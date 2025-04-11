@@ -4,6 +4,7 @@ set(MODULE_NAME NorvesLib)
 add_subdirectory(Core)
 add_subdirectory(Math)
 add_subdirectory(RHI)
+add_subdirectory(Memory)
 
 # 全てのモジュールをリンクするインターフェースライブラリを作成
 add_library(${MODULE_NAME} INTERFACE)
@@ -14,6 +15,7 @@ target_link_libraries(${MODULE_NAME}
         Core
         Math
         RHI
+        Memory
 )
 
 # インクルードパスの設定

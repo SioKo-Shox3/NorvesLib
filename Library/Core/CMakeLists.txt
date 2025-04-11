@@ -4,16 +4,23 @@ file(GLOB_RECURSE PUBLIC_HEADERS
     Public/*.h
 )
 
-# 空のインターフェースライブラリとして定義
-add_library(${MODULE_NAME} INTERFACE)
-
-target_include_directories(${MODULE_NAME}
-    INTERFACE
-        ${CMAKE_CURRENT_SOURCE_DIR}/Public
+file(GLOB_RECURSE PRIVATE_SOURCES
+    Private/*.cpp
 )
 
-# ヘッダーをIDEに表示するための設定
-add_custom_target(${MODULE_NAME}_IDE SOURCES ${PUBLIC_HEADERS})
+# スタティックライブラリとして定義（以前はINTERFACEライブラリ）
+add_library(${MODULE_NAME} STATIC ${PRIVATE_SOURCES} ${PUBLIC_HEADERS})
 
-# 他のモジュールへの依存関係を設定
-# target_link_libraries(${MODULE_NAME} INTERFACE OtherModule)
+target_include_directories(${MODULE_NAME}
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/Public
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Private
+        ${CMAKE_SOURCE_DIR}/Library
+)
+
+# Memoryモジュールへの依存関係を追加
+target_link_libraries(${MODULE_NAME} PUBLIC Memory)
+
+# ヘッダーをIDEに表示するための設定
+add_custom_target(${MODULE_NAME}_IDE SOURCES ${PUBLIC_HEADERS} ${PRIVATE_SOURCES})
