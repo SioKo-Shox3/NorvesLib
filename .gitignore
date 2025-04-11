@@ -30,3 +30,95 @@
 *.exe
 *.out
 *.app
+
+# C++/CMakeプロジェクト用の.gitignoreファイル
+
+# ビルドディレクトリ
+/build/
+/out/
+/Debug/
+/Release/
+/x64/
+/x86/
+/Win32/
+/bin/
+/lib/
+/*.dir/
+
+# CMakeの一時ファイル
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+*.cmake
+!CMakeLists.txt
+Makefile
+
+# VisualStudioの一時ファイル
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.VC.db
+*.VC.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.VC.opendb
+*.ncb
+*.sbr
+*.ilk
+*.idb
+*.pdb
+ipch/
+.vscode/
+*.vsidx
+
+# コンパイル生成物
+*.obj
+*.o
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.res
+*.pch
+*.manifest
+
+# コード解析ツールのファイル
+.clang-format
+.clangd/
+compile_commands.json
+
+# バックアップファイル
+*~
+*.bak
+*.swp
+*.tmp
+
+# デバッグ情報
+*.dSYM/
+*.idb
+
+# 各種OSの特殊ファイル
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 環境設定ファイル（必要に応じてコメントアウト）
+#.env
+#.envrc
+
+# 任意の依存関係管理ツールのディレクトリ
+/vendor/
+/node_modules/
+/.bundle/
+
+# ログファイル
+*.log
