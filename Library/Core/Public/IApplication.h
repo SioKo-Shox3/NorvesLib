@@ -4,7 +4,8 @@
 #include <string>
 #include <vector>
 
-namespace NorvesLib {
+namespace NorvesLib 
+{
 
 class IWindow;
 

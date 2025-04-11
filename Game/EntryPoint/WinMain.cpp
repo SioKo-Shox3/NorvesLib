@@ -22,8 +22,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     
-    if (argv != nullptr) {
-        for (int i = 0; i < argc; ++i) {
+    if (argv != nullptr) 
+    {
+        for (int i = 0; i < argc; ++i) 
+        {
             args.emplace_back(argv[i]);
         }
         LocalFree(argv);
@@ -31,13 +33,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // アプリケーションインスタンスの作成
     auto app = CreateApplication();
-    if (!app) {
+    if (!app) 
+    {
         MessageBoxW(NULL, L"アプリケーションの作成に失敗しました", L"エラー", MB_ICONERROR);
         return -1;
     }
     
     // アプリケーションの初期化と実行
-    if (!app->Initialize(args)) {
+    if (!app->Initialize(args)) 
+    {
         MessageBoxW(NULL, L"アプリケーションの初期化に失敗しました", L"エラー", MB_ICONERROR);
         return -1;
     }
