@@ -2,7 +2,8 @@
 
 #include <string>
 
-namespace NorvesLib {
+namespace NorvesLib 
+{
 
 /**
  * @brief ウィンドウの抽象インターフェース
