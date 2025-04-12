@@ -1,10 +1,9 @@
 #pragma once
 
-#include "IPipeline.h"
+#include "RHI/Public/IPipeline.h"
 #include <vulkan/vulkan.h>
 #include <memory>
 #include <vector>
-#include <string>
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -15,117 +14,90 @@ class VulkanRenderPass;
 class VulkanDescriptorSetLayout;
 
 /**
- * @brief パイプラインのVulkan実装
+ * @brief VulkanパイプラインレイアウトのラッパークラS
+ */
+class VulkanPipelineLayout
+{
+public:
+    VulkanPipelineLayout(std::shared_ptr<VulkanDevice> device, 
+                          const std::vector<std::shared_ptr<VulkanDescriptorSetLayout>>& layouts);
+    ~VulkanPipelineLayout();
+
+    VkPipelineLayout GetVkPipelineLayout() const { return m_pipelineLayout; }
+
+private:
+    std::shared_ptr<VulkanDevice> m_device;
+    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+    std::vector<std::shared_ptr<VulkanDescriptorSetLayout>> m_descriptorSetLayouts;
+};
+
+/**
+ * @brief Vulkanパイプラインの基底クラス
  */
 class VulkanPipeline : public IPipeline
 {
 public:
-    /**
-     * @brief グラフィックスパイプライン作成コンストラクタ
-     * @param device Vulkanデバイス
-     * @param desc パイプライン記述子
-     * @param renderPass レンダーパス
-     * @param shaders 各ステージのシェーダー配列
-     * @param descriptorSetLayouts ディスクリプタセットレイアウト配列
-     */
-    VulkanPipeline(
-        std::shared_ptr<VulkanDevice> device,
-        const GraphicsPipelineDesc& desc,
-        std::shared_ptr<VulkanRenderPass> renderPass,
-        const std::vector<std::shared_ptr<VulkanShader>>& shaders,
-        const std::vector<std::shared_ptr<VulkanDescriptorSetLayout>>& descriptorSetLayouts
-    );
+    VulkanPipeline(std::shared_ptr<VulkanDevice> device);
+    ~VulkanPipeline() override;
 
-    /**
-     * @brief コンピュートパイプライン作成コンストラクタ
-     * @param device Vulkanデバイス
-     * @param desc パイプライン記述子
-     * @param computeShader コンピュートシェーダー
-     * @param descriptorSetLayouts ディスクリプタセットレイアウト配列
-     */
-    VulkanPipeline(
-        std::shared_ptr<VulkanDevice> device,
-        const ComputePipelineDesc& desc,
-        std::shared_ptr<VulkanShader> computeShader,
-        const std::vector<std::shared_ptr<VulkanDescriptorSetLayout>>& descriptorSetLayouts
-    );
+    // IDeviceObjectインターフェース実装
+    ResourceType GetResourceType() const override { return ResourceType::Pipeline; }
 
-    /**
-     * @brief デストラクタ
-     */
-    virtual ~VulkanPipeline();
+    // IPipelineインターフェース実装
+    PipelineType GetPipelineType() const override { return m_pipelineType; }
 
-    /**
-     * @brief パイプラインがコンピュートパイプラインかどうか
-     * @return コンピュートパイプラインの場合true、グラフィックパイプラインの場合false
-     */
-    virtual bool IsComputePipeline() const override { return m_isCompute; }
-
-    /**
-     * @brief バインドポイント数の取得
-     * @return バインドポイント（ディスクリプタセット）の数
-     */
-    virtual uint32_t GetBindPointCount() const override { return static_cast<uint32_t>(m_descriptorSetLayouts.size()); }
-
-    /**
-     * @brief Vulkanパイプラインオブジェクトの取得
-     * @return パイプラインオブジェクト
-     */
+    // Vulkan固有のメソッド
     VkPipeline GetVkPipeline() const { return m_pipeline; }
+    VkPipelineLayout GetVkPipelineLayout() const { return m_pipelineLayout->GetVkPipelineLayout(); }
 
-    /**
-     * @brief Vulkanパイプラインレイアウトオブジェクトの取得
-     * @return パイプラインレイアウトオブジェクト
-     */
-    VkPipelineLayout GetVkPipelineLayout() const { return m_pipelineLayout; }
+protected:
+    std::shared_ptr<VulkanDevice> m_device;
+    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    std::shared_ptr<VulkanPipelineLayout> m_pipelineLayout;
+    PipelineType m_pipelineType;
+};
 
-    /**
-     * @brief コンピュートパイプラインかどうかの取得（別名関数）
-     * @return コンピュートパイプラインならtrue
-     */
-    bool IsCompute() const { return m_isCompute; }
-
-    /**
-     * @brief パイプラインレイアウトの取得
-     * @return パイプラインレイアウト
-     */
-    VkPipelineLayout GetPipelineLayout() const { return m_pipelineLayout; }
-
-private:
-    /**
-     * @brief パイプラインレイアウトの作成
-     * @param descriptorSetLayouts ディスクリプタセットレイアウト配列
-     */
-    void CreatePipelineLayout(const std::vector<std::shared_ptr<VulkanDescriptorSetLayout>>& descriptorSetLayouts);
-
-    /**
-     * @brief グラフィックパイプラインの作成
-     * @param desc パイプライン記述子
-     * @param renderPass レンダーパス
-     * @param shaders 各ステージのシェーダー配列
-     */
-    void CreateGraphicsPipeline(
-        const GraphicsPipelineDesc& desc,
-        std::shared_ptr<VulkanRenderPass> renderPass,
-        const std::vector<std::shared_ptr<VulkanShader>>& shaders
-    );
-
-    /**
-     * @brief コンピュートパイプラインの作成
-     * @param desc パイプライン記述子
-     * @param computeShader コンピュートシェーダー
-     */
-    void CreateComputePipeline(
-        const ComputePipelineDesc& desc,
-        std::shared_ptr<VulkanShader> computeShader
-    );
+/**
+ * @brief Vulkanグラフィックスパイプラインの実装クラス
+ */
+class VulkanGraphicsPipeline : public VulkanPipeline
+{
+public:
+    VulkanGraphicsPipeline(std::shared_ptr<VulkanDevice> device, 
+                           const GraphicsPipelineDesc& desc);
+    ~VulkanGraphicsPipeline() override;
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;                                     ///< Vulkanデバイス
-    VkPipeline m_pipeline = VK_NULL_HANDLE;                                      ///< Vulkanパイプライン
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;                         ///< Vulkanパイプラインレイアウト
-    std::vector<std::shared_ptr<VulkanDescriptorSetLayout>> m_descriptorSetLayouts; ///< ディスクリプタセットレイアウト配列
-    bool m_isCompute = false;                                                   ///< コンピュートパイプラインかどうか
+    GraphicsPipelineDesc m_desc;
+    
+    void CreateGraphicsPipeline();
+    
+    // ヘルパーメソッド
+    VkPrimitiveTopology ConvertPrimitiveTopology(PrimitiveTopology topology);
+    VkPolygonMode ConvertPolygonMode(PolygonMode mode);
+    VkCullModeFlags ConvertCullMode(CullMode mode);
+    VkFrontFace ConvertFrontFace(FrontFace frontFace);
+    VkCompareOp ConvertCompareOp(CompareOp op);
+    VkStencilOp ConvertStencilOp(StencilOp op);
+    VkBlendFactor ConvertBlendFactor(BlendFactor factor);
+    VkBlendOp ConvertBlendOp(BlendOp op);
+    VkColorComponentFlags ConvertColorWriteMask(ColorWriteMask mask);
+};
+
+/**
+ * @brief Vulkanコンピュートパイプラインの実装クラス
+ */
+class VulkanComputePipeline : public VulkanPipeline
+{
+public:
+    VulkanComputePipeline(std::shared_ptr<VulkanDevice> device, 
+                          const ComputePipelineDesc& desc);
+    ~VulkanComputePipeline() override;
+
+private:
+    ComputePipelineDesc m_desc;
+    
+    void CreateComputePipeline();
 };
 
 } // namespace NorvesLib::RHI::Vulkan

@@ -3,6 +3,7 @@
 #include <set>
 #include <string>
 #include <algorithm>
+#include "VulkanSwapChain.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -527,6 +528,9 @@ VkBool32 VulkanDevice::DebugCallback(
 #include "VulkanSampler.h"
 #include "VulkanShader.h"
 #include "VulkanDescriptorSet.h"
+#include "VulkanSwapChain.h"
+#include "VulkanRenderPass.h"
+#include "VulkanFramebuffer.h"
 
 // IDeviceインターフェース実装
 BufferPtr VulkanDevice::CreateBuffer(const BufferDesc& desc)
@@ -565,32 +569,39 @@ CommandListPtr VulkanDevice::CreateCommandList()
 
 SwapChainPtr VulkanDevice::CreateSwapChain(const SwapChainDesc& desc)
 {
-    // TODO: VulkanSwapChainの実装
-    return nullptr;
+    // VulkanSwapChainの作成
+    auto swapChain = std::make_shared<VulkanSwapChain>(std::shared_ptr<VulkanDevice>(this, [](VulkanDevice*){}), desc);
+    return swapChain;
 }
 
 RenderPassPtr VulkanDevice::CreateRenderPass(const RenderPassDesc& desc)
 {
-    // TODO: VulkanRenderPassの実装
-    return nullptr;
+    // VulkanRenderPassの作成
+    auto renderPass = std::make_shared<VulkanRenderPass>(std::shared_ptr<VulkanDevice>(this, [](VulkanDevice*){}), desc);
+    return renderPass;
 }
 
 FramebufferPtr VulkanDevice::CreateFramebuffer(const FramebufferDesc& desc)
 {
-    // TODO: VulkanFramebufferの実装
-    return nullptr;
+    // VulkanFramebufferの作成
+    auto framebuffer = std::make_shared<VulkanFramebuffer>(std::shared_ptr<VulkanDevice>(this, [](VulkanDevice*){}), desc);
+    return framebuffer;
 }
 
 PipelinePtr VulkanDevice::CreateGraphicsPipeline(const GraphicsPipelineDesc& desc)
 {
-    // TODO: VulkanPipelineの実装
-    return nullptr;
+    // VulkanGraphicsPipelineの作成
+    auto pipeline = std::make_shared<VulkanGraphicsPipeline>(
+        std::shared_ptr<VulkanDevice>(this, [](VulkanDevice*){}), desc);
+    return pipeline;
 }
 
 PipelinePtr VulkanDevice::CreateComputePipeline(const ComputePipelineDesc& desc)
 {
-    // TODO: VulkanPipelineの実装
-    return nullptr;
+    // VulkanComputePipelineの作成
+    auto pipeline = std::make_shared<VulkanComputePipeline>(
+        std::shared_ptr<VulkanDevice>(this, [](VulkanDevice*){}), desc);
+    return pipeline;
 }
 
 DescriptorSetPtr VulkanDevice::CreateDescriptorSet(const DescriptorSetDesc& desc)

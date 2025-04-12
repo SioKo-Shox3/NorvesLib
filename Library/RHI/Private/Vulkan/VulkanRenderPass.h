@@ -1,6 +1,6 @@
 #pragma once
 
-#include "IRenderPass.h"
+#include "RHI/Public/IRenderPass.h"
 #include <vulkan/vulkan.h>
 #include <memory>
 #include <vector>
@@ -11,68 +11,50 @@ namespace NorvesLib::RHI::Vulkan
 class VulkanDevice;
 
 /**
- * @brief RenderPassのVulkan実装
+ * @brief Vulkanレンダーパスの実装クラス
  */
 class VulkanRenderPass : public IRenderPass
 {
 public:
     /**
-     * @brief コンストラクタ
+     * @brief VulkanRenderPassのコンストラクタ
      * @param device Vulkanデバイス
-     * @param colorFormats カラーアタッチメントのフォーマット配列
-     * @param depthStencilFormat デプスステンシルフォーマット（無効な場合はFormat::Unknown）
+     * @param desc レンダーパス記述子
      */
-    VulkanRenderPass(std::shared_ptr<VulkanDevice> device, 
-                    const std::vector<Format>& colorFormats,
-                    Format depthStencilFormat = Format::Unknown);
+    VulkanRenderPass(std::shared_ptr<VulkanDevice> device, const RenderPassDesc& desc);
     
     /**
      * @brief デストラクタ
      */
-    virtual ~VulkanRenderPass();
+    ~VulkanRenderPass() override;
 
-    /**
-     * @brief カラーアタッチメント数を取得
-     * @return カラーアタッチメント数
-     */
-    virtual uint32_t GetColorAttachmentCount() const override;
+    // IDeviceObjectインターフェース実装
+    ResourceType GetResourceType() const override { return ResourceType::RenderPass; }
 
-    /**
-     * @brief デプスステンシルアタッチメントを持つかどうか
-     * @return デプスステンシルアタッチメントを持つ場合true
-     */
-    virtual bool HasDepthStencilAttachment() const override;
+    // IRenderPassインターフェース実装
+    const RenderPassDesc& GetDesc() const override { return m_desc; }
 
-    /**
-     * @brief カラーアタッチメントのフォーマットを取得
-     * @param index アタッチメントインデックス
-     * @return フォーマット
-     */
-    virtual Format GetColorAttachmentFormat(uint32_t index) const override;
-
-    /**
-     * @brief デプスステンシルアタッチメントのフォーマットを取得
-     * @return デプスステンシルフォーマット
-     */
-    virtual Format GetDepthStencilFormat() const override;
-
-    /**
-     * @brief Vulkanレンダーパスハンドルを取得
-     * @return VkRenderPassハンドル
-     */
+    // Vulkan固有のメソッド
     VkRenderPass GetVkRenderPass() const { return m_renderPass; }
 
 private:
-    /**
-     * @brief レンダーパスの作成
-     */
+    std::shared_ptr<VulkanDevice> m_device;
+    RenderPassDesc m_desc;
+    VkRenderPass m_renderPass = VK_NULL_HANDLE;
+    
+    // アタッチメント情報
+    std::vector<VkAttachmentDescription> m_attachmentDescs;
+    std::vector<VkAttachmentReference> m_colorAttachmentRefs;
+    std::vector<VkAttachmentReference> m_inputAttachmentRefs;
+    VkAttachmentReference m_depthAttachmentRef;
+    
+    // ヘルパーメソッド
     void CreateRenderPass();
-
-private:
-    std::shared_ptr<VulkanDevice> m_device;         ///< Vulkanデバイス
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;     ///< Vulkanレンダーパスハンドル
-    std::vector<Format> m_colorFormats;             ///< カラーアタッチメントのフォーマット
-    Format m_depthStencilFormat;                   ///< デプスステンシルフォーマット
+    VkFormat GetVulkanFormat(Format format) const;
+    VkAttachmentLoadOp GetVulkanLoadOp(AttachmentLoadOp op) const;
+    VkAttachmentStoreOp GetVulkanStoreOp(AttachmentStoreOp op) const;
+    VkImageLayout GetVulkanInitialLayout(ResourceState state) const;
+    VkImageLayout GetVulkanFinalLayout(ResourceState state) const;
 };
 
 } // namespace NorvesLib::RHI::Vulkan
