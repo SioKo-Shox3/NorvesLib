@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 #include <unordered_map>
+#include <set>
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -17,6 +18,97 @@ class VulkanPipeline;
 class VulkanRenderPass;
 class VulkanFramebuffer;
 class VulkanDescriptorSet;
+
+/**
+ * @brief メモリバリア追跡情報
+ */
+struct ResourceBarrierTracker
+{
+    struct BufferState {
+        VkAccessFlags accessFlags = 0;
+        VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        uint32_t queueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    };
+    
+    struct ImageState {
+        VkAccessFlags accessFlags = 0;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        uint32_t queueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    };
+    
+    // リソースの状態を追跡
+    std::unordered_map<VkBuffer, BufferState> bufferStates;
+    std::unordered_map<VkImage, ImageState> imageStates;
+    
+    // リソース状態からアクセスフラグに変換
+    VkAccessFlags ResourceStateToAccessFlags(ResourceState state) const;
+    
+    // リソース状態からパイプラインステージフラグに変換
+    VkPipelineStageFlags ResourceStateToPipelineStageFlags(ResourceState state) const;
+    
+    // リソース状態からイメージレイアウトに変換
+    VkImageLayout ResourceStateToImageLayout(ResourceState state) const;
+};
+
+/**
+ * @brief パイプラインステートキャッシュ
+ */
+struct PipelineStateCache
+{
+    // グラフィックスパイプラインのキーと生成済みパイプラインのマッピング
+    struct GraphicsPipelineCacheKey 
+    {
+        VkRenderPass renderPass;
+        std::vector<VkShaderModule> shaderModules;
+        std::vector<VkVertexInputBindingDescription> vertexBindings;
+        std::vector<VkVertexInputAttributeDescription> vertexAttributes;
+        VkPrimitiveTopology topology;
+        VkCullModeFlags cullMode;
+        VkFrontFace frontFace;
+        VkPolygonMode polygonMode;
+        bool depthTestEnable;
+        bool depthWriteEnable;
+        VkCompareOp depthCompareOp;
+        bool blendEnable;
+        VkBlendFactor srcColorBlendFactor;
+        VkBlendFactor dstColorBlendFactor;
+        VkBlendOp colorBlendOp;
+        VkBlendFactor srcAlphaBlendFactor;
+        VkBlendFactor dstAlphaBlendFactor;
+        VkBlendOp alphaBlendOp;
+        
+        // ハッシュ計算用関数
+        bool operator==(const GraphicsPipelineCacheKey& other) const;
+    };
+    
+    struct GraphicsPipelineCacheKeyHash
+    {
+        std::size_t operator()(const GraphicsPipelineCacheKey& key) const;
+    };
+    
+    // コンピュートパイプラインのキーと生成済みパイプラインのマッピング
+    struct ComputePipelineCacheKey
+    {
+        VkShaderModule computeShader;
+        
+        // ハッシュ計算用関数
+        bool operator==(const ComputePipelineCacheKey& other) const;
+    };
+    
+    struct ComputePipelineCacheKeyHash
+    {
+        std::size_t operator()(const ComputePipelineCacheKey& key) const;
+    };
+    
+    // パイプラインキャッシュ
+    std::unordered_map<GraphicsPipelineCacheKey, VkPipeline, GraphicsPipelineCacheKeyHash> graphicsPipelines;
+    std::unordered_map<ComputePipelineCacheKey, VkPipeline, ComputePipelineCacheKeyHash> computePipelines;
+    
+    // Vulkanパイプラインキャッシュオブジェクト
+    VkPipelineCache vkPipelineCache = VK_NULL_HANDLE;
+};
 
 /**
  * @brief シェーダーバインディングキー（ディスクリプタリソース管理用）
@@ -124,13 +216,61 @@ public:
     VkCommandBuffer GetVkCommandBuffer() const { return m_commandBuffer; }
     bool IsInRenderPass() const { return m_inRenderPass; }
 
+    /**
+     * @brief 最適化されたバッファバリア
+     * @param buffer Vulkanバッファ
+     * @param newState 新しいリソース状態
+     * @param offset オフセット
+     * @param size サイズ
+     */
+    void OptimizedBufferBarrier(VulkanBuffer* buffer, ResourceState newState, uint64_t offset = 0, uint64_t size = 0);
+    
+    /**
+     * @brief 最適化されたテクスチャバリア
+     * @param texture Vulkanテクスチャ
+     * @param newState 新しいリソース状態
+     * @param subresourceRange サブリソース範囲
+     */
+    void OptimizedTextureBarrier(VulkanTexture* texture, ResourceState newState, const VkImageSubresourceRange& subresourceRange);
+    
+    /**
+     * @brief グラフィックスパイプラインのキャッシュ取得/作成
+     * @param key パイプラインキャッシュキー
+     * @return キャッシュされたパイプライン、または新しく作成されたパイプライン
+     */
+    VkPipeline GetOrCreateGraphicsPipeline(const PipelineStateCache::GraphicsPipelineCacheKey& key);
+    
+    /**
+     * @brief コンピュートパイプラインのキャッシュ取得/作成
+     * @param key パイプラインキャッシュキー
+     * @return キャッシュされたパイプライン、または新しく作成されたパイプライン
+     */
+    VkPipeline GetOrCreateComputePipeline(const PipelineStateCache::ComputePipelineCacheKey& key);
+    
+    /**
+     * @brief パイプラインキャッシュの保存
+     * @param filePath 保存先ファイルパス
+     */
+    void SavePipelineCache(const std::string& filePath);
+    
+    /**
+     * @brief パイプラインキャッシュの読み込み
+     * @param filePath 読み込み元ファイルパス
+     */
+    void LoadPipelineCache(const std::string& filePath);
+    
+    /**
+     * @brief リソースバリア追跡のリセット
+     */
+    void ResetResourceBarriers();
+
 private:
     std::shared_ptr<VulkanDevice> m_device;
     VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
     VkFence m_fence = VK_NULL_HANDLE;
     
     // ディスクリプタプール関連
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    std::vector<VkDescriptorPool> m_descriptorPools;
     static constexpr uint32_t MAX_DESCRIPTOR_SETS = 100;
     static constexpr uint32_t MAX_DESCRIPTORS_PER_TYPE = 1000;
     
@@ -143,6 +283,12 @@ private:
     std::vector<uint64_t> m_currentVertexBufferOffsets;
     BufferPtr m_currentIndexBuffer;
     uint64_t m_currentIndexBufferOffset = 0;
+    
+    // リソースバリア追跡
+    ResourceBarrierTracker m_barrierTracker;
+    
+    // パイプラインステートキャッシュ
+    PipelineStateCache m_pipelineStateCache;
     
     // 一時リソース保存用（リソース解放を防ぐため）
     std::vector<std::shared_ptr<void>> m_temporaryResources;
