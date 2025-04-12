@@ -29,6 +29,9 @@ VulkanCommandList::VulkanCommandList(std::shared_ptr<VulkanDevice> device)
     if (vkCreateFence(device->GetVkDevice(), &fenceInfo, nullptr, &m_fence) != VK_SUCCESS) {
         throw std::runtime_error("フェンスの作成に失敗しました");
     }
+    
+    // ディスクリプタプールの作成
+    CreateDescriptorPool();
 }
 
 // デストラクタ
@@ -36,6 +39,9 @@ VulkanCommandList::~VulkanCommandList()
 {
     // 一時リソースをクリア
     m_temporaryResources.clear();
+    
+    // ディスクリプタプールの破棄
+    DestroyDescriptorPool();
     
     // フェンスの破棋
     if (m_fence != VK_NULL_HANDLE) {
@@ -45,6 +51,13 @@ VulkanCommandList::~VulkanCommandList()
     // コマンドバッファの解放（コマンドプールごと破棄される場合があるので省略可能）
     if (m_commandBuffer != VK_NULL_HANDLE) {
         vkFreeCommandBuffers(m_device->GetVkDevice(), m_device->GetCommandPool(), 1, &m_commandBuffer);
+    }
+    
+    // ディスクリプタプールが作成されていれば破棄
+    if (m_descriptorPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(m_device->GetVkDevice(), m_descriptorPool, nullptr);
+        m_descriptorPool = VK_NULL_HANDLE;
     }
 }
 
@@ -59,6 +72,10 @@ void VulkanCommandList::Reset()
     
     // コマンドバッファをリセット
     vkResetCommandBuffer(m_commandBuffer, 0);
+    
+    // ディスクリプタセットキャッシュをリセット
+    // プールは再利用するが、各セットは再作成する
+    m_descriptorSetCache.clear();
     
     // 状態のリセット
     m_isRecording = false;
@@ -1127,6 +1144,1551 @@ VkPipelineStageFlags VulkanCommandList::ToVkPipelineStage(ShaderStage stage) con
     }
     
     return result;
+}
+
+// ディスクリプタプールの作成
+void VulkanCommandList::CreateDescriptorPool()
+{
+    // 各タイプのディスクリプタの数を定義
+    std::array<VkDescriptorPoolSize, 4> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    poolSizes[2].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[3].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    // ディスクリプタプールの作成情報を設定
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = MAX_DESCRIPTOR_SETS;
+    
+    // ディスクリプタプールを作成
+    if (vkCreateDescriptorPool(m_device->GetVkDevice(), &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS)
+    {
+        throw std::runtime_error("ディスクリプタプールの作成に失敗しました");
+    }
+}
+
+// ディスクリプタプールの破棄
+void VulkanCommandList::DestroyDescriptorPool()
+{
+    if (m_descriptorPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(m_device->GetVkDevice(), m_descriptorPool, nullptr);
+        m_descriptorPool = VK_NULL_HANDLE;
+    }
+}
+
+// シェーダーステージをVkシェーダーステージフラグに変換
+VkShaderStageFlags VulkanCommandList::ToVkShaderStageFlags(ShaderStage stage) const
+{
+    VkShaderStageFlags result = 0;
+    
+    if ((stage & ShaderStage::Vertex) == ShaderStage::Vertex) {
+        result |= VK_SHADER_STAGE_VERTEX_BIT;
+    }
+    
+    if ((stage & ShaderStage::Hull) == ShaderStage::Hull) {
+        result |= VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+    }
+    
+    if ((stage & ShaderStage::Domain) == ShaderStage::Domain) {
+        result |= VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+    }
+    
+    if ((stage & ShaderStage::Geometry) == ShaderStage::Geometry) {
+        result |= VK_SHADER_STAGE_GEOMETRY_BIT;
+    }
+    
+    if ((stage & ShaderStage::Pixel) == ShaderStage::Pixel) {
+        result |= VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    
+    if ((stage & ShaderStage::Compute) == ShaderStage::Compute) {
+        result |= VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    
+    return result;
+}
+
+// ディスクリプタセットの取得または作成
+VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(uint32_t setIndex, VkDescriptorSetLayout layout)
+{
+    auto& setInfo = m_descriptorSetCache[setIndex];
+    
+    // すでに同じレイアウトのディスクリプタセットが存在する場合は再利用
+    if (setInfo.descriptorSet != VK_NULL_HANDLE && setInfo.layout == layout)
+    {
+        // ダーティフラグが立っている場合は更新
+        if (setInfo.isDirty)
+        {
+            UpdateDescriptorSet(setIndex);
+        }
+        return setInfo.descriptorSet;
+    }
+    
+    // 以前のディスクリプタセットがある場合は解放
+    if (setInfo.descriptorSet != VK_NULL_HANDLE)
+    {
+        vkFreeDescriptorSets(m_device->GetVkDevice(), m_descriptorPool, 1, &setInfo.descriptorSet);
+        setInfo.descriptorSet = VK_NULL_HANDLE;
+    }
+    
+    // 新しいディスクリプタセットを割り当て
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+    
+    if (vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &setInfo.descriptorSet) != VK_SUCCESS)
+    {
+        throw std::runtime_error("ディスクリプタセットの割り当てに失敗しました");
+    }
+    
+    setInfo.layout = layout;
+    
+    // 新しいディスクリプタセットに登録されたリソースを更新
+    if (!setInfo.resources.empty())
+    {
+        UpdateDescriptorSet(setIndex);
+    }
+    
+    return setInfo.descriptorSet;
+}
+
+// ディスクリプタセットの更新
+void VulkanCommandList::UpdateDescriptorSet(uint32_t setIndex)
+{
+    auto& setInfo = m_descriptorSetCache[setIndex];
+    if (!setInfo.isDirty || setInfo.descriptorSet == VK_NULL_HANDLE)
+    {
+        return;
+    }
+    
+    std::vector<VkWriteDescriptorSet> descriptorWrites;
+    std::vector<VkDescriptorBufferInfo> bufferInfos;
+    std::vector<VkDescriptorImageInfo> imageInfos;
+    
+    // リソースごとに適切な書き込み情報を作成
+    for (const auto& [key, resourceInfo] : setInfo.resources)
+    {
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = setInfo.descriptorSet;
+        write.dstBinding = key.binding;
+        write.dstArrayElement = 0;
+        write.descriptorCount = 1;
+        
+        switch (resourceInfo.type)
+        {
+            case BindingResourceInfo::Type::Buffer:
+            {
+                auto buffer = std::static_pointer_cast<VulkanBuffer>(resourceInfo.resource);
+                
+                VkDescriptorBufferInfo bufferInfo{};
+                bufferInfo.buffer = buffer->GetVkBuffer();
+                bufferInfo.offset = resourceInfo.offset;
+                bufferInfo.range = resourceInfo.range;
+                
+                bufferInfos.push_back(bufferInfo);
+                
+                write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                write.pBufferInfo = &bufferInfos.back();
+                break;
+            }
+            case BindingResourceInfo::Type::Texture:
+            {
+                auto texture = std::static_pointer_cast<VulkanTexture>(resourceInfo.resource);
+                
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfo.imageView = texture->GetVkImageView();
+                imageInfo.sampler = VK_NULL_HANDLE; // テクスチャのみの場合はNULL
+                
+                imageInfos.push_back(imageInfo);
+                
+                write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                write.pImageInfo = &imageInfos.back();
+                break;
+            }
+            case BindingResourceInfo::Type::Sampler:
+            {
+                auto sampler = std::static_pointer_cast<VulkanSampler>(resourceInfo.resource);
+                
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                imageInfo.imageView = VK_NULL_HANDLE;
+                imageInfo.sampler = sampler->GetVkSampler();
+                
+                imageInfos.push_back(imageInfo);
+                
+                write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                write.pImageInfo = &imageInfos.back();
+                break;
+            }
+        }
+        
+        descriptorWrites.push_back(write);
+    }
+    
+    // ディスクリプタセットを更新
+    if (!descriptorWrites.empty())
+    {
+        vkUpdateDescriptorSets(
+            m_device->GetVkDevice(),
+            static_cast<uint32_t>(descriptorWrites.size()),
+            descriptorWrites.data(),
+            0, nullptr);
+    }
+    
+    // 更新完了したのでダーティフラグをクリア
+    setInfo.isDirty = false;
+}
+
+// 全てのディスクリプタセットをバインド
+void VulkanCommandList::BindDescriptorSets()
+{
+    if (!m_currentPipeline) {
+        return; // パイプラインがバインドされていない
+    }
+    
+    auto vkPipeline = std::static_pointer_cast<VulkanPipeline>(m_currentPipeline);
+    VkPipelineLayout layout = vkPipeline->GetVkPipelineLayout();
+    VkPipelineBindPoint bindPoint = vkPipeline->IsCompute() ? 
+        VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    
+    // 各ディスクリプタセットについて更新してバインド
+    for (auto& [setIndex, setInfo] : m_descriptorSetCache) {
+        // 必要に応じてディスクリプタセットを更新
+        UpdateDescriptorSet(setIndex);
+        
+        // ディスクリプタセットをバインド
+        if (setInfo.descriptorSet != VK_NULL_HANDLE) {
+            vkCmdBindDescriptorSets(
+                m_commandBuffer,
+                bindPoint,
+                layout,
+                setIndex,  // セットインデックス
+                1,         // セット数
+                &setInfo.descriptorSet,
+                0,         // 動的オフセット数
+                nullptr    // 動的オフセット
+            );
+        }
+    }
+}
+
+// コマンドリスト初期化時にディスクリプタプールを作成
+bool VulkanCommandList::Init()
+{
+    // コマンドバッファの作成
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = m_commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+
+    if (vkAllocateCommandBuffers(m_device->GetVkDevice(), &allocInfo, &m_commandBuffer) != VK_SUCCESS)
+    {
+        return false;
+    }
+
+    // ディスクリプタプールを作成
+    CreateDescriptorPool();
+
+    return true;
+}
+
+// 定数バッファをセットする
+void VulkanCommandList::SetConstantBuffer(uint32_t setIndex, uint32_t binding, std::shared_ptr<IBuffer> buffer, uint64_t offset, uint64_t range)
+{
+    if (!buffer)
+    {
+        return;
+    }
+
+    auto vkBuffer = std::static_pointer_cast<VulkanBuffer>(buffer);
+    BindingKey key{ setIndex, binding };
+    
+    auto& setInfo = m_descriptorSetCache[setIndex];
+    auto& resourceInfo = setInfo.resources[key];
+    
+    resourceInfo.type = BindingResourceInfo::Type::Buffer;
+    resourceInfo.resource = buffer;
+    resourceInfo.offset = offset;
+    resourceInfo.range = (range == 0) ? vkBuffer->GetSize() - offset : range;
+    
+    // リソースが変更されたのでディスクリプタセットは更新が必要
+    setInfo.isDirty = true;
+
+    // シェーダーリソースをバインドするには、ディスクリプタセットが必要なので、
+    // 現在のパイプラインからディスクリプタセットレイアウトを取得
+    if (m_currentPipeline)
+    {
+        auto vkPipeline = std::static_pointer_cast<VulkanPipeline>(m_currentPipeline);
+        VkDescriptorSetLayout layout = vkPipeline->GetDescriptorSetLayout(setIndex);
+        if (layout != VK_NULL_HANDLE)
+        {
+            // ディスクリプタセットを取得または作成
+            GetOrCreateDescriptorSet(setIndex, layout);
+        }
+    }
+}
+
+// テクスチャをセットする
+void VulkanCommandList::SetTexture(uint32_t setIndex, uint32_t binding, std::shared_ptr<ITexture> texture)
+{
+    if (!texture)
+    {
+        return;
+    }
+
+    auto vkTexture = std::static_pointer_cast<VulkanTexture>(texture);
+    BindingKey key{ setIndex, binding };
+    
+    auto& setInfo = m_descriptorSetCache[setIndex];
+    auto& resourceInfo = setInfo.resources[key];
+    
+    resourceInfo.type = BindingResourceInfo::Type::Texture;
+    resourceInfo.resource = texture;
+    resourceInfo.offset = 0;
+    resourceInfo.range = 0;
+    
+    // リソースが変更されたのでディスクリプタセットは更新が必要
+    setInfo.isDirty = true;
+
+    // 現在のパイプラインからディスクリプタセットレイアウトを取得
+    if (m_currentPipeline)
+    {
+        auto vkPipeline = std::static_pointer_cast<VulkanPipeline>(m_currentPipeline);
+        VkDescriptorSetLayout layout = vkPipeline->GetDescriptorSetLayout(setIndex);
+        if (layout != VK_NULL_HANDLE)
+        {
+            // ディスクリプタセットを取得または作成
+            GetOrCreateDescriptorSet(setIndex, layout);
+        }
+    }
+}
+
+// サンプラーをセットする
+void VulkanCommandList::SetSampler(uint32_t setIndex, uint32_t binding, std::shared_ptr<ISampler> sampler)
+{
+    if (!sampler)
+    {
+        return;
+    }
+
+    auto vkSampler = std::static_pointer_cast<VulkanSampler>(sampler);
+    BindingKey key{ setIndex, binding };
+    
+    auto& setInfo = m_descriptorSetCache[setIndex];
+    auto& resourceInfo = setInfo.resources[key];
+    
+    resourceInfo.type = BindingResourceInfo::Type::Sampler;
+    resourceInfo.resource = sampler;
+    resourceInfo.offset = 0;
+    resourceInfo.range = 0;
+    
+    // リソースが変更されたのでディスクリプタセットは更新が必要
+    setInfo.isDirty = true;
+
+    // 現在のパイプラインからディスクリプタセットレイアウトを取得
+    if (m_currentPipeline)
+    {
+        auto vkPipeline = std::static_pointer_cast<VulkanPipeline>(m_currentPipeline);
+        VkDescriptorSetLayout layout = vkPipeline->GetDescriptorSetLayout(setIndex);
+        if (layout != VK_NULL_HANDLE)
+        {
+            // ディスクリプタセットを取得または作成
+            GetOrCreateDescriptorSet(setIndex, layout);
+        }
+    }
+}
+
+// パイプラインレイアウトのバインドポイントに対応するディスクリプタセットを取得または作成
+VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(uint32_t bindPoint)
+{
+    // 既にこのバインドポイント用のディスクリプタセットが存在するか確認
+    auto it = m_descriptorSets.find(bindPoint);
+    if (it != m_descriptorSets.end()) {
+        return it->second;
+    }
+
+    // 現在のパイプラインからディスクリプタセットレイアウトを取得
+    VulkanPipeline* vulkanPipeline = static_cast<VulkanPipeline*>(m_currentPipeline.get());
+    if (!vulkanPipeline) {
+        throw std::runtime_error("パイプラインがバインドされていません");
+    }
+
+    VkDescriptorSetLayout layout = vulkanPipeline->GetDescriptorSetLayout(bindPoint);
+    if (layout == VK_NULL_HANDLE) {
+        throw std::runtime_error("指定されたバインドポイントのディスクリプタセットレイアウトが見つかりません");
+    }
+
+    // 新しいディスクリプタセットの割り当て
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+
+    VkDescriptorSet descriptorSet;
+    if (vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet) != VK_SUCCESS) {
+        throw std::runtime_error("ディスクリプタセットの割り当てに失敗しました");
+    }
+
+    // マップに保存
+    m_descriptorSets[bindPoint] = descriptorSet;
+    return descriptorSet;
+}
+
+// ディスクリプタセットを更新
+void VulkanCommandList::UpdateDescriptorSet()
+{
+    if (m_pendingWrites.empty()) {
+        return;
+    }
+
+    // 保留中の書き込みを処理
+    vkUpdateDescriptorSets(
+        m_device->GetVkDevice(),
+        static_cast<uint32_t>(m_pendingWrites.size()),
+        m_pendingWrites.data(),
+        0,
+        nullptr
+    );
+
+    // 保留中の書き込みをクリア
+    m_pendingWrites.clear();
+}
+
+// ディスクリプタセットをパイプラインにバインド
+void VulkanCommandList::BindDescriptorSets()
+{
+    if (m_descriptorSets.empty() || !m_currentPipeline) {
+        return;
+    }
+
+    // 保留中の更新を適用
+    UpdateDescriptorSet();
+
+    VulkanPipeline* vulkanPipeline = static_cast<VulkanPipeline*>(m_currentPipeline.get());
+    VkPipelineLayout pipelineLayout = vulkanPipeline->GetVkPipelineLayout();
+
+    // バインドポイントに基づいてディスクリプタセットをバインド
+    for (const auto& [bindPoint, descriptorSet] : m_descriptorSets) {
+        vkCmdBindDescriptorSets(
+            m_commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS, // または COMPUTE
+            pipelineLayout,
+            bindPoint,
+            1,
+            &descriptorSet,
+            0,
+            nullptr
+        );
+    }
+}
+
+void VulkanCommandList::SetConstantBuffer(uint32_t bindPoint, uint32_t binding, const std::shared_ptr<IBuffer>& buffer)
+{
+    if (!buffer) {
+        return;
+    }
+
+    VulkanBuffer* vulkanBuffer = static_cast<VulkanBuffer*>(buffer.get());
+    VkBuffer vkBuffer = vulkanBuffer->GetVkBuffer();
+    VkDeviceSize offset = 0;
+    VkDeviceSize range = vulkanBuffer->GetSize();
+
+    // 対応するバインドポイントのディスクリプタセットを取得または作成
+    VkDescriptorSet descriptorSet = GetOrCreateDescriptorSet(bindPoint);
+
+    // バッファの記述子更新情報を作成
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = vkBuffer;
+    bufferInfo.offset = offset;
+    bufferInfo.range = range;
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = descriptorSet;
+    write.dstBinding = binding;
+    write.dstArrayElement = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; // または STORAGE_BUFFER
+    write.descriptorCount = 1;
+    write.pBufferInfo = &bufferInfo;
+
+    // 後で一括して更新するために記述子更新情報を保存
+    m_pendingWrites.push_back(write);
+    
+    // バッファへの参照を保持（ディスクリプタが有効である間）
+    m_boundResources.push_back(buffer);
+}
+
+void VulkanCommandList::SetTexture(uint32_t bindPoint, uint32_t binding, const std::shared_ptr<ITexture>& texture)
+{
+    if (!texture) {
+        return;
+    }
+    
+    VulkanTexture* vulkanTexture = static_cast<VulkanTexture*>(texture.get());
+    VkImageView imageView = vulkanTexture->GetVkImageView();
+    
+    // 対応するバインドポイントのディスクリプタセットを取得または作成
+    VkDescriptorSet descriptorSet = GetOrCreateDescriptorSet(bindPoint);
+    
+    // テクスチャの記述子更新情報を作成
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; // テクスチャのレイアウト
+    imageInfo.imageView = imageView;
+    imageInfo.sampler = VK_NULL_HANDLE; // テクスチャとサンプラーは別々に設定
+    
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = descriptorSet;
+    write.dstBinding = binding;
+    write.dstArrayElement = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    write.descriptorCount = 1;
+    write.pImageInfo = &imageInfo;
+    
+    // 後で一括して更新するために記述子更新情報を保存
+    m_pendingWrites.push_back(write);
+    
+    // テクスチャへの参照を保持
+    m_boundResources.push_back(texture);
+}
+
+void VulkanCommandList::SetSampler(uint32_t bindPoint, uint32_t binding, const std::shared_ptr<ISampler>& sampler)
+{
+    if (!sampler) {
+        return;
+    }
+    
+    VulkanSampler* vulkanSampler = static_cast<VulkanSampler*>(sampler.get());
+    VkSampler vkSampler = vulkanSampler->GetVkSampler();
+    
+    // 対応するバインドポイントのディスクリプタセットを取得または作成
+    VkDescriptorSet descriptorSet = GetOrCreateDescriptorSet(bindPoint);
+    
+    // サンプラーの記述子更新情報を作成
+    VkDescriptorImageInfo samplerInfo{};
+    samplerInfo.sampler = vkSampler;
+    samplerInfo.imageView = VK_NULL_HANDLE; // サンプラーのみの設定
+    samplerInfo.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = descriptorSet;
+    write.dstBinding = binding;
+    write.dstArrayElement = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    write.descriptorCount = 1;
+    write.pImageInfo = &samplerInfo;
+    
+    // 後で一括して更新するために記述子更新情報を保存
+    m_pendingWrites.push_back(write);
+    
+    // サンプラーへの参照を保持
+    m_boundResources.push_back(sampler);
+}
+
+VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(uint32_t bindPoint)
+{
+    // 指定されたバインドポイントのディスクリプタセット情報を検索
+    auto it = m_descriptorSetInfos.find(bindPoint);
+    
+    if (it != m_descriptorSetInfos.end()) {
+        // 既にディスクリプタセットが存在する場合はそれを返す
+        return it->second.descriptorSet;
+    }
+    
+    // 新しいディスクリプタセット情報を作成
+    DescriptorSetInfo setInfo{};
+    
+    // 現在バインドされているパイプラインからレイアウトを取得
+    if (!m_currentPipeline) {
+        // エラー処理: パイプラインがバインドされていない
+        return VK_NULL_HANDLE;
+    }
+    
+    VulkanPipeline* vulkanPipeline = static_cast<VulkanPipeline*>(m_currentPipeline.get());
+    VkDescriptorSetLayout layout = vulkanPipeline->GetDescriptorSetLayout(bindPoint);
+    
+    if (layout == VK_NULL_HANDLE) {
+        // 指定されたバインドポイントに対応するレイアウトが存在しない
+        return VK_NULL_HANDLE;
+    }
+    
+    // ディスクリプタセットの割り当て
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_device->GetDescriptorPool();
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+    
+    VkDescriptorSet descriptorSet;
+    VkResult result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+    
+    if (result != VK_SUCCESS) {
+        // ディスクリプタセットの割り当てに失敗
+        return VK_NULL_HANDLE;
+    }
+    
+    // 作成したディスクリプタセット情報を保存
+    setInfo.descriptorSet = descriptorSet;
+    setInfo.layout = layout;
+    m_descriptorSetInfos[bindPoint] = setInfo;
+    
+    return descriptorSet;
+}
+
+void VulkanCommandList::UpdateDescriptorSets()
+{
+    if (m_pendingWrites.empty()) {
+        return;
+    }
+    
+    // 蓄積された記述子更新情報を一括で適用
+    vkUpdateDescriptorSets(m_device->GetVkDevice(), 
+                          static_cast<uint32_t>(m_pendingWrites.size()), 
+                          m_pendingWrites.data(), 
+                          0, nullptr);
+    
+    // 更新後はリストをクリア
+    m_pendingWrites.clear();
+}
+
+void VulkanCommandList::BindDescriptorSets()
+{
+    // 記述子セットの更新を確実に適用
+    UpdateDescriptorSets();
+    
+    if (m_descriptorSetInfos.empty() || !m_currentPipeline) {
+        return;
+    }
+    
+    VulkanPipeline* vulkanPipeline = static_cast<VulkanPipeline*>(m_currentPipeline.get());
+    VkPipelineBindPoint bindPoint = vulkanPipeline->GetVkPipelineBindPoint();
+    VkPipelineLayout pipelineLayout = vulkanPipeline->GetVkPipelineLayout();
+    
+    // 各バインドポイントのディスクリプタセットをバインド
+    for (const auto& [setIndex, setInfo] : m_descriptorSetInfos) {
+        vkCmdBindDescriptorSets(
+            m_commandBuffer,
+                               bindPoint,
+                               pipelineLayout,
+                               setIndex,
+                               1,
+                               &setInfo.descriptorSet,
+                               0,
+                               nullptr);
+    }
+}
+
+// ディスクリプタセットの取得または作成
+VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(const ShaderBindingKey& key, VulkanPipeline* pipeline)
+{
+    // すでに作成済みのディスクリプタセットを検索
+    auto it = m_descriptorSetCache.find(key);
+    if (it != m_descriptorSetCache.end()) {
+        return it->second.descriptorSet;
+    }
+
+    // 新しいディスクリプタセットを作成
+    VkDescriptorSetLayout layout = pipeline->GetDescriptorSetLayout(key.setIndex);
+    if (layout == VK_NULL_HANDLE) {
+        // このセットインデックスに対するレイアウトが存在しない場合
+        return VK_NULL_HANDLE;
+    }
+
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    VkResult result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+    
+    if (result != VK_SUCCESS) {
+        // 既存のプールがいっぱいの場合は、新しいプールを作成して再試行
+        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
+            CreateDescriptorPool();
+            allocInfo.descriptorPool = m_descriptorPool;
+            result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+            
+            if (result != VK_SUCCESS) {
+                // それでも失敗する場合はエラー
+                return VK_NULL_HANDLE;
+            }
+        }
+        else {
+            // その他のエラー
+            return VK_NULL_HANDLE;
+        }
+    }
+
+    // キャッシュに保存
+    DescriptorSetInfo setInfo;
+    setInfo.descriptorSet = descriptorSet;
+    setInfo.layout = layout;
+    m_descriptorSetCache[key] = setInfo;
+
+    // 作成したディスクリプタセットを更新
+    UpdateDescriptorSet(key, descriptorSet);
+
+    return descriptorSet;
+}
+
+// ディスクリプタセットの更新
+void VulkanCommandList::UpdateDescriptorSet(const ShaderBindingKey& key, VkDescriptorSet descriptorSet, const std::unordered_map<uint32_t, BindingResourceInfo>& resources)
+{
+    std::vector<VkWriteDescriptorSet> descriptorWrites;
+    std::vector<VkDescriptorBufferInfo> bufferInfos;
+    std::vector<VkDescriptorImageInfo> imageInfos;
+    
+    // 各リソースについて記述子の書き込みを準備
+    for (const auto& [binding, resourceInfo] : resources) {
+        VkWriteDescriptorSet writeDescriptorSet{};
+        writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeDescriptorSet.dstSet = descriptorSet;
+        writeDescriptorSet.dstBinding = binding;
+        writeDescriptorSet.dstArrayElement = 0;
+        writeDescriptorSet.descriptorCount = 1;
+        
+        switch (resourceInfo.type) {
+            case BindingResourceType::UniformBuffer:
+            case BindingResourceType::StorageBuffer: {
+                VkDescriptorBufferInfo bufferInfo{};
+                VulkanBuffer* vulkanBuffer = static_cast<VulkanBuffer*>(resourceInfo.resource);
+                bufferInfo.buffer = vulkanBuffer->GetVkBuffer();
+                bufferInfo.offset = resourceInfo.offset;
+                bufferInfo.range = resourceInfo.size;
+                
+                bufferInfos.push_back(bufferInfo);
+                
+                writeDescriptorSet.descriptorType = 
+                    resourceInfo.type == BindingResourceType::UniformBuffer ? 
+                    VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : 
+                    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writeDescriptorSet.pBufferInfo = &bufferInfos.back();
+                break;
+            }
+            case BindingResourceType::Texture: {
+                VkDescriptorImageInfo imageInfo{};
+                VulkanTexture* vulkanTexture = static_cast<VulkanTexture*>(resourceInfo.resource);
+                imageInfo.imageView = vulkanTexture->GetImageView();
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfo.sampler = VK_NULL_HANDLE; // サンプラーは別に設定
+                
+                imageInfos.push_back(imageInfo);
+                
+                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                writeDescriptorSet.pImageInfo = &imageInfos.back();
+                break;
+            }
+            case BindingResourceType::Sampler: {
+                VkDescriptorImageInfo imageInfo{};
+                VulkanSampler* vulkanSampler = static_cast<VulkanSampler*>(resourceInfo.resource);
+                imageInfo.sampler = vulkanSampler->GetVkSampler();
+                imageInfo.imageView = VK_NULL_HANDLE;
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                
+                imageInfos.push_back(imageInfo);
+                
+                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                writeDescriptorSet.pImageInfo = &imageInfos.back();
+                break;
+            }
+        }
+        
+        descriptorWrites.push_back(writeDescriptorSet);
+    }
+    
+    // ディスクリプタセットを更新
+    if (!descriptorWrites.empty()) {
+        vkUpdateDescriptorSets(
+            m_device->GetVkDevice(), 
+            static_cast<uint32_t>(descriptorWrites.size()), 
+            descriptorWrites.data(), 
+            0, nullptr
+        );
+    }
+}
+
+// ディスクリプタセットの更新
+void VulkanCommandList::UpdateDescriptorSet(const ShaderBindingKey& key, VkDescriptorSet descriptorSet)
+{
+    auto resourcesIt = m_bindingResources.find(key);
+    if (resourcesIt == m_bindingResources.end()) {
+        // このキーに対するリソースがない場合は何もしない
+        return;
+    }
+
+    std::vector<VkWriteDescriptorSet> descriptorWrites;
+    std::vector<VkDescriptorBufferInfo> bufferInfos;
+    std::vector<VkDescriptorImageInfo> imageInfos;
+
+    // バインドされたリソースを使ってディスクリプタの書き込み情報を準備する
+    for (const auto& [bindingIndex, resourceInfo] : resourcesIt->second) {
+        VkWriteDescriptorSet writeInfo{};
+        writeInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeInfo.dstSet = descriptorSet;
+        writeInfo.dstBinding = bindingIndex;
+        writeInfo.dstArrayElement = 0;
+        writeInfo.descriptorCount = 1;
+
+        switch (resourceInfo.type) {
+        case BindingResourceInfo::ResourceType::UniformBuffer:
+        case BindingResourceInfo::ResourceType::StorageBuffer:
+            {
+                VkDescriptorBufferInfo bufferInfo{};
+                bufferInfo.buffer = reinterpret_cast<VulkanBuffer*>(resourceInfo.resource)->GetVkBuffer();
+                bufferInfo.offset = resourceInfo.offset;
+                bufferInfo.range = resourceInfo.size == 0 ? VK_WHOLE_SIZE : resourceInfo.size;
+
+                bufferInfos.push_back(bufferInfo);
+                writeInfo.pBufferInfo = &bufferInfos.back();
+                writeInfo.descriptorType = resourceInfo.type == BindingResourceInfo::ResourceType::UniformBuffer ?
+                    VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                descriptorWrites.push_back(writeInfo);
+            }
+            break;
+
+        case BindingResourceInfo::ResourceType::Texture:
+            {
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfo.imageView = reinterpret_cast<VulkanTexture*>(resourceInfo.resource)->GetVkImageView();
+                imageInfo.sampler = VK_NULL_HANDLE;
+
+                imageInfos.push_back(imageInfo);
+                writeInfo.pImageInfo = &imageInfos.back();
+                writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                descriptorWrites.push_back(writeInfo);
+            }
+            break;
+
+        case BindingResourceInfo::ResourceType::Sampler:
+            {
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                imageInfo.imageView = VK_NULL_HANDLE;
+                imageInfo.sampler = reinterpret_cast<VulkanSampler*>(resourceInfo.resource)->GetVkSampler();
+
+                imageInfos.push_back(imageInfo);
+                writeInfo.pImageInfo = &imageInfos.back();
+                writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                descriptorWrites.push_back(writeInfo);
+            }
+            break;
+
+        default:
+            // サポートされていないリソースタイプ
+            break;
+        }
+    }
+
+    if (!descriptorWrites.empty()) {
+        vkUpdateDescriptorSets(m_device->GetVkDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+    }
+}
+
+void VulkanCommandList::BindDescriptorSets(VulkanPipeline* pipeline)
+{
+    if (!pipeline) {
+        return;
+    }
+
+    VkPipelineBindPoint bindPoint = pipeline->GetPipelineType() == EPipelineType::Graphics 
+        ? VK_PIPELINE_BIND_POINT_GRAPHICS 
+        : VK_PIPELINE_BIND_POINT_COMPUTE;
+
+    VkPipelineLayout pipelineLayout = pipeline->GetVkPipelineLayout();
+    
+    // ディスクリプタセットが存在するセットインデックスを収集
+    std::map<uint32_t, VkDescriptorSet> sortedDescriptorSets;
+    for (const auto& entry : m_boundResources) {
+        const ShaderBindingKey& key = entry.first;
+        auto it = m_descriptorSetCache.find(key);
+        if (it != m_descriptorSetCache.end()) {
+            sortedDescriptorSets[key.setIndex] = it->second.descriptorSet;
+        }
+    }
+
+    if (sortedDescriptorSets.empty()) {
+        return;
+    }
+
+    // バインドするディスクリプタセットを準備
+    std::vector<VkDescriptorSet> descriptorSets;
+    std::vector<uint32_t> setIndices;
+
+    for (const auto& entry : sortedDescriptorSets) {
+        setIndices.push_back(entry.first);
+        descriptorSets.push_back(entry.second);
+    }
+
+    // 動的オフセット情報を収集（バッファ用）
+    std::vector<uint32_t> dynamicOffsets;
+    for (const auto& setIndex : setIndices) {
+        for (const auto& entry : m_boundResources) {
+            if (entry.first.setIndex == setIndex && entry.second.type == EBindingResourceType::Buffer) {
+                if (entry.second.buffer.dynamicOffset != 0) {
+                    dynamicOffsets.push_back(entry.second.buffer.dynamicOffset);
+                }
+            }
+        }
+    }
+
+    // ディスクリプタセットをコマンドバッファにバインド
+    if (!descriptorSets.empty()) {
+        vkCmdBindDescriptorSets(
+            m_commandBuffer,
+            bindPoint,
+            pipelineLayout,
+            setIndices[0], // 最初のセットインデックス
+            static_cast<uint32_t>(descriptorSets.size()),
+            descriptorSets.data(),
+            static_cast<uint32_t>(dynamicOffsets.size()),
+            dynamicOffsets.empty() ? nullptr : dynamicOffsets.data()
+        );
+    }
+}
+
+VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(const ShaderBindingKey& key)
+{
+    // キャッシュから既存のディスクリプタセットを検索
+    auto it = m_descriptorSetCache.find(key);
+    if (it != m_descriptorSetCache.end()) {
+        return it->second.descriptorSet;
+    }
+
+    // リソースバインディング情報を取得
+    VulkanShader* shader = static_cast<VulkanShader*>(key.shader);
+    if (!shader) {
+        return VK_NULL_HANDLE;
+    }
+
+    const VkDescriptorSetLayout& layout = shader->GetDescriptorSetLayout(key.setIndex);
+    if (layout == VK_NULL_HANDLE) {
+        return VK_NULL_HANDLE;
+    }
+
+    // ディスクリプタプールを作成または取得
+    VkDescriptorPool descriptorPool = GetOrCreateDescriptorPool();
+    if (descriptorPool == VK_NULL_HANDLE) {
+        return VK_NULL_HANDLE;
+    }
+
+    // 新しいディスクリプタセットの割り当て
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    VkResult result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+
+    if (result != VK_SUCCESS) {
+        // プールが満杯の場合、新しいプールを作成して再試行
+        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
+            descriptorPool = CreateDescriptorPool();
+            allocInfo.descriptorPool = descriptorPool;
+            result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+            if (result != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+        }
+        else {
+            return VK_NULL_HANDLE;
+        }
+    }
+
+    // キャッシュに新しいディスクリプタセット情報を保存
+    DescriptorSetInfo setInfo;
+    setInfo.descriptorSet = descriptorSet;
+    setInfo.descriptorPool = descriptorPool;
+    setInfo.layout = layout;
+    
+    m_descriptorSetCache[key] = setInfo;
+    
+    return descriptorSet;
+}
+
+void VulkanCommandList::UpdateDescriptorSets()
+{
+    if (m_pendingWrites.empty()) {
+        return;
+    }
+    
+    // 蓄積された記述子更新情報を一括で適用
+    vkUpdateDescriptorSets(m_device->GetVkDevice(), 
+                          static_cast<uint32_t>(m_pendingWrites.size()), 
+                          m_pendingWrites.data(), 
+                          0, nullptr);
+    
+    // 更新後はリストをクリア
+    m_pendingWrites.clear();
+}
+
+void VulkanCommandList::BindDescriptorSets()
+{
+    // 記述子セットの更新を確実に適用
+    UpdateDescriptorSets();
+    
+    if (m_descriptorSetInfos.empty() || !m_currentPipeline) {
+        return;
+    }
+    
+    VulkanPipeline* vulkanPipeline = static_cast<VulkanPipeline*>(m_currentPipeline.get());
+    VkPipelineBindPoint bindPoint = vulkanPipeline->GetVkPipelineBindPoint();
+    VkPipelineLayout pipelineLayout = vulkanPipeline->GetVkPipelineLayout();
+    
+    // 各バインドポイントのディスクリプタセットをバインド
+    for (const auto& [setIndex, setInfo] : m_descriptorSetInfos) {
+        vkCmdBindDescriptorSets(
+            m_commandBuffer,
+                               bindPoint,
+                               pipelineLayout,
+                               setIndex,
+                               1,
+                               &setInfo.descriptorSet,
+                               0,
+                               nullptr);
+    }
+}
+
+// ディスクリプタセットの取得または作成
+VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(const ShaderBindingKey& key, VulkanPipeline* pipeline)
+{
+    // すでに作成済みのディスクリプタセットを検索
+    auto it = m_descriptorSetCache.find(key);
+    if (it != m_descriptorSetCache.end()) {
+        return it->second.descriptorSet;
+    }
+
+    // 新しいディスクリプタセットを作成
+    VkDescriptorSetLayout layout = pipeline->GetDescriptorSetLayout(key.setIndex);
+    if (layout == VK_NULL_HANDLE) {
+        // このセットインデックスに対するレイアウトが存在しない場合
+        return VK_NULL_HANDLE;
+    }
+
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    VkResult result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+    
+    if (result != VK_SUCCESS) {
+        // 既存のプールがいっぱいの場合は、新しいプールを作成して再試行
+        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
+            CreateDescriptorPool();
+            allocInfo.descriptorPool = m_descriptorPool;
+            result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+            
+            if (result != VK_SUCCESS) {
+                // それでも失敗する場合はエラー
+                return VK_NULL_HANDLE;
+            }
+        }
+        else {
+            // その他のエラー
+            return VK_NULL_HANDLE;
+        }
+    }
+
+    // キャッシュに保存
+    DescriptorSetInfo setInfo;
+    setInfo.descriptorSet = descriptorSet;
+    setInfo.layout = layout;
+    m_descriptorSetCache[key] = setInfo;
+
+    // 作成したディスクリプタセットを更新
+    UpdateDescriptorSet(key, descriptorSet);
+
+    return descriptorSet;
+}
+
+// ディスクリプタセットの更新
+void VulkanCommandList::UpdateDescriptorSet(const ShaderBindingKey& key, VkDescriptorSet descriptorSet, const std::unordered_map<uint32_t, BindingResourceInfo>& resources)
+{
+    std::vector<VkWriteDescriptorSet> descriptorWrites;
+    std::vector<VkDescriptorBufferInfo> bufferInfos;
+    std::vector<VkDescriptorImageInfo> imageInfos;
+    
+    // 各リソースについて記述子の書き込みを準備
+    for (const auto& [binding, resourceInfo] : resources) {
+        VkWriteDescriptorSet writeDescriptorSet{};
+        writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeDescriptorSet.dstSet = descriptorSet;
+        writeDescriptorSet.dstBinding = binding;
+        writeDescriptorSet.dstArrayElement = 0;
+        writeDescriptorSet.descriptorCount = 1;
+        
+        switch (resourceInfo.type) {
+            case BindingResourceType::UniformBuffer:
+            case BindingResourceType::StorageBuffer: {
+                VkDescriptorBufferInfo bufferInfo{};
+                VulkanBuffer* vulkanBuffer = static_cast<VulkanBuffer*>(resourceInfo.resource);
+                bufferInfo.buffer = vulkanBuffer->GetVkBuffer();
+                bufferInfo.offset = resourceInfo.offset;
+                bufferInfo.range = resourceInfo.size;
+                
+                bufferInfos.push_back(bufferInfo);
+                
+                writeDescriptorSet.descriptorType = 
+                    resourceInfo.type == BindingResourceType::UniformBuffer ? 
+                    VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : 
+                    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writeDescriptorSet.pBufferInfo = &bufferInfos.back();
+                break;
+            }
+            case BindingResourceType::Texture: {
+                VkDescriptorImageInfo imageInfo{};
+                VulkanTexture* vulkanTexture = static_cast<VulkanTexture*>(resourceInfo.resource);
+                imageInfo.imageView = vulkanTexture->GetImageView();
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfo.sampler = VK_NULL_HANDLE; // サンプラーは別に設定
+                
+                imageInfos.push_back(imageInfo);
+                
+                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                writeDescriptorSet.pImageInfo = &imageInfos.back();
+                break;
+            }
+            case BindingResourceType::Sampler: {
+                VkDescriptorImageInfo imageInfo{};
+                VulkanSampler* vulkanSampler = static_cast<VulkanSampler*>(resourceInfo.resource);
+                imageInfo.sampler = vulkanSampler->GetVkSampler();
+                imageInfo.imageView = VK_NULL_HANDLE;
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                
+                imageInfos.push_back(imageInfo);
+                
+                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                writeDescriptorSet.pImageInfo = &imageInfos.back();
+                break;
+            }
+        }
+        
+        descriptorWrites.push_back(writeDescriptorSet);
+    }
+    
+    // ディスクリプタセットを更新
+    if (!descriptorWrites.empty()) {
+        vkUpdateDescriptorSets(
+            m_device->GetVkDevice(), 
+            static_cast<uint32_t>(descriptorWrites.size()), 
+            descriptorWrites.data(), 
+            0, nullptr
+        );
+    }
+}
+
+// ディスクリプタセットの更新
+void VulkanCommandList::UpdateDescriptorSet(const ShaderBindingKey& key, VkDescriptorSet descriptorSet)
+{
+    auto resourcesIt = m_bindingResources.find(key);
+    if (resourcesIt == m_bindingResources.end()) {
+        // このキーに対するリソースがない場合は何もしない
+        return;
+    }
+
+    std::vector<VkWriteDescriptorSet> descriptorWrites;
+    std::vector<VkDescriptorBufferInfo> bufferInfos;
+    std::vector<VkDescriptorImageInfo> imageInfos;
+
+    // バインドされたリソースを使ってディスクリプタの書き込み情報を準備する
+    for (const auto& [bindingIndex, resourceInfo] : resourcesIt->second) {
+        VkWriteDescriptorSet writeInfo{};
+        writeInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeInfo.dstSet = descriptorSet;
+        writeInfo.dstBinding = bindingIndex;
+        writeInfo.dstArrayElement = 0;
+        writeInfo.descriptorCount = 1;
+
+        switch (resourceInfo.type) {
+        case BindingResourceInfo::ResourceType::UniformBuffer:
+        case BindingResourceInfo::ResourceType::StorageBuffer:
+            {
+                VkDescriptorBufferInfo bufferInfo{};
+                bufferInfo.buffer = reinterpret_cast<VulkanBuffer*>(resourceInfo.resource)->GetVkBuffer();
+                bufferInfo.offset = resourceInfo.offset;
+                bufferInfo.range = resourceInfo.size == 0 ? VK_WHOLE_SIZE : resourceInfo.size;
+
+                bufferInfos.push_back(bufferInfo);
+                writeInfo.pBufferInfo = &bufferInfos.back();
+                writeInfo.descriptorType = resourceInfo.type == BindingResourceInfo::ResourceType::UniformBuffer ?
+                    VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                descriptorWrites.push_back(writeInfo);
+            }
+            break;
+
+        case BindingResourceInfo::ResourceType::Texture:
+            {
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfo.imageView = reinterpret_cast<VulkanTexture*>(resourceInfo.resource)->GetVkImageView();
+                imageInfo.sampler = VK_NULL_HANDLE;
+
+                imageInfos.push_back(imageInfo);
+                writeInfo.pImageInfo = &imageInfos.back();
+                writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                descriptorWrites.push_back(writeInfo);
+            }
+            break;
+
+        case BindingResourceInfo::ResourceType::Sampler:
+            {
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                imageInfo.imageView = VK_NULL_HANDLE;
+                imageInfo.sampler = reinterpret_cast<VulkanSampler*>(resourceInfo.resource)->GetVkSampler();
+
+                imageInfos.push_back(imageInfo);
+                writeInfo.pImageInfo = &imageInfos.back();
+                writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                descriptorWrites.push_back(writeInfo);
+            }
+            break;
+
+        default:
+            // サポートされていないリソースタイプ
+            break;
+        }
+    }
+
+    if (!descriptorWrites.empty()) {
+        vkUpdateDescriptorSets(m_device->GetVkDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+    }
+}
+
+void VulkanCommandList::BindDescriptorSets(VulkanPipeline* pipeline)
+{
+    if (!pipeline) {
+        return;
+    }
+
+    VkPipelineBindPoint bindPoint = pipeline->GetPipelineType() == EPipelineType::Graphics 
+        ? VK_PIPELINE_BIND_POINT_GRAPHICS 
+        : VK_PIPELINE_BIND_POINT_COMPUTE;
+
+    VkPipelineLayout pipelineLayout = pipeline->GetVkPipelineLayout();
+    
+    // ディスクリプタセットが存在するセットインデックスを収集
+    std::map<uint32_t, VkDescriptorSet> sortedDescriptorSets;
+    for (const auto& entry : m_boundResources) {
+        const ShaderBindingKey& key = entry.first;
+        auto it = m_descriptorSetCache.find(key);
+        if (it != m_descriptorSetCache.end()) {
+            sortedDescriptorSets[key.setIndex] = it->second.descriptorSet;
+        }
+    }
+
+    if (sortedDescriptorSets.empty()) {
+        return;
+    }
+
+    // バインドするディスクリプタセットを準備
+    std::vector<VkDescriptorSet> descriptorSets;
+    std::vector<uint32_t> setIndices;
+
+    for (const auto& entry : sortedDescriptorSets) {
+        setIndices.push_back(entry.first);
+        descriptorSets.push_back(entry.second);
+    }
+
+    // 動的オフセット情報を収集（バッファ用）
+    std::vector<uint32_t> dynamicOffsets;
+    for (const auto& setIndex : setIndices) {
+        for (const auto& entry : m_boundResources) {
+            if (entry.first.setIndex == setIndex && entry.second.type == EBindingResourceType::Buffer) {
+                if (entry.second.buffer.dynamicOffset != 0) {
+                    dynamicOffsets.push_back(entry.second.buffer.dynamicOffset);
+                }
+            }
+        }
+    }
+
+    // ディスクリプタセットをコマンドバッファにバインド
+    if (!descriptorSets.empty()) {
+        vkCmdBindDescriptorSets(
+            m_commandBuffer,
+            bindPoint,
+            pipelineLayout,
+            setIndices[0], // 最初のセットインデックス
+            static_cast<uint32_t>(descriptorSets.size()),
+            descriptorSets.data(),
+            static_cast<uint32_t>(dynamicOffsets.size()),
+            dynamicOffsets.empty() ? nullptr : dynamicOffsets.data()
+        );
+    }
+}
+
+VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(const ShaderBindingKey& key)
+{
+    // キャッシュから既存のディスクリプタセットを検索
+    auto it = m_descriptorSetCache.find(key);
+    if (it != m_descriptorSetCache.end()) {
+        return it->second.descriptorSet;
+    }
+
+    // リソースバインディング情報を取得
+    VulkanShader* shader = static_cast<VulkanShader*>(key.shader);
+    if (!shader) {
+        return VK_NULL_HANDLE;
+    }
+
+    const VkDescriptorSetLayout& layout = shader->GetDescriptorSetLayout(key.setIndex);
+    if (layout == VK_NULL_HANDLE) {
+        return VK_NULL_HANDLE;
+    }
+
+    // ディスクリプタプールを作成または取得
+    VkDescriptorPool descriptorPool = GetOrCreateDescriptorPool();
+    if (descriptorPool == VK_NULL_HANDLE) {
+        return VK_NULL_HANDLE;
+    }
+
+    // 新しいディスクリプタセットの割り当て
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    VkResult result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+
+    if (result != VK_SUCCESS) {
+        // プールが満杯の場合、新しいプールを作成して再試行
+        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
+            descriptorPool = CreateDescriptorPool();
+            allocInfo.descriptorPool = descriptorPool;
+            result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+            if (result != VK_SUCCESS) {
+                return VK_NULL_HANDLE;
+            }
+        }
+        else {
+            return VK_NULL_HANDLE;
+        }
+    }
+
+    // キャッシュに新しいディスクリプタセット情報を保存
+    DescriptorSetInfo setInfo;
+    setInfo.descriptorSet = descriptorSet;
+    setInfo.descriptorPool = descriptorPool;
+    setInfo.layout = layout;
+    
+    m_descriptorSetCache[key] = setInfo;
+    
+    return descriptorSet;
+}
+
+setInfo.descriptorPool = descriptorPool;
+    setInfo.layout = layout;
+    
+    m_descriptorSetCache[key] = setInfo;
+    
+    return descriptorSet;
+}
+
+// ディスクリプタプールの取得または作成
+VkDescriptorPool VulkanCommandList::GetOrCreateDescriptorPool()
+{
+    // 使用可能なプールがあるか確認
+    if (!m_descriptorPools.empty())
+    {
+        return m_descriptorPools.back();
+    }
+    
+    // 新しいプールを作成
+    return CreateDescriptorPool();
+}
+
+// 新しいディスクリプタプールを作成
+VkDescriptorPool VulkanCommandList::CreateDescriptorPool()
+{
+    // 各タイプのディスクリプタの数を定義
+    std::array<VkDescriptorPoolSize, 6> poolSizes{};
+    
+    // ユニフォームバッファ用
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    // ストレージバッファ用
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    // サンプル済みイメージ用
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    poolSizes[2].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    // サンプラー用
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    poolSizes[3].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    // 結合イメージサンプラー用
+    poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[4].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    // ストレージイメージ用
+    poolSizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[5].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
+    
+    // プール作成情報の設定
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;  // 個別の解放をサポート
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = MAX_DESCRIPTOR_SETS;  // プールごとの最大セット数
+    
+    // 新しいプールを作成
+    VkDescriptorPool newPool = VK_NULL_HANDLE;
+    if (vkCreateDescriptorPool(m_device->GetVkDevice(), &poolInfo, nullptr, &newPool) != VK_SUCCESS)
+    {
+        throw std::runtime_error("ディスクリプタプールの作成に失敗しました");
+    }
+    
+    // 作成したプールをリストに追加
+    m_descriptorPools.push_back(newPool);
+    
+    return newPool;
+}
+
+// 指定されたリソースをコマンドリストの実行中に維持するために追加
+void VulkanCommandList::AddTemporaryResource(std::shared_ptr<IResource> resource)
+{
+    if (resource)
+    {
+        // リソースが既に存在するかチェック
+        auto it = std::find(m_temporaryResources.begin(), m_temporaryResources.end(), resource);
+        if (it == m_temporaryResources.end())
+        {
+            // 存在しない場合は追加
+            m_temporaryResources.push_back(resource);
+        }
+    }
+}
+
+// シェーダーリソースのバインド（共通処理）
+void VulkanCommandList::BindShaderResource(uint32_t setIndex, uint32_t binding, 
+                                          BindingResourceInfo::ResourceType type, 
+                                          void* resource, uint64_t offset, uint64_t size)
+{
+    if (!resource || !m_currentPipeline)
+    {
+        return;
+    }
+    
+    // バインディングキーを作成
+    ShaderBindingKey key;
+    key.setIndex = setIndex;
+    key.shader = m_currentPipeline->GetShader();
+    
+    // バインディング情報を更新または追加
+    BindingResourceInfo resourceInfo;
+    resourceInfo.type = type;
+    resourceInfo.resource = resource;
+    resourceInfo.offset = offset;
+    resourceInfo.size = size;
+    
+    m_bindingResources[key][binding] = resourceInfo;
+    
+    // ディスクリプタセットが既に作成されている場合は更新マークを付ける
+    auto it = m_descriptorSetCache.find(key);
+    if (it != m_descriptorSetCache.end())
+    {
+        it->second.needsUpdate = true;
+    }
+}
+
+// コマンドリストのクリーンアップ処理
+void VulkanCommandList::Cleanup()
+{
+    // 一時的なリソース参照をクリア
+    m_temporaryResources.clear();
+    
+    // バインディングリソース情報をクリア
+    m_bindingResources.clear();
+    
+    // カレントパイプラインをクリア
+    m_currentPipeline = nullptr;
+    
+    // 頂点バッファとインデックスバッファの参照をクリア
+    m_currentVertexBuffers.clear();
+    m_currentVertexBufferOffsets.clear();
+    m_currentIndexBuffer = nullptr;
+    m_currentIndexBufferOffset = 0;
+}
+
+// すべてのディスクリプタセットのバインド処理
+void VulkanCommandList::BindAllDescriptorSets()
+{
+    if (!m_currentPipeline)
+    {
+        return;
+    }
+    
+    VulkanPipeline* vulkanPipeline = static_cast<VulkanPipeline*>(m_currentPipeline.get());
+    VkPipelineBindPoint bindPoint = vulkanPipeline->IsCompute() ? 
+        VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    
+    // セットごとにディスクリプタセットを作成・更新・バインド
+    for (const auto& [key, resourceMap] : m_bindingResources)
+    {
+        if (key.shader != m_currentPipeline->GetShader())
+        {
+            continue;  // 現在のパイプラインに関連しないリソースはスキップ
+        }
+        
+        // ディスクリプタセットを取得または作成
+        VkDescriptorSet descriptorSet = GetOrCreateDescriptorSet(key);
+        if (descriptorSet == VK_NULL_HANDLE)
+        {
+            continue;
+        }
+        
+        // 必要に応じてディスクリプタセットを更新
+        auto it = m_descriptorSetCache.find(key);
+        if (it != m_descriptorSetCache.end() && it->second.needsUpdate)
+        {
+            UpdateDescriptorSet(key, descriptorSet);
+            it->second.needsUpdate = false;
+        }
+        
+        // ディスクリプタセットをバインド
+        vkCmdBindDescriptorSets(
+            m_commandBuffer,
+            bindPoint,
+            vulkanPipeline->GetVkPipelineLayout(),
+            key.setIndex,
+            1,
+            &descriptorSet,
+            0,
+            nullptr
+        );
+    }
 }
 
 } // namespace NorvesLib::RHI::Vulkan

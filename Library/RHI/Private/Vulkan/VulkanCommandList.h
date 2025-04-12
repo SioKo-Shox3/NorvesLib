@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 #include <memory>
 #include <vector>
+#include <unordered_map>
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -16,6 +17,46 @@ class VulkanPipeline;
 class VulkanRenderPass;
 class VulkanFramebuffer;
 class VulkanDescriptorSet;
+
+/**
+ * @brief シェーダーバインディングキー（ディスクリプタリソース管理用）
+ */
+struct ShaderBindingKey {
+    uint32_t set;          // ディスクリプタセット番号
+    uint32_t binding;      // バインディング番号
+    ShaderStage stage;     // シェーダーステージ
+    
+    bool operator==(const ShaderBindingKey& other) const {
+        return set == other.set && binding == other.binding && stage == other.stage;
+    }
+};
+
+/**
+ * @brief ShaderBindingKeyのハッシュ関数
+ */
+struct ShaderBindingKeyHash {
+    size_t operator()(const ShaderBindingKey& key) const {
+        return std::hash<uint32_t>()(key.set) ^
+               (std::hash<uint32_t>()(key.binding) << 1) ^
+               (std::hash<uint32_t>()((uint32_t)key.stage) << 2);
+    }
+};
+
+/**
+ * @brief バインディングリソース情報
+ */
+struct BindingResourceInfo {
+    enum class Type {
+        Buffer,
+        Texture,
+        Sampler
+    };
+    
+    Type type;
+    std::shared_ptr<void> resource; // リソースへの参照
+    uint64_t offset = 0;           // バッファのオフセット
+    uint64_t range = VK_WHOLE_SIZE; // バッファのサイズ
+};
 
 /**
  * @brief Vulkanコマンドリスト実装クラス
@@ -73,6 +114,11 @@ public:
         uint32_t width, uint32_t height, 
         uint32_t srcMipLevel = 0, uint32_t srcArrayIndex = 0,
         uint32_t dstMipLevel = 0, uint32_t dstArrayIndex = 0) override;
+    
+    void BufferBarrier(BufferPtr buffer, ResourceState beforeState, ResourceState afterState, 
+                      uint64_t offset = 0, uint64_t size = 0) override;
+    void TextureBarrier(TexturePtr texture, ResourceState beforeState, ResourceState afterState,
+                       uint32_t mipLevel = 0, uint32_t arrayIndex = 0, uint32_t mipCount = 0, uint32_t arrayCount = 0) override;
 
     // Vulkan固有のメソッド
     VkCommandBuffer GetVkCommandBuffer() const { return m_commandBuffer; }
@@ -82,6 +128,11 @@ private:
     std::shared_ptr<VulkanDevice> m_device;
     VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
     VkFence m_fence = VK_NULL_HANDLE;
+    
+    // ディスクリプタプール関連
+    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    static constexpr uint32_t MAX_DESCRIPTOR_SETS = 100;
+    static constexpr uint32_t MAX_DESCRIPTORS_PER_TYPE = 1000;
     
     bool m_isRecording = false;
     bool m_inRenderPass = false;
@@ -96,8 +147,22 @@ private:
     // 一時リソース保存用（リソース解放を防ぐため）
     std::vector<std::shared_ptr<void>> m_temporaryResources;
     
-    // コマンドバッファの再利用処理
+    // ディスクリプタセット管理
+    struct DescriptorSetInfo {
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+        std::unordered_map<ShaderBindingKey, BindingResourceInfo, ShaderBindingKeyHash> resources;
+        bool isDirty = false;
+    };
+    
+    std::unordered_map<uint32_t, DescriptorSetInfo> m_descriptorSetCache;
+    
+    // プライベートメソッド
     void Reset();
+    void CreateDescriptorPool();
+    void DestroyDescriptorPool();
+    bool UpdateDescriptorSet(uint32_t setIndex);
+    VkDescriptorSet GetOrCreateDescriptorSet(uint32_t setIndex, VkDescriptorSetLayout layout);
+    void BindDescriptorSets();
     
     // リソース参照の追加（リソース解放防止用）
     template<typename T>
@@ -107,6 +172,8 @@ private:
     
     // シェーダーステージをVkPipelineStageに変換
     VkPipelineStageFlags ToVkPipelineStage(ShaderStage stage) const;
+    // シェーダーステージをVkシェーダーステージに変換
+    VkShaderStageFlags ToVkShaderStageFlags(ShaderStage stage) const;
 };
 
 } // namespace NorvesLib::RHI::Vulkan
