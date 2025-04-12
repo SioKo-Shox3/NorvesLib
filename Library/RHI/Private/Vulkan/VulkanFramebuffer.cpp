@@ -2,41 +2,25 @@
 #include "VulkanDevice.h"
 #include "VulkanRenderPass.h"
 #include "VulkanTexture.h"
+#include "VulkanSwapChain.h"
 #include <stdexcept>
 
 namespace NorvesLib::RHI::Vulkan
 {
 
 // コンストラクタ
-VulkanFramebuffer::VulkanFramebuffer(std::shared_ptr<VulkanDevice> device, 
-                                     std::shared_ptr<VulkanRenderPass> renderPass,
-                                     const std::vector<std::shared_ptr<VulkanTexture>>& colorAttachments,
-                                     std::shared_ptr<VulkanTexture> depthStencilAttachment,
-                                     uint32_t width,
-                                     uint32_t height)
+VulkanFramebuffer::VulkanFramebuffer(std::shared_ptr<VulkanDevice> device, const FramebufferDesc& desc)
     : m_device(device)
-    , m_renderPass(renderPass)
-    , m_colorAttachments(colorAttachments)
-    , m_depthStencilAttachment(depthStencilAttachment)
+    , m_desc(desc)
 {
-    // 幅と高さが指定されていない場合、最初のアタッチメントから取得
-    if (width == 0 || height == 0) {
-        if (!m_colorAttachments.empty() && m_colorAttachments[0]) {
-            m_width = m_colorAttachments[0]->GetWidth();
-            m_height = m_colorAttachments[0]->GetHeight();
-        } else if (m_depthStencilAttachment) {
-            m_width = m_depthStencilAttachment->GetWidth();
-            m_height = m_depthStencilAttachment->GetHeight();
-        } else {
-            throw std::runtime_error("フレームバッファの幅と高さを決定できません");
-        }
-    } else {
-        m_width = width;
-        m_height = height;
+    // RenderPassのキャスト
+    std::shared_ptr<VulkanRenderPass> renderPass = std::dynamic_pointer_cast<VulkanRenderPass>(desc.renderPass);
+    if (!renderPass) {
+        throw std::runtime_error("無効なRenderPassが指定されました");
     }
     
-    // フレームバッファの作成
-    CreateFramebuffer();
+    // フレームバッファ作成
+    CreateFramebuffer(renderPass);
 }
 
 // デストラクタ
@@ -44,88 +28,68 @@ VulkanFramebuffer::~VulkanFramebuffer()
 {
     if (m_framebuffer != VK_NULL_HANDLE) {
         vkDestroyFramebuffer(m_device->GetVkDevice(), m_framebuffer, nullptr);
-        m_framebuffer = VK_NULL_HANDLE;
     }
-}
-
-// フレームバッファの幅を取得
-uint32_t VulkanFramebuffer::GetWidth() const
-{
-    return m_width;
-}
-
-// フレームバッファの高さを取得
-uint32_t VulkanFramebuffer::GetHeight() const
-{
-    return m_height;
-}
-
-// 関連付けられたレンダーパスを取得
-RenderPassPtr VulkanFramebuffer::GetRenderPass() const
-{
-    return m_renderPass;
-}
-
-// カラーアタッチメントを取得
-TexturePtr VulkanFramebuffer::GetColorAttachment(uint32_t index) const
-{
-    if (index < m_colorAttachments.size()) {
-        return m_colorAttachments[index];
-    }
-    return nullptr;
-}
-
-// デプスステンシルアタッチメントを取得
-TexturePtr VulkanFramebuffer::GetDepthStencilAttachment() const
-{
-    return m_depthStencilAttachment;
-}
-
-// カラーアタッチメント数を取得
-uint32_t VulkanFramebuffer::GetColorAttachmentCount() const
-{
-    return static_cast<uint32_t>(m_colorAttachments.size());
-}
-
-// デプスステンシルアタッチメントを持つかどうか
-bool VulkanFramebuffer::HasDepthStencilAttachment() const
-{
-    return m_depthStencilAttachment != nullptr;
 }
 
 // フレームバッファの作成
-void VulkanFramebuffer::CreateFramebuffer()
+void VulkanFramebuffer::CreateFramebuffer(std::shared_ptr<VulkanRenderPass> renderPass)
 {
-    // アタッチメントビューのリストを作成
-    std::vector<VkImageView> attachments;
+    // アタッチメントビューの準備
+    m_attachmentViews.clear();
+    m_attachmentViews.reserve(m_desc.colorAttachments.size() + (m_desc.depthStencilAttachment.has_value() ? 1 : 0));
     
-    // カラーアタッチメントのビューを追加
-    for (const auto& texture : m_colorAttachments) {
-        if (!texture) {
-            throw std::runtime_error("無効なカラーアタッチメントがフレームバッファに渡されました");
+    // カラーアタッチメントのイメージビュー取得
+    for (const auto& attachment : m_desc.colorAttachments) {
+        VkImageView imageView = GetImageViewFromAttachment(attachment);
+        if (imageView == VK_NULL_HANDLE) {
+            throw std::runtime_error("アタッチメントのイメージビューが無効です");
         }
-        attachments.push_back(texture->GetVkImageView());
+        m_attachmentViews.push_back(imageView);
     }
     
-    // デプスステンシルアタッチメントのビューを追加
-    if (m_depthStencilAttachment) {
-        attachments.push_back(m_depthStencilAttachment->GetVkImageView());
+    // デプスアタッチメントのイメージビュー取得
+    if (m_desc.depthStencilAttachment.has_value()) {
+        VkImageView depthImageView = GetImageViewFromAttachment(m_desc.depthStencilAttachment.value());
+        if (depthImageView == VK_NULL_HANDLE) {
+            throw std::runtime_error("デプスアタッチメントのイメージビューが無効です");
+        }
+        m_attachmentViews.push_back(depthImageView);
     }
     
-    // フレームバッファの作成情報を設定
+    // フレームバッファ作成情報
     VkFramebufferCreateInfo framebufferInfo{};
     framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    framebufferInfo.renderPass = m_renderPass->GetVkRenderPass();
-    framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-    framebufferInfo.pAttachments = attachments.data();
-    framebufferInfo.width = m_width;
-    framebufferInfo.height = m_height;
-    framebufferInfo.layers = 1;
+    framebufferInfo.renderPass = renderPass->GetVkRenderPass();
+    framebufferInfo.attachmentCount = static_cast<uint32_t>(m_attachmentViews.size());
+    framebufferInfo.pAttachments = m_attachmentViews.data();
+    framebufferInfo.width = m_desc.width;
+    framebufferInfo.height = m_desc.height;
+    framebufferInfo.layers = 1; // マルチレイヤーの場合は変更が必要
     
-    // フレームバッファを作成
+    // フレームバッファの作成
     if (vkCreateFramebuffer(m_device->GetVkDevice(), &framebufferInfo, nullptr, &m_framebuffer) != VK_SUCCESS) {
-        throw std::runtime_error("フレームバッファの作成に失敗しました");
+        throw std::runtime_error("Vulkanフレームバッファの作成に失敗しました");
     }
+}
+
+// アタッチメントからVulkanイメージビューを取得
+VkImageView VulkanFramebuffer::GetImageViewFromAttachment(const AttachmentRef& attachment)
+{
+    if (attachment.texture) {
+        // テクスチャからイメージビューを取得
+        auto vulkanTexture = std::dynamic_pointer_cast<VulkanTexture>(attachment.texture);
+        if (vulkanTexture) {
+            return vulkanTexture->GetVkImageView();
+        }
+    } else if (attachment.swapChain) {
+        // スワップチェーンからイメージビューを取得
+        auto vulkanSwapChain = std::dynamic_pointer_cast<VulkanSwapChain>(attachment.swapChain);
+        if (vulkanSwapChain && attachment.swapChainBufferIndex < vulkanSwapChain->GetImageCount()) {
+            return vulkanSwapChain->GetImageView(attachment.swapChainBufferIndex);
+        }
+    }
+    
+    return VK_NULL_HANDLE;
 }
 
 } // namespace NorvesLib::RHI::Vulkan
