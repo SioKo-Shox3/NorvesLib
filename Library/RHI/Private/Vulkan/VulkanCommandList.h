@@ -3,9 +3,7 @@
 #include "RHI/Public/ICommandList.h"
 #include <vulkan/vulkan.h>
 #include <memory>
-#include <vector>
-#include <unordered_map>
-#include <set>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -39,8 +37,8 @@ struct ResourceBarrierTracker
     };
     
     // リソースの状態を追跡
-    std::unordered_map<VkBuffer, BufferState> bufferStates;
-    std::unordered_map<VkImage, ImageState> imageStates;
+    NorvesLib::Core::Container::UnorderedMap<VkBuffer, BufferState> bufferStates;
+    NorvesLib::Core::Container::UnorderedMap<VkImage, ImageState> imageStates;
     
     // リソース状態からアクセスフラグに変換
     VkAccessFlags ResourceStateToAccessFlags(ResourceState state) const;
@@ -61,9 +59,9 @@ struct PipelineStateCache
     struct GraphicsPipelineCacheKey 
     {
         VkRenderPass renderPass;
-        std::vector<VkShaderModule> shaderModules;
-        std::vector<VkVertexInputBindingDescription> vertexBindings;
-        std::vector<VkVertexInputAttributeDescription> vertexAttributes;
+        NorvesLib::Core::Container::VariableArray<VkShaderModule> shaderModules;
+        NorvesLib::Core::Container::VariableArray<VkVertexInputBindingDescription> vertexBindings;
+        NorvesLib::Core::Container::VariableArray<VkVertexInputAttributeDescription> vertexAttributes;
         VkPrimitiveTopology topology;
         VkCullModeFlags cullMode;
         VkFrontFace frontFace;
@@ -103,8 +101,8 @@ struct PipelineStateCache
     };
     
     // パイプラインキャッシュ
-    std::unordered_map<GraphicsPipelineCacheKey, VkPipeline, GraphicsPipelineCacheKeyHash> graphicsPipelines;
-    std::unordered_map<ComputePipelineCacheKey, VkPipeline, ComputePipelineCacheKeyHash> computePipelines;
+    NorvesLib::Core::Container::UnorderedMap<GraphicsPipelineCacheKey, VkPipeline, GraphicsPipelineCacheKeyHash> graphicsPipelines;
+    NorvesLib::Core::Container::UnorderedMap<ComputePipelineCacheKey, VkPipeline, ComputePipelineCacheKeyHash> computePipelines;
     
     // Vulkanパイプラインキャッシュオブジェクト
     VkPipelineCache vkPipelineCache = VK_NULL_HANDLE;
@@ -251,13 +249,13 @@ public:
      * @brief パイプラインキャッシュの保存
      * @param filePath 保存先ファイルパス
      */
-    void SavePipelineCache(const std::string& filePath);
+    void SavePipelineCache(const NorvesLib::Core::Container::String& filePath);
     
     /**
      * @brief パイプラインキャッシュの読み込み
      * @param filePath 読み込み元ファイルパス
      */
-    void LoadPipelineCache(const std::string& filePath);
+    void LoadPipelineCache(const NorvesLib::Core::Container::String& filePath);
     
     /**
      * @brief リソースバリア追跡のリセット
@@ -270,7 +268,7 @@ private:
     VkFence m_fence = VK_NULL_HANDLE;
     
     // ディスクリプタプール関連
-    std::vector<VkDescriptorPool> m_descriptorPools;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorPool> m_descriptorPools;
     static constexpr uint32_t MAX_DESCRIPTOR_SETS = 100;
     static constexpr uint32_t MAX_DESCRIPTORS_PER_TYPE = 1000;
     
@@ -279,8 +277,8 @@ private:
     
     // 現在バインドされているリソース
     PipelinePtr m_currentPipeline;
-    std::vector<BufferPtr> m_currentVertexBuffers;
-    std::vector<uint64_t> m_currentVertexBufferOffsets;
+    NorvesLib::Core::Container::VariableArray<BufferPtr> m_currentVertexBuffers;
+    NorvesLib::Core::Container::VariableArray<uint64_t> m_currentVertexBufferOffsets;
     BufferPtr m_currentIndexBuffer;
     uint64_t m_currentIndexBufferOffset = 0;
     
@@ -291,16 +289,16 @@ private:
     PipelineStateCache m_pipelineStateCache;
     
     // 一時リソース保存用（リソース解放を防ぐため）
-    std::vector<std::shared_ptr<void>> m_temporaryResources;
+    NorvesLib::Core::Container::VariableArray<std::shared_ptr<void>> m_temporaryResources;
     
     // ディスクリプタセット管理
     struct DescriptorSetInfo {
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
-        std::unordered_map<ShaderBindingKey, BindingResourceInfo, ShaderBindingKeyHash> resources;
+        NorvesLib::Core::Container::UnorderedMap<ShaderBindingKey, BindingResourceInfo, ShaderBindingKeyHash> resources;
         bool isDirty = false;
     };
     
-    std::unordered_map<uint32_t, DescriptorSetInfo> m_descriptorSetCache;
+    NorvesLib::Core::Container::UnorderedMap<uint32_t, DescriptorSetInfo> m_descriptorSetCache;
     
     // プライベートメソッド
     void Reset();

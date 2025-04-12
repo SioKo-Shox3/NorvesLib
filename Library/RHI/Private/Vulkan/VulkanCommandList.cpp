@@ -2913,7 +2913,7 @@ VkPipeline VulkanCommandList::GetOrCreateComputePipeline(const PipelineStateCach
 }
 
 // パイプラインキャッシュの保存
-void VulkanCommandList::SavePipelineCache(const std::string& filePath)
+void VulkanCommandList::SavePipelineCache(const NorvesLib::Core::Container::String& filePath)
 {
     if (m_pipelineStateCache.vkPipelineCache == VK_NULL_HANDLE)
     {
@@ -2928,7 +2928,7 @@ void VulkanCommandList::SavePipelineCache(const std::string& filePath)
         return; // キャッシュデータがない場合
     }
     
-    std::vector<char> cacheData(dataSize);
+    NorvesLib::Core::Container::VariableArray<char> cacheData(dataSize);
     vkGetPipelineCacheData(m_device->GetVkDevice(), m_pipelineStateCache.vkPipelineCache, &dataSize, cacheData.data());
     
     // ファイルに保存
@@ -2947,7 +2947,7 @@ void VulkanCommandList::SavePipelineCache(const std::string& filePath)
 }
 
 // パイプラインキャッシュの読み込み
-void VulkanCommandList::LoadPipelineCache(const std::string& filePath)
+void VulkanCommandList::LoadPipelineCache(const NorvesLib::Core::Container::String& filePath)
 {
     // 既存のキャッシュオブジェクトが存在する場合は破棄
     if (m_pipelineStateCache.vkPipelineCache != VK_NULL_HANDLE)
@@ -2956,7 +2956,7 @@ void VulkanCommandList::LoadPipelineCache(const std::string& filePath)
         m_pipelineStateCache.vkPipelineCache = VK_NULL_HANDLE;
     }
     
-    std::vector<char> cacheData;
+    NorvesLib::Core::Container::VariableArray<char> cacheData;
     
     // ファイルからキャッシュデータを読み込み
     FILE* file = nullptr;

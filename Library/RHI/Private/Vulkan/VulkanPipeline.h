@@ -3,7 +3,7 @@
 #include "RHI/Public/IPipeline.h"
 #include <vulkan/vulkan.h>
 #include <memory>
-#include <vector>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -20,7 +20,7 @@ class VulkanPipelineLayout
 {
 public:
     VulkanPipelineLayout(std::shared_ptr<VulkanDevice> device, 
-                          const std::vector<std::shared_ptr<VulkanDescriptorSetLayout>>& layouts);
+                          const NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>>& layouts);
     ~VulkanPipelineLayout();
 
     VkPipelineLayout GetVkPipelineLayout() const { return m_pipelineLayout; }
@@ -28,7 +28,7 @@ public:
 private:
     std::shared_ptr<VulkanDevice> m_device;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    std::vector<std::shared_ptr<VulkanDescriptorSetLayout>> m_descriptorSetLayouts;
+    NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>> m_descriptorSetLayouts;
 };
 
 /**

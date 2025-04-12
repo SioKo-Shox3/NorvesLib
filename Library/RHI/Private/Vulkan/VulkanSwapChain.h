@@ -2,8 +2,8 @@
 
 #include "RHI/Public/ISwapChain.h"
 #include <vulkan/vulkan.h>
-#include <vector>
 #include <memory>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -100,13 +100,13 @@ private:
     VkPresentModeKHR m_presentMode = VK_PRESENT_MODE_FIFO_KHR;
     
     // スワップチェーンイメージ関連
-    std::vector<VkImage> m_swapChainImages;
-    std::vector<std::shared_ptr<VulkanTexture>> m_backBufferTextures;
+    NorvesLib::Core::Container::VariableArray<VkImage> m_swapChainImages;
+    NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanTexture>> m_backBufferTextures;
     
     // 同期オブジェクト
-    std::vector<VkSemaphore> m_imageAvailableSemaphores;
-    std::vector<VkSemaphore> m_renderFinishedSemaphores;
-    std::vector<VkFence> m_inFlightFences;
+    NorvesLib::Core::Container::VariableArray<VkSemaphore> m_imageAvailableSemaphores;
+    NorvesLib::Core::Container::VariableArray<VkSemaphore> m_renderFinishedSemaphores;
+    NorvesLib::Core::Container::VariableArray<VkFence> m_inFlightFences;
     uint32_t m_currentFrame = 0;
     static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
     
