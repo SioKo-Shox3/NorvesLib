@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "EngineGlobals/GlobalMemoryAllocator.h"
 
 namespace NorvesLib 
 {

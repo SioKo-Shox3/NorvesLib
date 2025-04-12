@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Delegate.h"
-#include <vector>
+#include "Container/Containers.h"
 #include <algorithm>
 
 namespace NorvesLib::Core
@@ -20,7 +20,7 @@ private:
     using DelegateType = Delegate<void, Args...>;
     
     // 登録された関数のリスト
-    std::vector<DelegateType> m_Delegates;
+    NorvesLib::Core::Container::VariableArray<DelegateType> m_Delegates;
     
 public:
     /**
