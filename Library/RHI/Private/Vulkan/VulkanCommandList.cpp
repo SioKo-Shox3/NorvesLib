@@ -40,24 +40,60 @@ VulkanCommandList::~VulkanCommandList()
     // 一時リソースをクリア
     m_temporaryResources.clear();
     
-    // ディスクリプタプールの破棄
-    DestroyDescriptorPool();
+    // バインディングリソース情報をクリア
+    m_bindingResources.clear();
     
-    // フェンスの破棋
-    if (m_fence != VK_NULL_HANDLE) {
+    // ディスクリプタセットキャッシュをクリア
+    m_descriptorSetCache.clear();
+    
+    // ディスクリプタプールの破棄
+    for (auto pool : m_descriptorPools)
+    {
+        if (pool != VK_NULL_HANDLE)
+        {
+            vkDestroyDescriptorPool(m_device->GetVkDevice(), pool, nullptr);
+        }
+    }
+    m_descriptorPools.clear();
+    
+    // パイプラインキャッシュのクリーンアップ
+    for (auto& [key, pipeline] : m_pipelineStateCache.graphicsPipelines)
+    {
+        if (pipeline != VK_NULL_HANDLE)
+        {
+            vkDestroyPipeline(m_device->GetVkDevice(), pipeline, nullptr);
+        }
+    }
+    m_pipelineStateCache.graphicsPipelines.clear();
+    
+    for (auto& [key, pipeline] : m_pipelineStateCache.computePipelines)
+    {
+        if (pipeline != VK_NULL_HANDLE)
+        {
+            vkDestroyPipeline(m_device->GetVkDevice(), pipeline, nullptr);
+        }
+    }
+    m_pipelineStateCache.computePipelines.clear();
+    
+    // パイプラインキャッシュオブジェクトの破棄
+    if (m_pipelineStateCache.vkPipelineCache != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineCache(m_device->GetVkDevice(), m_pipelineStateCache.vkPipelineCache, nullptr);
+        m_pipelineStateCache.vkPipelineCache = VK_NULL_HANDLE;
+    }
+    
+    // フェンスの破棄
+    if (m_fence != VK_NULL_HANDLE)
+    {
         vkDestroyFence(m_device->GetVkDevice(), m_fence, nullptr);
+        m_fence = VK_NULL_HANDLE;
     }
     
     // コマンドバッファの解放（コマンドプールごと破棄される場合があるので省略可能）
-    if (m_commandBuffer != VK_NULL_HANDLE) {
-        vkFreeCommandBuffers(m_device->GetVkDevice(), m_device->GetCommandPool(), 1, &m_commandBuffer);
-    }
-    
-    // ディスクリプタプールが作成されていれば破棄
-    if (m_descriptorPool != VK_NULL_HANDLE)
+    if (m_commandBuffer != VK_NULL_HANDLE)
     {
-        vkDestroyDescriptorPool(m_device->GetVkDevice(), m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
+        vkFreeCommandBuffers(m_device->GetVkDevice(), m_device->GetCommandPool(), 1, &m_commandBuffer);
+        m_commandBuffer = VK_NULL_HANDLE;
     }
 }
 
@@ -97,6 +133,20 @@ void VulkanCommandList::Begin()
     
     if (vkBeginCommandBuffer(m_commandBuffer, &beginInfo) != VK_SUCCESS) {
         throw std::runtime_error("コマンドバッファの記録開始に失敗しました");
+    }
+    
+    // リソースバリアトラッカーをリセット
+    ResetResourceBarriers();
+    
+    // パイプラインステートキャッシュがまだ初期化されていなければ初期化
+    if (m_pipelineStateCache.vkPipelineCache == VK_NULL_HANDLE) {
+        VkPipelineCacheCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+        
+        if (vkCreatePipelineCache(m_device->GetVkDevice(), &createInfo, nullptr, &m_pipelineStateCache.vkPipelineCache) != VK_SUCCESS) {
+            // エラー発生時でも続行できるようにする（キャッシュなしで動作）
+            m_pipelineStateCache.vkPipelineCache = VK_NULL_HANDLE;
+        }
     }
     
     m_isRecording = true;
@@ -1651,20 +1701,6 @@ void VulkanCommandList::SetTexture(uint32_t bindPoint, uint32_t binding, const s
     // テクスチャの記述子更新情報を作成
     VkDescriptorImageInfo imageInfo{};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; // テクスチャのレイアウト
-    imageInfo.imageView = imageView;
-    imageInfo.sampler = VK_NULL_HANDLE; // テクスチャとサンプラーは別々に設定
-    
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = descriptorSet;
-    write.dstBinding = binding;
-    write.dstArrayElement = 0;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    write.descriptorCount = 1;
-    write.pImageInfo = &imageInfo;
-    
-    // 後で一括して更新するために記述子更新情報を保存
-    m_pendingWrites.push_back(write);
     
     // テクスチャへの参照を保持
     m_boundResources.push_back(texture);
@@ -1824,393 +1860,10 @@ VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(const ShaderBindingK
     
     if (result != VK_SUCCESS) {
         // 既存のプールがいっぱいの場合は、新しいプールを作成して再試行
-        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
-            CreateDescriptorPool();
-            allocInfo.descriptorPool = m_descriptorPool;
-            result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
-            
-            if (result != VK_SUCCESS) {
-                // それでも失敗する場合はエラー
-                return VK_NULL_HANDLE;
-            }
-        }
-        else {
-            // その他のエラー
-            return VK_NULL_HANDLE;
-        }
-    }
-
-    // キャッシュに保存
-    DescriptorSetInfo setInfo;
-    setInfo.descriptorSet = descriptorSet;
-    setInfo.layout = layout;
-    m_descriptorSetCache[key] = setInfo;
-
-    // 作成したディスクリプタセットを更新
-    UpdateDescriptorSet(key, descriptorSet);
-
-    return descriptorSet;
-}
-
-// ディスクリプタセットの更新
-void VulkanCommandList::UpdateDescriptorSet(const ShaderBindingKey& key, VkDescriptorSet descriptorSet, const std::unordered_map<uint32_t, BindingResourceInfo>& resources)
-{
-    std::vector<VkWriteDescriptorSet> descriptorWrites;
-    std::vector<VkDescriptorBufferInfo> bufferInfos;
-    std::vector<VkDescriptorImageInfo> imageInfos;
-    
-    // 各リソースについて記述子の書き込みを準備
-    for (const auto& [binding, resourceInfo] : resources) {
-        VkWriteDescriptorSet writeDescriptorSet{};
-        writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptorSet.dstSet = descriptorSet;
-        writeDescriptorSet.dstBinding = binding;
-        writeDescriptorSet.dstArrayElement = 0;
-        writeDescriptorSet.descriptorCount = 1;
-        
-        switch (resourceInfo.type) {
-            case BindingResourceType::UniformBuffer:
-            case BindingResourceType::StorageBuffer: {
-                VkDescriptorBufferInfo bufferInfo{};
-                VulkanBuffer* vulkanBuffer = static_cast<VulkanBuffer*>(resourceInfo.resource);
-                bufferInfo.buffer = vulkanBuffer->GetVkBuffer();
-                bufferInfo.offset = resourceInfo.offset;
-                bufferInfo.range = resourceInfo.size;
-                
-                bufferInfos.push_back(bufferInfo);
-                
-                writeDescriptorSet.descriptorType = 
-                    resourceInfo.type == BindingResourceType::UniformBuffer ? 
-                    VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : 
-                    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                writeDescriptorSet.pBufferInfo = &bufferInfos.back();
-                break;
-            }
-            case BindingResourceType::Texture: {
-                VkDescriptorImageInfo imageInfo{};
-                VulkanTexture* vulkanTexture = static_cast<VulkanTexture*>(resourceInfo.resource);
-                imageInfo.imageView = vulkanTexture->GetImageView();
-                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                imageInfo.sampler = VK_NULL_HANDLE; // サンプラーは別に設定
-                
-                imageInfos.push_back(imageInfo);
-                
-                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-                writeDescriptorSet.pImageInfo = &imageInfos.back();
-                break;
-            }
-            case BindingResourceType::Sampler: {
-                VkDescriptorImageInfo imageInfo{};
-                VulkanSampler* vulkanSampler = static_cast<VulkanSampler*>(resourceInfo.resource);
-                imageInfo.sampler = vulkanSampler->GetVkSampler();
-                imageInfo.imageView = VK_NULL_HANDLE;
-                imageInfo.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                
-                imageInfos.push_back(imageInfo);
-                
-                writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-                writeDescriptorSet.pImageInfo = &imageInfos.back();
-                break;
-            }
-        }
-        
-        descriptorWrites.push_back(writeDescriptorSet);
-    }
-    
-    // ディスクリプタセットを更新
-    if (!descriptorWrites.empty()) {
-        vkUpdateDescriptorSets(
-            m_device->GetVkDevice(), 
-            static_cast<uint32_t>(descriptorWrites.size()), 
-            descriptorWrites.data(), 
-            0, nullptr
-        );
-    }
-}
-
-// ディスクリプタセットの更新
-void VulkanCommandList::UpdateDescriptorSet(const ShaderBindingKey& key, VkDescriptorSet descriptorSet)
-{
-    auto resourcesIt = m_bindingResources.find(key);
-    if (resourcesIt == m_bindingResources.end()) {
-        // このキーに対するリソースがない場合は何もしない
-        return;
-    }
-
-    std::vector<VkWriteDescriptorSet> descriptorWrites;
-    std::vector<VkDescriptorBufferInfo> bufferInfos;
-    std::vector<VkDescriptorImageInfo> imageInfos;
-
-    // バインドされたリソースを使ってディスクリプタの書き込み情報を準備する
-    for (const auto& [bindingIndex, resourceInfo] : resourcesIt->second) {
-        VkWriteDescriptorSet writeInfo{};
-        writeInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeInfo.dstSet = descriptorSet;
-        writeInfo.dstBinding = bindingIndex;
-        writeInfo.dstArrayElement = 0;
-        writeInfo.descriptorCount = 1;
-
-        switch (resourceInfo.type) {
-        case BindingResourceInfo::ResourceType::UniformBuffer:
-        case BindingResourceInfo::ResourceType::StorageBuffer:
-            {
-                VkDescriptorBufferInfo bufferInfo{};
-                bufferInfo.buffer = reinterpret_cast<VulkanBuffer*>(resourceInfo.resource)->GetVkBuffer();
-                bufferInfo.offset = resourceInfo.offset;
-                bufferInfo.range = resourceInfo.size == 0 ? VK_WHOLE_SIZE : resourceInfo.size;
-
-                bufferInfos.push_back(bufferInfo);
-                writeInfo.pBufferInfo = &bufferInfos.back();
-                writeInfo.descriptorType = resourceInfo.type == BindingResourceInfo::ResourceType::UniformBuffer ?
-                    VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                descriptorWrites.push_back(writeInfo);
-            }
-            break;
-
-        case BindingResourceInfo::ResourceType::Texture:
-            {
-                VkDescriptorImageInfo imageInfo{};
-                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                imageInfo.imageView = reinterpret_cast<VulkanTexture*>(resourceInfo.resource)->GetVkImageView();
-                imageInfo.sampler = VK_NULL_HANDLE;
-
-                imageInfos.push_back(imageInfo);
-                writeInfo.pImageInfo = &imageInfos.back();
-                writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-                descriptorWrites.push_back(writeInfo);
-            }
-            break;
-
-        case BindingResourceInfo::ResourceType::Sampler:
-            {
-                VkDescriptorImageInfo imageInfo{};
-                imageInfo.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                imageInfo.imageView = VK_NULL_HANDLE;
-                imageInfo.sampler = reinterpret_cast<VulkanSampler*>(resourceInfo.resource)->GetVkSampler();
-
-                imageInfos.push_back(imageInfo);
-                writeInfo.pImageInfo = &imageInfos.back();
-                writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-                descriptorWrites.push_back(writeInfo);
-            }
-            break;
-
-        default:
-            // サポートされていないリソースタイプ
-            break;
-        }
-    }
-
-    if (!descriptorWrites.empty()) {
-        vkUpdateDescriptorSets(m_device->GetVkDevice(), static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
-    }
-}
-
-void VulkanCommandList::BindDescriptorSets(VulkanPipeline* pipeline)
-{
-    if (!pipeline) {
-        return;
-    }
-
-    VkPipelineBindPoint bindPoint = pipeline->GetPipelineType() == EPipelineType::Graphics 
-        ? VK_PIPELINE_BIND_POINT_GRAPHICS 
-        : VK_PIPELINE_BIND_POINT_COMPUTE;
-
-    VkPipelineLayout pipelineLayout = pipeline->GetVkPipelineLayout();
-    
-    // ディスクリプタセットが存在するセットインデックスを収集
-    std::map<uint32_t, VkDescriptorSet> sortedDescriptorSets;
-    for (const auto& entry : m_boundResources) {
-        const ShaderBindingKey& key = entry.first;
-        auto it = m_descriptorSetCache.find(key);
-        if (it != m_descriptorSetCache.end()) {
-            sortedDescriptorSets[key.setIndex] = it->second.descriptorSet;
-        }
-    }
-
-    if (sortedDescriptorSets.empty()) {
-        return;
-    }
-
-    // バインドするディスクリプタセットを準備
-    std::vector<VkDescriptorSet> descriptorSets;
-    std::vector<uint32_t> setIndices;
-
-    for (const auto& entry : sortedDescriptorSets) {
-        setIndices.push_back(entry.first);
-        descriptorSets.push_back(entry.second);
-    }
-
-    // 動的オフセット情報を収集（バッファ用）
-    std::vector<uint32_t> dynamicOffsets;
-    for (const auto& setIndex : setIndices) {
-        for (const auto& entry : m_boundResources) {
-            if (entry.first.setIndex == setIndex && entry.second.type == EBindingResourceType::Buffer) {
-                if (entry.second.buffer.dynamicOffset != 0) {
-                    dynamicOffsets.push_back(entry.second.buffer.dynamicOffset);
-                }
-            }
-        }
-    }
-
-    // ディスクリプタセットをコマンドバッファにバインド
-    if (!descriptorSets.empty()) {
-        vkCmdBindDescriptorSets(
-            m_commandBuffer,
-            bindPoint,
-            pipelineLayout,
-            setIndices[0], // 最初のセットインデックス
-            static_cast<uint32_t>(descriptorSets.size()),
-            descriptorSets.data(),
-            static_cast<uint32_t>(dynamicOffsets.size()),
-            dynamicOffsets.empty() ? nullptr : dynamicOffsets.data()
-        );
-    }
-}
-
-VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(const ShaderBindingKey& key)
-{
-    // キャッシュから既存のディスクリプタセットを検索
-    auto it = m_descriptorSetCache.find(key);
-    if (it != m_descriptorSetCache.end()) {
-        return it->second.descriptorSet;
-    }
-
-    // リソースバインディング情報を取得
-    VulkanShader* shader = static_cast<VulkanShader*>(key.shader);
-    if (!shader) {
-        return VK_NULL_HANDLE;
-    }
-
-    const VkDescriptorSetLayout& layout = shader->GetDescriptorSetLayout(key.setIndex);
-    if (layout == VK_NULL_HANDLE) {
-        return VK_NULL_HANDLE;
-    }
-
-    // ディスクリプタプールを作成または取得
-    VkDescriptorPool descriptorPool = GetOrCreateDescriptorPool();
-    if (descriptorPool == VK_NULL_HANDLE) {
-        return VK_NULL_HANDLE;
-    }
-
-    // 新しいディスクリプタセットの割り当て
-    VkDescriptorSetAllocateInfo allocInfo = {};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &layout;
-
-    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
-    VkResult result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
-
-    if (result != VK_SUCCESS) {
-        // プールが満杯の場合、新しいプールを作成して再試行
-        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
-            descriptorPool = CreateDescriptorPool();
-            allocInfo.descriptorPool = descriptorPool;
-            result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
-            if (result != VK_SUCCESS) {
-                return VK_NULL_HANDLE;
-            }
-        }
-        else {
-            return VK_NULL_HANDLE;
-        }
-    }
-
-    // キャッシュに新しいディスクリプタセット情報を保存
-    DescriptorSetInfo setInfo;
-    setInfo.descriptorSet = descriptorSet;
-    setInfo.descriptorPool = descriptorPool;
-    setInfo.layout = layout;
-    
-    m_descriptorSetCache[key] = setInfo;
-    
-    return descriptorSet;
-}
-
-void VulkanCommandList::UpdateDescriptorSets()
-{
-    if (m_pendingWrites.empty()) {
-        return;
-    }
-    
-    // 蓄積された記述子更新情報を一括で適用
-    vkUpdateDescriptorSets(m_device->GetVkDevice(), 
-                          static_cast<uint32_t>(m_pendingWrites.size()), 
-                          m_pendingWrites.data(), 
-                          0, nullptr);
-    
-    // 更新後はリストをクリア
-    m_pendingWrites.clear();
-}
-
-void VulkanCommandList::BindDescriptorSets()
-{
-    // 記述子セットの更新を確実に適用
-    UpdateDescriptorSets();
-    
-    if (m_descriptorSetInfos.empty() || !m_currentPipeline) {
-        return;
-    }
-    
-    VulkanPipeline* vulkanPipeline = static_cast<VulkanPipeline*>(m_currentPipeline.get());
-    VkPipelineBindPoint bindPoint = vulkanPipeline->GetVkPipelineBindPoint();
-    VkPipelineLayout pipelineLayout = vulkanPipeline->GetVkPipelineLayout();
-    
-    // 各バインドポイントのディスクリプタセットをバインド
-    for (const auto& [setIndex, setInfo] : m_descriptorSetInfos) {
-        vkCmdBindDescriptorSets(
-            m_commandBuffer,
-                               bindPoint,
-                               pipelineLayout,
-                               setIndex,
-                               1,
-                               &setInfo.descriptorSet,
-                               0,
-                               nullptr);
-    }
-}
-
-// ディスクリプタセットの取得または作成
-VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(const ShaderBindingKey& key, VulkanPipeline* pipeline)
-{
-    // すでに作成済みのディスクリプタセットを検索
-    auto it = m_descriptorSetCache.find(key);
-    if (it != m_descriptorSetCache.end()) {
-        return it->second.descriptorSet;
-    }
-
-    // 新しいディスクリプタセットを作成
-    VkDescriptorSetLayout layout = pipeline->GetDescriptorSetLayout(key.setIndex);
-    if (layout == VK_NULL_HANDLE) {
-        // このセットインデックスに対するレイアウトが存在しない場合
-        return VK_NULL_HANDLE;
-    }
-
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = m_descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &layout;
-
-    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
-    VkResult result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
-    
-    if (result != VK_SUCCESS) {
-        // 既存のプールがいっぱいの場合は、新しいプールを作成して再試行
-        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
-            CreateDescriptorPool();
-            allocInfo.descriptorPool = m_descriptorPool;
-            result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
-            
-            if (result != VK_SUCCESS) {
-                // それでも失敗する場合はエラー
-                return VK_NULL_HANDLE;
-            }
-        }
-        else {
-            // その他のエラー
+        CreateDescriptorPool();
+        allocInfo.descriptorPool = m_descriptorPool;
+        result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &descriptorSet);
+        if (result != VK_SUCCESS) {
             return VK_NULL_HANDLE;
         }
     }
@@ -2688,6 +2341,655 @@ void VulkanCommandList::BindAllDescriptorSets()
             0,
             nullptr
         );
+    }
+}
+
+// ResourceBarrierTrackerの実装
+
+// リソース状態をアクセスフラグに変換
+VkAccessFlags ResourceBarrierTracker::ResourceStateToAccessFlags(ResourceState state) const
+{
+    VkAccessFlags accessFlags = 0;
+    
+    if ((state & ResourceState::VertexBuffer) != ResourceState::None)
+        accessFlags |= VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+    
+    if ((state & ResourceState::IndexBuffer) != ResourceState::None)
+        accessFlags |= VK_ACCESS_INDEX_READ_BIT;
+    
+    if ((state & ResourceState::ConstantBuffer) != ResourceState::None)
+        accessFlags |= VK_ACCESS_UNIFORM_READ_BIT;
+    
+    if ((state & ResourceState::RenderTarget) != ResourceState::None)
+        accessFlags |= VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    
+    if ((state & ResourceState::DepthWrite) != ResourceState::None)
+        accessFlags |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    
+    if ((state & ResourceState::DepthRead) != ResourceState::None)
+        accessFlags |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    
+    if ((state & ResourceState::UnorderedAccess) != ResourceState::None)
+        accessFlags |= VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    
+    if ((state & ResourceState::ShaderResource) != ResourceState::None)
+        accessFlags |= VK_ACCESS_SHADER_READ_BIT;
+    
+    if ((state & ResourceState::IndirectArgument) != ResourceState::None)
+        accessFlags |= VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    
+    if ((state & ResourceState::CopySource) != ResourceState::None)
+        accessFlags |= VK_ACCESS_TRANSFER_READ_BIT;
+    
+    if ((state & ResourceState::CopyDest) != ResourceState::None)
+        accessFlags |= VK_ACCESS_TRANSFER_WRITE_BIT;
+    
+    if ((state & ResourceState::Present) != ResourceState::None)
+        accessFlags |= VK_ACCESS_MEMORY_READ_BIT;
+    
+    return accessFlags;
+}
+
+// リソース状態をパイプラインステージフラグに変換
+VkPipelineStageFlags ResourceBarrierTracker::ResourceStateToPipelineStageFlags(ResourceState state) const
+{
+    VkPipelineStageFlags stageFlags = 0;
+    
+    if ((state & ResourceState::VertexBuffer) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+    
+    if ((state & ResourceState::IndexBuffer) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+    
+    if ((state & ResourceState::ConstantBuffer) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    
+    if ((state & ResourceState::RenderTarget) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    
+    if ((state & ResourceState::DepthWrite) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    
+    if ((state & ResourceState::DepthRead) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    
+    if ((state & ResourceState::UnorderedAccess) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    
+    if ((state & ResourceState::ShaderResource) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    
+    if ((state & ResourceState::IndirectArgument) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
+    
+    if ((state & ResourceState::CopySource) != ResourceState::None || (state & ResourceState::CopyDest) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+    
+    if ((state & ResourceState::Present) != ResourceState::None)
+        stageFlags |= VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    
+    // どのステージにも当てはまらない場合はトップオブパイプラインを使用
+    if (stageFlags == 0)
+        stageFlags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    
+    return stageFlags;
+}
+
+// リソース状態をイメージレイアウトに変換
+VkImageLayout ResourceBarrierTracker::ResourceStateToImageLayout(ResourceState state) const
+{
+    if ((state & ResourceState::RenderTarget) != ResourceState::None)
+        return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    
+    if ((state & ResourceState::DepthWrite) != ResourceState::None)
+        return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    
+    if ((state & ResourceState::DepthRead) != ResourceState::None)
+        return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    
+    if ((state & ResourceState::UnorderedAccess) != ResourceState::None)
+        return VK_IMAGE_LAYOUT_GENERAL;
+    
+    if ((state & ResourceState::ShaderResource) != ResourceState::None)
+        return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    
+    if ((state & ResourceState::CopySource) != ResourceState::None)
+        return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    
+    if ((state & ResourceState::CopyDest) != ResourceState::None)
+        return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    
+    if ((state & ResourceState::Present) != ResourceState::None)
+        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    
+    return VK_IMAGE_LAYOUT_UNDEFINED;
+}
+
+// PipelineStateCache Key比較関数の実装
+bool PipelineStateCache::GraphicsPipelineCacheKey::operator==(const GraphicsPipelineCacheKey& other) const
+{
+    if (renderPass != other.renderPass ||
+        shaderModules.size() != other.shaderModules.size() ||
+        vertexBindings.size() != other.vertexBindings.size() ||
+        vertexAttributes.size() != other.vertexAttributes.size() ||
+        topology != other.topology ||
+        cullMode != other.cullMode ||
+        frontFace != other.frontFace ||
+        polygonMode != other.polygonMode ||
+        depthTestEnable != other.depthTestEnable ||
+        depthWriteEnable != other.depthWriteEnable ||
+        depthCompareOp != other.depthCompareOp ||
+        blendEnable != other.blendEnable ||
+        srcColorBlendFactor != other.srcColorBlendFactor ||
+        dstColorBlendFactor != other.dstColorBlendFactor ||
+        colorBlendOp != other.colorBlendOp ||
+        srcAlphaBlendFactor != other.srcAlphaBlendFactor ||
+        dstAlphaBlendFactor != other.dstAlphaBlendFactor ||
+        alphaBlendOp != other.alphaBlendOp)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < shaderModules.size(); ++i)
+    {
+        if (shaderModules[i] != other.shaderModules[i])
+        {
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < vertexBindings.size(); ++i)
+    {
+        const auto& a = vertexBindings[i];
+        const auto& b = other.vertexBindings[i];
+        if (a.binding != b.binding || a.stride != b.stride || a.inputRate != b.inputRate)
+        {
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < vertexAttributes.size(); ++i)
+    {
+        const auto& a = vertexAttributes[i];
+        const auto& b = other.vertexAttributes[i];
+        if (a.location != b.location || a.binding != b.binding || a.format != b.format || a.offset != b.offset)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// PipelineStateCache GraphicsPipelineCacheKeyのハッシュ関数
+std::size_t PipelineStateCache::GraphicsPipelineCacheKeyHash::operator()(const GraphicsPipelineCacheKey& key) const
+{
+    std::size_t seed = 0;
+    seed ^= std::hash<VkRenderPass>()(key.renderPass) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkPrimitiveTopology>()(key.topology) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkCullModeFlags>()(key.cullMode) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkFrontFace>()(key.frontFace) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkPolygonMode>()(key.polygonMode) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<bool>()(key.depthTestEnable) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<bool>()(key.depthWriteEnable) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkCompareOp>()(key.depthCompareOp) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<bool>()(key.blendEnable) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkBlendFactor>()(key.srcColorBlendFactor) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkBlendFactor>()(key.dstColorBlendFactor) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkBlendOp>()(key.colorBlendOp) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkBlendFactor>()(key.srcAlphaBlendFactor) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkBlendFactor>()(key.dstAlphaBlendFactor) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    seed ^= std::hash<VkBlendOp>()(key.alphaBlendOp) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    
+    for (const auto& module : key.shaderModules)
+    {
+        seed ^= std::hash<VkShaderModule>()(module) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    }
+    
+    for (const auto& binding : key.vertexBindings)
+    {
+        seed ^= std::hash<uint32_t>()(binding.binding) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        seed ^= std::hash<uint32_t>()(binding.stride) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        seed ^= std::hash<VkVertexInputRate>()(binding.inputRate) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    }
+    
+    for (const auto& attr : key.vertexAttributes)
+    {
+        seed ^= std::hash<uint32_t>()(attr.location) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        seed ^= std::hash<uint32_t>()(attr.binding) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        seed ^= std::hash<VkFormat>()(attr.format) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        seed ^= std::hash<uint32_t>()(attr.offset) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    }
+    
+    return seed;
+}
+
+// ComputePipelineCacheKeyの比較関数
+bool PipelineStateCache::ComputePipelineCacheKey::operator==(const ComputePipelineCacheKey& other) const
+{
+    return computeShader == other.computeShader;
+}
+
+// ComputePipelineCacheKeyのハッシュ関数
+std::size_t PipelineStateCache::ComputePipelineCacheKeyHash::operator()(const ComputePipelineCacheKey& key) const
+{
+    return std::hash<VkShaderModule>()(key.computeShader);
+}
+
+// 最適化されたバッファバリア関数
+void VulkanCommandList::OptimizedBufferBarrier(VulkanBuffer* buffer, ResourceState newState, uint64_t offset, uint64_t size)
+{
+    if (!buffer)
+    {
+        return;
+    }
+
+    VkBuffer vkBuffer = buffer->GetVkBuffer();
+    ResourceState currentState = buffer->GetState();
+    
+    // 現在の状態と新しい状態が同じであれば何もしない
+    if (currentState == newState)
+    {
+        return;
+    }
+    
+    // 追跡情報から現在の状態を取得、または新規作成
+    auto& bufferState = m_barrierTracker.bufferStates[vkBuffer];
+    
+    VkAccessFlags srcAccessMask = m_barrierTracker.ResourceStateToAccessFlags(currentState);
+    VkAccessFlags dstAccessMask = m_barrierTracker.ResourceStateToAccessFlags(newState);
+    
+    VkPipelineStageFlags srcStageMask = m_barrierTracker.ResourceStateToPipelineStageFlags(currentState);
+    VkPipelineStageFlags dstStageMask = m_barrierTracker.ResourceStateToPipelineStageFlags(newState);
+
+    // バッファバリア設定
+    VkBufferMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    barrier.buffer = vkBuffer;
+    barrier.offset = offset;
+    barrier.size = (size == 0) ? VK_WHOLE_SIZE : size;
+    barrier.srcAccessMask = srcAccessMask;
+    barrier.dstAccessMask = dstAccessMask;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+    // バリアコマンド発行
+    vkCmdPipelineBarrier(
+        m_commandBuffer,
+        srcStageMask,
+        dstStageMask,
+        0,
+        0, nullptr,
+        1, &barrier,
+        0, nullptr
+    );
+
+    // 追跡情報を更新
+    bufferState.accessFlags = dstAccessMask;
+    bufferState.stageFlags = dstStageMask;
+    
+    // バッファのリソース状態を更新
+    buffer->SetState(newState);
+}
+
+// 最適化されたテクスチャバリア関数
+void VulkanCommandList::OptimizedTextureBarrier(VulkanTexture* texture, ResourceState newState, const VkImageSubresourceRange& subresourceRange)
+{
+    if (!texture)
+    {
+        return;
+    }
+
+    VkImage vkImage = texture->GetVkImage();
+    ResourceState currentState = texture->GetState();
+    
+    // 現在の状態と新しい状態が同じであれば何もしない
+    if (currentState == newState)
+    {
+        return;
+    }
+    
+    // 追跡情報から現在の状態を取得、または新規作成
+    auto& imageState = m_barrierTracker.imageStates[vkImage];
+    
+    VkAccessFlags srcAccessMask = m_barrierTracker.ResourceStateToAccessFlags(currentState);
+    VkAccessFlags dstAccessMask = m_barrierTracker.ResourceStateToAccessFlags(newState);
+    
+    VkPipelineStageFlags srcStageMask = m_barrierTracker.ResourceStateToPipelineStageFlags(currentState);
+    VkPipelineStageFlags dstStageMask = m_barrierTracker.ResourceStateToPipelineStageFlags(newState);
+    
+    VkImageLayout oldLayout = m_barrierTracker.ResourceStateToImageLayout(currentState);
+    VkImageLayout newLayout = m_barrierTracker.ResourceStateToImageLayout(newState);
+
+    // イメージバリア設定
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.image = vkImage;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcAccessMask = srcAccessMask;
+    barrier.dstAccessMask = dstAccessMask;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.subresourceRange = subresourceRange;
+
+    // バリアコマンド発行
+    vkCmdPipelineBarrier(
+        m_commandBuffer,
+        srcStageMask,
+        dstStageMask,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier
+    );
+
+    // 追跡情報を更新
+    imageState.accessFlags = dstAccessMask;
+    imageState.stageFlags = dstStageMask;
+    imageState.layout = newLayout;
+    imageState.aspectMask = subresourceRange.aspectMask;
+    
+    // テクスチャのリソース状態を更新
+    texture->SetState(newState);
+    texture->SetVkImageLayout(newLayout);
+}
+
+// パイプラインキャッシュのリセット処理
+void VulkanCommandList::ResetResourceBarriers()
+{
+    m_barrierTracker.bufferStates.clear();
+    m_barrierTracker.imageStates.clear();
+}
+
+// グラフィックスパイプラインのキャッシュ取得または作成
+VkPipeline VulkanCommandList::GetOrCreateGraphicsPipeline(const PipelineStateCache::GraphicsPipelineCacheKey& key)
+{
+    // キャッシュにすでに存在するか確認
+    auto it = m_pipelineStateCache.graphicsPipelines.find(key);
+    if (it != m_pipelineStateCache.graphicsPipelines.end())
+    {
+        return it->second;
+    }
+    
+    // 新しいグラフィックスパイプラインを作成
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    
+    // シェーダーステージ情報
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+    for (const auto& module : key.shaderModules) {
+        VkPipelineShaderStageCreateInfo stageInfo{};
+        stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stageInfo.module = module;
+        stageInfo.pName = "main"; // エントリポイント名は通常「main」
+        
+        // シェーダーステージを決定（実際の実装ではもっと詳細な情報が必要）
+        if (shaderStages.empty()) {
+            stageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        } else if (shaderStages.size() == 1) {
+            stageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        } else {
+            // その他のシェーダーステージ（ジオメトリ、テッセレーション等）
+            stageInfo.stage = VK_SHADER_STAGE_ALL_GRAPHICS;
+        }
+        
+        shaderStages.push_back(stageInfo);
+    }
+    
+    pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+    pipelineInfo.pStages = shaderStages.data();
+    
+    // 頂点入力情報
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(key.vertexBindings.size());
+    vertexInputInfo.pVertexBindingDescriptions = key.vertexBindings.data();
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(key.vertexAttributes.size());
+    vertexInputInfo.pVertexAttributeDescriptions = key.vertexAttributes.data();
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    
+    // 入力アセンブリ情報
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = key.topology;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    
+    // ビューポート状態（動的）
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+    pipelineInfo.pViewportState = &viewportState;
+    
+    // ラスタライズ状態
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = key.polygonMode;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = key.cullMode;
+    rasterizer.frontFace = key.frontFace;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    
+    // マルチサンプル状態
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // 可変にすべき
+    pipelineInfo.pMultisampleState = &multisampling;
+    
+    // 深度ステンシル状態
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = key.depthTestEnable ? VK_TRUE : VK_FALSE;
+    depthStencil.depthWriteEnable = key.depthWriteEnable ? VK_TRUE : VK_FALSE;
+    depthStencil.depthCompareOp = key.depthCompareOp;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    
+    // カラーブレンド状態
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = 
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = key.blendEnable ? VK_TRUE : VK_FALSE;
+    colorBlendAttachment.srcColorBlendFactor = key.srcColorBlendFactor;
+    colorBlendAttachment.dstColorBlendFactor = key.dstColorBlendFactor;
+    colorBlendAttachment.colorBlendOp = key.colorBlendOp;
+    colorBlendAttachment.srcAlphaBlendFactor = key.srcAlphaBlendFactor;
+    colorBlendAttachment.dstAlphaBlendFactor = key.dstAlphaBlendFactor;
+    colorBlendAttachment.alphaBlendOp = key.alphaBlendOp;
+    
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    
+    // 動的状態
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
+    pipelineInfo.pDynamicState = &dynamicState;
+    
+    // パイプラインレイアウトとレンダーパス
+    // シェーダーと互換性のあるパイプラインレイアウトを取得
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    if (!key.shaderModules.empty()) {
+        // ここでシェーダーからレイアウトを取得する処理が必要
+        // 実際の実装ではシェーダーとパイプラインレイアウトの関連付けを行う
+    }
+    
+    pipelineInfo.layout = layout;
+    pipelineInfo.renderPass = key.renderPass;
+    pipelineInfo.subpass = 0;
+    
+    // パイプラインのキャッシュ使用
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+    pipelineInfo.basePipelineIndex = -1;
+    
+    // パイプラインの作成
+    VkPipeline newPipeline;
+    VkResult result = vkCreateGraphicsPipelines(
+        m_device->GetVkDevice(), 
+        m_pipelineStateCache.vkPipelineCache, 
+        1, 
+        &pipelineInfo, 
+        nullptr, 
+        &newPipeline
+    );
+    
+    if (result != VK_SUCCESS) {
+        // エラーハンドリング
+        return VK_NULL_HANDLE;
+    }
+    
+    // キャッシュに保存
+    m_pipelineStateCache.graphicsPipelines[key] = newPipeline;
+    
+    return newPipeline;
+}
+
+// コンピュートパイプラインのキャッシュ取得または作成
+VkPipeline VulkanCommandList::GetOrCreateComputePipeline(const PipelineStateCache::ComputePipelineCacheKey& key)
+{
+    // キャッシュにすでに存在するか確認
+    auto it = m_pipelineStateCache.computePipelines.find(key);
+    if (it != m_pipelineStateCache.computePipelines.end())
+    {
+        return it->second;
+    }
+    
+    // 新しいコンピュートパイプラインを作成
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    
+    // シェーダーステージ情報
+    pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipelineInfo.stage.module = key.computeShader;
+    pipelineInfo.stage.pName = "main"; // エントリポイント名
+    
+    // パイプラインレイアウト
+    // 実際のコードでは適切なパイプラインレイアウトを設定する必要がある
+    pipelineInfo.layout = VK_NULL_HANDLE; // 適切なレイアウトを設定
+    
+    // パイプラインのキャッシュ使用
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+    pipelineInfo.basePipelineIndex = -1;
+    
+    // パイプラインの作成
+    VkPipeline newPipeline;
+    VkResult result = vkCreateComputePipelines(
+        m_device->GetVkDevice(), 
+        m_pipelineStateCache.vkPipelineCache, 
+        1, 
+        &pipelineInfo, 
+        nullptr, 
+        &newPipeline
+    );
+    
+    if (result != VK_SUCCESS) {
+        // エラーハンドリング
+        return VK_NULL_HANDLE;
+    }
+    
+    // キャッシュに保存
+    m_pipelineStateCache.computePipelines[key] = newPipeline;
+    
+    return newPipeline;
+}
+
+// パイプラインキャッシュの保存
+void VulkanCommandList::SavePipelineCache(const std::string& filePath)
+{
+    if (m_pipelineStateCache.vkPipelineCache == VK_NULL_HANDLE)
+    {
+        return;
+    }
+    
+    size_t dataSize = 0;
+    vkGetPipelineCacheData(m_device->GetVkDevice(), m_pipelineStateCache.vkPipelineCache, &dataSize, nullptr);
+    
+    if (dataSize == 0)
+    {
+        return; // キャッシュデータがない場合
+    }
+    
+    std::vector<char> cacheData(dataSize);
+    vkGetPipelineCacheData(m_device->GetVkDevice(), m_pipelineStateCache.vkPipelineCache, &dataSize, cacheData.data());
+    
+    // ファイルに保存
+    FILE* file = nullptr;
+#ifdef _WIN32
+    fopen_s(&file, filePath.c_str(), "wb");
+#else
+    file = fopen(filePath.c_str(), "wb");
+#endif
+    
+    if (file)
+    {
+        fwrite(cacheData.data(), 1, dataSize, file);
+        fclose(file);
+    }
+}
+
+// パイプラインキャッシュの読み込み
+void VulkanCommandList::LoadPipelineCache(const std::string& filePath)
+{
+    // 既存のキャッシュオブジェクトが存在する場合は破棄
+    if (m_pipelineStateCache.vkPipelineCache != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineCache(m_device->GetVkDevice(), m_pipelineStateCache.vkPipelineCache, nullptr);
+        m_pipelineStateCache.vkPipelineCache = VK_NULL_HANDLE;
+    }
+    
+    std::vector<char> cacheData;
+    
+    // ファイルからキャッシュデータを読み込み
+    FILE* file = nullptr;
+#ifdef _WIN32
+    fopen_s(&file, filePath.c_str(), "rb");
+#else
+    file = fopen(filePath.c_str(), "rb");
+#endif
+    
+    if (file)
+    {
+        fseek(file, 0, SEEK_END);
+        size_t fileSize = ftell(file);
+        rewind(file);
+        
+        cacheData.resize(fileSize);
+        fread(cacheData.data(), 1, fileSize, file);
+        fclose(file);
+    }
+    
+    // パイプラインキャッシュオブジェクトの作成
+    VkPipelineCacheCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    
+    if (!cacheData.empty())
+    {
+        createInfo.initialDataSize = cacheData.size();
+        createInfo.pInitialData = cacheData.data();
+    }
+    
+    if (vkCreatePipelineCache(m_device->GetVkDevice(), &createInfo, nullptr, &m_pipelineStateCache.vkPipelineCache) != VK_SUCCESS)
+    {
+        throw std::runtime_error("パイプラインキャッシュの作成に失敗しました");
     }
 }
 
