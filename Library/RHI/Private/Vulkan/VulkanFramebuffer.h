@@ -3,7 +3,7 @@
 #include "RHI/Public/IFramebuffer.h"
 #include <vulkan/vulkan.h>
 #include <memory>
-#include <vector>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -46,7 +46,7 @@ private:
     VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
     
     // アタッチメントのVulkanイメージビュー
-    std::vector<VkImageView> m_attachmentViews;
+    NorvesLib::Core::Container::VariableArray<VkImageView> m_attachmentViews;
     
     // ヘルパーメソッド
     void CreateFramebuffer(std::shared_ptr<VulkanRenderPass> renderPass);

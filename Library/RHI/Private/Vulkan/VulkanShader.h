@@ -3,6 +3,7 @@
 #include "RHI/Public/IShader.h"
 #include <vulkan/vulkan.h>
 #include <memory>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -29,9 +30,9 @@ public:
 
     // IShaderインターフェース実装
     ShaderStage GetStage() const override { return m_desc.stage; }
-    const std::string& GetEntryPoint() const override { return m_desc.entryPoint; }
-    const std::vector<uint8_t>& GetBytecode() const override { return m_desc.bytecode; }
-    const std::string& GetSourceCode() const override { return m_desc.sourceCode; }
+    const NorvesLib::Core::Container::String& GetEntryPoint() const override { return m_desc.entryPoint; }
+    const NorvesLib::Core::Container::VariableArray<uint8_t>& GetBytecode() const override { return m_desc.bytecode; }
+    const NorvesLib::Core::Container::String& GetSourceCode() const override { return m_desc.sourceCode; }
     void* GetNativeHandle() const override { return reinterpret_cast<void*>(m_shaderModule); }
 
     // Vulkan固有のメソッド

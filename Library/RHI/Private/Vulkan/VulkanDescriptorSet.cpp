@@ -16,11 +16,11 @@ namespace NorvesLib::RHI::Vulkan
 
 VulkanDescriptorSetLayout::VulkanDescriptorSetLayout(
     std::shared_ptr<VulkanDevice> device,
-    const std::vector<DescriptorBindingDesc>& bindings)
+    const NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc>& bindings)
     : m_device(device)
     , m_bindings(bindings)
 {
-    std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorSetLayoutBinding> layoutBindings;
     layoutBindings.reserve(bindings.size());
 
     for (const auto& binding : bindings) {
@@ -267,9 +267,9 @@ void VulkanDescriptorSet::Update()
         return;
     }
 
-    std::vector<VkWriteDescriptorSet> descriptorWrites;
-    std::vector<VkDescriptorBufferInfo> bufferInfos;
-    std::vector<VkDescriptorImageInfo> imageInfos;
+    NorvesLib::Core::Container::VariableArray<VkWriteDescriptorSet> descriptorWrites;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorBufferInfo> bufferInfos;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorImageInfo> imageInfos;
 
     for (const auto& [binding, info] : m_bindings) {
         VkWriteDescriptorSet writeDesc{};

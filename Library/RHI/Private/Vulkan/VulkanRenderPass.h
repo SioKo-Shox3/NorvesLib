@@ -3,7 +3,7 @@
 #include "RHI/Public/IRenderPass.h"
 #include <vulkan/vulkan.h>
 #include <memory>
-#include <vector>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -43,9 +43,9 @@ private:
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
     
     // アタッチメント情報
-    std::vector<VkAttachmentDescription> m_attachmentDescs;
-    std::vector<VkAttachmentReference> m_colorAttachmentRefs;
-    std::vector<VkAttachmentReference> m_inputAttachmentRefs;
+    NorvesLib::Core::Container::VariableArray<VkAttachmentDescription> m_attachmentDescs;
+    NorvesLib::Core::Container::VariableArray<VkAttachmentReference> m_colorAttachmentRefs;
+    NorvesLib::Core::Container::VariableArray<VkAttachmentReference> m_inputAttachmentRefs;
     VkAttachmentReference m_depthAttachmentRef;
     
     // ヘルパーメソッド

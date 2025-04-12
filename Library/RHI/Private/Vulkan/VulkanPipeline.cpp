@@ -4,6 +4,7 @@
 #include "VulkanShader.h"
 #include "VulkanDescriptorSet.h"
 #include <stdexcept>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -11,11 +12,11 @@ namespace NorvesLib::RHI::Vulkan
 // VulkanPipelineLayoutの実装
 VulkanPipelineLayout::VulkanPipelineLayout(
     std::shared_ptr<VulkanDevice> device,
-    const std::vector<std::shared_ptr<VulkanDescriptorSetLayout>>& layouts)
+    const NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>>& layouts)
     : m_device(device), m_descriptorSetLayouts(layouts)
 {
     // Vulkanレイアウト作成用のディスクリプタセットレイアウトハンドル配列
-    std::vector<VkDescriptorSetLayout> vkLayouts;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorSetLayout> vkLayouts;
     for (const auto& layout : layouts) {
         if (layout) {
             vkLayouts.push_back(layout->GetVkDescriptorSetLayout());
@@ -76,7 +77,7 @@ VulkanGraphicsPipeline::~VulkanGraphicsPipeline()
 void VulkanGraphicsPipeline::CreateGraphicsPipeline()
 {
     // シェーダーステージ設定
-    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+    NorvesLib::Core::Container::VariableArray<VkPipelineShaderStageCreateInfo> shaderStages;
     
     // 頂点シェーダー
     if (m_desc.vertexShader) {
@@ -136,7 +137,7 @@ void VulkanGraphicsPipeline::CreateGraphicsPipeline()
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     
     // 頂点バインディングの設定
-    std::vector<VkVertexInputBindingDescription> bindingDescriptions;
+    NorvesLib::Core::Container::VariableArray<VkVertexInputBindingDescription> bindingDescriptions;
     for (const auto& binding : m_desc.vertexBindings) {
         VkVertexInputBindingDescription bindingDesc{};
         bindingDesc.binding = binding.binding;
@@ -147,7 +148,7 @@ void VulkanGraphicsPipeline::CreateGraphicsPipeline()
     }
     
     // 頂点属性の設定
-    std::vector<VkVertexInputAttributeDescription> attributeDescriptions;
+    NorvesLib::Core::Container::VariableArray<VkVertexInputAttributeDescription> attributeDescriptions;
     for (const auto& attribute : m_desc.vertexAttributes) {
         VkVertexInputAttributeDescription attributeDesc{};
         attributeDesc.binding = attribute.binding;
@@ -237,7 +238,7 @@ void VulkanGraphicsPipeline::CreateGraphicsPipeline()
     depthStencil.back.reference = m_desc.depthStencilState.backFace.reference;
     
     // カラーブレンド設定
-    std::vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments;
+    NorvesLib::Core::Container::VariableArray<VkPipelineColorBlendAttachmentState> colorBlendAttachments;
     for (const auto& attachment : m_desc.blendState.attachments) {
         VkPipelineColorBlendAttachmentState colorBlendAttachment{};
         colorBlendAttachment.blendEnable = attachment.blendEnable ? VK_TRUE : VK_FALSE;
@@ -263,7 +264,7 @@ void VulkanGraphicsPipeline::CreateGraphicsPipeline()
     colorBlending.blendConstants[3] = m_desc.blendState.blendConstants[3];
     
     // 動的ステート設定
-    std::vector<VkDynamicState> dynamicStates = {
+    NorvesLib::Core::Container::VariableArray<VkDynamicState> dynamicStates = {
         VK_DYNAMIC_STATE_VIEWPORT,
         VK_DYNAMIC_STATE_SCISSOR
     };
@@ -275,7 +276,7 @@ void VulkanGraphicsPipeline::CreateGraphicsPipeline()
     
     // パイプラインレイアウト
     // ディスクリプタセットレイアウトの収集
-    std::vector<std::shared_ptr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
+    NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
     for (const auto& setDesc : m_desc.descriptorSetLayouts) {
         auto vulkanLayout = std::dynamic_pointer_cast<VulkanDescriptorSetLayout>(setDesc);
         if (vulkanLayout) {
@@ -351,7 +352,7 @@ void VulkanComputePipeline::CreateComputePipeline()
     computeShaderStageInfo.pName = "main"; // エントリポイント
     
     // ディスクリプタセットレイアウト
-    std::vector<std::shared_ptr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
+    NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
     for (const auto& setDesc : m_desc.descriptorSetLayouts) {
         auto vulkanLayout = std::dynamic_pointer_cast<VulkanDescriptorSetLayout>(setDesc);
         if (vulkanLayout) {

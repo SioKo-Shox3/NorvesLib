@@ -3,7 +3,7 @@
 #include "RHI/Public/IDescriptorSet.h"
 #include <vulkan/vulkan.h>
 #include <memory>
-#include <vector>
+#include "Core/Public/Container/Containers.h"
 #include <unordered_map>
 
 namespace NorvesLib::RHI::Vulkan
@@ -27,7 +27,7 @@ public:
      */
     VulkanDescriptorSetLayout(
         std::shared_ptr<VulkanDevice> device,
-        const std::vector<DescriptorBindingDesc>& bindings);
+        const NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc>& bindings);
     
     /**
      * @brief デストラクタ
@@ -38,11 +38,11 @@ public:
     VkDescriptorSetLayout GetVkDescriptorSetLayout() const { return m_layout; }
     
     // バインディング情報取得
-    const std::vector<DescriptorBindingDesc>& GetBindings() const { return m_bindings; }
+    const NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc>& GetBindings() const { return m_bindings; }
 
 private:
     std::shared_ptr<VulkanDevice> m_device;
-    std::vector<DescriptorBindingDesc> m_bindings;
+    NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc> m_bindings;
     VkDescriptorSetLayout m_layout = VK_NULL_HANDLE;
     
     // バインディングタイプをVulkanディスクリプタタイプに変換
@@ -155,7 +155,7 @@ private:
     };
     
     // バインディング情報のマップ (binding -> info)
-    std::unordered_map<uint32_t, BindingInfo> m_bindings;
+    NorvesLib::Core::Container::HashMap<uint32_t, BindingInfo> m_bindings;
     
     // パイプラインレイアウト作成
     void CreatePipelineLayout();

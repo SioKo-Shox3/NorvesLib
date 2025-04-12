@@ -1,20 +1,19 @@
 #include "VulkanDevice.h"
 #include <iostream>
-#include <set>
-#include <string>
 #include <algorithm>
+#include "Core/Public/Container/Containers.h"
 #include "VulkanSwapChain.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
 
 // バリデーションレイヤー名
-const std::vector<const char*> validationLayers = {
+const NorvesLib::Core::Container::VariableArray<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
 
 // 必要なデバイス拡張機能
-const std::vector<const char*> deviceExtensions = {
+const NorvesLib::Core::Container::VariableArray<const char*> deviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
@@ -177,7 +176,7 @@ void VulkanDevice::PickPhysicalDevice()
     }
     
     // デバイス一覧取得
-    std::vector<VkPhysicalDevice> devices(deviceCount);
+    NorvesLib::Core::Container::VariableArray<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
     
     // 適切なデバイスを探す
@@ -205,20 +204,19 @@ void VulkanDevice::PickPhysicalDevice()
 void VulkanDevice::CreateLogicalDevice()
 {
     // 重複のないキューファミリインデックスのセット
-    std::set<uint32_t> uniqueQueueFamilies = {
-        m_graphicsQueueFamilyIndex,
-        m_presentQueueFamilyIndex,
-        m_computeQueueFamilyIndex
-    };
+    NorvesLib::Core::Container::Set<uint32_t> uniqueQueueFamilies;
+    uniqueQueueFamilies.insert(m_graphicsQueueFamilyIndex);
+    uniqueQueueFamilies.insert(m_presentQueueFamilyIndex);
+    uniqueQueueFamilies.insert(m_computeQueueFamilyIndex);
     
-    // 重複を除外
+    // 転送キューを追加
     if (m_transferQueueFamilyIndex != UINT32_MAX) {
         uniqueQueueFamilies.insert(m_transferQueueFamilyIndex);
     }
     
     // キュー作成情報
     float queuePriority = 1.0f;
-    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+    NorvesLib::Core::Container::VariableArray<VkDeviceQueueCreateInfo> queueCreateInfos;
     
     for (uint32_t queueFamily : uniqueQueueFamilies) {
         VkDeviceQueueCreateInfo queueCreateInfo{};
@@ -318,7 +316,7 @@ bool VulkanDevice::CheckValidationLayerSupport()
     uint32_t layerCount;
     vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
     
-    std::vector<VkLayerProperties> availableLayers(layerCount);
+    NorvesLib::Core::Container::VariableArray<VkLayerProperties> availableLayers(layerCount);
     vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
     
     // 必要なレイヤーが全て存在するか確認
@@ -361,13 +359,16 @@ bool VulkanDevice::IsDeviceSuitable(VkPhysicalDevice device)
     uint32_t extensionCount;
     vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
     
-    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+    NorvesLib::Core::Container::VariableArray<VkExtensionProperties> availableExtensions(extensionCount);
     vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
     
-    std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+    NorvesLib::Core::Container::Set<NorvesLib::Core::Container::String> requiredExtensions;
+    for (const auto& ext : deviceExtensions) {
+        requiredExtensions.insert(NorvesLib::Core::Container::String(ext));
+    }
     
     for (const auto& extension : availableExtensions) {
-        requiredExtensions.erase(extension.extensionName);
+        requiredExtensions.erase(NorvesLib::Core::Container::String(extension.extensionName));
     }
     
     extensionsSupported = requiredExtensions.empty();
@@ -383,9 +384,9 @@ bool VulkanDevice::IsDeviceSuitable(VkPhysicalDevice device)
 }
 
 // 必要なインスタンス拡張機能を取得
-std::vector<const char*> VulkanDevice::GetRequiredExtensions()
+NorvesLib::Core::Container::VariableArray<const char*> VulkanDevice::GetRequiredExtensions()
 {
-    std::vector<const char*> extensions;
+    NorvesLib::Core::Container::VariableArray<const char*> extensions;
     
     // ウィンドウシステム連携のための拡張機能
     extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
@@ -407,7 +408,7 @@ std::vector<const char*> VulkanDevice::GetRequiredExtensions()
 }
 
 // 必要なデバイス拡張機能を取得
-std::vector<const char*> VulkanDevice::GetDeviceExtensions()
+NorvesLib::Core::Container::VariableArray<const char*> VulkanDevice::GetDeviceExtensions()
 {
     return deviceExtensions;
 }
@@ -419,7 +420,7 @@ void VulkanDevice::FindQueueFamilies(VkPhysicalDevice device)
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
     
-    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    NorvesLib::Core::Container::VariableArray<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
     
     // グラフィックスキューファミリーを探す
@@ -470,7 +471,7 @@ uint32_t VulkanDevice::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags
 
 // サポートするフォーマットを検索
 VkFormat VulkanDevice::FindSupportedFormat(
-    const std::vector<VkFormat>& candidates,
+    const NorvesLib::Core::Container::VariableArray<VkFormat>& candidates,
     VkImageTiling tiling, 
     VkFormatFeatureFlags features) const
 {

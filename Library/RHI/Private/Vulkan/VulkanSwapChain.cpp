@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <array>
+#include "Core/Public/Container/Containers.h"
 
 // Windowsのインクルード（Windowsプラットフォーム用）
 #ifdef _WIN32
@@ -243,7 +244,7 @@ void VulkanSwapChain::CreateImageViews()
         textureDesc.initialState = ResourceState::Present;
         
         // VulkanTextureを作成（既存のVkImageを使用）
-        m_backBufferTextures[i] = std::make_shared<VulkanTexture>(m_device, textureDesc, m_swapChainImages[i]);
+        m_backBufferTextures[i] = NorvesLib::Core::Container::MakeShared<VulkanTexture>(m_device, textureDesc, m_swapChainImages[i]);
     }
 }
 
@@ -290,7 +291,7 @@ VkSurfaceFormatKHR VulkanSwapChain::ChooseSurfaceFormat()
     uint32_t formatCount;
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_device->GetVkPhysicalDevice(), m_surface, &formatCount, nullptr);
     
-    std::vector<VkSurfaceFormatKHR> availableFormats(formatCount);
+    NorvesLib::Core::Container::VariableArray<VkSurfaceFormatKHR> availableFormats(formatCount);
     vkGetPhysicalDeviceSurfaceFormatsKHR(
         m_device->GetVkPhysicalDevice(), m_surface, &formatCount, availableFormats.data());
     
@@ -314,7 +315,7 @@ VkPresentModeKHR VulkanSwapChain::ChoosePresentMode()
     vkGetPhysicalDeviceSurfacePresentModesKHR(
         m_device->GetVkPhysicalDevice(), m_surface, &presentModeCount, nullptr);
     
-    std::vector<VkPresentModeKHR> availablePresentModes(presentModeCount);
+    NorvesLib::Core::Container::VariableArray<VkPresentModeKHR> availablePresentModes(presentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(
         m_device->GetVkPhysicalDevice(), m_surface, &presentModeCount, availablePresentModes.data());
     

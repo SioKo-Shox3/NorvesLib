@@ -3,9 +3,7 @@
 #include "RHI/Public/IDevice.h"
 #include <vulkan/vulkan.h>
 #include <memory>
-#include <vector>
-#include <unordered_map>
-#include <string>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -74,7 +72,7 @@ public:
     VkCommandPool GetCommandPool() const { return m_commandPool; }
 
     // 実装固有の機能
-    VkFormat FindSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) const;
+    VkFormat FindSupportedFormat(const NorvesLib::Core::Container::VariableArray<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) const;
     
     // フォーマット変換
     VkFormat ToVkFormat(Format format) const;
@@ -109,8 +107,8 @@ private:
     bool m_validationEnabled = false;
 
     // フォーマット変換テーブル
-    std::unordered_map<Format, VkFormat> m_formatMap;
-    std::unordered_map<VkFormat, Format> m_reverseFormatMap;
+    NorvesLib::Core::Container::HashMap<Format, VkFormat> m_formatMap;
+    NorvesLib::Core::Container::HashMap<VkFormat, Format> m_reverseFormatMap;
     
     // 初期化メソッド
     void CreateInstance();
@@ -122,8 +120,8 @@ private:
     
     // ヘルパー
     bool IsDeviceSuitable(VkPhysicalDevice device);
-    std::vector<const char*> GetRequiredExtensions();
-    std::vector<const char*> GetDeviceExtensions();
+    NorvesLib::Core::Container::VariableArray<const char*> GetRequiredExtensions();
+    NorvesLib::Core::Container::VariableArray<const char*> GetDeviceExtensions();
     void FindQueueFamilies(VkPhysicalDevice device);
 
     // バリデーション関連
