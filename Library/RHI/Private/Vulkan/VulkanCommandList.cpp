@@ -37,7 +37,7 @@ VulkanCommandList::~VulkanCommandList()
     // 一時リソースをクリア
     m_temporaryResources.clear();
     
-    // フェンスの破棄
+    // フェンスの破棋
     if (m_fence != VK_NULL_HANDLE) {
         vkDestroyFence(m_device->GetVkDevice(), m_fence, nullptr);
     }
@@ -132,11 +132,14 @@ void VulkanCommandList::Submit(bool waitForCompletion)
 // レンダーパスの開始
 void VulkanCommandList::BeginRenderPass(RenderPassPtr renderPass, FramebufferPtr framebuffer)
 {
-    // Vulkan実装クラスへのキャストはまだ実装されていません
-    // 実際の実装では、renderPassとframebufferをダウンキャストして使用します
-    // このコードは実際のVulkan RenderPass/Framebufferが実装されるまでのプレースホルダーです
+    if (!m_isRecording) {
+        throw std::runtime_error("コマンドリストは記録中ではありません");
+    }
     
-    /*
+    if (m_inRenderPass) {
+        throw std::runtime_error("既にレンダーパス内です");
+    }
+    
     auto vkRenderPass = std::dynamic_pointer_cast<VulkanRenderPass>(renderPass);
     auto vkFramebuffer = std::dynamic_pointer_cast<VulkanFramebuffer>(framebuffer);
     
@@ -171,9 +174,7 @@ void VulkanCommandList::BeginRenderPass(RenderPassPtr renderPass, FramebufferPtr
     
     // レンダーパスの開始
     vkCmdBeginRenderPass(m_commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    */
     
-    // 仮の実装（実際のVulkanオブジェクトが実装されるまで）
     m_inRenderPass = true;
     
     // 一時的なリソースへの参照を保持
@@ -188,7 +189,7 @@ void VulkanCommandList::EndRenderPass()
         throw std::runtime_error("レンダーパス外でEndRenderPassが呼ばれました");
     }
     
-    // vkCmdEndRenderPass(m_commandBuffer);
+    vkCmdEndRenderPass(m_commandBuffer);
     m_inRenderPass = false;
 }
 
@@ -222,18 +223,16 @@ void VulkanCommandList::SetScissor(const ScissorRect& scissor)
 // パイプラインの設定
 void VulkanCommandList::SetPipeline(PipelinePtr pipeline)
 {
-    /*
     auto vkPipeline = std::dynamic_pointer_cast<VulkanPipeline>(pipeline);
     if (!vkPipeline) {
         throw std::runtime_error("無効なパイプラインです");
     }
     
-    if (vkPipeline->IsComputePipeline()) {
+    if (vkPipeline->IsCompute()) {
         vkCmdBindPipeline(m_commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, vkPipeline->GetVkPipeline());
     } else {
         vkCmdBindPipeline(m_commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline->GetVkPipeline());
     }
-    */
     
     m_currentPipeline = pipeline;
     AddTemporaryResource(pipeline);
@@ -284,8 +283,40 @@ void VulkanCommandList::SetIndexBuffer(BufferPtr buffer, uint64_t offset)
 // 定数バッファの設定
 void VulkanCommandList::SetConstantBuffer(BufferPtr buffer, uint32_t slot, ShaderStage stage)
 {
-    // ディスクリプタセットを使用した実装が必要
-    // このメソッドは、VulkanDescriptorSetが実装された後に完成します
+    if (!m_isRecording) {
+        throw std::runtime_error("コマンドリストは記録中ではありません");
+    }
+    
+    auto vkBuffer = std::dynamic_pointer_cast<VulkanBuffer>(buffer);
+    if (!vkBuffer) {
+        throw std::runtime_error("無効なバッファです");
+    }
+    
+    // パイプラインがバインドされていない場合はエラー
+    if (!m_currentPipeline) {
+        throw std::runtime_error("パイプラインがバインドされていません");
+    }
+    
+    // バインディングポイント用のキー
+    // Vulkanの場合、セット番号とバインディング番号の組み合わせでリソースを特定する
+    // 簡単のために、スロット番号をバインディング番号として使用
+    uint32_t set = 0;  // セット0を使用
+    uint32_t binding = slot;
+    
+    // パイプラインレイアウトとバインドポイントの取得
+    auto vkPipeline = std::dynamic_pointer_cast<VulkanPipeline>(m_currentPipeline);
+    VkPipelineLayout layout = vkPipeline->GetVkPipelineLayout();
+    VkPipelineBindPoint bindPoint = vkPipeline->IsCompute() ? 
+        VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    
+    // 動的オフセットを使用する場合はここで設定
+    uint32_t dynamicOffset = 0;
+    
+    // バッファを直接バインドすることはできず、ディスクリプタセットを通じて行う必要がある
+    // プッシュコンスタントを使用するか、一時的なディスクリプタセットを作成する必要がある
+    // この実装では簡略化のため、コメントのみとする
+    
+    // 将来的な実装：一時的なディスクリプタセットを作成してバインド
     
     AddTemporaryResource(buffer);
 }
@@ -293,8 +324,34 @@ void VulkanCommandList::SetConstantBuffer(BufferPtr buffer, uint32_t slot, Shade
 // テクスチャの設定
 void VulkanCommandList::SetTexture(TexturePtr texture, uint32_t slot, ShaderStage stage)
 {
-    // ディスクリプタセットを使用した実装が必要
-    // このメソッドは、VulkanDescriptorSetが実装された後に完成します
+    if (!m_isRecording) {
+        throw std::runtime_error("コマンドリストは記録中ではありません");
+    }
+    
+    auto vkTexture = std::dynamic_pointer_cast<VulkanTexture>(texture);
+    if (!vkTexture) {
+        throw std::runtime_error("無効なテクスチャです");
+    }
+    
+    // パイプラインがバインドされていない場合はエラー
+    if (!m_currentPipeline) {
+        throw std::runtime_error("パイプラインがバインドされていません");
+    }
+    
+    // バインディングポイント用のキー
+    uint32_t set = 0;  // セット0を使用
+    uint32_t binding = slot;
+    
+    // パイプラインレイアウトとバインドポイントの取得
+    auto vkPipeline = std::dynamic_pointer_cast<VulkanPipeline>(m_currentPipeline);
+    VkPipelineLayout layout = vkPipeline->GetVkPipelineLayout();
+    VkPipelineBindPoint bindPoint = vkPipeline->IsCompute() ? 
+        VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    
+    // テクスチャを直接バインドすることはできず、ディスクリプタセットを通じて行う必要がある
+    // この実装では簡略化のため、コメントのみとする
+    
+    // 将来的な実装：一時的なディスクリプタセットを作成してバインド
     
     AddTemporaryResource(texture);
 }
@@ -302,8 +359,34 @@ void VulkanCommandList::SetTexture(TexturePtr texture, uint32_t slot, ShaderStag
 // サンプラーの設定
 void VulkanCommandList::SetSampler(SamplerPtr sampler, uint32_t slot, ShaderStage stage)
 {
-    // ディスクリプタセットを使用した実装が必要
-    // このメソッドは、VulkanDescriptorSetが実装された後に完成します
+    if (!m_isRecording) {
+        throw std::runtime_error("コマンドリストは記録中ではありません");
+    }
+    
+    auto vkSampler = std::dynamic_pointer_cast<VulkanSampler>(sampler);
+    if (!vkSampler) {
+        throw std::runtime_error("無効なサンプラーです");
+    }
+    
+    // パイプラインがバインドされていない場合はエラー
+    if (!m_currentPipeline) {
+        throw std::runtime_error("パイプラインがバインドされていません");
+    }
+    
+    // バインディングポイント用のキー
+    uint32_t set = 0;  // セット0を使用
+    uint32_t binding = slot;
+    
+    // パイプラインレイアウトとバインドポイントの取得
+    auto vkPipeline = std::dynamic_pointer_cast<VulkanPipeline>(m_currentPipeline);
+    VkPipelineLayout layout = vkPipeline->GetVkPipelineLayout();
+    VkPipelineBindPoint bindPoint = vkPipeline->IsCompute() ? 
+        VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    
+    // サンプラーを直接バインドすることはできず、ディスクリプタセットを通じて行う必要がある
+    // この実装では簡略化のため、コメントのみとする
+    
+    // 将来的な実装：一時的なディスクリプタセットを作成してバインド
     
     AddTemporaryResource(sampler);
 }
@@ -457,7 +540,82 @@ void VulkanCommandList::CopyBufferToTexture(BufferPtr src, TexturePtr dst,
     uint32_t width, uint32_t height, uint64_t bufferOffset, 
     uint32_t mipLevel, uint32_t arrayIndex)
 {
-    // テクスチャ実装後に実装
+    if (!m_isRecording) {
+        throw std::runtime_error("コマンドリストは記録中ではありません");
+    }
+    
+    auto vkSrc = std::dynamic_pointer_cast<VulkanBuffer>(src);
+    auto vkDst = std::dynamic_pointer_cast<VulkanTexture>(dst);
+    
+    if (!vkSrc || !vkDst) {
+        throw std::runtime_error("無効なバッファまたはテクスチャです");
+    }
+    
+    // テクスチャの次元を考慮
+    uint32_t effectiveWidth = (width > 0) ? width : vkDst->GetWidth();
+    uint32_t effectiveHeight = (height > 0) ? height : vkDst->GetHeight();
+    uint32_t depth = 1; // 3Dテクスチャの場合は調整必要
+    
+    // テクスチャのアスペクトマスクを取得
+    VkImageAspectFlags aspectMask;
+    if ((vkDst->GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None) {
+        aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vkDst->GetFormat() == Format::D24_UNORM_S8_UINT) {
+            aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+    } else {
+        aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+    
+    // サブリソース範囲を定義
+    VkImageSubresourceRange subresourceRange{};
+    subresourceRange.aspectMask = aspectMask;
+    subresourceRange.baseMipLevel = mipLevel;
+    subresourceRange.levelCount = 1;
+    subresourceRange.baseArrayLayer = arrayIndex;
+    subresourceRange.layerCount = 1;
+    
+    // テクスチャレイアウトを転送先に変更
+    vkDst->TransitionLayout(m_commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresourceRange);
+    
+    // バッファからテクスチャへのコピー
+    VkBufferImageCopy region{};
+    region.bufferOffset = bufferOffset;
+    region.bufferRowLength = 0;  // 密にパックされたデータ
+    region.bufferImageHeight = 0;  // 密にパックされたデータ
+    region.imageSubresource.aspectMask = aspectMask;
+    region.imageSubresource.mipLevel = mipLevel;
+    region.imageSubresource.baseArrayLayer = arrayIndex;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {effectiveWidth, effectiveHeight, depth};
+    
+    vkCmdCopyBufferToImage(
+        m_commandBuffer,
+        vkSrc->GetVkBuffer(),
+        vkDst->GetVkImage(),
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &region
+    );
+    
+    // テクスチャを適切なレイアウトに戻す
+    VkImageLayout finalLayout;
+    if ((vkDst->GetUsage() & ResourceUsage::ShaderResource) != ResourceUsage::None) {
+        finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    } else if ((vkDst->GetUsage() & ResourceUsage::RenderTarget) != ResourceUsage::None) {
+        finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else if ((vkDst->GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None) {
+        finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    } else if ((vkDst->GetUsage() & ResourceUsage::UnorderedAccess) != ResourceUsage::None) {
+        finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    } else {
+        finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    
+    vkDst->TransitionLayout(m_commandBuffer, finalLayout, subresourceRange);
+    
+    // 一時的なリソースへの参照を保持
     AddTemporaryResource(src);
     AddTemporaryResource(dst);
 }
@@ -467,7 +625,82 @@ void VulkanCommandList::CopyTextureToBuffer(TexturePtr src, BufferPtr dst,
     uint32_t width, uint32_t height, uint64_t bufferOffset, 
     uint32_t mipLevel, uint32_t arrayIndex)
 {
-    // テクスチャ実装後に実装
+    if (!m_isRecording) {
+        throw std::runtime_error("コマンドリストは記録中ではありません");
+    }
+    
+    auto vkSrc = std::dynamic_pointer_cast<VulkanTexture>(src);
+    auto vkDst = std::dynamic_pointer_cast<VulkanBuffer>(dst);
+    
+    if (!vkSrc || !vkDst) {
+        throw std::runtime_error("無効なテクスチャまたはバッファです");
+    }
+    
+    // テクスチャの次元を考慮
+    uint32_t effectiveWidth = (width > 0) ? width : vkSrc->GetWidth();
+    uint32_t effectiveHeight = (height > 0) ? height : vkSrc->GetHeight();
+    uint32_t depth = 1; // 3Dテクスチャの場合は調整必要
+    
+    // テクスチャのアスペクトマスクを取得
+    VkImageAspectFlags aspectMask;
+    if ((vkSrc->GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None) {
+        aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vkSrc->GetFormat() == Format::D24_UNORM_S8_UINT) {
+            aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+    } else {
+        aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+    
+    // サブリソース範囲を定義
+    VkImageSubresourceRange subresourceRange{};
+    subresourceRange.aspectMask = aspectMask;
+    subresourceRange.baseMipLevel = mipLevel;
+    subresourceRange.levelCount = 1;
+    subresourceRange.baseArrayLayer = arrayIndex;
+    subresourceRange.layerCount = 1;
+    
+    // テクスチャレイアウトを転送元に変更
+    vkSrc->TransitionLayout(m_commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresourceRange);
+    
+    // テクスチャからバッファへのコピー
+    VkBufferImageCopy region{};
+    region.bufferOffset = bufferOffset;
+    region.bufferRowLength = 0;  // 密にパックされたデータ
+    region.bufferImageHeight = 0;  // 密にパックされたデータ
+    region.imageSubresource.aspectMask = aspectMask;
+    region.imageSubresource.mipLevel = mipLevel;
+    region.imageSubresource.baseArrayLayer = arrayIndex;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {effectiveWidth, effectiveHeight, depth};
+    
+    vkCmdCopyImageToBuffer(
+        m_commandBuffer,
+        vkSrc->GetVkImage(),
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        vkDst->GetVkBuffer(),
+        1,
+        &region
+    );
+    
+    // テクスチャを適切なレイアウトに戻す
+    VkImageLayout finalLayout;
+    if ((vkSrc->GetUsage() & ResourceUsage::ShaderResource) != ResourceUsage::None) {
+        finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    } else if ((vkSrc->GetUsage() & ResourceUsage::RenderTarget) != ResourceUsage::None) {
+        finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else if ((vkSrc->GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None) {
+        finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    } else if ((vkSrc->GetUsage() & ResourceUsage::UnorderedAccess) != ResourceUsage::None) {
+        finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    } else {
+        finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    
+    vkSrc->TransitionLayout(m_commandBuffer, finalLayout, subresourceRange);
+    
+    // 一時的なリソースへの参照を保持
     AddTemporaryResource(src);
     AddTemporaryResource(dst);
 }
@@ -478,9 +711,390 @@ void VulkanCommandList::CopyTexture(TexturePtr src, TexturePtr dst,
     uint32_t srcMipLevel, uint32_t srcArrayIndex,
     uint32_t dstMipLevel, uint32_t dstArrayIndex)
 {
-    // テクスチャ実装後に実装
+    if (!m_isRecording) {
+        throw std::runtime_error("コマンドリストは記録中ではありません");
+    }
+    
+    auto vkSrc = std::dynamic_pointer_cast<VulkanTexture>(src);
+    auto vkDst = std::dynamic_pointer_cast<VulkanTexture>(dst);
+    
+    if (!vkSrc || !vkDst) {
+        throw std::runtime_error("無効なテクスチャです");
+    }
+    
+    // コピー領域の寸法を決定
+    uint32_t effectiveWidth = (width > 0) ? width : std::min(vkSrc->GetWidth() >> srcMipLevel, vkDst->GetWidth() >> dstMipLevel);
+    uint32_t effectiveHeight = (height > 0) ? height : std::min(vkSrc->GetHeight() >> srcMipLevel, vkDst->GetHeight() >> dstMipLevel);
+    uint32_t depth = 1; // 2Dテクスチャの場合
+    
+    // ソーステクスチャのアスペクトマスクを設定
+    VkImageAspectFlags srcAspectMask;
+    if ((vkSrc->GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None) {
+        srcAspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vkSrc->GetFormat() == Format::D24_UNORM_S8_UINT) {
+            srcAspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+    } else {
+        srcAspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+    
+    // デスティネーションテクスチャのアスペクトマスクを設定
+    VkImageAspectFlags dstAspectMask;
+    if ((vkDst->GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None) {
+        dstAspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vkDst->GetFormat() == Format::D24_UNORM_S8_UINT) {
+            dstAspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+    } else {
+        dstAspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+    
+    // ソースのサブリソース範囲を定義
+    VkImageSubresourceRange srcSubresourceRange{};
+    srcSubresourceRange.aspectMask = srcAspectMask;
+    srcSubresourceRange.baseMipLevel = srcMipLevel;
+    srcSubresourceRange.levelCount = 1;
+    srcSubresourceRange.baseArrayLayer = srcArrayIndex;
+    srcSubresourceRange.layerCount = 1;
+    
+    // デスティネーションのサブリソース範囲を定義
+    VkImageSubresourceRange dstSubresourceRange{};
+    dstSubresourceRange.aspectMask = dstAspectMask;
+    dstSubresourceRange.baseMipLevel = dstMipLevel;
+    dstSubresourceRange.levelCount = 1;
+    dstSubresourceRange.baseArrayLayer = dstArrayIndex;
+    dstSubresourceRange.layerCount = 1;
+    
+    // ソースイメージをコピー元レイアウトに変更
+    vkSrc->TransitionLayout(m_commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcSubresourceRange);
+    
+    // デスティネーションイメージをコピー先レイアウトに変更
+    vkDst->TransitionLayout(m_commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, dstSubresourceRange);
+    
+    // コピーリージョンの設定
+    VkImageCopy region{};
+    region.srcSubresource.aspectMask = srcAspectMask;
+    region.srcSubresource.mipLevel = srcMipLevel;
+    region.srcSubresource.baseArrayLayer = srcArrayIndex;
+    region.srcSubresource.layerCount = 1;
+    region.srcOffset = {0, 0, 0};
+    
+    region.dstSubresource.aspectMask = dstAspectMask;
+    region.dstSubresource.mipLevel = dstMipLevel;
+    region.dstSubresource.baseArrayLayer = dstArrayIndex;
+    region.dstSubresource.layerCount = 1;
+    region.dstOffset = {0, 0, 0};
+    
+    region.extent = {effectiveWidth, effectiveHeight, depth};
+    
+    // コピーコマンドを実行
+    vkCmdCopyImage(
+        m_commandBuffer,
+        vkSrc->GetVkImage(),
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        vkDst->GetVkImage(),
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &region
+    );
+    
+    // ソースとデスティネーションのイメージを元のレイアウトに戻す
+    VkImageLayout srcFinalLayout;
+    if ((vkSrc->GetUsage() & ResourceUsage::ShaderResource) != ResourceUsage::None) {
+        srcFinalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    } else if ((vkSrc->GetUsage() & ResourceUsage::RenderTarget) != ResourceUsage::None) {
+        srcFinalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else if ((vkSrc->GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None) {
+        srcFinalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    } else if ((vkSrc->GetUsage() & ResourceUsage::UnorderedAccess) != ResourceUsage::None) {
+        srcFinalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    } else {
+        srcFinalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    
+    VkImageLayout dstFinalLayout;
+    if ((vkDst->GetUsage() & ResourceUsage::ShaderResource) != ResourceUsage::None) {
+        dstFinalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    } else if ((vkDst->GetUsage() & ResourceUsage::RenderTarget) != ResourceUsage::None) {
+        dstFinalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else if ((vkDst->GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None) {
+        dstFinalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    } else if ((vkDst->GetUsage() & ResourceUsage::UnorderedAccess) != ResourceUsage::None) {
+        dstFinalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    } else {
+        dstFinalLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    
+    vkSrc->TransitionLayout(m_commandBuffer, srcFinalLayout, srcSubresourceRange);
+    vkDst->TransitionLayout(m_commandBuffer, dstFinalLayout, dstSubresourceRange);
+    
+    // リソース参照を保持
     AddTemporaryResource(src);
     AddTemporaryResource(dst);
+}
+
+// バッファバリアの設定
+void VulkanCommandList::BufferBarrier(BufferPtr buffer, ResourceState beforeState, ResourceState afterState, 
+                                     uint64_t offset, uint64_t size)
+{
+    if (!m_isRecording) {
+        throw std::runtime_error("コマンドリストは記録中ではありません");
+    }
+    
+    auto vkBuffer = std::dynamic_pointer_cast<VulkanBuffer>(buffer);
+    if (!vkBuffer) {
+        throw std::runtime_error("無効なバッファです");
+    }
+    
+    VkBufferMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    barrier.buffer = vkBuffer->GetVkBuffer();
+    barrier.offset = offset;
+    barrier.size = (size == 0) ? VK_WHOLE_SIZE : size;
+    
+    // ソースアクセスマスク
+    if ((beforeState & ResourceState::VertexBuffer) != ResourceState::None) {
+        barrier.srcAccessMask |= VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+    }
+    if ((beforeState & ResourceState::IndexBuffer) != ResourceState::None) {
+        barrier.srcAccessMask |= VK_ACCESS_INDEX_READ_BIT;
+    }
+    if ((beforeState & ResourceState::ConstantBuffer) != ResourceState::None) {
+        barrier.srcAccessMask |= VK_ACCESS_UNIFORM_READ_BIT;
+    }
+    if ((beforeState & ResourceState::UnorderedAccess) != ResourceState::None) {
+        barrier.srcAccessMask |= VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    }
+    if ((beforeState & ResourceState::IndirectArgument) != ResourceState::None) {
+        barrier.srcAccessMask |= VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    }
+    if ((beforeState & ResourceState::CopyDest) != ResourceState::None) {
+        barrier.srcAccessMask |= VK_ACCESS_TRANSFER_WRITE_BIT;
+    }
+    if ((beforeState & ResourceState::CopySource) != ResourceState::None) {
+        barrier.srcAccessMask |= VK_ACCESS_TRANSFER_READ_BIT;
+    }
+    
+    // デスティネーションアクセスマスク
+    if ((afterState & ResourceState::VertexBuffer) != ResourceState::None) {
+        barrier.dstAccessMask |= VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+    }
+    if ((afterState & ResourceState::IndexBuffer) != ResourceState::None) {
+        barrier.dstAccessMask |= VK_ACCESS_INDEX_READ_BIT;
+    }
+    if ((afterState & ResourceState::ConstantBuffer) != ResourceState::None) {
+        barrier.dstAccessMask |= VK_ACCESS_UNIFORM_READ_BIT;
+    }
+    if ((afterState & ResourceState::UnorderedAccess) != ResourceState::None) {
+        barrier.dstAccessMask |= VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    }
+    if ((afterState & ResourceState::IndirectArgument) != ResourceState::None) {
+        barrier.dstAccessMask |= VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    }
+    if ((afterState & ResourceState::CopyDest) != ResourceState::None) {
+        barrier.dstAccessMask |= VK_ACCESS_TRANSFER_WRITE_BIT;
+    }
+    if ((afterState & ResourceState::CopySource) != ResourceState::None) {
+        barrier.dstAccessMask |= VK_ACCESS_TRANSFER_READ_BIT;
+    }
+    
+    // キューファミリーインデックス - 同じキューを使用する場合は無視される
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    
+    // パイプラインステージ - ワーストケースシナリオを使用
+    VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    
+    // パイプラインバリアコマンドを発行
+    vkCmdPipelineBarrier(
+        m_commandBuffer,
+        srcStageMask,
+        dstStageMask,
+        0,
+        0, nullptr,
+        1, &barrier,
+        0, nullptr
+    );
+    
+    AddTemporaryResource(buffer);
+}
+
+// テクスチャバリアの設定
+void VulkanCommandList::TextureBarrier(TexturePtr texture, ResourceState beforeState, ResourceState afterState,
+                                      uint32_t mipLevel, uint32_t arrayIndex, uint32_t mipCount, uint32_t arrayCount)
+{
+    if (!m_isRecording) {
+        throw std::runtime_error("コマンドリストは記録中ではありません");
+    }
+    
+    auto vkTexture = std::dynamic_pointer_cast<VulkanTexture>(texture);
+    if (!vkTexture) {
+        throw std::runtime_error("無効なテクスチャです");
+    }
+    
+    // アスペクトマスクの決定
+    VkImageAspectFlags aspectMask;
+    if ((vkTexture->GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None) {
+        aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vkTexture->GetFormat() == Format::D24_UNORM_S8_UINT) {
+            aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+    } else {
+        aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+    
+    // サブリソース範囲の設定
+    VkImageSubresourceRange subresourceRange{};
+    subresourceRange.aspectMask = aspectMask;
+    subresourceRange.baseMipLevel = mipLevel;
+    subresourceRange.levelCount = (mipCount == 0) ? vkTexture->GetMipLevels() - mipLevel : mipCount;
+    subresourceRange.baseArrayLayer = arrayIndex;
+    subresourceRange.layerCount = (arrayCount == 0) ? vkTexture->GetArraySize() - arrayIndex : arrayCount;
+    
+    // イメージレイアウトの決定
+    VkImageLayout oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageLayout newLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    
+    // BeforeStateに基づくレイアウト設定
+    if ((beforeState & ResourceState::RenderTarget) != ResourceState::None) {
+        oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else if ((beforeState & ResourceState::DepthWrite) != ResourceState::None) {
+        oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    } else if ((beforeState & ResourceState::DepthRead) != ResourceState::None) {
+        oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    } else if ((beforeState & ResourceState::UnorderedAccess) != ResourceState::None) {
+        oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    } else if ((beforeState & ResourceState::ShaderResource) != ResourceState::None) {
+        oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    } else if ((beforeState & ResourceState::CopyDest) != ResourceState::None) {
+        oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    } else if ((beforeState & ResourceState::CopySource) != ResourceState::None) {
+        oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    } else if ((beforeState & ResourceState::Present) != ResourceState::None) {
+        oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    }
+    
+    // AfterStateに基づくレイアウト設定
+    if ((afterState & ResourceState::RenderTarget) != ResourceState::None) {
+        newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    } else if ((afterState & ResourceState::DepthWrite) != ResourceState::None) {
+        newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    } else if ((afterState & ResourceState::DepthRead) != ResourceState::None) {
+        newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    } else if ((afterState & ResourceState::UnorderedAccess) != ResourceState::None) {
+        newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    } else if ((afterState & ResourceState::ShaderResource) != ResourceState::None) {
+        newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    } else if ((afterState & ResourceState::CopyDest) != ResourceState::None) {
+        newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    } else if ((afterState & ResourceState::CopySource) != ResourceState::None) {
+        newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    } else if ((afterState & ResourceState::Present) != ResourceState::None) {
+        newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    }
+    
+    // 現在と同じレイアウトの場合は何もしない
+    if (oldLayout == newLayout) {
+        return;
+    }
+
+    // アクセスマスクの設定
+    VkAccessFlags srcAccessMask = 0;
+    VkAccessFlags dstAccessMask = 0;
+    
+    // ソースアクセスマスク
+    if ((beforeState & ResourceState::RenderTarget) != ResourceState::None) {
+        srcAccessMask |= VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    }
+    if ((beforeState & ResourceState::DepthWrite) != ResourceState::None) {
+        srcAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    }
+    if ((beforeState & ResourceState::DepthRead) != ResourceState::None) {
+        srcAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    }
+    if ((beforeState & ResourceState::UnorderedAccess) != ResourceState::None) {
+        srcAccessMask |= VK_ACCESS_SHADER_WRITE_BIT;
+    }
+    if ((beforeState & ResourceState::ShaderResource) != ResourceState::None) {
+        srcAccessMask |= VK_ACCESS_SHADER_READ_BIT;
+    }
+    if ((beforeState & ResourceState::CopyDest) != ResourceState::None) {
+        srcAccessMask |= VK_ACCESS_TRANSFER_WRITE_BIT;
+    }
+    if ((beforeState & ResourceState::CopySource) != ResourceState::None) {
+        srcAccessMask |= VK_ACCESS_TRANSFER_READ_BIT;
+    }
+    
+    // デスティネーションアクセスマスク
+    if ((afterState & ResourceState::RenderTarget) != ResourceState::None) {
+        dstAccessMask |= VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    }
+    if ((afterState & ResourceState::DepthWrite) != ResourceState::None) {
+        dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    }
+    if ((afterState & ResourceState::DepthRead) != ResourceState::None) {
+        dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    }
+    if ((afterState & ResourceState::UnorderedAccess) != ResourceState::None) {
+        dstAccessMask |= VK_ACCESS_SHADER_WRITE_BIT;
+    }
+    if ((afterState & ResourceState::ShaderResource) != ResourceState::None) {
+        dstAccessMask |= VK_ACCESS_SHADER_READ_BIT;
+    }
+    if ((afterState & ResourceState::CopyDest) != ResourceState::None) {
+        dstAccessMask |= VK_ACCESS_TRANSFER_WRITE_BIT;
+    }
+    if ((afterState & ResourceState::CopySource) != ResourceState::None) {
+        dstAccessMask |= VK_ACCESS_TRANSFER_READ_BIT;
+    }
+    
+    // パイプラインステージの決定
+    VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    
+    // より最適化されたステージマスクを設定することも可能
+    if ((beforeState & ResourceState::RenderTarget) != ResourceState::None) {
+        srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    } else if (((beforeState & ResourceState::DepthWrite) != ResourceState::None) || 
+               ((beforeState & ResourceState::DepthRead) != ResourceState::None)) {
+        srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    }
+    
+    if ((afterState & ResourceState::RenderTarget) != ResourceState::None) {
+        dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    } else if (((afterState & ResourceState::DepthWrite) != ResourceState::None) || 
+               ((afterState & ResourceState::DepthRead) != ResourceState::None)) {
+        dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    }
+    
+    // イメージメモリバリア
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = vkTexture->GetVkImage();
+    barrier.subresourceRange = subresourceRange;
+    barrier.srcAccessMask = srcAccessMask;
+    barrier.dstAccessMask = dstAccessMask;
+    
+    // パイプラインバリアの発行
+    vkCmdPipelineBarrier(
+        m_commandBuffer,
+        srcStageMask,
+        dstStageMask,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier
+    );
+    
+    // テクスチャの現在のレイアウトを更新
+    vkTexture->SetVkImageLayout(newLayout);
+    
+    AddTemporaryResource(texture);
 }
 
 // シェーダーステージをVkPipelineStageに変換
