@@ -1,7 +1,7 @@
 #pragma once
 
 #include "RHITypes.h"
-#include <string>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI 
 {
@@ -56,8 +56,8 @@ struct SamplerDesc
 struct ShaderDesc 
 {
     ShaderStage stage;
-    std::string entryPoint;
-    std::vector<uint8_t> byteCode;
+    NorvesLib::Core::Container::String entryPoint;
+    NorvesLib::Core::Container::VariableArray<uint8_t> byteCode;
 };
 
 /**
@@ -152,7 +152,7 @@ struct AttachmentDesc
  */
 struct RenderPassDesc 
 {
-    std::vector<AttachmentDesc> colorAttachments;
+    NorvesLib::Core::Container::VariableArray<AttachmentDesc> colorAttachments;
     AttachmentDesc depthStencilAttachment;
     bool hasDepthStencil = false;
 };
@@ -162,7 +162,7 @@ struct RenderPassDesc
  */
 struct FramebufferDesc 
 {
-    std::vector<TexturePtr> colorTargets;
+    NorvesLib::Core::Container::VariableArray<TexturePtr> colorTargets;
     TexturePtr depthStencilTarget;
     RenderPassPtr renderPass;
     uint32_t width = 0;

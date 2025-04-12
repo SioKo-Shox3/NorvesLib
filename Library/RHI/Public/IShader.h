@@ -1,7 +1,7 @@
 #pragma once
 
 #include "RHITypes.h"
-#include <vector>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI 
 {
@@ -25,13 +25,13 @@ public:
      * @brief エントリーポイントを取得
      * @return エントリーポイント名
      */
-    virtual std::string GetEntryPoint() const = 0;
+    virtual NorvesLib::Core::Container::String GetEntryPoint() const = 0;
 
     /**
      * @brief シェーダーバイトコードを取得
      * @return シェーダーバイトコード
      */
-    virtual const std::vector<uint8_t>& GetByteCode() const = 0;
+    virtual const NorvesLib::Core::Container::VariableArray<uint8_t>& GetByteCode() const = 0;
 };
 
 } // namespace NorvesLib::RHI

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RHITypes.h"
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI 
 {
@@ -33,7 +34,7 @@ struct DescriptorBinding
  */
 struct DescriptorSetDesc 
 {
-    std::vector<DescriptorBinding> bindings;
+    NorvesLib::Core::Container::VariableArray<DescriptorBinding> bindings;
 };
 
 /**
