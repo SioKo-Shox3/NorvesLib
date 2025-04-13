@@ -5,6 +5,7 @@ add_subdirectory(Core)
 add_subdirectory(Math)
 add_subdirectory(RHI)
 add_subdirectory(Memory)
+add_subdirectory(Thread)
 
 # 全てのモジュールをリンクするインターフェースライブラリを作成
 add_library(${MODULE_NAME} INTERFACE)
@@ -16,6 +17,7 @@ target_link_libraries(${MODULE_NAME}
         Math
         RHI
         Memory
+        Thread
 )
 
 # インクルードパスの設定
