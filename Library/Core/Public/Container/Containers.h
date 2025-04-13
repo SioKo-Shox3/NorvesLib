@@ -19,6 +19,8 @@
 #include "String.h"
 #include "Span.h"
 #include "StringView.h"
+#include "Deque.h"
+#include "Queue.h"
 
 namespace NorvesLib::Core::Container
 {
@@ -52,6 +54,11 @@ namespace NorvesLib::Core::Container
         
         static_assert(std::is_same_v<String::allocator_type, Allocator<char>>, 
             "String is not using custom allocator");
+            
+        static_assert(std::is_same_v<Deque<int>::allocator_type, Allocator<int>>, 
+            "Deque is not using custom allocator");
+        
+        // Queueはアダプタなので、内部コンテナのアロケータに依存
         
         // SpanとStringViewはメモリを所有せず、アロケータを使用しない
         
