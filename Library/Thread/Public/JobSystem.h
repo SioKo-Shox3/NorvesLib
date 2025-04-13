@@ -2,8 +2,8 @@
 
 #include "Task.h"
 #include "WorkStealingQueue.h"
-#include <mutex>
-#include <condition_variable>
+#include "ConditionVariable.h"
+#include "Mutex.h"
 #include <atomic>
 #include <memory>
 #include <queue>
@@ -223,9 +223,9 @@ private:
     std::mt19937 m_randomGenerator;
     
     // 同期用オブジェクト
-    mutable std::mutex m_queueMutex;
-    mutable std::mutex m_workerThreadMutex;
-    std::condition_variable m_conditionVar;
+    mutable Mutex m_queueMutex;
+    mutable Mutex m_workerThreadMutex;
+    ConditionVariable m_conditionVar;
     std::atomic<bool> m_shutdownRequested;
     std::atomic<bool> m_monitorActive;
     
@@ -240,7 +240,7 @@ private:
     Core::Container::VariableArray<float> m_utilizationHistory;
 
     // ワーカースレッド統計情報
-    mutable std::mutex m_statsMutex;
+    mutable Mutex m_statsMutex;
     Core::Container::VariableArray<std::atomic<size_t>> m_tasksProcessedPerThread;
 };
 

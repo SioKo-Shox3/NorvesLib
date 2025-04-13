@@ -10,3 +10,6 @@ add_subdirectory(Library)
 
 # Gameアプリケーション
 add_subdirectory(Game)
+
+# テスト
+add_subdirectory(Test)

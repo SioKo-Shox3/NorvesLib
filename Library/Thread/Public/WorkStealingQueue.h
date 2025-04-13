@@ -1,8 +1,9 @@
 #pragma once
 
-#include <mutex>
 #include "Task.h"
+#include "Mutex.h"
 #include "Core/Public/Container/Containers.h"
+#include <atomic>
 
 namespace NorvesLib::Thread
 {
@@ -17,9 +18,9 @@ class WorkStealingQueue
 {
 public:
     /**
-     * @brief デフォルトコンストラクタ
+     * @brief コンストラクタ
      */
-    WorkStealingQueue() = default;
+    WorkStealingQueue();
     
     /**
      * @brief コピーコンストラクタ（削除）
@@ -34,7 +35,7 @@ public:
     /**
      * @brief デストラクタ
      */
-    ~WorkStealingQueue() = default;
+    ~WorkStealingQueue();
     
     /**
      * @brief タスクをキューに追加（所有スレッド用）
@@ -75,8 +76,20 @@ public:
     size_t Size() const;
 
 private:
-    mutable std::mutex m_mutex;
+    /**
+     * @brief トップインデックスの比較交換操作を行う
+     * @param expected 期待値
+     * @param desired 変更する値
+     * @return 変更に成功した場合はtrue
+     */
+    bool CompareExchangeTop(int64_t expected, int64_t desired);
+
+    mutable Mutex m_mutex;
     Core::Container::Deque<TaskPtr> m_tasks;
+    
+    // ロックフリーキュー操作のためのインデックス
+    std::atomic<int64_t> m_bottom;  // 所有スレッドが操作
+    std::atomic<int64_t> m_top;     // 他スレッドも操作可能
 };
 
 } // namespace NorvesLib::Thread

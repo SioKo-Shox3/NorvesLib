@@ -11,13 +11,13 @@ WorkStealingQueue::WorkStealingQueue()
 WorkStealingQueue::~WorkStealingQueue()
 {
     // キューの中身をクリア
-    std::unique_lock<std::mutex> lock(m_mutex);
+    ScopedLock lock(m_mutex);
     m_tasks.clear();
 }
 
 void WorkStealingQueue::Push(TaskPtr task)
 {
-    std::unique_lock<std::mutex> lock(m_mutex);
+    ScopedLock lock(m_mutex);
     const int64_t b = m_bottom.load(std::memory_order_relaxed);
     
     if (b < m_tasks.size())
@@ -55,7 +55,7 @@ TaskPtr WorkStealingQueue::Pop()
         
         // キューからタスクを取り出すが、まだコミットしない
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            ScopedLock lock(m_mutex);
             task = m_tasks[b % m_tasks.size()];
         }
         
@@ -101,7 +101,7 @@ TaskPtr WorkStealingQueue::Steal()
         TaskPtr task;
         
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
+            ScopedLock lock(m_mutex);
             task = m_tasks[t % m_tasks.size()];
         }
         
