@@ -17,6 +17,7 @@ add_library(${MODULE_NAME} STATIC ${SOURCES} ${HEADERS})
 target_include_directories(${MODULE_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/Public
+        ${CMAKE_SOURCE_DIR}/Library  # Libraryディレクトリを追加して相対パスによるインクルードを有効にする
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Private
 )

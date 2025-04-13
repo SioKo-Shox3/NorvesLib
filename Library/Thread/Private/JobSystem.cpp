@@ -118,17 +118,17 @@ void JobSystem::Shutdown()
     }
     
     // 全ワーカースレッドに作業終了を通知
-    m_conditionVar.notify_all();
+    m_conditionVar.NotifyAll();
     
     // 全てのワーカースレッドが終了するのを待つ
     {
-        std::unique_lock<std::mutex> lock(m_workerThreadMutex);
+        ScopedLock lock(m_workerThreadMutex);
         m_workerThreads.clear();
     }
     
     // 残りのタスクをクリア
     {
-        std::unique_lock<std::mutex> lock(m_queueMutex);
+        ScopedLock lock(m_queueMutex);
         while (!m_taskQueue.empty())
         {
             m_taskQueue.pop();
@@ -153,7 +153,7 @@ void JobSystem::SubmitTask(TaskPtr task)
     {
         // シンプルモード - グローバルキューに追加
         {
-            std::unique_lock<std::mutex> lock(m_queueMutex);
+            ScopedLock lock(m_queueMutex);
             
             // シャットダウン中なら追加しない
             if (m_shutdownRequested)
@@ -174,12 +174,12 @@ void JobSystem::SubmitTask(TaskPtr task)
             return;
         }
         
-        std::unique_lock<std::mutex> lock(m_workerThreadMutex);
+        ScopedLock lock(m_workerThreadMutex);
         
         if (m_localQueues.empty())
         {
             // ローカルキューが無い場合はグローバルキューに追加
-            std::unique_lock<std::mutex> queueLock(m_queueMutex);
+            ScopedLock queueLock(m_queueMutex);
             m_taskQueue.push(task);
             m_queuedTaskCount++;
         }
@@ -197,7 +197,7 @@ void JobSystem::SubmitTask(TaskPtr task)
             else
             {
                 // フォールバック：グローバルキューに追加
-                std::unique_lock<std::mutex> queueLock(m_queueMutex);
+                ScopedLock queueLock(m_queueMutex);
                 m_taskQueue.push(task);
                 m_queuedTaskCount++;
             }
@@ -205,7 +205,7 @@ void JobSystem::SubmitTask(TaskPtr task)
     }
     
     // ワーカースレッドに通知
-    m_conditionVar.notify_one();
+    m_conditionVar.NotifyOne();
 }
 
 TaskPtr JobSystem::SubmitTasks(const Core::Container::VariableArray<TaskPtr>& tasks, TaskPriority priority)
@@ -238,14 +238,14 @@ void JobSystem::WaitForAll()
         if (m_executionMode.load() == ExecutionMode::SIMPLE)
         {
             // シンプルモード - グローバルキューのみチェック
-            std::unique_lock<std::mutex> lock(m_queueMutex);
+            ScopedLock lock(m_queueMutex);
             allDone = m_taskQueue.empty() && m_activeThreads == 0;
         }
         else
         {
             // ワークスチーリングモード - 全ローカルキューを確認
             bool anyQueueHasTasks = false;
-            std::unique_lock<std::mutex> lock(m_queueMutex);
+            ScopedLock lock(m_queueMutex);
             
             if (!m_taskQueue.empty())
             {
@@ -253,8 +253,8 @@ void JobSystem::WaitForAll()
             }
             else
             {
-                lock.unlock();
-                std::unique_lock<std::mutex> workerLock(m_workerThreadMutex);
+                // m_queueMutexのロックは自動的に解除されます
+                ScopedLock workerLock(m_workerThreadMutex);
                 for (const auto& queue : m_localQueues)
                 {
                     if (queue && !queue->IsEmpty())
@@ -308,7 +308,7 @@ size_t JobSystem::GetActiveThreadCount() const
 
 size_t JobSystem::GetWorkerThreadCount() const
 {
-    std::unique_lock<std::mutex> lock(m_workerThreadMutex);
+    ScopedLock lock(m_workerThreadMutex);
     return m_workerThreads.size();
 }
 
@@ -319,8 +319,8 @@ void JobSystem::AddWorkerThread(std::unique_ptr<Thread> thread)
         return;
     }
     
-    std::unique_lock<std::mutex> workerLock(m_workerThreadMutex);
-    std::unique_lock<std::mutex> statsLock(m_statsMutex);
+    ScopedLock workerLock(m_workerThreadMutex);
+    ScopedLock statsLock(m_statsMutex);
     
     // 統計カウンター配列とローカルキューを拡張
     const size_t newIndex = m_tasksProcessedPerThread.size();
@@ -350,7 +350,7 @@ void JobSystem::SetWorkerThreadsAffinity(bool enableAffinityMasks)
         return;
     }
     
-    std::unique_lock<std::mutex> lock(m_workerThreadMutex);
+    ScopedLock lock(m_workerThreadMutex);
     const size_t threadCount = m_workerThreads.size();
     if (threadCount == 0)
     {
@@ -372,7 +372,7 @@ void JobSystem::SetWorkerThreadsAffinity(bool enableAffinityMasks)
 
 Core::Container::VariableArray<size_t> JobSystem::GetWorkerThreadsStats() const
 {
-    std::unique_lock<std::mutex> lock(m_statsMutex);
+    ScopedLock lock(m_statsMutex);
     
     // アトミック型の値を通常の配列にコピー
     Core::Container::VariableArray<size_t> stats;
@@ -467,7 +467,7 @@ size_t JobSystem::AdjustWorkerThreadCount(size_t targetThreadCount)
         return 0;
     }
     
-    std::unique_lock<std::mutex> workerLock(m_workerThreadMutex);
+    ScopedLock workerLock(m_workerThreadMutex);
     
     // 現在のスレッド数
     size_t currentThreadCount = m_workerThreads.size();
@@ -515,7 +515,7 @@ size_t JobSystem::AdjustWorkerThreadCount(size_t targetThreadCount)
 
 TaskPtr JobSystem::GetNextTaskSimple()
 {
-    std::unique_lock<std::mutex> lock(m_queueMutex);
+    ScopedLock lock(m_queueMutex);
     
     // タスクキューが空なら、nullを返す
     if (m_taskQueue.empty())
@@ -533,25 +533,21 @@ TaskPtr JobSystem::GetNextTaskSimple()
 
 TaskPtr JobSystem::GetNextTaskWorkStealing(size_t threadIndex)
 {
-    std::unique_lock<std::mutex> workerLock(m_workerThreadMutex);
+    ScopedLock workerLock(m_workerThreadMutex);
     
     // 最初に自分のローカルキューをチェック
     if (threadIndex < m_localQueues.size() && m_localQueues[threadIndex])
     {
-        workerLock.unlock();
+        // workerLockは自動的に解除されます
         if (TaskPtr task = m_localQueues[threadIndex]->Pop())
         {
             return task;
         }
     }
-    else
-    {
-        workerLock.unlock();
-    }
     
     // 自分のローカルキューが空ならグローバルキューをチェック
     {
-        std::unique_lock<std::mutex> lock(m_queueMutex);
+        ScopedLock lock(m_queueMutex);
         if (!m_taskQueue.empty())
         {
             TaskPtr task = m_taskQueue.top();
@@ -567,7 +563,7 @@ TaskPtr JobSystem::GetNextTaskWorkStealing(size_t threadIndex)
 
 TaskPtr JobSystem::StealTask(size_t currentThreadIndex)
 {
-    std::unique_lock<std::mutex> workerLock(m_workerThreadMutex);
+    ScopedLock workerLock(m_workerThreadMutex);
     
     const size_t threadCount = m_localQueues.size();
     if (threadCount <= 1)
@@ -575,7 +571,7 @@ TaskPtr JobSystem::StealTask(size_t currentThreadIndex)
         return nullptr;
     }
     
-    workerLock.unlock();
+    // workerLockは自動的に解除されます
     
     // ランダムなスレッドを選択（自分以外）
     std::uniform_int_distribution<size_t> dist(0, threadCount - 2);
@@ -589,11 +585,11 @@ TaskPtr JobSystem::StealTask(size_t currentThreadIndex)
     {
         const size_t index = (victimIndex + i) % threadCount;
         
-        std::unique_lock<std::mutex> workerCheckLock(m_workerThreadMutex);
+        ScopedLock workerCheckLock(m_workerThreadMutex);
         if (index != currentThreadIndex && index < m_localQueues.size() && m_localQueues[index])
         {
             std::unique_ptr<WorkStealingQueue>& victimQueue = m_localQueues[index];
-            workerCheckLock.unlock();
+            // workerCheckLockは自動的に解除されます
             
             if (TaskPtr stolenTask = victimQueue->Steal())
             {
@@ -601,10 +597,6 @@ TaskPtr JobSystem::StealTask(size_t currentThreadIndex)
                 m_totalStolenTasks++;
                 return stolenTask;
             }
-        }
-        else
-        {
-            workerCheckLock.unlock();
         }
     }
     
@@ -636,7 +628,7 @@ void JobSystem::WorkerThreadFunction(size_t threadIndex)
         // タスクがない場合は待機
         if (noTasks)
         {
-            std::unique_lock<std::mutex> lock(m_queueMutex);
+            ScopedLock lock(m_queueMutex);
             
             // 再確認（ロック取得後）
             bool shouldWait = true;
@@ -649,12 +641,12 @@ void JobSystem::WorkerThreadFunction(size_t threadIndex)
             {
                 shouldWait = m_taskQueue.empty();
                 
-                std::unique_lock<std::mutex> workerLock(m_workerThreadMutex);
+                ScopedLock workerLock(m_workerThreadMutex);
                 if (threadIndex < m_localQueues.size() && m_localQueues[threadIndex])
                 {
                     shouldWait = shouldWait && m_localQueues[threadIndex]->IsEmpty();
                 }
-                workerLock.unlock();
+                // workerLockは自動的に解除されます
                 
                 // 他のローカルキューもチェック（盗めるタスクがあるか）
                 if (shouldWait)
@@ -663,24 +655,24 @@ void JobSystem::WorkerThreadFunction(size_t threadIndex)
                     {
                         if (i == threadIndex) continue;
                         
-                        std::unique_lock<std::mutex> workerCheckLock(m_workerThreadMutex);
+                        ScopedLock workerCheckLock(m_workerThreadMutex);
                         if (i < m_localQueues.size() && m_localQueues[i] && !m_localQueues[i]->IsEmpty())
                         {
                             shouldWait = false;
                             break;
                         }
-                        workerCheckLock.unlock();
+                        // workerCheckLockは自動的に解除されます
                     }
                 }
             }
             
             if (shouldWait)
             {
-                m_conditionVar.wait(lock, [this] {
+                m_conditionVar.Wait(m_queueMutex, [this] {
                     bool hasTask = !m_taskQueue.empty();
                     if (m_executionMode.load() == ExecutionMode::WORK_STEALING)
                     {
-                        std::unique_lock<std::mutex> workerLock(m_workerThreadMutex);
+                        ScopedLock workerLock(m_workerThreadMutex);
                         for (const auto& queue : m_localQueues)
                         {
                             if (queue && !queue->IsEmpty())
@@ -689,7 +681,7 @@ void JobSystem::WorkerThreadFunction(size_t threadIndex)
                                 break;
                             }
                         }
-                        workerLock.unlock();
+                        // workerLockは自動的に解除されます
                     }
                     return hasTask || m_shutdownRequested;
                 });
@@ -704,7 +696,7 @@ void JobSystem::WorkerThreadFunction(size_t threadIndex)
                 continue;
             }
             
-            lock.unlock();
+            // lockは自動的に解除されます
         }
         
         // タスクを実行
@@ -714,12 +706,12 @@ void JobSystem::WorkerThreadFunction(size_t threadIndex)
             task->Execute();
             
             // 統計情報を更新
-            std::unique_lock<std::mutex> statsLock(m_statsMutex);
+            ScopedLock statsLock(m_statsMutex);
             if (threadIndex < m_tasksProcessedPerThread.size())
             {
                 m_tasksProcessedPerThread[threadIndex]++;
             }
-            statsLock.unlock();
+            // statsLockは自動的に解除されます
             
             m_activeThreads--;
         }
@@ -841,7 +833,7 @@ void JobSystem::CreateAndStartWorkerThread()
     size_t threadIndex;
     
     {
-        std::unique_lock<std::mutex> statsLock(m_statsMutex);
+        ScopedLock statsLock(m_statsMutex);
         threadIndex = m_tasksProcessedPerThread.size();
         m_tasksProcessedPerThread.push_back(0);
     }
@@ -849,7 +841,7 @@ void JobSystem::CreateAndStartWorkerThread()
     // ワークスチーリングモードの場合はローカルキューを作成
     if (m_executionMode.load() == ExecutionMode::WORK_STEALING)
     {
-        std::unique_lock<std::mutex> workerLock(m_workerThreadMutex);
+        ScopedLock workerLock(m_workerThreadMutex);
         if (threadIndex >= m_localQueues.size())
         {
             m_localQueues.resize(threadIndex + 1);
@@ -866,7 +858,7 @@ void JobSystem::CreateAndStartWorkerThread()
     thread->SetName(name);
     
     // リストに追加
-    std::unique_lock<std::mutex> workerLock(m_workerThreadMutex);
+    ScopedLock workerLock(m_workerThreadMutex);
     m_workerThreads.push_back(std::move(thread));
 }
 

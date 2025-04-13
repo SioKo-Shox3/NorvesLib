@@ -40,9 +40,9 @@ Task::Task(TaskFunction function, TaskPriority priority)
 Task::~Task()
 {
     // 終了時に待機中のスレッドがある場合、通知する
-    std::unique_lock<std::mutex> lock(m_mutex);
+    ScopedLock lock(m_mutex);
     m_state = State::COMPLETED;
-    m_completionEvent.notify_all();
+    m_completionEvent.NotifyAll();
 }
 
 void Task::Execute()
@@ -76,7 +76,7 @@ void Task::Execute()
     Core::Container::VariableArray<TaskPtr> childTasksCopy;
     
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
+        ScopedLock lock(m_mutex);
         childTasksCopy = m_childTasks;
     }
     
@@ -102,8 +102,8 @@ void Task::Wait() const
 {
     if (m_state.load() == State::PENDING || m_state.load() == State::RUNNING)
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_completionEvent.wait(lock, [this] {
+        ScopedLock lock(m_mutex);
+        m_completionEvent.Wait(m_mutex, [this] {
             return m_state.load() == State::COMPLETED || m_state.load() == State::CANCELED;
         });
     }
@@ -111,12 +111,12 @@ void Task::Wait() const
 
 TaskPtr Task::OnComplete(TaskCompletionHandler handler)
 {
-    std::unique_lock<std::mutex> lock(m_mutex);
+    ScopedLock lock(m_mutex);
     
     // 既に完了している場合は直接ハンドラを実行
     if (m_state.load() == State::COMPLETED)
     {
-        lock.unlock();
+        // ロックを手動で解除する必要はありません。ScopedLockはスコープを抜けると自動的に解除されます
         handler(shared_from_this());
     }
     else
@@ -130,7 +130,7 @@ TaskPtr Task::OnComplete(TaskCompletionHandler handler)
 
 TaskPtr Task::Then(TaskPtr task)
 {
-    std::unique_lock<std::mutex> lock(m_mutex);
+    ScopedLock lock(m_mutex);
     
     // 子タスクを追加
     m_childTasks.push_back(task);
@@ -184,18 +184,19 @@ bool Task::IsCanceled() const
 
 void Task::NotifyCompletion()
 {
-    std::unique_lock<std::mutex> lock(m_mutex);
+    Core::Container::VariableArray<TaskCompletionHandler> handlers;
     
-    // 完了イベントの通知
-    m_completionEvent.notify_all();
+    {
+        ScopedLock lock(m_mutex);
+        
+        // 完了イベントの通知
+        m_completionEvent.NotifyAll();
+        
+        // 完了ハンドラの一時コピー
+        handlers = std::move(m_completionHandlers);
+    }
     
-    // 完了ハンドラの実行
-    auto handlers = std::move(m_completionHandlers);
-    
-    // ハンドラを実行前にロックを解放
-    lock.unlock();
-    
-    // 完了ハンドラの実行
+    // 完了ハンドラの実行（ロック解除後）
     for (const auto& handler : handlers)
     {
         handler(shared_from_this());

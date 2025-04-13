@@ -4,6 +4,8 @@
 #include <functional>
 #include <atomic>
 #include "Core/Public/Container/Containers.h"
+#include "ConditionVariable.h"
+#include "Mutex.h"
 
 namespace NorvesLib::Thread
 {
@@ -168,8 +170,8 @@ private:
     Core::Container::VariableArray<TaskPtr> m_childTasks;
     Core::Container::VariableArray<TaskCompletionHandler> m_completionHandlers;
     std::atomic<State> m_state;
-    mutable std::condition_variable m_completionEvent;
-    mutable std::mutex m_mutex;
+    mutable ConditionVariable m_completionEvent;
+    mutable Mutex m_mutex;
     TaskPriority m_priority;
     
     /**
