@@ -64,7 +64,8 @@ void Thread::Start(ThreadFunction function)
     }
     
     m_isRunning = true;
-    m_thread = std::thread([this, func = std::move(function)]() {
+    m_thread = std::thread([this, func = std::move(function)]() 
+    {
         func();
         m_isRunning = false;
     });

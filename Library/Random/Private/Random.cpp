@@ -2,7 +2,8 @@
 #include <chrono>
 #include <thread>
 
-namespace NorvesLib::Random {
+namespace NorvesLib::Random
+{
 
 // スレッド単位のグローバル乱数生成器
 thread_local Generator* g_threadLocalGenerator = nullptr;

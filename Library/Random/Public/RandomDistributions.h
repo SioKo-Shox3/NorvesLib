@@ -3,12 +3,14 @@
 #include "Random.h"
 #include <random>
 
-namespace NorvesLib::Random {
+namespace NorvesLib::Random
+{
 
 /**
  * @brief 正規分布（ガウス分布）による乱数生成
  */
-class NormalDistribution {
+class NormalDistribution
+{
 public:
     /**
      * @brief コンストラクタ
@@ -51,7 +53,8 @@ private:
 /**
  * @brief 指数分布による乱数生成
  */
-class ExponentialDistribution {
+class ExponentialDistribution
+{
 public:
     /**
      * @brief コンストラクタ
@@ -79,7 +82,8 @@ private:
 /**
  * @brief ポアソン分布による乱数生成
  */
-class PoissonDistribution {
+class PoissonDistribution
+{
 public:
     /**
      * @brief コンストラクタ

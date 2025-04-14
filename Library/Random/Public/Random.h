@@ -4,7 +4,8 @@
 #include <random>
 #include <limits>
 
-namespace NorvesLib::Random {
+namespace NorvesLib::Random
+{
 
 // 前方宣言
 class NormalDistribution;
@@ -14,7 +15,8 @@ class PoissonDistribution;
 /**
  * 基本的な乱数生成機能を提供するクラス
  */
-class Generator {
+class Generator
+{
 public:
     /**
      * デフォルトコンストラクタ - 現在時刻をシードとして初期化
