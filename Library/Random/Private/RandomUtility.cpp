@@ -1,7 +1,8 @@
 #include "RandomUtility.h"
 #include <cmath>
 
-namespace NorvesLib::Random {
+namespace NorvesLib::Random
+{
 
 Vector2 GetRandomVector2(float minX, float maxX, float minY, float maxY)
 {

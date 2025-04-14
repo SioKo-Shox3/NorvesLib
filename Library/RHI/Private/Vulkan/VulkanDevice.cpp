@@ -22,12 +22,14 @@ VkResult CreateDebugUtilsMessengerEXT(
     VkInstance instance,
     const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
     const VkAllocationCallbacks* pAllocator,
-    VkDebugUtilsMessengerEXT* pDebugMessenger) {
+    VkDebugUtilsMessengerEXT* pDebugMessenger) 
+{
     
     auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
         instance, "vkCreateDebugUtilsMessengerEXT");
     
-    if (func != nullptr) {
+    if (func != nullptr) 
+    {
         return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
     }
     return VK_ERROR_EXTENSION_NOT_PRESENT;
@@ -37,12 +39,14 @@ VkResult CreateDebugUtilsMessengerEXT(
 void DestroyDebugUtilsMessengerEXT(
     VkInstance instance,
     VkDebugUtilsMessengerEXT debugMessenger,
-    const VkAllocationCallbacks* pAllocator) {
+    const VkAllocationCallbacks* pAllocator) 
+{
     
     auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
         instance, "vkDestroyDebugUtilsMessengerEXT");
     
-    if (func != nullptr) {
+    if (func != nullptr) 
+    {
         func(instance, debugMessenger, pAllocator);
     }
 }
@@ -53,7 +57,8 @@ VulkanDevice::VulkanDevice(bool enableValidation)
 {
     CreateInstance();
     
-    if (m_validationEnabled) {
+    if (m_validationEnabled) 
+    {
         SetupDebugMessenger();
     }
     
@@ -67,22 +72,26 @@ VulkanDevice::VulkanDevice(bool enableValidation)
 VulkanDevice::~VulkanDevice()
 {
     // コマンドプールを破棄
-    if (m_commandPool != VK_NULL_HANDLE) {
+    if (m_commandPool != VK_NULL_HANDLE) 
+    {
         vkDestroyCommandPool(m_device, m_commandPool, nullptr);
     }
     
     // デバイスを破棄
-    if (m_device != VK_NULL_HANDLE) {
+    if (m_device != VK_NULL_HANDLE) 
+    {
         vkDestroyDevice(m_device, nullptr);
     }
     
     // デバッグメッセンジャーを破棄
-    if (m_debugMessenger != VK_NULL_HANDLE) {
+    if (m_debugMessenger != VK_NULL_HANDLE) 
+    {
         DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
     }
     
     // インスタンスを破棄
-    if (m_instance != VK_NULL_HANDLE) {
+    if (m_instance != VK_NULL_HANDLE) 
+    {
         vkDestroyInstance(m_instance, nullptr);
     }
 }
@@ -91,7 +100,8 @@ VulkanDevice::~VulkanDevice()
 void VulkanDevice::CreateInstance()
 {
     // バリデーションレイヤーのチェック
-    if (m_validationEnabled && !CheckValidationLayerSupport()) {
+    if (m_validationEnabled && !CheckValidationLayerSupport()) 
+    {
         throw std::runtime_error("バリデーションレイヤーが利用できません");
     }
     
@@ -116,7 +126,8 @@ void VulkanDevice::CreateInstance()
     
     // バリデーションレイヤー
     VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
-    if (m_validationEnabled) {
+    if (m_validationEnabled) 
+    {
         createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
         createInfo.ppEnabledLayerNames = validationLayers.data();
         
@@ -133,13 +144,15 @@ void VulkanDevice::CreateInstance()
         debugCreateInfo.pfnUserCallback = DebugCallback;
         createInfo.pNext = &debugCreateInfo;
     }
-    else {
+    else 
+    {
         createInfo.enabledLayerCount = 0;
         createInfo.pNext = nullptr;
     }
     
     // インスタンス作成
-    if (vkCreateInstance(&createInfo, nullptr, &m_instance) != VK_SUCCESS) {
+    if (vkCreateInstance(&createInfo, nullptr, &m_instance) != VK_SUCCESS) 
+    {
         throw std::runtime_error("Vulkanインスタンスの作成に失敗しました");
     }
 }
@@ -159,7 +172,8 @@ void VulkanDevice::SetupDebugMessenger()
         VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
     createInfo.pfnUserCallback = DebugCallback;
     
-    if (CreateDebugUtilsMessengerEXT(m_instance, &createInfo, nullptr, &m_debugMessenger) != VK_SUCCESS) {
+    if (CreateDebugUtilsMessengerEXT(m_instance, &createInfo, nullptr, &m_debugMessenger) != VK_SUCCESS) 
+    {
         throw std::runtime_error("デバッグメッセンジャーの設定に失敗しました");
     }
 }
@@ -171,7 +185,8 @@ void VulkanDevice::PickPhysicalDevice()
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
     
-    if (deviceCount == 0) {
+    if (deviceCount == 0) 
+    {
         throw std::runtime_error("Vulkanをサポートするデバイスが見つかりません");
     }
     
@@ -180,8 +195,10 @@ void VulkanDevice::PickPhysicalDevice()
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
     
     // 適切なデバイスを探す
-    for (const auto& device : devices) {
-        if (IsDeviceSuitable(device)) {
+    for (const auto& device : devices) 
+    {
+        if (IsDeviceSuitable(device)) 
+        {
             m_physicalDevice = device;
             
             // デバイス情報を取得
@@ -195,7 +212,8 @@ void VulkanDevice::PickPhysicalDevice()
         }
     }
     
-    if (m_physicalDevice == VK_NULL_HANDLE) {
+    if (m_physicalDevice == VK_NULL_HANDLE) 
+    {
         throw std::runtime_error("適切なGPUデバイスが見つかりません");
     }
 }
@@ -210,7 +228,8 @@ void VulkanDevice::CreateLogicalDevice()
     uniqueQueueFamilies.insert(m_computeQueueFamilyIndex);
     
     // 転送キューを追加
-    if (m_transferQueueFamilyIndex != UINT32_MAX) {
+    if (m_transferQueueFamilyIndex != UINT32_MAX) 
+    {
         uniqueQueueFamilies.insert(m_transferQueueFamilyIndex);
     }
     
@@ -218,7 +237,8 @@ void VulkanDevice::CreateLogicalDevice()
     float queuePriority = 1.0f;
     NorvesLib::Core::Container::VariableArray<VkDeviceQueueCreateInfo> queueCreateInfos;
     
-    for (uint32_t queueFamily : uniqueQueueFamilies) {
+    for (uint32_t queueFamily : uniqueQueueFamilies) 
+    {
         VkDeviceQueueCreateInfo queueCreateInfo{};
         queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
         queueCreateInfo.queueFamilyIndex = queueFamily;
@@ -245,15 +265,18 @@ void VulkanDevice::CreateLogicalDevice()
     createInfo.ppEnabledExtensionNames = extensions.data();
     
     // バリデーションレイヤー
-    if (m_validationEnabled) {
+    if (m_validationEnabled) 
+    {
         createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
         createInfo.ppEnabledLayerNames = validationLayers.data();
-    } else {
+    } else 
+    {
         createInfo.enabledLayerCount = 0;
     }
     
     // デバイス作成
-    if (vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_device) != VK_SUCCESS) {
+    if (vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_device) != VK_SUCCESS) 
+    {
         throw std::runtime_error("Vulkan論理デバイスの作成に失敗しました");
     }
     
@@ -262,9 +285,11 @@ void VulkanDevice::CreateLogicalDevice()
     vkGetDeviceQueue(m_device, m_presentQueueFamilyIndex, 0, &m_presentQueue);
     vkGetDeviceQueue(m_device, m_computeQueueFamilyIndex, 0, &m_computeQueue);
     
-    if (m_transferQueueFamilyIndex != UINT32_MAX) {
+    if (m_transferQueueFamilyIndex != UINT32_MAX) 
+    {
         vkGetDeviceQueue(m_device, m_transferQueueFamilyIndex, 0, &m_transferQueue);
-    } else {
+    } else 
+    {
         m_transferQueue = m_graphicsQueue;
     }
 }
@@ -277,7 +302,8 @@ void VulkanDevice::CreateCommandPool()
     poolInfo.queueFamilyIndex = m_graphicsQueueFamilyIndex;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     
-    if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS) {
+    if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS) 
+    {
         throw std::runtime_error("コマンドプールの作成に失敗しました");
     }
 }
@@ -304,7 +330,8 @@ void VulkanDevice::InitFormatMaps()
     m_formatMap[Format::D32_FLOAT] = VK_FORMAT_D32_SFLOAT;
     
     // VkFormat → RHI Format (逆変換マップも作成)
-    for (const auto& [rhiFormat, vkFormat] : m_formatMap) {
+    for (const auto& [rhiFormat, vkFormat] : m_formatMap) 
+    {
         m_reverseFormatMap[vkFormat] = rhiFormat;
     }
 }
@@ -320,17 +347,21 @@ bool VulkanDevice::CheckValidationLayerSupport()
     vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
     
     // 必要なレイヤーが全て存在するか確認
-    for (const char* layerName : validationLayers) {
+    for (const char* layerName : validationLayers) 
+    {
         bool layerFound = false;
         
-        for (const auto& layerProperties : availableLayers) {
-            if (strcmp(layerName, layerProperties.layerName) == 0) {
+        for (const auto& layerProperties : availableLayers) 
+        {
+            if (strcmp(layerName, layerProperties.layerName) == 0) 
+            {
                 layerFound = true;
                 break;
             }
         }
         
-        if (!layerFound) {
+        if (!layerFound) 
+        {
             return false;
         }
     }
@@ -363,11 +394,13 @@ bool VulkanDevice::IsDeviceSuitable(VkPhysicalDevice device)
     vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
     
     NorvesLib::Core::Container::Set<NorvesLib::Core::Container::String> requiredExtensions;
-    for (const auto& ext : deviceExtensions) {
+    for (const auto& ext : deviceExtensions) 
+    {
         requiredExtensions.insert(NorvesLib::Core::Container::String(ext));
     }
     
-    for (const auto& extension : availableExtensions) {
+    for (const auto& extension : availableExtensions) 
+    {
         requiredExtensions.erase(NorvesLib::Core::Container::String(extension.extensionName));
     }
     
@@ -400,7 +433,8 @@ NorvesLib::Core::Container::VariableArray<const char*> VulkanDevice::GetRequired
 #endif
     
     // バリデーション関連の拡張機能
-    if (m_validationEnabled) {
+    if (m_validationEnabled) 
+    {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
     
@@ -424,34 +458,41 @@ void VulkanDevice::FindQueueFamilies(VkPhysicalDevice device)
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
     
     // グラフィックスキューファミリーを探す
-    for (uint32_t i = 0; i < queueFamilyCount; i++) {
+    for (uint32_t i = 0; i < queueFamilyCount; i++) 
+    {
         const auto& queueFamily = queueFamilies[i];
         
         // グラフィックスキュー
-        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) 
+        {
             m_graphicsQueueFamilyIndex = i;
             m_presentQueueFamilyIndex = i;  // 通常はグラフィックスキューでプレゼントも可能
         }
         
         // コンピュートキュー（可能ならグラフィックスとは別のキューを使用）
-        if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) {
+        if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) 
+        {
             if (m_computeQueueFamilyIndex == UINT32_MAX ||
-                !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) 
+            {
                 m_computeQueueFamilyIndex = i;
             }
         }
         
         // 転送専用キュー（可能ならグラフィックスとは別のキューを使用）
-        if (queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT) {
+        if (queueFamily.queueFlags & VK_QUEUE_TRANSFER_BIT) 
+        {
             if (m_transferQueueFamilyIndex == UINT32_MAX ||
-                !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                !(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)) 
+            {
                 m_transferQueueFamilyIndex = i;
             }
         }
     }
     
     // コンピュートキューがない場合はグラフィックスキューで代用
-    if (m_computeQueueFamilyIndex == UINT32_MAX) {
+    if (m_computeQueueFamilyIndex == UINT32_MAX) 
+    {
         m_computeQueueFamilyIndex = m_graphicsQueueFamilyIndex;
     }
 }
@@ -459,9 +500,11 @@ void VulkanDevice::FindQueueFamilies(VkPhysicalDevice device)
 // メモリタイプのインデックス検索
 uint32_t VulkanDevice::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
 {
-    for (uint32_t i = 0; i < m_memoryProperties.memoryTypeCount; i++) {
+    for (uint32_t i = 0; i < m_memoryProperties.memoryTypeCount; i++) 
+    {
         if ((typeFilter & (1 << i)) && 
-            (m_memoryProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            (m_memoryProperties.memoryTypes[i].propertyFlags & properties) == properties) 
+        {
             return i;
         }
     }
@@ -475,13 +518,16 @@ VkFormat VulkanDevice::FindSupportedFormat(
     VkImageTiling tiling, 
     VkFormatFeatureFlags features) const
 {
-    for (VkFormat format : candidates) {
+    for (VkFormat format : candidates) 
+    {
         VkFormatProperties props;
         vkGetPhysicalDeviceFormatProperties(m_physicalDevice, format, &props);
         
-        if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
+        if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) 
+        {
             return format;
-        } else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) {
+        } else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) 
+        {
             return format;
         }
     }
@@ -493,7 +539,8 @@ VkFormat VulkanDevice::FindSupportedFormat(
 VkFormat VulkanDevice::ToVkFormat(Format format) const
 {
     auto it = m_formatMap.find(format);
-    if (it != m_formatMap.end()) {
+    if (it != m_formatMap.end()) 
+    {
         return it->second;
     }
     return VK_FORMAT_UNDEFINED;
@@ -503,7 +550,8 @@ VkFormat VulkanDevice::ToVkFormat(Format format) const
 Format VulkanDevice::FromVkFormat(VkFormat format) const
 {
     auto it = m_reverseFormatMap.find(format);
-    if (it != m_reverseFormatMap.end()) {
+    if (it != m_reverseFormatMap.end()) 
+    {
         return it->second;
     }
     return Format::UNKNOWN;
@@ -516,7 +564,8 @@ VkBool32 VulkanDevice::DebugCallback(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData)
 {
-    if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+    if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) 
+    {
         std::cerr << "Vulkanバリデーション: " << pCallbackData->pMessage << std::endl;
     }
     

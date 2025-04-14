@@ -1,11 +1,12 @@
 #pragma once
 
 #include "Random.h"
-#include "../../../Math/Public/Vector2.h"
-#include "../../../Math/Public/Vector3.h"
+#include "Math/Public/Vector2.h"
+#include "Math/Public/Vector3.h"
 #include <cmath>
 
-namespace NorvesLib::Random {
+namespace NorvesLib::Random
+{
 
 // Mathモジュールの型を使用するためのエイリアス
 using Vector2 = NorvesLib::Math::Vector2;
@@ -67,7 +68,8 @@ float GetRandomAngle(float min = 0.0f, float max = 2.0f * 3.14159265358979323846
  * @return 配列からランダムに選択した要素
  */
 template<typename T>
-T& GetRandomElement(T* array, size_t size) {
+T& GetRandomElement(T* array, size_t size) 
+{
     int32_t index = GetRandomInt(0, static_cast<int32_t>(size - 1));
     return array[index];
 }
@@ -78,7 +80,8 @@ T& GetRandomElement(T* array, size_t size) {
  * @param probability 成功確率 (0.0～1.0)
  * @return 成功したかどうか
  */
-inline bool RandomChance(float probability = 0.5f) {
+inline bool RandomChance(float probability = 0.5f) 
+{
     return GetRandomBool(probability);
 }
 

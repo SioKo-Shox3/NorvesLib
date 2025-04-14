@@ -37,7 +37,10 @@ bool Fiber::InitializeCurrentThread()
     }
     
     // メインファイバーを作成（関数はnullptr、実行されないダミー）
-    s_mainFiber = new Fiber([](){}, 0);
+    s_mainFiber = new Fiber([]()
+    {
+        // ダミー関数
+    }, 0);
     s_mainFiber->m_fiberHandle = mainFiberHandle;
     s_mainFiber->m_isMainFiber = true;
     s_mainFiber->m_state = State::RUNNING;
@@ -46,9 +49,13 @@ bool Fiber::InitializeCurrentThread()
     return true;
 #else
     // POSIX実装
-    try {
+    try 
+    {
         // メインファイバーを作成（関数はnullptr、実行されないダミー）
-        s_mainFiber = new Fiber([](){}, 0);
+        s_mainFiber = new Fiber([]()
+        {
+            // ダミー関数
+        }, 0);
         s_mainFiber->m_isMainFiber = true;
         s_mainFiber->m_state = State::RUNNING;
         s_currentFiber = s_mainFiber;
@@ -64,7 +71,8 @@ bool Fiber::InitializeCurrentThread()
         
         return true;
     }
-    catch (...) {
+    catch (...) 
+    {
         if (s_mainFiber)
         {
             delete s_mainFiber;
@@ -128,10 +136,12 @@ std::unique_ptr<Fiber> Fiber::Create(FiberFunction function, size_t stackSize)
         return nullptr;
     }
     
-    try {
+    try 
+    {
         return std::make_unique<Fiber>(std::move(function), stackSize);
     }
-    catch (const std::exception&) {
+    catch (const std::exception&) 
+    {
         return nullptr;
     }
 }
@@ -349,13 +359,15 @@ void Fiber::FiberEntryPoint(void* arg)
     }
     
     // ファイバー関数を実行
-    try {
+    try 
+    {
         if (fiber->m_function)
         {
             fiber->m_function();
         }
     }
-    catch (...) {
+    catch (...) 
+    {
         // 例外は無視
     }
     

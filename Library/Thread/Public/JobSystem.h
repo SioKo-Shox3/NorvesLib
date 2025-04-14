@@ -191,7 +191,7 @@ private:
     std::unique_ptr<Thread> m_monitorThread;
 
     // タスクキュー（優先度付きキュー）- シンプルモード用
-    using PriorityTaskQueue = std::priority_queue<TaskPtr, std::vector<TaskPtr>, TaskPriorityCompare>;
+    using PriorityTaskQueue = std::priority_queue<TaskPtr, Core::Container::VariableArray<TaskPtr>, TaskPriorityCompare>;
     PriorityTaskQueue m_taskQueue;
 
     // ワーカースレッド用のローカルキュー - ワークスチーリングモード用

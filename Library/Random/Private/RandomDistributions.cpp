@@ -1,6 +1,7 @@
 #include "RandomDistributions.h"
 
-namespace NorvesLib::Random {
+namespace NorvesLib::Random
+{
 
 // NormalDistribution実装
 NormalDistribution::NormalDistribution(float mean, float standardDeviation)

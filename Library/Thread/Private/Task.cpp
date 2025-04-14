@@ -12,7 +12,8 @@ TaskPtr Task::Create(TaskFunction function, TaskPriority priority)
 TaskPtr Task::CreateBatch(const Core::Container::VariableArray<TaskPtr>& tasks, TaskPriority priority)
 {
     // バッチタスクを作成（すべての依存タスクの完了を待つ）
-    auto batchTask = std::make_shared<Task>([tasks]() {
+    auto batchTask = std::make_shared<Task>([tasks]() 
+    {
         // すべての依存タスクを待機
         for (const auto& task : tasks)
         {
@@ -103,7 +104,8 @@ void Task::Wait() const
     if (m_state.load() == State::PENDING || m_state.load() == State::RUNNING)
     {
         ScopedLock lock(m_mutex);
-        m_completionEvent.Wait(m_mutex, [this] {
+        m_completionEvent.Wait(m_mutex, [this] 
+        {
             return m_state.load() == State::COMPLETED || m_state.load() == State::CANCELED;
         });
     }

@@ -95,7 +95,10 @@ void JobSystem::Initialize(uint32_t threadCount, ExecutionMode mode)
     if (m_sizingMode == SizingMode::DYNAMIC)
     {
         m_monitorActive = true;
-        m_monitorThread = std::make_unique<Thread>([this] { MonitorThreadFunction(); });
+        m_monitorThread = std::make_unique<Thread>([this] 
+        { 
+            MonitorThreadFunction(); 
+        });
         m_monitorThread->SetName("JobSystem Monitor");
     }
 }
@@ -446,7 +449,10 @@ void JobSystem::EnableDynamicSizing(bool enabled, uint32_t minThreads, uint32_t 
     if (oldMode == SizingMode::FIXED && newMode == SizingMode::DYNAMIC)
     {
         m_monitorActive = true;
-        m_monitorThread = std::make_unique<Thread>([this] { MonitorThreadFunction(); });
+        m_monitorThread = std::make_unique<Thread>([this] 
+        { 
+            MonitorThreadFunction(); 
+        });
         m_monitorThread->SetName("JobSystem Monitor");
     }
     // FIXEDに切り替える場合は、モニタースレッドを停止
@@ -668,7 +674,8 @@ void JobSystem::WorkerThreadFunction(size_t threadIndex)
             
             if (shouldWait)
             {
-                m_conditionVar.Wait(m_queueMutex, [this] {
+                m_conditionVar.Wait(m_queueMutex, [this] 
+                {
                     bool hasTask = !m_taskQueue.empty();
                     if (m_executionMode.load() == ExecutionMode::WORK_STEALING)
                     {
@@ -850,7 +857,10 @@ void JobSystem::CreateAndStartWorkerThread()
     }
     
     // ワーカースレッドを作成
-    auto thread = std::make_unique<Thread>([this, threadIndex] { WorkerThreadFunction(threadIndex); });
+    auto thread = std::make_unique<Thread>([this, threadIndex] 
+    { 
+        WorkerThreadFunction(threadIndex); 
+    });
     
     // スレッドに名前を設定
     Core::Container::String name = "JobSystem Worker ";
