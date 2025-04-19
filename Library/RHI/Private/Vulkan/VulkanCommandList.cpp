@@ -223,7 +223,7 @@ void VulkanCommandList::BeginRenderPass(RenderPassPtr renderPass, FramebufferPtr
     renderPassInfo.renderArea.extent = {vkFramebuffer->GetWidth(), vkFramebuffer->GetHeight()};
     
     // クリア値の設定
-    std::vector<VkClearValue> clearValues;
+    NorvesLib::Core::Container::VariableArray<VkClearValue> clearValues;
     for (uint32_t i = 0; i < vkFramebuffer->GetColorAttachmentCount(); i++) {
         VkClearValue clearValue{};
         clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // デフォルトのクリアカラー
@@ -1200,7 +1200,7 @@ VkPipelineStageFlags VulkanCommandList::ToVkPipelineStage(ShaderStage stage) con
 void VulkanCommandList::CreateDescriptorPool()
 {
     // 各タイプのディスクリプタの数を定義
-    std::array<VkDescriptorPoolSize, 4> poolSizes{};
+    Core::Container::FixedArray<VkDescriptorPoolSize, 4> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_DESCRIPTORS_PER_TYPE;
     
@@ -1325,9 +1325,9 @@ void VulkanCommandList::UpdateDescriptorSet(uint32_t setIndex)
         return;
     }
     
-    std::vector<VkWriteDescriptorSet> descriptorWrites;
-    std::vector<VkDescriptorBufferInfo> bufferInfos;
-    std::vector<VkDescriptorImageInfo> imageInfos;
+    NorvesLib::Core::Container::VariableArray<VkWriteDescriptorSet> descriptorWrites;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorBufferInfo> bufferInfos;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorImageInfo> imageInfos;
     
     // リソースごとに適切な書き込み情報を作成
     for (const auto& [key, resourceInfo] : setInfo.resources)
@@ -1883,9 +1883,9 @@ VkDescriptorSet VulkanCommandList::GetOrCreateDescriptorSet(const ShaderBindingK
 // ディスクリプタセットの更新
 void VulkanCommandList::UpdateDescriptorSet(const ShaderBindingKey& key, VkDescriptorSet descriptorSet, const std::unordered_map<uint32_t, BindingResourceInfo>& resources)
 {
-    std::vector<VkWriteDescriptorSet> descriptorWrites;
-    std::vector<VkDescriptorBufferInfo> bufferInfos;
-    std::vector<VkDescriptorImageInfo> imageInfos;
+    NorvesLib::Core::Container::VariableArray<VkWriteDescriptorSet> descriptorWrites;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorBufferInfo> bufferInfos;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorImageInfo> imageInfos;
     
     // 各リソースについて記述子の書き込みを準備
     for (const auto& [binding, resourceInfo] : resources) {
@@ -1965,9 +1965,9 @@ void VulkanCommandList::UpdateDescriptorSet(const ShaderBindingKey& key, VkDescr
         return;
     }
 
-    std::vector<VkWriteDescriptorSet> descriptorWrites;
-    std::vector<VkDescriptorBufferInfo> bufferInfos;
-    std::vector<VkDescriptorImageInfo> imageInfos;
+    NorvesLib::Core::Container::VariableArray<VkWriteDescriptorSet> descriptorWrites;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorBufferInfo> bufferInfos;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorImageInfo> imageInfos;
 
     // バインドされたリソースを使ってディスクリプタの書き込み情報を準備する
     for (const auto& [bindingIndex, resourceInfo] : resourcesIt->second) {
@@ -2061,8 +2061,8 @@ void VulkanCommandList::BindDescriptorSets(VulkanPipeline* pipeline)
     }
 
     // バインドするディスクリプタセットを準備
-    std::vector<VkDescriptorSet> descriptorSets;
-    std::vector<uint32_t> setIndices;
+    NorvesLib::Core::Container::VariableArray<VkDescriptorSet> descriptorSets;
+    NorvesLib::Core::Container::VariableArray<uint32_t> setIndices;
 
     for (const auto& entry : sortedDescriptorSets) {
         setIndices.push_back(entry.first);
@@ -2070,7 +2070,7 @@ void VulkanCommandList::BindDescriptorSets(VulkanPipeline* pipeline)
     }
 
     // 動的オフセット情報を収集（バッファ用）
-    std::vector<uint32_t> dynamicOffsets;
+    NorvesLib::Core::Container::VariableArray<uint32_t> dynamicOffsets;
     for (const auto& setIndex : setIndices) {
         for (const auto& entry : m_boundResources) {
             if (entry.first.setIndex == setIndex && entry.second.type == EBindingResourceType::Buffer) {
@@ -2182,7 +2182,7 @@ VkDescriptorPool VulkanCommandList::GetOrCreateDescriptorPool()
 VkDescriptorPool VulkanCommandList::CreateDescriptorPool()
 {
     // 各タイプのディスクリプタの数を定義
-    std::array<VkDescriptorPoolSize, 6> poolSizes{};
+    Core::Container::FixedArray<VkDescriptorPoolSize, 6> poolSizes{};
     
     // ユニフォームバッファ用
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -2719,7 +2719,7 @@ VkPipeline VulkanCommandList::GetOrCreateGraphicsPipeline(const PipelineStateCac
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     
     // シェーダーステージ情報
-    std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+    NorvesLib::Core::Container::VariableArray<VkPipelineShaderStageCreateInfo> shaderStages;
     for (const auto& module : key.shaderModules) {
         VkPipelineShaderStageCreateInfo stageInfo{};
         stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -2814,7 +2814,7 @@ VkPipeline VulkanCommandList::GetOrCreateGraphicsPipeline(const PipelineStateCac
     pipelineInfo.pColorBlendState = &colorBlending;
     
     // 動的状態
-    std::vector<VkDynamicState> dynamicStates = {
+    NorvesLib::Core::Container::VariableArray<VkDynamicState> dynamicStates = {
         VK_DYNAMIC_STATE_VIEWPORT,
         VK_DYNAMIC_STATE_SCISSOR
     };
