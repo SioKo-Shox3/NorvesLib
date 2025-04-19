@@ -19,17 +19,20 @@ concept HasX = requires(T t) {
 };
 
 template<typename T>
-concept HasXY = HasX<T> && requires(T t) { 
+concept HasXY = HasX<T> && requires(T t) 
+{ 
     { t.y } -> FloatingPointType; 
 };
 
 template<typename T>
-concept HasXYZ = HasXY<T> && requires(T t) { 
+concept HasXYZ = HasXY<T> && requires(T t) 
+{ 
     { t.z } -> FloatingPointType; 
 };
 
 template<typename T>
-concept HasXYZW = HasXYZ<T> && requires(T t) { 
+concept HasXYZW = HasXYZ<T> && requires(T t) 
+{ 
     { t.w } -> FloatingPointType; 
 };
 
