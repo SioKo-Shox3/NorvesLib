@@ -202,6 +202,32 @@ enum class FilterMode
     Anisotropic
 };
 
+/**
+ * @brief リソースの状態を示す列挙型
+ * GPUメモリ管理とバリアに使用
+ */
+enum class ResourceState
+{
+    Undefined,
+    Common,
+    VertexBuffer,
+    ConstantBuffer,
+    IndexBuffer,
+    RenderTarget,
+    UnorderedAccess,
+    DepthWrite,
+    DepthRead,
+    ShaderResource,
+    StreamOut,
+    IndirectArgument,
+    CopyDest,
+    CopySource,
+    ResolveDest,
+    ResolveSource,
+    Present,
+    GenericRead
+};
+
 // 前方宣言
 class IDevice;
 class ICommandList;

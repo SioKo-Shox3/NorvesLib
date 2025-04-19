@@ -110,7 +110,7 @@ VulkanDescriptorPool::VulkanDescriptorPool(std::shared_ptr<VulkanDevice> device,
 {
     // よく使われる各種ディスクリプタタイプの数を設定
     // 実際のアプリケーションでは使用頻度に応じて調整する必要があります
-    std::array<VkDescriptorPoolSize, 6> poolSizes = {{
+    Core::Container::FixedArray<VkDescriptorPoolSize, 6> poolSizes = {{
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, maxSets * 4 },         // 定数バッファ
         { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, maxSets * 8 },          // テクスチャ
         { VK_DESCRIPTOR_TYPE_SAMPLER, maxSets * 4 },                // サンプラー
@@ -195,13 +195,13 @@ VulkanDescriptorSet::~VulkanDescriptorSet()
     }
 }
 
-void VulkanDescriptorSet::SetConstantBuffer(uint32_t binding, BufferPtr buffer, uint64_t offset, uint64_t range)
+void VulkanDescriptorSet::BindConstantBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size)
 {
     BindingInfo info{};
     info.type = BindingInfo::ResourceType::Buffer;
     info.bufferInfo.buffer = buffer;
     info.bufferInfo.offset = offset;
-    info.bufferInfo.range = range;
+    info.bufferInfo.range = size;
     
     m_bindings[binding] = info;
     m_needsUpdate = true;
@@ -219,19 +219,19 @@ void VulkanDescriptorSet::SetShaderResourceBuffer(uint32_t binding, BufferPtr bu
     m_needsUpdate = true;
 }
 
-void VulkanDescriptorSet::SetUnorderedAccessBuffer(uint32_t binding, BufferPtr buffer, uint64_t offset, uint64_t range)
+void VulkanDescriptorSet::BindStorageBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size)
 {
     BindingInfo info{};
     info.type = BindingInfo::ResourceType::Buffer;
     info.bufferInfo.buffer = buffer;
     info.bufferInfo.offset = offset;
-    info.bufferInfo.range = range;
+    info.bufferInfo.range = size;
     
     m_bindings[binding] = info;
     m_needsUpdate = true;
 }
 
-void VulkanDescriptorSet::SetTexture(uint32_t binding, TexturePtr texture)
+void VulkanDescriptorSet::BindTexture(uint32_t binding, TexturePtr texture)
 {
     BindingInfo info{};
     info.type = BindingInfo::ResourceType::Texture;
@@ -241,7 +241,7 @@ void VulkanDescriptorSet::SetTexture(uint32_t binding, TexturePtr texture)
     m_needsUpdate = true;
 }
 
-void VulkanDescriptorSet::SetStorageTexture(uint32_t binding, TexturePtr texture)
+void VulkanDescriptorSet::BindStorageTexture(uint32_t binding, TexturePtr texture)
 {
     BindingInfo info{};
     info.type = BindingInfo::ResourceType::Texture;
@@ -251,7 +251,7 @@ void VulkanDescriptorSet::SetStorageTexture(uint32_t binding, TexturePtr texture
     m_needsUpdate = true;
 }
 
-void VulkanDescriptorSet::SetSampler(uint32_t binding, SamplerPtr sampler)
+void VulkanDescriptorSet::BindSampler(uint32_t binding, SamplerPtr sampler)
 {
     BindingInfo info{};
     info.type = BindingInfo::ResourceType::Sampler;

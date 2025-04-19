@@ -247,6 +247,13 @@ public:
     virtual PipelinePtr CreateComputePipeline(const ComputePipelineDesc& desc) = 0;
 
     /**
+     * @brief ディスクリプタセットを作成
+     * @param desc ディスクリプタセット記述子
+     * @return 作成されたディスクリプタセットオブジェクト
+     */
+    virtual DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc& desc) = 0;
+
+    /**
      * @brief コマンドキューを待機
      */
     virtual void WaitIdle() = 0;

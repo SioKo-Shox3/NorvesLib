@@ -230,6 +230,30 @@ public:
         uint32_t width, uint32_t height, 
         uint32_t srcMipLevel = 0, uint32_t srcArrayIndex = 0,
         uint32_t dstMipLevel = 0, uint32_t dstArrayIndex = 0) = 0;
+        
+    /**
+     * @brief バッファのリソースバリア（状態遷移）
+     * @param buffer バッファ
+     * @param beforeState 遷移前の状態
+     * @param afterState 遷移後の状態
+     * @param offset バッファ内のオフセット
+     * @param size 対象のサイズ
+     */
+    virtual void BufferBarrier(BufferPtr buffer, ResourceState beforeState, ResourceState afterState, 
+                              uint64_t offset = 0, uint64_t size = 0) = 0;
+                              
+    /**
+     * @brief テクスチャのリソースバリア（状態遷移）
+     * @param texture テクスチャ
+     * @param beforeState 遷移前の状態
+     * @param afterState 遷移後の状態
+     * @param mipLevel 対象のミップレベル
+     * @param arrayIndex 対象の配列インデックス
+     * @param mipCount 対象のミップレベル数（0で全て）
+     * @param arrayCount 対象の配列数（0で全て）
+     */
+    virtual void TextureBarrier(TexturePtr texture, ResourceState beforeState, ResourceState afterState,
+                               uint32_t mipLevel = 0, uint32_t arrayIndex = 0, uint32_t mipCount = 0, uint32_t arrayCount = 0) = 0;
 };
 
 } // namespace NorvesLib::RHI

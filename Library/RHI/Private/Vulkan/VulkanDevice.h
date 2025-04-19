@@ -16,8 +16,12 @@ class VulkanRenderPass;
 class VulkanFramebuffer;
 class VulkanShader;
 class VulkanPipeline;
+class VulkanGraphicsPipeline;
+class VulkanComputePipeline;
 class VulkanSwapChain;
 class VulkanDescriptorSet;
+class VulkanDescriptorSetLayout;
+class VulkanDescriptorPool;
 
 /**
  * @brief Vulkanデバイスの実装クラス
@@ -47,6 +51,7 @@ public:
     FramebufferPtr CreateFramebuffer(const FramebufferDesc& desc) override;
     PipelinePtr CreateGraphicsPipeline(const GraphicsPipelineDesc& desc) override;
     PipelinePtr CreateComputePipeline(const ComputePipelineDesc& desc) override;
+    DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc& desc) override;
     void WaitIdle() override;
     API GetAPI() const override { return API::Vulkan; }
 
