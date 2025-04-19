@@ -119,7 +119,7 @@ struct GraphicsPipelineDesc
     uint8_t stencilWriteMask = 0xFF;
     
     // ブレンドステート
-    std::array<RenderTargetBlendDesc, 8> renderTargetBlendDesc;
+    Core::Container::FixedArray<RenderTargetBlendDesc, 8> renderTargetBlendDesc;
     bool alphaToCoverageEnable = false;
     bool independentBlendEnable = false;
 
