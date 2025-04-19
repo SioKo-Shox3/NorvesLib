@@ -46,12 +46,19 @@ public:
      * @param index バックバッファのインデックス
      * @return テクスチャへのポインタ
      */
-    TexturePtr GetBackBufferTexture(uint32_t index) override;
+    TexturePtr GetBackBuffer(uint32_t index) const override;
+    
+    /**
+     * @brief 現在のバックバッファテクスチャを取得
+     * @return 現在のバックバッファテクスチャ
+     */
+    TexturePtr GetCurrentBackBuffer() const override;
     
     /**
      * @brief スワップチェーンを画面に表示
+     * @param vsync 垂直同期を行うかどうか
      */
-    void Present() override;
+    void Present(bool vsync = true) override;
     
     /**
      * @brief スワップチェーンをリサイズ

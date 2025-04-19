@@ -106,12 +106,11 @@ public:
     ~VulkanDescriptorSet() override;
 
     // IDescriptorSetインターフェース実装
-    void SetConstantBuffer(uint32_t binding, BufferPtr buffer, uint64_t offset = 0, uint64_t range = 0) override;
-    void SetShaderResourceBuffer(uint32_t binding, BufferPtr buffer, uint64_t offset = 0, uint64_t range = 0) override;
-    void SetUnorderedAccessBuffer(uint32_t binding, BufferPtr buffer, uint64_t offset = 0, uint64_t range = 0) override;
-    void SetTexture(uint32_t binding, TexturePtr texture) override;
-    void SetStorageTexture(uint32_t binding, TexturePtr texture) override;
-    void SetSampler(uint32_t binding, SamplerPtr sampler) override;
+    void BindConstantBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size) override;
+    void BindTexture(uint32_t binding, TexturePtr texture) override;
+    void BindSampler(uint32_t binding, SamplerPtr sampler) override;
+    void BindStorageBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size) override;
+    void BindStorageTexture(uint32_t binding, TexturePtr texture) override;
     void Update() override;
 
     // Vulkan固有のメソッド

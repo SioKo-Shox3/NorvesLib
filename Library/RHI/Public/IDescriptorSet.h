@@ -50,8 +50,10 @@ public:
      * @brief 定数バッファをバインドする
      * @param binding バインディングポイント
      * @param buffer バインドするバッファ
+     * @param offset バインドするバッファのオフセット
+     * @param size バインドするバッファのサイズ
      */
-    virtual void BindConstantBuffer(uint32_t binding, BufferPtr buffer) = 0;
+    virtual void BindConstantBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size) = 0;
 
     /**
      * @brief テクスチャをバインドする
@@ -71,8 +73,10 @@ public:
      * @brief ストレージバッファ（RWBuffer）をバインドする
      * @param binding バインディングポイント
      * @param buffer バインドするバッファ
+     * @param offset バインドするバッファのオフセット
+     * @param size バインドするバッファのサイズ
      */
-    virtual void BindStorageBuffer(uint32_t binding, BufferPtr buffer) = 0;
+    virtual void BindStorageBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size) = 0;
 
     /**
      * @brief ストレージテクスチャ（RWTexture）をバインドする

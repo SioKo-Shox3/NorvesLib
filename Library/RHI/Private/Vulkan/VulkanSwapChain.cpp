@@ -56,7 +56,7 @@ uint32_t VulkanSwapChain::GetCurrentBackBufferIndex() const
 }
 
 // 特定インデックスのバックバッファテクスチャを取得
-TexturePtr VulkanSwapChain::GetBackBufferTexture(uint32_t index)
+TexturePtr VulkanSwapChain::GetBackBuffer(uint32_t index) const
 {
     if (index < m_backBufferTextures.size()) {
         return m_backBufferTextures[index];
@@ -64,8 +64,17 @@ TexturePtr VulkanSwapChain::GetBackBufferTexture(uint32_t index)
     return nullptr;
 }
 
+// 現在のバックバッファテクスチャを取得
+TexturePtr VulkanSwapChain::GetCurrentBackBuffer() const
+{
+    if (m_currentImageIndex < m_backBufferTextures.size()) {
+        return m_backBufferTextures[m_currentImageIndex];
+    }
+    return nullptr;
+}
+
 // スワップチェーンを画面に表示
-void VulkanSwapChain::Present()
+void VulkanSwapChain::Present(bool vsync)
 {
     // 現在のフレームのフェンスが完了するまで待機
     vkWaitForFences(m_device->GetVkDevice(), 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
@@ -80,19 +89,22 @@ void VulkanSwapChain::Present()
         &m_currentImageIndex);
     
     // スワップチェーンの再作成が必要な場合
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         Resize(m_width, m_height);
         return;
     }
-    else if (result != VK_SUCCESS) {
-        throw std::runtime_error("スワップチェーンの画像の取得に失敗しました");
+    else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        throw std::runtime_error("次のスワップチェーン画像の取得に失敗しました");
     }
-    
-    // レンダリングが完了したらプレゼント
+
+    // レンダリングが完了したシグナルを待つ
+    vkResetFences(m_device->GetVkDevice(), 1, &m_inFlightFences[m_currentFrame]);
+
+    // プレゼント情報の設定
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     
-    // 待機するセマフォ
+    // レンダリング完了を待つセマフォ
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
     

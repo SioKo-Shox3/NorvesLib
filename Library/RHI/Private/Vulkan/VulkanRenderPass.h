@@ -33,6 +33,10 @@ public:
 
     // IRenderPassインターフェース実装
     const RenderPassDesc& GetDesc() const override { return m_desc; }
+    uint32_t GetColorAttachmentCount() const override;
+    bool HasDepthStencilAttachment() const override;
+    Format GetColorAttachmentFormat(uint32_t index) const override;
+    Format GetDepthStencilFormat() const override;
 
     // Vulkan固有のメソッド
     VkRenderPass GetVkRenderPass() const { return m_renderPass; }
