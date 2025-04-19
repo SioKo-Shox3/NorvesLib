@@ -29,4 +29,7 @@ struct NORVES_ALIGN(16) Matrix4x4;
 // 四元数（回転表現用）
 struct NORVES_ALIGN(16) Quaternion;
 
+// トランスフォーム（位置、回転、拡縮）
+struct NORVES_ALIGN(16) Transform;
+
 } // namespace NorvesLib::Math
