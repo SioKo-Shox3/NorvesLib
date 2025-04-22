@@ -123,8 +123,8 @@ void TestIndependence()
     std::cout << "Running independence test..." << std::endl;
     
     ThreadLocalStorage<int> tls;
-    std::atomic<bool> threadsReady(false);
-    std::atomic<bool> canProceed(false);
+    Atomic<bool> threadsReady(false);
+    Atomic<bool> canProceed(false);
     constexpr int NUM_THREADS = 4;
     
     auto threadFunction = [&tls, &threadsReady, &canProceed](int threadId) 

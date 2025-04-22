@@ -169,7 +169,7 @@ private:
     TaskFunction m_function;
     Core::Container::VariableArray<TaskPtr> m_childTasks;
     Core::Container::VariableArray<TaskCompletionHandler> m_completionHandlers;
-    std::atomic<State> m_state;
+    Atomic<State> m_state;
     mutable ConditionVariable m_completionEvent;
     mutable Mutex m_mutex;
     TaskPriority m_priority;
