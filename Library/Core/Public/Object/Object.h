@@ -4,6 +4,7 @@
 #include "IClass.h"
 #include "TClass.h"
 #include "Container/Containers.h"
+#include "ObjectUtility.h"
 
 namespace NorvesLib::Core
 {
@@ -18,6 +19,12 @@ namespace NorvesLib::Core
          * @brief デフォルトコンストラクタ
          */
         Object();
+        
+        /**
+         * @brief 初期化子を使用したコンストラクタ
+         * @param initializer フィールド初期化子
+         */
+        explicit Object(const FieldInitializer* initializer);
         
         /**
          * @brief デストラクタ
@@ -37,9 +44,23 @@ namespace NorvesLib::Core
         virtual IUnknown* Clone() const override;
         
         /**
+         * @brief フィールド初期化子を使用してオブジェクトを複製します
+         * @param initializer フィールド初期化子
+         * @return 新しいオブジェクトへのポインタ
+         */
+        virtual IUnknown* Clone(const FieldInitializer* initializer) const override;
+        
+        /**
          * @brief オブジェクトを初期化します
          */
         virtual void Initialize() override;
+        
+        /**
+         * @brief フィールド初期化子を使用してオブジェクトを初期化します
+         * @param initializer フィールド初期化子
+         * @return 初期化に成功した場合はtrue
+         */
+        virtual bool Initialize(const FieldInitializer* initializer) override;
         
         /**
          * @brief オブジェクトの破棄前処理を行います
@@ -67,7 +88,7 @@ namespace NorvesLib::Core
         template<typename T>
         bool IsA() const
         {
-            return IsA(&TClass<T>::GetInstance());
+            return ObjectUtility::IsA<T>(this);
         }
         
         /**
@@ -78,7 +99,7 @@ namespace NorvesLib::Core
         template<typename T>
         T* Cast()
         {
-            return IsA<T>() ? static_cast<T*>(this) : nullptr;
+            return ObjectUtility::CastTo<T>(this);
         }
         
         /**
@@ -89,8 +110,14 @@ namespace NorvesLib::Core
         template<typename T>
         const T* Cast() const
         {
-            return IsA<T>() ? static_cast<const T*>(this) : nullptr;
+            return ObjectUtility::CastTo<T>(this);
         }
+
+        /**
+         * @brief このクラスの静的クラス情報を取得します
+         * @return クラス情報
+         */
+        static const IClass* StaticClass();
     };
 
 } // namespace NorvesLib::Core

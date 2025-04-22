@@ -4,6 +4,7 @@
 #include "IUnknown.h"
 #include "TValue.h"
 #include "TClass.h"
+#include "ObjectUtility.h"
 #include "Container/Containers.h" // Core::Containerのすべてのコンテナ
 #include <typeindex>
 
@@ -17,6 +18,7 @@ namespace NorvesLib::Core
             static const TClass<Class, ParentClass>* StaticClass(); \
             virtual const IClass* GetClass() const override { return StaticClass(); } \
             virtual IUnknown* Clone() const override; \
+            virtual IUnknown* Clone(const FieldInitializer* initializer) const override; \
         private: \
             using __ThisClass = Class; /* リフレクション用にクラス名を定義 */ \
             static PropertyRegistry<Class> s_PropertyRegistry; \
@@ -35,13 +37,27 @@ namespace NorvesLib::Core
         } \
         \
         IUnknown* Class::Clone() const { \
-            Class* newInstance = new Class(); \
-            const VariableContainer* srcContainer = GetVariableContainer(); \
-            VariableContainer* dstContainer = newInstance->GetVariableContainer(); \
-            if (srcContainer && dstContainer) { \
-                const void* srcData = srcContainer->GetData(); \
-                void* dstData = dstContainer->GetData(); \
-                std::memcpy(dstData, srcData, srcContainer->GetSize()); \
+            /* ObjectUtilityを使用してインスタンスを作成 */ \
+            Class* newInstance = static_cast<Class*>(ObjectUtility::CreateObject(GetClass())); \
+            if (newInstance) { \
+                /* コンテナデータをコピー */ \
+                const VariableContainer* srcContainer = GetVariableContainer(); \
+                VariableContainer* dstContainer = newInstance->GetVariableContainer(); \
+                if (srcContainer && dstContainer) { \
+                    const void* srcData = srcContainer->GetData(); \
+                    void* dstData = dstContainer->GetData(); \
+                    std::memcpy(dstData, srcData, srcContainer->GetSize()); \
+                } \
+            } \
+            return newInstance; \
+        } \
+        \
+        IUnknown* Class::Clone(const FieldInitializer* initializer) const { \
+            /* 基本クローンを作成 */ \
+            Class* newInstance = static_cast<Class*>(Clone()); \
+            /* 初期化子を適用 */ \
+            if (newInstance && initializer) { \
+                ObjectUtility::ApplyInitialValues(newInstance, initializer); \
             } \
             return newInstance; \
         }

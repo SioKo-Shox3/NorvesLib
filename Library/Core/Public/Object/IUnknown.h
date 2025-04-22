@@ -10,6 +10,7 @@ namespace NorvesLib::Core
 {
     class IClass;
     class IValue;
+    class FieldInitializer;
 
     /**
      * @brief VariableContainer クラス
@@ -209,9 +210,23 @@ namespace NorvesLib::Core
         virtual IUnknown* Clone() const = 0;
 
         /**
+         * @brief フィールド初期化子を使用してオブジェクトを複製します
+         * @param initializer フィールド初期化子
+         * @return 新しいオブジェクトへのポインタ
+         */
+        virtual IUnknown* Clone(const FieldInitializer* initializer) const = 0;
+
+        /**
          * @brief オブジェクトを初期化します
          */
         virtual void Initialize() = 0;
+
+        /**
+         * @brief フィールド初期化子を使用してオブジェクトを初期化します
+         * @param initializer フィールド初期化子
+         * @return 初期化に成功した場合はtrue
+         */
+        virtual bool Initialize(const FieldInitializer* initializer) = 0;
 
         /**
          * @brief オブジェクトの破棄前処理を行います
@@ -267,7 +282,20 @@ namespace NorvesLib::Core
     class UnknownImpl : public IUnknown
     {
     public:
+        /**
+         * @brief デフォルトコンストラクタ
+         */
         UnknownImpl();
+
+        /**
+         * @brief フィールド初期化子を使用したコンストラクタ
+         * @param initializer フィールド初期化子
+         */
+        explicit UnknownImpl(const FieldInitializer* initializer);
+
+        /**
+         * @brief デストラクタ
+         */
         virtual ~UnknownImpl();
 
         // IUnknownインターフェースの実装
@@ -280,15 +308,28 @@ namespace NorvesLib::Core
         virtual VariableContainer* GetVariableContainer() override;
         virtual const VariableContainer* GetVariableContainer() const override;
         
-        // 以下の2つのメソッドを追加
         virtual const IClass* GetClass() const override;
         virtual IUnknown* Clone() const override;
+        virtual IUnknown* Clone(const FieldInitializer* initializer) const override;
         virtual void Initialize() override;
+        virtual bool Initialize(const FieldInitializer* initializer) override;
         virtual void Finalize() override;
 
     protected:
-        mutable Thread::Atomic<uint32_t> m_RefCount;   // 参照カウント
-        mutable Thread::Atomic<uint32_t> m_Flags;      // オブジェクトフラグ
+        /**
+         * @brief 変数コンテナを初期化します
+         */
+        void InitializeVariableContainer();
+
+        /**
+         * @brief フィールド初期化子を適用します
+         * @param initializer フィールド初期化子
+         * @return 適用された初期値の数
+         */
+        int ApplyFieldInitializer(const FieldInitializer* initializer);
+
+        mutable std::atomic<uint32_t> m_RefCount;   // 参照カウント
+        mutable std::atomic<uint32_t> m_Flags;      // オブジェクトフラグ
         std::unique_ptr<VariableContainer> m_VariableContainer;  // 変数コンテナ
 
     private:
