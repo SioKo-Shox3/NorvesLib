@@ -3,6 +3,7 @@
 #include <memory>
 #include <type_traits>
 #include "IClass.h"
+#include "ObjectUtility.h"
 #include "Container/Containers.h"
 #include "Text/IdentityPool.h"
 
@@ -63,16 +64,24 @@ namespace NorvesLib::Core
         {
             if (!m_DefaultObject)
             {
-                m_DefaultObject.reset(new T());
-                m_DefaultObject->Initialize();
+                // ObjectUtilityを使用してデフォルトオブジェクトを作成
+                m_DefaultObject.reset(static_cast<T*>(ObjectUtility::CreateObject(this)));
+                if (m_DefaultObject)
+                {
+                    m_DefaultObject->Initialize();
+                }
             }
             return m_DefaultObject.get();
         }
         
         virtual IUnknown* CreateInstance() const override
         {
-            T* instance = new T();
-            instance->Initialize();
+            // ObjectUtilityを使用してインスタンスを作成
+            IUnknown* instance = ObjectUtility::CreateObject(this);
+            if (instance)
+            {
+                instance->Initialize();
+            }
             return instance;
         }
         
@@ -278,16 +287,24 @@ namespace NorvesLib::Core
         {
             if (!m_DefaultObject)
             {
-                m_DefaultObject.reset(new T());
-                m_DefaultObject->Initialize();
+                // ObjectUtilityを使用してデフォルトオブジェクトを作成
+                m_DefaultObject.reset(static_cast<T*>(ObjectUtility::CreateObject(this)));
+                if (m_DefaultObject)
+                {
+                    m_DefaultObject->Initialize();
+                }
             }
             return m_DefaultObject.get();
         }
         
         virtual IUnknown* CreateInstance() const override
         {
-            T* instance = new T();
-            instance->Initialize();
+            // ObjectUtilityを使用してインスタンスを作成
+            IUnknown* instance = ObjectUtility::CreateObject(this);
+            if (instance)
+            {
+                instance->Initialize();
+            }
             return instance;
         }
         

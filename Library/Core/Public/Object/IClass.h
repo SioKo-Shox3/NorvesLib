@@ -10,6 +10,7 @@ namespace NorvesLib::Core
     // 前方宣言
     class IValue;
     class IClass;
+    class FieldInitializer;
 
     /**
      * @brief クラスのプロパティを表現する基本クラス
@@ -73,12 +74,99 @@ namespace NorvesLib::Core
          */
         bool SetValue(IUnknown* instance, const IValue* value) const;
 
+        /**
+         * @brief プロパティの初期値を適用します
+         * @param instance オブジェクトインスタンス
+         * @param initializer 初期値を提供する初期化子
+         * @return 初期値が適用された場合はtrue
+         */
+        virtual bool ApplyInitialValue(IUnknown* instance, const FieldInitializer* initializer) const = 0;
+
+        /**
+         * @brief デフォルト値を適用します
+         * @param instance オブジェクトインスタンス
+         */
+        virtual void ApplyDefaultValue(IUnknown* instance) const = 0;
+
     protected:
         Identity m_Name;       // 変数名
         const IClass* m_Type;     // 型情報
         size_t m_Offset;          // VariableContainer内のオフセット
         size_t m_Size;            // サイズ（バイト単位）
         uint32_t m_Flags;         // フラグ
+    };
+
+    /**
+     * @brief フィールド初期化クラス
+     * プロパティの初期値を管理します
+     */
+    class FieldInitializer
+    {
+    public:
+        FieldInitializer() = default;
+        virtual ~FieldInitializer() = default;
+
+        /**
+         * @brief プロパティの初期値を設定します
+         * @param propertyName プロパティ名
+         * @param value 初期値
+         */
+        template<typename T>
+        void SetInitialValue(const Identity& propertyName, const T& value)
+        {
+            auto valuePtr = std::make_shared<InitialValue<T>>(value);
+            m_InitialValues[propertyName] = std::move(valuePtr);
+        }
+
+        /**
+         * @brief 指定されたプロパティに初期値が設定されているか確認します
+         * @param propertyName プロパティ名
+         * @return 初期値が設定されている場合はtrue
+         */
+        bool HasInitialValue(const Identity& propertyName) const
+        {
+            return m_InitialValues.find(propertyName) != m_InitialValues.end();
+        }
+
+        /**
+         * @brief プロパティの初期値を取得します
+         * @param propertyName プロパティ名
+         * @return 初期値のポインタ、見つからない場合はnullptr
+         */
+        template<typename T>
+        const T* GetInitialValue(const Identity& propertyName) const
+        {
+            auto it = m_InitialValues.find(propertyName);
+            if (it != m_InitialValues.end())
+            {
+                auto typedValue = dynamic_cast<InitialValue<T>*>(it->second.get());
+                if (typedValue)
+                {
+                    return &typedValue->Value;
+                }
+            }
+            return nullptr;
+        }
+
+    private:
+        // 初期値の基底クラス
+        class IInitialValue
+        {
+        public:
+            virtual ~IInitialValue() = default;
+        };
+
+        // 型付き初期値
+        template<typename T>
+        class InitialValue : public IInitialValue
+        {
+        public:
+            explicit InitialValue(const T& value) : Value(value) {}
+            T Value;
+        };
+
+        // プロパティ名から初期値へのマップ
+        Container::UnorderedMap<Identity, std::shared_ptr<IInitialValue>, Identity::Hasher> m_InitialValues;
     };
 
     /**
@@ -91,7 +179,17 @@ namespace NorvesLib::Core
     public:
         TClassProperty(const Identity& name, const IClass* type, size_t offset, size_t size, uint32_t flags = 0)
             : ClassProperty(name, type, offset, size, flags)
+            , m_DefaultValue()
         {
+        }
+
+        /**
+         * @brief デフォルト値を設定します
+         * @param defaultValue デフォルト値
+         */
+        void SetDefaultValue(const T& defaultValue)
+        {
+            m_DefaultValue = defaultValue;
         }
 
         /**
@@ -126,6 +224,38 @@ namespace NorvesLib::Core
             T& ref = GetRef(instance);
             ref = value;
         }
+
+        /**
+         * @brief プロパティの初期値を適用します
+         * @param instance オブジェクトインスタンス
+         * @param initializer 初期値を提供する初期化子
+         * @return 初期値が適用された場合はtrue
+         */
+        bool ApplyInitialValue(IUnknown* instance, const FieldInitializer* initializer) const override
+        {
+            if (initializer && initializer->HasInitialValue(m_Name))
+            {
+                const T* value = initializer->GetInitialValue<T>(m_Name);
+                if (value)
+                {
+                    SetValue(instance, *value);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * @brief デフォルト値を適用します
+         * @param instance オブジェクトインスタンス
+         */
+        void ApplyDefaultValue(IUnknown* instance) const override
+        {
+            SetValue(instance, m_DefaultValue);
+        }
+
+    private:
+        T m_DefaultValue; // プロパティのデフォルト値
     };
 
     /**
