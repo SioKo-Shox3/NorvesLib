@@ -3,7 +3,7 @@
 #include "Container/String.h"
 #include "Container/StringView.h"
 #include "Container/UnorderedMap.h"
-#include "Container/Vector.h"
+#include "Container/Containers.h"
 #include "Thread/Mutex.h"
 #include <functional>
 
@@ -189,7 +189,7 @@ namespace NorvesLib::Core
          * @brief すべての文字列を取得
          * @return 登録されている文字列の配列
          */
-        Container::Vector<Container::StringView> GetAllStrings() const;
+        Container::VariableArray<Container::StringView> GetAllStrings() const;
 
     private:
         /**
