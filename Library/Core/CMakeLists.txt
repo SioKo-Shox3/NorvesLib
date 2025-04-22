@@ -22,5 +22,8 @@ target_include_directories(${MODULE_NAME}
 # Memoryモジュールへの依存関係を追加
 target_link_libraries(${MODULE_NAME} PUBLIC Memory)
 
+# Threadモジュールへの依存関係を追加
+target_link_libraries(${MODULE_NAME} PUBLIC Thread)
+
 # ヘッダーをIDEに表示するための設定
 add_custom_target(${MODULE_NAME}_IDE SOURCES ${PUBLIC_HEADERS} ${PRIVATE_SOURCES})
