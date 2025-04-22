@@ -166,16 +166,16 @@ private:
     char m_padding1[64 - (Capacity * sizeof(T)) % 64];
     
     // 書き込みインデックス
-    std::atomic<size_t> m_writeIndex;
+    Atomic<size_t> m_writeIndex;
     
     // キャッシュラインを分離するためのパディング
-    char m_padding2[64 - sizeof(std::atomic<size_t>)];
+    char m_padding2[64 - sizeof(Atomic<size_t>)];
     
     // 読み取りインデックス
-    std::atomic<size_t> m_readIndex;
+    Atomic<size_t> m_readIndex;
     
     // キャッシュラインを分離するためのパディング
-    char m_padding3[64 - sizeof(std::atomic<size_t>)];
+    char m_padding3[64 - sizeof(Atomic<size_t>)];
 };
 
 } // namespace NorvesLib::Thread

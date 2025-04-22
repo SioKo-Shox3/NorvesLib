@@ -67,8 +67,8 @@ void TestMultithreaded()
     constexpr int NUM_ITEMS = 10000;
     
     RingBuffer<int, BUFFER_SIZE> buffer;
-    std::atomic<bool> done(false);
-    std::atomic<int> consumedCount(0);
+    Atomic<bool> done(false);
+    Atomic<int> consumedCount(0);
     
     // プロデューサースレッド
     auto producer = [&buffer]() 
@@ -129,7 +129,7 @@ void TestPerformance()
     constexpr int NUM_ITEMS = 1000000;
     
     RingBuffer<int, BUFFER_SIZE> buffer;
-    std::atomic<int> consumedCount(0);
+    Atomic<int> consumedCount(0);
     
     auto startTime = std::chrono::high_resolution_clock::now();
     

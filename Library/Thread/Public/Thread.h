@@ -135,7 +135,7 @@ public:
 
 private:
     std::thread m_thread;
-    std::atomic<bool> m_isRunning;
+    Atomic<bool> m_isRunning;
     Core::Container::String m_name;
 };
 

@@ -88,8 +88,8 @@ private:
     Core::Container::Deque<TaskPtr> m_tasks;
     
     // ロックフリーキュー操作のためのインデックス
-    std::atomic<int64_t> m_bottom;  // 所有スレッドが操作
-    std::atomic<int64_t> m_top;     // 他スレッドも操作可能
+    Atomic<int64_t> m_bottom;  // 所有スレッドが操作
+    Atomic<int64_t> m_top;     // 他スレッドも操作可能
 };
 
 } // namespace NorvesLib::Thread
