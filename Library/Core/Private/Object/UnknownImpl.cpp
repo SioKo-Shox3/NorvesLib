@@ -8,6 +8,7 @@ namespace NorvesLib::Core
         : m_RefCount(0)
         , m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
         , m_VariableContainer(nullptr)
+        , m_Outer(nullptr)
     {
         InitializeVariableContainer();
     }
@@ -16,6 +17,7 @@ namespace NorvesLib::Core
         : m_RefCount(0)
         , m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
         , m_VariableContainer(nullptr)
+        , m_Outer(nullptr)
     {
         InitializeVariableContainer();
         
@@ -39,10 +41,50 @@ namespace NorvesLib::Core
         }
     }
 
+    // 親オブジェクトを指定するコンストラクタを実装
+    UnknownImpl::UnknownImpl(IUnknown* outer)
+        : m_RefCount(0)
+        , m_Flags(0) // 通常オブジェクトとして初期化
+        , m_VariableContainer(nullptr)
+        , m_Outer(outer)
+    {
+        InitializeVariableContainer();
+        
+        // 親オブジェクトの子リストに自分を追加
+        if (outer)
+        {
+            outer->AddInner(this);
+        }
+    }
+    
+    // 親オブジェクトとフィールド初期化子を指定するコンストラクタを実装
+    UnknownImpl::UnknownImpl(IUnknown* outer, const FieldInitializer* initializer)
+        : m_RefCount(0)
+        , m_Flags(0) // 通常オブジェクトとして初期化
+        , m_VariableContainer(nullptr)
+        , m_Outer(outer)
+    {
+        InitializeVariableContainer();
+        
+        // フィールド初期化子が指定されている場合は適用
+        if (initializer)
+        {
+            // 各フィールドを初期化
+            initializer->ApplyTo(this);
+        }
+        
+        // 親オブジェクトの子リストに自分を追加
+        if (outer)
+        {
+            outer->AddInner(this);
+        }
+    }
+
     UnknownImpl::UnknownImpl(const IUnknown* sourceObject)
         : m_RefCount(0)
         , m_Flags(0) // 通常オブジェクトとして初期化
         , m_VariableContainer(nullptr)
+        , m_Outer(nullptr)
     {
         // 変数コンテナを初期化
         InitializeVariableContainer();
@@ -206,6 +248,56 @@ namespace NorvesLib::Core
                 if (sourceObject->HasFlag(flag))
                 {
                     SetFlag(flag, true);
+                }
+            }
+        }
+    }
+
+    // Outer/Inner関連メソッドの実装
+    IUnknown* UnknownImpl::GetOuter()
+    {
+        return m_Outer;
+    }
+
+    const IUnknown* UnknownImpl::GetOuter() const
+    {
+        return m_Outer;
+    }
+
+    const Container::Array<IUnknown*>& UnknownImpl::GetInners() const
+    {
+        return m_Inners;
+    }
+
+    void UnknownImpl::AddInner(IUnknown* inner)
+    {
+        if (inner)
+        {
+            // すでに子リストに存在しないか確認
+            for (IUnknown* existingInner : m_Inners)
+            {
+                if (existingInner == inner)
+                {
+                    return; // すでに存在する場合は何もしない
+                }
+            }
+
+            // 子リストに追加
+            m_Inners.Add(inner);
+        }
+    }
+
+    void UnknownImpl::RemoveInner(IUnknown* inner)
+    {
+        if (inner)
+        {
+            // 子リストから削除
+            for (size_t i = 0; i < m_Inners.GetLength(); ++i)
+            {
+                if (m_Inners[i] == inner)
+                {
+                    m_Inners.RemoveAt(i);
+                    break;
                 }
             }
         }
