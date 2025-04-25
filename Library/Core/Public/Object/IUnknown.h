@@ -275,6 +275,37 @@ namespace NorvesLib::Core
          * @return デフォルトオブジェクトの場合はtrue
          */
         virtual bool IsDefaultObject() const = 0;
+
+        /**
+         * @brief 親オブジェクト（Outer）を取得します
+         * @return 親オブジェクトへのポインタ、親がない場合はnullptr
+         */
+        virtual IUnknown* GetOuter() = 0;
+
+        /**
+         * @brief 親オブジェクト（Outer）を取得します（const版）
+         * @return 親オブジェクトへの読み取り専用ポインタ、親がない場合はnullptr
+         */
+        virtual const IUnknown* GetOuter() const = 0;
+
+        /**
+         * @brief 子オブジェクト（Inners）のリストを取得します
+         * @return 子オブジェクトのリスト
+         */
+        virtual const Container::Array<IUnknown*>& GetInners() const = 0;
+
+        /**
+         * @brief 子オブジェクト（Inner）を追加します
+         * @param inner 追加する子オブジェクト
+         */
+        virtual void AddInner(IUnknown* inner) = 0;
+
+        /**
+         * @brief 子オブジェクト（Inner）を削除します
+         * @param inner 削除する子オブジェクト
+         * @return 削除に成功した場合はtrue
+         */
+        virtual bool RemoveInner(IUnknown* inner) = 0;
     };
 
     /**
@@ -296,6 +327,19 @@ namespace NorvesLib::Core
          * @param initializer フィールド初期化子
          */
         explicit UnknownImpl(const FieldInitializer* initializer);
+
+        /**
+         * @brief 親オブジェクトを指定するコンストラクタ
+         * @param outer 親オブジェクト
+         */
+        explicit UnknownImpl(IUnknown* outer);
+
+        /**
+         * @brief 親オブジェクトとフィールド初期化子を指定するコンストラクタ
+         * @param outer 親オブジェクト
+         * @param initializer フィールド初期化子
+         */
+        UnknownImpl(IUnknown* outer, const FieldInitializer* initializer);
 
         /**
          * @brief 任意のIUnknownオブジェクトからコピーするコンストラクタ
@@ -324,6 +368,13 @@ namespace NorvesLib::Core
         virtual void Finalize() override;
         virtual bool IsDefaultObject() const override;
 
+        // Outer/Inner関連メソッドの実装
+        virtual IUnknown* GetOuter() override;
+        virtual const IUnknown* GetOuter() const override;
+        virtual const Container::Array<IUnknown*>& GetInners() const override;
+        virtual void AddInner(IUnknown* inner) override;
+        virtual bool RemoveInner(IUnknown* inner) override;
+
     protected:
         /**
          * @brief 変数コンテナを初期化します
@@ -339,6 +390,8 @@ namespace NorvesLib::Core
         mutable Thread::Atomic<uint32_t> m_RefCount;   // 参照カウント
         mutable Thread::Atomic<uint32_t> m_Flags;      // オブジェクトフラグ
         std::unique_ptr<VariableContainer> m_VariableContainer;  // 変数コンテナ
+        IUnknown* m_Outer;                         // 親オブジェクト
+        Container::Array<IUnknown*> m_Inners;      // 子オブジェクトのリスト
 
     private:
         // 代入は禁止
