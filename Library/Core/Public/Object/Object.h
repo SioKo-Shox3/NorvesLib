@@ -27,6 +27,12 @@ namespace NorvesLib::Core
         explicit Object(const FieldInitializer* initializer);
         
         /**
+         * @brief 任意のIUnknownオブジェクトからコピーするコンストラクタ
+         * @param sourceObject コピー元となるオブジェクト
+         */
+        explicit Object(const IUnknown* sourceObject);
+        
+        /**
          * @brief デストラクタ
          */
         virtual ~Object();
@@ -36,19 +42,6 @@ namespace NorvesLib::Core
          * @return このオブジェクトのクラス情報
          */
         virtual const IClass* GetClass() const override;
-        
-        /**
-         * @brief オブジェクトを複製します
-         * @return 新しいオブジェクトへのポインタ
-         */
-        virtual IUnknown* Clone() const override;
-        
-        /**
-         * @brief フィールド初期化子を使用してオブジェクトを複製します
-         * @param initializer フィールド初期化子
-         * @return 新しいオブジェクトへのポインタ
-         */
-        virtual IUnknown* Clone(const FieldInitializer* initializer) const override;
         
         /**
          * @brief オブジェクトを初期化します

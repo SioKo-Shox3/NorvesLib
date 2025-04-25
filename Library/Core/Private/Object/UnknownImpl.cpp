@@ -1,13 +1,12 @@
 #include "Object/IUnknown.h"
 #include "Object/IClass.h"
-#include "Object/IValue.h"
 #include "Object/ObjectUtility.h"
 
 namespace NorvesLib::Core
 {
     UnknownImpl::UnknownImpl()
         : m_RefCount(0)
-        , m_Flags(0)
+        , m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
         , m_VariableContainer(nullptr)
     {
         InitializeVariableContainer();
@@ -15,11 +14,44 @@ namespace NorvesLib::Core
 
     UnknownImpl::UnknownImpl(const FieldInitializer* initializer)
         : m_RefCount(0)
-        , m_Flags(0)
+        , m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
         , m_VariableContainer(nullptr)
     {
         InitializeVariableContainer();
-        ApplyFieldInitializer(initializer);
+        
+        if (initializer)
+        {
+            // デフォルトオブジェクトにフィールド初期化子を適用
+            const IClass* cls = GetClass();
+            if (cls)
+            {
+                const Container::VariableArray<const ClassProperty*> properties = cls->GetAllProperties();
+                
+                // 各プロパティに初期値を適用
+                for (const ClassProperty* prop : properties)
+                {
+                    if (prop)
+                    {
+                        prop->ApplyInitialValue(this, initializer);
+                    }
+                }
+            }
+        }
+    }
+
+    UnknownImpl::UnknownImpl(const IUnknown* sourceObject)
+        : m_RefCount(0)
+        , m_Flags(0) // 通常オブジェクトとして初期化
+        , m_VariableContainer(nullptr)
+    {
+        // 変数コンテナを初期化
+        InitializeVariableContainer();
+        
+        // ソースオブジェクトからデータをコピー
+        if (sourceObject)
+        {
+            CopyFromObject(sourceObject);
+        }
     }
 
     UnknownImpl::~UnknownImpl()
@@ -35,7 +67,7 @@ namespace NorvesLib::Core
     uint32_t UnknownImpl::Release() const
     {
         uint32_t count = --m_RefCount;
-        if (count == 0)
+        if (count == 0 && !HasFlag(OF_DefaultObject)) // デフォルトオブジェクトは自動削除しない
         {
             delete this;
         }
@@ -59,7 +91,7 @@ namespace NorvesLib::Core
         }
     }
 
-    std::unique_ptr<IValue> UnknownImpl::GetProperty(const Identity& propertyName) const
+    void* UnknownImpl::GetPropertyValue(const Identity& propertyName)
     {
         // クラス情報を取得
         const IClass* cls = GetClass();
@@ -75,33 +107,28 @@ namespace NorvesLib::Core
             return nullptr;
         }
 
-        // プロパティの値を取得
-        return property->GetValue(this);
+        // プロパティのデータへのポインタを取得
+        return property->GetValuePtr(this);
     }
 
-    bool UnknownImpl::SetProperty(const Identity& propertyName, const IValue* value)
+    const void* UnknownImpl::GetPropertyValue(const Identity& propertyName) const
     {
-        if (!value)
-        {
-            return false;
-        }
-
         // クラス情報を取得
         const IClass* cls = GetClass();
         if (!cls)
         {
-            return false;
+            return nullptr;
         }
 
         // プロパティ情報を取得
         const ClassProperty* property = cls->GetProperty(propertyName);
         if (!property)
         {
-            return false;
+            return nullptr;
         }
 
-        // プロパティに値を設定
-        return property->SetValue(this, value);
+        // プロパティのデータへのポインタを取得
+        return property->GetValuePtr(this);
     }
 
     VariableContainer* UnknownImpl::GetVariableContainer()
@@ -120,37 +147,21 @@ namespace NorvesLib::Core
         return nullptr;
     }
 
-    IUnknown* UnknownImpl::Clone() const
-    {
-        // サブクラスでオーバーライドされるため、基底クラスではnullptrを返す
-        return nullptr;
-    }
-
-    IUnknown* UnknownImpl::Clone(const FieldInitializer* initializer) const
-    {
-        // サブクラスでオーバーライドされるため、基底クラスではnullptrを返す
-        return nullptr;
-    }
-
     void UnknownImpl::Initialize()
     {
         // 初期化済みフラグを設定
         SetFlag(OF_Initialized, true);
     }
 
-    bool UnknownImpl::Initialize(const FieldInitializer* initializer)
-    {
-        // 基本的な初期化を行う
-        Initialize();
-
-        // フィールド初期化子を適用
-        return ApplyFieldInitializer(initializer) > 0;
-    }
-
     void UnknownImpl::Finalize()
     {
         // 初期化済みフラグをクリア
         SetFlag(OF_Initialized, false);
+    }
+
+    bool UnknownImpl::IsDefaultObject() const
+    {
+        return HasFlag(OF_DefaultObject);
     }
 
     void UnknownImpl::InitializeVariableContainer()
@@ -167,13 +178,37 @@ namespace NorvesLib::Core
         }
     }
 
-    int UnknownImpl::ApplyFieldInitializer(const FieldInitializer* initializer)
+    void UnknownImpl::CopyFromObject(const IUnknown* sourceObject)
     {
-        if (initializer)
+        if (!sourceObject)
         {
-            return ObjectUtility::ApplyInitialValues(this, initializer);
+            return;
         }
-        return 0;
+        
+        // VariableContainerをコピー
+        const VariableContainer* srcContainer = sourceObject->GetVariableContainer();
+        if (srcContainer && m_VariableContainer)
+        {
+            m_VariableContainer->CopyFrom(srcContainer);
+        }
+        
+        // フラグをコピー (DefaultObjectフラグは除く)
+        if (sourceObject->IsDefaultObject())
+        {
+            // デフォルトオブジェクトからコピーする場合、DefaultObjectフラグを除く
+            m_Flags = sourceObject->HasFlag(OF_Initialized) ? OF_Initialized : 0;
+        }
+        else
+        {
+            // 通常オブジェクトからコピーする場合、通常のフラグをすべてコピー
+            for (uint32_t flag = OF_Initialized; flag <= OF_Persistent; flag <<= 1)
+            {
+                if (sourceObject->HasFlag(flag))
+                {
+                    SetFlag(flag, true);
+                }
+            }
+        }
     }
 
 } // namespace NorvesLib::Core

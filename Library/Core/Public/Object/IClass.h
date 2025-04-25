@@ -8,7 +8,6 @@
 namespace NorvesLib::Core
 {
     // 前方宣言
-    class IValue;
     class IClass;
     class FieldInitializer;
 
@@ -60,21 +59,6 @@ namespace NorvesLib::Core
         uint32_t GetFlags() const { return m_Flags; }
 
         /**
-         * @brief 変数の値を取得します
-         * @param instance オブジェクトインスタンス
-         * @return 変数の値
-         */
-        std::unique_ptr<IValue> GetValue(const IUnknown* instance) const;
-
-        /**
-         * @brief 変数の値を設定します
-         * @param instance オブジェクトインスタンス
-         * @param value 設定する値
-         * @return 成功した場合はtrue
-         */
-        bool SetValue(IUnknown* instance, const IValue* value) const;
-
-        /**
          * @brief プロパティの初期値を適用します
          * @param instance オブジェクトインスタンス
          * @param initializer 初期値を提供する初期化子
@@ -87,6 +71,51 @@ namespace NorvesLib::Core
          * @param instance オブジェクトインスタンス
          */
         virtual void ApplyDefaultValue(IUnknown* instance) const = 0;
+
+        /**
+         * @brief プロパティデータの読み取り専用ポインタを取得します
+         * @param instance オブジェクトインスタンス
+         * @return プロパティデータへのポインタ
+         */
+        virtual const void* GetValuePtr(const IUnknown* instance) const
+        {
+            if (!instance) return nullptr;
+            const VariableContainer* container = instance->GetVariableContainer();
+            if (!container) return nullptr;
+            return container->GetAt(m_Offset);
+        }
+
+        /**
+         * @brief プロパティデータの書き込み可能ポインタを取得します
+         * @param instance オブジェクトインスタンス
+         * @return プロパティデータへのポインタ
+         */
+        virtual void* GetValuePtr(IUnknown* instance) const
+        {
+            if (!instance) return nullptr;
+            VariableContainer* container = instance->GetVariableContainer();
+            if (!container) return nullptr;
+            return container->GetAt(m_Offset);
+        }
+
+        /**
+         * @brief プロパティ値を別のインスタンスからコピーします
+         * @param destInstance コピー先インスタンス
+         * @param srcInstance コピー元インスタンス
+         * @return コピーが成功した場合はtrue
+         */
+        virtual bool CopyValueFrom(IUnknown* destInstance, const IUnknown* srcInstance) const
+        {
+            if (!destInstance || !srcInstance) return false;
+            
+            const void* src = GetValuePtr(srcInstance);
+            void* dest = GetValuePtr(destInstance);
+            
+            if (!src || !dest) return false;
+            
+            std::memcpy(dest, src, m_Size);
+            return true;
+        }
 
     protected:
         Identity m_Name;       // 変数名
@@ -417,10 +446,11 @@ namespace NorvesLib::Core
         /**
          * @brief 関数を呼び出します
          * @param instance オブジェクトインスタンス
-         * @param parameters 関数パラメータ
-         * @return 戻り値、void型の場合はnullptr
+         * @param parameters 関数パラメータの配列
+         * @param result 結果を格納するためのバッファ
+         * @return 呼び出しが成功した場合はtrue
          */
-        virtual std::unique_ptr<IValue> Invoke(IUnknown* instance, const Container::VariableArray<IValue*>& parameters) const = 0;
+        virtual bool Invoke(IUnknown* instance, const void* const* parameters, void* result) const = 0;
 
     private:
         Identity m_Name;                         // 関数名
@@ -596,12 +626,6 @@ namespace NorvesLib::Core
          * @return デフォルトオブジェクトへのポインタ
          */
         virtual const IUnknown* GetDefaultObject() const = 0;
-
-        /**
-         * @brief 新しいインスタンスを作成します
-         * @return 新しいインスタンスへのポインタ
-         */
-        virtual IUnknown* CreateInstance() const = 0;
 
         /**
          * @brief プロパティフィールドを取得します

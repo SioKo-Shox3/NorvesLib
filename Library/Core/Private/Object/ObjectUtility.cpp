@@ -1,14 +1,57 @@
 #include "Object/ObjectUtility.h"
 #include "Object/IClass.h"
+#include <memory>
 
 namespace NorvesLib::Core
 {
+    IUnknown* CreateObjectImpl(const IClass* cls)
+    {
+        if (!cls) return nullptr;
+
+        // デフォルトオブジェクトを取得
+        const IUnknown* defaultObject = cls->GetDefaultObject();
+        if (!defaultObject) return nullptr;
+
+        // RTTI情報を使用して適切な型のインスタンスを生成
+        IUnknown* newObject = nullptr;
+        
+        try 
+        {
+            // デフォルトオブジェクトからコピーするためのUnknownImplコンストラクタを使用
+            // dynamic_castを使わずに直接インスタンス生成
+            newObject = new UnknownImpl(defaultObject);
+            
+            if (newObject)
+            {
+                // デフォルトオブジェクトのフラグは引き継がない
+                newObject->SetFlag(OF_DefaultObject, false);
+                
+                // 変数コンテナを初期化
+                VariableContainer* container = newObject->GetVariableContainer();
+                if (container)
+                {
+                    cls->InitializeVariableContainer(container->GetData());
+                }
+                
+                // デフォルト値を適用
+                ObjectUtility::ApplyDefaultValues(newObject);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            // 例外が発生した場合はnullptrを返す
+            return nullptr;
+        }
+
+        return newObject;
+    }
+
     IUnknown* ObjectUtility::CreateObject(const Identity& className)
     {
         const IClass* cls = ClassRegistry::Get().FindClass(className);
         if (cls)
         {
-            return cls->CreateInstance();
+            return CreateObjectImpl(cls);
         }
         return nullptr;
     }
@@ -18,7 +61,7 @@ namespace NorvesLib::Core
         const IClass* cls = ClassRegistry::Get().FindClass(classId);
         if (cls)
         {
-            return cls->CreateInstance();
+            return CreateObjectImpl(cls);
         }
         return nullptr;
     }
@@ -27,7 +70,7 @@ namespace NorvesLib::Core
     {
         if (cls)
         {
-            return cls->CreateInstance();
+            return CreateObjectImpl(cls);
         }
         return nullptr;
     }
