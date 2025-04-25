@@ -64,25 +64,17 @@ namespace NorvesLib::Core
         {
             if (!m_DefaultObject)
             {
-                // ObjectUtilityを使用してデフォルトオブジェクトを作成
-                m_DefaultObject.reset(static_cast<T*>(ObjectUtility::CreateObject(this)));
+                // ObjectUtilityを使用せず直接生成
+                // デフォルトコンストラクタでデフォルトオブジェクトを作成
+                m_DefaultObject.reset(new T());
                 if (m_DefaultObject)
                 {
                     m_DefaultObject->Initialize();
+                    // デフォルトオブジェクトフラグを設定
+                    m_DefaultObject->SetFlag(OF_DefaultObject, true);
                 }
             }
             return m_DefaultObject.get();
-        }
-        
-        virtual IUnknown* CreateInstance() const override
-        {
-            // ObjectUtilityを使用してインスタンスを作成
-            IUnknown* instance = ObjectUtility::CreateObject(this);
-            if (instance)
-            {
-                instance->Initialize();
-            }
-            return instance;
         }
         
         virtual const PropertyField* GetPropertyField() const override
@@ -287,25 +279,17 @@ namespace NorvesLib::Core
         {
             if (!m_DefaultObject)
             {
-                // ObjectUtilityを使用してデフォルトオブジェクトを作成
-                m_DefaultObject.reset(static_cast<T*>(ObjectUtility::CreateObject(this)));
+                // ObjectUtilityを使用せず直接生成
+                // デフォルトコンストラクタでデフォルトオブジェクトを作成
+                m_DefaultObject.reset(new T());
                 if (m_DefaultObject)
                 {
                     m_DefaultObject->Initialize();
+                    // デフォルトオブジェクトフラグを設定
+                    m_DefaultObject->SetFlag(OF_DefaultObject, true);
                 }
             }
             return m_DefaultObject.get();
-        }
-        
-        virtual IUnknown* CreateInstance() const override
-        {
-            // ObjectUtilityを使用してインスタンスを作成
-            IUnknown* instance = ObjectUtility::CreateObject(this);
-            if (instance)
-            {
-                instance->Initialize();
-            }
-            return instance;
         }
         
         virtual const PropertyField* GetPropertyField() const override

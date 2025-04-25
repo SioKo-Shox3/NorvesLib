@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <atomic>
+#include "Thread/Public/Atomic.h"
 #include <memory>
 #include "Container/Containers.h"
 #include "Text/IdentityPool.h"
@@ -9,7 +9,6 @@
 namespace NorvesLib::Core
 {
     class IClass;
-    class IValue;
     class FieldInitializer;
 
     /**
@@ -119,6 +118,22 @@ namespace NorvesLib::Core
         }
 
         /**
+         * @brief コンテナ全体を別のコンテナからコピーします
+         * @param source コピー元コンテナ
+         * @return コピーが成功した場合はtrue
+         */
+        bool CopyFrom(const VariableContainer* source)
+        {
+            if (!m_Data || !source || !source->m_Data || m_Size != source->m_Size)
+            {
+                return false;
+            }
+
+            std::memcpy(m_Data, source->m_Data, m_Size);
+            return true;
+        }
+
+        /**
          * @brief コンテナ内のメモリをコピーします
          * @param dstOffset コピー先オフセット
          * @param srcOffset コピー元オフセット
@@ -203,30 +218,12 @@ namespace NorvesLib::Core
          */
         virtual const IClass* GetClass() const = 0;
 
-        /**
-         * @brief オブジェクトを複製します
-         * @return 新しいオブジェクトへのポインタ
-         */
-        virtual IUnknown* Clone() const = 0;
-
-        /**
-         * @brief フィールド初期化子を使用してオブジェクトを複製します
-         * @param initializer フィールド初期化子
-         * @return 新しいオブジェクトへのポインタ
-         */
-        virtual IUnknown* Clone(const FieldInitializer* initializer) const = 0;
-
+        // Cloneメソッドを削除し、代わりにコンストラクタを使用するよう推奨するコメントを追加
         /**
          * @brief オブジェクトを初期化します
+         * デフォルトオブジェクトの値を適用します
          */
         virtual void Initialize() = 0;
-
-        /**
-         * @brief フィールド初期化子を使用してオブジェクトを初期化します
-         * @param initializer フィールド初期化子
-         * @return 初期化に成功した場合はtrue
-         */
-        virtual bool Initialize(const FieldInitializer* initializer) = 0;
 
         /**
          * @brief オブジェクトの破棄前処理を行います
@@ -250,17 +247,16 @@ namespace NorvesLib::Core
         /**
          * @brief プロパティの値を取得します
          * @param propertyName プロパティ名
-         * @return プロパティの値、見つからない場合はnullptr
+         * @return プロパティの値をvoid*として返す
          */
-        virtual std::unique_ptr<IValue> GetProperty(const Identity& propertyName) const = 0;
+        virtual void* GetPropertyValue(const Identity& propertyName) = 0;
 
         /**
-         * @brief プロパティの値を設定します
+         * @brief プロパティの値を取得します（const版）
          * @param propertyName プロパティ名
-         * @param value 設定する値
-         * @return 成功した場合はtrue
+         * @return プロパティの値をconst void*として返す
          */
-        virtual bool SetProperty(const Identity& propertyName, const IValue* value) = 0;
+        virtual const void* GetPropertyValue(const Identity& propertyName) const = 0;
         
         /**
          * @brief 変数コンテナを取得します
@@ -273,6 +269,12 @@ namespace NorvesLib::Core
          * @return 変数コンテナへの読み取り専用ポインタ
          */
         virtual const VariableContainer* GetVariableContainer() const = 0;
+
+        /**
+         * @brief このオブジェクトがデフォルトオブジェクトかどうかを返します
+         * @return デフォルトオブジェクトの場合はtrue
+         */
+        virtual bool IsDefaultObject() const = 0;
     };
 
     /**
@@ -284,14 +286,23 @@ namespace NorvesLib::Core
     public:
         /**
          * @brief デフォルトコンストラクタ
+         * このコンストラクタはデフォルトオブジェクトの作成時に使用されます
          */
         UnknownImpl();
 
         /**
          * @brief フィールド初期化子を使用したコンストラクタ
+         * このコンストラクタはデフォルトオブジェクトの初期化時にのみ使用されます
          * @param initializer フィールド初期化子
          */
         explicit UnknownImpl(const FieldInitializer* initializer);
+
+        /**
+         * @brief 任意のIUnknownオブジェクトからコピーするコンストラクタ
+         * このコンストラクタはオブジェクトのクローン作成にも使用されます
+         * @param sourceObject コピー元となるオブジェクト
+         */
+        explicit UnknownImpl(const IUnknown* sourceObject);
 
         /**
          * @brief デストラクタ
@@ -303,17 +314,15 @@ namespace NorvesLib::Core
         virtual uint32_t Release() const override;
         virtual bool HasFlag(uint32_t flag) const override;
         virtual void SetFlag(uint32_t flag, bool value) override;
-        virtual std::unique_ptr<IValue> GetProperty(const Identity& propertyName) const override;
-        virtual bool SetProperty(const Identity& propertyName, const IValue* value) override;
+        virtual void* GetPropertyValue(const Identity& propertyName) override;
+        virtual const void* GetPropertyValue(const Identity& propertyName) const override;
         virtual VariableContainer* GetVariableContainer() override;
         virtual const VariableContainer* GetVariableContainer() const override;
         
         virtual const IClass* GetClass() const override;
-        virtual IUnknown* Clone() const override;
-        virtual IUnknown* Clone(const FieldInitializer* initializer) const override;
         virtual void Initialize() override;
-        virtual bool Initialize(const FieldInitializer* initializer) override;
         virtual void Finalize() override;
+        virtual bool IsDefaultObject() const override;
 
     protected:
         /**
@@ -322,19 +331,17 @@ namespace NorvesLib::Core
         void InitializeVariableContainer();
 
         /**
-         * @brief フィールド初期化子を適用します
-         * @param initializer フィールド初期化子
-         * @return 適用された初期値の数
+         * @brief 他のオブジェクトからデータをコピーします
+         * @param sourceObject コピー元となるオブジェクト
          */
-        int ApplyFieldInitializer(const FieldInitializer* initializer);
+        void CopyFromObject(const IUnknown* sourceObject);
 
-        mutable std::atomic<uint32_t> m_RefCount;   // 参照カウント
-        mutable std::atomic<uint32_t> m_Flags;      // オブジェクトフラグ
+        mutable Thread::Atomic<uint32_t> m_RefCount;   // 参照カウント
+        mutable Thread::Atomic<uint32_t> m_Flags;      // オブジェクトフラグ
         std::unique_ptr<VariableContainer> m_VariableContainer;  // 変数コンテナ
 
     private:
-        // コピー禁止
-        UnknownImpl(const UnknownImpl&) = delete;
+        // 代入は禁止
         UnknownImpl& operator=(const UnknownImpl&) = delete;
     };
 
@@ -348,7 +355,8 @@ namespace NorvesLib::Core
         OF_PendingDestroy   = 1 << 1,   // 破棄待ち
         OF_GarbageCollect   = 1 << 2,   // GC対象
         OF_Transient        = 1 << 3,   // 一時的なオブジェクト
-        OF_Persistent       = 1 << 4    // 永続的なオブジェクト
+        OF_Persistent       = 1 << 4,   // 永続的なオブジェクト
+        OF_DefaultObject    = 1 << 5    // デフォルトオブジェクト
     };
 
 } // namespace NorvesLib::Core

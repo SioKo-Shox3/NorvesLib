@@ -23,6 +23,14 @@ namespace NorvesLib::Core
 
                 // デフォルトオブジェクトを作成
                 m_DefaultObject = new Object();
+                
+                // FieldInitializerを使用してデフォルト値を設定
+                FieldInitializer initializer;
+                // ここでObjectクラスのデフォルト値をsetup
+                // 例: initializer.SetInitialValue<int>("PropertyName", defaultValue);
+                
+                // デフォルトオブジェクトを初期化
+                m_DefaultObject->Initialize();
             }
 
             ~ObjectClass()
@@ -84,7 +92,8 @@ namespace NorvesLib::Core
 
             virtual IUnknown* CreateInstance() const override
             {
-                return new Object();
+                // デフォルトオブジェクトをコピーして新しいインスタンスを作成
+                return new Object(m_DefaultObject);
             }
 
             virtual const PropertyField* GetPropertyField() const override
@@ -149,7 +158,11 @@ namespace NorvesLib::Core
 
             virtual void InitializeVariableContainer(void* container) const override
             {
-                // Objectクラスには初期化が必要なプロパティがない
+                // 基本的な初期化を行う（すべて0に設定）
+                if (container)
+                {
+                    std::memset(container, 0, GetVariableContainerSize());
+                }
             }
 
         private:
@@ -174,6 +187,12 @@ namespace NorvesLib::Core
     {
     }
 
+    Object::Object(const IUnknown* sourceObject)
+        : UnknownImpl(sourceObject)
+    {
+        // UnknownImplのコンストラクタですべての必要な処理は行われる
+    }
+
     Object::~Object()
     {
         Finalize();
@@ -184,38 +203,6 @@ namespace NorvesLib::Core
         return StaticClass();
     }
 
-    IUnknown* Object::Clone() const
-    {
-        // 新しいインスタンスを作成
-        Object* clone = new Object();
-        
-        // VariableContainerの内容をコピー
-        const VariableContainer* srcContainer = GetVariableContainer();
-        VariableContainer* destContainer = clone->GetVariableContainer();
-        
-        if (srcContainer && destContainer)
-        {
-            size_t size = srcContainer->GetSize();
-            destContainer->CopyTo(0, srcContainer->GetData(), size);
-        }
-        
-        return clone;
-    }
-
-    IUnknown* Object::Clone(const FieldInitializer* initializer) const
-    {
-        // 基本的なクローンを作成
-        Object* clone = static_cast<Object*>(Clone());
-        
-        // 初期化子があれば適用
-        if (clone && initializer)
-        {
-            clone->Initialize(initializer);
-        }
-        
-        return clone;
-    }
-
     void Object::Initialize()
     {
         // 基本初期化を呼び出す
@@ -224,7 +211,29 @@ namespace NorvesLib::Core
 
     bool Object::Initialize(const FieldInitializer* initializer)
     {
-        return UnknownImpl::Initialize(initializer);
+        // 基本初期化
+        UnknownImpl::Initialize();
+
+        if (initializer)
+        {
+            const IClass* cls = GetClass();
+            if (cls)
+            {
+                const Container::VariableArray<const ClassProperty*> properties = cls->GetAllProperties();
+                
+                // 各プロパティに初期値を適用
+                for (const ClassProperty* prop : properties)
+                {
+                    if (prop)
+                    {
+                        prop->ApplyInitialValue(this, initializer);
+                    }
+                }
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     void Object::Finalize()
