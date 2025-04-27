@@ -1,8 +1,8 @@
 #pragma once
 
 #include <memory>
-#include <string>
-#include <vector>
+#include "Container/VariableArray.h"
+#include "Container/String.h"
 #include "EngineGlobals/GlobalMemoryAllocator.h"
 
 namespace NorvesLib 
@@ -29,7 +29,7 @@ public:
      * @param args コマンドライン引数
      * @return 初期化の成否
      */
-    virtual bool Initialize(const std::vector<std::wstring> &args) = 0;
+    virtual bool Initialize(const Core::Container::VariableArray<Core::Container::String> &args) = 0;
 
     /**
      * @brief アプリケーションの実行

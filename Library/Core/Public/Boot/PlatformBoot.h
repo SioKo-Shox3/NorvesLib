@@ -1,10 +1,15 @@
 #pragma once
 
-#include <string>
-#include <vector>
+#include "Container/String.h"
+#include "Container/VariableArray.h"
 #include <memory>
+#include <Windows.h>
 
 namespace NorvesLib {
+
+// 前方宣言
+class IApplication;
+
 namespace Core {
 namespace Boot {
 
@@ -20,7 +25,7 @@ namespace Boot {
  * @param commandLine コマンドライン引数
  * @return 初期化の成否
  */
-bool PlatformInitialize(const std::wstring& commandLine);
+bool PlatformInitialize(const Container::String& commandLine);
 
 /**
  * @brief プラットフォーム固有の終了処理を行う
@@ -32,20 +37,43 @@ void PlatformShutdown();
  * @param commandLine 生のコマンドライン文字列
  * @return パースされたコマンドライン引数の配列
  */
-std::vector<std::wstring> ParseCommandLine(const std::wstring& commandLine);
+Container::VariableArray<Container::String> ParseCommandLine(const Container::String& commandLine);
 
 /**
  * @brief 実行可能ファイルのパスを取得する
  * @return 実行可能ファイルの完全パス
  */
-std::wstring GetExecutablePath();
+Container::String GetExecutablePath();
 
 /**
  * @brief アプリケーションの作業ディレクトリを設定する
  * @param path 設定するディレクトリパス
  * @return 設定の成否
  */
-bool SetWorkingDirectory(const std::wstring& path);
+bool SetWorkingDirectory(const Container::String& path);
+
+/**
+ * @brief 標準アプリケーションの作成
+ * @return 作成されたアプリケーションインスタンス
+ */
+std::unique_ptr<IApplication> CreateDefaultApplication();
+
+/**
+ * @brief アプリケーションを実行する統一エントリーポイント
+ * @param args コマンドライン引数の配列
+ * @return アプリケーションの終了コード
+ */
+int RunApplication(const Container::VariableArray<Container::String>& args);
+
+/**
+ * @brief WindowsのWinMainから呼び出す統一エントリーポイント
+ * @param hInstance アプリケーションインスタンスハンドル
+ * @param hPrevInstance 未使用（互換性のため）
+ * @param lpCmdLine コマンドライン引数
+ * @param nCmdShow ウィンドウの表示状態
+ * @return アプリケーションの終了コード
+ */
+int RunApplication(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow);
 
 } // namespace Boot
 } // namespace Core
