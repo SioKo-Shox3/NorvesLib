@@ -4,80 +4,71 @@
 
 namespace NorvesLib::Core
 {
-    IUnknown* CreateObjectImpl(const IClass* cls)
+    IUnknown* CreateObjectImpl(const IClass* cls, IUnknown* outer = nullptr)
     {
         if (!cls) return nullptr;
 
-        // デフォルトオブジェクトを取得
-        const IUnknown* defaultObject = cls->GetDefaultObject();
-        if (!defaultObject) return nullptr;
-
-        // RTTI情報を使用して適切な型のインスタンスを生成
-        IUnknown* newObject = nullptr;
-        
         try 
         {
-            // デフォルトオブジェクトからコピーするためのUnknownImplコンストラクタを使用
-            // dynamic_castを使わずに直接インスタンス生成
-            newObject = new UnknownImpl(defaultObject);
+            // クラス情報のNewInstanceメソッドを使用して新しいインスタンスを生成
+            // 親子関係の設定はここで行うため、outer引数は渡さない
+            IUnknown* newObject = cls->NewInstance();
             
-            if (newObject)
+            // 親子関係の設定（指定されていれば）
+            if (newObject && outer)
             {
-                // デフォルトオブジェクトのフラグは引き継がない
-                newObject->SetFlag(OF_DefaultObject, false);
+                outer->AddInner(newObject);
                 
-                // 変数コンテナを初期化
-                VariableContainer* container = newObject->GetVariableContainer();
-                if (container)
+                // 親オブジェクト参照を設定
+                // dynamic_castの代わりにTryCastを使用
+                auto* unknownImpl = ObjectUtility::TryCast<UnknownImpl>(newObject);
+                if (unknownImpl)
                 {
-                    cls->InitializeVariableContainer(container->GetData());
+                    unknownImpl->m_Outer = outer;
                 }
-                
-                // デフォルト値を適用
-                ObjectUtility::ApplyDefaultValues(newObject);
             }
+            
+            return newObject;
         }
         catch (const std::exception& e)
         {
             // 例外が発生した場合はnullptrを返す
             return nullptr;
         }
-
-        return newObject;
     }
 
-    IUnknown* ObjectUtility::CreateObject(const Identity& className)
+    IUnknown* ObjectUtility::CreateObject(const Identity& className, IUnknown* outer)
     {
         const IClass* cls = ClassRegistry::Get().FindClass(className);
         if (cls)
         {
-            return CreateObjectImpl(cls);
+            return CreateObjectImpl(cls, outer);
         }
         return nullptr;
     }
 
-    IUnknown* ObjectUtility::CreateObject(uint64_t classId)
+    IUnknown* ObjectUtility::CreateObject(uint64_t classId, IUnknown* outer)
     {
         const IClass* cls = ClassRegistry::Get().FindClass(classId);
         if (cls)
         {
-            return CreateObjectImpl(cls);
+            return CreateObjectImpl(cls, outer);
         }
         return nullptr;
     }
 
-    IUnknown* ObjectUtility::CreateObject(const IClass* cls)
+    IUnknown* ObjectUtility::CreateObject(const IClass* cls, IUnknown* outer)
     {
         if (cls)
         {
-            return CreateObjectImpl(cls);
+            return CreateObjectImpl(cls, outer);
         }
         return nullptr;
     }
 
-    IUnknown* ObjectUtility::CreateObject(const Identity& className, const FieldInitializer* initializer)
+    IUnknown* ObjectUtility::CreateObject(const Identity& className, const FieldInitializer* initializer, IUnknown* outer)
     {
-        IUnknown* object = CreateObject(className);
+        IUnknown* object = CreateObject(className, outer);
         if (object && initializer)
         {
             ApplyInitialValues(object, initializer);
@@ -85,9 +76,9 @@ namespace NorvesLib::Core
         return object;
     }
 
-    IUnknown* ObjectUtility::CreateObject(uint64_t classId, const FieldInitializer* initializer)
+    IUnknown* ObjectUtility::CreateObject(uint64_t classId, const FieldInitializer* initializer, IUnknown* outer)
     {
-        IUnknown* object = CreateObject(classId);
+        IUnknown* object = CreateObject(classId, outer);
         if (object && initializer)
         {
             ApplyInitialValues(object, initializer);
@@ -95,9 +86,9 @@ namespace NorvesLib::Core
         return object;
     }
 
-    IUnknown* ObjectUtility::CreateObject(const IClass* cls, const FieldInitializer* initializer)
+    IUnknown* ObjectUtility::CreateObject(const IClass* cls, const FieldInitializer* initializer, IUnknown* outer)
     {
-        IUnknown* object = CreateObject(cls);
+        IUnknown* object = CreateObject(cls, outer);
         if (object && initializer)
         {
             ApplyInitialValues(object, initializer);

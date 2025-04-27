@@ -218,7 +218,6 @@ namespace NorvesLib::Core
          */
         virtual const IClass* GetClass() const = 0;
 
-        // Cloneメソッドを削除し、代わりにコンストラクタを使用するよう推奨するコメントを追加
         /**
          * @brief オブジェクトを初期化します
          * デフォルトオブジェクトの値を適用します
@@ -328,18 +327,6 @@ namespace NorvesLib::Core
          */
         explicit UnknownImpl(const FieldInitializer* initializer);
 
-        /**
-         * @brief 親オブジェクトを指定するコンストラクタ
-         * @param outer 親オブジェクト
-         */
-        explicit UnknownImpl(IUnknown* outer);
-
-        /**
-         * @brief 親オブジェクトとフィールド初期化子を指定するコンストラクタ
-         * @param outer 親オブジェクト
-         * @param initializer フィールド初期化子
-         */
-        UnknownImpl(IUnknown* outer, const FieldInitializer* initializer);
 
         /**
          * @brief 任意のIUnknownオブジェクトからコピーするコンストラクタ

@@ -41,45 +41,6 @@ namespace NorvesLib::Core
         }
     }
 
-    // 親オブジェクトを指定するコンストラクタを実装
-    UnknownImpl::UnknownImpl(IUnknown* outer)
-        : m_RefCount(0)
-        , m_Flags(0) // 通常オブジェクトとして初期化
-        , m_VariableContainer(nullptr)
-        , m_Outer(outer)
-    {
-        InitializeVariableContainer();
-        
-        // 親オブジェクトの子リストに自分を追加
-        if (outer)
-        {
-            outer->AddInner(this);
-        }
-    }
-    
-    // 親オブジェクトとフィールド初期化子を指定するコンストラクタを実装
-    UnknownImpl::UnknownImpl(IUnknown* outer, const FieldInitializer* initializer)
-        : m_RefCount(0)
-        , m_Flags(0) // 通常オブジェクトとして初期化
-        , m_VariableContainer(nullptr)
-        , m_Outer(outer)
-    {
-        InitializeVariableContainer();
-        
-        // フィールド初期化子が指定されている場合は適用
-        if (initializer)
-        {
-            // 各フィールドを初期化
-            initializer->ApplyTo(this);
-        }
-        
-        // 親オブジェクトの子リストに自分を追加
-        if (outer)
-        {
-            outer->AddInner(this);
-        }
-    }
-
     UnknownImpl::UnknownImpl(const IUnknown* sourceObject)
         : m_RefCount(0)
         , m_Flags(0) // 通常オブジェクトとして初期化

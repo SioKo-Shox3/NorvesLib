@@ -628,6 +628,13 @@ namespace NorvesLib::Core
         virtual const IUnknown* GetDefaultObject() const = 0;
 
         /**
+         * @brief このクラスの新しいインスタンスを作成します
+         * @param outer 親オブジェクト（オプション）
+         * @return 作成されたインスタンス、失敗した場合はnullptr
+         */
+        virtual IUnknown* NewInstance(IUnknown* outer = nullptr) const = 0;
+
+        /**
          * @brief プロパティフィールドを取得します
          * @return プロパティフィールドへのポインタ
          */
