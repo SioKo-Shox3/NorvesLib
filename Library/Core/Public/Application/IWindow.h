@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string>
+#include "Container/String.h"
 
 namespace NorvesLib {
 
@@ -25,7 +25,7 @@ public:
      * @param height ウィンドウ高さ
      * @return 作成の成否
      */
-    virtual bool Create(const std::wstring& title, int width, int height) = 0;
+    virtual bool Create(const Core::Container::String& title, int width, int height) = 0;
 
     /**
      * @brief ウィンドウの破棄
@@ -46,7 +46,7 @@ public:
      * @brief ウィンドウタイトルの設定
      * @param title 新しいウィンドウタイトル
      */
-    virtual void SetTitle(const std::wstring& title) = 0;
+    virtual void SetTitle(const Core::Container::String& title) = 0;
 
     /**
      * @brief ウィンドウサイズの変更
