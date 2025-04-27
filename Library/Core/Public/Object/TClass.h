@@ -143,6 +143,35 @@ namespace NorvesLib::Core
             m_DefaultObject.reset(defaultObject);
         }
 
+        virtual IUnknown* NewInstance(IUnknown* outer = nullptr) const override
+        {
+            // デフォルトオブジェクトを取得
+            const IUnknown* defaultObject = GetDefaultObject();
+            if (!defaultObject) return nullptr;
+            
+            try 
+            {
+                // デフォルトオブジェクトからコピーして新しいインスタンスを作成
+                IUnknown* newObject = new T(static_cast<const T*>(defaultObject));
+                
+                if (newObject)
+                {
+                    // デフォルトオブジェクトのフラグは引き継がない
+                    newObject->SetFlag(OF_DefaultObject, false);
+                    
+                    // デフォルト値を適用
+                    ObjectUtility::ApplyDefaultValues(newObject);
+                }
+                
+                return newObject;
+            }
+            catch (const std::exception& e)
+            {
+                // 例外が発生した場合はnullptrを返す
+                return nullptr;
+            }
+        }
+
     private:
         void RegisterClassProperties()
         {
@@ -341,6 +370,35 @@ namespace NorvesLib::Core
                 
                 // 必要に応じて、個別のプロパティのデフォルト値を設定する
                 // この例では単純に0で初期化
+            }
+        }
+
+        virtual IUnknown* NewInstance(IUnknown* outer = nullptr) const override
+        {
+            // デフォルトオブジェクトを取得
+            const IUnknown* defaultObject = GetDefaultObject();
+            if (!defaultObject) return nullptr;
+            
+            try 
+            {
+                // デフォルトオブジェクトからコピーして新しいインスタンスを作成
+                IUnknown* newObject = new T(static_cast<const T*>(defaultObject));
+                
+                if (newObject)
+                {
+                    // デフォルトオブジェクトのフラグは引き継がない
+                    newObject->SetFlag(OF_DefaultObject, false);
+                    
+                    // デフォルト値を適用
+                    ObjectUtility::ApplyDefaultValues(newObject);
+                }
+                
+                return newObject;
+            }
+            catch (const std::exception& e)
+            {
+                // 例外が発生した場合はnullptrを返す
+                return nullptr;
             }
         }
 

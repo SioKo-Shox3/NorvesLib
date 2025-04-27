@@ -21,6 +21,7 @@ namespace NorvesLib::Core
             virtual IUnknown* Clone(const FieldInitializer* initializer) const override; \
         private: \
             using __ThisClass = Class; /* リフレクション用にクラス名を定義 */ \
+            using Super = ParentClass; \
             static PropertyRegistry<Class> s_PropertyRegistry; \
             static FunctionRegistry<Class> s_FunctionRegistry; \
             friend class TClass<Class, ParentClass>;

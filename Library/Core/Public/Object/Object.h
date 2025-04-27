@@ -15,6 +15,10 @@ namespace NorvesLib::Core
     class Object : public UnknownImpl
     {
     public:
+
+        using __ThisClass = Object;  // リフレクション用にクラス名を定義
+        using Super = UnknownImpl;
+
         /**
          * @brief デフォルトコンストラクタ
          */

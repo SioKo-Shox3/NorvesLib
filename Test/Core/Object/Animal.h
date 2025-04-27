@@ -10,7 +10,6 @@ namespace NorvesLib::Test
     class Animal : public Core::Object
     {
         REFLECTION_CLASS(Animal, Core::Object)
-        using __ThisClass = Animal;  // __ThisClassの定義を追加（リフレクションに必要）
 
     public:
         Animal();

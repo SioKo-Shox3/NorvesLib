@@ -18,47 +18,53 @@ namespace NorvesLib::Core
         /**
          * @brief 指定されたクラス名のオブジェクトを作成します
          * @param className クラス名
+         * @param outer 生成されるオブジェクトの親オブジェクト（オーナー）
          * @return 作成されたオブジェクトへのポインタ、失敗した場合はnullptr
          */
-        static IUnknown* CreateObject(const Identity& className);
+        static IUnknown* CreateObject(const Identity& className, IUnknown* outer = nullptr);
 
         /**
          * @brief 指定されたクラスIDのオブジェクトを作成します
          * @param classId クラスID
+         * @param outer 生成されるオブジェクトの親オブジェクト（オーナー）
          * @return 作成されたオブジェクトへのポインタ、失敗した場合はnullptr
          */
-        static IUnknown* CreateObject(uint64_t classId);
+        static IUnknown* CreateObject(uint64_t classId, IUnknown* outer = nullptr);
 
         /**
          * @brief 指定されたクラス型のオブジェクトを作成します
          * @param cls クラス情報
+         * @param outer 生成されるオブジェクトの親オブジェクト（オーナー）
          * @return 作成されたオブジェクトへのポインタ、失敗した場合はnullptr
          */
-        static IUnknown* CreateObject(const IClass* cls);
+        static IUnknown* CreateObject(const IClass* cls, IUnknown* outer = nullptr);
 
         /**
          * @brief フィールド初期化子を使用して指定されたクラスのオブジェクトを作成します
          * @param className クラス名
          * @param initializer フィールド初期化子
+         * @param outer 生成されるオブジェクトの親オブジェクト（オーナー）
          * @return 作成されたオブジェクトへのポインタ、失敗した場合はnullptr
          */
-        static IUnknown* CreateObject(const Identity& className, const FieldInitializer* initializer);
+        static IUnknown* CreateObject(const Identity& className, const FieldInitializer* initializer, IUnknown* outer = nullptr);
 
         /**
          * @brief フィールド初期化子を使用して指定されたクラスIDのオブジェクトを作成します
          * @param classId クラスID
          * @param initializer フィールド初期化子
+         * @param outer 生成されるオブジェクトの親オブジェクト（オーナー）
          * @return 作成されたオブジェクトへのポインタ、失敗した場合はnullptr
          */
-        static IUnknown* CreateObject(uint64_t classId, const FieldInitializer* initializer);
+        static IUnknown* CreateObject(uint64_t classId, const FieldInitializer* initializer, IUnknown* outer = nullptr);
 
         /**
          * @brief フィールド初期化子を使用して指定されたクラス型のオブジェクトを作成します
          * @param cls クラス情報
          * @param initializer フィールド初期化子
+         * @param outer 生成されるオブジェクトの親オブジェクト（オーナー）
          * @return 作成されたオブジェクトへのポインタ、失敗した場合はnullptr
          */
-        static IUnknown* CreateObject(const IClass* cls, const FieldInitializer* initializer);
+        static IUnknown* CreateObject(const IClass* cls, const FieldInitializer* initializer, IUnknown* outer = nullptr);
 
         /**
          * @brief オブジェクトを安全に破棄します
@@ -70,16 +76,17 @@ namespace NorvesLib::Core
         /**
          * @brief 指定された型のオブジェクトを作成します
          * @tparam T 作成するオブジェクトの型 (IUnknownから派生している必要があります)
+         * @param outer 生成されるオブジェクトの親オブジェクト（オーナー）
          * @return 作成されたオブジェクトへのポインタ、失敗した場合はnullptr
          */
         template<typename T>
-        static T* CreateTypedObject()
+        static T* CreateTypedObject(IUnknown* outer = nullptr)
         {
             static_assert(std::is_base_of<IUnknown, T>::value, "T must derive from IUnknown");
             const IClass* cls = T::StaticClass();
             if (cls)
             {
-                return static_cast<T*>(CreateObject(cls));
+                return static_cast<T*>(CreateObject(cls, outer));
             }
             return nullptr;
         }
@@ -88,16 +95,17 @@ namespace NorvesLib::Core
          * @brief フィールド初期化子を使用して指定された型のオブジェクトを作成します
          * @tparam T 作成するオブジェクトの型 (IUnknownから派生している必要があります)
          * @param initializer フィールド初期化子
+         * @param outer 生成されるオブジェクトの親オブジェクト（オーナー）
          * @return 作成されたオブジェクトへのポインタ、失敗した場合はnullptr
          */
         template<typename T>
-        static T* CreateTypedObject(const FieldInitializer* initializer)
+        static T* CreateTypedObject(const FieldInitializer* initializer, IUnknown* outer = nullptr)
         {
             static_assert(std::is_base_of<IUnknown, T>::value, "T must derive from IUnknown");
             const IClass* cls = T::StaticClass();
             if (cls)
             {
-                return static_cast<T*>(CreateObject(cls, initializer));
+                return static_cast<T*>(CreateObject(cls, initializer, outer));
             }
             return nullptr;
         }
@@ -127,6 +135,41 @@ namespace NorvesLib::Core
          */
         template<typename T>
         static const T* CastTo(const IUnknown* object)
+        {
+            static_assert(std::is_base_of<IUnknown, T>::value, "T must derive from IUnknown");
+            if (object && object->GetClass()->IsChildOf(T::StaticClass()))
+            {
+                return static_cast<const T*>(object);
+            }
+            return nullptr;
+        }
+
+        /**
+         * @brief オブジェクトの型を指定された型に安全にトライキャストします
+         * CastToと同様の機能を提供しますが、命名が異なります
+         * @tparam T キャスト先の型 (IUnknownから派生している必要があります)
+         * @param object キャストするオブジェクト
+         * @return キャストされたオブジェクトへのポインタ、失敗した場合はnullptr
+         */
+        template<typename T>
+        static T* TryCast(IUnknown* object)
+        {
+            static_assert(std::is_base_of<IUnknown, T>::value, "T must derive from IUnknown");
+            if (object && object->GetClass()->IsChildOf(T::StaticClass()))
+            {
+                return static_cast<T*>(object);
+            }
+            return nullptr;
+        }
+
+        /**
+         * @brief オブジェクトの型を指定された型に安全にトライキャストします (const版)
+         * @tparam T キャスト先の型 (IUnknownから派生している必要があります)
+         * @param object キャストするオブジェクト
+         * @return キャストされたオブジェクトへのポインタ、失敗した場合はnullptr
+         */
+        template<typename T>
+        static const T* TryCast(const IUnknown* object)
         {
             static_assert(std::is_base_of<IUnknown, T>::value, "T must derive from IUnknown");
             if (object && object->GetClass()->IsChildOf(T::StaticClass()))
