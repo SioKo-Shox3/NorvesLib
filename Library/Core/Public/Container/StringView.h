@@ -6,6 +6,8 @@
 #include <iterator>
 #include <stdexcept>
 #include <ostream>
+#include <Windows.h>
+#include <tchar.h>
 #include "Span.h"
 
 namespace NorvesLib::Core::Container
@@ -13,16 +15,17 @@ namespace NorvesLib::Core::Container
     /**
      * @brief 文字列の一部を参照するビュークラス
      * 所有権を持たず、メモリのコピーを行わない効率的な文字列参照型
+     * TCHARベースでWindowsのUNICODE設定に応じて適切に動作します
      */
     class StringView
     {
     public:
         // 型定義
-        using value_type = char;
-        using pointer = const char*;
-        using const_pointer = const char*;
-        using reference = const char&;
-        using const_reference = const char&;
+        using value_type = TCHAR;
+        using pointer = const TCHAR*;
+        using const_pointer = const TCHAR*;
+        using reference = const TCHAR&;
+        using const_reference = const TCHAR&;
         using const_iterator = const_pointer;
         using iterator = const_iterator;
         using const_reverse_iterator = std::reverse_iterator<const_iterator>;
@@ -40,23 +43,23 @@ namespace NorvesLib::Core::Container
         constexpr StringView(const StringView&) noexcept = default;
         constexpr StringView& operator=(const StringView&) noexcept = default;
 
-        // C文字列からのコンストラクタ
-        constexpr StringView(const char* str)
-            : data_(str), size_(str ? std::char_traits<char>::length(str) : 0) {}
+        // TCHAR文字列からのコンストラクタ
+        constexpr StringView(const TCHAR* str)
+            : data_(str), size_(str ? _tcslen(str) : 0) {}
 
         // ポインタと長さからのコンストラクタ
-        constexpr StringView(const char* str, size_type len) noexcept
+        constexpr StringView(const TCHAR* str, size_type len) noexcept
             : data_(str), size_(len) {}
 
-        // std::stringからのコンストラクタ
-        StringView(const std::string& str) noexcept
+        // std::basic_stringからのコンストラクタ
+        StringView(const std::basic_string<TCHAR>& str) noexcept
             : data_(str.data()), size_(str.size()) {}
 
         // NorvesLib::Core::Container::Stringからのコンストラクタ
         template<typename StringType, 
                  typename = std::enable_if_t<
                     std::is_convertible_v<
-                        const typename StringType::value_type*, const char*> &&
+                        const typename StringType::value_type*, const TCHAR*> &&
                     std::is_convertible_v<
                         typename StringType::size_type, size_type>
                  >
@@ -142,7 +145,7 @@ namespace NorvesLib::Core::Container
         // 文字列比較
         constexpr int compare(StringView other) const noexcept {
             const size_type rlen = std::min(size_, other.size_);
-            int result = std::char_traits<char>::compare(data_, other.data_, rlen);
+            int result = _tcsncmp(data_, other.data_, rlen);
             if (result == 0) {
                 if (size_ < other.size_) return -1;
                 if (size_ > other.size_) return 1;
@@ -159,15 +162,15 @@ namespace NorvesLib::Core::Container
             return substr(pos1, count1).compare(other.substr(pos2, count2));
         }
 
-        constexpr int compare(const char* s) const {
+        constexpr int compare(const TCHAR* s) const {
             return compare(StringView(s));
         }
 
-        constexpr int compare(size_type pos1, size_type count1, const char* s) const {
+        constexpr int compare(size_type pos1, size_type count1, const TCHAR* s) const {
             return substr(pos1, count1).compare(StringView(s));
         }
 
-        constexpr int compare(size_type pos1, size_type count1, const char* s, size_type count2) const {
+        constexpr int compare(size_type pos1, size_type count1, const TCHAR* s, size_type count2) const {
             return substr(pos1, count1).compare(StringView(s, count2));
         }
 
@@ -180,30 +183,30 @@ namespace NorvesLib::Core::Container
             const auto it = std::search(
                 this->begin() + pos, this->end(),
                 v.begin(), v.end(),
-                std::char_traits<char>::eq
+                [](TCHAR a, TCHAR b) { return a == b; }
             );
             
             return it == this->end() ? npos : std::distance(this->begin(), it);
         }
 
-        constexpr size_type find(char ch, size_type pos = 0) const noexcept {
+        constexpr size_type find(TCHAR ch, size_type pos = 0) const noexcept {
             if (pos >= size_) {
                 return npos;
             }
             
             const auto it = std::find_if(
                 this->begin() + pos, this->end(),
-                [ch](char c) { return std::char_traits<char>::eq(c, ch); }
+                [ch](TCHAR c) { return c == ch; }
             );
             
             return it == this->end() ? npos : std::distance(this->begin(), it);
         }
 
-        constexpr size_type find(const char* s, size_type pos, size_type count) const noexcept {
+        constexpr size_type find(const TCHAR* s, size_type pos, size_type count) const noexcept {
             return find(StringView(s, count), pos);
         }
 
-        constexpr size_type find(const char* s, size_type pos = 0) const noexcept {
+        constexpr size_type find(const TCHAR* s, size_type pos = 0) const noexcept {
             return find(StringView(s), pos);
         }
 
@@ -221,7 +224,7 @@ namespace NorvesLib::Core::Container
             
             for (auto i = pos + 1; i > 0; --i) {
                 const size_type idx = i - 1;
-                if (std::char_traits<char>::compare(data_ + idx, v.data_, v.size_) == 0) {
+                if (_tcsncmp(data_ + idx, v.data_, v.size_) == 0) {
                     return idx;
                 }
             }
@@ -229,7 +232,7 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type rfind(char ch, size_type pos = npos) const noexcept {
+        constexpr size_type rfind(TCHAR ch, size_type pos = npos) const noexcept {
             if (empty()) {
                 return npos;
             }
@@ -238,7 +241,7 @@ namespace NorvesLib::Core::Container
             
             for (auto i = pos + 1; i > 0; --i) {
                 const size_type idx = i - 1;
-                if (std::char_traits<char>::eq(data_[idx], ch)) {
+                if (data_[idx] == ch) {
                     return idx;
                 }
             }
@@ -246,11 +249,11 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type rfind(const char* s, size_type pos, size_type count) const noexcept {
+        constexpr size_type rfind(const TCHAR* s, size_type pos, size_type count) const noexcept {
             return rfind(StringView(s, count), pos);
         }
 
-        constexpr size_type rfind(const char* s, size_type pos = npos) const noexcept {
+        constexpr size_type rfind(const TCHAR* s, size_type pos = npos) const noexcept {
             return rfind(StringView(s), pos);
         }
 
@@ -262,7 +265,7 @@ namespace NorvesLib::Core::Container
             
             for (size_type i = pos; i < size_; ++i) {
                 for (const auto ch : v) {
-                    if (std::char_traits<char>::eq(data_[i], ch)) {
+                    if (data_[i] == ch) {
                         return i;
                     }
                 }
@@ -271,15 +274,15 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type find_first_of(char ch, size_type pos = 0) const noexcept {
+        constexpr size_type find_first_of(TCHAR ch, size_type pos = 0) const noexcept {
             return find(ch, pos);
         }
 
-        constexpr size_type find_first_of(const char* s, size_type pos, size_type count) const noexcept {
+        constexpr size_type find_first_of(const TCHAR* s, size_type pos, size_type count) const noexcept {
             return find_first_of(StringView(s, count), pos);
         }
 
-        constexpr size_type find_first_of(const char* s, size_type pos = 0) const noexcept {
+        constexpr size_type find_first_of(const TCHAR* s, size_type pos = 0) const noexcept {
             return find_first_of(StringView(s), pos);
         }
 
@@ -292,7 +295,7 @@ namespace NorvesLib::Core::Container
             for (size_type i = pos; i < size_; ++i) {
                 bool found = false;
                 for (const auto ch : v) {
-                    if (std::char_traits<char>::eq(data_[i], ch)) {
+                    if (data_[i] == ch) {
                         found = true;
                         break;
                     }
@@ -305,13 +308,13 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type find_first_not_of(char ch, size_type pos = 0) const noexcept {
+        constexpr size_type find_first_not_of(TCHAR ch, size_type pos = 0) const noexcept {
             if (pos >= size_) {
                 return npos;
             }
             
             for (size_type i = pos; i < size_; ++i) {
-                if (!std::char_traits<char>::eq(data_[i], ch)) {
+                if (data_[i] != ch) {
                     return i;
                 }
             }
@@ -319,11 +322,11 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type find_first_not_of(const char* s, size_type pos, size_type count) const noexcept {
+        constexpr size_type find_first_not_of(const TCHAR* s, size_type pos, size_type count) const noexcept {
             return find_first_not_of(StringView(s, count), pos);
         }
 
-        constexpr size_type find_first_not_of(const char* s, size_type pos = 0) const noexcept {
+        constexpr size_type find_first_not_of(const TCHAR* s, size_type pos = 0) const noexcept {
             return find_first_not_of(StringView(s), pos);
         }
 
@@ -338,7 +341,7 @@ namespace NorvesLib::Core::Container
             for (auto i = pos + 1; i > 0; --i) {
                 const size_type idx = i - 1;
                 for (const auto ch : v) {
-                    if (std::char_traits<char>::eq(data_[idx], ch)) {
+                    if (data_[idx] == ch) {
                         return idx;
                     }
                 }
@@ -347,15 +350,15 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type find_last_of(char ch, size_type pos = npos) const noexcept {
+        constexpr size_type find_last_of(TCHAR ch, size_type pos = npos) const noexcept {
             return rfind(ch, pos);
         }
 
-        constexpr size_type find_last_of(const char* s, size_type pos, size_type count) const noexcept {
+        constexpr size_type find_last_of(const TCHAR* s, size_type pos, size_type count) const noexcept {
             return find_last_of(StringView(s, count), pos);
         }
 
-        constexpr size_type find_last_of(const char* s, size_type pos = npos) const noexcept {
+        constexpr size_type find_last_of(const TCHAR* s, size_type pos = npos) const noexcept {
             return find_last_of(StringView(s), pos);
         }
 
@@ -371,7 +374,7 @@ namespace NorvesLib::Core::Container
                 const size_type idx = i - 1;
                 bool found = false;
                 for (const auto ch : v) {
-                    if (std::char_traits<char>::eq(data_[idx], ch)) {
+                    if (data_[idx] == ch) {
                         found = true;
                         break;
                     }
@@ -384,7 +387,7 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type find_last_not_of(char ch, size_type pos = npos) const noexcept {
+        constexpr size_type find_last_not_of(TCHAR ch, size_type pos = npos) const noexcept {
             if (empty()) {
                 return npos;
             }
@@ -393,7 +396,7 @@ namespace NorvesLib::Core::Container
             
             for (auto i = pos + 1; i > 0; --i) {
                 const size_type idx = i - 1;
-                if (!std::char_traits<char>::eq(data_[idx], ch)) {
+                if (data_[idx] != ch) {
                     return idx;
                 }
             }
@@ -401,26 +404,26 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type find_last_not_of(const char* s, size_type pos, size_type count) const noexcept {
+        constexpr size_type find_last_not_of(const TCHAR* s, size_type pos, size_type count) const noexcept {
             return find_last_not_of(StringView(s, count), pos);
         }
 
-        constexpr size_type find_last_not_of(const char* s, size_type pos = npos) const noexcept {
+        constexpr size_type find_last_not_of(const TCHAR* s, size_type pos = npos) const noexcept {
             return find_last_not_of(StringView(s), pos);
         }
 
         // Spanへの変換メソッド
-        constexpr Span<const char> as_span() const noexcept {
-            return Span<const char>(data_, size_);
+        constexpr Span<const TCHAR> as_span() const noexcept {
+            return Span<const TCHAR>(data_, size_);
         }
 
-        // std::string への変換
-        std::string to_string() const {
-            return std::string(data_, size_);
+        // std::basic_string への変換
+        std::basic_string<TCHAR> to_string() const {
+            return std::basic_string<TCHAR>(data_, size_);
         }
 
         // ストリーム出力
-        friend std::ostream& operator<<(std::ostream& os, const StringView& sv) {
+        friend std::basic_ostream<TCHAR>& operator<<(std::basic_ostream<TCHAR>& os, const StringView& sv) {
             for (const auto c : sv) {
                 os << c;
             }
