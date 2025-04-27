@@ -18,7 +18,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     (void)nCmdShow;
     
     // コマンドライン引数をwstring型のベクトルに変換
-    std::vector<std::wstring> args;
+    Core::Container::VariableArray<std::wstring> args;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     
