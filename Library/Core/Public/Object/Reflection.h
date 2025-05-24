@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "IClass.h"
 #include "IUnknown.h"

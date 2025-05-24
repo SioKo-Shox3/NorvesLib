@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "RHITypes.h"
 #include "Core/Public/Container/Containers.h"

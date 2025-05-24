@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "IStateMachine.h"
 #include <memory> // std::unique_ptr

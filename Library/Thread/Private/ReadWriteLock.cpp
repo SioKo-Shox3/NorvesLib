@@ -1,4 +1,4 @@
-#include "../Public/ReadWriteLock.h"
+﻿#include "ReadWriteLock.h"
 
 namespace NorvesLib::Thread
 {

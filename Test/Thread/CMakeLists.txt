@@ -1,4 +1,4 @@
-# Thread モジュールのテスト
+﻿# Thread モジュールのテスト
 
 # RingBufferテスト
 add_executable(RingBufferTest RingBufferTest.cpp)

@@ -1,4 +1,4 @@
-#include "RandomUtility.h"
+﻿#include "RandomUtility.h"
 #include <cmath>
 
 namespace NorvesLib::Random

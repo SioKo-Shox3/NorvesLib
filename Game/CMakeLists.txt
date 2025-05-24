@@ -1,4 +1,4 @@
-set(MODULE_NAME Game)
+﻿set(MODULE_NAME Game)
 
 # ソースファイルの収集
 file(GLOB_RECURSE SOURCE_FILES 
@@ -16,8 +16,14 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_SOURCE_DIR}  # ルートディレクトリを追加
 )
 
-# NorvesLibへの依存関係を設定
+# 各ライブラリコンポーネントへの依存関係を設定
 target_link_libraries(${MODULE_NAME} 
     PRIVATE 
-        NorvesLib
+        Core
+        Math
+        RHI
+        Memory
+        Random
+        GameMode
+        # Thread # 一時的に除外
 )

@@ -1,4 +1,4 @@
-set(MODULE_NAME Random)
+﻿set(MODULE_NAME Random)
 
 # ソースファイルとヘッダーファイルを収集
 file(GLOB_RECURSE SOURCES Private/*.cpp)

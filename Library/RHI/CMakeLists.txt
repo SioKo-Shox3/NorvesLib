@@ -1,4 +1,4 @@
-set(MODULE_NAME RHI)
+﻿set(MODULE_NAME RHI)
 
 file(GLOB_RECURSE PUBLIC_HEADERS
     Public/*.h

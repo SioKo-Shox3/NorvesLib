@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <string>
 #include <string_view>
@@ -166,11 +166,21 @@ namespace NorvesLib::Core::Container
         {
             return Base::find(subStr, pos);
         }
+
+        size_t Find(const TCHAR* chars, size_t pos = 0) const
+        {
+            return Base::find(chars, pos);
+        }
         
         // 右から指定の文字列を検索
         size_t FindLast(const String& subStr) const
         {
             return Base::rfind(subStr);
+        }
+
+        size_t FindLast(const TCHAR* chars) const
+        {
+            return Base::rfind(chars);
         }
         
         // 文字列の置換

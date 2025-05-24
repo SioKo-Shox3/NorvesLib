@@ -1,4 +1,4 @@
-set(MODULE_NAME Core)
+﻿set(MODULE_NAME Core)
 
 file(GLOB_RECURSE PUBLIC_HEADERS
     Public/*.h
@@ -17,6 +17,12 @@ target_include_directories(${MODULE_NAME}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Private
         ${CMAKE_SOURCE_DIR}/Library
+)
+
+# Threadモジュールのパスを明示的に追加
+target_include_directories(${MODULE_NAME}
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/Library/Thread/Public
 )
 
 # Memoryモジュールへの依存関係を追加

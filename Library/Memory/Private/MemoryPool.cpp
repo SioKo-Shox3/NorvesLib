@@ -1,7 +1,11 @@
-#include "../Public/MemoryPool.h"
+﻿#include "../Public/MemoryPool.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
+
+#ifdef _WIN32
+#include <malloc.h> // _aligned_malloc, _aligned_free用
+#endif
 
 namespace NorvesLib::Memory
 {
@@ -13,11 +17,7 @@ namespace NorvesLib::Memory
 
     // コンストラクタ
     MemoryPool::MemoryPool(size_t blockSize, size_t blocksPerChunk, size_t alignment)
-        : m_blockSize(std::max(AlignSize(blockSize, alignment), alignment))
-        , m_alignment(alignment)
-        , m_blocksPerChunk(blocksPerChunk)
-        , m_totalBlocks(0)
-        , m_allocatedBlocks(0)
+        : m_blockSize(std::max(AlignSize(blockSize, alignment), alignment)), m_alignment(alignment), m_blocksPerChunk(blocksPerChunk), m_totalBlocks(0), m_allocatedBlocks(0)
     {
         // 最初のチャンクを割り当てる
         AllocateChunk();
@@ -27,9 +27,13 @@ namespace NorvesLib::Memory
     MemoryPool::~MemoryPool()
     {
         // すべてのチャンクを解放
-        for (auto& chunk : m_chunks)
+        for (auto &chunk : m_chunks)
         {
+#ifdef _WIN32
+            _aligned_free(chunk.memory);
+#else
             std::free(chunk.memory);
+#endif
         }
     }
 
@@ -37,7 +41,11 @@ namespace NorvesLib::Memory
     void MemoryPool::AllocateChunk()
     {
         // ブロックのアライメントを考慮したメモリを確保
-        void* chunkMemory = std::aligned_alloc(m_alignment, m_blockSize * m_blocksPerChunk);
+#ifdef _WIN32
+        void *chunkMemory = _aligned_malloc(m_blockSize * m_blocksPerChunk, m_alignment);
+#else
+        void *chunkMemory = std::aligned_alloc(m_alignment, m_blockSize * m_blocksPerChunk);
+#endif
         if (!chunkMemory)
         {
             throw std::bad_alloc();
@@ -48,9 +56,9 @@ namespace NorvesLib::Memory
         newChunk.memory = chunkMemory;
         newChunk.blockCount = m_blocksPerChunk;
         m_chunks.push_back(newChunk);
-        
+
         // 各ブロックをフリーリストに追加
-        char* blockPtr = static_cast<char*>(chunkMemory);
+        char *blockPtr = static_cast<char *>(chunkMemory);
         for (size_t i = 0; i < m_blocksPerChunk; ++i)
         {
             m_freeBlocks.push_back(blockPtr);
@@ -62,7 +70,7 @@ namespace NorvesLib::Memory
     }
 
     // メモリブロックを割り当てる
-    void* MemoryPool::Allocate(size_t size, size_t /*alignment*/)
+    void *MemoryPool::Allocate(size_t size, size_t /*alignment*/)
     {
         // 要求サイズがブロックサイズを超える場合はnullptr
         if (size > m_blockSize)
@@ -77,36 +85,36 @@ namespace NorvesLib::Memory
         }
 
         // フリーリストから1つ取得
-        void* block = m_freeBlocks.back();
+        void *block = m_freeBlocks.back();
         m_freeBlocks.pop_back();
         m_allocatedBlocks++;
-        
+
         return block;
     }
 
     // メモリブロックを解放
-    void MemoryPool::Deallocate(void* ptr)
+    void MemoryPool::Deallocate(void *ptr)
     {
         if (!ptr)
         {
             return;
         }
 
-        // プール管理外のポインタでないことを確認（デバッグ用）
-        #ifndef NDEBUG
+// プール管理外のポインタでないことを確認（デバッグ用）
+#ifndef NDEBUG
         bool validPtr = false;
-        for (const auto& chunk : m_chunks)
+        for (const auto &chunk : m_chunks)
         {
-            char* start = static_cast<char*>(chunk.memory);
-            char* end = start + (m_blockSize * chunk.blockCount);
-            if (ptr >= start && ptr < end && ((static_cast<char*>(ptr) - start) % m_blockSize == 0))
+            char *start = static_cast<char *>(chunk.memory);
+            char *end = start + (m_blockSize * chunk.blockCount);
+            if (ptr >= start && ptr < end && ((static_cast<char *>(ptr) - start) % m_blockSize == 0))
             {
                 validPtr = true;
                 break;
             }
         }
         assert(validPtr && "Invalid pointer deallocated from MemoryPool");
-        #endif
+#endif
 
         // ブロックをフリーリストに戻す
         m_freeBlocks.push_back(ptr);

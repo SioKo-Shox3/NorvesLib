@@ -1,4 +1,4 @@
-#include "VulkanSwapChain.h"
+﻿#include "VulkanSwapChain.h"
 #include "VulkanDevice.h"
 #include "VulkanTexture.h"
 #include <stdexcept>

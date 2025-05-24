@@ -1,11 +1,15 @@
-#pragma once
+﻿#pragma once
 
 #include <array>
 #include <cstddef>
 #include <initializer_list>
 #include <algorithm>
 #include <type_traits>
+#include <stdexcept>  // std::out_of_range例外のためにインクルード
 #include "Allocator.h"
+
+// Windowsマクロを無効化
+#define NOMINMAX
 
 namespace NorvesLib::Core::Container
 {
@@ -24,27 +28,37 @@ namespace NorvesLib::Core::Container
     {
     private:
         // 小さいサイズならスタック、大きいサイズならヒープに確保する方式
-        using StorageType = std::conditional_t<
-            (N <= STACK_SIZE_THRESHOLD),
-            std::array<T, N>,           // スタック上のストレージ（小さいサイズ）
-            struct {                     // ヒープ上のストレージ（大きいサイズ）
-                T* data;
-                Allocator<T> allocator;
-            }
-        >;
+        using StackStorage = std::array<T, N>;
+        using HeapStorage = struct {
+            T* data;
+            Allocator<T> allocator;
+        };
+        
+        typename std::conditional<(N <= STACK_SIZE_THRESHOLD), 
+            StackStorage, 
+            HeapStorage
+        >::type storage;
 
-        StorageType storage;
-
-        // ヒープ上のデータにアクセスするヘルパー
-        template<typename U = void>
-        T* getData(std::enable_if_t<(N > STACK_SIZE_THRESHOLD), U>* = nullptr) const {
-            return storage.data;
+        // ヘルパー関数：ヒープストレージかどうかを判定
+        static constexpr bool isHeapStorage() {
+            return N > STACK_SIZE_THRESHOLD;
         }
 
-        // スタック上のデータにアクセスするヘルパー
-        template<typename U = void>
-        T* getData(std::enable_if_t<(N <= STACK_SIZE_THRESHOLD), U>* = nullptr) const {
-            return const_cast<T*>(storage.data());
+        // データポインタ取得ヘルパー関数
+        T* getData() {
+            if constexpr (isHeapStorage()) {
+                return storage.data;
+            } else {
+                return storage.data();
+            }
+        }
+        
+        const T* getData() const {
+            if constexpr (isHeapStorage()) {
+                return storage.data;
+            } else {
+                return storage.data();
+            }
         }
 
     public:
@@ -66,7 +80,7 @@ namespace NorvesLib::Core::Container
          * 全要素をデフォルト初期化
          */
         FixedArray() {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 storage.data = storage.allocator.allocate(N);
                 for (size_type i = 0; i < N; ++i) {
                     new (storage.data + i) T();
@@ -79,7 +93,7 @@ namespace NorvesLib::Core::Container
          * @param value 全要素を初期化する値
          */
         FixedArray(const T& value) {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 storage.data = storage.allocator.allocate(N);
                 for (size_type i = 0; i < N; ++i) {
                     new (storage.data + i) T(value);
@@ -94,7 +108,7 @@ namespace NorvesLib::Core::Container
          * @param init 初期化リスト
          */
         FixedArray(std::initializer_list<T> init) {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 storage.data = storage.allocator.allocate(N);
                 std::size_t i = 0;
                 for (const auto& value : init) {
@@ -120,7 +134,7 @@ namespace NorvesLib::Core::Container
          * @param other コピー元の配列
          */
         FixedArray(const FixedArray& other) {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 storage.data = storage.allocator.allocate(N);
                 for (size_type i = 0; i < N; ++i) {
                     new (storage.data + i) T(other[i]);
@@ -135,7 +149,7 @@ namespace NorvesLib::Core::Container
          * @param other ムーブ元の配列
          */
         FixedArray(FixedArray&& other) noexcept {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 storage.data = other.storage.data;
                 other.storage.data = nullptr;
             } else {
@@ -150,7 +164,7 @@ namespace NorvesLib::Core::Container
          * @param arr コピー元のstd::array
          */
         explicit FixedArray(const std::array<T, N>& arr) {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 storage.data = storage.allocator.allocate(N);
                 for (size_type i = 0; i < N; ++i) {
                     new (storage.data + i) T(arr[i]);
@@ -164,7 +178,7 @@ namespace NorvesLib::Core::Container
          * @brief デストラクタ
          */
         ~FixedArray() {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 if (storage.data) {
                     for (size_type i = 0; i < N; ++i) {
                         (storage.data + i)->~T();
@@ -181,7 +195,7 @@ namespace NorvesLib::Core::Container
          */
         FixedArray& operator=(const FixedArray& other) {
             if (this != &other) {
-                if constexpr (N > STACK_SIZE_THRESHOLD) {
+                if constexpr (isHeapStorage()) {
                     for (size_type i = 0; i < N; ++i) {
                         storage.data[i] = other.storage.data[i];
                     }
@@ -199,7 +213,7 @@ namespace NorvesLib::Core::Container
          */
         FixedArray& operator=(FixedArray&& other) noexcept {
             if (this != &other) {
-                if constexpr (N > STACK_SIZE_THRESHOLD) {
+                if constexpr (isHeapStorage()) {
                     if (storage.data) {
                         for (size_type i = 0; i < N; ++i) {
                             (storage.data + i)->~T();
@@ -223,7 +237,7 @@ namespace NorvesLib::Core::Container
          */
         explicit operator std::array<T, N>() const {
             std::array<T, N> arr;
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 for (size_type i = 0; i < N; ++i) {
                     arr[i] = storage.data[i];
                 }
@@ -339,7 +353,7 @@ namespace NorvesLib::Core::Container
          * @return インデックスの位置にある要素への参照
          */
         reference operator[](size_type index) noexcept {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 return storage.data[index];
             } else {
                 return storage[index];
@@ -352,7 +366,7 @@ namespace NorvesLib::Core::Container
          * @return インデックスの位置にある要素への定数参照
          */
         const_reference operator[](size_type index) const noexcept {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 return storage.data[index];
             } else {
                 return storage[index];
@@ -466,7 +480,7 @@ namespace NorvesLib::Core::Container
          * @param value 代入する値
          */
         void fill(const T& value) {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 for (size_type i = 0; i < N; ++i) {
                     storage.data[i] = value;
                 }
@@ -480,7 +494,7 @@ namespace NorvesLib::Core::Container
          * @param other 交換する配列
          */
         void swap(FixedArray& other) noexcept {
-            if constexpr (N > STACK_SIZE_THRESHOLD) {
+            if constexpr (isHeapStorage()) {
                 std::swap(storage.data, other.storage.data);
             } else {
                 std::swap(storage, other.storage);

@@ -1,10 +1,11 @@
-#pragma once
+﻿#pragma once
 
 #include <thread>
 #include <functional>
 #include <atomic>
 #include <cstdint>
 #include "Core/Public/Container/Containers.h"
+#include "Atomic.h" // Atomic<T>クラスを明示的にインクルード
 
 namespace NorvesLib::Thread
 {
@@ -135,7 +136,7 @@ public:
 
 private:
     std::thread m_thread;
-    Atomic<bool> m_isRunning;
+    Atomic<bool> m_isRunning; // Atomic<T>クラスを正しく使用
     Core::Container::String m_name;
 };
 

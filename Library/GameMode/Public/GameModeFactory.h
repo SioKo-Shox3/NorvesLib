@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "TGameMode.h"
 #include <memory> // std::make_uniqueを使用

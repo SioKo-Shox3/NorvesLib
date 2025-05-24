@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
 #include <type_traits>
@@ -60,6 +60,16 @@ public:
      * @param order メモリオーダー（デフォルトはseq_cst）
      * @return 現在の値
      */
+    T load(std::memory_order order = std::memory_order_seq_cst) const noexcept
+    {
+        return m_Value.load(order);
+    }
+
+    /**
+     * @brief アトミック変数の値を読み取る (GetValue と同じ)
+     * @param order メモリオーダー（デフォルトはseq_cst）
+     * @return 現在の値
+     */
     T GetValue(std::memory_order order = std::memory_order_seq_cst) const noexcept
     {
         return m_Value.load(order);
@@ -67,6 +77,16 @@ public:
 
     /**
      * @brief アトミック変数に値を書き込む
+     * @param value 書き込む値
+     * @param order メモリオーダー（デフォルトはseq_cst）
+     */
+    void store(T value, std::memory_order order = std::memory_order_seq_cst) noexcept
+    {
+        m_Value.store(value, order);
+    }
+
+    /**
+     * @brief アトミック変数に値を書き込む (store と同じ)
      * @param value 書き込む値
      * @param order メモリオーダー（デフォルトはseq_cst）
      */
@@ -114,6 +134,26 @@ public:
                                 std::memory_order failureOrder = std::memory_order_seq_cst) noexcept
     {
         return m_Value.compare_exchange_strong(expected, value, successOrder, failureOrder);
+    }
+    
+    /**
+     * @brief compare_exchange_strongのエイリアス（std::atomicと同じインターフェース用）
+     */
+    bool compare_exchange_strong(T& expected, T value,
+                               std::memory_order successOrder = std::memory_order_seq_cst,
+                               std::memory_order failureOrder = std::memory_order_seq_cst) noexcept
+    {
+        return CompareExchangeStrong(expected, value, successOrder, failureOrder);
+    }
+
+    /**
+     * @brief compare_exchange_weakのエイリアス（std::atomicと同じインターフェース用）
+     */
+    bool compare_exchange_weak(T& expected, T value,
+                             std::memory_order successOrder = std::memory_order_seq_cst,
+                             std::memory_order failureOrder = std::memory_order_seq_cst) noexcept
+    {
+        return CompareExchangeWeak(expected, value, successOrder, failureOrder);
     }
 
     /**
@@ -237,7 +277,7 @@ public:
     }
 
 private:
-    Atomic<T> m_Value; ///< ラップするAtomic
+    std::atomic<T> m_Value; ///< ラップするstd::atomic
 };
 
 } // namespace NorvesLib::Thread

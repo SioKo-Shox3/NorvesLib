@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <memory>
 #include <functional>
@@ -6,6 +6,7 @@
 #include "Core/Public/Container/Containers.h"
 #include "ConditionVariable.h"
 #include "Mutex.h"
+#include "Atomic.h" // Atomic<T>クラスを明示的にインクルード
 
 namespace NorvesLib::Thread
 {
@@ -169,7 +170,7 @@ private:
     TaskFunction m_function;
     Core::Container::VariableArray<TaskPtr> m_childTasks;
     Core::Container::VariableArray<TaskCompletionHandler> m_completionHandlers;
-    Atomic<State> m_state;
+    Atomic<State> m_state; // Atomic<T>クラスを正しく使用
     mutable ConditionVariable m_completionEvent;
     mutable Mutex m_mutex;
     TaskPriority m_priority;

@@ -1,9 +1,16 @@
-cmake_minimum_required(VERSION 3.10)
+﻿cmake_minimum_required(VERSION 3.10)
 project(GameMode)
 
 # ソースファイルとヘッダーファイルを追加
 file(GLOB_RECURSE PUBLIC_HEADERS CONFIGURE_DEPENDS "Public/*.h")
 file(GLOB_RECURSE PRIVATE_SOURCES CONFIGURE_DEPENDS "Private/*.cpp")
+
+# ソースファイルが存在しない場合、ダミーソースファイルを作成してライブラリをビルド可能にする
+if(NOT PRIVATE_SOURCES)
+    set(DUMMY_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/GameMode_dummy.cpp")
+    file(WRITE ${DUMMY_SOURCE} "// Dummy source file for header-only library\n")
+    set(PRIVATE_SOURCES ${DUMMY_SOURCE})
+endif()
 
 add_library(GameMode STATIC ${PUBLIC_HEADERS} ${PRIVATE_SOURCES})
 

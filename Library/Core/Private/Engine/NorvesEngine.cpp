@@ -1,4 +1,4 @@
-// filepath: c:\Users\KINGkawamura\Documents\NorvesLib\Library\Core\Private\Engine\NorvesEngine.cpp
+﻿// filepath: c:\Users\KINGkawamura\Documents\NorvesLib\Library\Core\Private\Engine\NorvesEngine.cpp
 #include "Core/Public/Engine/NorvesEngine.h"
 #include <iostream>
 

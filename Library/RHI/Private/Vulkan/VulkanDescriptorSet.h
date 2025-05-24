@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "RHI/Public/IDescriptorSet.h"
 #include <vulkan/vulkan.h>

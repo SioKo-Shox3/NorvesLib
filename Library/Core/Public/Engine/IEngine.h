@@ -1,4 +1,4 @@
-// filepath: c:\Users\KINGkawamura\Documents\NorvesLib\Library\Core\Public\Engine\IEngine.h
+﻿// filepath: c:\Users\KINGkawamura\Documents\NorvesLib\Library\Core\Public\Engine\IEngine.h
 #pragma once
 
 #include <memory>

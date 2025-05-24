@@ -1,4 +1,4 @@
-#include "../Public/WorkStealingQueue.h"
+﻿#include "WorkStealingQueue.h"
 
 namespace NorvesLib::Thread
 {

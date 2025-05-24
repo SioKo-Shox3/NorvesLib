@@ -1,4 +1,4 @@
-#include "Thread/Public/RingBuffer.h"
+﻿#include "Thread/Public/RingBuffer.h"
 #include <thread>
 #include <chrono>
 #include <vector>

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "RHI/Public/IRenderPass.h"
 #include <vulkan/vulkan.h>

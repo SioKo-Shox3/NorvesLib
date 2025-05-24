@@ -1,4 +1,4 @@
-#include "Object/Object.h"
+﻿#include "Object/Object.h"
 #include "Object/IClass.h"
 #include "Object/IValue.h"
 #include "Object/ObjectUtility.h"
@@ -12,23 +12,21 @@ namespace NorvesLib::Core
         {
         public:
             ObjectClass()
-                : m_ClassName("Object")
-                , m_ClassId(0)  // Object基本クラスには0のIDを割り当てる
-                , m_PropertyField(new PropertyField())
-                , m_FunctionField(new FunctionField())
-                , m_DefaultObject(nullptr)
+                : m_ClassName("Object"), m_ClassId(0) // Object基本クラスには0のIDを割り当てる
+                  ,
+                  m_PropertyField(new PropertyField()), m_FunctionField(new FunctionField()), m_DefaultObject(nullptr)
             {
                 // クラスレジストリに登録
                 ClassRegistry::Get().RegisterClass(this);
 
                 // デフォルトオブジェクトを作成
                 m_DefaultObject = new Object();
-                
+
                 // FieldInitializerを使用してデフォルト値を設定
                 FieldInitializer initializer;
                 // ここでObjectクラスのデフォルト値をsetup
                 // 例: initializer.SetInitialValue<int>("PropertyName", defaultValue);
-                
+
                 // デフォルトオブジェクトを初期化
                 m_DefaultObject->Initialize();
             }
@@ -57,18 +55,18 @@ namespace NorvesLib::Core
             }
 
             // IClass インターフェース実装
-            virtual const Identity& GetClassName() const override
+            virtual const Identity &GetClassName() const override
             {
                 return m_ClassName;
             }
 
-            virtual const IClass* GetParentClass() const override
+            virtual const IClass *GetParentClass() const override
             {
                 // Object は最上位クラスなので親はない
                 return nullptr;
             }
 
-            virtual bool IsChildOf(const IClass* cls) const override
+            virtual bool IsChildOf(const IClass *cls) const override
             {
                 if (!cls)
                 {
@@ -85,28 +83,28 @@ namespace NorvesLib::Core
                 return false;
             }
 
-            virtual const IUnknown* GetDefaultObject() const override
+            virtual const IUnknown *GetDefaultObject() const override
             {
                 return m_DefaultObject;
             }
 
-            virtual IUnknown* CreateInstance() const override
+            virtual IUnknown *NewInstance(IUnknown *outer = nullptr) const override
             {
                 // デフォルトオブジェクトをコピーして新しいインスタンスを作成
                 return new Object(m_DefaultObject);
             }
 
-            virtual const PropertyField* GetPropertyField() const override
+            virtual const PropertyField *GetPropertyField() const override
             {
                 return m_PropertyField;
             }
 
-            virtual const FunctionField* GetFunctionField() const override
+            virtual const FunctionField *GetFunctionField() const override
             {
                 return m_FunctionField;
             }
 
-            virtual const ClassProperty* GetProperty(const Identity& name) const override
+            virtual const ClassProperty *GetProperty(const Identity &name) const override
             {
                 if (m_PropertyField)
                 {
@@ -115,7 +113,7 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
-            virtual Container::VariableArray<const ClassProperty*> GetAllProperties() const override
+            virtual Container::VariableArray<const ClassProperty *> GetAllProperties() const override
             {
                 if (m_PropertyField)
                 {
@@ -124,7 +122,7 @@ namespace NorvesLib::Core
                 return {};
             }
 
-            virtual const ClassFunction* GetFunction(const Identity& name) const override
+            virtual const ClassFunction *GetFunction(const Identity &name) const override
             {
                 if (m_FunctionField)
                 {
@@ -133,7 +131,7 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
-            virtual Container::VariableArray<const ClassFunction*> GetAllFunctions() const override
+            virtual Container::VariableArray<const ClassFunction *> GetAllFunctions() const override
             {
                 if (m_FunctionField)
                 {
@@ -156,7 +154,7 @@ namespace NorvesLib::Core
                 return 0;
             }
 
-            virtual void InitializeVariableContainer(void* container) const override
+            virtual void InitializeVariableContainer(void *container) const override
             {
                 // 基本的な初期化を行う（すべて0に設定）
                 if (container)
@@ -168,9 +166,9 @@ namespace NorvesLib::Core
         private:
             Identity m_ClassName;
             uint64_t m_ClassId;
-            PropertyField* m_PropertyField;
-            FunctionField* m_FunctionField;
-            Object* m_DefaultObject;
+            PropertyField *m_PropertyField;
+            FunctionField *m_FunctionField;
+            Object *m_DefaultObject;
         };
 
         // 静的クラスインスタンス
@@ -182,12 +180,12 @@ namespace NorvesLib::Core
     {
     }
 
-    Object::Object(const FieldInitializer* initializer)
+    Object::Object(const FieldInitializer *initializer)
         : UnknownImpl(initializer)
     {
     }
 
-    Object::Object(const IUnknown* sourceObject)
+    Object::Object(const IUnknown *sourceObject)
         : UnknownImpl(sourceObject)
     {
         // UnknownImplのコンストラクタですべての必要な処理は行われる
@@ -198,7 +196,7 @@ namespace NorvesLib::Core
         Finalize();
     }
 
-    const IClass* Object::GetClass() const
+    const IClass *Object::GetClass() const
     {
         return StaticClass();
     }
@@ -209,20 +207,20 @@ namespace NorvesLib::Core
         UnknownImpl::Initialize();
     }
 
-    bool Object::Initialize(const FieldInitializer* initializer)
+    bool Object::Initialize(const FieldInitializer *initializer)
     {
         // 基本初期化
         UnknownImpl::Initialize();
 
         if (initializer)
         {
-            const IClass* cls = GetClass();
+            const IClass *cls = GetClass();
             if (cls)
             {
-                const Container::VariableArray<const ClassProperty*> properties = cls->GetAllProperties();
-                
+                const Container::VariableArray<const ClassProperty *> properties = cls->GetAllProperties();
+
                 // 各プロパティに初期値を適用
-                for (const ClassProperty* prop : properties)
+                for (const ClassProperty *prop : properties)
                 {
                     if (prop)
                     {
@@ -232,7 +230,7 @@ namespace NorvesLib::Core
                 return true;
             }
         }
-        
+
         return false;
     }
 
@@ -241,22 +239,22 @@ namespace NorvesLib::Core
         UnknownImpl::Finalize();
     }
 
-    const Identity& Object::GetTypeName() const
+    const Identity &Object::GetTypeName() const
     {
         return GetClass()->GetClassName();
     }
 
-    bool Object::IsA(const IClass* cls) const
+    bool Object::IsA(const IClass *cls) const
     {
         if (!cls)
         {
             return false;
         }
-        
+
         return GetClass()->IsChildOf(cls);
     }
 
-    const IClass* Object::StaticClass()
+    const IClass *Object::StaticClass()
     {
         return &g_ObjectClass;
     }

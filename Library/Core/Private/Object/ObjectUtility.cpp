@@ -1,45 +1,46 @@
-#include "Object/ObjectUtility.h"
+﻿#include "Object/ObjectUtility.h"
 #include "Object/IClass.h"
 #include <memory>
 
 namespace NorvesLib::Core
 {
-    IUnknown* CreateObjectImpl(const IClass* cls, IUnknown* outer = nullptr)
+    IUnknown *CreateObjectImpl(const IClass *cls, IUnknown *outer = nullptr)
     {
-        if (!cls) return nullptr;
+        if (!cls)
+            return nullptr;
 
-        try 
+        try
         {
             // クラス情報のNewInstanceメソッドを使用して新しいインスタンスを生成
             // 親子関係の設定はここで行うため、outer引数は渡さない
-            IUnknown* newObject = cls->NewInstance();
-            
+            IUnknown *newObject = cls->NewInstance();
+
             // 親子関係の設定（指定されていれば）
             if (newObject && outer)
             {
                 outer->AddInner(newObject);
-                
+
                 // 親オブジェクト参照を設定
-                // dynamic_castの代わりにTryCastを使用
-                auto* unknownImpl = ObjectUtility::TryCast<UnknownImpl>(newObject);
+                // dynamic_castを使用してUnknownImplにキャスト
+                UnknownImpl *unknownImpl = dynamic_cast<UnknownImpl *>(newObject);
                 if (unknownImpl)
                 {
-                    unknownImpl->m_Outer = outer;
+                    unknownImpl->SetOuter(outer); // SetOuterメソッドを使用
                 }
             }
-            
+
             return newObject;
         }
-        catch (const std::exception& e)
+        catch (const std::exception &e)
         {
             // 例外が発生した場合はnullptrを返す
             return nullptr;
         }
     }
 
-    IUnknown* ObjectUtility::CreateObject(const Identity& className, IUnknown* outer)
+    IUnknown *ObjectUtility::CreateObject(const Identity &className, IUnknown *outer)
     {
-        const IClass* cls = ClassRegistry::Get().FindClass(className);
+        const IClass *cls = ClassRegistry::Get().FindClass(className);
         if (cls)
         {
             return CreateObjectImpl(cls, outer);
@@ -47,9 +48,9 @@ namespace NorvesLib::Core
         return nullptr;
     }
 
-    IUnknown* ObjectUtility::CreateObject(uint64_t classId, IUnknown* outer)
+    IUnknown *ObjectUtility::CreateObject(uint64_t classId, IUnknown *outer)
     {
-        const IClass* cls = ClassRegistry::Get().FindClass(classId);
+        const IClass *cls = ClassRegistry::Get().FindClass(classId);
         if (cls)
         {
             return CreateObjectImpl(cls, outer);
@@ -57,7 +58,7 @@ namespace NorvesLib::Core
         return nullptr;
     }
 
-    IUnknown* ObjectUtility::CreateObject(const IClass* cls, IUnknown* outer)
+    IUnknown *ObjectUtility::CreateObject(const IClass *cls, IUnknown *outer)
     {
         if (cls)
         {
@@ -66,9 +67,9 @@ namespace NorvesLib::Core
         return nullptr;
     }
 
-    IUnknown* ObjectUtility::CreateObject(const Identity& className, const FieldInitializer* initializer, IUnknown* outer)
+    IUnknown *ObjectUtility::CreateObject(const Identity &className, const FieldInitializer *initializer, IUnknown *outer)
     {
-        IUnknown* object = CreateObject(className, outer);
+        IUnknown *object = CreateObject(className, outer);
         if (object && initializer)
         {
             ApplyInitialValues(object, initializer);
@@ -76,9 +77,9 @@ namespace NorvesLib::Core
         return object;
     }
 
-    IUnknown* ObjectUtility::CreateObject(uint64_t classId, const FieldInitializer* initializer, IUnknown* outer)
+    IUnknown *ObjectUtility::CreateObject(uint64_t classId, const FieldInitializer *initializer, IUnknown *outer)
     {
-        IUnknown* object = CreateObject(classId, outer);
+        IUnknown *object = CreateObject(classId, outer);
         if (object && initializer)
         {
             ApplyInitialValues(object, initializer);
@@ -86,9 +87,9 @@ namespace NorvesLib::Core
         return object;
     }
 
-    IUnknown* ObjectUtility::CreateObject(const IClass* cls, const FieldInitializer* initializer, IUnknown* outer)
+    IUnknown *ObjectUtility::CreateObject(const IClass *cls, const FieldInitializer *initializer, IUnknown *outer)
     {
-        IUnknown* object = CreateObject(cls, outer);
+        IUnknown *object = CreateObject(cls, outer);
         if (object && initializer)
         {
             ApplyInitialValues(object, initializer);
@@ -96,7 +97,7 @@ namespace NorvesLib::Core
         return object;
     }
 
-    bool ObjectUtility::DestroyObject(IUnknown* object)
+    bool ObjectUtility::DestroyObject(IUnknown *object)
     {
         if (!object)
         {
@@ -119,7 +120,7 @@ namespace NorvesLib::Core
         }
     }
 
-    int ObjectUtility::ApplyInitialValues(IUnknown* object, const FieldInitializer* initializer)
+    int ObjectUtility::ApplyInitialValues(IUnknown *object, const FieldInitializer *initializer)
     {
         if (!object || !initializer)
         {
@@ -127,20 +128,20 @@ namespace NorvesLib::Core
         }
 
         // オブジェクトのクラス情報を取得
-        const IClass* cls = object->GetClass();
+        const IClass *cls = object->GetClass();
         if (!cls)
         {
             return 0;
         }
 
         // すべてのプロパティを取得
-        Container::VariableArray<const ClassProperty*> properties = cls->GetAllProperties();
-        
+        Container::VariableArray<const ClassProperty *> properties = cls->GetAllProperties();
+
         // 適用された初期値の数をカウント
         int appliedCount = 0;
-        
+
         // 各プロパティに初期値を適用
-        for (const ClassProperty* prop : properties)
+        for (const ClassProperty *prop : properties)
         {
             if (prop && prop->ApplyInitialValue(object, initializer))
             {
@@ -151,7 +152,7 @@ namespace NorvesLib::Core
         return appliedCount;
     }
 
-    int ObjectUtility::ApplyDefaultValues(IUnknown* object)
+    int ObjectUtility::ApplyDefaultValues(IUnknown *object)
     {
         if (!object)
         {
@@ -159,20 +160,20 @@ namespace NorvesLib::Core
         }
 
         // オブジェクトのクラス情報を取得
-        const IClass* cls = object->GetClass();
+        const IClass *cls = object->GetClass();
         if (!cls)
         {
             return 0;
         }
 
         // すべてのプロパティを取得
-        Container::VariableArray<const ClassProperty*> properties = cls->GetAllProperties();
-        
+        Container::VariableArray<const ClassProperty *> properties = cls->GetAllProperties();
+
         // 適用されたデフォルト値の数をカウント
         int appliedCount = 0;
-        
+
         // 各プロパティにデフォルト値を適用
-        for (const ClassProperty* prop : properties)
+        for (const ClassProperty *prop : properties)
         {
             if (prop)
             {
@@ -182,6 +183,34 @@ namespace NorvesLib::Core
         }
 
         return appliedCount;
+    }
+
+    void SetOuter(IUnknown *object, IUnknown *outer)
+    {
+        if (!object)
+        {
+            return;
+        }
+
+        try
+        {
+            // objectを直接UnknownImplにキャストして使用
+            UnknownImpl *unknownImpl = dynamic_cast<UnknownImpl *>(object);
+            if (unknownImpl)
+            {
+                unknownImpl->SetOuter(outer);
+
+                // outerにinnerとして追加
+                if (outer)
+                {
+                    outer->AddInner(object);
+                }
+            }
+        }
+        catch (const std::exception &e)
+        {
+            // 例外が発生した場合は何もしない
+        }
     }
 
 } // namespace NorvesLib::Core

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "RHI/Public/ISampler.h"
 #include "RHI/Public/RHITypes.h"

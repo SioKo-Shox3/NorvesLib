@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Container/String.h"
 #include "Container/StringView.h"
