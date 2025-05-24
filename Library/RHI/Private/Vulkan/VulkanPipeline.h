@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "RHI/Public/IPipeline.h"
 #include <vulkan/vulkan.h>

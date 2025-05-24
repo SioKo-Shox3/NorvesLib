@@ -1,4 +1,4 @@
-#include <windows.h>
+﻿#include <windows.h>
 #include "Library/Core/Public/Boot/PlatformBoot.h"
 
 // Windowsアプリケーションのエントリーポイント

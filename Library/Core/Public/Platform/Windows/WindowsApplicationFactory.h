@@ -1,33 +1,38 @@
-#pragma once
+﻿#pragma once
 
-#include "Application/ApplicationFactory.h"
 #include <memory>
+#include "Application/IApplication.h" // IApplicationの完全な定義をインクルード
+#include "Application/IWindow.h"      // IWindowの完全な定義をインクルード
 
-namespace NorvesLib {
-namespace Core {
-namespace Platform {
-
-/**
- * @brief Windows向けのアプリケーションファクトリークラス
- * 
- * Windows向けの実装を提供するアプリケーションファクトリーです。
- */
-class WindowsApplicationFactory
+namespace NorvesLib
 {
-public:
-    /**
-     * @brief Windows向けのアプリケーションインスタンスを作成
-     * @return 作成されたWindowsアプリケーションインスタンス
-     */
-    static std::unique_ptr<IApplication> CreateWindowsApplication();
-    
-    /**
-     * @brief Windows向けのウィンドウインスタンスを作成
-     * @return 作成されたWindowsウィンドウインスタンス
-     */
-    static std::shared_ptr<IWindow> CreateWindowsWindow();
-};
 
-} // namespace Platform
-} // namespace Core
+    namespace Core
+    {
+        namespace Platform
+        {
+
+            /**
+             * @brief Windows環境向けアプリケーションファクトリークラス
+             *
+             * Windows固有のアプリケーション実装を生成するファクトリー
+             */
+            class WindowsApplicationFactory
+            {
+            public:
+                /**
+                 * @brief Windows環境向けアプリケーションインスタンスを生成
+                 * @return アプリケーションのインスタンス
+                 */
+                static std::unique_ptr<IApplication> CreateWindowsApplication();
+
+                /**
+                 * @brief Windows環境向けウィンドウインスタンスを生成
+                 * @return ウィンドウのインスタンス
+                 */
+                static std::shared_ptr<IWindow> CreateWindowsWindow();
+            };
+
+        } // namespace Platform
+    } // namespace Core
 } // namespace NorvesLib

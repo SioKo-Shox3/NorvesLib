@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include "Thread/Public/Atomic.h"
@@ -23,8 +23,7 @@ namespace NorvesLib::Core
          * @param size コンテナのサイズ（バイト単位）
          */
         explicit VariableContainer(size_t size)
-            : m_Size(size)
-            , m_Data(nullptr)
+            : m_Size(size), m_Data(nullptr)
         {
             if (size > 0)
             {
@@ -48,7 +47,7 @@ namespace NorvesLib::Core
          * @brief データへのポインタを取得します
          * @return データへのポインタ
          */
-        void* GetData()
+        void *GetData()
         {
             return m_Data;
         }
@@ -57,7 +56,7 @@ namespace NorvesLib::Core
          * @brief データへの読み取り専用ポインタを取得します
          * @return データへの読み取り専用ポインタ
          */
-        const void* GetData() const
+        const void *GetData() const
         {
             return m_Data;
         }
@@ -76,7 +75,7 @@ namespace NorvesLib::Core
          * @param offset コンテナ先頭からのオフセット
          * @return オフセット位置のデータへのポインタ
          */
-        void* GetAt(size_t offset)
+        void *GetAt(size_t offset)
         {
             if (offset < m_Size && m_Data)
             {
@@ -90,7 +89,7 @@ namespace NorvesLib::Core
          * @param offset コンテナ先頭からのオフセット
          * @return オフセット位置のデータへの読み取り専用ポインタ
          */
-        const void* GetAt(size_t offset) const
+        const void *GetAt(size_t offset) const
         {
             if (offset < m_Size && m_Data)
             {
@@ -106,7 +105,7 @@ namespace NorvesLib::Core
          * @param size コピーするバイト数
          * @return コピーが成功した場合はtrue
          */
-        bool CopyTo(size_t dstOffset, const void* src, size_t size)
+        bool CopyTo(size_t dstOffset, const void *src, size_t size)
         {
             if (!m_Data || !src || dstOffset + size > m_Size)
             {
@@ -122,7 +121,7 @@ namespace NorvesLib::Core
          * @param source コピー元コンテナ
          * @return コピーが成功した場合はtrue
          */
-        bool CopyFrom(const VariableContainer* source)
+        bool CopyFrom(const VariableContainer *source)
         {
             if (!m_Data || !source || !source->m_Data || m_Size != source->m_Size)
             {
@@ -179,12 +178,12 @@ namespace NorvesLib::Core
         }
 
     private:
-        size_t m_Size;     // コンテナのサイズ
-        uint8_t* m_Data;   // データ領域
+        size_t m_Size;   // コンテナのサイズ
+        uint8_t *m_Data; // データ領域
 
         // コピー禁止
-        VariableContainer(const VariableContainer&) = delete;
-        VariableContainer& operator=(const VariableContainer&) = delete;
+        VariableContainer(const VariableContainer &) = delete;
+        VariableContainer &operator=(const VariableContainer &) = delete;
     };
 
     /**
@@ -216,7 +215,7 @@ namespace NorvesLib::Core
          * @brief オブジェクトのクラス情報を取得します
          * @return このオブジェクトのクラス情報へのポインタ
          */
-        virtual const IClass* GetClass() const = 0;
+        virtual const IClass *GetClass() const = 0;
 
         /**
          * @brief オブジェクトを初期化します
@@ -248,26 +247,26 @@ namespace NorvesLib::Core
          * @param propertyName プロパティ名
          * @return プロパティの値をvoid*として返す
          */
-        virtual void* GetPropertyValue(const Identity& propertyName) = 0;
+        virtual void *GetPropertyValue(const Identity &propertyName) = 0;
 
         /**
          * @brief プロパティの値を取得します（const版）
          * @param propertyName プロパティ名
          * @return プロパティの値をconst void*として返す
          */
-        virtual const void* GetPropertyValue(const Identity& propertyName) const = 0;
-        
+        virtual const void *GetPropertyValue(const Identity &propertyName) const = 0;
+
         /**
          * @brief 変数コンテナを取得します
          * @return 変数コンテナへのポインタ
          */
-        virtual VariableContainer* GetVariableContainer() = 0;
-        
+        virtual VariableContainer *GetVariableContainer() = 0;
+
         /**
          * @brief 変数コンテナを取得します（読み取り専用）
          * @return 変数コンテナへの読み取り専用ポインタ
          */
-        virtual const VariableContainer* GetVariableContainer() const = 0;
+        virtual const VariableContainer *GetVariableContainer() const = 0;
 
         /**
          * @brief このオブジェクトがデフォルトオブジェクトかどうかを返します
@@ -279,32 +278,32 @@ namespace NorvesLib::Core
          * @brief 親オブジェクト（Outer）を取得します
          * @return 親オブジェクトへのポインタ、親がない場合はnullptr
          */
-        virtual IUnknown* GetOuter() = 0;
+        virtual IUnknown *GetOuter() = 0;
 
         /**
          * @brief 親オブジェクト（Outer）を取得します（const版）
          * @return 親オブジェクトへの読み取り専用ポインタ、親がない場合はnullptr
          */
-        virtual const IUnknown* GetOuter() const = 0;
+        virtual const IUnknown *GetOuter() const = 0;
 
         /**
          * @brief 子オブジェクト（Inners）のリストを取得します
          * @return 子オブジェクトのリスト
          */
-        virtual const Container::Array<IUnknown*>& GetInners() const = 0;
+        virtual const Container::VariableArray<IUnknown *> &GetInners() const = 0;
 
         /**
          * @brief 子オブジェクト（Inner）を追加します
          * @param inner 追加する子オブジェクト
          */
-        virtual void AddInner(IUnknown* inner) = 0;
+        virtual void AddInner(IUnknown *inner) = 0;
 
         /**
          * @brief 子オブジェクト（Inner）を削除します
          * @param inner 削除する子オブジェクト
          * @return 削除に成功した場合はtrue
          */
-        virtual bool RemoveInner(IUnknown* inner) = 0;
+        virtual bool RemoveInner(IUnknown *inner) = 0;
     };
 
     /**
@@ -325,15 +324,14 @@ namespace NorvesLib::Core
          * このコンストラクタはデフォルトオブジェクトの初期化時にのみ使用されます
          * @param initializer フィールド初期化子
          */
-        explicit UnknownImpl(const FieldInitializer* initializer);
-
+        explicit UnknownImpl(const FieldInitializer *initializer);
 
         /**
          * @brief 任意のIUnknownオブジェクトからコピーするコンストラクタ
          * このコンストラクタはオブジェクトのクローン作成にも使用されます
          * @param sourceObject コピー元となるオブジェクト
          */
-        explicit UnknownImpl(const IUnknown* sourceObject);
+        explicit UnknownImpl(const IUnknown *sourceObject);
 
         /**
          * @brief デストラクタ
@@ -345,22 +343,23 @@ namespace NorvesLib::Core
         virtual uint32_t Release() const override;
         virtual bool HasFlag(uint32_t flag) const override;
         virtual void SetFlag(uint32_t flag, bool value) override;
-        virtual void* GetPropertyValue(const Identity& propertyName) override;
-        virtual const void* GetPropertyValue(const Identity& propertyName) const override;
-        virtual VariableContainer* GetVariableContainer() override;
-        virtual const VariableContainer* GetVariableContainer() const override;
-        
-        virtual const IClass* GetClass() const override;
+        virtual void *GetPropertyValue(const Identity &propertyName) override;
+        virtual const void *GetPropertyValue(const Identity &propertyName) const override;
+        virtual VariableContainer *GetVariableContainer() override;
+        virtual const VariableContainer *GetVariableContainer() const override;
+
+        virtual const IClass *GetClass() const override;
         virtual void Initialize() override;
         virtual void Finalize() override;
         virtual bool IsDefaultObject() const override;
 
         // Outer/Inner関連メソッドの実装
-        virtual IUnknown* GetOuter() override;
-        virtual const IUnknown* GetOuter() const override;
-        virtual const Container::Array<IUnknown*>& GetInners() const override;
-        virtual void AddInner(IUnknown* inner) override;
-        virtual bool RemoveInner(IUnknown* inner) override;
+        virtual IUnknown *GetOuter() override;
+        virtual const IUnknown *GetOuter() const override;
+        void SetOuter(IUnknown *outer); // SetOuterメソッドを追加（非virtual）
+        virtual const Container::VariableArray<IUnknown *> &GetInners() const override;
+        virtual void AddInner(IUnknown *inner) override;
+        virtual bool RemoveInner(IUnknown *inner) override;
 
     protected:
         /**
@@ -372,17 +371,17 @@ namespace NorvesLib::Core
          * @brief 他のオブジェクトからデータをコピーします
          * @param sourceObject コピー元となるオブジェクト
          */
-        void CopyFromObject(const IUnknown* sourceObject);
+        void CopyFromObject(const IUnknown *sourceObject);
 
-        mutable Thread::Atomic<uint32_t> m_RefCount;   // 参照カウント
-        mutable Thread::Atomic<uint32_t> m_Flags;      // オブジェクトフラグ
-        std::unique_ptr<VariableContainer> m_VariableContainer;  // 変数コンテナ
-        IUnknown* m_Outer;                         // 親オブジェクト
-        Container::Array<IUnknown*> m_Inners;      // 子オブジェクトのリスト
+        mutable Thread::Atomic<uint32_t> m_RefCount;            // 参照カウント
+        mutable Thread::Atomic<uint32_t> m_Flags;               // オブジェクトフラグ
+        std::unique_ptr<VariableContainer> m_VariableContainer; // 変数コンテナ
+        IUnknown *m_Outer;                                      // 親オブジェクト
+        Container::VariableArray<IUnknown *> m_Inners;          // 子オブジェクトのリスト
 
     private:
         // 代入は禁止
-        UnknownImpl& operator=(const UnknownImpl&) = delete;
+        UnknownImpl &operator=(const UnknownImpl &) = delete;
     };
 
     /**
@@ -390,13 +389,13 @@ namespace NorvesLib::Core
      */
     enum ObjectFlags : uint32_t
     {
-        OF_None             = 0,        // フラグなし
-        OF_Initialized      = 1 << 0,   // 初期化済み
-        OF_PendingDestroy   = 1 << 1,   // 破棄待ち
-        OF_GarbageCollect   = 1 << 2,   // GC対象
-        OF_Transient        = 1 << 3,   // 一時的なオブジェクト
-        OF_Persistent       = 1 << 4,   // 永続的なオブジェクト
-        OF_DefaultObject    = 1 << 5    // デフォルトオブジェクト
+        OF_None = 0,                // フラグなし
+        OF_Initialized = 1 << 0,    // 初期化済み
+        OF_PendingDestroy = 1 << 1, // 破棄待ち
+        OF_GarbageCollect = 1 << 2, // GC対象
+        OF_Transient = 1 << 3,      // 一時的なオブジェクト
+        OF_Persistent = 1 << 4,     // 永続的なオブジェクト
+        OF_DefaultObject = 1 << 5   // デフォルトオブジェクト
     };
 
 } // namespace NorvesLib::Core

@@ -1,4 +1,4 @@
-set(MODULE_NAME NorvesLib)
+﻿set(MODULE_NAME NorvesLib)
 
 # ライブラリモジュールを追加
 add_subdirectory(Core)

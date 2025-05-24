@@ -1,4 +1,4 @@
-#include "../Public/Thread.h"
+﻿#include "Thread.h"
 #include <cassert>
 
 #ifdef _WIN32

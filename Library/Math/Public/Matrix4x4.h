@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "MathForward.h"
 #include "MathTypes.h"

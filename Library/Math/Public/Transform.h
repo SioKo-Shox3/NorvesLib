@@ -1,4 +1,4 @@
-// filepath: c:\Users\<user>\Documents\NorvesLib\Library\Math\Public\Transform.h
+﻿// filepath: c:\Users\<user>\Documents\NorvesLib\Library\Math\Public\Transform.h
 #pragma once
 
 #include "MathForward.h"

@@ -1,28 +1,31 @@
-#include "Platform/Windows/WindowsApplicationFactory.h"
+﻿#include "Platform/Windows/WindowsApplicationFactory.h"
 #include "Platform/Windows/WindowsApplication.h"
 #include "Platform/Windows/WindowsWindow.h"
 
-namespace NorvesLib {
-namespace Core {
-namespace Platform {
-
-std::unique_ptr<IApplication> WindowsApplicationFactory::CreateWindowsApplication()
+namespace NorvesLib
 {
-    return std::make_unique<WindowsApplication>();
-}
+    namespace Core
+    {
+        namespace Platform
+        {
 
-std::shared_ptr<IWindow> WindowsApplicationFactory::CreateWindowsWindow()
-{
-    return std::make_shared<WindowsWindow>();
-}
+            std::unique_ptr<IApplication> WindowsApplicationFactory::CreateWindowsApplication()
+            {
+                // Windows向けアプリケーション実装を返却
+                auto app = std::make_unique<WindowsApplication>();
 
-} // namespace Platform
-} // namespace Core
+                // 必要に応じてWindowsアプリケーションの初期設定を行う
+                // ...
+
+                return app;
+            }
+
+            std::shared_ptr<IWindow> WindowsApplicationFactory::CreateWindowsWindow()
+            {
+                // Windows向けウィンドウ実装を返却
+                return std::make_shared<WindowsWindow>();
+            }
+
+        } // namespace Platform
+    } // namespace Core
 } // namespace NorvesLib
-
-// 既存のCreateApplication関数を修正して、Windows向け実装を使用するようにする
-std::unique_ptr<NorvesLib::IApplication> CreateApplication()
-{
-    // Windows向けのアプリケーションを作成して返す
-    return NorvesLib::Core::Platform::WindowsApplicationFactory::CreateWindowsApplication();
-}

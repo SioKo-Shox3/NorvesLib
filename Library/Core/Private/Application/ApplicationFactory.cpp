@@ -1,31 +1,39 @@
-#include "Public/Application/ApplicationFactory.h"
-#include "DefaultApplication.h"
+﻿#include "Application/ApplicationFactory.h"
+#include "Platform/Windows/WindowsApplicationFactory.h"
 #include <memory>
 
-namespace NorvesLib {
-namespace Core {
-namespace Boot {
-
-std::unique_ptr<IApplication> ApplicationFactory::CreateDefaultApplication()
+namespace NorvesLib
 {
-    // デフォルトアプリケーションインスタンスを作成して返す
-    return std::make_unique<DefaultApplication>();
-}
+    namespace Core
+    {
+        namespace Boot
+        {
 
-std::unique_ptr<IApplication> ApplicationFactory::CreateCustomApplication()
-{
-    // カスタムアプリケーションを作成する処理を実装
-    // 現在はデフォルトと同じ実装を返すが、将来的にはゲーム固有の実装を返すことを想定
-    return std::make_unique<DefaultApplication>();
-}
+            std::unique_ptr<IApplication> ApplicationFactory::CreateDefaultApplication()
+            {
+                // プラットフォーム固有の実装を使用
+                return GetPlatformSpecificImplementation();
+            }
 
-} // namespace Boot
-} // namespace Core
+            std::unique_ptr<IApplication> ApplicationFactory::CreateCustomApplication()
+            {
+                // プラットフォーム固有の実装を使用
+                // 将来的にカスタマイズが必要になった場合、ここで拡張可能
+                return GetPlatformSpecificImplementation();
+            }
+
+            std::unique_ptr<IApplication> ApplicationFactory::GetPlatformSpecificImplementation()
+            {
+// プラットフォームに応じて適切なファクトリーを選択
+#ifdef _WIN32
+                // Windows環境
+                return Core::Platform::WindowsApplicationFactory::CreateWindowsApplication();
+#else
+// 未対応のプラットフォーム
+#error "対応していないプラットフォームです。"
+#endif
+            }
+
+        } // namespace Boot
+    } // namespace Core
 } // namespace NorvesLib
-
-// エントリーポイント（WinMain.cpp）から呼び出される関数の実装
-std::unique_ptr<NorvesLib::IApplication> CreateApplication()
-{
-    // ApplicationFactoryを通じてアプリケーションインスタンスを作成
-    return NorvesLib::Core::Boot::ApplicationFactory::CreateCustomApplication();
-}

@@ -1,4 +1,4 @@
-set(MODULE_NAME Thread)
+﻿set(MODULE_NAME Thread)
 
 # ソースファイル
 file(GLOB_RECURSE SOURCES 

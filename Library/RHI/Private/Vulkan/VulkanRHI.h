@@ -1,4 +1,4 @@
-// filepath: c:\Users\<user>\Documents\NorvesLib\Library\RHI\Private\Vulkan\VulkanRHI.h
+﻿// filepath: c:\Users\<user>\Documents\NorvesLib\Library\RHI\Private\Vulkan\VulkanRHI.h
 #pragma once
 
 #include "RHI/Public/RHITypes.h"

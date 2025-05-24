@@ -1,4 +1,4 @@
-#include "Text/IdentityPool.h"
+﻿#include "Text/IdentityPool.h"
 #include <functional>
 
 namespace NorvesLib::Core

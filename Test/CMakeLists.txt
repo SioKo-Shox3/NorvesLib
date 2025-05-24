@@ -1,4 +1,4 @@
-# NorvesLibテスト
+﻿# NorvesLibテスト
 
 # テストサブディレクトリの追加
 add_subdirectory(Thread)

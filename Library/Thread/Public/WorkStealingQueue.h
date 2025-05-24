@@ -1,7 +1,8 @@
-#pragma once
+﻿#pragma once
 
 #include "Task.h"
 #include "Mutex.h"
+#include "Atomic.h" // Atomic<T>クラスを明示的にインクルード
 #include "Core/Public/Container/Containers.h"
 #include <atomic>
 

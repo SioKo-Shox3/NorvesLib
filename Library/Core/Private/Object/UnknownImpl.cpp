@@ -1,36 +1,34 @@
-#include "Object/IUnknown.h"
+﻿#include "Object/IUnknown.h"
 #include "Object/IClass.h"
 #include "Object/ObjectUtility.h"
 
 namespace NorvesLib::Core
 {
     UnknownImpl::UnknownImpl()
-        : m_RefCount(0)
-        , m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
-        , m_VariableContainer(nullptr)
-        , m_Outer(nullptr)
+        : m_RefCount(0), m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
+          ,
+          m_VariableContainer(nullptr), m_Outer(nullptr)
     {
         InitializeVariableContainer();
     }
 
-    UnknownImpl::UnknownImpl(const FieldInitializer* initializer)
-        : m_RefCount(0)
-        , m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
-        , m_VariableContainer(nullptr)
-        , m_Outer(nullptr)
+    UnknownImpl::UnknownImpl(const FieldInitializer *initializer)
+        : m_RefCount(0), m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
+          ,
+          m_VariableContainer(nullptr), m_Outer(nullptr)
     {
         InitializeVariableContainer();
-        
+
         if (initializer)
         {
             // デフォルトオブジェクトにフィールド初期化子を適用
-            const IClass* cls = GetClass();
+            const IClass *cls = GetClass();
             if (cls)
             {
-                const Container::VariableArray<const ClassProperty*> properties = cls->GetAllProperties();
-                
+                const Container::VariableArray<const ClassProperty *> properties = cls->GetAllProperties();
+
                 // 各プロパティに初期値を適用
-                for (const ClassProperty* prop : properties)
+                for (const ClassProperty *prop : properties)
                 {
                     if (prop)
                     {
@@ -41,15 +39,14 @@ namespace NorvesLib::Core
         }
     }
 
-    UnknownImpl::UnknownImpl(const IUnknown* sourceObject)
-        : m_RefCount(0)
-        , m_Flags(0) // 通常オブジェクトとして初期化
-        , m_VariableContainer(nullptr)
-        , m_Outer(nullptr)
+    UnknownImpl::UnknownImpl(const IUnknown *sourceObject)
+        : m_RefCount(0), m_Flags(0) // 通常オブジェクトとして初期化
+          ,
+          m_VariableContainer(nullptr), m_Outer(nullptr)
     {
         // 変数コンテナを初期化
         InitializeVariableContainer();
-        
+
         // ソースオブジェクトからデータをコピー
         if (sourceObject)
         {
@@ -79,32 +76,32 @@ namespace NorvesLib::Core
 
     bool UnknownImpl::HasFlag(uint32_t flag) const
     {
-        return (m_Flags & flag) != 0;
+        return (m_Flags.GetValue() & flag) != 0;
     }
 
     void UnknownImpl::SetFlag(uint32_t flag, bool value)
     {
         if (value)
         {
-            m_Flags |= flag;
+            m_Flags.FetchOr(flag);
         }
         else
         {
-            m_Flags &= ~flag;
+            m_Flags.FetchAnd(~flag);
         }
     }
 
-    void* UnknownImpl::GetPropertyValue(const Identity& propertyName)
+    void *UnknownImpl::GetPropertyValue(const Identity &propertyName)
     {
         // クラス情報を取得
-        const IClass* cls = GetClass();
+        const IClass *cls = GetClass();
         if (!cls)
         {
             return nullptr;
         }
 
         // プロパティ情報を取得
-        const ClassProperty* property = cls->GetProperty(propertyName);
+        const ClassProperty *property = cls->GetProperty(propertyName);
         if (!property)
         {
             return nullptr;
@@ -114,17 +111,17 @@ namespace NorvesLib::Core
         return property->GetValuePtr(this);
     }
 
-    const void* UnknownImpl::GetPropertyValue(const Identity& propertyName) const
+    const void *UnknownImpl::GetPropertyValue(const Identity &propertyName) const
     {
         // クラス情報を取得
-        const IClass* cls = GetClass();
+        const IClass *cls = GetClass();
         if (!cls)
         {
             return nullptr;
         }
 
         // プロパティ情報を取得
-        const ClassProperty* property = cls->GetProperty(propertyName);
+        const ClassProperty *property = cls->GetProperty(propertyName);
         if (!property)
         {
             return nullptr;
@@ -134,17 +131,17 @@ namespace NorvesLib::Core
         return property->GetValuePtr(this);
     }
 
-    VariableContainer* UnknownImpl::GetVariableContainer()
+    VariableContainer *UnknownImpl::GetVariableContainer()
     {
         return m_VariableContainer.get();
     }
 
-    const VariableContainer* UnknownImpl::GetVariableContainer() const
+    const VariableContainer *UnknownImpl::GetVariableContainer() const
     {
         return m_VariableContainer.get();
     }
 
-    const IClass* UnknownImpl::GetClass() const
+    const IClass *UnknownImpl::GetClass() const
     {
         // サブクラスでオーバーライドされるため、基底クラスではnullptrを返す
         return nullptr;
@@ -169,7 +166,7 @@ namespace NorvesLib::Core
 
     void UnknownImpl::InitializeVariableContainer()
     {
-        const IClass* cls = GetClass();
+        const IClass *cls = GetClass();
         if (cls)
         {
             size_t containerSize = cls->GetVariableContainerSize();
@@ -181,20 +178,20 @@ namespace NorvesLib::Core
         }
     }
 
-    void UnknownImpl::CopyFromObject(const IUnknown* sourceObject)
+    void UnknownImpl::CopyFromObject(const IUnknown *sourceObject)
     {
         if (!sourceObject)
         {
             return;
         }
-        
+
         // VariableContainerをコピー
-        const VariableContainer* srcContainer = sourceObject->GetVariableContainer();
+        const VariableContainer *srcContainer = sourceObject->GetVariableContainer();
         if (srcContainer && m_VariableContainer)
         {
             m_VariableContainer->CopyFrom(srcContainer);
         }
-        
+
         // フラグをコピー (DefaultObjectフラグは除く)
         if (sourceObject->IsDefaultObject())
         {
@@ -215,27 +212,32 @@ namespace NorvesLib::Core
     }
 
     // Outer/Inner関連メソッドの実装
-    IUnknown* UnknownImpl::GetOuter()
+    IUnknown *UnknownImpl::GetOuter()
     {
         return m_Outer;
     }
 
-    const IUnknown* UnknownImpl::GetOuter() const
+    const IUnknown *UnknownImpl::GetOuter() const
     {
         return m_Outer;
     }
 
-    const Container::Array<IUnknown*>& UnknownImpl::GetInners() const
+    void UnknownImpl::SetOuter(IUnknown *outer)
+    {
+        m_Outer = outer;
+    }
+
+    const Container::VariableArray<IUnknown *> &UnknownImpl::GetInners() const
     {
         return m_Inners;
     }
 
-    void UnknownImpl::AddInner(IUnknown* inner)
+    void UnknownImpl::AddInner(IUnknown *inner)
     {
         if (inner)
         {
             // すでに子リストに存在しないか確認
-            for (IUnknown* existingInner : m_Inners)
+            for (IUnknown *existingInner : m_Inners)
             {
                 if (existingInner == inner)
                 {
@@ -244,24 +246,25 @@ namespace NorvesLib::Core
             }
 
             // 子リストに追加
-            m_Inners.Add(inner);
+            m_Inners.push_back(inner);
         }
     }
 
-    void UnknownImpl::RemoveInner(IUnknown* inner)
+    bool UnknownImpl::RemoveInner(IUnknown *inner)
     {
         if (inner)
         {
             // 子リストから削除
-            for (size_t i = 0; i < m_Inners.GetLength(); ++i)
+            for (size_t i = 0; i < m_Inners.size(); ++i)
             {
                 if (m_Inners[i] == inner)
                 {
-                    m_Inners.RemoveAt(i);
-                    break;
+                    m_Inners.erase(m_Inners.begin() + i);
+                    return true; // 削除成功
                 }
             }
         }
+        return false; // 削除失敗（見つからなかった）
     }
 
 } // namespace NorvesLib::Core

@@ -1,4 +1,7 @@
-#pragma once
+﻿#pragma once
+
+// Windowsマクロを無効化
+#define NOMINMAX
 
 #include <cstddef>
 #include <string>
@@ -6,6 +9,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <ostream>
+#include <limits>
 #include <Windows.h>
 #include <tchar.h>
 #include "Span.h"
@@ -143,9 +147,9 @@ namespace NorvesLib::Core::Container
         }
 
         // 文字列比較
-        constexpr int compare(StringView other) const noexcept {
+        int compare(StringView other) const noexcept {
             const size_type rlen = std::min(size_, other.size_);
-            int result = _tcsncmp(data_, other.data_, rlen);
+            int result = ::_tcsncmp(data_, other.data_, rlen);
             if (result == 0) {
                 if (size_ < other.size_) return -1;
                 if (size_ > other.size_) return 1;
@@ -153,24 +157,25 @@ namespace NorvesLib::Core::Container
             return result;
         }
 
-        constexpr int compare(size_type pos1, size_type count1, StringView other) const {
+        // constexprではない比較関数に変更
+        int compare(size_type pos1, size_type count1, StringView other) const {
             return substr(pos1, count1).compare(other);
         }
 
-        constexpr int compare(size_type pos1, size_type count1, StringView other,
+        int compare(size_type pos1, size_type count1, StringView other,
                             size_type pos2, size_type count2) const {
             return substr(pos1, count1).compare(other.substr(pos2, count2));
         }
 
-        constexpr int compare(const TCHAR* s) const {
+        int compare(const TCHAR* s) const {
             return compare(StringView(s));
         }
 
-        constexpr int compare(size_type pos1, size_type count1, const TCHAR* s) const {
+        int compare(size_type pos1, size_type count1, const TCHAR* s) const {
             return substr(pos1, count1).compare(StringView(s));
         }
 
-        constexpr int compare(size_type pos1, size_type count1, const TCHAR* s, size_type count2) const {
+        int compare(size_type pos1, size_type count1, const TCHAR* s, size_type count2) const {
             return substr(pos1, count1).compare(StringView(s, count2));
         }
 
@@ -211,7 +216,7 @@ namespace NorvesLib::Core::Container
         }
 
         // 逆方向検索
-        constexpr size_type rfind(StringView v, size_type pos = npos) const noexcept {
+        size_type rfind(StringView v, size_type pos = npos) const noexcept {
             if (v.empty()) {
                 return std::min(pos, size_);
             }
@@ -224,7 +229,7 @@ namespace NorvesLib::Core::Container
             
             for (auto i = pos + 1; i > 0; --i) {
                 const size_type idx = i - 1;
-                if (_tcsncmp(data_ + idx, v.data_, v.size_) == 0) {
+                if (::_tcsncmp(data_ + idx, v.data_, v.size_) == 0) {
                     return idx;
                 }
             }
@@ -232,7 +237,7 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type rfind(TCHAR ch, size_type pos = npos) const noexcept {
+        size_type rfind(TCHAR ch, size_type pos = npos) const noexcept {
             if (empty()) {
                 return npos;
             }
@@ -249,11 +254,11 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type rfind(const TCHAR* s, size_type pos, size_type count) const noexcept {
+        size_type rfind(const TCHAR* s, size_type pos, size_type count) const noexcept {
             return rfind(StringView(s, count), pos);
         }
 
-        constexpr size_type rfind(const TCHAR* s, size_type pos = npos) const noexcept {
+        size_type rfind(const TCHAR* s, size_type pos = npos) const noexcept {
             return rfind(StringView(s), pos);
         }
 
@@ -331,7 +336,7 @@ namespace NorvesLib::Core::Container
         }
 
         // 最後のいずれかの文字を検索
-        constexpr size_type find_last_of(StringView v, size_type pos = npos) const noexcept {
+        size_type find_last_of(StringView v, size_type pos = npos) const noexcept {
             if (empty() || v.empty()) {
                 return npos;
             }
@@ -350,15 +355,15 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type find_last_of(TCHAR ch, size_type pos = npos) const noexcept {
+        size_type find_last_of(TCHAR ch, size_type pos = npos) const noexcept {
             return rfind(ch, pos);
         }
 
-        constexpr size_type find_last_of(const TCHAR* s, size_type pos, size_type count) const noexcept {
+        size_type find_last_of(const TCHAR* s, size_type pos, size_type count) const noexcept {
             return find_last_of(StringView(s, count), pos);
         }
 
-        constexpr size_type find_last_of(const TCHAR* s, size_type pos = npos) const noexcept {
+        size_type find_last_of(const TCHAR* s, size_type pos = npos) const noexcept {
             return find_last_of(StringView(s), pos);
         }
 
@@ -435,28 +440,28 @@ namespace NorvesLib::Core::Container
         size_type size_;
     };
 
-    // 比較演算子
-    constexpr bool operator==(StringView lhs, StringView rhs) noexcept {
+    // 比較演算子を非constexprに変更
+    bool operator==(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) == 0;
     }
 
-    constexpr bool operator!=(StringView lhs, StringView rhs) noexcept {
+    bool operator!=(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) != 0;
     }
 
-    constexpr bool operator<(StringView lhs, StringView rhs) noexcept {
+    bool operator<(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) < 0;
     }
 
-    constexpr bool operator<=(StringView lhs, StringView rhs) noexcept {
+    bool operator<=(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) <= 0;
     }
 
-    constexpr bool operator>(StringView lhs, StringView rhs) noexcept {
+    bool operator>(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) > 0;
     }
 
-    constexpr bool operator>=(StringView lhs, StringView rhs) noexcept {
+    bool operator>=(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) >= 0;
     }
 }

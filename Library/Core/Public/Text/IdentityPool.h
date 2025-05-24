@@ -1,10 +1,11 @@
-#pragma once
+﻿#pragma once
 
 #include "Container/String.h"
 #include "Container/StringView.h"
 #include "Container/UnorderedMap.h"
 #include "Container/Containers.h"
-#include "Thread/Mutex.h"
+// Threadライブラリへの参照を相対パスに修正
+#include "../../../Thread/Public/Mutex.h"
 #include <functional>
 
 namespace NorvesLib::Core
@@ -25,13 +26,13 @@ namespace NorvesLib::Core
          * @brief C文字列からIdentityを作成
          * @param str 文字列
          */
-        Identity(const char* str);
+        Identity(const char *str);
 
         /**
          * @brief Container::Stringからのコンストラクタ
          * @param str 文字列
          */
-        explicit Identity(const Container::String& str);
+        explicit Identity(const Container::String &str);
 
         /**
          * @brief Container::StringViewからのコンストラクタ
@@ -43,27 +44,27 @@ namespace NorvesLib::Core
          * @brief コピーコンストラクタ
          * @param other コピー元オブジェクト
          */
-        Identity(const Identity& other) = default;
+        Identity(const Identity &other) = default;
 
         /**
          * @brief ムーブコンストラクタ
          * @param other ムーブ元オブジェクト
          */
-        Identity(Identity&& other) noexcept = default;
+        Identity(Identity &&other) noexcept = default;
 
         /**
          * @brief コピー代入演算子
          * @param other コピー元オブジェクト
          * @return *this
          */
-        Identity& operator=(const Identity& other) = default;
+        Identity &operator=(const Identity &other) = default;
 
         /**
          * @brief ムーブ代入演算子
          * @param other ムーブ元オブジェクト
          * @return *this
          */
-        Identity& operator=(Identity&& other) noexcept = default;
+        Identity &operator=(Identity &&other) noexcept = default;
 
         /**
          * @brief ハッシュ値を取得
@@ -94,21 +95,21 @@ namespace NorvesLib::Core
          * @param other 比較対象
          * @return 等しい場合true
          */
-        bool operator==(const Identity& other) const { return m_Hash == other.m_Hash; }
+        bool operator==(const Identity &other) const { return m_Hash == other.m_Hash; }
 
         /**
          * @brief 比較演算子
          * @param other 比較対象
          * @return 等しくない場合true
          */
-        bool operator!=(const Identity& other) const { return m_Hash != other.m_Hash; }
+        bool operator!=(const Identity &other) const { return m_Hash != other.m_Hash; }
 
         /**
          * @brief std::unordered_map等で使用するためのハッシュ関数オブジェクト
          */
         struct Hasher
         {
-            std::size_t operator()(const Identity& id) const
+            std::size_t operator()(const Identity &id) const
             {
                 return static_cast<std::size_t>(id.GetHash());
             }
@@ -127,7 +128,7 @@ namespace NorvesLib::Core
 
         // ハッシュ値
         uint64_t m_Hash = 0;
-        
+
         // 文字列ビュー
         Container::StringView m_StringView;
     };
@@ -142,21 +143,21 @@ namespace NorvesLib::Core
          * @brief シングルトンインスタンスを取得
          * @return IdentityPoolのインスタンス
          */
-        static IdentityPool& Get();
+        static IdentityPool &Get();
 
         /**
          * @brief 文字列からIdentityを作成または取得
          * @param str 文字列
          * @return Identity
          */
-        Identity CreateIdentity(const char* str);
+        Identity CreateIdentity(const char *str);
 
         /**
          * @brief 文字列からIdentityを作成または取得
          * @param str 文字列
          * @return Identity
          */
-        Identity CreateIdentity(const Container::String& str);
+        Identity CreateIdentity(const Container::String &str);
 
         /**
          * @brief 文字列ビューからIdentityを作成または取得

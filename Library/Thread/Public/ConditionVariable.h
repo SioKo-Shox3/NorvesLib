@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <condition_variable>
 #include "Mutex.h"
@@ -69,7 +69,10 @@ public:
     template<typename Predicate>
     void Wait(Mutex& mutex, Predicate predicate)
     {
-        m_condVar.wait(mutex.GetNativeMutex(), predicate);
+        // unique_lockを使用してstd::condition_variableに渡す必要がある
+        std::unique_lock<std::mutex> lock(mutex.GetNativeMutex(), std::adopt_lock);
+        m_condVar.wait(lock, predicate);
+        lock.release(); // ロックを解放せずに所有権を手放す（Mutexクラスが管理するため）
     }
     
     /**
@@ -83,7 +86,10 @@ public:
     template<typename Rep, typename Period>
     bool WaitFor(Mutex& mutex, const std::chrono::duration<Rep, Period>& relTime)
     {
-        return m_condVar.wait_for(mutex.GetNativeMutex(), relTime) == std::cv_status::no_timeout;
+        std::unique_lock<std::mutex> lock(mutex.GetNativeMutex(), std::adopt_lock);
+        auto result = m_condVar.wait_for(lock, relTime) == std::cv_status::no_timeout;
+        lock.release();
+        return result;
     }
     
     /**
@@ -99,7 +105,10 @@ public:
     template<typename Rep, typename Period, typename Predicate>
     bool WaitFor(Mutex& mutex, const std::chrono::duration<Rep, Period>& relTime, Predicate predicate)
     {
-        return m_condVar.wait_for(mutex.GetNativeMutex(), relTime, predicate);
+        std::unique_lock<std::mutex> lock(mutex.GetNativeMutex(), std::adopt_lock);
+        auto result = m_condVar.wait_for(lock, relTime, predicate);
+        lock.release();
+        return result;
     }
     
     /**
@@ -113,7 +122,10 @@ public:
     template<typename Clock, typename Duration>
     bool WaitUntil(Mutex& mutex, const std::chrono::time_point<Clock, Duration>& absTime)
     {
-        return m_condVar.wait_until(mutex.GetNativeMutex(), absTime) == std::cv_status::no_timeout;
+        std::unique_lock<std::mutex> lock(mutex.GetNativeMutex(), std::adopt_lock);
+        auto result = m_condVar.wait_until(lock, absTime) == std::cv_status::no_timeout;
+        lock.release();
+        return result;
     }
     
     /**
@@ -129,7 +141,10 @@ public:
     template<typename Clock, typename Duration, typename Predicate>
     bool WaitUntil(Mutex& mutex, const std::chrono::time_point<Clock, Duration>& absTime, Predicate predicate)
     {
-        return m_condVar.wait_until(mutex.GetNativeMutex(), absTime, predicate);
+        std::unique_lock<std::mutex> lock(mutex.GetNativeMutex(), std::adopt_lock);
+        auto result = m_condVar.wait_until(lock, absTime, predicate);
+        lock.release();
+        return result;
     }
 
 private:

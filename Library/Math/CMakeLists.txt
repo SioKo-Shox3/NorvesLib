@@ -1,4 +1,4 @@
-set(MODULE_NAME Math)
+﻿set(MODULE_NAME Math)
 
 file(GLOB_RECURSE PUBLIC_HEADERS
     Public/*.h

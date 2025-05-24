@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <shared_mutex>
 #include "Core/Public/Container/Containers.h"

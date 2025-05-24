@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Core/Object/IUnknown.h" // IUnknownをインクルード
 

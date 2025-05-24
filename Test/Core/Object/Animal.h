@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Object/IUnknown.h"
 #include "Object/Object.h"

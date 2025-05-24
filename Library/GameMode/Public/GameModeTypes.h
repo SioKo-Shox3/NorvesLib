@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "TStateMachine.h"
 #include "GameModeFactory.h"
