@@ -1,6 +1,6 @@
 ﻿#include "Boot/PlatformBoot.h"
 #include "Application/ApplicationFactory.h"
-#include "Core/Public/Container/Containers.h"  // TUniquePtrのため追加
+#include "Core/Public/Container/Containers.h" // TUniquePtrのため追加
 #include <Windows.h>
 #include <Shlwapi.h>
 #include <iostream>

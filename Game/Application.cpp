@@ -18,10 +18,10 @@ public:
     virtual bool Initialize(const NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::String> &args) override
     {
         std::wcout << L"GameApplication::Initialize() called" << std::endl;
-        
+
         // Windows環境向けのアプリケーションを作成
         m_platformApp = NorvesLib::Core::Platform::WindowsApplicationFactory::CreateWindowsApplication();
-        
+
         if (!m_platformApp)
         {
             std::wcerr << L"Failed to create platform application" << std::endl;
@@ -55,9 +55,9 @@ public:
             std::wcerr << L"Failed to create window" << std::endl;
             return false;
         }
-        
+
         std::wcout << L"Window created successfully" << std::endl;
-        
+
         // ウィンドウを表示
         mainWindow->Show();
 
@@ -75,7 +75,7 @@ public:
     virtual int Run() override
     {
         std::wcout << L"GameApplication::Run() called" << std::endl;
-        
+
         if (!m_platformApp)
         {
             std::wcerr << L"Platform application is null" << std::endl;
@@ -83,24 +83,24 @@ public:
         }
 
         std::wcout << L"Starting platform application message loop..." << std::endl;
-        
+
         // プラットフォームアプリケーションのメッセージループを実行
         int exitCode = m_platformApp->Run();
-        
+
         std::wcout << L"Message loop ended with exit code: " << exitCode << std::endl;
-        
+
         return exitCode;
     }
 
     virtual void Shutdown() override
     {
         std::wcout << L"GameApplication::Shutdown() called" << std::endl;
-        
+
         if (m_platformApp)
         {
             m_platformApp->Shutdown();
         }
-        
+
         std::wcout << L"Shutdown completed" << std::endl;
     }
 

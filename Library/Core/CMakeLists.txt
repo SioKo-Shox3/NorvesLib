@@ -1,35 +1,70 @@
-﻿set(MODULE_NAME Core)
+﻿cmake_minimum_required(VERSION 3.28)
 
-file(GLOB_RECURSE PUBLIC_HEADERS
-    Public/*.h
+# モジュール名の設定
+set(MODULE_NAME Core)
+
+# ソースファイルの定義
+set(PRIVATE_SOURCES
+    Private/CoreModule.cpp
+    Private/Object/Object.cpp
+    Private/Text/IdentityPool.cpp
+    Private/Logging/Logger.cpp
+    Private/Debug/DebugOutput.cpp
 )
 
-file(GLOB_RECURSE PRIVATE_SOURCES
-    Private/*.cpp
+set(PUBLIC_HEADERS
+    Public/CoreModule.h
+    Public/Object/Object.h
+    Public/Text/IdentityPool.h
+    Public/Container/Containers.h
+    Public/Container/PointerTypes.h
+    Public/Container/VariableArray.h
+    Public/Container/FixedArray.h
+    Public/Container/List.h
+    Public/Container/Map.h
+    Public/Container/Set.h
+    Public/Container/UnorderedMap.h
+    Public/Container/UnorderedSet.h
+    Public/Container/String.h
+    Public/Container/StringView.h
+    Public/Container/Span.h
+    Public/Container/Deque.h
+    Public/Container/Queue.h
+    Public/Logging/LoggingModule.h
+    Public/Logging/Logger.h
+    Public/Logging/LogMacros.h
+    Public/Debug/DebugOutput.h
 )
 
-# スタティックライブラリとして定義（以前はINTERFACEライブラリ）
+# ライブラリの作成
 add_library(${MODULE_NAME} STATIC ${PRIVATE_SOURCES} ${PUBLIC_HEADERS})
 
+# インクルードディレクトリの設定
 target_include_directories(${MODULE_NAME}
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/Public
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/Private
-        ${CMAKE_SOURCE_DIR}/Library
+    PUBLIC 
+        Public
+    PRIVATE 
+        Private
 )
 
-# Threadモジュールのパスを明示的に追加
-target_include_directories(${MODULE_NAME}
+# 依存関係の設定
+target_link_libraries(${MODULE_NAME}
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/Library/Thread/Public
+        Thread
+        FileStream
 )
 
-# Memoryモジュールへの依存関係を追加
-target_link_libraries(${MODULE_NAME} PUBLIC Memory)
+# C++23の設定
+target_compile_features(${MODULE_NAME} PUBLIC cxx_std_23)
 
-# Threadモジュールへの依存関係を追加
-target_link_libraries(${MODULE_NAME} PUBLIC Thread)
+# Windows固有の設定
+if(WIN32)
+    target_compile_definitions(${MODULE_NAME} PRIVATE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+endif()
 
-# ヘッダーをIDEに表示するための設定
-add_custom_target(${MODULE_NAME}_IDE SOURCES ${PUBLIC_HEADERS} ${PRIVATE_SOURCES})
+# IDEでのファイル整理（Visual Studio等）
+source_group("Public Headers" FILES ${PUBLIC_HEADERS})
+source_group("Private Sources" FILES ${PRIVATE_SOURCES})
