@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Core/Public/Container/PointerTypes.h"
 #include <memory>
 #include <cstdint>
 #include <type_traits>
@@ -135,7 +136,7 @@ namespace NorvesLib::Core
          * @brief 新しいインスタンスを複製します
          * @return 複製されたIValue
          */
-        virtual std::unique_ptr<IValue> Clone() const = 0;
+        virtual Container::TUniquePtr<IValue> Clone() const = 0;
 
         // 以下、型安全なアクセス用のメソッド
 

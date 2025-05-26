@@ -1,12 +1,14 @@
 ﻿#pragma once
 
-#include <memory>
+#include "Core/Public/Container/PointerTypes.h"
 #include <sstream>
 #include <type_traits>
 #include <limits>
 #include "IValue.h"
 #include "IClass.h"
 #include "Container/Containers.h"
+
+using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core
 {
@@ -482,9 +484,9 @@ namespace NorvesLib::Core
          * @brief 新しいインスタンスを複製します
          * @return 複製されたIValue
          */
-        virtual std::unique_ptr<IValue> Clone() const override
+        virtual TUniquePtr<IValue> Clone() const override
         {
-            return std::make_unique<TValue<T>>(m_Value, m_Name);
+            return MakeUnique<TValue<T>>(m_Value, m_Name);
         }
         
         // 型変換メソッド実装
@@ -966,60 +968,60 @@ namespace NorvesLib::Core
      * @return 作成された値オブジェクト
      */
     template<typename T>
-    std::unique_ptr<IValue> MakeValue(const T& value, const Container::String& name = "")
+    TUniquePtr<IValue> MakeValue(const T& value, const Container::String& name = "")
     {
-        return std::make_unique<TValue<T>>(value, name);
+        return MakeUnique<TValue<T>>(value, name);
     }
 
     /**
      * @brief 基本型の各種インスタンス作成用ヘルパー関数
      */
-    inline std::unique_ptr<IValue> MakeBoolValue(bool value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeBoolValue(bool value, const Container::String& name = "")
     {
         return MakeValue<bool>(value, name);
     }
 
-    inline std::unique_ptr<IValue> MakeInt32Value(int32_t value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeInt32Value(int32_t value, const Container::String& name = "")
     {
         return MakeValue<int32_t>(value, name);
     }
 
-    inline std::unique_ptr<IValue> MakeInt64Value(int64_t value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeInt64Value(int64_t value, const Container::String& name = "")
     {
         return MakeValue<int64_t>(value, name);
     }
 
-    inline std::unique_ptr<IValue> MakeUInt32Value(uint32_t value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeUInt32Value(uint32_t value, const Container::String& name = "")
     {
         return MakeValue<uint32_t>(value, name);
     }
 
-    inline std::unique_ptr<IValue> MakeUInt64Value(uint64_t value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeUInt64Value(uint64_t value, const Container::String& name = "")
     {
         return MakeValue<uint64_t>(value, name);
     }
 
-    inline std::unique_ptr<IValue> MakeFloatValue(float value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeFloatValue(float value, const Container::String& name = "")
     {
         return MakeValue<float>(value, name);
     }
 
-    inline std::unique_ptr<IValue> MakeDoubleValue(double value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeDoubleValue(double value, const Container::String& name = "")
     {
         return MakeValue<double>(value, name);
     }
 
-    inline std::unique_ptr<IValue> MakeStringValue(const Container::String& value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeStringValue(const Container::String& value, const Container::String& name = "")
     {
         return MakeValue<Container::String>(value, name);
     }
 
-    inline std::unique_ptr<IValue> MakeObjectValue(IUnknown* value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeObjectValue(IUnknown* value, const Container::String& name = "")
     {
         return MakeValue<IUnknown*>(value, name);
     }
 
-    inline std::unique_ptr<IValue> MakeClassValue(const IClass* value, const Container::String& name = "")
+    inline TUniquePtr<IValue> MakeClassValue(const IClass* value, const Container::String& name = "")
     {
         return MakeValue<const IClass*>(value, name);
     }

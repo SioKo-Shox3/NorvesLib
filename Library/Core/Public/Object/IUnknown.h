@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include "Thread/Public/Atomic.h"
-#include <memory>
+#include "Container/PointerTypes.h"
 #include "Container/Containers.h"
 #include "Text/IdentityPool.h"
 
@@ -375,7 +375,7 @@ namespace NorvesLib::Core
 
         mutable Thread::Atomic<uint32_t> m_RefCount;            // 参照カウント
         mutable Thread::Atomic<uint32_t> m_Flags;               // オブジェクトフラグ
-        std::unique_ptr<VariableContainer> m_VariableContainer; // 変数コンテナ
+        Container::TUniquePtr<VariableContainer> m_VariableContainer; // 変数コンテナ
         IUnknown *m_Outer;                                      // 親オブジェクト
         Container::VariableArray<IUnknown *> m_Inners;          // 子オブジェクトのリスト
 

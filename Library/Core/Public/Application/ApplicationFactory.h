@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <memory>
+#include "Container/PointerTypes.h"
 #include "Application/IApplication.h" // IApplicationの完全な定義をインクルード
 
 namespace NorvesLib
@@ -23,23 +23,23 @@ namespace NorvesLib
                  * @brief デフォルトアプリケーションを生成する
                  * @return デフォルトアプリケーションのインスタンス
                  */
-                static std::unique_ptr<IApplication> CreateDefaultApplication();
+                static Core::Container::TUniquePtr<IApplication> CreateDefaultApplication();
 
                 /**
                  * @brief カスタムアプリケーションを生成する
                  * @return カスタムアプリケーションのインスタンス
                  */
-                static std::unique_ptr<IApplication> CreateCustomApplication();
+                static Core::Container::TUniquePtr<IApplication> CreateCustomApplication();
 
             private:
                 // プラットフォーム固有の実装を取得する
-                static std::unique_ptr<IApplication> GetPlatformSpecificImplementation();
+                static Core::Container::TUniquePtr<IApplication> GetPlatformSpecificImplementation();
             };
 
         } // namespace Boot
     } // namespace Core
 
     // ゲームから実装される必要がある関数
-    std::unique_ptr<IApplication> CreateApplication();
+    Core::Container::TUniquePtr<IApplication> CreateApplication();
 
 } // namespace NorvesLib
