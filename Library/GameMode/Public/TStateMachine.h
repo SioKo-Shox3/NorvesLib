@@ -7,7 +7,7 @@
 namespace NorvesLib::GameMode
 {
     // テンプレートステートマシンクラス
-    template<typename StateType, typename FactoryType>
+    template <typename StateType, typename FactoryType>
     class TStateMachine : public IStateMachine
     {
     public:
@@ -17,7 +17,7 @@ namespace NorvesLib::GameMode
         virtual ~TStateMachine() override = default;
 
         // 次のステートを予約
-        template<typename T>
+        template <typename T>
         void ReserveState(Core::Container::TUniquePtr<T> nextState)
         {
             m_NextState = std::move(nextState);
@@ -26,8 +26,8 @@ namespace NorvesLib::GameMode
         // ステートマシンを更新
         void Update(float deltaTime)
         {
-            m_DeltaTime = deltaTime;  // デルタタイムを更新
-            
+            m_DeltaTime = deltaTime; // デルタタイムを更新
+
             // 予約されたステートがあれば遷移を実行
             if (m_NextState)
             {
@@ -51,21 +51,21 @@ namespace NorvesLib::GameMode
         }
 
         // 現在のステートを取得
-        StateType* GetCurrentState() const
+        StateType *GetCurrentState() const
         {
             return m_CurrentState.get();
         }
 
         // ファクトリへのアクセス
-        FactoryType& GetFactory() { return m_Factory; }
-        const FactoryType& GetFactory() const { return m_Factory; }
-        
+        FactoryType &GetFactory() { return m_Factory; }
+        const FactoryType &GetFactory() const { return m_Factory; }
+
         // IStateMachineのインターフェース実装
-        virtual void* GetFactoryImpl() const override
+        virtual void *GetFactoryImpl() const override
         {
-            return const_cast<FactoryType*>(&m_Factory);
+            return const_cast<FactoryType *>(&m_Factory);
         }
-        
+
         virtual float GetDeltaTime() const override
         {
             return m_DeltaTime;
@@ -79,7 +79,7 @@ namespace NorvesLib::GameMode
     };
 
     // IStateMachineのテンプレート関数の実装
-    template<typename T>
+    template <typename T>
     void IStateMachine::ReserveState(Core::Container::TUniquePtr<T> nextState)
     {
         // この実装は派生クラスで上書きされる

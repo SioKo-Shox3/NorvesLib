@@ -16,20 +16,20 @@ namespace NorvesLib::GameMode
         virtual ~IStateMachine() = default;
 
         // 次のステートを予約
-        template<typename T>
+        template <typename T>
         void ReserveState(Core::Container::TUniquePtr<T> nextState);
 
         // ファクトリを取得
-        virtual void* GetFactoryImpl() const = 0;
-        
+        virtual void *GetFactoryImpl() const = 0;
+
         // 最新のデルタタイムを取得
         virtual float GetDeltaTime() const = 0;
-        
+
         // ファクトリを型安全に取得するためのテンプレートメソッド
-        template<typename FactoryType>
-        FactoryType& GetFactory() const
+        template <typename FactoryType>
+        FactoryType &GetFactory() const
         {
-            return *static_cast<FactoryType*>(GetFactoryImpl());
+            return *static_cast<FactoryType *>(GetFactoryImpl());
         }
     };
 

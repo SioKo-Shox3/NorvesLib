@@ -23,27 +23,27 @@ namespace NorvesLib::Core
          */
         enum class ValueType
         {
-            None,           // 未定義
-            Bool,           // bool
-            Int8,           // int8_t
-            Int16,          // int16_t
-            Int32,          // int32_t
-            Int64,          // int64_t
-            UInt8,          // uint8_t
-            UInt16,         // uint16_t
-            UInt32,         // uint32_t
-            UInt64,         // uint64_t
-            Float,          // float
-            Double,         // double
-            String,         // Container::String
-            WString,        // std::wstring
-            Enum,           // 列挙型
-            Array,          // 配列型
-            Object,         // オブジェクト型 (IUnknown系)
-            Class,          // クラス型情報 (IClass系)
-            Function,       // 関数型
-            Pointer,        // ポインタ型
-            Custom          // カスタム型
+            None,     // 未定義
+            Bool,     // bool
+            Int8,     // int8_t
+            Int16,    // int16_t
+            Int32,    // int32_t
+            Int64,    // int64_t
+            UInt8,    // uint8_t
+            UInt16,   // uint16_t
+            UInt32,   // uint32_t
+            UInt64,   // uint64_t
+            Float,    // float
+            Double,   // double
+            String,   // Container::String
+            WString,  // std::wstring
+            Enum,     // 列挙型
+            Array,    // 配列型
+            Object,   // オブジェクト型 (IUnknown系)
+            Class,    // クラス型情報 (IClass系)
+            Function, // 関数型
+            Pointer,  // ポインタ型
+            Custom    // カスタム型
         };
 
         virtual ~IValue() = default;
@@ -59,25 +59,25 @@ namespace NorvesLib::Core
          * @return 型情報へのポインタ
          * @note 内蔵型の場合はnullptrを返す場合があります
          */
-        virtual const IClass* GetType() const = 0;
+        virtual const IClass *GetType() const = 0;
 
         /**
          * @brief 値の名前を取得します
          * @return 変数名
          */
-        virtual const Container::String& GetName() const = 0;
+        virtual const Container::String &GetName() const = 0;
 
         /**
          * @brief 値へのポインタを取得します
          * @return データへの生ポインタ
          */
-        virtual void* GetValuePtr() = 0;
+        virtual void *GetValuePtr() = 0;
 
         /**
          * @brief 値への読み取り専用ポインタを取得します
          * @return データへの読み取り専用ポインタ
          */
-        virtual const void* GetValuePtr() const = 0;
+        virtual const void *GetValuePtr() const = 0;
 
         /**
          * @brief 値のサイズを取得します
@@ -96,14 +96,14 @@ namespace NorvesLib::Core
          * @param src コピー元データへのポインタ
          * @return コピーが成功した場合はtrue
          */
-        virtual bool CopyFrom(const void* src) = 0;
+        virtual bool CopyFrom(const void *src) = 0;
 
         /**
          * @brief 別のIValueから値をコピーします
          * @param other コピー元のIValue
          * @return コピーが成功した場合はtrue
          */
-        virtual bool CopyFrom(const IValue& other) = 0;
+        virtual bool CopyFrom(const IValue &other) = 0;
 
         /**
          * @brief 値を文字列表現に変換します
@@ -116,14 +116,14 @@ namespace NorvesLib::Core
          * @param str 設定する文字列
          * @return 変換が成功した場合はtrue
          */
-        virtual bool FromString(const Container::String& str) = 0;
+        virtual bool FromString(const Container::String &str) = 0;
 
         /**
          * @brief この値が与えられた型に変換可能かどうかを確認します
          * @param targetType 変換先の型情報
          * @return 変換可能な場合はtrue
          */
-        virtual bool CanConvertTo(const IClass* targetType) const = 0;
+        virtual bool CanConvertTo(const IClass *targetType) const = 0;
 
         /**
          * @brief この値が指定された値型に変換可能かどうかを確認します
@@ -192,19 +192,19 @@ namespace NorvesLib::Core
          * @brief IUnknownオブジェクトを取得します
          * @return IUnknownへのポインタ、変換できない場合はnullptrを返します
          */
-        virtual IUnknown* AsObject() = 0;
+        virtual IUnknown *AsObject() = 0;
 
         /**
          * @brief IUnknownオブジェクトを読み取り専用で取得します
          * @return IUnknownへの読み取り専用ポインタ、変換できない場合はnullptrを返します
          */
-        virtual const IUnknown* AsObject() const = 0;
+        virtual const IUnknown *AsObject() const = 0;
 
         /**
          * @brief IClass型情報を取得します
          * @return IClassへのポインタ、変換できない場合はnullptrを返します
          */
-        virtual const IClass* AsClass() const = 0;
+        virtual const IClass *AsClass() const = 0;
     };
 
 } // namespace NorvesLib::Core
