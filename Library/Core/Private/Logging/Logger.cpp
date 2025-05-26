@@ -1,0 +1,364 @@
+﻿#include "Logger.h"
+#include <thread>
+#include <filesystem>
+#include <format>
+
+#ifdef _WIN32
+#include <Windows.h>
+#include <io.h>
+#include <fcntl.h>
+#else
+#include <unistd.h>
+#include <sys/syscall.h>
+#endif
+
+namespace NorvesLib::Core::Logging
+{
+
+    Logger& Logger::GetInstance()
+    {
+        static Logger instance;
+        return instance;
+    }
+
+    Logger::~Logger()
+    {
+        Shutdown();
+    }
+
+    bool Logger::Initialize(const LogConfig& config)
+    {
+        if (m_bInitialized.load())
+        {
+            return true;
+        }
+
+        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+
+        m_config = config;
+        m_bShutdown.store(false);
+
+        // デフォルトフォーマッターを設定
+        if (!m_formatter)
+        {
+            m_formatter = MakeShared<StandardLogFormatter>();
+        }
+
+        // ファイル出力の初期化
+        if (m_config.outputType == LogOutput::File || m_config.outputType == LogOutput::Both)
+        {
+            m_logFileStream = NorvesLib::FileStream::FileStream::Create(
+                m_config.logFilePath, 
+                NorvesLib::FileStream::FileMode::Append,
+                NorvesLib::FileStream::FileAccess::Write);
+
+            if (!m_logFileStream || !m_logFileStream->IsOpen())
+            {
+                // ファイル出力に失敗した場合、コンソール出力のみに変更
+                m_config.outputType = LogOutput::Console;
+                std::cerr << "Failed to open log file: " << m_config.logFilePath.c_str() 
+                         << ". Switching to console output only." << std::endl;
+            }
+        }
+
+        // Windows コンソールでのUTF-8サポート
+#ifdef _WIN32
+        SetConsoleOutputCP(CP_UTF8);
+        _setmode(_fileno(stdout), _O_U8TEXT);
+        _setmode(_fileno(stderr), _O_U8TEXT);
+#endif
+
+        // 非同期ログ処理の開始
+        if (m_config.bAsyncLogging)
+        {
+            m_workerTask = NorvesLib::Thread::Task::Create([this]() { AsyncLogWorker(); });
+            NorvesLib::Thread::JobSystem::GetInstance().Submit(m_workerTask);
+        }
+
+        m_bInitialized.store(true);
+        
+        // 初期化完了ログ
+        Log(LogLevel::Info, "Logger", "Logger initialized successfully");
+        
+        return true;
+    }
+
+    void Logger::Shutdown()
+    {
+        if (!m_bInitialized.load())
+        {
+            return;
+        }
+
+        Log(LogLevel::Info, "Logger", "Shutting down logger...");
+
+        m_bShutdown.store(true);
+
+        // 非同期ワーカーの停止を待機
+        if (m_workerTask)
+        {
+            m_workerTask->Wait();
+            m_workerTask.reset();
+        }
+
+        // 残りのログエントリを処理
+        LogEntry entry;
+        while (m_logQueue.TryPop(entry))
+        {
+            ProcessLogEntry(entry);
+        }
+
+        // ファイルストリームを閉じる
+        if (m_logFileStream)
+        {
+            m_logFileStream->Flush();
+            m_logFileStream->Close();
+            m_logFileStream.reset();
+        }
+
+        m_bInitialized.store(false);
+    }
+
+    void Logger::Log(LogLevel level, const String& category, const String& message,
+                    const char* filename, const char* function, int32_t lineNumber)
+    {
+        if (!IsLevelActive(level) || m_bShutdown.load())
+        {
+            return;
+        }
+
+        LogEntry entry;
+        entry.level = level;
+        entry.message = message;
+        entry.category = category;
+        entry.filename = filename ? String(filename) : String{};
+        entry.function = function ? String(function) : String{};
+        entry.lineNumber = lineNumber;
+        entry.timestamp = std::chrono::system_clock::now();
+        entry.threadId = GetCurrentThreadId();
+
+        if (m_config.bAsyncLogging && m_bInitialized.load())
+        {
+            // 非同期処理でキューに追加
+            if (!m_logQueue.TryPush(entry))
+            {
+                // キューが満杯の場合、ドロップされたログをカウント
+                m_droppedLogs.fetch_add(1);
+            }
+        }
+        else
+        {
+            // 同期処理で即座に出力
+            ProcessLogEntry(entry);
+        }
+    }
+
+    template<typename... Args>
+    void Logger::LogFormat(LogLevel level, const String& category, 
+                          const char* filename, const char* function, int32_t lineNumber,
+                          const char* format, Args&&... args)
+    {
+        if (!IsLevelActive(level))
+        {
+            return;
+        }
+
+        try
+        {
+            String formattedMessage = String(std::format(format, std::forward<Args>(args)...));
+            Log(level, category, formattedMessage, filename, function, lineNumber);
+        }
+        catch (const std::exception& e)
+        {
+            // フォーマットエラーの場合、エラーメッセージを出力
+            String errorMsg = String("Log format error: ") + e.what() + " (Original format: " + format + ")";
+            Log(LogLevel::Error, "Logger", errorMsg, filename, function, lineNumber);
+        }
+    }
+
+    void Logger::UpdateConfig(const LogConfig& config)
+    {
+        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+        m_config = config;
+    }
+
+    void Logger::SetFormatter(LogFormatterPtr formatter)
+    {
+        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+        m_formatter = formatter ? formatter : MakeShared<StandardLogFormatter>();
+    }
+
+    bool Logger::IsLevelActive(LogLevel level) const
+    {
+        return level >= m_config.minLevel;
+    }
+
+    void Logger::Flush()
+    {
+        if (m_logFileStream && m_logFileStream->IsOpen())
+        {
+            m_logFileStream->Flush();
+        }
+
+        std::cout.flush();
+        std::cerr.flush();
+    }
+
+    void Logger::RotateLogFile()
+    {
+        if (!m_logFileStream)
+        {
+            return;
+        }
+
+        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+
+        // 現在のファイルを閉じる
+        m_logFileStream->Close();
+
+        // バックアップファイルをローテーション
+        for (uint32_t i = m_config.maxLogFiles - 1; i > 0; --i)
+        {
+            String oldFile = GenerateBackupFileName(i - 1);
+            String newFile = GenerateBackupFileName(i);
+
+            if (std::filesystem::exists(oldFile.c_str()))
+            {
+                if (std::filesystem::exists(newFile.c_str()))
+                {
+                    std::filesystem::remove(newFile.c_str());
+                }
+                std::filesystem::rename(oldFile.c_str(), newFile.c_str());
+            }
+        }
+
+        // 現在のファイルを .1 にリネーム
+        if (std::filesystem::exists(m_config.logFilePath.c_str()))
+        {
+            std::filesystem::rename(m_config.logFilePath.c_str(), GenerateBackupFileName(0).c_str());
+        }
+
+        // 新しいファイルを開く
+        m_logFileStream = NorvesLib::FileStream::FileStream::Create(
+            m_config.logFilePath,
+            NorvesLib::FileStream::FileMode::Write,
+            NorvesLib::FileStream::FileAccess::Write);
+
+        m_currentFileSize.store(0);
+    }
+
+    void Logger::ProcessLogEntry(const LogEntry& entry)
+    {
+        if (!m_formatter)
+        {
+            return;
+        }
+
+        String formattedMessage = m_formatter->Format(entry);
+
+        // コンソール出力
+        if (m_config.outputType == LogOutput::Console || m_config.outputType == LogOutput::Both)
+        {
+            WriteToConsole(formattedMessage, entry.level);
+        }
+
+        // ファイル出力
+        if (m_config.outputType == LogOutput::File || m_config.outputType == LogOutput::Both)
+        {
+            WriteToFile(formattedMessage);
+        }
+
+        m_totalLogsWritten.fetch_add(1);
+
+        if (m_config.bAutoFlush)
+        {
+            Flush();
+        }
+    }
+
+    void Logger::AsyncLogWorker()
+    {
+        while (!m_bShutdown.load())
+        {
+            LogEntry entry;
+            if (m_logQueue.TryPop(entry))
+            {
+                ProcessLogEntry(entry);
+            }
+            else
+            {
+                // キューが空の場合、少し待機
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+            }
+        }
+
+        // シャットダウン時に残りのエントリを処理
+        LogEntry entry;
+        while (m_logQueue.TryPop(entry))
+        {
+            ProcessLogEntry(entry);
+        }
+    }
+
+    void Logger::WriteToConsole(const String& formattedMessage, LogLevel level)
+    {
+        if (level >= LogLevel::Error)
+        {
+            std::cerr << formattedMessage.c_str() << std::endl;
+        }
+        else
+        {
+            std::cout << formattedMessage.c_str() << std::endl;
+        }
+    }
+
+    void Logger::WriteToFile(const String& formattedMessage)
+    {
+        if (!m_logFileStream || !m_logFileStream->IsOpen())
+        {
+            return;
+        }
+
+        String messageWithNewline = formattedMessage + "\n";
+        size_t bytesWritten = m_logFileStream->WriteString(messageWithNewline);
+        
+        if (bytesWritten > 0)
+        {
+            m_currentFileSize.fetch_add(bytesWritten);
+            CheckAndRotateLogFile();
+        }
+    }
+
+    uint32_t Logger::GetCurrentThreadId() const
+    {
+#ifdef _WIN32
+        return static_cast<uint32_t>(GetCurrentThreadId());
+#else
+        return static_cast<uint32_t>(syscall(SYS_gettid));
+#endif
+    }
+
+    void Logger::CheckAndRotateLogFile()
+    {
+        if (m_currentFileSize.load() > m_config.maxLogFileSize)
+        {
+            RotateLogFile();
+        }
+    }
+
+    String Logger::GenerateBackupFileName(uint32_t index) const
+    {
+        std::filesystem::path logPath(m_config.logFilePath.c_str());
+        String stem = String(logPath.stem().string());
+        String extension = String(logPath.extension().string());
+        
+        return stem + "." + String(std::to_string(index + 1)) + extension;
+    }
+
+    // テンプレートの明示的インスタンス化
+    template void Logger::LogFormat<>(LogLevel, const String&, const char*, const char*, int32_t, const char*);
+    template void Logger::LogFormat<int>(LogLevel, const String&, const char*, const char*, int32_t, const char*, int&&);
+    template void Logger::LogFormat<const char*>(LogLevel, const String&, const char*, const char*, int32_t, const char*, const char*&&);
+    template void Logger::LogFormat<double>(LogLevel, const String&, const char*, const char*, int32_t, const char*, double&&);
+
+} // namespace NorvesLib::Core::Logging
