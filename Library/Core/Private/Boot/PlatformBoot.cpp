@@ -1,5 +1,6 @@
 ﻿#include "Boot/PlatformBoot.h"
 #include "Application/ApplicationFactory.h"
+#include "Core/Public/Container/Containers.h"  // TUniquePtrのため追加
 #include <Windows.h>
 #include <Shlwapi.h>
 #include <iostream>
@@ -12,6 +13,9 @@ namespace NorvesLib
     {
         namespace Boot
         {
+            // 前方宣言
+            Container::String GetExecutablePath();
+            bool SetWorkingDirectory(const Container::String &path);
 
             bool PlatformInitialize(const Container::String &commandLine)
             {
@@ -82,7 +86,7 @@ namespace NorvesLib
                 return SetCurrentDirectory(path.c_str()) != 0;
             }
 
-            std::unique_ptr<IApplication> CreateDefaultApplication()
+            Container::TUniquePtr<IApplication> CreateDefaultApplication()
             {
                 // ApplicationFactoryを使用してプラットフォーム固有の実装を取得
                 return Core::Boot::ApplicationFactory::CreateDefaultApplication();
