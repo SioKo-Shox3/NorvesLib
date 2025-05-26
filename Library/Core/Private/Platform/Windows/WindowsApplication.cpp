@@ -2,6 +2,8 @@
 #include "Platform/Windows/WindowsWindow.h"
 #include <algorithm>
 
+using namespace NorvesLib::Core::Container;
+
 namespace NorvesLib {
 namespace Core {
 namespace Platform {
@@ -22,7 +24,7 @@ WindowsApplication::~WindowsApplication()
     }
 }
 
-bool WindowsApplication::Initialize(const Container::VariableArray<Container::String>& args)
+bool WindowsApplication::Initialize(const Core::Container::VariableArray<Core::Container::String>& args)
 {
     // コマンドライン引数を保存
     m_args = args;
@@ -46,12 +48,21 @@ int WindowsApplication::Run()
 
 void WindowsApplication::Shutdown()
 {
-    // 実行フラグをOFF
-    m_isRunning = false;
-    
-    // すべてのウィンドウをクリーンアップ
-    m_windows.clear();
-    m_mainWindow = nullptr;
+    if (m_isRunning)
+    {
+        // すべてのウィンドウを閉じる
+        for (auto& window : m_windows)
+        {
+            if (window)
+            {
+                window->Destroy();
+            }
+        }
+        
+        m_windows.clear();
+        m_mainWindow = nullptr;
+        m_isRunning = false;
+    }
 }
 
 IWindow* WindowsApplication::GetMainWindow()
@@ -59,7 +70,7 @@ IWindow* WindowsApplication::GetMainWindow()
     return m_mainWindow.get();
 }
 
-void WindowsApplication::RegisterWindow(std::shared_ptr<IWindow> window)
+void WindowsApplication::RegisterWindow(Core::Container::TSharedPtr<IWindow> window)
 {
     // 新しいウィンドウを登録
     m_windows.push_back(window);
@@ -71,7 +82,7 @@ void WindowsApplication::RegisterWindow(std::shared_ptr<IWindow> window)
     }
 }
 
-void WindowsApplication::UnregisterWindow(std::shared_ptr<IWindow> window)
+void WindowsApplication::UnregisterWindow(Core::Container::TSharedPtr<IWindow> window)
 {
     // ウィンドウの検索と削除
     auto it = std::find(m_windows.begin(), m_windows.end(), window);
@@ -92,45 +103,36 @@ HINSTANCE WindowsApplication::GetInstance() const
     return m_hInstance;
 }
 
-const Container::VariableArray<Container::String>& WindowsApplication::GetCommandLineArgs() const
+const Core::Container::VariableArray<Core::Container::String>& WindowsApplication::GetCommandLineArgs() const
 {
     return m_args;
 }
 
 int WindowsApplication::ProcessWindowsMessages()
 {
-    // 基本的なメッセージループの実装
     MSG msg = {};
-    BOOL ret = 0;
     
-    // アプリケーションの実行ループ
     while (m_isRunning)
     {
-        // Windowsメッセージの処理
-        while ((ret = PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) != 0)
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
         {
-            // WM_QUITメッセージを受け取ったらループを終了
             if (msg.message == WM_QUIT)
             {
                 m_isRunning = false;
                 break;
             }
             
-            // メッセージの変換と送信
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
         
-        // 全てのウィンドウが閉じられたら終了
-        if (m_windows.empty())
+        // メインウィンドウが閉じられた場合はアプリケーションを終了
+        if (!m_mainWindow || m_windows.empty())
         {
             m_isRunning = false;
         }
         
-        // アプリケーション固有の処理を行う
-        // ここにゲームループや描画などを追加
-        
-        // スリープして CPU 使用率を下げる (必要に応じて調整)
+        // CPU使用率を下げるための短いスリープ
         Sleep(1);
     }
     

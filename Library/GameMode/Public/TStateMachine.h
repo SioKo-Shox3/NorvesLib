@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "IStateMachine.h"
-#include <memory> // std::unique_ptr
+#include "Core/Public/Container/PointerTypes.h"
 #include <utility> // std::move
 
 namespace NorvesLib::GameMode
@@ -11,14 +11,14 @@ namespace NorvesLib::GameMode
     class TStateMachine : public IStateMachine
     {
     public:
-        using StatePtr = std::unique_ptr<StateType>;
+        using StatePtr = Core::Container::TUniquePtr<StateType>;
 
         TStateMachine() = default;
         virtual ~TStateMachine() override = default;
 
         // 次のステートを予約
         template<typename T>
-        void ReserveState(std::unique_ptr<T> nextState)
+        void ReserveState(Core::Container::TUniquePtr<T> nextState)
         {
             m_NextState = std::move(nextState);
         }
@@ -80,7 +80,7 @@ namespace NorvesLib::GameMode
 
     // IStateMachineのテンプレート関数の実装
     template<typename T>
-    void IStateMachine::ReserveState(std::unique_ptr<T> nextState)
+    void IStateMachine::ReserveState(Core::Container::TUniquePtr<T> nextState)
     {
         // この実装は派生クラスで上書きされる
         // 何もしないデフォルト実装

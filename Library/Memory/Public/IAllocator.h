@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include <cstddef>
-#include <memory>
+#include "Container/PointerTypes.h"
 
 namespace NorvesLib::Memory
 {
@@ -36,5 +36,5 @@ namespace NorvesLib::Memory
     };
 
     // アロケータのスマートポインタ型定義
-    using AllocatorPtr = std::shared_ptr<IAllocator>;
+    using AllocatorPtr = Core::Container::TSharedPtr<IAllocator>;
 }

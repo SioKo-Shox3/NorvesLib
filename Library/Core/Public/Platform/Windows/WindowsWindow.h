@@ -2,8 +2,8 @@
 
 #include "Application/IWindow.h"
 #include "Container/String.h"
+#include "Container/PointerTypes.h"
 #include <Windows.h>
-#include <memory>
 
 namespace NorvesLib
 {
@@ -29,58 +29,59 @@ namespace NorvesLib
                 /**
                  * @brief デストラクタ
                  */
-                virtual ~WindowsWindow();
-
-                /**
-                 * @brief ウィンドウクラス名の取得
-                 * @return Windowsウィンドウクラス名
-                 */
-                static const TCHAR *GetWindowClassName();
-
-                /**
-                 * @brief ウィンドウメッセージプロシージャ
-                 * @param hWnd ウィンドウハンドル
-                 * @param message メッセージID
-                 * @param wParam 追加のメッセージ情報（依存）
-                 * @param lParam 追加のメッセージ情報（依存）
-                 * @return メッセージ処理結果
-                 */
-                static LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+                virtual ~WindowsWindow() override;
 
                 // IWindowインターフェースの実装
-                virtual bool Create(const Container::String &title, int width, int height) override;
+                virtual bool Create(const Container::String& title, int width, int height) override;
                 virtual void Destroy() override;
                 virtual void Show() override;
                 virtual void Hide() override;
-                virtual void SetTitle(const Container::String &title) override;
+                virtual void SetTitle(const Container::String& title) override;
                 virtual void Resize(int width, int height) override;
                 virtual bool IsActive() const override;
-                virtual void *GetNativeHandle() const override;
+                virtual void* GetNativeHandle() const override;
+
+                /**
+                 * @brief HWNDを取得
+                 * @return ウィンドウハンドル
+                 */
+                HWND GetHWND() const;
 
             private:
                 /**
-                 * @brief ウィンドウクラスの登録
+                 * @brief ウィンドウプロシージャ
+                 */
+                static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+                /**
+                 * @brief ウィンドウクラスを登録
                  * @return 登録の成否
                  */
                 bool RegisterWindowClass();
 
                 /**
-                 * @brief ウィンドウスタイルとクライアント領域サイズを調整
+                 * @brief ウィンドウクラス名を取得
+                 * @return ウィンドウクラス名
+                 */
+                static const TCHAR* GetWindowClassName();
+
+                /**
+                 * @brief ウィンドウサイズを調整
                  * @param style ウィンドウスタイル
                  * @param exStyle 拡張ウィンドウスタイル
-                 * @param width クライアント領域の幅（入出力）
-                 * @param height クライアント領域の高さ（入出力）
+                 * @param width ウィンドウ幅（調整される）
+                 * @param height ウィンドウ高さ（調整される）
                  */
-                void AdjustWindowSize(DWORD style, DWORD exStyle, int &width, int &height);
+                static void AdjustWindowSize(DWORD style, DWORD exStyle, int& width, int& height);
 
             private:
-                HWND m_hWnd;                   // ウィンドウハンドル
-                HINSTANCE m_hInstance;         // アプリケーションインスタンスハンドル
-                bool m_isActive;               // アクティブ状態フラグ
-                Container::String m_title;     // ウィンドウタイトル
-                int m_width;                   // ウィンドウ幅
-                int m_height;                  // ウィンドウ高さ
-                static bool s_classRegistered; // ウィンドウクラス登録状態
+                static bool s_classRegistered;      // ウィンドウクラス登録フラグ
+                HWND m_hWnd;                        // ウィンドウハンドル
+                HINSTANCE m_hInstance;              // アプリケーションインスタンスハンドル
+                bool m_isActive;                    // アクティブ状態フラグ
+                Container::String m_title;          // ウィンドウタイトル
+                int m_width;                        // ウィンドウ幅
+                int m_height;                       // ウィンドウ高さ
             };
 
         } // namespace Platform

@@ -2,6 +2,8 @@
 #include "Platform/Windows/WindowsApplication.h"
 #include "Platform/Windows/WindowsWindow.h"
 
+using namespace NorvesLib::Core::Container;
+
 namespace NorvesLib
 {
     namespace Core
@@ -9,10 +11,10 @@ namespace NorvesLib
         namespace Platform
         {
 
-            std::unique_ptr<IApplication> WindowsApplicationFactory::CreateWindowsApplication()
+            Core::Container::TUniquePtr<IApplication> WindowsApplicationFactory::CreateWindowsApplication()
             {
                 // Windows向けアプリケーション実装を返却
-                auto app = std::make_unique<WindowsApplication>();
+                auto app = MakeUnique<WindowsApplication>();
 
                 // 必要に応じてWindowsアプリケーションの初期設定を行う
                 // ...
@@ -20,10 +22,10 @@ namespace NorvesLib
                 return app;
             }
 
-            std::shared_ptr<IWindow> WindowsApplicationFactory::CreateWindowsWindow()
+            Core::Container::TSharedPtr<IWindow> WindowsApplicationFactory::CreateWindowsWindow()
             {
                 // Windows向けウィンドウ実装を返却
-                return std::make_shared<WindowsWindow>();
+                return MakeShared<WindowsWindow>();
             }
 
         } // namespace Platform

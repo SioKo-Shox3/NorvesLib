@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <memory>
+#include "Container/PointerTypes.h"
 #include "IUnknown.h"
 #include "IValue.h"
 #include "Container/Containers.h"
@@ -62,7 +62,7 @@ namespace NorvesLib::Core
          * @param params パラメータ配列
          * @return 関数の戻り値、void型の場合はnullptr
          */
-        virtual std::unique_ptr<IValue> Invoke(IUnknown* instance, const Container::VariableArray<IValue*>& params) const = 0;
+        virtual Container::TUniquePtr<IValue> Invoke(IUnknown* instance, const Container::VariableArray<IValue*>& params) const = 0;
 
         /**
          * @brief 関数が指定されたパラメータで呼び出し可能か確認します

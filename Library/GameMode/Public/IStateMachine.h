@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Core/Object/IUnknown.h"
+#include "Core/Public/Container/PointerTypes.h"
 
 namespace NorvesLib::GameMode
 {
@@ -16,7 +17,7 @@ namespace NorvesLib::GameMode
 
         // 次のステートを予約
         template<typename T>
-        void ReserveState(std::unique_ptr<T> nextState);
+        void ReserveState(Core::Container::TUniquePtr<T> nextState);
 
         // ファクトリを取得
         virtual void* GetFactoryImpl() const = 0;

@@ -1,6 +1,8 @@
-﻿#include <memory>
+﻿#include "Core/Public/Container/PointerTypes.h"
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
+
+using namespace NorvesLib::Core::Container;
 
 // ゲームアプリケーションクラスの簡易実装
 class GameApplication : public NorvesLib::IApplication
@@ -30,19 +32,19 @@ public:
         return nullptr; // 実際の実装ではウィンドウを返す
     }
 
-    virtual void RegisterWindow(std::shared_ptr<NorvesLib::IWindow> window) override
+    virtual void RegisterWindow(TSharedPtr<NorvesLib::IWindow> window) override
     {
         // ウィンドウ登録処理
     }
 
-    virtual void UnregisterWindow(std::shared_ptr<NorvesLib::IWindow> window) override
+    virtual void UnregisterWindow(TSharedPtr<NorvesLib::IWindow> window) override
     {
         // ウィンドウ登録解除処理
     }
 };
 
 // アプリケーションインスタンスを作成する関数の実装
-std::unique_ptr<NorvesLib::IApplication> CreateApplication()
+TUniquePtr<NorvesLib::IApplication> CreateApplication()
 {
-    return std::make_unique<GameApplication>();
+    return MakeUnique<GameApplication>();
 }

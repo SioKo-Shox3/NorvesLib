@@ -1,8 +1,10 @@
 ﻿#pragma once
 
 #include <cstdint>
-#include <memory>
+#include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Container/Containers.h"
+
+using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::RHI 
 {
@@ -242,16 +244,16 @@ class ISwapChain;
 class IDescriptorSet;
 
 // スマートポインタの定義
-using DevicePtr = std::shared_ptr<IDevice>;
-using CommandListPtr = std::shared_ptr<ICommandList>;
-using BufferPtr = std::shared_ptr<IBuffer>;
-using TexturePtr = std::shared_ptr<ITexture>;
-using SamplerPtr = std::shared_ptr<ISampler>;
-using RenderPassPtr = std::shared_ptr<IRenderPass>;
-using FramebufferPtr = std::shared_ptr<IFramebuffer>;
-using ShaderPtr = std::shared_ptr<IShader>;
-using PipelinePtr = std::shared_ptr<IPipeline>;
-using SwapChainPtr = std::shared_ptr<ISwapChain>;
-using DescriptorSetPtr = std::shared_ptr<IDescriptorSet>;
+using DevicePtr = TSharedPtr<IDevice>;
+using CommandListPtr = TSharedPtr<ICommandList>;
+using BufferPtr = TSharedPtr<IBuffer>;
+using TexturePtr = TSharedPtr<ITexture>;
+using SamplerPtr = TSharedPtr<ISampler>;
+using RenderPassPtr = TSharedPtr<IRenderPass>;
+using FramebufferPtr = TSharedPtr<IFramebuffer>;
+using ShaderPtr = TSharedPtr<IShader>;
+using PipelinePtr = TSharedPtr<IPipeline>;
+using SwapChainPtr = TSharedPtr<ISwapChain>;
+using DescriptorSetPtr = TSharedPtr<IDescriptorSet>;
 
 } // namespace NorvesLib::RHI

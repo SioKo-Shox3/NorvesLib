@@ -1,6 +1,8 @@
 ﻿#include "Platform/Windows/WindowsWindow.h"
 #include <stdexcept>
 
+using namespace NorvesLib::Core::Container;
+
 namespace NorvesLib {
 namespace Core {
 namespace Platform {
@@ -116,7 +118,7 @@ void WindowsWindow::AdjustWindowSize(DWORD style, DWORD exStyle, int& width, int
     height = rect.bottom - rect.top;
 }
 
-bool WindowsWindow::Create(const Container::String& title, int width, int height)
+bool WindowsWindow::Create(const String& title, int width, int height)
 {
     // タイトルと寸法を保存
     m_title = title;
@@ -196,7 +198,7 @@ void WindowsWindow::Hide()
     }
 }
 
-void WindowsWindow::SetTitle(const Container::String& title)
+void WindowsWindow::SetTitle(const String& title)
 {
     m_title = title;
     if (m_hWnd)
@@ -238,6 +240,11 @@ bool WindowsWindow::IsActive() const
 }
 
 void* WindowsWindow::GetNativeHandle() const
+{
+    return m_hWnd;
+}
+
+HWND WindowsWindow::GetHWND() const
 {
     return m_hWnd;
 }

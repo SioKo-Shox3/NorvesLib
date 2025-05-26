@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <memory>
+#include "Container/PointerTypes.h"
 #include "Container/VariableArray.h"
 #include "Container/String.h"
 #include "EngineGlobals/GlobalMemoryAllocator.h"
@@ -52,13 +52,13 @@ public:
      * @brief アプリケーションにウィンドウを登録
      * @param window 登録するウィンドウ
      */
-    virtual void RegisterWindow(std::shared_ptr<IWindow> window) = 0;
+    virtual void RegisterWindow(Core::Container::TSharedPtr<IWindow> window) = 0;
 
     /**
      * @brief ウィンドウの登録解除
      * @param window 解除するウィンドウ
      */
-    virtual void UnregisterWindow(std::shared_ptr<IWindow> window) = 0;
+    virtual void UnregisterWindow(Core::Container::TSharedPtr<IWindow> window) = 0;
 };
 
 } // namespace NorvesLib
