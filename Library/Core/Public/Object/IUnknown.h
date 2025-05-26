@@ -373,11 +373,11 @@ namespace NorvesLib::Core
          */
         void CopyFromObject(const IUnknown *sourceObject);
 
-        mutable Thread::Atomic<uint32_t> m_RefCount;            // 参照カウント
-        mutable Thread::Atomic<uint32_t> m_Flags;               // オブジェクトフラグ
+        mutable Thread::Atomic<uint32_t> m_RefCount;                  // 参照カウント
+        mutable Thread::Atomic<uint32_t> m_Flags;                     // オブジェクトフラグ
         Container::TUniquePtr<VariableContainer> m_VariableContainer; // 変数コンテナ
-        IUnknown *m_Outer;                                      // 親オブジェクト
-        Container::VariableArray<IUnknown *> m_Inners;          // 子オブジェクトのリスト
+        IUnknown *m_Outer;                                            // 親オブジェクト
+        Container::VariableArray<IUnknown *> m_Inners;                // 子オブジェクトのリスト
 
     private:
         // 代入は禁止

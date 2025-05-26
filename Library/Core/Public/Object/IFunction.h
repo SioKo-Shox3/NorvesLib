@@ -22,13 +22,13 @@ namespace NorvesLib::Core
          * @brief 関数名を取得します
          * @return 関数名
          */
-        virtual const Container::String& GetName() const = 0;
+        virtual const Container::String &GetName() const = 0;
 
         /**
          * @brief 返り値の型情報を取得します
          * @return 返り値の型情報、void型の場合はnullptr
          */
-        virtual const IClass* GetReturnType() const = 0;
+        virtual const IClass *GetReturnType() const = 0;
 
         /**
          * @brief パラメータの数を取得します
@@ -41,13 +41,13 @@ namespace NorvesLib::Core
          * @param index パラメータのインデックス
          * @return 型情報へのポインタ、インデックスが無効な場合はnullptr
          */
-        virtual const IClass* GetParameterType(size_t index) const = 0;
+        virtual const IClass *GetParameterType(size_t index) const = 0;
 
         /**
          * @brief すべてのパラメータの型情報を取得します
          * @return パラメータの型情報配列
          */
-        virtual Container::VariableArray<const IClass*> GetParameterTypes() const = 0;
+        virtual Container::VariableArray<const IClass *> GetParameterTypes() const = 0;
 
         /**
          * @brief パラメータ名を取得します
@@ -62,14 +62,14 @@ namespace NorvesLib::Core
          * @param params パラメータ配列
          * @return 関数の戻り値、void型の場合はnullptr
          */
-        virtual Container::TUniquePtr<IValue> Invoke(IUnknown* instance, const Container::VariableArray<IValue*>& params) const = 0;
+        virtual Container::TUniquePtr<IValue> Invoke(IUnknown *instance, const Container::VariableArray<IValue *> &params) const = 0;
 
         /**
          * @brief 関数が指定されたパラメータで呼び出し可能か確認します
          * @param params チェックするパラメータ配列
          * @return 呼び出し可能な場合はtrue
          */
-        virtual bool CanInvoke(const Container::VariableArray<IValue*>& params) const = 0;
+        virtual bool CanInvoke(const Container::VariableArray<IValue *> &params) const = 0;
 
         /**
          * @brief 関数シグネチャを文字列形式で取得します

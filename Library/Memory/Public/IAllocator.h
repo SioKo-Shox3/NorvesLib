@@ -20,13 +20,13 @@ namespace NorvesLib::Memory
          * @param alignment アライメント要件（バイト単位、デフォルトは16バイト）
          * @return 割り当てられたメモリブロックへのポインタ
          */
-        virtual void* Allocate(size_t size, size_t alignment = 16) = 0;
+        virtual void *Allocate(size_t size, size_t alignment = 16) = 0;
 
         /**
          * メモリの解放
          * @param ptr 解放するメモリブロックへのポインタ
          */
-        virtual void Deallocate(void* ptr) = 0;
+        virtual void Deallocate(void *ptr) = 0;
 
         /**
          * 割り当てられたメモリの合計サイズを取得

@@ -60,11 +60,11 @@ namespace NorvesLib
                 int ProcessWindowsMessages();
 
             private:
-                HINSTANCE m_hInstance;                                                                      // アプリケーションインスタンスハンドル
+                HINSTANCE m_hInstance;                                                                     // アプリケーションインスタンスハンドル
                 Core::Container::VariableArray<Core::Container::TSharedPtr<NorvesLib::IWindow>> m_windows; // ウィンドウリスト
-                Core::Container::TSharedPtr<NorvesLib::IWindow> m_mainWindow;                               // メインウィンドウ
-                bool m_isRunning;                                                                           // 実行中フラグ
-                Core::Container::VariableArray<Core::Container::String> m_args;                             // コマンドライン引数
+                Core::Container::TSharedPtr<NorvesLib::IWindow> m_mainWindow;                              // メインウィンドウ
+                bool m_isRunning;                                                                          // 実行中フラグ
+                Core::Container::VariableArray<Core::Container::String> m_args;                            // コマンドライン引数
             };
 
         } // namespace Platform
