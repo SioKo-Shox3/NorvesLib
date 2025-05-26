@@ -21,6 +21,7 @@
 #include "StringView.h"
 #include "Deque.h"
 #include "Queue.h"
+#include "PointerTypes.h"
 
 namespace NorvesLib::Core::Container
 {
