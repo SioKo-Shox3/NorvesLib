@@ -1,5 +1,8 @@
 ﻿#include "Application/ApplicationFactory.h"
-#include "Platform/Windows/WindowsApplicationFactory.h"
+// GameApplicationの作成のため、直接インクルード
+// プラットフォーム固有のアプリケーションではなく、ゲームアプリケーションを作成
+
+extern NorvesLib::Core::Container::TUniquePtr<NorvesLib::IApplication> CreateDefaultApplication();
 
 using namespace NorvesLib::Core::Container;
 
@@ -12,27 +15,20 @@ namespace NorvesLib
 
             Core::Container::TUniquePtr<IApplication> ApplicationFactory::CreateDefaultApplication()
             {
-                // プラットフォーム固有の実装を使用
-                return GetPlatformSpecificImplementation();
+                // ゲームアプリケーションを作成（Game/Application.cppで定義）
+                return ::CreateDefaultApplication();
             }
 
             Core::Container::TUniquePtr<IApplication> ApplicationFactory::CreateCustomApplication()
             {
-                // プラットフォーム固有の実装を使用
                 // 将来的にカスタマイズが必要になった場合、ここで拡張可能
-                return GetPlatformSpecificImplementation();
+                return CreateDefaultApplication();
             }
 
             Core::Container::TUniquePtr<IApplication> ApplicationFactory::GetPlatformSpecificImplementation()
             {
-// プラットフォームに応じて適切なファクトリーを選択
-#ifdef _WIN32
-                // Windows環境
-                return Core::Platform::WindowsApplicationFactory::CreateWindowsApplication();
-#else
-// 未対応のプラットフォーム
-#error "対応していないプラットフォームです。"
-#endif
+                // この関数は使用されなくなったが、互換性のため残す
+                return CreateDefaultApplication();
             }
 
         } // namespace Boot

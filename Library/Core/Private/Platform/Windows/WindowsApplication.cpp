@@ -1,6 +1,7 @@
 ﻿#include "Platform/Windows/WindowsApplication.h"
 #include "Platform/Windows/WindowsWindow.h"
 #include <algorithm>
+#include <iostream>
 
 using namespace NorvesLib::Core::Container;
 
@@ -38,12 +39,19 @@ int WindowsApplication::Run()
 {
     if (!m_isRunning)
     {
-        // 初期化されていない場合はエラー終了
+        std::wcerr << L"WindowsApplication::Run() - Application not initialized" << std::endl;
         return -1;
     }
     
+    std::wcout << L"WindowsApplication::Run() - Starting Windows message loop..." << std::endl;
+    std::wcout << L"WindowsApplication::Run() - Main window: " << (m_mainWindow ? L"Valid" : L"Null") << std::endl;
+    std::wcout << L"WindowsApplication::Run() - Number of windows: " << m_windows.size() << std::endl;
+    
     // Windowsメッセージループを処理
-    return ProcessWindowsMessages();
+    int exitCode = ProcessWindowsMessages();
+    
+    std::wcout << L"WindowsApplication::Run() - Message loop ended with exit code: " << exitCode << std::endl;
+    return exitCode;
 }
 
 void WindowsApplication::Shutdown()
@@ -111,15 +119,32 @@ const Core::Container::VariableArray<Core::Container::String>& WindowsApplicatio
 int WindowsApplication::ProcessWindowsMessages()
 {
     MSG msg = {};
+    std::wcout << L"ProcessWindowsMessages() - Starting message loop" << std::endl;
+    
+    int messageCount = 0;
     
     while (m_isRunning)
     {
+        bool hasMessage = false;
+        
         while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
         {
+            hasMessage = true;
+            messageCount++;
+            
             if (msg.message == WM_QUIT)
             {
+                std::wcout << L"ProcessWindowsMessages() - Received WM_QUIT message" << std::endl;
                 m_isRunning = false;
                 break;
+            }
+            
+            // 重要なメッセージをログ出力
+            if (msg.message == WM_CLOSE || msg.message == WM_DESTROY || 
+                msg.message == WM_PAINT || msg.message == WM_KEYDOWN)
+            {
+                std::wcout << L"ProcessWindowsMessages() - Message: " << msg.message 
+                          << L" (Total processed: " << messageCount << L")" << std::endl;
             }
             
             TranslateMessage(&msg);
@@ -129,12 +154,28 @@ int WindowsApplication::ProcessWindowsMessages()
         // メインウィンドウが閉じられた場合はアプリケーションを終了
         if (!m_mainWindow || m_windows.empty())
         {
+            std::wcout << L"ProcessWindowsMessages() - Main window lost or no windows remaining" << std::endl;
             m_isRunning = false;
+        }
+        
+        // 定期的な状態報告（メッセージがない場合のみ）
+        static int idleCount = 0;
+        if (!hasMessage)
+        {
+            idleCount++;
+            if (idleCount % 1000 == 0)  // 1000回に1回報告
+            {
+                std::wcout << L"ProcessWindowsMessages() - Idle loop " << idleCount 
+                          << L", Messages processed: " << messageCount << std::endl;
+            }
         }
         
         // CPU使用率を下げるための短いスリープ
         Sleep(1);
     }
+    
+    std::wcout << L"ProcessWindowsMessages() - Loop ended. Total messages processed: " 
+              << messageCount << std::endl;
     
     return static_cast<int>(msg.wParam);
 }
