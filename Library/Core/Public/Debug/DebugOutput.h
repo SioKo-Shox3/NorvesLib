@@ -1,5 +1,14 @@
 ﻿#pragma once
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
+#endif
+
 #include "Core/Public/Logging/LoggingModule.h"
 #include "Core/Public/Container/Containers.h"
 #include <chrono>
@@ -11,7 +20,7 @@ namespace NorvesLib::Debug
 
     /**
      * @brief デバッグ出力用のユーティリティクラス
-     * 
+     *
      * 開発時のデバッグ情報出力を簡単にするためのヘルパークラス群
      */
     class DebugOutput
@@ -23,8 +32,8 @@ namespace NorvesLib::Debug
          * @param value 変数の値
          * @param category カテゴリ（省略可能）
          */
-        template<typename T>
-        static void PrintVariable(const String& varName, const T& value, const String& category = "Debug")
+        template <typename T>
+        static void PrintVariable(const String &varName, const T &value, const String &category = "Debug")
         {
             NORVES_LOG_DEBUG_F(category, "%s = %s", varName.c_str(), ToString(value).c_str());
         }
@@ -35,13 +44,13 @@ namespace NorvesLib::Debug
          * @param container コンテナ
          * @param category カテゴリ（省略可能）
          */
-        template<typename Container>
-        static void PrintContainer(const String& containerName, const Container& container, const String& category = "Debug")
+        template <typename Container>
+        static void PrintContainer(const String &containerName, const Container &container, const String &category = "Debug")
         {
             NORVES_LOG_DEBUG_F(category, "%s (size: %zu):", containerName.c_str(), container.size());
-            
+
             size_t index = 0;
-            for (const auto& item : container)
+            for (const auto &item : container)
             {
                 NORVES_LOG_DEBUG_F(category, "  [%zu] = %s", index++, ToString(item).c_str());
             }
@@ -53,7 +62,7 @@ namespace NorvesLib::Debug
         class FunctionTracer
         {
         public:
-            FunctionTracer(const String& functionName, const String& category = "Function")
+            FunctionTracer(const String &functionName, const String &category = "Function")
                 : m_functionName(functionName), m_category(category)
             {
                 m_startTime = std::chrono::high_resolution_clock::now();
@@ -64,8 +73,8 @@ namespace NorvesLib::Debug
             {
                 auto endTime = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - m_startTime);
-                NORVES_LOG_TRACE_F(m_category, "<<< Exiting %s (took %lld μs)", 
-                                  m_functionName.c_str(), duration.count());
+                NORVES_LOG_TRACE_F(m_category, "<<< Exiting %s (took %lld μs)",
+                                   m_functionName.c_str(), duration.count());
             }
 
         private:
@@ -80,7 +89,7 @@ namespace NorvesLib::Debug
         class MemoryMonitor
         {
         public:
-            static void LogMemoryUsage(const String& location = "")
+            static void LogMemoryUsage(const String &location = "")
             {
 #ifdef _WIN32
                 PROCESS_MEMORY_COUNTERS pmc;
@@ -88,9 +97,9 @@ namespace NorvesLib::Debug
                 {
                     String prefix = location.empty() ? String{} : location + ": ";
                     NORVES_LOG_INFO_F("Memory", "%sWorking Set: %.2f MB, Page File: %.2f MB",
-                                     prefix.c_str(),
-                                     pmc.WorkingSetSize / (1024.0 * 1024.0),
-                                     pmc.PagefileUsage / (1024.0 * 1024.0));
+                                      prefix.c_str(),
+                                      pmc.WorkingSetSize / (1024.0 * 1024.0),
+                                      pmc.PagefileUsage / (1024.0 * 1024.0));
                 }
 #else
                 // Linux/Unix implementation can be added here
@@ -105,7 +114,7 @@ namespace NorvesLib::Debug
         class PerformanceProfiler
         {
         public:
-            PerformanceProfiler(const String& name, const String& category = "Performance")
+            PerformanceProfiler(const String &name, const String &category = "Performance")
                 : m_name(name), m_category(category)
             {
                 m_startTime = std::chrono::high_resolution_clock::now();
@@ -115,9 +124,9 @@ namespace NorvesLib::Debug
             {
                 auto endTime = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - m_startTime);
-                
-                NORVES_LOG_INFO_F(m_category, "Profile [%s]: %lld μs (%.3f ms)", 
-                                 m_name.c_str(), duration.count(), duration.count() / 1000.0);
+
+                NORVES_LOG_INFO_F(m_category, "Profile [%s]: %lld μs (%.3f ms)",
+                                  m_name.c_str(), duration.count(), duration.count() / 1000.0);
             }
 
         private:
@@ -130,8 +139,8 @@ namespace NorvesLib::Debug
         /**
          * @brief 値を文字列に変換するヘルパー
          */
-        template<typename T>
-        static String ToString(const T& value)
+        template <typename T>
+        static String ToString(const T &value)
         {
             if constexpr (std::is_arithmetic_v<T>)
             {
@@ -145,7 +154,7 @@ namespace NorvesLib::Debug
             {
                 return String(value);
             }
-            else if constexpr (std::is_same_v<T, const char*> || std::is_same_v<T, char*>)
+            else if constexpr (std::is_same_v<T, const char *> || std::is_same_v<T, char *>)
             {
                 return String(value);
             }

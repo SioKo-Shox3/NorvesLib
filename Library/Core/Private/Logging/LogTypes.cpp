@@ -1,4 +1,4 @@
-﻿#include "LogTypes.h"
+﻿#include "../Public/Logging/LogTypes.h"
 #include <iomanip>
 #include <sstream>
 #include <ctime>
@@ -6,68 +6,70 @@
 namespace NorvesLib::Core::Logging
 {
 
-    String StandardLogFormatter::Format(const LogEntry& entry) const
+    String StandardLogFormatter::Format(const LogEntry &entry) const
     {
         std::ostringstream oss;
-        
+
         // タイムスタンプの生成
         auto timeT = std::chrono::system_clock::to_time_t(entry.timestamp);
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            entry.timestamp.time_since_epoch()) % 1000;
-        
+                      entry.timestamp.time_since_epoch()) %
+                  1000;
+
         std::tm localTime;
 #ifdef _WIN32
         localtime_s(&localTime, &timeT);
 #else
         localtime_r(&timeT, &localTime);
 #endif
-        
+
         // フォーマット: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [THREAD] [CATEGORY] [FILE:FUNCTION:LINE] MESSAGE
         oss << "[" << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S")
             << "." << std::setfill('0') << std::setw(3) << ms.count() << "] ";
-        
+
         // ログレベル（カラー付き）
-        oss << "[" << GetLogLevelColor(entry.level) << LogLevelToString(entry.level) 
+        oss << "[" << GetLogLevelColor(entry.level) << LogLevelToString(entry.level)
             << RESET_COLOR << "] ";
-        
+
         // スレッドID
         oss << "[T:" << std::setfill('0') << std::setw(4) << entry.threadId << "] ";
-        
+
         // カテゴリ
         if (!entry.category.empty())
         {
             oss << "[" << entry.category.c_str() << "] ";
         }
-        
+
         // ソース情報
         if (!entry.filename.empty())
         {
-            oss << "[" << entry.filename.c_str() << ":" << entry.function.c_str() 
+            oss << "[" << entry.filename.c_str() << ":" << entry.function.c_str()
                 << ":" << entry.lineNumber << "] ";
         }
-        
+
         // メッセージ
         oss << entry.message.c_str();
-        
+
         return String(oss.str());
     }
 
-    String JsonLogFormatter::Format(const LogEntry& entry) const
+    String JsonLogFormatter::Format(const LogEntry &entry) const
     {
         std::ostringstream oss;
-        
+
         // タイムスタンプの生成（ISO 8601形式）
         auto timeT = std::chrono::system_clock::to_time_t(entry.timestamp);
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            entry.timestamp.time_since_epoch()) % 1000;
-        
+                      entry.timestamp.time_since_epoch()) %
+                  1000;
+
         std::tm localTime;
 #ifdef _WIN32
         localtime_s(&localTime, &timeT);
 #else
         localtime_r(&timeT, &localTime);
 #endif
-        
+
         oss << "{"
             << "\"timestamp\":\"" << std::put_time(&localTime, "%Y-%m-%dT%H:%M:%S")
             << "." << std::setfill('0') << std::setw(3) << ms.count() << "Z\","
@@ -75,7 +77,7 @@ namespace NorvesLib::Core::Logging
             << "\"thread_id\":" << entry.threadId << ","
             << "\"category\":\"" << entry.category.c_str() << "\","
             << "\"message\":\"" << entry.message.c_str() << "\"";
-        
+
         if (!entry.filename.empty())
         {
             oss << ",\"source\":{"
@@ -84,9 +86,9 @@ namespace NorvesLib::Core::Logging
                 << "\"line\":" << entry.lineNumber
                 << "}";
         }
-        
+
         oss << "}";
-        
+
         return String(oss.str());
     }
 

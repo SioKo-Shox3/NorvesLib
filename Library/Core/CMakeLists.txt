@@ -9,7 +9,14 @@ set(PRIVATE_SOURCES
     Private/Object/Object.cpp
     Private/Text/IdentityPool.cpp
     Private/Logging/Logger.cpp
+    Private/Logging/LogTypes.cpp
     Private/Debug/DebugOutput.cpp
+    Private/EngineGlobals/GlobalMemoryAllocator.cpp
+    Private/Platform/Windows/WindowsApplication.cpp
+    Private/Platform/Windows/WindowsApplicationFactory.cpp
+    Private/Platform/Windows/WindowsWindow.cpp
+    Private/Boot/PlatformBoot.cpp
+    Private/Application/ApplicationFactory.cpp
 )
 
 set(PUBLIC_HEADERS
@@ -34,6 +41,13 @@ set(PUBLIC_HEADERS
     Public/Logging/Logger.h
     Public/Logging/LogMacros.h
     Public/Debug/DebugOutput.h
+    Public/EngineGlobals/GlobalMemoryAllocator.h
+    Public/EngineGlobals/MemoryOverrides.h
+    Public/Platform/Windows/WindowsApplication.h
+    Public/Platform/Windows/WindowsApplicationFactory.h
+    Public/Platform/Windows/WindowsWindow.h
+    Public/Boot/PlatformBoot.h
+    Public/Application/ApplicationFactory.h
 )
 
 # ライブラリの作成

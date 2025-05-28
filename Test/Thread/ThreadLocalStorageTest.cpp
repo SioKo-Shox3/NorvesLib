@@ -1,4 +1,5 @@
 ﻿#include "Thread/Public/ThreadLocalStorage.h"
+#include "Thread/Public/Atomic.h"
 #include <thread>
 #include <vector>
 #include <cassert>
@@ -123,7 +124,7 @@ void TestIndependence()
     std::cout << "Running independence test..." << std::endl;
     
     ThreadLocalStorage<int> tls;
-    Atomic<bool> threadsReady(false);
+    Atomic<int> threadsReady(0);
     Atomic<bool> canProceed(false);
     constexpr int NUM_THREADS = 4;
     
@@ -133,8 +134,8 @@ void TestIndependence()
         tls.Set(threadId);
         
         // すべてのスレッドが準備完了するまで待機
-        threadsReady = true;
-        while (!canProceed) 
+        threadsReady.FetchAdd(1);
+        while (!canProceed.load()) 
         {
             std::this_thread::yield();
         }
@@ -155,7 +156,7 @@ void TestIndependence()
     {
         std::this_thread::yield();
     }
-    canProceed = true;
+    canProceed.store(true);
     
     // スレッドの終了を待つ
     for (auto& t : threads) 
