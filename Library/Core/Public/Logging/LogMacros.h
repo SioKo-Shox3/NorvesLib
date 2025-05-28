@@ -6,7 +6,7 @@
 /**
  * @file LogMacros.h
  * @brief ログ出力用の便利なマクロ定義
- * 
+ *
  * このファイルで定義されたマクロを使用することで、
  * 簡単にログ出力とファイル情報の記録ができます。
  */
@@ -16,10 +16,10 @@ namespace NorvesLib::Core::Logging
     /**
      * @brief ファイル名から拡張子とパスを取り除く
      */
-    constexpr const char* ExtractFileName(const char* path)
+    constexpr const char *ExtractFileName(const char *path)
     {
-        const char* filename = path;
-        for (const char* p = path; *p; ++p)
+        const char *filename = path;
+        for (const char *p = path; *p; ++p)
         {
             if (*p == '/' || *p == '\\')
             {
@@ -33,26 +33,30 @@ namespace NorvesLib::Core::Logging
 
 // ===== 基本ログマクロ =====
 
-#define NORVES_LOG(level, category, message) \
-    do { \
-        if (NorvesLib::Core::Logging::Logger::GetInstance().IsLevelActive(level)) { \
-            NorvesLib::Core::Logging::Logger::GetInstance().Log( \
-                level, category, message, \
-                NorvesLib::Core::Logging::ExtractFileName(__FILE__), \
-                __FUNCTION__, __LINE__); \
-        } \
-    } while(0)
+#define NORVES_LOG(level, category, message)                                      \
+    do                                                                            \
+    {                                                                             \
+        if (NorvesLib::Core::Logging::Logger::GetInstance().IsLevelActive(level)) \
+        {                                                                         \
+            NorvesLib::Core::Logging::Logger::GetInstance().Log(                  \
+                level, category, message,                                         \
+                NorvesLib::Core::Logging::ExtractFileName(__FILE__),              \
+                __FUNCTION__, __LINE__);                                          \
+        }                                                                         \
+    } while (0)
 
-#define NORVES_LOG_FORMAT(level, category, format, ...) \
-    do { \
-        if (NorvesLib::Core::Logging::Logger::GetInstance().IsLevelActive(level)) { \
-            NorvesLib::Core::Logging::Logger::GetInstance().LogFormat( \
-                level, category, \
-                NorvesLib::Core::Logging::ExtractFileName(__FILE__), \
-                __FUNCTION__, __LINE__, \
-                format, ##__VA_ARGS__); \
-        } \
-    } while(0)
+#define NORVES_LOG_FORMAT(level, category, format, ...)                           \
+    do                                                                            \
+    {                                                                             \
+        if (NorvesLib::Core::Logging::Logger::GetInstance().IsLevelActive(level)) \
+        {                                                                         \
+            NorvesLib::Core::Logging::Logger::GetInstance().LogFormat(            \
+                level, category,                                                  \
+                NorvesLib::Core::Logging::ExtractFileName(__FILE__),              \
+                __FUNCTION__, __LINE__,                                           \
+                format, ##__VA_ARGS__);                                           \
+        }                                                                         \
+    } while (0)
 
 // ===== レベル別ログマクロ =====
 
@@ -136,12 +140,14 @@ namespace NorvesLib::Core::Logging
 
 // ===== 条件付きログマクロ =====
 
-#define NORVES_LOG_IF(condition, level, category, message) \
-    do { \
-        if ((condition) && NorvesLib::Core::Logging::Logger::GetInstance().IsLevelActive(level)) { \
-            NORVES_LOG(level, category, message); \
-        } \
-    } while(0)
+#define NORVES_LOG_IF(condition, level, category, message)                                       \
+    do                                                                                           \
+    {                                                                                            \
+        if ((condition) && NorvesLib::Core::Logging::Logger::GetInstance().IsLevelActive(level)) \
+        {                                                                                        \
+            NORVES_LOG(level, category, message);                                                \
+        }                                                                                        \
+    } while (0)
 
 #define LOG_ERROR_IF(condition, message) \
     NORVES_LOG_IF(condition, NorvesLib::Core::Logging::LogLevel::Error, "General", message)
@@ -152,22 +158,34 @@ namespace NorvesLib::Core::Logging
 // ===== デバッグ専用マクロ（リリースビルドでは無効化） =====
 
 #ifdef _DEBUG
-    #define NORVES_DEBUG_LOG(category, message) \
-        NORVES_LOG_DEBUG(category, message)
-    
-    #define NORVES_DEBUG_LOG_F(category, format, ...) \
-        NORVES_LOG_DEBUG_F(category, format, ##__VA_ARGS__)
+#define NORVES_DEBUG_LOG(category, message) \
+    NORVES_LOG_DEBUG(category, message)
 
-    #define DEBUG_LOG(message) \
-        LOG_DEBUG(message)
+#define NORVES_DEBUG_LOG_F(category, format, ...) \
+    NORVES_LOG_DEBUG_F(category, format, ##__VA_ARGS__)
 
-    #define DEBUG_LOG_F(format, ...) \
-        LOG_DEBUG_F(format, ##__VA_ARGS__)
+#define DEBUG_LOG(message) \
+    LOG_DEBUG(message)
+
+#define DEBUG_LOG_F(format, ...) \
+    LOG_DEBUG_F(format, ##__VA_ARGS__)
 #else
-    #define NORVES_DEBUG_LOG(category, message) do {} while(0)
-    #define NORVES_DEBUG_LOG_F(category, format, ...) do {} while(0)
-    #define DEBUG_LOG(message) do {} while(0)
-    #define DEBUG_LOG_F(format, ...) do {} while(0)
+#define NORVES_DEBUG_LOG(category, message) \
+    do                                      \
+    {                                       \
+    } while (0)
+#define NORVES_DEBUG_LOG_F(category, format, ...) \
+    do                                            \
+    {                                             \
+    } while (0)
+#define DEBUG_LOG(message) \
+    do                     \
+    {                      \
+    } while (0)
+#define DEBUG_LOG_F(format, ...) \
+    do                           \
+    {                            \
+    } while (0)
 #endif
 
 // ===== 関数スコープトレース用マクロ =====
@@ -183,9 +201,10 @@ namespace NorvesLib::Core::Logging
 #define NORVES_LOG_PERFORMANCE_START(name) \
     auto start_time_##name = std::chrono::high_resolution_clock::now()
 
-#define NORVES_LOG_PERFORMANCE_END(name, category) \
-    do { \
-        auto end_time = std::chrono::high_resolution_clock::now(); \
+#define NORVES_LOG_PERFORMANCE_END(name, category)                                                           \
+    do                                                                                                       \
+    {                                                                                                        \
+        auto end_time = std::chrono::high_resolution_clock::now();                                           \
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_##name); \
-        NORVES_LOG_INFO_F(category, "Performance [%s]: %lld microseconds", #name, duration.count()); \
-    } while(0)
+        NORVES_LOG_INFO_F(category, "Performance [%s]: %lld microseconds", #name, duration.count());         \
+    } while (0)

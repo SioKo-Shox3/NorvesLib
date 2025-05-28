@@ -9,7 +9,9 @@
 #include "Allocator.h"
 
 // Windowsマクロを無効化
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 
 namespace NorvesLib::Core::Container
 {

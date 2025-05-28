@@ -1,7 +1,9 @@
 ﻿#pragma once
 
 // Windowsマクロを無効化
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 
 #include <cstddef>
 #include <string>
@@ -438,30 +440,28 @@ namespace NorvesLib::Core::Container
     private:
         const_pointer data_;
         size_type size_;
-    };
-
-    // 比較演算子を非constexprに変更
-    bool operator==(StringView lhs, StringView rhs) noexcept {
+    };    // 比較演算子 - inlineで重複定義を回避
+    inline bool operator==(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) == 0;
     }
 
-    bool operator!=(StringView lhs, StringView rhs) noexcept {
+    inline bool operator!=(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) != 0;
     }
 
-    bool operator<(StringView lhs, StringView rhs) noexcept {
+    inline bool operator<(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) < 0;
     }
 
-    bool operator<=(StringView lhs, StringView rhs) noexcept {
+    inline bool operator<=(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) <= 0;
     }
 
-    bool operator>(StringView lhs, StringView rhs) noexcept {
+    inline bool operator>(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) > 0;
     }
 
-    bool operator>=(StringView lhs, StringView rhs) noexcept {
+    inline bool operator>=(StringView lhs, StringView rhs) noexcept {
         return lhs.compare(rhs) >= 0;
     }
 }

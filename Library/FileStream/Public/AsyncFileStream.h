@@ -22,10 +22,10 @@ namespace NorvesLib::FileStream
         ~AsyncFileStream();
 
         // コピー・ムーブ禁止
-        AsyncFileStream(const AsyncFileStream&) = delete;
-        AsyncFileStream& operator=(const AsyncFileStream&) = delete;
-        AsyncFileStream(AsyncFileStream&&) = delete;
-        AsyncFileStream& operator=(AsyncFileStream&&) = delete;
+        AsyncFileStream(const AsyncFileStream &) = delete;
+        AsyncFileStream &operator=(const AsyncFileStream &) = delete;
+        AsyncFileStream(AsyncFileStream &&) = delete;
+        AsyncFileStream &operator=(AsyncFileStream &&) = delete;
 
         /**
          * @brief 非同期ファイルストリームを作成
@@ -35,16 +35,16 @@ namespace NorvesLib::FileStream
          * @param share 共有モード
          * @return 非同期ファイルストリームのスマートポインタ
          */
-        static AsyncFileStreamPtr Create(const String& filePath, FileMode mode, 
-                                       FileAccess access = FileAccess::ReadWrite, 
-                                       FileShare share = FileShare::Read);
+        static AsyncFileStreamPtr Create(const String &filePath, FileMode mode,
+                                         FileAccess access = FileAccess::ReadWrite,
+                                         FileShare share = FileShare::Read);
 
         /**
          * @brief 非同期ファイルストリームを作成（ユニークポインタ版）
          */
-        static AsyncFileStreamUniquePtr CreateUnique(const String& filePath, FileMode mode,
-                                                   FileAccess access = FileAccess::ReadWrite,
-                                                   FileShare share = FileShare::Read);
+        static AsyncFileStreamUniquePtr CreateUnique(const String &filePath, FileMode mode,
+                                                     FileAccess access = FileAccess::ReadWrite,
+                                                     FileShare share = FileShare::Read);
 
         /**
          * @brief ファイルを開く
@@ -54,9 +54,9 @@ namespace NorvesLib::FileStream
          * @param share 共有モード
          * @return 成功した場合true
          */
-        bool Open(const String& filePath, FileMode mode, 
-                 FileAccess access = FileAccess::ReadWrite, 
-                 FileShare share = FileShare::Read);
+        bool Open(const String &filePath, FileMode mode,
+                  FileAccess access = FileAccess::ReadWrite,
+                  FileShare share = FileShare::Read);
 
         /**
          * @brief ファイルを閉じる
@@ -76,8 +76,8 @@ namespace NorvesLib::FileStream
          * @param callback 完了時に呼び出されるコールバック
          * @return 非同期タスク
          */
-        AsyncReadTask ReadAsync(void* buffer, size_t size, 
-                               std::function<void(const AsyncReadResult&)> callback = nullptr);
+        AsyncReadTask ReadAsync(void *buffer, size_t size,
+                                std::function<void(const AsyncReadResult &)> callback = nullptr);
 
         /**
          * @brief 非同期でデータを書き込む
@@ -86,15 +86,15 @@ namespace NorvesLib::FileStream
          * @param callback 完了時に呼び出されるコールバック
          * @return 非同期タスク
          */
-        AsyncWriteTask WriteAsync(const void* buffer, size_t size,
-                                 std::function<void(const AsyncWriteResult&)> callback = nullptr);
+        AsyncWriteTask WriteAsync(const void *buffer, size_t size,
+                                  std::function<void(const AsyncWriteResult &)> callback = nullptr);
 
         /**
          * @brief 非同期で文字列を読み取る
          * @param callback 完了時に呼び出されるコールバック
          * @return 非同期タスク
          */
-        AsyncReadTask ReadStringAsync(std::function<void(const String&, bool)> callback = nullptr);
+        AsyncReadTask ReadStringAsync(std::function<void(const String &, bool)> callback = nullptr);
 
         /**
          * @brief 非同期で文字列を書き込む
@@ -102,15 +102,15 @@ namespace NorvesLib::FileStream
          * @param callback 完了時に呼び出されるコールバック
          * @return 非同期タスク
          */
-        AsyncWriteTask WriteStringAsync(const String& str,
-                                       std::function<void(const AsyncWriteResult&)> callback = nullptr);
+        AsyncWriteTask WriteStringAsync(const String &str,
+                                        std::function<void(const AsyncWriteResult &)> callback = nullptr);
 
         /**
          * @brief 非同期で行を読み取る
          * @param callback 完了時に呼び出されるコールバック
          * @return 非同期タスク
          */
-        AsyncReadTask ReadLineAsync(std::function<void(const String&, bool)> callback = nullptr);
+        AsyncReadTask ReadLineAsync(std::function<void(const String &, bool)> callback = nullptr);
 
         /**
          * @brief 非同期で行を書き込む
@@ -118,8 +118,8 @@ namespace NorvesLib::FileStream
          * @param callback 完了時に呼び出されるコールバック
          * @return 非同期タスク
          */
-        AsyncWriteTask WriteLineAsync(const String& line,
-                                     std::function<void(const AsyncWriteResult&)> callback = nullptr);
+        AsyncWriteTask WriteLineAsync(const String &line,
+                                      std::function<void(const AsyncWriteResult &)> callback = nullptr);
 
         /**
          * @brief ファイルサイズを取得
@@ -135,18 +135,16 @@ namespace NorvesLib::FileStream
         /**
          * @brief 進行中の非同期操作をキャンセル
          */
-        void CancelAllOperations();
-
-    private:
+        void CancelAllOperations();    private:
         FileStreamPtr m_fileStream;
-        NorvesLib::Thread::Mutex m_mutex;
+        mutable NorvesLib::Thread::Mutex m_mutex;
         VariableArray<AsyncReadTask> m_activeTasks;
         bool m_bCancelling = false;
 
         /**
          * @brief アクティブなタスクを追加
          */
-        void AddActiveTask(const NorvesLib::Thread::TaskPtr& task);
+        void AddActiveTask(const NorvesLib::Thread::TaskPtr &task);
 
         /**
          * @brief 完了したタスクを削除

@@ -2,10 +2,10 @@
 #include "Application/ApplicationFactory.h"
 #include "Core/Public/Container/Containers.h" // TUniquePtrのため追加
 #include <Windows.h>
-#include <Shlwapi.h>
+#include <Shellapi.h>
 #include <iostream>
 
-#pragma comment(lib, "Shlwapi.lib")
+#pragma comment(lib, "Shell32.lib")
 
 namespace NorvesLib
 {

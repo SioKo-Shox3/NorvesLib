@@ -1,4 +1,4 @@
-﻿#include "AsyncFileStream.h"
+#include "AsyncFileStream.h"
 #include "Thread/Public/JobSystem.h"
 #include <algorithm>
 
@@ -12,8 +12,8 @@ namespace NorvesLib::FileStream
         Close();
     }
 
-    AsyncFileStreamPtr AsyncFileStream::Create(const String& filePath, FileMode mode, 
-                                             FileAccess access, FileShare share)
+    AsyncFileStreamPtr AsyncFileStream::Create(const String &filePath, FileMode mode,
+                                               FileAccess access, FileShare share)
     {
         auto asyncStream = MakeShared<AsyncFileStream>();
         if (asyncStream->Open(filePath, mode, access, share))
@@ -23,8 +23,8 @@ namespace NorvesLib::FileStream
         return nullptr;
     }
 
-    AsyncFileStreamUniquePtr AsyncFileStream::CreateUnique(const String& filePath, FileMode mode,
-                                                         FileAccess access, FileShare share)
+    AsyncFileStreamUniquePtr AsyncFileStream::CreateUnique(const String &filePath, FileMode mode,
+                                                           FileAccess access, FileShare share)
     {
         auto asyncStream = MakeUnique<AsyncFileStream>();
         if (asyncStream->Open(filePath, mode, access, share))
@@ -34,19 +34,19 @@ namespace NorvesLib::FileStream
         return nullptr;
     }
 
-    bool AsyncFileStream::Open(const String& filePath, FileMode mode, 
-                              FileAccess access, FileShare share)
+    bool AsyncFileStream::Open(const String &filePath, FileMode mode,
+                               FileAccess access, FileShare share)
     {
-        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
-        
+        NorvesLib::Thread::ScopedLock lock(m_mutex);
+
         m_fileStream = FileStream::Create(filePath, mode, access, share);
         return m_fileStream != nullptr && m_fileStream->IsOpen();
     }
 
     void AsyncFileStream::Close()
     {
-        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
-        
+        NorvesLib::Thread::ScopedLock lock(m_mutex);
+
         if (m_fileStream)
         {
             m_fileStream->Close();
@@ -56,12 +56,12 @@ namespace NorvesLib::FileStream
 
     bool AsyncFileStream::IsOpen() const
     {
-        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+        NorvesLib::Thread::ScopedLock lock(m_mutex);
         return m_fileStream && m_fileStream->IsOpen();
     }
 
-    AsyncReadTask AsyncFileStream::ReadAsync(void* buffer, size_t size, 
-                                            std::function<void(const AsyncReadResult&)> callback)
+    AsyncReadTask AsyncFileStream::ReadAsync(void *buffer, size_t size,
+                                             std::function<void(const AsyncReadResult &)> callback)
     {
         if (!IsOpen() || !buffer || size == 0)
         {
@@ -76,7 +76,7 @@ namespace NorvesLib::FileStream
         }
 
         auto task = NorvesLib::Thread::Task::Create([this, buffer, size, callback]()
-        {
+                                                    {
             AsyncReadResult result;
             
             if (m_bCancelling)
@@ -86,7 +86,7 @@ namespace NorvesLib::FileStream
             }
             else
             {
-                NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+                NorvesLib::Thread::ScopedLock lock(m_mutex);
                 
                 if (m_fileStream && m_fileStream->IsOpen())
                 {
@@ -99,21 +99,19 @@ namespace NorvesLib::FileStream
                     result.errorMessage = "File stream is not available";
                 }
             }
-            
-            if (callback)
+              if (callback)
             {
                 callback(result);
-            }
-        });
+            } });
 
         AddActiveTask(task);
-        NorvesLib::Thread::JobSystem::GetInstance().Submit(task);
-        
+        NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
+
         return task;
     }
 
-    AsyncWriteTask AsyncFileStream::WriteAsync(const void* buffer, size_t size,
-                                              std::function<void(const AsyncWriteResult&)> callback)
+    AsyncWriteTask AsyncFileStream::WriteAsync(const void *buffer, size_t size,
+                                               std::function<void(const AsyncWriteResult &)> callback)
     {
         if (!IsOpen() || !buffer || size == 0)
         {
@@ -128,7 +126,7 @@ namespace NorvesLib::FileStream
         }
 
         auto task = NorvesLib::Thread::Task::Create([this, buffer, size, callback]()
-        {
+                                                    {
             AsyncWriteResult result;
             
             if (m_bCancelling)
@@ -138,7 +136,7 @@ namespace NorvesLib::FileStream
             }
             else
             {
-                NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+                NorvesLib::Thread::ScopedLock lock(m_mutex);
                 
                 if (m_fileStream && m_fileStream->IsOpen())
                 {
@@ -159,16 +157,13 @@ namespace NorvesLib::FileStream
             if (callback)
             {
                 callback(result);
-            }
-        });
+            } });        AddActiveTask(task);
+        NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
 
-        AddActiveTask(task);
-        NorvesLib::Thread::JobSystem::GetInstance().Submit(task);
-        
         return task;
     }
 
-    AsyncReadTask AsyncFileStream::ReadStringAsync(std::function<void(const String&, bool)> callback)
+    AsyncReadTask AsyncFileStream::ReadStringAsync(std::function<void(const String &, bool)> callback)
     {
         if (!IsOpen())
         {
@@ -180,13 +175,13 @@ namespace NorvesLib::FileStream
         }
 
         auto task = NorvesLib::Thread::Task::Create([this, callback]()
-        {
+                                                    {
             String result;
             bool bSuccess = false;
             
             if (!m_bCancelling)
             {
-                NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+                NorvesLib::Thread::ScopedLock lock(m_mutex);
                 
                 if (m_fileStream && m_fileStream->IsOpen())
                 {
@@ -197,18 +192,16 @@ namespace NorvesLib::FileStream
             
             if (callback)
             {
-                callback(result, bSuccess);
-            }
-        });
+                callback(result, bSuccess);        } });
 
         AddActiveTask(task);
-        NorvesLib::Thread::JobSystem::GetInstance().Submit(task);
-        
+        NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
+
         return task;
     }
 
-    AsyncWriteTask AsyncFileStream::WriteStringAsync(const String& str,
-                                                    std::function<void(const AsyncWriteResult&)> callback)
+    AsyncWriteTask AsyncFileStream::WriteStringAsync(const String &str,
+                                                     std::function<void(const AsyncWriteResult &)> callback)
     {
         if (!IsOpen())
         {
@@ -223,7 +216,7 @@ namespace NorvesLib::FileStream
         }
 
         auto task = NorvesLib::Thread::Task::Create([this, str, callback]()
-        {
+                                                    {
             AsyncWriteResult result;
             
             if (m_bCancelling)
@@ -233,7 +226,7 @@ namespace NorvesLib::FileStream
             }
             else
             {
-                NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+                NorvesLib::Thread::ScopedLock lock(m_mutex);
                 
                 if (m_fileStream && m_fileStream->IsOpen())
                 {
@@ -254,16 +247,13 @@ namespace NorvesLib::FileStream
             if (callback)
             {
                 callback(result);
-            }
-        });
+            } });        AddActiveTask(task);
+        NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
 
-        AddActiveTask(task);
-        NorvesLib::Thread::JobSystem::GetInstance().Submit(task);
-        
         return task;
     }
 
-    AsyncReadTask AsyncFileStream::ReadLineAsync(std::function<void(const String&, bool)> callback)
+    AsyncReadTask AsyncFileStream::ReadLineAsync(std::function<void(const String &, bool)> callback)
     {
         if (!IsOpen())
         {
@@ -275,13 +265,13 @@ namespace NorvesLib::FileStream
         }
 
         auto task = NorvesLib::Thread::Task::Create([this, callback]()
-        {
+                                                    {
             String result;
             bool bSuccess = false;
             
             if (!m_bCancelling)
             {
-                NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+                NorvesLib::Thread::ScopedLock lock(m_mutex);
                 
                 if (m_fileStream && m_fileStream->IsOpen())
                 {
@@ -293,17 +283,15 @@ namespace NorvesLib::FileStream
             if (callback)
             {
                 callback(result, bSuccess);
-            }
-        });
+            } });
 
-        AddActiveTask(task);
-        NorvesLib::Thread::JobSystem::GetInstance().Submit(task);
-        
+        AddActiveTask(task);        NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
+
         return task;
     }
 
-    AsyncWriteTask AsyncFileStream::WriteLineAsync(const String& line,
-                                                  std::function<void(const AsyncWriteResult&)> callback)
+    AsyncWriteTask AsyncFileStream::WriteLineAsync(const String &line,
+                                                   std::function<void(const AsyncWriteResult &)> callback)
     {
         if (!IsOpen())
         {
@@ -318,7 +306,7 @@ namespace NorvesLib::FileStream
         }
 
         auto task = NorvesLib::Thread::Task::Create([this, line, callback]()
-        {
+                                                    {
             AsyncWriteResult result;
             
             if (m_bCancelling)
@@ -328,7 +316,7 @@ namespace NorvesLib::FileStream
             }
             else
             {
-                NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+                NorvesLib::Thread::ScopedLock lock(m_mutex);
                 
                 if (m_fileStream && m_fileStream->IsOpen())
                 {
@@ -349,19 +337,16 @@ namespace NorvesLib::FileStream
             if (callback)
             {
                 callback(result);
-            }
-        });
+            } });        AddActiveTask(task);
+        NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
 
-        AddActiveTask(task);
-        NorvesLib::Thread::JobSystem::GetInstance().Submit(task);
-        
         return task;
     }
 
     int64_t AsyncFileStream::GetSize() const
     {
-        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
-        
+        NorvesLib::Thread::ScopedLock lock(m_mutex);
+
         if (m_fileStream && m_fileStream->IsOpen())
         {
             return m_fileStream->GetSize();
@@ -372,10 +357,10 @@ namespace NorvesLib::FileStream
     void AsyncFileStream::WaitForAllOperations()
     {
         RemoveCompletedTasks();
-        
-        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
-        
-        for (auto& task : m_activeTasks)
+
+        NorvesLib::Thread::ScopedLock lock(m_mutex);
+
+        for (auto &task : m_activeTasks)
         {
             if (task)
             {
@@ -388,10 +373,10 @@ namespace NorvesLib::FileStream
     void AsyncFileStream::CancelAllOperations()
     {
         m_bCancelling = true;
-        
-        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
-        
-        for (auto& task : m_activeTasks)
+
+        NorvesLib::Thread::ScopedLock lock(m_mutex);
+
+        for (auto &task : m_activeTasks)
         {
             if (task)
             {
@@ -400,22 +385,22 @@ namespace NorvesLib::FileStream
         }
     }
 
-    void AsyncFileStream::AddActiveTask(const NorvesLib::Thread::TaskPtr& task)
+    void AsyncFileStream::AddActiveTask(const NorvesLib::Thread::TaskPtr &task)
     {
-        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
+        NorvesLib::Thread::ScopedLock lock(m_mutex);
         m_activeTasks.push_back(task);
     }
 
     void AsyncFileStream::RemoveCompletedTasks()
     {
-        NorvesLib::Thread::LockGuard<NorvesLib::Thread::Mutex> lock(m_mutex);
-        
+        NorvesLib::Thread::ScopedLock lock(m_mutex);
+
         m_activeTasks.erase(
             std::remove_if(m_activeTasks.begin(), m_activeTasks.end(),
-                [](const NorvesLib::Thread::TaskPtr& task)
-                {
-                    return !task || task->IsCompleted();
-                }),
+                           [](const NorvesLib::Thread::TaskPtr &task)
+                           {
+                               return !task || task->IsCompleted();
+                           }),
             m_activeTasks.end());
     }
 

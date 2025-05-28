@@ -6,6 +6,8 @@
 #include <chrono>
 #include <iostream>
 
+using namespace NorvesLib::Core::Container;
+
 namespace NorvesLib::Core::Logging
 {
 
@@ -14,12 +16,12 @@ namespace NorvesLib::Core::Logging
      */
     enum class LogLevel : uint8_t
     {
-        Trace = 0,    // 詳細なトレース情報
-        Debug = 1,    // デバッグ情報
-        Info = 2,     // 一般的な情報
-        Warning = 3,  // 警告
-        Error = 4,    // エラー
-        Fatal = 5     // 致命的エラー
+        Trace = 0,   // 詳細なトレース情報
+        Debug = 1,   // デバッグ情報
+        Info = 2,    // 一般的な情報
+        Warning = 3, // 警告
+        Error = 4,   // エラー
+        Fatal = 5    // 致命的エラー
     };
 
     /**
@@ -72,7 +74,7 @@ namespace NorvesLib::Core::Logging
     {
     public:
         virtual ~ILogFormatter() = default;
-        virtual String Format(const LogEntry& entry) const = 0;
+        virtual String Format(const LogEntry &entry) const = 0;
     };
 
     /**
@@ -81,7 +83,7 @@ namespace NorvesLib::Core::Logging
     class StandardLogFormatter : public ILogFormatter
     {
     public:
-        String Format(const LogEntry& entry) const override;
+        String Format(const LogEntry &entry) const override;
     };
 
     /**
@@ -90,46 +92,58 @@ namespace NorvesLib::Core::Logging
     class JsonLogFormatter : public ILogFormatter
     {
     public:
-        String Format(const LogEntry& entry) const override;
-    };
-
-    // フォーマッター用のスマートポインタ型
+        String Format(const LogEntry &entry) const override;
+    }; // フォーマッター用のスマートポインタ型
     using LogFormatterPtr = TSharedPtr<ILogFormatter>;
 
     /**
      * @brief ログレベルを文字列に変換
      */
-    constexpr const char* LogLevelToString(LogLevel level)
+    constexpr const char *LogLevelToString(LogLevel level)
     {
         switch (level)
         {
-        case LogLevel::Trace:   return "TRACE";
-        case LogLevel::Debug:   return "DEBUG";
-        case LogLevel::Info:    return "INFO";
-        case LogLevel::Warning: return "WARN";
-        case LogLevel::Error:   return "ERROR";
-        case LogLevel::Fatal:   return "FATAL";
-        default:                return "UNKNOWN";
+        case LogLevel::Trace:
+            return "TRACE";
+        case LogLevel::Debug:
+            return "DEBUG";
+        case LogLevel::Info:
+            return "INFO";
+        case LogLevel::Warning:
+            return "WARN";
+        case LogLevel::Error:
+            return "ERROR";
+        case LogLevel::Fatal:
+            return "FATAL";
+        default:
+            return "UNKNOWN";
         }
     }
 
     /**
      * @brief ログレベルのカラーコードを取得
      */
-    constexpr const char* GetLogLevelColor(LogLevel level)
+    constexpr const char *GetLogLevelColor(LogLevel level)
     {
         switch (level)
         {
-        case LogLevel::Trace:   return "\033[37m";     // White
-        case LogLevel::Debug:   return "\033[36m";     // Cyan
-        case LogLevel::Info:    return "\033[32m";     // Green
-        case LogLevel::Warning: return "\033[33m";     // Yellow
-        case LogLevel::Error:   return "\033[31m";     // Red
-        case LogLevel::Fatal:   return "\033[35m";     // Magenta
-        default:                return "\033[0m";      // Reset
+        case LogLevel::Trace:
+            return "\033[37m"; // White
+        case LogLevel::Debug:
+            return "\033[36m"; // Cyan
+        case LogLevel::Info:
+            return "\033[32m"; // Green
+        case LogLevel::Warning:
+            return "\033[33m"; // Yellow
+        case LogLevel::Error:
+            return "\033[31m"; // Red
+        case LogLevel::Fatal:
+            return "\033[35m"; // Magenta
+        default:
+            return "\033[0m"; // Reset
         }
     }
 
-    constexpr const char* RESET_COLOR = "\033[0m";
+    constexpr const char *RESET_COLOR = "\033[0m";
 
 } // namespace NorvesLib::Core::Logging

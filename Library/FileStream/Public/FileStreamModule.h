@@ -29,14 +29,14 @@ namespace NorvesLib::FileStream
     }
 
     // 非同期ファイルストリーム用ファクトリー関数
-    inline AsyncFileStreamPtr CreateAsyncFileStream(const String& filePath, FileMode mode = FileMode::Read,
-                                                   FileAccess access = FileAccess::Read, FileShare share = FileShare::Read)
+    inline AsyncFileStreamPtr CreateAsyncFileStream(const String &filePath, FileMode mode = FileMode::Read,
+                                                    FileAccess access = FileAccess::Read, FileShare share = FileShare::Read)
     {
         return AsyncFileStream::Create(filePath, mode, access, share);
     }
 
-    inline AsyncFileStreamUniquePtr CreateUniqueAsyncFileStream(const String& filePath, FileMode mode = FileMode::Read,
-                                                               FileAccess access = FileAccess::Read, FileShare share = FileShare::Read)
+    inline AsyncFileStreamUniquePtr CreateUniqueAsyncFileStream(const String &filePath, FileMode mode = FileMode::Read,
+                                                                FileAccess access = FileAccess::Read, FileShare share = FileShare::Read)
     {
         return AsyncFileStream::CreateUnique(filePath, mode, access, share);
     }

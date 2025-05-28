@@ -4,8 +4,6 @@
 set(SOURCE_FILES
     "Private/FileStream.cpp"
     "Private/AsyncFileStream.cpp"
-    "Private/Path.cpp"
-    "Private/Directory.cpp"
 )
 
 # FileStreamモジュールのヘッダーファイル  
@@ -13,8 +11,6 @@ set(HEADER_FILES
     "Public/IFileStream.h"
     "Public/FileStream.h"
     "Public/AsyncFileStream.h"
-    "Public/Path.h"
-    "Public/Directory.h"
     "Public/FileStreamForward.h"
     "Public/FileStreamModule.h"
 )
