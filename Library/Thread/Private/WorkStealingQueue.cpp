@@ -17,12 +17,11 @@ WorkStealingQueue::~WorkStealingQueue()
 
 void WorkStealingQueue::Push(TaskPtr task)
 {
-    ScopedLock lock(m_mutex);
-    const int64_t b = m_bottom.load(std::memory_order_relaxed);
+    ScopedLock lock(m_mutex);    const int64_t b = m_bottom.load(std::memory_order_relaxed);
     
-    if (b < m_tasks.size())
+    if (b >= 0 && static_cast<size_t>(b) < m_tasks.size())
     {
-        m_tasks[b] = task;
+        m_tasks[static_cast<size_t>(b)] = task;
     }
     else
     {

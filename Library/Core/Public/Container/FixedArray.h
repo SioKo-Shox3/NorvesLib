@@ -5,7 +5,7 @@
 #include <initializer_list>
 #include <algorithm>
 #include <type_traits>
-#include <stdexcept>  // std::out_of_range例外のためにインクルード
+#include <stdexcept> // std::out_of_range例外のためにインクルード
 #include "Allocator.h"
 
 // Windowsマクロを無効化
@@ -21,44 +21,53 @@ namespace NorvesLib::Core::Container
     /**
      * @brief 固定長配列の実装
      * 小さいサイズはスタック上、大きいサイズは自動的にGlobalMemoryAllocator経由でヒープ上に確保
-     * 
+     *
      * @tparam T 格納する型
      * @tparam N 配列サイズ
      */
-    template<typename T, std::size_t N>
-    class FixedArray 
+    template <typename T, std::size_t N>
+    class FixedArray
     {
     private:
         // 小さいサイズならスタック、大きいサイズならヒープに確保する方式
         using StackStorage = std::array<T, N>;
-        using HeapStorage = struct {
-            T* data;
+        using HeapStorage = struct
+        {
+            T *data;
             Allocator<T> allocator;
         };
-        
-        typename std::conditional<(N <= STACK_SIZE_THRESHOLD), 
-            StackStorage, 
-            HeapStorage
-        >::type storage;
+
+        typename std::conditional<(N <= STACK_SIZE_THRESHOLD),
+                                  StackStorage,
+                                  HeapStorage>::type storage;
 
         // ヘルパー関数：ヒープストレージかどうかを判定
-        static constexpr bool isHeapStorage() {
+        static constexpr bool isHeapStorage()
+        {
             return N > STACK_SIZE_THRESHOLD;
         }
 
         // データポインタ取得ヘルパー関数
-        T* getData() {
-            if constexpr (isHeapStorage()) {
+        T *getData()
+        {
+            if constexpr (isHeapStorage())
+            {
                 return storage.data;
-            } else {
+            }
+            else
+            {
                 return storage.data();
             }
         }
-        
-        const T* getData() const {
-            if constexpr (isHeapStorage()) {
+
+        const T *getData() const
+        {
+            if constexpr (isHeapStorage())
+            {
                 return storage.data;
-            } else {
+            }
+            else
+            {
                 return storage.data();
             }
         }
@@ -68,10 +77,10 @@ namespace NorvesLib::Core::Container
         using value_type = T;
         using size_type = std::size_t;
         using difference_type = std::ptrdiff_t;
-        using reference = T&;
-        using const_reference = const T&;
-        using pointer = T*;
-        using const_pointer = const T*;
+        using reference = T &;
+        using const_reference = const T &;
+        using pointer = T *;
+        using const_pointer = const T *;
         using iterator = pointer;
         using const_iterator = const_pointer;
         using reverse_iterator = std::reverse_iterator<iterator>;
@@ -81,10 +90,13 @@ namespace NorvesLib::Core::Container
          * @brief デフォルトコンストラクタ
          * 全要素をデフォルト初期化
          */
-        FixedArray() {
-            if constexpr (isHeapStorage()) {
+        FixedArray()
+        {
+            if constexpr (isHeapStorage())
+            {
                 storage.data = storage.allocator.allocate(N);
-                for (size_type i = 0; i < N; ++i) {
+                for (size_type i = 0; i < N; ++i)
+                {
                     new (storage.data + i) T();
                 }
             }
@@ -94,13 +106,18 @@ namespace NorvesLib::Core::Container
          * @brief 値で初期化するコンストラクタ
          * @param value 全要素を初期化する値
          */
-        FixedArray(const T& value) {
-            if constexpr (isHeapStorage()) {
+        FixedArray(const T &value)
+        {
+            if constexpr (isHeapStorage())
+            {
                 storage.data = storage.allocator.allocate(N);
-                for (size_type i = 0; i < N; ++i) {
+                for (size_type i = 0; i < N; ++i)
+                {
                     new (storage.data + i) T(value);
                 }
-            } else {
+            }
+            else
+            {
                 storage.fill(value);
             }
         }
@@ -109,23 +126,32 @@ namespace NorvesLib::Core::Container
          * @brief 初期化リストからのコンストラクタ
          * @param init 初期化リスト
          */
-        FixedArray(std::initializer_list<T> init) {
-            if constexpr (isHeapStorage()) {
+        FixedArray(std::initializer_list<T> init)
+        {
+            if constexpr (isHeapStorage())
+            {
                 storage.data = storage.allocator.allocate(N);
                 std::size_t i = 0;
-                for (const auto& value : init) {
-                    if (i >= N) break;
+                for (const auto &value : init)
+                {
+                    if (i >= N)
+                        break;
                     new (storage.data + i) T(value);
                     ++i;
                 }
                 // 残りの要素をデフォルト初期化
-                for (; i < N; ++i) {
+                for (; i < N; ++i)
+                {
                     new (storage.data + i) T();
                 }
-            } else {
+            }
+            else
+            {
                 std::size_t i = 0;
-                for (const auto& value : init) {
-                    if (i >= N) break;
+                for (const auto &value : init)
+                {
+                    if (i >= N)
+                        break;
                     storage[i++] = value;
                 }
             }
@@ -135,13 +161,18 @@ namespace NorvesLib::Core::Container
          * @brief コピーコンストラクタ
          * @param other コピー元の配列
          */
-        FixedArray(const FixedArray& other) {
-            if constexpr (isHeapStorage()) {
+        FixedArray(const FixedArray &other)
+        {
+            if constexpr (isHeapStorage())
+            {
                 storage.data = storage.allocator.allocate(N);
-                for (size_type i = 0; i < N; ++i) {
+                for (size_type i = 0; i < N; ++i)
+                {
                     new (storage.data + i) T(other[i]);
                 }
-            } else {
+            }
+            else
+            {
                 storage = other.storage;
             }
         }
@@ -150,12 +181,17 @@ namespace NorvesLib::Core::Container
          * @brief ムーブコンストラクタ
          * @param other ムーブ元の配列
          */
-        FixedArray(FixedArray&& other) noexcept {
-            if constexpr (isHeapStorage()) {
+        FixedArray(FixedArray &&other) noexcept
+        {
+            if constexpr (isHeapStorage())
+            {
                 storage.data = other.storage.data;
                 other.storage.data = nullptr;
-            } else {
-                for (size_type i = 0; i < N; ++i) {
+            }
+            else
+            {
+                for (size_type i = 0; i < N; ++i)
+                {
                     storage[i] = std::move(other.storage[i]);
                 }
             }
@@ -165,13 +201,18 @@ namespace NorvesLib::Core::Container
          * @brief std::arrayからのコンストラクタ
          * @param arr コピー元のstd::array
          */
-        explicit FixedArray(const std::array<T, N>& arr) {
-            if constexpr (isHeapStorage()) {
+        explicit FixedArray(const std::array<T, N> &arr)
+        {
+            if constexpr (isHeapStorage())
+            {
                 storage.data = storage.allocator.allocate(N);
-                for (size_type i = 0; i < N; ++i) {
+                for (size_type i = 0; i < N; ++i)
+                {
                     new (storage.data + i) T(arr[i]);
                 }
-            } else {
+            }
+            else
+            {
                 storage = arr;
             }
         }
@@ -179,10 +220,14 @@ namespace NorvesLib::Core::Container
         /**
          * @brief デストラクタ
          */
-        ~FixedArray() {
-            if constexpr (isHeapStorage()) {
-                if (storage.data) {
-                    for (size_type i = 0; i < N; ++i) {
+        ~FixedArray()
+        {
+            if constexpr (isHeapStorage())
+            {
+                if (storage.data)
+                {
+                    for (size_type i = 0; i < N; ++i)
+                    {
                         (storage.data + i)->~T();
                     }
                     storage.allocator.deallocate(storage.data, N);
@@ -195,13 +240,19 @@ namespace NorvesLib::Core::Container
          * @param other コピー元の配列
          * @return このオブジェクトへの参照
          */
-        FixedArray& operator=(const FixedArray& other) {
-            if (this != &other) {
-                if constexpr (isHeapStorage()) {
-                    for (size_type i = 0; i < N; ++i) {
+        FixedArray &operator=(const FixedArray &other)
+        {
+            if (this != &other)
+            {
+                if constexpr (isHeapStorage())
+                {
+                    for (size_type i = 0; i < N; ++i)
+                    {
                         storage.data[i] = other.storage.data[i];
                     }
-                } else {
+                }
+                else
+                {
                     storage = other.storage;
                 }
             }
@@ -213,19 +264,27 @@ namespace NorvesLib::Core::Container
          * @param other ムーブ元の配列
          * @return このオブジェクトへの参照
          */
-        FixedArray& operator=(FixedArray&& other) noexcept {
-            if (this != &other) {
-                if constexpr (isHeapStorage()) {
-                    if (storage.data) {
-                        for (size_type i = 0; i < N; ++i) {
+        FixedArray &operator=(FixedArray &&other) noexcept
+        {
+            if (this != &other)
+            {
+                if constexpr (isHeapStorage())
+                {
+                    if (storage.data)
+                    {
+                        for (size_type i = 0; i < N; ++i)
+                        {
                             (storage.data + i)->~T();
                         }
                         storage.allocator.deallocate(storage.data, N);
                     }
                     storage.data = other.storage.data;
                     other.storage.data = nullptr;
-                } else {
-                    for (size_type i = 0; i < N; ++i) {
+                }
+                else
+                {
+                    for (size_type i = 0; i < N; ++i)
+                    {
                         storage[i] = std::move(other.storage[i]);
                     }
                 }
@@ -237,13 +296,18 @@ namespace NorvesLib::Core::Container
          * @brief std::arrayへの変換演算子
          * @return このオブジェクトのコピーをstd::arrayとして
          */
-        explicit operator std::array<T, N>() const {
+        explicit operator std::array<T, N>() const
+        {
             std::array<T, N> arr;
-            if constexpr (isHeapStorage()) {
-                for (size_type i = 0; i < N; ++i) {
+            if constexpr (isHeapStorage())
+            {
+                for (size_type i = 0; i < N; ++i)
+                {
                     arr[i] = storage.data[i];
                 }
-            } else {
+            }
+            else
+            {
                 arr = storage;
             }
             return arr;
@@ -255,7 +319,8 @@ namespace NorvesLib::Core::Container
          * @brief 先頭要素へのイテレータを取得
          * @return 先頭要素へのイテレータ
          */
-        iterator begin() noexcept {
+        iterator begin() noexcept
+        {
             return getData();
         }
 
@@ -263,7 +328,8 @@ namespace NorvesLib::Core::Container
          * @brief 先頭要素への定数イテレータを取得
          * @return 先頭要素への定数イテレータ
          */
-        const_iterator begin() const noexcept {
+        const_iterator begin() const noexcept
+        {
             return getData();
         }
 
@@ -271,7 +337,8 @@ namespace NorvesLib::Core::Container
          * @brief 末尾の次の要素へのイテレータを取得
          * @return 末尾の次の要素へのイテレータ
          */
-        iterator end() noexcept {
+        iterator end() noexcept
+        {
             return getData() + N;
         }
 
@@ -279,7 +346,8 @@ namespace NorvesLib::Core::Container
          * @brief 末尾の次の要素への定数イテレータを取得
          * @return 末尾の次の要素への定数イテレータ
          */
-        const_iterator end() const noexcept {
+        const_iterator end() const noexcept
+        {
             return getData() + N;
         }
 
@@ -287,7 +355,8 @@ namespace NorvesLib::Core::Container
          * @brief 先頭要素への定数イテレータを取得
          * @return 先頭要素への定数イテレータ
          */
-        const_iterator cbegin() const noexcept {
+        const_iterator cbegin() const noexcept
+        {
             return begin();
         }
 
@@ -295,7 +364,8 @@ namespace NorvesLib::Core::Container
          * @brief 末尾の次の要素への定数イテレータを取得
          * @return 末尾の次の要素への定数イテレータ
          */
-        const_iterator cend() const noexcept {
+        const_iterator cend() const noexcept
+        {
             return end();
         }
 
@@ -303,7 +373,8 @@ namespace NorvesLib::Core::Container
          * @brief 逆順の先頭要素へのイテレータを取得
          * @return 逆順の先頭要素へのイテレータ
          */
-        reverse_iterator rbegin() noexcept {
+        reverse_iterator rbegin() noexcept
+        {
             return reverse_iterator(end());
         }
 
@@ -311,7 +382,8 @@ namespace NorvesLib::Core::Container
          * @brief 逆順の先頭要素への定数イテレータを取得
          * @return 逆順の先頭要素への定数イテレータ
          */
-        const_reverse_iterator rbegin() const noexcept {
+        const_reverse_iterator rbegin() const noexcept
+        {
             return const_reverse_iterator(end());
         }
 
@@ -319,7 +391,8 @@ namespace NorvesLib::Core::Container
          * @brief 逆順の末尾の次の要素へのイテレータを取得
          * @return 逆順の末尾の次の要素へのイテレータ
          */
-        reverse_iterator rend() noexcept {
+        reverse_iterator rend() noexcept
+        {
             return reverse_iterator(begin());
         }
 
@@ -327,7 +400,8 @@ namespace NorvesLib::Core::Container
          * @brief 逆順の末尾の次の要素への定数イテレータを取得
          * @return 逆順の末尾の次の要素への定数イテレータ
          */
-        const_reverse_iterator rend() const noexcept {
+        const_reverse_iterator rend() const noexcept
+        {
             return const_reverse_iterator(begin());
         }
 
@@ -335,7 +409,8 @@ namespace NorvesLib::Core::Container
          * @brief 逆順の先頭要素への定数イテレータを取得
          * @return 逆順の先頭要素への定数イテレータ
          */
-        const_reverse_iterator crbegin() const noexcept {
+        const_reverse_iterator crbegin() const noexcept
+        {
             return rbegin();
         }
 
@@ -343,7 +418,8 @@ namespace NorvesLib::Core::Container
          * @brief 逆順の末尾の次の要素への定数イテレータを取得
          * @return 逆順の末尾の次の要素への定数イテレータ
          */
-        const_reverse_iterator crend() const noexcept {
+        const_reverse_iterator crend() const noexcept
+        {
             return rend();
         }
 
@@ -354,10 +430,14 @@ namespace NorvesLib::Core::Container
          * @param index インデックス
          * @return インデックスの位置にある要素への参照
          */
-        reference operator[](size_type index) noexcept {
-            if constexpr (isHeapStorage()) {
+        reference operator[](size_type index) noexcept
+        {
+            if constexpr (isHeapStorage())
+            {
                 return storage.data[index];
-            } else {
+            }
+            else
+            {
                 return storage[index];
             }
         }
@@ -367,10 +447,14 @@ namespace NorvesLib::Core::Container
          * @param index インデックス
          * @return インデックスの位置にある要素への定数参照
          */
-        const_reference operator[](size_type index) const noexcept {
-            if constexpr (isHeapStorage()) {
+        const_reference operator[](size_type index) const noexcept
+        {
+            if constexpr (isHeapStorage())
+            {
                 return storage.data[index];
-            } else {
+            }
+            else
+            {
                 return storage[index];
             }
         }
@@ -381,8 +465,10 @@ namespace NorvesLib::Core::Container
          * @return インデックスの位置にある要素への参照
          * @throws std::out_of_range インデックスが範囲外の場合
          */
-        reference at(size_type index) {
-            if (index >= N) {
+        reference at(size_type index)
+        {
+            if (index >= N)
+            {
                 throw std::out_of_range("FixedArray: index out of range");
             }
             return (*this)[index];
@@ -394,8 +480,10 @@ namespace NorvesLib::Core::Container
          * @return インデックスの位置にある要素への定数参照
          * @throws std::out_of_range インデックスが範囲外の場合
          */
-        const_reference at(size_type index) const {
-            if (index >= N) {
+        const_reference at(size_type index) const
+        {
+            if (index >= N)
+            {
                 throw std::out_of_range("FixedArray: index out of range");
             }
             return (*this)[index];
@@ -405,7 +493,8 @@ namespace NorvesLib::Core::Container
          * @brief 先頭要素への参照を取得
          * @return 先頭要素への参照
          */
-        reference front() noexcept {
+        reference front() noexcept
+        {
             return (*this)[0];
         }
 
@@ -413,7 +502,8 @@ namespace NorvesLib::Core::Container
          * @brief 先頭要素への定数参照を取得
          * @return 先頭要素への定数参照
          */
-        const_reference front() const noexcept {
+        const_reference front() const noexcept
+        {
             return (*this)[0];
         }
 
@@ -421,7 +511,8 @@ namespace NorvesLib::Core::Container
          * @brief 末尾要素への参照を取得
          * @return 末尾要素への参照
          */
-        reference back() noexcept {
+        reference back() noexcept
+        {
             return (*this)[N - 1];
         }
 
@@ -429,7 +520,8 @@ namespace NorvesLib::Core::Container
          * @brief 末尾要素への定数参照を取得
          * @return 末尾要素への定数参照
          */
-        const_reference back() const noexcept {
+        const_reference back() const noexcept
+        {
             return (*this)[N - 1];
         }
 
@@ -437,7 +529,8 @@ namespace NorvesLib::Core::Container
          * @brief 内部データへのポインタを取得
          * @return 内部データへのポインタ
          */
-        pointer data() noexcept {
+        pointer data() noexcept
+        {
             return getData();
         }
 
@@ -445,7 +538,8 @@ namespace NorvesLib::Core::Container
          * @brief 内部データへの定数ポインタを取得
          * @return 内部データへの定数ポインタ
          */
-        const_pointer data() const noexcept {
+        const_pointer data() const noexcept
+        {
             return getData();
         }
 
@@ -455,7 +549,8 @@ namespace NorvesLib::Core::Container
          * @brief 配列が空かどうかを判定
          * @return 配列が空の場合はtrue、それ以外はfalse
          */
-        [[nodiscard]] constexpr bool empty() const noexcept {
+        [[nodiscard]] constexpr bool empty() const noexcept
+        {
             return N == 0;
         }
 
@@ -463,7 +558,8 @@ namespace NorvesLib::Core::Container
          * @brief 配列のサイズを取得
          * @return 配列のサイズ
          */
-        [[nodiscard]] constexpr size_type size() const noexcept {
+        [[nodiscard]] constexpr size_type size() const noexcept
+        {
             return N;
         }
 
@@ -471,7 +567,8 @@ namespace NorvesLib::Core::Container
          * @brief 配列の最大サイズを取得
          * @return 配列の最大サイズ
          */
-        [[nodiscard]] constexpr size_type max_size() const noexcept {
+        [[nodiscard]] constexpr size_type max_size() const noexcept
+        {
             return N;
         }
 
@@ -481,12 +578,17 @@ namespace NorvesLib::Core::Container
          * @brief 全要素に指定した値を代入
          * @param value 代入する値
          */
-        void fill(const T& value) {
-            if constexpr (isHeapStorage()) {
-                for (size_type i = 0; i < N; ++i) {
+        void fill(const T &value)
+        {
+            if constexpr (isHeapStorage())
+            {
+                for (size_type i = 0; i < N; ++i)
+                {
                     storage.data[i] = value;
                 }
-            } else {
+            }
+            else
+            {
                 storage.fill(value);
             }
         }
@@ -495,10 +597,14 @@ namespace NorvesLib::Core::Container
          * @brief 2つの配列の内容を交換
          * @param other 交換する配列
          */
-        void swap(FixedArray& other) noexcept {
-            if constexpr (isHeapStorage()) {
+        void swap(FixedArray &other) noexcept
+        {
+            if constexpr (isHeapStorage())
+            {
                 std::swap(storage.data, other.storage.data);
-            } else {
+            }
+            else
+            {
                 std::swap(storage, other.storage);
             }
         }
@@ -512,8 +618,9 @@ namespace NorvesLib::Core::Container
      * @param rhs 比較する配列
      * @return 2つの配列が等しい場合はtrue、それ以外はfalse
      */
-    template<typename T, std::size_t N>
-    bool operator==(const FixedArray<T, N>& lhs, const FixedArray<T, N>& rhs) {
+    template <typename T, std::size_t N>
+    bool operator==(const FixedArray<T, N> &lhs, const FixedArray<T, N> &rhs)
+    {
         return std::equal(lhs.begin(), lhs.end(), rhs.begin());
     }
 
@@ -523,8 +630,9 @@ namespace NorvesLib::Core::Container
      * @param rhs 比較する配列
      * @return 2つの配列が等しくない場合はtrue、それ以外はfalse
      */
-    template<typename T, std::size_t N>
-    bool operator!=(const FixedArray<T, N>& lhs, const FixedArray<T, N>& rhs) {
+    template <typename T, std::size_t N>
+    bool operator!=(const FixedArray<T, N> &lhs, const FixedArray<T, N> &rhs)
+    {
         return !(lhs == rhs);
     }
 
@@ -534,8 +642,9 @@ namespace NorvesLib::Core::Container
      * @param rhs 比較する配列
      * @return lhsがrhsより小さい場合はtrue、それ以外はfalse
      */
-    template<typename T, std::size_t N>
-    bool operator<(const FixedArray<T, N>& lhs, const FixedArray<T, N>& rhs) {
+    template <typename T, std::size_t N>
+    bool operator<(const FixedArray<T, N> &lhs, const FixedArray<T, N> &rhs)
+    {
         return std::lexicographical_compare(lhs.begin(), lhs.end(), rhs.begin(), rhs.end());
     }
 
@@ -545,8 +654,9 @@ namespace NorvesLib::Core::Container
      * @param rhs 比較する配列
      * @return lhsがrhs以下の場合はtrue、それ以外はfalse
      */
-    template<typename T, std::size_t N>
-    bool operator<=(const FixedArray<T, N>& lhs, const FixedArray<T, N>& rhs) {
+    template <typename T, std::size_t N>
+    bool operator<=(const FixedArray<T, N> &lhs, const FixedArray<T, N> &rhs)
+    {
         return !(rhs < lhs);
     }
 
@@ -556,8 +666,9 @@ namespace NorvesLib::Core::Container
      * @param rhs 比較する配列
      * @return lhsがrhsより大きい場合はtrue、それ以外はfalse
      */
-    template<typename T, std::size_t N>
-    bool operator>(const FixedArray<T, N>& lhs, const FixedArray<T, N>& rhs) {
+    template <typename T, std::size_t N>
+    bool operator>(const FixedArray<T, N> &lhs, const FixedArray<T, N> &rhs)
+    {
         return rhs < lhs;
     }
 
@@ -567,8 +678,9 @@ namespace NorvesLib::Core::Container
      * @param rhs 比較する配列
      * @return lhsがrhs以上の場合はtrue、それ以外はfalse
      */
-    template<typename T, std::size_t N>
-    bool operator>=(const FixedArray<T, N>& lhs, const FixedArray<T, N>& rhs) {
+    template <typename T, std::size_t N>
+    bool operator>=(const FixedArray<T, N> &lhs, const FixedArray<T, N> &rhs)
+    {
         return !(lhs < rhs);
     }
 }
