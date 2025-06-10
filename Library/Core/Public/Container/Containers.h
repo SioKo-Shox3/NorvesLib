@@ -8,6 +8,8 @@
  * STLコンテナラッパーが使用できるようになります。
  */
 
+#include <Windows.h>
+#include <tchar.h>
 #include "Allocator.h"
 #include "VariableArray.h"
 #include "FixedArray.h"
@@ -60,7 +62,7 @@ namespace NorvesLib::Core::Container
         static_assert(std::is_same_v<UnorderedSet<int>::allocator_type, Allocator<int>>,
                       "UnorderedSet is not using custom allocator");
 
-        static_assert(std::is_same_v<String::allocator_type, Allocator<char>>,
+        static_assert(std::is_same_v<String::allocator_type, Allocator<TCHAR>>,
                       "String is not using custom allocator");
 
         static_assert(std::is_same_v<Deque<int>::allocator_type, Allocator<int>>,

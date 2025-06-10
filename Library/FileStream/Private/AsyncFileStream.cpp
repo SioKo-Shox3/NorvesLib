@@ -157,7 +157,8 @@ namespace NorvesLib::FileStream
             if (callback)
             {
                 callback(result);
-            } });        AddActiveTask(task);
+            } });
+        AddActiveTask(task);
         NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
 
         return task;
@@ -247,7 +248,8 @@ namespace NorvesLib::FileStream
             if (callback)
             {
                 callback(result);
-            } });        AddActiveTask(task);
+            } });
+        AddActiveTask(task);
         NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
 
         return task;
@@ -285,7 +287,8 @@ namespace NorvesLib::FileStream
                 callback(result, bSuccess);
             } });
 
-        AddActiveTask(task);        NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
+        AddActiveTask(task);
+        NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
 
         return task;
     }
@@ -337,7 +340,8 @@ namespace NorvesLib::FileStream
             if (callback)
             {
                 callback(result);
-            } });        AddActiveTask(task);
+            } });
+        AddActiveTask(task);
         NorvesLib::Thread::JobSystem::Get().SubmitTask(task);
 
         return task;

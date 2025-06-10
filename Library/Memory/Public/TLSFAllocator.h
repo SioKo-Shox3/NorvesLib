@@ -39,13 +39,18 @@ namespace NorvesLib::Memory
          * @param alignment アライメント要件（バイト単位、デフォルトは16バイト）
          * @return 割り当てられたメモリブロックへのポインタ
          */
-        void *Allocate(size_t size, size_t alignment = DEFAULT_ALIGNMENT) override;
+        void *Allocate(size_t size, size_t alignment = DEFAULT_ALIGNMENT) override; /**
+                                                                                     * メモリの解放
+                                                                                     * @param ptr 解放するメモリブロックポインタ
+                                                                                     */
+        void Deallocate(void *ptr) override;
 
         /**
-         * メモリの解放
-         * @param ptr 解放するメモリブロックポインタ
+         * 指定されたポインタのブロックサイズを取得
+         * @param ptr 確認するメモリブロックポインタ
+         * @return ブロックのペイロードサイズ（バイト単位）、無効なポインタの場合は0
          */
-        void Deallocate(void *ptr) override;
+        size_t GetBlockSize(void *ptr) const;
 
         /**
          * 現在割り当てられているメモリの合計サイズを取得
@@ -106,10 +111,8 @@ namespace NorvesLib::Memory
         void FindSuitableBlock(int &flIndex, int &slIndex);
 
         // アライメントに合わせてサイズを調整する
-        size_t AlignSize(size_t size, size_t alignment);
-
-        // ブロックの使用可能サイズを取得する（実際のペイロードサイズ）
-        size_t GetBlockPayloadSize(const BlockHeader *block);
+        size_t AlignSize(size_t size, size_t alignment); // ブロックの使用可能サイズを取得する（実際のペイロードサイズ）
+        size_t GetBlockPayloadSize(const BlockHeader *block) const;
 
         // ヘッダーからペイロードポインタを取得
         void *GetBlockPayload(BlockHeader *block);

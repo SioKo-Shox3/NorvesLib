@@ -57,11 +57,12 @@ namespace NorvesLib::FileStream
             return fileStream;
         }
         return nullptr;
-    }    bool FileStream::Open(const String &filePath, FileMode mode, FileAccess access, FileShare share)
+    }
+    bool FileStream::Open(const String &filePath, FileMode mode, FileAccess access, FileShare share)
     {
         // shareパラメータは現在未使用ですが、将来の拡張のために保持
         (void)share;
-        
+
         if (m_bIsOpen)
         {
             Close();
@@ -171,7 +172,8 @@ namespace NorvesLib::FileStream
         {
             return static_cast<int64_t>(m_stream.tellp());
         }
-    }    int64_t FileStream::GetSize() const
+    }
+    int64_t FileStream::GetSize() const
     {
         if (!IsOpen())
         {
@@ -246,11 +248,12 @@ namespace NorvesLib::FileStream
 
         String lineWithNewline = line + "\n";
         return Write(lineWithNewline.c_str(), lineWithNewline.length());
-    }    std::ios_base::openmode FileStream::ConvertToStdMode(FileMode mode, FileAccess access) const
+    }
+    std::ios_base::openmode FileStream::ConvertToStdMode(FileMode mode, FileAccess access) const
     {
         // accessパラメータは現在未使用ですが、将来の拡張のために保持
         (void)access;
-        
+
         std::ios_base::openmode openMode = std::ios_base::binary;
 
         switch (mode)

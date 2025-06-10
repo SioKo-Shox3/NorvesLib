@@ -2,7 +2,7 @@
 #pragma once
 
 #include "IEngine.h"
-#include <string>
+#include "Core/Public/Container/Containers.h"
 // Threadライブラリへの参照を相対パスに修正
 #include "../../../Thread/Public/Atomic.h"
 
@@ -56,18 +56,16 @@ namespace NorvesLib::Core
         /**
          * @brief エンジンの実行を停止する
          */
-        void Stop() override;
-
-        /**
-         * @brief エンジンのバージョンを取得
-         *
-         * @return バージョン文字列
-         */
-        const std::string &GetVersion() const;
+        void Stop() override; /**
+                               * @brief エンジンのバージョンを取得
+                               *
+                               * @return バージョン文字列
+                               */
+        const NorvesLib::Core::Container::String &GetVersion() const;
 
     private:
-        Thread::Atomic<bool> m_isRunning; ///< エンジンが実行中かどうか
-        std::string m_version;            ///< エンジンのバージョン
+        Thread::Atomic<bool> m_isRunning;             ///< エンジンが実行中かどうか
+        NorvesLib::Core::Container::String m_version; ///< エンジンのバージョン
     };
 
     /**

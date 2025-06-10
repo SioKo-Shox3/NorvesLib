@@ -1,109 +1,109 @@
 ﻿// filepath: c:\Users\KINGkawamura\Documents\NorvesLib\Library\Core\Private\Engine\NorvesEngine.cpp
 #include "Core/Public/Engine/NorvesEngine.h"
-#include <iostream>
+#include "Core/Public/Logging/LogMacros.h"
+
+using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core
 {
 
-// グローバルエンジンインスタンスの定義
-NorvesEngine GEngine;
+    // グローバルエンジンインスタンスの定義
+    NorvesEngine GEngine;
 
-NorvesEngine::NorvesEngine()
-    : m_isRunning(false)
-    , m_version("1.0.0")
-{
-    // コンストラクタで初期化する処理を追加
-    std::cout << "NorvesEngine created. Version: " << m_version << std::endl;
-}
-
-NorvesEngine::~NorvesEngine()
-{
-    // エンジンが正しく終了しているか確認
-    if (m_isRunning)
+    NorvesEngine::NorvesEngine()
+        : m_isRunning(false), m_version(String("1.0.0"))
     {
-        std::cout << "Warning: Engine is still running during destruction. Shutting down..." << std::endl;
-        Shutdown();
+        // コンストラクタで初期化する処理を追加
+        LOG_INFO_F("NorvesEngine created. Version: %s", m_version.c_str());
     }
-    
-    std::cout << "NorvesEngine destroyed." << std::endl;
-}
 
-bool NorvesEngine::Initialize()
-{
-    if (m_isRunning)
-    {
-        std::cout << "Engine is already running." << std::endl;
-        return false;
+    NorvesEngine::~NorvesEngine()
+    { // エンジンが正しく終了しているか確認
+        if (m_isRunning)
+        {
+            LOG_WARNING("Engine is still running during destruction. Shutting down...");
+            Shutdown();
+        }
+
+        LOG_INFO("NorvesEngine destroyed");
     }
-    
-    std::cout << "Initializing NorvesEngine..." << std::endl;
-    
-    // TODO: サブシステムの初期化
-    // - RHIの初期化
-    // - レンダラーの初期化
-    // - 入力システムの初期化
-    // - オーディオシステムの初期化
-    // - 物理演算システムの初期化
-    
-    m_isRunning = true;
-    std::cout << "NorvesEngine initialized successfully." << std::endl;
-    
-    return true;
-}
 
-void NorvesEngine::Update(float deltaTime)
-{
-    if (!m_isRunning)
+    bool NorvesEngine::Initialize()
     {
-        return;
+        if (m_isRunning)
+        {
+            LOG_WARNING("Engine is already running");
+            return false;
+        }
+
+        LOG_INFO("Initializing NorvesEngine...");
+
+        // TODO: サブシステムの初期化
+        // - RHIの初期化
+        // - レンダラーの初期化
+        // - 入力システムの初期化
+        // - オーディオシステムの初期化
+        // - 物理演算システムの初期化
+
+        m_isRunning = true;
+        LOG_INFO("NorvesEngine initialized successfully");
+
+        return true;
     }
-    
-    // TODO: サブシステムの更新
-    // - 入力の更新
-    // - シーンの更新
-    // - 物理演算の更新
-    // - オーディオの更新
-    // - レンダリングの更新
-}
 
-void NorvesEngine::Shutdown()
-{
-    if (!m_isRunning)
+    void NorvesEngine::Update(float deltaTime)
     {
-        std::cout << "Engine is not running." << std::endl;
-        return;
+        if (!m_isRunning)
+        {
+            return;
+        }
+
+        // TODO: サブシステムの更新
+        // - 入力の更新
+        // - シーンの更新
+        // - 物理演算の更新
+        // - オーディオの更新
+        // - レンダリングの更新
     }
-    
-    std::cout << "Shutting down NorvesEngine..." << std::endl;
-    
-    // TODO: サブシステムのシャットダウン（初期化と逆順）
-    // - レンダラーのシャットダウン
-    // - 物理演算システムのシャットダウン
-    // - オーディオシステムのシャットダウン
-    // - 入力システムのシャットダウン
-    // - RHIのシャットダウン
-    
-    m_isRunning = false;
-    std::cout << "NorvesEngine shutdown complete." << std::endl;
-}
 
-bool NorvesEngine::IsRunning() const
-{
-    return m_isRunning;
-}
-
-void NorvesEngine::Stop()
-{
-    if (m_isRunning)
+    void NorvesEngine::Shutdown()
     {
-        std::cout << "Stopping NorvesEngine..." << std::endl;
+        if (!m_isRunning)
+        {
+            LOG_WARNING("Engine is not running");
+            return;
+        }
+
+        LOG_INFO("Shutting down NorvesEngine...");
+
+        // TODO: サブシステムのシャットダウン（初期化と逆順）
+        // - レンダラーのシャットダウン
+        // - 物理演算システムのシャットダウン
+        // - オーディオシステムのシャットダウン
+        // - 入力システムのシャットダウン
+        // - RHIのシャットダウン
+
         m_isRunning = false;
+        LOG_INFO("NorvesEngine shutdown complete");
     }
-}
 
-const std::string& NorvesEngine::GetVersion() const
-{
-    return m_version;
-}
+    bool NorvesEngine::IsRunning() const
+    {
+        return m_isRunning;
+    }
+
+    void NorvesEngine::Stop()
+    {
+        if (m_isRunning)
+        {
+            LOG_INFO("Stopping NorvesEngine...");
+            m_isRunning = false;
+        }
+    }
+
+    const String &NorvesEngine::GetVersion() const
+    {
+        return m_version;
+    }
 
 } // namespace NorvesLib::Core

@@ -45,12 +45,11 @@ namespace NorvesLib::Core::Logging
         {
             oss << "[" << entry.filename.c_str() << ":" << entry.function.c_str()
                 << ":" << entry.lineNumber << "] ";
-        }
-
-        // メッセージ
+        }        // メッセージ
         oss << entry.message.c_str();
 
-        return String(oss.str());
+        // std::stringを経由せずに直接変換
+        return String(oss.str().c_str());
     }
 
     String JsonLogFormatter::Format(const LogEntry &entry) const
@@ -85,11 +84,10 @@ namespace NorvesLib::Core::Logging
                 << "\"function\":\"" << entry.function.c_str() << "\","
                 << "\"line\":" << entry.lineNumber
                 << "}";
-        }
+        }        oss << "}";
 
-        oss << "}";
-
-        return String(oss.str());
+        // std::stringを経由せずに直接変換
+        return String(oss.str().c_str());
     }
 
 } // namespace NorvesLib::Core::Logging

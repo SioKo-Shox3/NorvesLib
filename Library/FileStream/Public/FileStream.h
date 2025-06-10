@@ -56,7 +56,9 @@ namespace NorvesLib::FileStream
         String ReadString() override;
         String ReadLine() override;
         size_t WriteString(const String &str) override;
-        size_t WriteLine(const String &line) override;    private:
+        size_t WriteLine(const String &line) override;
+
+    private:
         mutable std::fstream m_stream;
         String m_filePath;
         FileMode m_mode = FileMode::Read;

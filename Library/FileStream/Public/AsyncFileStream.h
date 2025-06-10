@@ -135,7 +135,9 @@ namespace NorvesLib::FileStream
         /**
          * @brief 進行中の非同期操作をキャンセル
          */
-        void CancelAllOperations();    private:
+        void CancelAllOperations();
+
+    private:
         FileStreamPtr m_fileStream;
         mutable NorvesLib::Thread::Mutex m_mutex;
         VariableArray<AsyncReadTask> m_activeTasks;

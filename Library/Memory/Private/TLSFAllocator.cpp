@@ -5,7 +5,11 @@
 #include <intrin.h> // Visual Studioの組み込み関数用
 
 #ifdef _WIN32
-#include <malloc.h> // _aligned_malloc, _aligned_free用
+#ifndef NOMINMAX
+#define NOMINMAX     // min/maxマクロの無効化
+#endif
+#include <malloc.h>  // _aligned_malloc, _aligned_free用
+#include <Windows.h> // OutputDebugStringA用
 #endif
 
 namespace NorvesLib::Memory
@@ -14,20 +18,22 @@ namespace NorvesLib::Memory
     inline size_t RoundUpSize(size_t size, size_t alignment)
     {
         return (size + alignment - 1) & ~(alignment - 1);
-    }
-
-    // 最上位ビットの位置を取得（MSB）
-    inline int FindMSB(uint32_t value)
+    } // 最上位ビットの位置を取得（MSB）
+    inline int FindMSB(size_t value)
     {
         // 組み込み関数を使用してMSB（Most Significant Bit）を検出
         if (value == 0)
             return -1;
 #if defined(_MSC_VER)
         unsigned long index;
-        _BitScanReverse(&index, value);
-        return index;
+#ifdef _WIN64
+        _BitScanReverse64(&index, value);
 #else
-        return 31 - __builtin_clz(value);
+        _BitScanReverse(&index, static_cast<uint32_t>(value));
+#endif
+        return static_cast<int>(index);
+#else
+        return static_cast<int>(sizeof(size_t) * 8 - 1 - __builtin_clzll(value));
 #endif
     }
 
@@ -44,11 +50,9 @@ namespace NorvesLib::Memory
 #else
         return __builtin_ctz(value);
 #endif
-    }
-
-    // コンストラクタ
+    } // コンストラクタ
     TLSFAllocator::TLSFAllocator(size_t memorySize, size_t minBlockSize)
-        : m_memoryPool(nullptr), m_memorySize(memorySize), m_minBlockSize(std::max(minBlockSize, DEFAULT_ALIGNMENT)), m_allocatedSize(0), m_flBitmap(0)
+        : m_memoryPool(nullptr), m_memorySize(memorySize), m_minBlockSize((std::max)(minBlockSize, DEFAULT_ALIGNMENT)), m_allocatedSize(0), m_flBitmap(0)
     {
         // メモリサイズを最小ブロックサイズにアラインする
         m_memorySize = RoundUpSize(m_memorySize, m_minBlockSize);
@@ -95,13 +99,11 @@ namespace NorvesLib::Memory
 #endif
             m_memoryPool = nullptr;
         }
-    }
-
-    // アライメントに合わせてサイズを調整
+    } // アライメントに合わせてサイズを調整
     size_t TLSFAllocator::AlignSize(size_t size, size_t alignment)
     {
         // 最小ブロックサイズ以上かつアライメントに合わせる
-        return std::max(m_minBlockSize, RoundUpSize(size, alignment));
+        return (std::max)(m_minBlockSize, RoundUpSize(size, alignment));
     }
 
     // メモリの割り当て
@@ -124,9 +126,7 @@ namespace NorvesLib::Memory
         if ((block->size - alignedSize) >= (m_minBlockSize + sizeof(BlockHeader)))
         {
             block = SplitBlock(block, alignedSize);
-        }
-
-        // ブロックを使用中としてマーク
+        } // ブロックを使用中としてマーク
         block->used = true;
 
         // フリーリストから削除
@@ -136,10 +136,17 @@ namespace NorvesLib::Memory
         m_allocatedSize += block->size;
 
         // ペイロードポインタを返す
-        return GetBlockPayload(block);
-    }
+        void *payload = GetBlockPayload(block);
 
-    // メモリの解放
+#ifdef _WIN32
+        // デバッグ情報: メモリ確保をトレース
+        char debugMsg[256];
+        sprintf_s(debugMsg, "ALLOCATE: Ptr=%p, Block=%p, Size=%zu\n", payload, block, block->size);
+        OutputDebugStringA(debugMsg);
+#endif
+
+        return payload;
+    } // メモリの解放
     void TLSFAllocator::Deallocate(void *ptr)
     {
         if (!ptr)
@@ -151,7 +158,45 @@ namespace NorvesLib::Memory
         // 有効なポインタかチェック
         assert(block >= m_memoryPool &&
                reinterpret_cast<char *>(block) < (reinterpret_cast<char *>(m_memoryPool) + m_memorySize));
+
+#ifdef _WIN32
+        // デバッグ情報: すべてのDeallocationをトレース
+        char debugMsg[512];
+        sprintf_s(debugMsg, "DEALLOCATE ATTEMPT: Ptr=%p, Block=%p, Size=%zu, Used=%s\n",
+                  ptr, block, block->size, block->used ? "true" : "false");
+        OutputDebugStringA(debugMsg);
+
+        // スタックトレースを取得（簡易版）
+        void *stack[10];
+        WORD numFrames = CaptureStackBackTrace(0, 10, stack, nullptr);
+        sprintf_s(debugMsg, "CALL STACK:\n");
+        OutputDebugStringA(debugMsg);
+        for (WORD i = 0; i < numFrames; ++i)
+        {
+            sprintf_s(debugMsg, "  Frame %d: %p\n", i, stack[i]);
+            OutputDebugStringA(debugMsg);
+        }
+#endif
+
+        // デバッグ情報: ダブルフリーエラーの詳細を出力
+        if (!block->used)
+        {
+#ifdef _WIN32
+            sprintf_s(debugMsg, "DOUBLE FREE DETECTED!\nPtr: %p\nBlock: %p\nSize: %zu\nUsed: %s\n",
+                      ptr, block, block->size, block->used ? "true" : "false");
+            OutputDebugStringA(debugMsg);
+            OutputDebugStringA("This indicates that the same memory block is being freed twice!\n");
+#endif
+            // 一時的にアサーションをより詳細にする
+            assert(false && "Double free detected - block is already free!");
+        }
         assert(block->used);
+
+#ifdef _WIN32
+        // デバッグ情報: 正常なメモリ解放をトレース
+        sprintf_s(debugMsg, "DEALLOCATE SUCCESS: Ptr=%p, Block=%p, Size=%zu\n", ptr, block, block->size);
+        OutputDebugStringA(debugMsg);
+#endif
 
         // 割り当てサイズを更新
         m_allocatedSize -= block->size;
@@ -227,9 +272,7 @@ namespace NorvesLib::Memory
         // ビットマップを更新
         m_flBitmap |= (1 << flIndex);
         m_slBitmap[flIndex] |= (1 << slIndex);
-    }
-
-    // サイズからマッピングインデックスを計算（挿入用）
+    } // サイズからマッピングインデックスを計算（挿入用）
     void TLSFAllocator::MappingInsert(size_t size, int &flIndex, int &slIndex)
     {
         // ファーストレベルインデックス（サイズのMSB）
@@ -238,11 +281,11 @@ namespace NorvesLib::Memory
         // セカンドレベルインデックス（サイズの詳細部分）
         if (flIndex < SL_INDEX_COUNT)
         {
-            slIndex = size >> (flIndex - SL_INDEX_COUNT + 1);
+            slIndex = static_cast<int>(size >> (flIndex - SL_INDEX_COUNT + 1));
         }
         else
         {
-            slIndex = size >> flIndex;
+            slIndex = static_cast<int>(size >> flIndex);
         }
         slIndex &= (SL_INDEX_COUNT - 1);
     }
@@ -260,7 +303,7 @@ namespace NorvesLib::Memory
         }
         else
         {
-            slIndex = size >> (flIndex - SL_INDEX_COUNT + 1);
+            slIndex = static_cast<int>(size >> (flIndex - SL_INDEX_COUNT + 1));
             slIndex &= (SL_INDEX_COUNT - 1);
         }
     }
@@ -397,10 +440,8 @@ namespace NorvesLib::Memory
         }
 
         return block;
-    }
-
-    // ブロックの使用可能サイズを取得
-    size_t TLSFAllocator::GetBlockPayloadSize(const BlockHeader *block)
+    } // ブロックの使用可能サイズを取得
+    size_t TLSFAllocator::GetBlockPayloadSize(const BlockHeader *block) const
     {
         return block->size;
     }
@@ -409,12 +450,35 @@ namespace NorvesLib::Memory
     void *TLSFAllocator::GetBlockPayload(BlockHeader *block)
     {
         return reinterpret_cast<char *>(block) + sizeof(BlockHeader);
-    }
-
-    // ペイロードポインタからヘッダーを取得
+    } // ペイロードポインタからヘッダーを取得
     TLSFAllocator::BlockHeader *TLSFAllocator::GetBlockHeader(void *payload)
     {
         return reinterpret_cast<BlockHeader *>(
             reinterpret_cast<char *>(payload) - sizeof(BlockHeader));
+    }
+
+    // 指定されたポインタのブロックサイズを取得
+    size_t TLSFAllocator::GetBlockSize(void *ptr) const
+    {
+        if (!ptr)
+            return 0;
+
+        // ペイロードポインタからブロックヘッダーを取得
+        BlockHeader *block = const_cast<TLSFAllocator *>(this)->GetBlockHeader(ptr);
+
+        // 有効なポインタかチェック
+        if (block < m_memoryPool ||
+            reinterpret_cast<char *>(block) >= (reinterpret_cast<char *>(m_memoryPool) + m_memorySize))
+        {
+            return 0; // 無効なポインタ
+        }
+
+        // 使用中のブロックかチェック
+        if (!block->used)
+        {
+            return 0; // 未使用ブロック
+        }
+
+        return GetBlockPayloadSize(block);
     }
 }
