@@ -21,6 +21,7 @@
 #include "String.h"
 #include "Span.h"
 #include "StringView.h"
+#include "StringBuilder.h"
 #include "Deque.h"
 #include "Queue.h"
 #include "PointerTypes.h"

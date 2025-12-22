@@ -45,7 +45,7 @@ namespace NorvesLib::Core::Logging
         {
             oss << "[" << entry.filename.c_str() << ":" << entry.function.c_str()
                 << ":" << entry.lineNumber << "] ";
-        }        // メッセージ
+        } // メッセージ
         oss << entry.message.c_str();
 
         // std::stringを経由せずに直接変換
@@ -84,7 +84,8 @@ namespace NorvesLib::Core::Logging
                 << "\"function\":\"" << entry.function.c_str() << "\","
                 << "\"line\":" << entry.lineNumber
                 << "}";
-        }        oss << "}";
+        }
+        oss << "}";
 
         // std::stringを経由せずに直接変換
         return String(oss.str().c_str());
