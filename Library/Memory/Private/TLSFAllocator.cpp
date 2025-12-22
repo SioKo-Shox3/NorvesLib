@@ -6,7 +6,7 @@
 
 #ifdef _WIN32
 #ifndef NOMINMAX
-#define NOMINMAX     // min/maxマクロの無効化
+#define NOMINMAX // min/maxマクロの無効化
 #endif
 #include <malloc.h>  // _aligned_malloc, _aligned_free用
 #include <Windows.h> // OutputDebugStringA用
@@ -120,17 +120,19 @@ namespace NorvesLib::Memory
         if (!block)
         {
             return nullptr; // 適切なブロックが見つからない
-        }
-
-        // ブロックが必要なサイズよりもずっと大きい場合は分割
+        }        // ブロックが必要なサイズよりもずっと大きい場合は分割
         if ((block->size - alignedSize) >= (m_minBlockSize + sizeof(BlockHeader)))
         {
             block = SplitBlock(block, alignedSize);
-        } // ブロックを使用中としてマーク
-        block->used = true;
+        }
+        else
+        {
+            // 分割しない場合は、ここでフリーリストから削除
+            RemoveFromFreeList(block);
+        }
 
-        // フリーリストから削除
-        RemoveFromFreeList(block);
+        // ブロックを使用中としてマーク
+        block->used = true;
 
         // 割り当てサイズを更新
         m_allocatedSize += block->size;
@@ -140,9 +142,8 @@ namespace NorvesLib::Memory
 
 #ifdef _WIN32
         // デバッグ情報: メモリ確保をトレース
-        char debugMsg[256];
-        sprintf_s(debugMsg, "ALLOCATE: Ptr=%p, Block=%p, Size=%zu\n", payload, block, block->size);
-        OutputDebugStringA(debugMsg);
+        printf("ALLOCATE: Ptr=%p, Block=%p, Size=%zu\n", payload, block, block->size);
+        fflush(stdout);
 #endif
 
         return payload;
@@ -161,31 +162,27 @@ namespace NorvesLib::Memory
 
 #ifdef _WIN32
         // デバッグ情報: すべてのDeallocationをトレース
-        char debugMsg[512];
-        sprintf_s(debugMsg, "DEALLOCATE ATTEMPT: Ptr=%p, Block=%p, Size=%zu, Used=%s\n",
+        printf("DEALLOCATE ATTEMPT: Ptr=%p, Block=%p, Size=%zu, Used=%s\n",
                   ptr, block, block->size, block->used ? "true" : "false");
-        OutputDebugStringA(debugMsg);
+        fflush(stdout);
 
         // スタックトレースを取得（簡易版）
         void *stack[10];
         WORD numFrames = CaptureStackBackTrace(0, 10, stack, nullptr);
-        sprintf_s(debugMsg, "CALL STACK:\n");
-        OutputDebugStringA(debugMsg);
+        printf("CALL STACK:\n");
         for (WORD i = 0; i < numFrames; ++i)
         {
-            sprintf_s(debugMsg, "  Frame %d: %p\n", i, stack[i]);
-            OutputDebugStringA(debugMsg);
+            printf("  Frame %d: %p\n", i, stack[i]);
         }
-#endif
-
-        // デバッグ情報: ダブルフリーエラーの詳細を出力
+        fflush(stdout);
+#endif        // デバッグ情報: ダブルフリーエラーの詳細を出力
         if (!block->used)
         {
 #ifdef _WIN32
-            sprintf_s(debugMsg, "DOUBLE FREE DETECTED!\nPtr: %p\nBlock: %p\nSize: %zu\nUsed: %s\n",
+            printf("DOUBLE FREE DETECTED!\nPtr: %p\nBlock: %p\nSize: %zu\nUsed: %s\n",
                       ptr, block, block->size, block->used ? "true" : "false");
-            OutputDebugStringA(debugMsg);
-            OutputDebugStringA("This indicates that the same memory block is being freed twice!\n");
+            printf("This indicates that the same memory block is being freed twice!\n");
+            fflush(stdout);
 #endif
             // 一時的にアサーションをより詳細にする
             assert(false && "Double free detected - block is already free!");
@@ -194,8 +191,8 @@ namespace NorvesLib::Memory
 
 #ifdef _WIN32
         // デバッグ情報: 正常なメモリ解放をトレース
-        sprintf_s(debugMsg, "DEALLOCATE SUCCESS: Ptr=%p, Block=%p, Size=%zu\n", ptr, block, block->size);
-        OutputDebugStringA(debugMsg);
+        printf("DEALLOCATE SUCCESS: Ptr=%p, Block=%p, Size=%zu\n", ptr, block, block->size);
+        fflush(stdout);
 #endif
 
         // 割り当てサイズを更新
@@ -215,13 +212,33 @@ namespace NorvesLib::Memory
     size_t TLSFAllocator::GetAllocatedSize() const
     {
         return m_allocatedSize;
-    }
-
-    // フリーリストからブロックを削除
+    }    // フリーリストからブロックを削除
     void TLSFAllocator::RemoveFromFreeList(BlockHeader *block)
     {
         int flIndex, slIndex;
         MappingInsert(block->size, flIndex, slIndex);
+
+#ifdef _WIN32
+        // デバッグ: ブロックがフリーリストに存在するかチェック
+        bool found = false;
+        BlockHeader *current = m_freeBlocks[flIndex][slIndex];
+        while (current)
+        {
+            if (current == block)
+            {
+                found = true;
+                break;
+            }
+            current = current->nextFree;
+        }
+          if (!found)
+        {
+            printf("WARNING: Block %p not found in free list during removal!\n", block);
+            fflush(stdout);
+            assert(false && "Block not found in free list!");
+            return;
+        }
+#endif
 
         // リストから削除
         if (block->prevFree)
@@ -251,13 +268,26 @@ namespace NorvesLib::Memory
         // 前後のフリーリストポインタをクリア
         block->prevFree = nullptr;
         block->nextFree = nullptr;
-    }
-
-    // フリーリストにブロックを挿入
+    }// フリーリストにブロックを挿入
     void TLSFAllocator::InsertToFreeList(BlockHeader *block)
     {
         int flIndex, slIndex;
         MappingInsert(block->size, flIndex, slIndex);
+
+#ifdef _WIN32
+        // デバッグ: 既にフリーリストに存在するかチェック
+        BlockHeader *current = m_freeBlocks[flIndex][slIndex];        while (current)
+        {
+            if (current == block)
+            {
+                printf("WARNING: Block %p already exists in free list!\n", block);
+                fflush(stdout);
+                assert(false && "Block already in free list!");
+                return;
+            }
+            current = current->nextFree;
+        }
+#endif
 
         // リンクリストの先頭に挿入
         block->nextFree = m_freeBlocks[flIndex][slIndex];
@@ -272,7 +302,7 @@ namespace NorvesLib::Memory
         // ビットマップを更新
         m_flBitmap |= (1 << flIndex);
         m_slBitmap[flIndex] |= (1 << slIndex);
-    } // サイズからマッピングインデックスを計算（挿入用）
+    }// サイズからマッピングインデックスを計算（挿入用）
     void TLSFAllocator::MappingInsert(size_t size, int &flIndex, int &slIndex)
     {
         // ファーストレベルインデックス（サイズのMSB）
@@ -356,9 +386,7 @@ namespace NorvesLib::Memory
 
         // 見つかったブロックを返す
         return m_freeBlocks[flIndex][slIndex];
-    }
-
-    // ブロックを分割する
+    }    // ブロックを分割する
     TLSFAllocator::BlockHeader *TLSFAllocator::SplitBlock(BlockHeader *block, size_t size)
     {
         // 分割可能なサイズかチェック
@@ -366,6 +394,9 @@ namespace NorvesLib::Memory
         {
             return block; // 分割できない
         }
+
+        // まず元のブロックをフリーリストから削除
+        RemoveFromFreeList(block);
 
         // 分割位置を計算
         size_t remainingSize = block->size - size - sizeof(BlockHeader);

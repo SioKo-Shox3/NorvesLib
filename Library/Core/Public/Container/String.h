@@ -1,382 +1,872 @@
 ﻿#pragma once
 
-#include <string>
-#include <string_view>
+#include <cstring>
+#include <memory>
+#include <algorithm>
+#include <stdexcept>
+#include <initializer_list>
+#include <type_traits>
 #include <Windows.h>
 #include <tchar.h>
 #include "Allocator.h"
-#include "VariableArray.h"
 
 namespace NorvesLib::Core::Container
 {
+    // 前方宣言
+    template<typename CharT>
+    class TStringView;
     /**
-     * @brief GlobalMemoryAllocatorを使用するTCHAR文字列クラス
-     * メモリオーバーライドとの競合を避けるため、コンポジションパターンで実装
+     * @brief 動的文字列クラステンプレート
+     * @tparam CharT 文字型
+     * 
+     * 独自のメモリ管理を行う文字列クラステンプレートです。
+     * STLからの継承は行わず、全てのメモリ管理をカスタムアロケータで実装します。
      */
-    class String
-    {
-    private:
-        using StringType = std::basic_string<TCHAR, std::char_traits<TCHAR>, Allocator<TCHAR>>;
-        StringType m_string;
+    template<typename CharT>
+    class TString
+    {    public:
+        // 型定義
+        using value_type = CharT;
+        using pointer = CharT*;
+        using const_pointer = const CharT*;
+        using reference = CharT&;
+        using const_reference = const CharT&;
+        using size_type = std::size_t;
+        using difference_type = std::ptrdiff_t;
+        using iterator = pointer;
+        using const_iterator = const_pointer;
+        using allocator_type = Allocator<CharT>;
 
-    public:
-        // 型エイリアス
-        using value_type = TCHAR;
-        using size_type = typename StringType::size_type;
-        using difference_type = typename StringType::difference_type;
-        using reference = typename StringType::reference;
-        using const_reference = typename StringType::const_reference;
-        using pointer = typename StringType::pointer;
-        using const_pointer = typename StringType::const_pointer;
-        using iterator = typename StringType::iterator;
-        using const_iterator = typename StringType::const_iterator;
-        using reverse_iterator = typename StringType::reverse_iterator;
-        using const_reverse_iterator = typename StringType::const_reverse_iterator;
-        using allocator_type = Allocator<TCHAR>;
+        // 特殊値
+        static constexpr size_type npos = static_cast<size_type>(-1);    private:
+        pointer m_data;
+        size_type m_size;
+        size_type m_capacity;
+        Allocator<CharT> m_allocator;
 
-        static constexpr size_type npos = StringType::npos;
+        // 文字列長計算（NULL終端対応）
+        static size_type StringLength(const_pointer str)
+        {
+            if constexpr (std::is_same_v<CharT, char>)
+            {
+                return str ? std::strlen(str) : 0;
+            }
+            else if constexpr (std::is_same_v<CharT, wchar_t>)
+            {
+                return str ? std::wcslen(str) : 0;
+            }
+            else if constexpr (std::is_same_v<CharT, TCHAR>)
+            {
+                return str ? _tcslen(str) : 0;
+            }
+            else
+            {
+                // 汎用実装
+                if (!str) return 0;
+                size_type len = 0;
+                while (str[len] != CharT{}) ++len;
+                return len;
+            }
+        }
 
-        // デフォルトコンストラクタ
-        String() = default;
+        // 文字列比較
+        static int StringCompare(const_pointer lhs, const_pointer rhs, size_type count)
+        {
+            if constexpr (std::is_same_v<CharT, char>)
+            {
+                return std::strncmp(lhs, rhs, count);
+            }
+            else if constexpr (std::is_same_v<CharT, wchar_t>)
+            {
+                return std::wcsncmp(lhs, rhs, count);
+            }
+            else if constexpr (std::is_same_v<CharT, TCHAR>)
+            {
+                return _tcsncmp(lhs, rhs, count);
+            }
+            else
+            {
+                // 汎用実装
+                for (size_type i = 0; i < count; ++i)
+                {
+                    if (lhs[i] < rhs[i]) return -1;
+                    if (lhs[i] > rhs[i]) return 1;
+                    if (lhs[i] == CharT{}) return 0;
+                }
+                return 0;
+            }
+        }        // 文字列コピー
+        static void StringCopy(pointer dest, const_pointer src, size_type count)
+        {
+            if constexpr (std::is_same_v<CharT, char>)
+            {
+                strncpy_s(dest, count + 1, src, count);
+            }
+            else if constexpr (std::is_same_v<CharT, wchar_t>)
+            {
+                wcsncpy_s(dest, count + 1, src, count);
+            }
+            else if constexpr (std::is_same_v<CharT, TCHAR>)
+            {
+                _tcsncpy_s(dest, count + 1, src, count);
+            }
+            else
+            {
+                // 汎用実装
+                for (size_type i = 0; i < count; ++i)
+                {
+                    dest[i] = src[i];
+                }
+            }
+        }
+
+        // 容量拡張
+        void Reserve(size_type newCapacity)
+        {
+            if (newCapacity <= m_capacity)
+                return;
+
+            // 新しいバッファを確保
+            pointer newData = m_allocator.allocate(newCapacity + 1); // NULL終端用の+1
+
+            // 既存データをコピー
+            if (m_data && m_size > 0)
+            {
+                StringCopy(newData, m_data, m_size);
+            }
+
+            // NULL終端
+            newData[m_size] = CharT{};
+
+            // 古いバッファを解放
+            if (m_data)
+            {
+                m_allocator.deallocate(m_data, m_capacity + 1);
+            }
+
+            m_data = newData;
+            m_capacity = newCapacity;
+        }
+
+        // 容量成長計算
+        size_type CalculateGrowth(size_type newSize) const
+        {
+            const size_type maxSize = max_size();
+            const size_type oldCapacity = m_capacity;
+
+            if (oldCapacity > maxSize - oldCapacity / 2)
+            {
+                return maxSize; // オーバーフローを避ける
+            }
+
+            const size_type newCapacity = oldCapacity + oldCapacity / 2;
+            if (newCapacity < newSize)
+            {
+                return newSize;
+            }
+
+            return newCapacity;
+        }
+
+    public:        // デフォルトコンストラクタ
+        TString()
+            : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
+        {
+#ifdef _WIN32
+            char debugMsg[256];
+            sprintf_s(debugMsg, "TString DEFAULT CTOR: this=%p\n", this);
+            OutputDebugStringA(debugMsg);
+#endif
+        }
 
         // コピーコンストラクタ
-        String(const String &other) : m_string(other.m_string) {}
+        TString(const TString& other)
+            : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
+        {
+#ifdef _WIN32
+            char debugMsg[256];
+            sprintf_s(debugMsg, "TString COPY CTOR: this=%p, other=%p, other.m_data=%p\n", this, &other, other.m_data);
+            OutputDebugStringA(debugMsg);
+#endif
+            if (other.m_size > 0)
+            {
+                Reserve(other.m_size);
+                StringCopy(m_data, other.m_data, other.m_size);
+                m_size = other.m_size;
+                m_data[m_size] = CharT{};
+            }
+        }
 
         // ムーブコンストラクタ
-        String(String &&other) noexcept : m_string(std::move(other.m_string)) {}
-
-        // TCHAR文字列からの構築
-        String(const TCHAR *str) : m_string(str) {}
-
-        // 文字列長を指定したTCHAR文字列からの構築
-        String(const TCHAR *str, size_type count) : m_string(str, count) {}
-
-        // 文字の繰り返し
-        String(size_type count, TCHAR ch) : m_string(count, ch) {}
-
-        // イテレータからの構築
-        template <typename InputIt>
-        String(InputIt first, InputIt last) : m_string(first, last) {}        // std::basic_stringからの変換コンストラクタ
-        explicit String(const std::basic_string<TCHAR> &other)
+        TString(TString&& other) noexcept
+            : m_data(other.m_data), m_size(other.m_size), m_capacity(other.m_capacity), m_allocator(std::move(other.m_allocator))
         {
-            // 安全なコピーベースの変換
-            m_string.assign(other.data(), other.size());
+#ifdef _WIN32
+            char debugMsg[256];
+            sprintf_s(debugMsg, "TString MOVE CTOR: this=%p, other=%p, data=%p\n", this, &other, m_data);
+            OutputDebugStringA(debugMsg);
+#endif
+            other.m_data = nullptr;
+            other.m_size = 0;
+            other.m_capacity = 0;
         }
 
-        // std::basic_stringからの変換ムーブコンストラクタ
-        explicit String(std::basic_string<TCHAR> &&other)
+        // C文字列からのコンストラクタ
+        TString(const_pointer str)
+            : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
-            // 異なるアロケータ間のムーブは危険なので、コピーベースで実装
-            m_string.assign(other.data(), other.size());
-            other.clear();
+            if (str)
+            {
+                const size_type len = StringLength(str);
+                if (len > 0)
+                {
+                    Reserve(len);
+                    StringCopy(m_data, str, len);
+                    m_size = len;
+                    m_data[m_size] = CharT{};
+                }
+            }
         }
 
-        // basic_string_viewからの構築
-        explicit String(std::basic_string_view<TCHAR> view) : m_string(view.data(), view.size()) {}
-
-        // デストラクタ
-        ~String() = default; // std::basic_stringへの変換演算子
-        operator std::basic_string<TCHAR>() const
+        // 文字数と文字を指定するコンストラクタ
+        TString(size_type count, CharT ch)
+            : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
-            return std::basic_string<TCHAR>(m_string.data(), m_string.size());
+            if (count > 0)
+            {
+                Reserve(count);
+                std::fill_n(m_data, count, ch);
+                m_size = count;
+                m_data[m_size] = CharT{};
+            }
+        }        // イニシャライザリストからのコンストラクタ
+        TString(std::initializer_list<CharT> ilist)
+            : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
+        {
+            if (ilist.size() > 0)
+            {
+                Reserve(ilist.size());
+                std::copy(ilist.begin(), ilist.end(), m_data);
+                m_size = ilist.size();
+                m_data[m_size] = CharT{};
+            }
         }
 
-        // basic_string_viewへの変換演算子
-        operator std::basic_string_view<TCHAR>() const
+        // std::stringからの変換コンストラクタ（CharT == charの場合のみ）
+        template<typename T = CharT>
+        TString(const std::basic_string<T>& str, 
+                typename std::enable_if_t<std::is_same_v<T, CharT>>* = nullptr)
+            : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
-            return std::basic_string_view<TCHAR>(m_string.data(), m_string.size());
+            if (!str.empty())
+            {
+                Reserve(str.size());
+                StringCopy(m_data, str.c_str(), str.size());
+                m_size = str.size();
+                m_data[m_size] = CharT{};
+            }
+        }
+
+        // StringViewからの変換コンストラクタ
+        TString(const TStringView<CharT>& sv)
+            : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
+        {
+            if (!sv.empty())
+            {
+                Reserve(sv.size());
+                StringCopy(m_data, sv.data(), sv.size());
+                m_size = sv.size();
+                m_data[m_size] = CharT{};
+            }
+        }        // デストラクタ
+        ~TString()
+        {
+            // デバッグトレース
+            std::printf("[TString::~TString] Destructor called this=%p, m_data=%p, m_size=%zu, m_capacity=%zu\n", 
+                       this, m_data, m_size, m_capacity);
+            if (m_data)
+            {
+                std::printf("[TString::~TString] Deallocating memory for %p\n", m_data);
+                m_allocator.deallocate(m_data, m_capacity + 1);
+                std::printf("[TString::~TString] Memory deallocated successfully for %p\n", m_data);
+            }
+            else
+            {
+                std::printf("[TString::~TString] No memory to deallocate (m_data is null)\n");
+            }
         }
 
         // 代入演算子
-        String &operator=(const String &other)
+        TString& operator=(const TString& other)
         {
             if (this != &other)
             {
-                m_string = other.m_string;
+                clear();
+                if (other.m_size > 0)
+                {
+                    Reserve(other.m_size);
+                    StringCopy(m_data, other.m_data, other.m_size);
+                    m_size = other.m_size;
+                    m_data[m_size] = CharT{};
+                }
+            }
+            return *this;
+        }        // ムーブ代入演算子
+        TString& operator=(TString&& other) noexcept
+        {
+            std::printf("[TString::operator=(move)] Called this=%p (data=%p), other=%p (data=%p)\n", 
+                       this, m_data, &other, other.m_data);
+            if (this != &other)
+            {
+                if (m_data)
+                {
+                    std::printf("[TString::operator=(move)] Deallocating current data %p\n", m_data);
+                    m_allocator.deallocate(m_data, m_capacity + 1);
+                }
+
+                m_data = other.m_data;
+                m_size = other.m_size;
+                m_capacity = other.m_capacity;
+                m_allocator = std::move(other.m_allocator);
+
+                std::printf("[TString::operator=(move)] Moving data %p from other=%p to this=%p\n", 
+                           m_data, &other, this);
+                
+                other.m_data = nullptr;
+                other.m_size = 0;
+                other.m_capacity = 0;
+                
+                std::printf("[TString::operator=(move)] Cleared other=%p (data now=%p)\n", 
+                           &other, other.m_data);
             }
             return *this;
         }
 
-        String &operator=(String &&other) noexcept
+        // C文字列からの代入
+        TString& operator=(const_pointer str)
         {
-            if (this != &other)
+            clear();
+            if (str)
             {
-                m_string = std::move(other.m_string);
+                const size_type len = StringLength(str);
+                if (len > 0)
+                {
+                    Reserve(len);
+                    StringCopy(m_data, str, len);
+                    m_size = len;
+                    m_data[m_size] = CharT{};
+                }
             }
             return *this;
         }
-
-        String &operator=(const TCHAR *str)
-        {
-            m_string = str;
-            return *this;
-        }        String &operator=(const std::basic_string<TCHAR> &str)
-        {
-            m_string.assign(str.data(), str.size());
-            return *this;
-        }
-
-        String &operator=(std::basic_string<TCHAR> &&str)
-        {
-            m_string.assign(str.data(), str.size());
-            str.clear();
-            return *this;
-        }
-
-        String &operator=(std::basic_string_view<TCHAR> view)
-        {
-            m_string.assign(view.data(), view.size());
-            return *this;
-        }
-
-        // basic_stringインターフェースの委譲
-        const TCHAR *c_str() const { return m_string.c_str(); }
-        const TCHAR *data() const { return m_string.data(); }
-        size_type size() const { return m_string.size(); }
-        size_type length() const { return m_string.length(); }
-        bool empty() const { return m_string.empty(); }
-        void clear() { m_string.clear(); }
-        void reserve(size_type new_cap) { m_string.reserve(new_cap); }
-        size_type capacity() const { return m_string.capacity(); }
-        void shrink_to_fit() { m_string.shrink_to_fit(); }
-
-        // アクセス演算子
-        reference operator[](size_type pos) { return m_string[pos]; }
-        const_reference operator[](size_type pos) const { return m_string[pos]; }
-        reference at(size_type pos) { return m_string.at(pos); }
-        const_reference at(size_type pos) const { return m_string.at(pos); }
-        reference front() { return m_string.front(); }
-        const_reference front() const { return m_string.front(); }
-        reference back() { return m_string.back(); }
-        const_reference back() const { return m_string.back(); }
 
         // イテレータ
-        iterator begin() { return m_string.begin(); }
-        const_iterator begin() const { return m_string.begin(); }
-        const_iterator cbegin() const { return m_string.cbegin(); }
-        iterator end() { return m_string.end(); }
-        const_iterator end() const { return m_string.end(); }
-        const_iterator cend() const { return m_string.cend(); }
-        reverse_iterator rbegin() { return m_string.rbegin(); }
-        const_reverse_iterator rbegin() const { return m_string.rbegin(); }
-        const_reverse_iterator crbegin() const { return m_string.crbegin(); }
-        reverse_iterator rend() { return m_string.rend(); }
-        const_reverse_iterator rend() const { return m_string.rend(); }
-        const_reverse_iterator crend() const { return m_string.crend(); }
+        iterator begin() noexcept { return m_data; }
+        const_iterator begin() const noexcept { return m_data; }
+        const_iterator cbegin() const noexcept { return m_data; }
+        
+        iterator end() noexcept { return m_data + m_size; }
+        const_iterator end() const noexcept { return m_data + m_size; }
+        const_iterator cend() const noexcept { return m_data + m_size; }
 
-        // 変更操作
-        void push_back(TCHAR ch) { m_string.push_back(ch); }
-        void pop_back() { m_string.pop_back(); }
-        String &append(const String &str)
+        // 要素アクセス
+        reference at(size_type pos)
         {
-            m_string.append(str.m_string);
+            if (pos >= m_size)
+                throw std::out_of_range("TString::at: index out of range");
+            return m_data[pos];
+        }
+
+        const_reference at(size_type pos) const
+        {
+            if (pos >= m_size)
+                throw std::out_of_range("TString::at: index out of range");
+            return m_data[pos];
+        }
+
+        reference operator[](size_type pos) noexcept
+        {
+            return m_data[pos];
+        }
+
+        const_reference operator[](size_type pos) const noexcept
+        {
+            return m_data[pos];
+        }
+
+        reference front() noexcept
+        {
+            return m_data[0];
+        }
+
+        const_reference front() const noexcept
+        {
+            return m_data[0];
+        }
+
+        reference back() noexcept
+        {
+            return m_data[m_size - 1];
+        }
+
+        const_reference back() const noexcept
+        {
+            return m_data[m_size - 1];
+        }
+
+        const_pointer data() const noexcept
+        {
+            return m_data ? m_data : reinterpret_cast<const_pointer>(&npos); // 空の場合の安全性
+        }
+
+        const_pointer c_str() const noexcept
+        {
+            return m_data ? m_data : reinterpret_cast<const_pointer>(&npos); // 空の場合の安全性
+        }
+
+        // 容量
+        bool empty() const noexcept
+        {
+            return m_size == 0;
+        }
+
+        size_type size() const noexcept
+        {
+            return m_size;
+        }
+
+        size_type length() const noexcept
+        {
+            return m_size;
+        }
+
+        size_type max_size() const noexcept
+        {
+            return m_allocator.max_size() - 1; // NULL終端用の-1
+        }
+
+        void reserve(size_type newCapacity)
+        {
+            Reserve(newCapacity);
+        }
+
+        size_type capacity() const noexcept
+        {
+            return m_capacity;
+        }
+
+        void shrink_to_fit()
+        {
+            if (m_capacity > m_size)
+            {
+                if (m_size == 0)
+                {
+                    if (m_data)
+                    {
+                        m_allocator.deallocate(m_data, m_capacity + 1);
+                        m_data = nullptr;
+                        m_capacity = 0;
+                    }
+                }
+                else
+                {
+                    pointer newData = m_allocator.allocate(m_size + 1);
+                    StringCopy(newData, m_data, m_size);
+                    newData[m_size] = CharT{};
+
+                    m_allocator.deallocate(m_data, m_capacity + 1);
+                    m_data = newData;
+                    m_capacity = m_size;
+                }
+            }
+        }        // 変更
+        void clear() noexcept
+        {
+            std::printf("[TString::clear] Called this=%p, m_data=%p, m_size=%zu\n", this, m_data, m_size);
+            m_size = 0;
+            if (m_data)
+            {
+                m_data[0] = CharT{};
+            }
+            std::printf("[TString::clear] Cleared this=%p, new m_size=%zu\n", this, m_size);
+        }
+
+        TString& append(const TString& str)
+        {
+            return append(str.data(), str.size());
+        }
+
+        TString& append(const_pointer str)
+        {
+            if (str)
+            {
+                return append(str, StringLength(str));
+            }
             return *this;
         }
-        String &append(const TCHAR *str)
+
+        TString& append(const_pointer str, size_type count)
         {
-            m_string.append(str);
+            if (str && count > 0)
+            {
+                const size_type newSize = m_size + count;
+                if (newSize > m_capacity)
+                {
+                    Reserve(CalculateGrowth(newSize));
+                }
+
+                StringCopy(m_data + m_size, str, count);
+                m_size = newSize;
+                m_data[m_size] = CharT{};
+            }
             return *this;
         }
-        String &append(const TCHAR *str, size_type count)
+
+        TString& append(size_type count, CharT ch)
         {
-            m_string.append(str, count);
+            if (count > 0)
+            {
+                const size_type newSize = m_size + count;
+                if (newSize > m_capacity)
+                {
+                    Reserve(CalculateGrowth(newSize));
+                }
+
+                std::fill_n(m_data + m_size, count, ch);
+                m_size = newSize;
+                m_data[m_size] = CharT{};
+            }
             return *this;
         }
-        String &append(size_type count, TCHAR ch)
+
+        void push_back(CharT ch)
         {
-            m_string.append(count, ch);
-            return *this;
+            append(1, ch);
         }
-        String &assign(const String &str)
+
+        void pop_back()
         {
-            m_string.assign(str.m_string);
-            return *this;
+            if (m_size > 0)
+            {
+                --m_size;
+                m_data[m_size] = CharT{};
+            }
         }
-        String &assign(const TCHAR *str)
+
+        // 演算子
+        TString& operator+=(const TString& str)
         {
-            m_string.assign(str);
-            return *this;
+            return append(str);
         }
-        String &assign(const TCHAR *str, size_type count)
+
+        TString& operator+=(const_pointer str)
         {
-            m_string.assign(str, count);
-            return *this;
+            return append(str);
         }
-        String &assign(size_type count, TCHAR ch)
+
+        TString& operator+=(CharT ch)
         {
-            m_string.assign(count, ch);
+            push_back(ch);
             return *this;
         }
 
         // 比較
-        int compare(const String &str) const { return m_string.compare(str.m_string); }
-        int compare(const TCHAR *str) const { return m_string.compare(str); }
-        int compare(size_type pos1, size_type count1, const String &str) const { return m_string.compare(pos1, count1, str.m_string); }
-        int compare(size_type pos1, size_type count1, const TCHAR *str) const { return m_string.compare(pos1, count1, str); }
+        int compare(const TString& str) const noexcept
+        {
+            const size_type minSize = std::min(m_size, str.m_size);
+            const int result = (minSize > 0) ? StringCompare(m_data, str.m_data, minSize) : 0;
+            
+            if (result != 0)
+                return result;
+            
+            if (m_size < str.m_size)
+                return -1;
+            if (m_size > str.m_size)
+                return 1;
+            
+            return 0;
+        }
+
+        int compare(const_pointer str) const noexcept
+        {
+            if (!str)
+                return empty() ? 0 : 1;
+            
+            const size_type strLen = StringLength(str);
+            const size_type minSize = std::min(m_size, strLen);
+            const int result = (minSize > 0) ? StringCompare(m_data, str, minSize) : 0;
+            
+            if (result != 0)
+                return result;
+            
+            if (m_size < strLen)
+                return -1;
+            if (m_size > strLen)
+                return 1;
+            
+            return 0;
+        }
 
         // 検索
-        size_type find(const String &str, size_type pos = 0) const { return m_string.find(str.m_string, pos); }
-        size_type find(const TCHAR *str, size_type pos = 0) const { return m_string.find(str, pos); }
-        size_type find(TCHAR ch, size_type pos = 0) const { return m_string.find(ch, pos); }
-        size_type rfind(const String &str, size_type pos = npos) const { return m_string.rfind(str.m_string, pos); }
-        size_type rfind(const TCHAR *str, size_type pos = npos) const { return m_string.rfind(str, pos); }
-        size_type rfind(TCHAR ch, size_type pos = npos) const { return m_string.rfind(ch, pos); }
+        size_type find(const TString& str, size_type pos = 0) const noexcept
+        {
+            return find(str.data(), pos, str.size());
+        }
 
-        // NorvesLib独自のメソッド（下位互換性のため）
-        size_type FindLast(const String &str) const { return rfind(str); }
-        size_type FindLast(const TCHAR *str) const { return rfind(str); }
-        size_type FindLast(TCHAR ch) const { return rfind(ch); }
+        size_type find(const_pointer str, size_type pos = 0) const noexcept
+        {
+            if (!str)
+                return npos;
+            return find(str, pos, StringLength(str));
+        }
+
+        size_type find(const_pointer str, size_type pos, size_type count) const noexcept
+        {
+            if (!str || pos > m_size || count == 0)
+                return npos;
+            
+            if (count > m_size - pos)
+                return npos;
+
+            const const_pointer dataEnd = m_data + m_size - count + 1;
+            for (const_pointer it = m_data + pos; it < dataEnd; ++it)
+            {
+                if (StringCompare(it, str, count) == 0)
+                {
+                    return static_cast<size_type>(it - m_data);
+                }
+            }
+            
+            return npos;
+        }
+
+        size_type find(CharT ch, size_type pos = 0) const noexcept
+        {
+            if (pos >= m_size)
+                return npos;
+
+            const const_pointer result = std::find(m_data + pos, m_data + m_size, ch);
+            return (result != m_data + m_size) ? static_cast<size_t>(result - m_data) : npos;
+        }
+
+        // 後方検索
+        size_type FindLast(CharT ch) const noexcept
+        {
+            if (m_size == 0)
+                return npos;
+
+            for (size_type i = m_size; i > 0; --i)
+            {
+                if (m_data[i - 1] == ch)
+                {
+                    return i - 1;
+                }
+            }
+            return npos;
+        }
+
+        size_type FindLast(const TString& str) const noexcept
+        {
+            return FindLast(str.data(), str.size());
+        }
+
+        size_type FindLast(const_pointer str) const noexcept
+        {
+            if (!str)
+                return npos;
+            return FindLast(str, StringLength(str));
+        }
+
+        size_type FindLast(const_pointer str, size_type count) const noexcept
+        {
+            if (!str || count == 0 || count > m_size)
+                return npos;
+
+            for (size_type i = m_size - count + 1; i > 0; --i)
+            {
+                if (StringCompare(m_data + i - 1, str, count) == 0)
+                {
+                    return i - 1;
+                }
+            }
+            return npos;
+        }
 
         // 部分文字列
-        String substr(size_type pos = 0, size_type len = npos) const { return String(m_string.substr(pos, len)); } // 部分文字列取得
-        String Substring(size_t start, size_t length = npos) const
+        TString substr(size_type pos = 0, size_type count = npos) const
         {
-            if (empty() || start >= size())
-            {
-                return String();
-            }
+            if (pos > m_size)
+                throw std::out_of_range("TString::substr: position out of range");
 
-            return String(m_string.substr(start, length));
-        }
+            const size_type rcount = std::min(count, m_size - pos);
+            if (rcount == 0)
+                return TString{};
 
-        // 文字列の長さ（文字数）を取得
-        size_t Length() const
-        {
-            return size();
-        }
-
-        // 文字列が空かどうか
-        bool IsEmpty() const
-        {
-            return empty();
-        }
-
-        // 文字列の比較
-        bool Equals(const String &other) const
-        {
-            return compare(other) == 0;
-        }
-
-        bool Equals(const TCHAR *other) const
-        {
-            return compare(other) == 0;
-        }
-
-        // 指定した文字列で始まるかどうか
-        bool StartsWith(const String &prefix) const
-        {
-            if (prefix.size() > size())
-                return false;
-
-            return compare(0, prefix.size(), prefix) == 0;
-        }
-
-        // 指定した文字列で終わるかどうか
-        bool EndsWith(const String &suffix) const
-        {
-            if (suffix.size() > size())
-                return false;
-
-            return compare(size() - suffix.size(), suffix.size(), suffix) == 0;
-        }
-
-        // 文字列を小文字に変換
-        String ToLower() const
-        {
-            String result(*this);
-            for (TCHAR &c : result)
-            {
-                c = static_cast<TCHAR>(_totlower(c));
-            }
+            TString result;
+            result.Reserve(rcount);
+            StringCopy(result.m_data, m_data + pos, rcount);
+            result.m_size = rcount;
+            result.m_data[result.m_size] = CharT{};
+            
             return result;
         }
 
-        // 文字列を大文字に変換
-        String ToUpper() const
+        // Substringエイリアス（substr用のエイリアス）
+        TString Substring(size_type pos = 0, size_type count = npos) const
         {
-            String result(*this);
-            for (TCHAR &c : result)
-            {
-                c = static_cast<TCHAR>(_totupper(c));
-            }
-            return result;
+            return substr(pos, count);
         }
 
-        // 比較演算子
-        bool operator==(const String &other) const { return compare(other) == 0; }
-        bool operator!=(const String &other) const { return compare(other) != 0; }
-        bool operator<(const String &other) const { return compare(other) < 0; }
-        bool operator<=(const String &other) const { return compare(other) <= 0; }
-        bool operator>(const String &other) const { return compare(other) > 0; }
-        bool operator>=(const String &other) const { return compare(other) >= 0; }
-        bool operator==(const TCHAR *other) const { return compare(other) == 0; }
-        bool operator!=(const TCHAR *other) const { return compare(other) != 0; }
-        bool operator<(const TCHAR *other) const { return compare(other) < 0; }
-        bool operator<=(const TCHAR *other) const { return compare(other) <= 0; }
-        bool operator>(const TCHAR *other) const { return compare(other) > 0; }
-        bool operator>=(const TCHAR *other) const { return compare(other) >= 0; }
-
-        // 連結演算子
-        String &operator+=(const String &other)
+        // 文字列置換
+        TString& replace(size_type pos, size_type count, const TString& str)
         {
-            m_string.append(other.m_string);
+            if (pos > m_size)
+                throw std::out_of_range("TString::replace: position out of range");
+
+            const size_type actualCount = std::min(count, m_size - pos);
+            const size_type newSize = m_size - actualCount + str.size();
+
+            if (newSize > m_capacity)
+            {
+                Reserve(CalculateGrowth(newSize));
+            }
+
+            // 置換後の部分を後ろに移動
+            if (str.size() != actualCount)
+            {
+                const size_type moveStart = pos + actualCount;
+                const size_type moveCount = m_size - moveStart;
+                if (moveCount > 0)
+                {
+                    // メモリ移動（重複可能）
+                    std::memmove(m_data + pos + str.size(), m_data + moveStart, moveCount * sizeof(CharT));
+                }
+            }
+
+            // 新しい文字列をコピー
+            if (str.size() > 0)
+            {
+                StringCopy(m_data + pos, str.m_data, str.size());
+            }
+
+            m_size = newSize;
+            m_data[m_size] = CharT{};
+
             return *this;
         }
 
-        String &operator+=(const TCHAR *other)
+        TString& replace(size_type pos, size_type count, const_pointer str)
         {
-            m_string.append(other);
-            return *this;
-        }
-
-        String &operator+=(TCHAR ch)
-        {
-            m_string.push_back(ch);
-            return *this;
-        }
-
-        String operator+(const String &other) const
-        {
-            String result(*this);
-            result += other;
-            return result;
-        }
-
-        String operator+(const TCHAR *other) const
-        {
-            String result(*this);
-            result += other;
-            return result;
-        }
-
-        String operator+(TCHAR ch) const
-        {
-            String result(*this);
-            result += ch;
-            return result;
+            return replace(pos, count, TString{str});
         }
     };
 
-    // フリー関数での比較演算子（左辺がTCHAR*の場合）
-    inline bool operator==(const TCHAR *lhs, const String &rhs) { return rhs == lhs; }
-    inline bool operator!=(const TCHAR *lhs, const String &rhs) { return rhs != lhs; }
-    inline bool operator<(const TCHAR *lhs, const String &rhs) { return rhs > lhs; }
-    inline bool operator<=(const TCHAR *lhs, const String &rhs) { return rhs >= lhs; }
-    inline bool operator>(const TCHAR *lhs, const String &rhs) { return rhs < lhs; }
-    inline bool operator>=(const TCHAR *lhs, const String &rhs) { return rhs <= lhs; } // フリー関数での文字列結合（左辺がTCHAR*の場合）
-    inline String operator+(const TCHAR *lhs, const String &rhs)
+    // 比較演算子
+    template<typename CharT>
+    bool operator==(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
     {
-        String result(lhs);
+        return lhs.compare(rhs) == 0;
+    }
+
+    template<typename CharT>
+    bool operator!=(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    {
+        return !(lhs == rhs);
+    }
+
+    template<typename CharT>
+    bool operator<(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    {
+        return lhs.compare(rhs) < 0;
+    }
+
+    template<typename CharT>
+    bool operator<=(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    {
+        return lhs.compare(rhs) <= 0;
+    }
+
+    template<typename CharT>
+    bool operator>(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    {
+        return lhs.compare(rhs) > 0;
+    }
+
+    template<typename CharT>
+    bool operator>=(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    {
+        return lhs.compare(rhs) >= 0;
+    }
+
+    // C文字列との比較
+    template<typename CharT>
+    bool operator==(const TString<CharT>& lhs, const CharT* rhs) noexcept
+    {
+        return lhs.compare(rhs) == 0;
+    }
+
+    template<typename CharT>
+    bool operator==(const CharT* lhs, const TString<CharT>& rhs) noexcept
+    {
+        return rhs.compare(lhs) == 0;
+    }
+
+    template<typename CharT>
+    bool operator!=(const TString<CharT>& lhs, const CharT* rhs) noexcept
+    {
+        return !(lhs == rhs);
+    }
+
+    template<typename CharT>
+    bool operator!=(const CharT* lhs, const TString<CharT>& rhs) noexcept
+    {
+        return !(lhs == rhs);
+    }
+
+    // 連結演算子
+    template<typename CharT>
+    TString<CharT> operator+(const TString<CharT>& lhs, const TString<CharT>& rhs)
+    {
+        TString<CharT> result = lhs;
         result += rhs;
         return result;
     }
 
-    // フリー関数での文字列結合（左辺がTCHARの場合）
-    inline String operator+(TCHAR lhs, const String &rhs)
+    template<typename CharT>
+    TString<CharT> operator+(const TString<CharT>& lhs, const CharT* rhs)
     {
-        String result(1, lhs);
+        TString<CharT> result = lhs;
         result += rhs;
         return result;
     }
+
+    template<typename CharT>
+    TString<CharT> operator+(const CharT* lhs, const TString<CharT>& rhs)
+    {
+        TString<CharT> result{lhs};
+        result += rhs;
+        return result;
+    }
+
+    template<typename CharT>
+    TString<CharT> operator+(const TString<CharT>& lhs, CharT rhs)
+    {
+        TString<CharT> result = lhs;
+        result += rhs;
+        return result;
+    }
+
+    template<typename CharT>
+    TString<CharT> operator+(CharT lhs, const TString<CharT>& rhs)
+    {
+        TString<CharT> result{1, lhs};
+        result += rhs;
+        return result;
+    }    // Type alias definitions
+    using String = TString<TCHAR>;
+    using AnsiString = TString<char>;
+    using WideString = TString<wchar_t>;
 
 } // namespace NorvesLib::Core::Container
+
+#include "StringView.h"

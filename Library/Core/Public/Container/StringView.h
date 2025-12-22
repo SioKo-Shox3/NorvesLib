@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <ostream>
 #include <limits>
+#include <type_traits>
 #include <Windows.h>
 #include <tchar.h>
 #include "Span.h"
@@ -19,19 +20,21 @@
 namespace NorvesLib::Core::Container
 {
     /**
-     * @brief 文字列の一部を参照するビュークラス
+     * @brief 文字列の一部を参照するビュークラステンプレート
+     * @tparam CharT 文字型
+     * 
      * 所有権を持たず、メモリのコピーを行わない効率的な文字列参照型
-     * TCHARベースでWindowsのUNICODE設定に応じて適切に動作します
      */
-    class StringView
+    template<typename CharT>
+    class TStringView
     {
     public:
         // 型定義
-        using value_type = TCHAR;
-        using pointer = const TCHAR *;
-        using const_pointer = const TCHAR *;
-        using reference = const TCHAR &;
-        using const_reference = const TCHAR &;
+        using value_type = CharT;
+        using pointer = const CharT*;
+        using const_pointer = const CharT*;
+        using reference = const CharT&;
+        using const_reference = const CharT&;
         using const_iterator = const_pointer;
         using iterator = const_iterator;
         using const_reverse_iterator = std::reverse_iterator<const_iterator>;
@@ -42,33 +45,60 @@ namespace NorvesLib::Core::Container
         // 特殊値
         static constexpr size_type npos = static_cast<size_type>(-1);
 
+    private:
+        // 文字列長計算（NULL終端対応）
+        static constexpr size_type StringLength(const_pointer str) noexcept
+        {
+            if constexpr (std::is_same_v<CharT, char>)
+            {
+                return str ? std::char_traits<char>::length(str) : 0;
+            }
+            else if constexpr (std::is_same_v<CharT, wchar_t>)
+            {
+                return str ? std::char_traits<wchar_t>::length(str) : 0;
+            }
+            else if constexpr (std::is_same_v<CharT, TCHAR>)
+            {
+                return str ? _tcslen(str) : 0;
+            }
+            else
+            {
+                // 汎用実装
+                if (!str) return 0;
+                size_type len = 0;
+                while (str[len] != CharT{}) ++len;
+                return len;
+            }
+        }
+
+    public:
         // デフォルトコンストラクタ
-        constexpr StringView() noexcept : data_(nullptr), size_(0) {}
+        constexpr TStringView() noexcept : data_(nullptr), size_(0) {}
 
         // コピーコンストラクタとコピー代入（デフォルト）
-        constexpr StringView(const StringView &) noexcept = default;
-        constexpr StringView &operator=(const StringView &) noexcept = default;
+        constexpr TStringView(const TStringView&) noexcept = default;
+        constexpr TStringView& operator=(const TStringView&) noexcept = default;
 
-        // TCHAR文字列からのコンストラクタ
-        constexpr StringView(const TCHAR *str)
-            : data_(str), size_(str ? _tcslen(str) : 0) {}
+        // 文字列からのコンストラクタ
+        constexpr TStringView(const_pointer str)
+            : data_(str), size_(str ? StringLength(str) : 0) {}
 
         // ポインタと長さからのコンストラクタ
-        constexpr StringView(const TCHAR *str, size_type len) noexcept
+        constexpr TStringView(const_pointer str, size_type len) noexcept
             : data_(str), size_(len) {}
 
         // std::basic_stringからのコンストラクタ
-        StringView(const std::basic_string<TCHAR> &str) noexcept
+        TStringView(const std::basic_string<CharT>& str) noexcept
             : data_(str.data()), size_(str.size()) {}
 
-        // NorvesLib::Core::Container::Stringからのコンストラクタ
-        template <typename StringType,
-                  typename = std::enable_if_t<
-                      std::is_convertible_v<
-                          const typename StringType::value_type *, const TCHAR *> &&
-                      std::is_convertible_v<
-                          typename StringType::size_type, size_type>>>
-        constexpr StringView(const StringType &str) noexcept
+        // TStringからのコンストラクタ
+        template<typename StringType,
+                 typename = std::enable_if_t<
+                     std::is_convertible_v<
+                         const typename StringType::value_type*, const_pointer> &&
+                     std::is_convertible_v<
+                         typename StringType::size_type, size_type>>>
+        constexpr TStringView(const StringType& str) noexcept
             : data_(str.data()), size_(str.size()) {}
 
         // イテレータアクセス
@@ -142,30 +172,50 @@ namespace NorvesLib::Core::Container
         constexpr void remove_suffix(size_type n) noexcept
         {
             size_ -= n;
-        }
-
-        constexpr void swap(StringView &other) noexcept
+        }        constexpr void swap(TStringView &other) noexcept
         {
             std::swap(data_, other.data_);
             std::swap(size_, other.size_);
         }
 
         // 部分文字列の取得
-        constexpr StringView substr(size_type pos = 0, size_type count = npos) const
+        constexpr TStringView substr(size_type pos = 0, size_type count = npos) const
         {
             if (pos > size_)
             {
-                throw std::out_of_range("StringView::substr: position out of range");
+                throw std::out_of_range("TStringView::substr: position out of range");
             }
             const size_type rcount = std::min(count, size_ - pos);
-            return StringView(data_ + pos, rcount);
-        }
-
-        // 文字列比較
-        int compare(StringView other) const noexcept
+            return TStringView(data_ + pos, rcount);
+        }        // 文字列比較
+        int compare(TStringView other) const noexcept
         {
             const size_type rlen = std::min(size_, other.size_);
-            int result = ::_tcsncmp(data_, other.data_, rlen);
+            int result;
+            
+            if constexpr (std::is_same_v<CharT, char>)
+            {
+                result = std::strncmp(data_, other.data_, rlen);
+            }
+            else if constexpr (std::is_same_v<CharT, wchar_t>)
+            {
+                result = std::wcsncmp(data_, other.data_, rlen);
+            }
+            else if constexpr (std::is_same_v<CharT, TCHAR>)
+            {
+                result = ::_tcsncmp(data_, other.data_, rlen);
+            }
+            else
+            {
+                // 汎用実装
+                result = 0;
+                for (size_type i = 0; i < rlen && result == 0; ++i)
+                {
+                    if (data_[i] < other.data_[i]) result = -1;
+                    else if (data_[i] > other.data_[i]) result = 1;
+                }
+            }
+            
             if (result == 0)
             {
                 if (size_ < other.size_)
@@ -177,34 +227,32 @@ namespace NorvesLib::Core::Container
         }
 
         // constexprではない比較関数に変更
-        int compare(size_type pos1, size_type count1, StringView other) const
+        int compare(size_type pos1, size_type count1, TStringView other) const
         {
             return substr(pos1, count1).compare(other);
         }
 
-        int compare(size_type pos1, size_type count1, StringView other,
+        int compare(size_type pos1, size_type count1, TStringView other,
                     size_type pos2, size_type count2) const
         {
             return substr(pos1, count1).compare(other.substr(pos2, count2));
         }
 
-        int compare(const TCHAR *s) const
+        int compare(const_pointer s) const
         {
-            return compare(StringView(s));
+            return compare(TStringView(s));
         }
 
-        int compare(size_type pos1, size_type count1, const TCHAR *s) const
+        int compare(size_type pos1, size_type count1, const_pointer s) const
         {
-            return substr(pos1, count1).compare(StringView(s));
+            return substr(pos1, count1).compare(TStringView(s));
         }
 
-        int compare(size_type pos1, size_type count1, const TCHAR *s, size_type count2) const
+        int compare(size_type pos1, size_type count1, const_pointer s, size_type count2) const
         {
-            return substr(pos1, count1).compare(StringView(s, count2));
-        }
-
-        // 文字列検索
-        constexpr size_type find(StringView v, size_type pos = 0) const noexcept
+            return substr(pos1, count1).compare(TStringView(s, count2));
+        }        // 文字列検索
+        constexpr size_type find(TStringView v, size_type pos = 0) const noexcept
         {
             if (pos > size_ || v.empty() || v.size_ > size_ - pos)
             {
@@ -214,13 +262,13 @@ namespace NorvesLib::Core::Container
             const auto it = std::search(
                 this->begin() + pos, this->end(),
                 v.begin(), v.end(),
-                [](TCHAR a, TCHAR b)
+                [](CharT a, CharT b)
                 { return a == b; });
 
             return it == this->end() ? npos : std::distance(this->begin(), it);
         }
 
-        constexpr size_type find(TCHAR ch, size_type pos = 0) const noexcept
+        constexpr size_type find(CharT ch, size_type pos = 0) const noexcept
         {
             if (pos >= size_)
             {
@@ -233,20 +281,18 @@ namespace NorvesLib::Core::Container
                 { return c == ch; });
 
             return it == this->end() ? npos : std::distance(this->begin(), it);
+        }        constexpr size_type find(const_pointer s, size_type pos, size_type count) const noexcept
+        {
+            return find(TStringView(s, count), pos);
         }
 
-        constexpr size_type find(const TCHAR *s, size_type pos, size_type count) const noexcept
+        constexpr size_type find(const_pointer s, size_type pos = 0) const noexcept
         {
-            return find(StringView(s, count), pos);
-        }
-
-        constexpr size_type find(const TCHAR *s, size_type pos = 0) const noexcept
-        {
-            return find(StringView(s), pos);
+            return find(TStringView(s), pos);
         }
 
         // 逆方向検索
-        size_type rfind(StringView v, size_type pos = npos) const noexcept
+        size_type rfind(TStringView v, size_type pos = npos) const noexcept
         {
             if (v.empty())
             {
@@ -263,7 +309,13 @@ namespace NorvesLib::Core::Container
             for (auto i = pos + 1; i > 0; --i)
             {
                 const size_type idx = i - 1;
-                if (::_tcsncmp(data_ + idx, v.data_, v.size_) == 0)
+                bool match = true;
+                for (size_type j = 0; j < v.size_ && match; ++j)
+                {
+                    if (data_[idx + j] != v.data_[j])
+                        match = false;
+                }
+                if (match)
                 {
                     return idx;
                 }
@@ -272,7 +324,7 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        size_type rfind(TCHAR ch, size_type pos = npos) const noexcept
+        size_type rfind(CharT ch, size_type pos = npos) const noexcept
         {
             if (empty())
             {
@@ -293,18 +345,16 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        size_type rfind(const TCHAR *s, size_type pos, size_type count) const noexcept
+        size_type rfind(const_pointer s, size_type pos, size_type count) const noexcept
         {
-            return rfind(StringView(s, count), pos);
+            return rfind(TStringView(s, count), pos);
         }
 
-        size_type rfind(const TCHAR *s, size_type pos = npos) const noexcept
+        size_type rfind(const_pointer s, size_type pos = npos) const noexcept
         {
-            return rfind(StringView(s), pos);
-        }
-
-        // いずれかの文字を検索
-        constexpr size_type find_first_of(StringView v, size_type pos = 0) const noexcept
+            return rfind(TStringView(s), pos);
+        }        // いずれかの文字を検索
+        constexpr size_type find_first_of(TStringView v, size_type pos = 0) const noexcept
         {
             if (pos >= size_ || v.empty())
             {
@@ -325,23 +375,23 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        constexpr size_type find_first_of(TCHAR ch, size_type pos = 0) const noexcept
+        constexpr size_type find_first_of(CharT ch, size_type pos = 0) const noexcept
         {
             return find(ch, pos);
         }
 
-        constexpr size_type find_first_of(const TCHAR *s, size_type pos, size_type count) const noexcept
+        constexpr size_type find_first_of(const_pointer s, size_type pos, size_type count) const noexcept
         {
-            return find_first_of(StringView(s, count), pos);
+            return find_first_of(TStringView(s, count), pos);
         }
 
-        constexpr size_type find_first_of(const TCHAR *s, size_type pos = 0) const noexcept
+        constexpr size_type find_first_of(const_pointer s, size_type pos = 0) const noexcept
         {
-            return find_first_of(StringView(s), pos);
+            return find_first_of(TStringView(s), pos);
         }
 
         // いずれの文字も検索しない
-        constexpr size_type find_first_not_of(StringView v, size_type pos = 0) const noexcept
+        constexpr size_type find_first_not_of(TStringView v, size_type pos = 0) const noexcept
         {
             if (pos >= size_)
             {
@@ -384,20 +434,18 @@ namespace NorvesLib::Core::Container
             }
 
             return npos;
+        }        constexpr size_type find_first_not_of(const_pointer s, size_type pos, size_type count) const noexcept
+        {
+            return find_first_not_of(TStringView(s, count), pos);
         }
 
-        constexpr size_type find_first_not_of(const TCHAR *s, size_type pos, size_type count) const noexcept
+        constexpr size_type find_first_not_of(const_pointer s, size_type pos = 0) const noexcept
         {
-            return find_first_not_of(StringView(s, count), pos);
-        }
-
-        constexpr size_type find_first_not_of(const TCHAR *s, size_type pos = 0) const noexcept
-        {
-            return find_first_not_of(StringView(s), pos);
+            return find_first_not_of(TStringView(s), pos);
         }
 
         // 最後のいずれかの文字を検索
-        size_type find_last_of(StringView v, size_type pos = npos) const noexcept
+        size_type find_last_of(TStringView v, size_type pos = npos) const noexcept
         {
             if (empty() || v.empty())
             {
@@ -419,25 +467,23 @@ namespace NorvesLib::Core::Container
             }
 
             return npos;
-        }
-
-        size_type find_last_of(TCHAR ch, size_type pos = npos) const noexcept
+        }        size_type find_last_of(CharT ch, size_type pos = npos) const noexcept
         {
             return rfind(ch, pos);
         }
 
-        size_type find_last_of(const TCHAR *s, size_type pos, size_type count) const noexcept
+        size_type find_last_of(const_pointer s, size_type pos, size_type count) const noexcept
         {
-            return find_last_of(StringView(s, count), pos);
+            return find_last_of(TStringView(s, count), pos);
         }
 
-        size_type find_last_of(const TCHAR *s, size_type pos = npos) const noexcept
+        size_type find_last_of(const_pointer s, size_type pos = npos) const noexcept
         {
-            return find_last_of(StringView(s), pos);
+            return find_last_of(TStringView(s), pos);
         }
 
         // 最後のいずれでもない文字を検索
-        constexpr size_type find_last_not_of(StringView v, size_type pos = npos) const noexcept
+        constexpr size_type find_last_not_of(TStringView v, size_type pos = npos) const noexcept
         {
             if (empty())
             {
@@ -486,32 +532,29 @@ namespace NorvesLib::Core::Container
             }
 
             return npos;
+        }        constexpr size_type find_last_not_of(const_pointer s, size_type pos, size_type count) const noexcept
+        {
+            return find_last_not_of(TStringView(s, count), pos);
         }
 
-        constexpr size_type find_last_not_of(const TCHAR *s, size_type pos, size_type count) const noexcept
+        constexpr size_type find_last_not_of(const_pointer s, size_type pos = npos) const noexcept
         {
-            return find_last_not_of(StringView(s, count), pos);
-        }
-
-        constexpr size_type find_last_not_of(const TCHAR *s, size_type pos = npos) const noexcept
-        {
-            return find_last_not_of(StringView(s), pos);
+            return find_last_not_of(TStringView(s), pos);
         }
 
         // Spanへの変換メソッド
-        constexpr Span<const TCHAR> as_span() const noexcept
+        constexpr Span<const CharT> as_span() const noexcept
         {
-            return Span<const TCHAR>(data_, size_);
+            return Span<const CharT>(data_, size_);
         }
 
         // std::basic_string への変換
         std::basic_string<TCHAR> to_string() const
         {
             return std::basic_string<TCHAR>(data_, size_);
-        }
-
-        // ストリーム出力
-        friend std::basic_ostream<TCHAR> &operator<<(std::basic_ostream<TCHAR> &os, const StringView &sv)
+        }        // ストリーム出力
+        template<typename OStreamT>
+        friend OStreamT &operator<<(OStreamT &os, const TStringView &sv)
         {
             for (const auto c : sv)
             {
@@ -523,34 +566,48 @@ namespace NorvesLib::Core::Container
     private:
         const_pointer data_;
         size_type size_;
-    }; // 比較演算子 - inlineで重複定義を回避
-    inline bool operator==(StringView lhs, StringView rhs) noexcept
+    };
+
+    // 比較演算子（テンプレート版）
+    template<typename CharT>
+    inline bool operator==(TStringView<CharT> lhs, TStringView<CharT> rhs) noexcept
     {
         return lhs.compare(rhs) == 0;
     }
 
-    inline bool operator!=(StringView lhs, StringView rhs) noexcept
+    template<typename CharT>
+    inline bool operator!=(TStringView<CharT> lhs, TStringView<CharT> rhs) noexcept
     {
         return lhs.compare(rhs) != 0;
     }
 
-    inline bool operator<(StringView lhs, StringView rhs) noexcept
+    template<typename CharT>
+    inline bool operator<(TStringView<CharT> lhs, TStringView<CharT> rhs) noexcept
     {
         return lhs.compare(rhs) < 0;
     }
 
-    inline bool operator<=(StringView lhs, StringView rhs) noexcept
+    template<typename CharT>
+    inline bool operator<=(TStringView<CharT> lhs, TStringView<CharT> rhs) noexcept
     {
         return lhs.compare(rhs) <= 0;
     }
 
-    inline bool operator>(StringView lhs, StringView rhs) noexcept
+    template<typename CharT>
+    inline bool operator>(TStringView<CharT> lhs, TStringView<CharT> rhs) noexcept
     {
         return lhs.compare(rhs) > 0;
     }
 
-    inline bool operator>=(StringView lhs, StringView rhs) noexcept
+    template<typename CharT>
+    inline bool operator>=(TStringView<CharT> lhs, TStringView<CharT> rhs) noexcept
     {
         return lhs.compare(rhs) >= 0;
     }
-}
+
+    // 型エイリアス
+    using StringView = TStringView<TCHAR>;
+    using AnsiStringView = TStringView<char>;
+    using WideStringView = TStringView<wchar_t>;
+
+} // namespace NorvesLib::Core::Container
