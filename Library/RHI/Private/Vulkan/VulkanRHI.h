@@ -4,9 +4,9 @@
 #include "RHI/Public/RHITypes.h"
 #include "VulkanDevice.h"
 
-namespace NorvesLib::RHI::Vulkan 
+namespace NorvesLib::RHI::Vulkan
 {
 
-// VulkanInitParamsはVulkanDevice.hで定義されています
+    // VulkanInitParamsはVulkanDevice.hで定義されています
 
 } // namespace NorvesLib::RHI::Vulkan
