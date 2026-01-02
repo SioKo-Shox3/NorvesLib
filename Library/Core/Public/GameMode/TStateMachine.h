@@ -4,27 +4,43 @@
 #include "Core/Public/Container/PointerTypes.h"
 #include <utility> // std::move
 
-namespace NorvesLib::GameMode
+namespace NorvesLib::Core::GameMode
 {
-    // テンプレートステートマシンクラス
+
+    /**
+     * @brief テンプレートステートマシンクラス
+     *
+     * ステート型とファクトリ型をテンプレート引数として受け取り、
+     * ステートの遷移と更新を管理します。
+     *
+     * @tparam StateType ステートの型（IGameMode派生）
+     * @tparam FactoryType ファクトリの型
+     */
     template <typename StateType, typename FactoryType>
     class TStateMachine : public IStateMachine
     {
     public:
-        using StatePtr = Core::Container::TUniquePtr<StateType>;
+        using StatePtr = Container::TUniquePtr<StateType>;
 
         TStateMachine() = default;
         virtual ~TStateMachine() override = default;
 
-        // 次のステートを予約
+        /**
+         * @brief 次のステートを予約
+         * @tparam T ステートの具象型
+         * @param nextState 次のステート
+         */
         template <typename T>
-        void ReserveState(Core::Container::TUniquePtr<T> nextState)
+        void ReserveState(Container::TUniquePtr<T> nextState)
         {
             m_NextState = std::move(nextState);
         }
 
-        // ステートマシンを更新
-        void Update(float deltaTime)
+        /**
+         * @brief ステートマシンを更新
+         * @param deltaTime フレーム間隔（秒）
+         */
+        virtual void Update(float deltaTime) override
         {
             m_DeltaTime = deltaTime; // デルタタイムを更新
 
@@ -50,15 +66,30 @@ namespace NorvesLib::GameMode
             }
         }
 
-        // 現在のステートを取得
+        /**
+         * @brief 現在のステートを取得
+         * @return 現在のステートへのポインタ
+         */
         StateType *GetCurrentState() const
         {
             return m_CurrentState.get();
         }
 
-        // ファクトリへのアクセス
-        FactoryType &GetFactory() { return m_Factory; }
-        const FactoryType &GetFactory() const { return m_Factory; }
+        /**
+         * @brief ファクトリへのアクセス
+         */
+        FactoryType &GetFactory()
+        {
+            return m_Factory;
+        }
+
+        /**
+         * @brief ファクトリへの読み取り専用アクセス
+         */
+        const FactoryType &GetFactory() const
+        {
+            return m_Factory;
+        }
 
         // IStateMachineのインターフェース実装
         virtual void *GetFactoryImpl() const override
@@ -78,12 +109,4 @@ namespace NorvesLib::GameMode
         float m_DeltaTime = 0.0f;          // 最新のデルタタイム
     };
 
-    // IStateMachineのテンプレート関数の実装
-    template <typename T>
-    void IStateMachine::ReserveState(Core::Container::TUniquePtr<T> nextState)
-    {
-        // この実装は派生クラスで上書きされる
-        // 何もしないデフォルト実装
-    }
-
-} // namespace NorvesLib::GameMode
+} // namespace NorvesLib::Core::GameMode
