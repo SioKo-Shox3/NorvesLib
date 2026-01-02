@@ -3,7 +3,7 @@
 #include "Container/PointerTypes.h"
 #include "Container/VariableArray.h"
 #include "Container/String.h"
-#include "EngineGlobals/GlobalMemoryAllocator.h"
+#include "EngineGlobals/MemoryOverrides.h"
 
 namespace NorvesLib
 {

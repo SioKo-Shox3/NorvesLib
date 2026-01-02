@@ -1,239 +1,282 @@
 ﻿#pragma once
 
-// デバッグのためにメモリオーバーライドを一時的に無効化
-// この定義をコメントアウトまたは削除して有効化
-// #define DISABLE_MEMORY_OVERRIDES
-
-#ifndef DISABLE_MEMORY_OVERRIDES
-
-#include "GlobalMemoryAllocator.h"
-#include <cstdlib>
-#include <new>
-
 /**
- * このヘッダーファイルは、組み込みのメモリ確保・解放関数を
- * NorvesLib::Core::GlobalMemoryAllocatorを使用するように再定義します
+ * @file MemoryOverrides.h
+ * @brief NorvesLibのメモリ管理インターフェース
  *
- * このヘッダーを含めると、以下の関数が置き換えられます：
- * - operator new / delete
- * - malloc / calloc / realloc / free
+ * このファイルは、NorvesLibのメモリ管理関数を提供します。
+ * 標準のmalloc/freeは使用せず、NorvesLib::Memory名前空間の関数を使用してください。
+ *
+ * 使用例:
+ *   void* ptr = NorvesLib::Memory::Malloc(size);
+ *   NorvesLib::Memory::Free(ptr);
+ *
+ *   void* aligned = NorvesLib::Memory::AlignedMalloc(size, alignment);
+ *   NorvesLib::Memory::AlignedFree(aligned);
  */
 
-#ifndef NORVES_LIB_DEFAULT_ALIGNMENT
-#define NORVES_LIB_DEFAULT_ALIGNMENT 16
-#endif
+#include <cstddef>
+#include <cstring>
+#include <new>
+#include <type_traits>
 
-// C++のnew/deleteオペレータのオーバーロード
-
-// 基本のnew
-void *operator new(std::size_t size)
+// 前方宣言
+namespace NorvesLib::Memory
 {
-    void *ptr = NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size);
-    if (!ptr)
-        throw std::bad_alloc();
-    return ptr;
-}
+    class MemorySystem;
+} // namespace NorvesLib::Memory
 
-// 配置new
-void *operator new(std::size_t size, std::align_val_t alignment)
+namespace NorvesLib::Memory
 {
-    void *ptr = NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size, static_cast<std::size_t>(alignment));
-    if (!ptr)
-        throw std::bad_alloc();
-    return ptr;
-}
+    // ===========================================
+    // 定数定義
+    // ===========================================
 
-// noexceptのnew
-void *operator new(std::size_t size, const std::nothrow_t &) noexcept
-{
-    return NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size);
-}
+    /**
+     * @brief デフォルトのアライメント値
+     */
+    constexpr size_t DefaultAlignment = 16;
 
-// noexceptの配置new
-void *operator new(std::size_t size, std::align_val_t alignment, const std::nothrow_t &) noexcept
-{
-    return NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size, static_cast<std::size_t>(alignment));
-}
+    // ===========================================
+    // 初期化・終了処理
+    // ===========================================
 
-// 基本のdelete
-void operator delete(void *ptr) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    /**
+     * @brief メモリシステムを初期化
+     *
+     * アプリケーション開始時に呼び出してください。
+     * 初期化前でも Malloc/Free は動作しますが、
+     * 最適化されていないOS直接呼び出しになります。
+     */
+    void Initialize();
 
-// サイズ指定のdelete (C++14)
-void operator delete(void *ptr, std::size_t) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    /**
+     * @brief メモリシステムを終了
+     *
+     * アプリケーション終了時に呼び出してください。
+     */
+    void Shutdown();
 
-// アライメント指定のdelete (C++17)
-void operator delete(void *ptr, std::align_val_t) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    /**
+     * @brief メモリシステムが初期化されているかを確認
+     * @return 初期化されていればtrue
+     */
+    bool IsInitialized();
 
-// サイズとアライメント指定のdelete (C++17)
-void operator delete(void *ptr, std::size_t, std::align_val_t) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    // ===========================================
+    // メモリ確保・解放関数
+    // ===========================================
 
-// nothrowのdelete
-void operator delete(void *ptr, const std::nothrow_t &) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    /**
+     * @brief メモリを確保（NorvesLib版malloc）
+     * @param size 確保するサイズ（バイト）
+     * @return 確保されたメモリへのポインタ、失敗時はnullptr
+     */
+    void *Malloc(size_t size);
 
-// nothrowでアライメント指定のdelete
-void operator delete(void *ptr, std::align_val_t, const std::nothrow_t &) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    /**
+     * @brief アライメント指定でメモリを確保
+     * @param size 確保するサイズ（バイト）
+     * @param alignment アライメント要件
+     * @return 確保されたメモリへのポインタ、失敗時はnullptr
+     */
+    void *AlignedMalloc(size_t size, size_t alignment);
 
-// 配列のnew
-void *operator new[](std::size_t size)
-{
-    void *ptr = NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size);
-    if (!ptr)
-        throw std::bad_alloc();
-    return ptr;
-}
+    /**
+     * @brief メモリを解放（NorvesLib版free）
+     * @param ptr 解放するポインタ
+     */
+    void Free(void *ptr);
 
-// アライメント指定の配列new
-void *operator new[](std::size_t size, std::align_val_t alignment)
-{
-    void *ptr = NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size, static_cast<std::size_t>(alignment));
-    if (!ptr)
-        throw std::bad_alloc();
-    return ptr;
-}
+    /**
+     * @brief アライメント指定で確保したメモリを解放
+     * @param ptr 解放するポインタ
+     */
+    void AlignedFree(void *ptr);
 
-// noexceptの配列new
-void *operator new[](std::size_t size, const std::nothrow_t &) noexcept
-{
-    return NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size);
-}
+    /**
+     * @brief ゼロ初期化してメモリを確保（NorvesLib版calloc）
+     * @param num 要素数
+     * @param size 各要素のサイズ（バイト）
+     * @return 確保されたメモリへのポインタ、失敗時はnullptr
+     */
+    void *Calloc(size_t num, size_t size);
 
-// noexceptでアライメント指定の配列new
-void *operator new[](std::size_t size, std::align_val_t alignment, const std::nothrow_t &) noexcept
-{
-    return NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size, static_cast<std::size_t>(alignment));
-}
+    /**
+     * @brief メモリを再確保（NorvesLib版realloc）
+     * @param ptr 既存のポインタ（nullptrの場合はMallocと同等）
+     * @param newSize 新しいサイズ（バイト）
+     * @return 再確保されたメモリへのポインタ、失敗時はnullptr
+     */
+    void *Realloc(void *ptr, size_t newSize);
 
-// 配列のdelete
-void operator delete[](void *ptr) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    /**
+     * @brief アライメント指定でメモリを再確保
+     * @param ptr 既存のポインタ
+     * @param newSize 新しいサイズ（バイト）
+     * @param alignment アライメント要件
+     * @return 再確保されたメモリへのポインタ、失敗時はnullptr
+     */
+    void *AlignedRealloc(void *ptr, size_t newSize, size_t alignment);
 
-// サイズ指定の配列delete
-void operator delete[](void *ptr, std::size_t) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    /**
+     * @brief 確保されたブロックのサイズを取得
+     * @param ptr メモリポインタ
+     * @return ブロックサイズ（バイト）
+     */
+    size_t GetBlockSize(const void *ptr);
 
-// アライメント指定の配列delete
-void operator delete[](void *ptr, std::align_val_t) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    /**
+     * @brief 合計確保済みメモリサイズを取得
+     * @return 確保済みメモリサイズ（バイト）
+     */
+    size_t GetTotalAllocatedSize();
 
-// サイズとアライメント指定の配列delete
-void operator delete[](void *ptr, std::size_t, std::align_val_t) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
+    // ===========================================
+    // 型付きメモリ確保ヘルパー
+    // ===========================================
 
-// nothrowの配列delete
-void operator delete[](void *ptr, const std::nothrow_t &) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
-
-// nothrowでアライメント指定の配列delete
-void operator delete[](void *ptr, std::align_val_t, const std::nothrow_t &) noexcept
-{
-    NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-}
-
-// C言語のメモリ関数の再定義
-
-extern "C"
-{
-
-    // malloc関数の置き換え
-    void *malloc(size_t size)
+    /**
+     * @brief 型Tのメモリを確保（コンストラクタは呼ばない）
+     * @tparam T 型
+     * @param count 要素数
+     * @return 確保されたメモリへのポインタ
+     */
+    template <typename T>
+    T *TypedMalloc(size_t count = 1)
     {
-        return NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size);
+        return static_cast<T *>(AlignedMalloc(sizeof(T) * count, alignof(T)));
     }
 
-    // calloc関数の置き換え
-    void *calloc(size_t num, size_t size)
+    /**
+     * @brief 型Tのメモリを解放（デストラクタは呼ばない）
+     * @tparam T 型
+     * @param ptr 解放するポインタ
+     */
+    template <typename T>
+    void TypedFree(T *ptr)
     {
-        size_t totalSize = num * size;
-        void *ptr = NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(totalSize);
+        AlignedFree(ptr);
+    }
+
+    // ===========================================
+    // オブジェクト生成・破棄ヘルパー
+    // ===========================================
+
+    /**
+     * @brief 型Tのオブジェクトを生成（コンストラクタを呼ぶ）
+     * @tparam T 型
+     * @tparam Args コンストラクタ引数の型
+     * @param args コンストラクタ引数
+     * @return 生成されたオブジェクトへのポインタ
+     */
+    template <typename T, typename... Args>
+    T *New(Args &&...args)
+    {
+        void *ptr = AlignedMalloc(sizeof(T), alignof(T));
+        if (!ptr)
+        {
+            return nullptr;
+        }
+        return new (ptr) T(std::forward<Args>(args)...);
+    }
+
+    /**
+     * @brief 型Tのオブジェクトを破棄（デストラクタを呼ぶ）
+     * @tparam T 型
+     * @param ptr 破棄するオブジェクトへのポインタ
+     */
+    template <typename T>
+    void Delete(T *ptr)
+    {
         if (ptr)
         {
-            std::memset(ptr, 0, totalSize);
+            ptr->~T();
+            AlignedFree(ptr);
         }
-        return ptr;
-    } // realloc関数の置き換え
-    void *realloc(void *ptr, size_t newSize)
+    }
+
+    /**
+     * @brief 型Tの配列を生成（各要素のデフォルトコンストラクタを呼ぶ）
+     * @tparam T 型
+     * @param count 要素数
+     * @return 生成された配列へのポインタ
+     */
+    template <typename T>
+    T *NewArray(size_t count)
+    {
+        if (count == 0)
+        {
+            return nullptr;
+        }
+
+        // 要素数を格納するための追加スペースを確保
+        size_t headerSize = sizeof(size_t);
+        size_t alignment = alignof(T) > alignof(size_t) ? alignof(T) : alignof(size_t);
+        size_t totalSize = headerSize + sizeof(T) * count;
+
+        void *rawPtr = AlignedMalloc(totalSize, alignment);
+        if (!rawPtr)
+        {
+            return nullptr;
+        }
+
+        // 先頭に要素数を格納
+        *static_cast<size_t *>(rawPtr) = count;
+
+        // 実際の配列ポインタ
+        T *arrayPtr = reinterpret_cast<T *>(static_cast<char *>(rawPtr) + headerSize);
+
+        // 各要素を構築
+        for (size_t i = 0; i < count; ++i)
+        {
+            new (&arrayPtr[i]) T();
+        }
+
+        return arrayPtr;
+    }
+
+    /**
+     * @brief 型Tの配列を破棄（各要素のデストラクタを呼ぶ）
+     * @tparam T 型
+     * @param ptr 破棄する配列へのポインタ
+     */
+    template <typename T>
+    void DeleteArray(T *ptr)
     {
         if (!ptr)
         {
-            return NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(newSize);
+            return;
         }
 
-        if (newSize == 0)
+        // ヘッダーから要素数を取得
+        size_t headerSize = sizeof(size_t);
+        void *rawPtr = static_cast<void *>(reinterpret_cast<char *>(ptr) - headerSize);
+        size_t count = *static_cast<size_t *>(rawPtr);
+
+        // 逆順でデストラクタを呼ぶ
+        for (size_t i = count; i > 0; --i)
         {
-            NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-            return nullptr;
+            ptr[i - 1].~T();
         }
 
-        // TLSFAllocatorから元のブロックサイズを取得
-        auto &allocator = NorvesLib::Core::GlobalMemoryAllocator::Get();
-        size_t oldSize = allocator.GetBlockSize(ptr);
-
-        if (oldSize == 0)
-        {
-            // 無効なポインタの場合、新しいメモリを確保
-            return allocator.Allocate(newSize);
-        }
-
-        // 新しいメモリを確保
-        void *newPtr = allocator.Allocate(newSize);
-        if (!newPtr)
-        {
-            return nullptr;
-        }
-
-        // 元のデータをコピー（安全なサイズでコピー）
-        size_t copySize = (oldSize < newSize) ? oldSize : newSize;
-        std::memcpy(newPtr, ptr, copySize);
-
-        // 元のメモリを解放
-        allocator.Deallocate(ptr);
-
-        return newPtr;
+        AlignedFree(rawPtr);
     }
 
-    // free関数の置き換え
-    void free(void *ptr)
-    {
-        if (ptr)
-        {
-            NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
-        }
-    }
+} // namespace NorvesLib::Memory
 
-    // aligned_alloc関数の置き換え
-    void *aligned_alloc(size_t alignment, size_t size)
-    {
-        return NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(size, alignment);
-    }
+// ===========================================
+// グローバル new/delete 演算子オーバーライド
+// ===========================================
 
-} // extern "C"
+/**
+ * グローバルのnew/delete演算子をオーバーライドして、
+ * すべてのメモリ確保をNorvesLibのメモリシステム経由にします。
+ *
+ * 注意: これらの演算子はCPPファイル(MemoryOverrides.cpp)で定義されています。
+ * ヘッダーでは宣言のみ行います。
+ */
 
-#endif // !DISABLE_MEMORY_OVERRIDES
+// operator new/delete の宣言はシステムヘッダーで既に行われているため、
+// ここでは追加の宣言は不要です。
+// 実装は MemoryOverrides.cpp で行います。
