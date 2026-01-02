@@ -1,9 +1,10 @@
 ﻿#pragma once
 
 #include "RHI/Public/ICommandList.h"
-#include <vulkan/vulkan.h>
-#include <memory>
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <vulkan/vulkan.hpp>
 #include "Core/Public/Container/Containers.h"
+#include "Container/PointerTypes.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -22,32 +23,34 @@ class VulkanDescriptorSet;
  */
 struct ResourceBarrierTracker
 {
-    struct BufferState {
-        VkAccessFlags accessFlags = 0;
-        VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    struct BufferState
+    {
+        vk::AccessFlags accessFlags = {};
+        vk::PipelineStageFlags stageFlags = vk::PipelineStageFlagBits::eTopOfPipe;
         uint32_t queueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     };
     
-    struct ImageState {
-        VkAccessFlags accessFlags = 0;
-        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    struct ImageState
+    {
+        vk::AccessFlags accessFlags = {};
+        vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+        vk::PipelineStageFlags stageFlags = vk::PipelineStageFlagBits::eTopOfPipe;
         uint32_t queueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        vk::ImageAspectFlags aspectMask = vk::ImageAspectFlagBits::eColor;
     };
     
     // リソースの状態を追跡
-    NorvesLib::Core::Container::UnorderedMap<VkBuffer, BufferState> bufferStates;
-    NorvesLib::Core::Container::UnorderedMap<VkImage, ImageState> imageStates;
+    NorvesLib::Core::Container::UnorderedMap<vk::Buffer, BufferState> bufferStates;
+    NorvesLib::Core::Container::UnorderedMap<vk::Image, ImageState> imageStates;
     
     // リソース状態からアクセスフラグに変換
-    VkAccessFlags ResourceStateToAccessFlags(ResourceState state) const;
+    vk::AccessFlags ResourceStateToAccessFlags(ResourceState state) const;
     
     // リソース状態からパイプラインステージフラグに変換
-    VkPipelineStageFlags ResourceStateToPipelineStageFlags(ResourceState state) const;
+    vk::PipelineStageFlags ResourceStateToPipelineStageFlags(ResourceState state) const;
     
     // リソース状態からイメージレイアウトに変換
-    VkImageLayout ResourceStateToImageLayout(ResourceState state) const;
+    vk::ImageLayout ResourceStateToImageLayout(ResourceState state) const;
 };
 
 /**
@@ -58,24 +61,24 @@ struct PipelineStateCache
     // グラフィックスパイプラインのキーと生成済みパイプラインのマッピング
     struct GraphicsPipelineCacheKey 
     {
-        VkRenderPass renderPass;
-        NorvesLib::Core::Container::VariableArray<VkShaderModule> shaderModules;
-        NorvesLib::Core::Container::VariableArray<VkVertexInputBindingDescription> vertexBindings;
-        NorvesLib::Core::Container::VariableArray<VkVertexInputAttributeDescription> vertexAttributes;
-        VkPrimitiveTopology topology;
-        VkCullModeFlags cullMode;
-        VkFrontFace frontFace;
-        VkPolygonMode polygonMode;
-        bool depthTestEnable;
-        bool depthWriteEnable;
-        VkCompareOp depthCompareOp;
-        bool blendEnable;
-        VkBlendFactor srcColorBlendFactor;
-        VkBlendFactor dstColorBlendFactor;
-        VkBlendOp colorBlendOp;
-        VkBlendFactor srcAlphaBlendFactor;
-        VkBlendFactor dstAlphaBlendFactor;
-        VkBlendOp alphaBlendOp;
+        vk::RenderPass renderPass;
+        NorvesLib::Core::Container::VariableArray<vk::ShaderModule> shaderModules;
+        NorvesLib::Core::Container::VariableArray<vk::VertexInputBindingDescription> vertexBindings;
+        NorvesLib::Core::Container::VariableArray<vk::VertexInputAttributeDescription> vertexAttributes;
+        vk::PrimitiveTopology topology;
+        vk::CullModeFlags cullMode;
+        vk::FrontFace frontFace;
+        vk::PolygonMode polygonMode;
+        bool bDepthTestEnable;
+        bool bDepthWriteEnable;
+        vk::CompareOp depthCompareOp;
+        bool bBlendEnable;
+        vk::BlendFactor srcColorBlendFactor;
+        vk::BlendFactor dstColorBlendFactor;
+        vk::BlendOp colorBlendOp;
+        vk::BlendFactor srcAlphaBlendFactor;
+        vk::BlendFactor dstAlphaBlendFactor;
+        vk::BlendOp alphaBlendOp;
         
         // ハッシュ計算用関数
         bool operator==(const GraphicsPipelineCacheKey& other) const;
@@ -89,7 +92,7 @@ struct PipelineStateCache
     // コンピュートパイプラインのキーと生成済みパイプラインのマッピング
     struct ComputePipelineCacheKey
     {
-        VkShaderModule computeShader;
+        vk::ShaderModule computeShader;
         
         // ハッシュ計算用関数
         bool operator==(const ComputePipelineCacheKey& other) const;
@@ -101,22 +104,24 @@ struct PipelineStateCache
     };
     
     // パイプラインキャッシュ
-    NorvesLib::Core::Container::UnorderedMap<GraphicsPipelineCacheKey, VkPipeline, GraphicsPipelineCacheKeyHash> graphicsPipelines;
-    NorvesLib::Core::Container::UnorderedMap<ComputePipelineCacheKey, VkPipeline, ComputePipelineCacheKeyHash> computePipelines;
+    NorvesLib::Core::Container::UnorderedMap<GraphicsPipelineCacheKey, vk::Pipeline, GraphicsPipelineCacheKeyHash> graphicsPipelines;
+    NorvesLib::Core::Container::UnorderedMap<ComputePipelineCacheKey, vk::Pipeline, ComputePipelineCacheKeyHash> computePipelines;
     
     // Vulkanパイプラインキャッシュオブジェクト
-    VkPipelineCache vkPipelineCache = VK_NULL_HANDLE;
+    vk::PipelineCache pipelineCache;
 };
 
 /**
  * @brief シェーダーバインディングキー（ディスクリプタリソース管理用）
  */
-struct ShaderBindingKey {
+struct ShaderBindingKey
+{
     uint32_t set;          // ディスクリプタセット番号
     uint32_t binding;      // バインディング番号
     ShaderStage stage;     // シェーダーステージ
     
-    bool operator==(const ShaderBindingKey& other) const {
+    bool operator==(const ShaderBindingKey& other) const
+    {
         return set == other.set && binding == other.binding && stage == other.stage;
     }
 };
@@ -124,27 +129,31 @@ struct ShaderBindingKey {
 /**
  * @brief ShaderBindingKeyのハッシュ関数
  */
-struct ShaderBindingKeyHash {
-    size_t operator()(const ShaderBindingKey& key) const {
+struct ShaderBindingKeyHash
+{
+    size_t operator()(const ShaderBindingKey& key) const
+    {
         return std::hash<uint32_t>()(key.set) ^
                (std::hash<uint32_t>()(key.binding) << 1) ^
-               (std::hash<uint32_t>()((uint32_t)key.stage) << 2);
+               (std::hash<uint32_t>()(static_cast<uint32_t>(key.stage)) << 2);
     }
 };
 
 /**
  * @brief バインディングリソース情報
  */
-struct BindingResourceInfo {
-    enum class Type {
+struct BindingResourceInfo
+{
+    enum class Type
+    {
         Buffer,
         Texture,
         Sampler
     };
     
     Type type;
-    std::shared_ptr<void> resource; // リソースへの参照
-    uint64_t offset = 0;           // バッファのオフセット
+    TSharedPtr<void> resource; // リソースへの参照
+    uint64_t offset = 0;       // バッファのオフセット
     uint64_t range = VK_WHOLE_SIZE; // バッファのサイズ
 };
 
@@ -158,7 +167,7 @@ public:
      * @brief VulkanCommandListのコンストラクタ
      * @param device Vulkanデバイス
      */
-    explicit VulkanCommandList(std::shared_ptr<VulkanDevice> device);
+    explicit VulkanCommandList(TSharedPtr<VulkanDevice> device);
     
     /**
      * @brief デストラクタ
@@ -168,7 +177,7 @@ public:
     // ICommandListインターフェース実装
     void Begin() override;
     void End() override;
-    void Submit(bool waitForCompletion = false) override;
+    void Submit(bool bWaitForCompletion = false) override;
     
     void BeginRenderPass(RenderPassPtr renderPass, FramebufferPtr framebuffer) override;
     void EndRenderPass() override;
@@ -211,8 +220,8 @@ public:
                        uint32_t mipLevel = 0, uint32_t arrayIndex = 0, uint32_t mipCount = 0, uint32_t arrayCount = 0) override;
 
     // Vulkan固有のメソッド
-    VkCommandBuffer GetVkCommandBuffer() const { return m_commandBuffer; }
-    bool IsInRenderPass() const { return m_inRenderPass; }
+    vk::CommandBuffer GetVkCommandBuffer() const { return m_commandBuffer; }
+    bool IsInRenderPass() const { return m_bInRenderPass; }
 
     /**
      * @brief 最適化されたバッファバリア
@@ -229,21 +238,21 @@ public:
      * @param newState 新しいリソース状態
      * @param subresourceRange サブリソース範囲
      */
-    void OptimizedTextureBarrier(VulkanTexture* texture, ResourceState newState, const VkImageSubresourceRange& subresourceRange);
+    void OptimizedTextureBarrier(VulkanTexture* texture, ResourceState newState, const vk::ImageSubresourceRange& subresourceRange);
     
     /**
      * @brief グラフィックスパイプラインのキャッシュ取得/作成
      * @param key パイプラインキャッシュキー
      * @return キャッシュされたパイプライン、または新しく作成されたパイプライン
      */
-    VkPipeline GetOrCreateGraphicsPipeline(const PipelineStateCache::GraphicsPipelineCacheKey& key);
+    vk::Pipeline GetOrCreateGraphicsPipeline(const PipelineStateCache::GraphicsPipelineCacheKey& key);
     
     /**
      * @brief コンピュートパイプラインのキャッシュ取得/作成
      * @param key パイプラインキャッシュキー
      * @return キャッシュされたパイプライン、または新しく作成されたパイプライン
      */
-    VkPipeline GetOrCreateComputePipeline(const PipelineStateCache::ComputePipelineCacheKey& key);
+    vk::Pipeline GetOrCreateComputePipeline(const PipelineStateCache::ComputePipelineCacheKey& key);
     
     /**
      * @brief パイプラインキャッシュの保存
@@ -263,17 +272,17 @@ public:
     void ResetResourceBarriers();
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;
-    VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
-    VkFence m_fence = VK_NULL_HANDLE;
+    TSharedPtr<VulkanDevice> m_device;
+    vk::CommandBuffer m_commandBuffer;
+    vk::Fence m_fence;
     
     // ディスクリプタプール関連
-    NorvesLib::Core::Container::VariableArray<VkDescriptorPool> m_descriptorPools;
+    NorvesLib::Core::Container::VariableArray<vk::DescriptorPool> m_descriptorPools;
     static constexpr uint32_t MAX_DESCRIPTOR_SETS = 100;
     static constexpr uint32_t MAX_DESCRIPTORS_PER_TYPE = 1000;
     
-    bool m_isRecording = false;
-    bool m_inRenderPass = false;
+    bool m_bIsRecording = false;
+    bool m_bInRenderPass = false;
     
     // 現在バインドされているリソース
     PipelinePtr m_currentPipeline;
@@ -289,35 +298,40 @@ private:
     PipelineStateCache m_pipelineStateCache;
     
     // 一時リソース保存用（リソース解放を防ぐため）
-    NorvesLib::Core::Container::VariableArray<std::shared_ptr<void>> m_temporaryResources;
+    NorvesLib::Core::Container::VariableArray<TSharedPtr<void>> m_temporaryResources;
     
     // ディスクリプタセット管理
-    struct DescriptorSetInfo {
-        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    struct DescriptorSetInfo
+    {
+        vk::DescriptorSet descriptorSet;
         NorvesLib::Core::Container::UnorderedMap<ShaderBindingKey, BindingResourceInfo, ShaderBindingKeyHash> resources;
-        bool isDirty = false;
+        bool bIsDirty = false;
     };
     
     NorvesLib::Core::Container::UnorderedMap<uint32_t, DescriptorSetInfo> m_descriptorSetCache;
+    
+    // バインディングリソース情報
+    NorvesLib::Core::Container::UnorderedMap<ShaderBindingKey, BindingResourceInfo, ShaderBindingKeyHash> m_bindingResources;
     
     // プライベートメソッド
     void Reset();
     void CreateDescriptorPool();
     void DestroyDescriptorPool();
     bool UpdateDescriptorSet(uint32_t setIndex);
-    VkDescriptorSet GetOrCreateDescriptorSet(uint32_t setIndex, VkDescriptorSetLayout layout);
+    vk::DescriptorSet GetOrCreateDescriptorSet(uint32_t setIndex, vk::DescriptorSetLayout layout);
     void BindDescriptorSets();
     
     // リソース参照の追加（リソース解放防止用）
     template<typename T>
-    void AddTemporaryResource(std::shared_ptr<T> resource) {
-        m_temporaryResources.push_back(std::static_pointer_cast<void>(resource));
+    void AddTemporaryResource(TSharedPtr<T> resource)
+    {
+        m_temporaryResources.push_back(StaticPointerCast<void>(resource));
     }
     
     // シェーダーステージをVkPipelineStageに変換
-    VkPipelineStageFlags ToVkPipelineStage(ShaderStage stage) const;
+    vk::PipelineStageFlags ToVkPipelineStage(ShaderStage stage) const;
     // シェーダーステージをVkシェーダーステージに変換
-    VkShaderStageFlags ToVkShaderStageFlags(ShaderStage stage) const;
+    vk::ShaderStageFlags ToVkShaderStageFlags(ShaderStage stage) const;
 };
 
 } // namespace NorvesLib::RHI::Vulkan

@@ -5,14 +5,11 @@
 namespace NorvesLib::RHI::Vulkan
 {
 
-// コンストラクタ
-VulkanSampler::VulkanSampler(std::shared_ptr<VulkanDevice> device, const SamplerDesc& desc)
+VulkanSampler::VulkanSampler(TSharedPtr<VulkanDevice> device, const SamplerDesc& desc)
     : m_device(device)
     , m_desc(desc)
 {
-    // サンプラー作成情報の設定
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    vk::SamplerCreateInfo samplerInfo;
     
     // フィルタリングの設定
     samplerInfo.magFilter = ToVkFilter(desc.filterMag);
@@ -25,17 +22,17 @@ VulkanSampler::VulkanSampler(std::shared_ptr<VulkanDevice> device, const Sampler
     samplerInfo.addressModeW = ToVkAddressMode(desc.addressModeW);
     
     // アニソトロピック フィルタリングの設定
-    samplerInfo.anisotropyEnable = desc.maxAnisotropy > 1 ? VK_TRUE : VK_FALSE;
+    samplerInfo.anisotropyEnable = desc.maxAnisotropy > 1 ? vk::True : vk::False;
     samplerInfo.maxAnisotropy = static_cast<float>(desc.maxAnisotropy);
     
     // ボーダーカラーの設定
     samplerInfo.borderColor = ToVkBorderColor(desc.borderColor);
     
     // 座標の正規化設定
-    samplerInfo.unnormalizedCoordinates = VK_FALSE; // 常に正規化
+    samplerInfo.unnormalizedCoordinates = vk::False;
     
     // 比較機能の設定
-    samplerInfo.compareEnable = desc.compareFunc != CompareFunc::Never ? VK_TRUE : VK_FALSE;
+    samplerInfo.compareEnable = desc.compareFunc != CompareFunc::Never ? vk::True : vk::False;
     samplerInfo.compareOp = ToVkCompareOp(desc.compareFunc);
     
     // MIPマップの設定
@@ -44,108 +41,107 @@ VulkanSampler::VulkanSampler(std::shared_ptr<VulkanDevice> device, const Sampler
     samplerInfo.maxLod = desc.maxLod;
     
     // サンプラーの作成
-    if (vkCreateSampler(m_device->GetVkDevice(), &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS) {
+    auto result = m_device->GetVkDevice().createSampler(samplerInfo);
+    if (result.result != vk::Result::eSuccess)
+    {
         throw std::runtime_error("Vulkanサンプラーの作成に失敗しました");
     }
+    m_sampler = result.value;
 }
 
-// デストラクタ
 VulkanSampler::~VulkanSampler()
 {
-    if (m_sampler != VK_NULL_HANDLE) {
-        vkDestroySampler(m_device->GetVkDevice(), m_sampler, nullptr);
+    if (m_sampler)
+    {
+        m_device->GetVkDevice().destroySampler(m_sampler);
+        m_sampler = nullptr;
     }
 }
 
-// フィルターモードをVulkanフィルターに変換
-VkFilter VulkanSampler::ToVkFilter(FilterMode mode) const
+vk::Filter VulkanSampler::ToVkFilter(FilterMode mode) const
 {
     switch (mode)
     {
     case FilterMode::Point:
-        return VK_FILTER_NEAREST;
+        return vk::Filter::eNearest;
     case FilterMode::Linear:
     case FilterMode::Anisotropic:
-        return VK_FILTER_LINEAR;
+        return vk::Filter::eLinear;
     default:
-        return VK_FILTER_LINEAR;
+        return vk::Filter::eLinear;
     }
 }
 
-// ミップマップフィルターモードをVulkanミップマップモードに変換
-VkSamplerMipmapMode VulkanSampler::ToVkMipmapMode(FilterMode mode) const
+vk::SamplerMipmapMode VulkanSampler::ToVkMipmapMode(FilterMode mode) const
 {
     switch (mode)
     {
     case FilterMode::Point:
-        return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        return vk::SamplerMipmapMode::eNearest;
     case FilterMode::Linear:
     case FilterMode::Anisotropic:
-        return VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        return vk::SamplerMipmapMode::eLinear;
     default:
-        return VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        return vk::SamplerMipmapMode::eLinear;
     }
 }
 
-// アドレッシングモードをVulkanアドレッシングモードに変換
-VkSamplerAddressMode VulkanSampler::ToVkAddressMode(TextureAddressMode mode) const
+vk::SamplerAddressMode VulkanSampler::ToVkAddressMode(TextureAddressMode mode) const
 {
     switch (mode)
     {
     case TextureAddressMode::Wrap:
-        return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        return vk::SamplerAddressMode::eRepeat;
     case TextureAddressMode::Mirror:
-        return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+        return vk::SamplerAddressMode::eMirroredRepeat;
     case TextureAddressMode::Clamp:
-        return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        return vk::SamplerAddressMode::eClampToEdge;
     case TextureAddressMode::Border:
-        return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        return vk::SamplerAddressMode::eClampToBorder;
     case TextureAddressMode::MirrorOnce:
-        return VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
+        return vk::SamplerAddressMode::eMirrorClampToEdge;
     default:
-        return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        return vk::SamplerAddressMode::eRepeat;
     }
 }
 
-// 比較関数をVulkan比較関数に変換
-VkCompareOp VulkanSampler::ToVkCompareOp(CompareFunc func) const
+vk::CompareOp VulkanSampler::ToVkCompareOp(CompareFunc func) const
 {
     switch (func)
     {
     case CompareFunc::Never:
-        return VK_COMPARE_OP_NEVER;
+        return vk::CompareOp::eNever;
     case CompareFunc::Less:
-        return VK_COMPARE_OP_LESS;
+        return vk::CompareOp::eLess;
     case CompareFunc::Equal:
-        return VK_COMPARE_OP_EQUAL;
+        return vk::CompareOp::eEqual;
     case CompareFunc::LessEqual:
-        return VK_COMPARE_OP_LESS_OR_EQUAL;
+        return vk::CompareOp::eLessOrEqual;
     case CompareFunc::Greater:
-        return VK_COMPARE_OP_GREATER;
+        return vk::CompareOp::eGreater;
     case CompareFunc::NotEqual:
-        return VK_COMPARE_OP_NOT_EQUAL;
+        return vk::CompareOp::eNotEqual;
     case CompareFunc::GreaterEqual:
-        return VK_COMPARE_OP_GREATER_OR_EQUAL;
+        return vk::CompareOp::eGreaterOrEqual;
     case CompareFunc::Always:
-        return VK_COMPARE_OP_ALWAYS;
+        return vk::CompareOp::eAlways;
     default:
-        return VK_COMPARE_OP_NEVER;
+        return vk::CompareOp::eNever;
     }
 }
 
-// ボーダーカラーをVulkanボーダーカラーに変換
-VkBorderColor VulkanSampler::ToVkBorderColor(SamplerDesc::BorderColor color) const
+vk::BorderColor VulkanSampler::ToVkBorderColor(SamplerDesc::BorderColor color) const
 {
     switch (color)
     {
     case SamplerDesc::BorderColor::TransparentBlack:
-        return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+        return vk::BorderColor::eFloatTransparentBlack;
     case SamplerDesc::BorderColor::OpaqueBlack:
-        return VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+        return vk::BorderColor::eFloatOpaqueBlack;
     case SamplerDesc::BorderColor::OpaqueWhite:
-        return VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+        return vk::BorderColor::eFloatOpaqueWhite;
     default:
-        return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+        return vk::BorderColor::eFloatTransparentBlack;
     }
 }
 

@@ -1,8 +1,8 @@
 ﻿#pragma once
 
 #include "RHI/Public/ISwapChain.h"
-#include <vulkan/vulkan.h>
-#include <memory>
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <vulkan/vulkan.hpp>
 #include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
@@ -22,7 +22,7 @@ public:
      * @param device Vulkanデバイス
      * @param desc スワップチェーン作成情報
      */
-    VulkanSwapChain(std::shared_ptr<VulkanDevice> device, const SwapChainDesc& desc);
+    VulkanSwapChain(NorvesLib::Core::Container::TSharedPtr<VulkanDevice> device, const SwapChainDesc& desc);
     
     /**
      * @brief デストラクタ
@@ -86,12 +86,12 @@ public:
     Format GetFormat() const override { return m_format; }
 
     // Vulkan固有の機能
-    VkSwapchainKHR GetVkSwapchain() const { return m_swapChain; }
-    VkSurfaceKHR GetVkSurface() const { return m_surface; }
-    VkFormat GetVkFormat() const { return m_vkFormat; }
+    vk::SwapchainKHR GetVkSwapchain() const { return m_swapChain; }
+    vk::SurfaceKHR GetVkSurface() const { return m_surface; }
+    vk::Format GetVkFormat() const { return m_vkFormat; }
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;
+    NorvesLib::Core::Container::TSharedPtr<VulkanDevice> m_device;
     SwapChainDesc m_desc;
     
     uint32_t m_width = 0;
@@ -100,20 +100,20 @@ private:
     uint32_t m_currentImageIndex = 0;
     
     // Vulkan固有のメンバ
-    VkSwapchainKHR m_swapChain = VK_NULL_HANDLE;
-    VkSurfaceKHR m_surface = VK_NULL_HANDLE;
-    VkFormat m_vkFormat = VK_FORMAT_UNDEFINED;
-    VkColorSpaceKHR m_colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-    VkPresentModeKHR m_presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    vk::SwapchainKHR m_swapChain;
+    vk::SurfaceKHR m_surface;
+    vk::Format m_vkFormat = vk::Format::eUndefined;
+    vk::ColorSpaceKHR m_colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear;
+    vk::PresentModeKHR m_presentMode = vk::PresentModeKHR::eFifo;
     
     // スワップチェーンイメージ関連
-    NorvesLib::Core::Container::VariableArray<VkImage> m_swapChainImages;
-    NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanTexture>> m_backBufferTextures;
+    NorvesLib::Core::Container::VariableArray<vk::Image> m_swapChainImages;
+    NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::TSharedPtr<VulkanTexture>> m_backBufferTextures;
     
     // 同期オブジェクト
-    NorvesLib::Core::Container::VariableArray<VkSemaphore> m_imageAvailableSemaphores;
-    NorvesLib::Core::Container::VariableArray<VkSemaphore> m_renderFinishedSemaphores;
-    NorvesLib::Core::Container::VariableArray<VkFence> m_inFlightFences;
+    NorvesLib::Core::Container::VariableArray<vk::Semaphore> m_imageAvailableSemaphores;
+    NorvesLib::Core::Container::VariableArray<vk::Semaphore> m_renderFinishedSemaphores;
+    NorvesLib::Core::Container::VariableArray<vk::Fence> m_inFlightFences;
     uint32_t m_currentFrame = 0;
     static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
     
@@ -125,13 +125,13 @@ private:
     
     // スワップチェーン関連ヘルパー
     void CleanupSwapChain();
-    VkSurfaceFormatKHR ChooseSurfaceFormat();
-    VkPresentModeKHR ChoosePresentMode();
-    VkExtent2D ChooseSwapExtent();
+    vk::SurfaceFormatKHR ChooseSurfaceFormat();
+    vk::PresentModeKHR ChoosePresentMode();
+    vk::Extent2D ChooseSwapExtent();
     uint32_t GetMinImageCount();
     
     // フォーマット変換ヘルパー
-    Format FromVkFormat(VkFormat format) const;
+    Format FromVkFormat(vk::Format format) const;
 };
 
 } // namespace NorvesLib::RHI::Vulkan

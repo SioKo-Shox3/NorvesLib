@@ -5,8 +5,10 @@
 namespace NorvesLib::RHI::Vulkan
 {
 
+using namespace NorvesLib::Core::Container;
+
 // コンストラクタ
-VulkanRenderPass::VulkanRenderPass(std::shared_ptr<VulkanDevice> device, const RenderPassDesc& desc)
+VulkanRenderPass::VulkanRenderPass(TSharedPtr<VulkanDevice> device, const RenderPassDesc& desc)
     : m_device(device)
     , m_desc(desc)
 {
@@ -16,8 +18,9 @@ VulkanRenderPass::VulkanRenderPass(std::shared_ptr<VulkanDevice> device, const R
 // デストラクタ
 VulkanRenderPass::~VulkanRenderPass()
 {
-    if (m_renderPass != VK_NULL_HANDLE) {
-        vkDestroyRenderPass(m_device->GetVkDevice(), m_renderPass, nullptr);
+    if (m_renderPass)
+    {
+        m_device->GetVkDevice().destroyRenderPass(m_renderPass);
     }
 }
 
@@ -29,81 +32,86 @@ void VulkanRenderPass::CreateRenderPass()
     m_colorAttachmentRefs.reserve(m_desc.colorAttachments.size());
 
     // カラーアタッチメント
-    for (size_t i = 0; i < m_desc.colorAttachments.size(); ++i) {
+    for (size_t i = 0; i < m_desc.colorAttachments.size(); ++i)
+    {
         const auto& attachment = m_desc.colorAttachments[i];
         
-        VkAttachmentDescription colorAttachment{};
+        vk::AttachmentDescription colorAttachment{};
         colorAttachment.format = GetVulkanFormat(attachment.format);
-        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        colorAttachment.samples = vk::SampleCountFlagBits::e1;
         colorAttachment.loadOp = GetVulkanLoadOp(attachment.loadOp);
         colorAttachment.storeOp = GetVulkanStoreOp(attachment.storeOp);
-        colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colorAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        colorAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
         colorAttachment.initialLayout = GetVulkanInitialLayout(attachment.initialState);
         colorAttachment.finalLayout = GetVulkanFinalLayout(attachment.finalState);
         
         m_attachmentDescs.push_back(colorAttachment);
         
-        VkAttachmentReference colorAttachmentRef{};
+        vk::AttachmentReference colorAttachmentRef{};
         colorAttachmentRef.attachment = static_cast<uint32_t>(i);
-        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colorAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
         m_colorAttachmentRefs.push_back(colorAttachmentRef);
     }
     
     // デプス/ステンシルアタッチメント
-    bool hasDepthStencil = m_desc.depthStencilAttachment.has_value();
-    if (hasDepthStencil) {
+    bool bHasDepthStencil = m_desc.depthStencilAttachment.has_value();
+    if (bHasDepthStencil)
+    {
         const auto& depthAttachment = m_desc.depthStencilAttachment.value();
         
-        VkAttachmentDescription depthAttachmentDesc{};
+        vk::AttachmentDescription depthAttachmentDesc{};
         depthAttachmentDesc.format = GetVulkanFormat(depthAttachment.format);
-        depthAttachmentDesc.samples = VK_SAMPLE_COUNT_1_BIT;
+        depthAttachmentDesc.samples = vk::SampleCountFlagBits::e1;
         depthAttachmentDesc.loadOp = GetVulkanLoadOp(depthAttachment.loadOp);
         depthAttachmentDesc.storeOp = GetVulkanStoreOp(depthAttachment.storeOp);
-        depthAttachmentDesc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        depthAttachmentDesc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachmentDesc.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        depthAttachmentDesc.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
         depthAttachmentDesc.initialLayout = GetVulkanInitialLayout(depthAttachment.initialState);
         depthAttachmentDesc.finalLayout = GetVulkanFinalLayout(depthAttachment.finalState);
         
         m_attachmentDescs.push_back(depthAttachmentDesc);
         
         m_depthAttachmentRef.attachment = static_cast<uint32_t>(m_attachmentDescs.size() - 1);
-        m_depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        m_depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
     }
     
     // サブパス記述子
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    vk::SubpassDescription subpass{};
+    subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
     
     // カラーアタッチメント
-    if (!m_colorAttachmentRefs.empty()) {
+    if (!m_colorAttachmentRefs.empty())
+    {
         subpass.colorAttachmentCount = static_cast<uint32_t>(m_colorAttachmentRefs.size());
         subpass.pColorAttachments = m_colorAttachmentRefs.data();
     }
     
     // デプス/ステンシルアタッチメント
-    if (hasDepthStencil) {
+    if (bHasDepthStencil)
+    {
         subpass.pDepthStencilAttachment = &m_depthAttachmentRef;
     }
     
     // 入力アタッチメント
-    if (!m_inputAttachmentRefs.empty()) {
+    if (!m_inputAttachmentRefs.empty())
+    {
         subpass.inputAttachmentCount = static_cast<uint32_t>(m_inputAttachmentRefs.size());
         subpass.pInputAttachments = m_inputAttachmentRefs.data();
     }
     
     // サブパス依存関係
-    VkSubpassDependency dependency{};
+    vk::SubpassDependency dependency{};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    dependency.srcAccessMask = vk::AccessFlagBits::eNone;
+    dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
     
     // レンダーパスの作成
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    vk::RenderPassCreateInfo renderPassInfo{};
+    renderPassInfo.sType = vk::StructureType::eRenderPassCreateInfo;
     renderPassInfo.attachmentCount = static_cast<uint32_t>(m_attachmentDescs.size());
     renderPassInfo.pAttachments = m_attachmentDescs.data();
     renderPassInfo.subpassCount = 1;
@@ -111,84 +119,118 @@ void VulkanRenderPass::CreateRenderPass()
     renderPassInfo.dependencyCount = 1;
     renderPassInfo.pDependencies = &dependency;
     
-    if (vkCreateRenderPass(m_device->GetVkDevice(), &renderPassInfo, nullptr, &m_renderPass) != VK_SUCCESS) {
+    vk::Result result = m_device->GetVkDevice().createRenderPass(&renderPassInfo, nullptr, &m_renderPass);
+    if (result != vk::Result::eSuccess)
+    {
         throw std::runtime_error("Vulkanレンダーパスの作成に失敗しました");
     }
 }
 
+// カラーアタッチメント数を取得
+uint32_t VulkanRenderPass::GetColorAttachmentCount() const
+{
+    return static_cast<uint32_t>(m_desc.colorAttachments.size());
+}
+
+// デプス/ステンシルアタッチメントの有無を取得
+bool VulkanRenderPass::HasDepthStencilAttachment() const
+{
+    return m_desc.depthStencilAttachment.has_value();
+}
+
+// カラーアタッチメントフォーマットを取得
+Format VulkanRenderPass::GetColorAttachmentFormat(uint32_t index) const
+{
+    if (index < m_desc.colorAttachments.size())
+    {
+        return m_desc.colorAttachments[index].format;
+    }
+    return Format::Unknown;
+}
+
+// デプス/ステンシルフォーマットを取得
+Format VulkanRenderPass::GetDepthStencilFormat() const
+{
+    if (m_desc.depthStencilAttachment.has_value())
+    {
+        return m_desc.depthStencilAttachment.value().format;
+    }
+    return Format::Unknown;
+}
+
 // RHIフォーマットからVulkanフォーマットに変換
-VkFormat VulkanRenderPass::GetVulkanFormat(Format format) const
+vk::Format VulkanRenderPass::GetVulkanFormat(Format format) const
 {
     return m_device->ToVkFormat(format);
 }
 
 // ロード操作の変換
-VkAttachmentLoadOp VulkanRenderPass::GetVulkanLoadOp(AttachmentLoadOp op) const
+vk::AttachmentLoadOp VulkanRenderPass::GetVulkanLoadOp(AttachmentLoadOp op) const
 {
     switch (op)
     {
     case AttachmentLoadOp::Load:
-        return VK_ATTACHMENT_LOAD_OP_LOAD;
+        return vk::AttachmentLoadOp::eLoad;
     case AttachmentLoadOp::Clear:
-        return VK_ATTACHMENT_LOAD_OP_CLEAR;
+        return vk::AttachmentLoadOp::eClear;
     case AttachmentLoadOp::DontCare:
-        return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        return vk::AttachmentLoadOp::eDontCare;
     default:
-        return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        return vk::AttachmentLoadOp::eDontCare;
     }
 }
 
 // ストア操作の変換
-VkAttachmentStoreOp VulkanRenderPass::GetVulkanStoreOp(AttachmentStoreOp op) const
+vk::AttachmentStoreOp VulkanRenderPass::GetVulkanStoreOp(AttachmentStoreOp op) const
 {
     switch (op)
     {
     case AttachmentStoreOp::Store:
-        return VK_ATTACHMENT_STORE_OP_STORE;
+        return vk::AttachmentStoreOp::eStore;
     case AttachmentStoreOp::DontCare:
-        return VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        return vk::AttachmentStoreOp::eDontCare;
     default:
-        return VK_ATTACHMENT_STORE_OP_STORE;
+        return vk::AttachmentStoreOp::eStore;
     }
 }
 
 // 初期レイアウトの変換
-VkImageLayout VulkanRenderPass::GetVulkanInitialLayout(ResourceState state) const
+vk::ImageLayout VulkanRenderPass::GetVulkanInitialLayout(ResourceState state) const
 {
     switch (state)
     {
     case ResourceState::Undefined:
-        return VK_IMAGE_LAYOUT_UNDEFINED;
+        return vk::ImageLayout::eUndefined;
     case ResourceState::RenderTarget:
-        return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        return vk::ImageLayout::eColorAttachmentOptimal;
     case ResourceState::DepthWrite:
-        return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        return vk::ImageLayout::eDepthStencilAttachmentOptimal;
     case ResourceState::ShaderResource:
-        return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        return vk::ImageLayout::eShaderReadOnlyOptimal;
     case ResourceState::Present:
-        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        return vk::ImageLayout::ePresentSrcKHR;
     default:
-        return VK_IMAGE_LAYOUT_UNDEFINED;
+        return vk::ImageLayout::eUndefined;
     }
 }
 
 // 最終レイアウトの変換
-VkImageLayout VulkanRenderPass::GetVulkanFinalLayout(ResourceState state) const
+vk::ImageLayout VulkanRenderPass::GetVulkanFinalLayout(ResourceState state) const
 {
     switch (state)
     {
     case ResourceState::Undefined:
-        return VK_IMAGE_LAYOUT_UNDEFINED;
+        return vk::ImageLayout::eUndefined;
     case ResourceState::RenderTarget:
-        return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        return vk::ImageLayout::eColorAttachmentOptimal;
     case ResourceState::DepthWrite:
-        return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        return vk::ImageLayout::eDepthStencilAttachmentOptimal;
     case ResourceState::ShaderResource:
-        return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        return vk::ImageLayout::eShaderReadOnlyOptimal;
     case ResourceState::Present:
-        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        return vk::ImageLayout::ePresentSrcKHR;
     default:
-        return VK_IMAGE_LAYOUT_UNDEFINED;
+        return vk::ImageLayout::eUndefined;
     }
 }
 

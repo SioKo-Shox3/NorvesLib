@@ -1,8 +1,9 @@
 ﻿#pragma once
 
 #include "RHI/Public/ITexture.h"
-#include <vulkan/vulkan.h>
-#include <memory>
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <vulkan/vulkan.hpp>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -10,7 +11,7 @@ namespace NorvesLib::RHI::Vulkan
 class VulkanDevice;
 
 /**
- * @brief テクスチャの Vulkan 実装
+ * @brief テクスチャの Vulkan 実装 (vulkan.hpp使用)
  */
 class VulkanTexture : public ITexture
 {
@@ -20,110 +21,38 @@ public:
      * @param device Vulkanデバイス
      * @param desc テクスチャ記述子
      */
-    VulkanTexture(std::shared_ptr<VulkanDevice> device, const TextureDesc& desc);
+    VulkanTexture(TSharedPtr<VulkanDevice> device, const TextureDesc& desc);
     
     /**
      * @brief VulkanTextureのコンストラクタ (既存のイメージから)
      * @param device Vulkanデバイス
      * @param desc テクスチャ記述子
-     * @param image 既存のVkImage (所有権は移行しない)
+     * @param image 既存のvk::Image (所有権は移行しない)
      */
-    VulkanTexture(std::shared_ptr<VulkanDevice> device, const TextureDesc& desc, VkImage image);
+    VulkanTexture(TSharedPtr<VulkanDevice> device, const TextureDesc& desc, vk::Image image);
     
     /**
      * @brief デストラクタ
      */
     virtual ~VulkanTexture();
 
-    /**
-     * @brief テクスチャの幅を取得
-     * @return テクスチャの幅（ピクセル）
-     */
+    // ITextureインターフェース実装
     virtual uint32_t GetWidth() const override { return m_desc.width; }
-
-    /**
-     * @brief テクスチャの高さを取得
-     * @return テクスチャの高さ（ピクセル）
-     */
     virtual uint32_t GetHeight() const override { return m_desc.height; }
-
-    /**
-     * @brief テクスチャの深さを取得
-     * @return テクスチャの深さ（3Dテクスチャの場合）
-     */
     virtual uint32_t GetDepth() const override { return m_desc.depth; }
-
-    /**
-     * @brief テクスチャのミップレベル数を取得
-     * @return ミップレベル数
-     */
     virtual uint32_t GetMipLevels() const override { return m_desc.mipLevels; }
-
-    /**
-     * @brief テクスチャの配列サイズを取得
-     * @return 配列サイズ
-     */
     virtual uint32_t GetArraySize() const override { return m_desc.arraySize; }
-
-    /**
-     * @brief テクスチャのフォーマットを取得
-     * @return テクスチャのフォーマット
-     */
     virtual Format GetFormat() const override { return m_desc.format; }
-
-    /**
-     * @brief テクスチャの使用用途を取得
-     * @return テクスチャの使用用途
-     */
     virtual ResourceUsage GetUsage() const override { return m_desc.usage; }
-
-    /**
-     * @brief キューブマップかどうかを取得
-     * @return キューブマップの場合true
-     */
     virtual bool IsCubemap() const override { return m_desc.isCubemap; }
+    virtual void Update(const void* data, uint32_t rowPitch, uint32_t slicePitch, 
+                       uint32_t mipLevel = 0, uint32_t arrayIndex = 0) override;
 
-    /**
-     * @brief テクスチャデータを更新
-     * @param data 更新するデータへのポインタ
-     * @param rowPitch 1行あたりのバイト数
-     * @param slicePitch 1スライスあたりのバイト数
-     * @param mipLevel 更新するミップレベル
-     * @param arrayIndex 更新する配列インデックス
-     */
-    virtual void Update(const void* data, uint32_t rowPitch, uint32_t slicePitch, uint32_t mipLevel = 0, uint32_t arrayIndex = 0) override;
-
-    /**
-     * @brief Vulkanイメージハンドルを取得
-     * @return Vulkanイメージハンドル
-     */
-    VkImage GetVkImage() const { return m_image; }
-
-    /**
-     * @brief Vulkanイメージビューハンドルを取得
-     * @return Vulkanイメージビューハンドル
-     */
-    VkImageView GetVkImageView() const { return m_imageView; }
-
-    /**
-     * @brief ストレージテクスチャかどうかを判定
-     * @return ストレージテクスチャの場合はtrue
-     */
-    bool IsStorage() const {
-        return (m_desc.usage & ResourceUsage::UnorderedAccess) != ResourceUsage::None;
-    }
-
-    /**
-     * @brief イメージレイアウトを取得
-     * @return 現在のイメージレイアウト
-     */
-    VkImageLayout GetVkImageLayout() const { return m_currentLayout; }
-
-    /**
-     * @brief イメージレイアウトを設定
-     * @param layout 新しいイメージレイアウト
-     */
-    void SetVkImageLayout(VkImageLayout layout) { m_currentLayout = layout; }
+    // Vulkan固有のメソッド (vulkan.hpp型)
+    vk::Image GetVkImage() const { return m_image; }
+    vk::ImageView GetVkImageView() const { return m_imageView; }
+    vk::ImageLayout GetVkImageLayout() const { return m_currentLayout; }
+    void SetVkImageLayout(vk::ImageLayout layout) { m_currentLayout = layout; }
 
     /**
      * @brief イメージレイアウトの遷移
@@ -132,9 +61,9 @@ public:
      * @param subresourceRange サブリソース範囲
      */
     void TransitionLayout(
-        VkCommandBuffer cmdBuffer, 
-        VkImageLayout newLayout, 
-        VkImageSubresourceRange subresourceRange);
+        vk::CommandBuffer cmdBuffer, 
+        vk::ImageLayout newLayout, 
+        vk::ImageSubresourceRange subresourceRange);
     
     /**
      * @brief イメージレイアウトの遷移 (全サブリソース)
@@ -142,28 +71,21 @@ public:
      * @param newLayout 新しいレイアウト
      */
     void TransitionLayout(
-        VkCommandBuffer cmdBuffer, 
-        VkImageLayout newLayout);
+        vk::CommandBuffer cmdBuffer, 
+        vk::ImageLayout newLayout);
 
 private:
-    /**
-     * @brief テクスチャリソースの作成
-     */
     void CreateTexture();
-
-    /**
-     * @brief イメージビューの作成
-     */
     void CreateImageView();
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;           ///< Vulkanデバイス
-    TextureDesc m_desc;                             ///< テクスチャ記述子
-    VkImage m_image = VK_NULL_HANDLE;                ///< Vulkanイメージハンドル
-    VkDeviceMemory m_memory = VK_NULL_HANDLE;        ///< デバイスメモリ
-    VkImageView m_imageView = VK_NULL_HANDLE;        ///< Vulkanイメージビューハンドル
-    VkImageLayout m_currentLayout = VK_IMAGE_LAYOUT_UNDEFINED;  ///< 現在のイメージレイアウト
-    bool m_ownsImage = true; // 自身でイメージを所有するかどうか
+    TSharedPtr<VulkanDevice> m_device;
+    TextureDesc m_desc;
+    vk::Image m_image;
+    vk::DeviceMemory m_memory;
+    vk::ImageView m_imageView;
+    vk::ImageLayout m_currentLayout = vk::ImageLayout::eUndefined;
+    bool m_bOwnsImage = true;
 };
 
 } // namespace NorvesLib::RHI::Vulkan

@@ -9,59 +9,67 @@
 namespace NorvesLib::RHI::Vulkan
 {
 
+using namespace NorvesLib::Core::Container;
+
 // VulkanPipelineLayoutの実装
 VulkanPipelineLayout::VulkanPipelineLayout(
-    std::shared_ptr<VulkanDevice> device,
-    const NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>>& layouts)
+    TSharedPtr<VulkanDevice> device,
+    const VariableArray<TSharedPtr<VulkanDescriptorSetLayout>>& layouts)
     : m_device(device), m_descriptorSetLayouts(layouts)
 {
     // Vulkanレイアウト作成用のディスクリプタセットレイアウトハンドル配列
-    NorvesLib::Core::Container::VariableArray<VkDescriptorSetLayout> vkLayouts;
-    for (const auto& layout : layouts) {
-        if (layout) {
+    VariableArray<vk::DescriptorSetLayout> vkLayouts;
+    for (const auto& layout : layouts)
+    {
+        if (layout)
+        {
             vkLayouts.push_back(layout->GetVkDescriptorSetLayout());
         }
     }
     
     // パイプラインレイアウト作成情報
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(vkLayouts.size());
-    pipelineLayoutInfo.pSetLayouts = vkLayouts.empty() ? nullptr : vkLayouts.data();
-    
-    // プッシュ定数ブロックの設定（ここでは簡略化のために未実装）
-    pipelineLayoutInfo.pushConstantRangeCount = 0;
-    pipelineLayoutInfo.pPushConstantRanges = nullptr;
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo
+    {
+        .setLayoutCount = static_cast<uint32_t>(vkLayouts.size()),
+        .pSetLayouts = vkLayouts.empty() ? nullptr : vkLayouts.data(),
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = nullptr
+    };
     
     // パイプラインレイアウト作成
-    if (vkCreatePipelineLayout(m_device->GetVkDevice(), &pipelineLayoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS) {
+    vk::Result result;
+    std::tie(result, m_pipelineLayout) = m_device->GetVkDevice().createPipelineLayout(pipelineLayoutInfo);
+    if (result != vk::Result::eSuccess)
+    {
         throw std::runtime_error("パイプラインレイアウトの作成に失敗しました");
     }
 }
 
 VulkanPipelineLayout::~VulkanPipelineLayout()
 {
-    if (m_pipelineLayout != VK_NULL_HANDLE) {
-        vkDestroyPipelineLayout(m_device->GetVkDevice(), m_pipelineLayout, nullptr);
+    if (m_pipelineLayout)
+    {
+        m_device->GetVkDevice().destroyPipelineLayout(m_pipelineLayout);
     }
 }
 
 // VulkanPipelineの基底クラス実装
-VulkanPipeline::VulkanPipeline(std::shared_ptr<VulkanDevice> device)
+VulkanPipeline::VulkanPipeline(TSharedPtr<VulkanDevice> device)
     : m_device(device)
 {
 }
 
 VulkanPipeline::~VulkanPipeline()
 {
-    if (m_pipeline != VK_NULL_HANDLE) {
-        vkDestroyPipeline(m_device->GetVkDevice(), m_pipeline, nullptr);
+    if (m_pipeline)
+    {
+        m_device->GetVkDevice().destroyPipeline(m_pipeline);
     }
 }
 
 // VulkanGraphicsPipelineの実装
 VulkanGraphicsPipeline::VulkanGraphicsPipeline(
-    std::shared_ptr<VulkanDevice> device,
+    TSharedPtr<VulkanDevice> device,
     const GraphicsPipelineDesc& desc)
     : VulkanPipeline(device), m_desc(desc)
 {
@@ -77,252 +85,289 @@ VulkanGraphicsPipeline::~VulkanGraphicsPipeline()
 void VulkanGraphicsPipeline::CreateGraphicsPipeline()
 {
     // シェーダーステージ設定
-    NorvesLib::Core::Container::VariableArray<VkPipelineShaderStageCreateInfo> shaderStages;
+    VariableArray<vk::PipelineShaderStageCreateInfo> shaderStages;
     
     // 頂点シェーダー
-    if (m_desc.vertexShader) {
+    if (m_desc.vertexShader)
+    {
         auto vulkanShader = static_cast<VulkanShader*>(m_desc.vertexShader.get());
-        VkPipelineShaderStageCreateInfo vertStageInfo{};
-        vertStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        vertStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-        vertStageInfo.module = vulkanShader->GetVkShaderModule();
-        vertStageInfo.pName = "main"; // エントリポイント
+        vk::PipelineShaderStageCreateInfo vertStageInfo
+        {
+            .stage = vk::ShaderStageFlagBits::eVertex,
+            .module = vulkanShader->GetVkShaderModule(),
+            .pName = "main"
+        };
         shaderStages.push_back(vertStageInfo);
     }
     
     // フラグメントシェーダー
-    if (m_desc.fragmentShader) {
+    if (m_desc.fragmentShader)
+    {
         auto vulkanShader = static_cast<VulkanShader*>(m_desc.fragmentShader.get());
-        VkPipelineShaderStageCreateInfo fragStageInfo{};
-        fragStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        fragStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        fragStageInfo.module = vulkanShader->GetVkShaderModule();
-        fragStageInfo.pName = "main"; // エントリポイント
+        vk::PipelineShaderStageCreateInfo fragStageInfo
+        {
+            .stage = vk::ShaderStageFlagBits::eFragment,
+            .module = vulkanShader->GetVkShaderModule(),
+            .pName = "main"
+        };
         shaderStages.push_back(fragStageInfo);
     }
     
     // オプショナルなシェーダー
     // ジオメトリシェーダー
-    if (m_desc.geometryShader) {
+    if (m_desc.geometryShader)
+    {
         auto vulkanShader = static_cast<VulkanShader*>(m_desc.geometryShader.get());
-        VkPipelineShaderStageCreateInfo geomStageInfo{};
-        geomStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        geomStageInfo.stage = VK_SHADER_STAGE_GEOMETRY_BIT;
-        geomStageInfo.module = vulkanShader->GetVkShaderModule();
-        geomStageInfo.pName = "main"; // エントリポイント
+        vk::PipelineShaderStageCreateInfo geomStageInfo
+        {
+            .stage = vk::ShaderStageFlagBits::eGeometry,
+            .module = vulkanShader->GetVkShaderModule(),
+            .pName = "main"
+        };
         shaderStages.push_back(geomStageInfo);
     }
     
     // テッセレーションシェーダー
-    if (m_desc.tessControlShader && m_desc.tessEvalShader) {
+    if (m_desc.tessControlShader && m_desc.tessEvalShader)
+    {
         auto vulkanTessControlShader = static_cast<VulkanShader*>(m_desc.tessControlShader.get());
-        VkPipelineShaderStageCreateInfo tessControlStageInfo{};
-        tessControlStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        tessControlStageInfo.stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
-        tessControlStageInfo.module = vulkanTessControlShader->GetVkShaderModule();
-        tessControlStageInfo.pName = "main"; // エントリポイント
+        vk::PipelineShaderStageCreateInfo tessControlStageInfo
+        {
+            .stage = vk::ShaderStageFlagBits::eTessellationControl,
+            .module = vulkanTessControlShader->GetVkShaderModule(),
+            .pName = "main"
+        };
         shaderStages.push_back(tessControlStageInfo);
         
         auto vulkanTessEvalShader = static_cast<VulkanShader*>(m_desc.tessEvalShader.get());
-        VkPipelineShaderStageCreateInfo tessEvalStageInfo{};
-        tessEvalStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        tessEvalStageInfo.stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
-        tessEvalStageInfo.module = vulkanTessEvalShader->GetVkShaderModule();
-        tessEvalStageInfo.pName = "main"; // エントリポイント
+        vk::PipelineShaderStageCreateInfo tessEvalStageInfo
+        {
+            .stage = vk::ShaderStageFlagBits::eTessellationEvaluation,
+            .module = vulkanTessEvalShader->GetVkShaderModule(),
+            .pName = "main"
+        };
         shaderStages.push_back(tessEvalStageInfo);
     }
     
-    // 頂点入力の設定
-    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    
     // 頂点バインディングの設定
-    NorvesLib::Core::Container::VariableArray<VkVertexInputBindingDescription> bindingDescriptions;
-    for (const auto& binding : m_desc.vertexBindings) {
-        VkVertexInputBindingDescription bindingDesc{};
-        bindingDesc.binding = binding.binding;
-        bindingDesc.stride = binding.stride;
-        bindingDesc.inputRate = binding.inputRate == VertexInputRate::Vertex ? 
-                                VK_VERTEX_INPUT_RATE_VERTEX : VK_VERTEX_INPUT_RATE_INSTANCE;
+    VariableArray<vk::VertexInputBindingDescription> bindingDescriptions;
+    for (const auto& binding : m_desc.vertexBindings)
+    {
+        vk::VertexInputBindingDescription bindingDesc
+        {
+            .binding = binding.binding,
+            .stride = binding.stride,
+            .inputRate = binding.inputRate == VertexInputRate::Vertex ? 
+                         vk::VertexInputRate::eVertex : vk::VertexInputRate::eInstance
+        };
         bindingDescriptions.push_back(bindingDesc);
     }
     
     // 頂点属性の設定
-    NorvesLib::Core::Container::VariableArray<VkVertexInputAttributeDescription> attributeDescriptions;
-    for (const auto& attribute : m_desc.vertexAttributes) {
-        VkVertexInputAttributeDescription attributeDesc{};
-        attributeDesc.binding = attribute.binding;
-        attributeDesc.location = attribute.location;
-        attributeDesc.format = m_device->ToVkFormat(attribute.format);
-        attributeDesc.offset = attribute.offset;
+    VariableArray<vk::VertexInputAttributeDescription> attributeDescriptions;
+    for (const auto& attribute : m_desc.vertexAttributes)
+    {
+        vk::VertexInputAttributeDescription attributeDesc
+        {
+            .location = attribute.location,
+            .binding = attribute.binding,
+            .format = m_device->ToVkFormat(attribute.format),
+            .offset = attribute.offset
+        };
         attributeDescriptions.push_back(attributeDesc);
     }
     
-    vertexInputInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(bindingDescriptions.size());
-    vertexInputInfo.pVertexBindingDescriptions = bindingDescriptions.empty() ? nullptr : bindingDescriptions.data();
-    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.empty() ? nullptr : attributeDescriptions.data();
+    // 頂点入力の設定
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo
+    {
+        .vertexBindingDescriptionCount = static_cast<uint32_t>(bindingDescriptions.size()),
+        .pVertexBindingDescriptions = bindingDescriptions.empty() ? nullptr : bindingDescriptions.data(),
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+        .pVertexAttributeDescriptions = attributeDescriptions.empty() ? nullptr : attributeDescriptions.data()
+    };
     
     // 入力アセンブリの設定
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = ConvertPrimitiveTopology(m_desc.primitiveTopology);
-    inputAssembly.primitiveRestartEnable = VK_FALSE;
+    vk::PipelineInputAssemblyStateCreateInfo inputAssembly
+    {
+        .topology = ConvertPrimitiveTopology(m_desc.primitiveTopology),
+        .primitiveRestartEnable = vk::False
+    };
     
     // テッセレーション設定（テッセレーションシェーダーを使用する場合）
-    VkPipelineTessellationStateCreateInfo tessellationState{};
-    if (m_desc.tessControlShader && m_desc.tessEvalShader) {
-        tessellationState.sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
-        tessellationState.patchControlPoints = m_desc.patchControlPoints;
-    }
+    vk::PipelineTessellationStateCreateInfo tessellationState
+    {
+        .patchControlPoints = m_desc.patchControlPoints
+    };
     
     // ビューポートの設定（動的なビューポート使用）
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1; // 動的に設定するため、最低1つは必要
-    viewportState.scissorCount = 1;  // 同上
+    vk::PipelineViewportStateCreateInfo viewportState
+    {
+        .viewportCount = 1,
+        .scissorCount = 1
+    };
     
     // ラスタライザ設定
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.depthClampEnable = m_desc.rasterState.depthClampEnable ? VK_TRUE : VK_FALSE;
-    rasterizer.rasterizerDiscardEnable = VK_FALSE;
-    rasterizer.polygonMode = ConvertPolygonMode(m_desc.rasterState.polygonMode);
-    rasterizer.cullMode = ConvertCullMode(m_desc.rasterState.cullMode);
-    rasterizer.frontFace = ConvertFrontFace(m_desc.rasterState.frontFace);
-    rasterizer.depthBiasEnable = m_desc.rasterState.depthBiasEnable ? VK_TRUE : VK_FALSE;
-    rasterizer.depthBiasConstantFactor = m_desc.rasterState.depthBiasConstantFactor;
-    rasterizer.depthBiasClamp = m_desc.rasterState.depthBiasClamp;
-    rasterizer.depthBiasSlopeFactor = m_desc.rasterState.depthBiasSlopeFactor;
-    rasterizer.lineWidth = m_desc.rasterState.lineWidth;
+    vk::PipelineRasterizationStateCreateInfo rasterizer
+    {
+        .depthClampEnable = m_desc.rasterState.depthClampEnable ? vk::True : vk::False,
+        .rasterizerDiscardEnable = vk::False,
+        .polygonMode = ConvertPolygonMode(m_desc.rasterState.polygonMode),
+        .cullMode = ConvertCullMode(m_desc.rasterState.cullMode),
+        .frontFace = ConvertFrontFace(m_desc.rasterState.frontFace),
+        .depthBiasEnable = m_desc.rasterState.depthBiasEnable ? vk::True : vk::False,
+        .depthBiasConstantFactor = m_desc.rasterState.depthBiasConstantFactor,
+        .depthBiasClamp = m_desc.rasterState.depthBiasClamp,
+        .depthBiasSlopeFactor = m_desc.rasterState.depthBiasSlopeFactor,
+        .lineWidth = m_desc.rasterState.lineWidth
+    };
     
     // マルチサンプリング設定
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT; // 現在はMSAAなしで固定
-    multisampling.sampleShadingEnable = VK_FALSE;
-    multisampling.minSampleShading = 1.0f;
-    multisampling.pSampleMask = nullptr;
-    multisampling.alphaToCoverageEnable = VK_FALSE;
-    multisampling.alphaToOneEnable = VK_FALSE;
+    vk::PipelineMultisampleStateCreateInfo multisampling
+    {
+        .rasterizationSamples = vk::SampleCountFlagBits::e1,
+        .sampleShadingEnable = vk::False,
+        .minSampleShading = 1.0f,
+        .pSampleMask = nullptr,
+        .alphaToCoverageEnable = vk::False,
+        .alphaToOneEnable = vk::False
+    };
     
     // 深度ステンシル設定
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = m_desc.depthStencilState.depthTestEnable ? VK_TRUE : VK_FALSE;
-    depthStencil.depthWriteEnable = m_desc.depthStencilState.depthWriteEnable ? VK_TRUE : VK_FALSE;
-    depthStencil.depthCompareOp = ConvertCompareOp(m_desc.depthStencilState.depthCompareOp);
-    depthStencil.depthBoundsTestEnable = m_desc.depthStencilState.depthBoundsTestEnable ? VK_TRUE : VK_FALSE;
-    depthStencil.minDepthBounds = 0.0f;
-    depthStencil.maxDepthBounds = 1.0f;
+    vk::StencilOpState frontStencil
+    {
+        .failOp = ConvertStencilOp(m_desc.depthStencilState.frontFace.failOp),
+        .passOp = ConvertStencilOp(m_desc.depthStencilState.frontFace.passOp),
+        .depthFailOp = ConvertStencilOp(m_desc.depthStencilState.frontFace.depthFailOp),
+        .compareOp = ConvertCompareOp(m_desc.depthStencilState.frontFace.compareOp),
+        .compareMask = m_desc.depthStencilState.frontFace.compareMask,
+        .writeMask = m_desc.depthStencilState.frontFace.writeMask,
+        .reference = m_desc.depthStencilState.frontFace.reference
+    };
     
-    // ステンシルテスト設定
-    depthStencil.stencilTestEnable = m_desc.depthStencilState.stencilTestEnable ? VK_TRUE : VK_FALSE;
+    vk::StencilOpState backStencil
+    {
+        .failOp = ConvertStencilOp(m_desc.depthStencilState.backFace.failOp),
+        .passOp = ConvertStencilOp(m_desc.depthStencilState.backFace.passOp),
+        .depthFailOp = ConvertStencilOp(m_desc.depthStencilState.backFace.depthFailOp),
+        .compareOp = ConvertCompareOp(m_desc.depthStencilState.backFace.compareOp),
+        .compareMask = m_desc.depthStencilState.backFace.compareMask,
+        .writeMask = m_desc.depthStencilState.backFace.writeMask,
+        .reference = m_desc.depthStencilState.backFace.reference
+    };
     
-    // 表面ステンシル設定
-    depthStencil.front.failOp = ConvertStencilOp(m_desc.depthStencilState.frontFace.failOp);
-    depthStencil.front.passOp = ConvertStencilOp(m_desc.depthStencilState.frontFace.passOp);
-    depthStencil.front.depthFailOp = ConvertStencilOp(m_desc.depthStencilState.frontFace.depthFailOp);
-    depthStencil.front.compareOp = ConvertCompareOp(m_desc.depthStencilState.frontFace.compareOp);
-    depthStencil.front.compareMask = m_desc.depthStencilState.frontFace.compareMask;
-    depthStencil.front.writeMask = m_desc.depthStencilState.frontFace.writeMask;
-    depthStencil.front.reference = m_desc.depthStencilState.frontFace.reference;
-    
-    // 裏面ステンシル設定
-    depthStencil.back.failOp = ConvertStencilOp(m_desc.depthStencilState.backFace.failOp);
-    depthStencil.back.passOp = ConvertStencilOp(m_desc.depthStencilState.backFace.passOp);
-    depthStencil.back.depthFailOp = ConvertStencilOp(m_desc.depthStencilState.backFace.depthFailOp);
-    depthStencil.back.compareOp = ConvertCompareOp(m_desc.depthStencilState.backFace.compareOp);
-    depthStencil.back.compareMask = m_desc.depthStencilState.backFace.compareMask;
-    depthStencil.back.writeMask = m_desc.depthStencilState.backFace.writeMask;
-    depthStencil.back.reference = m_desc.depthStencilState.backFace.reference;
+    vk::PipelineDepthStencilStateCreateInfo depthStencil
+    {
+        .depthTestEnable = m_desc.depthStencilState.depthTestEnable ? vk::True : vk::False,
+        .depthWriteEnable = m_desc.depthStencilState.depthWriteEnable ? vk::True : vk::False,
+        .depthCompareOp = ConvertCompareOp(m_desc.depthStencilState.depthCompareOp),
+        .depthBoundsTestEnable = m_desc.depthStencilState.depthBoundsTestEnable ? vk::True : vk::False,
+        .stencilTestEnable = m_desc.depthStencilState.stencilTestEnable ? vk::True : vk::False,
+        .front = frontStencil,
+        .back = backStencil,
+        .minDepthBounds = 0.0f,
+        .maxDepthBounds = 1.0f
+    };
     
     // カラーブレンド設定
-    NorvesLib::Core::Container::VariableArray<VkPipelineColorBlendAttachmentState> colorBlendAttachments;
-    for (const auto& attachment : m_desc.blendState.attachments) {
-        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.blendEnable = attachment.blendEnable ? VK_TRUE : VK_FALSE;
-        colorBlendAttachment.srcColorBlendFactor = ConvertBlendFactor(attachment.srcColorBlendFactor);
-        colorBlendAttachment.dstColorBlendFactor = ConvertBlendFactor(attachment.dstColorBlendFactor);
-        colorBlendAttachment.colorBlendOp = ConvertBlendOp(attachment.colorBlendOp);
-        colorBlendAttachment.srcAlphaBlendFactor = ConvertBlendFactor(attachment.srcAlphaBlendFactor);
-        colorBlendAttachment.dstAlphaBlendFactor = ConvertBlendFactor(attachment.dstAlphaBlendFactor);
-        colorBlendAttachment.alphaBlendOp = ConvertBlendOp(attachment.alphaBlendOp);
-        colorBlendAttachment.colorWriteMask = ConvertColorWriteMask(attachment.colorWriteMask);
+    VariableArray<vk::PipelineColorBlendAttachmentState> colorBlendAttachments;
+    for (const auto& attachment : m_desc.blendState.attachments)
+    {
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment
+        {
+            .blendEnable = attachment.blendEnable ? vk::True : vk::False,
+            .srcColorBlendFactor = ConvertBlendFactor(attachment.srcColorBlendFactor),
+            .dstColorBlendFactor = ConvertBlendFactor(attachment.dstColorBlendFactor),
+            .colorBlendOp = ConvertBlendOp(attachment.colorBlendOp),
+            .srcAlphaBlendFactor = ConvertBlendFactor(attachment.srcAlphaBlendFactor),
+            .dstAlphaBlendFactor = ConvertBlendFactor(attachment.dstAlphaBlendFactor),
+            .alphaBlendOp = ConvertBlendOp(attachment.alphaBlendOp),
+            .colorWriteMask = ConvertColorWriteMask(attachment.colorWriteMask)
+        };
         colorBlendAttachments.push_back(colorBlendAttachment);
     }
     
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colorBlending.logicOpEnable = VK_FALSE;
-    colorBlending.logicOp = VK_LOGIC_OP_COPY;
-    colorBlending.attachmentCount = static_cast<uint32_t>(colorBlendAttachments.size());
-    colorBlending.pAttachments = colorBlendAttachments.data();
-    colorBlending.blendConstants[0] = m_desc.blendState.blendConstants[0];
-    colorBlending.blendConstants[1] = m_desc.blendState.blendConstants[1];
-    colorBlending.blendConstants[2] = m_desc.blendState.blendConstants[2];
-    colorBlending.blendConstants[3] = m_desc.blendState.blendConstants[3];
-    
-    // 動的ステート設定
-    NorvesLib::Core::Container::VariableArray<VkDynamicState> dynamicStates = {
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_SCISSOR
+    vk::PipelineColorBlendStateCreateInfo colorBlending
+    {
+        .logicOpEnable = vk::False,
+        .logicOp = vk::LogicOp::eCopy,
+        .attachmentCount = static_cast<uint32_t>(colorBlendAttachments.size()),
+        .pAttachments = colorBlendAttachments.data(),
+        .blendConstants = {{
+            m_desc.blendState.blendConstants[0],
+            m_desc.blendState.blendConstants[1],
+            m_desc.blendState.blendConstants[2],
+            m_desc.blendState.blendConstants[3]
+        }}
     };
     
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-    dynamicState.pDynamicStates = dynamicStates.data();
+    // 動的ステート設定
+    VariableArray<vk::DynamicState> dynamicStates = {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor
+    };
+    
+    vk::PipelineDynamicStateCreateInfo dynamicState
+    {
+        .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+        .pDynamicStates = dynamicStates.data()
+    };
     
     // パイプラインレイアウト
     // ディスクリプタセットレイアウトの収集
-    NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
-    for (const auto& setDesc : m_desc.descriptorSetLayouts) {
-        auto vulkanLayout = std::dynamic_pointer_cast<VulkanDescriptorSetLayout>(setDesc);
-        if (vulkanLayout) {
+    VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
+    for (const auto& setDesc : m_desc.descriptorSetLayouts)
+    {
+        auto vulkanLayout = DynamicPointerCast<VulkanDescriptorSetLayout>(setDesc);
+        if (vulkanLayout)
+        {
             descriptorSetLayouts.push_back(vulkanLayout);
         }
     }
     
     // パイプラインレイアウトの作成
-    m_pipelineLayout = std::make_shared<VulkanPipelineLayout>(m_device, descriptorSetLayouts);
+    m_pipelineLayout = MakeShared<VulkanPipelineLayout>(m_device, descriptorSetLayouts);
     
     // レンダーパスとサブパス設定
-    VkRenderPass renderPass = VK_NULL_HANDLE;
-    if (m_desc.renderPass) {
+    vk::RenderPass renderPass;
+    if (m_desc.renderPass)
+    {
         auto vulkanRenderPass = static_cast<VulkanRenderPass*>(m_desc.renderPass.get());
         renderPass = vulkanRenderPass->GetVkRenderPass();
     }
     
     // グラフィックスパイプライン作成情報
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
-    pipelineInfo.pStages = shaderStages.data();
-    pipelineInfo.pVertexInputState = &vertexInputInfo;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pTessellationState = m_desc.tessControlShader && m_desc.tessEvalShader ? &tessellationState : nullptr;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = m_pipelineLayout->GetVkPipelineLayout();
-    pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = m_desc.subpass;
-    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-    pipelineInfo.basePipelineIndex = -1;
+    vk::GraphicsPipelineCreateInfo pipelineInfo
+    {
+        .stageCount = static_cast<uint32_t>(shaderStages.size()),
+        .pStages = shaderStages.data(),
+        .pVertexInputState = &vertexInputInfo,
+        .pInputAssemblyState = &inputAssembly,
+        .pTessellationState = (m_desc.tessControlShader && m_desc.tessEvalShader) ? &tessellationState : nullptr,
+        .pViewportState = &viewportState,
+        .pRasterizationState = &rasterizer,
+        .pMultisampleState = &multisampling,
+        .pDepthStencilState = &depthStencil,
+        .pColorBlendState = &colorBlending,
+        .pDynamicState = &dynamicState,
+        .layout = m_pipelineLayout->GetVkPipelineLayout(),
+        .renderPass = renderPass,
+        .subpass = m_desc.subpass,
+        .basePipelineHandle = nullptr,
+        .basePipelineIndex = -1
+    };
     
     // パイプライン作成
-    if (vkCreateGraphicsPipelines(m_device->GetVkDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipeline) != VK_SUCCESS) {
+    vk::Result result;
+    std::tie(result, m_pipeline) = m_device->GetVkDevice().createGraphicsPipeline(nullptr, pipelineInfo);
+    if (result != vk::Result::eSuccess)
+    {
         throw std::runtime_error("グラフィックスパイプラインの作成に失敗しました");
     }
 }
 
 // VulkanComputePipelineの実装
 VulkanComputePipeline::VulkanComputePipeline(
-    std::shared_ptr<VulkanDevice> device,
+    TSharedPtr<VulkanDevice> device,
     const ComputePipelineDesc& desc)
     : VulkanPipeline(device), m_desc(desc)
 {
@@ -337,222 +382,250 @@ VulkanComputePipeline::~VulkanComputePipeline()
 
 void VulkanComputePipeline::CreateComputePipeline()
 {
-    // コンピュートシェーダーステージの設定
-    VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
-    computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    computeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    
     // コンピュートシェーダーは必須
-    if (!m_desc.computeShader) {
+    if (!m_desc.computeShader)
+    {
         throw std::runtime_error("コンピュートシェーダーが指定されていません");
     }
     
     auto vulkanShader = static_cast<VulkanShader*>(m_desc.computeShader.get());
-    computeShaderStageInfo.module = vulkanShader->GetVkShaderModule();
-    computeShaderStageInfo.pName = "main"; // エントリポイント
+    
+    // コンピュートシェーダーステージの設定
+    vk::PipelineShaderStageCreateInfo computeShaderStageInfo
+    {
+        .stage = vk::ShaderStageFlagBits::eCompute,
+        .module = vulkanShader->GetVkShaderModule(),
+        .pName = "main"
+    };
     
     // ディスクリプタセットレイアウト
-    NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
-    for (const auto& setDesc : m_desc.descriptorSetLayouts) {
-        auto vulkanLayout = std::dynamic_pointer_cast<VulkanDescriptorSetLayout>(setDesc);
-        if (vulkanLayout) {
+    VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
+    for (const auto& setDesc : m_desc.descriptorSetLayouts)
+    {
+        auto vulkanLayout = DynamicPointerCast<VulkanDescriptorSetLayout>(setDesc);
+        if (vulkanLayout)
+        {
             descriptorSetLayouts.push_back(vulkanLayout);
         }
     }
     
     // パイプラインレイアウトの作成
-    m_pipelineLayout = std::make_shared<VulkanPipelineLayout>(m_device, descriptorSetLayouts);
+    m_pipelineLayout = MakeShared<VulkanPipelineLayout>(m_device, descriptorSetLayouts);
     
     // コンピュートパイプライン作成情報
-    VkComputePipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.stage = computeShaderStageInfo;
-    pipelineInfo.layout = m_pipelineLayout->GetVkPipelineLayout();
-    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-    pipelineInfo.basePipelineIndex = -1;
+    vk::ComputePipelineCreateInfo pipelineInfo
+    {
+        .stage = computeShaderStageInfo,
+        .layout = m_pipelineLayout->GetVkPipelineLayout(),
+        .basePipelineHandle = nullptr,
+        .basePipelineIndex = -1
+    };
     
     // パイプライン作成
-    if (vkCreateComputePipelines(m_device->GetVkDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipeline) != VK_SUCCESS) {
+    vk::Result result;
+    std::tie(result, m_pipeline) = m_device->GetVkDevice().createComputePipeline(nullptr, pipelineInfo);
+    if (result != vk::Result::eSuccess)
+    {
         throw std::runtime_error("コンピュートパイプラインの作成に失敗しました");
     }
 }
 
 // 列挙型変換ヘルパーメソッド
-VkPrimitiveTopology VulkanGraphicsPipeline::ConvertPrimitiveTopology(PrimitiveTopology topology)
+vk::PrimitiveTopology VulkanGraphicsPipeline::ConvertPrimitiveTopology(PrimitiveTopology topology)
 {
-    switch (topology) {
+    switch (topology)
+    {
         case PrimitiveTopology::PointList:
-            return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+            return vk::PrimitiveTopology::ePointList;
         case PrimitiveTopology::LineList:
-            return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+            return vk::PrimitiveTopology::eLineList;
         case PrimitiveTopology::LineStrip:
-            return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+            return vk::PrimitiveTopology::eLineStrip;
         case PrimitiveTopology::TriangleList:
-            return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            return vk::PrimitiveTopology::eTriangleList;
         case PrimitiveTopology::TriangleStrip:
-            return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+            return vk::PrimitiveTopology::eTriangleStrip;
         case PrimitiveTopology::TriangleFan:
-            return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+            return vk::PrimitiveTopology::eTriangleFan;
         case PrimitiveTopology::PatchList:
-            return VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
+            return vk::PrimitiveTopology::ePatchList;
         default:
-            return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            return vk::PrimitiveTopology::eTriangleList;
     }
 }
 
-VkPolygonMode VulkanGraphicsPipeline::ConvertPolygonMode(PolygonMode mode)
+vk::PolygonMode VulkanGraphicsPipeline::ConvertPolygonMode(PolygonMode mode)
 {
-    switch (mode) {
+    switch (mode)
+    {
         case PolygonMode::Fill:
-            return VK_POLYGON_MODE_FILL;
+            return vk::PolygonMode::eFill;
         case PolygonMode::Line:
-            return VK_POLYGON_MODE_LINE;
+            return vk::PolygonMode::eLine;
         case PolygonMode::Point:
-            return VK_POLYGON_MODE_POINT;
+            return vk::PolygonMode::ePoint;
         default:
-            return VK_POLYGON_MODE_FILL;
+            return vk::PolygonMode::eFill;
     }
 }
 
-VkCullModeFlags VulkanGraphicsPipeline::ConvertCullMode(CullMode mode)
+vk::CullModeFlags VulkanGraphicsPipeline::ConvertCullMode(CullMode mode)
 {
-    switch (mode) {
+    switch (mode)
+    {
         case CullMode::None:
-            return VK_CULL_MODE_NONE;
+            return vk::CullModeFlagBits::eNone;
         case CullMode::Front:
-            return VK_CULL_MODE_FRONT_BIT;
+            return vk::CullModeFlagBits::eFront;
         case CullMode::Back:
-            return VK_CULL_MODE_BACK_BIT;
+            return vk::CullModeFlagBits::eBack;
         case CullMode::FrontAndBack:
-            return VK_CULL_MODE_FRONT_AND_BACK;
+            return vk::CullModeFlagBits::eFrontAndBack;
         default:
-            return VK_CULL_MODE_BACK_BIT;
+            return vk::CullModeFlagBits::eBack;
     }
 }
 
-VkFrontFace VulkanGraphicsPipeline::ConvertFrontFace(FrontFace frontFace)
+vk::FrontFace VulkanGraphicsPipeline::ConvertFrontFace(FrontFace frontFace)
 {
-    switch (frontFace) {
+    switch (frontFace)
+    {
         case FrontFace::CounterClockwise:
-            return VK_FRONT_FACE_COUNTER_CLOCKWISE;
+            return vk::FrontFace::eCounterClockwise;
         case FrontFace::Clockwise:
-            return VK_FRONT_FACE_CLOCKWISE;
+            return vk::FrontFace::eClockwise;
         default:
-            return VK_FRONT_FACE_COUNTER_CLOCKWISE;
+            return vk::FrontFace::eCounterClockwise;
     }
 }
 
-VkCompareOp VulkanGraphicsPipeline::ConvertCompareOp(CompareOp op)
+vk::CompareOp VulkanGraphicsPipeline::ConvertCompareOp(CompareOp op)
 {
-    switch (op) {
+    switch (op)
+    {
         case CompareOp::Never:
-            return VK_COMPARE_OP_NEVER;
+            return vk::CompareOp::eNever;
         case CompareOp::Less:
-            return VK_COMPARE_OP_LESS;
+            return vk::CompareOp::eLess;
         case CompareOp::Equal:
-            return VK_COMPARE_OP_EQUAL;
+            return vk::CompareOp::eEqual;
         case CompareOp::LessOrEqual:
-            return VK_COMPARE_OP_LESS_OR_EQUAL;
+            return vk::CompareOp::eLessOrEqual;
         case CompareOp::Greater:
-            return VK_COMPARE_OP_GREATER;
+            return vk::CompareOp::eGreater;
         case CompareOp::NotEqual:
-            return VK_COMPARE_OP_NOT_EQUAL;
+            return vk::CompareOp::eNotEqual;
         case CompareOp::GreaterOrEqual:
-            return VK_COMPARE_OP_GREATER_OR_EQUAL;
+            return vk::CompareOp::eGreaterOrEqual;
         case CompareOp::Always:
-            return VK_COMPARE_OP_ALWAYS;
+            return vk::CompareOp::eAlways;
         default:
-            return VK_COMPARE_OP_LESS;
+            return vk::CompareOp::eLess;
     }
 }
 
-VkStencilOp VulkanGraphicsPipeline::ConvertStencilOp(StencilOp op)
+vk::StencilOp VulkanGraphicsPipeline::ConvertStencilOp(StencilOp op)
 {
-    switch (op) {
+    switch (op)
+    {
         case StencilOp::Keep:
-            return VK_STENCIL_OP_KEEP;
+            return vk::StencilOp::eKeep;
         case StencilOp::Zero:
-            return VK_STENCIL_OP_ZERO;
+            return vk::StencilOp::eZero;
         case StencilOp::Replace:
-            return VK_STENCIL_OP_REPLACE;
+            return vk::StencilOp::eReplace;
         case StencilOp::IncrementAndClamp:
-            return VK_STENCIL_OP_INCREMENT_AND_CLAMP;
+            return vk::StencilOp::eIncrementAndClamp;
         case StencilOp::DecrementAndClamp:
-            return VK_STENCIL_OP_DECREMENT_AND_CLAMP;
+            return vk::StencilOp::eDecrementAndClamp;
         case StencilOp::Invert:
-            return VK_STENCIL_OP_INVERT;
+            return vk::StencilOp::eInvert;
         case StencilOp::IncrementAndWrap:
-            return VK_STENCIL_OP_INCREMENT_AND_WRAP;
+            return vk::StencilOp::eIncrementAndWrap;
         case StencilOp::DecrementAndWrap:
-            return VK_STENCIL_OP_DECREMENT_AND_WRAP;
+            return vk::StencilOp::eDecrementAndWrap;
         default:
-            return VK_STENCIL_OP_KEEP;
+            return vk::StencilOp::eKeep;
     }
 }
 
-VkBlendFactor VulkanGraphicsPipeline::ConvertBlendFactor(BlendFactor factor)
+vk::BlendFactor VulkanGraphicsPipeline::ConvertBlendFactor(BlendFactor factor)
 {
-    switch (factor) {
+    switch (factor)
+    {
         case BlendFactor::Zero:
-            return VK_BLEND_FACTOR_ZERO;
+            return vk::BlendFactor::eZero;
         case BlendFactor::One:
-            return VK_BLEND_FACTOR_ONE;
+            return vk::BlendFactor::eOne;
         case BlendFactor::SrcColor:
-            return VK_BLEND_FACTOR_SRC_COLOR;
+            return vk::BlendFactor::eSrcColor;
         case BlendFactor::OneMinusSrcColor:
-            return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+            return vk::BlendFactor::eOneMinusSrcColor;
         case BlendFactor::DstColor:
-            return VK_BLEND_FACTOR_DST_COLOR;
+            return vk::BlendFactor::eDstColor;
         case BlendFactor::OneMinusDstColor:
-            return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+            return vk::BlendFactor::eOneMinusDstColor;
         case BlendFactor::SrcAlpha:
-            return VK_BLEND_FACTOR_SRC_ALPHA;
+            return vk::BlendFactor::eSrcAlpha;
         case BlendFactor::OneMinusSrcAlpha:
-            return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            return vk::BlendFactor::eOneMinusSrcAlpha;
         case BlendFactor::DstAlpha:
-            return VK_BLEND_FACTOR_DST_ALPHA;
+            return vk::BlendFactor::eDstAlpha;
         case BlendFactor::OneMinusDstAlpha:
-            return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+            return vk::BlendFactor::eOneMinusDstAlpha;
         case BlendFactor::ConstantColor:
-            return VK_BLEND_FACTOR_CONSTANT_COLOR;
+            return vk::BlendFactor::eConstantColor;
         case BlendFactor::OneMinusConstantColor:
-            return VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR;
+            return vk::BlendFactor::eOneMinusConstantColor;
         case BlendFactor::ConstantAlpha:
-            return VK_BLEND_FACTOR_CONSTANT_ALPHA;
+            return vk::BlendFactor::eConstantAlpha;
         case BlendFactor::OneMinusConstantAlpha:
-            return VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_ALPHA;
+            return vk::BlendFactor::eOneMinusConstantAlpha;
         case BlendFactor::SrcAlphaSaturate:
-            return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
+            return vk::BlendFactor::eSrcAlphaSaturate;
         default:
-            return VK_BLEND_FACTOR_ONE;
+            return vk::BlendFactor::eOne;
     }
 }
 
-VkBlendOp VulkanGraphicsPipeline::ConvertBlendOp(BlendOp op)
+vk::BlendOp VulkanGraphicsPipeline::ConvertBlendOp(BlendOp op)
 {
-    switch (op) {
+    switch (op)
+    {
         case BlendOp::Add:
-            return VK_BLEND_OP_ADD;
+            return vk::BlendOp::eAdd;
         case BlendOp::Subtract:
-            return VK_BLEND_OP_SUBTRACT;
+            return vk::BlendOp::eSubtract;
         case BlendOp::ReverseSubtract:
-            return VK_BLEND_OP_REVERSE_SUBTRACT;
+            return vk::BlendOp::eReverseSubtract;
         case BlendOp::Min:
-            return VK_BLEND_OP_MIN;
+            return vk::BlendOp::eMin;
         case BlendOp::Max:
-            return VK_BLEND_OP_MAX;
+            return vk::BlendOp::eMax;
         default:
-            return VK_BLEND_OP_ADD;
+            return vk::BlendOp::eAdd;
     }
 }
 
-VkColorComponentFlags VulkanGraphicsPipeline::ConvertColorWriteMask(ColorWriteMask mask)
+vk::ColorComponentFlags VulkanGraphicsPipeline::ConvertColorWriteMask(ColorWriteMask mask)
 {
-    VkColorComponentFlags result = 0;
-    if (mask & ColorWriteMask::R) result |= VK_COLOR_COMPONENT_R_BIT;
-    if (mask & ColorWriteMask::G) result |= VK_COLOR_COMPONENT_G_BIT;
-    if (mask & ColorWriteMask::B) result |= VK_COLOR_COMPONENT_B_BIT;
-    if (mask & ColorWriteMask::A) result |= VK_COLOR_COMPONENT_A_BIT;
+    vk::ColorComponentFlags result;
+    if (mask & ColorWriteMask::R)
+    {
+        result |= vk::ColorComponentFlagBits::eR;
+    }
+    if (mask & ColorWriteMask::G)
+    {
+        result |= vk::ColorComponentFlagBits::eG;
+    }
+    if (mask & ColorWriteMask::B)
+    {
+        result |= vk::ColorComponentFlagBits::eB;
+    }
+    if (mask & ColorWriteMask::A)
+    {
+        result |= vk::ColorComponentFlagBits::eA;
+    }
     return result;
 }
 

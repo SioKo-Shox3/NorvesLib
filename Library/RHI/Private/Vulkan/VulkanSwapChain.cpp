@@ -3,12 +3,12 @@
 #include "VulkanTexture.h"
 #include <stdexcept>
 #include <algorithm>
-#include <array>
 #include "Core/Public/Container/Containers.h"
 
 // Windowsのインクルード（Windowsプラットフォーム用）
 #ifdef _WIN32
 #define VK_USE_PLATFORM_WIN32_KHR
+#define NOMINMAX
 #include <Windows.h>
 #include <vulkan/vulkan_win32.h>
 #endif
@@ -16,8 +16,10 @@
 namespace NorvesLib::RHI::Vulkan
 {
 
+using namespace NorvesLib::Core::Container;
+
 // コンストラクタ
-VulkanSwapChain::VulkanSwapChain(std::shared_ptr<VulkanDevice> device, const SwapChainDesc& desc)
+VulkanSwapChain::VulkanSwapChain(TSharedPtr<VulkanDevice> device, const SwapChainDesc& desc)
     : m_device(device)
     , m_desc(desc)
     , m_width(desc.width)
@@ -33,20 +35,21 @@ VulkanSwapChain::VulkanSwapChain(std::shared_ptr<VulkanDevice> device, const Swa
 VulkanSwapChain::~VulkanSwapChain()
 {
     // デバイスの処理が完了するのを待機
-    vkDeviceWaitIdle(m_device->GetVkDevice());
+    m_device->GetVkDevice().waitIdle();
 
     // 同期オブジェクトのクリーンアップ
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        vkDestroySemaphore(m_device->GetVkDevice(), m_renderFinishedSemaphores[i], nullptr);
-        vkDestroySemaphore(m_device->GetVkDevice(), m_imageAvailableSemaphores[i], nullptr);
-        vkDestroyFence(m_device->GetVkDevice(), m_inFlightFences[i], nullptr);
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        m_device->GetVkDevice().destroySemaphore(m_renderFinishedSemaphores[i]);
+        m_device->GetVkDevice().destroySemaphore(m_imageAvailableSemaphores[i]);
+        m_device->GetVkDevice().destroyFence(m_inFlightFences[i]);
     }
 
     // スワップチェーンのクリーンアップ
     CleanupSwapChain();
 
     // サーフェスの破棄
-    vkDestroySurfaceKHR(m_device->GetVkInstance(), m_surface, nullptr);
+    m_device->GetVkInstance().destroySurfaceKHR(m_surface);
 }
 
 // 現在のバックバッファインデックスを取得
@@ -58,7 +61,8 @@ uint32_t VulkanSwapChain::GetCurrentBackBufferIndex() const
 // 特定インデックスのバックバッファテクスチャを取得
 TexturePtr VulkanSwapChain::GetBackBuffer(uint32_t index) const
 {
-    if (index < m_backBufferTextures.size()) {
+    if (index < m_backBufferTextures.size())
+    {
         return m_backBufferTextures[index];
     }
     return nullptr;
@@ -67,7 +71,8 @@ TexturePtr VulkanSwapChain::GetBackBuffer(uint32_t index) const
 // 現在のバックバッファテクスチャを取得
 TexturePtr VulkanSwapChain::GetCurrentBackBuffer() const
 {
-    if (m_currentImageIndex < m_backBufferTextures.size()) {
+    if (m_currentImageIndex < m_backBufferTextures.size())
+    {
         return m_backBufferTextures[m_currentImageIndex];
     }
     return nullptr;
@@ -77,50 +82,57 @@ TexturePtr VulkanSwapChain::GetCurrentBackBuffer() const
 void VulkanSwapChain::Present(bool vsync)
 {
     // 現在のフレームのフェンスが完了するまで待機
-    vkWaitForFences(m_device->GetVkDevice(), 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+    auto waitResult = m_device->GetVkDevice().waitForFences(
+        m_inFlightFences[m_currentFrame],
+        VK_TRUE,
+        UINT64_MAX);
+    
+    if (waitResult != vk::Result::eSuccess)
+    {
+        throw std::runtime_error("フェンスの待機に失敗しました");
+    }
 
     // 次の画像を取得
-    VkResult result = vkAcquireNextImageKHR(
-        m_device->GetVkDevice(),
+    auto acquireResult = m_device->GetVkDevice().acquireNextImageKHR(
         m_swapChain,
         UINT64_MAX,
         m_imageAvailableSemaphores[m_currentFrame],
-        VK_NULL_HANDLE,
-        &m_currentImageIndex);
+        nullptr);
     
     // スワップチェーンの再作成が必要な場合
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+    if (acquireResult.result == vk::Result::eErrorOutOfDateKHR)
+    {
         Resize(m_width, m_height);
         return;
     }
-    else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+    else if (acquireResult.result != vk::Result::eSuccess && acquireResult.result != vk::Result::eSuboptimalKHR)
+    {
         throw std::runtime_error("次のスワップチェーン画像の取得に失敗しました");
     }
+    
+    m_currentImageIndex = acquireResult.value;
 
     // レンダリングが完了したシグナルを待つ
-    vkResetFences(m_device->GetVkDevice(), 1, &m_inFlightFences[m_currentFrame]);
+    m_device->GetVkDevice().resetFences(m_inFlightFences[m_currentFrame]);
 
     // プレゼント情報の設定
-    VkPresentInfoKHR presentInfo{};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    
-    // レンダリング完了を待つセマフォ
+    vk::PresentInfoKHR presentInfo = {};
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
-    
-    // プレゼントするスワップチェーンと画像
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &m_swapChain;
     presentInfo.pImageIndices = &m_currentImageIndex;
     
     // プレゼント実行
-    result = vkQueuePresentKHR(m_device->GetPresentQueue(), &presentInfo);
+    vk::Result presentResult = m_device->GetPresentQueue().presentKHR(presentInfo);
     
     // スワップチェーンの再作成が必要な場合
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+    if (presentResult == vk::Result::eErrorOutOfDateKHR || presentResult == vk::Result::eSuboptimalKHR)
+    {
         Resize(m_width, m_height);
     }
-    else if (result != VK_SUCCESS) {
+    else if (presentResult != vk::Result::eSuccess)
+    {
         throw std::runtime_error("画像のプレゼントに失敗しました");
     }
     
@@ -131,12 +143,13 @@ void VulkanSwapChain::Present(bool vsync)
 // スワップチェーンのリサイズ
 void VulkanSwapChain::Resize(uint32_t width, uint32_t height)
 {
-    if (width == 0 || height == 0) {
+    if (width == 0 || height == 0)
+    {
         return; // ウィンドウが最小化されている場合は何もしない
     }
     
     // デバイスがアイドル状態になるまで待機
-    vkDeviceWaitIdle(m_device->GetVkDevice());
+    m_device->GetVkDevice().waitIdle();
     
     // 新しいサイズを保存
     m_width = width;
@@ -153,14 +166,11 @@ void VulkanSwapChain::CreateSurface()
 {
 #ifdef _WIN32
     // Windowsプラットフォーム用のサーフェス作成
-    VkWin32SurfaceCreateInfoKHR createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    vk::Win32SurfaceCreateInfoKHR createInfo = {};
     createInfo.hwnd = static_cast<HWND>(m_desc.windowHandle);
     createInfo.hinstance = GetModuleHandle(nullptr);
     
-    if (vkCreateWin32SurfaceKHR(m_device->GetVkInstance(), &createInfo, nullptr, &m_surface) != VK_SUCCESS) {
-        throw std::runtime_error("Windowsサーフェスの作成に失敗しました");
-    }
+    m_surface = m_device->GetVkInstance().createWin32SurfaceKHR(createInfo);
 #else
     // 他のプラットフォーム用のサーフェス作成はここに追加
     throw std::runtime_error("このプラットフォームではサーフェスの作成がサポートされていません");
@@ -171,11 +181,11 @@ void VulkanSwapChain::CreateSurface()
 void VulkanSwapChain::CreateSwapChain()
 {
     // サーフェスのケイパビリティを取得
-    VkSurfaceCapabilitiesKHR capabilities;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_device->GetVkPhysicalDevice(), m_surface, &capabilities);
+    vk::SurfaceCapabilitiesKHR capabilities = 
+        m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
     
     // サーフェスフォーマットを選択
-    VkSurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat();
+    vk::SurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat();
     m_vkFormat = surfaceFormat.format;
     m_colorSpace = surfaceFormat.colorSpace;
     
@@ -183,56 +193,53 @@ void VulkanSwapChain::CreateSwapChain()
     m_presentMode = ChoosePresentMode();
     
     // スワップチェーンの範囲を決定
-    VkExtent2D extent = ChooseSwapExtent();
+    vk::Extent2D extent = ChooseSwapExtent();
     
     // 画像の最小数（ダブルバッファリング + 1）
     uint32_t imageCount = GetMinImageCount();
     
     // スワップチェーン作成情報の設定
-    VkSwapchainCreateInfoKHR createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    vk::SwapchainCreateInfoKHR createInfo = {};
     createInfo.surface = m_surface;
     createInfo.minImageCount = imageCount;
     createInfo.imageFormat = m_vkFormat;
     createInfo.imageColorSpace = m_colorSpace;
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1; // 通常のイメージではレイヤー数は1
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // レンダリング用途
+    createInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment; // レンダリング用途
     
     // キューファミリーインデックスの取得
-    uint32_t queueFamilyIndices[] = {
+    VariableArray<uint32_t> queueFamilyIndices = {
         m_device->GetGraphicsQueueFamilyIndex(),
         m_device->GetPresentQueueFamilyIndex()
     };
     
     // キューファミリーの共有モードを設定
-    if (queueFamilyIndices[0] != queueFamilyIndices[1]) {
+    if (queueFamilyIndices[0] != queueFamilyIndices[1])
+    {
         // グラフィックスキューとプレゼントキューが異なる場合は共有モード
-        createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        createInfo.imageSharingMode = vk::SharingMode::eConcurrent;
         createInfo.queueFamilyIndexCount = 2;
-        createInfo.pQueueFamilyIndices = queueFamilyIndices;
-    } else {
+        createInfo.pQueueFamilyIndices = queueFamilyIndices.data();
+    }
+    else
+    {
         // 同じキューファミリーの場合は排他モード
-        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        createInfo.imageSharingMode = vk::SharingMode::eExclusive;
     }
     
     // 追加の変換指定（通常は変換なし）
     createInfo.preTransform = capabilities.currentTransform;
-    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; // アルファ合成なし
+    createInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque; // アルファ合成なし
     createInfo.presentMode = m_presentMode;
     createInfo.clipped = VK_TRUE; // 隠れたピクセルのクリッピングを許可
-    createInfo.oldSwapchain = VK_NULL_HANDLE; // 古いスワップチェーンはない
+    createInfo.oldSwapchain = nullptr; // 古いスワップチェーンはない
     
     // スワップチェーンの作成
-    if (vkCreateSwapchainKHR(m_device->GetVkDevice(), &createInfo, nullptr, &m_swapChain) != VK_SUCCESS) {
-        throw std::runtime_error("スワップチェーンの作成に失敗しました");
-    }
+    m_swapChain = m_device->GetVkDevice().createSwapchainKHR(createInfo);
     
     // スワップチェーンイメージの取得
-    uint32_t actualImageCount;
-    vkGetSwapchainImagesKHR(m_device->GetVkDevice(), m_swapChain, &actualImageCount, nullptr);
-    m_swapChainImages.resize(actualImageCount);
-    vkGetSwapchainImagesKHR(m_device->GetVkDevice(), m_swapChain, &actualImageCount, m_swapChainImages.data());
+    m_swapChainImages = m_device->GetVkDevice().getSwapchainImagesKHR(m_swapChain);
     
     // サイズとフォーマットを保存
     m_width = extent.width;
@@ -246,7 +253,8 @@ void VulkanSwapChain::CreateImageViews()
     // バックバッファテクスチャの配列をリサイズ
     m_backBufferTextures.resize(m_swapChainImages.size());
 
-    for (size_t i = 0; i < m_swapChainImages.size(); i++) {
+    for (size_t i = 0; i < m_swapChainImages.size(); i++)
+    {
         // テクスチャ記述子の設定
         TextureDesc textureDesc = {};
         textureDesc.width = m_width;
@@ -255,8 +263,8 @@ void VulkanSwapChain::CreateImageViews()
         textureDesc.usage = TextureUsage::RenderTarget;
         textureDesc.initialState = ResourceState::Present;
         
-        // VulkanTextureを作成（既存のVkImageを使用）
-        m_backBufferTextures[i] = NorvesLib::Core::Container::MakeShared<VulkanTexture>(m_device, textureDesc, m_swapChainImages[i]);
+        // VulkanTextureを作成（既存のvk::Imageを使用）
+        m_backBufferTextures[i] = MakeShared<VulkanTexture>(m_device, textureDesc, m_swapChainImages[i]);
     }
 }
 
@@ -267,19 +275,16 @@ void VulkanSwapChain::CreateSyncObjects()
     m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
     
-    VkSemaphoreCreateInfo semaphoreInfo{};
-    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    vk::SemaphoreCreateInfo semaphoreInfo = {};
     
-    VkFenceCreateInfo fenceInfo{};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // 初期状態はシグナル
+    vk::FenceCreateInfo fenceInfo = {};
+    fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled; // 初期状態はシグナル
     
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        if (vkCreateSemaphore(m_device->GetVkDevice(), &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
-            vkCreateSemaphore(m_device->GetVkDevice(), &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS ||
-            vkCreateFence(m_device->GetVkDevice(), &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
-            throw std::runtime_error("同期オブジェクトの作成に失敗しました");
-        }
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        m_imageAvailableSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo);
+        m_renderFinishedSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo);
+        m_inFlightFences[i] = m_device->GetVkDevice().createFence(fenceInfo);
     }
 }
 
@@ -290,27 +295,26 @@ void VulkanSwapChain::CleanupSwapChain()
     m_backBufferTextures.clear();
     
     // スワップチェーンを破棄
-    if (m_swapChain != VK_NULL_HANDLE) {
-        vkDestroySwapchainKHR(m_device->GetVkDevice(), m_swapChain, nullptr);
-        m_swapChain = VK_NULL_HANDLE;
+    if (m_swapChain)
+    {
+        m_device->GetVkDevice().destroySwapchainKHR(m_swapChain);
+        m_swapChain = nullptr;
     }
 }
 
 // サーフェスフォーマットの選択
-VkSurfaceFormatKHR VulkanSwapChain::ChooseSurfaceFormat()
+vk::SurfaceFormatKHR VulkanSwapChain::ChooseSurfaceFormat()
 {
     // 利用可能なサーフェスフォーマットを取得
-    uint32_t formatCount;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(m_device->GetVkPhysicalDevice(), m_surface, &formatCount, nullptr);
-    
-    NorvesLib::Core::Container::VariableArray<VkSurfaceFormatKHR> availableFormats(formatCount);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(
-        m_device->GetVkPhysicalDevice(), m_surface, &formatCount, availableFormats.data());
+    VariableArray<vk::SurfaceFormatKHR> availableFormats = 
+        m_device->GetVkPhysicalDevice().getSurfaceFormatsKHR(m_surface);
     
     // 優先フォーマットを探す（SRGB + B8G8R8A8）
-    for (const auto& availableFormat : availableFormats) {
-        if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
-            availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+    for (const auto& availableFormat : availableFormats)
+    {
+        if (availableFormat.format == vk::Format::eB8G8R8A8Srgb &&
+            availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+        {
             return availableFormat;
         }
     }
@@ -320,50 +324,53 @@ VkSurfaceFormatKHR VulkanSwapChain::ChooseSurfaceFormat()
 }
 
 // プレゼントモードの選択
-VkPresentModeKHR VulkanSwapChain::ChoosePresentMode()
+vk::PresentModeKHR VulkanSwapChain::ChoosePresentMode()
 {
     // 利用可能なプレゼントモードを取得
-    uint32_t presentModeCount;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(
-        m_device->GetVkPhysicalDevice(), m_surface, &presentModeCount, nullptr);
-    
-    NorvesLib::Core::Container::VariableArray<VkPresentModeKHR> availablePresentModes(presentModeCount);
-    vkGetPhysicalDeviceSurfacePresentModesKHR(
-        m_device->GetVkPhysicalDevice(), m_surface, &presentModeCount, availablePresentModes.data());
+    VariableArray<vk::PresentModeKHR> availablePresentModes = 
+        m_device->GetVkPhysicalDevice().getSurfacePresentModesKHR(m_surface);
     
     // VSync設定に基づいてプレゼントモードを選択
-    if (!m_desc.vsync) {
+    if (!m_desc.vsync)
+    {
         // VSync無効 - メールボックスモードを優先（ティアリングなし、低遅延）
-        for (const auto& availablePresentMode : availablePresentModes) {
-            if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+        for (const auto& availablePresentMode : availablePresentModes)
+        {
+            if (availablePresentMode == vk::PresentModeKHR::eMailbox)
+            {
                 return availablePresentMode;
             }
         }
         
         // メールボックスモードがなければ即時モード（ティアリングあり、最低遅延）
-        for (const auto& availablePresentMode : availablePresentModes) {
-            if (availablePresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+        for (const auto& availablePresentMode : availablePresentModes)
+        {
+            if (availablePresentMode == vk::PresentModeKHR::eImmediate)
+            {
                 return availablePresentMode;
             }
         }
     }
     
     // VSyncが有効か、他のモードが利用できない場合はFIFOモード（Vブランク同期）
-    return VK_PRESENT_MODE_FIFO_KHR;
+    return vk::PresentModeKHR::eFifo;
 }
 
 // スワップチェーンの範囲の選択
-VkExtent2D VulkanSwapChain::ChooseSwapExtent()
+vk::Extent2D VulkanSwapChain::ChooseSwapExtent()
 {
-    VkSurfaceCapabilitiesKHR capabilities;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_device->GetVkPhysicalDevice(), m_surface, &capabilities);
+    vk::SurfaceCapabilitiesKHR capabilities = 
+        m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
     
     // currentExtentが特殊値でなければ、それを使用
-    if (capabilities.currentExtent.width != UINT32_MAX) {
+    if (capabilities.currentExtent.width != UINT32_MAX)
+    {
         return capabilities.currentExtent;
-    } else {
+    }
+    else
+    {
         // ウィンドウサイズから適切な範囲を設定
-        VkExtent2D actualExtent = {
+        vk::Extent2D actualExtent = {
             static_cast<uint32_t>(m_width),
             static_cast<uint32_t>(m_height)
         };
@@ -383,27 +390,29 @@ VkExtent2D VulkanSwapChain::ChooseSwapExtent()
 // 最小イメージ数の取得
 uint32_t VulkanSwapChain::GetMinImageCount()
 {
-    VkSurfaceCapabilitiesKHR capabilities;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_device->GetVkPhysicalDevice(), m_surface, &capabilities);
+    vk::SurfaceCapabilitiesKHR capabilities = 
+        m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
     
     // トリプルバッファリングを推奨するが、サポートされる最大数を超えないようにする
     uint32_t imageCount = capabilities.minImageCount + 1;
     
-    if (capabilities.maxImageCount > 0 && imageCount > capabilities.maxImageCount) {
+    if (capabilities.maxImageCount > 0 && imageCount > capabilities.maxImageCount)
+    {
         imageCount = capabilities.maxImageCount;
     }
     
     return imageCount;
 }
 
-// VkFormatからRHIのFormatに変換
-Format VulkanSwapChain::FromVkFormat(VkFormat format) const
+// vk::FormatからRHIのFormatに変換
+Format VulkanSwapChain::FromVkFormat(vk::Format format) const
 {
-    switch (format) {
-        case VK_FORMAT_R8G8B8A8_UNORM: return Format::R8G8B8A8_UNORM;
-        case VK_FORMAT_R8G8B8A8_SRGB: return Format::R8G8B8A8_SRGB;
-        case VK_FORMAT_B8G8R8A8_UNORM: return Format::B8G8R8A8_UNORM;
-        case VK_FORMAT_B8G8R8A8_SRGB: return Format::B8G8R8A8_SRGB;
+    switch (format)
+    {
+        case vk::Format::eR8G8B8A8Unorm: return Format::R8G8B8A8_UNORM;
+        case vk::Format::eR8G8B8A8Srgb: return Format::R8G8B8A8_SRGB;
+        case vk::Format::eB8G8R8A8Unorm: return Format::B8G8R8A8_UNORM;
+        case vk::Format::eB8G8R8A8Srgb: return Format::B8G8R8A8_SRGB;
         default: return Format::Unknown;
     }
 }

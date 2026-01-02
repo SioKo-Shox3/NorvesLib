@@ -2,8 +2,9 @@
 
 #include "RHI/Public/ISampler.h"
 #include "RHI/Public/RHITypes.h"
-#include <vulkan/vulkan.h>
-#include <memory>
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <vulkan/vulkan.hpp>
+#include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -35,7 +36,7 @@ struct SamplerDesc
 };
 
 /**
- * @brief Vulkanサンプラー実装クラス
+ * @brief Vulkanサンプラー実装クラス (vulkan.hpp使用)
  */
 class VulkanSampler : public ISampler
 {
@@ -45,7 +46,7 @@ public:
      * @param device Vulkanデバイス
      * @param desc サンプラー記述子
      */
-    VulkanSampler(std::shared_ptr<VulkanDevice> device, const SamplerDesc& desc);
+    VulkanSampler(TSharedPtr<VulkanDevice> device, const SamplerDesc& desc);
     
     /**
      * @brief デストラクタ
@@ -68,28 +69,19 @@ public:
     float GetMaxLod() const { return m_desc.maxLod; }
     SamplerDesc::BorderColor GetBorderColor() const { return m_desc.borderColor; }
 
-    // Vulkan固有のメソッド
-    VkSampler GetVkSampler() const { return m_sampler; }
+    // Vulkan固有のメソッド (vulkan.hpp型)
+    vk::Sampler GetVkSampler() const { return m_sampler; }
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;
+    TSharedPtr<VulkanDevice> m_device;
     SamplerDesc m_desc;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    vk::Sampler m_sampler;
 
-    // フィルターモードをVulkanフィルターに変換
-    VkFilter ToVkFilter(FilterMode mode) const;
-    
-    // ミップマップフィルターモードをVulkanミップマップモードに変換
-    VkSamplerMipmapMode ToVkMipmapMode(FilterMode mode) const;
-    
-    // アドレッシングモードをVulkanアドレッシングモードに変換
-    VkSamplerAddressMode ToVkAddressMode(TextureAddressMode mode) const;
-    
-    // 比較関数をVulkan比較関数に変換
-    VkCompareOp ToVkCompareOp(CompareFunc func) const;
-    
-    // ボーダーカラーをVulkanボーダーカラーに変換
-    VkBorderColor ToVkBorderColor(SamplerDesc::BorderColor color) const;
+    vk::Filter ToVkFilter(FilterMode mode) const;
+    vk::SamplerMipmapMode ToVkMipmapMode(FilterMode mode) const;
+    vk::SamplerAddressMode ToVkAddressMode(TextureAddressMode mode) const;
+    vk::CompareOp ToVkCompareOp(CompareFunc func) const;
+    vk::BorderColor ToVkBorderColor(SamplerDesc::BorderColor color) const;
 };
 
 } // namespace NorvesLib::RHI::Vulkan

@@ -1,8 +1,8 @@
 ﻿#pragma once
 
 #include "RHI/Public/IDevice.h"
-#include <vulkan/vulkan.h>
-#include <memory>
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <vulkan/vulkan.hpp>
 #include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
@@ -24,16 +24,32 @@ class VulkanDescriptorSetLayout;
 class VulkanDescriptorPool;
 
 /**
- * @brief Vulkanデバイスの実装クラス
+ * @brief Vulkan初期化パラメータ
+ */
+struct VulkanInitParams
+{
+    bool bEnableValidation = true;
+    bool bPreferIntegratedGPU = false;
+};
+
+/**
+ * @brief Vulkanデバイスの実装クラス (vulkan.hpp使用)
  */
 class VulkanDevice : public IDevice
 {
 public:
     /**
-     * @brief VulkanDeviceのコンストラクタ
-     * @param enableValidation バリデーションレイヤー有効化フラグ
+     * @brief VulkanDeviceのファクトリメソッド
+     * @param params 初期化パラメータ
+     * @return 作成されたデバイス
      */
-    explicit VulkanDevice(bool enableValidation = true);
+    static DevicePtr Create(const VulkanInitParams& params = {});
+
+    /**
+     * @brief VulkanDeviceのコンストラクタ
+     * @param bEnableValidation バリデーションレイヤー有効化フラグ
+     */
+    explicit VulkanDevice(bool bEnableValidation = true);
     
     /**
      * @brief デストラクタ
@@ -55,42 +71,49 @@ public:
     void WaitIdle() override;
     API GetAPI() const override { return API::Vulkan; }
 
-    // Vulkan固有のメソッド
-    VkDevice GetVkDevice() const { return m_device; }
-    VkPhysicalDevice GetVkPhysicalDevice() const { return m_physicalDevice; }
-    VkInstance GetVkInstance() const { return m_instance; }
+    // Vulkan固有のメソッド (vulkan.hpp型)
+    vk::Device GetVkDevice() const { return m_device; }
+    vk::PhysicalDevice GetVkPhysicalDevice() const { return m_physicalDevice; }
+    vk::Instance GetVkInstance() const { return m_instance; }
     
     // キュー関連
-    VkQueue GetGraphicsQueue() const { return m_graphicsQueue; }
-    VkQueue GetPresentQueue() const { return m_presentQueue; }
-    VkQueue GetComputeQueue() const { return m_computeQueue; }
-    VkQueue GetTransferQueue() const { return m_transferQueue; }
+    vk::Queue GetGraphicsQueue() const { return m_graphicsQueue; }
+    vk::Queue GetPresentQueue() const { return m_presentQueue; }
+    vk::Queue GetComputeQueue() const { return m_computeQueue; }
+    vk::Queue GetTransferQueue() const { return m_transferQueue; }
     
     uint32_t GetGraphicsQueueFamilyIndex() const { return m_graphicsQueueFamilyIndex; }
     uint32_t GetComputeQueueFamilyIndex() const { return m_computeQueueFamilyIndex; }
     uint32_t GetTransferQueueFamilyIndex() const { return m_transferQueueFamilyIndex; }
     
     // メモリ管理
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
+    uint32_t FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
     
     // コマンドプール
-    VkCommandPool GetCommandPool() const { return m_commandPool; }
+    vk::CommandPool GetCommandPool() const { return m_commandPool; }
+
+    // 単発コマンドバッファ用ユーティリティ
+    vk::CommandBuffer BeginSingleTimeCommands();
+    void EndSingleTimeCommands(vk::CommandBuffer commandBuffer);
 
     // 実装固有の機能
-    VkFormat FindSupportedFormat(const NorvesLib::Core::Container::VariableArray<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) const;
+    vk::Format FindSupportedFormat(
+        const NorvesLib::Core::Container::VariableArray<vk::Format>& candidates,
+        vk::ImageTiling tiling,
+        vk::FormatFeatureFlags features) const;
     
     // フォーマット変換
-    VkFormat ToVkFormat(Format format) const;
-    Format FromVkFormat(VkFormat format) const;
+    vk::Format ToVkFormat(Format format) const;
+    Format FromVkFormat(vk::Format format) const;
 
 private:
     // Vulkanインスタンスとデバイス
-    VkInstance m_instance = VK_NULL_HANDLE;
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkPhysicalDeviceProperties m_deviceProperties{};
-    VkPhysicalDeviceFeatures m_deviceFeatures{};
-    VkPhysicalDeviceMemoryProperties m_memoryProperties{};
+    vk::Instance m_instance;
+    vk::PhysicalDevice m_physicalDevice;
+    vk::Device m_device;
+    vk::PhysicalDeviceProperties m_deviceProperties{};
+    vk::PhysicalDeviceFeatures m_deviceFeatures{};
+    vk::PhysicalDeviceMemoryProperties m_memoryProperties{};
     
     // キューファミリー
     uint32_t m_graphicsQueueFamilyIndex = UINT32_MAX;
@@ -99,21 +122,21 @@ private:
     uint32_t m_presentQueueFamilyIndex = UINT32_MAX;
     
     // キュー
-    VkQueue m_graphicsQueue = VK_NULL_HANDLE;
-    VkQueue m_computeQueue = VK_NULL_HANDLE;
-    VkQueue m_transferQueue = VK_NULL_HANDLE;
-    VkQueue m_presentQueue = VK_NULL_HANDLE;
+    vk::Queue m_graphicsQueue;
+    vk::Queue m_computeQueue;
+    vk::Queue m_transferQueue;
+    vk::Queue m_presentQueue;
     
     // コマンドプール
-    VkCommandPool m_commandPool = VK_NULL_HANDLE;
+    vk::CommandPool m_commandPool;
     
     // デバッグ・バリデーション用
-    VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
-    bool m_validationEnabled = false;
+    vk::DebugUtilsMessengerEXT m_debugMessenger;
+    bool m_bValidationEnabled = false;
 
     // フォーマット変換テーブル
-    NorvesLib::Core::Container::HashMap<Format, VkFormat> m_formatMap;
-    NorvesLib::Core::Container::HashMap<VkFormat, Format> m_reverseFormatMap;
+    NorvesLib::Core::Container::HashMap<Format, vk::Format> m_formatMap;
+    NorvesLib::Core::Container::HashMap<vk::Format, Format> m_reverseFormatMap;
     
     // 初期化メソッド
     void CreateInstance();
@@ -124,14 +147,14 @@ private:
     void InitFormatMaps();
     
     // ヘルパー
-    bool IsDeviceSuitable(VkPhysicalDevice device);
+    bool IsDeviceSuitable(vk::PhysicalDevice device);
     NorvesLib::Core::Container::VariableArray<const char*> GetRequiredExtensions();
     NorvesLib::Core::Container::VariableArray<const char*> GetDeviceExtensions();
-    void FindQueueFamilies(VkPhysicalDevice device);
+    void FindQueueFamilies(vk::PhysicalDevice device);
 
     // バリデーション関連
     bool CheckValidationLayerSupport();
-    static VkBool32 DebugCallback(
+    static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
         VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
         VkDebugUtilsMessageTypeFlagsEXT messageType,
         const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
