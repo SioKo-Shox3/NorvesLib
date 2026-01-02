@@ -4,13 +4,13 @@
 #include <cstddef>
 #include <memory>
 #include <type_traits>
-#include "EngineGlobals/GlobalMemoryAllocator.h"
+#include "EngineGlobals/MemoryOverrides.h"
 
 namespace NorvesLib::Core::Container
 {
     /**
      * @brief STLコンテナと互換性のあるカスタムアロケーターの実装
-     * GlobalMemoryAllocatorを内部的に使用します
+     * NorvesLib::Memory のメモリ関数を内部的に使用します
      *
      * @tparam T アロケートする型
      */
@@ -70,7 +70,7 @@ namespace NorvesLib::Core::Container
 
             // アライメントを考慮
             constexpr size_type alignment = alignof(T);
-            void *ptr = NorvesLib::Core::GlobalMemoryAllocator::Get().Allocate(bytes, alignment);
+            void *ptr = NorvesLib::Memory::AlignedMalloc(bytes, alignment);
 
             if (!ptr)
             {
@@ -87,7 +87,7 @@ namespace NorvesLib::Core::Container
          */
         void deallocate(T *ptr, [[maybe_unused]] size_type count)
         {
-            NorvesLib::Core::GlobalMemoryAllocator::Get().Deallocate(ptr);
+            NorvesLib::Memory::AlignedFree(ptr);
         }
 
         /**

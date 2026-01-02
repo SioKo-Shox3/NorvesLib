@@ -15,9 +15,10 @@ target_include_directories(${MODULE_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/Public
         ${CMAKE_CURRENT_SOURCE_DIR}/../Core/Public  # Coreモジュールへのパス追加
+        ${CMAKE_CURRENT_SOURCE_DIR}/..              # Libraryルートへのパス（Thread等へのアクセス用）
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Private
 )
 
 # Coreモジュールへの依存関係を設定
-target_link_libraries(${MODULE_NAME} PUBLIC Core)
+target_link_libraries(${MODULE_NAME} PUBLIC Core Thread)

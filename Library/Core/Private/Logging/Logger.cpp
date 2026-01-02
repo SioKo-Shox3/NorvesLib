@@ -233,7 +233,7 @@ namespace NorvesLib::Core::Logging
 
         try
         {
-            String formattedMessage = String(std::format(format, std::forward<Args>(args)...));
+            String formattedMessage = String(std::vformat(std::string_view(format), std::make_format_args(args...)));
             Log(level, category, formattedMessage, filename, function, lineNumber);
         }
         catch (const std::exception &e)
