@@ -21,7 +21,7 @@ target_link_libraries(${MODULE_NAME}
     PRIVATE 
         Core
         Math
-        RHI
+        # RHI # TODO: RHIモジュールはリファクタリング中のため一時的に無効化
         Memory
         Random
         GameMode
