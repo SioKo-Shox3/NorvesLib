@@ -3,7 +3,11 @@
 #include "Container/String.h"
 #include "Container/VariableArray.h"
 #include "Container/PointerTypes.h"
+#include "BootConfig.h"
+
+#ifdef _WIN32
 #include <Windows.h>
+#endif
 
 namespace NorvesLib
 {
@@ -27,11 +31,10 @@ namespace NorvesLib
 
             /**
              * @brief プラットフォーム初期化を行う
-             * @param hInstance インスタンスハンドル
-             * @param commandLine コマンドライン引数
+             * @param config 起動設定
              * @return 成功した場合true
              */
-            bool InitializePlatform(HINSTANCE hInstance, const String &commandLine);
+            bool InitializePlatform(const BootConfig &config);
 
             /**
              * @brief プラットフォーム終了処理を行う
@@ -45,13 +48,29 @@ namespace NorvesLib
             TUniquePtr<IApplication> CreateDefaultApplication();
 
             /**
+             * @brief アプリケーションを実行する統一エントリーポイント（新API）
+             * @param config 起動設定
+             * @return アプリケーションの終了コード
+             */
+            int RunApplication(const BootConfig &config);
+
+#ifdef _WIN32
+            /**
+             * @brief プラットフォーム初期化を行う（Windows用レガシーAPI）
+             * @param hInstance インスタンスハンドル
+             * @param commandLine コマンドライン引数
+             * @return 成功した場合true
+             */
+            bool InitializePlatform(HINSTANCE hInstance, const String &commandLine);
+
+            /**
              * @brief Windowsメッセージを処理する
              * @return 処理されたメッセージ数
              */
             int ProcessWindowsMessages();
 
             /**
-             * @brief アプリケーションを実行する統一エントリーポイント
+             * @brief アプリケーションを実行する統一エントリーポイント（Windows用レガシーAPI）
              * @param hInstance アプリケーションインスタンスハンドル
              * @param hPrevInstance 前のインスタンスハンドル（現在は常にNULL）
              * @param lpCmdLine コマンドライン引数
@@ -59,6 +78,15 @@ namespace NorvesLib
              * @return アプリケーションの終了コード
              */
             int RunApplication(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow);
+
+            /**
+             * @brief アプリケーションを実行する統一エントリーポイント（Windows用新API）
+             * @param hInstance アプリケーションインスタンスハンドル
+             * @param config 起動設定
+             * @return アプリケーションの終了コード
+             */
+            int RunApplication(HINSTANCE hInstance, const BootConfig &config);
+#endif
 
         } // namespace Boot
     } // namespace Core

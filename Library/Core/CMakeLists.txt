@@ -17,6 +17,8 @@ set(PRIVATE_SOURCES
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Boot/PlatformBoot.cpp
     Private/Application/ApplicationFactory.cpp
+    Private/Engine/Engine.cpp
+    Private/Engine/ApplicationProcessor.cpp
 )
 
 set(PUBLIC_HEADERS
@@ -46,7 +48,20 @@ set(PUBLIC_HEADERS
     Public/Platform/Windows/WindowsApplicationFactory.h
     Public/Platform/Windows/WindowsWindow.h
     Public/Boot/PlatformBoot.h
+    Public/Boot/BootConfig.h
+    Public/Boot/IPlatformBoot.h
     Public/Application/ApplicationFactory.h
+    Public/Application/IApplicationHandler.h
+    Public/Application/ApplicationHandlerBase.h
+    Public/Engine/Engine.h
+    Public/Engine/ApplicationProcessor.h
+    # GameMode (統合)
+    Public/GameMode/IStateMachine.h
+    Public/GameMode/TStateMachine.h
+    Public/GameMode/IGameMode.h
+    Public/GameMode/TGameMode.h
+    Public/GameMode/GameModeFactory.h
+    Public/GameMode/GameModeTypes.h
 )
 
 # ライブラリの作成

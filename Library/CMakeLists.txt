@@ -7,7 +7,7 @@ add_subdirectory(Math)
 add_subdirectory(Memory)
 add_subdirectory(Thread)
 add_subdirectory(Random)
-add_subdirectory(GameMode) # GameModeモジュールを追加
+# GameModeはCoreに統合されました
 add_subdirectory(FileStream) # FileStreamモジュールを追加
 
 # 全てのモジュールをリンクするインターフェースライブラリを作成
@@ -22,7 +22,7 @@ target_link_libraries(${MODULE_NAME}
         Memory
         Thread
         Random
-        GameMode # GameModeへの依存関係を追加
+        # GameModeはCoreに統合されました
         FileStream # FileStreamへの依存関係を追加
 )
 
