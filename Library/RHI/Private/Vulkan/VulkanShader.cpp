@@ -5,66 +5,62 @@
 namespace NorvesLib::RHI::Vulkan
 {
 
-// コンストラクタ
-VulkanShader::VulkanShader(std::shared_ptr<VulkanDevice> device, const ShaderDesc& desc)
+VulkanShader::VulkanShader(TSharedPtr<VulkanDevice> device, const ShaderDesc& desc)
     : m_device(device)
     , m_desc(desc)
 {
-    // シェーダーモジュールを作成
     CreateShaderModule();
 }
 
-// デストラクタ
 VulkanShader::~VulkanShader()
 {
-    if (m_shaderModule != VK_NULL_HANDLE) {
-        vkDestroyShaderModule(m_device->GetVkDevice(), m_shaderModule, nullptr);
+    if (m_shaderModule)
+    {
+        m_device->GetVkDevice().destroyShaderModule(m_shaderModule);
+        m_shaderModule = nullptr;
     }
 }
 
-// シェーダーステージフラグを取得
-VkShaderStageFlags VulkanShader::GetVkShaderStageFlags() const
+vk::ShaderStageFlags VulkanShader::GetVkShaderStageFlags() const
 {
-    return static_cast<VkShaderStageFlags>(ToVkShaderStage(m_desc.stage));
+    return ToVkShaderStage(m_desc.stage);
 }
 
-// シェーダーモジュールの作成
 void VulkanShader::CreateShaderModule()
 {
-    // バイトコードが空の場合はエラー
-    if (m_desc.bytecode.empty()) {
+    if (m_desc.bytecode.empty())
+    {
         throw std::runtime_error("シェーダーバイトコードが空です");
     }
 
-    // シェーダーモジュール作成情報
-    VkShaderModuleCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    vk::ShaderModuleCreateInfo createInfo;
     createInfo.codeSize = m_desc.bytecode.size();
     createInfo.pCode = reinterpret_cast<const uint32_t*>(m_desc.bytecode.data());
 
-    // シェーダーモジュールの作成
-    if (vkCreateShaderModule(m_device->GetVkDevice(), &createInfo, nullptr, &m_shaderModule) != VK_SUCCESS) {
+    auto result = m_device->GetVkDevice().createShaderModule(createInfo);
+    if (result.result != vk::Result::eSuccess)
+    {
         throw std::runtime_error("Vulkanシェーダーモジュールの作成に失敗しました");
     }
+    m_shaderModule = result.value;
 }
 
-// シェーダーステージの変換
-VkShaderStageFlagBits VulkanShader::ToVkShaderStage(ShaderStage stage) const
+vk::ShaderStageFlagBits VulkanShader::ToVkShaderStage(ShaderStage stage) const
 {
     switch (stage)
     {
     case ShaderStage::Vertex:
-        return VK_SHADER_STAGE_VERTEX_BIT;
+        return vk::ShaderStageFlagBits::eVertex;
     case ShaderStage::Hull:
-        return VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+        return vk::ShaderStageFlagBits::eTessellationControl;
     case ShaderStage::Domain:
-        return VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+        return vk::ShaderStageFlagBits::eTessellationEvaluation;
     case ShaderStage::Geometry:
-        return VK_SHADER_STAGE_GEOMETRY_BIT;
+        return vk::ShaderStageFlagBits::eGeometry;
     case ShaderStage::Pixel:
-        return VK_SHADER_STAGE_FRAGMENT_BIT;
+        return vk::ShaderStageFlagBits::eFragment;
     case ShaderStage::Compute:
-        return VK_SHADER_STAGE_COMPUTE_BIT;
+        return vk::ShaderStageFlagBits::eCompute;
     default:
         throw std::runtime_error("未対応のシェーダーステージです");
     }

@@ -1,12 +1,16 @@
 ﻿#pragma once
 
 #include "RHI/Public/IPipeline.h"
-#include <vulkan/vulkan.h>
-#include <memory>
+
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <vulkan/vulkan.hpp>
+
 #include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
+
+using namespace NorvesLib::Core::Container;
 
 class VulkanDevice;
 class VulkanShader;
@@ -14,21 +18,24 @@ class VulkanRenderPass;
 class VulkanDescriptorSetLayout;
 
 /**
- * @brief VulkanパイプラインレイアウトのラッパークラS
+ * @brief Vulkanパイプラインレイアウトのラッパークラス
  */
 class VulkanPipelineLayout
 {
 public:
-    VulkanPipelineLayout(std::shared_ptr<VulkanDevice> device, 
-                          const NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>>& layouts);
+    VulkanPipelineLayout(TSharedPtr<VulkanDevice> device, 
+                         const VariableArray<TSharedPtr<VulkanDescriptorSetLayout>>& layouts);
     ~VulkanPipelineLayout();
 
-    VkPipelineLayout GetVkPipelineLayout() const { return m_pipelineLayout; }
+    vk::PipelineLayout GetVkPipelineLayout() const
+    {
+        return m_pipelineLayout;
+    }
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    NorvesLib::Core::Container::VariableArray<std::shared_ptr<VulkanDescriptorSetLayout>> m_descriptorSetLayouts;
+    TSharedPtr<VulkanDevice> m_device;
+    vk::PipelineLayout m_pipelineLayout;
+    VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> m_descriptorSetLayouts;
 };
 
 /**
@@ -37,23 +44,36 @@ private:
 class VulkanPipeline : public IPipeline
 {
 public:
-    VulkanPipeline(std::shared_ptr<VulkanDevice> device);
+    VulkanPipeline(TSharedPtr<VulkanDevice> device);
     ~VulkanPipeline() override;
 
     // IDeviceObjectインターフェース実装
-    ResourceType GetResourceType() const override { return ResourceType::Pipeline; }
+    ResourceType GetResourceType() const override
+    {
+        return ResourceType::Pipeline;
+    }
 
     // IPipelineインターフェース実装
-    PipelineType GetPipelineType() const override { return m_pipelineType; }
+    PipelineType GetPipelineType() const override
+    {
+        return m_pipelineType;
+    }
 
     // Vulkan固有のメソッド
-    VkPipeline GetVkPipeline() const { return m_pipeline; }
-    VkPipelineLayout GetVkPipelineLayout() const { return m_pipelineLayout->GetVkPipelineLayout(); }
+    vk::Pipeline GetVkPipeline() const
+    {
+        return m_pipeline;
+    }
+    
+    vk::PipelineLayout GetVkPipelineLayout() const
+    {
+        return m_pipelineLayout->GetVkPipelineLayout();
+    }
 
 protected:
-    std::shared_ptr<VulkanDevice> m_device;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
-    std::shared_ptr<VulkanPipelineLayout> m_pipelineLayout;
+    TSharedPtr<VulkanDevice> m_device;
+    vk::Pipeline m_pipeline;
+    TSharedPtr<VulkanPipelineLayout> m_pipelineLayout;
     PipelineType m_pipelineType;
 };
 
@@ -63,7 +83,7 @@ protected:
 class VulkanGraphicsPipeline : public VulkanPipeline
 {
 public:
-    VulkanGraphicsPipeline(std::shared_ptr<VulkanDevice> device, 
+    VulkanGraphicsPipeline(TSharedPtr<VulkanDevice> device, 
                            const GraphicsPipelineDesc& desc);
     ~VulkanGraphicsPipeline() override;
 
@@ -73,15 +93,15 @@ private:
     void CreateGraphicsPipeline();
     
     // ヘルパーメソッド
-    VkPrimitiveTopology ConvertPrimitiveTopology(PrimitiveTopology topology);
-    VkPolygonMode ConvertPolygonMode(PolygonMode mode);
-    VkCullModeFlags ConvertCullMode(CullMode mode);
-    VkFrontFace ConvertFrontFace(FrontFace frontFace);
-    VkCompareOp ConvertCompareOp(CompareOp op);
-    VkStencilOp ConvertStencilOp(StencilOp op);
-    VkBlendFactor ConvertBlendFactor(BlendFactor factor);
-    VkBlendOp ConvertBlendOp(BlendOp op);
-    VkColorComponentFlags ConvertColorWriteMask(ColorWriteMask mask);
+    vk::PrimitiveTopology ConvertPrimitiveTopology(PrimitiveTopology topology);
+    vk::PolygonMode ConvertPolygonMode(PolygonMode mode);
+    vk::CullModeFlags ConvertCullMode(CullMode mode);
+    vk::FrontFace ConvertFrontFace(FrontFace frontFace);
+    vk::CompareOp ConvertCompareOp(CompareOp op);
+    vk::StencilOp ConvertStencilOp(StencilOp op);
+    vk::BlendFactor ConvertBlendFactor(BlendFactor factor);
+    vk::BlendOp ConvertBlendOp(BlendOp op);
+    vk::ColorComponentFlags ConvertColorWriteMask(ColorWriteMask mask);
 };
 
 /**
@@ -90,7 +110,7 @@ private:
 class VulkanComputePipeline : public VulkanPipeline
 {
 public:
-    VulkanComputePipeline(std::shared_ptr<VulkanDevice> device, 
+    VulkanComputePipeline(TSharedPtr<VulkanDevice> device, 
                           const ComputePipelineDesc& desc);
     ~VulkanComputePipeline() override;
 

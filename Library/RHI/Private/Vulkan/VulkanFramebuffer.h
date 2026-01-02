@@ -1,8 +1,10 @@
 ﻿#pragma once
 
 #include "RHI/Public/IFramebuffer.h"
-#include <vulkan/vulkan.h>
-#include <memory>
+
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <vulkan/vulkan.hpp>
+
 #include "Core/Public/Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
@@ -22,12 +24,18 @@ public:
      * @param device Vulkanデバイス
      * @param desc フレームバッファ記述子
      */
-    VulkanFramebuffer(std::shared_ptr<VulkanDevice> device, const FramebufferDesc& desc);
+    VulkanFramebuffer(TSharedPtr<VulkanDevice> device, const FramebufferDesc& desc);
     
     /**
      * @brief デストラクタ
      */
     ~VulkanFramebuffer() override;
+
+    // コピー・ムーブ禁止
+    VulkanFramebuffer(const VulkanFramebuffer&) = delete;
+    VulkanFramebuffer& operator=(const VulkanFramebuffer&) = delete;
+    VulkanFramebuffer(VulkanFramebuffer&&) = delete;
+    VulkanFramebuffer& operator=(VulkanFramebuffer&&) = delete;
 
     // IDeviceObjectインターフェース実装
     ResourceType GetResourceType() const override { return ResourceType::Framebuffer; }
@@ -38,19 +46,19 @@ public:
     uint32_t GetHeight() const override { return m_desc.height; }
 
     // Vulkan固有のメソッド
-    VkFramebuffer GetVkFramebuffer() const { return m_framebuffer; }
+    vk::Framebuffer GetVkFramebuffer() const { return m_framebuffer; }
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;
+    TSharedPtr<VulkanDevice> m_device;
     FramebufferDesc m_desc;
-    VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
+    vk::Framebuffer m_framebuffer;
     
     // アタッチメントのVulkanイメージビュー
-    NorvesLib::Core::Container::VariableArray<VkImageView> m_attachmentViews;
+    VariableArray<vk::ImageView> m_attachmentViews;
     
     // ヘルパーメソッド
-    void CreateFramebuffer(std::shared_ptr<VulkanRenderPass> renderPass);
-    VkImageView GetImageViewFromAttachment(const AttachmentRef& attachment);
+    void CreateFramebuffer(TSharedPtr<VulkanRenderPass> renderPass);
+    vk::ImageView GetImageViewFromAttachment(const AttachmentRef& attachment);
 };
 
 } // namespace NorvesLib::RHI::Vulkan

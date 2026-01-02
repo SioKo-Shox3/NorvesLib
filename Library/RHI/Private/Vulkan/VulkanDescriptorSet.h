@@ -1,10 +1,9 @@
 ﻿#pragma once
 
 #include "RHI/Public/IDescriptorSet.h"
-#include <vulkan/vulkan.h>
-#include <memory>
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <vulkan/vulkan.hpp>
 #include "Core/Public/Container/Containers.h"
-#include <unordered_map>
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -15,7 +14,7 @@ class VulkanTexture;
 class VulkanSampler;
 
 /**
- * @brief Vulkanディスクリプタセットレイアウト
+ * @brief Vulkanディスクリプタセットレイアウト (vulkan.hpp使用)
  */
 class VulkanDescriptorSetLayout
 {
@@ -26,7 +25,7 @@ public:
      * @param bindings バインディング記述子のリスト
      */
     VulkanDescriptorSetLayout(
-        std::shared_ptr<VulkanDevice> device,
+        TSharedPtr<VulkanDevice> device,
         const NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc>& bindings);
     
     /**
@@ -34,26 +33,20 @@ public:
      */
     ~VulkanDescriptorSetLayout();
     
-    // Vulkanレイアウトハンドル取得
-    VkDescriptorSetLayout GetVkDescriptorSetLayout() const { return m_layout; }
-    
-    // バインディング情報取得
+    vk::DescriptorSetLayout GetVkDescriptorSetLayout() const { return m_layout; }
     const NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc>& GetBindings() const { return m_bindings; }
+    vk::DescriptorType ToVkDescriptorType(DescriptorType type) const;
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;
+    TSharedPtr<VulkanDevice> m_device;
     NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc> m_bindings;
-    VkDescriptorSetLayout m_layout = VK_NULL_HANDLE;
+    vk::DescriptorSetLayout m_layout;
     
-    // バインディングタイプをVulkanディスクリプタタイプに変換
-    VkDescriptorType ToVkDescriptorType(DescriptorType type) const;
-    
-    // シェーダーステージをVulkanシェーダーステージフラグに変換
-    VkShaderStageFlags ToVkShaderStageFlags(ShaderStage stage) const;
+    vk::ShaderStageFlags ToVkShaderStageFlags(ShaderStage stage) const;
 };
 
 /**
- * @brief Vulkanディスクリプタプール
+ * @brief Vulkanディスクリプタプール (vulkan.hpp使用)
  */
 class VulkanDescriptorPool
 {
@@ -63,26 +56,23 @@ public:
      * @param device Vulkanデバイス
      * @param maxSets 最大セット数
      */
-    VulkanDescriptorPool(std::shared_ptr<VulkanDevice> device, uint32_t maxSets = 100);
+    VulkanDescriptorPool(TSharedPtr<VulkanDevice> device, uint32_t maxSets = 100);
     
     /**
      * @brief デストラクタ
      */
     ~VulkanDescriptorPool();
     
-    // Vulkanプールハンドル取得
-    VkDescriptorPool GetVkDescriptorPool() const { return m_pool; }
-    
-    // プールのリセット
+    vk::DescriptorPool GetVkDescriptorPool() const { return m_pool; }
     void Reset();
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;
-    VkDescriptorPool m_pool = VK_NULL_HANDLE;
+    TSharedPtr<VulkanDevice> m_device;
+    vk::DescriptorPool m_pool;
 };
 
 /**
- * @brief Vulkanディスクリプタセット実装クラス
+ * @brief Vulkanディスクリプタセット実装クラス (vulkan.hpp使用)
  */
 class VulkanDescriptorSet : public IDescriptorSet
 {
@@ -95,10 +85,10 @@ public:
      * @param pool ディスクリプタプール
      */
     VulkanDescriptorSet(
-        std::shared_ptr<VulkanDevice> device,
+        TSharedPtr<VulkanDevice> device,
         const DescriptorSetDesc& desc,
-        std::shared_ptr<VulkanDescriptorSetLayout> layout,
-        std::shared_ptr<VulkanDescriptorPool> pool);
+        TSharedPtr<VulkanDescriptorSetLayout> layout,
+        TSharedPtr<VulkanDescriptorPool> pool);
     
     /**
      * @brief デストラクタ
@@ -113,54 +103,43 @@ public:
     void BindStorageTexture(uint32_t binding, TexturePtr texture) override;
     void Update() override;
 
-    // Vulkan固有のメソッド
-    VkDescriptorSet GetVkDescriptorSet() const { return m_descriptorSet; }
-    VkDescriptorSetLayout GetVkDescriptorSetLayout() const;
-    
-    // パイプラインレイアウトの取得
-    VkPipelineLayout GetVkPipelineLayout() const;
+    // Vulkan固有のメソッド (vulkan.hpp型)
+    vk::DescriptorSet GetVkDescriptorSet() const { return m_descriptorSet; }
+    vk::DescriptorSetLayout GetVkDescriptorSetLayout() const;
+    vk::PipelineLayout GetVkPipelineLayout() const;
 
 private:
-    std::shared_ptr<VulkanDevice> m_device;
+    TSharedPtr<VulkanDevice> m_device;
     DescriptorSetDesc m_desc;
-    std::shared_ptr<VulkanDescriptorSetLayout> m_layout;
-    std::shared_ptr<VulkanDescriptorPool> m_pool;
+    TSharedPtr<VulkanDescriptorSetLayout> m_layout;
+    TSharedPtr<VulkanDescriptorPool> m_pool;
     
-    VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+    vk::DescriptorSet m_descriptorSet;
+    vk::PipelineLayout m_pipelineLayout;
     
-    // 更新が必要かどうか
-    bool m_needsUpdate = false;
+    bool m_bNeedsUpdate = false;
     
-    // バインディング情報の構造体
-    struct BindingInfo {
-        enum class ResourceType {
+    struct BindingInfo
+    {
+        enum class ResourceType
+        {
             Buffer,
             Texture,
             Sampler
         };
         
         ResourceType type;
-        union {
-            struct {
-                BufferPtr buffer;
-                uint64_t offset;
-                uint64_t range;
-            } bufferInfo;
-            
-            TexturePtr texture;
-            SamplerPtr sampler;
-        };
+        BufferPtr buffer;
+        TexturePtr texture;
+        SamplerPtr sampler;
+        uint64_t offset = 0;
+        uint64_t range = VK_WHOLE_SIZE;
     };
     
-    // バインディング情報のマップ (binding -> info)
     NorvesLib::Core::Container::HashMap<uint32_t, BindingInfo> m_bindings;
     
-    // パイプラインレイアウト作成
     void CreatePipelineLayout();
-    
-    // バインディングに対応するVkDescriptorTypeを取得
-    VkDescriptorType GetVkDescriptorType(uint32_t binding) const;
+    vk::DescriptorType GetVkDescriptorType(uint32_t binding) const;
 };
 
 } // namespace NorvesLib::RHI::Vulkan

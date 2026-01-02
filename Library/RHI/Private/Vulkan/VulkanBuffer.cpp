@@ -6,23 +6,28 @@
 namespace NorvesLib::RHI::Vulkan
 {
 
+using namespace NorvesLib::Core::Container;
+
 // コンストラクタ
-VulkanBuffer::VulkanBuffer(std::shared_ptr<VulkanDevice> device, const BufferDesc& desc)
+VulkanBuffer::VulkanBuffer(TSharedPtr<VulkanDevice> device, const BufferDesc& desc)
     : m_device(device)
     , m_desc(desc)
 {
     // Vulkanバッファ使用法フラグを取得
-    VkBufferUsageFlags usage = GetVkBufferUsage();
+    vk::BufferUsageFlags usage = GetVkBufferUsage();
     
     // メモリプロパティを設定
-    VkMemoryPropertyFlags memProps = 0;
+    vk::MemoryPropertyFlags memProps;
     
-    if (desc.hostVisible) {
+    if (desc.hostVisible)
+    {
         // CPUからアクセス可能なメモリ
-        memProps = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    } else {
+        memProps = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+    }
+    else
+    {
         // デバイスローカルメモリ
-        memProps = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        memProps = vk::MemoryPropertyFlagBits::eDeviceLocal;
     }
     
     // バッファとメモリを作成
@@ -33,229 +38,216 @@ VulkanBuffer::VulkanBuffer(std::shared_ptr<VulkanDevice> device, const BufferDes
 VulkanBuffer::~VulkanBuffer()
 {
     // マッピングされている場合はアンマップ
-    if (m_isMapped) {
+    if (m_bIsMapped)
+    {
         Unmap();
     }
     
-    // バッファとメモリを破棄
-    if (m_buffer != VK_NULL_HANDLE) {
-        vkDestroyBuffer(m_device->GetVkDevice(), m_buffer, nullptr);
+    auto vkDevice = m_device->GetVkDevice();
+    
+    // バッファを破棄
+    if (m_buffer)
+    {
+        vkDevice.destroyBuffer(m_buffer);
     }
     
-    if (m_deviceMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(m_device->GetVkDevice(), m_deviceMemory, nullptr);
+    // メモリを解放
+    if (m_deviceMemory)
+    {
+        vkDevice.freeMemory(m_deviceMemory);
     }
 }
 
 // IBufferインターフェース実装: Map
 void* VulkanBuffer::Map(uint64_t offset, uint64_t size)
 {
-    if (!m_desc.hostVisible) {
+    if (!m_desc.hostVisible)
+    {
         throw std::runtime_error("ホスト可視でないバッファはマッピングできません");
     }
     
-    if (m_isMapped) {
+    if (m_bIsMapped)
+    {
         throw std::runtime_error("バッファは既にマッピングされています");
     }
     
     // サイズが0の場合は全体をマップ
-    if (size == 0) {
+    if (size == 0)
+    {
         size = m_desc.size - offset;
     }
     
     // オフセットとサイズの範囲チェック
-    if (offset + size > m_desc.size) {
+    if (offset + size > m_desc.size)
+    {
         throw std::runtime_error("マッピング範囲がバッファサイズを超えています");
     }
     
     // メモリのマッピング
-    void* data = nullptr;
-    VkResult result = vkMapMemory(
-        m_device->GetVkDevice(), 
-        m_deviceMemory, 
-        offset, 
-        size, 
-        0, // フラグは現在未使用
-        &data);
-    
-    if (result != VK_SUCCESS) {
+    auto result = m_device->GetVkDevice().mapMemory(m_deviceMemory, offset, size, {});
+    if (result.result != vk::Result::eSuccess)
+    {
         throw std::runtime_error("バッファメモリのマッピングに失敗しました");
     }
     
-    m_isMapped = true;
-    m_mappedData = data;
+    m_bIsMapped = true;
+    m_mappedData = result.value;
     
-    return data;
+    return m_mappedData;
 }
 
 // IBufferインターフェース実装: Unmap
 void VulkanBuffer::Unmap()
 {
-    if (!m_isMapped) {
+    if (!m_bIsMapped)
+    {
         return;
     }
     
-    vkUnmapMemory(m_device->GetVkDevice(), m_deviceMemory);
-    m_isMapped = false;
+    m_device->GetVkDevice().unmapMemory(m_deviceMemory);
+    m_bIsMapped = false;
     m_mappedData = nullptr;
 }
 
 // IBufferインターフェース実装: Update
 void VulkanBuffer::Update(const void* data, uint64_t size, uint64_t offset)
 {
-    if (offset + size > m_desc.size) {
+    if (offset + size > m_desc.size)
+    {
         throw std::runtime_error("更新範囲がバッファサイズを超えています");
     }
     
     // ホスト可視の場合は直接マッピングして更新
-    if (m_desc.hostVisible) {
+    if (m_desc.hostVisible)
+    {
         void* mappedData = Map(offset, size);
         std::memcpy(mappedData, data, size);
         Unmap();
-    } 
+    }
     // ホスト不可視の場合は一時的なステージングバッファを使用
-    else {
+    else
+    {
         // ステージングバッファの作成
         BufferDesc stagingDesc;
         stagingDesc.size = size;
         stagingDesc.usage = ResourceUsage::TransferSrc;
         stagingDesc.hostVisible = true;
         
-        auto stagingBuffer = std::make_shared<VulkanBuffer>(m_device, stagingDesc);
+        auto stagingBuffer = MakeShared<VulkanBuffer>(m_device, stagingDesc);
         
         // データをステージングバッファに書き込み
         void* mappedStaging = stagingBuffer->Map(0, size);
         std::memcpy(mappedStaging, data, size);
         stagingBuffer->Unmap();
         
-        // コマンドバッファの作成と記録
-        VkCommandBufferAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandPool = m_device->GetCommandPool();
-        allocInfo.commandBufferCount = 1;
-        
-        VkCommandBuffer commandBuffer;
-        vkAllocateCommandBuffers(m_device->GetVkDevice(), &allocInfo, &commandBuffer);
-        
-        VkCommandBufferBeginInfo beginInfo{};
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        
-        vkBeginCommandBuffer(commandBuffer, &beginInfo);
+        // 単発コマンドバッファでコピー
+        vk::CommandBuffer commandBuffer = m_device->BeginSingleTimeCommands();
         
         // コピーコマンドの実行
-        VkBufferCopy copyRegion{};
+        vk::BufferCopy copyRegion{};
         copyRegion.srcOffset = 0;
         copyRegion.dstOffset = offset;
         copyRegion.size = size;
         
-        vkCmdCopyBuffer(
-            commandBuffer, 
-            stagingBuffer->GetVkBuffer(), 
-            m_buffer, 
-            1, 
-            &copyRegion);
+        commandBuffer.copyBuffer(stagingBuffer->GetVkBuffer(), m_buffer, 1, &copyRegion);
         
-        vkEndCommandBuffer(commandBuffer);
-        
-        // コマンドの提出と完了を待機
-        VkSubmitInfo submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &commandBuffer;
-        
-        VkFence fence;
-        VkFenceCreateInfo fenceInfo{};
-        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        
-        vkCreateFence(m_device->GetVkDevice(), &fenceInfo, nullptr, &fence);
-        
-        vkQueueSubmit(m_device->GetGraphicsQueue(), 1, &submitInfo, fence);
-        vkWaitForFences(m_device->GetVkDevice(), 1, &fence, VK_TRUE, UINT64_MAX);
-        
-        // リソース解放
-        vkDestroyFence(m_device->GetVkDevice(), fence, nullptr);
-        vkFreeCommandBuffers(m_device->GetVkDevice(), m_device->GetCommandPool(), 1, &commandBuffer);
+        m_device->EndSingleTimeCommands(commandBuffer);
         
         // ステージングバッファは自動的に解放される（スマートポインタによる管理）
     }
 }
 
 // バッファとメモリの作成
-void VulkanBuffer::CreateBuffer(VkBufferUsageFlags usage, VkMemoryPropertyFlags properties)
+void VulkanBuffer::CreateBuffer(vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties)
 {
+    auto vkDevice = m_device->GetVkDevice();
+    
     // バッファ作成情報
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    vk::BufferCreateInfo bufferInfo{};
     bufferInfo.size = m_desc.size;
     bufferInfo.usage = usage;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // 単一キュー専用
+    bufferInfo.sharingMode = vk::SharingMode::eExclusive; // 単一キュー専用
 
     // バッファの作成
-    if (vkCreateBuffer(m_device->GetVkDevice(), &bufferInfo, nullptr, &m_buffer) != VK_SUCCESS) {
+    auto createResult = vkDevice.createBuffer(bufferInfo);
+    if (createResult.result != vk::Result::eSuccess)
+    {
         throw std::runtime_error("Vulkanバッファの作成に失敗しました");
     }
+    m_buffer = createResult.value;
 
     // メモリ要件の取得
-    VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(m_device->GetVkDevice(), m_buffer, &memRequirements);
+    vk::MemoryRequirements memRequirements = vkDevice.getBufferMemoryRequirements(m_buffer);
 
     // メモリタイプのインデックスを取得
     uint32_t memoryTypeIndex = m_device->FindMemoryType(memRequirements.memoryTypeBits, properties);
 
     // メモリ割り当て情報
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    vk::MemoryAllocateInfo allocInfo{};
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = memoryTypeIndex;
 
     // メモリの割り当て
-    if (vkAllocateMemory(m_device->GetVkDevice(), &allocInfo, nullptr, &m_deviceMemory) != VK_SUCCESS) {
+    auto allocResult = vkDevice.allocateMemory(allocInfo);
+    if (allocResult.result != vk::Result::eSuccess)
+    {
         throw std::runtime_error("バッファメモリの割り当てに失敗しました");
     }
+    m_deviceMemory = allocResult.value;
 
     // メモリをバッファにバインド
-    vkBindBufferMemory(m_device->GetVkDevice(), m_buffer, m_deviceMemory, 0);
+    auto bindResult = vkDevice.bindBufferMemory(m_buffer, m_deviceMemory, 0);
+    if (bindResult != vk::Result::eSuccess)
+    {
+        throw std::runtime_error("バッファメモリのバインドに失敗しました");
+    }
 }
 
 // Vulkanバッファ使用法フラグに変換
-VkBufferUsageFlags VulkanBuffer::GetVkBufferUsage() const
+vk::BufferUsageFlags VulkanBuffer::GetVkBufferUsage() const
 {
-    VkBufferUsageFlags usage = 0;
+    vk::BufferUsageFlags usage{};
     
     // 使用法フラグの変換
-    if ((m_desc.usage & ResourceUsage::VertexBuffer) == ResourceUsage::VertexBuffer) {
-        usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    if ((m_desc.usage & ResourceUsage::VertexBuffer) == ResourceUsage::VertexBuffer)
+    {
+        usage |= vk::BufferUsageFlagBits::eVertexBuffer;
     }
     
-    if ((m_desc.usage & ResourceUsage::IndexBuffer) == ResourceUsage::IndexBuffer) {
-        usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    if ((m_desc.usage & ResourceUsage::IndexBuffer) == ResourceUsage::IndexBuffer)
+    {
+        usage |= vk::BufferUsageFlagBits::eIndexBuffer;
     }
     
-    if ((m_desc.usage & ResourceUsage::ConstantBuffer) == ResourceUsage::ConstantBuffer) {
-        usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    if ((m_desc.usage & ResourceUsage::ConstantBuffer) == ResourceUsage::ConstantBuffer)
+    {
+        usage |= vk::BufferUsageFlagBits::eUniformBuffer;
     }
     
-    if ((m_desc.usage & ResourceUsage::ShaderRead) == ResourceUsage::ShaderRead) {
-        usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    if ((m_desc.usage & ResourceUsage::ShaderRead) == ResourceUsage::ShaderRead)
+    {
+        usage |= vk::BufferUsageFlagBits::eStorageBuffer;
     }
     
-    if ((m_desc.usage & ResourceUsage::ShaderWrite) == ResourceUsage::ShaderWrite) {
-        usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    if ((m_desc.usage & ResourceUsage::ShaderWrite) == ResourceUsage::ShaderWrite)
+    {
+        usage |= vk::BufferUsageFlagBits::eStorageBuffer;
     }
     
-    if ((m_desc.usage & ResourceUsage::TransferSrc) == ResourceUsage::TransferSrc) {
-        usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    if ((m_desc.usage & ResourceUsage::TransferSrc) == ResourceUsage::TransferSrc)
+    {
+        usage |= vk::BufferUsageFlagBits::eTransferSrc;
     }
     
-    if ((m_desc.usage & ResourceUsage::TransferDst) == ResourceUsage::TransferDst) {
-        usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if ((m_desc.usage & ResourceUsage::TransferDst) == ResourceUsage::TransferDst)
+    {
+        usage |= vk::BufferUsageFlagBits::eTransferDst;
     }
     
     // デフォルトでトランスファー先として使用可能にする
-    if (!m_desc.hostVisible) {
-        usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (!m_desc.hostVisible)
+    {
+        usage |= vk::BufferUsageFlagBits::eTransferDst;
     }
     
     return usage;
