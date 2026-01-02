@@ -3,7 +3,7 @@
 # ライブラリモジュールを追加
 add_subdirectory(Core)
 add_subdirectory(Math)
-add_subdirectory(RHI)
+# add_subdirectory(RHI) # TODO: RHIモジュールはリファクタリング中のため一時的に無効化
 add_subdirectory(Memory)
 add_subdirectory(Thread)
 add_subdirectory(Random)
@@ -18,7 +18,7 @@ target_link_libraries(${MODULE_NAME}
     INTERFACE 
         Core
         Math
-        RHI
+        # RHI # TODO: RHIモジュールはリファクタリング中のため一時的に無効化
         Memory
         Thread
         Random
