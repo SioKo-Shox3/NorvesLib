@@ -4,6 +4,7 @@
 #include "GameMode/IStateMachine.h"
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
+#include "Rendering/RenderWorld.h"
 
 namespace NorvesLib::Core::Application
 {
@@ -234,12 +235,44 @@ namespace NorvesLib::Core::Engine
             return m_bExitRequested;
         }
 
+        // ========== レンダリングシステム ==========
+
+        /**
+         * @brief レンダリングワールドを取得
+         * @return RenderWorldへの参照
+         */
+        Rendering::RenderWorld& GetRenderWorld()
+        {
+            return m_RenderWorld;
+        }
+
+        /**
+         * @brief レンダリングリソースマネージャーを取得
+         * @return RenderResourceManagerへの参照
+         */
+        Rendering::RenderResourceManager& GetRenderResourceManager()
+        {
+            return m_RenderWorld.GetResourceManager();
+        }
+
+        /**
+         * @brief メッシュリソースマネージャーを取得
+         * @return MeshResourceManagerへの参照
+         */
+        Rendering::MeshResourceManager& GetMeshResourceManager()
+        {
+            return m_RenderWorld.GetMeshResourceManager();
+        }
+
     private:
         // サブシステムへの参照
         Container::TUniquePtr<NorvesLib::IApplication> m_PlatformApp;
         Container::TSharedPtr<Application::IApplicationHandler> m_Handler;
         Container::TUniquePtr<GameMode::IStateMachine> m_GameModeStateMachine;
         Container::TSharedPtr<NorvesLib::IWindow> m_MainWindow;
+
+        // レンダリングシステム（GEngine配下で実体保持）
+        Rendering::RenderWorld m_RenderWorld;
 
         // 実行状態
         bool m_bIsRunning = false;

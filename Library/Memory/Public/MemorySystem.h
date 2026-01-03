@@ -7,7 +7,7 @@
 #include "FrameAllocator.h"
 #include "PoolAllocator.h"
 #include "SizeClassAllocator.h"
-#include "Thread/Public/ThreadLocalStorage.h"
+#include "Thread/ThreadLocalStorage.h"
 #include <cstdint>
 #include <vector>
 

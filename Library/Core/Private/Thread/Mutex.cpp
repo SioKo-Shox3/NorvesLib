@@ -1,4 +1,4 @@
-﻿#include "Mutex.h"
+﻿#include "Thread/Mutex.h"
 
 namespace NorvesLib::Thread
 {

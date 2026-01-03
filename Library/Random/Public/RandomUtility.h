@@ -1,8 +1,8 @@
 ﻿#pragma once
 
 #include "Random.h"
-#include "Math/Public/Vector2.h"
-#include "Math/Public/Vector3.h"
+#include "Math/Vector2.h"
+#include "Math/Vector3.h"
 #include <cmath>
 
 namespace NorvesLib::Random

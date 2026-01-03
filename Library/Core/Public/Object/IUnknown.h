@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include <cstdint>
-#include "Thread/Public/Atomic.h"
+#include "Thread/Atomic.h"
 #include "Container/PointerTypes.h"
 #include "Container/Containers.h"
 #include "Text/IdentityPool.h"

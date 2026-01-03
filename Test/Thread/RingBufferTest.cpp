@@ -1,5 +1,5 @@
-﻿#include "Thread/Public/RingBuffer.h"
-#include "Thread/Public/Atomic.h"
+﻿#include "Thread/RingBuffer.h"
+#include "Thread/Atomic.h"
 #include <thread>
 #include <chrono>
 #include <vector>

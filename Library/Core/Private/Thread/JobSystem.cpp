@@ -1,5 +1,5 @@
-﻿#include "JobSystem.h"
-#include "Thread.h"
+﻿#include "Thread/JobSystem.h"
+#include "Thread/Thread.h"
 #include <cassert>
 #include <algorithm>
 #include <random>

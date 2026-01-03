@@ -17,13 +17,13 @@ target_include_directories(${MODULE_NAME}
 )
 
 # 各ライブラリコンポーネントへの依存関係を設定
-# GameModeはCoreに統合されたため、Coreへの依存のみで十分
+# GameMode, Math, Thread は Core に統合されたため、Core への依存のみで十分
 target_link_libraries(${MODULE_NAME} 
     PRIVATE 
         Core
-        Math
+        # Math # Core に統合されました
         # RHI # TODO: RHIモジュールはリファクタリング中のため一時的に無効化
         Memory
         Random
-        # Thread # 一時的に除外
+        # Thread # Core に統合されました
 )

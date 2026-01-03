@@ -246,6 +246,65 @@ std::map<std::string, int> stdMap;
 - プラットフォーム固有の実装を抽象化
 - `ApplicationFactory`, `WindowsApplicationFactory`
 
+### シングルトンパターンの禁止
+- **クラス内でstaticインスタンスを持つシングルトンパターンは禁止**
+- `〇〇Manager`などのシステムクラスは`GEngine`の下に実体を持たせる
+- グローバルアクセスが必要な場合は`GEngine`経由で取得する
+
+```cpp
+// 禁止（クラス内でシングルトン）
+class ResourceManager
+{
+public:
+    static ResourceManager& Get()
+    {
+        static ResourceManager instance;
+        return instance;
+    }
+private:
+    ResourceManager() = default;
+};
+
+// 推奨（GEngineの下に実体を持つ）
+class ResourceManager
+{
+public:
+    ResourceManager() = default;
+    // ... 通常のクラスとして実装
+};
+
+// Engine.h内
+class Engine
+{
+public:
+    ResourceManager& GetResourceManager() { return m_ResourceManager; }
+private:
+    ResourceManager m_ResourceManager;
+};
+
+// 使用時
+GEngine->GetResourceManager().DoSomething();
+```
+
+### ポインタ演算子の記法
+- **ポインタ演算子は型のすぐ後に付ける**（変数名との間にスペース）
+- 参照も同様
+
+```cpp
+// 正しい記法
+void* buffer = nullptr;
+int* pValue = &value;
+const char* str = "hello";
+MyClass* pObject = new MyClass();
+void Process(const Data* pData);
+void Modify(Data& data);
+
+// 避けるべき記法
+void *buffer = nullptr;
+int *pValue = &value;
+const char *str = "hello";
+```
+
 ### PIMPL (Pointer to Implementation)
 - プライベートメンバーの隠蔽
 - コンパイル時間の短縮
@@ -340,6 +399,8 @@ Library/
 - 生のポインタの直接使用
 - **`std::`版スマートポインタの直接使用**（`std::unique_ptr`, `std::shared_ptr`, `std::make_unique`, `std::make_shared`など）
 - **STLコンテナの直接使用**（`std::vector`, `std::list`, `std::map`, `std::string`など）
+- **クラス内シングルトンパターン**（`static Instance& Get()`形式）
+- **ポインタ演算子を変数名側に付ける**（`void *hoge`ではなく`void* hoge`）
 - `using namespace`の使用（ヘッダーファイル内）
 - プラットフォーム固有コードの直接記述
 - 古いC++スタイルの記述

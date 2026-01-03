@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "Core/Public/Container/Containers.h"
-#include "Thread/Public/Mutex.h"
+#include "Thread/Mutex.h"
 #include "FileStream/Public/FileStreamModule.h"
 #include <chrono>
 #include <iostream>

@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "MathForward.h"
+#include "Vector4.h"
 #include "MathTypes.h"
 #include <cmath>
 
