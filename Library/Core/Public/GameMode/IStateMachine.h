@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include "Core/Public/Object/IUnknown.h"
 #include "Core/Public/Container/PointerTypes.h"
 
 namespace NorvesLib::Core::GameMode
@@ -13,7 +12,7 @@ namespace NorvesLib::Core::GameMode
      *
      * ゲームモードの状態遷移を管理するステートマシンの基底インターフェース。
      */
-    class IStateMachine : public IUnknown
+    class IStateMachine
     {
     public:
         // 仮想デストラクタ

@@ -1,7 +1,5 @@
 ﻿#pragma once
 
-#include "Core/Public/Object/IUnknown.h"
-
 namespace NorvesLib::Core::GameMode
 {
     class IStateMachine; // 前方宣言
@@ -12,7 +10,7 @@ namespace NorvesLib::Core::GameMode
      * ステートマシンで管理される各ゲームモード（タイトル、ゲームプレイ等）の
      * 基底インターフェース。
      */
-    class IGameMode : public IUnknown
+    class IGameMode
     {
     public:
         // 仮想デストラクタ

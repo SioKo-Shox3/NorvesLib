@@ -2,12 +2,14 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Engine/Engine.h"
 
-// GameMode関連（必要に応じてインクルード）
-// #include "GameModes/TitleMode.h"
-// #include "GameModes/GameModeFactory.h"
+// GameMode関連
+#include "Core/Public/GameMode/TStateMachine.h"
+#include "Core/Public/GameMode/GameModeFactory.h"
+#include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
 
 using namespace NorvesLib::Core::Container;
 using namespace NorvesLib::Core::Engine;
+using namespace NorvesLib::Core::GameMode;
 
 namespace Game
 {
@@ -107,18 +109,17 @@ namespace Game
     {
         LOG_INFO("GameApplicationHandler::CreateGameModeStateMachine()");
 
-        // TODO: ゲーム固有のステートマシンを作成
-        // 
-        // 実際の使用例:
-        // using namespace NorvesLib::Core::GameMode;
-        // using namespace NorvesLib::Core::Container;
-        // 
-        // auto stateMachine = MakeUnique<TStateMachine<IGameMode, GameModeFactory>>();
-        // stateMachine->ReserveState(MakeUnique<TitleMode>());
-        // return stateMachine;
+        // メモリエージングテスト用のステートマシンを作成
+        using namespace Game::GameModes;
 
-        // 現時点ではnullptrを返す（GameModeなしで動作可能）
-        return nullptr;
+        auto stateMachine = MakeUnique<TStateMachine<IGameMode, GameModeFactory>>();
+        
+        // メモリエージングテストモードを初期ステートとして設定
+        stateMachine->ReserveState(MakeUnique<MemoryAgingTestMode>());
+        
+        LOG_INFO("メモリエージングテストモードを開始します");
+
+        return stateMachine;
     }
 
 } // namespace Game
