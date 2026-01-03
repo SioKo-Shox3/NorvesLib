@@ -233,6 +233,14 @@ public:
     }
 
     /**
+     * @brief fetch_addのエイリアス（std::atomicと同じインターフェース用）
+     */
+    T fetch_add(T value, std::memory_order order = std::memory_order_seq_cst) noexcept
+    {
+        return FetchAdd(value, order);
+    }
+
+    /**
      * @brief アトミックな減算
      * @param value 減算する値
      * @param order メモリオーダー
@@ -241,6 +249,14 @@ public:
     T FetchSub(T value, std::memory_order order = std::memory_order_seq_cst) noexcept
     {
         return m_Value.fetch_sub(value, order);
+    }
+
+    /**
+     * @brief fetch_subのエイリアス（std::atomicと同じインターフェース用）
+     */
+    T fetch_sub(T value, std::memory_order order = std::memory_order_seq_cst) noexcept
+    {
+        return FetchSub(value, order);
     }
 
     /**

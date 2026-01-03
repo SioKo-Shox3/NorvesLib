@@ -3,8 +3,7 @@
 
 #include "IEngine.h"
 #include "Core/Public/Container/Containers.h"
-// Threadライブラリへの参照を相対パスに修正
-#include "../../../Thread/Public/Atomic.h"
+#include "Thread/Atomic.h"
 
 namespace NorvesLib::Core
 {

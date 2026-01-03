@@ -2,8 +2,8 @@
 
 #include "IAllocator.h"
 #include "SizeClassAllocator.h"
-#include "Thread/Public/Mutex.h"
-#include "Thread/Public/Atomic.h"
+#include "Thread/Mutex.h"
+#include "Thread/Atomic.h"
 #include "Core/Public/Container/Containers.h"
 #include <cstdint>
 

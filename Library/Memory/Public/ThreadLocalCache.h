@@ -2,7 +2,7 @@
 
 #include "IAllocator.h"
 #include "MemoryConfig.h"
-#include "Thread/Public/Atomic.h"
+#include "Thread/Atomic.h"
 #include "Core/Public/Container/Containers.h"
 #include <cstdint>
 

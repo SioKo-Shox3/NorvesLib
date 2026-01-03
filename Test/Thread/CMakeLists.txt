@@ -1,8 +1,8 @@
-﻿# Thread モジュールのテスト
+﻿# Thread モジュールのテスト（Thread は Core に統合されました）
 
 # RingBufferテスト
 add_executable(RingBufferTest RingBufferTest.cpp)
-target_link_libraries(RingBufferTest PRIVATE Thread)
+target_link_libraries(RingBufferTest PRIVATE Core)
 target_include_directories(RingBufferTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
@@ -10,7 +10,7 @@ set_target_properties(RingBufferTest PROPERTIES FOLDER "Test/Thread")
 
 # ThreadLocalStorageテスト
 add_executable(ThreadLocalStorageTest ThreadLocalStorageTest.cpp)
-target_link_libraries(ThreadLocalStorageTest PRIVATE Thread)
+target_link_libraries(ThreadLocalStorageTest PRIVATE Core)
 target_include_directories(ThreadLocalStorageTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )

@@ -1,5 +1,5 @@
-﻿#include "Thread/Public/ThreadLocalStorage.h"
-#include "Thread/Public/Atomic.h"
+﻿#include "Thread/ThreadLocalStorage.h"
+#include "Thread/Atomic.h"
 #include <thread>
 #include <vector>
 #include <cassert>

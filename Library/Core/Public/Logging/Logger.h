@@ -1,9 +1,9 @@
 ﻿#pragma once
 
 #include "LogTypes.h"
-#include "Thread/Public/JobSystem.h"
-#include "Thread/Public/RingBuffer.h"
-#include "Thread/Public/Atomic.h"
+#include "Thread/JobSystem.h"
+#include "Thread/RingBuffer.h"
+#include "Thread/Atomic.h"
 #include <memory>
 #include <functional>
 

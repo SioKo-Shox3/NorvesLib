@@ -4,8 +4,7 @@
 #include "Container/StringView.h"
 #include "Container/UnorderedMap.h"
 #include "Container/Containers.h"
-// Threadライブラリへの参照を相対パスに修正
-#include "../../../Thread/Public/Mutex.h"
+#include "Thread/Mutex.h"
 #include <functional>
 
 namespace NorvesLib::Core

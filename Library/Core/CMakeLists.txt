@@ -19,6 +19,15 @@ set(PRIVATE_SOURCES
     Private/Application/ApplicationFactory.cpp
     Private/Engine/Engine.cpp
     Private/Engine/ApplicationProcessor.cpp
+    # Thread (統合)
+    Private/Thread/ConditionVariable.cpp
+    Private/Thread/Fiber.cpp
+    Private/Thread/JobSystem.cpp
+    Private/Thread/Mutex.cpp
+    Private/Thread/ReadWriteLock.cpp
+    Private/Thread/Task.cpp
+    Private/Thread/Thread.cpp
+    Private/Thread/WorkStealingQueue.cpp
 )
 
 set(PUBLIC_HEADERS
@@ -62,6 +71,45 @@ set(PUBLIC_HEADERS
     Public/GameMode/TGameMode.h
     Public/GameMode/GameModeFactory.h
     Public/GameMode/GameModeTypes.h
+    # Rendering
+    Public/Rendering/RenderTypes.h
+    Public/Rendering/VertexLayout.h
+    Public/Rendering/MeshTypes.h
+    Public/Rendering/MaterialTypes.h
+    Public/Rendering/SceneProxy.h
+    Public/Rendering/FramePacket.h
+    Public/Rendering/RenderResourceManager.h
+    Public/Rendering/MeshResourceManager.h
+    Public/Rendering/SceneCollector.h
+    Public/Rendering/RenderThread.h
+    Public/Rendering/RenderWorld.h
+    # Component
+    Public/Component/Component.h
+    Public/Component/MeshComponent.h
+    # Math (統合)
+    Public/Math/MathForward.h
+    Public/Math/MathTypes.h
+    Public/Math/Matrix4x4.h
+    Public/Math/MatrixUtils.h
+    Public/Math/Quaternion.h
+    Public/Math/QuaternionUtils.h
+    Public/Math/Transform.h
+    Public/Math/Vector2.h
+    Public/Math/Vector3.h
+    Public/Math/Vector4.h
+    Public/Math/VectorUtils.h
+    # Thread (統合)
+    Public/Thread/Atomic.h
+    Public/Thread/ConditionVariable.h
+    Public/Thread/Fiber.h
+    Public/Thread/JobSystem.h
+    Public/Thread/Mutex.h
+    Public/Thread/ReadWriteLock.h
+    Public/Thread/RingBuffer.h
+    Public/Thread/Task.h
+    Public/Thread/Thread.h
+    Public/Thread/ThreadLocalStorage.h
+    Public/Thread/WorkStealingQueue.h
 )
 
 # ライブラリの作成
@@ -78,8 +126,8 @@ target_include_directories(${MODULE_NAME}
 # 依存関係の設定
 target_link_libraries(${MODULE_NAME}
     PUBLIC
-        Thread
         FileStream
+        # RHI # TODO: RHI統合後に有効化
 )
 
 # C++23の設定

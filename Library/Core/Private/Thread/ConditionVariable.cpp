@@ -1,4 +1,4 @@
-﻿#include "ConditionVariable.h"
+﻿#include "Thread/ConditionVariable.h"
 #include <mutex>
 
 namespace NorvesLib::Thread

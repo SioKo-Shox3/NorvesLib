@@ -20,5 +20,5 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/Private
 )
 
-# Coreモジュールへの依存関係を設定
-target_link_libraries(${MODULE_NAME} PUBLIC Core Thread)
+# Coreモジュールへの依存関係を設定（Thread は Core に統合されました）
+target_link_libraries(${MODULE_NAME} PUBLIC Core)

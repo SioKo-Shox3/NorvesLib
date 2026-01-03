@@ -26,11 +26,10 @@ target_include_directories(${MODULE_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/Private"
 )
 
-# 依存関係の設定 - Coreモジュールとメモリ管理
+# 依存関係の設定 - Coreモジュールとメモリ管理（Thread は Core に統合されました）
 target_link_libraries(${MODULE_NAME} 
     PUBLIC 
         Core
-        Thread
     PRIVATE
         Memory
 )

@@ -1,5 +1,5 @@
 ﻿#include "AsyncFileStream.h"
-#include "Thread/Public/JobSystem.h"
+#include "Thread/JobSystem.h"
 #include <algorithm>
 
 namespace NorvesLib::FileStream

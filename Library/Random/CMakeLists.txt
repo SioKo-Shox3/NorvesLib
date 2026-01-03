@@ -19,9 +19,8 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/Private
 )
 
-# 依存関係の設定（必要に応じて他のモジュールを追加）
+# 依存関係の設定（Math は Core に統合されました）
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         Core
-        Math
 )

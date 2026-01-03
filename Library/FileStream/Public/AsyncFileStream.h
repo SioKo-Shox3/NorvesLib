@@ -2,9 +2,9 @@
 
 #include "IFileStream.h"
 #include "FileStream.h"
-#include "Thread/Public/JobSystem.h"
-#include "Thread/Public/Task.h"
-#include "Thread/Public/Mutex.h"
+#include "Thread/JobSystem.h"
+#include "Thread/Task.h"
+#include "Thread/Mutex.h"
 #include <functional>
 #include <future>
 

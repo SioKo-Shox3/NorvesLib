@@ -23,8 +23,8 @@ struct NORVES_ALIGN(16) Vector3;
 // 4次元ベクトル（x, y, z, w）
 struct NORVES_ALIGN(16) Vector4;
 
-// 4x4行列
-struct NORVES_ALIGN(16) Matrix4x4;
+// 4x4行列はテンプレートエイリアスのため前方宣言不可
+// Matrix4x4.hを直接インクルードしてください
 
 // 四元数（回転表現用）
 struct NORVES_ALIGN(16) Quaternion;
