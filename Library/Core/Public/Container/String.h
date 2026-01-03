@@ -172,22 +172,12 @@ namespace NorvesLib::Core::Container
         TString()
             : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
-#ifdef _WIN32
-            char debugMsg[256];
-            sprintf_s(debugMsg, "TString DEFAULT CTOR: this=%p\n", this);
-            OutputDebugStringA(debugMsg);
-#endif
         }
 
         // コピーコンストラクタ
         TString(const TString& other)
             : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
-#ifdef _WIN32
-            char debugMsg[256];
-            sprintf_s(debugMsg, "TString COPY CTOR: this=%p, other=%p, other.m_data=%p\n", this, &other, other.m_data);
-            OutputDebugStringA(debugMsg);
-#endif
             if (other.m_size > 0)
             {
                 Reserve(other.m_size);
@@ -201,11 +191,6 @@ namespace NorvesLib::Core::Container
         TString(TString&& other) noexcept
             : m_data(other.m_data), m_size(other.m_size), m_capacity(other.m_capacity), m_allocator(std::move(other.m_allocator))
         {
-#ifdef _WIN32
-            char debugMsg[256];
-            sprintf_s(debugMsg, "TString MOVE CTOR: this=%p, other=%p, data=%p\n", this, &other, m_data);
-            OutputDebugStringA(debugMsg);
-#endif
             other.m_data = nullptr;
             other.m_size = 0;
             other.m_capacity = 0;
@@ -281,18 +266,9 @@ namespace NorvesLib::Core::Container
         }        // デストラクタ
         ~TString()
         {
-            // デバッグトレース
-            std::printf("[TString::~TString] Destructor called this=%p, m_data=%p, m_size=%zu, m_capacity=%zu\n", 
-                       this, m_data, m_size, m_capacity);
             if (m_data)
             {
-                std::printf("[TString::~TString] Deallocating memory for %p\n", m_data);
                 m_allocator.deallocate(m_data, m_capacity + 1);
-                std::printf("[TString::~TString] Memory deallocated successfully for %p\n", m_data);
-            }
-            else
-            {
-                std::printf("[TString::~TString] No memory to deallocate (m_data is null)\n");
             }
         }
 
@@ -314,13 +290,10 @@ namespace NorvesLib::Core::Container
         }        // ムーブ代入演算子
         TString& operator=(TString&& other) noexcept
         {
-            std::printf("[TString::operator=(move)] Called this=%p (data=%p), other=%p (data=%p)\n", 
-                       this, m_data, &other, other.m_data);
             if (this != &other)
             {
                 if (m_data)
                 {
-                    std::printf("[TString::operator=(move)] Deallocating current data %p\n", m_data);
                     m_allocator.deallocate(m_data, m_capacity + 1);
                 }
 
@@ -328,16 +301,10 @@ namespace NorvesLib::Core::Container
                 m_size = other.m_size;
                 m_capacity = other.m_capacity;
                 m_allocator = std::move(other.m_allocator);
-
-                std::printf("[TString::operator=(move)] Moving data %p from other=%p to this=%p\n", 
-                           m_data, &other, this);
                 
                 other.m_data = nullptr;
                 other.m_size = 0;
                 other.m_capacity = 0;
-                
-                std::printf("[TString::operator=(move)] Cleared other=%p (data now=%p)\n", 
-                           &other, other.m_data);
             }
             return *this;
         }
@@ -482,13 +449,11 @@ namespace NorvesLib::Core::Container
         }        // 変更
         void clear() noexcept
         {
-            std::printf("[TString::clear] Called this=%p, m_data=%p, m_size=%zu\n", this, m_data, m_size);
             m_size = 0;
             if (m_data)
             {
                 m_data[0] = CharT{};
             }
-            std::printf("[TString::clear] Cleared this=%p, new m_size=%zu\n", this, m_size);
         }
 
         TString& append(const TString& str)
