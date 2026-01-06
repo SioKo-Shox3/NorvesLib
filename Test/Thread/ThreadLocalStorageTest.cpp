@@ -131,7 +131,7 @@ void TestIndependence()
 
         // すべてのスレッドが準備完了するまで待機
         threadsReady.FetchAdd(1);
-        while (!canProceed.load())
+        while (!canProceed.Load())
         {
             std::this_thread::yield();
         }
@@ -148,11 +148,11 @@ void TestIndependence()
     }
 
     // すべてのスレッドが準備完了するのを待ってから進行許可
-    while (threadsReady.load() < NUM_THREADS)
+    while (threadsReady.Load() < NUM_THREADS)
     {
         std::this_thread::yield();
     }
-    canProceed.store(true);
+    canProceed.Store(true);
 
     // スレッドの終了を待つ
     for (auto &t : threads)

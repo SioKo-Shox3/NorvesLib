@@ -234,7 +234,7 @@ namespace NorvesLib::Memory
         }
 
         // 合計ブロック数を更新
-        m_totalBlocks.store(m_totalBlocks.load() + m_blocksPerChunk);
+        m_totalBlocks.Store(m_totalBlocks.Load() + m_blocksPerChunk);
     }
 
     template <bool bThreadSafe>
@@ -266,7 +266,7 @@ namespace NorvesLib::Memory
             Unlock();
         }
 
-        m_allocatedBlocks.store(m_allocatedBlocks.load() + 1);
+        m_allocatedBlocks.Store(m_allocatedBlocks.Load() + 1);
 
         return node;
     }
@@ -304,19 +304,19 @@ namespace NorvesLib::Memory
             Unlock();
         }
 
-        m_allocatedBlocks.store(m_allocatedBlocks.load() - 1);
+        m_allocatedBlocks.Store(m_allocatedBlocks.Load() - 1);
     }
 
     template <bool bThreadSafe>
     size_t PoolAllocator<bThreadSafe>::GetAllocatedSize() const
     {
-        return m_allocatedBlocks.load() * m_blockSize;
+        return m_allocatedBlocks.Load() * m_blockSize;
     }
 
     template <bool bThreadSafe>
     size_t PoolAllocator<bThreadSafe>::GetTotalSize() const
     {
-        return m_totalBlocks.load() * m_blockSize;
+        return m_totalBlocks.Load() * m_blockSize;
     }
 
     template <bool bThreadSafe>
@@ -380,13 +380,13 @@ namespace NorvesLib::Memory
     template <bool bThreadSafe>
     size_t PoolAllocator<bThreadSafe>::GetFreeBlockCount() const
     {
-        return m_totalBlocks.load() - m_allocatedBlocks.load();
+        return m_totalBlocks.Load() - m_allocatedBlocks.Load();
     }
 
     template <bool bThreadSafe>
     size_t PoolAllocator<bThreadSafe>::GetTotalBlockCount() const
     {
-        return m_totalBlocks.load();
+        return m_totalBlocks.Load();
     }
 
     template <bool bThreadSafe>

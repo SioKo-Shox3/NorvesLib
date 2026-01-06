@@ -38,9 +38,18 @@ namespace NorvesLib::Core
 
         LOG_INFO("Initializing NorvesEngine...");
 
-        // TODO: サブシステムの初期化
+        // サブシステムの初期化
+        
+        // 1. ResourceRegistryの初期化
+        if (!m_ResourceRegistry.Initialize())
+        {
+            LOG_ERROR("Failed to initialize ResourceRegistry");
+            return false;
+        }
+
+        // TODO: 追加サブシステムの初期化
         // - RHIの初期化
-        // - レンダラーの初期化
+        // - RenderWorldの初期化（RHI初期化後に行う）
         // - 入力システムの初期化
         // - オーディオシステムの初期化
         // - 物理演算システムの初期化
@@ -58,12 +67,17 @@ namespace NorvesLib::Core
             return;
         }
 
-        // TODO: サブシステムの更新
+        // サブシステムの更新
         // - 入力の更新
         // - シーンの更新
         // - 物理演算の更新
         // - オーディオの更新
-        // - レンダリングの更新
+        
+        // リソースのガベージコレクション（定期的に実行）
+        m_ResourceRegistry.CollectGarbage();
+        
+        // レンダリングの更新
+        // TODO: RenderWorldの更新
     }
 
     void NorvesEngine::Shutdown()
@@ -76,12 +90,17 @@ namespace NorvesLib::Core
 
         LOG_INFO("Shutting down NorvesEngine...");
 
-        // TODO: サブシステムのシャットダウン（初期化と逆順）
-        // - レンダラーのシャットダウン
+        // サブシステムのシャットダウン（初期化と逆順）
+        
+        // TODO: 追加サブシステムのシャットダウン
+        // - RenderWorldのシャットダウン
         // - 物理演算システムのシャットダウン
         // - オーディオシステムのシャットダウン
         // - 入力システムのシャットダウン
         // - RHIのシャットダウン
+
+        // ResourceRegistryのシャットダウン（最後に行う）
+        m_ResourceRegistry.Shutdown();
 
         m_isRunning = false;
         LOG_INFO("NorvesEngine shutdown complete");

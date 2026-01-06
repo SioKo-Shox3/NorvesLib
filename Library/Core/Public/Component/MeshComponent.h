@@ -231,7 +231,7 @@ namespace NorvesLib::Core::Component
         Rendering::RenderLayer m_RenderLayer = Rendering::RenderLayer::Default;
 
         // LOD
-        int32_t m_ForcedLODLevel = -1;  // -1 = 自動
+        int32_t m_ForcedLODLevel = -1; // -1 = 自動
         uint8_t m_CurrentLODLevel = 0;
 
         // カスタムシェーダーデータ

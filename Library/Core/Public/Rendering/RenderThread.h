@@ -78,7 +78,7 @@ namespace NorvesLib::Core::Rendering
 
         // トランスフォーム定数バッファ用データ
         float WorldMatrix[16];
-        float NormalMatrix[12];  // 3x4行列
+        float NormalMatrix[12]; // 3x4行列
 
         DrawCommand() : RenderCommand(RenderCommandType::DrawIndexed) {}
     };
@@ -160,7 +160,7 @@ namespace NorvesLib::Core::Rendering
          */
         RenderThreadState GetState() const
         {
-            return static_cast<RenderThreadState>(m_State.load(std::memory_order_acquire));
+            return static_cast<RenderThreadState>(m_State.Load(std::memory_order_acquire));
         }
 
         /**
@@ -259,7 +259,7 @@ namespace NorvesLib::Core::Rendering
          * @param outCommands 出力先コマンドリスト
          */
         void GenerateDrawCommands(const MeshProxy &meshProxy,
-                                   Container::VariableArray<DrawCommand> &outCommands);
+                                  Container::VariableArray<DrawCommand> &outCommands);
 
         /**
          * @brief コマンドをGPUに発行

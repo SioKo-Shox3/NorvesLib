@@ -5,7 +5,6 @@
 #include "ConditionVariable.h"
 #include "Mutex.h"
 #include "Atomic.h"
-#include <atomic>
 #include <memory>
 #include <queue>
 #include <random>
@@ -195,17 +194,17 @@ namespace NorvesLib::Thread
         Core::Container::VariableArray<std::unique_ptr<WorkStealingQueue>> m_localQueues;
 
         // 実行モード
-        std::atomic<ExecutionMode> m_executionMode;
+        Atomic<ExecutionMode> m_executionMode;
 
         // サイジングモード
-        std::atomic<SizingMode> m_sizingMode;
+        Atomic<SizingMode> m_sizingMode;
 
         // 最小/最大スレッド数
-        std::atomic<uint32_t> m_minThreads;
-        std::atomic<uint32_t> m_maxThreads;
+        Atomic<uint32_t> m_minThreads;
+        Atomic<uint32_t> m_maxThreads;
 
         // スチールされたタスク数
-        std::atomic<size_t> m_totalStolenTasks;
+        Atomic<size_t> m_totalStolenTasks;
 
         // 最後のスレッド調整時刻
         std::chrono::steady_clock::time_point m_lastThreadAdjustment;
@@ -223,14 +222,14 @@ namespace NorvesLib::Thread
         mutable Mutex m_queueMutex;
         mutable Mutex m_workerThreadMutex;
         ConditionVariable m_conditionVar;
-        std::atomic<bool> m_shutdownRequested;
-        std::atomic<bool> m_monitorActive;
+        Atomic<bool> m_shutdownRequested;
+        Atomic<bool> m_monitorActive;
 
         // スレッド状態追跡
-        std::atomic<size_t> m_activeThreads;
+        Atomic<size_t> m_activeThreads;
 
         // キュー内のタスク追跡
-        std::atomic<size_t> m_queuedTaskCount;
+        Atomic<size_t> m_queuedTaskCount;
 
         // プロセッサ使用率の履歴
         static constexpr size_t UTILIZATION_HISTORY_SIZE = 10;
@@ -238,8 +237,8 @@ namespace NorvesLib::Thread
 
         // ワーカースレッド統計情報
         mutable Mutex m_statsMutex;
-        // std::atomicはコピー不可なのでコンテナに直接格納できないため、ポインタの配列に変更
-        Core::Container::VariableArray<std::unique_ptr<std::atomic<size_t>>> m_tasksProcessedPerThread;
+        // Atomicはコピー不可なのでコンテナに直接格納できないため、ポインタの配列に変更
+        Core::Container::VariableArray<std::unique_ptr<Atomic<size_t>>> m_tasksProcessedPerThread;
     };
 
 } // namespace NorvesLib::Thread

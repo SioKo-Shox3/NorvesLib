@@ -27,7 +27,7 @@ namespace NorvesLib::Core::Logging
     }
     bool Logger::Initialize(const LogConfig &config)
     {
-        if (m_bInitialized.load())
+        if (m_bInitialized.Load())
         {
             return true;
         }
@@ -45,7 +45,7 @@ namespace NorvesLib::Core::Logging
 #endif
 
         m_config = config;
-        m_bShutdown.store(false);
+        m_bShutdown.Store(false);
 
 #ifdef _WIN32
         OutputDebugStringA("Logger::Initialize - Step 3: Config set\n");
@@ -138,7 +138,7 @@ namespace NorvesLib::Core::Logging
 #ifdef _WIN32
         OutputDebugStringA("Logger::Initialize - Step 13: Setting initialized flag\n");
 #endif
-        m_bInitialized.store(true);
+        m_bInitialized.Store(true);
 
 #ifdef _WIN32
         OutputDebugStringA("Logger::Initialize - Step 14: About to log initialization message\n");
@@ -154,14 +154,14 @@ namespace NorvesLib::Core::Logging
 
     void Logger::Shutdown()
     {
-        if (!m_bInitialized.load())
+        if (!m_bInitialized.Load())
         {
             return;
         }
 
         Log(LogLevel::Info, "Logger", "Shutting down logger...");
 
-        m_bShutdown.store(true);
+        m_bShutdown.Store(true);
 
         // 非同期ワーカーの停止を待機
         if (m_workerTask)
@@ -185,13 +185,13 @@ namespace NorvesLib::Core::Logging
             m_logFileStream.reset();
         }
 
-        m_bInitialized.store(false);
+        m_bInitialized.Store(false);
     }
 
     void Logger::Log(LogLevel level, const String &category, const String &message,
                      const char *filename, const char *function, int32_t lineNumber)
     {
-        if (!IsLevelActive(level) || m_bShutdown.load())
+        if (!IsLevelActive(level) || m_bShutdown.Load())
         {
             return;
         }
@@ -205,7 +205,7 @@ namespace NorvesLib::Core::Logging
         entry.lineNumber = lineNumber;
         entry.timestamp = std::chrono::system_clock::now();
         entry.threadId = GetCurrentThreadId();
-        if (m_config.bAsyncLogging && m_bInitialized.load())
+        if (m_config.bAsyncLogging && m_bInitialized.Load())
         {
             // 非同期処理でキューに追加
             if (!m_logQueue.TryWrite(entry))
@@ -311,7 +311,7 @@ namespace NorvesLib::Core::Logging
             NorvesLib::FileStream::FileMode::Write,
             NorvesLib::FileStream::FileAccess::Write);
 
-        m_currentFileSize.store(0);
+        m_currentFileSize.Store(0);
     }
 
     void Logger::ProcessLogEntry(const LogEntry &entry)
@@ -345,7 +345,7 @@ namespace NorvesLib::Core::Logging
 
     void Logger::AsyncLogWorker()
     {
-        while (!m_bShutdown.load())
+        while (!m_bShutdown.Load())
         {
             LogEntry entry;
             if (m_logQueue.TryRead(entry))
@@ -431,7 +431,7 @@ namespace NorvesLib::Core::Logging
 
     void Logger::CheckAndRotateLogFile()
     {
-        if (m_currentFileSize.load() > m_config.maxLogFileSize)
+        if (m_currentFileSize.Load() > m_config.maxLogFileSize)
         {
             RotateLogFile();
         }

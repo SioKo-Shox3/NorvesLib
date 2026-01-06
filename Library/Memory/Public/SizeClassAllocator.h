@@ -305,8 +305,8 @@ namespace NorvesLib::Memory
             Unlock();
         }
 
-        m_largeObjectSize.store(m_largeObjectSize.load() + size);
-        m_largeObjectCount.store(m_largeObjectCount.load() + 1);
+        m_largeObjectSize.Store(m_largeObjectSize.Load() + size);
+        m_largeObjectCount.Store(m_largeObjectCount.Load() + 1);
 
         // ペイロードポインタを返す
         return reinterpret_cast<char *>(memory) + headerSize;
@@ -350,8 +350,8 @@ namespace NorvesLib::Memory
             Unlock();
         }
 
-        m_largeObjectSize.store(m_largeObjectSize.load() - header->size);
-        m_largeObjectCount.store(m_largeObjectCount.load() - 1);
+        m_largeObjectSize.Store(m_largeObjectSize.Load() - header->size);
+        m_largeObjectCount.Store(m_largeObjectCount.Load() - 1);
 
 #ifdef _WIN32
         _aligned_free(header);
@@ -402,7 +402,7 @@ namespace NorvesLib::Memory
     template <bool bThreadSafe>
     size_t SizeClassAllocator<bThreadSafe>::GetAllocatedSize() const
     {
-        size_t total = m_largeObjectSize.load();
+        size_t total = m_largeObjectSize.Load();
 
         for (const auto &pool : m_pools)
         {
@@ -415,7 +415,7 @@ namespace NorvesLib::Memory
     template <bool bThreadSafe>
     size_t SizeClassAllocator<bThreadSafe>::GetTotalSize() const
     {
-        size_t total = m_largeObjectSize.load();
+        size_t total = m_largeObjectSize.Load();
 
         for (const auto &pool : m_pools)
         {

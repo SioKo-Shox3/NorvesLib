@@ -313,6 +313,111 @@ const char *str = "hello";
 - リソース管理をコンストラクタ/デストラクタで自動化
 - スマートポインタの活用
 
+## インスタンス管理アーキテクチャ
+
+### IUnknown継承クラスの分類
+
+NorvesLibで「誰かに管理されてほしいクラス」は、特殊な構造体などを除き全て`IUnknown`を継承します。
+
+```
+IUnknown
+    ├── Object（World管理 - 画面に映るもの）
+    │       ├── Actor（シーン内の配置可能オブジェクト）
+    │       ├── Component（Actorにアタッチ）
+    │       └── その他ゲームオブジェクト
+    │
+    └── Resource（GEngine管理 - データ/リソース）
+            ├── TextureResource
+            ├── MeshResource  
+            ├── MaterialResource
+            └── その他リソース
+```
+
+### Objectクラス
+
+- **定義**: `World`に属し、画面に映る/ゲームロジックを持つオブジェクト
+- **責任者**: `World`
+- **寿命管理**: WorldのInnerとして親子付けされ、**Worldと寿命が一致**
+- **リフレクション**: 特別な理由がない限り`REFLECTION_CLASS`マクロを使用
+
+```cpp
+// Objectは必ずWorldのInnerとして登録される
+// World破棄時に全Objectが連鎖破棄される
+class MyGameObject : public Object
+{
+    REFLECTION_CLASS(MyGameObject, Object)
+public:
+    // ...
+};
+```
+
+### Resourceクラス
+
+- **定義**: `World`に属さない、テクスチャ・メッシュ・マテリアル等のデータリソース
+- **責任者**: `GEngine`（ResourceRegistry経由）
+- **寿命管理**: **参照カウント方式** - 参照がなくなったら自動破棄
+- **リフレクション**: 特別な理由がない限り`REFLECTION_CLASS`マクロを使用
+- **特徴**: Worldが破棄されても参照があれば生存
+
+```cpp
+// Resourceは参照カウントで管理
+// 誰からも参照されなくなったら自動破棄
+class MyTextureResource : public Resource
+{
+    REFLECTION_CLASS(MyTextureResource, Resource)
+public:
+    // ...
+};
+
+// 使用例
+TSharedPtr<MyTextureResource> texture = GEngine.GetResourceRegistry().Load<MyTextureResource>("path/to/texture");
+// textureへの参照がなくなれば自動破棄
+```
+
+### Inner/Outer親子関係
+
+- **Inner**: 子オブジェクト（所有される側）
+- **Outer**: 親オブジェクト（所有する側）
+- **寿命ルール**: Outerが破棄されたら、そのInner全ても破棄される
+
+```cpp
+// World -> Actor -> Component の親子関係
+// World破棄 → Actor破棄 → Component破棄
+```
+
+### Managerパターンの回避
+
+- **`〇〇Manager`クラスの作成は極力避ける**
+- 代わりに**エンジンのサブシステム**として実装
+- GEngine配下にサブシステムとして配置
+
+```cpp
+// 避ける
+class MeshManager
+{
+public:
+    static MeshManager& Get(); // シングルトン禁止
+};
+
+// 推奨
+class NorvesEngine
+{
+public:
+    ResourceRegistry& GetResourceRegistry();
+    // RenderWorldなどもサブシステムとして保持
+private:
+    ResourceRegistry m_ResourceRegistry;
+};
+```
+
+### 責任の所在まとめ
+
+| 対象 | 責任者 | 寿命管理 | 説明 |
+|------|--------|----------|------|
+| Object | World | Inner/Outer親子関係 | 画面に映る/ゲームロジックを持つ |
+| Resource | GEngine | 参照カウント | テクスチャ、メッシュ等のデータ |
+| サブシステム | GEngine | GEngineと同じ | RenderWorld等のエンジン機能 |
+
 ## エラーハンドリング
 
 ### 例外の使用

@@ -58,17 +58,17 @@ namespace NorvesLib::Thread
          */
         bool TryWrite(const T &item)
         {
-            const size_t currentWrite = m_writeIndex.load(std::memory_order_relaxed);
+            const size_t currentWrite = m_writeIndex.Load(std::memory_order_relaxed);
             const size_t nextWrite = (currentWrite + 1) & (Capacity - 1);
 
             // バッファが満杯の場合は失敗
-            if (nextWrite == m_readIndex.load(std::memory_order_acquire))
+            if (nextWrite == m_readIndex.Load(std::memory_order_acquire))
             {
                 return false;
             }
 
             m_buffer[currentWrite] = item;
-            m_writeIndex.store(nextWrite, std::memory_order_release);
+            m_writeIndex.Store(nextWrite, std::memory_order_release);
             return true;
         }
 
@@ -80,16 +80,16 @@ namespace NorvesLib::Thread
          */
         bool TryRead(T &item)
         {
-            const size_t currentRead = m_readIndex.load(std::memory_order_relaxed);
+            const size_t currentRead = m_readIndex.Load(std::memory_order_relaxed);
 
             // バッファが空の場合は失敗
-            if (currentRead == m_writeIndex.load(std::memory_order_acquire))
+            if (currentRead == m_writeIndex.Load(std::memory_order_acquire))
             {
                 return false;
             }
 
             item = m_buffer[currentRead];
-            m_readIndex.store((currentRead + 1) & (Capacity - 1), std::memory_order_release);
+            m_readIndex.Store((currentRead + 1) & (Capacity - 1), std::memory_order_release);
             return true;
         }
 
@@ -100,8 +100,8 @@ namespace NorvesLib::Thread
          */
         bool IsEmpty() const
         {
-            return m_readIndex.load(std::memory_order_acquire) ==
-                   m_writeIndex.load(std::memory_order_acquire);
+            return m_readIndex.Load(std::memory_order_acquire) ==
+                   m_writeIndex.Load(std::memory_order_acquire);
         }
 
         /**
@@ -111,8 +111,8 @@ namespace NorvesLib::Thread
          */
         bool IsFull() const
         {
-            const size_t nextWrite = (m_writeIndex.load(std::memory_order_acquire) + 1) & (Capacity - 1);
-            return nextWrite == m_readIndex.load(std::memory_order_acquire);
+            const size_t nextWrite = (m_writeIndex.Load(std::memory_order_acquire) + 1) & (Capacity - 1);
+            return nextWrite == m_readIndex.Load(std::memory_order_acquire);
         }
 
         /**
@@ -123,8 +123,8 @@ namespace NorvesLib::Thread
          */
         size_t GetSize() const
         {
-            const size_t writeIndex = m_writeIndex.load(std::memory_order_acquire);
-            const size_t readIndex = m_readIndex.load(std::memory_order_acquire);
+            const size_t writeIndex = m_writeIndex.Load(std::memory_order_acquire);
+            const size_t readIndex = m_readIndex.Load(std::memory_order_acquire);
 
             if (writeIndex >= readIndex)
             {
@@ -153,8 +153,8 @@ namespace NorvesLib::Thread
          */
         void Clear()
         {
-            m_writeIndex.store(0, std::memory_order_relaxed);
-            m_readIndex.store(0, std::memory_order_relaxed);
+            m_writeIndex.Store(0, std::memory_order_relaxed);
+            m_readIndex.Store(0, std::memory_order_relaxed);
         }
 
     private:

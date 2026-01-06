@@ -31,15 +31,33 @@ namespace NorvesLib::Core::Rendering
     };
 
     // ハンドルタグ定義
-    struct BufferHandleTag {};
-    struct TextureHandleTag {};
-    struct SamplerHandleTag {};
-    struct ShaderHandleTag {};
-    struct PipelineHandleTag {};
-    struct RenderPassHandleTag {};
-    struct FramebufferHandleTag {};
-    struct MeshDataHandleTag {};
-    struct MaterialHandleTag {};
+    struct BufferHandleTag
+    {
+    };
+    struct TextureHandleTag
+    {
+    };
+    struct SamplerHandleTag
+    {
+    };
+    struct ShaderHandleTag
+    {
+    };
+    struct PipelineHandleTag
+    {
+    };
+    struct RenderPassHandleTag
+    {
+    };
+    struct FramebufferHandleTag
+    {
+    };
+    struct MeshDataHandleTag
+    {
+    };
+    struct MaterialHandleTag
+    {
+    };
 
     /**
      * @brief バッファリソースへのハンドル
@@ -159,22 +177,34 @@ namespace NorvesLib::Core::Rendering
 
         void Expand(float x, float y, float z)
         {
-            if (x < MinX) MinX = x;
-            if (y < MinY) MinY = y;
-            if (z < MinZ) MinZ = z;
-            if (x > MaxX) MaxX = x;
-            if (y > MaxY) MaxY = y;
-            if (z > MaxZ) MaxZ = z;
+            if (x < MinX)
+                MinX = x;
+            if (y < MinY)
+                MinY = y;
+            if (z < MinZ)
+                MinZ = z;
+            if (x > MaxX)
+                MaxX = x;
+            if (y > MaxY)
+                MaxY = y;
+            if (z > MaxZ)
+                MaxZ = z;
         }
 
         void Merge(const BoundingBox &other)
         {
-            if (other.MinX < MinX) MinX = other.MinX;
-            if (other.MinY < MinY) MinY = other.MinY;
-            if (other.MinZ < MinZ) MinZ = other.MinZ;
-            if (other.MaxX > MaxX) MaxX = other.MaxX;
-            if (other.MaxY > MaxY) MaxY = other.MaxY;
-            if (other.MaxZ > MaxZ) MaxZ = other.MaxZ;
+            if (other.MinX < MinX)
+                MinX = other.MinX;
+            if (other.MinY < MinY)
+                MinY = other.MinY;
+            if (other.MinZ < MinZ)
+                MinZ = other.MinZ;
+            if (other.MaxX > MaxX)
+                MaxX = other.MaxX;
+            if (other.MaxY > MaxY)
+                MaxY = other.MaxY;
+            if (other.MaxZ > MaxZ)
+                MaxZ = other.MaxZ;
         }
 
         static BoundingBox CreateInvalid()
@@ -266,12 +296,12 @@ namespace NorvesLib::Core::Rendering
 
         // プロジェクション用データ
         ProjectionType Projection = ProjectionType::Perspective;
-        float FieldOfView = 60.0f;  // degrees
+        float FieldOfView = 60.0f; // degrees
         float AspectRatio = 16.0f / 9.0f;
         float NearPlane = 0.1f;
         float FarPlane = 1000.0f;
-        float OrthoWidth = 10.0f;   // Orthographic用
-        float OrthoHeight = 10.0f;  // Orthographic用
+        float OrthoWidth = 10.0f;  // Orthographic用
+        float OrthoHeight = 10.0f; // Orthographic用
 
         // ビューポート
         Viewport ViewportRect;
@@ -313,8 +343,8 @@ namespace NorvesLib::Core::Rendering
         float AttenuationQuadratic = 0.032f;
 
         // スポットライト用
-        float InnerConeAngle = 12.5f;  // degrees
-        float OuterConeAngle = 17.5f;  // degrees
+        float InnerConeAngle = 12.5f; // degrees
+        float OuterConeAngle = 17.5f; // degrees
 
         // シャドウ
         bool bCastShadows = false;
