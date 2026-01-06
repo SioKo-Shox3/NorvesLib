@@ -241,7 +241,7 @@ namespace NorvesLib::Core::Engine
          * @brief レンダリングワールドを取得
          * @return RenderWorldへの参照
          */
-        Rendering::RenderWorld& GetRenderWorld()
+        Rendering::RenderWorld &GetRenderWorld()
         {
             return m_RenderWorld;
         }
@@ -250,7 +250,7 @@ namespace NorvesLib::Core::Engine
          * @brief レンダリングリソースマネージャーを取得
          * @return RenderResourceManagerへの参照
          */
-        Rendering::RenderResourceManager& GetRenderResourceManager()
+        Rendering::RenderResourceManager &GetRenderResourceManager()
         {
             return m_RenderWorld.GetResourceManager();
         }
@@ -259,7 +259,7 @@ namespace NorvesLib::Core::Engine
          * @brief メッシュリソースマネージャーを取得
          * @return MeshResourceManagerへの参照
          */
-        Rendering::MeshResourceManager& GetMeshResourceManager()
+        Rendering::MeshResourceManager &GetMeshResourceManager()
         {
             return m_RenderWorld.GetMeshResourceManager();
         }

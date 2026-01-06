@@ -44,7 +44,7 @@ namespace NorvesLib::Memory
             void *ptr = m_globalAllocator->Allocate(alignedSize, alignment);
             if (ptr)
             {
-                m_allocatedSize.store(m_allocatedSize.load() + alignedSize);
+                m_allocatedSize.Store(m_allocatedSize.Load() + alignedSize);
             }
             return ptr;
         }
@@ -66,8 +66,8 @@ namespace NorvesLib::Memory
         cache.count--;
 
         size_t classSize = Config::SizeClasses[classIndex];
-        m_cachedSize.store(m_cachedSize.load() - classSize);
-        m_allocatedSize.store(m_allocatedSize.load() + classSize);
+        m_cachedSize.Store(m_cachedSize.Load() - classSize);
+        m_allocatedSize.Store(m_allocatedSize.Load() + classSize);
 
         return node;
     }
@@ -95,7 +95,7 @@ namespace NorvesLib::Memory
         if (classIndex < 0)
         {
             // 大きなオブジェクトは直接グローバルに返却
-            m_allocatedSize.store(m_allocatedSize.load() - blockSize);
+            m_allocatedSize.Store(m_allocatedSize.Load() - blockSize);
             m_globalAllocator->Deallocate(ptr);
             return;
         }
@@ -115,8 +115,8 @@ namespace NorvesLib::Memory
         cache.freeList = node;
         cache.count++;
 
-        m_allocatedSize.store(m_allocatedSize.load() - classSize);
-        m_cachedSize.store(m_cachedSize.load() + classSize);
+        m_allocatedSize.Store(m_allocatedSize.Load() - classSize);
+        m_cachedSize.Store(m_cachedSize.Load() + classSize);
     }
 
     bool ThreadLocalCache::FetchFromGlobal(int classIndex)
@@ -146,7 +146,7 @@ namespace NorvesLib::Memory
             cache.count++;
         }
 
-        m_cachedSize.store(m_cachedSize.load() + fetched * classSize);
+        m_cachedSize.Store(m_cachedSize.Load() + fetched * classSize);
 
         return true;
     }
@@ -179,7 +179,7 @@ namespace NorvesLib::Memory
             objects[i] = node;
         }
 
-        m_cachedSize.store(m_cachedSize.load() - returnCount * classSize);
+        m_cachedSize.Store(m_cachedSize.Load() - returnCount * classSize);
         m_globalAllocator->ReturnToCentral(classIndex, objects, returnCount);
     }
 
@@ -198,12 +198,12 @@ namespace NorvesLib::Memory
 
     size_t ThreadLocalCache::GetAllocatedSize() const
     {
-        return m_allocatedSize.load();
+        return m_allocatedSize.Load();
     }
 
     size_t ThreadLocalCache::GetTotalSize() const
     {
-        return m_cachedSize.load() + m_allocatedSize.load();
+        return m_cachedSize.Load() + m_allocatedSize.Load();
     }
 
     AllocatorType ThreadLocalCache::GetType() const

@@ -292,14 +292,14 @@ namespace NorvesLib::Core::Rendering
 
     private:
         // コピー・ムーブ禁止
-        MeshResourceManager(const MeshResourceManager&) = delete;
-        MeshResourceManager& operator=(const MeshResourceManager&) = delete;
+        MeshResourceManager(const MeshResourceManager &) = delete;
+        MeshResourceManager &operator=(const MeshResourceManager &) = delete;
 
         // ハンドル生成
         MeshDataHandle AllocateHandle()
         {
             MeshDataHandle handle;
-            handle.Id = m_NextHandleId.fetch_add(1, std::memory_order_relaxed);
+            handle.Id = m_NextHandleId.FetchAdd(1, std::memory_order_relaxed);
             return handle;
         }
 

@@ -35,7 +35,7 @@ namespace NorvesLib::Core::Rendering
     struct BufferCreateInfo
     {
         size_t Size = 0;
-        bool bHostVisible = false;  // CPUからアクセス可能か
+        bool bHostVisible = false; // CPUからアクセス可能か
 
         enum class Usage
         {
@@ -213,7 +213,7 @@ namespace NorvesLib::Core::Rendering
          * @return バッファハンドル
          */
         BufferHandle CreateBuffer(const BufferCreateInfo &createInfo,
-                                   const void *data, size_t dataSize);
+                                  const void *data, size_t dataSize);
 
         /**
          * @brief バッファデータを更新
@@ -251,7 +251,7 @@ namespace NorvesLib::Core::Rendering
          * @return テクスチャハンドル
          */
         TextureHandle CreateTexture(const TextureCreateInfo &createInfo,
-                                     const void *data, size_t dataSize);
+                                    const void *data, size_t dataSize);
 
         /**
          * @brief ファイルからテクスチャをロード
@@ -384,15 +384,15 @@ namespace NorvesLib::Core::Rendering
 
     private:
         // コピー・ムーブ禁止
-        RenderResourceManager(const RenderResourceManager&) = delete;
-        RenderResourceManager& operator=(const RenderResourceManager&) = delete;
+        RenderResourceManager(const RenderResourceManager &) = delete;
+        RenderResourceManager &operator=(const RenderResourceManager &) = delete;
 
         // ハンドルID生成
         template <typename HandleType>
         HandleType AllocateHandle()
         {
             HandleType handle;
-            handle.Id = m_NextHandleId.fetch_add(1, std::memory_order_relaxed);
+            handle.Id = m_NextHandleId.FetchAdd(1, std::memory_order_relaxed);
             return handle;
         }
 

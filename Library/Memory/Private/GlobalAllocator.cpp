@@ -43,7 +43,7 @@ namespace NorvesLib::Memory
             return nullptr;
         }
 
-        m_totalAllocations.store(m_totalAllocations.load() + 1);
+        m_totalAllocations.Store(m_totalAllocations.Load() + 1);
 
         // サイズクラスアロケータから直接割り当て
         return m_sizeClassAllocator->Allocate(size, alignment);
@@ -56,7 +56,7 @@ namespace NorvesLib::Memory
             return;
         }
 
-        m_totalDeallocations.store(m_totalDeallocations.load() + 1);
+        m_totalDeallocations.Store(m_totalDeallocations.Load() + 1);
 
         // サイズクラスアロケータに直接返却
         m_sizeClassAllocator->Deallocate(ptr);
@@ -93,7 +93,7 @@ namespace NorvesLib::Memory
                 break; // メモリ不足
             }
             objects[fetched++] = ptr;
-            m_totalAllocations.store(m_totalAllocations.load() + 1);
+            m_totalAllocations.Store(m_totalAllocations.Load() + 1);
         }
 
         return fetched;
@@ -172,12 +172,12 @@ namespace NorvesLib::Memory
 
     uint64_t GlobalAllocator::GetTotalAllocationCount() const
     {
-        return m_totalAllocations.load();
+        return m_totalAllocations.Load();
     }
 
     uint64_t GlobalAllocator::GetTotalDeallocationCount() const
     {
-        return m_totalDeallocations.load();
+        return m_totalDeallocations.Load();
     }
 
 } // namespace NorvesLib::Memory

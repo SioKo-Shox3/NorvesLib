@@ -47,8 +47,8 @@ namespace NorvesLib::Core::Rendering
      */
     struct MaterialSlot
     {
-        Container::String Name;          // スロット名（例: "Body", "Face"）
-        MaterialHandle DefaultMaterial;  // デフォルトマテリアル
+        Container::String Name;         // スロット名（例: "Body", "Face"）
+        MaterialHandle DefaultMaterial; // デフォルトマテリアル
 
         MaterialSlot() = default;
 
@@ -100,7 +100,7 @@ namespace NorvesLib::Core::Rendering
         BoundingBox Bounds;
 
         // オプション
-        bool bKeepCPUData = false; // CPU側にデータを保持するか
+        bool bKeepCPUData = false;   // CPU側にデータを保持するか
         Container::String DebugName; // デバッグ用名前
     };
 
@@ -179,9 +179,9 @@ namespace NorvesLib::Core::Rendering
      */
     struct LODLevel
     {
-        MeshDataHandle MeshHandle;   // このLODレベルのメッシュ
-        float ScreenSizeThreshold;   // このLODに切り替わる画面サイズしきい値
-        float TransitionWidth;       // トランジション幅（ディザリング用）
+        MeshDataHandle MeshHandle; // このLODレベルのメッシュ
+        float ScreenSizeThreshold; // このLODに切り替わる画面サイズしきい値
+        float TransitionWidth;     // トランジション幅（ディザリング用）
     };
 
     /**

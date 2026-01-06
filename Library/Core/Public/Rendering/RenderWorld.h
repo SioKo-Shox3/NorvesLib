@@ -30,7 +30,7 @@ namespace NorvesLib::Core::Rendering
     struct RenderWorldSettings
     {
         // ウィンドウハンドル
-        void* WindowHandle = nullptr;
+        void *WindowHandle = nullptr;
 
         // 解像度
         uint32_t Width = 1280;
@@ -149,7 +149,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief リソースマネージャーを取得
          */
-        RenderResourceManager& GetResourceManager()
+        RenderResourceManager &GetResourceManager()
         {
             return m_ResourceManager;
         }
@@ -157,7 +157,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief メッシュリソースマネージャーを取得
          */
-        MeshResourceManager& GetMeshResourceManager()
+        MeshResourceManager &GetMeshResourceManager()
         {
             return m_MeshResourceManager;
         }
@@ -258,8 +258,8 @@ namespace NorvesLib::Core::Rendering
 
     private:
         // コピー・ムーブ禁止
-        RenderWorld(const RenderWorld&) = delete;
-        RenderWorld& operator=(const RenderWorld&) = delete;
+        RenderWorld(const RenderWorld &) = delete;
+        RenderWorld &operator=(const RenderWorld &) = delete;
 
         // ========================================
         // メンバ変数
@@ -277,7 +277,7 @@ namespace NorvesLib::Core::Rendering
         SceneCollector m_SceneCollector;
 
         // 現在のフレームパケット
-        FramePacket* m_CurrentPacket = nullptr;
+        FramePacket *m_CurrentPacket = nullptr;
 
         // 解像度
         uint32_t m_Width = 1280;

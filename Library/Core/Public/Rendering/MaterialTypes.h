@@ -67,15 +67,15 @@ namespace NorvesLib::Core::Rendering
      */
     enum class TextureUsage : uint8_t
     {
-        Diffuse,       // ディフューズ/アルベド
-        Normal,        // 法線マップ
-        Metallic,      // メタリック
-        Roughness,     // ラフネス
-        AO,            // アンビエントオクルージョン
-        Emissive,      // エミッシブ
-        Height,        // ハイトマップ
-        Opacity,       // 不透明度
-        Custom         // カスタム用途
+        Diffuse,   // ディフューズ/アルベド
+        Normal,    // 法線マップ
+        Metallic,  // メタリック
+        Roughness, // ラフネス
+        AO,        // アンビエントオクルージョン
+        Emissive,  // エミッシブ
+        Height,    // ハイトマップ
+        Opacity,   // 不透明度
+        Custom     // カスタム用途
     };
 
     /**
@@ -209,14 +209,14 @@ namespace NorvesLib::Core::Rendering
      */
     enum class ShadingModel : uint8_t
     {
-        Unlit,       // ライティングなし
-        DefaultLit,  // 標準ライティング
-        Subsurface,  // サブサーフェイススキャッタリング
-        ClearCoat,   // クリアコート
-        Cloth,       // 布
-        Hair,        // 髪
-        Eye,         // 目
-        Custom       // カスタム
+        Unlit,      // ライティングなし
+        DefaultLit, // 標準ライティング
+        Subsurface, // サブサーフェイススキャッタリング
+        ClearCoat,  // クリアコート
+        Cloth,      // 布
+        Hair,       // 髪
+        Eye,        // 目
+        Custom      // カスタム
     };
 
     // ========================================
@@ -245,11 +245,11 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<MaterialParameter> Parameters;
 
         // レンダリング設定
-        bool bTwoSided = false;        // 両面描画
-        bool bCastShadows = true;      // 影を落とす
-        bool bReceiveShadows = true;   // 影を受ける
-        bool bWireframe = false;       // ワイヤーフレーム表示
-        float AlphaCutoff = 0.5f;      // アルファカットオフ（Masked用）
+        bool bTwoSided = false;      // 両面描画
+        bool bCastShadows = true;    // 影を落とす
+        bool bReceiveShadows = true; // 影を受ける
+        bool bWireframe = false;     // ワイヤーフレーム表示
+        float AlphaCutoff = 0.5f;    // アルファカットオフ（Masked用）
 
         // デバッグ
         Container::String DebugName;

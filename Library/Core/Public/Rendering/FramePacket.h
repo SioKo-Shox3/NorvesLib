@@ -14,10 +14,10 @@ namespace NorvesLib::Core::Rendering
      */
     enum class FramePacketState : uint8_t
     {
-        Empty,      // 空（書き込み可能）
-        Writing,    // 書き込み中
-        Ready,      // 読み取り可能
-        Reading     // 読み取り中
+        Empty,   // 空（書き込み可能）
+        Writing, // 書き込み中
+        Ready,   // 読み取り可能
+        Reading  // 読み取り中
     };
 
     // ========================================
@@ -37,9 +37,9 @@ namespace NorvesLib::Core::Rendering
         // フレーム情報
         // ========================================
 
-        uint64_t FrameNumber = 0;   // フレーム番号
-        float DeltaTime = 0.0f;     // 前フレームからの経過時間
-        double TotalTime = 0.0;     // アプリケーション開始からの経過時間
+        uint64_t FrameNumber = 0; // フレーム番号
+        float DeltaTime = 0.0f;   // 前フレームからの経過時間
+        double TotalTime = 0.0;   // アプリケーション開始からの経過時間
 
         // ========================================
         // シーンデータ
@@ -73,7 +73,7 @@ namespace NorvesLib::Core::Rendering
          */
         FramePacketState GetState() const
         {
-            return static_cast<FramePacketState>(State.load(std::memory_order_acquire));
+            return static_cast<FramePacketState>(State.Load(std::memory_order_acquire));
         }
 
         /**
@@ -81,7 +81,7 @@ namespace NorvesLib::Core::Rendering
          */
         void SetState(FramePacketState newState)
         {
-            State.store(static_cast<uint8_t>(newState), std::memory_order_release);
+            State.Store(static_cast<uint8_t>(newState), std::memory_order_release);
         }
 
         /**
@@ -93,8 +93,8 @@ namespace NorvesLib::Core::Rendering
         bool CompareExchangeState(FramePacketState expected, FramePacketState desired)
         {
             uint8_t expectedVal = static_cast<uint8_t>(expected);
-            return State.compare_exchange_strong(expectedVal, static_cast<uint8_t>(desired),
-                                                  std::memory_order_acq_rel);
+            return State.CompareExchangeStrong(expectedVal, static_cast<uint8_t>(desired),
+                                                 std::memory_order_acq_rel);
         }
     };
 
@@ -131,9 +131,9 @@ namespace NorvesLib::Core::Rendering
                 m_Packets[i].Clear();
                 m_Packets[i].SetState(FramePacketState::Empty);
             }
-            m_WriteIndex.store(0, std::memory_order_release);
-            m_ReadIndex.store(0, std::memory_order_release);
-            m_CurrentFrameNumber.store(0, std::memory_order_release);
+            m_WriteIndex.Store(0, std::memory_order_release);
+            m_ReadIndex.Store(0, std::memory_order_release);
+            m_CurrentFrameNumber.Store(0, std::memory_order_release);
         }
 
         /**
@@ -161,23 +161,23 @@ namespace NorvesLib::Core::Rendering
          */
         FramePacket *AcquireForWrite()
         {
-            uint32_t writeIdx = m_WriteIndex.load(std::memory_order_acquire);
+            uint32_t writeIdx = m_WriteIndex.Load(std::memory_order_acquire);
 
             // 現在のバッファが書き込み可能かチェック
             if (m_Packets[writeIdx].CompareExchangeState(FramePacketState::Empty,
-                                                          FramePacketState::Writing))
+                                                         FramePacketState::Writing))
             {
-                m_Packets[writeIdx].FrameNumber = m_CurrentFrameNumber.fetch_add(1, std::memory_order_relaxed);
+                m_Packets[writeIdx].FrameNumber = m_CurrentFrameNumber.FetchAdd(1, std::memory_order_relaxed);
                 return &m_Packets[writeIdx];
             }
 
             // 次のバッファを試す
             uint32_t nextIdx = (writeIdx + 1) % FRAME_PACKET_BUFFER_COUNT;
             if (m_Packets[nextIdx].CompareExchangeState(FramePacketState::Empty,
-                                                         FramePacketState::Writing))
+                                                        FramePacketState::Writing))
             {
-                m_WriteIndex.store(nextIdx, std::memory_order_release);
-                m_Packets[nextIdx].FrameNumber = m_CurrentFrameNumber.fetch_add(1, std::memory_order_relaxed);
+                m_WriteIndex.Store(nextIdx, std::memory_order_release);
+                m_Packets[nextIdx].FrameNumber = m_CurrentFrameNumber.FetchAdd(1, std::memory_order_relaxed);
                 return &m_Packets[nextIdx];
             }
 
@@ -192,14 +192,14 @@ namespace NorvesLib::Core::Rendering
          *
          * @param packet 書き込み完了したパケット
          */
-        void FinishWrite(FramePacket* packet)
+        void FinishWrite(FramePacket *packet)
         {
             if (packet)
             {
                 packet->SetState(FramePacketState::Ready);
                 // 次のバッファへ進む
                 uint32_t currentIdx = static_cast<uint32_t>(packet - m_Packets.data());
-                m_WriteIndex.store((currentIdx + 1) % FRAME_PACKET_BUFFER_COUNT, std::memory_order_release);
+                m_WriteIndex.Store((currentIdx + 1) % FRAME_PACKET_BUFFER_COUNT, std::memory_order_release);
             }
         }
 
@@ -250,7 +250,7 @@ namespace NorvesLib::Core::Rendering
             if (latestReady)
             {
                 if (latestReady->CompareExchangeState(FramePacketState::Ready,
-                                                       FramePacketState::Reading))
+                                                      FramePacketState::Reading))
                 {
                     return latestReady;
                 }
@@ -284,7 +284,7 @@ namespace NorvesLib::Core::Rendering
          */
         uint64_t GetCurrentFrameNumber() const
         {
-            return m_CurrentFrameNumber.load(std::memory_order_acquire);
+            return m_CurrentFrameNumber.Load(std::memory_order_acquire);
         }
 
         /**

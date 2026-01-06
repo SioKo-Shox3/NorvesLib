@@ -62,8 +62,8 @@ namespace NorvesLib::Thread
         m_tasksProcessedPerThread.resize(threadCount);
         for (size_t i = 0; i < threadCount; ++i)
         {
-            // std::unique_ptr<std::atomic<size_t>>を生成して初期化
-            m_tasksProcessedPerThread[i] = std::make_unique<std::atomic<size_t>>(0);
+            // std::unique_ptr<Atomic<size_t>>を生成して初期化
+            m_tasksProcessedPerThread[i] = std::make_unique<Atomic<size_t>>(0);
         }
 
         // ワークスチーリングモードの場合はローカルキューを初期化
@@ -149,7 +149,7 @@ namespace NorvesLib::Thread
             return; // nullタスクは追加しない
         }
 
-        const ExecutionMode mode = m_executionMode.load();
+        const ExecutionMode mode = m_executionMode.Load();
 
         if (mode == ExecutionMode::EXECUTION_SIMPLE)
         {
@@ -237,7 +237,7 @@ namespace NorvesLib::Thread
             // キューが空になり、アクティブなスレッドがなくなるまで待機
             bool allDone = false;
 
-            if (m_executionMode.load() == ExecutionMode::EXECUTION_SIMPLE)
+            if (m_executionMode.Load() == ExecutionMode::EXECUTION_SIMPLE)
             {
                 // シンプルモード - グローバルキューのみチェック
                 ScopedLock lock(m_queueMutex);
@@ -277,7 +277,7 @@ namespace NorvesLib::Thread
 
             // 自身でタスクを処理して待機状態を改善
             TaskPtr task = nullptr;
-            if (m_executionMode.load() == ExecutionMode::EXECUTION_SIMPLE)
+            if (m_executionMode.Load() == ExecutionMode::EXECUTION_SIMPLE)
             {
                 task = GetNextTaskSimple();
             }
@@ -300,12 +300,12 @@ namespace NorvesLib::Thread
 
     size_t JobSystem::GetQueuedTaskCount() const
     {
-        return m_queuedTaskCount.load();
+        return m_queuedTaskCount.Load();
     }
 
     size_t JobSystem::GetActiveThreadCount() const
     {
-        return m_activeThreads.load();
+        return m_activeThreads.Load();
     }
 
     size_t JobSystem::GetWorkerThreadCount() const
@@ -329,7 +329,7 @@ namespace NorvesLib::Thread
         m_tasksProcessedPerThread.push_back(0);
 
         // ワークスチーリングモードの場合はローカルキューも追加
-        if (m_executionMode.load() == ExecutionMode::EXECUTION_WORK_STEALING)
+        if (m_executionMode.Load() == ExecutionMode::EXECUTION_WORK_STEALING)
         {
             if (newIndex >= m_localQueues.size())
             {
@@ -383,8 +383,8 @@ namespace NorvesLib::Thread
 
         for (const auto &counter : m_tasksProcessedPerThread)
         {
-            // unique_ptr経由でatomicオブジェクトの値を取得
-            stats.push_back(counter->load());
+            // unique_ptr経由でAtomicオブジェクトの値を取得
+            stats.push_back(counter->Load());
         }
 
         return stats;
@@ -407,16 +407,16 @@ namespace NorvesLib::Thread
 
     JobSystem::SizingMode JobSystem::GetSizingMode() const
     {
-        return m_sizingMode.load();
+        return m_sizingMode.Load();
     }
 
     void JobSystem::EnableDynamicSizing(bool enabled, uint32_t minThreads, uint32_t maxThreads)
     {
         // 現在のモードと同じなら何もしない
         SizingMode newMode = enabled ? SizingMode::SIZING_DYNAMIC : SizingMode::SIZING_FIXED;
-        if (newMode == m_sizingMode.load() &&
-            (minThreads == m_minThreads.load() || minThreads == 0) &&
-            (maxThreads == m_maxThreads.load() || maxThreads == 0))
+        if (newMode == m_sizingMode.Load() &&
+            (minThreads == m_minThreads.Load() || minThreads == 0) &&
+            (maxThreads == m_maxThreads.Load() || maxThreads == 0))
         {
             return;
         }
@@ -444,7 +444,7 @@ namespace NorvesLib::Thread
         m_maxThreads = maxThreads;
 
         // 前回のモードと新しいモードの切り替え
-        SizingMode oldMode = m_sizingMode.exchange(newMode);
+        SizingMode oldMode = m_sizingMode.Exchange(newMode);
 
         // SIZING_DYNAMICに切り替える場合は、モニタースレッドを起動
         if (oldMode == SizingMode::SIZING_FIXED && newMode == SizingMode::SIZING_DYNAMIC)
@@ -478,8 +478,8 @@ namespace NorvesLib::Thread
         size_t currentThreadCount = m_workerThreads.size();
 
         // 範囲制限（最小・最大スレッド数）
-        size_t minThreads = m_minThreads.load();
-        size_t maxThreads = m_maxThreads.load();
+        size_t minThreads = m_minThreads.Load();
+        size_t maxThreads = m_maxThreads.Load();
         targetThreadCount = std::max(minThreads, std::min(maxThreads, targetThreadCount));
 
         // 現在と目標が同じなら何もしない
@@ -601,7 +601,7 @@ namespace NorvesLib::Thread
         {
             // 現在の実行モードによって、タスク取得方法を切り替え
             TaskPtr task = nullptr;
-            const ExecutionMode mode = m_executionMode.load();
+            const ExecutionMode mode = m_executionMode.Load();
             bool noTasks = false;
 
             if (mode == ExecutionMode::EXECUTION_SIMPLE)
@@ -658,8 +658,8 @@ namespace NorvesLib::Thread
         while (m_monitorActive)
         {
             // 現在のタスク数と実行中スレッド数を取得
-            size_t queuedTasks = m_queuedTaskCount.load();
-            size_t activeThreads = m_activeThreads.load();
+            size_t queuedTasks = m_queuedTaskCount.Load();
+            size_t activeThreads = m_activeThreads.Load();
             size_t workerThreads = GetWorkerThreadCount();
 
             // ワーカースレッドの使用率を計算
@@ -704,13 +704,13 @@ namespace NorvesLib::Thread
     size_t JobSystem::CalculateOptimalThreadCount()
     {
         // 現在の設定
-        size_t minThreads = m_minThreads.load();
-        size_t maxThreads = m_maxThreads.load();
+        size_t minThreads = m_minThreads.Load();
+        size_t maxThreads = m_maxThreads.Load();
         size_t currentThreads = GetWorkerThreadCount();
 
         // 現在のタスク数とアクティブスレッド数
-        size_t queuedTasks = m_queuedTaskCount.load();
-        size_t activeThreads = m_activeThreads.load();
+        size_t queuedTasks = m_queuedTaskCount.Load();
+        size_t activeThreads = m_activeThreads.Load();
 
         // 直近の使用率平均
         float avgUtilization = 0.0f;
@@ -762,12 +762,12 @@ namespace NorvesLib::Thread
         {
             ScopedLock statsLock(m_statsMutex);
             threadIndex = m_tasksProcessedPerThread.size();
-            // std::unique_ptrを使ってatomicオブジェクトを生成
-            m_tasksProcessedPerThread.push_back(std::make_unique<std::atomic<size_t>>(0));
+            // std::unique_ptrを使ってAtomicオブジェクトを生成
+            m_tasksProcessedPerThread.push_back(std::make_unique<Atomic<size_t>>(0));
         }
 
         // ワークスチーリングモードの場合はローカルキューを作成
-        if (m_executionMode.load() == ExecutionMode::EXECUTION_WORK_STEALING)
+        if (m_executionMode.Load() == ExecutionMode::EXECUTION_WORK_STEALING)
         {
             ScopedLock workerLock(m_workerThreadMutex);
             if (threadIndex >= m_localQueues.size())

@@ -40,24 +40,24 @@ namespace NorvesLib::Core::Rendering
      */
     enum class VertexFormat : uint8_t
     {
-        Float1,   // float x 1 (4 bytes)
-        Float2,   // float x 2 (8 bytes)
-        Float3,   // float x 3 (12 bytes)
-        Float4,   // float x 4 (16 bytes)
-        Half2,    // half x 2 (4 bytes)
-        Half4,    // half x 4 (8 bytes)
-        UByte4,   // uint8_t x 4 (4 bytes)
-        UByte4N,  // uint8_t x 4 normalized (4 bytes)
-        Short2,   // int16_t x 2 (4 bytes)
-        Short2N,  // int16_t x 2 normalized (4 bytes)
-        Short4,   // int16_t x 4 (8 bytes)
-        Short4N,  // int16_t x 4 normalized (8 bytes)
-        UInt1,    // uint32_t x 1 (4 bytes)
-        UInt2,    // uint32_t x 2 (8 bytes)
-        UInt4,    // uint32_t x 4 (16 bytes)
-        Int1,     // int32_t x 1 (4 bytes)
-        Int2,     // int32_t x 2 (8 bytes)
-        Int4,     // int32_t x 4 (16 bytes)
+        Float1,  // float x 1 (4 bytes)
+        Float2,  // float x 2 (8 bytes)
+        Float3,  // float x 3 (12 bytes)
+        Float4,  // float x 4 (16 bytes)
+        Half2,   // half x 2 (4 bytes)
+        Half4,   // half x 4 (8 bytes)
+        UByte4,  // uint8_t x 4 (4 bytes)
+        UByte4N, // uint8_t x 4 normalized (4 bytes)
+        Short2,  // int16_t x 2 (4 bytes)
+        Short2N, // int16_t x 2 normalized (4 bytes)
+        Short4,  // int16_t x 4 (8 bytes)
+        Short4N, // int16_t x 4 normalized (8 bytes)
+        UInt1,   // uint32_t x 1 (4 bytes)
+        UInt2,   // uint32_t x 2 (8 bytes)
+        UInt4,   // uint32_t x 4 (16 bytes)
+        Int1,    // int32_t x 1 (4 bytes)
+        Int2,    // int32_t x 2 (8 bytes)
+        Int4,    // int32_t x 4 (16 bytes)
     };
 
     /**
@@ -151,8 +151,8 @@ namespace NorvesLib::Core::Rendering
     {
         VertexSemantic Semantic = VertexSemantic::Position;
         VertexFormat Format = VertexFormat::Float3;
-        uint32_t Offset = 0;       // バッファ内オフセット（バイト）
-        uint32_t BufferSlot = 0;   // 頂点バッファスロット（複数バッファ対応）
+        uint32_t Offset = 0;        // バッファ内オフセット（バイト）
+        uint32_t BufferSlot = 0;    // 頂点バッファスロット（複数バッファ対応）
         uint32_t SemanticIndex = 0; // 同一セマンティクスの複数インスタンス用
 
         constexpr VertexElement() = default;
@@ -383,7 +383,9 @@ namespace NorvesLib::Core::Rendering
      *
      * 登録済みのレイアウトを参照するための軽量なハンドル
      */
-    struct VertexLayoutHandleTag {};
+    struct VertexLayoutHandleTag
+    {
+    };
     using VertexLayoutHandle = ResourceHandle<VertexLayoutHandleTag>;
 
 } // namespace NorvesLib::Core::Rendering

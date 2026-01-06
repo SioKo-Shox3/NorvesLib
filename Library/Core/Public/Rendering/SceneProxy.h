@@ -34,29 +34,29 @@ namespace NorvesLib::Core::Rendering
         // 識別子
         // ========================================
 
-        uint64_t ObjectId = 0;      // 所属するObjectのID
-        uint64_t ComponentId = 0;   // MeshComponentのID
-        uint32_t SortKey = 0;       // ソート用キー
+        uint64_t ObjectId = 0;    // 所属するObjectのID
+        uint64_t ComponentId = 0; // MeshComponentのID
+        uint32_t SortKey = 0;     // ソート用キー
 
         // ========================================
         // メッシュデータ参照
         // ========================================
 
-        MeshDataHandle MeshHandle;  // メッシュデータへのハンドル
-        uint8_t LODLevel = 0;       // 現在のLODレベル
+        MeshDataHandle MeshHandle; // メッシュデータへのハンドル
+        uint8_t LODLevel = 0;      // 現在のLODレベル
 
         // ========================================
         // トランスフォーム
         // ========================================
 
-        Math::Matrix4x4 WorldTransform;          // ワールド変換行列
-        Math::Matrix4x4 PreviousWorldTransform;  // 前フレームの変換行列（モーションブラー用）
+        Math::Matrix4x4 WorldTransform;         // ワールド変換行列
+        Math::Matrix4x4 PreviousWorldTransform; // 前フレームの変換行列（モーションブラー用）
 
         // ========================================
         // カリング用バウンディング
         // ========================================
 
-        BoundingSphere WorldBounds;  // ワールド空間でのバウンディングスフィア
+        BoundingSphere WorldBounds; // ワールド空間でのバウンディングスフィア
 
         // ========================================
         // マテリアル
@@ -73,19 +73,19 @@ namespace NorvesLib::Core::Rendering
         // 描画フラグ
         // ========================================
 
-        bool bVisible = true;           // 描画するか
-        bool bCastShadow = true;        // シャドウを落とすか
-        bool bReceiveShadow = true;     // シャドウを受けるか
-        bool bAffectDynamicIndirectLighting = true;  // 動的間接光の影響を受けるか
-        bool bAffectDistanceFieldLighting = false;   // ディスタンスフィールドライティング
+        bool bVisible = true;                       // 描画するか
+        bool bCastShadow = true;                    // シャドウを落とすか
+        bool bReceiveShadow = true;                 // シャドウを受けるか
+        bool bAffectDynamicIndirectLighting = true; // 動的間接光の影響を受けるか
+        bool bAffectDistanceFieldLighting = false;  // ディスタンスフィールドライティング
 
-        RenderLayer LayerMask = RenderLayer::Default;  // レンダーレイヤーマスク
+        RenderLayer LayerMask = RenderLayer::Default; // レンダーレイヤーマスク
 
         // ========================================
         // カスタムデータ
         // ========================================
 
-        float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // シェーダーに渡すカスタムデータ
+        float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // シェーダーに渡すカスタムデータ
 
         // ========================================
         // ユーティリティ
@@ -254,7 +254,7 @@ namespace NorvesLib::Core::Rendering
 
         // レンダリング設定
         RenderLayer CullingMask = RenderLayer::All;
-        uint8_t RenderOrder = 0;  // 複数カメラの描画順序
+        uint8_t RenderOrder = 0; // 複数カメラの描画順序
 
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;
@@ -312,7 +312,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief メッシュプロキシを追加
          */
-        void AddMeshProxy(const MeshProxy& proxy)
+        void AddMeshProxy(const MeshProxy &proxy)
         {
             if (proxy.IsValid())
             {
@@ -323,7 +323,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief ライトプロキシを追加
          */
-        void AddLightProxy(const LightProxy& proxy)
+        void AddLightProxy(const LightProxy &proxy)
         {
             if (proxy.IsValid())
             {

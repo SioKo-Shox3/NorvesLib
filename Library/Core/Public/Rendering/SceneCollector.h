@@ -147,11 +147,11 @@ namespace NorvesLib::Core::Rendering
          */
         struct CullingSettings
         {
-            bool bEnableFrustumCulling = true;   // 視錐台カリング
+            bool bEnableFrustumCulling = true;    // 視錐台カリング
             bool bEnableOcclusionCulling = false; // オクルージョンカリング（未実装）
-            bool bEnableDistanceCulling = true;  // 距離カリング
-            float MaxDrawDistance = 10000.0f;    // 最大描画距離
-            float SmallObjectThreshold = 0.001f; // 小さすぎるオブジェクトを除外するしきい値
+            bool bEnableDistanceCulling = true;   // 距離カリング
+            float MaxDrawDistance = 10000.0f;     // 最大描画距離
+            float SmallObjectThreshold = 0.001f;  // 小さすぎるオブジェクトを除外するしきい値
         };
 
         /**
@@ -176,12 +176,12 @@ namespace NorvesLib::Core::Rendering
 
         struct CollectionStats
         {
-            uint32_t TotalObjects = 0;       // 登録オブジェクト総数
-            uint32_t VisibleObjects = 0;     // 可視オブジェクト数
-            uint32_t CulledObjects = 0;      // カリングされたオブジェクト数
-            uint32_t CollectedMeshes = 0;    // 収集されたメッシュ数
-            uint32_t CollectedLights = 0;    // 収集されたライト数
-            float CollectionTimeMs = 0.0f;   // 収集にかかった時間（ミリ秒）
+            uint32_t TotalObjects = 0;     // 登録オブジェクト総数
+            uint32_t VisibleObjects = 0;   // 可視オブジェクト数
+            uint32_t CulledObjects = 0;    // カリングされたオブジェクト数
+            uint32_t CollectedMeshes = 0;  // 収集されたメッシュ数
+            uint32_t CollectedLights = 0;  // 収集されたライト数
+            float CollectionTimeMs = 0.0f; // 収集にかかった時間（ミリ秒）
         };
 
         /**
