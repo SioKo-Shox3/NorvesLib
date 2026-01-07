@@ -1,8 +1,5 @@
 ﻿#include "Application/ApplicationFactory.h"
-// GameApplicationの作成のため、直接インクルード
-// プラットフォーム固有のアプリケーションではなく、ゲームアプリケーションを作成
-
-extern NorvesLib::Core::Container::TUniquePtr<NorvesLib::IApplication> CreateDefaultApplication();
+#include "Platform/Windows/WindowsApplicationFactory.h"
 
 using namespace NorvesLib::Core::Container;
 
@@ -15,8 +12,12 @@ namespace NorvesLib
 
             Core::Container::TUniquePtr<IApplication> ApplicationFactory::CreateDefaultApplication()
             {
-                // ゲームアプリケーションを作成（Game/Application.cppで定義）
-                return ::CreateDefaultApplication();
+                // プラットフォーム固有のアプリケーションを作成
+#ifdef _WIN32
+                return Platform::WindowsApplicationFactory::CreateWindowsApplication();
+#else
+                return nullptr;
+#endif
             }
 
             Core::Container::TUniquePtr<IApplication> ApplicationFactory::CreateCustomApplication()
