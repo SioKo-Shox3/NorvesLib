@@ -437,7 +437,7 @@ namespace NorvesLib::Core
                 else
                 {
                     // その他の型は標準的な変換を試す
-                    std::stringstream ss(str);
+                    std::stringstream ss(std::string(str.data(), str.size()));
                     ss >> m_Value;
                     m_IsValid = !ss.fail();
                     return m_IsValid;
@@ -615,7 +615,7 @@ namespace NorvesLib::Core
                 // 文字列からの変換
                 try
                 {
-                    return std::stoi(m_Value);
+                    return std::stoi(std::string(m_Value.data(), m_Value.size()));
                 }
                 catch (...)
                 {
@@ -659,7 +659,7 @@ namespace NorvesLib::Core
                 // 文字列からの変換
                 try
                 {
-                    return std::stoll(m_Value);
+                    return std::stoll(std::string(m_Value.data(), m_Value.size()));
                 }
                 catch (...)
                 {
@@ -711,7 +711,7 @@ namespace NorvesLib::Core
                 // 文字列からの変換
                 try
                 {
-                    return static_cast<uint32_t>(std::stoul(m_Value));
+                    return static_cast<uint32_t>(std::stoul(std::string(m_Value.data(), m_Value.size())));
                 }
                 catch (...)
                 {
@@ -755,7 +755,7 @@ namespace NorvesLib::Core
                 // 文字列からの変換
                 try
                 {
-                    return std::stoull(m_Value);
+                    return std::stoull(std::string(m_Value.data(), m_Value.size()));
                 }
                 catch (...)
                 {
@@ -799,7 +799,7 @@ namespace NorvesLib::Core
                 // 文字列からの変換
                 try
                 {
-                    return std::stof(m_Value);
+                    return std::stof(std::string(m_Value.data(), m_Value.size()));
                 }
                 catch (...)
                 {
@@ -843,7 +843,7 @@ namespace NorvesLib::Core
                 // 文字列からの変換
                 try
                 {
-                    return std::stod(m_Value);
+                    return std::stod(std::string(m_Value.data(), m_Value.size()));
                 }
                 catch (...)
                 {

@@ -223,6 +223,37 @@ std::map<std::string, int> stdMap;
 - `Queue<T>` (std::queueの代替)
 ```
 
+#### Identityの使用規則
+- **ハッシュキーとして文字列を使う場合は`Identity`を使用する**
+- `UnorderedMap`/`UnorderedSet`のキーに文字列が必要な場合は、`String`ではなく`Identity`を使用
+- `Identity`は文字列からハッシュ値を事前計算し、高速な比較と検索が可能
+- `Identity::Hasher`をハッシュ関数として指定
+
+```cpp
+// 推奨（Identityをハッシュキーとして使用）
+#include "Text/IdentityPool.h"
+using namespace NorvesLib::Core;
+
+// ハッシュマップのキーにはIdentityを使用
+Container::UnorderedMap<Identity, int, Identity::Hasher> nameToValue;
+
+// Identityの作成
+Identity id("ResourceName");
+nameToValue[id] = 42;
+
+// 検索（高速なハッシュ比較）
+auto it = nameToValue.find(Identity("ResourceName"));
+
+// 避ける（Stringをハッシュキーに使わない）
+Container::UnorderedMap<Container::String, int> stringMap;  // コンパイルエラーまたは非効率
+```
+
+#### Identityの用途
+- リソースパスのキャッシュキー
+- クラス名・プロパティ名の識別
+- 高速な文字列比較が必要な場面
+- **注意**: `Identity`は`IdentityPool`で内部管理され、同じ文字列は同じハッシュを返す
+
 ### プラットフォーム固有コード
 
 #### 条件コンパイル
@@ -506,6 +537,7 @@ Library/
 - **STLコンテナの直接使用**（`std::vector`, `std::list`, `std::map`, `std::string`など）
 - **クラス内シングルトンパターン**（`static Instance& Get()`形式）
 - **ポインタ演算子を変数名側に付ける**（`void *hoge`ではなく`void* hoge`）
+- **Stringをハッシュキーに使用する**（`UnorderedMap<String, ...>`ではなく`UnorderedMap<Identity, ..., Identity::Hasher>`を使用）
 - `using namespace`の使用（ヘッダーファイル内）
 - プラットフォーム固有コードの直接記述
 - 古いC++スタイルの記述
@@ -515,6 +547,7 @@ Library/
 - モダンC++の機能を積極的に使用
 - **NorvesLib専用エイリアス**の使用（`TUniquePtr`, `TSharedPtr`, `MakeUnique`, `MakeShared`）
 - **NorvesLib専用コンテナ**の使用（`VariableArray`, `List`, `Map`, `String`など）
+- **ハッシュキーには`Identity`を使用**（高速な比較・検索が可能）
 - **C++23コンセプト**によるテンプレート制約（SFINAE回避）
 - RAII原則の遵守
 - const correctnessの徹底

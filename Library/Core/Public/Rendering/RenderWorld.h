@@ -5,7 +5,6 @@
 #include "RenderThread.h"
 #include "RenderResourceManager.h"
 #include "MeshResourceManager.h"
-#include "SceneCollector.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
@@ -162,14 +161,6 @@ namespace NorvesLib::Core::Rendering
             return m_MeshResourceManager;
         }
 
-        /**
-         * @brief シーンコレクターを取得
-         */
-        SceneCollector &GetSceneCollector()
-        {
-            return m_SceneCollector;
-        }
-
         // ========================================
         // 解像度変更
         // ========================================
@@ -274,7 +265,6 @@ namespace NorvesLib::Core::Rendering
         MeshResourceManager m_MeshResourceManager;
         FramePacketManager m_PacketManager;
         RenderThread m_RenderThread;
-        SceneCollector m_SceneCollector;
 
         // 現在のフレームパケット
         FramePacket *m_CurrentPacket = nullptr;

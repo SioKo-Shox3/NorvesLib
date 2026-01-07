@@ -94,7 +94,7 @@ namespace NorvesLib::Core::Rendering
         {
             uint8_t expectedVal = static_cast<uint8_t>(expected);
             return State.CompareExchangeStrong(expectedVal, static_cast<uint8_t>(desired),
-                                                 std::memory_order_acq_rel);
+                                               std::memory_order_acq_rel);
         }
     };
 

@@ -39,7 +39,7 @@ namespace NorvesLib::Core
         LOG_INFO("Initializing NorvesEngine...");
 
         // サブシステムの初期化
-        
+
         // 1. ResourceRegistryの初期化
         if (!m_ResourceRegistry.Initialize())
         {
@@ -47,9 +47,20 @@ namespace NorvesLib::Core
             return false;
         }
 
+        // 2. AssetRegistryの初期化
+        if (!m_AssetRegistry.InitializeSubsystem())
+        {
+            LOG_ERROR("Failed to initialize AssetRegistry");
+            m_ResourceRegistry.Shutdown();
+            return false;
+        }
+
+        // TODO: RenderingCoordinatorの初期化
+        // - RHI初期化後に行う
+        // - Screenの作成
+        // - RenderThreadの開始
+
         // TODO: 追加サブシステムの初期化
-        // - RHIの初期化
-        // - RenderWorldの初期化（RHI初期化後に行う）
         // - 入力システムの初期化
         // - オーディオシステムの初期化
         // - 物理演算システムの初期化
@@ -72,12 +83,21 @@ namespace NorvesLib::Core
         // - シーンの更新
         // - 物理演算の更新
         // - オーディオの更新
-        
+
         // リソースのガベージコレクション（定期的に実行）
         m_ResourceRegistry.CollectGarbage();
-        
-        // レンダリングの更新
-        // TODO: RenderWorldの更新
+
+        // アセットレジストリの更新（GC、非同期ロード完了チェック等）
+        m_AssetRegistry.Update(deltaTime);
+
+        // レンダリングフレームの処理
+        if (m_RenderingCoordinator.IsInitialized())
+        {
+            m_RenderingCoordinator.BeginFrame();
+            m_RenderingCoordinator.CollectScene();
+            m_RenderingCoordinator.GenerateDrawCommands();
+            m_RenderingCoordinator.EndFrame();
+        }
     }
 
     void NorvesEngine::Shutdown()
@@ -91,13 +111,24 @@ namespace NorvesLib::Core
         LOG_INFO("Shutting down NorvesEngine...");
 
         // サブシステムのシャットダウン（初期化と逆順）
-        
+
+        // RenderThreadの停止
+        if (m_RenderThread.IsRunning())
+        {
+            m_RenderThread.Stop();
+        }
+        m_RenderThread.Shutdown();
+
+        // RenderingCoordinatorのシャットダウン
+        m_RenderingCoordinator.Shutdown();
+
         // TODO: 追加サブシステムのシャットダウン
-        // - RenderWorldのシャットダウン
         // - 物理演算システムのシャットダウン
         // - オーディオシステムのシャットダウン
         // - 入力システムのシャットダウン
-        // - RHIのシャットダウン
+
+        // AssetRegistryのシャットダウン
+        m_AssetRegistry.ShutdownSubsystem();
 
         // ResourceRegistryのシャットダウン（最後に行う）
         m_ResourceRegistry.Shutdown();

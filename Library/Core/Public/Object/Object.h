@@ -64,6 +64,19 @@ namespace NorvesLib::Core
         virtual void Finalize() override;
 
         /**
+         * @brief オブジェクトのクローンを作成します
+         * @return クローンされたオブジェクトへのポインタ
+         */
+        virtual IUnknown *Clone() const override;
+
+        /**
+         * @brief フィールド初期化子を使用してオブジェクトのクローンを作成します
+         * @param initializer フィールド初期化子
+         * @return クローンされたオブジェクトへのポインタ
+         */
+        virtual IUnknown *Clone(const FieldInitializer *initializer) const override;
+
+        /**
          * @brief オブジェクトの型を文字列として取得します
          * @return クラス名
          */

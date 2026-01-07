@@ -239,6 +239,38 @@ namespace NorvesLib::Core
         UnknownImpl::Finalize();
     }
 
+    IUnknown *Object::Clone() const
+    {
+        // ObjectはREFLECTION_CLASSを使用しないので、手動でクローンを実装
+        Object *newInstance = new Object();
+        if (newInstance)
+        {
+            // コンテナデータをコピー
+            const VariableContainer *srcContainer = GetVariableContainer();
+            VariableContainer *dstContainer = newInstance->GetVariableContainer();
+            if (srcContainer && dstContainer)
+            {
+                const void *srcData = srcContainer->GetData();
+                void *dstData = dstContainer->GetData();
+                if (srcData && dstData && srcContainer->GetSize() > 0)
+                {
+                    std::memcpy(dstData, srcData, srcContainer->GetSize());
+                }
+            }
+        }
+        return newInstance;
+    }
+
+    IUnknown *Object::Clone(const FieldInitializer *initializer) const
+    {
+        Object *newInstance = static_cast<Object *>(Clone());
+        if (newInstance && initializer)
+        {
+            ObjectUtility::ApplyInitialValues(newInstance, initializer);
+        }
+        return newInstance;
+    }
+
     const Identity &Object::GetTypeName() const
     {
         return GetClass()->GetClassName();
