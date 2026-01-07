@@ -2,6 +2,8 @@
 #include "Boot/BootConfig.h"
 #include "Application/ApplicationFactory.h"
 #include "Engine/ApplicationProcessor.h"
+#include "Logging/LoggingModule.h"
+#include "Logging/LogMacros.h"
 #include "Core/Public/Container/Containers.h"
 #include <iostream>
 
@@ -241,6 +243,75 @@ namespace NorvesLib
                 ShutdownPlatform();
 
                 return exitCode;
+            }
+
+            int Boot(const BootConfig &config)
+            {
+                // デバッグコンソールの割り当て
+                if (config.bEnableDebugConsole)
+                {
+#ifdef _DEBUG
+                    if (AllocConsole())
+                    {
+                        FILE *fp;
+                        freopen_s(&fp, "CONOUT$", "w", stdout);
+                        freopen_s(&fp, "CONOUT$", "w", stderr);
+                        freopen_s(&fp, "CONIN$", "r", stdin);
+                        std::ios::sync_with_stdio(true);
+                        SetConsoleTitleA("NorvesLib Debug Console");
+                    }
+#endif
+                }
+
+                // ロガー初期化
+                Container::String logFileName = config.LogFileName.empty()
+                                                    ? Container::String(TEXT("Game.log"))
+                                                    : config.LogFileName;
+
+                Logging::LogConfig logConfig = Logging::CreateLogConfig(
+                    Logging::LogLevel::Info,
+                    Logging::LogOutput::Both,
+                    logFileName,
+                    false);
+
+                if (!Logging::InitializeLogging(logConfig))
+                {
+                    std::wcerr << L"Failed to initialize logging system" << std::endl;
+                    return -1;
+                }
+
+                LOG_INFO("PlatformBoot::Boot() - Starting application...");
+
+                // アプリケーション実行
+                int result = RunApplication(config);
+
+                LOG_INFO("PlatformBoot::Boot() - Application finished");
+
+                // ロガー終了
+                Logging::ShutdownLogging();
+
+#ifdef _DEBUG
+                if (config.bEnableDebugConsole)
+                {
+                    std::wcout << L"Press any key to exit..." << std::endl;
+                    std::wcout.flush();
+                    std::cin.get();
+                }
+#endif
+
+                return result;
+            }
+
+            int Boot(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow, BootConfig config)
+            {
+                // WinMain引数をBootConfigに設定
+                config.hInstance = hInstance;
+                config.hPrevInstance = hPrevInstance;
+                config.lpCmdLine = lpCmdLine;
+                config.nCmdShow = nCmdShow;
+
+                // 通常のBootを呼び出し
+                return Boot(config);
             }
 #endif
 

@@ -104,7 +104,7 @@ namespace Game
         // m_bIsPaused = true;
     }
 
-    NorvesLib::Core::Container::TUniquePtr<NorvesLib::Core::GameMode::IStateMachine> 
+    NorvesLib::Core::Container::TUniquePtr<NorvesLib::Core::GameMode::IStateMachine>
     GameApplicationHandler::CreateGameModeStateMachine()
     {
         LOG_INFO("GameApplicationHandler::CreateGameModeStateMachine()");
@@ -113,10 +113,10 @@ namespace Game
         using namespace Game::GameModes;
 
         auto stateMachine = MakeUnique<TStateMachine<IGameMode, GameModeFactory>>();
-        
+
         // メモリエージングテストモードを初期ステートとして設定
         stateMachine->ReserveState(MakeUnique<MemoryAgingTestMode>());
-        
+
         LOG_INFO("メモリエージングテストモードを開始します");
 
         return stateMachine;

@@ -86,6 +86,31 @@ namespace NorvesLib
              * @return アプリケーションの終了コード
              */
             int RunApplication(HINSTANCE hInstance, const BootConfig &config);
+
+            /**
+             * @brief アプリケーションを起動する最もシンプルなAPI
+             *
+             * ロガー初期化、デバッグコンソール割り当て、アプリケーション実行、
+             * 終了処理までを全て行います。
+             *
+             * @param config 起動設定
+             * @return アプリケーションの終了コード
+             */
+            int Boot(const BootConfig &config);
+
+            /**
+             * @brief WinMain引数を受け取るオーバーロード
+             *
+             * WinMain引数をBootConfigに設定してからBootを呼び出します。
+             *
+             * @param hInstance アプリケーションインスタンスハンドル
+             * @param hPrevInstance 前のインスタンスハンドル
+             * @param lpCmdLine コマンドライン引数
+             * @param nCmdShow ウィンドウ表示状態
+             * @param config 起動設定（コピーされ、WinMain引数が設定されます）
+             * @return アプリケーションの終了コード
+             */
+            int Boot(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow, BootConfig config);
 #endif
 
         } // namespace Boot

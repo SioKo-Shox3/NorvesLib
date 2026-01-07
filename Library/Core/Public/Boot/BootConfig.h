@@ -3,6 +3,10 @@
 #include "Container/String.h"
 #include "Container/PointerTypes.h"
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 namespace NorvesLib::Core::Application
 {
     class IApplicationHandler;
@@ -63,6 +67,37 @@ namespace NorvesLib::Core::Boot
          * @brief デバッグコンソール有効（Windowsのみ）
          */
         bool bEnableDebugConsole = true;
+
+        // ========== ロギング設定 ==========
+
+        /**
+         * @brief ログファイル名
+         */
+        Container::String LogFileName = TEXT("Game.log");
+
+        // ========== プラットフォーム固有パラメータ ==========
+
+#ifdef _WIN32
+        /**
+         * @brief アプリケーションインスタンスハンドル（Windows用）
+         */
+        HINSTANCE hInstance = nullptr;
+
+        /**
+         * @brief 前のインスタンスハンドル（Windows用、常にnullptr）
+         */
+        HINSTANCE hPrevInstance = nullptr;
+
+        /**
+         * @brief コマンドライン引数（Windows用）
+         */
+        LPSTR lpCmdLine = nullptr;
+
+        /**
+         * @brief ウィンドウ表示状態（Windows用）
+         */
+        int nCmdShow = SW_SHOW;
+#endif
 
         // ========== ハンドラ作成 ==========
 
