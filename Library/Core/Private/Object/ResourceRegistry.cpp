@@ -1,5 +1,5 @@
 ﻿#include "Object/ResourceRegistry.h"
-#include "Logging/Logger.h"
+#include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core
 {
@@ -21,7 +21,7 @@ namespace NorvesLib::Core
         m_NextResourceId.Store(1);
         m_bInitialized = true;
 
-        LOG_INFO("ResourceRegistry", "ResourceRegistry initialized");
+        NORVES_LOG_INFO("ResourceRegistry", "ResourceRegistry initialized");
         return true;
     }
 
@@ -44,10 +44,10 @@ namespace NorvesLib::Core
 
         m_bInitialized = false;
 
-        LOG_INFO("ResourceRegistry", "ResourceRegistry shutdown");
+        NORVES_LOG_INFO("ResourceRegistry", "ResourceRegistry shutdown");
     }
 
-    void ResourceRegistry::RegisterResource(Container::TSharedPtr<Resource> resource, const Container::String& path)
+    void ResourceRegistry::RegisterResource(Container::TSharedPtr<Resource> resource, const Container::String &path)
     {
         if (!resource)
         {
@@ -55,19 +55,20 @@ namespace NorvesLib::Core
         }
 
         Thread::ScopedLock lock(m_Mutex);
-        
+
         uint64_t id = resource->GetResourceId();
-        
+
         // パスが指定されていればパスキャッシュにも登録
         if (!path.empty())
         {
-            m_PathToResource[path] = resource;
+            Identity pathId(path);
+            m_PathToResource[pathId] = resource;
         }
-        
+
         // IDキャッシュに登録
         m_IdToResource[id] = resource;
 
-        LOG_DEBUG("ResourceRegistry", "Registered resource: " + path + " (ID: " + Container::String(std::to_string(id)) + ")");
+        NORVES_LOG_DEBUG("ResourceRegistry", "Registered resource: " + path + " (ID: " + Container::String(std::to_string(id)) + ")");
     }
 
     uint64_t ResourceRegistry::GenerateResourceId()
@@ -82,7 +83,7 @@ namespace NorvesLib::Core
         Thread::ScopedLock lock(m_Mutex);
 
         // パスキャッシュから無効なエントリを削除
-        for (auto it = m_PathToResource.begin(); it != m_PathToResource.end(); )
+        for (auto it = m_PathToResource.begin(); it != m_PathToResource.end();)
         {
             if (it->second.expired())
             {
@@ -96,7 +97,7 @@ namespace NorvesLib::Core
         }
 
         // IDキャッシュから無効なエントリを削除
-        for (auto it = m_IdToResource.begin(); it != m_IdToResource.end(); )
+        for (auto it = m_IdToResource.begin(); it != m_IdToResource.end();)
         {
             if (it->second.expired())
             {
@@ -111,7 +112,7 @@ namespace NorvesLib::Core
 
         if (removedCount > 0)
         {
-            LOG_DEBUG("ResourceRegistry", "Garbage collected " + Container::String(std::to_string(removedCount)) + " entries");
+            NORVES_LOG_DEBUG("ResourceRegistry", "Garbage collected " + Container::String(std::to_string(removedCount)) + " entries");
         }
 
         return removedCount;
@@ -122,7 +123,7 @@ namespace NorvesLib::Core
         Thread::ScopedLock lock(m_Mutex);
 
         // すべてのリソースをアンロード
-        for (auto& pair : m_IdToResource)
+        for (auto &pair : m_IdToResource)
         {
             if (auto resource = pair.second.lock())
             {
@@ -130,15 +131,15 @@ namespace NorvesLib::Core
             }
         }
 
-        LOG_INFO("ResourceRegistry", "All resources unloaded");
+        NORVES_LOG_INFO("ResourceRegistry", "All resources unloaded");
     }
 
     size_t ResourceRegistry::GetResourceCount() const
     {
         Thread::ScopedLock lock(m_Mutex);
-        
+
         size_t count = 0;
-        for (const auto& pair : m_IdToResource)
+        for (const auto &pair : m_IdToResource)
         {
             if (!pair.second.expired())
             {
@@ -151,9 +152,9 @@ namespace NorvesLib::Core
     size_t ResourceRegistry::GetCachedPathCount() const
     {
         Thread::ScopedLock lock(m_Mutex);
-        
+
         size_t count = 0;
-        for (const auto& pair : m_PathToResource)
+        for (const auto &pair : m_PathToResource)
         {
             if (!pair.second.expired())
             {
@@ -166,9 +167,9 @@ namespace NorvesLib::Core
     size_t ResourceRegistry::GetTotalMemoryUsage() const
     {
         Thread::ScopedLock lock(m_Mutex);
-        
+
         size_t totalSize = 0;
-        for (const auto& pair : m_IdToResource)
+        for (const auto &pair : m_IdToResource)
         {
             if (auto resource = pair.second.lock())
             {

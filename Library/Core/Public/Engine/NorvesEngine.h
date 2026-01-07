@@ -5,7 +5,10 @@
 #include "Core/Public/Container/Containers.h"
 #include "Thread/Atomic.h"
 #include "Object/ResourceRegistry.h"
-#include "Rendering/RenderWorld.h"
+#include "Engine/AssetRegistry.h"
+#include "Rendering/Screen.h"
+#include "Rendering/RenderingCoordinator.h"
+#include "Rendering/RenderThread.h"
 
 namespace NorvesLib::Core
 {
@@ -14,10 +17,20 @@ namespace NorvesLib::Core
      * @brief Norvesゲームエンジンの実装クラス
      *
      * IEngineインターフェースを実装し、Norvesエンジンの中心的な機能を提供します。
-     * 
+     *
      * サブシステム:
      * - ResourceRegistry: リソース管理（参照カウント方式）
-     * - RenderWorld: レンダリングシステム
+     * - Screen: 最終描画出力先
+     * - RenderingCoordinator: 描画フロー管理
+     * - RenderThread: レンダースレッド管理
+     *
+     * 描画フロー:
+     * 1. SceneViewがProxyを収集・カリング・バッチング
+     * 2. DrawCommandを生成
+     * 3. ViewportごとにDrawCommandを実行
+     * 4. Viewportの結果をViewに合成
+     * 5. 複数Viewの結果をScreenに合成
+     * 6. Screenをウィンドウにプレゼント
      */
     class NorvesEngine : public IEngine
     {
@@ -68,7 +81,7 @@ namespace NorvesLib::Core
          *
          * @return バージョン文字列
          */
-        const NorvesLib::Core::Container::String& GetVersion() const;
+        const NorvesLib::Core::Container::String &GetVersion() const;
 
         // ========================================
         // サブシステムアクセス
@@ -78,33 +91,71 @@ namespace NorvesLib::Core
          * @brief リソースレジストリを取得
          * @return リソースレジストリへの参照
          */
-        ResourceRegistry& GetResourceRegistry() { return m_ResourceRegistry; }
+        ResourceRegistry &GetResourceRegistry() { return m_ResourceRegistry; }
 
         /**
          * @brief リソースレジストリを取得（const版）
          * @return リソースレジストリへのconst参照
          */
-        const ResourceRegistry& GetResourceRegistry() const { return m_ResourceRegistry; }
+        const ResourceRegistry &GetResourceRegistry() const { return m_ResourceRegistry; }
 
         /**
-         * @brief レンダリングワールドを取得
-         * @return レンダリングワールドへの参照
+         * @brief アセットレジストリを取得
+         * @return アセットレジストリへの参照
          */
-        Rendering::RenderWorld& GetRenderWorld() { return m_RenderWorld; }
+        AssetRegistry &GetAssetRegistry() { return m_AssetRegistry; }
 
         /**
-         * @brief レンダリングワールドを取得（const版）
-         * @return レンダリングワールドへのconst参照
+         * @brief アセットレジストリを取得（const版）
+         * @return アセットレジストリへのconst参照
          */
-        const Rendering::RenderWorld& GetRenderWorld() const { return m_RenderWorld; }
+        const AssetRegistry &GetAssetRegistry() const { return m_AssetRegistry; }
+
+        /**
+         * @brief Screenを取得
+         * @return Screenへの参照
+         */
+        Rendering::Screen &GetScreen() { return m_RenderingCoordinator.GetScreen(); }
+
+        /**
+         * @brief Screenを取得（const版）
+         * @return Screenへのconst参照
+         */
+        const Rendering::Screen &GetScreen() const { return m_RenderingCoordinator.GetScreen(); }
+
+        /**
+         * @brief レンダリングコーディネーターを取得
+         * @return レンダリングコーディネーターへの参照
+         */
+        Rendering::RenderingCoordinator &GetRenderingCoordinator() { return m_RenderingCoordinator; }
+
+        /**
+         * @brief レンダリングコーディネーターを取得（const版）
+         * @return レンダリングコーディネーターへのconst参照
+         */
+        const Rendering::RenderingCoordinator &GetRenderingCoordinator() const { return m_RenderingCoordinator; }
+
+        /**
+         * @brief レンダースレッドを取得
+         * @return レンダースレッドへの参照
+         */
+        Rendering::RenderThread &GetRenderThread() { return m_RenderThread; }
+
+        /**
+         * @brief レンダースレッドを取得（const版）
+         * @return レンダースレッドへのconst参照
+         */
+        const Rendering::RenderThread &GetRenderThread() const { return m_RenderThread; }
 
     private:
         Thread::Atomic<bool> m_isRunning;             ///< エンジンが実行中かどうか
         NorvesLib::Core::Container::String m_version; ///< エンジンのバージョン
 
         // サブシステム（GEngineと寿命が一致）
-        ResourceRegistry m_ResourceRegistry;         ///< リソース管理
-        Rendering::RenderWorld m_RenderWorld;        ///< レンダリングシステム
+        ResourceRegistry m_ResourceRegistry;                    ///< リソース管理
+        AssetRegistry m_AssetRegistry;                          ///< アセット（ファイル）管理
+        Rendering::RenderingCoordinator m_RenderingCoordinator; ///< 描画フロー管理
+        Rendering::RenderThread m_RenderThread;                 ///< レンダースレッド
     };
 
     /**

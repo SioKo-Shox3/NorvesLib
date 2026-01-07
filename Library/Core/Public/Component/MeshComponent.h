@@ -5,7 +5,6 @@
 #include "Rendering/MeshTypes.h"
 #include "Rendering/MaterialTypes.h"
 #include "Rendering/SceneProxy.h"
-#include "Rendering/SceneCollector.h"
 #include "Rendering/MeshResourceManager.h"
 #include "Math/Matrix4x4.h"
 #include "Container/Containers.h"

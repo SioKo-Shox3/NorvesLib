@@ -6,6 +6,9 @@
 #include <stdexcept>
 #include <initializer_list>
 #include <type_traits>
+#include <ostream>
+#include <istream>
+#include <string>
 #include <Windows.h>
 #include <tchar.h>
 #include "Allocator.h"
@@ -13,24 +16,25 @@
 namespace NorvesLib::Core::Container
 {
     // 前方宣言
-    template<typename CharT>
+    template <typename CharT>
     class TStringView;
     /**
      * @brief 動的文字列クラステンプレート
      * @tparam CharT 文字型
-     * 
+     *
      * 独自のメモリ管理を行う文字列クラステンプレートです。
      * STLからの継承は行わず、全てのメモリ管理をカスタムアロケータで実装します。
      */
-    template<typename CharT>
+    template <typename CharT>
     class TString
-    {    public:
+    {
+    public:
         // 型定義
         using value_type = CharT;
-        using pointer = CharT*;
-        using const_pointer = const CharT*;
-        using reference = CharT&;
-        using const_reference = const CharT&;
+        using pointer = CharT *;
+        using const_pointer = const CharT *;
+        using reference = CharT &;
+        using const_reference = const CharT &;
         using size_type = std::size_t;
         using difference_type = std::ptrdiff_t;
         using iterator = pointer;
@@ -38,7 +42,9 @@ namespace NorvesLib::Core::Container
         using allocator_type = Allocator<CharT>;
 
         // 特殊値
-        static constexpr size_type npos = static_cast<size_type>(-1);    private:
+        static constexpr size_type npos = static_cast<size_type>(-1);
+
+    private:
         pointer m_data;
         size_type m_size;
         size_type m_capacity;
@@ -62,9 +68,11 @@ namespace NorvesLib::Core::Container
             else
             {
                 // 汎用実装
-                if (!str) return 0;
+                if (!str)
+                    return 0;
                 size_type len = 0;
-                while (str[len] != CharT{}) ++len;
+                while (str[len] != CharT{})
+                    ++len;
                 return len;
             }
         }
@@ -89,13 +97,16 @@ namespace NorvesLib::Core::Container
                 // 汎用実装
                 for (size_type i = 0; i < count; ++i)
                 {
-                    if (lhs[i] < rhs[i]) return -1;
-                    if (lhs[i] > rhs[i]) return 1;
-                    if (lhs[i] == CharT{}) return 0;
+                    if (lhs[i] < rhs[i])
+                        return -1;
+                    if (lhs[i] > rhs[i])
+                        return 1;
+                    if (lhs[i] == CharT{})
+                        return 0;
                 }
                 return 0;
             }
-        }        // 文字列コピー
+        } // 文字列コピー
         static void StringCopy(pointer dest, const_pointer src, size_type count)
         {
             if constexpr (std::is_same_v<CharT, char>)
@@ -168,14 +179,14 @@ namespace NorvesLib::Core::Container
             return newCapacity;
         }
 
-    public:        // デフォルトコンストラクタ
+    public: // デフォルトコンストラクタ
         TString()
             : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
         }
 
         // コピーコンストラクタ
-        TString(const TString& other)
+        TString(const TString &other)
             : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
             if (other.m_size > 0)
@@ -188,7 +199,7 @@ namespace NorvesLib::Core::Container
         }
 
         // ムーブコンストラクタ
-        TString(TString&& other) noexcept
+        TString(TString &&other) noexcept
             : m_data(other.m_data), m_size(other.m_size), m_capacity(other.m_capacity), m_allocator(std::move(other.m_allocator))
         {
             other.m_data = nullptr;
@@ -224,7 +235,7 @@ namespace NorvesLib::Core::Container
                 m_size = count;
                 m_data[m_size] = CharT{};
             }
-        }        // イニシャライザリストからのコンストラクタ
+        } // イニシャライザリストからのコンストラクタ
         TString(std::initializer_list<CharT> ilist)
             : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
@@ -238,9 +249,9 @@ namespace NorvesLib::Core::Container
         }
 
         // std::stringからの変換コンストラクタ（CharT == charの場合のみ）
-        template<typename T = CharT>
-        TString(const std::basic_string<T>& str, 
-                typename std::enable_if_t<std::is_same_v<T, CharT>>* = nullptr)
+        template <typename T = CharT>
+        TString(const std::basic_string<T> &str,
+                typename std::enable_if_t<std::is_same_v<T, CharT>> * = nullptr)
             : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
             if (!str.empty())
@@ -253,7 +264,7 @@ namespace NorvesLib::Core::Container
         }
 
         // StringViewからの変換コンストラクタ
-        TString(const TStringView<CharT>& sv)
+        TString(const TStringView<CharT> &sv)
             : m_data(nullptr), m_size(0), m_capacity(0), m_allocator()
         {
             if (!sv.empty())
@@ -263,7 +274,7 @@ namespace NorvesLib::Core::Container
                 m_size = sv.size();
                 m_data[m_size] = CharT{};
             }
-        }        // デストラクタ
+        } // デストラクタ
         ~TString()
         {
             if (m_data)
@@ -273,7 +284,7 @@ namespace NorvesLib::Core::Container
         }
 
         // 代入演算子
-        TString& operator=(const TString& other)
+        TString &operator=(const TString &other)
         {
             if (this != &other)
             {
@@ -287,8 +298,8 @@ namespace NorvesLib::Core::Container
                 }
             }
             return *this;
-        }        // ムーブ代入演算子
-        TString& operator=(TString&& other) noexcept
+        } // ムーブ代入演算子
+        TString &operator=(TString &&other) noexcept
         {
             if (this != &other)
             {
@@ -301,7 +312,7 @@ namespace NorvesLib::Core::Container
                 m_size = other.m_size;
                 m_capacity = other.m_capacity;
                 m_allocator = std::move(other.m_allocator);
-                
+
                 other.m_data = nullptr;
                 other.m_size = 0;
                 other.m_capacity = 0;
@@ -310,7 +321,7 @@ namespace NorvesLib::Core::Container
         }
 
         // C文字列からの代入
-        TString& operator=(const_pointer str)
+        TString &operator=(const_pointer str)
         {
             clear();
             if (str)
@@ -331,7 +342,7 @@ namespace NorvesLib::Core::Container
         iterator begin() noexcept { return m_data; }
         const_iterator begin() const noexcept { return m_data; }
         const_iterator cbegin() const noexcept { return m_data; }
-        
+
         iterator end() noexcept { return m_data + m_size; }
         const_iterator end() const noexcept { return m_data + m_size; }
         const_iterator cend() const noexcept { return m_data + m_size; }
@@ -446,7 +457,7 @@ namespace NorvesLib::Core::Container
                     m_capacity = m_size;
                 }
             }
-        }        // 変更
+        } // 変更
         void clear() noexcept
         {
             m_size = 0;
@@ -456,12 +467,12 @@ namespace NorvesLib::Core::Container
             }
         }
 
-        TString& append(const TString& str)
+        TString &append(const TString &str)
         {
             return append(str.data(), str.size());
         }
 
-        TString& append(const_pointer str)
+        TString &append(const_pointer str)
         {
             if (str)
             {
@@ -470,7 +481,7 @@ namespace NorvesLib::Core::Container
             return *this;
         }
 
-        TString& append(const_pointer str, size_type count)
+        TString &append(const_pointer str, size_type count)
         {
             if (str && count > 0)
             {
@@ -487,7 +498,7 @@ namespace NorvesLib::Core::Container
             return *this;
         }
 
-        TString& append(size_type count, CharT ch)
+        TString &append(size_type count, CharT ch)
         {
             if (count > 0)
             {
@@ -519,36 +530,36 @@ namespace NorvesLib::Core::Container
         }
 
         // 演算子
-        TString& operator+=(const TString& str)
+        TString &operator+=(const TString &str)
         {
             return append(str);
         }
 
-        TString& operator+=(const_pointer str)
+        TString &operator+=(const_pointer str)
         {
             return append(str);
         }
 
-        TString& operator+=(CharT ch)
+        TString &operator+=(CharT ch)
         {
             push_back(ch);
             return *this;
         }
 
         // 比較
-        int compare(const TString& str) const noexcept
+        int compare(const TString &str) const noexcept
         {
             const size_type minSize = std::min(m_size, str.m_size);
             const int result = (minSize > 0) ? StringCompare(m_data, str.m_data, minSize) : 0;
-            
+
             if (result != 0)
                 return result;
-            
+
             if (m_size < str.m_size)
                 return -1;
             if (m_size > str.m_size)
                 return 1;
-            
+
             return 0;
         }
 
@@ -556,24 +567,24 @@ namespace NorvesLib::Core::Container
         {
             if (!str)
                 return empty() ? 0 : 1;
-            
+
             const size_type strLen = StringLength(str);
             const size_type minSize = std::min(m_size, strLen);
             const int result = (minSize > 0) ? StringCompare(m_data, str, minSize) : 0;
-            
+
             if (result != 0)
                 return result;
-            
+
             if (m_size < strLen)
                 return -1;
             if (m_size > strLen)
                 return 1;
-            
+
             return 0;
         }
 
         // 検索
-        size_type find(const TString& str, size_type pos = 0) const noexcept
+        size_type find(const TString &str, size_type pos = 0) const noexcept
         {
             return find(str.data(), pos, str.size());
         }
@@ -589,7 +600,7 @@ namespace NorvesLib::Core::Container
         {
             if (!str || pos > m_size || count == 0)
                 return npos;
-            
+
             if (count > m_size - pos)
                 return npos;
 
@@ -601,7 +612,7 @@ namespace NorvesLib::Core::Container
                     return static_cast<size_type>(it - m_data);
                 }
             }
-            
+
             return npos;
         }
 
@@ -630,7 +641,7 @@ namespace NorvesLib::Core::Container
             return npos;
         }
 
-        size_type FindLast(const TString& str) const noexcept
+        size_type FindLast(const TString &str) const noexcept
         {
             return FindLast(str.data(), str.size());
         }
@@ -672,7 +683,7 @@ namespace NorvesLib::Core::Container
             StringCopy(result.m_data, m_data + pos, rcount);
             result.m_size = rcount;
             result.m_data[result.m_size] = CharT{};
-            
+
             return result;
         }
 
@@ -683,7 +694,7 @@ namespace NorvesLib::Core::Container
         }
 
         // 文字列置換
-        TString& replace(size_type pos, size_type count, const TString& str)
+        TString &replace(size_type pos, size_type count, const TString &str)
         {
             if (pos > m_size)
                 throw std::out_of_range("TString::replace: position out of range");
@@ -720,117 +731,138 @@ namespace NorvesLib::Core::Container
             return *this;
         }
 
-        TString& replace(size_type pos, size_type count, const_pointer str)
+        TString &replace(size_type pos, size_type count, const_pointer str)
         {
             return replace(pos, count, TString{str});
         }
     };
 
     // 比較演算子
-    template<typename CharT>
-    bool operator==(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    template <typename CharT>
+    bool operator==(const TString<CharT> &lhs, const TString<CharT> &rhs) noexcept
     {
         return lhs.compare(rhs) == 0;
     }
 
-    template<typename CharT>
-    bool operator!=(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    template <typename CharT>
+    bool operator!=(const TString<CharT> &lhs, const TString<CharT> &rhs) noexcept
     {
         return !(lhs == rhs);
     }
 
-    template<typename CharT>
-    bool operator<(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    template <typename CharT>
+    bool operator<(const TString<CharT> &lhs, const TString<CharT> &rhs) noexcept
     {
         return lhs.compare(rhs) < 0;
     }
 
-    template<typename CharT>
-    bool operator<=(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    template <typename CharT>
+    bool operator<=(const TString<CharT> &lhs, const TString<CharT> &rhs) noexcept
     {
         return lhs.compare(rhs) <= 0;
     }
 
-    template<typename CharT>
-    bool operator>(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    template <typename CharT>
+    bool operator>(const TString<CharT> &lhs, const TString<CharT> &rhs) noexcept
     {
         return lhs.compare(rhs) > 0;
     }
 
-    template<typename CharT>
-    bool operator>=(const TString<CharT>& lhs, const TString<CharT>& rhs) noexcept
+    template <typename CharT>
+    bool operator>=(const TString<CharT> &lhs, const TString<CharT> &rhs) noexcept
     {
         return lhs.compare(rhs) >= 0;
     }
 
     // C文字列との比較
-    template<typename CharT>
-    bool operator==(const TString<CharT>& lhs, const CharT* rhs) noexcept
+    template <typename CharT>
+    bool operator==(const TString<CharT> &lhs, const CharT *rhs) noexcept
     {
         return lhs.compare(rhs) == 0;
     }
 
-    template<typename CharT>
-    bool operator==(const CharT* lhs, const TString<CharT>& rhs) noexcept
+    template <typename CharT>
+    bool operator==(const CharT *lhs, const TString<CharT> &rhs) noexcept
     {
         return rhs.compare(lhs) == 0;
     }
 
-    template<typename CharT>
-    bool operator!=(const TString<CharT>& lhs, const CharT* rhs) noexcept
+    template <typename CharT>
+    bool operator!=(const TString<CharT> &lhs, const CharT *rhs) noexcept
     {
         return !(lhs == rhs);
     }
 
-    template<typename CharT>
-    bool operator!=(const CharT* lhs, const TString<CharT>& rhs) noexcept
+    template <typename CharT>
+    bool operator!=(const CharT *lhs, const TString<CharT> &rhs) noexcept
     {
         return !(lhs == rhs);
     }
 
     // 連結演算子
-    template<typename CharT>
-    TString<CharT> operator+(const TString<CharT>& lhs, const TString<CharT>& rhs)
+    template <typename CharT>
+    TString<CharT> operator+(const TString<CharT> &lhs, const TString<CharT> &rhs)
     {
         TString<CharT> result = lhs;
         result += rhs;
         return result;
     }
 
-    template<typename CharT>
-    TString<CharT> operator+(const TString<CharT>& lhs, const CharT* rhs)
+    template <typename CharT>
+    TString<CharT> operator+(const TString<CharT> &lhs, const CharT *rhs)
     {
         TString<CharT> result = lhs;
         result += rhs;
         return result;
     }
 
-    template<typename CharT>
-    TString<CharT> operator+(const CharT* lhs, const TString<CharT>& rhs)
+    template <typename CharT>
+    TString<CharT> operator+(const CharT *lhs, const TString<CharT> &rhs)
     {
         TString<CharT> result{lhs};
         result += rhs;
         return result;
     }
 
-    template<typename CharT>
-    TString<CharT> operator+(const TString<CharT>& lhs, CharT rhs)
+    template <typename CharT>
+    TString<CharT> operator+(const TString<CharT> &lhs, CharT rhs)
     {
         TString<CharT> result = lhs;
         result += rhs;
         return result;
     }
 
-    template<typename CharT>
-    TString<CharT> operator+(CharT lhs, const TString<CharT>& rhs)
+    template <typename CharT>
+    TString<CharT> operator+(CharT lhs, const TString<CharT> &rhs)
     {
         TString<CharT> result{1, lhs};
         result += rhs;
         return result;
-    }    // Type alias definitions
+    } // Type alias definitions
     using String = TString<TCHAR>;
     using AnsiString = TString<char>;
     using WideString = TString<wchar_t>;
+
+    // std::ostream出力演算子
+    template <typename CharT>
+    std::basic_ostream<CharT> &operator<<(std::basic_ostream<CharT> &os, const TString<CharT> &str)
+    {
+        if (str.data())
+        {
+            os.write(str.data(), str.size());
+        }
+        return os;
+    }
+
+    // std::istream入力演算子
+    template <typename CharT>
+    std::basic_istream<CharT> &operator>>(std::basic_istream<CharT> &is, TString<CharT> &str)
+    {
+        std::basic_string<CharT> temp;
+        is >> temp;
+        str = TString<CharT>(temp.c_str(), temp.size());
+        return is;
+    }
 
 } // namespace NorvesLib::Core::Container
 

@@ -248,9 +248,9 @@ namespace NorvesLib::Core::Rendering
     // ========================================
 
     /**
-     * @brief ビューポート定義
+     * @brief ビューポート矩形定義（RHI用）
      */
-    struct Viewport
+    struct ViewportRect
     {
         float X = 0.0f;
         float Y = 0.0f;
@@ -304,7 +304,7 @@ namespace NorvesLib::Core::Rendering
         float OrthoHeight = 10.0f; // Orthographic用
 
         // ビューポート
-        Viewport ViewportRect;
+        ViewportRect Viewport;
     };
 
     // ========================================

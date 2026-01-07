@@ -114,7 +114,7 @@ namespace NorvesLib::Thread
          * @param failureOrder 失敗時のメモリオーダー
          * @return 交換が成功した場合はtrue
          */
-        bool CompareExchangeWeak(T& expected, T value,
+        bool CompareExchangeWeak(T &expected, T value,
                                  std::memory_order successOrder = std::memory_order_seq_cst,
                                  std::memory_order failureOrder = std::memory_order_seq_cst) noexcept
         {
@@ -129,7 +129,7 @@ namespace NorvesLib::Thread
          * @param failureOrder 失敗時のメモリオーダー
          * @return 交換が成功した場合はtrue
          */
-        bool CompareExchangeStrong(T& expected, T value,
+        bool CompareExchangeStrong(T &expected, T value,
                                    std::memory_order successOrder = std::memory_order_seq_cst,
                                    std::memory_order failureOrder = std::memory_order_seq_cst) noexcept
         {

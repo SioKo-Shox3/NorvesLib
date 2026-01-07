@@ -4,6 +4,7 @@
 set(SOURCE_FILES
     "Private/FileStream.cpp"
     "Private/AsyncFileStream.cpp"
+    "Private/Package.cpp"
 )
 
 # FileStreamモジュールのヘッダーファイル  
@@ -13,6 +14,7 @@ set(HEADER_FILES
     "Public/AsyncFileStream.h"
     "Public/FileStreamForward.h"
     "Public/FileStreamModule.h"
+    "Public/Package.h"
 )
 
 # スタティックライブラリとして作成

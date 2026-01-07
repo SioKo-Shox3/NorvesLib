@@ -32,7 +32,7 @@ namespace NorvesLib::Core
             // 親クラスがテンプレート引数で指定されている場合
             if constexpr (!std::is_same_v<Parent, void>)
             {
-                m_ParentClass = &Parent::StaticClass();
+                m_ParentClass = Parent::StaticClass();
             }
 
             // 親クラスからプロパティと関数を継承
@@ -157,7 +157,7 @@ namespace NorvesLib::Core
             m_DefaultObject.reset(defaultObject);
         }
 
-        virtual IUnknown *NewInstance(IUnknown *outer = nullptr) const override
+        virtual IUnknown *NewInstance([[maybe_unused]] IUnknown *outer = nullptr) const override
         {
             // デフォルトオブジェクトを取得
             const IUnknown *defaultObject = GetDefaultObject();
@@ -180,7 +180,7 @@ namespace NorvesLib::Core
 
                 return newObject;
             }
-            catch (const std::exception &e)
+            catch ([[maybe_unused]] const std::exception &e)
             {
                 // 例外が発生した場合はnullptrを返す
                 return nullptr;
@@ -229,10 +229,9 @@ namespace NorvesLib::Core
             {
                 for (const auto &prop : parentPropertyField->GetAllProperties())
                 {
-                    // 親クラスのプロパティをコピーして登録
-                    auto copiedProp = std::make_shared<ClassProperty>(
-                        prop->GetName(), prop->GetType(), prop->GetOffset(), prop->GetSize(), prop->GetFlags());
-                    m_PropertyField->AddProperty(copiedProp);
+                    // 親クラスのプロパティをそのまま登録（共有）
+                    // 注意: 親クラスのプロパティへの参照を保持
+                    m_PropertyField->AddInheritedProperty(prop);
                 }
             }
 
@@ -241,12 +240,8 @@ namespace NorvesLib::Core
             {
                 for (const auto &func : parentFunctionField->GetAllFunctions())
                 {
-                    // 実際の実装ではオーバーライドされた関数を考慮する必要がある
-                    // この例では単純に親の関数をコピー
-                    // TODO: 関数オーバーライドの処理を実装
-                    auto copiedFunc = std::make_shared<ClassFunction>(
-                        func->GetName(), func->GetReturnType(), func->GetFlags());
-                    m_FunctionField->AddFunction(copiedFunc);
+                    // 親クラスの関数をそのまま登録（共有）
+                    m_FunctionField->AddInheritedFunction(func);
                 }
             }
         }

@@ -3,10 +3,16 @@
 # モジュール名の設定
 set(MODULE_NAME Core)
 
+# Vulkan SDKを検索
+find_package(Vulkan REQUIRED)
+
 # ソースファイルの定義
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Object/Object.cpp
+    Private/Object/Resource.cpp
+    Private/Object/WorldObject.cpp
+    Private/Object/ResourceRegistry.cpp
     Private/Text/IdentityPool.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
@@ -18,7 +24,22 @@ set(PRIVATE_SOURCES
     Private/Boot/PlatformBoot.cpp
     Private/Application/ApplicationFactory.cpp
     Private/Engine/Engine.cpp
+    Private/Engine/NorvesEngine.cpp
     Private/Engine/ApplicationProcessor.cpp
+    # Rendering
+    Private/Rendering/Screen.cpp
+    Private/Rendering/View.cpp
+    Private/Rendering/Viewport.cpp
+    Private/Rendering/SceneView.cpp
+    Private/Rendering/DrawCommand.cpp
+    Private/Rendering/RenderingCoordinator.cpp
+    Private/Rendering/RenderThread.cpp
+    Private/Rendering/PersistentResourceCache.cpp
+    Private/Rendering/SceneRenderer.cpp
+    # Engine
+    Private/Engine/AssetRegistry.cpp
+    # Resource
+    Private/Resource/MeshResource.cpp
     # Thread (統合)
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
@@ -28,6 +49,18 @@ set(PRIVATE_SOURCES
     Private/Thread/Task.cpp
     Private/Thread/Thread.cpp
     Private/Thread/WorkStealingQueue.cpp
+    # RHI (統合)
+    Private/RHI/Vulkan/VulkanBuffer.cpp
+    Private/RHI/Vulkan/VulkanCommandList.cpp
+    Private/RHI/Vulkan/VulkanDescriptorSet.cpp
+    Private/RHI/Vulkan/VulkanDevice.cpp
+    Private/RHI/Vulkan/VulkanFramebuffer.cpp
+    Private/RHI/Vulkan/VulkanPipeline.cpp
+    Private/RHI/Vulkan/VulkanRenderPass.cpp
+    Private/RHI/Vulkan/VulkanSampler.cpp
+    Private/RHI/Vulkan/VulkanShader.cpp
+    Private/RHI/Vulkan/VulkanSwapChain.cpp
+    Private/RHI/Vulkan/VulkanTexture.cpp
 )
 
 set(PUBLIC_HEADERS
@@ -80,9 +113,26 @@ set(PUBLIC_HEADERS
     Public/Rendering/FramePacket.h
     Public/Rendering/RenderResourceManager.h
     Public/Rendering/MeshResourceManager.h
-    Public/Rendering/SceneCollector.h
     Public/Rendering/RenderThread.h
     Public/Rendering/RenderWorld.h
+    Public/Rendering/Screen.h
+    Public/Rendering/View.h
+    Public/Rendering/Viewport.h
+    Public/Rendering/SceneView.h
+    Public/Rendering/DrawCommand.h
+    Public/Rendering/RenderingCoordinator.h
+    Public/Rendering/PersistentResourceCache.h
+    Public/Rendering/SceneRenderer.h
+    # Object
+    Public/Object/Resource.h
+    Public/Object/WorldObject.h
+    Public/Object/ResourceRegistry.h
+    # Engine
+    Public/Engine/NorvesEngine.h
+    Public/Engine/IEngine.h
+    Public/Engine/AssetRegistry.h
+    # Resource
+    Public/Resource/MeshResource.h
     # Component
     Public/Component/Component.h
     Public/Component/MeshComponent.h
@@ -110,6 +160,23 @@ set(PUBLIC_HEADERS
     Public/Thread/Thread.h
     Public/Thread/ThreadLocalStorage.h
     Public/Thread/WorkStealingQueue.h
+    # RHI (統合)
+    Public/RHI/RHITypes.h
+    Public/RHI/RHIConfig.h
+    Public/RHI/RHIContext.h
+    Public/RHI/IBuffer.h
+    Public/RHI/ITexture.h
+    Public/RHI/ISampler.h
+    Public/RHI/IShader.h
+    Public/RHI/ICommandList.h
+    Public/RHI/ISwapChain.h
+    Public/RHI/IRenderPass.h
+    Public/RHI/IFramebuffer.h
+    Public/RHI/IPipeline.h
+    Public/RHI/IDescriptorSet.h
+    Public/RHI/IDevice.h
+    Public/RHI/IGPUResourceAllocator.h
+    Public/RHI/TransientResourcePool.h
 )
 
 # ライブラリの作成
@@ -127,7 +194,13 @@ target_include_directories(${MODULE_NAME}
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         FileStream
-        # RHI # TODO: RHI統合後に有効化
+        Vulkan::Vulkan
+)
+
+# Vulkan設定
+target_compile_definitions(${MODULE_NAME}
+    PRIVATE
+        VULKAN_HPP_NO_EXCEPTIONS
 )
 
 # C++23の設定
@@ -144,3 +217,16 @@ endif()
 # IDEでのファイル整理（Visual Studio等）
 source_group("Public Headers" FILES ${PUBLIC_HEADERS})
 source_group("Private Sources" FILES ${PRIVATE_SOURCES})
+source_group("RHI/Private" FILES 
+    Private/RHI/Vulkan/VulkanBuffer.cpp
+    Private/RHI/Vulkan/VulkanCommandList.cpp
+    Private/RHI/Vulkan/VulkanDescriptorSet.cpp
+    Private/RHI/Vulkan/VulkanDevice.cpp
+    Private/RHI/Vulkan/VulkanFramebuffer.cpp
+    Private/RHI/Vulkan/VulkanPipeline.cpp
+    Private/RHI/Vulkan/VulkanRenderPass.cpp
+    Private/RHI/Vulkan/VulkanSampler.cpp
+    Private/RHI/Vulkan/VulkanShader.cpp
+    Private/RHI/Vulkan/VulkanSwapChain.cpp
+    Private/RHI/Vulkan/VulkanTexture.cpp
+)

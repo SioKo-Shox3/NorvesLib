@@ -12,20 +12,20 @@ namespace NorvesLib::Core
 {
     /**
      * @brief リソースレジストリ
-     * 
+     *
      * GEngineが保持するサブシステムとして、すべてのResourceの管理を行います。
-     * 
+     *
      * 責務:
      * - Resourceのライフサイクル管理（参照カウント方式）
      * - 重複ロード防止のためのキャッシュ機能
      * - リソースパスからのロード/取得
      * - 未使用リソースのガベージコレクション
-     * 
+     *
      * 使用例:
      * ```cpp
      * // リソースのロード（キャッシュがあればキャッシュから返す）
      * auto texture = GEngine.GetResourceRegistry().Load<TextureResource>("path/to/texture.png");
-     * 
+     *
      * // リソースの取得（ロード済みリソースのみ）
      * auto mesh = GEngine.GetResourceRegistry().Get<MeshResource>(resourceId);
      * ```
@@ -70,14 +70,16 @@ namespace NorvesLib::Core
          * @return リソースへの共有ポインタ
          */
         template <typename T>
-        Container::TSharedPtr<T> Load(const Container::String& path)
+        Container::TSharedPtr<T> Load(const Container::String &path)
         {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
+
+            Identity pathId(path);
 
             // キャッシュをチェック
             {
                 Thread::ScopedLock lock(m_Mutex);
-                auto it = m_PathToResource.find(path);
+                auto it = m_PathToResource.find(pathId);
                 if (it != m_PathToResource.end())
                 {
                     // キャッシュヒット - 弱参照から共有ポインタを取得
@@ -133,12 +135,13 @@ namespace NorvesLib::Core
          * @return リソースへの共有ポインタ（見つからない場合はnullptr）
          */
         template <typename T>
-        Container::TSharedPtr<T> Find(const Container::String& path)
+        Container::TSharedPtr<T> Find(const Container::String &path)
         {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
 
+            Identity pathId(path);
             Thread::ScopedLock lock(m_Mutex);
-            auto it = m_PathToResource.find(path);
+            auto it = m_PathToResource.find(pathId);
             if (it != m_PathToResource.end())
             {
                 if (auto resource = it->second.lock())
@@ -157,7 +160,7 @@ namespace NorvesLib::Core
          * @return リソースへの共有ポインタ
          */
         template <typename T>
-        Container::TSharedPtr<T> CreateResource(const Container::String& path)
+        Container::TSharedPtr<T> CreateResource(const Container::String &path)
         {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
 
@@ -179,7 +182,7 @@ namespace NorvesLib::Core
          * @return リソースへの共有ポインタ
          */
         template <typename T>
-        Container::TSharedPtr<T> CreateTransient(const Container::String& name)
+        Container::TSharedPtr<T> CreateTransient(const Container::String &name)
         {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
 
@@ -239,7 +242,7 @@ namespace NorvesLib::Core
          * @param resource リソース
          * @param path リソースパス
          */
-        void RegisterResource(Container::TSharedPtr<Resource> resource, const Container::String& path);
+        void RegisterResource(Container::TSharedPtr<Resource> resource, const Container::String &path);
 
         /**
          * @brief リソースIDを生成
@@ -254,9 +257,9 @@ namespace NorvesLib::Core
         Thread::Atomic<uint64_t> m_NextResourceId{1};
 
         // リソースキャッシュ（弱参照で保持）
-        // パス -> リソース
-        Container::UnorderedMap<Container::String, Container::TWeakPtr<Resource>> m_PathToResource;
-        
+        // パス（Identity） -> リソース
+        Container::UnorderedMap<Identity, Container::TWeakPtr<Resource>, Identity::Hasher> m_PathToResource;
+
         // ID -> リソース
         Container::UnorderedMap<uint64_t, Container::TWeakPtr<Resource>> m_IdToResource;
 
@@ -264,8 +267,8 @@ namespace NorvesLib::Core
         mutable Thread::Mutex m_Mutex;
 
         // コピー禁止
-        ResourceRegistry(const ResourceRegistry&) = delete;
-        ResourceRegistry& operator=(const ResourceRegistry&) = delete;
+        ResourceRegistry(const ResourceRegistry &) = delete;
+        ResourceRegistry &operator=(const ResourceRegistry &) = delete;
     };
 
 } // namespace NorvesLib::Core

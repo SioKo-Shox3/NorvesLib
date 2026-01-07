@@ -229,6 +229,19 @@ namespace NorvesLib::Core
         virtual void Finalize() = 0;
 
         /**
+         * @brief オブジェクトのクローンを作成します
+         * @return クローンされたオブジェクトへのポインタ
+         */
+        virtual IUnknown *Clone() const = 0;
+
+        /**
+         * @brief フィールド初期化子を使用してオブジェクトのクローンを作成します
+         * @param initializer フィールド初期化子
+         * @return クローンされたオブジェクトへのポインタ
+         */
+        virtual IUnknown *Clone(const FieldInitializer *initializer) const = 0;
+
+        /**
          * @brief オブジェクトがフラグを持っているか確認します
          * @param flag 確認するフラグ
          * @return フラグが設定されていればtrue

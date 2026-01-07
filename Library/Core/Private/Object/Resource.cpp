@@ -5,22 +5,22 @@
 namespace NorvesLib::Core
 {
     // IMPLEMENT_CLASSマクロを使用してリフレクション実装を生成
-    IMPLEMENT_CLASS(Resource, UnknownImpl)
+    IMPLEMENT_CLASS(Resource, Object)
 
     Resource::Resource()
-        : UnknownImpl()
+        : Object()
     {
     }
 
-    Resource::Resource(const FieldInitializer* initializer)
-        : UnknownImpl(initializer)
+    Resource::Resource(const FieldInitializer *initializer)
+        : Object(initializer)
     {
     }
 
-    Resource::Resource(const IUnknown* sourceObject)
-        : UnknownImpl(sourceObject)
+    Resource::Resource(const IUnknown *sourceObject)
+        : Object(sourceObject)
     {
-        // UnknownImplのコンストラクタですべての必要な処理は行われる
+        // Objectのコンストラクタですべての必要な処理は行われる
     }
 
     Resource::~Resource()
@@ -31,23 +31,23 @@ namespace NorvesLib::Core
     void Resource::Initialize()
     {
         // 基本初期化を呼び出す
-        UnknownImpl::Initialize();
+        Object::Initialize();
     }
 
-    bool Resource::Initialize(const FieldInitializer* initializer)
+    bool Resource::Initialize(const FieldInitializer *initializer)
     {
         // 基本初期化
-        UnknownImpl::Initialize();
+        Object::Initialize();
 
         if (initializer)
         {
-            const IClass* cls = GetClass();
+            const IClass *cls = GetClass();
             if (cls)
             {
-                const Container::VariableArray<const ClassProperty*> properties = cls->GetAllProperties();
+                const Container::VariableArray<const ClassProperty *> properties = cls->GetAllProperties();
 
                 // 各プロパティに初期値を適用
-                for (const ClassProperty* prop : properties)
+                for (const ClassProperty *prop : properties)
                 {
                     if (prop)
                     {
@@ -68,8 +68,8 @@ namespace NorvesLib::Core
         {
             Unload();
         }
-        
-        UnknownImpl::Finalize();
+
+        Object::Finalize();
     }
 
     bool Resource::Load()
@@ -82,11 +82,11 @@ namespace NorvesLib::Core
         }
 
         m_State = ResourceState::Loading;
-        
+
         // 基底クラスでは何もロードしない
         // 派生クラスでこのメソッドをオーバーライドして実装
         m_State = ResourceState::Loaded;
-        
+
         return true;
     }
 
@@ -100,9 +100,9 @@ namespace NorvesLib::Core
         }
 
         m_State = ResourceState::Unloading;
-        
+
         // 派生クラスでこのメソッドをオーバーライドして実装
-        
+
         m_State = ResourceState::Unloaded;
     }
 

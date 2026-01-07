@@ -250,7 +250,7 @@ namespace NorvesLib::Core::Rendering
         float OrthoHeight = 10.0f;
 
         // ビューポート
-        Viewport ViewportRect;
+        ViewportRect Viewport;
 
         // レンダリング設定
         RenderLayer CullingMask = RenderLayer::All;
@@ -261,7 +261,7 @@ namespace NorvesLib::Core::Rendering
 
         bool IsValid() const
         {
-            return ViewportRect.Width > 0.0f && ViewportRect.Height > 0.0f;
+            return Viewport.Width > 0.0f && Viewport.Height > 0.0f;
         }
     };
 
