@@ -180,7 +180,7 @@ namespace NorvesLib::Core::Rendering
         if (!toRemove.empty())
         {
             NORVES_LOG_DEBUG("PersistentResourceCache",
-                             "Released " + Container::String(std::to_string(toRemove.size())) + " unused mesh(es)");
+                             "Released %zu unused mesh(es)", toRemove.size());
         }
 
         return toRemove.size();

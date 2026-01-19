@@ -344,6 +344,147 @@ const char *str = "hello";
 - リソース管理をコンストラクタ/デストラクタで自動化
 - スマートポインタの活用
 
+## デバッグ・ログ・スタット機能
+
+### ログ出力
+
+#### 基本原則
+- ログ出力には必ず`Logging/LogMacros.h`のマクロを使用する
+- 直接の`printf`, `std::cout`等は**禁止**
+
+#### ログマクロの使用
+- **統合マクロを使用**: `_F`サフィックスは不要（自動でフォーマット対応）
+- フォーマット引数があってもなくても同じマクロを使用
+
+```cpp
+#include "Logging/LogMacros.h"
+
+// カテゴリ指定ログ
+NORVES_LOG_INFO("MyCategory", "単純なメッセージ");
+NORVES_LOG_INFO("MyCategory", "フォーマット: 値=%d, 名前=%s", value, name);
+
+// 簡易ログ（カテゴリ="General"）
+LOG_INFO("単純なメッセージ");
+LOG_INFO("フォーマット: 値=%d", value);
+```
+
+#### ログレベル
+| マクロ | 用途 |
+|--------|------|
+| `NORVES_LOG_TRACE` | 詳細なトレース情報（関数の入出力等） |
+| `NORVES_LOG_DEBUG` | デバッグ情報（開発時のみ有用な情報） |
+| `NORVES_LOG_INFO` | 一般的な情報（初期化完了、状態変更等） |
+| `NORVES_LOG_WARNING` | 警告（問題ではないが注意が必要） |
+| `NORVES_LOG_ERROR` | エラー（処理が失敗したが継続可能） |
+| `NORVES_LOG_FATAL` | 致命的エラー（続行不可能） |
+
+### デバッグ出力ユーティリティ
+
+#### DebugOutputの使用
+- 開発時のデバッグ情報出力には`Debug/DebugOutput.h`を使用
+- 変数値の出力、コンテナの内容表示、関数トレースに活用
+
+```cpp
+#include "Debug/DebugOutput.h"
+
+// 変数の値を出力
+DEBUG_PRINT_VAR(myVariable);
+DEBUG_PRINT_VAR_CATEGORY(myVariable, "MyCategory");
+
+// コンテナの内容を出力
+DEBUG_PRINT_CONTAINER(myVector);
+
+// 関数の入出力をトレース（スコープベース）
+void MyFunction()
+{
+    DEBUG_FUNCTION_TRACE();  // 関数の入出力を自動ログ
+    // 処理...
+}
+
+// メモリ使用量の確認
+DEBUG_LOG_MEMORY();
+DEBUG_LOG_MEMORY_AT("処理後");
+```
+
+### スタット（パフォーマンス計測）
+
+#### 基本原則
+- **リリースビルドでは計測系は無効化される**
+- 計測には`Debug/Stats.h`のマクロを使用
+- 手動での`std::chrono`計測は避け、スタットマクロを使用
+
+#### スタットマクロの使用
+
+```cpp
+#include "Debug/Stats.h"
+
+// スコープ計測（スコープ終了時に自動でログ出力）
+void MyFunction()
+{
+    NORVES_STAT_FUNCTION();  // 関数全体を計測
+    // 処理...
+}
+
+// 名前付きスコープ計測
+void ComplexFunction()
+{
+    {
+        NORVES_STAT_SCOPE("初期化処理");
+        // 初期化...
+    }
+    
+    {
+        NORVES_STAT_SCOPE("メイン処理");
+        // 処理...
+    }
+}
+
+// 手動タイミング計測（スタット構造体への保存用）
+NORVES_STAT_TIME_START(myOperation);
+// 処理...
+NORVES_STAT_TIME_END(myOperation, stats.MyOperationTimeMs);
+
+// カウンター
+NORVES_STAT_INC(stats.DrawCalls);
+NORVES_STAT_ADD(stats.TriangleCount, triangleCount);
+```
+
+#### レンダリングスタット
+- レンダリング関連の計測は`Debug::RenderingStats`を使用
+- `RenderingCoordinator`で管理される
+
+```cpp
+// スタット情報の取得
+const auto& stats = coordinator.GetStats();
+LOG_INFO("FPS: %.1f, DrawCalls: %u", stats.FPS, stats.DrawCalls);
+```
+
+#### 独自スタットの追加
+- `Debug::IStats`を継承してカスタムスタットを作成可能
+- 大規模なスタットは`StatsManager`への登録を検討
+
+### 条件付きデバッグ機能
+
+#### デバッグビルド専用マクロ
+リリースビルドでは自動的に無効化されるマクロを使用：
+
+```cpp
+// デバッグビルドのみ有効
+NORVES_DEBUG_LOG("Category", "デバッグ情報");
+DEBUG_LOG("簡易デバッグ情報");
+
+// スタット（リリースでは何もしない）
+NORVES_STAT_FUNCTION();
+NORVES_STAT_SCOPE("処理名");
+```
+
+### 避けるべきパターン
+
+- `printf`, `std::cout`による直接出力
+- 手動での`std::chrono`計測（スタットマクロを使用）
+- リリースビルドで残る計測コード（条件付きマクロを使用）
+- `_F`サフィックス付きログマクロ（統合版を使用）
+
 ## インスタンス管理アーキテクチャ
 
 ### IUnknown継承クラスの分類
@@ -537,6 +678,9 @@ Library/
 - **STLコンテナの直接使用**（`std::vector`, `std::list`, `std::map`, `std::string`など）
 - **クラス内シングルトンパターン**（`static Instance& Get()`形式）
 - **ポインタ演算子を変数名側に付ける**（`void *hoge`ではなく`void* hoge`）
+- **`printf`, `std::cout`による直接出力**（`NORVES_LOG_*`マクロを使用）
+- **手動での`std::chrono`計測**（`NORVES_STAT_*`マクロを使用）
+- **`_F`サフィックス付きログマクロ**（統合版マクロを使用）
 - **Stringをハッシュキーに使用する**（`UnorderedMap<String, ...>`ではなく`UnorderedMap<Identity, ..., Identity::Hasher>`を使用）
 - `using namespace`の使用（ヘッダーファイル内）
 - プラットフォーム固有コードの直接記述
