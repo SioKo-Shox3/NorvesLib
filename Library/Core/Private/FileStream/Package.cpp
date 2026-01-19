@@ -1,5 +1,5 @@
-﻿#include "Package.h"
-#include "FileStream.h"
+﻿#include "FileStream/Package.h"
+#include "FileStream/FileStream.h"
 #include "Object/Reflection.h"
 #include "Object/ObjectUtility.h"
 

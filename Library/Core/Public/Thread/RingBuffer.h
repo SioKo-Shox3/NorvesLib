@@ -3,7 +3,7 @@
 #include <atomic>
 #include <memory>
 #include <type_traits>
-#include "Core/Public/Container/Containers.h"
+#include "Container/Containers.h"
 #include "Atomic.h"
 
 namespace NorvesLib::Thread

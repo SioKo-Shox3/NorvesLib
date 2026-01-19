@@ -1,6 +1,6 @@
 ﻿// filepath: c:\Users\KINGkawamura\Documents\NorvesLib\Library\Core\Private\Engine\NorvesEngine.cpp
-#include "Core/Public/Engine/NorvesEngine.h"
-#include "Core/Public/Logging/LogMacros.h"
+#include "Engine/NorvesEngine.h"
+#include "Logging/LogMacros.h"
 
 using namespace NorvesLib::Core::Container;
 

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "IGPUResourceAllocator.h"
 #include "Container/Containers.h"

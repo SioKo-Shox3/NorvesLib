@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "Core/Public/Container/PointerTypes.h"
+#include "Container/PointerTypes.h"
 #include <sstream>
 #include <type_traits>
 #include <limits>

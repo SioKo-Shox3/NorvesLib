@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "Core/Public/Container/Containers.h"
+#include "Container/Containers.h"
 #include "Thread/Task.h"
 
 namespace NorvesLib::FileStream

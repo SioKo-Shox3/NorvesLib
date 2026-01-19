@@ -1,4 +1,4 @@
-// filepath: c:\Users\KINGkawamura\Documents\NorvesLib\Library\RHI\Public\RHIConfig.h
+﻿// filepath: c:\Users\KINGkawamura\Documents\NorvesLib\Library\RHI\Public\RHIConfig.h
 #pragma once
 
 #include "RHITypes.h"

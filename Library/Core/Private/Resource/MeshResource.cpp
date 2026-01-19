@@ -1,4 +1,4 @@
-#include "Resource/MeshResource.h"
+﻿#include "Resource/MeshResource.h"
 #include "Object/Reflection.h"
 #include "Logging/LogMacros.h"
 #include <cmath>

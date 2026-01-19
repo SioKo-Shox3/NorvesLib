@@ -3,7 +3,7 @@
 #include <memory>
 #include <functional>
 #include <atomic>
-#include "Core/Public/Container/Containers.h"
+#include "Container/Containers.h"
 #include "ConditionVariable.h"
 #include "Mutex.h"
 #include "Atomic.h" // Atomic<T>クラスを明示的にインクルード

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "RHI/IDescriptorSet.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
@@ -136,7 +136,7 @@ namespace NorvesLib::RHI::Vulkan
             uint64_t range = VK_WHOLE_SIZE;
         };
 
-        NorvesLib::Core::Container::HashMap<uint32_t, BindingInfo> m_bindings;
+        NorvesLib::Core::Container::UnorderedMap<uint32_t, BindingInfo> m_bindings;
 
         void CreatePipelineLayout();
         vk::DescriptorType GetVkDescriptorType(uint32_t binding) const;

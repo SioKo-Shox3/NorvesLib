@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "IStateMachine.h"
-#include "Core/Public/Container/PointerTypes.h"
+#include "Container/PointerTypes.h"
 #include <utility> // std::move
 
 namespace NorvesLib::Core::GameMode

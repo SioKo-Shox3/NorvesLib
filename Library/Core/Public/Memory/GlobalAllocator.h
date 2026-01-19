@@ -4,7 +4,7 @@
 #include "SizeClassAllocator.h"
 #include "Thread/Mutex.h"
 #include "Thread/Atomic.h"
-#include "Core/Public/Container/Containers.h"
+#include "Container/Containers.h"
 #include <cstdint>
 
 namespace NorvesLib::Memory
