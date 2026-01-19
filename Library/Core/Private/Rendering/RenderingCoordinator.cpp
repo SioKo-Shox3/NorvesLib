@@ -4,6 +4,7 @@
 #include "Rendering/View.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/FramePacket.h"
+#include "Debug/Stats.h"
 #include <chrono>
 #include <algorithm>
 
@@ -141,7 +142,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        auto startTime = std::chrono::high_resolution_clock::now();
+        NORVES_STAT_TIME_START(collection);
 
         // 各SceneViewでシーン収集
         // 注: ProxyはWorldからSceneViewに直接渡されているため、
@@ -156,8 +157,7 @@ namespace NorvesLib::Core::Rendering
             // SceneViewのProxy情報は既にWorldから設定済み
         }
 
-        auto endTime = std::chrono::high_resolution_clock::now();
-        m_Stats.CollectionTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+        NORVES_STAT_TIME_END(collection, m_Stats.CollectionTimeMs);
     }
 
     void RenderingCoordinator::GenerateDrawCommands()
@@ -171,7 +171,7 @@ namespace NorvesLib::Core::Rendering
 
         // 各SceneViewでDrawCommand生成
         // 注: カリングとバッチングはSceneView::Render()内でViewportごとに行われる
-        auto startCmdGen = std::chrono::high_resolution_clock::now();
+        NORVES_STAT_TIME_START(cmdGen);
 
         for (auto &view : m_Views)
         {
@@ -184,10 +184,9 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        auto endCmdGen = std::chrono::high_resolution_clock::now();
-        m_Stats.CommandGenerationTimeMs = std::chrono::duration<float, std::milli>(endCmdGen - startCmdGen).count();
+        NORVES_STAT_TIME_END(cmdGen, m_Stats.CommandGenerationTimeMs);
 
-        m_Stats.DrawCalls = static_cast<uint32_t>(m_FrameDrawCommands.size());
+        NORVES_STAT_ADD(m_Stats.DrawCalls, static_cast<uint32_t>(m_FrameDrawCommands.size()));
     }
 
     void RenderingCoordinator::EndFrame()

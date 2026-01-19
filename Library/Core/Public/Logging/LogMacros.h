@@ -9,6 +9,14 @@
  *
  * このファイルで定義されたマクロを使用することで、
  * 簡単にログ出力とファイル情報の記録ができます。
+ * 
+ * ## 使用方法
+ * 
+ * すべてのログマクロはフォーマット機能を統合しています：
+ * - 単純な文字列: `NORVES_LOG_INFO("Category", "メッセージ")`
+ * - フォーマット付き: `NORVES_LOG_INFO("Category", "値: %d, 名前: %s", value, name)`
+ * 
+ * 従来の `_F` サフィックス付きマクロも互換性のために残されています。
  */
 
 namespace NorvesLib::Core::Logging
@@ -31,9 +39,14 @@ namespace NorvesLib::Core::Logging
 
 } // namespace NorvesLib::Core::Logging
 
-// ===== 基本ログマクロ =====
+// ===== 内部実装用マクロ（直接使用しないでください） =====
 
-#define NORVES_LOG(level, category, message)                                      \
+// 引数の有無を判定するヘルパーマクロ
+#define NORVES_LOG_INTERNAL_EXPAND(x) x
+#define NORVES_LOG_INTERNAL_GET_MACRO(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, NAME, ...) NAME
+
+// 基本ログマクロ（フォーマットなし）
+#define NORVES_LOG_SIMPLE(level, category, message)                               \
     do                                                                            \
     {                                                                             \
         if (NorvesLib::Core::Logging::Logger::GetInstance().IsLevelActive(level)) \
@@ -45,6 +58,7 @@ namespace NorvesLib::Core::Logging
         }                                                                         \
     } while (0)
 
+// 基本ログマクロ（フォーマット付き）
 #define NORVES_LOG_FORMAT(level, category, format, ...)                           \
     do                                                                            \
     {                                                                             \
@@ -58,27 +72,33 @@ namespace NorvesLib::Core::Logging
         }                                                                         \
     } while (0)
 
-// ===== レベル別ログマクロ =====
+// ===== 統合ログマクロ =====
+// フォーマット引数がある場合は自動的にフォーマット版を使用
 
-#define NORVES_LOG_TRACE(category, message) \
-    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Trace, category, message)
+#define NORVES_LOG(level, category, ...)                                          \
+    NORVES_LOG_FORMAT(level, category, __VA_ARGS__)
 
-#define NORVES_LOG_DEBUG(category, message) \
-    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Debug, category, message)
+// ===== レベル別ログマクロ（統合版 - フォーマット対応） =====
 
-#define NORVES_LOG_INFO(category, message) \
-    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Info, category, message)
+#define NORVES_LOG_TRACE(category, ...) \
+    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Trace, category, __VA_ARGS__)
 
-#define NORVES_LOG_WARNING(category, message) \
-    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Warning, category, message)
+#define NORVES_LOG_DEBUG(category, ...) \
+    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Debug, category, __VA_ARGS__)
 
-#define NORVES_LOG_ERROR(category, message) \
-    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Error, category, message)
+#define NORVES_LOG_INFO(category, ...) \
+    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Info, category, __VA_ARGS__)
 
-#define NORVES_LOG_FATAL(category, message) \
-    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Fatal, category, message)
+#define NORVES_LOG_WARNING(category, ...) \
+    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Warning, category, __VA_ARGS__)
 
-// ===== フォーマット付きレベル別ログマクロ =====
+#define NORVES_LOG_ERROR(category, ...) \
+    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Error, category, __VA_ARGS__)
+
+#define NORVES_LOG_FATAL(category, ...) \
+    NORVES_LOG(NorvesLib::Core::Logging::LogLevel::Fatal, category, __VA_ARGS__)
+
+// ===== フォーマット付きレベル別ログマクロ（後方互換性のため維持） =====
 
 #define NORVES_LOG_TRACE_F(category, format, ...) \
     NORVES_LOG_FORMAT(NorvesLib::Core::Logging::LogLevel::Trace, category, format, ##__VA_ARGS__)
@@ -98,27 +118,27 @@ namespace NorvesLib::Core::Logging
 #define NORVES_LOG_FATAL_F(category, format, ...) \
     NORVES_LOG_FORMAT(NorvesLib::Core::Logging::LogLevel::Fatal, category, format, ##__VA_ARGS__)
 
-// ===== 簡易ログマクロ（デフォルトカテゴリ使用） =====
+// ===== 簡易ログマクロ（デフォルトカテゴリ使用・フォーマット対応） =====
 
-#define LOG_TRACE(message) \
-    NORVES_LOG_TRACE("General", message)
+#define LOG_TRACE(...) \
+    NORVES_LOG_TRACE("General", __VA_ARGS__)
 
-#define LOG_DEBUG(message) \
-    NORVES_LOG_DEBUG("General", message)
+#define LOG_DEBUG(...) \
+    NORVES_LOG_DEBUG("General", __VA_ARGS__)
 
-#define LOG_INFO(message) \
-    NORVES_LOG_INFO("General", message)
+#define LOG_INFO(...) \
+    NORVES_LOG_INFO("General", __VA_ARGS__)
 
-#define LOG_WARNING(message) \
-    NORVES_LOG_WARNING("General", message)
+#define LOG_WARNING(...) \
+    NORVES_LOG_WARNING("General", __VA_ARGS__)
 
-#define LOG_ERROR(message) \
-    NORVES_LOG_ERROR("General", message)
+#define LOG_ERROR(...) \
+    NORVES_LOG_ERROR("General", __VA_ARGS__)
 
-#define LOG_FATAL(message) \
-    NORVES_LOG_FATAL("General", message)
+#define LOG_FATAL(...) \
+    NORVES_LOG_FATAL("General", __VA_ARGS__)
 
-// ===== フォーマット付き簡易ログマクロ =====
+// ===== フォーマット付き簡易ログマクロ（後方互換性のため維持） =====
 
 #define LOG_TRACE_F(format, ...) \
     NORVES_LOG_TRACE_F("General", format, ##__VA_ARGS__)

@@ -8,6 +8,7 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
+#include "Debug/Stats.h"
 #include <cstdint>
 
 // 前方宣言
@@ -223,28 +224,12 @@ namespace NorvesLib::Core::Rendering
         // 統計
         // ========================================
 
-        struct CoordinatorStats
-        {
-            uint64_t FrameNumber = 0;
-            float DeltaTime = 0.0f;
-            float FPS = 0.0f;
-
-            // 描画統計
-            uint32_t DrawCalls = 0;
-            uint32_t TrianglesRendered = 0;
-            uint32_t VisibleObjects = 0;
-            uint32_t BatchCount = 0;
-            uint32_t InstancedDrawCalls = 0;
-
-            // タイミング
-            float CollectionTimeMs = 0.0f;
-            float CullingTimeMs = 0.0f;
-            float BatchingTimeMs = 0.0f;
-            float CommandGenerationTimeMs = 0.0f;
-            float GPUTimeMs = 0.0f;
-        };
-
-        const CoordinatorStats &GetStats() const { return m_Stats; }
+        /**
+         * @brief レンダリングスタットを取得
+         * @note Debug::RenderingStats を使用します
+         */
+        Debug::RenderingStats& GetStats() { return m_Stats; }
+        const Debug::RenderingStats& GetStats() const { return m_Stats; }
 
     private:
         // RHIリソース
@@ -280,8 +265,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bMultiThreadedRendering = true;
         uint32_t m_MaxDrawCallsPerFrame = 10000;
 
-        // 統計
-        CoordinatorStats m_Stats;
+        // 統計（Debug::RenderingStats使用）
+        Debug::RenderingStats m_Stats;
 
         // フレームタイミング
         double m_LastFrameTime = 0.0;

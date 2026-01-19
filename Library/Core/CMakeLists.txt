@@ -17,6 +17,7 @@ set(PRIVATE_SOURCES
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
     Private/Debug/DebugOutput.cpp
+    Private/Debug/Stats.cpp
     Private/EngineGlobals/MemoryOverrides.cpp
     Private/Platform/Windows/WindowsApplication.cpp
     Private/Platform/Windows/WindowsApplicationFactory.cpp
@@ -99,6 +100,7 @@ set(PUBLIC_HEADERS
     Public/Logging/Logger.h
     Public/Logging/LogMacros.h
     Public/Debug/DebugOutput.h
+    Public/Debug/Stats.h
     Public/EngineGlobals/MemoryOverrides.h
     Public/Platform/Windows/WindowsApplication.h
     Public/Platform/Windows/WindowsApplicationFactory.h

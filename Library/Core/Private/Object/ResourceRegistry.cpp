@@ -68,7 +68,7 @@ namespace NorvesLib::Core
         // IDキャッシュに登録
         m_IdToResource[id] = resource;
 
-        NORVES_LOG_DEBUG("ResourceRegistry", "Registered resource: " + path + " (ID: " + Container::String(std::to_string(id)) + ")");
+        NORVES_LOG_DEBUG("ResourceRegistry", "Registered resource: %s (ID: %llu)", path.c_str(), id);
     }
 
     uint64_t ResourceRegistry::GenerateResourceId()
@@ -112,7 +112,7 @@ namespace NorvesLib::Core
 
         if (removedCount > 0)
         {
-            NORVES_LOG_DEBUG("ResourceRegistry", "Garbage collected " + Container::String(std::to_string(removedCount)) + " entries");
+            NORVES_LOG_DEBUG("ResourceRegistry", "Garbage collected %zu entries", removedCount);
         }
 
         return removedCount;

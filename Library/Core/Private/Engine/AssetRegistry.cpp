@@ -104,19 +104,19 @@ namespace NorvesLib::Core
         FileStream::Package *package = CreatePackage(path);
         if (!package)
         {
-            NORVES_LOG_ERROR("AssetRegistry", "Failed to create package: " + path);
+            NORVES_LOG_ERROR("AssetRegistry", "Failed to create package: %s", path.c_str());
             return nullptr;
         }
 
         // ファイル読み込み
         if (!package->Load(path))
         {
-            NORVES_LOG_ERROR("AssetRegistry", "Failed to load package: " + path);
+            NORVES_LOG_ERROR("AssetRegistry", "Failed to load package: %s", path.c_str());
             // パッケージは保持するが、状態がFailedになる
         }
 
         package->SetLastAccessFrame(m_CurrentFrame);
-        NORVES_LOG_DEBUG("AssetRegistry", "Loaded package: " + path);
+        NORVES_LOG_DEBUG("AssetRegistry", "Loaded package: %s", path.c_str());
         return package;
     }
 
@@ -185,7 +185,7 @@ namespace NorvesLib::Core
         // PackageはこのAssetRegistryのInnerなので、RemoveInnerで解放
         RemoveInner(package);
 
-        NORVES_LOG_DEBUG("AssetRegistry", "Unloaded package: " + package->GetFilePath());
+        NORVES_LOG_DEBUG("AssetRegistry", "Unloaded package: %s", package->GetFilePath().c_str());
     }
 
     void AssetRegistry::UnloadAll()
@@ -289,7 +289,7 @@ namespace NorvesLib::Core
         if (removedCount > 0)
         {
             NORVES_LOG_DEBUG("AssetRegistry",
-                             "LRU collected " + Container::String(std::to_string(removedCount)) + " packages");
+                             "LRU collected %zu packages", removedCount);
         }
 
         return removedCount;
