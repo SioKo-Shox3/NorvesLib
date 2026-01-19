@@ -3,7 +3,7 @@
 #define DISABLE_MEMORY_OVERRIDES
 
 #include "EngineGlobals/MemoryOverrides.h"
-#include "Memory/Public/MemorySystem.h"
+#include "Memory/MemorySystem.h"
 #include <cstring>
 
 namespace NorvesLib::Memory

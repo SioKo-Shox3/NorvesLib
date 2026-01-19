@@ -1,8 +1,8 @@
 ﻿#pragma once
 
-#include "Core/Public/Container/Containers.h"
+#include "Container/Containers.h"
 #include "Thread/Mutex.h"
-#include "FileStream/Public/FileStreamModule.h"
+#include "FileStream/FileStreamModule.h"
 #include <chrono>
 #include <iostream>
 

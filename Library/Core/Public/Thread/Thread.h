@@ -4,7 +4,7 @@
 #include <functional>
 #include <atomic>
 #include <cstdint>
-#include "Core/Public/Container/Containers.h"
+#include "Container/Containers.h"
 #include "Atomic.h" // Atomic<T>クラスを明示的にインクルード
 
 namespace NorvesLib::Thread

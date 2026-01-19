@@ -1,5 +1,5 @@
 ﻿#include "CoreModule.h"
-#include "Core/Public/Logging/LoggingModule.h"
+#include "Logging/LoggingModule.h"
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Container;

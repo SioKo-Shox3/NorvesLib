@@ -40,7 +40,7 @@ set(PRIVATE_SOURCES
     Private/Engine/AssetRegistry.cpp
     # Resource
     Private/Resource/MeshResource.cpp
-    # Thread (統合)
+    # Thread
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
     Private/Thread/JobSystem.cpp
@@ -49,18 +49,32 @@ set(PRIVATE_SOURCES
     Private/Thread/Task.cpp
     Private/Thread/Thread.cpp
     Private/Thread/WorkStealingQueue.cpp
-    # RHI (統合)
-    Private/RHI/Vulkan/VulkanBuffer.cpp
-    Private/RHI/Vulkan/VulkanCommandList.cpp
-    Private/RHI/Vulkan/VulkanDescriptorSet.cpp
-    Private/RHI/Vulkan/VulkanDevice.cpp
-    Private/RHI/Vulkan/VulkanFramebuffer.cpp
-    Private/RHI/Vulkan/VulkanPipeline.cpp
-    Private/RHI/Vulkan/VulkanRenderPass.cpp
-    Private/RHI/Vulkan/VulkanSampler.cpp
-    Private/RHI/Vulkan/VulkanShader.cpp
-    Private/RHI/Vulkan/VulkanSwapChain.cpp
-    Private/RHI/Vulkan/VulkanTexture.cpp
+    # RHI (TODO: Vulkan implementation is WIP - temporarily disabled)
+    # Private/RHI/Vulkan/VulkanBuffer.cpp
+    # Private/RHI/Vulkan/VulkanCommandList.cpp
+    # Private/RHI/Vulkan/VulkanDescriptorSet.cpp
+    # Private/RHI/Vulkan/VulkanDevice.cpp
+    # Private/RHI/Vulkan/VulkanFramebuffer.cpp
+    # Private/RHI/Vulkan/VulkanPipeline.cpp
+    # Private/RHI/Vulkan/VulkanRenderPass.cpp
+    # Private/RHI/Vulkan/VulkanSampler.cpp
+    # Private/RHI/Vulkan/VulkanShader.cpp
+    # Private/RHI/Vulkan/VulkanSwapChain.cpp
+    # Private/RHI/Vulkan/VulkanTexture.cpp
+    # Memory
+    Private/Memory/FrameAllocator.cpp
+    Private/Memory/GlobalAllocator.cpp
+    Private/Memory/MemorySystem.cpp
+    Private/Memory/StackAllocator.cpp
+    Private/Memory/ThreadLocalCache.cpp
+    # Random
+    Private/Random/Random.cpp
+    Private/Random/RandomDistributions.cpp
+    Private/Random/RandomUtility.cpp
+    # FileStream
+    Private/FileStream/FileStream.cpp
+    Private/FileStream/AsyncFileStream.cpp
+    Private/FileStream/Package.cpp
 )
 
 set(PUBLIC_HEADERS
@@ -97,7 +111,7 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Engine/ApplicationProcessor.h
-    # GameMode (統合)
+    # GameMode
     Public/GameMode/IStateMachine.h
     Public/GameMode/TStateMachine.h
     Public/GameMode/IGameMode.h
@@ -136,7 +150,7 @@ set(PUBLIC_HEADERS
     # Component
     Public/Component/Component.h
     Public/Component/MeshComponent.h
-    # Math (統合)
+    # Math
     Public/Math/MathForward.h
     Public/Math/MathTypes.h
     Public/Math/Matrix4x4.h
@@ -148,7 +162,7 @@ set(PUBLIC_HEADERS
     Public/Math/Vector3.h
     Public/Math/Vector4.h
     Public/Math/VectorUtils.h
-    # Thread (統合)
+    # Thread
     Public/Thread/Atomic.h
     Public/Thread/ConditionVariable.h
     Public/Thread/Fiber.h
@@ -160,7 +174,7 @@ set(PUBLIC_HEADERS
     Public/Thread/Thread.h
     Public/Thread/ThreadLocalStorage.h
     Public/Thread/WorkStealingQueue.h
-    # RHI (統合)
+    # RHI
     Public/RHI/RHITypes.h
     Public/RHI/RHIConfig.h
     Public/RHI/RHIContext.h
@@ -177,6 +191,27 @@ set(PUBLIC_HEADERS
     Public/RHI/IDevice.h
     Public/RHI/IGPUResourceAllocator.h
     Public/RHI/TransientResourcePool.h
+    # Memory
+    Public/Memory/FrameAllocator.h
+    Public/Memory/GlobalAllocator.h
+    Public/Memory/IAllocator.h
+    Public/Memory/MemoryConfig.h
+    Public/Memory/MemorySystem.h
+    Public/Memory/PoolAllocator.h
+    Public/Memory/SizeClassAllocator.h
+    Public/Memory/StackAllocator.h
+    Public/Memory/ThreadLocalCache.h
+    # Random
+    Public/Random/Random.h
+    Public/Random/RandomDistributions.h
+    Public/Random/RandomUtility.h
+    # FileStream
+    Public/FileStream/IFileStream.h
+    Public/FileStream/FileStream.h
+    Public/FileStream/AsyncFileStream.h
+    Public/FileStream/FileStreamForward.h
+    Public/FileStream/FileStreamModule.h
+    Public/FileStream/Package.h
 )
 
 # ライブラリの作成
@@ -185,7 +220,8 @@ add_library(${MODULE_NAME} STATIC ${PRIVATE_SOURCES} ${PUBLIC_HEADERS})
 # インクルードディレクトリの設定
 target_include_directories(${MODULE_NAME}
     PUBLIC 
-        Public
+        ${CMAKE_SOURCE_DIR}/Library  # Core/Public/... のパスでアクセス可能にする
+        ${CMAKE_SOURCE_DIR}/Library/Core/Public  # Container/String.h のような相対インクルード用
     PRIVATE 
         Private
 )
@@ -193,7 +229,6 @@ target_include_directories(${MODULE_NAME}
 # 依存関係の設定
 target_link_libraries(${MODULE_NAME}
     PUBLIC
-        FileStream
         Vulkan::Vulkan
 )
 

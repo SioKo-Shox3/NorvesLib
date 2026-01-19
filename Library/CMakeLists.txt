@@ -2,13 +2,6 @@
 
 # ライブラリモジュールを追加
 add_subdirectory(Core)
-# add_subdirectory(Math) # MathはCoreに統合されました
-# add_subdirectory(RHI) # TODO: RHIモジュールはリファクタリング中のため一時的に無効化
-add_subdirectory(Memory)
-# add_subdirectory(Thread) # ThreadはCoreに統合されました
-add_subdirectory(Random)
-# GameModeはCoreに統合されました
-add_subdirectory(FileStream) # FileStreamモジュールを追加
 
 # 全てのモジュールをリンクするインターフェースライブラリを作成
 add_library(${MODULE_NAME} INTERFACE)
@@ -17,13 +10,6 @@ add_library(${MODULE_NAME} INTERFACE)
 target_link_libraries(${MODULE_NAME} 
     INTERFACE 
         Core
-        # Math # MathはCoreに統合されました
-        # RHI # TODO: RHIモジュールはリファクタリング中のため一時的に無効化
-        Memory
-        # Thread # ThreadはCoreに統合されました
-        Random
-        # GameModeはCoreに統合されました
-        FileStream # FileStreamへの依存関係を追加
 )
 
 # インクルードパスの設定

@@ -1,5 +1,5 @@
 ﻿#include "Engine/AssetRegistry.h"
-#include "FileStream/Public/Package.h"
+#include "FileStream/Package.h"
 #include "Object/Reflection.h"
 #include "Logging/LogMacros.h"
 

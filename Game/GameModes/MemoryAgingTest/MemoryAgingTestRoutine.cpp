@@ -1,6 +1,6 @@
 ﻿#include "MemoryAgingTestRoutine.h"
 #include "Core/Public/Logging/LogMacros.h"
-#include "Random/Public/Random.h"
+#include "Core/Public/Random/Random.h"
 
 using namespace NorvesLib::Core::Container;
 using namespace NorvesLib::Core::GameMode;
@@ -9,7 +9,7 @@ using namespace NorvesLib::Random;
 namespace Game::GameModes
 {
 
-    void MemoryAgingTestRoutine::Enter(IStateMachine* proc, MemoryAgingTestData& data)
+    void MemoryAgingTestRoutine::Enter(IStateMachine *proc, MemoryAgingTestData &data)
     {
         (void)proc; // 未使用警告の抑制
 
@@ -17,7 +17,7 @@ namespace Game::GameModes
         LOG_INFO("メモリエージングテスト開始");
         LOG_INFO("=================================================");
         LOG_INFO("設定:");
-        
+
         char buffer[256];
         sprintf_s(buffer, "  - 1フレームあたりの確保回数: %zu", data.m_AllocationCount);
         LOG_INFO(buffer);
@@ -27,7 +27,7 @@ namespace Game::GameModes
         LOG_INFO(buffer);
         sprintf_s(buffer, "  - レポート間隔: %.1f 秒", data.m_ReportInterval);
         LOG_INFO(buffer);
-        
+
         LOG_INFO("-------------------------------------------------");
 
         // データをリセット
@@ -37,7 +37,7 @@ namespace Game::GameModes
         data.m_MemoryBlocks.reserve(data.m_AllocationCount * 10);
     }
 
-    void MemoryAgingTestRoutine::Do(IStateMachine* proc, MemoryAgingTestData& data, float deltaTime)
+    void MemoryAgingTestRoutine::Do(IStateMachine *proc, MemoryAgingTestData &data, float deltaTime)
     {
         (void)proc; // 未使用警告の抑制
 
@@ -83,14 +83,14 @@ namespace Game::GameModes
         {
             // ランダムな位置のブロックを解放
             size_t index = static_cast<size_t>(rng.GetInt(0, static_cast<int32_t>(data.m_MemoryBlocks.size() - 1)));
-            
+
             // swap and popで効率的に削除
             if (index != data.m_MemoryBlocks.size() - 1)
             {
                 std::swap(data.m_MemoryBlocks[index], data.m_MemoryBlocks.back());
             }
             data.m_MemoryBlocks.pop_back();
-            
+
             ++data.m_TotalDeallocations;
             --data.m_CurrentAllocations;
         }
@@ -102,10 +102,10 @@ namespace Game::GameModes
 
             char buffer[512];
             sprintf_s(buffer, "[メモリエージング %.1f秒] 確保: %zu, 解放: %zu, 現在保持: %zu",
-                data.m_ElapsedTime,
-                data.m_TotalAllocations,
-                data.m_TotalDeallocations,
-                data.m_CurrentAllocations);
+                      data.m_ElapsedTime,
+                      data.m_TotalAllocations,
+                      data.m_TotalDeallocations,
+                      data.m_CurrentAllocations);
             LOG_INFO(buffer);
         }
 
@@ -116,7 +116,7 @@ namespace Game::GameModes
 
             LOG_INFO("-------------------------------------------------");
             LOG_INFO("メモリエージングテスト完了");
-            
+
             char buffer[512];
             sprintf_s(buffer, "  - 総確保回数: %zu", data.m_TotalAllocations);
             LOG_INFO(buffer);
@@ -124,12 +124,12 @@ namespace Game::GameModes
             LOG_INFO(buffer);
             sprintf_s(buffer, "  - 残存ブロック数: %zu", data.m_CurrentAllocations);
             LOG_INFO(buffer);
-            
+
             LOG_INFO("=================================================");
         }
     }
 
-    void MemoryAgingTestRoutine::Leave(IStateMachine* proc, MemoryAgingTestData& data)
+    void MemoryAgingTestRoutine::Leave(IStateMachine *proc, MemoryAgingTestData &data)
     {
         (void)proc; // 未使用警告の抑制
 

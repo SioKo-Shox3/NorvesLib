@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "RHI/IDevice.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
@@ -135,8 +135,8 @@ namespace NorvesLib::RHI::Vulkan
         bool m_bValidationEnabled = false;
 
         // フォーマット変換テーブル
-        NorvesLib::Core::Container::HashMap<Format, vk::Format> m_formatMap;
-        NorvesLib::Core::Container::HashMap<vk::Format, Format> m_reverseFormatMap;
+        NorvesLib::Core::Container::UnorderedMap<Format, vk::Format> m_formatMap;
+        NorvesLib::Core::Container::UnorderedMap<vk::Format, Format> m_reverseFormatMap;
 
         // 初期化メソッド
         void CreateInstance();

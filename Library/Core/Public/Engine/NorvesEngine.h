@@ -2,7 +2,7 @@
 #pragma once
 
 #include "IEngine.h"
-#include "Core/Public/Container/Containers.h"
+#include "Container/Containers.h"
 #include "Thread/Atomic.h"
 #include "Object/ResourceRegistry.h"
 #include "Engine/AssetRegistry.h"

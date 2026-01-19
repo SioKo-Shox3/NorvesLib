@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "RHI/ITexture.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS

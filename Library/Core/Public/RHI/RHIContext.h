@@ -1,4 +1,4 @@
-// filepath: c:\Users\<user>\Documents\NorvesLib\Library\RHI\Public\RHIContext.h
+﻿// filepath: c:\Users\<user>\Documents\NorvesLib\Library\RHI\Public\RHIContext.h
 #pragma once
 
 #include "RHITypes.h"

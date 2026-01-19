@@ -9,8 +9,8 @@
 #pragma comment(lib, "psapi.lib")
 #endif
 
-#include "Core/Public/Logging/LoggingModule.h"
-#include "Core/Public/Container/Containers.h"
+#include "Logging/LoggingModule.h"
+#include "Container/Containers.h"
 #include <chrono>
 
 namespace NorvesLib::Debug

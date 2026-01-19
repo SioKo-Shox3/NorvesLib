@@ -11,7 +11,7 @@
 #include "LogTypes.h"
 #include "Logger.h"
 #include "LogMacros.h"
-#include "Core/Public/Container/PointerTypes.h"
+#include "Container/PointerTypes.h"
 
 namespace NorvesLib::Core::Logging
 {

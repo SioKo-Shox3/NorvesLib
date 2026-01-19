@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include <shared_mutex>
-#include "Core/Public/Container/Containers.h"
+#include "Container/Containers.h"
 
 namespace NorvesLib::Thread
 {

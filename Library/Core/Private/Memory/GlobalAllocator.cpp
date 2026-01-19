@@ -1,5 +1,5 @@
-﻿#include "../Public/GlobalAllocator.h"
-#include "../Public/ThreadLocalCache.h"
+﻿#include "Memory/GlobalAllocator.h"
+#include "Memory/ThreadLocalCache.h"
 #include <cassert>
 #include <cstring>
 
