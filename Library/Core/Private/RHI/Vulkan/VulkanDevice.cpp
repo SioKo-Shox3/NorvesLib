@@ -1,4 +1,14 @@
 ﻿#include "VulkanDevice.h"
+#include "VulkanBuffer.h"
+#include "VulkanTexture.h"
+#include "VulkanSampler.h"
+#include "VulkanShader.h"
+#include "VulkanPipeline.h"
+#include "VulkanRenderPass.h"
+#include "VulkanFramebuffer.h"
+#include "VulkanDescriptorSet.h"
+#include "VulkanCommandList.h"
+#include "VulkanSwapChain.h"
 #include <iostream>
 #include <algorithm>
 #include "Container/Containers.h"
@@ -8,8 +18,14 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace NorvesLib::RHI::Vulkan
 {
-
-    using namespace NorvesLib::Core::Container;
+    // 明示的なusing宣言（グローバル名前空間から参照）
+    using ::NorvesLib::Core::Container::DynamicPointerCast;
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::StaticPointerCast;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
+    using ::NorvesLib::Core::Container::UnorderedMap;
+    using ::NorvesLib::Core::Container::VariableArray;
 
     // バリデーションレイヤー名
     const VariableArray<const char *> validationLayers = {
@@ -29,9 +45,7 @@ namespace NorvesLib::RHI::Vulkan
     VulkanDevice::VulkanDevice(bool bEnableValidation)
         : m_bValidationEnabled(bEnableValidation)
     {
-        // Dynamic dispatcherの初期化
-        static vk::DynamicLoader dl;
-        auto vkGetInstanceProcAddr = dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
+        // Dynamic dispatcherの初期化（Vulkan SDKからvkGetInstanceProcAddrを直接使用）
         VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
         CreateInstance();
@@ -117,7 +131,7 @@ namespace NorvesLib::RHI::Vulkan
                 vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
                 vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
                 vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
-            debugCreateInfo.pfnUserCallback = DebugCallback;
+            debugCreateInfo.pfnUserCallback = reinterpret_cast<vk::PFN_DebugUtilsMessengerCallbackEXT>(DebugCallback);
 
             createInfo.pNext = &debugCreateInfo;
         }
@@ -151,7 +165,7 @@ namespace NorvesLib::RHI::Vulkan
             vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
             vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
             vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
-        createInfo.pfnUserCallback = DebugCallback;
+        createInfo.pfnUserCallback = reinterpret_cast<vk::PFN_DebugUtilsMessengerCallbackEXT>(DebugCallback);
 
         auto result = m_instance.createDebugUtilsMessengerEXT(createInfo);
         if (result.result != vk::Result::eSuccess)
@@ -613,70 +627,115 @@ namespace NorvesLib::RHI::Vulkan
     // IDeviceインターフェース実装
     BufferPtr VulkanDevice::CreateBuffer(const BufferDesc &desc)
     {
-        return MakeShared<VulkanBuffer>(
+        auto buffer = MakeShared<VulkanBuffer>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<IBuffer>(buffer);
     }
 
     TexturePtr VulkanDevice::CreateTexture(const TextureDesc &desc)
     {
-        return MakeShared<VulkanTexture>(
+        auto texture = MakeShared<VulkanTexture>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<ITexture>(texture);
     }
 
     SamplerPtr VulkanDevice::CreateSampler(const SamplerDesc &desc)
     {
-        return MakeShared<VulkanSampler>(
+        auto sampler = MakeShared<VulkanSampler>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<ISampler>(sampler);
     }
 
     ShaderPtr VulkanDevice::CreateShader(const ShaderDesc &desc)
     {
-        return MakeShared<VulkanShader>(
+        auto shader = MakeShared<VulkanShader>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<IShader>(shader);
     }
 
     CommandListPtr VulkanDevice::CreateCommandList()
     {
-        return MakeShared<VulkanCommandList>(
+        auto commandList = MakeShared<VulkanCommandList>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}));
+        return StaticPointerCast<ICommandList>(commandList);
     }
 
     SwapChainPtr VulkanDevice::CreateSwapChain(const SwapChainDesc &desc)
     {
-        return MakeShared<VulkanSwapChain>(
+        auto swapChain = MakeShared<VulkanSwapChain>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<ISwapChain>(swapChain);
     }
 
     RenderPassPtr VulkanDevice::CreateRenderPass(const RenderPassDesc &desc)
     {
-        return MakeShared<VulkanRenderPass>(
+        auto renderPass = MakeShared<VulkanRenderPass>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<IRenderPass>(renderPass);
     }
 
     FramebufferPtr VulkanDevice::CreateFramebuffer(const FramebufferDesc &desc)
     {
-        return MakeShared<VulkanFramebuffer>(
+        auto framebuffer = MakeShared<VulkanFramebuffer>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<IFramebuffer>(framebuffer);
     }
 
     PipelinePtr VulkanDevice::CreateGraphicsPipeline(const GraphicsPipelineDesc &desc)
     {
-        return MakeShared<VulkanGraphicsPipeline>(
+        auto pipeline = MakeShared<VulkanGraphicsPipeline>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<IPipeline>(pipeline);
     }
 
     PipelinePtr VulkanDevice::CreateComputePipeline(const ComputePipelineDesc &desc)
     {
-        return MakeShared<VulkanComputePipeline>(
+        auto pipeline = MakeShared<VulkanComputePipeline>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<IPipeline>(pipeline);
+    }
+
+    // ResourceBindTypeからDescriptorTypeへの変換ヘルパー
+    static DescriptorType ConvertResourceBindType(ResourceBindType type)
+    {
+        switch (type)
+        {
+        case ResourceBindType::ConstantBuffer:
+            return DescriptorType::UniformBuffer;
+        case ResourceBindType::Texture:
+            return DescriptorType::SampledImage;
+        case ResourceBindType::Sampler:
+            return DescriptorType::Sampler;
+        case ResourceBindType::RWTexture:
+            return DescriptorType::StorageImage;
+        case ResourceBindType::RWBuffer:
+            return DescriptorType::StorageBuffer;
+        case ResourceBindType::StructuredBuffer:
+            return DescriptorType::StorageBuffer;
+        default:
+            return DescriptorType::UniformBuffer;
+        }
     }
 
     DescriptorSetPtr VulkanDevice::CreateDescriptorSet(const DescriptorSetDesc &desc)
     {
+        // DescriptorBindingをDescriptorBindingDescに変換
+        VariableArray<DescriptorBindingDesc> bindingDescs;
+        bindingDescs.reserve(desc.bindings.size());
+        for (const auto &binding : desc.bindings)
+        {
+            DescriptorBindingDesc bindingDesc;
+            bindingDesc.binding = binding.binding;
+            bindingDesc.type = ConvertResourceBindType(binding.type);
+            bindingDesc.stages = binding.stages;
+            bindingDesc.count = 1;
+            bindingDescs.push_back(bindingDesc);
+        }
+
         // ディスクリプタセットレイアウトの作成
         auto layout = MakeShared<VulkanDescriptorSetLayout>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
-            desc.bindings);
+            bindingDescs);
 
         // ディスクリプタプールの作成
         auto pool = MakeShared<VulkanDescriptorPool>(
@@ -684,11 +743,12 @@ namespace NorvesLib::RHI::Vulkan
             10); // 10セット分のプールを作成
 
         // VulkanDescriptorSetの作成
-        return MakeShared<VulkanDescriptorSet>(
+        auto descriptorSet = MakeShared<VulkanDescriptorSet>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
             desc,
             layout,
             pool);
+        return StaticPointerCast<IDescriptorSet>(descriptorSet);
     }
 
     void VulkanDevice::WaitIdle()

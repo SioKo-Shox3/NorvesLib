@@ -27,7 +27,7 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanRenderPass::CreateRenderPass()
     {
         // アタッチメント記述子の作成
-        m_attachmentDescs.reserve(m_desc.colorAttachments.size() + (m_desc.depthStencilAttachment.has_value() ? 1 : 0));
+        m_attachmentDescs.reserve(m_desc.colorAttachments.size() + (m_desc.hasDepthStencil ? 1 : 0));
         m_colorAttachmentRefs.reserve(m_desc.colorAttachments.size());
 
         // カラーアタッチメント
@@ -54,10 +54,10 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // デプス/ステンシルアタッチメント
-        bool bHasDepthStencil = m_desc.depthStencilAttachment.has_value();
+        bool bHasDepthStencil = m_desc.hasDepthStencil;
         if (bHasDepthStencil)
         {
-            const auto &depthAttachment = m_desc.depthStencilAttachment.value();
+            const auto &depthAttachment = m_desc.depthStencilAttachment;
 
             vk::AttachmentDescription depthAttachmentDesc{};
             depthAttachmentDesc.format = GetVulkanFormat(depthAttachment.format);
@@ -134,7 +134,7 @@ namespace NorvesLib::RHI::Vulkan
     // デプス/ステンシルアタッチメントの有無を取得
     bool VulkanRenderPass::HasDepthStencilAttachment() const
     {
-        return m_desc.depthStencilAttachment.has_value();
+        return m_desc.hasDepthStencil;
     }
 
     // カラーアタッチメントフォーマットを取得
@@ -144,17 +144,17 @@ namespace NorvesLib::RHI::Vulkan
         {
             return m_desc.colorAttachments[index].format;
         }
-        return Format::Unknown;
+        return Format::UNKNOWN;
     }
 
     // デプス/ステンシルフォーマットを取得
     Format VulkanRenderPass::GetDepthStencilFormat() const
     {
-        if (m_desc.depthStencilAttachment.has_value())
+        if (m_desc.hasDepthStencil)
         {
-            return m_desc.depthStencilAttachment.value().format;
+            return m_desc.depthStencilAttachment.format;
         }
-        return Format::Unknown;
+        return Format::UNKNOWN;
     }
 
     // RHIフォーマットからVulkanフォーマットに変換

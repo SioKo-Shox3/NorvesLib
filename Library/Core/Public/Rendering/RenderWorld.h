@@ -5,6 +5,7 @@
 #include "RenderThread.h"
 #include "RenderResourceManager.h"
 #include "MeshResourceManager.h"
+#include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
@@ -14,6 +15,12 @@ namespace NorvesLib::RHI
 {
     class IDevice;
     class ISwapChain;
+    class ICommandList;
+    class IRenderPass;
+    class IFramebuffer;
+    class IPipeline;
+    class IBuffer;
+    class IShader;
 }
 
 namespace NorvesLib::Core::Rendering
@@ -28,6 +35,9 @@ namespace NorvesLib::Core::Rendering
      */
     struct RenderWorldSettings
     {
+        // RHIデバイス（エンジン層で初期化済み）
+        RHI::DevicePtr Device;
+
         // ウィンドウハンドル
         void *WindowHandle = nullptr;
 
@@ -114,6 +124,13 @@ namespace NorvesLib::Core::Rendering
          * FramePacketを取得し、書き込み準備を行います。
          */
         void BeginFrame();
+
+        /**
+         * @brief 三角形を描画（デバッグ/テスト用）
+         *
+         * RHIを使用してハードコードされた三角形を1つ描画します。
+         */
+        void RenderTriangle();
 
         /**
          * @brief シーン収集（GameThread）
@@ -253,12 +270,30 @@ namespace NorvesLib::Core::Rendering
         RenderWorld &operator=(const RenderWorld &) = delete;
 
         // ========================================
+        // 内部ヘルパー
+        // ========================================
+
+        /**
+         * @brief スワップチェーンのフレームバッファを作成
+         * @return 成功時true
+         */
+        bool CreateSwapChainFramebuffers();
+
+        // ========================================
         // メンバ変数
         // ========================================
 
         // RHIリソース
         Container::TSharedPtr<RHI::IDevice> m_Device;
         Container::TSharedPtr<RHI::ISwapChain> m_SwapChain;
+        Container::TSharedPtr<RHI::ICommandList> m_CommandList;
+
+        // 三角形描画用リソース
+        Container::TSharedPtr<RHI::IRenderPass> m_TriangleRenderPass;
+        Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_SwapChainFramebuffers;
+        Container::TSharedPtr<RHI::IPipeline> m_TrianglePipeline;
+        Container::TSharedPtr<RHI::IShader> m_TriangleVertexShader;
+        Container::TSharedPtr<RHI::IShader> m_TriangleFragmentShader;
 
         // サブシステム（GEngine配下で実体保持）
         RenderResourceManager m_ResourceManager;

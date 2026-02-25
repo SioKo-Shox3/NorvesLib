@@ -96,10 +96,10 @@ namespace NorvesLib::RHI::Vulkan
             shaderStages.push_back(vertStageInfo);
         }
 
-        // フラグメントシェーダー
-        if (m_desc.fragmentShader)
+        // ピクセル（フラグメント）シェーダー
+        if (m_desc.pixelShader)
         {
-            auto vulkanShader = static_cast<VulkanShader *>(m_desc.fragmentShader.get());
+            auto vulkanShader = static_cast<VulkanShader *>(m_desc.pixelShader.get());
             vk::PipelineShaderStageCreateInfo fragStageInfo{
                 .stage = vk::ShaderStageFlagBits::eFragment,
                 .module = vulkanShader->GetVkShaderModule(),
@@ -120,16 +120,16 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // テッセレーションシェーダー
-        if (m_desc.tessControlShader && m_desc.tessEvalShader)
+        if (m_desc.hullShader && m_desc.domainShader)
         {
-            auto vulkanTessControlShader = static_cast<VulkanShader *>(m_desc.tessControlShader.get());
+            auto vulkanTessControlShader = static_cast<VulkanShader *>(m_desc.hullShader.get());
             vk::PipelineShaderStageCreateInfo tessControlStageInfo{
                 .stage = vk::ShaderStageFlagBits::eTessellationControl,
                 .module = vulkanTessControlShader->GetVkShaderModule(),
                 .pName = "main"};
             shaderStages.push_back(tessControlStageInfo);
 
-            auto vulkanTessEvalShader = static_cast<VulkanShader *>(m_desc.tessEvalShader.get());
+            auto vulkanTessEvalShader = static_cast<VulkanShader *>(m_desc.domainShader.get());
             vk::PipelineShaderStageCreateInfo tessEvalStageInfo{
                 .stage = vk::ShaderStageFlagBits::eTessellationEvaluation,
                 .module = vulkanTessEvalShader->GetVkShaderModule(),
@@ -269,16 +269,9 @@ namespace NorvesLib::RHI::Vulkan
             .pDynamicStates = dynamicStates.data()};
 
         // パイプラインレイアウト
-        // ディスクリプタセットレイアウトの収集
+        // ディスクリプタセットレイアウトの収集（空のレイアウトで作成）
         VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
-        for (const auto &setDesc : m_desc.descriptorSetLayouts)
-        {
-            auto vulkanLayout = DynamicPointerCast<VulkanDescriptorSetLayout>(setDesc);
-            if (vulkanLayout)
-            {
-                descriptorSetLayouts.push_back(vulkanLayout);
-            }
-        }
+        // TODO: シェーダーリフレクションからディスクリプタセットレイアウトを取得する
 
         // パイプラインレイアウトの作成
         m_pipelineLayout = MakeShared<VulkanPipelineLayout>(m_device, descriptorSetLayouts);
@@ -297,7 +290,7 @@ namespace NorvesLib::RHI::Vulkan
             .pStages = shaderStages.data(),
             .pVertexInputState = &vertexInputInfo,
             .pInputAssemblyState = &inputAssembly,
-            .pTessellationState = (m_desc.tessControlShader && m_desc.tessEvalShader) ? &tessellationState : nullptr,
+            .pTessellationState = (m_desc.hullShader && m_desc.domainShader) ? &tessellationState : nullptr,
             .pViewportState = &viewportState,
             .pRasterizationState = &rasterizer,
             .pMultisampleState = &multisampling,
@@ -306,7 +299,7 @@ namespace NorvesLib::RHI::Vulkan
             .pDynamicState = &dynamicState,
             .layout = m_pipelineLayout->GetVkPipelineLayout(),
             .renderPass = renderPass,
-            .subpass = m_desc.subpass,
+            .subpass = 0, // デフォルトでサブパス0を使用
             .basePipelineHandle = nullptr,
             .basePipelineIndex = -1};
 
@@ -350,16 +343,9 @@ namespace NorvesLib::RHI::Vulkan
             .module = vulkanShader->GetVkShaderModule(),
             .pName = "main"};
 
-        // ディスクリプタセットレイアウト
+        // ディスクリプタセットレイアウト（空のレイアウトで作成）
         VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
-        for (const auto &setDesc : m_desc.descriptorSetLayouts)
-        {
-            auto vulkanLayout = DynamicPointerCast<VulkanDescriptorSetLayout>(setDesc);
-            if (vulkanLayout)
-            {
-                descriptorSetLayouts.push_back(vulkanLayout);
-            }
-        }
+        // TODO: シェーダーリフレクションからディスクリプタセットレイアウトを取得する
 
         // パイプラインレイアウトの作成
         m_pipelineLayout = MakeShared<VulkanPipelineLayout>(m_device, descriptorSetLayouts);
@@ -395,10 +381,6 @@ namespace NorvesLib::RHI::Vulkan
             return vk::PrimitiveTopology::eTriangleList;
         case PrimitiveTopology::TriangleStrip:
             return vk::PrimitiveTopology::eTriangleStrip;
-        case PrimitiveTopology::TriangleFan:
-            return vk::PrimitiveTopology::eTriangleFan;
-        case PrimitiveTopology::PatchList:
-            return vk::PrimitiveTopology::ePatchList;
         default:
             return vk::PrimitiveTopology::eTriangleList;
         }
@@ -429,8 +411,6 @@ namespace NorvesLib::RHI::Vulkan
             return vk::CullModeFlagBits::eFront;
         case CullMode::Back:
             return vk::CullModeFlagBits::eBack;
-        case CullMode::FrontAndBack:
-            return vk::CullModeFlagBits::eFrontAndBack;
         default:
             return vk::CullModeFlagBits::eBack;
         }
@@ -484,15 +464,15 @@ namespace NorvesLib::RHI::Vulkan
             return vk::StencilOp::eZero;
         case StencilOp::Replace:
             return vk::StencilOp::eReplace;
-        case StencilOp::IncrementAndClamp:
+        case StencilOp::IncrSat:
             return vk::StencilOp::eIncrementAndClamp;
-        case StencilOp::DecrementAndClamp:
+        case StencilOp::DecrSat:
             return vk::StencilOp::eDecrementAndClamp;
         case StencilOp::Invert:
             return vk::StencilOp::eInvert;
-        case StencilOp::IncrementAndWrap:
+        case StencilOp::Incr:
             return vk::StencilOp::eIncrementAndWrap;
-        case StencilOp::DecrementAndWrap:
+        case StencilOp::Decr:
             return vk::StencilOp::eDecrementAndWrap;
         default:
             return vk::StencilOp::eKeep;
@@ -509,30 +489,20 @@ namespace NorvesLib::RHI::Vulkan
             return vk::BlendFactor::eOne;
         case BlendFactor::SrcColor:
             return vk::BlendFactor::eSrcColor;
-        case BlendFactor::OneMinusSrcColor:
+        case BlendFactor::InvSrcColor:
             return vk::BlendFactor::eOneMinusSrcColor;
         case BlendFactor::DstColor:
             return vk::BlendFactor::eDstColor;
-        case BlendFactor::OneMinusDstColor:
+        case BlendFactor::InvDstColor:
             return vk::BlendFactor::eOneMinusDstColor;
         case BlendFactor::SrcAlpha:
             return vk::BlendFactor::eSrcAlpha;
-        case BlendFactor::OneMinusSrcAlpha:
+        case BlendFactor::InvSrcAlpha:
             return vk::BlendFactor::eOneMinusSrcAlpha;
         case BlendFactor::DstAlpha:
             return vk::BlendFactor::eDstAlpha;
-        case BlendFactor::OneMinusDstAlpha:
+        case BlendFactor::InvDstAlpha:
             return vk::BlendFactor::eOneMinusDstAlpha;
-        case BlendFactor::ConstantColor:
-            return vk::BlendFactor::eConstantColor;
-        case BlendFactor::OneMinusConstantColor:
-            return vk::BlendFactor::eOneMinusConstantColor;
-        case BlendFactor::ConstantAlpha:
-            return vk::BlendFactor::eConstantAlpha;
-        case BlendFactor::OneMinusConstantAlpha:
-            return vk::BlendFactor::eOneMinusConstantAlpha;
-        case BlendFactor::SrcAlphaSaturate:
-            return vk::BlendFactor::eSrcAlphaSaturate;
         default:
             return vk::BlendFactor::eOne;
         }
@@ -546,7 +516,7 @@ namespace NorvesLib::RHI::Vulkan
             return vk::BlendOp::eAdd;
         case BlendOp::Subtract:
             return vk::BlendOp::eSubtract;
-        case BlendOp::ReverseSubtract:
+        case BlendOp::RevSubtract:
             return vk::BlendOp::eReverseSubtract;
         case BlendOp::Min:
             return vk::BlendOp::eMin;
@@ -560,19 +530,19 @@ namespace NorvesLib::RHI::Vulkan
     vk::ColorComponentFlags VulkanGraphicsPipeline::ConvertColorWriteMask(ColorWriteMask mask)
     {
         vk::ColorComponentFlags result;
-        if (mask & ColorWriteMask::R)
+        if (static_cast<uint32_t>(mask) & static_cast<uint32_t>(ColorWriteMask::R))
         {
             result |= vk::ColorComponentFlagBits::eR;
         }
-        if (mask & ColorWriteMask::G)
+        if (static_cast<uint32_t>(mask) & static_cast<uint32_t>(ColorWriteMask::G))
         {
             result |= vk::ColorComponentFlagBits::eG;
         }
-        if (mask & ColorWriteMask::B)
+        if (static_cast<uint32_t>(mask) & static_cast<uint32_t>(ColorWriteMask::B))
         {
             result |= vk::ColorComponentFlagBits::eB;
         }
-        if (mask & ColorWriteMask::A)
+        if (static_cast<uint32_t>(mask) & static_cast<uint32_t>(ColorWriteMask::A))
         {
             result |= vk::ColorComponentFlagBits::eA;
         }

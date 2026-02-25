@@ -32,9 +32,10 @@ namespace NorvesLib::RHI
      */
     struct ShaderDesc
     {
-        ShaderStage stage;
-        NorvesLib::Core::Container::String entryPoint;
+        ShaderStage stage = ShaderStage::None;
+        NorvesLib::Core::Container::String entryPoint = "main";
         NorvesLib::Core::Container::VariableArray<uint8_t> byteCode;
+        NorvesLib::Core::Container::String sourceCode; // ソースコード（コンパイル済みでない場合）
     };
 
     /**
@@ -70,36 +71,31 @@ namespace NorvesLib::RHI
      */
     struct GraphicsPipelineDesc
     {
+        // シェーダー
         ShaderPtr vertexShader;
         ShaderPtr pixelShader;
         ShaderPtr geometryShader;
-        ShaderPtr hullShader;
-        ShaderPtr domainShader;
+        ShaderPtr hullShader;   // Vulkan: tessControlShader
+        ShaderPtr domainShader; // Vulkan: tessEvalShader
 
-        PrimitiveTopology topology = PrimitiveTopology::TriangleList;
+        // 頂点入力
+        Core::Container::VariableArray<VertexBindingDesc> vertexBindings;
+        Core::Container::VariableArray<VertexAttributeDesc> vertexAttributes;
+
+        // プリミティブトポロジー
+        PrimitiveTopology primitiveTopology = PrimitiveTopology::TriangleList;
+        uint32_t patchControlPoints = 3; // テッセレーション用
 
         // ラスタライザステート
-        FillMode fillMode = FillMode::Solid;
-        CullMode cullMode = CullMode::Back;
-        bool frontCounterClockwise = false;
-        bool depthClipEnable = true;
-        bool scissorEnable = false;
-        bool multisampleEnable = false;
-        bool antialiasedLineEnable = false;
+        RasterState rasterState;
 
         // デプスステンシルステート
-        bool depthEnable = true;
-        bool depthWriteEnable = true;
-        CompareFunc depthFunc = CompareFunc::Less;
-        bool stencilEnable = false;
-        uint8_t stencilReadMask = 0xFF;
-        uint8_t stencilWriteMask = 0xFF;
+        DepthStencilState depthStencilState;
 
         // ブレンドステート
-        Core::Container::FixedArray<RenderTargetBlendDesc, 8> renderTargetBlendDesc;
-        bool alphaToCoverageEnable = false;
-        bool independentBlendEnable = false;
+        BlendState blendState;
 
+        // レンダーパス
         RenderPassPtr renderPass;
     };
 
@@ -122,6 +118,10 @@ namespace NorvesLib::RHI
         float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         float clearDepth = 1.0f;
         uint32_t clearStencil = 0;
+        AttachmentLoadOp loadOp = AttachmentLoadOp::Clear;
+        AttachmentStoreOp storeOp = AttachmentStoreOp::Store;
+        ResourceState initialState = ResourceState::Undefined;
+        ResourceState finalState = ResourceState::Present;
     };
 
     /**

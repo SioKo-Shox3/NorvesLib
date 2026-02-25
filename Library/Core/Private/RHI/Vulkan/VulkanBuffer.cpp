@@ -18,7 +18,7 @@ namespace NorvesLib::RHI::Vulkan
         // メモリプロパティを設定
         vk::MemoryPropertyFlags memProps;
 
-        if (desc.hostVisible)
+        if (desc.CPUAccessible)
         {
             // CPUからアクセス可能なメモリ
             memProps = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
@@ -60,7 +60,7 @@ namespace NorvesLib::RHI::Vulkan
     // IBufferインターフェース実装: Map
     void *VulkanBuffer::Map(uint64_t offset, uint64_t size)
     {
-        if (!m_desc.hostVisible)
+        if (!m_desc.CPUAccessible)
         {
             throw std::runtime_error("ホスト可視でないバッファはマッピングできません");
         }
@@ -73,11 +73,11 @@ namespace NorvesLib::RHI::Vulkan
         // サイズが0の場合は全体をマップ
         if (size == 0)
         {
-            size = m_desc.size - offset;
+            size = m_desc.Size - offset;
         }
 
         // オフセットとサイズの範囲チェック
-        if (offset + size > m_desc.size)
+        if (offset + size > m_desc.Size)
         {
             throw std::runtime_error("マッピング範囲がバッファサイズを超えています");
         }
@@ -111,13 +111,13 @@ namespace NorvesLib::RHI::Vulkan
     // IBufferインターフェース実装: Update
     void VulkanBuffer::Update(const void *data, uint64_t size, uint64_t offset)
     {
-        if (offset + size > m_desc.size)
+        if (offset + size > m_desc.Size)
         {
             throw std::runtime_error("更新範囲がバッファサイズを超えています");
         }
 
         // ホスト可視の場合は直接マッピングして更新
-        if (m_desc.hostVisible)
+        if (m_desc.CPUAccessible)
         {
             void *mappedData = Map(offset, size);
             std::memcpy(mappedData, data, size);
@@ -128,9 +128,9 @@ namespace NorvesLib::RHI::Vulkan
         {
             // ステージングバッファの作成
             BufferDesc stagingDesc;
-            stagingDesc.size = size;
-            stagingDesc.usage = ResourceUsage::TransferSrc;
-            stagingDesc.hostVisible = true;
+            stagingDesc.Size = size;
+            stagingDesc.Usage = ResourceUsage::TransferSrc;
+            stagingDesc.CPUAccessible = true;
 
             auto stagingBuffer = MakeShared<VulkanBuffer>(m_device, stagingDesc);
 
@@ -163,7 +163,7 @@ namespace NorvesLib::RHI::Vulkan
 
         // バッファ作成情報
         vk::BufferCreateInfo bufferInfo{};
-        bufferInfo.size = m_desc.size;
+        bufferInfo.size = m_desc.Size;
         bufferInfo.usage = usage;
         bufferInfo.sharingMode = vk::SharingMode::eExclusive; // 単一キュー専用
 
@@ -208,43 +208,43 @@ namespace NorvesLib::RHI::Vulkan
         vk::BufferUsageFlags usage{};
 
         // 使用法フラグの変換
-        if ((m_desc.usage & ResourceUsage::VertexBuffer) == ResourceUsage::VertexBuffer)
+        if ((m_desc.Usage & ResourceUsage::VertexBuffer) == ResourceUsage::VertexBuffer)
         {
             usage |= vk::BufferUsageFlagBits::eVertexBuffer;
         }
 
-        if ((m_desc.usage & ResourceUsage::IndexBuffer) == ResourceUsage::IndexBuffer)
+        if ((m_desc.Usage & ResourceUsage::IndexBuffer) == ResourceUsage::IndexBuffer)
         {
             usage |= vk::BufferUsageFlagBits::eIndexBuffer;
         }
 
-        if ((m_desc.usage & ResourceUsage::ConstantBuffer) == ResourceUsage::ConstantBuffer)
+        if ((m_desc.Usage & ResourceUsage::ConstantBuffer) == ResourceUsage::ConstantBuffer)
         {
             usage |= vk::BufferUsageFlagBits::eUniformBuffer;
         }
 
-        if ((m_desc.usage & ResourceUsage::ShaderRead) == ResourceUsage::ShaderRead)
+        if ((m_desc.Usage & ResourceUsage::ShaderRead) == ResourceUsage::ShaderRead)
         {
             usage |= vk::BufferUsageFlagBits::eStorageBuffer;
         }
 
-        if ((m_desc.usage & ResourceUsage::ShaderWrite) == ResourceUsage::ShaderWrite)
+        if ((m_desc.Usage & ResourceUsage::ShaderWrite) == ResourceUsage::ShaderWrite)
         {
             usage |= vk::BufferUsageFlagBits::eStorageBuffer;
         }
 
-        if ((m_desc.usage & ResourceUsage::TransferSrc) == ResourceUsage::TransferSrc)
+        if ((m_desc.Usage & ResourceUsage::TransferSrc) == ResourceUsage::TransferSrc)
         {
             usage |= vk::BufferUsageFlagBits::eTransferSrc;
         }
 
-        if ((m_desc.usage & ResourceUsage::TransferDst) == ResourceUsage::TransferDst)
+        if ((m_desc.Usage & ResourceUsage::TransferDst) == ResourceUsage::TransferDst)
         {
             usage |= vk::BufferUsageFlagBits::eTransferDst;
         }
 
         // デフォルトでトランスファー先として使用可能にする
-        if (!m_desc.hostVisible)
+        if (!m_desc.CPUAccessible)
         {
             usage |= vk::BufferUsageFlagBits::eTransferDst;
         }

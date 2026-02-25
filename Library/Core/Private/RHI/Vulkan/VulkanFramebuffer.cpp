@@ -39,12 +39,12 @@ namespace NorvesLib::RHI::Vulkan
     {
         // アタッチメントビューの準備
         m_attachmentViews.clear();
-        m_attachmentViews.reserve(m_desc.colorAttachments.size() + (m_desc.depthStencilAttachment.has_value() ? 1 : 0));
+        m_attachmentViews.reserve(m_desc.colorTargets.size() + (m_desc.depthStencilTarget ? 1 : 0));
 
         // カラーアタッチメントのイメージビュー取得
-        for (const auto &attachment : m_desc.colorAttachments)
+        for (const auto &target : m_desc.colorTargets)
         {
-            vk::ImageView imageView = GetImageViewFromAttachment(attachment);
+            vk::ImageView imageView = GetImageViewFromTexture(target);
             if (!imageView)
             {
                 throw std::runtime_error("アタッチメントのイメージビューが無効です");
@@ -53,9 +53,9 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // デプスアタッチメントのイメージビュー取得
-        if (m_desc.depthStencilAttachment.has_value())
+        if (m_desc.depthStencilTarget)
         {
-            vk::ImageView depthImageView = GetImageViewFromAttachment(m_desc.depthStencilAttachment.value());
+            vk::ImageView depthImageView = GetImageViewFromTexture(m_desc.depthStencilTarget);
             if (!depthImageView)
             {
                 throw std::runtime_error("デプスアタッチメントのイメージビューが無効です");
@@ -82,29 +82,30 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
-    // アタッチメントからVulkanイメージビューを取得
-    vk::ImageView VulkanFramebuffer::GetImageViewFromAttachment(const AttachmentRef &attachment)
+    // テクスチャからVulkanイメージビューを取得
+    vk::ImageView VulkanFramebuffer::GetImageViewFromTexture(const TexturePtr &texture)
     {
-        if (attachment.texture)
+        if (texture)
         {
             // テクスチャからイメージビューを取得
-            auto vulkanTexture = DynamicPointerCast<VulkanTexture>(attachment.texture);
+            auto vulkanTexture = DynamicPointerCast<VulkanTexture>(texture);
             if (vulkanTexture)
             {
                 return vulkanTexture->GetVkImageView();
             }
         }
-        else if (attachment.swapChain)
-        {
-            // スワップチェーンからイメージビューを取得
-            auto vulkanSwapChain = DynamicPointerCast<VulkanSwapChain>(attachment.swapChain);
-            if (vulkanSwapChain && attachment.swapChainBufferIndex < vulkanSwapChain->GetImageCount())
-            {
-                return vulkanSwapChain->GetImageView(attachment.swapChainBufferIndex);
-            }
-        }
 
         return vk::ImageView{};
+    }
+
+    // カラーアタッチメントの取得
+    TexturePtr VulkanFramebuffer::GetColorAttachment(uint32_t index) const
+    {
+        if (index < m_desc.colorTargets.size())
+        {
+            return m_desc.colorTargets[index];
+        }
+        return nullptr;
     }
 
 } // namespace NorvesLib::RHI::Vulkan

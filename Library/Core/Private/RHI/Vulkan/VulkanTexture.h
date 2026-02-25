@@ -1,12 +1,18 @@
 ﻿#pragma once
 
 #include "RHI/ITexture.h"
+#include "RHI/IDevice.h"
+#include "RHI/IGPUResourceAllocator.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
+    // 明示的なusing宣言（グローバル名前空間から参照）
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
 
     class VulkanDevice;
 
@@ -37,14 +43,14 @@ namespace NorvesLib::RHI::Vulkan
         virtual ~VulkanTexture();
 
         // ITextureインターフェース実装
-        virtual uint32_t GetWidth() const override { return m_desc.width; }
-        virtual uint32_t GetHeight() const override { return m_desc.height; }
-        virtual uint32_t GetDepth() const override { return m_desc.depth; }
-        virtual uint32_t GetMipLevels() const override { return m_desc.mipLevels; }
-        virtual uint32_t GetArraySize() const override { return m_desc.arraySize; }
-        virtual Format GetFormat() const override { return m_desc.format; }
-        virtual ResourceUsage GetUsage() const override { return m_desc.usage; }
-        virtual bool IsCubemap() const override { return m_desc.isCubemap; }
+        virtual uint32_t GetWidth() const override { return m_desc.Width; }
+        virtual uint32_t GetHeight() const override { return m_desc.Height; }
+        virtual uint32_t GetDepth() const override { return m_desc.Depth; }
+        virtual uint32_t GetMipLevels() const override { return m_desc.MipLevels; }
+        virtual uint32_t GetArraySize() const override { return m_desc.ArraySize; }
+        virtual Format GetFormat() const override { return m_desc.TextureFormat; }
+        virtual ResourceUsage GetUsage() const override { return m_desc.Usage; }
+        virtual bool IsCubemap() const override { return m_desc.IsCubemap; }
         virtual void Update(const void *data, uint32_t rowPitch, uint32_t slicePitch,
                             uint32_t mipLevel = 0, uint32_t arrayIndex = 0) override;
 

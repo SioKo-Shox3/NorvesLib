@@ -1,12 +1,25 @@
 ﻿#pragma once
 
 #include "RHI/ISwapChain.h"
+#include "RHI/IDevice.h"
+
+// Windowsプラットフォーム用Vulkan拡張
+#ifdef _WIN32
+#define VK_USE_PLATFORM_WIN32_KHR
+#define NOMINMAX
+#endif
+
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
+    // 明示的なusing宣言（グローバル名前空間から参照）
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
+    using ::NorvesLib::Core::Container::VariableArray;
 
     class VulkanDevice;
     class VulkanTexture;
@@ -22,7 +35,7 @@ namespace NorvesLib::RHI::Vulkan
          * @param device Vulkanデバイス
          * @param desc スワップチェーン作成情報
          */
-        VulkanSwapChain(NorvesLib::Core::Container::TSharedPtr<VulkanDevice> device, const SwapChainDesc &desc);
+        VulkanSwapChain(TSharedPtr<VulkanDevice> device, const SwapChainDesc &desc);
 
         /**
          * @brief デストラクタ
@@ -68,6 +81,18 @@ namespace NorvesLib::RHI::Vulkan
         void Resize(uint32_t width, uint32_t height) override;
 
         /**
+         * @brief フレーム開始（フェンス待機＋イメージ取得）
+         * @return 成功時true
+         */
+        bool BeginFrame() override;
+
+        /**
+         * @brief フレーム終了（セマフォ同期付きサブミット＋プレゼント）
+         * @param commandList 実行するコマンドリスト
+         */
+        void EndFrame(CommandListPtr commandList) override;
+
+        /**
          * @brief スワップチェーンの幅を取得
          * @return 幅
          */
@@ -85,18 +110,21 @@ namespace NorvesLib::RHI::Vulkan
          */
         Format GetFormat() const override { return m_format; }
 
+        uint32_t GetCurrentFrameIndex() const override { return m_currentFrame; }
+        uint32_t GetMaxFramesInFlight() const override { return MAX_FRAMES_IN_FLIGHT; }
+
         // Vulkan固有の機能
         vk::SwapchainKHR GetVkSwapchain() const { return m_swapChain; }
         vk::SurfaceKHR GetVkSurface() const { return m_surface; }
         vk::Format GetVkFormat() const { return m_vkFormat; }
 
     private:
-        NorvesLib::Core::Container::TSharedPtr<VulkanDevice> m_device;
+        TSharedPtr<VulkanDevice> m_device;
         SwapChainDesc m_desc;
 
         uint32_t m_width = 0;
         uint32_t m_height = 0;
-        Format m_format = Format::Unknown;
+        Format m_format = Format::UNKNOWN;
         uint32_t m_currentImageIndex = 0;
 
         // Vulkan固有のメンバ
@@ -107,13 +135,13 @@ namespace NorvesLib::RHI::Vulkan
         vk::PresentModeKHR m_presentMode = vk::PresentModeKHR::eFifo;
 
         // スワップチェーンイメージ関連
-        NorvesLib::Core::Container::VariableArray<vk::Image> m_swapChainImages;
-        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::TSharedPtr<VulkanTexture>> m_backBufferTextures;
+        VariableArray<vk::Image> m_swapChainImages;
+        VariableArray<TSharedPtr<VulkanTexture>> m_backBufferTextures;
 
         // 同期オブジェクト
-        NorvesLib::Core::Container::VariableArray<vk::Semaphore> m_imageAvailableSemaphores;
-        NorvesLib::Core::Container::VariableArray<vk::Semaphore> m_renderFinishedSemaphores;
-        NorvesLib::Core::Container::VariableArray<vk::Fence> m_inFlightFences;
+        VariableArray<vk::Semaphore> m_imageAvailableSemaphores;
+        VariableArray<vk::Semaphore> m_renderFinishedSemaphores;
+        VariableArray<vk::Fence> m_inFlightFences;
         uint32_t m_currentFrame = 0;
         static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 

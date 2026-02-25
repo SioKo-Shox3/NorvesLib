@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RHI/IFramebuffer.h"
+#include "RHI/IDevice.h"
 
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
@@ -9,6 +10,11 @@
 
 namespace NorvesLib::RHI::Vulkan
 {
+    // 明示的なusing宣言（グローバル名前空間から参照）
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
+    using ::NorvesLib::Core::Container::VariableArray;
 
     class VulkanDevice;
     class VulkanRenderPass;
@@ -37,13 +43,14 @@ namespace NorvesLib::RHI::Vulkan
         VulkanFramebuffer(VulkanFramebuffer &&) = delete;
         VulkanFramebuffer &operator=(VulkanFramebuffer &&) = delete;
 
-        // IDeviceObjectインターフェース実装
-        ResourceType GetResourceType() const override { return ResourceType::Framebuffer; }
-
         // IFramebufferインターフェース実装
-        const FramebufferDesc &GetDesc() const override { return m_desc; }
         uint32_t GetWidth() const override { return m_desc.width; }
         uint32_t GetHeight() const override { return m_desc.height; }
+        RenderPassPtr GetRenderPass() const override { return m_desc.renderPass; }
+        TexturePtr GetColorAttachment(uint32_t index) const override;
+        TexturePtr GetDepthStencilAttachment() const override { return m_desc.depthStencilTarget; }
+        uint32_t GetColorAttachmentCount() const override { return static_cast<uint32_t>(m_desc.colorTargets.size()); }
+        bool HasDepthStencilAttachment() const override { return m_desc.depthStencilTarget != nullptr; }
 
         // Vulkan固有のメソッド
         vk::Framebuffer GetVkFramebuffer() const { return m_framebuffer; }
@@ -58,7 +65,7 @@ namespace NorvesLib::RHI::Vulkan
 
         // ヘルパーメソッド
         void CreateFramebuffer(TSharedPtr<VulkanRenderPass> renderPass);
-        vk::ImageView GetImageViewFromAttachment(const AttachmentRef &attachment);
+        vk::ImageView GetImageViewFromTexture(const TexturePtr &texture);
     };
 
 } // namespace NorvesLib::RHI::Vulkan

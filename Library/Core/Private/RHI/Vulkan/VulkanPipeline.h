@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RHI/IPipeline.h"
+#include "RHI/IDevice.h"
 
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
@@ -9,8 +10,11 @@
 
 namespace NorvesLib::RHI::Vulkan
 {
-
-    using namespace NorvesLib::Core::Container;
+    // 明示的なusing宣言（グローバル名前空間から参照）
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
+    using ::NorvesLib::Core::Container::VariableArray;
 
     class VulkanDevice;
     class VulkanShader;
@@ -47,16 +51,26 @@ namespace NorvesLib::RHI::Vulkan
         VulkanPipeline(TSharedPtr<VulkanDevice> device);
         ~VulkanPipeline() override;
 
-        // IDeviceObjectインターフェース実装
-        ResourceType GetResourceType() const override
-        {
-            return ResourceType::Pipeline;
-        }
-
         // IPipelineインターフェース実装
         PipelineType GetPipelineType() const override
         {
             return m_pipelineType;
+        }
+
+        uint32_t GetBindPointCount() const override
+        {
+            return static_cast<uint32_t>(m_descriptorSetLayouts.size());
+        }
+
+        // パイプラインタイプ判定
+        bool IsCompute() const
+        {
+            return m_pipelineType == PipelineType::Compute;
+        }
+
+        bool IsGraphics() const
+        {
+            return m_pipelineType == PipelineType::Graphics;
         }
 
         // Vulkan固有のメソッド
@@ -75,6 +89,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::Pipeline m_pipeline;
         TSharedPtr<VulkanPipelineLayout> m_pipelineLayout;
         PipelineType m_pipelineType;
+        VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> m_descriptorSetLayouts;
     };
 
     /**

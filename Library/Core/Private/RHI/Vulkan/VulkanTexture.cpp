@@ -14,18 +14,34 @@ namespace NorvesLib::RHI::Vulkan
     {
         switch (format)
         {
+        case Format::R8_UNORM:
+            return vk::Format::eR8Unorm;
+        case Format::R8G8_UNORM:
+            return vk::Format::eR8G8Unorm;
         case Format::R8G8B8A8_UNORM:
             return vk::Format::eR8G8B8A8Unorm;
+        case Format::R8G8B8A8_SRGB:
+            return vk::Format::eR8G8B8A8Srgb;
         case Format::B8G8R8A8_UNORM:
             return vk::Format::eB8G8R8A8Unorm;
-        case Format::R32G32B32A32_FLOAT:
-            return vk::Format::eR32G32B32A32Sfloat;
-        case Format::R32G32B32_FLOAT:
-            return vk::Format::eR32G32B32Sfloat;
-        case Format::R32G32_FLOAT:
-            return vk::Format::eR32G32Sfloat;
+        case Format::B8G8R8A8_SRGB:
+            return vk::Format::eB8G8R8A8Srgb;
+        case Format::R16_FLOAT:
+            return vk::Format::eR16Sfloat;
+        case Format::R16G16_FLOAT:
+            return vk::Format::eR16G16Sfloat;
+        case Format::R16G16B16A16_FLOAT:
+            return vk::Format::eR16G16B16A16Sfloat;
         case Format::R32_FLOAT:
             return vk::Format::eR32Sfloat;
+        case Format::R32G32_FLOAT:
+            return vk::Format::eR32G32Sfloat;
+        case Format::R32G32B32_FLOAT:
+            return vk::Format::eR32G32B32Sfloat;
+        case Format::R32G32B32A32_FLOAT:
+            return vk::Format::eR32G32B32A32Sfloat;
+        case Format::D16_UNORM:
+            return vk::Format::eD16Unorm;
         case Format::D24_UNORM_S8_UINT:
             return vk::Format::eD24UnormS8Uint;
         case Format::D32_FLOAT:
@@ -74,9 +90,9 @@ namespace NorvesLib::RHI::Vulkan
     void GetSubresourceLayout(const TextureDesc &desc, uint32_t mipLevel, uint32_t /*arrayIndex*/,
                               uint32_t &width, uint32_t &height, uint32_t &depth)
     {
-        width = std::max(1u, desc.width >> mipLevel);
-        height = std::max(1u, desc.height >> mipLevel);
-        depth = (desc.dimension == TextureDimension::Texture3D) ? std::max(1u, desc.depth >> mipLevel) : 1;
+        width = std::max(1u, desc.Width >> mipLevel);
+        height = std::max(1u, desc.Height >> mipLevel);
+        depth = (desc.Dimension == TextureDimension::Texture3D) ? std::max(1u, desc.Depth >> mipLevel) : 1;
     }
 
     VulkanTexture::VulkanTexture(TSharedPtr<VulkanDevice> device, const TextureDesc &desc)
@@ -120,7 +136,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::ImageCreateInfo imageInfo;
 
         // イメージタイプの設定
-        switch (m_desc.dimension)
+        switch (m_desc.Dimension)
         {
         case TextureDimension::Texture1D:
             imageInfo.imageType = vk::ImageType::e1D;
@@ -136,20 +152,20 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // キューブマップの場合は追加フラグを設定
-        if (m_desc.isCubemap)
+        if (m_desc.IsCubemap)
         {
             imageInfo.flags = vk::ImageCreateFlagBits::eCubeCompatible;
         }
 
         // 基本パラメータの設定
-        imageInfo.format = ConvertToVkFormat(m_desc.format);
-        imageInfo.extent.width = m_desc.width;
-        imageInfo.extent.height = m_desc.height;
-        imageInfo.extent.depth = (m_desc.dimension == TextureDimension::Texture3D) ? m_desc.depth : 1;
-        imageInfo.mipLevels = m_desc.mipLevels;
-        imageInfo.arrayLayers = m_desc.arraySize * (m_desc.isCubemap ? 6 : 1);
+        imageInfo.format = ConvertToVkFormat(m_desc.TextureFormat);
+        imageInfo.extent.width = m_desc.Width;
+        imageInfo.extent.height = m_desc.Height;
+        imageInfo.extent.depth = (m_desc.Dimension == TextureDimension::Texture3D) ? m_desc.Depth : 1;
+        imageInfo.mipLevels = m_desc.MipLevels;
+        imageInfo.arrayLayers = m_desc.ArraySize * (m_desc.IsCubemap ? 6 : 1);
         imageInfo.samples = vk::SampleCountFlagBits::e1;
-        imageInfo.usage = ConvertToVkImageUsageFlags(m_desc.usage);
+        imageInfo.usage = ConvertToVkImageUsageFlags(m_desc.Usage);
         imageInfo.tiling = vk::ImageTiling::eOptimal;
         imageInfo.sharingMode = vk::SharingMode::eExclusive;
         imageInfo.initialLayout = vk::ImageLayout::eUndefined;
@@ -199,19 +215,19 @@ namespace NorvesLib::RHI::Vulkan
         viewInfo.image = m_image;
 
         // ビュータイプの設定
-        switch (m_desc.dimension)
+        switch (m_desc.Dimension)
         {
         case TextureDimension::Texture1D:
-            viewInfo.viewType = (m_desc.arraySize > 1) ? vk::ImageViewType::e1DArray : vk::ImageViewType::e1D;
+            viewInfo.viewType = (m_desc.ArraySize > 1) ? vk::ImageViewType::e1DArray : vk::ImageViewType::e1D;
             break;
         case TextureDimension::Texture2D:
-            if (m_desc.isCubemap)
+            if (m_desc.IsCubemap)
             {
-                viewInfo.viewType = (m_desc.arraySize > 1) ? vk::ImageViewType::eCubeArray : vk::ImageViewType::eCube;
+                viewInfo.viewType = (m_desc.ArraySize > 1) ? vk::ImageViewType::eCubeArray : vk::ImageViewType::eCube;
             }
             else
             {
-                viewInfo.viewType = (m_desc.arraySize > 1) ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
+                viewInfo.viewType = (m_desc.ArraySize > 1) ? vk::ImageViewType::e2DArray : vk::ImageViewType::e2D;
             }
             break;
         case TextureDimension::Texture3D:
@@ -222,16 +238,16 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // フォーマットとコンポーネントマッピングの設定
-        viewInfo.format = ConvertToVkFormat(m_desc.format);
+        viewInfo.format = ConvertToVkFormat(m_desc.TextureFormat);
         viewInfo.components.r = vk::ComponentSwizzle::eIdentity;
         viewInfo.components.g = vk::ComponentSwizzle::eIdentity;
         viewInfo.components.b = vk::ComponentSwizzle::eIdentity;
         viewInfo.components.a = vk::ComponentSwizzle::eIdentity;
 
         // アスペクトフラグの設定
-        if ((m_desc.usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
+        if ((m_desc.Usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
         {
-            if (m_desc.format == Format::D24_UNORM_S8_UINT)
+            if (m_desc.TextureFormat == Format::D24_UNORM_S8_UINT)
             {
                 viewInfo.subresourceRange.aspectMask =
                     vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
@@ -248,9 +264,9 @@ namespace NorvesLib::RHI::Vulkan
 
         // サブリソース範囲の設定
         viewInfo.subresourceRange.baseMipLevel = 0;
-        viewInfo.subresourceRange.levelCount = m_desc.mipLevels;
+        viewInfo.subresourceRange.levelCount = m_desc.MipLevels;
         viewInfo.subresourceRange.baseArrayLayer = 0;
-        viewInfo.subresourceRange.layerCount = m_desc.arraySize * (m_desc.isCubemap ? 6 : 1);
+        viewInfo.subresourceRange.layerCount = m_desc.ArraySize * (m_desc.IsCubemap ? 6 : 1);
 
         // イメージビューの作成
         vk::Device vkDevice = m_device->GetVkDevice();
@@ -270,7 +286,7 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("更新データがnullです");
         }
 
-        if (mipLevel >= m_desc.mipLevels || arrayIndex >= m_desc.arraySize)
+        if (mipLevel >= m_desc.MipLevels || arrayIndex >= m_desc.ArraySize)
         {
             throw std::runtime_error("無効なミップレベルまたは配列インデックスです");
         }
@@ -343,10 +359,10 @@ namespace NorvesLib::RHI::Vulkan
 
         // レイアウト変更とコピー
         vk::ImageSubresourceRange subresourceRange;
-        if ((m_desc.usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
+        if ((m_desc.Usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
         {
             subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
-            if (m_desc.format == Format::D24_UNORM_S8_UINT)
+            if (m_desc.TextureFormat == Format::D24_UNORM_S8_UINT)
             {
                 subresourceRange.aspectMask |= vk::ImageAspectFlagBits::eStencil;
             }
@@ -357,8 +373,8 @@ namespace NorvesLib::RHI::Vulkan
         }
         subresourceRange.baseMipLevel = mipLevel;
         subresourceRange.levelCount = 1;
-        subresourceRange.baseArrayLayer = arrayIndex * (m_desc.isCubemap ? 6 : 1);
-        subresourceRange.layerCount = m_desc.isCubemap ? 6 : 1;
+        subresourceRange.baseArrayLayer = arrayIndex * (m_desc.IsCubemap ? 6 : 1);
+        subresourceRange.layerCount = m_desc.IsCubemap ? 6 : 1;
 
         // 転送先レイアウトに変更
         TransitionLayout(commandBuffer, vk::ImageLayout::eTransferDstOptimal, subresourceRange);
@@ -384,19 +400,19 @@ namespace NorvesLib::RHI::Vulkan
 
         // 適切なレイアウトに戻す
         vk::ImageLayout targetLayout;
-        if ((m_desc.usage & ResourceUsage::ShaderResource) != ResourceUsage::None)
+        if ((m_desc.Usage & ResourceUsage::ShaderResource) != ResourceUsage::None)
         {
             targetLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
         }
-        else if ((m_desc.usage & ResourceUsage::RenderTarget) != ResourceUsage::None)
+        else if ((m_desc.Usage & ResourceUsage::RenderTarget) != ResourceUsage::None)
         {
             targetLayout = vk::ImageLayout::eColorAttachmentOptimal;
         }
-        else if ((m_desc.usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
+        else if ((m_desc.Usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
         {
             targetLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
         }
-        else if ((m_desc.usage & ResourceUsage::UnorderedAccess) != ResourceUsage::None)
+        else if ((m_desc.Usage & ResourceUsage::UnorderedAccess) != ResourceUsage::None)
         {
             targetLayout = vk::ImageLayout::eGeneral;
         }
@@ -504,10 +520,10 @@ namespace NorvesLib::RHI::Vulkan
         vk::ImageLayout newLayout)
     {
         vk::ImageSubresourceRange subresourceRange;
-        if ((m_desc.usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
+        if ((m_desc.Usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
         {
             subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
-            if (m_desc.format == Format::D24_UNORM_S8_UINT)
+            if (m_desc.TextureFormat == Format::D24_UNORM_S8_UINT)
             {
                 subresourceRange.aspectMask |= vk::ImageAspectFlagBits::eStencil;
             }
@@ -517,9 +533,9 @@ namespace NorvesLib::RHI::Vulkan
             subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
         }
         subresourceRange.baseMipLevel = 0;
-        subresourceRange.levelCount = m_desc.mipLevels;
+        subresourceRange.levelCount = m_desc.MipLevels;
         subresourceRange.baseArrayLayer = 0;
-        subresourceRange.layerCount = m_desc.arraySize * (m_desc.isCubemap ? 6 : 1);
+        subresourceRange.layerCount = m_desc.ArraySize * (m_desc.IsCubemap ? 6 : 1);
 
         TransitionLayout(cmdBuffer, newLayout, subresourceRange);
     }
