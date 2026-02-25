@@ -1,12 +1,19 @@
 ﻿#pragma once
 
 #include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
+    // 明示的なusing宣言（グローバル名前空間から参照）
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
+    using ::NorvesLib::Core::Container::UnorderedMap;
+    using ::NorvesLib::Core::Container::VariableArray;
 
     class VulkanDevice;
     class VulkanBuffer;
@@ -26,7 +33,7 @@ namespace NorvesLib::RHI::Vulkan
          */
         VulkanDescriptorSetLayout(
             TSharedPtr<VulkanDevice> device,
-            const NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc> &bindings);
+            const VariableArray<DescriptorBindingDesc> &bindings);
 
         /**
          * @brief デストラクタ
@@ -34,12 +41,12 @@ namespace NorvesLib::RHI::Vulkan
         ~VulkanDescriptorSetLayout();
 
         vk::DescriptorSetLayout GetVkDescriptorSetLayout() const { return m_layout; }
-        const NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc> &GetBindings() const { return m_bindings; }
+        const VariableArray<DescriptorBindingDesc> &GetBindings() const { return m_bindings; }
         vk::DescriptorType ToVkDescriptorType(DescriptorType type) const;
 
     private:
         TSharedPtr<VulkanDevice> m_device;
-        NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc> m_bindings;
+        VariableArray<DescriptorBindingDesc> m_bindings;
         vk::DescriptorSetLayout m_layout;
 
         vk::ShaderStageFlags ToVkShaderStageFlags(ShaderStage stage) const;
@@ -136,7 +143,7 @@ namespace NorvesLib::RHI::Vulkan
             uint64_t range = VK_WHOLE_SIZE;
         };
 
-        NorvesLib::Core::Container::UnorderedMap<uint32_t, BindingInfo> m_bindings;
+        UnorderedMap<uint32_t, BindingInfo> m_bindings;
 
         void CreatePipelineLayout();
         vk::DescriptorType GetVkDescriptorType(uint32_t binding) const;

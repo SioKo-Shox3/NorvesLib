@@ -1,14 +1,13 @@
 ﻿#include "VulkanSwapChain.h"
 #include "VulkanDevice.h"
 #include "VulkanTexture.h"
+#include "VulkanCommandList.h"
 #include <stdexcept>
 #include <algorithm>
 #include "Container/Containers.h"
 
-// Windowsのインクルード（Windowsプラットフォーム用）
+// Windowsのインクルード（ヘッダで定義済みだが追加インクルードが必要）
 #ifdef _WIN32
-#define VK_USE_PLATFORM_WIN32_KHR
-#define NOMINMAX
 #include <Windows.h>
 #include <vulkan/vulkan_win32.h>
 #endif
@@ -158,6 +157,97 @@ namespace NorvesLib::RHI::Vulkan
         CreateImageViews();
     }
 
+    // フレーム開始（フェンス待機＋イメージ取得）
+    bool VulkanSwapChain::BeginFrame()
+    {
+        // 現在のフレームのフェンスが完了するまで待機
+        auto waitResult = m_device->GetVkDevice().waitForFences(
+            m_inFlightFences[m_currentFrame],
+            VK_TRUE,
+            UINT64_MAX);
+
+        if (waitResult != vk::Result::eSuccess)
+        {
+            return false;
+        }
+
+        // 次の画像を取得
+        auto acquireResult = m_device->GetVkDevice().acquireNextImageKHR(
+            m_swapChain,
+            UINT64_MAX,
+            m_imageAvailableSemaphores[m_currentFrame],
+            nullptr);
+
+        // スワップチェーンの再作成が必要な場合
+        if (acquireResult.result == vk::Result::eErrorOutOfDateKHR)
+        {
+            Resize(m_width, m_height);
+            return false;
+        }
+        else if (acquireResult.result != vk::Result::eSuccess && acquireResult.result != vk::Result::eSuboptimalKHR)
+        {
+            return false;
+        }
+
+        m_currentImageIndex = acquireResult.value;
+
+        // フェンスをリセット（イメージ取得成功後にリセット）
+        m_device->GetVkDevice().resetFences(m_inFlightFences[m_currentFrame]);
+
+        return true;
+    }
+
+    // フレーム終了（セマフォ同期付きサブミット＋プレゼント）
+    void VulkanSwapChain::EndFrame(CommandListPtr commandList)
+    {
+        auto vulkanCmdList = DynamicPointerCast<VulkanCommandList>(commandList);
+        if (!vulkanCmdList)
+        {
+            return;
+        }
+
+        vk::CommandBuffer cmdBuffer = vulkanCmdList->GetVkCommandBuffer();
+
+        // セマフォ同期付きでサブミット
+        vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+        vk::SubmitInfo submitInfo;
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &m_imageAvailableSemaphores[m_currentFrame];
+        submitInfo.pWaitDstStageMask = &waitStage;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &cmdBuffer;
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
+
+        auto submitResult = m_device->GetGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
+        if (submitResult != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("コマンドバッファのサブミットに失敗しました");
+        }
+
+        // プレゼント
+        vk::PresentInfoKHR presentInfo = {};
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = &m_swapChain;
+        presentInfo.pImageIndices = &m_currentImageIndex;
+
+        vk::Result presentResult = m_device->GetPresentQueue().presentKHR(presentInfo);
+
+        if (presentResult == vk::Result::eErrorOutOfDateKHR || presentResult == vk::Result::eSuboptimalKHR)
+        {
+            Resize(m_width, m_height);
+        }
+        else if (presentResult != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("画像のプレゼントに失敗しました");
+        }
+
+        // 次のフレームに進む
+        m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    }
+
     // サーフェスの作成
     void VulkanSwapChain::CreateSurface()
     {
@@ -167,7 +257,12 @@ namespace NorvesLib::RHI::Vulkan
         createInfo.hwnd = static_cast<HWND>(m_desc.windowHandle);
         createInfo.hinstance = GetModuleHandle(nullptr);
 
-        m_surface = m_device->GetVkInstance().createWin32SurfaceKHR(createInfo);
+        auto surfaceResult = m_device->GetVkInstance().createWin32SurfaceKHR(createInfo);
+        if (surfaceResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("Win32サーフェスの作成に失敗しました");
+        }
+        m_surface = surfaceResult.value;
 #else
         // 他のプラットフォーム用のサーフェス作成はここに追加
         throw std::runtime_error("このプラットフォームではサーフェスの作成がサポートされていません");
@@ -178,8 +273,12 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanSwapChain::CreateSwapChain()
     {
         // サーフェスのケイパビリティを取得
-        vk::SurfaceCapabilitiesKHR capabilities =
-            m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
+        auto capabilitiesResult = m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
+        if (capabilitiesResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("サーフェスケーパビリティの取得に失敗しました");
+        }
+        vk::SurfaceCapabilitiesKHR capabilities = capabilitiesResult.value;
 
         // サーフェスフォーマットを選択
         vk::SurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat();
@@ -206,23 +305,15 @@ namespace NorvesLib::RHI::Vulkan
         createInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment; // レンダリング用途
 
         // キューファミリーインデックスの取得
-        VariableArray<uint32_t> queueFamilyIndices = {
-            m_device->GetGraphicsQueueFamilyIndex(),
-            m_device->GetPresentQueueFamilyIndex()};
+        // 注: GetGraphicsQueueFamilyIndex をグラフィックスとプレゼント両方に使用
+        // （通常は同じキューファミリーがプレゼントもサポート）
+        uint32_t graphicsQueueFamily = m_device->GetGraphicsQueueFamilyIndex();
+        VariableArray<uint32_t> queueFamilyIndices = {graphicsQueueFamily};
 
-        // キューファミリーの共有モードを設定
-        if (queueFamilyIndices[0] != queueFamilyIndices[1])
-        {
-            // グラフィックスキューとプレゼントキューが異なる場合は共有モード
-            createInfo.imageSharingMode = vk::SharingMode::eConcurrent;
-            createInfo.queueFamilyIndexCount = 2;
-            createInfo.pQueueFamilyIndices = queueFamilyIndices.data();
-        }
-        else
-        {
-            // 同じキューファミリーの場合は排他モード
-            createInfo.imageSharingMode = vk::SharingMode::eExclusive;
-        }
+        // キューファミリーの共有モードを設定（単一キューファミリーなので排他モード）
+        createInfo.imageSharingMode = vk::SharingMode::eExclusive;
+        createInfo.queueFamilyIndexCount = 0;
+        createInfo.pQueueFamilyIndices = nullptr;
 
         // 追加の変換指定（通常は変換なし）
         createInfo.preTransform = capabilities.currentTransform;
@@ -232,10 +323,27 @@ namespace NorvesLib::RHI::Vulkan
         createInfo.oldSwapchain = nullptr; // 古いスワップチェーンはない
 
         // スワップチェーンの作成
-        m_swapChain = m_device->GetVkDevice().createSwapchainKHR(createInfo);
+        auto swapChainResult = m_device->GetVkDevice().createSwapchainKHR(createInfo);
+        if (swapChainResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("スワップチェーンの作成に失敗しました");
+        }
+        m_swapChain = swapChainResult.value;
 
         // スワップチェーンイメージの取得
-        m_swapChainImages = m_device->GetVkDevice().getSwapchainImagesKHR(m_swapChain);
+        auto imagesResult = m_device->GetVkDevice().getSwapchainImagesKHR(m_swapChain);
+        if (imagesResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("スワップチェーンイメージの取得に失敗しました");
+        }
+        // std::vectorからVariableArrayへコピー
+        const auto &images = imagesResult.value;
+        m_swapChainImages.clear();
+        m_swapChainImages.reserve(images.size());
+        for (const auto &image : images)
+        {
+            m_swapChainImages.push_back(image);
+        }
 
         // サイズとフォーマットを保存
         m_width = extent.width;
@@ -253,11 +361,10 @@ namespace NorvesLib::RHI::Vulkan
         {
             // テクスチャ記述子の設定
             TextureDesc textureDesc = {};
-            textureDesc.width = m_width;
-            textureDesc.height = m_height;
-            textureDesc.format = m_format;
-            textureDesc.usage = TextureUsage::RenderTarget;
-            textureDesc.initialState = ResourceState::Present;
+            textureDesc.Width = m_width;
+            textureDesc.Height = m_height;
+            textureDesc.TextureFormat = m_format;
+            textureDesc.Usage = ResourceUsage::RenderTarget;
 
             // VulkanTextureを作成（既存のvk::Imageを使用）
             m_backBufferTextures[i] = MakeShared<VulkanTexture>(m_device, textureDesc, m_swapChainImages[i]);
@@ -278,9 +385,9 @@ namespace NorvesLib::RHI::Vulkan
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
-            m_imageAvailableSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo);
-            m_renderFinishedSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo);
-            m_inFlightFences[i] = m_device->GetVkDevice().createFence(fenceInfo);
+            m_imageAvailableSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo).value;
+            m_renderFinishedSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo).value;
+            m_inFlightFences[i] = m_device->GetVkDevice().createFence(fenceInfo).value;
         }
     }
 
@@ -302,8 +409,12 @@ namespace NorvesLib::RHI::Vulkan
     vk::SurfaceFormatKHR VulkanSwapChain::ChooseSurfaceFormat()
     {
         // 利用可能なサーフェスフォーマットを取得
-        VariableArray<vk::SurfaceFormatKHR> availableFormats =
-            m_device->GetVkPhysicalDevice().getSurfaceFormatsKHR(m_surface);
+        auto formatsResult = m_device->GetVkPhysicalDevice().getSurfaceFormatsKHR(m_surface);
+        if (formatsResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("サーフェスフォーマットの取得に失敗しました");
+        }
+        auto &availableFormats = formatsResult.value;
 
         // 優先フォーマットを探す（SRGB + B8G8R8A8）
         for (const auto &availableFormat : availableFormats)
@@ -323,8 +434,12 @@ namespace NorvesLib::RHI::Vulkan
     vk::PresentModeKHR VulkanSwapChain::ChoosePresentMode()
     {
         // 利用可能なプレゼントモードを取得
-        VariableArray<vk::PresentModeKHR> availablePresentModes =
-            m_device->GetVkPhysicalDevice().getSurfacePresentModesKHR(m_surface);
+        auto presentModesResult = m_device->GetVkPhysicalDevice().getSurfacePresentModesKHR(m_surface);
+        if (presentModesResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("プレゼントモードの取得に失敗しました");
+        }
+        auto &availablePresentModes = presentModesResult.value;
 
         // VSync設定に基づいてプレゼントモードを選択
         if (!m_desc.vsync)
@@ -355,8 +470,12 @@ namespace NorvesLib::RHI::Vulkan
     // スワップチェーンの範囲の選択
     vk::Extent2D VulkanSwapChain::ChooseSwapExtent()
     {
-        vk::SurfaceCapabilitiesKHR capabilities =
-            m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
+        auto capabilitiesResult = m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
+        if (capabilitiesResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("サーフェスケーパビリティの取得に失敗しました");
+        }
+        vk::SurfaceCapabilitiesKHR capabilities = capabilitiesResult.value;
 
         // currentExtentが特殊値でなければ、それを使用
         if (capabilities.currentExtent.width != UINT32_MAX)
@@ -385,8 +504,12 @@ namespace NorvesLib::RHI::Vulkan
     // 最小イメージ数の取得
     uint32_t VulkanSwapChain::GetMinImageCount()
     {
-        vk::SurfaceCapabilitiesKHR capabilities =
-            m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
+        auto capabilitiesResult = m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
+        if (capabilitiesResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("サーフェスケーパビリティの取得に失敗しました");
+        }
+        vk::SurfaceCapabilitiesKHR capabilities = capabilitiesResult.value;
 
         // トリプルバッファリングを推奨するが、サポートされる最大数を超えないようにする
         uint32_t imageCount = capabilities.minImageCount + 1;
@@ -413,7 +536,7 @@ namespace NorvesLib::RHI::Vulkan
         case vk::Format::eB8G8R8A8Srgb:
             return Format::B8G8R8A8_SRGB;
         default:
-            return Format::Unknown;
+            return Format::UNKNOWN;
         }
     }
 

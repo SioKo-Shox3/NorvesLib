@@ -37,6 +37,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/RenderThread.cpp
     Private/Rendering/PersistentResourceCache.cpp
     Private/Rendering/SceneRenderer.cpp
+    Private/Rendering/RenderWorld.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
@@ -50,18 +51,18 @@ set(PRIVATE_SOURCES
     Private/Thread/Task.cpp
     Private/Thread/Thread.cpp
     Private/Thread/WorkStealingQueue.cpp
-    # RHI (TODO: Vulkan implementation is WIP - temporarily disabled)
-    # Private/RHI/Vulkan/VulkanBuffer.cpp
-    # Private/RHI/Vulkan/VulkanCommandList.cpp
-    # Private/RHI/Vulkan/VulkanDescriptorSet.cpp
-    # Private/RHI/Vulkan/VulkanDevice.cpp
-    # Private/RHI/Vulkan/VulkanFramebuffer.cpp
-    # Private/RHI/Vulkan/VulkanPipeline.cpp
-    # Private/RHI/Vulkan/VulkanRenderPass.cpp
-    # Private/RHI/Vulkan/VulkanSampler.cpp
-    # Private/RHI/Vulkan/VulkanShader.cpp
-    # Private/RHI/Vulkan/VulkanSwapChain.cpp
-    # Private/RHI/Vulkan/VulkanTexture.cpp
+    # RHI Vulkan
+    Private/RHI/Vulkan/VulkanBuffer.cpp
+    Private/RHI/Vulkan/VulkanCommandList.cpp
+    Private/RHI/Vulkan/VulkanDescriptorSet.cpp
+    Private/RHI/Vulkan/VulkanDevice.cpp
+    Private/RHI/Vulkan/VulkanFramebuffer.cpp
+    Private/RHI/Vulkan/VulkanPipeline.cpp
+    Private/RHI/Vulkan/VulkanRenderPass.cpp
+    Private/RHI/Vulkan/VulkanSampler.cpp
+    Private/RHI/Vulkan/VulkanShader.cpp
+    Private/RHI/Vulkan/VulkanSwapChain.cpp
+    Private/RHI/Vulkan/VulkanTexture.cpp
     # Memory
     Private/Memory/FrameAllocator.cpp
     Private/Memory/GlobalAllocator.cpp

@@ -228,8 +228,8 @@ namespace NorvesLib::Core::Rendering
          * @brief レンダリングスタットを取得
          * @note Debug::RenderingStats を使用します
          */
-        Debug::RenderingStats& GetStats() { return m_Stats; }
-        const Debug::RenderingStats& GetStats() const { return m_Stats; }
+        Debug::RenderingStats &GetStats() { return m_Stats; }
+        const Debug::RenderingStats &GetStats() const { return m_Stats; }
 
     private:
         // RHIリソース

@@ -1,12 +1,19 @@
 ﻿#pragma once
 
 #include "RHI/IShader.h"
+#include "RHI/IDevice.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
+    // 明示的なusing宣言（グローバル名前空間から参照）
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::String;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
+    using ::NorvesLib::Core::Container::VariableArray;
 
     class VulkanDevice;
 
@@ -30,10 +37,8 @@ namespace NorvesLib::RHI::Vulkan
 
         // IShaderインターフェース実装
         ShaderStage GetStage() const override { return m_desc.stage; }
-        const NorvesLib::Core::Container::String &GetEntryPoint() const override { return m_desc.entryPoint; }
-        const NorvesLib::Core::Container::VariableArray<uint8_t> &GetBytecode() const override { return m_desc.bytecode; }
-        const NorvesLib::Core::Container::String &GetSourceCode() const override { return m_desc.sourceCode; }
-        void *GetNativeHandle() const override { return reinterpret_cast<void *>(static_cast<VkShaderModule>(m_shaderModule)); }
+        ::NorvesLib::Core::Container::String GetEntryPoint() const override { return m_desc.entryPoint; }
+        const ::NorvesLib::Core::Container::VariableArray<uint8_t> &GetByteCode() const override { return m_desc.byteCode; }
 
         // Vulkan固有のメソッド (vulkan.hpp型)
         vk::ShaderModule GetVkShaderModule() const { return m_shaderModule; }

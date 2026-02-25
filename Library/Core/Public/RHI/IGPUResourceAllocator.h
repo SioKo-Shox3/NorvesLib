@@ -16,9 +16,9 @@ namespace NorvesLib::RHI
      */
     enum class AllocationType : uint8_t
     {
-        Dedicated,  ///< 専用メモリ（永続リソース向け）
-        Transient,  ///< 一時メモリ（フレーム内再利用可能）
-        Aliased     ///< エイリアス可能（RenderGraph向け）
+        Dedicated, ///< 専用メモリ（永続リソース向け）
+        Transient, ///< 一時メモリ（フレーム内再利用可能）
+        Aliased    ///< エイリアス可能（RenderGraph向け）
     };
 
     /**
@@ -26,18 +26,15 @@ namespace NorvesLib::RHI
      */
     struct BufferDesc
     {
-        uint64_t Size = 0;                              ///< バッファサイズ（バイト）
-        ResourceUsage Usage = ResourceUsage::None;      ///< 使用用途
-        bool CPUAccessible = false;                     ///< CPUからアクセス可能か
-        const char* DebugName = nullptr;                ///< デバッグ用名前
+        uint64_t Size = 0;                         ///< バッファサイズ（バイト）
+        ResourceUsage Usage = ResourceUsage::None; ///< 使用用途
+        bool CPUAccessible = false;                ///< CPUからアクセス可能か
+        const char *DebugName = nullptr;           ///< デバッグ用名前
 
         BufferDesc() = default;
 
-        BufferDesc(uint64_t size, ResourceUsage usage, bool cpuAccessible = false, const char* debugName = nullptr)
-            : Size(size)
-            , Usage(usage)
-            , CPUAccessible(cpuAccessible)
-            , DebugName(debugName)
+        BufferDesc(uint64_t size, ResourceUsage usage, bool cpuAccessible = false, const char *debugName = nullptr)
+            : Size(size), Usage(usage), CPUAccessible(cpuAccessible), DebugName(debugName)
         {
         }
     };
@@ -47,19 +44,20 @@ namespace NorvesLib::RHI
      */
     struct TextureDesc
     {
-        uint32_t Width = 1;                             ///< 幅
-        uint32_t Height = 1;                            ///< 高さ
-        uint32_t Depth = 1;                             ///< 深さ（3Dテクスチャ用）
-        uint32_t MipLevels = 1;                         ///< ミップレベル数
-        uint32_t ArraySize = 1;                         ///< 配列サイズ
-        Format TextureFormat = Format::R8G8B8A8_UNORM;  ///< フォーマット
-        ResourceUsage Usage = ResourceUsage::ShaderRead; ///< 使用用途
-        bool IsCubemap = false;                         ///< キューブマップか
-        const char* DebugName = nullptr;                ///< デバッグ用名前
+        uint32_t Width = 1;                                       ///< 幅
+        uint32_t Height = 1;                                      ///< 高さ
+        uint32_t Depth = 1;                                       ///< 深さ（3Dテクスチャ用）
+        uint32_t MipLevels = 1;                                   ///< ミップレベル数
+        uint32_t ArraySize = 1;                                   ///< 配列サイズ
+        Format TextureFormat = Format::R8G8B8A8_UNORM;            ///< フォーマット
+        ResourceUsage Usage = ResourceUsage::ShaderRead;          ///< 使用用途
+        TextureDimension Dimension = TextureDimension::Texture2D; ///< テクスチャ次元
+        bool IsCubemap = false;                                   ///< キューブマップか
+        const char *DebugName = nullptr;                          ///< デバッグ用名前
 
         TextureDesc() = default;
 
-        static TextureDesc RenderTarget(uint32_t width, uint32_t height, Format textureFormat, const char* name = nullptr)
+        static TextureDesc RenderTarget(uint32_t width, uint32_t height, Format textureFormat, const char *name = nullptr)
         {
             TextureDesc desc;
             desc.Width = width;
@@ -70,7 +68,7 @@ namespace NorvesLib::RHI
             return desc;
         }
 
-        static TextureDesc DepthStencil(uint32_t width, uint32_t height, Format textureFormat = Format::D24_UNORM_S8_UINT, const char* name = nullptr)
+        static TextureDesc DepthStencil(uint32_t width, uint32_t height, Format textureFormat = Format::D24_UNORM_S8_UINT, const char *name = nullptr)
         {
             TextureDesc desc;
             desc.Width = width;
@@ -87,9 +85,9 @@ namespace NorvesLib::RHI
      */
     struct BufferAllocation
     {
-        IBuffer* Buffer = nullptr;                      ///< バッファ
-        uint64_t Offset = 0;                            ///< メモリ内オフセット
-        uint64_t Size = 0;                              ///< サイズ
+        IBuffer *Buffer = nullptr;                       ///< バッファ
+        uint64_t Offset = 0;                             ///< メモリ内オフセット
+        uint64_t Size = 0;                               ///< サイズ
         AllocationType Type = AllocationType::Dedicated; ///< 確保タイプ
 
         bool IsValid() const { return Buffer != nullptr; }
@@ -100,8 +98,8 @@ namespace NorvesLib::RHI
      */
     struct TextureAllocation
     {
-        ITexture* Texture = nullptr;                    ///< テクスチャ
-        uint64_t Size = 0;                              ///< メモリサイズ
+        ITexture *Texture = nullptr;                     ///< テクスチャ
+        uint64_t Size = 0;                               ///< メモリサイズ
         AllocationType Type = AllocationType::Dedicated; ///< 確保タイプ
 
         bool IsValid() const { return Texture != nullptr; }
@@ -144,13 +142,13 @@ namespace NorvesLib::RHI
          * @param type 確保タイプ
          * @return バッファ確保結果
          */
-        virtual BufferAllocation AllocateBuffer(const BufferDesc& desc, AllocationType type = AllocationType::Dedicated) = 0;
+        virtual BufferAllocation AllocateBuffer(const BufferDesc &desc, AllocationType type = AllocationType::Dedicated) = 0;
 
         /**
          * @brief バッファを解放します
          * @param allocation 解放するバッファ
          */
-        virtual void FreeBuffer(BufferAllocation& allocation) = 0;
+        virtual void FreeBuffer(BufferAllocation &allocation) = 0;
 
         // ========================================
         // テクスチャ操作
@@ -162,13 +160,13 @@ namespace NorvesLib::RHI
          * @param type 確保タイプ
          * @return テクスチャ確保結果
          */
-        virtual TextureAllocation AllocateTexture(const TextureDesc& desc, AllocationType type = AllocationType::Dedicated) = 0;
+        virtual TextureAllocation AllocateTexture(const TextureDesc &desc, AllocationType type = AllocationType::Dedicated) = 0;
 
         /**
          * @brief テクスチャを解放します
          * @param allocation 解放するテクスチャ
          */
-        virtual void FreeTexture(TextureAllocation& allocation) = 0;
+        virtual void FreeTexture(TextureAllocation &allocation) = 0;
 
         // ========================================
         // 統計情報

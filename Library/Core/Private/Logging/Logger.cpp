@@ -450,5 +450,9 @@ namespace NorvesLib::Core::Logging
     template void Logger::LogFormat<int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, int &);
     template void Logger::LogFormat<const char *>(LogLevel, const String &, const char *, const char *, int32_t, const char *, const char *&&);
     template void Logger::LogFormat<double>(LogLevel, const String &, const char *, const char *, int32_t, const char *, double &&);
-
+    // unsigned int variants (used by RenderWorld logging)
+    template void Logger::LogFormat<unsigned int>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &&);
+    template void Logger::LogFormat<unsigned int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &);
+    template void Logger::LogFormat<unsigned int &, unsigned int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &, unsigned int &);
+    template void Logger::LogFormat<unsigned int, unsigned int, unsigned int>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &&, unsigned int &&, unsigned int &&);
 } // namespace NorvesLib::Core::Logging

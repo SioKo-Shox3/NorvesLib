@@ -131,7 +131,7 @@ namespace NorvesLib::RHI::Vulkan
         std::size_t h = 0;
         h ^= std::hash<VkRenderPass>()(static_cast<VkRenderPass>(key.renderPass)) << 1;
         h ^= std::hash<int>()(static_cast<int>(key.topology)) << 2;
-        h ^= std::hash<int>()(static_cast<int>(key.cullMode)) << 3;
+        h ^= std::hash<VkCullModeFlags>()(static_cast<VkCullModeFlags>(key.cullMode)) << 3;
         h ^= std::hash<bool>()(key.bDepthTestEnable) << 4;
         h ^= std::hash<bool>()(key.bBlendEnable) << 5;
         return h;
@@ -154,18 +154,24 @@ namespace NorvesLib::RHI::Vulkan
     VulkanCommandList::VulkanCommandList(TSharedPtr<VulkanDevice> device)
         : m_device(device)
     {
-        // コマンドバッファの割り当て
+        // フレームごとのコマンドバッファを割り当て
         vk::CommandBufferAllocateInfo allocInfo;
-        allocInfo.commandPool = m_device->GetVkCommandPool();
+        allocInfo.commandPool = m_device->GetCommandPool();
         allocInfo.level = vk::CommandBufferLevel::ePrimary;
-        allocInfo.commandBufferCount = 1;
+        allocInfo.commandBufferCount = MAX_COMMAND_BUFFERS;
 
         auto result = m_device->GetVkDevice().allocateCommandBuffers(allocInfo);
         if (result.result != vk::Result::eSuccess)
         {
             throw std::runtime_error("コマンドバッファの割り当てに失敗しました");
         }
-        m_commandBuffer = result.value[0];
+
+        m_commandBuffers.reserve(MAX_COMMAND_BUFFERS);
+        for (uint32_t i = 0; i < MAX_COMMAND_BUFFERS; ++i)
+        {
+            m_commandBuffers.push_back(result.value[i]);
+        }
+        m_commandBuffer = m_commandBuffers[0];
 
         // フェンスの作成
         vk::FenceCreateInfo fenceInfo;
@@ -193,10 +199,12 @@ namespace NorvesLib::RHI::Vulkan
             m_device->GetVkDevice().destroyFence(m_fence);
         }
 
-        if (m_commandBuffer)
+        if (m_commandBuffers.size() > 0)
         {
             m_device->GetVkDevice().freeCommandBuffers(
-                m_device->GetVkCommandPool(), 1, &m_commandBuffer);
+                m_device->GetCommandPool(),
+                static_cast<uint32_t>(m_commandBuffers.size()),
+                m_commandBuffers.data());
         }
     }
 
@@ -218,6 +226,29 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bIsRecording = true;
+    }
+
+    void VulkanCommandList::BeginRecording()
+    {
+        // 現在のフレームのコマンドバッファを使用（SetFrameIndexで設定済み）
+        Reset();
+
+        vk::CommandBufferBeginInfo beginInfo;
+        beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+
+        auto result = m_commandBuffer.begin(beginInfo);
+        if (result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("コマンドバッファの開始に失敗しました");
+        }
+
+        m_bIsRecording = true;
+    }
+
+    void VulkanCommandList::SetFrameIndex(uint32_t frameIndex)
+    {
+        m_currentFrameIndex = frameIndex % MAX_COMMAND_BUFFERS;
+        m_commandBuffer = m_commandBuffers[m_currentFrameIndex];
     }
 
     void VulkanCommandList::End()
@@ -247,7 +278,7 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &m_commandBuffer;
 
-        vk::Queue queue = m_device->GetVkGraphicsQueue();
+        vk::Queue queue = m_device->GetGraphicsQueue();
         auto result = queue.submit(1, &submitInfo, m_fence);
         if (result != vk::Result::eSuccess)
         {
@@ -275,22 +306,20 @@ namespace NorvesLib::RHI::Vulkan
 
         for (const auto &attachment : desc.colorAttachments)
         {
-            vk::ClearValue clearValue;
-            clearValue.color = vk::ClearColorValue{std::array<float, 4>{
-                attachment.clearColor.r,
-                attachment.clearColor.g,
-                attachment.clearColor.b,
-                attachment.clearColor.a}};
-            clearValues.push_back(clearValue);
+            VkClearValue clearValue = {};
+            clearValue.color.float32[0] = attachment.clearColor[0];
+            clearValue.color.float32[1] = attachment.clearColor[1];
+            clearValue.color.float32[2] = attachment.clearColor[2];
+            clearValue.color.float32[3] = attachment.clearColor[3];
+            clearValues.push_back(*reinterpret_cast<vk::ClearValue *>(&clearValue));
         }
 
-        if (desc.depthStencilAttachment.has_value())
+        if (desc.hasDepthStencil)
         {
-            vk::ClearValue clearValue;
-            clearValue.depthStencil = vk::ClearDepthStencilValue{
-                desc.depthStencilAttachment->clearDepth,
-                desc.depthStencilAttachment->clearStencil};
-            clearValues.push_back(clearValue);
+            VkClearValue clearValue = {};
+            clearValue.depthStencil.depth = desc.depthStencilAttachment.clearDepth;
+            clearValue.depthStencil.stencil = desc.depthStencilAttachment.clearStencil;
+            clearValues.push_back(*reinterpret_cast<vk::ClearValue *>(&clearValue));
         }
 
         vk::RenderPassBeginInfo renderPassInfo;
@@ -332,8 +361,10 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::SetScissor(const ScissorRect &scissor)
     {
         vk::Rect2D vkScissor;
-        vkScissor.offset = vk::Offset2D{static_cast<int32_t>(scissor.x), static_cast<int32_t>(scissor.y)};
-        vkScissor.extent = vk::Extent2D{scissor.width, scissor.height};
+        vkScissor.offset = vk::Offset2D{scissor.left, scissor.top};
+        vkScissor.extent = vk::Extent2D{
+            static_cast<uint32_t>(scissor.right - scissor.left),
+            static_cast<uint32_t>(scissor.bottom - scissor.top)};
 
         m_commandBuffer.setScissor(0, 1, &vkScissor);
     }

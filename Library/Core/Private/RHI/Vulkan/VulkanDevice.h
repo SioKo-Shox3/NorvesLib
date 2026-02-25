@@ -1,12 +1,27 @@
 ﻿#pragma once
 
 #include "RHI/IDevice.h"
+
+// Windowsプラットフォーム用Vulkan拡張
+#ifdef _WIN32
+#define VK_USE_PLATFORM_WIN32_KHR
+#define NOMINMAX
+#endif
+
+// Vulkan Dynamic Dispatcherの設定
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
+    // 明示的なusing宣言（グローバル名前空間から参照）
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
+    using ::NorvesLib::Core::Container::UnorderedMap;
+    using ::NorvesLib::Core::Container::VariableArray;
 
     class VulkanBuffer;
     class VulkanCommandList;
@@ -98,7 +113,7 @@ namespace NorvesLib::RHI::Vulkan
 
         // 実装固有の機能
         vk::Format FindSupportedFormat(
-            const NorvesLib::Core::Container::VariableArray<vk::Format> &candidates,
+            const VariableArray<vk::Format> &candidates,
             vk::ImageTiling tiling,
             vk::FormatFeatureFlags features) const;
 
@@ -135,8 +150,8 @@ namespace NorvesLib::RHI::Vulkan
         bool m_bValidationEnabled = false;
 
         // フォーマット変換テーブル
-        NorvesLib::Core::Container::UnorderedMap<Format, vk::Format> m_formatMap;
-        NorvesLib::Core::Container::UnorderedMap<vk::Format, Format> m_reverseFormatMap;
+        UnorderedMap<Format, vk::Format> m_formatMap;
+        UnorderedMap<vk::Format, Format> m_reverseFormatMap;
 
         // 初期化メソッド
         void CreateInstance();
@@ -148,8 +163,8 @@ namespace NorvesLib::RHI::Vulkan
 
         // ヘルパー
         bool IsDeviceSuitable(vk::PhysicalDevice device);
-        NorvesLib::Core::Container::VariableArray<const char *> GetRequiredExtensions();
-        NorvesLib::Core::Container::VariableArray<const char *> GetDeviceExtensions();
+        VariableArray<const char *> GetRequiredExtensions();
+        VariableArray<const char *> GetDeviceExtensions();
         void FindQueueFamilies(vk::PhysicalDevice device);
 
         // バリデーション関連

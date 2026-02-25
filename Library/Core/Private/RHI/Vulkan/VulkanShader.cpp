@@ -27,14 +27,14 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanShader::CreateShaderModule()
     {
-        if (m_desc.bytecode.empty())
+        if (m_desc.byteCode.empty())
         {
             throw std::runtime_error("シェーダーバイトコードが空です");
         }
 
         vk::ShaderModuleCreateInfo createInfo;
-        createInfo.codeSize = m_desc.bytecode.size();
-        createInfo.pCode = reinterpret_cast<const uint32_t *>(m_desc.bytecode.data());
+        createInfo.codeSize = m_desc.byteCode.size();
+        createInfo.pCode = reinterpret_cast<const uint32_t *>(m_desc.byteCode.data());
 
         auto result = m_device->GetVkDevice().createShaderModule(createInfo);
         if (result.result != vk::Result::eSuccess)

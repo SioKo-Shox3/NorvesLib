@@ -16,9 +16,9 @@ namespace NorvesLib::RHI::Vulkan
         samplerInfo.mipmapMode = ToVkMipmapMode(desc.filterMip);
 
         // アドレッシングモードの設定
-        samplerInfo.addressModeU = ToVkAddressMode(desc.addressModeU);
-        samplerInfo.addressModeV = ToVkAddressMode(desc.addressModeV);
-        samplerInfo.addressModeW = ToVkAddressMode(desc.addressModeW);
+        samplerInfo.addressModeU = ToVkAddressMode(desc.addressU);
+        samplerInfo.addressModeV = ToVkAddressMode(desc.addressV);
+        samplerInfo.addressModeW = ToVkAddressMode(desc.addressW);
 
         // アニソトロピック フィルタリングの設定
         samplerInfo.anisotropyEnable = desc.maxAnisotropy > 1 ? vk::True : vk::False;
@@ -35,9 +35,9 @@ namespace NorvesLib::RHI::Vulkan
         samplerInfo.compareOp = ToVkCompareOp(desc.compareFunc);
 
         // MIPマップの設定
-        samplerInfo.mipLodBias = desc.mipLodBias;
-        samplerInfo.minLod = desc.minLod;
-        samplerInfo.maxLod = desc.maxLod;
+        samplerInfo.mipLodBias = desc.mipLODBias;
+        samplerInfo.minLod = desc.minLOD;
+        samplerInfo.maxLod = desc.maxLOD;
 
         // サンプラーの作成
         auto result = m_device->GetVkDevice().createSampler(samplerInfo);
@@ -129,18 +129,23 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
-    vk::BorderColor VulkanSampler::ToVkBorderColor(SamplerDesc::BorderColor color) const
+    vk::BorderColor VulkanSampler::ToVkBorderColor(const float borderColor[4]) const
     {
-        switch (color)
+        // float配列からVulkanのBorderColorを推定
+        // [0,0,0,0] = TransparentBlack
+        // [0,0,0,1] = OpaqueBlack
+        // [1,1,1,1] = OpaqueWhite
+        if (borderColor[3] == 0.0f)
         {
-        case SamplerDesc::BorderColor::TransparentBlack:
             return vk::BorderColor::eFloatTransparentBlack;
-        case SamplerDesc::BorderColor::OpaqueBlack:
+        }
+        else if (borderColor[0] == 0.0f && borderColor[1] == 0.0f && borderColor[2] == 0.0f)
+        {
             return vk::BorderColor::eFloatOpaqueBlack;
-        case SamplerDesc::BorderColor::OpaqueWhite:
+        }
+        else
+        {
             return vk::BorderColor::eFloatOpaqueWhite;
-        default:
-            return vk::BorderColor::eFloatTransparentBlack;
         }
     }
 

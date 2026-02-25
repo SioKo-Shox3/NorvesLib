@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "RHI/ICommandList.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
@@ -8,6 +8,33 @@
 
 namespace NorvesLib::RHI::Vulkan
 {
+
+    // グローバル名前空間から絶対パスで指定
+    using ::NorvesLib::Core::Container::DynamicPointerCast;
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::StaticPointerCast;
+    using ::NorvesLib::Core::Container::String;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
+    using ::NorvesLib::Core::Container::UnorderedMap;
+    using ::NorvesLib::Core::Container::VariableArray;
+
+    // Vulkanハンドル用カスタムハッシュ
+    struct VkBufferHash
+    {
+        std::size_t operator()(const vk::Buffer &buffer) const noexcept
+        {
+            return std::hash<VkBuffer>()(static_cast<VkBuffer>(buffer));
+        }
+    };
+
+    struct VkImageHash
+    {
+        std::size_t operator()(const vk::Image &image) const noexcept
+        {
+            return std::hash<VkImage>()(static_cast<VkImage>(image));
+        }
+    };
 
     class VulkanDevice;
     class VulkanBuffer;
@@ -40,8 +67,8 @@ namespace NorvesLib::RHI::Vulkan
         };
 
         // リソースの状態を追跡
-        NorvesLib::Core::Container::UnorderedMap<vk::Buffer, BufferState> bufferStates;
-        NorvesLib::Core::Container::UnorderedMap<vk::Image, ImageState> imageStates;
+        UnorderedMap<vk::Buffer, BufferState, VkBufferHash> bufferStates;
+        UnorderedMap<vk::Image, ImageState, VkImageHash> imageStates;
 
         // リソース状態からアクセスフラグに変換
         vk::AccessFlags ResourceStateToAccessFlags(ResourceState state) const;
@@ -62,9 +89,9 @@ namespace NorvesLib::RHI::Vulkan
         struct GraphicsPipelineCacheKey
         {
             vk::RenderPass renderPass;
-            NorvesLib::Core::Container::VariableArray<vk::ShaderModule> shaderModules;
-            NorvesLib::Core::Container::VariableArray<vk::VertexInputBindingDescription> vertexBindings;
-            NorvesLib::Core::Container::VariableArray<vk::VertexInputAttributeDescription> vertexAttributes;
+            VariableArray<vk::ShaderModule> shaderModules;
+            VariableArray<vk::VertexInputBindingDescription> vertexBindings;
+            VariableArray<vk::VertexInputAttributeDescription> vertexAttributes;
             vk::PrimitiveTopology topology;
             vk::CullModeFlags cullMode;
             vk::FrontFace frontFace;
@@ -104,8 +131,8 @@ namespace NorvesLib::RHI::Vulkan
         };
 
         // パイプラインキャッシュ
-        NorvesLib::Core::Container::UnorderedMap<GraphicsPipelineCacheKey, vk::Pipeline, GraphicsPipelineCacheKeyHash> graphicsPipelines;
-        NorvesLib::Core::Container::UnorderedMap<ComputePipelineCacheKey, vk::Pipeline, ComputePipelineCacheKeyHash> computePipelines;
+        UnorderedMap<GraphicsPipelineCacheKey, vk::Pipeline, GraphicsPipelineCacheKeyHash> graphicsPipelines;
+        UnorderedMap<ComputePipelineCacheKey, vk::Pipeline, ComputePipelineCacheKeyHash> computePipelines;
 
         // Vulkanパイプラインキャッシュオブジェクト
         vk::PipelineCache pipelineCache;
@@ -176,6 +203,8 @@ namespace NorvesLib::RHI::Vulkan
 
         // ICommandListインターフェース実装
         void Begin() override;
+        void BeginRecording() override;
+        void SetFrameIndex(uint32_t frameIndex) override;
         void End() override;
         void Submit(bool bWaitForCompletion = false) override;
 
@@ -258,13 +287,13 @@ namespace NorvesLib::RHI::Vulkan
          * @brief パイプラインキャッシュの保存
          * @param filePath 保存先ファイルパス
          */
-        void SavePipelineCache(const NorvesLib::Core::Container::String &filePath);
+        void SavePipelineCache(const String &filePath);
 
         /**
          * @brief パイプラインキャッシュの読み込み
          * @param filePath 読み込み元ファイルパス
          */
-        void LoadPipelineCache(const NorvesLib::Core::Container::String &filePath);
+        void LoadPipelineCache(const String &filePath);
 
         /**
          * @brief リソースバリア追跡のリセット
@@ -273,11 +302,14 @@ namespace NorvesLib::RHI::Vulkan
 
     private:
         TSharedPtr<VulkanDevice> m_device;
-        vk::CommandBuffer m_commandBuffer;
+        vk::CommandBuffer m_commandBuffer;                 ///< 現在のフレームのコマンドバッファ（m_commandBuffersの要素を参照）
+        VariableArray<vk::CommandBuffer> m_commandBuffers; ///< フレームごとのコマンドバッファ
+        uint32_t m_currentFrameIndex = 0;
+        static constexpr uint32_t MAX_COMMAND_BUFFERS = 3; ///< トリプルバッファリングまで対応
         vk::Fence m_fence;
 
         // ディスクリプタプール関連
-        NorvesLib::Core::Container::VariableArray<vk::DescriptorPool> m_descriptorPools;
+        VariableArray<vk::DescriptorPool> m_descriptorPools;
         static constexpr uint32_t MAX_DESCRIPTOR_SETS = 100;
         static constexpr uint32_t MAX_DESCRIPTORS_PER_TYPE = 1000;
 
@@ -286,8 +318,8 @@ namespace NorvesLib::RHI::Vulkan
 
         // 現在バインドされているリソース
         PipelinePtr m_currentPipeline;
-        NorvesLib::Core::Container::VariableArray<BufferPtr> m_currentVertexBuffers;
-        NorvesLib::Core::Container::VariableArray<uint64_t> m_currentVertexBufferOffsets;
+        VariableArray<BufferPtr> m_currentVertexBuffers;
+        VariableArray<uint64_t> m_currentVertexBufferOffsets;
         BufferPtr m_currentIndexBuffer;
         uint64_t m_currentIndexBufferOffset = 0;
 
@@ -298,20 +330,20 @@ namespace NorvesLib::RHI::Vulkan
         PipelineStateCache m_pipelineStateCache;
 
         // 一時リソース保存用（リソース解放を防ぐため）
-        NorvesLib::Core::Container::VariableArray<TSharedPtr<void>> m_temporaryResources;
+        VariableArray<TSharedPtr<void>> m_temporaryResources;
 
         // ディスクリプタセット管理
         struct DescriptorSetInfo
         {
             vk::DescriptorSet descriptorSet;
-            NorvesLib::Core::Container::UnorderedMap<ShaderBindingKey, BindingResourceInfo, ShaderBindingKeyHash> resources;
+            UnorderedMap<ShaderBindingKey, BindingResourceInfo, ShaderBindingKeyHash> resources;
             bool bIsDirty = false;
         };
 
-        NorvesLib::Core::Container::UnorderedMap<uint32_t, DescriptorSetInfo> m_descriptorSetCache;
+        UnorderedMap<uint32_t, DescriptorSetInfo> m_descriptorSetCache;
 
         // バインディングリソース情報
-        NorvesLib::Core::Container::UnorderedMap<ShaderBindingKey, BindingResourceInfo, ShaderBindingKeyHash> m_bindingResources;
+        UnorderedMap<ShaderBindingKey, BindingResourceInfo, ShaderBindingKeyHash> m_bindingResources;
 
         // プライベートメソッド
         void Reset();

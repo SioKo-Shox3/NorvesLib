@@ -6,6 +6,9 @@
 #include "Application/IWindow.h"
 #include "Application/ApplicationFactory.h"
 #include "Platform/Windows/WindowsApplicationFactory.h"
+#include "Rendering/RenderWorld.h"
+#include "RHI/Vulkan/VulkanRHI.h"
+#include "RHI/RHIConfig.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
 
@@ -103,6 +106,33 @@ namespace NorvesLib::Core::Engine
             return false;
         }
 
+        // RHI初期化（エンジン層の責務）
+        if (!RHI_INITIALIZE())
+        {
+            LOG_ERROR("Failed to initialize RHI");
+            return false;
+        }
+        LOG_INFO("RHI initialized successfully");
+
+        // レンダリングシステムを初期化
+        {
+            Rendering::RenderWorldSettings renderSettings;
+            renderSettings.Device = RHI_GET_DEVICE();
+            renderSettings.WindowHandle = GEngine->GetMainWindow()->GetNativeHandle();
+            renderSettings.Width = config.WindowWidth;
+            renderSettings.Height = config.WindowHeight;
+            renderSettings.BackBufferCount = 2;
+            renderSettings.bVSync = true;
+            renderSettings.bEnableValidation = true;
+
+            if (!GEngine->GetRenderWorld().Initialize(renderSettings))
+            {
+                LOG_ERROR("Failed to initialize RenderWorld");
+                return false;
+            }
+            LOG_INFO("RenderWorld initialized successfully");
+        }
+
         // OnInitialize呼び出し
         if (handler && !handler->OnInitialize())
         {
@@ -174,6 +204,13 @@ namespace NorvesLib::Core::Engine
                 handler->OnPreShutdown();
             }
 
+            // レンダリングシステムをシャットダウン
+            GEngine->GetRenderWorld().Shutdown();
+
+            // RHI終了（エンジン層の責務）
+            RHI_SHUTDOWN();
+            LOG_INFO("RHI shutdown completed");
+
             // GameModeステートマシンを解放
             GEngine->SetGameModeStateMachine(nullptr);
 
@@ -235,6 +272,15 @@ namespace NorvesLib::Core::Engine
         }
 
         // TODO: 描画処理
+        {
+            auto &renderWorld = GEngine->GetRenderWorld();
+            if (renderWorld.IsInitialized())
+            {
+                renderWorld.BeginFrame();
+                renderWorld.RenderTriangle();
+                renderWorld.EndFrame();
+            }
+        }
 
         // OnPostRender呼び出し
         if (handler)

@@ -2,29 +2,38 @@
 
 #include "RHITypes.h"
 
-namespace NorvesLib::RHI 
+namespace NorvesLib::RHI
 {
 
-/**
- * @brief パイプラインインターフェース
- * パイプラインはシェーダー、ステート、入出力レイアウト等を含むレンダリングの設定です。
- */
-class IPipeline 
-{
-public:
-    virtual ~IPipeline() = default;
-
     /**
-     * @brief パイプラインがコンピュートパイプラインかどうか
-     * @return コンピュートパイプラインの場合true、グラフィックパイプラインの場合false
+     * @brief パイプラインインターフェース
+     * パイプラインはシェーダー、ステート、入出力レイアウト等を含むレンダリングの設定です。
      */
-    virtual bool IsComputePipeline() const = 0;
+    class IPipeline
+    {
+    public:
+        virtual ~IPipeline() = default;
 
-    /**
-     * @brief バインドポイント数の取得
-     * @return バインドポイント（ディスクリプタセット）の数
-     */
-    virtual uint32_t GetBindPointCount() const = 0;
-};
+        /**
+         * @brief パイプラインタイプを取得
+         * @return パイプラインタイプ
+         */
+        virtual PipelineType GetPipelineType() const = 0;
+
+        /**
+         * @brief パイプラインがコンピュートパイプラインかどうか
+         * @return コンピュートパイプラインの場合true、グラフィックパイプラインの場合false
+         */
+        virtual bool IsComputePipeline() const
+        {
+            return GetPipelineType() == PipelineType::Compute;
+        }
+
+        /**
+         * @brief バインドポイント数の取得
+         * @return バインドポイント（ディスクリプタセット）の数
+         */
+        virtual uint32_t GetBindPointCount() const = 0;
+    };
 
 } // namespace NorvesLib::RHI

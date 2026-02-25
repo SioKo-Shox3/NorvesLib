@@ -46,6 +46,16 @@ namespace NorvesLib::RHI
     };
 
     /**
+     * @brief テクスチャ次元の種類
+     */
+    enum class TextureDimension
+    {
+        Texture1D,
+        Texture2D,
+        Texture3D
+    };
+
+    /**
      * @brief リソースの使用方法を定義するフラグ
      */
     enum class ResourceUsage : uint32_t
@@ -59,7 +69,9 @@ namespace NorvesLib::RHI
         TransferDst = 1 << 5,
         VertexBuffer = 1 << 6,
         IndexBuffer = 1 << 7,
-        ConstantBuffer = 1 << 8
+        ConstantBuffer = 1 << 8,
+        ShaderResource = ShaderRead,  // エイリアス: 互換性のため
+        UnorderedAccess = ShaderWrite // エイリアス: 互換性のため
     };
 
     inline ResourceUsage operator|(ResourceUsage a, ResourceUsage b)
@@ -90,6 +102,11 @@ namespace NorvesLib::RHI
     inline ShaderStage operator|(ShaderStage a, ShaderStage b)
     {
         return static_cast<ShaderStage>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    }
+
+    inline ShaderStage operator&(ShaderStage a, ShaderStage b)
+    {
+        return static_cast<ShaderStage>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
     }
 
     /**
@@ -183,6 +200,63 @@ namespace NorvesLib::RHI
     };
 
     /**
+     * @brief ポリゴンモード（塗りつぶし方法）
+     */
+    enum class PolygonMode
+    {
+        Fill,
+        Line,
+        Point
+    };
+
+    /**
+     * @brief 前面の定義
+     */
+    enum class FrontFace
+    {
+        CounterClockwise,
+        Clockwise
+    };
+
+    /**
+     * @brief 比較演算子
+     */
+    enum class CompareOp
+    {
+        Never,
+        Less,
+        Equal,
+        LessOrEqual,
+        Greater,
+        NotEqual,
+        GreaterOrEqual,
+        Always
+    };
+
+    /**
+     * @brief カラー書き込みマスク
+     */
+    enum class ColorWriteMask : uint32_t
+    {
+        None = 0,
+        R = 1 << 0,
+        G = 1 << 1,
+        B = 1 << 2,
+        A = 1 << 3,
+        All = R | G | B | A
+    };
+
+    inline ColorWriteMask operator|(ColorWriteMask a, ColorWriteMask b)
+    {
+        return static_cast<ColorWriteMask>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    }
+
+    inline ColorWriteMask operator&(ColorWriteMask a, ColorWriteMask b)
+    {
+        return static_cast<ColorWriteMask>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+    }
+
+    /**
      * @brief テクスチャアドレスモード
      */
     enum class TextureAddressMode
@@ -228,6 +302,173 @@ namespace NorvesLib::RHI
         ResolveSource,
         Present,
         GenericRead
+    };
+
+    /**
+     * @brief ディスクリプタタイプ
+     */
+    enum class DescriptorType
+    {
+        UniformBuffer,
+        SampledImage,
+        Sampler,
+        StorageBuffer,
+        StorageImage,
+        UniformTexelBuffer,
+        StorageTexelBuffer,
+        CombinedImageSampler
+    };
+
+    /**
+     * @brief ディスクリプタバインディング記述子
+     */
+    struct DescriptorBindingDesc
+    {
+        uint32_t binding = 0;                                ///< バインディングポイント
+        DescriptorType type = DescriptorType::UniformBuffer; ///< ディスクリプタタイプ
+        ShaderStage stages = ShaderStage::All;               ///< シェーダーステージ
+        uint32_t count = 1;                                  ///< ディスクリプタ数
+    };
+
+    /**
+     * @brief リソースタイプ
+     */
+    enum class ResourceType
+    {
+        Unknown,
+        Buffer,
+        Texture,
+        Sampler,
+        RenderPass,
+        Framebuffer,
+        Pipeline,
+        DescriptorSet
+    };
+
+    /**
+     * @brief パイプラインタイプ
+     */
+    enum class PipelineType
+    {
+        Graphics,
+        Compute
+    };
+
+    /**
+     * @brief アタッチメントロード操作
+     */
+    enum class AttachmentLoadOp
+    {
+        Load,
+        Clear,
+        DontCare
+    };
+
+    /**
+     * @brief アタッチメントストア操作
+     */
+    enum class AttachmentStoreOp
+    {
+        Store,
+        DontCare
+    };
+
+    /**
+     * @brief 頂点入力レート
+     */
+    enum class VertexInputRate
+    {
+        Vertex,
+        Instance
+    };
+
+    /**
+     * @brief 頂点バインディング記述子
+     */
+    struct VertexBindingDesc
+    {
+        uint32_t binding = 0;
+        uint32_t stride = 0;
+        VertexInputRate inputRate = VertexInputRate::Vertex;
+    };
+
+    /**
+     * @brief 頂点属性記述子
+     */
+    struct VertexAttributeDesc
+    {
+        uint32_t location = 0;
+        uint32_t binding = 0;
+        Format format = Format::R32G32B32A32_FLOAT;
+        uint32_t offset = 0;
+    };
+
+    /**
+     * @brief ラスタライザステート
+     */
+    struct RasterState
+    {
+        PolygonMode polygonMode = PolygonMode::Fill;
+        CullMode cullMode = CullMode::Back;
+        FrontFace frontFace = FrontFace::CounterClockwise;
+        bool depthClampEnable = false;
+        bool depthBiasEnable = false;
+        float depthBiasConstantFactor = 0.0f;
+        float depthBiasClamp = 0.0f;
+        float depthBiasSlopeFactor = 0.0f;
+        float lineWidth = 1.0f;
+    };
+
+    /**
+     * @brief ステンシル面操作記述子
+     */
+    struct StencilFaceDesc
+    {
+        StencilOp failOp = StencilOp::Keep;
+        StencilOp passOp = StencilOp::Keep;
+        StencilOp depthFailOp = StencilOp::Keep;
+        CompareOp compareOp = CompareOp::Never;
+        uint32_t compareMask = 0xFF;
+        uint32_t writeMask = 0xFF;
+        uint32_t reference = 0;
+    };
+
+    /**
+     * @brief デプスステンシルステート
+     */
+    struct DepthStencilState
+    {
+        bool depthTestEnable = true;
+        bool depthWriteEnable = true;
+        CompareOp depthCompareOp = CompareOp::Less;
+        bool depthBoundsTestEnable = false;
+        bool stencilTestEnable = false;
+        StencilFaceDesc frontFace;
+        StencilFaceDesc backFace;
+    };
+
+    /**
+     * @brief ブレンドアタッチメント記述子
+     */
+    struct BlendAttachmentDesc
+    {
+        bool blendEnable = false;
+        BlendFactor srcColorBlendFactor = BlendFactor::One;
+        BlendFactor dstColorBlendFactor = BlendFactor::Zero;
+        BlendOp colorBlendOp = BlendOp::Add;
+        BlendFactor srcAlphaBlendFactor = BlendFactor::One;
+        BlendFactor dstAlphaBlendFactor = BlendFactor::Zero;
+        BlendOp alphaBlendOp = BlendOp::Add;
+        ColorWriteMask colorWriteMask = ColorWriteMask::All;
+    };
+
+    /**
+     * @brief ブレンドステート
+     */
+    struct BlendState
+    {
+        Core::Container::VariableArray<BlendAttachmentDesc> attachments;
+        float blendConstants[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     };
 
     // 前方宣言

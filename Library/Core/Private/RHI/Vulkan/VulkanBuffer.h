@@ -1,12 +1,17 @@
 ﻿#pragma once
 
 #include "RHI/IBuffer.h"
+#include "RHI/IDevice.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
+    // 明示的なusing宣言（グローバル名前空間から参照）
+    using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TWeakPtr;
 
     class VulkanDevice;
 
@@ -29,16 +34,16 @@ namespace NorvesLib::RHI::Vulkan
         ~VulkanBuffer() override;
 
         // IBufferインターフェース実装
-        uint64_t GetSize() const override { return m_desc.size; }
+        uint64_t GetSize() const override { return m_desc.Size; }
         void *Map(uint64_t offset = 0, uint64_t size = 0) override;
         void Unmap() override;
         void Update(const void *data, uint64_t size, uint64_t offset = 0) override;
-        ResourceUsage GetUsage() const override { return m_desc.usage; }
+        ResourceUsage GetUsage() const override { return m_desc.Usage; }
 
         // Vulkan固有のメソッド (vulkan.hpp型)
         vk::Buffer GetVkBuffer() const { return m_buffer; }
         vk::DeviceMemory GetVkDeviceMemory() const { return m_deviceMemory; }
-        bool IsHostVisible() const { return m_desc.hostVisible; }
+        bool IsHostVisible() const { return m_desc.CPUAccessible; }
 
     private:
         TSharedPtr<VulkanDevice> m_device;
