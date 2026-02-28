@@ -31,13 +31,23 @@ namespace NorvesLib::Core::Component
      */
     class MeshComponent : public Component
     {
-    public:
-        using Super = Component;
+        REFLECTION_CLASS(MeshComponent, Component)
 
+    public:
         /**
          * @brief デフォルトコンストラクタ
          */
         MeshComponent();
+
+        /**
+         * @brief 初期化子を使用したコンストラクタ
+         */
+        explicit MeshComponent(const FieldInitializer *initializer);
+
+        /**
+         * @brief コピーコンストラクタ
+         */
+        explicit MeshComponent(const IUnknown *sourceObject);
 
         /**
          * @brief デストラクタ
@@ -68,12 +78,12 @@ namespace NorvesLib::Core::Component
          * @brief メッシュハンドルを取得
          * @return メッシュデータハンドル
          */
-        Rendering::MeshDataHandle GetMeshHandle() const { return m_MeshHandle; }
+        Rendering::MeshDataHandle GetMeshHandle() const { return MeshHandle; }
 
         /**
          * @brief メッシュが設定されているかどうか
          */
-        bool HasMesh() const { return m_MeshHandle.IsValid(); }
+        bool HasMesh() const { return MeshHandle->IsValid(); }
 
         // ========================================
         // マテリアル設定
@@ -110,26 +120,26 @@ namespace NorvesLib::Core::Component
         /**
          * @brief 可視性を設定
          */
-        void SetVisible(bool bVisible) { m_bVisible = bVisible; }
-        bool IsVisible() const override { return m_bVisible && IsActive(); }
+        void SetVisible(bool bNewVisible) { bVisible = bNewVisible; }
+        bool IsVisible() const { return bVisible && IsActive(); }
 
         /**
          * @brief シャドウキャスト設定
          */
-        void SetCastShadow(bool bCast) { m_bCastShadow = bCast; }
-        bool GetCastShadow() const { return m_bCastShadow; }
+        void SetCastShadow(bool bCast) { bCastShadow = bCast; }
+        bool GetCastShadow() const { return bCastShadow; }
 
         /**
          * @brief シャドウレシーブ設定
          */
-        void SetReceiveShadow(bool bReceive) { m_bReceiveShadow = bReceive; }
-        bool GetReceiveShadow() const { return m_bReceiveShadow; }
+        void SetReceiveShadow(bool bReceive) { bReceiveShadow = bReceive; }
+        bool GetReceiveShadow() const { return bReceiveShadow; }
 
         /**
          * @brief レンダーレイヤー設定
          */
-        void SetRenderLayer(Rendering::RenderLayer layer) { m_RenderLayer = layer; }
-        Rendering::RenderLayer GetRenderLayer() const override { return m_RenderLayer; }
+        void SetRenderLayer(Rendering::RenderLayer layer) { RenderLayerProp = layer; }
+        Rendering::RenderLayer GetRenderLayer() const { return RenderLayerProp; }
 
         // ========================================
         // LOD設定
@@ -138,13 +148,13 @@ namespace NorvesLib::Core::Component
         /**
          * @brief 強制LODレベルを設定（-1で自動）
          */
-        void SetForcedLODLevel(int32_t level) { m_ForcedLODLevel = level; }
-        int32_t GetForcedLODLevel() const { return m_ForcedLODLevel; }
+        void SetForcedLODLevel(int32_t level) { ForcedLODLevel = level; }
+        int32_t GetForcedLODLevel() const { return ForcedLODLevel; }
 
         /**
          * @brief 現在のLODレベルを取得
          */
-        uint8_t GetCurrentLODLevel() const { return m_CurrentLODLevel; }
+        uint8_t GetCurrentLODLevel() const { return CurrentLODLevel; }
 
         // ========================================
         // カスタムデータ
@@ -215,24 +225,28 @@ namespace NorvesLib::Core::Component
         void CalculateWorldMatrix(Math::Matrix4x4 &outMatrix) const;
 
         // ========================================
-        // メンバ変数
+        // リフレクションプロパティ
         // ========================================
 
         // メッシュリソース（CPU側データ - Resourceシステム経由）
-        Rendering::MeshDataHandle m_MeshHandle;
+        PROPERTY(Rendering::MeshDataHandle, MeshHandle)
+
+        // 描画設定
+        PROPERTY(bool, bVisible)
+        PROPERTY(bool, bCastShadow)
+        PROPERTY(bool, bReceiveShadow)
+        PROPERTY(Rendering::RenderLayer, RenderLayerProp)
+
+        // LOD
+        PROPERTY(int32_t, ForcedLODLevel) // -1 = 自動
+        PROPERTY(uint8_t, CurrentLODLevel)
+
+        // ========================================
+        // 内部キャッシュ（リフレクション対象外）
+        // ========================================
 
         // マテリアルオーバーライド
         Container::VariableArray<Rendering::MaterialHandle> m_Materials;
-
-        // 描画設定
-        bool m_bVisible = true;
-        bool m_bCastShadow = true;
-        bool m_bReceiveShadow = true;
-        Rendering::RenderLayer m_RenderLayer = Rendering::RenderLayer::Default;
-
-        // LOD
-        int32_t m_ForcedLODLevel = -1; // -1 = 自動
-        uint8_t m_CurrentLODLevel = 0;
 
         // カスタムシェーダーデータ
         float m_CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f};

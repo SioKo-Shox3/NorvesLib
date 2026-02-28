@@ -1,50 +1,18 @@
 ﻿#pragma once
 
 #include "Object/Object.h"
+#include "Object/Reflection.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
 
+namespace NorvesLib::Core
+{
+    class WorldObject;
+}
+
 namespace NorvesLib::Core::Component
 {
-
-    // 前方宣言
-    class Component;
-
-    // ========================================
-    // コンポーネントオーナーインターフェース
-    // ========================================
-
-    /**
-     * @brief コンポーネントオーナーインターフェース
-     *
-     * コンポーネントをアタッチ可能なオブジェクトが実装するインターフェース
-     */
-    class IComponentOwner
-    {
-    public:
-        virtual ~IComponentOwner() = default;
-
-        /**
-         * @brief オーナーのユニークIDを取得
-         */
-        virtual uint64_t GetOwnerId() const = 0;
-
-        /**
-         * @brief ワールド位置を取得
-         */
-        virtual void GetWorldPosition(float &outX, float &outY, float &outZ) const = 0;
-
-        /**
-         * @brief ワールド回転を取得（クォータニオン）
-         */
-        virtual void GetWorldRotation(float &outX, float &outY, float &outZ, float &outW) const = 0;
-
-        /**
-         * @brief ワールドスケールを取得
-         */
-        virtual void GetWorldScale(float &outX, float &outY, float &outZ) const = 0;
-    };
 
     // ========================================
     // コンポーネント基底クラス
@@ -54,17 +22,31 @@ namespace NorvesLib::Core::Component
      * @brief コンポーネント基底クラス
      *
      * すべてのコンポーネントの基底クラス。
-     * オブジェクトにアタッチされて機能を提供します。
+     * WorldObjectのInnerとして管理され、GetOuter()でオーナーのWorldObjectを取得できます。
+     *
+     * Outer/Inner関係:
+     * - WorldObject（Outer）→ Component（Inner）
+     * - WorldObjectが破棄されると、Inner全てが連鎖破棄されます。
      */
     class Component : public Object
     {
-    public:
-        using Super = Object;
+        REFLECTION_CLASS(Component, Object)
 
+    public:
         /**
          * @brief デフォルトコンストラクタ
          */
         Component();
+
+        /**
+         * @brief 初期化子を使用したコンストラクタ
+         */
+        explicit Component(const FieldInitializer *initializer);
+
+        /**
+         * @brief コピーコンストラクタ
+         */
+        explicit Component(const IUnknown *sourceObject);
 
         /**
          * @brief デストラクタ
@@ -102,28 +84,20 @@ namespace NorvesLib::Core::Component
         virtual void Tick(float deltaTime);
 
         // ========================================
-        // オーナー管理
+        // オーナー管理（Outer経由）
         // ========================================
 
         /**
-         * @brief オーナーを設定
-         * @param owner コンポーネントオーナー
+         * @brief オーナーのWorldObjectを取得（Outer経由）
+         * @return WorldObjectへのポインタ（所属していない場合はnullptr）
          */
-        void SetOwner(IComponentOwner *owner);
-
-        /**
-         * @brief オーナーを取得
-         * @return コンポーネントオーナー
-         */
-        IComponentOwner *GetOwner() const { return m_Owner; }
+        WorldObject *GetOwner();
+        const WorldObject *GetOwner() const;
 
         /**
          * @brief オーナーIDを取得
          */
-        uint64_t GetOwnerId() const
-        {
-            return m_Owner ? m_Owner->GetOwnerId() : 0;
-        }
+        uint64_t GetOwnerId() const;
 
         // ========================================
         // コンポーネントID
@@ -132,7 +106,7 @@ namespace NorvesLib::Core::Component
         /**
          * @brief コンポーネントIDを取得
          */
-        uint64_t GetComponentId() const { return m_ComponentId; }
+        uint64_t GetComponentId() const { return ComponentId; }
 
         // ========================================
         // 有効/無効
@@ -151,12 +125,12 @@ namespace NorvesLib::Core::Component
         /**
          * @brief 有効かどうか
          */
-        bool IsEnabled() const { return m_bEnabled; }
+        bool IsEnabled() const { return bEnabled; }
 
         /**
-         * @brief アクティブかどうか（オーナーが有効かつ自身も有効）
+         * @brief アクティブかどうか（オーナーが存在かつ自身も有効）
          */
-        virtual bool IsActive() const { return m_bEnabled && m_Owner != nullptr; }
+        virtual bool IsActive() const { return bEnabled && GetOuter() != nullptr; }
 
         // ========================================
         // Tick設定
@@ -165,20 +139,17 @@ namespace NorvesLib::Core::Component
         /**
          * @brief Tick有効設定
          */
-        void SetTickEnabled(bool bEnabled) { m_bTickEnabled = bEnabled; }
-        bool IsTickEnabled() const { return m_bTickEnabled; }
+        void SetTickEnabled(bool bEnabled) { bTickEnabled = bEnabled; }
+        bool IsTickEnabled() const { return bTickEnabled; }
 
     protected:
-        // オーナー
-        IComponentOwner *m_Owner = nullptr;
-
-        // コンポーネントID
-        uint64_t m_ComponentId = 0;
-
-        // 状態
-        bool m_bEnabled = true;
-        bool m_bTickEnabled = true;
-        bool m_bBegunPlay = false;
+        // ========================================
+        // リフレクションプロパティ
+        // ========================================
+        PROPERTY(uint64_t, ComponentId) // コンポーネントID
+        PROPERTY(bool, bEnabled)        // 有効状態
+        PROPERTY(bool, bTickEnabled)    // Tick有効
+        PROPERTY(bool, bBegunPlay)      // BeginPlay済みフラグ
 
     private:
         // ID生成用静的カウンター

@@ -1,6 +1,8 @@
 ﻿#include "Object/WorldObject.h"
+#include "Object/World.h"
 #include "Object/Reflection.h"
 #include "Object/ObjectUtility.h"
+#include "Component/Component.h"
 
 namespace NorvesLib::Core
 {
@@ -10,17 +12,27 @@ namespace NorvesLib::Core
     WorldObject::WorldObject()
         : Object()
     {
+        // PROPERTYマクロは値初期化（0/false）するため、非ゼロデフォルト値を設定
+        bTickEnabled = true;
+        bActive = true;
+        // RotationはQuaternionのデフォルトが単位回転(0,0,0,1)なので設定不要
+        Scale = Math::Vector3(1.0f, 1.0f, 1.0f);
     }
 
     WorldObject::WorldObject(const FieldInitializer *initializer)
         : Object(initializer)
     {
+        bTickEnabled = true;
+        bActive = true;
+        Scale = Math::Vector3(1.0f, 1.0f, 1.0f);
     }
 
     WorldObject::WorldObject(const IUnknown *sourceObject)
         : Object(sourceObject)
     {
-        // Objectのコンストラクタですべての必要な処理は行われる
+        bTickEnabled = true;
+        bActive = true;
+        Scale = Math::Vector3(1.0f, 1.0f, 1.0f);
     }
 
     WorldObject::~WorldObject()
@@ -30,28 +42,126 @@ namespace NorvesLib::Core
 
     void WorldObject::Initialize()
     {
-        // 基本初期化を呼び出す
         Object::Initialize();
     }
 
     void WorldObject::Finalize()
     {
-        // Worldからの削除通知
-        if (m_World != nullptr)
+        if (!HasFlag(OF_Initialized))
         {
-            OnRemovedFromWorld();
-            m_World = nullptr;
+            return;
         }
+
+        // Innerの全ComponentをFinalize
+        for (auto it = m_Inners.rbegin(); it != m_Inners.rend(); ++it)
+        {
+            if (auto *comp = ObjectUtility::CastTo<Component::Component>(*it))
+            {
+                comp->EndPlay();
+            }
+            (*it)->Finalize();
+            static_cast<UnknownImpl *>(*it)->SetOuter(nullptr);
+        }
+        m_Inners.clear();
 
         Object::Finalize();
     }
 
-    void WorldObject::SetActive(bool bActive)
+    void WorldObject::SetActive(bool bNewActive)
     {
-        if (m_bActive != bActive)
+        if (bActive != bNewActive)
         {
-            m_bActive = bActive;
-            // TODO: アクティブ状態変更時のコールバック
+            bActive = bNewActive;
+        }
+    }
+
+    // ========================================
+    // World関連（Outer経由）
+    // ========================================
+
+    World *WorldObject::GetWorld() const
+    {
+        // Outer関係はオーナーシップの概念であり、constの制約を受けない
+        return ObjectUtility::CastTo<World>(const_cast<IUnknown *>(GetOuter()));
+    }
+
+    bool WorldObject::IsInWorld() const
+    {
+        return ObjectUtility::CastTo<World>(GetOuter()) != nullptr;
+    }
+
+    // ========================================
+    // コンポーネント管理（Outer/Inner経由）
+    // ========================================
+
+    void WorldObject::AddComponent(Component::Component *component)
+    {
+        if (!component)
+        {
+            return;
+        }
+
+        // 重複チェック（既にInnerに存在するか）
+        for (auto *inner : m_Inners)
+        {
+            if (inner == component)
+            {
+                return;
+            }
+        }
+
+        // Innerとして追加（Outerも自動設定される）
+        AddInner(component);
+
+        // ライフサイクル
+        component->Initialize();
+        component->BeginPlay();
+    }
+
+    void WorldObject::RemoveComponent(Component::Component *component)
+    {
+        if (!component)
+        {
+            return;
+        }
+
+        // Innersに存在するか確認
+        for (auto *inner : m_Inners)
+        {
+            if (inner == component)
+            {
+                component->EndPlay();
+                component->Finalize();
+
+                // Innerから除去（Outerも自動クリアされる）
+                RemoveInner(component);
+                return;
+            }
+        }
+    }
+
+    Container::VariableArray<Component::Component *> WorldObject::GetComponents() const
+    {
+        Container::VariableArray<Component::Component *> result;
+        for (auto *inner : m_Inners)
+        {
+            if (auto *comp = ObjectUtility::CastTo<Component::Component>(inner))
+            {
+                result.push_back(comp);
+            }
+        }
+        return result;
+    }
+
+    void WorldObject::TickComponents(float deltaTime)
+    {
+        for (auto *inner : m_Inners)
+        {
+            auto *comp = ObjectUtility::CastTo<Component::Component>(inner);
+            if (comp && comp->IsActive() && comp->IsTickEnabled())
+            {
+                comp->Tick(deltaTime);
+            }
         }
     }
 

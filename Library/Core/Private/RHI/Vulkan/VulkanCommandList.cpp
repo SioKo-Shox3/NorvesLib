@@ -466,7 +466,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::DescriptorSet descSet = vkDescSet->GetVkDescriptorSet();
         m_commandBuffer.bindDescriptorSets(
             bindPoint,
-            vkDescSet->GetVkPipelineLayout(),
+            vkPipeline->GetVkPipelineLayout(),
             slot,
             1,
             &descSet,

@@ -22,6 +22,9 @@ namespace NorvesLib::RHI
     class IFramebuffer;
     class IPipeline;
     class IShader;
+    class IBuffer;
+    class ITexture;
+    class IDescriptorSet;
 }
 
 namespace NorvesLib::Core::Rendering
@@ -263,6 +266,17 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::IPipeline> m_TrianglePipeline;
         Container::TSharedPtr<RHI::IShader> m_TriangleVertexShader;
         Container::TSharedPtr<RHI::IShader> m_TriangleFragmentShader;
+
+        // 3D球体レンダリング用リソース
+        Container::TSharedPtr<RHI::IPipeline> m_Mesh3DPipeline;
+        Container::TSharedPtr<RHI::IShader> m_Mesh3DVertexShader;
+        Container::TSharedPtr<RHI::IShader> m_Mesh3DFragmentShader;
+        Container::TSharedPtr<RHI::IBuffer> m_SphereVertexBuffer;
+        Container::TSharedPtr<RHI::IBuffer> m_SphereIndexBuffer;
+        Container::TSharedPtr<RHI::IBuffer> m_MVPUniformBuffer;
+        Container::TSharedPtr<RHI::IDescriptorSet> m_MVPDescriptorSet;
+        Container::TSharedPtr<RHI::ITexture> m_DepthTexture;
+        uint32_t m_SphereIndexCount = 0;
 
         // Screen（最終出力先 - SwapChain所有）
         Screen m_Screen;

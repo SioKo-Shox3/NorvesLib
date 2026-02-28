@@ -3,11 +3,19 @@
 #include "Object.h"
 #include "Reflection.h"
 #include "Container/Containers.h"
+#include "Container/PointerTypes.h"
+#include "Math/Vector3.h"
+#include "Math/Quaternion.h"
 
 namespace NorvesLib::Core
 {
     // 前方宣言
     class World;
+
+    namespace Component
+    {
+        class Component;
+    }
 
     /**
      * @brief Worldに属するオブジェクトの基底クラス
@@ -15,12 +23,12 @@ namespace NorvesLib::Core
      * WorldObjectはWorldのInnerとして管理され、Worldと寿命が一致します。
      * シーン内に存在するゲームオブジェクト（Actor、Componentなど）の基底クラスです。
      *
-     * 責任者: World
-     * 寿命管理: Inner/Outer親子関係（WorldのInnerとして登録）
+     * Outer/Inner関係:
+     * - World（Outer）→ WorldObject（Inner）
+     * - WorldObject（Outer）→ Component（Inner）
      *
-     * Resourceとの違い:
-     * - ResourceはGEngineが管理し、参照カウントで寿命を制御
-     * - WorldObjectはWorldが管理し、World破棄時に連鎖破棄される
+     * GetOuter()をたどればWorldを取得できます。
+     * m_InnersにはこのオブジェクトにアタッチされたComponentが含まれます。
      */
     class WorldObject : public Object
     {
@@ -60,26 +68,112 @@ namespace NorvesLib::Core
         virtual void Finalize() override;
 
         // ========================================
-        // World関連
+        // コンポーネント管理（Outer/Inner経由）
         // ========================================
 
         /**
-         * @brief このオブジェクトが属するWorldを取得
-         * @return Worldへのポインタ（Worldに属していない場合はnullptr）
+         * @brief コンポーネントを追加
+         * @param component 追加するコンポーネント
          */
-        World *GetWorld() const { return m_World; }
+        void AddComponent(Component::Component *component);
 
         /**
-         * @brief このオブジェクトが属するWorldを設定（内部用）
-         * @param world 設定するWorld
+         * @brief コンポーネントを削除
+         * @param component 削除するコンポーネント
          */
-        void SetWorld(World *world) { m_World = world; }
+        void RemoveComponent(Component::Component *component);
+
+        /**
+         * @brief 指定型のコンポーネントを取得（Innersから検索）
+         * @tparam T コンポーネントの型
+         * @return 見つかったコンポーネント、見つからない場合nullptr
+         */
+        template <typename T>
+        T *GetComponent() const
+        {
+            for (auto *inner : GetInners())
+            {
+                if (T *cast = ObjectUtility::CastTo<T>(inner))
+                {
+                    return cast;
+                }
+            }
+            return nullptr;
+        }
+
+        /**
+         * @brief 全コンポーネントを取得（Innersからフィルタリング）
+         */
+        Container::VariableArray<Component::Component *> GetComponents() const;
+
+        /**
+         * @brief 全コンポーネントのTickを呼び出す
+         * @param deltaTime 前フレームからの経過時間
+         */
+        void TickComponents(float deltaTime);
+
+        // ========================================
+        // World関連（Outer経由）
+        // ========================================
+
+        /**
+         * @brief このオブジェクトが属するWorldを取得（Outerをたどる）
+         * @return Worldへのポインタ（Worldに属していない場合はnullptr）
+         */
+        World *GetWorld() const;
 
         /**
          * @brief Worldに属しているかどうか
          * @return Worldに属している場合true
          */
-        bool IsInWorld() const { return m_World != nullptr; }
+        bool IsInWorld() const;
+
+        /**
+         * @brief オブジェクトIDを取得
+         */
+        uint64_t GetObjectId() const { return ObjectId; }
+
+        /**
+         * @brief オブジェクトIDを設定（World内部用）
+         */
+        void SetObjectId(uint64_t id) { ObjectId = id; }
+
+        // ========================================
+        // トランスフォーム
+        // ========================================
+
+        /**
+         * @brief ワールド位置を設定
+         */
+        void SetPosition(const Math::Vector3 &pos) { Position = pos; }
+        void SetPosition(float x, float y, float z) { Position = Math::Vector3(x, y, z); }
+
+        /**
+         * @brief ワールド位置を取得
+         */
+        const Math::Vector3 &GetPosition() const { return Position; }
+
+        /**
+         * @brief ワールド回転を設定（クォータニオン）
+         */
+        void SetRotation(const Math::Quaternion &rot) { Rotation = rot; }
+        void SetRotation(float x, float y, float z, float w) { Rotation = Math::Quaternion(x, y, z, w); }
+
+        /**
+         * @brief ワールド回転を取得（クォータニオン）
+         */
+        const Math::Quaternion &GetRotation() const { return Rotation; }
+
+        /**
+         * @brief スケールを設定
+         */
+        void SetScale(const Math::Vector3 &scale) { Scale = scale; }
+        void SetScale(float x, float y, float z) { Scale = Math::Vector3(x, y, z); }
+
+        /**
+         * @brief スケールを取得
+         */
+        const Math::Vector3 &GetScale() const { return Scale; }
 
         // ========================================
         // ライフサイクル
@@ -105,13 +199,13 @@ namespace NorvesLib::Core
          * @brief 更新が有効かどうか
          * @return 有効な場合true
          */
-        bool IsTickEnabled() const { return m_bTickEnabled; }
+        bool IsTickEnabled() const { return bTickEnabled; }
 
         /**
          * @brief 更新の有効/無効を設定
          * @param bEnabled 有効にする場合true
          */
-        void SetTickEnabled(bool bEnabled) { m_bTickEnabled = bEnabled; }
+        void SetTickEnabled(bool bEnabled) { bTickEnabled = bEnabled; }
 
         // ========================================
         // アクティブ状態
@@ -121,7 +215,7 @@ namespace NorvesLib::Core
          * @brief オブジェクトがアクティブかどうか
          * @return アクティブな場合true
          */
-        bool IsActive() const { return m_bActive; }
+        bool IsActive() const { return bActive; }
 
         /**
          * @brief アクティブ状態を設定
@@ -134,19 +228,29 @@ namespace NorvesLib::Core
          *
          * 次のフレーム終了時にWorldから削除され、破棄されます。
          */
-        void MarkForDestroy() { m_bPendingDestroy = true; }
+        void MarkForDestroy() { bPendingDestroy = true; }
 
         /**
          * @brief 破棄予約されているかどうか
          * @return 破棄予約されている場合true
          */
-        bool IsPendingDestroy() const { return m_bPendingDestroy; }
+        bool IsPendingDestroy() const { return bPendingDestroy; }
 
     protected:
-        World *m_World = nullptr;       // 所属するWorld
-        bool m_bTickEnabled = true;     // Tick更新が有効か
-        bool m_bActive = true;          // アクティブ状態
-        bool m_bPendingDestroy = false; // 破棄予約フラグ
+        // ========================================
+        // リフレクションプロパティ
+        // ========================================
+        PROPERTY(bool, bTickEnabled)    // Tick更新が有効か
+        PROPERTY(bool, bActive)         // アクティブ状態
+        PROPERTY(bool, bPendingDestroy) // 破棄予約フラグ
+
+        // トランスフォーム
+        PROPERTY(Math::Vector3, Position)    // ワールド位置
+        PROPERTY(Math::Quaternion, Rotation) // ワールド回転（クォータニオン）
+        PROPERTY(Math::Vector3, Scale)       // スケール
+
+        // オブジェクトID（World内でユニーク）
+        PROPERTY(uint64_t, ObjectId)
     };
 
 } // namespace NorvesLib::Core

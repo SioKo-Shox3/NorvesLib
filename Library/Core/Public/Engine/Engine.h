@@ -5,6 +5,7 @@
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
 #include "Rendering/RenderWorld.h"
+#include "Object/World.h"
 
 namespace NorvesLib::Core::Application
 {
@@ -255,6 +256,25 @@ namespace NorvesLib::Core::Engine
             return m_RenderWorld.GetResourceManager();
         }
 
+        // ========== ゲームワールド ==========
+
+        /**
+         * @brief ゲームワールドを取得
+         * @return Worldへの参照
+         */
+        World &GetWorld()
+        {
+            return m_World;
+        }
+
+        /**
+         * @brief ゲームワールドを取得（const版）
+         */
+        const World &GetWorld() const
+        {
+            return m_World;
+        }
+
     private:
         // サブシステムへの参照
         Container::TUniquePtr<NorvesLib::IApplication> m_PlatformApp;
@@ -264,6 +284,9 @@ namespace NorvesLib::Core::Engine
 
         // レンダリングシステム（GEngine配下で実体保持）
         Rendering::RenderWorld m_RenderWorld;
+
+        // ゲームワールド（GEngine配下で実体保持）
+        World m_World;
 
         // 実行状態
         bool m_bIsRunning = false;
