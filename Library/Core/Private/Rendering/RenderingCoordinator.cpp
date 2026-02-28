@@ -212,7 +212,26 @@ namespace NorvesLib::Core::Rendering
         m_SceneRenderer.SetDefaultPipeline(m_TrianglePipeline);
 
         // ========================================
-        // 10. FramePacketManagerの初期化
+        // 10. テスト三角形用MeshProxyの登録
+        // シェーダー内蔵頂点の三角形をフルDrawCommandパイプラインで描画
+        // ========================================
+        {
+            MeshProxy testTriangleProxy;
+            testTriangleProxy.ObjectId = 1;     // テスト用ID
+            testTriangleProxy.ComponentId = 1;
+            testTriangleProxy.MeshHandle = MeshDataHandle{1}; // センチネルID（GPUバッファなし）
+            testTriangleProxy.MaterialCount = 1;               // バッチ生成に必要
+            testTriangleProxy.Materials[0] = MaterialHandle{1}; // デフォルトマテリアル
+            testTriangleProxy.bVisible = true;
+            testTriangleProxy.bCastShadow = false;
+            testTriangleProxy.WorldTransform = Math::Matrix4x4::Identity;
+
+            m_MainSceneView->AddMeshProxy(testTriangleProxy);
+            NORVES_LOG_INFO("RenderingCoordinator", "Test triangle MeshProxy registered to MainSceneView");
+        }
+
+        // ========================================
+        // 11. FramePacketManagerの初期化
         // ========================================
         m_PacketManager.Initialize();
 
@@ -432,11 +451,15 @@ namespace NorvesLib::Core::Rendering
 
         // ========================================
         // DrawCommand描画フロー
+        // SceneView → MeshBatcher → DrawCommand → SceneRenderer → RHI
         // ========================================
 
-        // SceneViewからDrawCommandを収集して描画
+        // SceneViewのDrawCommandパイプラインを実行
         if (m_MainSceneView)
         {
+            // Cull → Batch → GenerateCommands（Viewport不要のフォールバックパス）
+            m_MainSceneView->PrepareDrawCommands();
+
             const auto &drawCommands = m_MainSceneView->GetDrawCommands();
             if (!drawCommands.empty())
             {
@@ -445,7 +468,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // フォールバック: DrawCommandがない場合はテスト三角形を直接描画
+        // 最終フォールバック: DrawCommandが1つもない場合はテスト三角形を直接描画
         if (m_SceneRenderer.GetStats().DrawCallCount == 0)
         {
             m_SceneRenderer.DrawDirect(m_CommandList.get(), m_TrianglePipeline, 3);
