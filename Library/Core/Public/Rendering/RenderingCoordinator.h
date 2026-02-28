@@ -188,6 +188,17 @@ namespace NorvesLib::Core::Rendering
         void DestroyView(Container::TSharedPtr<View> view);
 
         /**
+         * @brief メインカメラを設定
+         * @param camera カメラ情報
+         */
+        void SetMainCamera(const CameraProxy &camera);
+
+        /**
+         * @brief メインカメラを取得
+         */
+        const CameraProxy &GetMainCamera() const { return m_MainCamera; }
+
+        /**
          * @brief メインSceneViewを取得
          */
         Container::TSharedPtr<SceneView> GetMainSceneView() const { return m_MainSceneView; }
@@ -277,6 +288,17 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::IDescriptorSet> m_MVPDescriptorSet;
         Container::TSharedPtr<RHI::ITexture> m_DepthTexture;
         uint32_t m_SphereIndexCount = 0;
+
+        // 地面メッシュ用リソース
+        Container::TSharedPtr<RHI::IBuffer> m_GroundVertexBuffer;
+        Container::TSharedPtr<RHI::IBuffer> m_GroundIndexBuffer;
+        Container::TSharedPtr<RHI::IBuffer> m_GroundMVPUniformBuffer;
+        Container::TSharedPtr<RHI::IDescriptorSet> m_GroundMVPDescriptorSet;
+        uint32_t m_GroundIndexCount = 0;
+
+        // メインカメラ（GameThreadから設定される）
+        CameraProxy m_MainCamera;
+        bool m_bCameraSet = false;
 
         // Screen（最終出力先 - SwapChain所有）
         Screen m_Screen;

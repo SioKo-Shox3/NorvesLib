@@ -77,6 +77,11 @@ set(PRIVATE_SOURCES
     Private/Memory/MemorySystem.cpp
     Private/Memory/StackAllocator.cpp
     Private/Memory/ThreadLocalCache.cpp
+    # Input
+    Private/Input/InputState.cpp
+    Private/Input/InputSystem.cpp
+    Private/Input/MayaCameraController.cpp
+    Private/Input/LightController.cpp
     # Random
     Private/Random/Random.cpp
     Private/Random/RandomDistributions.cpp
@@ -223,6 +228,14 @@ set(PUBLIC_HEADERS
     Public/FileStream/FileStreamForward.h
     Public/FileStream/FileStreamModule.h
     Public/FileStream/Package.h
+    # Input
+    Public/Input/InputTypes.h
+    Public/Input/InputState.h
+    Public/Input/InputSystem.h
+    Public/Input/IInputDevice.h
+    Public/Input/MayaCameraController.h
+    Public/Input/LightController.h
+    Public/Platform/Windows/WindowsKeyMap.h
 )
 
 # ライブラリの作成

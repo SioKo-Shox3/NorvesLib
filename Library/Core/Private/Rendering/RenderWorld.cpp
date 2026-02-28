@@ -111,8 +111,7 @@ namespace NorvesLib::Core::Rendering
 
     void RenderWorld::SetMainCamera(const CameraProxy &camera)
     {
-        // TODO: カメラ情報をRenderingCoordinator/SceneViewに反映
-        (void)camera;
+        m_RenderingCoordinator.SetMainCamera(camera);
     }
 
     void RenderWorld::EndFrame()

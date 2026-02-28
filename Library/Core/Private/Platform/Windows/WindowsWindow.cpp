@@ -1,4 +1,7 @@
 ﻿#include "Platform/Windows/WindowsWindow.h"
+#include "Platform/Windows/WindowsKeyMap.h"
+#include "Engine/Engine.h"
+#include "Input/InputSystem.h"
 #include <stdexcept>
 
 using namespace NorvesLib::Core::Container;
@@ -52,6 +55,17 @@ namespace NorvesLib
                     pThis = reinterpret_cast<WindowsWindow *>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
                 }
 
+                // InputSystemへの入力注入ヘルパー
+                auto *inputSystem = []()
+                    -> NorvesLib::Core::Input::InputSystem *
+                {
+                    if (NorvesLib::Core::Engine::GEngine)
+                    {
+                        return &NorvesLib::Core::Engine::GEngine->GetInputSystem();
+                    }
+                    return nullptr;
+                }();
+
                 // メッセージ処理
                 switch (message)
                 {
@@ -66,6 +80,108 @@ namespace NorvesLib
                     // ウィンドウの破棄
                     PostQuitMessage(0);
                     return 0;
+
+                // ========== キーボード入力 ==========
+                case WM_KEYDOWN:
+                case WM_SYSKEYDOWN:
+                    if (inputSystem)
+                    {
+                        auto keyCode = TranslateWindowsKeyCode(wParam);
+                        if (keyCode != Input::KeyCode::None)
+                        {
+                            bool bRepeat = (lParam & 0x40000000) != 0;
+                            inputSystem->InjectKeyEvent(
+                                keyCode,
+                                bRepeat ? Input::InputAction::Repeat : Input::InputAction::Pressed);
+                        }
+                    }
+                    break;
+
+                case WM_KEYUP:
+                case WM_SYSKEYUP:
+                    if (inputSystem)
+                    {
+                        auto keyCode = TranslateWindowsKeyCode(wParam);
+                        if (keyCode != Input::KeyCode::None)
+                        {
+                            inputSystem->InjectKeyEvent(keyCode, Input::InputAction::Released);
+                        }
+                    }
+                    break;
+
+                // ========== マウスボタン入力 ==========
+                case WM_LBUTTONDOWN:
+                    if (inputSystem)
+                    {
+                        float mx = static_cast<float>(LOWORD(lParam));
+                        float my = static_cast<float>(HIWORD(lParam));
+                        inputSystem->InjectMouseButton(Input::MouseButton::Left, Input::InputAction::Pressed, mx, my);
+                    }
+                    break;
+
+                case WM_LBUTTONUP:
+                    if (inputSystem)
+                    {
+                        float mx = static_cast<float>(LOWORD(lParam));
+                        float my = static_cast<float>(HIWORD(lParam));
+                        inputSystem->InjectMouseButton(Input::MouseButton::Left, Input::InputAction::Released, mx, my);
+                    }
+                    break;
+
+                case WM_RBUTTONDOWN:
+                    if (inputSystem)
+                    {
+                        float mx = static_cast<float>(LOWORD(lParam));
+                        float my = static_cast<float>(HIWORD(lParam));
+                        inputSystem->InjectMouseButton(Input::MouseButton::Right, Input::InputAction::Pressed, mx, my);
+                    }
+                    break;
+
+                case WM_RBUTTONUP:
+                    if (inputSystem)
+                    {
+                        float mx = static_cast<float>(LOWORD(lParam));
+                        float my = static_cast<float>(HIWORD(lParam));
+                        inputSystem->InjectMouseButton(Input::MouseButton::Right, Input::InputAction::Released, mx, my);
+                    }
+                    break;
+
+                case WM_MBUTTONDOWN:
+                    if (inputSystem)
+                    {
+                        float mx = static_cast<float>(LOWORD(lParam));
+                        float my = static_cast<float>(HIWORD(lParam));
+                        inputSystem->InjectMouseButton(Input::MouseButton::Middle, Input::InputAction::Pressed, mx, my);
+                    }
+                    break;
+
+                case WM_MBUTTONUP:
+                    if (inputSystem)
+                    {
+                        float mx = static_cast<float>(LOWORD(lParam));
+                        float my = static_cast<float>(HIWORD(lParam));
+                        inputSystem->InjectMouseButton(Input::MouseButton::Middle, Input::InputAction::Released, mx, my);
+                    }
+                    break;
+
+                // ========== マウス移動 ==========
+                case WM_MOUSEMOVE:
+                    if (inputSystem)
+                    {
+                        float mx = static_cast<float>(LOWORD(lParam));
+                        float my = static_cast<float>(HIWORD(lParam));
+                        inputSystem->InjectMouseMove(mx, my);
+                    }
+                    break;
+
+                // ========== マウススクロール ==========
+                case WM_MOUSEWHEEL:
+                    if (inputSystem)
+                    {
+                        float delta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
+                        inputSystem->InjectMouseScroll(delta);
+                    }
+                    break;
                 }
 
                 // 標準のウィンドウプロシージャを呼び出す

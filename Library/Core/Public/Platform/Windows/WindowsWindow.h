@@ -3,6 +3,10 @@
 #include "Application/IWindow.h"
 #include "Container/String.h"
 #include "Container/PointerTypes.h"
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 
 namespace NorvesLib

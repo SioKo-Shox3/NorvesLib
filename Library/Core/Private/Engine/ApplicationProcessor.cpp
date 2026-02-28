@@ -197,6 +197,11 @@ namespace NorvesLib::Core::Engine
 
         while (GEngine && GEngine->IsRunning() && !GEngine->IsExitRequested())
         {
+            // 入力システムのフレーム開始（前フレーム状態保存、累積値リセット）
+            // ※ProcessPlatformMessagesの前に呼ぶこと。
+            //   メッセージ処理中にInjectされた入力をOnUpdateで参照するため。
+            GEngine->GetInputSystem().BeginFrame();
+
             // プラットフォームメッセージ処理
             if (!ProcessPlatformMessages())
             {
@@ -279,6 +284,8 @@ namespace NorvesLib::Core::Engine
         float deltaTime = CalculateDeltaTime();
         GEngine->SetDeltaTime(deltaTime);
 
+        // 注: BeginFrame()はRun()ループ内でProcessPlatformMessagesの前に呼ばれている
+
         auto *handler = GEngine->GetApplicationHandler();
 
         // OnUpdate呼び出し
@@ -321,6 +328,9 @@ namespace NorvesLib::Core::Engine
 
         // フレームカウントをインクリメント
         GEngine->IncrementFrameCount();
+
+        // 入力システムのフレーム終了
+        GEngine->GetInputSystem().EndFrame();
     }
 
     bool ApplicationProcessor::ProcessPlatformMessages()

@@ -1,6 +1,9 @@
 ﻿#pragma once
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
+#include "Core/Public/Input/MayaCameraController.h"
+#include "Core/Public/Input/LightController.h"
+#include "Core/Public/Rendering/SceneProxy.h"
 
 // 前方宣言
 namespace NorvesLib::Core
@@ -51,6 +54,19 @@ namespace Game
         // テスト三角形オブジェクト（World管理下）
         NorvesLib::Core::WorldObject *m_pTriangleObject = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pTriangleMeshComponent = nullptr;
+
+        // ========================================
+        // 入力コントローラー
+        // ========================================
+
+        /// Maya準拠カメラコントローラー
+        NorvesLib::Core::Input::MayaCameraController m_CameraController;
+
+        /// ライトコントローラー
+        NorvesLib::Core::Input::LightController m_LightController;
+
+        /// メインディレクショナルライト
+        NorvesLib::Core::Rendering::LightProxy m_MainLight;
     };
 
 } // namespace Game

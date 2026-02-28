@@ -9,11 +9,13 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 view;
     mat4 projection;
     vec4 cameraPosition;
+    vec4 objectColor;
 } mvp;
 
 layout(location = 0) out vec3 fragWorldPos;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragCameraPos;
+layout(location = 3) out vec3 fragObjectColor;
 
 void main()
 {
@@ -24,6 +26,7 @@ void main()
     fragNormal = normalize(normalMatrix * inNormal);
 
     fragCameraPos = mvp.cameraPosition.xyz;
+    fragObjectColor = mvp.objectColor.rgb;
 
     gl_Position = mvp.projection * mvp.view * worldPos;
 }

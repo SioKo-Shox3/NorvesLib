@@ -6,6 +6,7 @@
 #include "Application/IWindow.h"
 #include "Rendering/RenderWorld.h"
 #include "Object/World.h"
+#include "Input/InputSystem.h"
 
 namespace NorvesLib::Core::Application
 {
@@ -275,6 +276,25 @@ namespace NorvesLib::Core::Engine
             return m_World;
         }
 
+        // ========== 入力システム ==========
+
+        /**
+         * @brief 入力システムを取得
+         * @return InputSystemへの参照
+         */
+        Input::InputSystem &GetInputSystem()
+        {
+            return m_InputSystem;
+        }
+
+        /**
+         * @brief 入力システムを取得（const版）
+         */
+        const Input::InputSystem &GetInputSystem() const
+        {
+            return m_InputSystem;
+        }
+
     private:
         // サブシステムへの参照
         Container::TUniquePtr<NorvesLib::IApplication> m_PlatformApp;
@@ -287,6 +307,9 @@ namespace NorvesLib::Core::Engine
 
         // ゲームワールド（GEngine配下で実体保持）
         World m_World;
+
+        // 入力システム（GEngine配下で実体保持）
+        Input::InputSystem m_InputSystem;
 
         // 実行状態
         bool m_bIsRunning = false;
