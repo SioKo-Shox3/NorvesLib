@@ -3,6 +3,7 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Rendering/DrawCommand.h"
+#include "RHI/RHITypes.h"
 #include <cstdint>
 
 // 前方宣言
@@ -76,6 +77,14 @@ namespace NorvesLib::Core::Rendering
                         RHI::TransientResourcePool *transientPool = nullptr);
 
         /**
+         * @brief デフォルトパイプラインを設定します
+         * @param pipeline パイプライン
+         *
+         * マテリアルシステムが未完成の間、全DrawCommandはこのパイプラインで描画されます。
+         */
+        void SetDefaultPipeline(RHI::PipelinePtr pipeline) { m_DefaultPipeline = pipeline; }
+
+        /**
          * @brief 終了処理を行います
          */
         void Shutdown();
@@ -112,6 +121,18 @@ namespace NorvesLib::Core::Rendering
          */
         void ExecuteDrawCommands(const Container::VariableArray<DrawCommand> &commands,
                                  RHI::ICommandList *commandList);
+
+        /**
+         * @brief パイプラインのみの単純な描画を実行します
+         * @param commandList コマンドリスト
+         * @param pipeline パイプライン
+         * @param vertexCount 頂点数
+         *
+         * 頂点バッファなしのシェーダー内蔵描画（テスト用）。
+         */
+        void DrawDirect(RHI::ICommandList *commandList,
+                        RHI::PipelinePtr pipeline,
+                        uint32_t vertexCount);
 
         // ========================================
         // 統計情報
@@ -150,6 +171,12 @@ namespace NorvesLib::Core::Rendering
         RHI::IDevice *m_Device = nullptr;
         PersistentResourceCache *m_ResourceCache = nullptr;
         RHI::TransientResourcePool *m_TransientPool = nullptr;
+
+        // デフォルトパイプライン（マテリアルシステム完成まで使用）
+        RHI::PipelinePtr m_DefaultPipeline;
+
+        // 前回バインドしたパイプライン（冗長なバインドを避けるため）
+        RHI::PipelinePtr m_BoundPipeline;
 
         SceneRendererStats m_Stats;
         uint64_t m_CurrentFrame = 0;

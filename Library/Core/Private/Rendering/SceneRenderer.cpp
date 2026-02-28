@@ -3,6 +3,8 @@
 #include "Rendering/PersistentResourceCache.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
+#include "RHI/IBuffer.h"
+#include "RHI/IPipeline.h"
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
@@ -30,10 +32,10 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // ResourceCacheはオプション（なくてもDrawDirectモードで動作可能）
         if (!resourceCache)
         {
-            NORVES_LOG_ERROR("SceneRenderer", "ResourceCache is null");
-            return false;
+            NORVES_LOG_WARNING("SceneRenderer", "ResourceCache is null - mesh-based DrawCommands will not work");
         }
 
         m_Device = device;
@@ -132,42 +134,73 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // TODO: 実際のRHI描画コール実装
-        // 現時点ではスタブ実装
-
-        // 統計更新
-        ++m_Stats.DrawCallCount;
-        m_Stats.TriangleCount += command.IndexCount / 3;
-
-        // 実際の描画は以下のような流れになる:
-        // 1. パイプライン/シェーダーのバインド
-        // 2. 頂点/インデックスバッファのバインド
-        // 3. 定数バッファ/デスクリプタのバインド
-        // 4. ドローコール
-
-        /*
-        // パイプラインバインド
-        commandList->SetPipeline(command.Pipeline);
-
-        // 頂点バッファバインド
-        commandList->SetVertexBuffer(0, command.VertexBuffer, command.VertexOffset);
-
-        // インデックスバッファバインド
-        commandList->SetIndexBuffer(command.IndexBuffer, command.IndexOffset, IndexFormat::UInt32);
-
-        // 定数バッファバインド
-        // ...
-
-        // ドローコール
-        if (command.InstanceCount > 1)
+        // パイプラインをバインド（デフォルトパイプライン使用）
+        // TODO: マテリアルシステム完成後はMaterialHandleからパイプラインを解決
+        RHI::PipelinePtr pipeline = m_DefaultPipeline;
+        if (!pipeline)
         {
-            commandList->DrawIndexedInstanced(command.IndexCount, command.InstanceCount, 0, 0, 0);
+            return;
+        }
+
+        if (pipeline != m_BoundPipeline)
+        {
+            commandList->SetPipeline(pipeline);
+            m_BoundPipeline = pipeline;
+        }
+
+        // MeshHandleからGPUデータを解決
+        if (command.MeshHandle.IsValid() && m_ResourceCache)
+        {
+            // PersistentResourceCache経由でGPUバッファを取得
+            // Note: ResourceIdとMeshDataHandle.Idが対応する
+            // ここではCachedMeshGPUDataへの直接アクセスが必要
+            // → SceneRenderer用のルックアップ関数が必要
+
+            // 現時点ではフォールバック: MeshHandleベースで直接描画
+            // 将来的にはResourceRegistry経由でMeshResource→PersistentResourceCache→GPUデータ
+        }
+
+        // 頂点/インデックスバッファがある場合のインデックス描画
+        if (command.IndexCount > 0 && command.MeshHandle.IsValid())
+        {
+            if (command.bInstanced && command.InstanceCount > 1)
+            {
+                commandList->DrawIndexedInstanced(
+                    command.IndexCount,
+                    command.InstanceCount,
+                    command.IndexOffset,
+                    static_cast<int32_t>(command.VertexOffset),
+                    command.FirstInstance);
+            }
+            else
+            {
+                commandList->DrawIndexed(
+                    command.IndexCount,
+                    command.IndexOffset,
+                    static_cast<int32_t>(command.VertexOffset));
+            }
         }
         else
         {
-            commandList->DrawIndexed(command.IndexCount, 0, 0);
+            // 頂点バッファなし描画（シェーダー内蔵の頂点データ）
+            // VertexOffset を頂点数として再利用（Directモード用）
+            uint32_t vertexCount = command.VertexOffset > 0 ? command.VertexOffset : 3;
+            if (command.bInstanced && command.InstanceCount > 1)
+            {
+                commandList->DrawInstanced(vertexCount, command.InstanceCount, 0, command.FirstInstance);
+            }
+            else
+            {
+                commandList->Draw(vertexCount, 0);
+            }
         }
-        */
+
+        // 統計更新
+        ++m_Stats.DrawCallCount;
+        if (command.IndexCount > 0)
+        {
+            m_Stats.TriangleCount += command.IndexCount / 3;
+        }
     }
 
     void SceneRenderer::ExecuteBatch(const Container::VariableArray<DrawCommand> &commands,
@@ -175,11 +208,26 @@ namespace NorvesLib::Core::Rendering
                                      RHI::ICommandList *commandList)
     {
         // バッチ実行（同じマテリアル/パイプラインのコマンドをまとめて処理）
-        // TODO: インスタンシング対応
         for (size_t i = startIndex; i < startIndex + count && i < commands.size(); ++i)
         {
             ExecuteDrawCommand(commands[i], commandList);
         }
+    }
+
+    void SceneRenderer::DrawDirect(RHI::ICommandList *commandList,
+                                   RHI::PipelinePtr pipeline,
+                                   uint32_t vertexCount)
+    {
+        if (!commandList || !pipeline)
+        {
+            return;
+        }
+
+        commandList->SetPipeline(pipeline);
+        commandList->Draw(vertexCount, 0);
+
+        ++m_Stats.DrawCallCount;
+        m_Stats.TriangleCount += vertexCount / 3;
     }
 
     void SceneRenderer::ResetStats()

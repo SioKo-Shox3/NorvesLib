@@ -255,15 +255,6 @@ namespace NorvesLib::Core::Engine
             return m_RenderWorld.GetResourceManager();
         }
 
-        /**
-         * @brief メッシュリソースマネージャーを取得
-         * @return MeshResourceManagerへの参照
-         */
-        Rendering::MeshResourceManager &GetMeshResourceManager()
-        {
-            return m_RenderWorld.GetMeshResourceManager();
-        }
-
     private:
         // サブシステムへの参照
         Container::TUniquePtr<NorvesLib::IApplication> m_PlatformApp;

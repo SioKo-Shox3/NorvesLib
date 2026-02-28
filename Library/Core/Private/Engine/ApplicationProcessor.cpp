@@ -271,13 +271,13 @@ namespace NorvesLib::Core::Engine
             handler->OnPreRender();
         }
 
-        // TODO: 描画処理
+        // 描画処理
         {
             auto &renderWorld = GEngine->GetRenderWorld();
             if (renderWorld.IsInitialized())
             {
                 renderWorld.BeginFrame();
-                renderWorld.RenderTriangle();
+                renderWorld.Render();
                 renderWorld.EndFrame();
             }
         }

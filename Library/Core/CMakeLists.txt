@@ -63,6 +63,7 @@ set(PRIVATE_SOURCES
     Private/RHI/Vulkan/VulkanShader.cpp
     Private/RHI/Vulkan/VulkanSwapChain.cpp
     Private/RHI/Vulkan/VulkanTexture.cpp
+    Private/RHI/TransientResourcePool.cpp
     # Memory
     Private/Memory/FrameAllocator.cpp
     Private/Memory/GlobalAllocator.cpp
@@ -129,7 +130,6 @@ set(PUBLIC_HEADERS
     Public/Rendering/SceneProxy.h
     Public/Rendering/FramePacket.h
     Public/Rendering/RenderResourceManager.h
-    Public/Rendering/MeshResourceManager.h
     Public/Rendering/RenderThread.h
     Public/Rendering/RenderWorld.h
     Public/Rendering/Screen.h

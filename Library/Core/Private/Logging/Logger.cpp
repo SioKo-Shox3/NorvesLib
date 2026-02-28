@@ -455,4 +455,8 @@ namespace NorvesLib::Core::Logging
     template void Logger::LogFormat<unsigned int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &);
     template void Logger::LogFormat<unsigned int &, unsigned int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &, unsigned int &);
     template void Logger::LogFormat<unsigned int, unsigned int, unsigned int>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &&, unsigned int &&, unsigned int &&);
+    // size_t (unsigned __int64) variants (used by PersistentResourceCache)
+    template void Logger::LogFormat<unsigned long long>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned long long &&);
+    // ScopedStat variants (used by Debug::ScopedStat::~ScopedStat)
+    template void Logger::LogFormat<const char *&, long long, double>(LogLevel, const String &, const char *, const char *, int32_t, const char *, const char *&, long long &&, double &&);
 } // namespace NorvesLib::Core::Logging
