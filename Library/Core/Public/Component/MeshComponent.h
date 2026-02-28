@@ -5,7 +5,6 @@
 #include "Rendering/MeshTypes.h"
 #include "Rendering/MaterialTypes.h"
 #include "Rendering/SceneProxy.h"
-#include "Rendering/MeshResourceManager.h"
 #include "Math/Matrix4x4.h"
 #include "Container/Containers.h"
 #include <cstdint>
@@ -30,7 +29,7 @@ namespace NorvesLib::Core::Component
      * - LOD設定
      * - 描画フラグの制御
      */
-    class MeshComponent : public Component, public Rendering::ISceneCollectable
+    class MeshComponent : public Component
     {
     public:
         using Super = Component;
@@ -63,18 +62,18 @@ namespace NorvesLib::Core::Component
          * @brief メッシュを設定
          * @param mesh メッシュアセット
          */
-        void SetMesh(Rendering::MeshPtr mesh);
+        void SetMeshHandle(Rendering::MeshDataHandle handle);
 
         /**
-         * @brief メッシュを取得
-         * @return メッシュアセット
+         * @brief メッシュハンドルを取得
+         * @return メッシュデータハンドル
          */
-        Rendering::MeshPtr GetMesh() const { return m_Mesh; }
+        Rendering::MeshDataHandle GetMeshHandle() const { return m_MeshHandle; }
 
         /**
-         * @brief メッシュがあるかどうか
+         * @brief メッシュが設定されているかどうか
          */
-        bool HasMesh() const { return m_Mesh != nullptr && m_Mesh->IsValid(); }
+        bool HasMesh() const { return m_MeshHandle.IsValid(); }
 
         // ========================================
         // マテリアル設定
@@ -180,13 +179,15 @@ namespace NorvesLib::Core::Component
         const Rendering::BoundingSphere &GetWorldBounds() const { return m_WorldBounds; }
 
         // ========================================
-        // ISceneCollectable実装
+        // SceneProxy生成
         // ========================================
 
         /**
-         * @brief MeshProxyを収集
+         * @brief MeshProxyを構築して返す
+         * @param outProxy 出力先
+         * @return 有効なProxyが生成できた場合true
          */
-        virtual bool CollectMeshProxy(Rendering::MeshProxy &outProxy) const override;
+        bool BuildMeshProxy(Rendering::MeshProxy &outProxy) const;
 
     protected:
         // ========================================
@@ -217,8 +218,8 @@ namespace NorvesLib::Core::Component
         // メンバ変数
         // ========================================
 
-        // メッシュアセット
-        Rendering::MeshPtr m_Mesh;
+        // メッシュリソース（CPU側データ - Resourceシステム経由）
+        Rendering::MeshDataHandle m_MeshHandle;
 
         // マテリアルオーバーライド
         Container::VariableArray<Rendering::MaterialHandle> m_Materials;

@@ -4,7 +4,16 @@
 #include "Rendering/View.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/Shaders/TriangleShaders.h"
+#include "RHI/IDevice.h"
+#include "RHI/ISwapChain.h"
+#include "RHI/ICommandList.h"
+#include "RHI/IRenderPass.h"
+#include "RHI/IFramebuffer.h"
+#include "RHI/IPipeline.h"
+#include "RHI/IShader.h"
 #include "Debug/Stats.h"
+#include "Logging/LogMacros.h"
 #include <chrono>
 #include <algorithm>
 
@@ -22,28 +31,159 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        LOG_INFO("RenderingCoordinator::Initialize() - Starting initialization");
+
         m_Width = settings.Width;
         m_Height = settings.Height;
         m_bVSyncEnabled = settings.bVSync;
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
         m_MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
 
-        // TODO: RHIデバイスの作成
-        // m_Device = RHI::CreateDevice(settings.bEnableValidation);
+        // ========================================
+        // 1. RHIデバイス（RenderWorldから渡される）
+        // ========================================
+        m_Device = settings.Device;
+        if (!m_Device)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "RHI Device is null");
+            return false;
+        }
 
-        // Screenの初期化
+        // ========================================
+        // 2. Screenの初期化（SwapChain作成を含む）
+        // ========================================
         ScreenSettings screenSettings;
         screenSettings.Width = settings.Width;
         screenSettings.Height = settings.Height;
         screenSettings.WindowHandle = settings.WindowHandle;
         screenSettings.bVSync = settings.bVSync;
+        screenSettings.BackBufferCount = settings.BackBufferCount;
 
         if (!m_Screen.Initialize(m_Device, screenSettings))
         {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize Screen");
             return false;
         }
 
-        // メインSceneViewの作成
+        // ========================================
+        // 3. CommandList作成
+        // ========================================
+        m_CommandList = m_Device->CreateCommandList();
+        if (!m_CommandList)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create command list");
+            m_Screen.Shutdown();
+            return false;
+        }
+
+        // ========================================
+        // 4. RenderPass作成（Screen SwapChain用）
+        // ========================================
+        auto swapChain = m_Screen.GetSwapChain();
+        if (!swapChain)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Screen SwapChain is null");
+            return false;
+        }
+
+        RHI::AttachmentDesc colorAttachment;
+        colorAttachment.format = swapChain->GetFormat();
+        colorAttachment.isDepthStencil = false;
+        colorAttachment.clear = true;
+        // Cornflower blue clear color
+        colorAttachment.clearColor[0] = 0.392f;
+        colorAttachment.clearColor[1] = 0.584f;
+        colorAttachment.clearColor[2] = 0.929f;
+        colorAttachment.clearColor[3] = 1.0f;
+        colorAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
+        colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        colorAttachment.initialState = RHI::ResourceState::Undefined;
+        colorAttachment.finalState = RHI::ResourceState::Present;
+
+        RHI::RenderPassDesc renderPassDesc;
+        renderPassDesc.colorAttachments.push_back(colorAttachment);
+        renderPassDesc.hasDepthStencil = false;
+
+        m_RenderPass = m_Device->CreateRenderPass(renderPassDesc);
+        if (!m_RenderPass)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create render pass");
+            return false;
+        }
+
+        // ========================================
+        // 5. Framebuffers（スワップチェーンイメージごと）
+        // ========================================
+        if (!CreateSwapChainFramebuffers())
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create framebuffers");
+            return false;
+        }
+
+        // ========================================
+        // 6. テスト三角形用シェーダー
+        // ========================================
+        RHI::ShaderDesc vertexShaderDesc;
+        vertexShaderDesc.stage = RHI::ShaderStage::Vertex;
+        vertexShaderDesc.entryPoint = "main";
+        vertexShaderDesc.byteCode.assign(
+            TriangleVertexShaderSpirV,
+            TriangleVertexShaderSpirV + sizeof(TriangleVertexShaderSpirV));
+
+        m_TriangleVertexShader = m_Device->CreateShader(vertexShaderDesc);
+        if (!m_TriangleVertexShader)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create triangle vertex shader");
+            return false;
+        }
+
+        RHI::ShaderDesc fragmentShaderDesc;
+        fragmentShaderDesc.stage = RHI::ShaderStage::Pixel;
+        fragmentShaderDesc.entryPoint = "main";
+        fragmentShaderDesc.byteCode.assign(
+            TriangleFragmentShaderSpirV,
+            TriangleFragmentShaderSpirV + sizeof(TriangleFragmentShaderSpirV));
+
+        m_TriangleFragmentShader = m_Device->CreateShader(fragmentShaderDesc);
+        if (!m_TriangleFragmentShader)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create triangle fragment shader");
+            return false;
+        }
+
+        // ========================================
+        // 7. テスト三角形用グラフィックスパイプライン
+        // ========================================
+        RHI::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = m_TriangleVertexShader;
+        pipelineDesc.pixelShader = m_TriangleFragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+
+        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+        pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+
+        pipelineDesc.depthStencilState.depthTestEnable = false;
+        pipelineDesc.depthStencilState.depthWriteEnable = false;
+
+        RHI::BlendAttachmentDesc blendAttachment;
+        blendAttachment.blendEnable = false;
+        blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
+
+        pipelineDesc.renderPass = m_RenderPass;
+
+        m_TrianglePipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!m_TrianglePipeline)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create triangle graphics pipeline");
+            return false;
+        }
+
+        // ========================================
+        // 8. メインSceneViewの作成
+        // ========================================
         SceneViewSettings sceneViewSettings;
         sceneViewSettings.Width = settings.Width;
         sceneViewSettings.Height = settings.Height;
@@ -51,21 +191,36 @@ namespace NorvesLib::Core::Rendering
         m_MainSceneView = Container::MakeShared<SceneView>();
         if (!m_MainSceneView->Initialize(sceneViewSettings))
         {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize main SceneView");
             m_Screen.Shutdown();
             return false;
         }
 
-        // ScreenにSceneViewを追加
         m_Screen.AddView(m_MainSceneView, 0);
         m_Views.push_back(m_MainSceneView);
 
-        // FramePacketManagerの初期化
+        // ========================================
+        // 9. SceneRendererの初期化
+        // ========================================
+        if (!m_SceneRenderer.Initialize(m_Device.get(), nullptr))
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize SceneRenderer");
+            return false;
+        }
+
+        // テスト三角形用パイプラインをデフォルトパイプラインとして設定
+        m_SceneRenderer.SetDefaultPipeline(m_TrianglePipeline);
+
+        // ========================================
+        // 10. FramePacketManagerの初期化
+        // ========================================
         m_PacketManager.Initialize();
 
         // DrawCommand用バッファを確保
         m_FrameDrawCommands.reserve(m_MaxDrawCallsPerFrame);
 
         m_bInitialized = true;
+        LOG_INFO("RenderingCoordinator::Initialize() - Initialization completed successfully");
         return true;
     }
 
@@ -74,6 +229,14 @@ namespace NorvesLib::Core::Rendering
         if (!m_bInitialized)
         {
             return;
+        }
+
+        LOG_INFO("RenderingCoordinator::Shutdown() - Starting shutdown");
+
+        // GPU処理の完了を待機
+        if (m_Device)
+        {
+            m_Device->WaitIdle();
         }
 
         // Viewの破棄
@@ -87,18 +250,32 @@ namespace NorvesLib::Core::Rendering
         m_Views.clear();
         m_MainSceneView.reset();
 
-        // Screenの破棄
+        // SceneRendererの終了
+        m_SceneRenderer.Shutdown();
+
+        // テスト三角形リソースの解放
+        m_TrianglePipeline.reset();
+        m_TriangleFragmentShader.reset();
+        m_TriangleVertexShader.reset();
+
+        // フレームバッファ・レンダーパスの解放
+        m_SwapChainFramebuffers.clear();
+        m_RenderPass.reset();
+
+        // コマンドリストの解放
+        m_CommandList.reset();
+
+        // Screenの破棄（SwapChain解放を含む）
         m_Screen.Shutdown();
 
         // FramePacketManagerの終了
         m_PacketManager.Shutdown();
 
-        // RHIリソースの解放
-        m_CommandList.reset();
-        m_SwapChain.reset();
+        // デバイス参照の解放（Engine層がRHIの終了を管理）
         m_Device.reset();
 
         m_bInitialized = false;
+        LOG_INFO("RenderingCoordinator::Shutdown() - Shutdown completed");
     }
 
     void RenderingCoordinator::BeginFrame()
@@ -203,83 +380,113 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket = nullptr;
         }
 
-        m_Screen.EndFrame();
+        // Screen経由でコマンドリストをサブミット＆Present
+        m_Screen.EndFrame(m_CommandList);
         m_Stats.FrameNumber++;
     }
 
     void RenderingCoordinator::RenderFrame(FramePacket *packet)
     {
-        if (!m_bInitialized || !packet)
+        if (!m_bInitialized)
         {
             return;
         }
 
-        // 各Viewをレンダリング
-        // SceneView::Render()内でCollectProxies, CullProxies, BatchProxies,
-        // GenerateCommands, RenderCommandsが順次実行される
-        for (auto &view : m_Views)
+        auto swapChain = m_Screen.GetSwapChain();
+        if (!swapChain)
         {
-            if (view)
+            return;
+        }
+
+        uint32_t imageIndex = swapChain->GetCurrentBackBufferIndex();
+
+        // フレーム別コマンドバッファを選択（ダブルバッファリングでの同期問題を回避）
+        m_CommandList->SetFrameIndex(swapChain->GetCurrentFrameIndex());
+
+        // SceneRendererフレーム開始
+        m_SceneRenderer.BeginFrame();
+
+        // コマンド録画開始
+        m_CommandList->BeginRecording();
+
+        // レンダーパス開始（現在のスワップチェーンフレームバッファを使用）
+        m_CommandList->BeginRenderPass(m_RenderPass, m_SwapChainFramebuffers[imageIndex]);
+
+        // ビューポート設定
+        RHI::Viewport viewport;
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = static_cast<float>(swapChain->GetWidth());
+        viewport.height = static_cast<float>(swapChain->GetHeight());
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        m_CommandList->SetViewport(viewport);
+
+        // シザー設定
+        RHI::ScissorRect scissor;
+        scissor.left = 0;
+        scissor.top = 0;
+        scissor.right = static_cast<int32_t>(swapChain->GetWidth());
+        scissor.bottom = static_cast<int32_t>(swapChain->GetHeight());
+        m_CommandList->SetScissor(scissor);
+
+        // ========================================
+        // DrawCommand描画フロー
+        // ========================================
+
+        // SceneViewからDrawCommandを収集して描画
+        if (m_MainSceneView)
+        {
+            const auto &drawCommands = m_MainSceneView->GetDrawCommands();
+            if (!drawCommands.empty())
             {
-                view->Render();
+                // SceneRenderer経由でDrawCommandを実行
+                m_SceneRenderer.ExecuteDrawCommands(drawCommands, m_CommandList.get());
             }
         }
 
-        // Viewの合成
-        m_Screen.CompositeViews();
+        // フォールバック: DrawCommandがない場合はテスト三角形を直接描画
+        if (m_SceneRenderer.GetStats().DrawCallCount == 0)
+        {
+            m_SceneRenderer.DrawDirect(m_CommandList.get(), m_TrianglePipeline, 3);
+        }
 
-        // GPUにサブミット
-        SubmitToGPU();
+        // レンダーパス終了
+        m_CommandList->EndRenderPass();
 
-        // プレゼント
-        Present();
+        // コマンド録画終了
+        m_CommandList->End();
+
+        // SceneRendererフレーム終了
+        m_SceneRenderer.EndFrame();
+
+        // 統計更新
+        const auto &rendererStats = m_SceneRenderer.GetStats();
+        m_Stats.DrawCalls = rendererStats.DrawCallCount;
+        m_Stats.TrianglesRendered = rendererStats.TriangleCount;
     }
 
     void RenderingCoordinator::ExecuteDrawCommands(const Container::VariableArray<DrawCommand> &commands)
     {
-        if (!m_bInitialized)
+        if (!m_bInitialized || commands.empty())
         {
             return;
         }
 
-        for (const DrawCommand &cmd : commands)
-        {
-            // TODO: RHI経由でGPUにコマンドを発行
-            // 1. マテリアルのバインド
-            // 2. メッシュのバインド
-            // 3. ユニフォームの設定
-            // 4. ドローコールの発行
-            (void)cmd; // 未使用警告抑制
-        }
+        // SceneRenderer経由でRHI描画コールを発行
+        m_SceneRenderer.ExecuteDrawCommands(commands, m_CommandList.get());
     }
 
     void RenderingCoordinator::SubmitToGPU()
     {
-        if (!m_bInitialized)
-        {
-            return;
-        }
-
-        // TODO: RHIコマンドリストの実行
-        // if (m_CommandList)
-        // {
-        //     m_CommandList->Close();
-        //     m_Device->ExecuteCommandList(m_CommandList.get());
-        // }
+        // Screen::EndFrame()内でSwapChain::EndFrame(commandList)がsubmit+presentを行うため、
+        // この関数は将来的なマルチスレッドレンダリング用に予約
     }
 
     void RenderingCoordinator::Present()
     {
-        if (!m_bInitialized)
-        {
-            return;
-        }
-
-        // TODO: スワップチェーンのプレゼント
-        // if (m_SwapChain)
-        // {
-        //     m_SwapChain->Present(m_bVSyncEnabled ? 1 : 0);
-        // }
+        // Screen::EndFrame()内でSwapChain::EndFrame(commandList)がsubmit+presentを行うため、
+        // この関数は将来的なマルチスレッドレンダリング用に予約
     }
 
     Container::TSharedPtr<SceneView> RenderingCoordinator::CreateSceneView(const SceneViewSettings &settings)
@@ -325,11 +532,23 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        LOG_INFO("RenderingCoordinator::Resize(%u, %u)", width, height);
+
+        // GPU処理の完了を待機
+        if (m_Device)
+        {
+            m_Device->WaitIdle();
+        }
+
         m_Width = width;
         m_Height = height;
 
-        // Screenのリサイズ
+        // Screenのリサイズ（SwapChainリサイズを含む）
         m_Screen.Resize(width, height);
+
+        // フレームバッファの再作成
+        m_SwapChainFramebuffers.clear();
+        CreateSwapChainFramebuffers();
 
         // 各Viewのリサイズ
         for (auto &view : m_Views)
@@ -339,8 +558,39 @@ namespace NorvesLib::Core::Rendering
                 view->Resize(width, height);
             }
         }
+    }
 
-        // TODO: スワップチェーンのリサイズ
+    bool RenderingCoordinator::CreateSwapChainFramebuffers()
+    {
+        auto swapChain = m_Screen.GetSwapChain();
+        if (!swapChain || !m_RenderPass)
+        {
+            return false;
+        }
+
+        uint32_t imageCount = swapChain->GetBufferCount();
+        m_SwapChainFramebuffers.reserve(imageCount);
+
+        for (uint32_t i = 0; i < imageCount; ++i)
+        {
+            RHI::FramebufferDesc fbDesc;
+            fbDesc.colorTargets.push_back(swapChain->GetBackBuffer(i));
+            fbDesc.renderPass = m_RenderPass;
+            fbDesc.width = swapChain->GetWidth();
+            fbDesc.height = swapChain->GetHeight();
+
+            auto framebuffer = m_Device->CreateFramebuffer(fbDesc);
+            if (!framebuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create framebuffer for swapchain image %u", i);
+                return false;
+            }
+
+            m_SwapChainFramebuffers.push_back(framebuffer);
+        }
+
+        LOG_INFO("Created %u swapchain framebuffers", imageCount);
+        return true;
     }
 
 } // namespace NorvesLib::Core::Rendering

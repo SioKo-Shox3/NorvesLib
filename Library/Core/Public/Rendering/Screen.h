@@ -10,6 +10,7 @@ namespace NorvesLib::RHI
 {
     class IDevice;
     class ISwapChain;
+    class ICommandList;
     class IRenderTarget;
     class ITexture2D;
 }
@@ -151,9 +152,10 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief フレーム終了・Present
          *
-         * 合成結果を画面に表示します。
+         * コマンドリストをサブミットし、合成結果を画面に表示します。
+         * @param commandList サブミットするコマンドリスト
          */
-        void EndFrame();
+        void EndFrame(Container::TSharedPtr<RHI::ICommandList> commandList);
 
         // ========================================
         // RHIアクセス

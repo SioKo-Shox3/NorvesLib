@@ -3,6 +3,7 @@
 #include "Screen.h"
 #include "View.h"
 #include "SceneView.h"
+#include "SceneRenderer.h"
 #include "DrawCommand.h"
 #include "FramePacket.h"
 #include "Container/Containers.h"
@@ -17,22 +18,29 @@ namespace NorvesLib::RHI
     class IDevice;
     class ICommandList;
     class ISwapChain;
+    class IRenderPass;
+    class IFramebuffer;
+    class IPipeline;
+    class IShader;
 }
 
 namespace NorvesLib::Core::Rendering
 {
     // 前方宣言
     class RenderResourceManager;
-    class MeshResourceManager;
 
     /**
      * @brief レンダリング調整設定
      */
     struct RenderingCoordinatorSettings
     {
+        // RHIデバイス（RenderWorldから渡される）
+        Container::TSharedPtr<RHI::IDevice> Device;
+
         void *WindowHandle = nullptr;
         uint32_t Width = 1280;
         uint32_t Height = 720;
+        uint32_t BackBufferCount = 2;
         bool bVSync = true;
         bool bEnableMultiThreadedRendering = true;
         uint32_t MaxDrawCallsPerFrame = 10000;
@@ -186,14 +194,15 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         /**
+         * @brief SceneRendererを取得
+         */
+        SceneRenderer &GetSceneRenderer() { return m_SceneRenderer; }
+        const SceneRenderer &GetSceneRenderer() const { return m_SceneRenderer; }
+
+        /**
          * @brief リソースマネージャーを設定
          */
         void SetResourceManager(RenderResourceManager *manager) { m_ResourceManager = manager; }
-
-        /**
-         * @brief メッシュリソースマネージャーを設定
-         */
-        void SetMeshResourceManager(MeshResourceManager *manager) { m_MeshResourceManager = manager; }
 
         // ========================================
         // RHIアクセス
@@ -232,13 +241,34 @@ namespace NorvesLib::Core::Rendering
         const Debug::RenderingStats &GetStats() const { return m_Stats; }
 
     private:
+        // ========================================
+        // 内部ヘルパー
+        // ========================================
+
+        /**
+         * @brief スワップチェーンのフレームバッファを作成
+         * @return 成功時true
+         */
+        bool CreateSwapChainFramebuffers();
+
         // RHIリソース
         Container::TSharedPtr<RHI::IDevice> m_Device;
-        Container::TSharedPtr<RHI::ISwapChain> m_SwapChain;
         Container::TSharedPtr<RHI::ICommandList> m_CommandList;
 
-        // Screen（最終出力先）
+        // レンダーパス・フレームバッファ（Screen SwapChain用）
+        Container::TSharedPtr<RHI::IRenderPass> m_RenderPass;
+        Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_SwapChainFramebuffers;
+
+        // テスト三角形用リソース（将来的にマテリアルシステムに移行）
+        Container::TSharedPtr<RHI::IPipeline> m_TrianglePipeline;
+        Container::TSharedPtr<RHI::IShader> m_TriangleVertexShader;
+        Container::TSharedPtr<RHI::IShader> m_TriangleFragmentShader;
+
+        // Screen（最終出力先 - SwapChain所有）
         Screen m_Screen;
+
+        // SceneRenderer（実際のRHI描画コマンド発行）
+        SceneRenderer m_SceneRenderer;
 
         // View管理
         Container::TSharedPtr<SceneView> m_MainSceneView;
@@ -246,7 +276,6 @@ namespace NorvesLib::Core::Rendering
 
         // リソースマネージャー（外部参照）
         RenderResourceManager *m_ResourceManager = nullptr;
-        MeshResourceManager *m_MeshResourceManager = nullptr;
 
         // FramePacket管理
         FramePacketManager m_PacketManager;

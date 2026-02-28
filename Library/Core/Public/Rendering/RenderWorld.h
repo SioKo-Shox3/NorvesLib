@@ -1,10 +1,9 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
-#include "FramePacket.h"
+#include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResourceManager.h"
-#include "MeshResourceManager.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -14,13 +13,6 @@
 namespace NorvesLib::RHI
 {
     class IDevice;
-    class ISwapChain;
-    class ICommandList;
-    class IRenderPass;
-    class IFramebuffer;
-    class IPipeline;
-    class IBuffer;
-    class IShader;
 }
 
 namespace NorvesLib::Core::Rendering
@@ -126,11 +118,12 @@ namespace NorvesLib::Core::Rendering
         void BeginFrame();
 
         /**
-         * @brief 三角形を描画（デバッグ/テスト用）
+         * @brief 描画実行
          *
-         * RHIを使用してハードコードされた三角形を1つ描画します。
+         * RenderingCoordinator経由でコマンドを録画します。
+         * 現在はテスト三角形を描画。将来的にはDrawCommand経由に移行します。
          */
-        void RenderTriangle();
+        void Render();
 
         /**
          * @brief シーン収集（GameThread）
@@ -171,11 +164,15 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
-         * @brief メッシュリソースマネージャーを取得
+         * @brief レンダリングコーディネーターを取得
          */
-        MeshResourceManager &GetMeshResourceManager()
+        RenderingCoordinator &GetRenderingCoordinator()
         {
-            return m_MeshResourceManager;
+            return m_RenderingCoordinator;
+        }
+        const RenderingCoordinator &GetRenderingCoordinator() const
+        {
+            return m_RenderingCoordinator;
         }
 
         // ========================================
@@ -270,39 +267,18 @@ namespace NorvesLib::Core::Rendering
         RenderWorld &operator=(const RenderWorld &) = delete;
 
         // ========================================
-        // 内部ヘルパー
-        // ========================================
-
-        /**
-         * @brief スワップチェーンのフレームバッファを作成
-         * @return 成功時true
-         */
-        bool CreateSwapChainFramebuffers();
-
-        // ========================================
         // メンバ変数
         // ========================================
 
-        // RHIリソース
+        // RHIデバイス（Engine層から受け取り）
         Container::TSharedPtr<RHI::IDevice> m_Device;
-        Container::TSharedPtr<RHI::ISwapChain> m_SwapChain;
-        Container::TSharedPtr<RHI::ICommandList> m_CommandList;
 
-        // 三角形描画用リソース
-        Container::TSharedPtr<RHI::IRenderPass> m_TriangleRenderPass;
-        Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_SwapChainFramebuffers;
-        Container::TSharedPtr<RHI::IPipeline> m_TrianglePipeline;
-        Container::TSharedPtr<RHI::IShader> m_TriangleVertexShader;
-        Container::TSharedPtr<RHI::IShader> m_TriangleFragmentShader;
+        // レンダリングコーディネーター（描画フロー管理）
+        RenderingCoordinator m_RenderingCoordinator;
 
         // サブシステム（GEngine配下で実体保持）
         RenderResourceManager m_ResourceManager;
-        MeshResourceManager m_MeshResourceManager;
-        FramePacketManager m_PacketManager;
         RenderThread m_RenderThread;
-
-        // 現在のフレームパケット
-        FramePacket *m_CurrentPacket = nullptr;
 
         // 解像度
         uint32_t m_Width = 1280;

@@ -1,5 +1,9 @@
 ﻿#include "Rendering/Screen.h"
 #include "Rendering/View.h"
+#include "RHI/IDevice.h"
+#include "RHI/ISwapChain.h"
+#include "RHI/ICommandList.h"
+#include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Rendering
 {
@@ -17,8 +21,27 @@ namespace NorvesLib::Core::Rendering
         m_bVSyncEnabled = settings.bVSync;
         m_bFullscreen = settings.bFullscreen;
 
-        // TODO: RHI SwapChain作成
-        // m_SwapChain = device->CreateSwapChain(settings);
+        // SwapChain作成
+        if (m_Device && settings.WindowHandle)
+        {
+            RHI::SwapChainDesc swapChainDesc;
+            swapChainDesc.windowHandle = settings.WindowHandle;
+            swapChainDesc.width = m_Width;
+            swapChainDesc.height = m_Height;
+            swapChainDesc.format = RHI::Format::B8G8R8A8_UNORM;
+            swapChainDesc.bufferCount = settings.BackBufferCount;
+            swapChainDesc.vsync = m_bVSyncEnabled;
+
+            m_SwapChain = m_Device->CreateSwapChain(swapChainDesc);
+            if (!m_SwapChain)
+            {
+                NORVES_LOG_ERROR("Screen", "Failed to create SwapChain");
+                return false;
+            }
+
+            LOG_INFO("Screen: SwapChain created (%ux%u, %u buffers)",
+                     m_SwapChain->GetWidth(), m_SwapChain->GetHeight(), m_SwapChain->GetBufferCount());
+        }
 
         m_bInitialized = true;
         return true;
@@ -37,8 +60,8 @@ namespace NorvesLib::Core::Rendering
 
         // RHIリソース解放
         m_CurrentBackBuffer = nullptr;
-        m_SwapChain = nullptr;
-        m_Device = nullptr;
+        m_SwapChain.reset();
+        m_Device.reset();
 
         m_bInitialized = false;
     }
@@ -53,11 +76,11 @@ namespace NorvesLib::Core::Rendering
         m_Width = width;
         m_Height = height;
 
-        // TODO: SwapChainのリサイズ
-        // if (m_SwapChain)
-        // {
-        //     m_SwapChain->Resize(width, height);
-        // }
+        // SwapChainのリサイズ
+        if (m_SwapChain)
+        {
+            m_SwapChain->Resize(width, height);
+        }
 
         // 登録されているViewにもリサイズを通知
         for (auto &view : m_Views)
@@ -107,8 +130,15 @@ namespace NorvesLib::Core::Rendering
 
     void Screen::BeginFrame()
     {
-        // TODO: 次のバックバッファを取得
-        // m_CurrentBackBuffer = m_SwapChain->AcquireNextImage();
+        // SwapChainから次のバックバッファを取得
+        if (m_SwapChain)
+        {
+            if (!m_SwapChain->BeginFrame())
+            {
+                // SwapChainのリクリエーションが必要な場合がある（ウィンドウリサイズ等）
+                NORVES_LOG_WARNING("Screen", "SwapChain::BeginFrame() failed - may need recreation");
+            }
+        }
     }
 
     void Screen::CompositeViews()
@@ -123,13 +153,13 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void Screen::EndFrame()
+    void Screen::EndFrame(Container::TSharedPtr<RHI::ICommandList> commandList)
     {
-        // TODO: Present
-        // if (m_SwapChain)
-        // {
-        //     m_SwapChain->Present(m_bVSyncEnabled);
-        // }
+        // コマンドリストをサブミットしてPresent
+        if (m_SwapChain && commandList)
+        {
+            m_SwapChain->EndFrame(commandList);
+        }
     }
 
     void Screen::SetVSync(bool bEnabled)
