@@ -7,6 +7,8 @@
 #include "Application/ApplicationFactory.h"
 #include "Platform/Windows/WindowsApplicationFactory.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/RenderingCoordinator.h"
+#include "Rendering/SceneView.h"
 #include "RHI/Vulkan/VulkanRHI.h"
 #include "RHI/RHIConfig.h"
 #include "Logging/LogMacros.h"
@@ -133,6 +135,26 @@ namespace NorvesLib::Core::Engine
             LOG_INFO("RenderWorld initialized successfully");
         }
 
+        // ゲームワールドを初期化
+        {
+            GEngine->GetWorld().Initialize();
+
+            // WorldにメインSceneViewを設定
+            auto &coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
+            auto mainSceneView = coordinator.GetMainSceneView();
+            if (mainSceneView)
+            {
+                GEngine->GetWorld().SetSceneView(mainSceneView.get());
+                LOG_INFO("World connected to MainSceneView");
+            }
+            else
+            {
+                LOG_WARNING("MainSceneView not available for World");
+            }
+
+            LOG_INFO("World initialized successfully");
+        }
+
         // OnInitialize呼び出し
         if (handler && !handler->OnInitialize())
         {
@@ -204,6 +226,9 @@ namespace NorvesLib::Core::Engine
                 handler->OnPreShutdown();
             }
 
+            // ゲームワールドをFinalize
+            GEngine->GetWorld().Finalize();
+
             // レンダリングシステムをシャットダウン
             GEngine->GetRenderWorld().Shutdown();
 
@@ -264,6 +289,12 @@ namespace NorvesLib::Core::Engine
 
         // GameModeの更新
         GEngine->UpdateGameModeStateMachine(deltaTime);
+
+        // ゲームワールドのTick更新
+        GEngine->GetWorld().Tick(deltaTime);
+
+        // ワールドからSceneViewへProxy同期
+        GEngine->GetWorld().SyncToSceneView();
 
         // OnPreRender呼び出し
         if (handler)

@@ -10,9 +10,13 @@ find_package(Vulkan REQUIRED)
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Object/Object.cpp
+    Private/Object/UnknownImpl.cpp
+    Private/Object/ObjectUtility.cpp
+    Private/Object/ClassRegistry.cpp
     Private/Object/Resource.cpp
     Private/Object/WorldObject.cpp
     Private/Object/ResourceRegistry.cpp
+    Private/Object/World.cpp
     Private/Text/IdentityPool.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
@@ -42,6 +46,9 @@ set(PRIVATE_SOURCES
     Private/Engine/AssetRegistry.cpp
     # Resource
     Private/Resource/MeshResource.cpp
+    # Component
+    Private/Component/Component.cpp
+    Private/Component/MeshComponent.cpp
     # Thread
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
@@ -144,6 +151,7 @@ set(PUBLIC_HEADERS
     Public/Object/Resource.h
     Public/Object/WorldObject.h
     Public/Object/ResourceRegistry.h
+    Public/Object/World.h
     # Engine
     Public/Engine/NorvesEngine.h
     Public/Engine/IEngine.h

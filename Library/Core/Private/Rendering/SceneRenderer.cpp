@@ -54,6 +54,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        m_DefaultPipeline.reset();
+        m_BoundPipeline.reset();
         m_Device = nullptr;
         m_ResourceCache = nullptr;
         m_TransientPool = nullptr;

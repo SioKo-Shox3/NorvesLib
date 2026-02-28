@@ -2,6 +2,17 @@
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
 
+// 前方宣言
+namespace NorvesLib::Core
+{
+    class WorldObject;
+}
+
+namespace NorvesLib::Core::Component
+{
+    class MeshComponent;
+}
+
 namespace Game
 {
 
@@ -36,6 +47,10 @@ namespace Game
     private:
         // ゲーム固有のメンバー変数
         bool m_bIsPaused = false;
+
+        // テスト三角形オブジェクト（World管理下）
+        NorvesLib::Core::WorldObject *m_pTriangleObject = nullptr;
+        NorvesLib::Core::Component::MeshComponent *m_pTriangleMeshComponent = nullptr;
     };
 
 } // namespace Game

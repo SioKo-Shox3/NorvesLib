@@ -269,9 +269,52 @@ namespace NorvesLib::RHI::Vulkan
             .pDynamicStates = dynamicStates.data()};
 
         // パイプラインレイアウト
-        // ディスクリプタセットレイアウトの収集（空のレイアウトで作成）
+        // GraphicsPipelineDescのdescriptorSetLayoutsからディスクリプタセットレイアウトを作成
         VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
-        // TODO: シェーダーリフレクションからディスクリプタセットレイアウトを取得する
+        for (const auto& dsDesc : m_desc.descriptorSetLayouts)
+        {
+            // DescriptorBindingをDescriptorBindingDescに変換
+            VariableArray<DescriptorBindingDesc> bindingDescs;
+            for (const auto& binding : dsDesc.bindings)
+            {
+                DescriptorBindingDesc bindingDesc;
+                bindingDesc.binding = binding.binding;
+                bindingDesc.stages = binding.stages;
+                bindingDesc.count = 1;
+
+                // ResourceBindTypeからDescriptorTypeへの変換
+                switch (binding.type)
+                {
+                case ResourceBindType::ConstantBuffer:
+                    bindingDesc.type = DescriptorType::UniformBuffer;
+                    break;
+                case ResourceBindType::Texture:
+                    bindingDesc.type = DescriptorType::SampledImage;
+                    break;
+                case ResourceBindType::Sampler:
+                    bindingDesc.type = DescriptorType::Sampler;
+                    break;
+                case ResourceBindType::RWTexture:
+                    bindingDesc.type = DescriptorType::StorageImage;
+                    break;
+                case ResourceBindType::RWBuffer:
+                    bindingDesc.type = DescriptorType::StorageBuffer;
+                    break;
+                case ResourceBindType::StructuredBuffer:
+                    bindingDesc.type = DescriptorType::StorageBuffer;
+                    break;
+                default:
+                    bindingDesc.type = DescriptorType::UniformBuffer;
+                    break;
+                }
+
+                bindingDescs.push_back(bindingDesc);
+            }
+
+            auto layout = MakeShared<VulkanDescriptorSetLayout>(m_device, bindingDescs);
+            descriptorSetLayouts.push_back(layout);
+        }
+        m_descriptorSetLayouts = descriptorSetLayouts;
 
         // パイプラインレイアウトの作成
         m_pipelineLayout = MakeShared<VulkanPipelineLayout>(m_device, descriptorSetLayouts);

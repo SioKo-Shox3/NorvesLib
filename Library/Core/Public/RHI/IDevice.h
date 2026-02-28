@@ -97,6 +97,9 @@ namespace NorvesLib::RHI
 
         // レンダーパス
         RenderPassPtr renderPass;
+
+        // ディスクリプタセットレイアウト（パイプラインレイアウト用）
+        Core::Container::VariableArray<DescriptorSetDesc> descriptorSetLayouts;
     };
 
     /**

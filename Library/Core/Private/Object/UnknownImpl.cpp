@@ -247,6 +247,9 @@ namespace NorvesLib::Core
 
             // 子リストに追加
             m_Inners.push_back(inner);
+
+            // InnerのOuterを自身に設定
+            static_cast<UnknownImpl *>(inner)->SetOuter(this);
         }
     }
 
@@ -259,6 +262,9 @@ namespace NorvesLib::Core
             {
                 if (m_Inners[i] == inner)
                 {
+                    // InnerのOuterをクリア
+                    static_cast<UnknownImpl *>(inner)->SetOuter(nullptr);
+
                     m_Inners.erase(m_Inners.begin() + i);
                     return true; // 削除成功
                 }

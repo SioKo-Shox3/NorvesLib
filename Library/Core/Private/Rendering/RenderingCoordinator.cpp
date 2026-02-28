@@ -4,7 +4,9 @@
 #include "Rendering/View.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/Shaders/TriangleShaders.h"
+#include "Rendering/Shaders/Mesh3DShaders.h"
 #include "RHI/IDevice.h"
 #include "RHI/ISwapChain.h"
 #include "RHI/ICommandList.h"
@@ -12,10 +14,17 @@
 #include "RHI/IFramebuffer.h"
 #include "RHI/IPipeline.h"
 #include "RHI/IShader.h"
+#include "RHI/IBuffer.h"
+#include "RHI/ITexture.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/IGPUResourceAllocator.h"
+#include "Math/MatrixUtils.h"
+#include "Math/Vector3.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
 #include <algorithm>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -102,7 +111,21 @@ namespace NorvesLib::Core::Rendering
 
         RHI::RenderPassDesc renderPassDesc;
         renderPassDesc.colorAttachments.push_back(colorAttachment);
-        renderPassDesc.hasDepthStencil = false;
+
+        // デプスステンシルアタッチメント
+        RHI::AttachmentDesc depthAttachment;
+        depthAttachment.format = RHI::Format::D32_FLOAT;
+        depthAttachment.isDepthStencil = true;
+        depthAttachment.clear = true;
+        depthAttachment.clearDepth = 1.0f;
+        depthAttachment.clearStencil = 0;
+        depthAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
+        depthAttachment.storeOp = RHI::AttachmentStoreOp::DontCare;
+        depthAttachment.initialState = RHI::ResourceState::Undefined;
+        depthAttachment.finalState = RHI::ResourceState::DepthWrite;
+
+        renderPassDesc.depthStencilAttachment = depthAttachment;
+        renderPassDesc.hasDepthStencil = true;
 
         m_RenderPass = m_Device->CreateRenderPass(renderPassDesc);
         if (!m_RenderPass)
@@ -121,19 +144,19 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
-        // 6. テスト三角形用シェーダー
+        // 6. 3Dメッシュシェーダーの作成
         // ========================================
         RHI::ShaderDesc vertexShaderDesc;
         vertexShaderDesc.stage = RHI::ShaderStage::Vertex;
         vertexShaderDesc.entryPoint = "main";
         vertexShaderDesc.byteCode.assign(
-            TriangleVertexShaderSpirV,
-            TriangleVertexShaderSpirV + sizeof(TriangleVertexShaderSpirV));
+            Mesh3DVertexShaderSpirV,
+            Mesh3DVertexShaderSpirV + sizeof(Mesh3DVertexShaderSpirV));
 
-        m_TriangleVertexShader = m_Device->CreateShader(vertexShaderDesc);
-        if (!m_TriangleVertexShader)
+        m_Mesh3DVertexShader = m_Device->CreateShader(vertexShaderDesc);
+        if (!m_Mesh3DVertexShader)
         {
-            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create triangle vertex shader");
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create 3D mesh vertex shader");
             return false;
         }
 
@@ -141,32 +164,110 @@ namespace NorvesLib::Core::Rendering
         fragmentShaderDesc.stage = RHI::ShaderStage::Pixel;
         fragmentShaderDesc.entryPoint = "main";
         fragmentShaderDesc.byteCode.assign(
+            Mesh3DFragmentShaderSpirV,
+            Mesh3DFragmentShaderSpirV + sizeof(Mesh3DFragmentShaderSpirV));
+
+        m_Mesh3DFragmentShader = m_Device->CreateShader(fragmentShaderDesc);
+        if (!m_Mesh3DFragmentShader)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create 3D mesh fragment shader");
+            return false;
+        }
+
+        // 旧三角形シェーダーも残す（フォールバック用）
+        RHI::ShaderDesc triVertDesc;
+        triVertDesc.stage = RHI::ShaderStage::Vertex;
+        triVertDesc.entryPoint = "main";
+        triVertDesc.byteCode.assign(
+            TriangleVertexShaderSpirV,
+            TriangleVertexShaderSpirV + sizeof(TriangleVertexShaderSpirV));
+        m_TriangleVertexShader = m_Device->CreateShader(triVertDesc);
+
+        RHI::ShaderDesc triFragDesc;
+        triFragDesc.stage = RHI::ShaderStage::Pixel;
+        triFragDesc.entryPoint = "main";
+        triFragDesc.byteCode.assign(
             TriangleFragmentShaderSpirV,
             TriangleFragmentShaderSpirV + sizeof(TriangleFragmentShaderSpirV));
+        m_TriangleFragmentShader = m_Device->CreateShader(triFragDesc);
 
-        m_TriangleFragmentShader = m_Device->CreateShader(fragmentShaderDesc);
-        if (!m_TriangleFragmentShader)
+        // ========================================
+        // 7. MVPユニフォームバッファ作成
+        // ========================================
+        // UBOレイアウト: mat4 world(64), mat4 view(64), mat4 projection(64), vec4 cameraPosition(16) = 208 bytes
+        // std140レイアウトに合わせて256バイト確保
+        RHI::BufferDesc uboDesc(256, RHI::ResourceUsage::ConstantBuffer, true, "MVPUniformBuffer");
+        m_MVPUniformBuffer = m_Device->CreateBuffer(uboDesc);
+        if (!m_MVPUniformBuffer)
         {
-            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create triangle fragment shader");
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create MVP uniform buffer");
             return false;
         }
 
         // ========================================
-        // 7. テスト三角形用グラフィックスパイプライン
+        // 8. ディスクリプタセット作成（UBOバインディング）
+        // ========================================
+        RHI::DescriptorSetDesc dsDesc;
+        RHI::DescriptorBinding uboBinding;
+        uboBinding.binding = 0;
+        uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        uboBinding.stages = RHI::ShaderStage::Vertex;
+        dsDesc.bindings.push_back(uboBinding);
+
+        m_MVPDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
+        if (!m_MVPDescriptorSet)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create MVP descriptor set");
+            return false;
+        }
+
+        // UBOをディスクリプタセットにバインド
+        m_MVPDescriptorSet->BindConstantBuffer(0, m_MVPUniformBuffer, 0, 208);
+        m_MVPDescriptorSet->Update();
+
+        // ========================================
+        // 9. 3Dグラフィックスパイプライン作成
         // ========================================
         RHI::GraphicsPipelineDesc pipelineDesc;
-        pipelineDesc.vertexShader = m_TriangleVertexShader;
-        pipelineDesc.pixelShader = m_TriangleFragmentShader;
+        pipelineDesc.vertexShader = m_Mesh3DVertexShader;
+        pipelineDesc.pixelShader = m_Mesh3DFragmentShader;
         pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
 
+        // 頂点入力レイアウト（Position + Normal）
+        RHI::VertexBindingDesc vertexBinding;
+        vertexBinding.binding = 0;
+        vertexBinding.stride = sizeof(Mesh3DVertex);
+        vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
+        pipelineDesc.vertexBindings.push_back(vertexBinding);
+
+        // Position: location=0, vec3
+        RHI::VertexAttributeDesc posAttr;
+        posAttr.location = 0;
+        posAttr.binding = 0;
+        posAttr.format = RHI::Format::R32G32B32_FLOAT;
+        posAttr.offset = 0;
+        pipelineDesc.vertexAttributes.push_back(posAttr);
+
+        // Normal: location=1, vec3
+        RHI::VertexAttributeDesc normalAttr;
+        normalAttr.location = 1;
+        normalAttr.binding = 0;
+        normalAttr.format = RHI::Format::R32G32B32_FLOAT;
+        normalAttr.offset = sizeof(float) * 3;
+        pipelineDesc.vertexAttributes.push_back(normalAttr);
+
+        // ラスタライザ
         pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
 
-        pipelineDesc.depthStencilState.depthTestEnable = false;
-        pipelineDesc.depthStencilState.depthWriteEnable = false;
+        // デプステスト有効
+        pipelineDesc.depthStencilState.depthTestEnable = true;
+        pipelineDesc.depthStencilState.depthWriteEnable = true;
+        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
 
+        // ブレンド
         RHI::BlendAttachmentDesc blendAttachment;
         blendAttachment.blendEnable = false;
         blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
@@ -174,15 +275,73 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.renderPass = m_RenderPass;
 
-        m_TrianglePipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-        if (!m_TrianglePipeline)
+        // ディスクリプタセットレイアウト（set=0: UBO）
+        pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
+
+        m_Mesh3DPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!m_Mesh3DPipeline)
         {
-            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create triangle graphics pipeline");
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create 3D mesh pipeline");
             return false;
         }
 
+        // 旧三角形パイプラインも残す
+        {
+            RHI::GraphicsPipelineDesc triPipelineDesc;
+            triPipelineDesc.vertexShader = m_TriangleVertexShader;
+            triPipelineDesc.pixelShader = m_TriangleFragmentShader;
+            triPipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+            triPipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+            triPipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+            triPipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+            triPipelineDesc.rasterState.lineWidth = 1.0f;
+            triPipelineDesc.depthStencilState.depthTestEnable = false;
+            triPipelineDesc.depthStencilState.depthWriteEnable = false;
+            RHI::BlendAttachmentDesc triBlend;
+            triBlend.blendEnable = false;
+            triBlend.colorWriteMask = RHI::ColorWriteMask::All;
+            triPipelineDesc.blendState.attachments.push_back(triBlend);
+            triPipelineDesc.renderPass = m_RenderPass;
+            m_TrianglePipeline = m_Device->CreateGraphicsPipeline(triPipelineDesc);
+        }
+
         // ========================================
-        // 8. メインSceneViewの作成
+        // 10. 球体メッシュの生成とGPUバッファ作成
+        // ========================================
+        {
+            Container::VariableArray<Mesh3DVertex> vertices;
+            Container::VariableArray<uint32_t> indices;
+            ProceduralMeshGenerator::GenerateUVSphere(1.0f, 32, 16, vertices, indices);
+            m_SphereIndexCount = static_cast<uint32_t>(indices.size());
+
+            // 頂点バッファ
+            uint64_t vbSize = vertices.size() * sizeof(Mesh3DVertex);
+            RHI::BufferDesc vbDesc(vbSize, RHI::ResourceUsage::VertexBuffer, true, "SphereVertexBuffer");
+            m_SphereVertexBuffer = m_Device->CreateBuffer(vbDesc);
+            if (!m_SphereVertexBuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create sphere vertex buffer");
+                return false;
+            }
+            m_SphereVertexBuffer->Update(vertices.data(), vbSize);
+
+            // インデックスバッファ
+            uint64_t ibSize = indices.size() * sizeof(uint32_t);
+            RHI::BufferDesc ibDesc(ibSize, RHI::ResourceUsage::IndexBuffer, true, "SphereIndexBuffer");
+            m_SphereIndexBuffer = m_Device->CreateBuffer(ibDesc);
+            if (!m_SphereIndexBuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create sphere index buffer");
+                return false;
+            }
+            m_SphereIndexBuffer->Update(indices.data(), ibSize);
+
+            LOG_INFO("Sphere mesh created: %u vertices, %u indices",
+                     static_cast<uint32_t>(vertices.size()), m_SphereIndexCount);
+        }
+
+        // ========================================
+        // 11. メインSceneViewの作成
         // ========================================
         SceneViewSettings sceneViewSettings;
         sceneViewSettings.Width = settings.Width;
@@ -200,7 +359,7 @@ namespace NorvesLib::Core::Rendering
         m_Views.push_back(m_MainSceneView);
 
         // ========================================
-        // 9. SceneRendererの初期化
+        // 12. SceneRendererの初期化
         // ========================================
         if (!m_SceneRenderer.Initialize(m_Device.get(), nullptr))
         {
@@ -208,30 +367,15 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // テスト三角形用パイプラインをデフォルトパイプラインとして設定
-        m_SceneRenderer.SetDefaultPipeline(m_TrianglePipeline);
+        // デフォルトパイプラインは設定しない（球体描画で代替）
+        // m_SceneRenderer.SetDefaultPipeline(m_TrianglePipeline);
 
         // ========================================
-        // 10. テスト三角形用MeshProxyの登録
-        // シェーダー内蔵頂点の三角形をフルDrawCommandパイプラインで描画
+        // 13. MeshProxyはWorldから自動登録される
         // ========================================
-        {
-            MeshProxy testTriangleProxy;
-            testTriangleProxy.ObjectId = 1;     // テスト用ID
-            testTriangleProxy.ComponentId = 1;
-            testTriangleProxy.MeshHandle = MeshDataHandle{1}; // センチネルID（GPUバッファなし）
-            testTriangleProxy.MaterialCount = 1;               // バッチ生成に必要
-            testTriangleProxy.Materials[0] = MaterialHandle{1}; // デフォルトマテリアル
-            testTriangleProxy.bVisible = true;
-            testTriangleProxy.bCastShadow = false;
-            testTriangleProxy.WorldTransform = Math::Matrix4x4::Identity;
-
-            m_MainSceneView->AddMeshProxy(testTriangleProxy);
-            NORVES_LOG_INFO("RenderingCoordinator", "Test triangle MeshProxy registered to MainSceneView");
-        }
 
         // ========================================
-        // 11. FramePacketManagerの初期化
+        // 14. FramePacketManagerの初期化
         // ========================================
         m_PacketManager.Initialize();
 
@@ -276,6 +420,16 @@ namespace NorvesLib::Core::Rendering
         m_TrianglePipeline.reset();
         m_TriangleFragmentShader.reset();
         m_TriangleVertexShader.reset();
+
+        // 3Dメッシュリソースの解放
+        m_Mesh3DPipeline.reset();
+        m_MVPDescriptorSet.reset();
+        m_MVPUniformBuffer.reset();
+        m_SphereIndexBuffer.reset();
+        m_SphereVertexBuffer.reset();
+        m_Mesh3DFragmentShader.reset();
+        m_Mesh3DVertexShader.reset();
+        m_DepthTexture.reset();
 
         // フレームバッファ・レンダーパスの解放
         m_SwapChainFramebuffers.clear();
@@ -468,10 +622,94 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 最終フォールバック: DrawCommandが1つもない場合はテスト三角形を直接描画
-        if (m_SceneRenderer.GetStats().DrawCallCount == 0)
+        // 3D球体を描画
+        if (m_Mesh3DPipeline && m_SphereVertexBuffer)
         {
-            m_SceneRenderer.DrawDirect(m_CommandList.get(), m_TrianglePipeline, 3);
+            // カメラ行列の計算（回転する球体）
+            using namespace NorvesLib::Math;
+
+            float time = static_cast<float>(m_TotalTime);
+
+            // カメラ位置（Y-up座標系で少し上から見る）
+            Vector3 cameraPos(0.0f, 1.5f, 4.0f);
+            Vector3 lookAt(0.0f, 0.0f, 0.0f);
+            Vector3 upDir(0.0f, 1.0f, 0.0f);
+
+            // ワールド行列（Y軸回転）
+            float angle = time * 0.5f;
+            float cosA = std::cos(angle);
+            float sinA = std::sin(angle);
+
+            // 行列はRowMajorレイアウト
+            // Vulkan/GLSLのstd140はcolumn-majorを期待するため転置して渡す
+            Matrix4x4 worldMat = Matrix4x4::Identity;
+            worldMat.m00 = cosA;   worldMat.m01 = 0.0f; worldMat.m02 = sinA;  worldMat.m03 = 0.0f;
+            worldMat.m10 = 0.0f;   worldMat.m11 = 1.0f; worldMat.m12 = 0.0f;  worldMat.m13 = 0.0f;
+            worldMat.m20 = -sinA;  worldMat.m21 = 0.0f; worldMat.m22 = cosA;  worldMat.m23 = 0.0f;
+            worldMat.m30 = 0.0f;   worldMat.m31 = 0.0f; worldMat.m32 = 0.0f;  worldMat.m33 = 1.0f;
+
+            // ビュー行列
+            Matrix4x4 viewMat = MatrixUtils::CreateLookAt(cameraPos, lookAt, upDir);
+
+            // プロジェクション行列
+            float aspectRatio = static_cast<float>(swapChain->GetWidth()) / static_cast<float>(swapChain->GetHeight());
+            Matrix4x4 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
+                0.7853981f,  // 45 degrees
+                aspectRatio,
+                0.1f,
+                100.0f);
+
+            // CreatePerspectiveFieldOfViewは左手系(m[3][2]=+1)で作成される。
+            // しかしCreateLookAtは右手系(オブジェクトはビュー空間でz<0)のため、
+            // 投影行列を右手系に変換する必要がある。
+            projMat.m22 *= -1.0f;  // f/(f-n) → -f/(f-n)
+            projMat.m32 *= -1.0f;  // +1 → -1
+
+            // Vulkanのクリップ空間はY反転（OpenGLとは異なる）
+            projMat.m11 *= -1.0f;
+
+            // UBOデータ構造体（std140レイアウトに合わせる）
+            // RowMajor行列をcolumn-majorとして転置して渡す
+            struct MVPData
+            {
+                float world[16];
+                float view[16];
+                float projection[16];
+                float cameraPosition[4];
+            };
+
+            MVPData mvpData;
+
+            // 転置してコピー（RowMajor → ColumnMajor）
+            auto TransposeToFloat = [](const Matrix4x4& mat, float* out)
+            {
+                for (int row = 0; row < 4; ++row)
+                {
+                    for (int col = 0; col < 4; ++col)
+                    {
+                        out[col * 4 + row] = mat.m[row][col];
+                    }
+                }
+            };
+
+            TransposeToFloat(worldMat, mvpData.world);
+            TransposeToFloat(viewMat, mvpData.view);
+            TransposeToFloat(projMat, mvpData.projection);
+
+            mvpData.cameraPosition[0] = cameraPos.x;
+            mvpData.cameraPosition[1] = cameraPos.y;
+            mvpData.cameraPosition[2] = cameraPos.z;
+            mvpData.cameraPosition[3] = 1.0f;
+
+            // UBO更新
+            m_MVPUniformBuffer->Update(&mvpData, sizeof(MVPData));
+
+            // 3D球体描画
+            m_CommandList->SetPipeline(m_Mesh3DPipeline);
+            m_CommandList->SetDescriptorSet(m_MVPDescriptorSet, 0);
+            m_CommandList->SetVertexBuffer(m_SphereVertexBuffer, 0, 0);
+            m_CommandList->SetIndexBuffer(m_SphereIndexBuffer, 0);
+            m_CommandList->DrawIndexed(m_SphereIndexCount, 0, 0);
         }
 
         // レンダーパス終了
@@ -569,8 +807,9 @@ namespace NorvesLib::Core::Rendering
         // Screenのリサイズ（SwapChainリサイズを含む）
         m_Screen.Resize(width, height);
 
-        // フレームバッファの再作成
+        // フレームバッファの再作成（デプスバッファも含む）
         m_SwapChainFramebuffers.clear();
+        m_DepthTexture.reset();
         CreateSwapChainFramebuffers();
 
         // 各Viewのリサイズ
@@ -591,6 +830,17 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // デプステクスチャの作成
+        RHI::TextureDesc depthDesc = RHI::TextureDesc::DepthStencil(
+            swapChain->GetWidth(), swapChain->GetHeight(),
+            RHI::Format::D32_FLOAT, "DepthBuffer");
+        m_DepthTexture = m_Device->CreateTexture(depthDesc);
+        if (!m_DepthTexture)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create depth texture");
+            return false;
+        }
+
         uint32_t imageCount = swapChain->GetBufferCount();
         m_SwapChainFramebuffers.reserve(imageCount);
 
@@ -598,6 +848,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::FramebufferDesc fbDesc;
             fbDesc.colorTargets.push_back(swapChain->GetBackBuffer(i));
+            fbDesc.depthStencilTarget = m_DepthTexture;
             fbDesc.renderPass = m_RenderPass;
             fbDesc.width = swapChain->GetWidth();
             fbDesc.height = swapChain->GetHeight();
@@ -612,7 +863,7 @@ namespace NorvesLib::Core::Rendering
             m_SwapChainFramebuffers.push_back(framebuffer);
         }
 
-        LOG_INFO("Created %u swapchain framebuffers", imageCount);
+        LOG_INFO("Created %u swapchain framebuffers with depth buffer", imageCount);
         return true;
     }
 

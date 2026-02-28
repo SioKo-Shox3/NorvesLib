@@ -1,6 +1,9 @@
 ﻿#include "GameApplicationHandler.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Engine/Engine.h"
+#include "Core/Public/Object/World.h"
+#include "Core/Public/Object/WorldObject.h"
+#include "Core/Public/Component/MeshComponent.h"
 
 // GameMode関連
 #include "Core/Public/GameMode/TStateMachine.h"
@@ -10,6 +13,7 @@
 using namespace NorvesLib::Core::Container;
 using namespace NorvesLib::Core::Engine;
 using namespace NorvesLib::Core::GameMode;
+using namespace NorvesLib::Core;
 
 namespace Game
 {
@@ -32,12 +36,32 @@ namespace Game
     {
         LOG_INFO("GameApplicationHandler::OnInitialize()");
 
-        // ゲーム固有の初期化処理
-        // - リソースマネージャの初期化
-        // - オーディオシステムの初期化
-        // - 入力システムの初期化
-        // - ネットワーク初期化
-        // など
+        // ========================================
+        // テスト三角形のWorldObject作成
+        // ========================================
+        {
+            auto &world = GEngine->GetWorld();
+
+            // WorldObjectを作成（Worldにnewで作成してWorld管理下に置く）
+            m_pTriangleObject = new WorldObject();
+            m_pTriangleObject->Initialize();
+
+            // MeshComponentを作成
+            m_pTriangleMeshComponent = new Component::MeshComponent();
+
+            // シェーダー内蔵頂点用のセンチネルハンドル（ID=1はGPUバッファなし）
+            m_pTriangleMeshComponent->SetMeshHandle(Rendering::MeshDataHandle{1});
+            m_pTriangleMeshComponent->SetMaterial(0, Rendering::MaterialHandle{1});
+            m_pTriangleMeshComponent->SetCastShadow(false);
+
+            // コンポーネントをオブジェクトにアタッチ
+            m_pTriangleObject->AddComponent(m_pTriangleMeshComponent);
+
+            // Worldに追加（これによりOnAddedToWorldが呼ばれる）
+            world.AddObject(m_pTriangleObject);
+
+            LOG_INFO("Triangle WorldObject created and added to World");
+        }
 
         return true;
     }
