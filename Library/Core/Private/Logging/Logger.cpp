@@ -462,4 +462,9 @@ namespace NorvesLib::Core::Logging
     template void Logger::LogFormat<unsigned long long, unsigned long long>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned long long &&, unsigned long long &&);
     // ScopedStat variants (used by Debug::ScopedStat::~ScopedStat)
     template void Logger::LogFormat<const char *&, long long, double>(LogLevel, const String &, const char *, const char *, int32_t, const char *, const char *&, long long &&, double &&);
+    // float variants (used by Input system / Camera debugging)
+    template void Logger::LogFormat<float>(LogLevel, const String &, const char *, const char *, int32_t, const char *, float &&);
+    template void Logger::LogFormat<float &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, float &);
+    template void Logger::LogFormat<float &, float &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, float &, float &);
+    template void Logger::LogFormat<float &, float &, float &, float &, float &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, float &, float &, float &, float &, float &);
 } // namespace NorvesLib::Core::Logging

@@ -222,7 +222,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // UBOをディスクリプタセットにバインド
-        m_MVPDescriptorSet->BindConstantBuffer(0, m_MVPUniformBuffer, 0, 208);
+        m_MVPDescriptorSet->BindConstantBuffer(0, m_MVPUniformBuffer, 0, 224);
         m_MVPDescriptorSet->Update();
 
         // ========================================
@@ -341,6 +341,59 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
+        // 10b. 地面メッシュの生成とGPUバッファ作成
+        // ========================================
+        {
+            Container::VariableArray<Mesh3DVertex> vertices;
+            Container::VariableArray<uint32_t> indices;
+            ProceduralMeshGenerator::GeneratePlane(10.0f, 10.0f, 10, 10, vertices, indices);
+            m_GroundIndexCount = static_cast<uint32_t>(indices.size());
+
+            // 頂点バッファ
+            uint64_t vbSize = vertices.size() * sizeof(Mesh3DVertex);
+            RHI::BufferDesc vbDesc(vbSize, RHI::ResourceUsage::VertexBuffer, true, "GroundVertexBuffer");
+            m_GroundVertexBuffer = m_Device->CreateBuffer(vbDesc);
+            if (!m_GroundVertexBuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create ground vertex buffer");
+                return false;
+            }
+            m_GroundVertexBuffer->Update(vertices.data(), vbSize);
+
+            // インデックスバッファ
+            uint64_t ibSize = indices.size() * sizeof(uint32_t);
+            RHI::BufferDesc ibDesc(ibSize, RHI::ResourceUsage::IndexBuffer, true, "GroundIndexBuffer");
+            m_GroundIndexBuffer = m_Device->CreateBuffer(ibDesc);
+            if (!m_GroundIndexBuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create ground index buffer");
+                return false;
+            }
+            m_GroundIndexBuffer->Update(indices.data(), ibSize);
+
+            LOG_INFO("Ground plane mesh created: %u vertices, %u indices",
+                     static_cast<uint32_t>(vertices.size()), m_GroundIndexCount);
+
+            // 地面用の専用UBOとディスクリプタセット作成
+            RHI::BufferDesc groundUboDesc(256, RHI::ResourceUsage::ConstantBuffer, true, "GroundMVPUniformBuffer");
+            m_GroundMVPUniformBuffer = m_Device->CreateBuffer(groundUboDesc);
+            if (!m_GroundMVPUniformBuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create ground MVP uniform buffer");
+                return false;
+            }
+
+            m_GroundMVPDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
+            if (!m_GroundMVPDescriptorSet)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create ground MVP descriptor set");
+                return false;
+            }
+            m_GroundMVPDescriptorSet->BindConstantBuffer(0, m_GroundMVPUniformBuffer, 0, 224);
+            m_GroundMVPDescriptorSet->Update();
+        }
+
+        // ========================================
         // 11. メインSceneViewの作成
         // ========================================
         SceneViewSettings sceneViewSettings;
@@ -427,6 +480,10 @@ namespace NorvesLib::Core::Rendering
         m_MVPUniformBuffer.reset();
         m_SphereIndexBuffer.reset();
         m_SphereVertexBuffer.reset();
+        m_GroundIndexBuffer.reset();
+        m_GroundVertexBuffer.reset();
+        m_GroundMVPDescriptorSet.reset();
+        m_GroundMVPUniformBuffer.reset();
         m_Mesh3DFragmentShader.reset();
         m_Mesh3DVertexShader.reset();
         m_DepthTexture.reset();
@@ -630,10 +687,26 @@ namespace NorvesLib::Core::Rendering
 
             float time = static_cast<float>(m_TotalTime);
 
-            // カメラ位置（Y-up座標系で少し上から見る）
-            Vector3 cameraPos(0.0f, 1.5f, 4.0f);
-            Vector3 lookAt(0.0f, 0.0f, 0.0f);
-            Vector3 upDir(0.0f, 1.0f, 0.0f);
+            // カメラ位置と注視点
+            Vector3 cameraPos;
+            Vector3 lookAt;
+            Vector3 upDir;
+
+            if (m_bCameraSet)
+            {
+                // MayaCameraController等から設定されたカメラを使用
+                cameraPos = Vector3(m_MainCamera.PositionX, m_MainCamera.PositionY, m_MainCamera.PositionZ);
+                Vector3 forward(m_MainCamera.ForwardX, m_MainCamera.ForwardY, m_MainCamera.ForwardZ);
+                lookAt = cameraPos + forward;
+                upDir = Vector3(m_MainCamera.UpX, m_MainCamera.UpY, m_MainCamera.UpZ);
+            }
+            else
+            {
+                // デフォルトカメラ（フォールバック）
+                cameraPos = Vector3(0.0f, 1.5f, 4.0f);
+                lookAt = Vector3(0.0f, 0.0f, 0.0f);
+                upDir = Vector3(0.0f, 1.0f, 0.0f);
+            }
 
             // ワールド行列（Y軸回転）
             float angle = time * 0.5f;
@@ -643,27 +716,44 @@ namespace NorvesLib::Core::Rendering
             // 行列はRowMajorレイアウト
             // Vulkan/GLSLのstd140はcolumn-majorを期待するため転置して渡す
             Matrix4x4 worldMat = Matrix4x4::Identity;
-            worldMat.m00 = cosA;   worldMat.m01 = 0.0f; worldMat.m02 = sinA;  worldMat.m03 = 0.0f;
-            worldMat.m10 = 0.0f;   worldMat.m11 = 1.0f; worldMat.m12 = 0.0f;  worldMat.m13 = 0.0f;
-            worldMat.m20 = -sinA;  worldMat.m21 = 0.0f; worldMat.m22 = cosA;  worldMat.m23 = 0.0f;
-            worldMat.m30 = 0.0f;   worldMat.m31 = 0.0f; worldMat.m32 = 0.0f;  worldMat.m33 = 1.0f;
+            worldMat.m00 = cosA;
+            worldMat.m01 = 0.0f;
+            worldMat.m02 = sinA;
+            worldMat.m03 = 0.0f;
+            worldMat.m10 = 0.0f;
+            worldMat.m11 = 1.0f;
+            worldMat.m12 = 0.0f;
+            worldMat.m13 = 0.0f;
+            worldMat.m20 = -sinA;
+            worldMat.m21 = 0.0f;
+            worldMat.m22 = cosA;
+            worldMat.m23 = 0.0f;
+            worldMat.m30 = 0.0f;
+            worldMat.m31 = 0.0f;
+            worldMat.m32 = 0.0f;
+            worldMat.m33 = 1.0f;
 
             // ビュー行列
             Matrix4x4 viewMat = MatrixUtils::CreateLookAt(cameraPos, lookAt, upDir);
 
             // プロジェクション行列
             float aspectRatio = static_cast<float>(swapChain->GetWidth()) / static_cast<float>(swapChain->GetHeight());
+            float fovRadians = m_bCameraSet
+                                   ? m_MainCamera.FieldOfView * (3.14159265f / 180.0f)
+                                   : 0.7853981f; // 45 degrees fallback
+            float nearPlane = m_bCameraSet ? m_MainCamera.NearPlane : 0.1f;
+            float farPlane = m_bCameraSet ? m_MainCamera.FarPlane : 100.0f;
             Matrix4x4 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
-                0.7853981f,  // 45 degrees
+                fovRadians,
                 aspectRatio,
-                0.1f,
-                100.0f);
+                nearPlane,
+                farPlane);
 
             // CreatePerspectiveFieldOfViewは左手系(m[3][2]=+1)で作成される。
             // しかしCreateLookAtは右手系(オブジェクトはビュー空間でz<0)のため、
             // 投影行列を右手系に変換する必要がある。
-            projMat.m22 *= -1.0f;  // f/(f-n) → -f/(f-n)
-            projMat.m32 *= -1.0f;  // +1 → -1
+            projMat.m22 *= -1.0f; // f/(f-n) → -f/(f-n)
+            projMat.m32 *= -1.0f; // +1 → -1
 
             // Vulkanのクリップ空間はY反転（OpenGLとは異なる）
             projMat.m11 *= -1.0f;
@@ -676,12 +766,13 @@ namespace NorvesLib::Core::Rendering
                 float view[16];
                 float projection[16];
                 float cameraPosition[4];
+                float objectColor[4];
             };
 
             MVPData mvpData;
 
             // 転置してコピー（RowMajor → ColumnMajor）
-            auto TransposeToFloat = [](const Matrix4x4& mat, float* out)
+            auto TransposeToFloat = [](const Matrix4x4 &mat, float *out)
             {
                 for (int row = 0; row < 4; ++row)
                 {
@@ -701,6 +792,12 @@ namespace NorvesLib::Core::Rendering
             mvpData.cameraPosition[2] = cameraPos.z;
             mvpData.cameraPosition[3] = 1.0f;
 
+            // 球体の色（赤系）
+            mvpData.objectColor[0] = 0.8f;
+            mvpData.objectColor[1] = 0.2f;
+            mvpData.objectColor[2] = 0.2f;
+            mvpData.objectColor[3] = 1.0f;
+
             // UBO更新
             m_MVPUniformBuffer->Update(&mvpData, sizeof(MVPData));
 
@@ -710,6 +807,37 @@ namespace NorvesLib::Core::Rendering
             m_CommandList->SetVertexBuffer(m_SphereVertexBuffer, 0, 0);
             m_CommandList->SetIndexBuffer(m_SphereIndexBuffer, 0);
             m_CommandList->DrawIndexed(m_SphereIndexCount, 0, 0);
+
+            // 地面描画（専用UBOを使用）
+            if (m_GroundVertexBuffer && m_GroundMVPUniformBuffer)
+            {
+                // 地面は球体の下（Y = -1.0）に配置、回転なし
+                Matrix4x4 groundWorld = Matrix4x4::Identity;
+                groundWorld.m13 = -1.0f; // Y方向に-1.0オフセット（RowMajor: m[1][3] = ty）
+
+                MVPData groundMvpData;
+                TransposeToFloat(groundWorld, groundMvpData.world);
+                TransposeToFloat(viewMat, groundMvpData.view);
+                TransposeToFloat(projMat, groundMvpData.projection);
+                groundMvpData.cameraPosition[0] = cameraPos.x;
+                groundMvpData.cameraPosition[1] = cameraPos.y;
+                groundMvpData.cameraPosition[2] = cameraPos.z;
+                groundMvpData.cameraPosition[3] = 1.0f;
+
+                // 地面の色（暗い緑灰色）
+                groundMvpData.objectColor[0] = 0.35f;
+                groundMvpData.objectColor[1] = 0.45f;
+                groundMvpData.objectColor[2] = 0.3f;
+                groundMvpData.objectColor[3] = 1.0f;
+
+                m_GroundMVPUniformBuffer->Update(&groundMvpData, sizeof(MVPData));
+
+                m_CommandList->SetPipeline(m_Mesh3DPipeline);
+                m_CommandList->SetDescriptorSet(m_GroundMVPDescriptorSet, 0);
+                m_CommandList->SetVertexBuffer(m_GroundVertexBuffer, 0, 0);
+                m_CommandList->SetIndexBuffer(m_GroundIndexBuffer, 0);
+                m_CommandList->DrawIndexed(m_GroundIndexCount, 0, 0);
+            }
         }
 
         // レンダーパス終了
@@ -784,6 +912,12 @@ namespace NorvesLib::Core::Rendering
             (*it)->Shutdown();
             m_Views.erase(it);
         }
+    }
+
+    void RenderingCoordinator::SetMainCamera(const CameraProxy &camera)
+    {
+        m_MainCamera = camera;
+        m_bCameraSet = true;
     }
 
     void RenderingCoordinator::Resize(uint32_t width, uint32_t height)

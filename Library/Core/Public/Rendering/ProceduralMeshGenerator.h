@@ -136,6 +136,69 @@ namespace NorvesLib::Core::Rendering
                 outIndices.push_back(lastRingBaseIndex + slice);
             }
         }
+
+        /**
+         * @brief 平面メッシュを生成（XZ平面、Y-up）
+         * @param width X方向の幅
+         * @param depth Z方向の奥行き
+         * @param subdivisionsX X方向の分割数
+         * @param subdivisionsZ Z方向の分割数
+         * @param outVertices 出力頂点データ
+         * @param outIndices 出力インデックスデータ
+         */
+        static void GeneratePlane(
+            float width,
+            float depth,
+            uint32_t subdivisionsX,
+            uint32_t subdivisionsZ,
+            Container::VariableArray<Mesh3DVertex>& outVertices,
+            Container::VariableArray<uint32_t>& outIndices)
+        {
+            outVertices.clear();
+            outIndices.clear();
+
+            float halfW = width * 0.5f;
+            float halfD = depth * 0.5f;
+            float stepX = width / static_cast<float>(subdivisionsX);
+            float stepZ = depth / static_cast<float>(subdivisionsZ);
+
+            // 頂点生成
+            for (uint32_t iz = 0; iz <= subdivisionsZ; ++iz)
+            {
+                for (uint32_t ix = 0; ix <= subdivisionsX; ++ix)
+                {
+                    Mesh3DVertex vertex;
+                    vertex.Position[0] = -halfW + static_cast<float>(ix) * stepX;
+                    vertex.Position[1] = 0.0f;
+                    vertex.Position[2] = -halfD + static_cast<float>(iz) * stepZ;
+                    vertex.Normal[0] = 0.0f;
+                    vertex.Normal[1] = 1.0f;
+                    vertex.Normal[2] = 0.0f;
+                    outVertices.push_back(vertex);
+                }
+            }
+
+            // インデックス生成
+            uint32_t rowVerts = subdivisionsX + 1;
+            for (uint32_t iz = 0; iz < subdivisionsZ; ++iz)
+            {
+                for (uint32_t ix = 0; ix < subdivisionsX; ++ix)
+                {
+                    uint32_t i0 = iz * rowVerts + ix;
+                    uint32_t i1 = i0 + 1;
+                    uint32_t i2 = i0 + rowVerts;
+                    uint32_t i3 = i2 + 1;
+
+                    outIndices.push_back(i0);
+                    outIndices.push_back(i2);
+                    outIndices.push_back(i1);
+
+                    outIndices.push_back(i1);
+                    outIndices.push_back(i2);
+                    outIndices.push_back(i3);
+                }
+            }
+        }
     };
 
 } // namespace NorvesLib::Core::Rendering
