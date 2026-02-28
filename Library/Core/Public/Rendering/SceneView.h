@@ -155,6 +155,15 @@ namespace NorvesLib::Core::Rendering
          */
         void RenderCommands(Viewport *viewport);
 
+        /**
+         * @brief Viewport不要のDrawCommand準備
+         *
+         * カメラ依存のカリングをスキップし、
+         * 全可視Proxyからバッチング→DrawCommand生成を行います。
+         * Viewport/Camera未設定時のフォールバック用。
+         */
+        void PrepareDrawCommands();
+
         // ========================================
         // Proxy直接アクセス
         // ========================================

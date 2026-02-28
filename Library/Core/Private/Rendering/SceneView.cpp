@@ -267,6 +267,37 @@ namespace NorvesLib::Core::Rendering
         // 4. 透明オブジェクトを描画
     }
 
+    void SceneView::PrepareDrawCommands()
+    {
+        if (!m_bInitialized)
+        {
+            return;
+        }
+
+        // 統計の更新
+        m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
+        m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
+
+        // カメラ非依存のカリング: 可視フラグのみでフィルタリング
+        m_VisibleMeshProxies.clear();
+        for (MeshProxy &proxy : m_MeshProxies)
+        {
+            if (proxy.bVisible)
+            {
+                m_VisibleMeshProxies.push_back(&proxy);
+            }
+        }
+
+        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size());
+        m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
+
+        // バッチング
+        BatchProxies();
+
+        // DrawCommand生成
+        GenerateCommands();
+    }
+
     bool SceneView::FrustumCull(const MeshProxy &proxy, const Math::Matrix4x4 &viewProjection) const
     {
         // 簡易的な視錐台カリング
