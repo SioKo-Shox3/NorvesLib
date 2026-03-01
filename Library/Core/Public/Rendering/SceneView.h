@@ -10,6 +10,7 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    class SceneRenderer;
 
     /**
      * @brief SceneView設定
@@ -128,6 +129,38 @@ namespace NorvesLib::Core::Rendering
         virtual void Render() override;
 
         /**
+         * @brief パスチェーン対応の描画（オーバーライド）
+         * @param context 描画コンテキスト
+         *
+         * パスチェーンが設定されていれば、GBuffer→Lighting→PostProcess
+         * の順にパスを実行します。未設定の場合はレガシーRender()に
+         * フォールバックします。
+         */
+        virtual void Render(ViewRenderContext &context) override;
+
+        // ========================================
+        // パイプライン構築ヘルパー
+        // ========================================
+
+        /**
+         * @brief ディファードレンダリングパイプラインをセットアップ
+         * @param sceneRenderer SceneRenderer参照
+         *
+         * GBufferPass → LightingPass → PostProcessStack(ToneMapping)
+         * の順にパスチェーンを構築します。
+         */
+        void SetupDeferredPipeline(SceneRenderer *sceneRenderer);
+
+        /**
+         * @brief フォワードレンダリングパイプラインをセットアップ
+         * @param sceneRenderer SceneRenderer参照
+         *
+         * ForwardPass → PostProcessStack(ToneMapping)
+         * の順にパスチェーンを構築します。
+         */
+        void SetupForwardPipeline(SceneRenderer *sceneRenderer);
+
+        /**
          * @brief Proxyをカリング
          * @param viewport 対象Viewport
          *
@@ -182,6 +215,16 @@ namespace NorvesLib::Core::Rendering
          * @brief DrawCommandを取得
          */
         const Container::VariableArray<DrawCommand> &GetDrawCommands() const { return m_DrawCommands; }
+
+        /**
+         * @brief 不透明DrawCommandを取得
+         */
+        const Container::VariableArray<DrawCommand> &GetOpaqueCommands() const { return m_OpaqueCommands; }
+
+        /**
+         * @brief 半透明DrawCommandを取得
+         */
+        const Container::VariableArray<DrawCommand> &GetTransparentCommands() const { return m_TransparentCommands; }
 
         // ========================================
         // 設定

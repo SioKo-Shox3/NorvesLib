@@ -706,6 +706,8 @@ namespace NorvesLib::RHI::Vulkan
             return DescriptorType::SampledImage;
         case ResourceBindType::Sampler:
             return DescriptorType::Sampler;
+        case ResourceBindType::CombinedImageSampler:
+            return DescriptorType::CombinedImageSampler;
         case ResourceBindType::RWTexture:
             return DescriptorType::StorageImage;
         case ResourceBindType::RWBuffer:

@@ -303,6 +303,9 @@ namespace NorvesLib::RHI::Vulkan
                 case ResourceBindType::StructuredBuffer:
                     bindingDesc.type = DescriptorType::StorageBuffer;
                     break;
+                case ResourceBindType::CombinedImageSampler:
+                    bindingDesc.type = DescriptorType::CombinedImageSampler;
+                    break;
                 default:
                     bindingDesc.type = DescriptorType::UniformBuffer;
                     break;

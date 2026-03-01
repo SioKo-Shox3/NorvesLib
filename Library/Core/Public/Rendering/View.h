@@ -17,6 +17,9 @@ namespace NorvesLib::Core::Rendering
 {
     // 前方宣言
     class Viewport;
+    class IViewPass;
+    class PostProcessStack;
+    struct ViewRenderContext;
 
     /**
      * @brief Viewの種類
@@ -55,12 +58,12 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief デフォルトコンストラクタ
          */
-        View() = default;
+        View();
 
         /**
          * @brief デストラクタ
          */
-        virtual ~View() = default;
+        virtual ~View();
 
         // コピー・ムーブ禁止
         View(const View &) = delete;
@@ -126,11 +129,21 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         /**
-         * @brief Viewの描画を実行
+         * @brief Viewの描画を実行（レガシー）
          *
          * 全Viewportを描画し、結果を合成して出力します。
+         * ViewRenderContextを使用する新しいRenderに移行してください。
          */
         virtual void Render();
+
+        /**
+         * @brief Viewの描画を実行（パスチェーン対応）
+         *
+         * パスチェーンに登録されたIViewPassを順次実行します。
+         * パスが未登録の場合はレガシーRender()にフォールバックします。
+         * @param context 描画コンテキスト
+         */
+        virtual void Render(ViewRenderContext &context);
 
         /**
          * @brief View出力を合成
@@ -138,6 +151,61 @@ namespace NorvesLib::Core::Rendering
          * 全Viewportの描画結果を合成します。
          */
         virtual void CompositeViewports();
+
+        // ========================================
+        // パスチェーン管理
+        // ========================================
+
+        /**
+         * @brief パスを追加
+         * @param pass 追加するパス（所有権を移譲）
+         */
+        void AddPass(Container::TUniquePtr<IViewPass> pass);
+
+        /**
+         * @brief パスを挿入
+         * @param index 挿入位置
+         * @param pass 挿入するパス（所有権を移譲）
+         */
+        void InsertPass(uint32_t index, Container::TUniquePtr<IViewPass> pass);
+
+        /**
+         * @brief パスを名前で削除
+         * @param name 削除するパスの名前
+         * @return 削除成功時true
+         */
+        bool RemovePass(const char *name);
+
+        /**
+         * @brief パスを名前で検索
+         * @param name パス名
+         * @return 見つかったパス（見つからない場合nullptr）
+         */
+        IViewPass *FindPass(const char *name) const;
+
+        /**
+         * @brief パスの有効/無効を切替
+         * @param name パス名
+         * @param bEnabled 有効にする場合true
+         */
+        void SetPassEnabled(const char *name, bool bEnabled);
+
+        /**
+         * @brief 登録パス数を取得
+         */
+        uint32_t GetPassCount() const { return static_cast<uint32_t>(m_Passes.size()); }
+
+        /**
+         * @brief ポストプロセススタックを設定
+         * @param stack ポストプロセススタック（所有権を移譲）
+         */
+        void SetPostProcessStack(Container::TUniquePtr<PostProcessStack> stack);
+
+        /**
+         * @brief ポストプロセススタックを取得
+         * @return ポストプロセススタック（未設定時nullptr）
+         */
+        PostProcessStack *GetPostProcessStack() const { return m_PostProcessStack.get(); }
 
         // ========================================
         // 出力
@@ -186,8 +254,24 @@ namespace NorvesLib::Core::Rendering
         bool IsEnabled() const { return m_bEnabled; }
 
     protected:
+        // ========================================
+        // パスチェーン実行
+        // ========================================
+
+        /**
+         * @brief 登録パスのSetup→Executeを順次実行
+         * @param context 描画コンテキスト
+         */
+        void ExecutePassChain(ViewRenderContext &context);
+
         // Viewport管理
         Container::VariableArray<Container::TSharedPtr<Viewport>> m_Viewports;
+
+        // パスチェーン
+        Container::VariableArray<Container::TUniquePtr<IViewPass>> m_Passes;
+
+        // ポストプロセススタック
+        Container::TUniquePtr<PostProcessStack> m_PostProcessStack;
 
         // 出力リソース
         Container::TSharedPtr<RHI::IRenderTarget> m_OutputRenderTarget;

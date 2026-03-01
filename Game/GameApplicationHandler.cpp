@@ -11,7 +11,7 @@
 // GameMode関連
 #include "Core/Public/GameMode/TStateMachine.h"
 #include "Core/Public/GameMode/GameModeFactory.h"
-#include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
+#include "GameModes/Rendering3DTest/Rendering3DTestMode.h"
 
 using namespace NorvesLib::Core::Container;
 using namespace NorvesLib::Core::Engine;
@@ -77,32 +77,7 @@ namespace Game
             LOG_INFO("LightController initialized");
         }
 
-        // ========================================
-        // テスト三角形のWorldObject作成
-        // ========================================
-        {
-            auto &world = GEngine->GetWorld();
-
-            // WorldObjectを作成（Worldにnewで作成してWorld管理下に置く）
-            m_pTriangleObject = new WorldObject();
-            m_pTriangleObject->Initialize();
-
-            // MeshComponentを作成
-            m_pTriangleMeshComponent = new Component::MeshComponent();
-
-            // シェーダー内蔵頂点用のセンチネルハンドル（ID=1はGPUバッファなし）
-            m_pTriangleMeshComponent->SetMeshHandle(Rendering::MeshDataHandle{1});
-            m_pTriangleMeshComponent->SetMaterial(0, Rendering::MaterialHandle{1});
-            m_pTriangleMeshComponent->SetCastShadow(false);
-
-            // コンポーネントをオブジェクトにアタッチ
-            m_pTriangleObject->AddComponent(m_pTriangleMeshComponent);
-
-            // Worldに追加（これによりOnAddedToWorldが呼ばれる）
-            world.AddObject(m_pTriangleObject);
-
-            LOG_INFO("Triangle WorldObject created and added to World");
-        }
+        // テストオブジェクトの作成はRendering3DTestModeのEnterで行われる
 
         return true;
     }
@@ -211,15 +186,15 @@ namespace Game
     {
         LOG_INFO("GameApplicationHandler::CreateGameModeStateMachine()");
 
-        // メモリエージングテスト用のステートマシンを作成
+        // 3Dレンダリングテスト用のステートマシンを作成
         using namespace Game::GameModes;
 
         auto stateMachine = MakeUnique<TStateMachine<IGameMode, GameModeFactory>>();
 
-        // メモリエージングテストモードを初期ステートとして設定
-        stateMachine->ReserveState(MakeUnique<MemoryAgingTestMode>());
+        // 3Dレンダリングテストモードを初期ステートとして設定
+        stateMachine->ReserveState(MakeUnique<Rendering3DTestMode>());
 
-        LOG_INFO("メモリエージングテストモードを開始します");
+        LOG_INFO("3Dレンダリングテストモードを開始します");
 
         return stateMachine;
     }

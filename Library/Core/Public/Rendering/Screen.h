@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "SharedResourceRegistry.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
@@ -187,6 +188,20 @@ namespace NorvesLib::Core::Rendering
         void SetFullscreen(bool bEnabled);
         bool IsFullscreen() const { return m_bFullscreen; }
 
+        // ========================================
+        // 共有リソースレジストリ
+        // ========================================
+
+        /**
+         * @brief View間共有リソースレジストリを取得
+         *
+         * View間（例: SceneViewの深度をUIViewで参照等）で
+         * リソースを共有するためのレジストリです。
+         * 毎フレームBeginFrame()時にクリアされます。
+         */
+        SharedResourceRegistry &GetSharedResourceRegistry() { return m_SharedResourceRegistry; }
+        const SharedResourceRegistry &GetSharedResourceRegistry() const { return m_SharedResourceRegistry; }
+
     private:
         // RHIリソース
         Container::TSharedPtr<RHI::IDevice> m_Device;
@@ -196,6 +211,9 @@ namespace NorvesLib::Core::Rendering
         // View管理
         Container::VariableArray<Container::TSharedPtr<View>> m_Views;
         Container::VariableArray<int32_t> m_ViewPriorities;
+
+        // View間共有リソース
+        SharedResourceRegistry m_SharedResourceRegistry;
 
         // 設定
         uint32_t m_Width = 1280;

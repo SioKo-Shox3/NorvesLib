@@ -55,6 +55,18 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // ========================================
+        // 3. RenderResourceManager初期化
+        // ========================================
+        if (!m_ResourceManager.Initialize(m_Device))
+        {
+            NORVES_LOG_ERROR("Rendering", "Failed to initialize RenderResourceManager");
+            return false;
+        }
+
+        // RenderingCoordinatorにResourceManagerを設定
+        m_RenderingCoordinator.SetResourceManager(&m_ResourceManager);
+
         m_bInitialized = true;
         LOG_INFO("RenderWorld::Initialize() - Initialization completed successfully");
         return true;
@@ -68,6 +80,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         LOG_INFO("RenderWorld::Shutdown() - Starting shutdown");
+
+        // RenderResourceManagerの終了（メッシュGPUリソース等の解放）
+        m_ResourceManager.Shutdown();
 
         // RenderingCoordinatorの終了（RHIリソース解放を含む）
         m_RenderingCoordinator.Shutdown();

@@ -6,6 +6,7 @@
 #include "SceneRenderer.h"
 #include "DrawCommand.h"
 #include "FramePacket.h"
+#include "ViewRenderContext.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
@@ -25,6 +26,7 @@ namespace NorvesLib::RHI
     class IBuffer;
     class ITexture;
     class IDescriptorSet;
+    class ISampler;
 }
 
 namespace NorvesLib::Core::Rendering
@@ -278,23 +280,15 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::IShader> m_TriangleVertexShader;
         Container::TSharedPtr<RHI::IShader> m_TriangleFragmentShader;
 
-        // 3D球体レンダリング用リソース
-        Container::TSharedPtr<RHI::IPipeline> m_Mesh3DPipeline;
-        Container::TSharedPtr<RHI::IShader> m_Mesh3DVertexShader;
-        Container::TSharedPtr<RHI::IShader> m_Mesh3DFragmentShader;
-        Container::TSharedPtr<RHI::IBuffer> m_SphereVertexBuffer;
-        Container::TSharedPtr<RHI::IBuffer> m_SphereIndexBuffer;
-        Container::TSharedPtr<RHI::IBuffer> m_MVPUniformBuffer;
-        Container::TSharedPtr<RHI::IDescriptorSet> m_MVPDescriptorSet;
-        Container::TSharedPtr<RHI::ITexture> m_DepthTexture;
-        uint32_t m_SphereIndexCount = 0;
+        // Blit合成用リソース（ToneMappedColor → SwapChain最終出力）
+        Container::TSharedPtr<RHI::IPipeline> m_BlitPipeline;
+        Container::TSharedPtr<RHI::IShader> m_BlitVertexShader;
+        Container::TSharedPtr<RHI::IShader> m_BlitFragmentShader;
+        Container::TSharedPtr<RHI::IDescriptorSet> m_BlitDescriptorSet;
+        Container::TSharedPtr<RHI::ISampler> m_BlitSampler;
 
-        // 地面メッシュ用リソース
-        Container::TSharedPtr<RHI::IBuffer> m_GroundVertexBuffer;
-        Container::TSharedPtr<RHI::IBuffer> m_GroundIndexBuffer;
-        Container::TSharedPtr<RHI::IBuffer> m_GroundMVPUniformBuffer;
-        Container::TSharedPtr<RHI::IDescriptorSet> m_GroundMVPDescriptorSet;
-        uint32_t m_GroundIndexCount = 0;
+        // 深度バッファ（スワップチェーン用、将来的にForwardPass等で使用）
+        Container::TSharedPtr<RHI::ITexture> m_DepthTexture;
 
         // メインカメラ（GameThreadから設定される）
         CameraProxy m_MainCamera;

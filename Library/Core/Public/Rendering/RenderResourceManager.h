@@ -330,6 +330,46 @@ namespace NorvesLib::Core::Rendering
         const VertexLayout *GetVertexLayout(VertexLayoutHandle handle) const;
 
         // ========================================
+        // メッシュ操作
+        // ========================================
+
+        /**
+         * @brief メッシュのGPUデータ（VB/IB/インデックス数）
+         */
+        struct MeshGPUData
+        {
+            Container::TSharedPtr<RHI::IBuffer> VertexBuffer;
+            Container::TSharedPtr<RHI::IBuffer> IndexBuffer;
+            uint32_t IndexCount = 0;
+        };
+
+        /**
+         * @brief プロシージャルメッシュをGPUに登録
+         * @param handle メッシュデータハンドル（呼び出し側でIDを決定）
+         * @param vertices 頂点データ
+         * @param vertexSize 頂点データの総バイト数
+         * @param indices インデックスデータ
+         * @param indexCount インデックス数
+         * @return 登録成功時true
+         */
+        bool RegisterMesh(MeshDataHandle handle,
+                          const void* vertices, size_t vertexSize,
+                          const uint32_t* indices, uint32_t indexCount);
+
+        /**
+         * @brief メッシュのGPUデータを取得
+         * @param handle メッシュデータハンドル
+         * @return GPUデータへのポインタ（未登録時nullptr）
+         */
+        const MeshGPUData* GetMeshGPUData(MeshDataHandle handle) const;
+
+        /**
+         * @brief メッシュを解除
+         * @param handle メッシュデータハンドル
+         */
+        void UnregisterMesh(MeshDataHandle handle);
+
+        // ========================================
         // 内部リソースアクセス（Rendering内部用）
         // ========================================
 
@@ -412,6 +452,9 @@ namespace NorvesLib::Core::Rendering
 
         // シェーダーキャッシュ（パス→ハンドル）
         Container::Map<Container::String, ShaderHandle> m_ShaderCache;
+
+        // メッシュGPUデータマップ（MeshDataHandle::Id → GPUバッファ）
+        Container::Map<uint64_t, MeshGPUData> m_MeshGPUDataMap;
 
         // デフォルトサンプラー
         SamplerHandle m_DefaultSampler;

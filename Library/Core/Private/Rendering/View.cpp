@@ -1,8 +1,17 @@
 ﻿#include "Rendering/View.h"
 #include "Rendering/Viewport.h"
+#include "Rendering/IViewPass.h"
+#include "Rendering/PostProcessStack.h"
+#include "Rendering/ViewRenderContext.h"
+#include "Logging/LogMacros.h"
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
+
+    View::View() = default;
+
+    View::~View() = default;
 
     bool View::Initialize(const ViewSettings &settings)
     {
@@ -34,6 +43,23 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+
+        // ポストプロセススタックの終了処理
+        if (m_PostProcessStack)
+        {
+            m_PostProcessStack->Shutdown();
+            m_PostProcessStack.reset();
+        }
+
+        // パスチェーンの終了処理
+        for (auto &pass : m_Passes)
+        {
+            if (pass && pass->IsInitialized())
+            {
+                pass->Shutdown();
+            }
+        }
+        m_Passes.clear();
 
         // Viewportをクリア
         for (auto &viewport : m_Viewports)
@@ -133,6 +159,141 @@ namespace NorvesLib::Core::Rendering
         m_Height = height;
 
         // TODO: 出力レンダーターゲットのリサイズ
+    }
+
+    // ========================================
+    // パスチェーン対応Render
+    // ========================================
+
+    void View::Render(ViewRenderContext &context)
+    {
+        if (!m_bEnabled || !m_bInitialized)
+        {
+            return;
+        }
+
+        // パスチェーンが登録されていればパスベースの描画
+        if (!m_Passes.empty())
+        {
+            ExecutePassChain(context);
+
+            // ポストプロセス実行
+            if (m_PostProcessStack && m_PostProcessStack->GetPassCount() > 0)
+            {
+                // 未初期化のPostProcessStackを初期化
+                if (!m_PostProcessStack->IsInitialized())
+                {
+                    m_PostProcessStack->Initialize(context);
+                }
+
+                m_PostProcessStack->Setup(context);
+                m_PostProcessStack->Execute(context);
+            }
+        }
+        else
+        {
+            // パス未登録の場合はレガシーRender()にフォールバック
+            Render();
+        }
+    }
+
+    void View::ExecutePassChain(ViewRenderContext &context)
+    {
+        for (auto &pass : m_Passes)
+        {
+            if (!pass || !pass->IsEnabled())
+            {
+                continue;
+            }
+
+            // 未初期化のパスを初期化
+            if (!pass->IsInitialized())
+            {
+                if (!pass->Initialize(context))
+                {
+                    NORVES_LOG_ERROR("View", "Failed to initialize pass: %s", pass->GetName());
+                    continue;
+                }
+            }
+
+            // Setup → Execute
+            pass->Setup(context);
+            pass->Execute(context);
+        }
+    }
+
+    // ========================================
+    // パスチェーン管理
+    // ========================================
+
+    void View::AddPass(Container::TUniquePtr<IViewPass> pass)
+    {
+        if (pass)
+        {
+            NORVES_LOG_INFO("View", "Pass added: %s", pass->GetName());
+            m_Passes.push_back(std::move(pass));
+        }
+    }
+
+    void View::InsertPass(uint32_t index, Container::TUniquePtr<IViewPass> pass)
+    {
+        if (!pass)
+        {
+            return;
+        }
+
+        if (index >= m_Passes.size())
+        {
+            m_Passes.push_back(std::move(pass));
+        }
+        else
+        {
+            m_Passes.insert(m_Passes.begin() + index, std::move(pass));
+        }
+    }
+
+    bool View::RemovePass(const char *name)
+    {
+        for (auto it = m_Passes.begin(); it != m_Passes.end(); ++it)
+        {
+            if (*it && std::strcmp((*it)->GetName(), name) == 0)
+            {
+                if ((*it)->IsInitialized())
+                {
+                    (*it)->Shutdown();
+                }
+                m_Passes.erase(it);
+                NORVES_LOG_INFO("View", "Pass removed: %s", name);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    IViewPass *View::FindPass(const char *name) const
+    {
+        for (const auto &pass : m_Passes)
+        {
+            if (pass && std::strcmp(pass->GetName(), name) == 0)
+            {
+                return pass.get();
+            }
+        }
+        return nullptr;
+    }
+
+    void View::SetPassEnabled(const char *name, bool bEnabled)
+    {
+        IViewPass *pass = FindPass(name);
+        if (pass)
+        {
+            pass->SetEnabled(bEnabled);
+        }
+    }
+
+    void View::SetPostProcessStack(Container::TUniquePtr<PostProcessStack> stack)
+    {
+        m_PostProcessStack = std::move(stack);
     }
 
 } // namespace NorvesLib::Core::Rendering

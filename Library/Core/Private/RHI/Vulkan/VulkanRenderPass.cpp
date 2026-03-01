@@ -100,13 +100,48 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // サブパス依存関係
-        vk::SubpassDependency dependency{};
-        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-        dependency.dstSubpass = 0;
-        dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        dependency.srcAccessMask = vk::AccessFlagBits::eNone;
-        dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+        // ========================================
+        // 入力依存（EXTERNAL → サブパス0）:
+        //   前のレンダーパスのカラー/デプス書き込みを待ち、
+        //   このパスのアタッチメント書き込みとフラグメント読み取りを可能にする
+        // ========================================
+        VariableArray<vk::SubpassDependency> dependencies;
+
+        vk::SubpassDependency incomingDep{};
+        incomingDep.srcSubpass = VK_SUBPASS_EXTERNAL;
+        incomingDep.dstSubpass = 0;
+        incomingDep.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput
+                                 | vk::PipelineStageFlagBits::eLateFragmentTests;
+        incomingDep.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput
+                                 | vk::PipelineStageFlagBits::eEarlyFragmentTests
+                                 | vk::PipelineStageFlagBits::eFragmentShader;
+        incomingDep.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
+                                  | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+        incomingDep.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
+                                  | vk::AccessFlagBits::eDepthStencilAttachmentWrite
+                                  | vk::AccessFlagBits::eShaderRead;
+        dependencies.push_back(incomingDep);
+
+        // ========================================
+        // 出力依存（サブパス0 → EXTERNAL）:
+        //   このパスのカラー/デプス書き込みが完了してから、
+        //   後続パスのフラグメントシェーダ読み取りを許可する
+        // ========================================
+        vk::SubpassDependency outgoingDep{};
+        outgoingDep.srcSubpass = 0;
+        outgoingDep.dstSubpass = VK_SUBPASS_EXTERNAL;
+        outgoingDep.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput
+                                 | vk::PipelineStageFlagBits::eLateFragmentTests;
+        outgoingDep.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader
+                                 | vk::PipelineStageFlagBits::eColorAttachmentOutput
+                                 | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+        outgoingDep.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
+                                  | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+        outgoingDep.dstAccessMask = vk::AccessFlagBits::eShaderRead
+                                  | vk::AccessFlagBits::eColorAttachmentWrite
+                                  | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+        outgoingDep.dependencyFlags = vk::DependencyFlagBits::eByRegion;
+        dependencies.push_back(outgoingDep);
 
         // レンダーパスの作成
         vk::RenderPassCreateInfo renderPassInfo{};
@@ -115,8 +150,8 @@ namespace NorvesLib::RHI::Vulkan
         renderPassInfo.pAttachments = m_attachmentDescs.data();
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
-        renderPassInfo.dependencyCount = 1;
-        renderPassInfo.pDependencies = &dependency;
+        renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
+        renderPassInfo.pDependencies = dependencies.data();
 
         vk::Result result = m_device->GetVkDevice().createRenderPass(&renderPassInfo, nullptr, &m_renderPass);
         if (result != vk::Result::eSuccess)
