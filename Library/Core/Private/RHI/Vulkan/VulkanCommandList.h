@@ -316,6 +316,13 @@ namespace NorvesLib::RHI::Vulkan
         bool m_bIsRecording = false;
         bool m_bInRenderPass = false;
 
+        // レンダーパス終了時のレイアウト追跡用
+        TSharedPtr<VulkanRenderPass> m_activeRenderPass;
+        TSharedPtr<VulkanFramebuffer> m_activeFramebuffer;
+
+        /// @brief レンダーパス終了後にアタッチメントテクスチャのレイアウトを更新
+        void UpdateAttachmentLayoutsAfterRenderPass();
+
         // 現在バインドされているリソース
         PipelinePtr m_currentPipeline;
         VariableArray<BufferPtr> m_currentVertexBuffers;

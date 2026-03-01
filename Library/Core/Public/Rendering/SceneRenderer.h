@@ -85,6 +85,12 @@ namespace NorvesLib::Core::Rendering
         void SetDefaultPipeline(RHI::PipelinePtr pipeline) { m_DefaultPipeline = pipeline; }
 
         /**
+         * @brief デフォルトパイプラインを取得します
+         * @return デフォルトパイプライン
+         */
+        RHI::PipelinePtr GetDefaultPipeline() const { return m_DefaultPipeline; }
+
+        /**
          * @brief 終了処理を行います
          */
         void Shutdown();

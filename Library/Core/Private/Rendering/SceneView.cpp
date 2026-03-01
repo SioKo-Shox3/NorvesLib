@@ -1,6 +1,15 @@
 ﻿#include "Rendering/SceneView.h"
 #include "Rendering/Viewport.h"
+#include "Rendering/ViewRenderContext.h"
+#include "Rendering/SceneRenderer.h"
+#include "Rendering/GBufferPass.h"
+#include "Rendering/LightingPass.h"
+#include "Rendering/ForwardPass.h"
+#include "Rendering/BloomPass.h"
+#include "Rendering/ToneMappingPass.h"
+#include "Rendering/PostProcessStack.h"
 #include "Math/VectorUtils.h"
+#include "Logging/LogMacros.h"
 #include <chrono>
 
 namespace NorvesLib::Core::Rendering
@@ -160,6 +169,112 @@ namespace NorvesLib::Core::Rendering
 
         // Viewportの結果を合成
         CompositeViewports();
+    }
+
+    void SceneView::Render(ViewRenderContext &context)
+    {
+        if (!m_bEnabled || !m_bInitialized)
+        {
+            return;
+        }
+
+        // 統計を更新
+        m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
+        m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
+
+        // パスチェーンが存在すれば基底クラスのパスベース描画を実行
+        if (GetPassCount() > 0)
+        {
+            View::Render(context);
+        }
+        else
+        {
+            // パス未登録の場合はレガシー描画にフォールバック
+            Render();
+        }
+    }
+
+    // ========================================
+    // パイプライン構築ヘルパー
+    // ========================================
+
+    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer)
+    {
+        // 既存のパスをクリア
+        while (GetPassCount() > 0)
+        {
+            auto &passes = m_Passes;
+            if (!passes.empty())
+            {
+                if (passes.back() && passes.back()->IsInitialized())
+                {
+                    passes.back()->Shutdown();
+                }
+                passes.pop_back();
+            }
+        }
+
+        // GBufferPass: ジオメトリ→GBuffer MRT
+        GBufferPassSettings gbufferSettings;
+        auto gbufferPass = MakeUnique<GBufferPass>(gbufferSettings);
+        gbufferPass->SetSceneView(this);
+        gbufferPass->SetSceneRenderer(sceneRenderer);
+        AddPass(std::move(gbufferPass));
+
+        // LightingPass: GBuffer→HDRシーンカラー
+        LightingPassSettings lightingSettings;
+        auto lightingPass = MakeUnique<LightingPass>(lightingSettings);
+        AddPass(std::move(lightingPass));
+
+        // PostProcessStack: Bloom -> ToneMapping
+        auto postProcessStack = MakeUnique<PostProcessStack>();
+
+        // Bloom（ToneMappingの前にHDR空間でブルーム適用）
+        BloomSettings bloomSettings;
+        bloomSettings.Threshold = 1.0f;
+        bloomSettings.Intensity = 1.5f;
+        bloomSettings.Radius = 3.0f;
+        bloomSettings.SoftKnee = 0.5f;
+        postProcessStack->AddPass(MakeUnique<BloomPass>(bloomSettings));
+
+        // ToneMapping（HDR→LDR変換）
+        ToneMappingSettings toneMappingSettings;
+        toneMappingSettings.Operator = ToneMappingOperator::ACES;
+        postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
+
+        SetPostProcessStack(std::move(postProcessStack));
+
+        NORVES_LOG_INFO("SceneView", "Deferred pipeline configured: GBuffer -> Lighting -> Bloom -> ToneMapping");
+    }
+
+    void SceneView::SetupForwardPipeline(SceneRenderer *sceneRenderer)
+    {
+        // 既存のパスをクリア
+        while (GetPassCount() > 0)
+        {
+            auto &passes = m_Passes;
+            if (!passes.empty())
+            {
+                if (passes.back() && passes.back()->IsInitialized())
+                {
+                    passes.back()->Shutdown();
+                }
+                passes.pop_back();
+            }
+        }
+
+        // ForwardPass: 従来のフォワード描画
+        auto forwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
+        AddPass(std::move(forwardPass));
+
+        // PostProcessStack: ToneMapping
+        auto postProcessStack = MakeUnique<PostProcessStack>();
+        ToneMappingSettings toneMappingSettings;
+        toneMappingSettings.Operator = ToneMappingOperator::ACES;
+        postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
+        SetPostProcessStack(std::move(postProcessStack));
+
+        NORVES_LOG_INFO("SceneView", "Forward pipeline configured: Forward -> ToneMapping");
     }
 
     void SceneView::CullProxies(Viewport *viewport)

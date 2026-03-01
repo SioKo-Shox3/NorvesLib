@@ -152,11 +152,11 @@ static auto Length(const VectorT& v)
 - 生のポインタは避け、**NorvesLib専用のスマートポインタエイリアス**を使用
 - **必須**: `TUniquePtr<T>`, `TSharedPtr<T>`, `TWeakPtr<T>`を使用（`std::`版は使わない）
 - ファクトリー関数: `MakeUnique<T>()`, `MakeShared<T>()`を使用（`std::make_`版は使わない）
-- インクルード: `#include "Core/Public/Container/Containers.h"`または`#include "Container/PointerTypes.h"`
+- インクルード: `#include "CoreTypes.h"`（推奨）または`#include "Container/Containers.h"`
 
 ```cpp
-// 推奨（NorvesLibエイリアス使用）
-using namespace NorvesLib::Core::Container;
+// 推奨（CoreTypes.hインクルードで名前空間プレフィックス不要）
+#include "CoreTypes.h"
 auto uniquePtr = MakeUnique<MyClass>(args...);
 auto sharedPtr = MakeShared<MyClass>(args...);
 TWeakPtr<MyClass> weakPtr = sharedPtr;
@@ -190,11 +190,12 @@ void ProcessPointer(const PtrT& ptr)
 #### コンテナの使用規則
 - **必須**: `NorvesLib::Core::Container`以下のカスタムコンテナを使用
 - **STLコンテナの直接使用を避ける**: `std::vector`, `std::list`, `std::map`などは使用しない
+- **推奨**: `#include "CoreTypes.h"`をインクルードすることで、`Container::`プレフィックスなしで使用可能
 - カスタムアロケータによる統一的なメモリ管理を実現
 
 ```cpp
-// 推奨（NorvesLibカスタムコンテナ使用）
-using namespace NorvesLib::Core::Container;
+// 推奨（CoreTypes.hインクルードで名前空間プレフィックス不要）
+#include "CoreTypes.h"
 VariableArray<int> numbers;        // std::vectorの代わり
 List<MyClass> objects;             // std::listの代わり
 Map<String, int> nameToId;         // std::mapの代わり
@@ -231,11 +232,10 @@ std::map<std::string, int> stdMap;
 
 ```cpp
 // 推奨（Identityをハッシュキーとして使用）
-#include "Text/IdentityPool.h"
-using namespace NorvesLib::Core;
+#include "CoreTypes.h"
 
 // ハッシュマップのキーにはIdentityを使用
-Container::UnorderedMap<Identity, int, Identity::Hasher> nameToValue;
+UnorderedMap<Identity, int, Identity::Hasher> nameToValue;
 
 // Identityの作成
 Identity id("ResourceName");
@@ -245,7 +245,7 @@ nameToValue[id] = 42;
 auto it = nameToValue.find(Identity("ResourceName"));
 
 // 避ける（Stringをハッシュキーに使わない）
-Container::UnorderedMap<Container::String, int> stringMap;  // コンパイルエラーまたは非効率
+UnorderedMap<String, int> stringMap;  // コンパイルエラーまたは非効率
 ```
 
 #### Identityの用途

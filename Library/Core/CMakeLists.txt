@@ -42,6 +42,15 @@ set(PRIVATE_SOURCES
     Private/Rendering/PersistentResourceCache.cpp
     Private/Rendering/SceneRenderer.cpp
     Private/Rendering/RenderWorld.cpp
+    Private/Rendering/SharedResourceRegistry.cpp
+    Private/Rendering/RenderResourceManager.cpp
+    Private/Rendering/DynamicUniformAllocator.cpp
+    Private/Rendering/PostProcessStack.cpp
+    Private/Rendering/GBufferPass.cpp
+    Private/Rendering/LightingPass.cpp
+    Private/Rendering/ToneMappingPass.cpp
+    Private/Rendering/BloomPass.cpp
+    Private/Rendering/ForwardPass.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
@@ -152,6 +161,15 @@ set(PUBLIC_HEADERS
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/PersistentResourceCache.h
     Public/Rendering/SceneRenderer.h
+    Public/Rendering/ViewRenderContext.h
+    Public/Rendering/IViewPass.h
+    Public/Rendering/SharedResourceRegistry.h
+    Public/Rendering/PostProcessStack.h
+    Public/Rendering/GBufferPass.h
+    Public/Rendering/LightingPass.h
+    Public/Rendering/ToneMappingPass.h
+    Public/Rendering/BloomPass.h
+    Public/Rendering/ForwardPass.h
     # Object
     Public/Object/Resource.h
     Public/Object/WorldObject.h

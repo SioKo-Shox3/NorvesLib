@@ -54,6 +54,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 共有リソースレジストリをクリア（テクスチャ参照をデバイス破棄前に解放）
+        m_SharedResourceRegistry.Clear();
+
         // Viewをクリア
         m_Views.clear();
         m_ViewPriorities.clear();
@@ -130,6 +133,9 @@ namespace NorvesLib::Core::Rendering
 
     void Screen::BeginFrame()
     {
+        // フレーム開始時にView間共有リソースをクリア
+        m_SharedResourceRegistry.BeginFrame();
+
         // SwapChainから次のバックバッファを取得
         if (m_SwapChain)
         {

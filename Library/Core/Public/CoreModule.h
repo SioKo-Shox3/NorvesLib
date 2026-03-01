@@ -8,8 +8,8 @@
  * Core モジュールを使用する際は、このファイルをインクルードしてください。
  */
 
-// Container 機能
-#include "Container/Containers.h"
+// Container 機能 & 型の名前空間昇格
+#include "CoreTypes.h"
 #include "Container/PointerTypes.h"
 #include "Container/VariableArray.h"
 #include "Container/FixedArray.h"

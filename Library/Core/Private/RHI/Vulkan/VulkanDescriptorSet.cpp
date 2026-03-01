@@ -223,11 +223,20 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanDescriptorSet::BindTexture(uint32_t binding, TexturePtr texture)
     {
-        BindingInfo info;
-        info.type = BindingInfo::ResourceType::Texture;
-        info.texture = texture;
-
-        m_bindings[binding] = info;
+        // CombinedImageSamplerの場合、既存のサンプラーを保持してマージする
+        auto it = m_bindings.find(binding);
+        if (it != m_bindings.end() && it->second.sampler)
+        {
+            it->second.type = BindingInfo::ResourceType::Texture;
+            it->second.texture = texture;
+        }
+        else
+        {
+            BindingInfo info;
+            info.type = BindingInfo::ResourceType::Texture;
+            info.texture = texture;
+            m_bindings[binding] = info;
+        }
         m_bNeedsUpdate = true;
     }
 
@@ -243,11 +252,19 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanDescriptorSet::BindSampler(uint32_t binding, SamplerPtr sampler)
     {
-        BindingInfo info;
-        info.type = BindingInfo::ResourceType::Sampler;
-        info.sampler = sampler;
-
-        m_bindings[binding] = info;
+        // CombinedImageSamplerの場合、既存のテクスチャを保持してマージする
+        auto it = m_bindings.find(binding);
+        if (it != m_bindings.end() && it->second.texture)
+        {
+            it->second.sampler = sampler;
+        }
+        else
+        {
+            BindingInfo info;
+            info.type = BindingInfo::ResourceType::Sampler;
+            info.sampler = sampler;
+            m_bindings[binding] = info;
+        }
         m_bNeedsUpdate = true;
     }
 
@@ -301,7 +318,24 @@ namespace NorvesLib::RHI::Vulkan
                 vk::DescriptorImageInfo imageInfo;
                 imageInfo.imageLayout = vkTexture->GetVkImageLayout();
                 imageInfo.imageView = vkTexture->GetVkImageView();
-                imageInfo.sampler = nullptr;
+
+                // CombinedImageSampler: テクスチャと同じバインドにサンプラーがある場合
+                if (info.sampler)
+                {
+                    auto vkSampler = DynamicPointerCast<VulkanSampler>(info.sampler);
+                    if (vkSampler)
+                    {
+                        imageInfo.sampler = vkSampler->GetVkSampler();
+                    }
+                    else
+                    {
+                        imageInfo.sampler = nullptr;
+                    }
+                }
+                else
+                {
+                    imageInfo.sampler = nullptr;
+                }
 
                 imageInfos.push_back(imageInfo);
                 writeDesc.pImageInfo = &imageInfos.back();

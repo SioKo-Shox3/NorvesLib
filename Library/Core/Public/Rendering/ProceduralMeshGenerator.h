@@ -34,8 +34,8 @@ namespace NorvesLib::Core::Rendering
             float radius,
             uint32_t sliceCount,
             uint32_t stackCount,
-            Container::VariableArray<Mesh3DVertex>& outVertices,
-            Container::VariableArray<uint32_t>& outIndices)
+            Container::VariableArray<Mesh3DVertex> &outVertices,
+            Container::VariableArray<uint32_t> &outIndices)
         {
             outVertices.clear();
             outIndices.clear();
@@ -151,8 +151,8 @@ namespace NorvesLib::Core::Rendering
             float depth,
             uint32_t subdivisionsX,
             uint32_t subdivisionsZ,
-            Container::VariableArray<Mesh3DVertex>& outVertices,
-            Container::VariableArray<uint32_t>& outIndices)
+            Container::VariableArray<Mesh3DVertex> &outVertices,
+            Container::VariableArray<uint32_t> &outIndices)
         {
             outVertices.clear();
             outIndices.clear();

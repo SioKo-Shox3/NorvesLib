@@ -332,6 +332,10 @@ namespace NorvesLib::RHI::Vulkan
         renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
         renderPassInfo.pClearValues = clearValues.data();
 
+        // レンダーパス終了時のレイアウト追跡用に参照を保持
+        m_activeRenderPass = vkRenderPass;
+        m_activeFramebuffer = vkFramebuffer;
+
         m_commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
         m_bInRenderPass = true;
     }
@@ -342,7 +346,56 @@ namespace NorvesLib::RHI::Vulkan
         {
             m_commandBuffer.endRenderPass();
             m_bInRenderPass = false;
+
+            // レンダーパスのfinalLayout情報に基づいてテクスチャの追跡レイアウトを更新
+            UpdateAttachmentLayoutsAfterRenderPass();
         }
+    }
+
+    void VulkanCommandList::UpdateAttachmentLayoutsAfterRenderPass()
+    {
+        if (!m_activeRenderPass || !m_activeFramebuffer)
+        {
+            return;
+        }
+
+        const auto &rpDesc = m_activeRenderPass->GetDesc();
+
+        // カラーアタッチメントのレイアウトを更新
+        uint32_t colorCount = m_activeFramebuffer->GetColorAttachmentCount();
+        for (uint32_t i = 0; i < rpDesc.colorAttachments.size() && i < colorCount; ++i)
+        {
+            auto colorTarget = m_activeFramebuffer->GetColorAttachment(i);
+            if (colorTarget)
+            {
+                auto vkTexture = DynamicPointerCast<VulkanTexture>(colorTarget);
+                if (vkTexture)
+                {
+                    vk::ImageLayout finalLayout = m_barrierTracker.ResourceStateToImageLayout(
+                        rpDesc.colorAttachments[i].finalState);
+                    vkTexture->SetVkImageLayout(finalLayout);
+                }
+            }
+        }
+
+        // デプスアタッチメントのレイアウトを更新
+        if (rpDesc.hasDepthStencil && m_activeFramebuffer->HasDepthStencilAttachment())
+        {
+            auto depthTarget = m_activeFramebuffer->GetDepthStencilAttachment();
+            if (depthTarget)
+            {
+                auto vkTexture = DynamicPointerCast<VulkanTexture>(depthTarget);
+                if (vkTexture)
+                {
+                    vk::ImageLayout finalLayout = m_barrierTracker.ResourceStateToImageLayout(
+                        rpDesc.depthStencilAttachment.finalState);
+                    vkTexture->SetVkImageLayout(finalLayout);
+                }
+            }
+        }
+
+        m_activeRenderPass.reset();
+        m_activeFramebuffer.reset();
     }
 
     void VulkanCommandList::SetViewport(const Viewport &viewport)
@@ -774,6 +827,8 @@ namespace NorvesLib::RHI::Vulkan
         m_temporaryResources.clear();
         m_bindingResources.clear();
         m_descriptorSetCache.clear();
+        m_activeRenderPass.reset();
+        m_activeFramebuffer.reset();
 
         m_commandBuffer.reset({});
     }
