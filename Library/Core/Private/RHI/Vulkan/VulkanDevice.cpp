@@ -3,6 +3,7 @@
 #include "VulkanTexture.h"
 #include "VulkanSampler.h"
 #include "VulkanShader.h"
+#include "VulkanShaderCompiler.h"
 #include "VulkanPipeline.h"
 #include "VulkanRenderPass.h"
 #include "VulkanFramebuffer.h"
@@ -756,6 +757,12 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanDevice::WaitIdle()
     {
         m_device.waitIdle();
+    }
+
+    ShaderCompilerPtr VulkanDevice::CreateShaderCompiler()
+    {
+        auto compiler = MakeShared<VulkanShaderCompiler>();
+        return StaticPointerCast<IShaderCompiler>(compiler);
     }
 
 } // namespace NorvesLib::RHI::Vulkan

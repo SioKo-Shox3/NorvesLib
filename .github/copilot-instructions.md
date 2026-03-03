@@ -626,6 +626,10 @@ static auto Length(const VectorT& v)
 
 ### ディレクトリ構造
 ```
+Assets/             // アセットファイル（ソースコード以外のリソース）
+├── Shaders/        // シェーダーソースファイル (.vert, .frag)
+├── Textures/       // テクスチャファイル（将来）
+└── Models/         // モデルファイル（将来）
 Library/
 ├── Core/           // 基盤機能
 ├── Math/           // 数学ライブラリ
@@ -635,6 +639,12 @@ Library/
 ├── Random/         // 乱数生成
 └── GameMode/       // ゲームモード管理
 ```
+
+### アセット管理
+- **ソースコードでないファイル（シェーダー、テクスチャ、モデル等）は全て`Assets/`ディレクトリに配置する**
+- `Library/`以下にはC++のソースコード・ヘッダーファイルのみを配置
+- シェーダーファイルは`Assets/Shaders/`に配置し、ランタイムでコンパイルする
+- CMakeの`NORVES_SHADER_DIR`がシェーダーパスを指す
 
 ### CMake規則
 - 各モジュールに`CMakeLists.txt`を配置

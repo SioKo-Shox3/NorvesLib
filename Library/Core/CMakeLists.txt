@@ -47,10 +47,12 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
+    Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
     Private/Rendering/ToneMappingPass.cpp
     Private/Rendering/BloomPass.cpp
     Private/Rendering/ForwardPass.cpp
+    Private/Rendering/ShaderManager.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
@@ -77,6 +79,7 @@ set(PRIVATE_SOURCES
     Private/RHI/Vulkan/VulkanRenderPass.cpp
     Private/RHI/Vulkan/VulkanSampler.cpp
     Private/RHI/Vulkan/VulkanShader.cpp
+    Private/RHI/Vulkan/VulkanShaderCompiler.cpp
     Private/RHI/Vulkan/VulkanSwapChain.cpp
     Private/RHI/Vulkan/VulkanTexture.cpp
     Private/RHI/TransientResourcePool.cpp
@@ -166,10 +169,12 @@ set(PUBLIC_HEADERS
     Public/Rendering/SharedResourceRegistry.h
     Public/Rendering/PostProcessStack.h
     Public/Rendering/GBufferPass.h
+    Public/Rendering/ShadowMapPass.h
     Public/Rendering/LightingPass.h
     Public/Rendering/ToneMappingPass.h
     Public/Rendering/BloomPass.h
     Public/Rendering/ForwardPass.h
+    Public/Rendering/ShaderManager.h
     # Object
     Public/Object/Resource.h
     Public/Object/WorldObject.h
@@ -223,6 +228,7 @@ set(PUBLIC_HEADERS
     Public/RHI/IPipeline.h
     Public/RHI/IDescriptorSet.h
     Public/RHI/IDevice.h
+    Public/RHI/IShaderCompiler.h
     Public/RHI/IGPUResourceAllocator.h
     Public/RHI/TransientResourcePool.h
     # Memory
@@ -268,16 +274,31 @@ target_include_directories(${MODULE_NAME}
         Private
 )
 
+# shaderc（Vulkan SDK同梱のランタイムシェーダーコンパイラ）
+find_library(SHADERC_LIB_RELEASE shaderc_combined PATHS $ENV{VULKAN_SDK}/Lib)
+find_library(SHADERC_LIB_DEBUG shaderc_combinedd PATHS $ENV{VULKAN_SDK}/Lib)
+if(NOT SHADERC_LIB_RELEASE OR NOT SHADERC_LIB_DEBUG)
+    message(FATAL_ERROR "shaderc libraries not found in Vulkan SDK")
+endif()
+
 # 依存関係の設定
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         Vulkan::Vulkan
+    PRIVATE
+        $<$<CONFIG:Debug>:${SHADERC_LIB_DEBUG}>
+        $<$<NOT:$<CONFIG:Debug>>:${SHADERC_LIB_RELEASE}>
 )
+
+# シェーダーアセットディレクトリ（ソースからランタイムコンパイル用）
+set(NORVES_SHADER_DIR "${CMAKE_SOURCE_DIR}/Assets/Shaders")
+string(REPLACE "\\" "/" NORVES_SHADER_DIR "${NORVES_SHADER_DIR}")
 
 # Vulkan設定
 target_compile_definitions(${MODULE_NAME}
     PRIVATE
         VULKAN_HPP_NO_EXCEPTIONS
+        NORVES_SHADER_DIR="${NORVES_SHADER_DIR}"
 )
 
 # C++23の設定
@@ -304,6 +325,7 @@ source_group("RHI/Private" FILES
     Private/RHI/Vulkan/VulkanRenderPass.cpp
     Private/RHI/Vulkan/VulkanSampler.cpp
     Private/RHI/Vulkan/VulkanShader.cpp
+    Private/RHI/Vulkan/VulkanShaderCompiler.cpp
     Private/RHI/Vulkan/VulkanSwapChain.cpp
     Private/RHI/Vulkan/VulkanTexture.cpp
 )

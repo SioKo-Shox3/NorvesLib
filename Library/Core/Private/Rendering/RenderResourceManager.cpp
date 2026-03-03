@@ -290,8 +290,8 @@ namespace NorvesLib::Core::Rendering
     // ========================================
 
     bool RenderResourceManager::RegisterMesh(MeshDataHandle handle,
-                                             const void* vertices, size_t vertexSize,
-                                             const uint32_t* indices, uint32_t indexCount)
+                                             const void *vertices, size_t vertexSize,
+                                             const uint32_t *indices, uint32_t indexCount)
     {
         if (!m_bInitialized || !handle.IsValid() || !vertices || !indices || indexCount == 0)
         {
@@ -343,7 +343,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    const RenderResourceManager::MeshGPUData* RenderResourceManager::GetMeshGPUData(MeshDataHandle handle) const
+    const RenderResourceManager::MeshGPUData *RenderResourceManager::GetMeshGPUData(MeshDataHandle handle) const
     {
         Thread::ScopedLock lock(m_ResourceMutex);
         auto it = m_MeshGPUDataMap.find(handle.Id);

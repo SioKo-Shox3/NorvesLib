@@ -6,15 +6,13 @@
 #include "Rendering/RenderResourceManager.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/TransientResourcePool.h"
 #include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
-
-// GBuffer用SPIR-Vシェーダー
-#include "Shaders/GBufferShaders.h"
 
 namespace NorvesLib::Core::Rendering
 {
@@ -47,28 +45,20 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // GBuffer用シェーダーの作成
         // ========================================
-        RHI::ShaderDesc vertexShaderDesc;
-        vertexShaderDesc.stage = RHI::ShaderStage::Vertex;
-        vertexShaderDesc.entryPoint = "main";
-        vertexShaderDesc.byteCode.assign(
-            GBufferVertexShaderSpirV,
-            GBufferVertexShaderSpirV + sizeof(GBufferVertexShaderSpirV));
+        if (!context.ShaderMgr)
+        {
+            NORVES_LOG_ERROR("GBufferPass", "ShaderManager is null");
+            return false;
+        }
 
-        m_GBufferVertexShader = m_Device->CreateShader(vertexShaderDesc);
+        m_GBufferVertexShader = context.ShaderMgr->LoadShader("gbuffer.vert", RHI::ShaderStage::Vertex);
         if (!m_GBufferVertexShader)
         {
             NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer vertex shader");
             return false;
         }
 
-        RHI::ShaderDesc fragmentShaderDesc;
-        fragmentShaderDesc.stage = RHI::ShaderStage::Pixel;
-        fragmentShaderDesc.entryPoint = "main";
-        fragmentShaderDesc.byteCode.assign(
-            GBufferFragmentShaderSpirV,
-            GBufferFragmentShaderSpirV + sizeof(GBufferFragmentShaderSpirV));
-
-        m_GBufferFragmentShader = m_Device->CreateShader(fragmentShaderDesc);
+        m_GBufferFragmentShader = context.ShaderMgr->LoadShader("gbuffer.frag", RHI::ShaderStage::Pixel);
         if (!m_GBufferFragmentShader)
         {
             NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer fragment shader");
@@ -205,7 +195,7 @@ namespace NorvesLib::Core::Rendering
 
             if (context.MainCamera)
             {
-                const auto& cam = *context.MainCamera;
+                const auto &cam = *context.MainCamera;
                 Vector3 camPos(cam.PositionX, cam.PositionY, cam.PositionZ);
                 Vector3 forward(cam.ForwardX, cam.ForwardY, cam.ForwardZ);
                 Vector3 lookAt = camPos + forward;
@@ -231,7 +221,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             // RowMajor → ColumnMajor転置ヘルパー
-            auto TransposeToFloat = [](const Matrix4x4& mat, float* out)
+            auto TransposeToFloat = [](const Matrix4x4 &mat, float *out)
             {
                 for (int row = 0; row < 4; ++row)
                 {
@@ -261,8 +251,8 @@ namespace NorvesLib::Core::Rendering
             // フレーム開始時にアロケータリセット
             m_UniformAllocator.Reset();
 
-            const auto& meshProxies = m_SceneView->GetMeshProxies();
-            for (const auto& proxy : meshProxies)
+            const auto &meshProxies = m_SceneView->GetMeshProxies();
+            for (const auto &proxy : meshProxies)
             {
                 if (!proxy.IsValid())
                 {
@@ -270,7 +260,7 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 // RenderResourceManagerからGPUデータを取得
-                const auto* gpuData = context.ResourceManager->GetMeshGPUData(proxy.MeshHandle);
+                const auto *gpuData = context.ResourceManager->GetMeshGPUData(proxy.MeshHandle);
                 if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer)
                 {
                     continue;
@@ -286,7 +276,10 @@ namespace NorvesLib::Core::Rendering
 
                 // UBOデータ構築
                 PerObjectUBO uboData;
-                TransposeToFloat(proxy.WorldTransform, uboData.world);
+                // ワールド行列は行ベクトル規約（平行移動がRow3）なので
+                // 直接コピーしてGLSL列メジャーのM^Tとして正しく機能させる
+                // （TransposeToFloatはLookAt/Perspectiveなど列ベクトル規約の行列に使う）
+                std::memcpy(uboData.world, proxy.WorldTransform.values, sizeof(uboData.world));
                 std::memcpy(uboData.view, viewData, sizeof(viewData));
                 std::memcpy(uboData.projection, projData, sizeof(projData));
                 std::memcpy(uboData.cameraPosition, cameraPos, sizeof(cameraPos));

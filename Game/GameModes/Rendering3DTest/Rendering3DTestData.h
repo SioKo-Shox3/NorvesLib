@@ -29,12 +29,12 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::MeshDataHandle m_GroundMeshHandle{101};
 
         // WorldObject参照（Worldが所有）
-        NorvesLib::Core::WorldObject* m_pSphereObject = nullptr;
-        NorvesLib::Core::WorldObject* m_pGroundObject = nullptr;
+        NorvesLib::Core::WorldObject *m_pSphereObject = nullptr;
+        NorvesLib::Core::WorldObject *m_pGroundObject = nullptr;
 
         // MeshComponent参照（WorldObjectが所有）
-        NorvesLib::Core::Component::MeshComponent* m_pSphereMeshComponent = nullptr;
-        NorvesLib::Core::Component::MeshComponent* m_pGroundMeshComponent = nullptr;
+        NorvesLib::Core::Component::MeshComponent *m_pSphereMeshComponent = nullptr;
+        NorvesLib::Core::Component::MeshComponent *m_pGroundMeshComponent = nullptr;
 
         // 経過時間
         float m_ElapsedTime = 0.0f;

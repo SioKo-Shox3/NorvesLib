@@ -1,16 +1,13 @@
 ﻿#include "Rendering/BloomPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
-
-// ブルーム用SPIR-Vシェーダー
-#include "Shaders/LightingShaders.h" // FullscreenVertexShaderSpirV（共用）
-#include "Shaders/BloomShaders.h"    // BloomFragmentShaderSpirV
 
 namespace NorvesLib::Core::Rendering
 {
@@ -29,7 +26,7 @@ namespace NorvesLib::Core::Rendering
 
     static constexpr uint32_t BLOOM_PARAMS_SIZE = sizeof(GPUBloomParams);
 
-    BloomPass::BloomPass(const BloomSettings& settings)
+    BloomPass::BloomPass(const BloomSettings &settings)
         : m_Settings(settings)
     {
     }
@@ -39,7 +36,7 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
-    bool BloomPass::Initialize(ViewRenderContext& context)
+    bool BloomPass::Initialize(ViewRenderContext &context)
     {
         if (m_bInitialized)
         {
@@ -55,16 +52,15 @@ namespace NorvesLib::Core::Rendering
         m_Device = context.Device;
 
         // ========================================
-        // フルスクリーン頂点シェーダー作成（LightingPassと共有SPIR-V）
+        // フルスクリーン頂点シェーダー作成（LightingPassとキャッシュ共有）
         // ========================================
-        RHI::ShaderDesc vertexShaderDesc;
-        vertexShaderDesc.stage = RHI::ShaderStage::Vertex;
-        vertexShaderDesc.entryPoint = "main";
-        vertexShaderDesc.byteCode.assign(
-            FullscreenVertexShaderSpirV,
-            FullscreenVertexShaderSpirV + sizeof(FullscreenVertexShaderSpirV));
+        if (!context.ShaderMgr)
+        {
+            NORVES_LOG_ERROR("BloomPass", "ShaderManager is null");
+            return false;
+        }
 
-        m_BloomVertexShader = m_Device->CreateShader(vertexShaderDesc);
+        m_BloomVertexShader = context.ShaderMgr->LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
         if (!m_BloomVertexShader)
         {
             NORVES_LOG_ERROR("BloomPass", "Failed to create fullscreen vertex shader");
@@ -74,14 +70,7 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // ブルームフラグメントシェーダー作成
         // ========================================
-        RHI::ShaderDesc fragmentShaderDesc;
-        fragmentShaderDesc.stage = RHI::ShaderStage::Pixel;
-        fragmentShaderDesc.entryPoint = "main";
-        fragmentShaderDesc.byteCode.assign(
-            BloomFragmentShaderSpirV,
-            BloomFragmentShaderSpirV + sizeof(BloomFragmentShaderSpirV));
-
-        m_BloomFragmentShader = m_Device->CreateShader(fragmentShaderDesc);
+        m_BloomFragmentShader = context.ShaderMgr->LoadShader("bloom.frag", RHI::ShaderStage::Pixel);
         if (!m_BloomFragmentShader)
         {
             NORVES_LOG_ERROR("BloomPass", "Failed to create bloom fragment shader");
@@ -145,7 +134,7 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("BloomPass", "BloomPass shutdown");
     }
 
-    void BloomPass::Setup(ViewRenderContext& context)
+    void BloomPass::Setup(ViewRenderContext &context)
     {
         uint32_t width = context.ScreenWidth;
         uint32_t height = context.ScreenHeight;
@@ -280,7 +269,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void BloomPass::Execute(ViewRenderContext& context)
+    void BloomPass::Execute(ViewRenderContext &context)
     {
         if (!context.CommandList)
         {

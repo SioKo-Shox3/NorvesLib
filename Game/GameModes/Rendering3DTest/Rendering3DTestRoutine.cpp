@@ -22,7 +22,7 @@ using namespace NorvesLib::Core;
 namespace Game::GameModes
 {
 
-    void Rendering3DTestRoutine::Enter(IStateMachine* proc, Rendering3DTestData& data)
+    void Rendering3DTestRoutine::Enter(IStateMachine *proc, Rendering3DTestData &data)
     {
         (void)proc;
 
@@ -34,7 +34,7 @@ namespace Game::GameModes
         // 1. プロシージャルメッシュの生成とGPU登録
         // ========================================
         {
-            auto& resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
 
             // 球体メッシュの生成
             VariableArray<Mesh3DVertex> sphereVertices;
@@ -87,7 +87,7 @@ namespace Game::GameModes
         // 2. WorldObjectの作成とメッシュコンポーネントの追加
         // ========================================
         {
-            auto& world = GEngine->GetWorld();
+            auto &world = GEngine->GetWorld();
 
             // --- 球体オブジェクト ---
             data.m_pSphereObject = new WorldObject();
@@ -135,7 +135,7 @@ namespace Game::GameModes
         }
     }
 
-    void Rendering3DTestRoutine::Do(IStateMachine* proc, Rendering3DTestData& data, float deltaTime)
+    void Rendering3DTestRoutine::Do(IStateMachine *proc, Rendering3DTestData &data, float deltaTime)
     {
         (void)proc;
 
@@ -151,7 +151,7 @@ namespace Game::GameModes
         }
     }
 
-    void Rendering3DTestRoutine::Leave(IStateMachine* proc, Rendering3DTestData& data)
+    void Rendering3DTestRoutine::Leave(IStateMachine *proc, Rendering3DTestData &data)
     {
         (void)proc;
 
@@ -162,7 +162,7 @@ namespace Game::GameModes
         // メッシュの登録解除
         if (data.m_bMeshesRegistered)
         {
-            auto& resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
             resourceManager.UnregisterMesh(data.m_SphereMeshHandle);
             resourceManager.UnregisterMesh(data.m_GroundMeshHandle);
             data.m_bMeshesRegistered = false;

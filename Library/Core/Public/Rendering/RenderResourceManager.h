@@ -353,15 +353,15 @@ namespace NorvesLib::Core::Rendering
          * @return 登録成功時true
          */
         bool RegisterMesh(MeshDataHandle handle,
-                          const void* vertices, size_t vertexSize,
-                          const uint32_t* indices, uint32_t indexCount);
+                          const void *vertices, size_t vertexSize,
+                          const uint32_t *indices, uint32_t indexCount);
 
         /**
          * @brief メッシュのGPUデータを取得
          * @param handle メッシュデータハンドル
          * @return GPUデータへのポインタ（未登録時nullptr）
          */
-        const MeshGPUData* GetMeshGPUData(MeshDataHandle handle) const;
+        const MeshGPUData *GetMeshGPUData(MeshDataHandle handle) const;
 
         /**
          * @brief メッシュを解除

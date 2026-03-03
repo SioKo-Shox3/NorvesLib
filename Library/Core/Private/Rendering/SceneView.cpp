@@ -2,6 +2,7 @@
 #include "Rendering/Viewport.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SceneRenderer.h"
+#include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/ForwardPass.h"
@@ -214,6 +215,13 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // ShadowMapPass: ライト視点の深度描画
+        ShadowMapPassSettings shadowSettings;
+        auto shadowMapPass = MakeUnique<ShadowMapPass>(shadowSettings);
+        shadowMapPass->SetSceneView(this);
+        shadowMapPass->SetSceneRenderer(sceneRenderer);
+        AddPass(std::move(shadowMapPass));
+
         // GBufferPass: ジオメトリ→GBuffer MRT
         GBufferPassSettings gbufferSettings;
         auto gbufferPass = MakeUnique<GBufferPass>(gbufferSettings);
@@ -244,7 +252,7 @@ namespace NorvesLib::Core::Rendering
 
         SetPostProcessStack(std::move(postProcessStack));
 
-        NORVES_LOG_INFO("SceneView", "Deferred pipeline configured: GBuffer -> Lighting -> Bloom -> ToneMapping");
+        NORVES_LOG_INFO("SceneView", "Deferred pipeline configured: ShadowMap -> GBuffer -> Lighting -> Bloom -> ToneMapping");
     }
 
     void SceneView::SetupForwardPipeline(SceneRenderer *sceneRenderer)

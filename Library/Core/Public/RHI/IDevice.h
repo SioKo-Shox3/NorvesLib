@@ -234,6 +234,12 @@ namespace NorvesLib::RHI
         virtual DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc &desc) = 0;
 
         /**
+         * @brief シェーダーコンパイラを作成
+         * @return 対応するRHI用シェーダーコンパイラ
+         */
+        virtual ShaderCompilerPtr CreateShaderCompiler() = 0;
+
+        /**
          * @brief コマンドキューを待機
          */
         virtual void WaitIdle() = 0;

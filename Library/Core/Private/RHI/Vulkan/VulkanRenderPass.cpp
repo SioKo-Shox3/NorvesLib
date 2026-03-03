@@ -110,16 +110,10 @@ namespace NorvesLib::RHI::Vulkan
         vk::SubpassDependency incomingDep{};
         incomingDep.srcSubpass = VK_SUBPASS_EXTERNAL;
         incomingDep.dstSubpass = 0;
-        incomingDep.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput
-                                 | vk::PipelineStageFlagBits::eLateFragmentTests;
-        incomingDep.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput
-                                 | vk::PipelineStageFlagBits::eEarlyFragmentTests
-                                 | vk::PipelineStageFlagBits::eFragmentShader;
-        incomingDep.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
-                                  | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
-        incomingDep.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
-                                  | vk::AccessFlagBits::eDepthStencilAttachmentWrite
-                                  | vk::AccessFlagBits::eShaderRead;
+        incomingDep.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eLateFragmentTests;
+        incomingDep.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eFragmentShader;
+        incomingDep.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+        incomingDep.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite | vk::AccessFlagBits::eShaderRead;
         dependencies.push_back(incomingDep);
 
         // ========================================
@@ -130,16 +124,10 @@ namespace NorvesLib::RHI::Vulkan
         vk::SubpassDependency outgoingDep{};
         outgoingDep.srcSubpass = 0;
         outgoingDep.dstSubpass = VK_SUBPASS_EXTERNAL;
-        outgoingDep.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput
-                                 | vk::PipelineStageFlagBits::eLateFragmentTests;
-        outgoingDep.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader
-                                 | vk::PipelineStageFlagBits::eColorAttachmentOutput
-                                 | vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        outgoingDep.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
-                                  | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
-        outgoingDep.dstAccessMask = vk::AccessFlagBits::eShaderRead
-                                  | vk::AccessFlagBits::eColorAttachmentWrite
-                                  | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+        outgoingDep.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eLateFragmentTests;
+        outgoingDep.dstStageMask = vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+        outgoingDep.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+        outgoingDep.dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
         outgoingDep.dependencyFlags = vk::DependencyFlagBits::eByRegion;
         dependencies.push_back(outgoingDep);
 

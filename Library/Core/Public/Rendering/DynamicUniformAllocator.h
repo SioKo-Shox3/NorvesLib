@@ -53,8 +53,8 @@ namespace NorvesLib::Core::Rendering
          * @param descriptorSetDesc DescriptorSetのレイアウト記述
          * @return 初期化成功時true
          */
-        bool Initialize(RHI::IDevice* device, uint32_t uboSize, uint32_t maxSlots,
-                        const RHI::DescriptorSetDesc& descriptorSetDesc);
+        bool Initialize(RHI::IDevice *device, uint32_t uboSize, uint32_t maxSlots,
+                        const RHI::DescriptorSetDesc &descriptorSetDesc);
 
         /**
          * @brief 終了処理
