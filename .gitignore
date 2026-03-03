@@ -122,3 +122,4 @@ desktop.ini
 
 # ログファイル
 *.log
+build_output.txt
