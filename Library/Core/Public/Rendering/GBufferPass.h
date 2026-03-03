@@ -35,6 +35,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief Metallic/Roughness/AOバッファのフォーマット */
         RHI::Format MaterialFormat = RHI::Format::R8G8B8A8_UNORM;
 
+        /** @brief エミッシブバッファのフォーマット（HDR発光色） */
+        RHI::Format EmissiveFormat = RHI::Format::R16G16B16A16_FLOAT;
+
         /** @brief Depthバッファのフォーマット */
         RHI::Format DepthFormat = RHI::Format::D32_FLOAT;
     };
@@ -49,6 +52,7 @@ namespace NorvesLib::Core::Rendering
      * - RT0: Albedo (R8G8B8A8_UNORM)
      * - RT1: WorldNormal (R16G16B16A16_FLOAT)
      * - RT2: Metallic/Roughness/AO (R8G8B8A8_UNORM)
+     * - RT3: Emissive (R16G16B16A16_FLOAT)
      * - DS:  Depth (D32_FLOAT)
      *
      * 出力はSharedResourceRegistryに登録され、後続のLightingPassが参照します。
@@ -57,6 +61,7 @@ namespace NorvesLib::Core::Rendering
      * - "GBuffer_Albedo"
      * - "GBuffer_Normal"
      * - "GBuffer_Material"
+     * - "GBuffer_Emissive"
      * - "GBuffer_Depth"
      */
     class GBufferPass : public IViewPass
@@ -107,6 +112,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture *GetAlbedoTexture() const { return m_AlbedoTexture.get(); }
         RHI::ITexture *GetNormalTexture() const { return m_NormalTexture.get(); }
         RHI::ITexture *GetMaterialTexture() const { return m_MaterialTexture.get(); }
+        RHI::ITexture *GetEmissiveTexture() const { return m_EmissiveTexture.get(); }
         RHI::ITexture *GetDepthTexture() const { return m_DepthTexture.get(); }
 
     private:
@@ -130,6 +136,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_AlbedoTexture;
         RHI::TexturePtr m_NormalTexture;
         RHI::TexturePtr m_MaterialTexture;
+        RHI::TexturePtr m_EmissiveTexture;
         RHI::TexturePtr m_DepthTexture;
 
         // GBuffer用レンダーパス・フレームバッファ

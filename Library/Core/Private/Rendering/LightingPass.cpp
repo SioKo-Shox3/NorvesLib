@@ -2,6 +2,7 @@
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/SceneView.h"
 #include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
@@ -166,6 +167,7 @@ namespace NorvesLib::Core::Rendering
         m_LightingDescriptorSet.reset();
         m_GBufferSampler.reset();
         m_Device = nullptr;
+        m_SceneView = nullptr;
 
         m_bInitialized = false;
         NORVES_LOG_INFO("LightingPass", "LightingPass shutdown");
@@ -298,6 +300,13 @@ namespace NorvesLib::Core::Rendering
             shadowBinding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(shadowBinding);
 
+            // GBuffer Emissive (binding=7, combined image sampler)
+            RHI::DescriptorBinding emissiveBinding;
+            emissiveBinding.binding = 7;
+            emissiveBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            emissiveBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(emissiveBinding);
+
             m_LightingDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
             if (!m_LightingDescriptorSet)
             {
@@ -383,6 +392,13 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // GBufferエミッシブ取得
+        RHI::ITexture *gbufferEmissive = nullptr;
+        if (context.SharedResources)
+        {
+            gbufferEmissive = context.SharedResources->GetTexture("GBuffer_Emissive");
+        }
+
         // シャドウマップをSharedResourceRegistryから取得
         RHI::TexturePtr shadowMapPtr;
         bool bShadowAvailable = false;
@@ -407,6 +423,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr normalPtr;
         RHI::TexturePtr materialPtr;
         RHI::TexturePtr depthPtr;
+        RHI::TexturePtr emissivePtr;
 
         if (context.SharedResources)
         {
@@ -414,6 +431,7 @@ namespace NorvesLib::Core::Rendering
             normalPtr = context.SharedResources->GetTexturePtr("GBuffer_Normal");
             materialPtr = context.SharedResources->GetTexturePtr("GBuffer_Material");
             depthPtr = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+            emissivePtr = context.SharedResources->GetTexturePtr("GBuffer_Emissive");
         }
 
         if (!albedoPtr || !normalPtr || !materialPtr || !depthPtr)
@@ -441,6 +459,18 @@ namespace NorvesLib::Core::Rendering
             m_LightingDescriptorSet->BindTexture(6, depthPtr);
         }
         m_LightingDescriptorSet->BindSampler(6, m_GBufferSampler);
+
+        // GBufferエミッシブバインド
+        if (emissivePtr)
+        {
+            m_LightingDescriptorSet->BindTexture(7, emissivePtr);
+        }
+        else
+        {
+            // フォールバック（エミッシブ無し）: アルベドをダミーとしてバインド（値は無視される）
+            m_LightingDescriptorSet->BindTexture(7, albedoPtr);
+        }
+        m_LightingDescriptorSet->BindSampler(7, m_GBufferSampler);
 
         m_LightingDescriptorSet->Update();
 
@@ -588,35 +618,78 @@ namespace NorvesLib::Core::Rendering
             params.bShadowEnabled = 0;
         }
 
-        // デフォルトのディレクショナルライトを1つ追加
-        params.lightCount = 1;
+        // ========================================
+        // SceneViewのLightProxyからライト配列を構築
+        // ========================================
+        uint32_t lightCount = 0;
+        GPULightData lightArray[MAX_LIGHTS] = {};
+
+        if (m_SceneView)
+        {
+            const auto &lightProxies = m_SceneView->GetLightProxies();
+            for (const auto &proxy : lightProxies)
+            {
+                if (lightCount >= MAX_LIGHTS)
+                {
+                    break;
+                }
+                if (!proxy.IsValid())
+                {
+                    continue;
+                }
+
+                GPULightData &gpu = lightArray[lightCount];
+
+                // position.w = type (0:Dir, 1:Point, 2:Spot)
+                gpu.position[0] = proxy.PositionX;
+                gpu.position[1] = proxy.PositionY;
+                gpu.position[2] = proxy.PositionZ;
+                gpu.position[3] = static_cast<float>(static_cast<int>(proxy.Type));
+
+                // direction
+                gpu.direction[0] = proxy.DirectionX;
+                gpu.direction[1] = proxy.DirectionY;
+                gpu.direction[2] = proxy.DirectionZ;
+                gpu.direction[3] = proxy.InnerConeAngle;
+
+                // color * intensity
+                gpu.color[0] = proxy.ColorR;
+                gpu.color[1] = proxy.ColorG;
+                gpu.color[2] = proxy.ColorB;
+                gpu.color[3] = proxy.Intensity;
+
+                // attenuation
+                gpu.attenuation[0] = proxy.Range;
+                gpu.attenuation[1] = proxy.OuterConeAngle;
+                gpu.attenuation[2] = 0.0f;
+                gpu.attenuation[3] = 0.0f;
+
+                ++lightCount;
+            }
+        }
+
+        // ライトが登録されていない場合はデフォルトのディレクショナルライトを追加
+        if (lightCount == 0)
+        {
+            GPULightData &gpu = lightArray[0];
+            gpu.position[3] = 0.0f; // Directional
+            gpu.direction[0] = -0.577f;
+            gpu.direction[1] = -0.577f;
+            gpu.direction[2] = -0.577f;
+            gpu.color[0] = 1.0f;
+            gpu.color[1] = 1.0f;
+            gpu.color[2] = 1.0f;
+            gpu.color[3] = 1.0f;
+            gpu.attenuation[0] = 100.0f;
+            lightCount = 1;
+        }
+
+        params.lightCount = lightCount;
 
         m_LightDataBuffer->Update(&params, sizeof(GPULightingParams));
 
-        // ライト配列バッファ更新（デフォルトのディレクショナルライト）
-        GPULightData defaultLight = {};
-        // position.w = 0 → ディレクショナルライト
-        defaultLight.position[0] = 0.0f;
-        defaultLight.position[1] = 0.0f;
-        defaultLight.position[2] = 0.0f;
-        defaultLight.position[3] = 0.0f; // type: Directional
-        // ディレクショナルライトの方向（正規化済み）
-        defaultLight.direction[0] = -0.577f;
-        defaultLight.direction[1] = -0.577f;
-        defaultLight.direction[2] = -0.577f;
-        defaultLight.direction[3] = 0.0f; // innerAngle
-        // 白色、強度1.0
-        defaultLight.color[0] = 1.0f;
-        defaultLight.color[1] = 1.0f;
-        defaultLight.color[2] = 1.0f;
-        defaultLight.color[3] = 1.0f; // intensity
-        // 減衰パラメータ
-        defaultLight.attenuation[0] = 100.0f; // range
-        defaultLight.attenuation[1] = 0.0f;
-        defaultLight.attenuation[2] = 0.0f;
-        defaultLight.attenuation[3] = 0.0f;
-
-        m_LightArrayBuffer->Update(&defaultLight, sizeof(GPULightData));
+        // ライト配列バッファ更新
+        m_LightArrayBuffer->Update(lightArray, sizeof(GPULightData) * lightCount);
     }
 
 } // namespace NorvesLib::Core::Rendering

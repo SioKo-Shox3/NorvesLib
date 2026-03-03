@@ -40,6 +40,9 @@ layout(set = 0, binding = 5) uniform LightBuffer
 // シャドウマップ
 layout(set = 0, binding = 6) uniform sampler2D shadowMap;
 
+// GBufferエミッシブ
+layout(set = 0, binding = 7) uniform sampler2D gbufferEmissive;
+
 layout(location = 0) out vec4 outColor;
 
 // ========================================
@@ -252,10 +255,13 @@ void main()
         Lo += (kD * albedo / PI + specular) * lightColor * NdotL * attenuation * shadow;
     }
 
+    // エミッシブ（自発光）をGBufferから取得
+    vec3 emissive = texture(gbufferEmissive, fragUV).rgb;
+
     // アンビエントライト
     vec3 ambient = params.ambientColor.rgb * params.ambientColor.w * albedo * ao;
 
-    // 最終カラー（HDR）
-    vec3 color = ambient + Lo;
+    // 最終カラー（HDR）: アンビエント + ライティング + エミッシブ
+    vec3 color = ambient + Lo + emissive;
     outColor = vec4(color, 1.0);
 }

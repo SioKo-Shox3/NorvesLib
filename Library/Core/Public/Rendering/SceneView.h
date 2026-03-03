@@ -207,6 +207,11 @@ namespace NorvesLib::Core::Rendering
         const Container::VariableArray<MeshProxy> &GetMeshProxies() const { return m_MeshProxies; }
 
         /**
+         * @brief 収集されたLightProxyを取得
+         */
+        const Container::VariableArray<LightProxy> &GetLightProxies() const { return m_LightProxies; }
+
+        /**
          * @brief 可視MeshProxyを取得
          */
         const Container::VariableArray<MeshProxy *> &GetVisibleMeshProxies() const { return m_VisibleMeshProxies; }

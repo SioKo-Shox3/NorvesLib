@@ -71,8 +71,8 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBOレイアウト: world(64) + view(64) + projection(64) + cameraPos(16) + objectColor(16) = 224 bytes
-            constexpr uint32_t UBO_SIZE = 224;
+            // UBOレイアウト: world(64) + view(64) + projection(64) + cameraPos(16) + objectColor(16) + emissiveColor(16) = 240 bytes
+            constexpr uint32_t UBO_SIZE = 240;
             constexpr uint32_t MAX_OBJECTS = 256; // 1フレームあたりの最大オブジェクト数
 
             RHI::DescriptorSetDesc uboDescSetDesc;
@@ -103,6 +103,7 @@ namespace NorvesLib::Core::Rendering
         m_AlbedoTexture.reset();
         m_NormalTexture.reset();
         m_MaterialTexture.reset();
+        m_EmissiveTexture.reset();
         m_DepthTexture.reset();
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
@@ -155,6 +156,7 @@ namespace NorvesLib::Core::Rendering
             context.SharedResources->RegisterTexturePtr("GBuffer_Albedo", m_AlbedoTexture);
             context.SharedResources->RegisterTexturePtr("GBuffer_Normal", m_NormalTexture);
             context.SharedResources->RegisterTexturePtr("GBuffer_Material", m_MaterialTexture);
+            context.SharedResources->RegisterTexturePtr("GBuffer_Emissive", m_EmissiveTexture);
             context.SharedResources->RegisterTexturePtr("GBuffer_Depth", m_DepthTexture);
         }
 
@@ -240,6 +242,7 @@ namespace NorvesLib::Core::Rendering
                 float projection[16];
                 float cameraPosition[4];
                 float objectColor[4];
+                float emissiveColor[4]; // rgb=エミッシブカラー, a=エミッシブ強度
             };
 
             // ビュー・プロジェクション行列を事前変換
@@ -290,6 +293,12 @@ namespace NorvesLib::Core::Rendering
                 uboData.objectColor[2] = proxy.CustomData[2] != 0.0f ? proxy.CustomData[2] : 1.0f;
                 uboData.objectColor[3] = proxy.CustomData[3] != 0.0f ? proxy.CustomData[3] : 1.0f;
 
+                // エミッシブカラー（rgb=色, a=強度）
+                uboData.emissiveColor[0] = proxy.EmissiveColor[0];
+                uboData.emissiveColor[1] = proxy.EmissiveColor[1];
+                uboData.emissiveColor[2] = proxy.EmissiveColor[2];
+                uboData.emissiveColor[3] = proxy.EmissiveStrength;
+
                 // UBO更新
                 allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
@@ -324,17 +333,19 @@ namespace NorvesLib::Core::Rendering
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"));
         m_MaterialTexture = m_Device->CreateTexture(
             RHI::TextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"));
+        m_EmissiveTexture = m_Device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"));
         m_DepthTexture = m_Device->CreateTexture(
             RHI::TextureDesc::DepthStencil(width, height, m_Settings.DepthFormat, "GBuffer_Depth"));
 
-        if (!m_AlbedoTexture || !m_NormalTexture || !m_MaterialTexture || !m_DepthTexture)
+        if (!m_AlbedoTexture || !m_NormalTexture || !m_MaterialTexture || !m_EmissiveTexture || !m_DepthTexture)
         {
             NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer textures");
             return false;
         }
 
         // ========================================
-        // MRT対応レンダーパス作成（3カラー + 1デプス）
+        // MRT対応レンダーパス作成（4カラー + 1デプス）
         // ========================================
         RHI::RenderPassDesc rpDesc;
 
@@ -383,6 +394,21 @@ namespace NorvesLib::Core::Rendering
         materialAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(materialAttach);
 
+        // Emissive アタッチメント（HDR自発光カラー）
+        RHI::AttachmentDesc emissiveAttach;
+        emissiveAttach.format = m_Settings.EmissiveFormat;
+        emissiveAttach.isDepthStencil = false;
+        emissiveAttach.clear = true;
+        emissiveAttach.clearColor[0] = 0.0f;
+        emissiveAttach.clearColor[1] = 0.0f;
+        emissiveAttach.clearColor[2] = 0.0f;
+        emissiveAttach.clearColor[3] = 0.0f;
+        emissiveAttach.loadOp = RHI::AttachmentLoadOp::Clear;
+        emissiveAttach.storeOp = RHI::AttachmentStoreOp::Store;
+        emissiveAttach.initialState = RHI::ResourceState::Undefined;
+        emissiveAttach.finalState = RHI::ResourceState::ShaderResource;
+        rpDesc.colorAttachments.push_back(emissiveAttach);
+
         // Depth アタッチメント
         rpDesc.hasDepthStencil = true;
         rpDesc.depthStencilAttachment.format = m_Settings.DepthFormat;
@@ -410,6 +436,7 @@ namespace NorvesLib::Core::Rendering
         fbDesc.colorTargets.push_back(m_AlbedoTexture);
         fbDesc.colorTargets.push_back(m_NormalTexture);
         fbDesc.colorTargets.push_back(m_MaterialTexture);
+        fbDesc.colorTargets.push_back(m_EmissiveTexture);
         fbDesc.depthStencilTarget = m_DepthTexture;
         fbDesc.width = width;
         fbDesc.height = height;
@@ -463,8 +490,8 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.depthStencilState.depthWriteEnable = true;
         pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
 
-        // MRT用ブレンドステート（3カラーアタッチメント分）
-        for (int i = 0; i < 3; ++i)
+        // MRT用ブレンドステート（4カラーアタッチメント分）
+        for (int i = 0; i < 4; ++i)
         {
             RHI::BlendAttachmentDesc blendAttachment;
             blendAttachment.blendEnable = false;

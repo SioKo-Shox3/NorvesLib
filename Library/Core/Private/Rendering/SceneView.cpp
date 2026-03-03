@@ -232,6 +232,7 @@ namespace NorvesLib::Core::Rendering
         // LightingPass: GBuffer→HDRシーンカラー
         LightingPassSettings lightingSettings;
         auto lightingPass = MakeUnique<LightingPass>(lightingSettings);
+        lightingPass->SetSceneView(this);
         AddPass(std::move(lightingPass));
 
         // PostProcessStack: Bloom -> ToneMapping
