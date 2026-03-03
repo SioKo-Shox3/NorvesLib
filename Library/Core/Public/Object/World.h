@@ -23,7 +23,8 @@ namespace NorvesLib::Core
      * 責務:
      * - WorldObjectのライフサイクル管理（Inner/Outerで親子付け）
      * - 毎フレームのTick更新
-     * - MeshComponentからSceneViewへのProxy同期
+     * - MeshComponentからSceneViewへのMeshProxy同期
+     * - LightComponentからSceneViewへのLightProxy同期
      *
      * Worldが破棄されると、Inner全てが連鎖破棄されます。
      */
@@ -80,7 +81,7 @@ namespace NorvesLib::Core
         Rendering::SceneView *GetSceneView() const { return m_SceneView; }
 
         /**
-         * @brief MeshComponentからSceneViewへProxy同期
+         * @brief MeshComponent/LightComponentからSceneViewへProxy同期
          */
         void SyncToSceneView();
 

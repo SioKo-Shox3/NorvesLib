@@ -60,6 +60,8 @@ set(PRIVATE_SOURCES
     # Component
     Private/Component/Component.cpp
     Private/Component/MeshComponent.cpp
+    Private/Component/LightComponent.cpp
+    Private/Component/PointLightComponent.cpp
     # Thread
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
@@ -189,6 +191,8 @@ set(PUBLIC_HEADERS
     # Component
     Public/Component/Component.h
     Public/Component/MeshComponent.h
+    Public/Component/LightComponent.h
+    Public/Component/PointLightComponent.h
     # Math
     Public/Math/MathForward.h
     Public/Math/MathTypes.h

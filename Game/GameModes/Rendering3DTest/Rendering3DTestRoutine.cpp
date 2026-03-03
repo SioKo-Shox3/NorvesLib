@@ -4,9 +4,12 @@
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/WorldObject.h"
 #include "Core/Public/Component/MeshComponent.h"
+#include "Core/Public/Component/PointLightComponent.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/RenderResourceManager.h"
 #include "Core/Public/Rendering/ProceduralMeshGenerator.h"
+#include "Core/Public/Rendering/SceneProxy.h"
+#include "Core/Public/Rendering/SceneView.h"
 #include "Core/Public/Math/Matrix4x4.h"
 #include "Core/Public/Math/Quaternion.h"
 #include "Core/Public/Math/Vector3.h"
@@ -81,6 +84,26 @@ namespace Game::GameModes
             }
 
             data.m_bMeshesRegistered = bSphereOk && bGroundOk;
+
+            // ポイントライト光源球体メッシュの生成（小さい球体: 半径0.15）
+            VariableArray<Mesh3DVertex> lightSphereVertices;
+            VariableArray<uint32_t> lightSphereIndices;
+            ProceduralMeshGenerator::GenerateUVSphere(0.15f, 16, 8, lightSphereVertices, lightSphereIndices);
+
+            bool bLightSphereOk = resourceManager.RegisterMesh(
+                data.m_LightSphereMeshHandle,
+                lightSphereVertices.data(),
+                static_cast<uint32_t>(lightSphereVertices.size() * sizeof(Mesh3DVertex)),
+                lightSphereIndices.data(),
+                static_cast<uint32_t>(lightSphereIndices.size()));
+
+            if (bLightSphereOk)
+            {
+                NORVES_LOG_INFO("Rendering3DTest", "Light sphere mesh registered: %zu vertices, %zu indices",
+                                lightSphereVertices.size(), lightSphereIndices.size());
+            }
+
+            data.m_bMeshesRegistered = bSphereOk && bGroundOk && bLightSphereOk;
         }
 
         // ========================================
@@ -132,6 +155,41 @@ namespace Game::GameModes
             world.AddObject(data.m_pGroundObject);
 
             LOG_INFO("Ground WorldObject created and added to World");
+
+            // --- ポイントライト光源球体オブジェクト ---
+            data.m_pLightSphereObject = new WorldObject();
+            data.m_pLightSphereObject->Initialize();
+
+            // 球体の横に配置（X=2.0, Y=0.5, Z=0.0）
+            data.m_pLightSphereObject->SetPosition(2.0f, 0.5f, 0.0f);
+
+            data.m_pLightSphereMeshComponent = new Component::MeshComponent();
+            data.m_pLightSphereMeshComponent->SetMeshHandle(data.m_LightSphereMeshHandle);
+            data.m_pLightSphereMeshComponent->SetMaterial(0, MaterialHandle{1});
+            data.m_pLightSphereMeshComponent->SetCastShadow(false); // 光源自体は影を落とさない
+            // 明るい黄色（発光体の見た目）
+            data.m_pLightSphereMeshComponent->SetCustomData(0, 1.0f);
+            data.m_pLightSphereMeshComponent->SetCustomData(1, 0.9f);
+            data.m_pLightSphereMeshComponent->SetCustomData(2, 0.3f);
+            data.m_pLightSphereMeshComponent->SetCustomData(3, 1.0f);
+            // エミッシブ設定（自発光 → ブルーム対象になる）
+            data.m_pLightSphereMeshComponent->SetEmissiveColor(1.0f, 0.9f, 0.3f);
+            data.m_pLightSphereMeshComponent->SetEmissiveStrength(8.0f);
+
+            data.m_pLightSphereObject->AddComponent(data.m_pLightSphereMeshComponent);
+
+            // PointLightComponentの追加（SceneViewへのLightProxy登録はWorld::SyncToSceneView()で自動化）
+            data.m_pPointLightComponent = new Component::PointLightComponent();
+            data.m_pPointLightComponent->SetLightColor(1.0f, 0.9f, 0.3f);
+            data.m_pPointLightComponent->SetIntensity(3.0f);
+            data.m_pPointLightComponent->SetRange(8.0f);
+            data.m_pPointLightComponent->SetLightVisible(true);
+            data.m_pPointLightComponent->SetCastShadows(false);
+            data.m_pLightSphereObject->AddComponent(data.m_pPointLightComponent);
+
+            world.AddObject(data.m_pLightSphereObject);
+
+            LOG_INFO("Light sphere WorldObject created and added to World");
         }
     }
 
@@ -165,6 +223,7 @@ namespace Game::GameModes
             auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
             resourceManager.UnregisterMesh(data.m_SphereMeshHandle);
             resourceManager.UnregisterMesh(data.m_GroundMeshHandle);
+            resourceManager.UnregisterMesh(data.m_LightSphereMeshHandle);
             data.m_bMeshesRegistered = false;
         }
 
@@ -172,8 +231,11 @@ namespace Game::GameModes
         // ここでは参照のクリアのみ
         data.m_pSphereObject = nullptr;
         data.m_pGroundObject = nullptr;
+        data.m_pLightSphereObject = nullptr;
         data.m_pSphereMeshComponent = nullptr;
         data.m_pGroundMeshComponent = nullptr;
+        data.m_pLightSphereMeshComponent = nullptr;
+        data.m_pPointLightComponent = nullptr;
     }
 
 } // namespace Game::GameModes

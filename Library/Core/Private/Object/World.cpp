@@ -1,6 +1,7 @@
 ﻿#include "Object/World.h"
 #include "Object/WorldObject.h"
 #include "Component/MeshComponent.h"
+#include "Component/LightComponent.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneProxy.h"
 #include "Logging/LogMacros.h"
@@ -124,6 +125,17 @@ namespace NorvesLib::Core
                 if (m_SceneView)
                 {
                     m_SceneView->RemoveMeshProxy(object->GetObjectId());
+
+                    // LightComponentのLightProxyも削除
+                    auto components = object->GetComponents();
+                    for (auto* comp : components)
+                    {
+                        auto* lightComp = ObjectUtility::CastTo<Component::LightComponent>(comp);
+                        if (lightComp)
+                        {
+                            m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
+                        }
+                    }
                 }
 
                 // ライフサイクル通知
@@ -199,7 +211,7 @@ namespace NorvesLib::Core
             return;
         }
 
-        // 全WorldObjectのMeshComponentからProxyを構築してSceneViewへ送信
+        // 全WorldObjectのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
         for (auto *inner : m_Inners)
         {
             auto *obj = ObjectUtility::CastTo<WorldObject>(inner);
@@ -212,22 +224,34 @@ namespace NorvesLib::Core
             auto components = obj->GetComponents();
             for (auto *comp : components)
             {
+                // MeshComponentの同期
                 auto *meshComp = ObjectUtility::CastTo<Component::MeshComponent>(comp);
-                if (!meshComp || !meshComp->IsEnabled())
+                if (meshComp && meshComp->IsEnabled())
                 {
-                    continue;
+                    // MeshProxyを構築
+                    Rendering::MeshProxy meshProxy;
+                    if (meshComp->BuildMeshProxy(meshProxy))
+                    {
+                        // ObjectIdとComponentIdを設定
+                        meshProxy.ObjectId = obj->GetObjectId();
+                        meshProxy.ComponentId = meshComp->GetComponentId();
+
+                        // SceneViewに追加/更新
+                        m_SceneView->UpdateMeshProxy(meshProxy);
+                    }
                 }
 
-                // MeshProxyを構築
-                Rendering::MeshProxy proxy;
-                if (meshComp->BuildMeshProxy(proxy))
+                // LightComponentの同期
+                auto *lightComp = ObjectUtility::CastTo<Component::LightComponent>(comp);
+                if (lightComp && lightComp->IsEnabled())
                 {
-                    // ObjectIdとComponentIdを設定
-                    proxy.ObjectId = obj->GetObjectId();
-                    proxy.ComponentId = meshComp->GetComponentId();
-
-                    // SceneViewに追加/更新
-                    m_SceneView->UpdateMeshProxy(proxy);
+                    // LightProxyを構築
+                    Rendering::LightProxy lightProxy;
+                    if (lightComp->BuildLightProxy(lightProxy))
+                    {
+                        // SceneViewに追加/更新
+                        m_SceneView->UpdateLightProxy(lightProxy);
+                    }
                 }
             }
         }
@@ -252,6 +276,17 @@ namespace NorvesLib::Core
             if (m_SceneView)
             {
                 m_SceneView->RemoveMeshProxy(obj->GetObjectId());
+
+                // LightComponentのLightProxyも削除
+                auto components = obj->GetComponents();
+                for (auto* comp : components)
+                {
+                    auto* lightComp = ObjectUtility::CastTo<Component::LightComponent>(comp);
+                    if (lightComp)
+                    {
+                        m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
+                    }
+                }
             }
 
             obj->OnRemovedFromWorld();

@@ -10,11 +10,13 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 projection;
     vec4 cameraPosition;
     vec4 objectColor;
+    vec4 emissiveColor;  // rgb=エミッシブカラー, a=エミッシブ強度
 } mvp;
 
 layout(location = 0) out vec3 fragWorldPos;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragObjectColor;
+layout(location = 3) out vec4 fragEmissiveColor;
 
 void main()
 {
@@ -25,6 +27,7 @@ void main()
     fragNormal = normalize(normalMatrix * inNormal);
 
     fragObjectColor = mvp.objectColor.rgb;
+    fragEmissiveColor = mvp.emissiveColor;
 
     gl_Position = mvp.projection * mvp.view * worldPos;
 }

@@ -175,6 +175,29 @@ namespace NorvesLib::Core::Component
         float GetCustomData(uint32_t index) const;
 
         // ========================================
+        // エミッシブ設定
+        // ========================================
+
+        /**
+         * @brief エミッシブカラーを設定
+         * @param r 赤 (0-1)
+         * @param g 緑 (0-1)
+         * @param b 青 (0-1)
+         */
+        void SetEmissiveColor(float r, float g, float b);
+
+        /**
+         * @brief エミッシブ強度を設定
+         * @param strength 強度（0=非発光、1以上でHDR値になりブルームの対象）
+         */
+        void SetEmissiveStrength(float strength);
+
+        /**
+         * @brief エミッシブ強度を取得
+         */
+        float GetEmissiveStrength() const { return m_EmissiveStrength; }
+
+        // ========================================
         // バウンディング
         // ========================================
 
@@ -250,6 +273,10 @@ namespace NorvesLib::Core::Component
 
         // カスタムシェーダーデータ
         float m_CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        // エミッシブデータ
+        float m_EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
+        float m_EmissiveStrength = 0.0f;
 
         // キャッシュされたトランスフォーム
         Math::Matrix4x4 m_WorldTransform;

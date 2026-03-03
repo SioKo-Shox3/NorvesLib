@@ -36,6 +36,7 @@ namespace NorvesLib::Core::Rendering
      * - "GBuffer_Albedo"   : アルベド
      * - "GBuffer_Normal"   : ワールド法線
      * - "GBuffer_Material" : メタリック/ラフネス/AO
+     * - "GBuffer_Emissive" : エミッシブ（HDR自発光）
      * - "GBuffer_Depth"    : 深度
      *
      * 出力（SharedResourceRegistryに登録）:
@@ -44,6 +45,8 @@ namespace NorvesLib::Core::Rendering
      *
      * ライトデータはSceneViewのLightProxyから収集してUBOにパックします。
      */
+    class SceneView;
+
     class LightingPass : public IViewPass
     {
     public:
@@ -52,6 +55,12 @@ namespace NorvesLib::Core::Rendering
          * @param settings ライティングパス設定
          */
         explicit LightingPass(const LightingPassSettings &settings = LightingPassSettings{});
+
+        /**
+         * @brief SceneViewを設定
+         * @param sceneView SceneView参照（LightProxy取得用）
+         */
+        void SetSceneView(SceneView *sceneView) { m_SceneView = sceneView; }
 
         /**
          * @brief デストラクタ
@@ -105,6 +114,9 @@ namespace NorvesLib::Core::Rendering
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
+
+        // SceneView参照（LightProxy取得用）
+        SceneView *m_SceneView = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
