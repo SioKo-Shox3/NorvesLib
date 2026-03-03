@@ -24,7 +24,7 @@ namespace Game::GameModes
          * RenderResourceManagerに登録、
          * WorldにObjectとMeshComponentを追加。
          */
-        void Enter(NorvesLib::Core::GameMode::IStateMachine* proc, Rendering3DTestData& data);
+        void Enter(NorvesLib::Core::GameMode::IStateMachine *proc, Rendering3DTestData &data);
 
         /**
          * @brief ステート実行中の処理
@@ -34,14 +34,14 @@ namespace Game::GameModes
          *
          * 球体を回転させてWorldTransformを更新。
          */
-        void Do(NorvesLib::Core::GameMode::IStateMachine* proc, Rendering3DTestData& data, float deltaTime);
+        void Do(NorvesLib::Core::GameMode::IStateMachine *proc, Rendering3DTestData &data, float deltaTime);
 
         /**
          * @brief ステート終了時の処理
          * @param proc ステートマシン
          * @param data ゲームモードデータ
          */
-        void Leave(NorvesLib::Core::GameMode::IStateMachine* proc, Rendering3DTestData& data);
+        void Leave(NorvesLib::Core::GameMode::IStateMachine *proc, Rendering3DTestData &data);
     };
 
 } // namespace Game::GameModes

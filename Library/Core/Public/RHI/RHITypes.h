@@ -480,6 +480,7 @@ namespace NorvesLib::RHI
     class IRenderPass;
     class IFramebuffer;
     class IShader;
+    class IShaderCompiler;
     class IPipeline;
     class ISwapChain;
     class IDescriptorSet;
@@ -496,5 +497,6 @@ namespace NorvesLib::RHI
     using PipelinePtr = TSharedPtr<IPipeline>;
     using SwapChainPtr = TSharedPtr<ISwapChain>;
     using DescriptorSetPtr = TSharedPtr<IDescriptorSet>;
+    using ShaderCompilerPtr = TSharedPtr<IShaderCompiler>;
 
 } // namespace NorvesLib::RHI

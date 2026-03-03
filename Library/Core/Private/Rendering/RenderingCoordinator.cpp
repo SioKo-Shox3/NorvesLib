@@ -7,9 +7,7 @@
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/RenderResourceManager.h"
-#include "Rendering/Shaders/TriangleShaders.h"
-#include "Rendering/Shaders/LightingShaders.h"
-#include "Rendering/Shaders/BlitShaders.h"
+#include "Rendering/ShaderManager.h"
 #include "RHI/ISampler.h"
 #include "RHI/IDevice.h"
 #include "RHI/ISwapChain.h"
@@ -146,17 +144,20 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
-        // 6. Blitシェーダーの作成（ToneMappedColor → SwapChain合成用）
+        // 6. ShaderManagerの初期化
+        // ========================================
+        if (!m_ShaderManager.Initialize(m_Device.get(), NORVES_SHADER_DIR))
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize ShaderManager");
+            return false;
+        }
+
+        // ========================================
+        // 7. Blitシェーダーの作成（ToneMappedColor → SwapChain合成用）
         // ========================================
         {
-            // Blit用頂点シェーダー（フルスクリーン三角形 - LightingPassと共通）
-            RHI::ShaderDesc blitVertDesc;
-            blitVertDesc.stage = RHI::ShaderStage::Vertex;
-            blitVertDesc.entryPoint = "main";
-            blitVertDesc.byteCode.assign(
-                FullscreenVertexShaderSpirV,
-                FullscreenVertexShaderSpirV + sizeof(FullscreenVertexShaderSpirV));
-            m_BlitVertexShader = m_Device->CreateShader(blitVertDesc);
+            // Blit用頂点シェーダー（フルスクリーン三角形）
+            m_BlitVertexShader = m_ShaderManager.LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
             if (!m_BlitVertexShader)
             {
                 NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create Blit vertex shader");
@@ -164,13 +165,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             // Blit用フラグメントシェーダー
-            RHI::ShaderDesc blitFragDesc;
-            blitFragDesc.stage = RHI::ShaderStage::Pixel;
-            blitFragDesc.entryPoint = "main";
-            blitFragDesc.byteCode.assign(
-                BlitFragmentShaderSpirV,
-                BlitFragmentShaderSpirV + sizeof(BlitFragmentShaderSpirV));
-            m_BlitFragmentShader = m_Device->CreateShader(blitFragDesc);
+            m_BlitFragmentShader = m_ShaderManager.LoadShader("blit.frag", RHI::ShaderStage::Pixel);
             if (!m_BlitFragmentShader)
             {
                 NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create Blit fragment shader");
@@ -241,21 +236,8 @@ namespace NorvesLib::Core::Rendering
 
         // 旧三角形シェーダー・パイプラインも残す（フォールバック用）
         {
-            RHI::ShaderDesc triVertDesc;
-            triVertDesc.stage = RHI::ShaderStage::Vertex;
-            triVertDesc.entryPoint = "main";
-            triVertDesc.byteCode.assign(
-                TriangleVertexShaderSpirV,
-                TriangleVertexShaderSpirV + sizeof(TriangleVertexShaderSpirV));
-            m_TriangleVertexShader = m_Device->CreateShader(triVertDesc);
-
-            RHI::ShaderDesc triFragDesc;
-            triFragDesc.stage = RHI::ShaderStage::Pixel;
-            triFragDesc.entryPoint = "main";
-            triFragDesc.byteCode.assign(
-                TriangleFragmentShaderSpirV,
-                TriangleFragmentShaderSpirV + sizeof(TriangleFragmentShaderSpirV));
-            m_TriangleFragmentShader = m_Device->CreateShader(triFragDesc);
+            m_TriangleVertexShader = m_ShaderManager.LoadShader("triangle.vert", RHI::ShaderStage::Vertex);
+            m_TriangleFragmentShader = m_ShaderManager.LoadShader("triangle.frag", RHI::ShaderStage::Pixel);
 
             RHI::GraphicsPipelineDesc triPipelineDesc;
             triPipelineDesc.vertexShader = m_TriangleVertexShader;
@@ -357,6 +339,9 @@ namespace NorvesLib::Core::Rendering
 
         // SceneRendererの終了
         m_SceneRenderer.Shutdown();
+
+        // シェーダーマネージャーの終了
+        m_ShaderManager.Shutdown();
 
         // テスト三角形リソースの解放
         m_TrianglePipeline.reset();
@@ -546,6 +531,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.TotalTime = m_TotalTime;
         viewContext.ResourceManager = m_ResourceManager;
         viewContext.MainCamera = m_bCameraSet ? &m_MainCamera : nullptr;
+        viewContext.ShaderMgr = &m_ShaderManager;
 
         // パスチェーンが設定されたViewはパスベース描画を実行
         // パス未設定のViewはレガシーフローにフォールバック

@@ -82,8 +82,9 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief ライト情報をGPUバッファにパック
          * @param context 描画コンテキスト
+         * @param bShadowAvailable シャドウマップが利用可能か
          */
-        void UpdateLightBuffer(ViewRenderContext &context);
+        void UpdateLightBuffer(ViewRenderContext &context, bool bShadowAvailable);
 
         // 設定
         LightingPassSettings m_Settings;

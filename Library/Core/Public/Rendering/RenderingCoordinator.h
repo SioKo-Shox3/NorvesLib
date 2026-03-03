@@ -7,6 +7,7 @@
 #include "DrawCommand.h"
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
+#include "ShaderManager.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
@@ -299,6 +300,9 @@ namespace NorvesLib::Core::Rendering
 
         // SceneRenderer（実際のRHI描画コマンド発行）
         SceneRenderer m_SceneRenderer;
+
+        // シェーダーマネージャー（ランタイムコンパイル管理）
+        ShaderManager m_ShaderManager;
 
         // View管理
         Container::TSharedPtr<SceneView> m_MainSceneView;

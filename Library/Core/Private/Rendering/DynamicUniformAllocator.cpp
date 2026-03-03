@@ -10,8 +10,8 @@
 namespace NorvesLib::Core::Rendering
 {
 
-    bool DynamicUniformAllocator::Initialize(RHI::IDevice* device, uint32_t uboSize, uint32_t maxSlots,
-                                              const RHI::DescriptorSetDesc& descriptorSetDesc)
+    bool DynamicUniformAllocator::Initialize(RHI::IDevice *device, uint32_t uboSize, uint32_t maxSlots,
+                                             const RHI::DescriptorSetDesc &descriptorSetDesc)
     {
         if (m_bInitialized)
         {
@@ -66,7 +66,7 @@ namespace NorvesLib::Core::Rendering
 
     void DynamicUniformAllocator::Shutdown()
     {
-        for (auto& slot : m_Slots)
+        for (auto &slot : m_Slots)
         {
             slot.DescriptorSet.reset();
             slot.UniformBuffer.reset();
@@ -99,7 +99,7 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
-        auto& slot = m_Slots[m_CurrentIndex];
+        auto &slot = m_Slots[m_CurrentIndex];
         result.UniformBuffer = slot.UniformBuffer;
         result.DescriptorSet = slot.DescriptorSet;
         result.SlotIndex = m_CurrentIndex;

@@ -1,4 +1,4 @@
-﻿#version 450
+#version 450
 
 layout(location = 0) in vec2 fragUV;
 
@@ -14,10 +14,12 @@ layout(set = 0, binding = 4) uniform LightingParams
     mat4 invViewProjection;
     vec4 cameraPosition;    // xyz=position, w=unused
     vec4 ambientColor;      // xyz=color, w=intensity
+    mat4 lightView;         // シャドウマップ用ライトビュー行列
+    mat4 lightProjection;   // シャドウマップ用ライトプロジェクション行列
     uint lightCount;
+    uint bShadowEnabled;    // シャドウマップ有効フラグ
     uint _pad0;
     uint _pad1;
-    uint _pad2;
 } params;
 
 // ライトデータ構造
@@ -34,6 +36,9 @@ layout(set = 0, binding = 5) uniform LightBuffer
 {
     LightData lights[16];
 } lightBuffer;
+
+// シャドウマップ
+layout(set = 0, binding = 6) uniform sampler2D shadowMap;
 
 layout(location = 0) out vec4 outColor;
 
@@ -100,6 +105,49 @@ float CalculateAttenuation(float distance, float range)
     float attenuation = 1.0 / (distance * distance + 1.0);
     float factor = clamp(1.0 - pow(distance / max(range, 0.001), 4.0), 0.0, 1.0);
     return attenuation * factor * factor;
+}
+
+// ========================================
+// シャドウマップ計算（PCF 3x3）
+// ========================================
+float CalculateShadow(vec3 worldPos)
+{
+    // ワールド座標をライトクリップ空間に変換
+    vec4 lightSpacePos = params.lightProjection * params.lightView * vec4(worldPos, 1.0);
+    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+
+    // クリップ空間[-1,1] → UV座標[0,1]に変換
+    vec2 shadowUV = projCoords.xy * 0.5 + 0.5;
+    float currentDepth = projCoords.z;
+
+    // シャドウマップ範囲外は影なし（完全にライトが当たっている）
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0)
+    {
+        return 1.0;
+    }
+
+    // 深度範囲外も影なし
+    if (currentDepth < 0.0 || currentDepth > 1.0)
+    {
+        return 1.0;
+    }
+
+    // PCF（Percentage Closer Filtering）3x3カーネル
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    float bias = 0.005;
+
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            float pcfDepth = texture(shadowMap, shadowUV + vec2(x, y) * texelSize).r;
+            shadow += (currentDepth - bias > pcfDepth) ? 0.0 : 1.0;
+        }
+    }
+    shadow /= 9.0;
+
+    return shadow;
 }
 
 void main()
@@ -194,7 +242,14 @@ void main()
         vec3 kD = vec3(1.0) - kS;
         kD *= 1.0 - metallic; // 金属はディフューズなし
 
-        Lo += (kD * albedo / PI + specular) * lightColor * NdotL * attenuation;
+        // シャドウ計算（ディレクショナルライトのみ）
+        float shadow = 1.0;
+        if (lightType < 0.5 && params.bShadowEnabled != 0u)
+        {
+            shadow = CalculateShadow(worldPos);
+        }
+
+        Lo += (kD * albedo / PI + specular) * lightColor * NdotL * attenuation * shadow;
     }
 
     // アンビエントライト

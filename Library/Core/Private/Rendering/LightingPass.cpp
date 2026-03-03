@@ -1,15 +1,15 @@
 ﻿#include "Rendering/LightingPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/SceneProxy.h"
+#include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/TransientResourcePool.h"
+#include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
-
-// ライティング用SPIR-Vシェーダー（フルスクリーン頂点 + ライティングフラグメント）
-#include "Shaders/LightingShaders.h"
 
 namespace NorvesLib::Core::Rendering
 {
@@ -32,10 +32,12 @@ namespace NorvesLib::Core::Rendering
         float invViewProjection[16]; // mat4
         float cameraPosition[4];     // vec4
         float ambientColor[4];       // vec4 (xyz=color, w=intensity)
+        float lightView[16];         // mat4 （シャドウマップ用ライトビュー行列）
+        float lightProjection[16];   // mat4 （シャドウマップ用ライトプロジェクション行列）
         uint32_t lightCount;         // uint
+        uint32_t bShadowEnabled;     // uint （シャドウマップ有効フラグ）
         uint32_t _pad0;
         uint32_t _pad1;
-        uint32_t _pad2;
     };
 
     static constexpr uint32_t MAX_LIGHTS = 16;
@@ -70,14 +72,13 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // フルスクリーン頂点シェーダー作成
         // ========================================
-        RHI::ShaderDesc vertexShaderDesc;
-        vertexShaderDesc.stage = RHI::ShaderStage::Vertex;
-        vertexShaderDesc.entryPoint = "main";
-        vertexShaderDesc.byteCode.assign(
-            FullscreenVertexShaderSpirV,
-            FullscreenVertexShaderSpirV + sizeof(FullscreenVertexShaderSpirV));
+        if (!context.ShaderMgr)
+        {
+            NORVES_LOG_ERROR("LightingPass", "ShaderManager is null");
+            return false;
+        }
 
-        m_LightingVertexShader = m_Device->CreateShader(vertexShaderDesc);
+        m_LightingVertexShader = context.ShaderMgr->LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
         if (!m_LightingVertexShader)
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to create fullscreen vertex shader");
@@ -87,14 +88,7 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // ライティングフラグメントシェーダー作成
         // ========================================
-        RHI::ShaderDesc fragmentShaderDesc;
-        fragmentShaderDesc.stage = RHI::ShaderStage::Pixel;
-        fragmentShaderDesc.entryPoint = "main";
-        fragmentShaderDesc.byteCode.assign(
-            LightingFragmentShaderSpirV,
-            LightingFragmentShaderSpirV + sizeof(LightingFragmentShaderSpirV));
-
-        m_LightingFragmentShader = m_Device->CreateShader(fragmentShaderDesc);
+        m_LightingFragmentShader = context.ShaderMgr->LoadShader("lighting.frag", RHI::ShaderStage::Pixel);
         if (!m_LightingFragmentShader)
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to create lighting fragment shader");
@@ -297,6 +291,13 @@ namespace NorvesLib::Core::Rendering
             lightBinding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(lightBinding);
 
+            // Shadow map (binding=6, combined image sampler)
+            RHI::DescriptorBinding shadowBinding;
+            shadowBinding.binding = 6;
+            shadowBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            shadowBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(shadowBinding);
+
             m_LightingDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
             if (!m_LightingDescriptorSet)
             {
@@ -382,8 +383,17 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // シャドウマップをSharedResourceRegistryから取得
+        RHI::TexturePtr shadowMapPtr;
+        bool bShadowAvailable = false;
+        if (context.SharedResources)
+        {
+            shadowMapPtr = context.SharedResources->GetTexturePtr("ShadowMap");
+            bShadowAvailable = (shadowMapPtr != nullptr);
+        }
+
         // ライト情報をGPUバッファに転送
-        UpdateLightBuffer(context);
+        UpdateLightBuffer(context, bShadowAvailable);
 
         // HDRシーンカラーをSharedResourceRegistryに登録
         if (context.SharedResources)
@@ -420,6 +430,18 @@ namespace NorvesLib::Core::Rendering
         m_LightingDescriptorSet->BindSampler(1, m_GBufferSampler);
         m_LightingDescriptorSet->BindSampler(2, m_GBufferSampler);
         m_LightingDescriptorSet->BindSampler(3, m_GBufferSampler);
+
+        // シャドウマップバインド（利用不可の場合はGBuffer深度をフォールバック）
+        if (bShadowAvailable)
+        {
+            m_LightingDescriptorSet->BindTexture(6, shadowMapPtr);
+        }
+        else
+        {
+            m_LightingDescriptorSet->BindTexture(6, depthPtr);
+        }
+        m_LightingDescriptorSet->BindSampler(6, m_GBufferSampler);
+
         m_LightingDescriptorSet->Update();
 
         // ライティングレンダーパス開始
@@ -453,30 +475,118 @@ namespace NorvesLib::Core::Rendering
         context.CommandList->EndRenderPass();
     }
 
-    void LightingPass::UpdateLightBuffer(ViewRenderContext &context)
+    void LightingPass::UpdateLightBuffer(ViewRenderContext &context, bool bShadowAvailable)
     {
         // ライティングパラメータを構築
         GPULightingParams params = {};
 
-        // カメラ位置（ViewRenderContextからは直接取得できないので、デフォルト値を使用）
-        // TODO: ViewRenderContextにカメラ情報を追加
-        params.cameraPosition[0] = 0.0f;
-        params.cameraPosition[1] = 2.0f;
-        params.cameraPosition[2] = 5.0f;
-        params.cameraPosition[3] = 1.0f;
+        using namespace NorvesLib::Math;
 
-        // invViewProjection（単位行列をデフォルト）
-        // TODO: ViewRenderContextからカメラの逆VP行列を取得
-        for (int i = 0; i < 16; ++i)
+        // RowMajor → ColumnMajor転置ヘルパー
+        auto TransposeToFloat = [](const Matrix4x4 &mat, float *out)
         {
-            params.invViewProjection[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+            for (int row = 0; row < 4; ++row)
+            {
+                for (int col = 0; col < 4; ++col)
+                {
+                    out[col * 4 + row] = mat.m[row][col];
+                }
+            }
+        };
+
+        // ========================================
+        // カメラ行列の計算（GBufferPassと同じロジック）
+        // ========================================
+        Matrix4x4 viewMat = Matrix4x4::Identity;
+        Matrix4x4 projMat = Matrix4x4::Identity;
+
+        if (context.MainCamera)
+        {
+            const auto &cam = *context.MainCamera;
+            Vector3 camPos(cam.PositionX, cam.PositionY, cam.PositionZ);
+            Vector3 forward(cam.ForwardX, cam.ForwardY, cam.ForwardZ);
+            Vector3 lookAt = camPos + forward;
+            Vector3 upDir(cam.UpX, cam.UpY, cam.UpZ);
+
+            viewMat = MatrixUtils::CreateLookAt(camPos, lookAt, upDir);
+
+            float aspectRatio = (m_CurrentHeight > 0)
+                ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
+                : 16.0f / 9.0f;
+            float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
+            projMat = MatrixUtils::CreatePerspectiveFieldOfView(
+                fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
+
+            // 右手系変換
+            projMat.m22 *= -1.0f;
+            projMat.m32 *= -1.0f;
+            // Vulkan Y反転
+            projMat.m11 *= -1.0f;
+
+            params.cameraPosition[0] = cam.PositionX;
+            params.cameraPosition[1] = cam.PositionY;
+            params.cameraPosition[2] = cam.PositionZ;
+            params.cameraPosition[3] = 1.0f;
         }
+        else
+        {
+            params.cameraPosition[0] = 0.0f;
+            params.cameraPosition[1] = 2.0f;
+            params.cameraPosition[2] = 5.0f;
+            params.cameraPosition[3] = 1.0f;
+        }
+
+        // invViewProjection行列の計算
+        Matrix4x4 vpMat = projMat * viewMat;
+        Matrix4x4 invVPMat = MatrixUtils::Inverse(vpMat);
+        TransposeToFloat(invVPMat, params.invViewProjection);
 
         // アンビエントカラー
         params.ambientColor[0] = m_Settings.AmbientColor[0];
         params.ambientColor[1] = m_Settings.AmbientColor[1];
         params.ambientColor[2] = m_Settings.AmbientColor[2];
         params.ambientColor[3] = m_Settings.AmbientIntensity;
+
+        // ========================================
+        // シャドウマップ用ライトビュー・プロジェクション行列
+        // ========================================
+        if (bShadowAvailable)
+        {
+            // ShadowMapPassと同じライト方向・パラメータ
+            float lightDirX = -0.577f;
+            float lightDirY = -0.577f;
+            float lightDirZ = -0.577f;
+
+            float lightDistance = 20.0f;
+            Vector3 lightPos(-lightDirX * lightDistance, -lightDirY * lightDistance, -lightDirZ * lightDistance);
+            Vector3 lightTarget(0.0f, 0.0f, 0.0f);
+            Vector3 upDir(0.0f, 1.0f, 0.0f);
+
+            Matrix4x4 lightViewMat = MatrixUtils::CreateLookAt(lightPos, lightTarget, upDir);
+
+            float orthoSize = 20.0f;
+            Matrix4x4 lightProjMat = MatrixUtils::CreateOrthographic(
+                orthoSize * 2.0f, orthoSize * 2.0f, 0.1f, 50.0f);
+
+            // 右手系変換（Vulkan深度[0,1]）
+            lightProjMat.m22 *= -1.0f;
+            lightProjMat.m32 *= -1.0f;
+            // シャドウマップではY反転は適用しない
+
+            TransposeToFloat(lightViewMat, params.lightView);
+            TransposeToFloat(lightProjMat, params.lightProjection);
+            params.bShadowEnabled = 1;
+        }
+        else
+        {
+            // シャドウ無効時は単位行列を設定
+            for (int i = 0; i < 16; ++i)
+            {
+                params.lightView[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+                params.lightProjection[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+            }
+            params.bShadowEnabled = 0;
+        }
 
         // デフォルトのディレクショナルライトを1つ追加
         params.lightCount = 1;

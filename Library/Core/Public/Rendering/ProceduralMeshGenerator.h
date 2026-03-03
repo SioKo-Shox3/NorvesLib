@@ -189,13 +189,14 @@ namespace NorvesLib::Core::Rendering
                     uint32_t i2 = i0 + rowVerts;
                     uint32_t i3 = i2 + 1;
 
+                    // CW winding (上から見て時計回り、FrontFace::Clockwiseに合わせる)
                     outIndices.push_back(i0);
-                    outIndices.push_back(i2);
                     outIndices.push_back(i1);
+                    outIndices.push_back(i2);
 
                     outIndices.push_back(i1);
-                    outIndices.push_back(i2);
                     outIndices.push_back(i3);
+                    outIndices.push_back(i2);
                 }
             }
         }

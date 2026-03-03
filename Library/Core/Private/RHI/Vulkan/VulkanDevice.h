@@ -83,6 +83,7 @@ namespace NorvesLib::RHI::Vulkan
         PipelinePtr CreateGraphicsPipeline(const GraphicsPipelineDesc &desc) override;
         PipelinePtr CreateComputePipeline(const ComputePipelineDesc &desc) override;
         DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc &desc) override;
+        ShaderCompilerPtr CreateShaderCompiler() override;
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
 

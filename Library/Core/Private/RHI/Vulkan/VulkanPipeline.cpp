@@ -271,11 +271,11 @@ namespace NorvesLib::RHI::Vulkan
         // パイプラインレイアウト
         // GraphicsPipelineDescのdescriptorSetLayoutsからディスクリプタセットレイアウトを作成
         VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
-        for (const auto& dsDesc : m_desc.descriptorSetLayouts)
+        for (const auto &dsDesc : m_desc.descriptorSetLayouts)
         {
             // DescriptorBindingをDescriptorBindingDescに変換
             VariableArray<DescriptorBindingDesc> bindingDescs;
-            for (const auto& binding : dsDesc.bindings)
+            for (const auto &binding : dsDesc.bindings)
             {
                 DescriptorBindingDesc bindingDesc;
                 bindingDesc.binding = binding.binding;

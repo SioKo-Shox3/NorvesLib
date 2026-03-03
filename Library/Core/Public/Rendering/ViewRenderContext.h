@@ -18,6 +18,7 @@ namespace NorvesLib::Core::Rendering
     // 前方宣言
     class SharedResourceRegistry;
     class RenderResourceManager;
+    class ShaderManager;
     struct CameraProxy;
 
     /**
@@ -57,6 +58,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief メッシュGPUデータ等を管理するリソースマネージャー */
         RenderResourceManager *ResourceManager = nullptr;
+
+        /** @brief シェーダーアセットの読み込み・コンパイル・キャッシュ管理 */
+        ShaderManager *ShaderMgr = nullptr;
 
         /** @brief メインカメラ情報（ビュー/プロジェクション行列計算用） */
         const CameraProxy *MainCamera = nullptr;

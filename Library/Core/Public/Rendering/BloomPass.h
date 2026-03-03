@@ -55,7 +55,7 @@ namespace NorvesLib::Core::Rendering
          * @brief コンストラクタ
          * @param settings ブルーム設定
          */
-        explicit BloomPass(const BloomSettings& settings = BloomSettings{});
+        explicit BloomPass(const BloomSettings &settings = BloomSettings{});
 
         /**
          * @brief デストラクタ
@@ -66,12 +66,12 @@ namespace NorvesLib::Core::Rendering
         // IViewPass実装
         // ========================================
 
-        const char* GetName() const override { return "BloomPass"; }
+        const char *GetName() const override { return "BloomPass"; }
 
-        bool Initialize(ViewRenderContext& context) override;
+        bool Initialize(ViewRenderContext &context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext& context) override;
-        void Execute(ViewRenderContext& context) override;
+        void Setup(ViewRenderContext &context) override;
+        void Execute(ViewRenderContext &context) override;
 
         // ========================================
         // パラメータ調整
@@ -105,7 +105,7 @@ namespace NorvesLib::Core::Rendering
          * @brief 現在の設定を取得
          * @return ブルーム設定の参照
          */
-        const BloomSettings& GetSettings() const { return m_Settings; }
+        const BloomSettings &GetSettings() const { return m_Settings; }
 
     private:
         // 設定
@@ -125,7 +125,7 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_SceneColorSampler;
 
         // デバイス参照
-        RHI::IDevice* m_Device = nullptr;
+        RHI::IDevice *m_Device = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;

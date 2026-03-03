@@ -1,16 +1,13 @@
 ﻿#include "Rendering/ToneMappingPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
-
-// トーンマッピング用SPIR-Vシェーダー
-#include "Shaders/LightingShaders.h"    // FullscreenVertexShaderSpirV（共用）
-#include "Shaders/ToneMappingShaders.h" // ToneMappingFragmentShaderSpirV
 
 namespace NorvesLib::Core::Rendering
 {
@@ -55,16 +52,15 @@ namespace NorvesLib::Core::Rendering
         m_Device = context.Device;
 
         // ========================================
-        // フルスクリーン頂点シェーダー作成（LightingPassと共有SPIR-V）
+        // フルスクリーン頂点シェーダー作成（LightingPassとキャッシュ共有）
         // ========================================
-        RHI::ShaderDesc vertexShaderDesc;
-        vertexShaderDesc.stage = RHI::ShaderStage::Vertex;
-        vertexShaderDesc.entryPoint = "main";
-        vertexShaderDesc.byteCode.assign(
-            FullscreenVertexShaderSpirV,
-            FullscreenVertexShaderSpirV + sizeof(FullscreenVertexShaderSpirV));
+        if (!context.ShaderMgr)
+        {
+            NORVES_LOG_ERROR("ToneMappingPass", "ShaderManager is null");
+            return false;
+        }
 
-        m_ToneMappingVertexShader = m_Device->CreateShader(vertexShaderDesc);
+        m_ToneMappingVertexShader = context.ShaderMgr->LoadShader("fullscreen.vert", RHI::ShaderStage::Vertex);
         if (!m_ToneMappingVertexShader)
         {
             NORVES_LOG_ERROR("ToneMappingPass", "Failed to create fullscreen vertex shader");
@@ -74,14 +70,7 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // トーンマッピングフラグメントシェーダー作成
         // ========================================
-        RHI::ShaderDesc fragmentShaderDesc;
-        fragmentShaderDesc.stage = RHI::ShaderStage::Pixel;
-        fragmentShaderDesc.entryPoint = "main";
-        fragmentShaderDesc.byteCode.assign(
-            ToneMappingFragmentShaderSpirV,
-            ToneMappingFragmentShaderSpirV + sizeof(ToneMappingFragmentShaderSpirV));
-
-        m_ToneMappingFragmentShader = m_Device->CreateShader(fragmentShaderDesc);
+        m_ToneMappingFragmentShader = context.ShaderMgr->LoadShader("tonemapping.frag", RHI::ShaderStage::Pixel);
         if (!m_ToneMappingFragmentShader)
         {
             NORVES_LOG_ERROR("ToneMappingPass", "Failed to create tone mapping fragment shader");
