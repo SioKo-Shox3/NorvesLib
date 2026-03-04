@@ -88,11 +88,21 @@ namespace NorvesLib::Core::Rendering
         float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // シェーダーに渡すカスタムデータ
 
         // ========================================
+        // テクスチャ
+        // ========================================
+
+        TextureHandle AlbedoTexture;    // アルベドテクスチャハンドル（無効値=テクスチャなし）
+        TextureHandle NormalTexture;    // ノーマルマップハンドル（無効値=テクスチャなし）
+        TextureHandle MetallicTexture;  // メタリックマップハンドル（無効値=テクスチャなし）
+        TextureHandle RoughnessTexture; // ラフネスマップハンドル（無効値=テクスチャなし）
+        TextureHandle AOTexture;        // AOマップハンドル（無効値=テクスチャなし）
+
+        // ========================================
         // エミッシブ（自発光）
         // ========================================
 
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f}; // エミッシブカラー (RGB)
-        float EmissiveStrength = 0.0f;                 // エミッシブ強度（0=非発光）
+        float EmissiveStrength = 0.0f;               // エミッシブ強度（0=非発光）
 
         // ========================================
         // ユーティリティ

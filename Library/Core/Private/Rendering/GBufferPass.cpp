@@ -10,6 +10,9 @@
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IGPUResourceAllocator.h"
+#include "RHI/ITexture.h"
+#include "RHI/ISampler.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/TransientResourcePool.h"
 #include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
@@ -82,9 +85,90 @@ namespace NorvesLib::Core::Rendering
             uboBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(uboBinding);
 
+            // PBRテクスチャサンプラー（binding 1-5: albedo, normal, metallic, roughness, ao）
+            for (uint32_t i = 1; i <= 5; ++i)
+            {
+                RHI::DescriptorBinding texBinding;
+                texBinding.binding = i;
+                texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+                texBinding.stages = RHI::ShaderStage::Pixel;
+                uboDescSetDesc.bindings.push_back(texBinding);
+            }
+
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
                 NORVES_LOG_ERROR("GBufferPass", "Failed to initialize DynamicUniformAllocator");
+                return false;
+            }
+        }
+
+        // ========================================
+        // デフォルトPBRテクスチャとLinearサンプラーの作成
+        // ========================================
+        {
+            // ヘルパー: 1x1テクスチャ作成
+            auto CreateDefault1x1 = [this](const char *debugName, uint8_t r, uint8_t g, uint8_t b, uint8_t a) -> RHI::TexturePtr
+            {
+                RHI::TextureDesc texDesc;
+                texDesc.Width = 1;
+                texDesc.Height = 1;
+                texDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+                texDesc.Usage = RHI::ResourceUsage::ShaderRead;
+                texDesc.DebugName = debugName;
+
+                auto tex = m_Device->CreateTexture(texDesc);
+                if (tex)
+                {
+                    uint8_t pixel[4] = {r, g, b, a};
+                    tex->Update(pixel, 4, 4);
+                }
+                return tex;
+            };
+
+            // 1x1白テクスチャ（アルベド・AOデフォルト）
+            m_DefaultWhiteTexture = CreateDefault1x1("DefaultWhite1x1", 255, 255, 255, 255);
+            if (!m_DefaultWhiteTexture)
+            {
+                NORVES_LOG_ERROR("GBufferPass", "Failed to create default white texture");
+                return false;
+            }
+
+            // 1x1フラット法線テクスチャ（ノーマルマップデフォルト: (0.5, 0.5, 1.0) → (128, 128, 255)）
+            m_DefaultFlatNormalTexture = CreateDefault1x1("DefaultFlatNormal1x1", 128, 128, 255, 255);
+            if (!m_DefaultFlatNormalTexture)
+            {
+                NORVES_LOG_ERROR("GBufferPass", "Failed to create default flat normal texture");
+                return false;
+            }
+
+            // 1x1黒テクスチャ（メタリックデフォルト: 0.0 = 非金属）
+            m_DefaultBlackTexture = CreateDefault1x1("DefaultBlack1x1", 0, 0, 0, 255);
+            if (!m_DefaultBlackTexture)
+            {
+                NORVES_LOG_ERROR("GBufferPass", "Failed to create default black texture");
+                return false;
+            }
+
+            // 1x1中間灰テクスチャ（ラフネスデフォルト: 0.5）
+            m_DefaultMidGrayTexture = CreateDefault1x1("DefaultMidGray1x1", 128, 128, 128, 255);
+            if (!m_DefaultMidGrayTexture)
+            {
+                NORVES_LOG_ERROR("GBufferPass", "Failed to create default mid-gray texture");
+                return false;
+            }
+
+            RHI::SamplerDesc sampDesc;
+            sampDesc.filterMin = RHI::FilterMode::Linear;
+            sampDesc.filterMag = RHI::FilterMode::Linear;
+            sampDesc.filterMip = RHI::FilterMode::Linear;
+            sampDesc.addressU = RHI::TextureAddressMode::Wrap;
+            sampDesc.addressV = RHI::TextureAddressMode::Wrap;
+            sampDesc.addressW = RHI::TextureAddressMode::Wrap;
+
+            m_DefaultLinearSampler = m_Device->CreateSampler(sampDesc);
+            if (!m_DefaultLinearSampler)
+            {
+                NORVES_LOG_ERROR("GBufferPass", "Failed to create default sampler");
                 return false;
             }
         }
@@ -110,6 +194,11 @@ namespace NorvesLib::Core::Rendering
         m_GBufferPipeline.reset();
         m_GBufferVertexShader.reset();
         m_GBufferFragmentShader.reset();
+        m_DefaultWhiteTexture.reset();
+        m_DefaultFlatNormalTexture.reset();
+        m_DefaultBlackTexture.reset();
+        m_DefaultMidGrayTexture.reset();
+        m_DefaultLinearSampler.reset();
         m_UniformAllocator.Shutdown();
         m_SceneView = nullptr;
         m_SceneRenderer = nullptr;
@@ -302,6 +391,38 @@ namespace NorvesLib::Core::Rendering
                 // UBO更新
                 allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
+                // PBRテクスチャバインド（テクスチャ未設定ならデフォルトテクスチャ）
+                auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTex) -> RHI::TexturePtr
+                {
+                    if (handle.IsValid() && context.ResourceManager)
+                    {
+                        auto tex = context.ResourceManager->GetRHITexturePtr(handle);
+                        if (tex)
+                        {
+                            return tex;
+                        }
+                    }
+                    return defaultTex;
+                };
+
+                RHI::TexturePtr albedoTex = ResolveTexture(proxy.AlbedoTexture, m_DefaultWhiteTexture);
+                RHI::TexturePtr normalTex = ResolveTexture(proxy.NormalTexture, m_DefaultFlatNormalTexture);
+                RHI::TexturePtr metallicTex = ResolveTexture(proxy.MetallicTexture, m_DefaultBlackTexture);
+                RHI::TexturePtr roughnessTex = ResolveTexture(proxy.RoughnessTexture, m_DefaultMidGrayTexture);
+                RHI::TexturePtr aoTex = ResolveTexture(proxy.AOTexture, m_DefaultWhiteTexture);
+
+                allocation.DescriptorSet->BindTexture(1, albedoTex);
+                allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(2, normalTex);
+                allocation.DescriptorSet->BindSampler(2, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(3, metallicTex);
+                allocation.DescriptorSet->BindSampler(3, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(4, roughnessTex);
+                allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(5, aoTex);
+                allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
+                allocation.DescriptorSet->Update();
+
                 // 描画
                 context.CommandList->SetDescriptorSet(allocation.DescriptorSet, 0);
                 context.CommandList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
@@ -479,6 +600,14 @@ namespace NorvesLib::Core::Rendering
         normalAttr.offset = sizeof(float) * 3;
         pipelineDesc.vertexAttributes.push_back(normalAttr);
 
+        // TexCoord: location=2, vec2
+        RHI::VertexAttributeDesc texCoordAttr;
+        texCoordAttr.location = 2;
+        texCoordAttr.binding = 0;
+        texCoordAttr.format = RHI::Format::R32G32_FLOAT;
+        texCoordAttr.offset = sizeof(float) * 6;
+        pipelineDesc.vertexAttributes.push_back(texCoordAttr);
+
         // ラスタライザ
         pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
         pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
@@ -501,14 +630,24 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.renderPass = m_GBufferRenderPass;
 
-        // ディスクリプタセットレイアウト（set=0: MVP UBO）
-        // GBufferシェーダーはmesh3dと同じUBOレイアウトを使用
+        // ディスクリプタセットレイアウト（set=0: MVP UBO + PBRテクスチャ x5）
         RHI::DescriptorSetDesc dsDesc;
         RHI::DescriptorBinding uboBinding;
         uboBinding.binding = 0;
         uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
         uboBinding.stages = RHI::ShaderStage::Vertex;
         dsDesc.bindings.push_back(uboBinding);
+
+        // binding 1-5: albedo, normal, metallic, roughness, ao
+        for (uint32_t i = 1; i <= 5; ++i)
+        {
+            RHI::DescriptorBinding texBinding;
+            texBinding.binding = i;
+            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            texBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(texBinding);
+        }
+
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         m_GBufferPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);

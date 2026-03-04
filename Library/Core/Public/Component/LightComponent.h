@@ -129,6 +129,22 @@ namespace NorvesLib::Core::Component
         void SetAffectedLayers(Rendering::RenderLayer layers) { AffectedLayers = layers; }
         Rendering::RenderLayer GetAffectedLayers() const { return AffectedLayers; }
 
+        /**
+         * @brief ライト方向を設定（ディレクショナルライト用）
+         * @param x X方向成分
+         * @param y Y方向成分
+         * @param z Z方向成分
+         */
+        void SetLightDirection(float x, float y, float z);
+
+        /**
+         * @brief ライト方向を取得
+         * @param outX X方向成分
+         * @param outY Y方向成分
+         * @param outZ Z方向成分
+         */
+        void GetLightDirection(float& outX, float& outY, float& outZ) const;
+
         // ========================================
         // LightProxy構築
         // ========================================
@@ -167,6 +183,7 @@ namespace NorvesLib::Core::Component
         // ========================================
 
         float m_LightColor[3] = {1.0f, 1.0f, 1.0f};
+        float m_LightDirection[3] = {0.0f, -1.0f, 0.0f};
     };
 
     // LightComponentへのスマートポインタ

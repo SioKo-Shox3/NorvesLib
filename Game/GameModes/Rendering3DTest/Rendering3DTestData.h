@@ -10,6 +10,7 @@ namespace NorvesLib::Core
     namespace Component
     {
         class MeshComponent;
+        class LightComponent;
         class PointLightComponent;
     } // namespace Component
 } // namespace NorvesLib::Core
@@ -30,6 +31,16 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::MeshDataHandle m_GroundMeshHandle{101};
         NorvesLib::Core::Rendering::MeshDataHandle m_LightSphereMeshHandle{102};
 
+        // テクスチャハンドル
+        NorvesLib::Core::Rendering::TextureHandle m_CheckerTextureHandle;
+
+        // PBRテクスチャハンドル（Silver）
+        NorvesLib::Core::Rendering::TextureHandle m_SilverAlbedoTexture;
+        NorvesLib::Core::Rendering::TextureHandle m_SilverNormalTexture;
+        NorvesLib::Core::Rendering::TextureHandle m_SilverMetallicTexture;
+        NorvesLib::Core::Rendering::TextureHandle m_SilverRoughnessTexture;
+        NorvesLib::Core::Rendering::TextureHandle m_SilverAOTexture;
+
         // WorldObject参照（Worldが所有）
         NorvesLib::Core::WorldObject *m_pSphereObject = nullptr;
         NorvesLib::Core::WorldObject *m_pGroundObject = nullptr;
@@ -40,8 +51,12 @@ namespace Game::GameModes
         NorvesLib::Core::Component::MeshComponent *m_pGroundMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pLightSphereMeshComponent = nullptr;
 
-        // PointLightComponent参照（WorldObjectが所有）
+        // LightComponent参照（WorldObjectが所有）
+        NorvesLib::Core::Component::LightComponent *m_pDirectionalLightComponent = nullptr;
         NorvesLib::Core::Component::PointLightComponent *m_pPointLightComponent = nullptr;
+
+        // ディレクショナルライト用WorldObject（位置は不要だがComponentホスト用）
+        NorvesLib::Core::WorldObject *m_pDirectionalLightObject = nullptr;
 
         // 経過時間
         float m_ElapsedTime = 0.0f;

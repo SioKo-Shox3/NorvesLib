@@ -94,6 +94,20 @@ namespace NorvesLib::Core::Component
         Intensity = intensity;
     }
 
+    void LightComponent::SetLightDirection(float x, float y, float z)
+    {
+        m_LightDirection[0] = x;
+        m_LightDirection[1] = y;
+        m_LightDirection[2] = z;
+    }
+
+    void LightComponent::GetLightDirection(float& outX, float& outY, float& outZ) const
+    {
+        outX = m_LightDirection[0];
+        outY = m_LightDirection[1];
+        outZ = m_LightDirection[2];
+    }
+
     // ========================================
     // LightProxy構築
     // ========================================
@@ -110,6 +124,11 @@ namespace NorvesLib::Core::Component
         outProxy.ShadowBias = ShadowBias;
         outProxy.ShadowMapResolution = ShadowMapResolution;
         outProxy.AffectedLayers = AffectedLayers;
+
+        // ライト方向（ディレクショナルライト / スポットライト用）
+        outProxy.DirectionX = m_LightDirection[0];
+        outProxy.DirectionY = m_LightDirection[1];
+        outProxy.DirectionZ = m_LightDirection[2];
     }
 
     bool LightComponent::BuildLightProxy(Rendering::LightProxy& outProxy) const

@@ -220,6 +220,13 @@ namespace NorvesLib::Core::Component
             outProxy.CustomData[i] = m_CustomData[i];
         }
 
+        // テクスチャ
+        outProxy.AlbedoTexture = m_AlbedoTexture;
+        outProxy.NormalTexture = m_NormalTexture;
+        outProxy.MetallicTexture = m_MetallicTexture;
+        outProxy.RoughnessTexture = m_RoughnessTexture;
+        outProxy.AOTexture = m_AOTexture;
+
         // エミッシブデータ
         for (uint32_t i = 0; i < 3; ++i)
         {

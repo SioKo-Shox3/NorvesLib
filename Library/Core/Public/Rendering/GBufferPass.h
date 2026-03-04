@@ -157,6 +157,13 @@ namespace NorvesLib::Core::Rendering
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
+
+        // デフォルトテクスチャ・サンプラー（テクスチャ未設定オブジェクト用）
+        RHI::TexturePtr m_DefaultWhiteTexture;      // 1x1 白 (255,255,255,255) — アルベド/AOデフォルト
+        RHI::TexturePtr m_DefaultFlatNormalTexture; // 1x1 フラット法線 (128,128,255,255) — ノーマルマップデフォルト
+        RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 (0,0,0,255) — メタリックデフォルト
+        RHI::TexturePtr m_DefaultMidGrayTexture;    // 1x1 中間灰 (128,128,128,255) — ラフネスデフォルト
+        RHI::SamplerPtr m_DefaultLinearSampler;
     };
 
 } // namespace NorvesLib::Core::Rendering

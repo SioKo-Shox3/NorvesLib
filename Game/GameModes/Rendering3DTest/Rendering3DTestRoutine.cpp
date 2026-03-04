@@ -4,6 +4,7 @@
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/WorldObject.h"
 #include "Core/Public/Component/MeshComponent.h"
+#include "Core/Public/Component/LightComponent.h"
 #include "Core/Public/Component/PointLightComponent.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/RenderResourceManager.h"
@@ -107,6 +108,71 @@ namespace Game::GameModes
         }
 
         // ========================================
+        // 1.5 プロシージャルチェッカーボードテクスチャ生成
+        // ========================================
+        {
+            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+
+            constexpr uint32_t TEX_SIZE = 256;
+            constexpr uint32_t CHECKER_SIZE = 32; // 32ピクセルごとに色が切り替わる
+            VariableArray<uint8_t> checkerData(TEX_SIZE * TEX_SIZE * 4);
+
+            for (uint32_t y = 0; y < TEX_SIZE; ++y)
+            {
+                for (uint32_t x = 0; x < TEX_SIZE; ++x)
+                {
+                    uint32_t idx = (y * TEX_SIZE + x) * 4;
+                    bool bWhite = ((x / CHECKER_SIZE) + (y / CHECKER_SIZE)) % 2 == 0;
+                    uint8_t c = bWhite ? 230 : 50;
+                    checkerData[idx + 0] = c;
+                    checkerData[idx + 1] = c;
+                    checkerData[idx + 2] = c;
+                    checkerData[idx + 3] = 255;
+                }
+            }
+
+            TextureCreateInfo texInfo;
+            texInfo.Width = TEX_SIZE;
+            texInfo.Height = TEX_SIZE;
+            texInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+            texInfo.DebugName = "CheckerboardTexture";
+
+            data.m_CheckerTextureHandle = resourceManager.CreateTexture(
+                texInfo, checkerData.data(), static_cast<uint32_t>(checkerData.size()));
+
+            if (data.m_CheckerTextureHandle.IsValid())
+            {
+                NORVES_LOG_INFO("Rendering3DTest", "Checkerboard texture created (256x256)");
+            }
+            else
+            {
+                NORVES_LOG_ERROR("Rendering3DTest", "Failed to create checkerboard texture");
+            }
+        }
+
+        // ========================================
+        // 1.6 Silver PBRテクスチャのロード
+        // ========================================
+        {
+            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+
+            data.m_SilverAlbedoTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_albedo.png");
+            data.m_SilverNormalTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_normal-ogl.png");
+            data.m_SilverMetallicTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_metallic.png");
+            data.m_SilverRoughnessTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_roughness.png");
+            data.m_SilverAOTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_ao.png");
+
+            if (data.m_SilverAlbedoTexture.IsValid())
+            {
+                NORVES_LOG_INFO("Rendering3DTest", "Silver PBR textures loaded");
+            }
+            else
+            {
+                NORVES_LOG_ERROR("Rendering3DTest", "Failed to load Silver PBR textures");
+            }
+        }
+
+        // ========================================
         // 2. WorldObjectの作成とメッシュコンポーネントの追加
         // ========================================
         {
@@ -123,11 +189,20 @@ namespace Game::GameModes
             data.m_pSphereMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
             data.m_pSphereMeshComponent->SetMaterial(0, MaterialHandle{1});
             data.m_pSphereMeshComponent->SetCastShadow(true);
-            // オブジェクトカラー（赤系）→ CustomData
-            data.m_pSphereMeshComponent->SetCustomData(0, 0.8f);
-            data.m_pSphereMeshComponent->SetCustomData(1, 0.2f);
-            data.m_pSphereMeshComponent->SetCustomData(2, 0.2f);
+            // オブジェクトカラー（白 = テクスチャカラーをそのまま使用）
+            data.m_pSphereMeshComponent->SetCustomData(0, 1.0f);
+            data.m_pSphereMeshComponent->SetCustomData(1, 1.0f);
+            data.m_pSphereMeshComponent->SetCustomData(2, 1.0f);
             data.m_pSphereMeshComponent->SetCustomData(3, 1.0f);
+            // Silver PBRテクスチャを適用
+            if (data.m_SilverAlbedoTexture.IsValid())
+            {
+                data.m_pSphereMeshComponent->SetAlbedoTexture(data.m_SilverAlbedoTexture);
+                data.m_pSphereMeshComponent->SetNormalTexture(data.m_SilverNormalTexture);
+                data.m_pSphereMeshComponent->SetMetallicTexture(data.m_SilverMetallicTexture);
+                data.m_pSphereMeshComponent->SetRoughnessTexture(data.m_SilverRoughnessTexture);
+                data.m_pSphereMeshComponent->SetAOTexture(data.m_SilverAOTexture);
+            }
 
             data.m_pSphereObject->AddComponent(data.m_pSphereMeshComponent);
             world.AddObject(data.m_pSphereObject);
@@ -150,6 +225,11 @@ namespace Game::GameModes
             data.m_pGroundMeshComponent->SetCustomData(1, 0.45f);
             data.m_pGroundMeshComponent->SetCustomData(2, 0.3f);
             data.m_pGroundMeshComponent->SetCustomData(3, 1.0f);
+            // チェッカーボードテクスチャを設定
+            if (data.m_CheckerTextureHandle.IsValid())
+            {
+                data.m_pGroundMeshComponent->SetAlbedoTexture(data.m_CheckerTextureHandle);
+            }
 
             data.m_pGroundObject->AddComponent(data.m_pGroundMeshComponent);
             world.AddObject(data.m_pGroundObject);
@@ -190,6 +270,24 @@ namespace Game::GameModes
             world.AddObject(data.m_pLightSphereObject);
 
             LOG_INFO("Light sphere WorldObject created and added to World");
+
+            // --- ディレクショナルライト（シャドウ方向と一致） ---
+            data.m_pDirectionalLightObject = new WorldObject();
+            data.m_pDirectionalLightObject->Initialize();
+            data.m_pDirectionalLightObject->SetPosition(0.0f, 0.0f, 0.0f);
+
+            data.m_pDirectionalLightComponent = new Component::LightComponent();
+            // LightComponentはデフォルトでDirectional型
+            data.m_pDirectionalLightComponent->SetLightColor(1.0f, 1.0f, 1.0f);
+            data.m_pDirectionalLightComponent->SetIntensity(1.5f);
+            data.m_pDirectionalLightComponent->SetLightDirection(-0.577f, -0.577f, -0.577f);
+            data.m_pDirectionalLightComponent->SetLightVisible(true);
+            data.m_pDirectionalLightComponent->SetCastShadows(true);
+            data.m_pDirectionalLightObject->AddComponent(data.m_pDirectionalLightComponent);
+
+            world.AddObject(data.m_pDirectionalLightObject);
+
+            LOG_INFO("Directional light created and added to World");
         }
     }
 
@@ -232,9 +330,11 @@ namespace Game::GameModes
         data.m_pSphereObject = nullptr;
         data.m_pGroundObject = nullptr;
         data.m_pLightSphereObject = nullptr;
+        data.m_pDirectionalLightObject = nullptr;
         data.m_pSphereMeshComponent = nullptr;
         data.m_pGroundMeshComponent = nullptr;
         data.m_pLightSphereMeshComponent = nullptr;
+        data.m_pDirectionalLightComponent = nullptr;
         data.m_pPointLightComponent = nullptr;
     }
 
