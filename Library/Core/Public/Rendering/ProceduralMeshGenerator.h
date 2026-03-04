@@ -8,12 +8,13 @@ namespace NorvesLib::Core::Rendering
 {
 
     /**
-     * @brief 3Dメッシュ用頂点データ（Position + Normal）
+     * @brief 3Dメッシュ用頂点データ（Position + Normal + TexCoord）
      */
     struct Mesh3DVertex
     {
         float Position[3];
         float Normal[3];
+        float TexCoord[2];
     };
 
     /**
@@ -50,6 +51,8 @@ namespace NorvesLib::Core::Rendering
             topVertex.Normal[0] = 0.0f;
             topVertex.Normal[1] = 1.0f;
             topVertex.Normal[2] = 0.0f;
+            topVertex.TexCoord[0] = 0.5f;
+            topVertex.TexCoord[1] = 0.0f;
             outVertices.push_back(topVertex);
 
             // 中間の頂点を生成（北極と南極の間）
@@ -77,6 +80,10 @@ namespace NorvesLib::Core::Rendering
                     vertex.Normal[1] = vertex.Position[1] * invRadius;
                     vertex.Normal[2] = vertex.Position[2] * invRadius;
 
+                    // UV座標（球面マッピング）
+                    vertex.TexCoord[0] = static_cast<float>(slice) / static_cast<float>(sliceCount);
+                    vertex.TexCoord[1] = static_cast<float>(stack) / static_cast<float>(stackCount);
+
                     outVertices.push_back(vertex);
                 }
             }
@@ -89,6 +96,8 @@ namespace NorvesLib::Core::Rendering
             bottomVertex.Normal[0] = 0.0f;
             bottomVertex.Normal[1] = -1.0f;
             bottomVertex.Normal[2] = 0.0f;
+            bottomVertex.TexCoord[0] = 0.5f;
+            bottomVertex.TexCoord[1] = 1.0f;
             outVertices.push_back(bottomVertex);
 
             // === インデックス生成 ===
@@ -174,6 +183,11 @@ namespace NorvesLib::Core::Rendering
                     vertex.Normal[0] = 0.0f;
                     vertex.Normal[1] = 1.0f;
                     vertex.Normal[2] = 0.0f;
+
+                    // UV座標（0～1にマッピング）
+                    vertex.TexCoord[0] = static_cast<float>(ix) / static_cast<float>(subdivisionsX);
+                    vertex.TexCoord[1] = static_cast<float>(iz) / static_cast<float>(subdivisionsZ);
+
                     outVertices.push_back(vertex);
                 }
             }

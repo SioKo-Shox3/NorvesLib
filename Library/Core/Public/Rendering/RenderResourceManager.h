@@ -388,6 +388,13 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture *GetRHITexture(TextureHandle handle) const;
 
         /**
+         * @brief RHIテクスチャの共有ポインタを取得（DescriptorSetバインド用）
+         * @param handle テクスチャハンドル
+         * @return RHIテクスチャ共有ポインタ
+         */
+        Container::TSharedPtr<RHI::ITexture> GetRHITexturePtr(TextureHandle handle) const;
+
+        /**
          * @brief RHIシェーダーを取得（Rendering内部用）
          * @param handle シェーダーハンドル
          * @return RHIシェーダーポインタ

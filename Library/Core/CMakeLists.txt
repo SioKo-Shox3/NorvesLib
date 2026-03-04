@@ -104,6 +104,8 @@ set(PRIVATE_SOURCES
     Private/FileStream/FileStream.cpp
     Private/FileStream/AsyncFileStream.cpp
     Private/FileStream/Package.cpp
+    # ThirdParty
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb/stb_image_impl.cpp
 )
 
 set(PUBLIC_HEADERS
@@ -276,6 +278,7 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_SOURCE_DIR}/Library/Core/Public  # Container/String.h のような相対インクルード用
     PRIVATE 
         Private
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb  # stb_image.h
 )
 
 # shaderc（Vulkan SDK同梱のランタイムシェーダーコンパイラ）
@@ -298,11 +301,16 @@ target_link_libraries(${MODULE_NAME}
 set(NORVES_SHADER_DIR "${CMAKE_SOURCE_DIR}/Assets/Shaders")
 string(REPLACE "\\" "/" NORVES_SHADER_DIR "${NORVES_SHADER_DIR}")
 
+# アセットルートディレクトリ（テクスチャ、モデル等のリソース用）
+set(NORVES_ASSET_DIR "${CMAKE_SOURCE_DIR}/Assets")
+string(REPLACE "\\" "/" NORVES_ASSET_DIR "${NORVES_ASSET_DIR}")
+
 # Vulkan設定
 target_compile_definitions(${MODULE_NAME}
     PRIVATE
         VULKAN_HPP_NO_EXCEPTIONS
         NORVES_SHADER_DIR="${NORVES_SHADER_DIR}"
+        NORVES_ASSET_DIR="${NORVES_ASSET_DIR}"
 )
 
 # C++23の設定

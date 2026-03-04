@@ -57,6 +57,12 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// フレネル（Schlickの近似、ラフネス考慮版 - アンビエント/IBL用）
+vec3 FresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 // 法線分布関数（GGX/Trowbridge-Reitz）
 float DistributionGGX(vec3 N, vec3 H, float roughness)
 {
@@ -258,8 +264,23 @@ void main()
     // エミッシブ（自発光）をGBufferから取得
     vec3 emissive = texture(gbufferEmissive, fragUV).rgb;
 
-    // アンビエントライト
-    vec3 ambient = params.ambientColor.rgb * params.ambientColor.w * albedo * ao;
+    // ========================================
+    // PBR対応アンビエントライト
+    // ========================================
+    // IBL（環境マップ）が無い場合の近似:
+    // - ディフューズアンビエント: 非金属部分のみ（kD × albedo）
+    // - スペキュラアンビエント: FresnelSchlickRoughnessによる環境反射近似
+    float NdotV = max(dot(N, V), 0.0);
+    vec3 F_ambient = FresnelSchlickRoughness(NdotV, F0, roughness);
+    vec3 kS_ambient = F_ambient;
+    vec3 kD_ambient = (1.0 - kS_ambient) * (1.0 - metallic);
+
+    vec3 ambientLight = params.ambientColor.rgb * params.ambientColor.w;
+    vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
+    // スペキュラアンビエント近似（環境マップの代わりにアンビエントカラーで近似）
+    // ラフネスが低いほど強い環境反射、高いほど拡散
+    vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
+    vec3 ambient = (diffuseAmbient + specularAmbient) * ao;
 
     // 最終カラー（HDR）: アンビエント + ライティング + エミッシブ
     vec3 color = ambient + Lo + emissive;

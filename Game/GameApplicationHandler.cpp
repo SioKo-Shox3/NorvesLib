@@ -57,25 +57,10 @@ namespace Game
         // ========================================
         // ライトコントローラーの初期化
         // ========================================
-        {
-            // メインディレクショナルライトの設定
-            m_MainLight.LightId = 1;
-            m_MainLight.Type = NorvesLib::Core::Rendering::LightType::Directional;
-            m_MainLight.DirectionX = 0.0f;
-            m_MainLight.DirectionY = -1.0f;
-            m_MainLight.DirectionZ = -0.5f;
-            m_MainLight.Intensity = 1.0f;
-            m_MainLight.ColorR = 1.0f;
-            m_MainLight.ColorG = 1.0f;
-            m_MainLight.ColorB = 1.0f;
-            m_MainLight.bVisible = true;
+        // メインディレクショナルライトはRendering3DTestModeのEnterで
+        // LightComponent経由で作成されるため、ここでは初期化しない
 
-            // コントローラーにライトを設定
-            m_LightController.SetTargetLight(&m_MainLight);
-            m_LightController.SetDirection(-45.0f, -45.0f);
-
-            LOG_INFO("LightController initialized");
-        }
+        LOG_INFO("LightController initialization skipped (managed by GameMode)");
 
         // テストオブジェクトの作成はRendering3DTestModeのEnterで行われる
 
@@ -86,16 +71,9 @@ namespace Game
     {
         LOG_INFO("GameApplicationHandler::OnPostInitialize()");
 
-        // SceneViewにメインライトを登録
-        {
-            auto &world = GEngine->GetWorld();
-            auto *sceneView = world.GetSceneView();
-            if (sceneView)
-            {
-                sceneView->AddLightProxy(m_MainLight);
-                LOG_INFO("Main directional light added to SceneView");
-            }
-        }
+        // メインディレクショナルライトはGameMode（Rendering3DTest）内の
+        // LightComponent経由でSceneViewに登録されるため、
+        // ここでの直接登録は行わない
     }
 
     void GameApplicationHandler::OnUpdate(float deltaTime)
@@ -135,18 +113,11 @@ namespace Game
             GEngine->GetRenderWorld().SetMainCamera(cameraProxy);
         }
 
-        // ライトコントローラー更新
-        m_LightController.Update(inputState, deltaTime);
+        // ライトコントローラー更新（現在はGameMode管理のため無効化）
+        // m_LightController.Update(inputState, deltaTime);
 
-        // ライト状態をSceneViewに反映
-        {
-            auto &world = GEngine->GetWorld();
-            auto *sceneView = world.GetSceneView();
-            if (sceneView)
-            {
-                sceneView->UpdateLightProxy(m_MainLight);
-            }
-        }
+        // ライト状態のSceneView反映はWorld::SyncToSceneViewで
+        // LightComponent経由で自動的に行われる
     }
 
     void GameApplicationHandler::OnPreShutdown()

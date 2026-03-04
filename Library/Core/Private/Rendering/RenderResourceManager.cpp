@@ -4,7 +4,11 @@
 #include "RHI/ITexture.h"
 #include "RHI/ISampler.h"
 #include "RHI/IShader.h"
+#include "RHI/IGPUResourceAllocator.h"
 #include "Logging/LogMacros.h"
+
+// stb_image（テクスチャファイル読み込み用）
+#include "stb_image.h"
 
 namespace NorvesLib::Core::Rendering
 {
@@ -143,21 +147,196 @@ namespace NorvesLib::Core::Rendering
 
     TextureHandle RenderResourceManager::CreateTexture(const TextureCreateInfo &createInfo)
     {
-        // TODO: テクスチャ作成の実装
-        return TextureHandle::Invalid();
+        if (!m_bInitialized)
+        {
+            return TextureHandle::Invalid();
+        }
+
+        // TextureCreateInfo::Format → RHI::Format 変換
+        RHI::Format rhiFormat = RHI::Format::R8G8B8A8_UNORM;
+        switch (createInfo.PixelFormat)
+        {
+        case TextureCreateInfo::Format::RGBA8_UNORM:
+            rhiFormat = RHI::Format::R8G8B8A8_UNORM;
+            break;
+        case TextureCreateInfo::Format::RGBA8_SRGB:
+            rhiFormat = RHI::Format::R8G8B8A8_SRGB;
+            break;
+        case TextureCreateInfo::Format::RGBA16_FLOAT:
+            rhiFormat = RHI::Format::R16G16B16A16_FLOAT;
+            break;
+        case TextureCreateInfo::Format::RGBA32_FLOAT:
+            rhiFormat = RHI::Format::R32G32B32A32_FLOAT;
+            break;
+        case TextureCreateInfo::Format::R8_UNORM:
+            rhiFormat = RHI::Format::R8_UNORM;
+            break;
+        case TextureCreateInfo::Format::RG8_UNORM:
+            rhiFormat = RHI::Format::R8G8_UNORM;
+            break;
+        case TextureCreateInfo::Format::D24_S8:
+            rhiFormat = RHI::Format::D24_UNORM_S8_UINT;
+            break;
+        case TextureCreateInfo::Format::D32_FLOAT:
+            rhiFormat = RHI::Format::D32_FLOAT;
+            break;
+        }
+
+        RHI::TextureDesc desc;
+        desc.Width = createInfo.Width;
+        desc.Height = createInfo.Height;
+        desc.Depth = createInfo.Depth;
+        desc.MipLevels = createInfo.MipLevels;
+        desc.ArraySize = createInfo.ArraySize;
+        desc.TextureFormat = rhiFormat;
+        desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        desc.DebugName = createInfo.DebugName.c_str();
+
+        if (createInfo.bRenderTarget)
+        {
+            desc.Usage = desc.Usage | RHI::ResourceUsage::RenderTarget;
+        }
+        if (createInfo.bDepthStencil)
+        {
+            desc.Usage = desc.Usage | RHI::ResourceUsage::DepthStencil;
+        }
+
+        auto rhiTexture = m_Device->CreateTexture(desc);
+        if (!rhiTexture)
+        {
+            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create texture");
+            return TextureHandle::Invalid();
+        }
+
+        auto handle = AllocateHandle<TextureHandle>();
+
+        TextureResourceData data;
+        data.RHITexture = rhiTexture;
+        data.Width = createInfo.Width;
+        data.Height = createInfo.Height;
+        data.Format = createInfo.PixelFormat;
+        data.RefCount = 1;
+        data.DebugName = createInfo.DebugName;
+
+        Thread::ScopedLock lock(m_ResourceMutex);
+        m_Textures[handle.Id] = std::move(data);
+
+        return handle;
     }
 
     TextureHandle RenderResourceManager::CreateTexture(const TextureCreateInfo &createInfo,
                                                        const void *data, size_t dataSize)
     {
-        // TODO: テクスチャ作成+データ転送の実装
-        return TextureHandle::Invalid();
+        auto handle = CreateTexture(createInfo);
+        if (!handle.IsValid() || !data || dataSize == 0)
+        {
+            return handle;
+        }
+
+        // テクスチャにデータをアップロード
+        Thread::ScopedLock lock(m_ResourceMutex);
+        auto it = m_Textures.find(handle.Id);
+        if (it != m_Textures.end() && it->second.RHITexture)
+        {
+            uint32_t bytesPerPixel = 4; // RGBA8のデフォルト
+            switch (createInfo.PixelFormat)
+            {
+            case TextureCreateInfo::Format::R8_UNORM:
+                bytesPerPixel = 1;
+                break;
+            case TextureCreateInfo::Format::RG8_UNORM:
+                bytesPerPixel = 2;
+                break;
+            case TextureCreateInfo::Format::RGBA8_UNORM:
+            case TextureCreateInfo::Format::RGBA8_SRGB:
+                bytesPerPixel = 4;
+                break;
+            case TextureCreateInfo::Format::RGBA16_FLOAT:
+                bytesPerPixel = 8;
+                break;
+            case TextureCreateInfo::Format::RGBA32_FLOAT:
+                bytesPerPixel = 16;
+                break;
+            default:
+                bytesPerPixel = 4;
+                break;
+            }
+
+            uint32_t rowPitch = createInfo.Width * bytesPerPixel;
+            uint32_t slicePitch = rowPitch * createInfo.Height;
+            it->second.RHITexture->Update(data, rowPitch, slicePitch);
+        }
+
+        return handle;
     }
 
     TextureHandle RenderResourceManager::LoadTexture(const Container::String &path)
     {
-        // TODO: ファイルからテクスチャロードの実装
-        return TextureHandle::Invalid();
+        if (!m_bInitialized)
+        {
+            return TextureHandle::Invalid();
+        }
+
+        // パス解決: "Assets/"で始まる相対パスはNORVES_ASSET_DIRをベースに変換
+        Container::String resolvedPath = path;
+#ifdef NORVES_ASSET_DIR
+        // 相対パスの場合（ドライブレター/UNCパスでない場合）NORVES_ASSET_DIRをベースにする
+        if (path.size() > 0 && path[0] != '/' && path[0] != '\\' &&
+            (path.size() < 2 || path[1] != ':'))
+        {
+            // "Assets/" プレフィックスを除去してNORVES_ASSET_DIRに結合
+            Container::String relativePath = path;
+            if (relativePath.size() > 7)
+            {
+                Container::String prefix = relativePath.substr(0, 7);
+                if (prefix == "Assets/" || prefix == "Assets\\")
+                {
+                    relativePath = relativePath.substr(7);
+                }
+            }
+            resolvedPath = Container::String(NORVES_ASSET_DIR) + "/" + relativePath;
+        }
+#endif
+
+        // キャッシュチェック
+        {
+            Thread::ScopedLock lock(m_ResourceMutex);
+            auto it = m_TextureCache.find(resolvedPath);
+            if (it != m_TextureCache.end())
+            {
+                return it->second;
+            }
+        }
+
+        // stb_imageでファイルを読み込み
+        int width = 0, height = 0, channels = 0;
+        unsigned char *pixels = stbi_load(resolvedPath.c_str(), &width, &height, &channels, 4); // RGBA強制
+        if (!pixels)
+        {
+            NORVES_LOG_ERROR("RenderResourceManager", "Failed to load texture file");
+            NORVES_LOG_ERROR("RenderResourceManager", resolvedPath.c_str());
+            return TextureHandle::Invalid();
+        }
+
+        TextureCreateInfo createInfo;
+        createInfo.Width = static_cast<uint32_t>(width);
+        createInfo.Height = static_cast<uint32_t>(height);
+        createInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+        createInfo.DebugName = path;
+
+        size_t dataSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+        auto handle = CreateTexture(createInfo, pixels, dataSize);
+
+        stbi_image_free(pixels);
+
+        if (handle.IsValid())
+        {
+            Thread::ScopedLock lock(m_ResourceMutex);
+            m_TextureCache[resolvedPath] = handle;
+            NORVES_LOG_INFO("RenderResourceManager", "Texture loaded successfully");
+        }
+
+        return handle;
     }
 
     void RenderResourceManager::ReleaseTexture(TextureHandle handle)
@@ -177,13 +356,74 @@ namespace NorvesLib::Core::Rendering
 
     SamplerHandle RenderResourceManager::GetDefaultSampler()
     {
-        // TODO: デフォルトサンプラー作成
+        if (m_DefaultSampler.IsValid())
+        {
+            return m_DefaultSampler;
+        }
+
+        // Linear + Wrap サンプラーを作成
+        RHI::SamplerDesc desc;
+        desc.filterMin = RHI::FilterMode::Linear;
+        desc.filterMag = RHI::FilterMode::Linear;
+        desc.filterMip = RHI::FilterMode::Linear;
+        desc.addressU = RHI::TextureAddressMode::Wrap;
+        desc.addressV = RHI::TextureAddressMode::Wrap;
+        desc.addressW = RHI::TextureAddressMode::Wrap;
+        desc.maxAnisotropy = 4;
+
+        auto rhiSampler = m_Device->CreateSampler(desc);
+        if (!rhiSampler)
+        {
+            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create default sampler");
+            return SamplerHandle::Invalid();
+        }
+
+        m_DefaultSampler = AllocateHandle<SamplerHandle>();
+
+        SamplerResourceData data;
+        data.RHISampler = rhiSampler;
+        data.RefCount = 1;
+        data.DebugName = "DefaultSampler";
+
+        Thread::ScopedLock lock(m_ResourceMutex);
+        m_Samplers[m_DefaultSampler.Id] = std::move(data);
+
         return m_DefaultSampler;
     }
 
     SamplerHandle RenderResourceManager::GetPointSampler()
     {
-        // TODO: ポイントサンプラー作成
+        if (m_PointSampler.IsValid())
+        {
+            return m_PointSampler;
+        }
+
+        // Point + Clamp サンプラーを作成
+        RHI::SamplerDesc desc;
+        desc.filterMin = RHI::FilterMode::Point;
+        desc.filterMag = RHI::FilterMode::Point;
+        desc.filterMip = RHI::FilterMode::Point;
+        desc.addressU = RHI::TextureAddressMode::Clamp;
+        desc.addressV = RHI::TextureAddressMode::Clamp;
+        desc.addressW = RHI::TextureAddressMode::Clamp;
+
+        auto rhiSampler = m_Device->CreateSampler(desc);
+        if (!rhiSampler)
+        {
+            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create point sampler");
+            return SamplerHandle::Invalid();
+        }
+
+        m_PointSampler = AllocateHandle<SamplerHandle>();
+
+        SamplerResourceData data;
+        data.RHISampler = rhiSampler;
+        data.RefCount = 1;
+        data.DebugName = "PointSampler";
+
+        Thread::ScopedLock lock(m_ResourceMutex);
+        m_Samplers[m_PointSampler.Id] = std::move(data);
+
         return m_PointSampler;
     }
 
@@ -270,6 +510,17 @@ namespace NorvesLib::Core::Rendering
         if (it != m_Textures.end())
         {
             return it->second.RHITexture.get();
+        }
+        return nullptr;
+    }
+
+    Container::TSharedPtr<RHI::ITexture> RenderResourceManager::GetRHITexturePtr(TextureHandle handle) const
+    {
+        Thread::ScopedLock lock(m_ResourceMutex);
+        auto it = m_Textures.find(handle.Id);
+        if (it != m_Textures.end())
+        {
+            return it->second.RHITexture;
         }
         return nullptr;
     }
