@@ -151,6 +151,57 @@ namespace NorvesLib::Core::Rendering
         Container::String DebugName;
     };
 
+    /**
+     * @brief マテリアル作成情報
+     */
+    struct MaterialCreateData
+    {
+        TextureHandle AlbedoTexture;
+        TextureHandle NormalTexture;
+        TextureHandle MetallicTexture;
+        TextureHandle RoughnessTexture;
+        TextureHandle AOTexture;
+        TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
+
+        float HeightScale = 0.05f; ///< POMの高さスケール（0.0～0.1程度が自然）
+
+        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
+        float EmissiveStrength = 0.0f;
+
+        BlendMode Blend = BlendMode::Opaque;
+        ShadingModel Shading = ShadingModel::DefaultLit;
+        bool bTwoSided = false;
+        bool bCastShadows = true;
+
+        Container::String DebugName;
+    };
+
+    /**
+     * @brief マテリアルリソースデータ（内部用）
+     */
+    struct MaterialResourceData
+    {
+        TextureHandle AlbedoTexture;
+        TextureHandle NormalTexture;
+        TextureHandle MetallicTexture;
+        TextureHandle RoughnessTexture;
+        TextureHandle AOTexture;
+        TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
+
+        float HeightScale = 0.05f; ///< POMの高さスケール
+
+        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
+        float EmissiveStrength = 0.0f;
+
+        BlendMode Blend = BlendMode::Opaque;
+        ShadingModel Shading = ShadingModel::DefaultLit;
+        bool bTwoSided = false;
+        bool bCastShadows = true;
+
+        uint32_t RefCount = 0;
+        Container::String DebugName;
+    };
+
     // ========================================
     // RenderResourceManager
     // ========================================
@@ -370,6 +421,38 @@ namespace NorvesLib::Core::Rendering
         void UnregisterMesh(MeshDataHandle handle);
 
         // ========================================
+        // マテリアル操作
+        // ========================================
+
+        /**
+         * @brief マテリアルを作成
+         * @param createInfo マテリアル作成情報
+         * @return マテリアルハンドル
+         */
+        MaterialHandle CreateMaterial(const MaterialCreateData &createInfo);
+
+        /**
+         * @brief マテリアルデータを取得
+         * @param handle マテリアルハンドル
+         * @return マテリアルデータへのポインタ（未登録時nullptr）
+         */
+        const MaterialResourceData *GetMaterialData(MaterialHandle handle) const;
+
+        /**
+         * @brief マテリアルデータを更新
+         * @param handle マテリアルハンドル
+         * @param createInfo 新しいマテリアルデータ
+         * @return 更新成功時true
+         */
+        bool UpdateMaterial(MaterialHandle handle, const MaterialCreateData &createInfo);
+
+        /**
+         * @brief マテリアルを解放
+         * @param handle マテリアルハンドル
+         */
+        void ReleaseMaterial(MaterialHandle handle);
+
+        // ========================================
         // 内部リソースアクセス（Rendering内部用）
         // ========================================
 
@@ -462,6 +545,9 @@ namespace NorvesLib::Core::Rendering
 
         // メッシュGPUデータマップ（MeshDataHandle::Id → GPUバッファ）
         Container::Map<uint64_t, MeshGPUData> m_MeshGPUDataMap;
+
+        // マテリアルデータマップ（MaterialHandle::Id → マテリアル情報）
+        Container::Map<uint64_t, MaterialResourceData> m_Materials;
 
         // デフォルトサンプラー
         SamplerHandle m_DefaultSampler;

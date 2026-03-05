@@ -34,12 +34,11 @@ namespace Game::GameModes
         // テクスチャハンドル
         NorvesLib::Core::Rendering::TextureHandle m_CheckerTextureHandle;
 
-        // PBRテクスチャハンドル（Silver）
-        NorvesLib::Core::Rendering::TextureHandle m_SilverAlbedoTexture;
-        NorvesLib::Core::Rendering::TextureHandle m_SilverNormalTexture;
-        NorvesLib::Core::Rendering::TextureHandle m_SilverMetallicTexture;
-        NorvesLib::Core::Rendering::TextureHandle m_SilverRoughnessTexture;
-        NorvesLib::Core::Rendering::TextureHandle m_SilverAOTexture;
+        // マテリアルハンドル
+        NorvesLib::Core::Rendering::MaterialHandle m_SilverMaterial;      // Silver PBR マテリアル
+        NorvesLib::Core::Rendering::MaterialHandle m_CobbleStoneMaterial; // 石畳マテリアル
+        NorvesLib::Core::Rendering::MaterialHandle m_GroundMaterial;      // 地面マテリアル
+        NorvesLib::Core::Rendering::MaterialHandle m_LightSphereMaterial; // 光源球体マテリアル
 
         // WorldObject参照（Worldが所有）
         NorvesLib::Core::WorldObject *m_pSphereObject = nullptr;

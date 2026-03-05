@@ -630,6 +630,7 @@ namespace NorvesLib::Core::Rendering
         Thread::ScopedLock lock(m_ResourceMutex);
 
         m_MeshGPUDataMap.clear();
+        m_Materials.clear();
         m_Buffers.clear();
         m_Textures.clear();
         m_Samplers.clear();
@@ -656,6 +657,91 @@ namespace NorvesLib::Core::Rendering
         }
 
         return stats;
+    }
+
+    // ========================================
+    // マテリアル操作
+    // ========================================
+
+    MaterialHandle RenderResourceManager::CreateMaterial(const MaterialCreateData &createInfo)
+    {
+        auto handle = AllocateHandle<MaterialHandle>();
+
+        MaterialResourceData data;
+        data.AlbedoTexture = createInfo.AlbedoTexture;
+        data.NormalTexture = createInfo.NormalTexture;
+        data.MetallicTexture = createInfo.MetallicTexture;
+        data.RoughnessTexture = createInfo.RoughnessTexture;
+        data.AOTexture = createInfo.AOTexture;
+        data.HeightTexture = createInfo.HeightTexture;
+        data.HeightScale = createInfo.HeightScale;
+        data.EmissiveColor[0] = createInfo.EmissiveColor[0];
+        data.EmissiveColor[1] = createInfo.EmissiveColor[1];
+        data.EmissiveColor[2] = createInfo.EmissiveColor[2];
+        data.EmissiveStrength = createInfo.EmissiveStrength;
+        data.Blend = createInfo.Blend;
+        data.Shading = createInfo.Shading;
+        data.bTwoSided = createInfo.bTwoSided;
+        data.bCastShadows = createInfo.bCastShadows;
+        data.RefCount = 1;
+        data.DebugName = createInfo.DebugName;
+
+        Thread::ScopedLock lock(m_ResourceMutex);
+        m_Materials[handle.Id] = std::move(data);
+
+        return handle;
+    }
+
+    const MaterialResourceData *RenderResourceManager::GetMaterialData(MaterialHandle handle) const
+    {
+        Thread::ScopedLock lock(m_ResourceMutex);
+        auto it = m_Materials.find(handle.Id);
+        if (it != m_Materials.end())
+        {
+            return &it->second;
+        }
+        return nullptr;
+    }
+
+    bool RenderResourceManager::UpdateMaterial(MaterialHandle handle, const MaterialCreateData &createInfo)
+    {
+        Thread::ScopedLock lock(m_ResourceMutex);
+        auto it = m_Materials.find(handle.Id);
+        if (it == m_Materials.end())
+        {
+            return false;
+        }
+
+        auto &data = it->second;
+        data.AlbedoTexture = createInfo.AlbedoTexture;
+        data.NormalTexture = createInfo.NormalTexture;
+        data.MetallicTexture = createInfo.MetallicTexture;
+        data.RoughnessTexture = createInfo.RoughnessTexture;
+        data.AOTexture = createInfo.AOTexture;
+        data.HeightTexture = createInfo.HeightTexture;
+        data.HeightScale = createInfo.HeightScale;
+        data.EmissiveColor[0] = createInfo.EmissiveColor[0];
+        data.EmissiveColor[1] = createInfo.EmissiveColor[1];
+        data.EmissiveColor[2] = createInfo.EmissiveColor[2];
+        data.EmissiveStrength = createInfo.EmissiveStrength;
+        data.Blend = createInfo.Blend;
+        data.Shading = createInfo.Shading;
+        data.bTwoSided = createInfo.bTwoSided;
+        data.bCastShadows = createInfo.bCastShadows;
+        data.DebugName = createInfo.DebugName;
+
+        return true;
+    }
+
+    void RenderResourceManager::ReleaseMaterial(MaterialHandle handle)
+    {
+        if (!handle.IsValid())
+        {
+            return;
+        }
+
+        Thread::ScopedLock lock(m_ResourceMutex);
+        m_Materials.erase(handle.Id);
     }
 
 } // namespace NorvesLib::Core::Rendering

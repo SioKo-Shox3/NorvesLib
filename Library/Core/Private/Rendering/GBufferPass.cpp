@@ -74,8 +74,8 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBOレイアウト: world(64) + view(64) + projection(64) + cameraPos(16) + objectColor(16) + emissiveColor(16) = 240 bytes
-            constexpr uint32_t UBO_SIZE = 240;
+            // UBOレイアウト: world(64) + view(64) + projection(64) + cameraPos(16) + objectColor(16) + emissiveColor(16) + pomParams(16) = 256 bytes
+            constexpr uint32_t UBO_SIZE = 256;
             constexpr uint32_t MAX_OBJECTS = 256; // 1フレームあたりの最大オブジェクト数
 
             RHI::DescriptorSetDesc uboDescSetDesc;
@@ -85,8 +85,8 @@ namespace NorvesLib::Core::Rendering
             uboBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(uboBinding);
 
-            // PBRテクスチャサンプラー（binding 1-5: albedo, normal, metallic, roughness, ao）
-            for (uint32_t i = 1; i <= 5; ++i)
+            // PBRテクスチャサンプラー（binding 1-6: albedo, normal, metallic, roughness, ao, height）
+            for (uint32_t i = 1; i <= 6; ++i)
             {
                 RHI::DescriptorBinding texBinding;
                 texBinding.binding = i;
@@ -332,6 +332,7 @@ namespace NorvesLib::Core::Rendering
                 float cameraPosition[4];
                 float objectColor[4];
                 float emissiveColor[4]; // rgb=エミッシブカラー, a=エミッシブ強度
+                float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=unused, w=unused
             };
 
             // ビュー・プロジェクション行列を事前変換
@@ -382,16 +383,52 @@ namespace NorvesLib::Core::Rendering
                 uboData.objectColor[2] = proxy.CustomData[2] != 0.0f ? proxy.CustomData[2] : 1.0f;
                 uboData.objectColor[3] = proxy.CustomData[3] != 0.0f ? proxy.CustomData[3] : 1.0f;
 
+                // マテリアルからテクスチャとエミッシブを取得
+                TextureHandle matAlbedo;
+                TextureHandle matNormal;
+                TextureHandle matMetallic;
+                TextureHandle matRoughness;
+                TextureHandle matAO;
+                TextureHandle matHeight;
+                float matHeightScale = 0.05f;
+                float matEmissiveR = 0.0f, matEmissiveG = 0.0f, matEmissiveB = 0.0f;
+                float matEmissiveStrength = 0.0f;
+
+                if (proxy.MaterialCount > 0 && proxy.Materials[0].IsValid() && context.ResourceManager)
+                {
+                    const auto *matData = context.ResourceManager->GetMaterialData(proxy.Materials[0]);
+                    if (matData)
+                    {
+                        matAlbedo = matData->AlbedoTexture;
+                        matNormal = matData->NormalTexture;
+                        matMetallic = matData->MetallicTexture;
+                        matRoughness = matData->RoughnessTexture;
+                        matAO = matData->AOTexture;
+                        matHeight = matData->HeightTexture;
+                        matHeightScale = matData->HeightScale;
+                        matEmissiveR = matData->EmissiveColor[0];
+                        matEmissiveG = matData->EmissiveColor[1];
+                        matEmissiveB = matData->EmissiveColor[2];
+                        matEmissiveStrength = matData->EmissiveStrength;
+                    }
+                }
+
                 // エミッシブカラー（rgb=色, a=強度）
-                uboData.emissiveColor[0] = proxy.EmissiveColor[0];
-                uboData.emissiveColor[1] = proxy.EmissiveColor[1];
-                uboData.emissiveColor[2] = proxy.EmissiveColor[2];
-                uboData.emissiveColor[3] = proxy.EmissiveStrength;
+                uboData.emissiveColor[0] = matEmissiveR;
+                uboData.emissiveColor[1] = matEmissiveG;
+                uboData.emissiveColor[2] = matEmissiveB;
+                uboData.emissiveColor[3] = matEmissiveStrength;
+
+                // POMパラメータ
+                uboData.pomParams[0] = matHeightScale;
+                uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
+                uboData.pomParams[2] = 0.0f;
+                uboData.pomParams[3] = 0.0f;
 
                 // UBO更新
                 allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
-                // PBRテクスチャバインド（テクスチャ未設定ならデフォルトテクスチャ）
+                // PBRテクスチャバインド（マテリアル経由、未設定ならデフォルトテクスチャ）
                 auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTex) -> RHI::TexturePtr
                 {
                     if (handle.IsValid() && context.ResourceManager)
@@ -405,11 +442,12 @@ namespace NorvesLib::Core::Rendering
                     return defaultTex;
                 };
 
-                RHI::TexturePtr albedoTex = ResolveTexture(proxy.AlbedoTexture, m_DefaultWhiteTexture);
-                RHI::TexturePtr normalTex = ResolveTexture(proxy.NormalTexture, m_DefaultFlatNormalTexture);
-                RHI::TexturePtr metallicTex = ResolveTexture(proxy.MetallicTexture, m_DefaultBlackTexture);
-                RHI::TexturePtr roughnessTex = ResolveTexture(proxy.RoughnessTexture, m_DefaultMidGrayTexture);
-                RHI::TexturePtr aoTex = ResolveTexture(proxy.AOTexture, m_DefaultWhiteTexture);
+                RHI::TexturePtr albedoTex = ResolveTexture(matAlbedo, m_DefaultWhiteTexture);
+                RHI::TexturePtr normalTex = ResolveTexture(matNormal, m_DefaultFlatNormalTexture);
+                RHI::TexturePtr metallicTex = ResolveTexture(matMetallic, m_DefaultBlackTexture);
+                RHI::TexturePtr roughnessTex = ResolveTexture(matRoughness, m_DefaultMidGrayTexture);
+                RHI::TexturePtr aoTex = ResolveTexture(matAO, m_DefaultWhiteTexture);
+                RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
 
                 allocation.DescriptorSet->BindTexture(1, albedoTex);
                 allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
@@ -421,6 +459,8 @@ namespace NorvesLib::Core::Rendering
                 allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
                 allocation.DescriptorSet->BindTexture(5, aoTex);
                 allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(6, heightTex);
+                allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
                 allocation.DescriptorSet->Update();
 
                 // 描画
@@ -630,7 +670,7 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.renderPass = m_GBufferRenderPass;
 
-        // ディスクリプタセットレイアウト（set=0: MVP UBO + PBRテクスチャ x5）
+        // ディスクリプタセットレイアウト（set=0: MVP UBO + PBRテクスチャ x6）
         RHI::DescriptorSetDesc dsDesc;
         RHI::DescriptorBinding uboBinding;
         uboBinding.binding = 0;
@@ -638,8 +678,8 @@ namespace NorvesLib::Core::Rendering
         uboBinding.stages = RHI::ShaderStage::Vertex;
         dsDesc.bindings.push_back(uboBinding);
 
-        // binding 1-5: albedo, normal, metallic, roughness, ao
-        for (uint32_t i = 1; i <= 5; ++i)
+        // binding 1-6: albedo, normal, metallic, roughness, ao, height
+        for (uint32_t i = 1; i <= 6; ++i)
         {
             RHI::DescriptorBinding texBinding;
             texBinding.binding = i;

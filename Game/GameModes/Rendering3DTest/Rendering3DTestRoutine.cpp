@@ -151,25 +151,80 @@ namespace Game::GameModes
         }
 
         // ========================================
-        // 1.6 Silver PBRテクスチャのロード
+        // 1.6 Silver PBRマテリアルの作成
         // ========================================
         {
             auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
 
-            data.m_SilverAlbedoTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_albedo.png");
-            data.m_SilverNormalTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_normal-ogl.png");
-            data.m_SilverMetallicTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_metallic.png");
-            data.m_SilverRoughnessTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_roughness.png");
-            data.m_SilverAOTexture = resourceManager.LoadTexture("Assets/Textures/Silver/silver_ao.png");
+            // テクスチャロード
+            auto silverAlbedo = resourceManager.LoadTexture("Assets/Textures/Silver/silver_albedo.png");
+            auto silverNormal = resourceManager.LoadTexture("Assets/Textures/Silver/silver_normal-ogl.png");
+            auto silverMetallic = resourceManager.LoadTexture("Assets/Textures/Silver/silver_metallic.png");
+            auto silverRoughness = resourceManager.LoadTexture("Assets/Textures/Silver/silver_roughness.png");
+            auto silverAO = resourceManager.LoadTexture("Assets/Textures/Silver/silver_ao.png");
 
-            if (data.m_SilverAlbedoTexture.IsValid())
+            // Silver PBRマテリアル作成
+            MaterialCreateData silverMatInfo;
+            silverMatInfo.AlbedoTexture = silverAlbedo;
+            silverMatInfo.NormalTexture = silverNormal;
+            silverMatInfo.MetallicTexture = silverMetallic;
+            silverMatInfo.RoughnessTexture = silverRoughness;
+            silverMatInfo.AOTexture = silverAO;
+            silverMatInfo.DebugName = "SilverPBR";
+            data.m_SilverMaterial = resourceManager.CreateMaterial(silverMatInfo);
+
+            if (data.m_SilverMaterial.IsValid())
             {
-                NORVES_LOG_INFO("Rendering3DTest", "Silver PBR textures loaded");
+                NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material created");
             }
             else
             {
-                NORVES_LOG_ERROR("Rendering3DTest", "Failed to load Silver PBR textures");
+                NORVES_LOG_ERROR("Rendering3DTest", "Failed to create Silver PBR material");
             }
+
+            // CobbleStoneFloor（石畳）マテリアル作成
+            {
+                auto cobbleAlbedo = resourceManager.LoadTexture("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png");
+                auto cobbleNormal = resourceManager.LoadTexture("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_gl_4k.png");
+                auto cobbleRoughness = resourceManager.LoadTexture("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png");
+                auto cobbleAO = resourceManager.LoadTexture("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png");
+                auto cobbleHeight = resourceManager.LoadTexture("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png");
+
+                MaterialCreateData cobbleMatInfo;
+                cobbleMatInfo.AlbedoTexture = cobbleAlbedo;
+                cobbleMatInfo.NormalTexture = cobbleNormal;
+                cobbleMatInfo.RoughnessTexture = cobbleRoughness;
+                cobbleMatInfo.AOTexture = cobbleAO;
+                cobbleMatInfo.HeightTexture = cobbleHeight;
+                cobbleMatInfo.HeightScale = 0.05f; // 石畳の凹凸深さ
+                // メタリックはデフォルト（黒=0.0, 非金属）
+                cobbleMatInfo.DebugName = "CobbleStoneFloor";
+                data.m_CobbleStoneMaterial = resourceManager.CreateMaterial(cobbleMatInfo);
+
+                if (data.m_CobbleStoneMaterial.IsValid())
+                {
+                    NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material created");
+                }
+                else
+                {
+                    NORVES_LOG_ERROR("Rendering3DTest", "Failed to create CobbleStoneFloor material");
+                }
+            }
+
+            // 地面マテリアル作成（チェッカーボード）
+            MaterialCreateData groundMatInfo;
+            groundMatInfo.AlbedoTexture = data.m_CheckerTextureHandle;
+            groundMatInfo.DebugName = "Ground";
+            data.m_GroundMaterial = resourceManager.CreateMaterial(groundMatInfo);
+
+            // 光源球体マテリアル作成（エミッシブ）
+            MaterialCreateData lightSphereMatInfo;
+            lightSphereMatInfo.EmissiveColor[0] = 1.0f;
+            lightSphereMatInfo.EmissiveColor[1] = 0.9f;
+            lightSphereMatInfo.EmissiveColor[2] = 0.3f;
+            lightSphereMatInfo.EmissiveStrength = 8.0f;
+            lightSphereMatInfo.DebugName = "LightSphere";
+            data.m_LightSphereMaterial = resourceManager.CreateMaterial(lightSphereMatInfo);
         }
 
         // ========================================
@@ -187,22 +242,14 @@ namespace Game::GameModes
 
             data.m_pSphereMeshComponent = new Component::MeshComponent();
             data.m_pSphereMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
-            data.m_pSphereMeshComponent->SetMaterial(0, MaterialHandle{1});
             data.m_pSphereMeshComponent->SetCastShadow(true);
             // オブジェクトカラー（白 = テクスチャカラーをそのまま使用）
             data.m_pSphereMeshComponent->SetCustomData(0, 1.0f);
             data.m_pSphereMeshComponent->SetCustomData(1, 1.0f);
             data.m_pSphereMeshComponent->SetCustomData(2, 1.0f);
             data.m_pSphereMeshComponent->SetCustomData(3, 1.0f);
-            // Silver PBRテクスチャを適用
-            if (data.m_SilverAlbedoTexture.IsValid())
-            {
-                data.m_pSphereMeshComponent->SetAlbedoTexture(data.m_SilverAlbedoTexture);
-                data.m_pSphereMeshComponent->SetNormalTexture(data.m_SilverNormalTexture);
-                data.m_pSphereMeshComponent->SetMetallicTexture(data.m_SilverMetallicTexture);
-                data.m_pSphereMeshComponent->SetRoughnessTexture(data.m_SilverRoughnessTexture);
-                data.m_pSphereMeshComponent->SetAOTexture(data.m_SilverAOTexture);
-            }
+            // CobbleStoneFloor（石畳）マテリアルを適用
+            data.m_pSphereMeshComponent->SetMaterial(0, data.m_CobbleStoneMaterial);
 
             data.m_pSphereObject->AddComponent(data.m_pSphereMeshComponent);
             world.AddObject(data.m_pSphereObject);
@@ -218,18 +265,14 @@ namespace Game::GameModes
 
             data.m_pGroundMeshComponent = new Component::MeshComponent();
             data.m_pGroundMeshComponent->SetMeshHandle(data.m_GroundMeshHandle);
-            data.m_pGroundMeshComponent->SetMaterial(0, MaterialHandle{1});
             data.m_pGroundMeshComponent->SetCastShadow(false);
             // オブジェクトカラー（暗い緑灰色）→ CustomData
             data.m_pGroundMeshComponent->SetCustomData(0, 0.35f);
             data.m_pGroundMeshComponent->SetCustomData(1, 0.45f);
             data.m_pGroundMeshComponent->SetCustomData(2, 0.3f);
             data.m_pGroundMeshComponent->SetCustomData(3, 1.0f);
-            // チェッカーボードテクスチャを設定
-            if (data.m_CheckerTextureHandle.IsValid())
-            {
-                data.m_pGroundMeshComponent->SetAlbedoTexture(data.m_CheckerTextureHandle);
-            }
+            // 地面マテリアルを適用
+            data.m_pGroundMeshComponent->SetMaterial(0, data.m_GroundMaterial);
 
             data.m_pGroundObject->AddComponent(data.m_pGroundMeshComponent);
             world.AddObject(data.m_pGroundObject);
@@ -240,29 +283,27 @@ namespace Game::GameModes
             data.m_pLightSphereObject = new WorldObject();
             data.m_pLightSphereObject->Initialize();
 
-            // 球体の横に配置（X=2.0, Y=0.5, Z=0.0）
-            data.m_pLightSphereObject->SetPosition(2.0f, 0.5f, 0.0f);
+            // 球体の横に配置（X=4.0, Y=1.0, Z=0.0）――少し遠め
+            data.m_pLightSphereObject->SetPosition(4.0f, 1.0f, 0.0f);
 
             data.m_pLightSphereMeshComponent = new Component::MeshComponent();
             data.m_pLightSphereMeshComponent->SetMeshHandle(data.m_LightSphereMeshHandle);
-            data.m_pLightSphereMeshComponent->SetMaterial(0, MaterialHandle{1});
             data.m_pLightSphereMeshComponent->SetCastShadow(false); // 光源自体は影を落とさない
             // 明るい黄色（発光体の見た目）
             data.m_pLightSphereMeshComponent->SetCustomData(0, 1.0f);
             data.m_pLightSphereMeshComponent->SetCustomData(1, 0.9f);
             data.m_pLightSphereMeshComponent->SetCustomData(2, 0.3f);
             data.m_pLightSphereMeshComponent->SetCustomData(3, 1.0f);
-            // エミッシブ設定（自発光 → ブルーム対象になる）
-            data.m_pLightSphereMeshComponent->SetEmissiveColor(1.0f, 0.9f, 0.3f);
-            data.m_pLightSphereMeshComponent->SetEmissiveStrength(8.0f);
+            // 光源球体マテリアル（エミッシブ設定はマテリアル側に移動済み）
+            data.m_pLightSphereMeshComponent->SetMaterial(0, data.m_LightSphereMaterial);
 
             data.m_pLightSphereObject->AddComponent(data.m_pLightSphereMeshComponent);
 
             // PointLightComponentの追加（SceneViewへのLightProxy登録はWorld::SyncToSceneView()で自動化）
             data.m_pPointLightComponent = new Component::PointLightComponent();
             data.m_pPointLightComponent->SetLightColor(1.0f, 0.9f, 0.3f);
-            data.m_pPointLightComponent->SetIntensity(3.0f);
-            data.m_pPointLightComponent->SetRange(8.0f);
+            data.m_pPointLightComponent->SetIntensity(2.0f);
+            data.m_pPointLightComponent->SetRange(10.0f);
             data.m_pPointLightComponent->SetLightVisible(true);
             data.m_pPointLightComponent->SetCastShadows(false);
             data.m_pLightSphereObject->AddComponent(data.m_pPointLightComponent);
@@ -279,7 +320,7 @@ namespace Game::GameModes
             data.m_pDirectionalLightComponent = new Component::LightComponent();
             // LightComponentはデフォルトでDirectional型
             data.m_pDirectionalLightComponent->SetLightColor(1.0f, 1.0f, 1.0f);
-            data.m_pDirectionalLightComponent->SetIntensity(1.5f);
+            data.m_pDirectionalLightComponent->SetIntensity(1.0f);
             data.m_pDirectionalLightComponent->SetLightDirection(-0.577f, -0.577f, -0.577f);
             data.m_pDirectionalLightComponent->SetLightVisible(true);
             data.m_pDirectionalLightComponent->SetCastShadows(true);

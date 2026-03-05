@@ -51,12 +51,16 @@ set(PRIVATE_SOURCES
     Private/Rendering/LightingPass.cpp
     Private/Rendering/ToneMappingPass.cpp
     Private/Rendering/BloomPass.cpp
+    Private/Rendering/SSAOPass.cpp
+    Private/Rendering/FXAAPass.cpp
+    Private/Rendering/SSRPass.cpp
     Private/Rendering/ForwardPass.cpp
     Private/Rendering/ShaderManager.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
     Private/Resource/MeshResource.cpp
+    Private/Resource/MaterialResource.cpp
     # Component
     Private/Component/Component.cpp
     Private/Component/MeshComponent.cpp
@@ -177,6 +181,9 @@ set(PUBLIC_HEADERS
     Public/Rendering/LightingPass.h
     Public/Rendering/ToneMappingPass.h
     Public/Rendering/BloomPass.h
+    Public/Rendering/SSAOPass.h
+    Public/Rendering/FXAAPass.h
+    Public/Rendering/SSRPass.h
     Public/Rendering/ForwardPass.h
     Public/Rendering/ShaderManager.h
     # Object
@@ -190,6 +197,7 @@ set(PUBLIC_HEADERS
     Public/Engine/AssetRegistry.h
     # Resource
     Public/Resource/MeshResource.h
+    Public/Resource/MaterialResource.h
     # Component
     Public/Component/Component.h
     Public/Component/MeshComponent.h

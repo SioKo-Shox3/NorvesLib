@@ -139,22 +139,6 @@ namespace NorvesLib::Core::Component
     }
 
     // ========================================
-    // エミッシブ
-    // ========================================
-
-    void MeshComponent::SetEmissiveColor(float r, float g, float b)
-    {
-        m_EmissiveColor[0] = r;
-        m_EmissiveColor[1] = g;
-        m_EmissiveColor[2] = b;
-    }
-
-    void MeshComponent::SetEmissiveStrength(float strength)
-    {
-        m_EmissiveStrength = strength;
-    }
-
-    // ========================================
     // バウンディング
     // ========================================
 
@@ -219,20 +203,6 @@ namespace NorvesLib::Core::Component
         {
             outProxy.CustomData[i] = m_CustomData[i];
         }
-
-        // テクスチャ
-        outProxy.AlbedoTexture = m_AlbedoTexture;
-        outProxy.NormalTexture = m_NormalTexture;
-        outProxy.MetallicTexture = m_MetallicTexture;
-        outProxy.RoughnessTexture = m_RoughnessTexture;
-        outProxy.AOTexture = m_AOTexture;
-
-        // エミッシブデータ
-        for (uint32_t i = 0; i < 3; ++i)
-        {
-            outProxy.EmissiveColor[i] = m_EmissiveColor[i];
-        }
-        outProxy.EmissiveStrength = m_EmissiveStrength;
 
         return true;
     }

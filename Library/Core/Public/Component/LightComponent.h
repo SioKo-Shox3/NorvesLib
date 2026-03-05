@@ -40,12 +40,12 @@ namespace NorvesLib::Core::Component
         /**
          * @brief 初期化子を使用したコンストラクタ
          */
-        explicit LightComponent(const FieldInitializer* initializer);
+        explicit LightComponent(const FieldInitializer *initializer);
 
         /**
          * @brief コピーコンストラクタ
          */
-        explicit LightComponent(const IUnknown* sourceObject);
+        explicit LightComponent(const IUnknown *sourceObject);
 
         /**
          * @brief デストラクタ
@@ -86,7 +86,7 @@ namespace NorvesLib::Core::Component
          * @param outG 緑
          * @param outB 青
          */
-        void GetLightColor(float& outR, float& outG, float& outB) const;
+        void GetLightColor(float &outR, float &outG, float &outB) const;
 
         /**
          * @brief 強度を設定
@@ -143,7 +143,7 @@ namespace NorvesLib::Core::Component
          * @param outY Y方向成分
          * @param outZ Z方向成分
          */
-        void GetLightDirection(float& outX, float& outY, float& outZ) const;
+        void GetLightDirection(float &outX, float &outY, float &outZ) const;
 
         // ========================================
         // LightProxy構築
@@ -157,14 +157,14 @@ namespace NorvesLib::Core::Component
          * 派生クラスでオーバーライドし、ライトタイプ固有の情報を設定します。
          * 基底クラスでは共通プロパティ（色、強度、シャドウ等）を設定します。
          */
-        virtual bool BuildLightProxy(Rendering::LightProxy& outProxy) const;
+        virtual bool BuildLightProxy(Rendering::LightProxy &outProxy) const;
 
     protected:
         /**
          * @brief 共通のLightProxyフィールドを設定するヘルパー
          * @param outProxy 出力先
          */
-        void FillCommonLightProxy(Rendering::LightProxy& outProxy) const;
+        void FillCommonLightProxy(Rendering::LightProxy &outProxy) const;
 
         // ========================================
         // リフレクションプロパティ
