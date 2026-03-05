@@ -8,6 +8,9 @@
 #include "Rendering/ForwardPass.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/ToneMappingPass.h"
+#include "Rendering/SSAOPass.h"
+#include "Rendering/FXAAPass.h"
+#include "Rendering/SSRPass.h"
 #include "Rendering/PostProcessStack.h"
 #include "Math/VectorUtils.h"
 #include "Logging/LogMacros.h"
@@ -229,14 +232,33 @@ namespace NorvesLib::Core::Rendering
         gbufferPass->SetSceneRenderer(sceneRenderer);
         AddPass(std::move(gbufferPass));
 
+        // SSAOPass: GBufferの深度・法線からスクリーンスペースAOを計算
+        SSAOSettings ssaoSettings;
+        ssaoSettings.Radius = 0.5f;
+        ssaoSettings.Bias = 0.025f;
+        ssaoSettings.Intensity = 2.0f;
+        auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
+        AddPass(std::move(ssaoPass));
+
         // LightingPass: GBuffer→HDRシーンカラー
         LightingPassSettings lightingSettings;
+        lightingSettings.EnvironmentMapPath = "Textures/Atmosphere/grasslands_sunset_4k.hdr";
+        lightingSettings.IBLIntensity = 1.0f;
         auto lightingPass = MakeUnique<LightingPass>(lightingSettings);
         lightingPass->SetSceneView(this);
         AddPass(std::move(lightingPass));
 
-        // PostProcessStack: Bloom -> ToneMapping
+        // PostProcessStack: SSR -> Bloom -> ToneMapping -> FXAA
         auto postProcessStack = MakeUnique<PostProcessStack>();
+
+        // SSR（スクリーンスペース反射、HDR空間で適用）
+        SSRSettings ssrSettings;
+        ssrSettings.MaxDistance = 15.0f;
+        ssrSettings.Thickness = 0.3f;
+        ssrSettings.MaxSteps = 64.0f;
+        ssrSettings.Intensity = 0.8f;
+        ssrSettings.RoughnessCutoff = 0.5f;
+        postProcessStack->AddPass(MakeUnique<SSRPass>(ssrSettings));
 
         // Bloom（ToneMappingの前にHDR空間でブルーム適用）
         BloomSettings bloomSettings;
@@ -246,14 +268,20 @@ namespace NorvesLib::Core::Rendering
         bloomSettings.SoftKnee = 0.5f;
         postProcessStack->AddPass(MakeUnique<BloomPass>(bloomSettings));
 
-        // ToneMapping（HDR→LDR変換）
+        // ToneMapping（HDR→LDR変換 + Vignette + Color Grading）
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
         postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
 
+        // FXAA（アンチエイリアシング、最終パス）
+        FXAASettings fxaaSettings;
+        fxaaSettings.EdgeThreshold = 0.0312f;
+        fxaaSettings.SubpixelQuality = 0.75f;
+        postProcessStack->AddPass(MakeUnique<FXAAPass>(fxaaSettings));
+
         SetPostProcessStack(std::move(postProcessStack));
 
-        NORVES_LOG_INFO("SceneView", "Deferred pipeline configured: ShadowMap -> GBuffer -> Lighting -> Bloom -> ToneMapping");
+        NORVES_LOG_INFO("SceneView", "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> SSR -> Bloom -> ToneMapping -> FXAA");
     }
 
     void SceneView::SetupForwardPipeline(SceneRenderer *sceneRenderer)

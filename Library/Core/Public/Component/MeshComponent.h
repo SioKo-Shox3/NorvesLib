@@ -175,93 +175,6 @@ namespace NorvesLib::Core::Component
         float GetCustomData(uint32_t index) const;
 
         // ========================================
-        // テクスチャ設定
-        // ========================================
-
-        /**
-         * @brief アルベドテクスチャを設定
-         * @param handle テクスチャハンドル
-         */
-        void SetAlbedoTexture(Rendering::TextureHandle handle) { m_AlbedoTexture = handle; }
-
-        /**
-         * @brief アルベドテクスチャを取得
-         * @return テクスチャハンドル
-         */
-        Rendering::TextureHandle GetAlbedoTexture() const { return m_AlbedoTexture; }
-
-        /**
-         * @brief ノーマルマップテクスチャを設定
-         * @param handle テクスチャハンドル
-         */
-        void SetNormalTexture(Rendering::TextureHandle handle) { m_NormalTexture = handle; }
-
-        /**
-         * @brief ノーマルマップテクスチャを取得
-         * @return テクスチャハンドル
-         */
-        Rendering::TextureHandle GetNormalTexture() const { return m_NormalTexture; }
-
-        /**
-         * @brief メタリックマップテクスチャを設定
-         * @param handle テクスチャハンドル
-         */
-        void SetMetallicTexture(Rendering::TextureHandle handle) { m_MetallicTexture = handle; }
-
-        /**
-         * @brief メタリックマップテクスチャを取得
-         * @return テクスチャハンドル
-         */
-        Rendering::TextureHandle GetMetallicTexture() const { return m_MetallicTexture; }
-
-        /**
-         * @brief ラフネスマップテクスチャを設定
-         * @param handle テクスチャハンドル
-         */
-        void SetRoughnessTexture(Rendering::TextureHandle handle) { m_RoughnessTexture = handle; }
-
-        /**
-         * @brief ラフネスマップテクスチャを取得
-         * @return テクスチャハンドル
-         */
-        Rendering::TextureHandle GetRoughnessTexture() const { return m_RoughnessTexture; }
-
-        /**
-         * @brief AOマップテクスチャを設定
-         * @param handle テクスチャハンドル
-         */
-        void SetAOTexture(Rendering::TextureHandle handle) { m_AOTexture = handle; }
-
-        /**
-         * @brief AOマップテクスチャを取得
-         * @return テクスチャハンドル
-         */
-        Rendering::TextureHandle GetAOTexture() const { return m_AOTexture; }
-
-        // ========================================
-        // エミッシブ設定
-        // ========================================
-
-        /**
-         * @brief エミッシブカラーを設定
-         * @param r 赤 (0-1)
-         * @param g 緑 (0-1)
-         * @param b 青 (0-1)
-         */
-        void SetEmissiveColor(float r, float g, float b);
-
-        /**
-         * @brief エミッシブ強度を設定
-         * @param strength 強度（0=非発光、1以上でHDR値になりブルームの対象）
-         */
-        void SetEmissiveStrength(float strength);
-
-        /**
-         * @brief エミッシブ強度を取得
-         */
-        float GetEmissiveStrength() const { return m_EmissiveStrength; }
-
-        // ========================================
         // バウンディング
         // ========================================
 
@@ -339,16 +252,6 @@ namespace NorvesLib::Core::Component
         float m_CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
         // テクスチャ
-        Rendering::TextureHandle m_AlbedoTexture;    // アルベドテクスチャ（無効値=テクスチャなし）
-        Rendering::TextureHandle m_NormalTexture;    // ノーマルマップ（無効値=テクスチャなし）
-        Rendering::TextureHandle m_MetallicTexture;  // メタリックマップ（無効値=テクスチャなし）
-        Rendering::TextureHandle m_RoughnessTexture; // ラフネスマップ（無効値=テクスチャなし）
-        Rendering::TextureHandle m_AOTexture;        // AOマップ（無効値=テクスチャなし）
-
-        // エミッシブデータ
-        float m_EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
-        float m_EmissiveStrength = 0.0f;
-
         // キャッシュされたトランスフォーム
         Math::Matrix4x4 m_WorldTransform;
         Math::Matrix4x4 m_PreviousWorldTransform;

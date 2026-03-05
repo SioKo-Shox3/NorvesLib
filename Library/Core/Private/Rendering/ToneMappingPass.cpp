@@ -22,6 +22,17 @@ namespace NorvesLib::Core::Rendering
         float gamma;
         uint32_t operatorType; // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure
         float _pad0;
+        // Vignette
+        float vignetteIntensity;
+        float vignetteRadius;
+        float vignetteSoftness;
+        float _pad1;
+        // Color Grading
+        float colorFilter[4]; // rgb + intensity(w)
+        float contrast;
+        float saturation;
+        float brightness;
+        float temperature;
     };
 
     static constexpr uint32_t TONEMAPPING_PARAMS_SIZE = sizeof(GPUToneMappingParams);
@@ -302,6 +313,20 @@ namespace NorvesLib::Core::Rendering
         params.gamma = m_Settings.Gamma;
         params.operatorType = static_cast<uint32_t>(m_Settings.Operator);
         params._pad0 = 0.0f;
+        // Vignette
+        params.vignetteIntensity = m_Settings.VignetteIntensity;
+        params.vignetteRadius = m_Settings.VignetteRadius;
+        params.vignetteSoftness = m_Settings.VignetteSoftness;
+        params._pad1 = 0.0f;
+        // Color Grading
+        params.colorFilter[0] = m_Settings.ColorFilter[0];
+        params.colorFilter[1] = m_Settings.ColorFilter[1];
+        params.colorFilter[2] = m_Settings.ColorFilter[2];
+        params.colorFilter[3] = m_Settings.ColorFilterIntensity;
+        params.contrast = m_Settings.Contrast;
+        params.saturation = m_Settings.Saturation;
+        params.brightness = m_Settings.Brightness;
+        params.temperature = m_Settings.Temperature;
         m_ParamsBuffer->Update(&params, sizeof(GPUToneMappingParams));
 
         // トーンマッピング結果をSharedResourceRegistryに登録

@@ -12,8 +12,50 @@
 #include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
 
+// HDR環境マップロード用
+#include "stb_image.h"
+#include <cmath>
+#include <algorithm>
+
 namespace NorvesLib::Core::Rendering
 {
+    // ========================================
+    // float32 → float16 変換ヘルパー
+    // ========================================
+    static uint16_t FloatToHalf(float value)
+    {
+        union
+        {
+            float f;
+            uint32_t u;
+        } conv;
+        conv.f = value;
+        uint32_t f32 = conv.u;
+
+        uint16_t sign = static_cast<uint16_t>((f32 >> 16) & 0x8000);
+        int32_t exponent = static_cast<int32_t>((f32 >> 23) & 0xFF) - 127;
+        uint32_t mantissa = f32 & 0x007FFFFF;
+
+        if (exponent > 15)
+        {
+            return sign | 0x7C00; // Overflow → Infinity
+        }
+        else if (exponent > -15)
+        {
+            return sign | static_cast<uint16_t>(((exponent + 15) << 10) | (mantissa >> 13));
+        }
+        else if (exponent > -25)
+        {
+            mantissa |= 0x800000;
+            uint32_t shift = static_cast<uint32_t>(-14 - exponent);
+            return sign | static_cast<uint16_t>(mantissa >> (shift + 13));
+        }
+        else
+        {
+            return sign; // Too small → zero
+        }
+    }
+
     // ========================================
     // GPU側ライトデータ構造（シェーダーのUBOレイアウトに対応）
     // ========================================
@@ -37,8 +79,12 @@ namespace NorvesLib::Core::Rendering
         float lightProjection[16];   // mat4 （シャドウマップ用ライトプロジェクション行列）
         uint32_t lightCount;         // uint
         uint32_t bShadowEnabled;     // uint （シャドウマップ有効フラグ）
-        uint32_t _pad0;
-        uint32_t _pad1;
+        uint32_t envMapMipLevels;    // uint （環境マップミップレベル数）
+        uint32_t bIBLEnabled;        // uint （IBL有効フラグ）
+        uint32_t bSSAOEnabled;       // uint （SSAO有効フラグ）
+        uint32_t _pad0;              // padding
+        uint32_t _pad1;              // padding
+        uint32_t _pad2;              // padding
     };
 
     static constexpr uint32_t MAX_LIGHTS = 16;
@@ -145,6 +191,43 @@ namespace NorvesLib::Core::Rendering
         //       別のバインディングポイント（binding=5）として作成
 
         m_bInitialized = true;
+
+        // ========================================
+        // IBL (Image-Based Lighting) リソース初期化
+        // ========================================
+        if (!m_Settings.EnvironmentMapPath.empty())
+        {
+            bool bEnvLoaded = LoadEnvironmentMap(m_Settings.EnvironmentMapPath);
+            bool bBrdfGenerated = GenerateBRDFLut();
+
+            if (bEnvLoaded && bBrdfGenerated)
+            {
+                // IBL用サンプラー作成（Linear + ミップマップ）
+                RHI::SamplerDesc iblSamplerDesc;
+                iblSamplerDesc.filterMin = RHI::FilterMode::Linear;
+                iblSamplerDesc.filterMag = RHI::FilterMode::Linear;
+                iblSamplerDesc.filterMip = RHI::FilterMode::Linear;
+                iblSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+                iblSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+                iblSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+
+                m_IBLSampler = m_Device->CreateSampler(iblSamplerDesc);
+                if (m_IBLSampler)
+                {
+                    m_bIBLAvailable = true;
+                    NORVES_LOG_INFO("LightingPass", "IBL initialized successfully");
+                }
+                else
+                {
+                    NORVES_LOG_WARNING("LightingPass", "Failed to create IBL sampler, falling back to flat ambient");
+                }
+            }
+            else
+            {
+                NORVES_LOG_WARNING("LightingPass", "IBL resource loading failed, falling back to flat ambient");
+            }
+        }
+
         NORVES_LOG_INFO("LightingPass", "LightingPass initialized");
         return true;
     }
@@ -166,6 +249,13 @@ namespace NorvesLib::Core::Rendering
         m_LightArrayBuffer.reset();
         m_LightingDescriptorSet.reset();
         m_GBufferSampler.reset();
+
+        // IBLリソース解放
+        m_EnvironmentTexture.reset();
+        m_BrdfLutTexture.reset();
+        m_IBLSampler.reset();
+        m_bIBLAvailable = false;
+
         m_Device = nullptr;
         m_SceneView = nullptr;
 
@@ -306,6 +396,27 @@ namespace NorvesLib::Core::Rendering
             emissiveBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             emissiveBinding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(emissiveBinding);
+
+            // IBL Environment Map (binding=8, combined image sampler)
+            RHI::DescriptorBinding envMapBinding;
+            envMapBinding.binding = 8;
+            envMapBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            envMapBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(envMapBinding);
+
+            // IBL BRDF LUT (binding=9, combined image sampler)
+            RHI::DescriptorBinding brdfLutBinding;
+            brdfLutBinding.binding = 9;
+            brdfLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            brdfLutBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(brdfLutBinding);
+
+            // SSAO texture (binding=10, combined image sampler)
+            RHI::DescriptorBinding ssaoBinding;
+            ssaoBinding.binding = 10;
+            ssaoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            ssaoBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(ssaoBinding);
 
             m_LightingDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
             if (!m_LightingDescriptorSet)
@@ -472,6 +583,40 @@ namespace NorvesLib::Core::Rendering
         }
         m_LightingDescriptorSet->BindSampler(7, m_GBufferSampler);
 
+        // IBL環境マップ・BRDF LUTバインド
+        if (m_bIBLAvailable)
+        {
+            m_LightingDescriptorSet->BindTexture(8, m_EnvironmentTexture);
+            m_LightingDescriptorSet->BindSampler(8, m_IBLSampler);
+            m_LightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
+            m_LightingDescriptorSet->BindSampler(9, m_IBLSampler);
+        }
+        else
+        {
+            // IBL無効時: フォールバック（ダミーテクスチャバインド）
+            m_LightingDescriptorSet->BindTexture(8, albedoPtr);
+            m_LightingDescriptorSet->BindSampler(8, m_GBufferSampler);
+            m_LightingDescriptorSet->BindTexture(9, albedoPtr);
+            m_LightingDescriptorSet->BindSampler(9, m_GBufferSampler);
+        }
+
+        // SSAOテクスチャバインド（binding=10）
+        RHI::TexturePtr ssaoPtr;
+        if (context.SharedResources)
+        {
+            ssaoPtr = context.SharedResources->GetTexturePtr("SSAO");
+        }
+        if (ssaoPtr)
+        {
+            m_LightingDescriptorSet->BindTexture(10, ssaoPtr);
+        }
+        else
+        {
+            // SSAO利用不可時: ダミーバインド（albedoを流用、シェーダー側でfallback）
+            m_LightingDescriptorSet->BindTexture(10, albedoPtr);
+        }
+        m_LightingDescriptorSet->BindSampler(10, m_GBufferSampler);
+
         m_LightingDescriptorSet->Update();
 
         // ライティングレンダーパス開始
@@ -541,8 +686,8 @@ namespace NorvesLib::Core::Rendering
             viewMat = MatrixUtils::CreateLookAt(camPos, lookAt, upDir);
 
             float aspectRatio = (m_CurrentHeight > 0)
-                ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
-                : 16.0f / 9.0f;
+                                    ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
+                                    : 16.0f / 9.0f;
             float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
             projMat = MatrixUtils::CreatePerspectiveFieldOfView(
                 fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
@@ -686,10 +831,284 @@ namespace NorvesLib::Core::Rendering
 
         params.lightCount = lightCount;
 
+        // IBLパラメータ設定
+        params.envMapMipLevels = m_bIBLAvailable ? m_EnvironmentMipLevels : 1;
+        params.bIBLEnabled = m_bIBLAvailable ? 1 : 0;
+
+        // SSAOパラメータ設定
+        bool bSSAOAvailable = false;
+        if (context.SharedResources)
+        {
+            bSSAOAvailable = (context.SharedResources->GetTexturePtr("SSAO") != nullptr);
+        }
+        params.bSSAOEnabled = bSSAOAvailable ? 1 : 0;
+
+        // IBL有効時はambientColor.wにIBL強度を設定
+        if (m_bIBLAvailable)
+        {
+            params.ambientColor[3] = m_Settings.IBLIntensity;
+        }
+
         m_LightDataBuffer->Update(&params, sizeof(GPULightingParams));
 
         // ライト配列バッファ更新
         m_LightArrayBuffer->Update(lightArray, sizeof(GPULightData) * lightCount);
+    }
+
+    // ========================================
+    // HDR環境マップロード（ミップマップ付きRGBA16_FLOAT）
+    // ========================================
+    bool LightingPass::LoadEnvironmentMap(const Container::String &path)
+    {
+        if (path.empty())
+        {
+            NORVES_LOG_WARNING("LightingPass", "No environment map path specified");
+            return false;
+        }
+
+        // パス解決
+        Container::String resolvedPath = path;
+#ifdef NORVES_ASSET_DIR
+        if (path.size() > 0 && path[0] != '/' && path[0] != '\\' &&
+            (path.size() < 2 || path[1] != ':'))
+        {
+            Container::String relativePath = path;
+            if (relativePath.size() > 7)
+            {
+                Container::String prefix = relativePath.substr(0, 7);
+                if (prefix == "Assets/" || prefix == "Assets\\")
+                {
+                    relativePath = relativePath.substr(7);
+                }
+            }
+            resolvedPath = Container::String(NORVES_ASSET_DIR) + "/" + relativePath;
+        }
+#endif
+
+        NORVES_LOG_INFO("LightingPass", "Loading HDR environment map...");
+        NORVES_LOG_INFO("LightingPass", resolvedPath.c_str());
+
+        // HDRファイル読み込み（float32 RGBA）
+        int width = 0, height = 0, channels = 0;
+        float *hdrData = stbi_loadf(resolvedPath.c_str(), &width, &height, &channels, 4);
+        if (!hdrData)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to load HDR environment map");
+            return false;
+        }
+
+        NORVES_LOG_INFO("LightingPass", "HDR loaded successfully");
+
+        // ミップレベル数の計算
+        uint32_t mipLevels = 1;
+        {
+            uint32_t maxDim = (std::max)(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+            while (maxDim > 1)
+            {
+                maxDim >>= 1;
+                ++mipLevels;
+            }
+        }
+        m_EnvironmentMipLevels = mipLevels;
+
+        // テクスチャ作成
+        RHI::TextureDesc envDesc;
+        envDesc.Width = static_cast<uint32_t>(width);
+        envDesc.Height = static_cast<uint32_t>(height);
+        envDesc.MipLevels = mipLevels;
+        envDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+        envDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        envDesc.DebugName = "EnvironmentMap";
+
+        m_EnvironmentTexture = m_Device->CreateTexture(envDesc);
+        if (!m_EnvironmentTexture)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create environment map texture");
+            stbi_image_free(hdrData);
+            return false;
+        }
+
+        // ========================================
+        // ミップチェーン生成とアップロード
+        // ========================================
+        uint32_t mipWidth = static_cast<uint32_t>(width);
+        uint32_t mipHeight = static_cast<uint32_t>(height);
+        size_t basePixelCount = static_cast<size_t>(width) * height;
+
+        // float32データの作業バッファ
+        Container::VariableArray<float> currentMipData(basePixelCount * 4);
+        std::memcpy(currentMipData.data(), hdrData, basePixelCount * 4 * sizeof(float));
+        stbi_image_free(hdrData);
+
+        for (uint32_t mip = 0; mip < mipLevels; ++mip)
+        {
+            size_t pixelCount = static_cast<size_t>(mipWidth) * mipHeight;
+
+            // float32 → half16 変換
+            Container::VariableArray<uint16_t> halfData(pixelCount * 4);
+            for (size_t i = 0; i < pixelCount * 4; ++i)
+            {
+                halfData[i] = FloatToHalf(currentMipData[i]);
+            }
+
+            uint32_t rowPitch = mipWidth * 4 * static_cast<uint32_t>(sizeof(uint16_t));
+            uint32_t slicePitch = rowPitch * mipHeight;
+            m_EnvironmentTexture->Update(halfData.data(), rowPitch, slicePitch, mip);
+
+            // 次のミップレベル生成（box filter）
+            if (mip + 1 < mipLevels)
+            {
+                uint32_t nextWidth = (std::max)(mipWidth / 2, 1u);
+                uint32_t nextHeight = (std::max)(mipHeight / 2, 1u);
+                Container::VariableArray<float> nextMipData(static_cast<size_t>(nextWidth) * nextHeight * 4);
+
+                for (uint32_t y = 0; y < nextHeight; ++y)
+                {
+                    for (uint32_t x = 0; x < nextWidth; ++x)
+                    {
+                        uint32_t sx = x * 2;
+                        uint32_t sy = y * 2;
+                        uint32_t sx1 = (std::min)(sx + 1, mipWidth - 1);
+                        uint32_t sy1 = (std::min)(sy + 1, mipHeight - 1);
+
+                        for (uint32_t c = 0; c < 4; ++c)
+                        {
+                            float sum = 0.0f;
+                            sum += currentMipData[(sy * mipWidth + sx) * 4 + c];
+                            sum += currentMipData[(sy * mipWidth + sx1) * 4 + c];
+                            sum += currentMipData[(sy1 * mipWidth + sx) * 4 + c];
+                            sum += currentMipData[(sy1 * mipWidth + sx1) * 4 + c];
+                            nextMipData[(y * nextWidth + x) * 4 + c] = sum * 0.25f;
+                        }
+                    }
+                }
+
+                currentMipData = std::move(nextMipData);
+                mipWidth = nextWidth;
+                mipHeight = nextHeight;
+            }
+        }
+
+        NORVES_LOG_INFO("LightingPass", "Environment map created with mipmaps");
+        return true;
+    }
+
+    // ========================================
+    // BRDF LUT CPU生成（split-sum近似）
+    // ========================================
+    bool LightingPass::GenerateBRDFLut()
+    {
+        constexpr uint32_t LUT_SIZE = 256;
+        constexpr uint32_t SAMPLE_COUNT = 1024;
+        constexpr float PI = 3.14159265359f;
+
+        NORVES_LOG_INFO("LightingPass", "Generating BRDF LUT...");
+
+        // RG16_FLOAT LUT
+        Container::VariableArray<uint16_t> lutData(static_cast<size_t>(LUT_SIZE) * LUT_SIZE * 2, 0);
+
+        for (uint32_t y = 0; y < LUT_SIZE; ++y)
+        {
+            float roughness = (static_cast<float>(y) + 0.5f) / static_cast<float>(LUT_SIZE);
+            roughness = (std::max)(roughness, 0.01f); // 0に近いとGGXが不安定になる
+
+            for (uint32_t x = 0; x < LUT_SIZE; ++x)
+            {
+                float NdotV = (static_cast<float>(x) + 0.5f) / static_cast<float>(LUT_SIZE);
+                NdotV = (std::max)(NdotV, 0.001f);
+
+                // V vector in tangent space (N = (0,0,1))
+                float Vx = std::sqrt(1.0f - NdotV * NdotV);
+                float Vy = 0.0f;
+                float Vz = NdotV;
+
+                float A = 0.0f;
+                float B = 0.0f;
+
+                for (uint32_t i = 0; i < SAMPLE_COUNT; ++i)
+                {
+                    // Hammersley sequence
+                    float u = static_cast<float>(i) / static_cast<float>(SAMPLE_COUNT);
+                    uint32_t bits = i;
+                    bits = (bits << 16u) | (bits >> 16u);
+                    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+                    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+                    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+                    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+                    float v = static_cast<float>(bits) * 2.3283064365386963e-10f;
+
+                    // ImportanceSample GGX
+                    float a = roughness * roughness;
+                    float phi = 2.0f * PI * u;
+                    float cosTheta = std::sqrt((1.0f - v) / (1.0f + (a * a - 1.0f) * v));
+                    float sinTheta = std::sqrt(1.0f - cosTheta * cosTheta);
+
+                    // Half vector in tangent space
+                    float Hx = sinTheta * std::cos(phi);
+                    float Hy = sinTheta * std::sin(phi);
+                    float Hz = cosTheta;
+
+                    // Reflect V around H to get L
+                    float VdotH = Vx * Hx + Vy * Hy + Vz * Hz;
+                    float Lx = 2.0f * VdotH * Hx - Vx;
+                    float Ly = 2.0f * VdotH * Hy - Vy;
+                    float Lz = 2.0f * VdotH * Hz - Vz;
+
+                    float NdotL = (std::max)(Lz, 0.0f);
+                    float NdotH = (std::max)(Hz, 0.0f);
+                    VdotH = (std::max)(VdotH, 0.0f);
+
+                    if (NdotL > 0.0f)
+                    {
+                        // Smith GGX for IBL: k = roughness^2 / 2
+                        float k = (roughness * roughness) / 2.0f;
+                        float G_V = NdotV / (NdotV * (1.0f - k) + k);
+                        float G_L = NdotL / (NdotL * (1.0f - k) + k);
+                        float G = G_V * G_L;
+
+                        float G_Vis = (G * VdotH) / (NdotH * NdotV + 0.0001f);
+                        float Fc = std::pow(1.0f - VdotH, 5.0f);
+
+                        A += (1.0f - Fc) * G_Vis;
+                        B += Fc * G_Vis;
+                    }
+                }
+
+                A /= static_cast<float>(SAMPLE_COUNT);
+                B /= static_cast<float>(SAMPLE_COUNT);
+
+                // Clamp to valid range
+                A = (std::max)(0.0f, (std::min)(1.0f, A));
+                B = (std::max)(0.0f, (std::min)(1.0f, B));
+
+                size_t idx = (static_cast<size_t>(y) * LUT_SIZE + x) * 2;
+                lutData[idx + 0] = FloatToHalf(A);
+                lutData[idx + 1] = FloatToHalf(B);
+            }
+        }
+
+        // テクスチャ作成（R16G16_FLOAT）
+        RHI::TextureDesc lutDesc;
+        lutDesc.Width = LUT_SIZE;
+        lutDesc.Height = LUT_SIZE;
+        lutDesc.MipLevels = 1;
+        lutDesc.TextureFormat = RHI::Format::R16G16_FLOAT;
+        lutDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        lutDesc.DebugName = "BRDF_LUT";
+
+        m_BrdfLutTexture = m_Device->CreateTexture(lutDesc);
+        if (!m_BrdfLutTexture)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create BRDF LUT texture");
+            return false;
+        }
+
+        uint32_t rowPitch = LUT_SIZE * 2 * static_cast<uint32_t>(sizeof(uint16_t));
+        uint32_t slicePitch = rowPitch * LUT_SIZE;
+        m_BrdfLutTexture->Update(lutData.data(), rowPitch, slicePitch);
+
+        NORVES_LOG_INFO("LightingPass", "BRDF LUT generated");
+        return true;
     }
 
 } // namespace NorvesLib::Core::Rendering

@@ -12,6 +12,17 @@ layout(set = 0, binding = 1) uniform ToneMappingParams
     float gamma;
     uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure
     float _padding;
+    // Vignette パラメータ
+    float vignetteIntensity;  // 0.0 = off, ~0.3 = subtle
+    float vignetteRadius;     // 内側半径 ~0.8
+    float vignetteSoftness;   // フォールオフの柔らかさ ~0.5
+    float _pad1;
+    // Color Grading パラメータ
+    vec4 colorFilter;         // カラーフィルター (rgb * intensity in w)
+    float contrast;           // コントラスト (1.0 = default)
+    float saturation;         // 彩度 (1.0 = default)
+    float brightness;         // 明度オフセット (0.0 = default)
+    float temperature;        // 色温度シフト (-1..+1, 0=neutral)
 } params;
 
 layout(location = 0) out vec4 outColor;
@@ -64,6 +75,43 @@ vec3 TonemapExposure(vec3 color, float exposure)
     return vec3(1.0) - exp(-color * exposure);
 }
 
+// ========================================
+// Vignette（周辺減光）
+// ========================================
+float ComputeVignette(vec2 uv, float intensity, float radius, float softness)
+{
+    vec2 centered = uv - 0.5;
+    float dist = length(centered);
+    float vignette = smoothstep(radius, radius - softness, dist);
+    return mix(1.0, vignette, intensity);
+}
+
+// ========================================
+// Color Grading
+// ========================================
+
+// 色温度補正（簡易版）
+vec3 ApplyTemperature(vec3 color, float temp)
+{
+    // temp: -1 (cool/blue) to +1 (warm/orange)
+    color.r += temp * 0.1;
+    color.b -= temp * 0.1;
+    return clamp(color, 0.0, 1.0);
+}
+
+// コントラスト調整
+vec3 ApplyContrast(vec3 color, float contrast)
+{
+    return clamp((color - 0.5) * contrast + 0.5, 0.0, 1.0);
+}
+
+// 彩度調整
+vec3 ApplySaturation(vec3 color, float saturation)
+{
+    float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    return clamp(mix(vec3(luma), color, saturation), 0.0, 1.0);
+}
+
 void main()
 {
     // HDRシーンカラーをサンプリング
@@ -92,7 +140,31 @@ void main()
     }
 
     // ガンマ補正
-    vec3 gammaCorrected = pow(mapped, vec3(1.0 / params.gamma));
+    vec3 result = pow(mapped, vec3(1.0 / params.gamma));
 
-    outColor = vec4(gammaCorrected, 1.0);
+    // ========================================
+    // Color Grading（LDR空間で適用）
+    // ========================================
+    // カラーフィルター
+    result *= params.colorFilter.rgb * params.colorFilter.w;
+
+    // 明度
+    result += vec3(params.brightness);
+
+    // コントラスト
+    result = ApplyContrast(result, params.contrast);
+
+    // 彩度
+    result = ApplySaturation(result, params.saturation);
+
+    // 色温度
+    result = ApplyTemperature(result, params.temperature);
+
+    // ========================================
+    // Vignette（最終段で適用）
+    // ========================================
+    float vignette = ComputeVignette(fragUV, params.vignetteIntensity, params.vignetteRadius, params.vignetteSoftness);
+    result *= vignette;
+
+    outColor = vec4(result, 1.0);
 }

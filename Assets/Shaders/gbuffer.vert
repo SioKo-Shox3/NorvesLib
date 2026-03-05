@@ -12,6 +12,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 objectColor;
     vec4 emissiveColor;  // rgb=エミッシブカラー, a=エミッシブ強度
+    vec4 pomParams;      // x=heightScale, y=hasHeightMap, z=unused, w=unused
 } mvp;
 
 layout(location = 0) out vec3 fragWorldPos;
@@ -19,6 +20,7 @@ layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragObjectColor;
 layout(location = 3) out vec4 fragEmissiveColor;
 layout(location = 4) out vec2 fragTexCoord;
+layout(location = 5) out vec3 fragViewDir;  // ワールド空間でのカメラ方向
 
 void main()
 {
@@ -31,6 +33,7 @@ void main()
     fragObjectColor = mvp.objectColor.rgb;
     fragEmissiveColor = mvp.emissiveColor;
     fragTexCoord = inTexCoord;
+    fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
 
     gl_Position = mvp.projection * mvp.view * worldPos;
 }

@@ -18,7 +18,7 @@ namespace NorvesLib::Core::Component
         AffectedLayers = Rendering::RenderLayer::All;
     }
 
-    LightComponent::LightComponent(const FieldInitializer* initializer)
+    LightComponent::LightComponent(const FieldInitializer *initializer)
         : Component(initializer)
     {
         LightTypeProp = Rendering::LightType::Directional;
@@ -30,7 +30,7 @@ namespace NorvesLib::Core::Component
         AffectedLayers = Rendering::RenderLayer::All;
     }
 
-    LightComponent::LightComponent(const IUnknown* sourceObject)
+    LightComponent::LightComponent(const IUnknown *sourceObject)
         : Component(sourceObject)
     {
         LightTypeProp = Rendering::LightType::Directional;
@@ -82,7 +82,7 @@ namespace NorvesLib::Core::Component
         m_LightColor[2] = b;
     }
 
-    void LightComponent::GetLightColor(float& outR, float& outG, float& outB) const
+    void LightComponent::GetLightColor(float &outR, float &outG, float &outB) const
     {
         outR = m_LightColor[0];
         outG = m_LightColor[1];
@@ -101,7 +101,7 @@ namespace NorvesLib::Core::Component
         m_LightDirection[2] = z;
     }
 
-    void LightComponent::GetLightDirection(float& outX, float& outY, float& outZ) const
+    void LightComponent::GetLightDirection(float &outX, float &outY, float &outZ) const
     {
         outX = m_LightDirection[0];
         outY = m_LightDirection[1];
@@ -112,7 +112,7 @@ namespace NorvesLib::Core::Component
     // LightProxy構築
     // ========================================
 
-    void LightComponent::FillCommonLightProxy(Rendering::LightProxy& outProxy) const
+    void LightComponent::FillCommonLightProxy(Rendering::LightProxy &outProxy) const
     {
         outProxy.Type = LightTypeProp;
         outProxy.ColorR = m_LightColor[0];
@@ -131,7 +131,7 @@ namespace NorvesLib::Core::Component
         outProxy.DirectionZ = m_LightDirection[2];
     }
 
-    bool LightComponent::BuildLightProxy(Rendering::LightProxy& outProxy) const
+    bool LightComponent::BuildLightProxy(Rendering::LightProxy &outProxy) const
     {
         if (!IsEnabled() || !bLightVisible)
         {

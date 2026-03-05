@@ -45,6 +45,41 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 出力フォーマット（LDR） */
         RHI::Format OutputFormat = RHI::Format::R8G8B8A8_UNORM;
+
+        // ========================================
+        // Vignette（周辺減光）
+        // ========================================
+
+        /** @brief ビネット強度（0=無効、0.3=微妙、0.6=強め） */
+        float VignetteIntensity = 0.3f;
+
+        /** @brief ビネット内側半径 */
+        float VignetteRadius = 0.8f;
+
+        /** @brief ビネットのフォールオフ柔らかさ */
+        float VignetteSoftness = 0.5f;
+
+        // ========================================
+        // Color Grading
+        // ========================================
+
+        /** @brief カラーフィルター（RGB） */
+        float ColorFilter[3] = {1.0f, 1.0f, 1.0f};
+
+        /** @brief カラーフィルター強度 */
+        float ColorFilterIntensity = 1.0f;
+
+        /** @brief コントラスト（1.0=デフォルト） */
+        float Contrast = 1.05f;
+
+        /** @brief 彩度（1.0=デフォルト） */
+        float Saturation = 1.1f;
+
+        /** @brief 明度オフセット */
+        float Brightness = 0.0f;
+
+        /** @brief 色温度シフト（-1〜+1、0=ニュートラル） */
+        float Temperature = 0.0f;
     };
 
     /**

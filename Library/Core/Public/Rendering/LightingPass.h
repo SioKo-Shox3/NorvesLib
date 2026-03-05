@@ -24,6 +24,12 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief アンビエントライトの色 */
         float AmbientColor[3] = {1.0f, 1.0f, 1.0f};
+
+        /** @brief HDR環境マップパス（空の場合はIBL無効、フォールバックアンビエント使用） */
+        Container::String EnvironmentMapPath;
+
+        /** @brief IBL強度 */
+        float IBLIntensity = 0.2f;
     };
 
     /**
@@ -95,6 +101,19 @@ namespace NorvesLib::Core::Rendering
          */
         void UpdateLightBuffer(ViewRenderContext &context, bool bShadowAvailable);
 
+        /**
+         * @brief HDR環境マップをロード（ミップマップ付きRGBA16_FLOAT）
+         * @param path 環境マップファイルパス
+         * @return ロード成功時true
+         */
+        bool LoadEnvironmentMap(const Container::String &path);
+
+        /**
+         * @brief BRDF LUTをCPUで生成（split-sum近似）
+         * @return 生成成功時true
+         */
+        bool GenerateBRDFLut();
+
         // 設定
         LightingPassSettings m_Settings;
 
@@ -111,6 +130,13 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_LightArrayBuffer;
         RHI::DescriptorSetPtr m_LightingDescriptorSet;
         RHI::SamplerPtr m_GBufferSampler;
+
+        // IBL (Image-Based Lighting) リソース
+        RHI::TexturePtr m_EnvironmentTexture; ///< HDR環境マップ（equirectangular）
+        RHI::TexturePtr m_BrdfLutTexture;     ///< BRDF LUT（split-sum近似）
+        RHI::SamplerPtr m_IBLSampler;         ///< IBL用サンプラー（Linear + ミップマップ）
+        uint32_t m_EnvironmentMipLevels = 1;  ///< 環境マップのミップレベル数
+        bool m_bIBLAvailable = false;         ///< IBLリソースが利用可能か
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
