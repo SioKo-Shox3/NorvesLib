@@ -86,6 +86,8 @@ namespace NorvesLib::RHI::Vulkan
         ShaderCompilerPtr CreateShaderCompiler() override;
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
+        Math::Matrix4x4 AdjustProjectionForClipSpace(
+            const Math::Matrix4x4 &projection, bool bApplyYFlip = true) const override;
 
         // Vulkan固有のメソッド (vulkan.hpp型)
         vk::Device GetVkDevice() const { return m_device; }

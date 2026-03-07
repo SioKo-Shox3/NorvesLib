@@ -55,18 +55,18 @@ namespace NorvesLib::Core::Rendering
     class SSRPass : public IViewPass
     {
     public:
-        explicit SSRPass(const SSRSettings& settings = SSRSettings{});
+        explicit SSRPass(const SSRSettings &settings = SSRSettings{});
         ~SSRPass() override;
 
-        const char* GetName() const override { return "SSRPass"; }
+        const char *GetName() const override { return "SSRPass"; }
 
-        bool Initialize(ViewRenderContext& context) override;
+        bool Initialize(ViewRenderContext &context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext& context) override;
-        void Execute(ViewRenderContext& context) override;
+        void Setup(ViewRenderContext &context) override;
+        void Execute(ViewRenderContext &context) override;
 
         void SetEnabled(bool bEnabled) { m_Settings.bEnabled = bEnabled; }
-        const SSRSettings& GetSettings() const { return m_Settings; }
+        const SSRSettings &GetSettings() const { return m_Settings; }
 
     private:
         SSRSettings m_Settings;
@@ -86,7 +86,7 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_PointSampler;
 
         // デバイス参照
-        RHI::IDevice* m_Device = nullptr;
+        RHI::IDevice *m_Device = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;

@@ -13,7 +13,7 @@ namespace NorvesLib::Core::Rendering
 
     struct GPUFXAAParams
     {
-        float texelSize[4];      // xy = 1/resolution, zw = resolution
+        float texelSize[4]; // xy = 1/resolution, zw = resolution
         float edgeThreshold;
         float edgeThresholdMin;
         float subpixelQuality;
@@ -24,7 +24,7 @@ namespace NorvesLib::Core::Rendering
     // Constructor / Destructor
     // ========================================
 
-    FXAAPass::FXAAPass(const FXAASettings& settings)
+    FXAAPass::FXAAPass(const FXAASettings &settings)
         : m_Settings(settings)
     {
     }
@@ -41,7 +41,7 @@ namespace NorvesLib::Core::Rendering
     // Initialize
     // ========================================
 
-    bool FXAAPass::Initialize(ViewRenderContext& context)
+    bool FXAAPass::Initialize(ViewRenderContext &context)
     {
         if (m_bInitialized)
         {
@@ -138,7 +138,7 @@ namespace NorvesLib::Core::Rendering
     // Setup
     // ========================================
 
-    void FXAAPass::Setup(ViewRenderContext& context)
+    void FXAAPass::Setup(ViewRenderContext &context)
     {
         uint32_t width = context.ScreenWidth;
         uint32_t height = context.ScreenHeight;
@@ -262,7 +262,7 @@ namespace NorvesLib::Core::Rendering
     // Execute
     // ========================================
 
-    void FXAAPass::Execute(ViewRenderContext& context)
+    void FXAAPass::Execute(ViewRenderContext &context)
     {
         if (!context.CommandList)
         {

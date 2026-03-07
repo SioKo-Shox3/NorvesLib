@@ -272,30 +272,14 @@ namespace NorvesLib::Core::Rendering
             orthoSize * 2.0f, orthoSize * 2.0f,
             m_Settings.NearPlane, m_Settings.FarPlane);
 
-        // 右手系変換（Vulkan深度[0,1]）
-        lightProjMat.m22 *= -1.0f;
-        lightProjMat.m32 *= -1.0f;
-        // シャドウマップではY反転は適用しない（テクスチャサンプリングとの整合性のため）
+        // RHI側でAPI固有のクリップ空間補正を適用（シャドウマップではY反転なし）
+        lightProjMat = context.Device->AdjustProjectionForClipSpace(lightProjMat, false);
 
-        // ========================================
-        // RowMajor → ColumnMajor転置ヘルパー
-        // ========================================
-        auto TransposeToFloat = [](const Matrix4x4 &mat, float *out)
-        {
-            for (int row = 0; row < 4; ++row)
-            {
-                for (int col = 0; col < 4; ++col)
-                {
-                    out[col * 4 + row] = mat.m[row][col];
-                }
-            }
-        };
-
-        // ライトビュー・プロジェクションを変換
+        // ライトビュー・プロジェクションをGPU用データに変換
         float lightViewData[16];
         float lightProjData[16];
-        TransposeToFloat(lightViewMat, lightViewData);
-        TransposeToFloat(lightProjMat, lightProjData);
+        MatrixUtils::TransposeToShaderData(lightViewMat, lightViewData);
+        MatrixUtils::TransposeToShaderData(lightProjMat, lightProjData);
 
         // シャドウマップテクスチャをSharedResourceRegistryに登録
         if (context.SharedResources)
@@ -329,9 +313,9 @@ namespace NorvesLib::Core::Rendering
         context.CommandList->SetPipeline(m_ShadowPipeline);
 
         // ========================================
-        // MeshProxy駆動の描画（影を落とすメッシュのみ）
+        // DrawCommand駆動の描画（影を落とすメッシュのみ）
         // ========================================
-        if (m_SceneView && context.ResourceManager)
+        if (m_SceneView && m_SceneRenderer && context.ResourceManager)
         {
             // UBOデータ構造体（shadow.vertのShadowMVPに対応）
             struct ShadowPerObjectUBO
@@ -344,17 +328,11 @@ namespace NorvesLib::Core::Rendering
             // フレーム開始時にアロケータリセット
             m_UniformAllocator.Reset();
 
-            const auto &meshProxies = m_SceneView->GetMeshProxies();
-            for (const auto &proxy : meshProxies)
+            // DrawCommand配列を取得し、影を落とすコマンドのみ描画
+            const auto &drawCommands = m_SceneView->GetDrawCommands();
+            for (const auto &cmd : drawCommands)
             {
-                if (!proxy.IsValid() || !proxy.bCastShadow)
-                {
-                    continue;
-                }
-
-                // RenderResourceManagerからGPUデータを取得
-                const auto *gpuData = context.ResourceManager->GetMeshGPUData(proxy.MeshHandle);
-                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer)
+                if (!cmd.bCastShadow)
                 {
                     continue;
                 }
@@ -369,19 +347,16 @@ namespace NorvesLib::Core::Rendering
 
                 // UBOデータ構築
                 ShadowPerObjectUBO uboData;
-                // ワールド行列は行ベクトル規約なので直接コピー（GBufferPassと同じ）
-                std::memcpy(uboData.world, proxy.WorldTransform.values, sizeof(uboData.world));
+                MatrixUtils::CopyToShaderData(cmd.WorldMatrix, uboData.world);
                 std::memcpy(uboData.lightView, lightViewData, sizeof(lightViewData));
                 std::memcpy(uboData.lightProjection, lightProjData, sizeof(lightProjData));
 
                 // UBO更新
                 allocation.UniformBuffer->Update(&uboData, sizeof(ShadowPerObjectUBO));
 
-                // 描画
-                context.CommandList->SetDescriptorSet(allocation.DescriptorSet, 0);
-                context.CommandList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
-                context.CommandList->SetIndexBuffer(gpuData->IndexBuffer, 0);
-                context.CommandList->DrawIndexed(gpuData->IndexCount, 0, 0);
+                // SceneRenderer経由で描画記録
+                m_SceneRenderer->RecordMeshDrawCall(cmd, context.CommandList,
+                                                    context.ResourceManager, allocation.DescriptorSet, 0);
             }
         }
 

@@ -273,9 +273,9 @@ namespace NorvesLib::Core::Rendering
         context.CommandList->SetPipeline(m_GBufferPipeline);
 
         // ========================================
-        // MeshProxy駆動の描画
+        // DrawCommand駆動の描画
         // ========================================
-        if (m_SceneView && context.ResourceManager)
+        if (m_SceneView && m_SceneRenderer && context.ResourceManager)
         {
             // カメラ行列の構築
             using namespace NorvesLib::Math;
@@ -299,29 +299,14 @@ namespace NorvesLib::Core::Rendering
                 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
                     fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
 
-                // 右手系変換
-                projMat.m22 *= -1.0f;
-                projMat.m32 *= -1.0f;
-                // Vulkan Y反転
-                projMat.m11 *= -1.0f;
+                // RHI側でAPI固有のクリップ空間補正を適用
+                projMat = context.Device->AdjustProjectionForClipSpace(projMat);
 
                 cameraPos[0] = cam.PositionX;
                 cameraPos[1] = cam.PositionY;
                 cameraPos[2] = cam.PositionZ;
                 cameraPos[3] = 1.0f;
             }
-
-            // RowMajor → ColumnMajor転置ヘルパー
-            auto TransposeToFloat = [](const Matrix4x4 &mat, float *out)
-            {
-                for (int row = 0; row < 4; ++row)
-                {
-                    for (int col = 0; col < 4; ++col)
-                    {
-                        out[col * 4 + row] = mat.m[row][col];
-                    }
-                }
-            };
 
             // UBOデータ構造体（std140レイアウト）
             struct PerObjectUBO
@@ -338,27 +323,16 @@ namespace NorvesLib::Core::Rendering
             // ビュー・プロジェクション行列を事前変換
             float viewData[16];
             float projData[16];
-            TransposeToFloat(viewMat, viewData);
-            TransposeToFloat(projMat, projData);
+            MatrixUtils::TransposeToShaderData(viewMat, viewData);
+            MatrixUtils::TransposeToShaderData(projMat, projData);
 
             // フレーム開始時にアロケータリセット
             m_UniformAllocator.Reset();
 
-            const auto &meshProxies = m_SceneView->GetMeshProxies();
-            for (const auto &proxy : meshProxies)
+            // DrawCommand配列を取得（SceneViewが事前生成）
+            const auto &opaqueCommands = m_SceneView->GetOpaqueCommands();
+            for (const auto &cmd : opaqueCommands)
             {
-                if (!proxy.IsValid())
-                {
-                    continue;
-                }
-
-                // RenderResourceManagerからGPUデータを取得
-                const auto *gpuData = context.ResourceManager->GetMeshGPUData(proxy.MeshHandle);
-                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer)
-                {
-                    continue;
-                }
-
                 // UBOスロット確保
                 auto allocation = m_UniformAllocator.Allocate();
                 if (!allocation.UniformBuffer)
@@ -369,19 +343,16 @@ namespace NorvesLib::Core::Rendering
 
                 // UBOデータ構築
                 PerObjectUBO uboData;
-                // ワールド行列は行ベクトル規約（平行移動がRow3）なので
-                // 直接コピーしてGLSL列メジャーのM^Tとして正しく機能させる
-                // （TransposeToFloatはLookAt/Perspectiveなど列ベクトル規約の行列に使う）
-                std::memcpy(uboData.world, proxy.WorldTransform.values, sizeof(uboData.world));
+                MatrixUtils::CopyToShaderData(cmd.WorldMatrix, uboData.world);
                 std::memcpy(uboData.view, viewData, sizeof(viewData));
                 std::memcpy(uboData.projection, projData, sizeof(projData));
                 std::memcpy(uboData.cameraPosition, cameraPos, sizeof(cameraPos));
 
                 // オブジェクトカラー（CustomDataから取得、未設定時はデフォルト白）
-                uboData.objectColor[0] = proxy.CustomData[0] != 0.0f ? proxy.CustomData[0] : 1.0f;
-                uboData.objectColor[1] = proxy.CustomData[1] != 0.0f ? proxy.CustomData[1] : 1.0f;
-                uboData.objectColor[2] = proxy.CustomData[2] != 0.0f ? proxy.CustomData[2] : 1.0f;
-                uboData.objectColor[3] = proxy.CustomData[3] != 0.0f ? proxy.CustomData[3] : 1.0f;
+                uboData.objectColor[0] = cmd.CustomData[0] != 0.0f ? cmd.CustomData[0] : 1.0f;
+                uboData.objectColor[1] = cmd.CustomData[1] != 0.0f ? cmd.CustomData[1] : 1.0f;
+                uboData.objectColor[2] = cmd.CustomData[2] != 0.0f ? cmd.CustomData[2] : 1.0f;
+                uboData.objectColor[3] = cmd.CustomData[3] != 0.0f ? cmd.CustomData[3] : 1.0f;
 
                 // マテリアルからテクスチャとエミッシブを取得
                 TextureHandle matAlbedo;
@@ -394,9 +365,9 @@ namespace NorvesLib::Core::Rendering
                 float matEmissiveR = 0.0f, matEmissiveG = 0.0f, matEmissiveB = 0.0f;
                 float matEmissiveStrength = 0.0f;
 
-                if (proxy.MaterialCount > 0 && proxy.Materials[0].IsValid() && context.ResourceManager)
+                if (cmd.MaterialHandle.IsValid() && context.ResourceManager)
                 {
-                    const auto *matData = context.ResourceManager->GetMaterialData(proxy.Materials[0]);
+                    const auto *matData = context.ResourceManager->GetMaterialData(cmd.MaterialHandle);
                     if (matData)
                     {
                         matAlbedo = matData->AlbedoTexture;
@@ -463,11 +434,9 @@ namespace NorvesLib::Core::Rendering
                 allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
                 allocation.DescriptorSet->Update();
 
-                // 描画
-                context.CommandList->SetDescriptorSet(allocation.DescriptorSet, 0);
-                context.CommandList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
-                context.CommandList->SetIndexBuffer(gpuData->IndexBuffer, 0);
-                context.CommandList->DrawIndexed(gpuData->IndexCount, 0, 0);
+                // SceneRenderer経由で描画記録
+                m_SceneRenderer->RecordMeshDrawCall(cmd, context.CommandList,
+                                                    context.ResourceManager, allocation.DescriptorSet, 0);
             }
         }
 

@@ -4,6 +4,7 @@
 #include "IGPUResourceAllocator.h"
 #include "IDescriptorSet.h"
 #include "Container/Containers.h"
+#include "Math/Matrix4x4.h"
 
 namespace NorvesLib::RHI
 {
@@ -249,6 +250,19 @@ namespace NorvesLib::RHI
          * @return 使用中のRHI API
          */
         virtual API GetAPI() const = 0;
+
+        /**
+         * @brief 描画API固有のクリップ空間に合わせてプロジェクション行列を補正
+         *
+         * 右手系座標のプロジェクション行列を現在の描画APIのクリップ空間に変換します。
+         * Y軸反転（Vulkan等）や深度範囲の調整をAPI側で吸収します。
+         *
+         * @param projection 補正前のプロジェクション行列
+         * @param bApplyYFlip Y軸反転を適用するか（シャドウマップではfalse）
+         * @return 補正済みのプロジェクション行列
+         */
+        virtual Math::Matrix4x4 AdjustProjectionForClipSpace(
+            const Math::Matrix4x4 &projection, bool bApplyYFlip = true) const = 0;
     };
 
 } // namespace NorvesLib::RHI

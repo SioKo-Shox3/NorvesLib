@@ -67,6 +67,12 @@ namespace NorvesLib::Core::Rendering
         bool bInstanced = false; // インスタンシング描画か
 
         // ========================================
+        // カスタムデータ
+        // ========================================
+
+        float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // シェーダーに渡すカスタムデータ
+
+        // ========================================
         // ユーティリティ
         // ========================================
 
@@ -122,6 +128,16 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<Math::Matrix4x4> InstanceTransforms;
         Container::VariableArray<uint64_t> InstanceObjectIds; // 元のObjectID（デバッグ用）
 
+        /**
+         * @brief インスタンスごとの追加データ
+         */
+        struct PerInstanceExtraData
+        {
+            float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            bool bCastShadow = true;
+        };
+        Container::VariableArray<PerInstanceExtraData> InstanceExtraData;
+
         // ========================================
         // ユーティリティ
         // ========================================
@@ -131,10 +147,21 @@ namespace NorvesLib::Core::Rendering
          * @param worldTransform ワールド変換行列
          * @param objectId オブジェクトID
          */
-        void AddInstance(const Math::Matrix4x4 &worldTransform, uint64_t objectId = 0)
+        void AddInstance(const Math::Matrix4x4 &worldTransform, uint64_t objectId = 0,
+                         const float *customData = nullptr, bool bCastShadow = true)
         {
             InstanceTransforms.push_back(worldTransform);
             InstanceObjectIds.push_back(objectId);
+            PerInstanceExtraData extra;
+            if (customData)
+            {
+                extra.CustomData[0] = customData[0];
+                extra.CustomData[1] = customData[1];
+                extra.CustomData[2] = customData[2];
+                extra.CustomData[3] = customData[3];
+            }
+            extra.bCastShadow = bCastShadow;
+            InstanceExtraData.push_back(extra);
         }
 
         /**
@@ -152,6 +179,7 @@ namespace NorvesLib::Core::Rendering
         {
             InstanceTransforms.clear();
             InstanceObjectIds.clear();
+            InstanceExtraData.clear();
         }
 
         /**
