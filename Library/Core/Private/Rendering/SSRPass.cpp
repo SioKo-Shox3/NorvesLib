@@ -32,7 +32,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t bEnabled;
     };
 
-    SSRPass::SSRPass(const SSRSettings& settings)
+    SSRPass::SSRPass(const SSRSettings &settings)
         : m_Settings(settings)
     {
     }
@@ -45,7 +45,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    bool SSRPass::Initialize(ViewRenderContext& context)
+    bool SSRPass::Initialize(ViewRenderContext &context)
     {
         if (m_bInitialized)
         {
@@ -148,7 +148,7 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("SSRPass", "SSRPass shutdown");
     }
 
-    void SSRPass::Setup(ViewRenderContext& context)
+    void SSRPass::Setup(ViewRenderContext &context)
     {
         uint32_t width = context.ScreenWidth;
         uint32_t height = context.ScreenHeight;
@@ -284,7 +284,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void SSRPass::Execute(ViewRenderContext& context)
+    void SSRPass::Execute(ViewRenderContext &context)
     {
         if (!context.CommandList)
         {
@@ -316,17 +316,6 @@ namespace NorvesLib::Core::Rendering
         // プロジェクション行列をカメラから計算
         using namespace NorvesLib::Math;
 
-        auto transposeToFloat = [](const Matrix4x4& mat, float* out)
-        {
-            for (int col = 0; col < 4; col++)
-            {
-                for (int row = 0; row < 4; row++)
-                {
-                    out[col * 4 + row] = mat.m[row][col];
-                }
-            }
-        };
-
         GPUSSRParams params = {};
         params.screenSize[0] = static_cast<float>(m_CurrentWidth);
         params.screenSize[1] = static_cast<float>(m_CurrentHeight);
@@ -344,31 +333,29 @@ namespace NorvesLib::Core::Rendering
         // ビューとプロジェクション行列
         if (context.MainCamera)
         {
-            const auto& cam = *context.MainCamera;
+            const auto &cam = *context.MainCamera;
 
             float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
             float aspectRatio = static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight);
 
             Matrix4x4 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
                 fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
-            // Vulkanクリップ空間補正
-            projMat.m22 *= -1.0f;
-            projMat.m32 *= -1.0f;
-            projMat.m11 *= -1.0f;
+            // RHI側でAPI固有のクリップ空間補正を適用
+            projMat = context.Device->AdjustProjectionForClipSpace(projMat);
 
             Matrix4x4 viewMat = MatrixUtils::CreateLookAt(
                 {cam.PositionX, cam.PositionY, cam.PositionZ},
                 {cam.PositionX + cam.ForwardX, cam.PositionY + cam.ForwardY, cam.PositionZ + cam.ForwardZ},
                 {cam.UpX, cam.UpY, cam.UpZ});
 
-            transposeToFloat(projMat, params.projection);
-            transposeToFloat(viewMat, params.view);
+            MatrixUtils::TransposeToShaderData(projMat, params.projection);
+            MatrixUtils::TransposeToShaderData(viewMat, params.view);
 
             // 逆行列
             Matrix4x4 invProj = MatrixUtils::Inverse(projMat);
             Matrix4x4 invView = MatrixUtils::Inverse(viewMat);
-            transposeToFloat(invProj, params.invProjection);
-            transposeToFloat(invView, params.invView);
+            MatrixUtils::TransposeToShaderData(invProj, params.invProjection);
+            MatrixUtils::TransposeToShaderData(invView, params.invView);
         }
 
         m_ParamsBuffer->Update(&params, sizeof(GPUSSRParams));

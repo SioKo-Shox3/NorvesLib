@@ -657,18 +657,6 @@ namespace NorvesLib::Core::Rendering
 
         using namespace NorvesLib::Math;
 
-        // RowMajor → ColumnMajor転置ヘルパー
-        auto TransposeToFloat = [](const Matrix4x4 &mat, float *out)
-        {
-            for (int row = 0; row < 4; ++row)
-            {
-                for (int col = 0; col < 4; ++col)
-                {
-                    out[col * 4 + row] = mat.m[row][col];
-                }
-            }
-        };
-
         // ========================================
         // カメラ行列の計算（GBufferPassと同じロジック）
         // ========================================
@@ -692,11 +680,8 @@ namespace NorvesLib::Core::Rendering
             projMat = MatrixUtils::CreatePerspectiveFieldOfView(
                 fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
 
-            // 右手系変換
-            projMat.m22 *= -1.0f;
-            projMat.m32 *= -1.0f;
-            // Vulkan Y反転
-            projMat.m11 *= -1.0f;
+            // RHI側でAPI固有のクリップ空間補正を適用
+            projMat = context.Device->AdjustProjectionForClipSpace(projMat);
 
             params.cameraPosition[0] = cam.PositionX;
             params.cameraPosition[1] = cam.PositionY;
@@ -714,7 +699,7 @@ namespace NorvesLib::Core::Rendering
         // invViewProjection行列の計算
         Matrix4x4 vpMat = projMat * viewMat;
         Matrix4x4 invVPMat = MatrixUtils::Inverse(vpMat);
-        TransposeToFloat(invVPMat, params.invViewProjection);
+        MatrixUtils::TransposeToShaderData(invVPMat, params.invViewProjection);
 
         // アンビエントカラー
         params.ambientColor[0] = m_Settings.AmbientColor[0];
@@ -743,13 +728,11 @@ namespace NorvesLib::Core::Rendering
             Matrix4x4 lightProjMat = MatrixUtils::CreateOrthographic(
                 orthoSize * 2.0f, orthoSize * 2.0f, 0.1f, 50.0f);
 
-            // 右手系変換（Vulkan深度[0,1]）
-            lightProjMat.m22 *= -1.0f;
-            lightProjMat.m32 *= -1.0f;
-            // シャドウマップではY反転は適用しない
+            // RHI側でAPI固有のクリップ空間補正を適用（シャドウマップではY反転なし）
+            lightProjMat = context.Device->AdjustProjectionForClipSpace(lightProjMat, false);
 
-            TransposeToFloat(lightViewMat, params.lightView);
-            TransposeToFloat(lightProjMat, params.lightProjection);
+            MatrixUtils::TransposeToShaderData(lightViewMat, params.lightView);
+            MatrixUtils::TransposeToShaderData(lightProjMat, params.lightProjection);
             params.bShadowEnabled = 1;
         }
         else

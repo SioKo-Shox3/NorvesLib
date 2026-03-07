@@ -140,6 +140,25 @@ namespace NorvesLib::Core::Rendering
                         RHI::PipelinePtr pipeline,
                         uint32_t vertexCount);
 
+        /**
+         * @brief 単一DrawCommandのメッシュ描画をコマンドリストに記録します
+         *
+         * パスがUBOとディスクリプタセットを準備した後、
+         * メッシュのGPUデータ解決・頂点/インデックスバッファ設定・DrawIndexedを実行します。
+         *
+         * @param command 描画コマンド
+         * @param commandList コマンドリスト
+         * @param resourceManager レンダリングリソースマネージャ
+         * @param descriptorSet UBOバインド済みディスクリプタセット
+         * @param descriptorSetSlot ディスクリプタセットスロット
+         * @return 描画に成功した場合true
+         */
+        bool RecordMeshDrawCall(const DrawCommand &command,
+                                RHI::ICommandList *commandList,
+                                class RenderResourceManager *resourceManager,
+                                RHI::DescriptorSetPtr descriptorSet,
+                                uint32_t descriptorSetSlot = 0);
+
         // ========================================
         // 統計情報
         // ========================================

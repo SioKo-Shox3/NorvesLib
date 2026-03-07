@@ -24,7 +24,7 @@ namespace NorvesLib::Core::Rendering
     {
         float projection[16];
         float invProjection[16];
-        float screenSize[4];   // xy=size, zw=1/size
+        float screenSize[4]; // xy=size, zw=1/size
         float radius;
         float bias;
         float intensity;
@@ -33,7 +33,7 @@ namespace NorvesLib::Core::Rendering
 
     struct GPUBlurParams
     {
-        float texelSize[4];   // xy=1/width, 1/height
+        float texelSize[4]; // xy=1/width, 1/height
     };
 
     static constexpr uint32_t SSAO_PARAMS_SIZE = sizeof(GPUSSAOParams);
@@ -57,7 +57,7 @@ namespace NorvesLib::Core::Rendering
     // コンストラクタ・デストラクタ
     // ========================================
 
-    SSAOPass::SSAOPass(const SSAOSettings& settings)
+    SSAOPass::SSAOPass(const SSAOSettings &settings)
         : m_Settings(settings)
     {
         std::memset(m_KernelData, 0, sizeof(m_KernelData));
@@ -167,7 +167,7 @@ namespace NorvesLib::Core::Rendering
     // Initialize
     // ========================================
 
-    bool SSAOPass::Initialize(ViewRenderContext& context)
+    bool SSAOPass::Initialize(ViewRenderContext &context)
     {
         if (m_bInitialized)
         {
@@ -312,7 +312,7 @@ namespace NorvesLib::Core::Rendering
     // Setup（リサイズ時にリソース再作成）
     // ========================================
 
-    void SSAOPass::Setup(ViewRenderContext& context)
+    void SSAOPass::Setup(ViewRenderContext &context)
     {
         uint32_t width = context.ScreenWidth;
         uint32_t height = context.ScreenHeight;
@@ -539,7 +539,7 @@ namespace NorvesLib::Core::Rendering
     // Execute
     // ========================================
 
-    void SSAOPass::Execute(ViewRenderContext& context)
+    void SSAOPass::Execute(ViewRenderContext &context)
     {
         if (!context.CommandList || !m_SSAOPipeline || !m_BlurPipeline)
         {
@@ -568,24 +568,12 @@ namespace NorvesLib::Core::Rendering
         // パラメータ更新
         GPUSSAOParams ssaoParams = {};
 
-        // RowMajor → ColumnMajor転置ヘルパー
-        auto TransposeToFloat = [](const NorvesLib::Math::Matrix4x4& mat, float* out)
-        {
-            for (int row = 0; row < 4; ++row)
-            {
-                for (int col = 0; col < 4; ++col)
-                {
-                    out[col * 4 + row] = mat.m[row][col];
-                }
-            }
-        };
-
         // プロジェクション行列を計算（CameraProxyのパラメータから）
         if (context.MainCamera)
         {
             using namespace NorvesLib::Math;
 
-            const auto& cam = *context.MainCamera;
+            const auto &cam = *context.MainCamera;
             float aspectRatio = (m_CurrentHeight > 0)
                                     ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
                                     : 16.0f / 9.0f;
@@ -593,19 +581,17 @@ namespace NorvesLib::Core::Rendering
             Matrix4x4 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
                 fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
 
-            // Vulkan Projection修正（Y反転、Z範囲）
-            projMat.m22 *= -1.0f;
-            projMat.m32 *= -1.0f;
-            projMat.m11 *= -1.0f;
+            // RHI側でAPI固有のクリップ空間補正を適用
+            projMat = context.Device->AdjustProjectionForClipSpace(projMat);
 
             float projData[16];
-            TransposeToFloat(projMat, projData);
+            MatrixUtils::TransposeToShaderData(projMat, projData);
             std::memcpy(ssaoParams.projection, projData, sizeof(projData));
 
             // 逆プロジェクション行列
             Matrix4x4 invProjMat = MatrixUtils::Inverse(projMat);
             float invProjData[16];
-            TransposeToFloat(invProjMat, invProjData);
+            MatrixUtils::TransposeToShaderData(invProjMat, invProjData);
             std::memcpy(ssaoParams.invProjection, invProjData, sizeof(invProjData));
         }
 

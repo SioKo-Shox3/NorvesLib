@@ -1,6 +1,7 @@
 ﻿#include "Rendering/SceneRenderer.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/PersistentResourceCache.h"
+#include "Rendering/RenderResourceManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IBuffer.h"
@@ -240,6 +241,56 @@ namespace NorvesLib::Core::Rendering
         {
             m_Stats.GPUMemoryUsed = m_ResourceCache->GetGPUMemoryUsage();
         }
+    }
+
+    bool SceneRenderer::RecordMeshDrawCall(const DrawCommand &command,
+                                           RHI::ICommandList *commandList,
+                                           RenderResourceManager *resourceManager,
+                                           RHI::DescriptorSetPtr descriptorSet,
+                                           uint32_t descriptorSetSlot)
+    {
+        if (!commandList || !resourceManager)
+        {
+            return false;
+        }
+
+        // MeshHandleからGPUデータを解決
+        const auto *gpuData = resourceManager->GetMeshGPUData(command.MeshHandle);
+        if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer)
+        {
+            return false;
+        }
+
+        // ディスクリプタセット設定
+        if (descriptorSet)
+        {
+            commandList->SetDescriptorSet(descriptorSet, descriptorSetSlot);
+        }
+
+        // 頂点・インデックスバッファ設定
+        commandList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
+        commandList->SetIndexBuffer(gpuData->IndexBuffer, 0);
+
+        // 描画
+        if (command.bInstanced && command.InstanceCount > 1)
+        {
+            commandList->DrawIndexedInstanced(
+                gpuData->IndexCount,
+                command.InstanceCount,
+                0,
+                0,
+                command.FirstInstance);
+        }
+        else
+        {
+            commandList->DrawIndexed(gpuData->IndexCount, 0, 0);
+        }
+
+        // 統計更新
+        ++m_Stats.DrawCallCount;
+        m_Stats.TriangleCount += gpuData->IndexCount / 3;
+
+        return true;
     }
 
 } // namespace NorvesLib::Core::Rendering

@@ -1,6 +1,7 @@
 ﻿#include "Rendering/DrawCommand.h"
 #include "Rendering/SceneProxy.h"
 #include <algorithm>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -66,8 +67,8 @@ namespace NorvesLib::Core::Rendering
             batch.MaterialHandle = proxy.Materials[i];
             batch.SubMeshIndex = i;
 
-            // インスタンスを追加
-            batch.AddInstance(proxy.WorldTransform, proxy.ObjectId);
+            // インスタンスを追加（カスタムデータとシャドウフラグも含む）
+            batch.AddInstance(proxy.WorldTransform, proxy.ObjectId, proxy.CustomData, proxy.bCastShadow);
         }
     }
 
@@ -103,6 +104,13 @@ namespace NorvesLib::Core::Rendering
                 cmd.bInstanced = true;
                 cmd.InstanceCount = batch.GetInstanceCount();
                 cmd.FirstInstance = 0;
+                // カスタムデータとフラグをコピー（最初のインスタンスの値を使用）
+                if (!batch.InstanceExtraData.empty())
+                {
+                    const auto &extra = batch.InstanceExtraData[0];
+                    std::memcpy(cmd.CustomData, extra.CustomData, sizeof(cmd.CustomData));
+                    cmd.bCastShadow = extra.bCastShadow;
+                }
                 // TODO: インスタンスデータバッファへのオフセット設定
             }
             else if (batch.GetInstanceCount() == 1)
@@ -111,6 +119,13 @@ namespace NorvesLib::Core::Rendering
                 cmd.bInstanced = false;
                 cmd.InstanceCount = 1;
                 cmd.WorldMatrix = batch.InstanceTransforms[0];
+                // カスタムデータとフラグをコピー
+                if (!batch.InstanceExtraData.empty())
+                {
+                    const auto &extra = batch.InstanceExtraData[0];
+                    std::memcpy(cmd.CustomData, extra.CustomData, sizeof(cmd.CustomData));
+                    cmd.bCastShadow = extra.bCastShadow;
+                }
                 // TODO: 法線行列の計算
             }
 

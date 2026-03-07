@@ -765,4 +765,18 @@ namespace NorvesLib::RHI::Vulkan
         return StaticPointerCast<IShaderCompiler>(compiler);
     }
 
+    Math::Matrix4x4 VulkanDevice::AdjustProjectionForClipSpace(
+        const Math::Matrix4x4 &projection, bool bApplyYFlip) const
+    {
+        // Vulkanクリップ空間補正行列を構築
+        // 右手系座標のZ軸反転（視線方向が-Zのため）+ オプションのY軸反転
+        Math::Matrix4x4 correction = Math::Matrix4x4::Identity;
+        correction.m22 = -1.0f; // Z反転（右手系→Vulkan深度[0,1]）
+        if (bApplyYFlip)
+        {
+            correction.m11 = -1.0f; // Y反転（Vulkan NDCのY方向）
+        }
+        return projection * correction;
+    }
+
 } // namespace NorvesLib::RHI::Vulkan

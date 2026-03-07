@@ -45,7 +45,7 @@ namespace NorvesLib::Core::Rendering
          * @brief コンストラクタ
          * @param settings FXAA設定
          */
-        explicit FXAAPass(const FXAASettings& settings = FXAASettings{});
+        explicit FXAAPass(const FXAASettings &settings = FXAASettings{});
 
         /**
          * @brief デストラクタ
@@ -56,12 +56,12 @@ namespace NorvesLib::Core::Rendering
         // IViewPass実装
         // ========================================
 
-        const char* GetName() const override { return "FXAAPass"; }
+        const char *GetName() const override { return "FXAAPass"; }
 
-        bool Initialize(ViewRenderContext& context) override;
+        bool Initialize(ViewRenderContext &context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext& context) override;
-        void Execute(ViewRenderContext& context) override;
+        void Setup(ViewRenderContext &context) override;
+        void Execute(ViewRenderContext &context) override;
 
         // ========================================
         // パラメータ調整
@@ -75,7 +75,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 現在の設定を取得
          */
-        const FXAASettings& GetSettings() const { return m_Settings; }
+        const FXAASettings &GetSettings() const { return m_Settings; }
 
     private:
         // 設定
@@ -95,7 +95,7 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_LinearSampler;
 
         // デバイス参照
-        RHI::IDevice* m_Device = nullptr;
+        RHI::IDevice *m_Device = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;

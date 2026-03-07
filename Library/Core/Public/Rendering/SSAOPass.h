@@ -46,7 +46,7 @@ namespace NorvesLib::Core::Rendering
          * @brief コンストラクタ
          * @param settings SSAO設定
          */
-        explicit SSAOPass(const SSAOSettings& settings = SSAOSettings{});
+        explicit SSAOPass(const SSAOSettings &settings = SSAOSettings{});
 
         /**
          * @brief デストラクタ
@@ -57,12 +57,12 @@ namespace NorvesLib::Core::Rendering
         // IViewPass実装
         // ========================================
 
-        const char* GetName() const override { return "SSAOPass"; }
+        const char *GetName() const override { return "SSAOPass"; }
 
-        bool Initialize(ViewRenderContext& context) override;
+        bool Initialize(ViewRenderContext &context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext& context) override;
-        void Execute(ViewRenderContext& context) override;
+        void Setup(ViewRenderContext &context) override;
+        void Execute(ViewRenderContext &context) override;
 
         // ========================================
         // パラメータ調整
@@ -71,7 +71,7 @@ namespace NorvesLib::Core::Rendering
         void SetRadius(float radius) { m_Settings.Radius = radius; }
         void SetBias(float bias) { m_Settings.Bias = bias; }
         void SetIntensity(float intensity) { m_Settings.Intensity = intensity; }
-        const SSAOSettings& GetSettings() const { return m_Settings; }
+        const SSAOSettings &GetSettings() const { return m_Settings; }
 
     private:
         /**
@@ -88,7 +88,7 @@ namespace NorvesLib::Core::Rendering
         SSAOSettings m_Settings;
 
         // SSAOパス用リソース
-        RHI::TexturePtr m_SSAORawTexture;    // ブラー前の生AO
+        RHI::TexturePtr m_SSAORawTexture;     // ブラー前の生AO
         RHI::TexturePtr m_SSAOBlurredTexture; // ブラー後の最終AO
         RHI::TexturePtr m_NoiseTexture;       // 4x4ランダムノイズ
 
@@ -115,7 +115,7 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_NearestRepeatSampler;
 
         // デバイス参照
-        RHI::IDevice* m_Device = nullptr;
+        RHI::IDevice *m_Device = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
