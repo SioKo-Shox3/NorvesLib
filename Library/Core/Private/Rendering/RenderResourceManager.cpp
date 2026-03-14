@@ -6,6 +6,8 @@
 #include "RHI/IShader.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "Logging/LogMacros.h"
+#include "Thread/JobSystem.h"
+#include "FileStream/FileStream.h"
 
 // stb_image（テクスチャファイル読み込み用）
 #include "stb_image.h"
@@ -270,14 +272,8 @@ namespace NorvesLib::Core::Rendering
         return handle;
     }
 
-    TextureHandle RenderResourceManager::LoadTexture(const Container::String &path)
+    Container::String RenderResourceManager::ResolveTexturePath(const Container::String &path) const
     {
-        if (!m_bInitialized)
-        {
-            return TextureHandle::Invalid();
-        }
-
-        // パス解決: "Assets/"で始まる相対パスはNORVES_ASSET_DIRをベースに変換
         Container::String resolvedPath = path;
 #ifdef NORVES_ASSET_DIR
         // 相対パスの場合（ドライブレター/UNCパスでない場合）NORVES_ASSET_DIRをベースにする
@@ -297,6 +293,17 @@ namespace NorvesLib::Core::Rendering
             resolvedPath = Container::String(NORVES_ASSET_DIR) + "/" + relativePath;
         }
 #endif
+        return resolvedPath;
+    }
+
+    TextureHandle RenderResourceManager::LoadTexture(const Container::String &path)
+    {
+        if (!m_bInitialized)
+        {
+            return TextureHandle::Invalid();
+        }
+
+        Container::String resolvedPath = ResolveTexturePath(path);
 
         // キャッシュチェック
         {
@@ -742,6 +749,190 @@ namespace NorvesLib::Core::Rendering
 
         Thread::ScopedLock lock(m_ResourceMutex);
         m_Materials.erase(handle.Id);
+    }
+
+    // ========================================
+    // 非同期テクスチャ読み込み
+    // ========================================
+
+    uint32_t RenderResourceManager::LoadTextureAsync(const Container::String &path,
+                                                     NorvesLib::Core::Delegate<void, TextureHandle> callback)
+    {
+        if (!m_bInitialized)
+        {
+            return 0;
+        }
+
+        Container::String resolvedPath = ResolveTexturePath(path);
+
+        // キャッシュチェック（既に読み込み済みなら即コールバック）
+        {
+            Thread::ScopedLock lock(m_ResourceMutex);
+            auto it = m_TextureCache.find(resolvedPath);
+            if (it != m_TextureCache.end())
+            {
+                callback.InvokeIfBound(it->second);
+                return 0; // 即完了のためリクエストIDは不要
+            }
+        }
+
+        auto request = Container::MakeShared<AsyncTextureRequest>();
+        request->RequestId = m_NextAsyncRequestId.FetchAdd(1, std::memory_order_relaxed);
+        request->Path = path;
+        request->Callback = std::move(callback);
+        request->Result.Path = path;
+        request->Result.ResolvedPath = resolvedPath;
+
+        // ファイルI/O + デコードをワーカースレッドで実行するタスクを作成
+        auto taskFunction = [request]()
+        {
+            auto &result = request->Result;
+
+            // FileStreamでバイナリ読み込み
+            auto fileStream = NorvesLib::FileStream::FileStream::Create(
+                result.ResolvedPath,
+                NorvesLib::FileStream::FileMode::Read,
+                NorvesLib::FileStream::FileAccess::Read,
+                NorvesLib::FileStream::FileShare::Read);
+
+            if (!fileStream || !fileStream->IsOpen())
+            {
+                result.bSuccess = false;
+                return;
+            }
+
+            int64_t fileSize = fileStream->GetSize();
+            if (fileSize <= 0)
+            {
+                result.bSuccess = false;
+                return;
+            }
+
+            // ファイル全体をメモリに読み込み
+            Container::VariableArray<uint8_t> fileData(static_cast<size_t>(fileSize));
+            size_t bytesRead = fileStream->Read(fileData.data(), static_cast<size_t>(fileSize));
+            fileStream->Close();
+
+            if (bytesRead != static_cast<size_t>(fileSize))
+            {
+                result.bSuccess = false;
+                return;
+            }
+
+            // stbi_load_from_memoryでデコード（ワーカースレッドで実行）
+            int width = 0, height = 0, channels = 0;
+            unsigned char *pixels = stbi_load_from_memory(
+                fileData.data(),
+                static_cast<int>(fileData.size()),
+                &width, &height, &channels, 4); // RGBA強制
+
+            if (!pixels)
+            {
+                result.bSuccess = false;
+                return;
+            }
+
+            // デコード結果をリクエストに保存
+            size_t pixelDataSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+            result.PixelData.resize(pixelDataSize);
+            std::memcpy(result.PixelData.data(), pixels, pixelDataSize);
+            stbi_image_free(pixels);
+
+            result.CreateInfo.Width = static_cast<uint32_t>(width);
+            result.CreateInfo.Height = static_cast<uint32_t>(height);
+            result.CreateInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+            result.CreateInfo.DebugName = result.Path;
+            result.bSuccess = true;
+        };
+
+        request->Task = Thread::Task::Create(taskFunction, Thread::TaskPriority::NORMAL);
+
+        // ペンディングリストに追加
+        {
+            Thread::ScopedLock lock(m_AsyncLoadMutex);
+            m_PendingTextureLoads.push_back(request);
+        }
+
+        // JobSystemに投入
+        Thread::JobSystem::Get().SubmitTask(request->Task);
+
+        NORVES_LOG_INFO("RenderResourceManager", "Async texture load started: %s (RequestId=%u)",
+                        path.c_str(), static_cast<unsigned int>(request->RequestId));
+
+        return request->RequestId;
+    }
+
+    uint32_t RenderResourceManager::FlushCompletedTextureLoads()
+    {
+        Thread::ScopedLock lock(m_AsyncLoadMutex);
+
+        uint32_t processedCount = 0;
+
+        // 完了したリクエストを処理（後ろから走査して削除）
+        for (auto it = m_PendingTextureLoads.begin(); it != m_PendingTextureLoads.end();)
+        {
+            auto &request = *it;
+
+            if (!request->Task->IsCompleted())
+            {
+                ++it;
+                continue;
+            }
+
+            auto &result = request->Result;
+
+            if (result.bSuccess)
+            {
+                // メインスレッドでGPUアップロード
+                auto handle = CreateTexture(
+                    result.CreateInfo,
+                    result.PixelData.data(),
+                    result.PixelData.size());
+
+                if (handle.IsValid())
+                {
+                    // キャッシュ登録
+                    {
+                        Thread::ScopedLock resourceLock(m_ResourceMutex);
+                        m_TextureCache[result.ResolvedPath] = handle;
+                    }
+
+                    NORVES_LOG_INFO("RenderResourceManager", "Async texture loaded: %s",
+                                    result.Path.c_str());
+                }
+                else
+                {
+                    NORVES_LOG_ERROR("RenderResourceManager", "Async texture GPU upload failed: %s",
+                                     result.Path.c_str());
+                }
+
+                // コールバック実行
+                request->Callback.InvokeIfBound(handle);
+            }
+            else
+            {
+                NORVES_LOG_ERROR("RenderResourceManager", "Async texture load failed: %s",
+                                 result.ResolvedPath.c_str());
+
+                // 失敗コールバック
+                request->Callback.InvokeIfBound(TextureHandle::Invalid());
+            }
+
+            // ピクセルデータ解放（GPUに転送済み）
+            result.PixelData.clear();
+            result.PixelData.shrink_to_fit();
+
+            it = m_PendingTextureLoads.erase(it);
+            ++processedCount;
+        }
+
+        return processedCount;
+    }
+
+    uint32_t RenderResourceManager::GetPendingAsyncLoadCount() const
+    {
+        Thread::ScopedLock lock(m_AsyncLoadMutex);
+        return static_cast<uint32_t>(m_PendingTextureLoads.size());
     }
 
 } // namespace NorvesLib::Core::Rendering

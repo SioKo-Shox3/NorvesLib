@@ -458,6 +458,8 @@ namespace NorvesLib::Core::Logging
     template void Logger::LogFormat<unsigned int &, unsigned int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &, unsigned int &);
     template void Logger::LogFormat<unsigned int, unsigned int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &&, unsigned int &);
     template void Logger::LogFormat<unsigned int, unsigned int, unsigned int>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &&, unsigned int &&, unsigned int &&);
+    // const char* + unsigned int variant (used by async texture loading)
+    template void Logger::LogFormat<const char *, unsigned int>(LogLevel, const String &, const char *, const char *, int32_t, const char *, const char *&&, unsigned int &&);
     // size_t (unsigned __int64) variants (used by PersistentResourceCache)
     template void Logger::LogFormat<unsigned long long>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned long long &&);
     template void Logger::LogFormat<unsigned long long &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned long long &);

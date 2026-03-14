@@ -12,6 +12,7 @@
 #include "RHI/Vulkan/VulkanRHI.h"
 #include "RHI/RHIConfig.h"
 #include "Logging/LogMacros.h"
+#include "Thread/JobSystem.h"
 #include <chrono>
 
 #ifdef _WIN32
@@ -39,6 +40,10 @@ namespace NorvesLib::Core::Engine
     bool ApplicationProcessor::Initialize(const Boot::BootConfig &config)
     {
         LOG_INFO("ApplicationProcessor::Initialize() - Starting initialization");
+
+        // JobSystemを初期化（ワーカースレッドの起動）
+        Thread::JobSystem::Get().Initialize();
+        LOG_INFO("JobSystem initialized");
 
         // GEngineを作成
         if (!CreateEngine())
@@ -267,6 +272,9 @@ namespace NorvesLib::Core::Engine
 
         // GEngineを破棄
         DestroyEngine();
+
+        // JobSystemをシャットダウン
+        Thread::JobSystem::Get().Shutdown();
 
         // シングルトンを解放
         if (s_Instance)
