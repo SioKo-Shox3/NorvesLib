@@ -2,6 +2,7 @@
 
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Rendering/RenderResourceManager.h"
+#include "Core/Public/Thread/Mutex.h"
 
 namespace NorvesLib::Core
 {
@@ -18,6 +19,19 @@ namespace NorvesLib::Core
 namespace Game::GameModes
 {
     using namespace NorvesLib::Core::Container;
+
+    /**
+     * @brief 非同期マテリアル更新情報
+     *
+     * テクスチャの非同期読み込み完了時に、
+     * どのマテリアルのどのスロットを更新するかを保持します。
+     */
+    struct PendingMaterialUpdate
+    {
+        NorvesLib::Core::Rendering::MaterialHandle TargetMaterial;
+        NorvesLib::Core::Rendering::MaterialCreateData CreateData;
+        uint32_t PendingTextureCount = 0; ///< 残り読み込み中テクスチャ数
+    };
 
     /**
      * @brief 3Dレンダリングテストのデータクラス
@@ -39,6 +53,9 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::MaterialHandle m_CobbleStoneMaterial; // 石畳マテリアル
         NorvesLib::Core::Rendering::MaterialHandle m_GroundMaterial;      // 地面マテリアル
         NorvesLib::Core::Rendering::MaterialHandle m_LightSphereMaterial; // 光源球体マテリアル
+
+        // 非同期ロード用：マテリアル更新ペンディングリスト
+        VariableArray<TSharedPtr<PendingMaterialUpdate>> m_PendingMaterialUpdates;
 
         // WorldObject参照（Worldが所有）
         NorvesLib::Core::WorldObject *m_pSphereObject = nullptr;

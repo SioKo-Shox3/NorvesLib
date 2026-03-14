@@ -7,6 +7,8 @@
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
 #include "Thread/Atomic.h"
+#include "Thread/Task.h"
+#include "Delegate/Delegate.h"
 #include <cstdint>
 
 // 前方宣言
@@ -305,11 +307,68 @@ namespace NorvesLib::Core::Rendering
                                     const void *data, size_t dataSize);
 
         /**
-         * @brief ファイルからテクスチャをロード
+         * @brief ファイルからテクスチャをロード（同期）
          * @param path ファイルパス
          * @return テクスチャハンドル
          */
         TextureHandle LoadTexture(const Container::String &path);
+
+        // ========================================
+        // 非同期テクスチャ読み込み
+        // ========================================
+
+        /**
+         * @brief 非同期テクスチャ読み込みの完了データ
+         */
+        struct AsyncTextureResult
+        {
+            Container::String Path;           ///< リクエストパス
+            Container::String ResolvedPath;   ///< 解決済みパス
+            TextureCreateInfo CreateInfo;      ///< テクスチャ作成情報
+            Container::VariableArray<uint8_t> PixelData; ///< デコード済みピクセルデータ
+            bool bSuccess = false;            ///< 読み込み成功フラグ
+        };
+
+        /**
+         * @brief 非同期テクスチャ読み込みリクエスト
+         */
+        struct AsyncTextureRequest
+        {
+            uint32_t RequestId = 0;           ///< リクエストID
+            Container::String Path;           ///< テクスチャパス
+            Thread::TaskPtr Task;             ///< ジョブシステムタスク
+            AsyncTextureResult Result;        ///< 読み込み結果
+            NorvesLib::Core::Delegate<void, TextureHandle> Callback; ///< 完了コールバック
+        };
+
+        /**
+         * @brief ファイルからテクスチャを非同期ロード
+         *
+         * ファイルI/O+デコードをワーカースレッドで実行し、
+         * FlushCompletedTextureLoads()呼び出し時にGPUアップロード+コールバック実行を行います。
+         *
+         * @param path ファイルパス
+         * @param callback テクスチャ作成完了時に呼び出されるコールバック
+         * @return リクエストID（0は失敗）
+         */
+        uint32_t LoadTextureAsync(const Container::String &path,
+                                  NorvesLib::Core::Delegate<void, TextureHandle> callback = {});
+
+        /**
+         * @brief 完了した非同期テクスチャ読み込みを処理する
+         *
+         * メインスレッドから毎フレーム呼び出してください。
+         * 完了したファイルI/OのGPUアップロードとコールバック実行を行います。
+         *
+         * @return 今回処理したテクスチャ数
+         */
+        uint32_t FlushCompletedTextureLoads();
+
+        /**
+         * @brief 非同期ロードのペンディング数を取得
+         * @return 未完了のリクエスト数
+         */
+        uint32_t GetPendingAsyncLoadCount() const;
 
         /**
          * @brief テクスチャを解放
@@ -555,6 +614,14 @@ namespace NorvesLib::Core::Rendering
 
         // スレッドセーフ用ミューテックス
         mutable Thread::Mutex m_ResourceMutex;
+
+        // 非同期テクスチャ読み込みキュー
+        Container::VariableArray<Container::TSharedPtr<AsyncTextureRequest>> m_PendingTextureLoads;
+        mutable Thread::Mutex m_AsyncLoadMutex;
+        Thread::Atomic<uint32_t> m_NextAsyncRequestId{1};
+
+        // パス解決ヘルパー（LoadTextureとLoadTextureAsyncで共通使用）
+        Container::String ResolveTexturePath(const Container::String &path) const;
 
         // ハンドルID生成用
         Thread::Atomic<uint64_t> m_NextHandleId{1};
