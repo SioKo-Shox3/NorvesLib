@@ -4,54 +4,116 @@
 #include "MaterialTypes.h"
 #include "MeshTypes.h"
 #include "Container/Containers.h"
+#include "RHI/RHITypes.h"
 #include "Math/Matrix4x4.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
 {
     // ========================================
-    // DrawCommand
+    // DrawCommandType
     // ========================================
 
     /**
-     * @brief 描画コマンド
-     *
-     * 最終的にGPUに発行される描画命令。
-     * バッチ処理後に生成され、RenderThreadで実行されます。
+     * @brief GPUコマンドの種別
      */
-    struct DrawCommand
+    enum class DrawCommandType : uint8_t
     {
-        // ========================================
-        // メッシュデータ
-        // ========================================
+        DrawIndexed,          // インデックス付き描画
+        Draw,                 // インデックスなし描画
+        DrawIndexedInstanced, // インスタンシングインデックス描画
+        DrawInstanced,        // インスタンシング描画
+        Dispatch,             // コンピュートディスパッチ
+    };
 
+    // ========================================
+    // DrawParams
+    // ========================================
+
+    /**
+     * @brief グラフィックス描画パラメータ
+     *
+     * Draw/DrawIndexed系コマンドで使用されるパラメータ群。
+     */
+    struct DrawParams
+    {
+        // メッシュデータ
         MeshDataHandle MeshHandle; // メッシュハンドル
         uint32_t SubMeshIndex = 0; // サブメッシュインデックス
         uint32_t IndexOffset = 0;  // インデックスオフセット
         uint32_t IndexCount = 0;   // インデックス数
         uint32_t VertexOffset = 0; // 頂点オフセット
 
-        // ========================================
         // マテリアル
-        // ========================================
-
         MaterialHandle MaterialHandle; // マテリアルハンドル
         uint32_t MaterialIndex = 0;    // マテリアルインデックス
 
-        // ========================================
         // インスタンシング
-        // ========================================
-
         uint32_t InstanceCount = 1;      // インスタンス数
         uint32_t FirstInstance = 0;      // 最初のインスタンスID
         uint32_t InstanceDataOffset = 0; // インスタンスデータオフセット
 
-        // ========================================
         // トランスフォーム（非インスタンシング時）
-        // ========================================
-
         Math::Matrix4x4 WorldMatrix;  // ワールド行列
         Math::Matrix4x4 NormalMatrix; // 法線行列（転置逆行列）
+
+        // フラグ
+        bool bCastShadow = true; // シャドウを落とすか
+        bool bInstanced = false; // インスタンシング描画か
+
+        // カスタムデータ
+        float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // シェーダーに渡すカスタムデータ
+    };
+
+    // ========================================
+    // DispatchParams
+    // ========================================
+
+    /**
+     * @brief コンピュートディスパッチパラメータ
+     *
+     * Dispatchコマンドで使用されるスレッドグループ数。
+     */
+    struct DispatchParams
+    {
+        uint32_t ThreadGroupCountX = 1; // Xスレッドグループ数
+        uint32_t ThreadGroupCountY = 1; // Yスレッドグループ数
+        uint32_t ThreadGroupCountZ = 1; // Zスレッドグループ数
+    };
+
+    // ========================================
+    // DrawCommand
+    // ========================================
+
+    /**
+     * @brief GPUコマンド抽象
+     *
+     * GPUに発行される描画命令/コンピュート命令の統一的な表現。
+     * Draw/DrawIndexed/Dispatch等のコマンドを共通の構造体で扱い、
+     * RenderThread上でコマンドリストに記録されます。
+     */
+    struct DrawCommand
+    {
+        // ========================================
+        // コマンド種別
+        // ========================================
+
+        DrawCommandType Type = DrawCommandType::DrawIndexed; // コマンド種別
+
+        // ========================================
+        // パイプライン・ディスクリプタ（共通）
+        // ========================================
+
+        RHI::PipelinePtr Pipeline;           // 使用するパイプライン（nullならデフォルト）
+        RHI::DescriptorSetPtr DescriptorSet; // ディスクリプタセット（nullならパス側で管理）
+        uint32_t DescriptorSetSlot = 0;      // ディスクリプタセットスロット
+
+        // ========================================
+        // コマンドパラメータ（種別に応じて使い分ける）
+        // ========================================
+
+        DrawParams Draw;        // グラフィックス描画パラメータ
+        DispatchParams Compute; // コンピュートパラメータ
 
         // ========================================
         // ソートキー
@@ -60,21 +122,64 @@ namespace NorvesLib::Core::Rendering
         uint64_t SortKey = 0; // ソートキー
 
         // ========================================
-        // フラグ
+        // ファクトリメソッド
         // ========================================
 
-        bool bCastShadow = true; // シャドウを落とすか
-        bool bInstanced = false; // インスタンシング描画か
+        /**
+         * @brief インデックス付き描画コマンドを生成
+         */
+        static DrawCommand CreateDrawIndexed()
+        {
+            DrawCommand cmd;
+            cmd.Type = DrawCommandType::DrawIndexed;
+            return cmd;
+        }
 
-        // ========================================
-        // カスタムデータ
-        // ========================================
+        /**
+         * @brief インデックスなし描画コマンドを生成
+         */
+        static DrawCommand CreateDraw()
+        {
+            DrawCommand cmd;
+            cmd.Type = DrawCommandType::Draw;
+            return cmd;
+        }
 
-        float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // シェーダーに渡すカスタムデータ
+        /**
+         * @brief コンピュートディスパッチコマンドを生成
+         * @param groupX Xスレッドグループ数
+         * @param groupY Yスレッドグループ数
+         * @param groupZ Zスレッドグループ数
+         */
+        static DrawCommand CreateDispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ)
+        {
+            DrawCommand cmd;
+            cmd.Type = DrawCommandType::Dispatch;
+            cmd.Compute.ThreadGroupCountX = groupX;
+            cmd.Compute.ThreadGroupCountY = groupY;
+            cmd.Compute.ThreadGroupCountZ = groupZ;
+            return cmd;
+        }
 
         // ========================================
         // ユーティリティ
         // ========================================
+
+        /**
+         * @brief グラフィックス描画コマンドか判定
+         */
+        bool IsGraphicsCommand() const
+        {
+            return Type != DrawCommandType::Dispatch;
+        }
+
+        /**
+         * @brief コンピュートコマンドか判定
+         */
+        bool IsComputeCommand() const
+        {
+            return Type == DrawCommandType::Dispatch;
+        }
 
         /**
          * @brief ソートキーを計算

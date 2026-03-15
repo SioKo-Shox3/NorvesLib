@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RHITypes.h"
+#include "DeviceCapabilities.h"
 #include "IGPUResourceAllocator.h"
 #include "IDescriptorSet.h"
 #include "Container/Containers.h"
@@ -250,6 +251,12 @@ namespace NorvesLib::RHI
          * @return 使用中のRHI API
          */
         virtual API GetAPI() const = 0;
+
+        /**
+         * @brief デバイスの能力情報を取得
+         * @return DeviceCapabilities への const 参照
+         */
+        virtual const DeviceCapabilities &GetCapabilities() const = 0;
 
         /**
          * @brief 描画API固有のクリップ空間に合わせてプロジェクション行列を補正

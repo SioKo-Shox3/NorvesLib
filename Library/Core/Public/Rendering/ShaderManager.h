@@ -57,6 +57,20 @@ namespace NorvesLib::Core::Rendering
         bool Initialize(RHI::IDevice *device, const String &shaderDirectory);
 
         /**
+         * @brief Slangコンパイラを設定（Neural Shaders用）
+         *
+         * DeviceCapabilitiesでCooperative Vectorが有効な場合にのみ呼ばれます。
+         * .slang ファイルはこのコンパイラで処理されます。
+         * @param slangCompiler Slangコンパイラ
+         */
+        void SetSlangCompiler(const RHI::ShaderCompilerPtr &slangCompiler);
+
+        /**
+         * @brief Slangコンパイラが利用可能か
+         */
+        bool HasSlangCompiler() const { return m_SlangCompiler != nullptr; }
+
+        /**
          * @brief 終了処理
          */
         void Shutdown();
@@ -114,9 +128,16 @@ namespace NorvesLib::Core::Rendering
         /** @brief フルパスを構築 */
         String BuildFullPath(const String &filename) const;
 
+        /** @brief ファイル拡張子がSlangかどうか判定 */
+        bool IsSlangFile(const String &filename) const;
+
+        /** @brief ファイルに対応するコンパイラを取得 */
+        RHI::IShaderCompiler *GetCompilerForFile(const String &filename) const;
+
         RHI::IDevice *m_Device = nullptr;
         String m_ShaderDirectory;
-        RHI::ShaderCompilerPtr m_Compiler;
+        RHI::ShaderCompilerPtr m_Compiler;      // GLSL用（shaderc）
+        RHI::ShaderCompilerPtr m_SlangCompiler; // Slang用（Neural Shaders）
         UnorderedMap<Identity, CachedShader, Identity::Hasher> m_Cache;
         bool m_bInitialized = false;
     };

@@ -70,6 +70,12 @@ namespace NorvesLib::Core::Rendering
         case BufferCreateInfo::Usage::Constant:
             usage = RHI::ResourceUsage::ConstantBuffer;
             break;
+        case BufferCreateInfo::Usage::Structured:
+            usage = RHI::ResourceUsage::ShaderRead;
+            break;
+        case BufferCreateInfo::Usage::Storage:
+            usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite;
+            break;
         default:
             usage = RHI::ResourceUsage::VertexBuffer;
             break;
@@ -342,6 +348,34 @@ namespace NorvesLib::Core::Rendering
             m_TextureCache[resolvedPath] = handle;
             NORVES_LOG_INFO("RenderResourceManager", "Texture loaded successfully");
         }
+
+        return handle;
+    }
+
+    TextureHandle RenderResourceManager::RegisterExternalTexture(
+        Container::TSharedPtr<RHI::ITexture> rhiTexture,
+        const Container::String& debugName)
+    {
+        if (!m_bInitialized || !rhiTexture)
+        {
+            return TextureHandle::Invalid();
+        }
+
+        auto handle = AllocateHandle<TextureHandle>();
+
+        TextureResourceData data;
+        data.RHITexture = rhiTexture;
+        data.Width = 0;   // 外部テクスチャのため詳細不明（必要に応じて拡張）
+        data.Height = 0;
+        data.Format = TextureCreateInfo::Format::RGBA8_UNORM; // デフォルト
+        data.RefCount = 1;
+        data.DebugName = debugName;
+
+        Thread::ScopedLock lock(m_ResourceMutex);
+        m_Textures[handle.Id] = std::move(data);
+
+        NORVES_LOG_DEBUG("RenderResourceManager", "External texture registered: %s (handle=%llu)",
+                         debugName.c_str(), handle.Id);
 
         return handle;
     }

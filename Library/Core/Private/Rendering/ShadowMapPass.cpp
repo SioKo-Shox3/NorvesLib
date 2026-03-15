@@ -332,7 +332,7 @@ namespace NorvesLib::Core::Rendering
             const auto &drawCommands = m_SceneView->GetDrawCommands();
             for (const auto &cmd : drawCommands)
             {
-                if (!cmd.bCastShadow)
+                if (!cmd.Draw.bCastShadow)
                 {
                     continue;
                 }
@@ -347,7 +347,7 @@ namespace NorvesLib::Core::Rendering
 
                 // UBOデータ構築
                 ShadowPerObjectUBO uboData;
-                MatrixUtils::CopyToShaderData(cmd.WorldMatrix, uboData.world);
+                MatrixUtils::CopyToShaderData(cmd.Draw.WorldMatrix, uboData.world);
                 std::memcpy(uboData.lightView, lightViewData, sizeof(lightViewData));
                 std::memcpy(uboData.lightProjection, lightProjData, sizeof(lightProjData));
 

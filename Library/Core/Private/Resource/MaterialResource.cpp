@@ -1,4 +1,5 @@
 ﻿#include "Resource/MaterialResource.h"
+#include "Rendering/NeuralMaterialResource.h"
 #include "Object/Reflection.h"
 #include "Logging/LogMacros.h"
 
@@ -97,6 +98,56 @@ namespace NorvesLib::Core
         r = m_EmissiveColor[0];
         g = m_EmissiveColor[1];
         b = m_EmissiveColor[2];
+    }
+
+    // ========================================
+    // NeuralMaterial統合
+    // ========================================
+
+    void MaterialResource::SetNeuralMaterial(Rendering::NeuralMaterialResource* neuralMaterial,
+                                             const NeuralMaterialSlotMapping& mapping)
+    {
+        m_NeuralMaterial = neuralMaterial;
+        m_NeuralSlotMapping = mapping;
+    }
+
+    Rendering::TextureHandle MaterialResource::ResolveAlbedoTexture() const
+    {
+        return ResolveNeuralSlot(m_NeuralSlotMapping.AlbedoSlotIndex, m_AlbedoTexture);
+    }
+
+    Rendering::TextureHandle MaterialResource::ResolveNormalTexture() const
+    {
+        return ResolveNeuralSlot(m_NeuralSlotMapping.NormalSlotIndex, m_NormalTexture);
+    }
+
+    Rendering::TextureHandle MaterialResource::ResolveMetallicTexture() const
+    {
+        return ResolveNeuralSlot(m_NeuralSlotMapping.MetallicSlotIndex, m_MetallicTexture);
+    }
+
+    Rendering::TextureHandle MaterialResource::ResolveRoughnessTexture() const
+    {
+        return ResolveNeuralSlot(m_NeuralSlotMapping.RoughnessSlotIndex, m_RoughnessTexture);
+    }
+
+    Rendering::TextureHandle MaterialResource::ResolveAOTexture() const
+    {
+        return ResolveNeuralSlot(m_NeuralSlotMapping.AOSlotIndex, m_AOTexture);
+    }
+
+    Rendering::TextureHandle MaterialResource::ResolveNeuralSlot(uint32_t slotIndex,
+                                                                  Rendering::TextureHandle fallback) const
+    {
+        if (m_NeuralMaterial && slotIndex != UINT32_MAX)
+        {
+            auto handle = m_NeuralMaterial->GetOutputTextureHandle(slotIndex);
+            if (handle.IsValid())
+            {
+                return handle;
+            }
+        }
+        return fallback;
     }
 
 } // namespace NorvesLib::Core

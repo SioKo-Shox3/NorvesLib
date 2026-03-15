@@ -12,6 +12,7 @@
 #include "Rendering/FXAAPass.h"
 #include "Rendering/SSRPass.h"
 #include "Rendering/PostProcessStack.h"
+#include "Rendering/NeuralMaterialDecodePass.h"
 #include "Math/VectorUtils.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
@@ -227,6 +228,12 @@ namespace NorvesLib::Core::Rendering
         shadowMapPass->SetSceneView(this);
         shadowMapPass->SetSceneRenderer(sceneRenderer);
         AddPass(std::move(shadowMapPass));
+
+        // NeuralMaterialDecodePass: ニューラルマテリアルの事前デコード（Compute）
+        auto neuralDecodePass = MakeUnique<NeuralMaterialDecodePass>();
+        neuralDecodePass->SetSceneView(this);
+        neuralDecodePass->SetSceneRenderer(sceneRenderer);
+        AddPass(std::move(neuralDecodePass));
 
         // GBufferPass: ジオメトリ→GBuffer MRT
         GBufferPassSettings gbufferSettings;

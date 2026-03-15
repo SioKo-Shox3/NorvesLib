@@ -343,16 +343,16 @@ namespace NorvesLib::Core::Rendering
 
                 // UBOデータ構築
                 PerObjectUBO uboData;
-                MatrixUtils::CopyToShaderData(cmd.WorldMatrix, uboData.world);
+                MatrixUtils::CopyToShaderData(cmd.Draw.WorldMatrix, uboData.world);
                 std::memcpy(uboData.view, viewData, sizeof(viewData));
                 std::memcpy(uboData.projection, projData, sizeof(projData));
                 std::memcpy(uboData.cameraPosition, cameraPos, sizeof(cameraPos));
 
                 // オブジェクトカラー（CustomDataから取得、未設定時はデフォルト白）
-                uboData.objectColor[0] = cmd.CustomData[0] != 0.0f ? cmd.CustomData[0] : 1.0f;
-                uboData.objectColor[1] = cmd.CustomData[1] != 0.0f ? cmd.CustomData[1] : 1.0f;
-                uboData.objectColor[2] = cmd.CustomData[2] != 0.0f ? cmd.CustomData[2] : 1.0f;
-                uboData.objectColor[3] = cmd.CustomData[3] != 0.0f ? cmd.CustomData[3] : 1.0f;
+                uboData.objectColor[0] = cmd.Draw.CustomData[0] != 0.0f ? cmd.Draw.CustomData[0] : 1.0f;
+                uboData.objectColor[1] = cmd.Draw.CustomData[1] != 0.0f ? cmd.Draw.CustomData[1] : 1.0f;
+                uboData.objectColor[2] = cmd.Draw.CustomData[2] != 0.0f ? cmd.Draw.CustomData[2] : 1.0f;
+                uboData.objectColor[3] = cmd.Draw.CustomData[3] != 0.0f ? cmd.Draw.CustomData[3] : 1.0f;
 
                 // マテリアルからテクスチャとエミッシブを取得
                 TextureHandle matAlbedo;
@@ -365,9 +365,9 @@ namespace NorvesLib::Core::Rendering
                 float matEmissiveR = 0.0f, matEmissiveG = 0.0f, matEmissiveB = 0.0f;
                 float matEmissiveStrength = 0.0f;
 
-                if (cmd.MaterialHandle.IsValid() && context.ResourceManager)
+                if (cmd.Draw.MaterialHandle.IsValid() && context.ResourceManager)
                 {
-                    const auto *matData = context.ResourceManager->GetMaterialData(cmd.MaterialHandle);
+                    const auto *matData = context.ResourceManager->GetMaterialData(cmd.Draw.MaterialHandle);
                     if (matData)
                     {
                         matAlbedo = matData->AlbedoTexture;

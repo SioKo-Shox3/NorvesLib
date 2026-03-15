@@ -81,7 +81,15 @@ namespace NorvesLib::Core::Rendering
 
         // フルパスを構築してコンパイル
         String fullPath = BuildFullPath(filename);
-        RHI::ShaderCompileResult compileResult = m_Compiler->CompileFromFile(fullPath, stage, entryPoint);
+        auto *compiler = GetCompilerForFile(filename);
+        if (!compiler)
+        {
+            String errorLog = "No suitable compiler for shader: " + filename;
+            NORVES_LOG_ERROR("ShaderManager", errorLog.c_str());
+            return nullptr;
+        }
+
+        RHI::ShaderCompileResult compileResult = compiler->CompileFromFile(fullPath, stage, entryPoint);
 
         if (!compileResult.bSuccess)
         {
@@ -172,7 +180,14 @@ namespace NorvesLib::Core::Rendering
 
         auto &cached = it->second;
         String fullPath = BuildFullPath(cached.Filename);
-        RHI::ShaderCompileResult compileResult = m_Compiler->CompileFromFile(
+        auto *compiler = GetCompilerForFile(cached.Filename);
+        if (!compiler)
+        {
+            NORVES_LOG_ERROR("ShaderManager", ("No suitable compiler for: " + cached.Filename).c_str());
+            return false;
+        }
+
+        RHI::ShaderCompileResult compileResult = compiler->CompileFromFile(
             fullPath, cached.Stage, cached.EntryPoint);
 
         if (!compileResult.bSuccess)
@@ -207,6 +222,35 @@ namespace NorvesLib::Core::Rendering
     String ShaderManager::BuildFullPath(const String &filename) const
     {
         return m_ShaderDirectory + filename;
+    }
+
+    void ShaderManager::SetSlangCompiler(const RHI::ShaderCompilerPtr &slangCompiler)
+    {
+        m_SlangCompiler = slangCompiler;
+        if (m_SlangCompiler)
+        {
+            NORVES_LOG_INFO("ShaderManager", "Slang compiler set - .slang shader compilation enabled");
+        }
+    }
+
+    bool ShaderManager::IsSlangFile(const String &filename) const
+    {
+        // .slang 拡張子を判定
+        const String slangExt = ".slang";
+        if (filename.size() >= slangExt.size())
+        {
+            return filename.substr(filename.size() - slangExt.size()) == slangExt;
+        }
+        return false;
+    }
+
+    RHI::IShaderCompiler *ShaderManager::GetCompilerForFile(const String &filename) const
+    {
+        if (IsSlangFile(filename))
+        {
+            return m_SlangCompiler.get();
+        }
+        return m_Compiler.get();
     }
 
 } // namespace NorvesLib::Core::Rendering

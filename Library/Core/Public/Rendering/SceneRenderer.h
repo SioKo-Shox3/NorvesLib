@@ -26,6 +26,7 @@ namespace NorvesLib::Core::Rendering
     struct SceneRendererStats
     {
         uint32_t DrawCallCount = 0; ///< ドローコール数
+        uint32_t DispatchCount = 0; ///< ディスパッチ数
         uint32_t TriangleCount = 0; ///< 三角形数
         float RenderTimeMs = 0.0f;  ///< レンダリング時間（ミリ秒）
         size_t GPUMemoryUsed = 0;   ///< GPU使用メモリ
