@@ -221,28 +221,7 @@ namespace NorvesLib::Core::Logging
         }
     }
 
-    template <typename... Args>
-    void Logger::LogFormat(LogLevel level, const String &category,
-                           const char *filename, const char *function, int32_t lineNumber,
-                           const char *format, Args &&...args)
-    {
-        if (!IsLevelActive(level))
-        {
-            return;
-        }
 
-        try
-        {
-            String formattedMessage = String(std::vformat(std::string_view(format), std::make_format_args(args...)));
-            Log(level, category, formattedMessage, filename, function, lineNumber);
-        }
-        catch (const std::exception &e)
-        {
-            // フォーマットエラーの場合、エラーメッセージを出力
-            String errorMsg = String("Log format error: ") + e.what() + " (Original format: " + format + ")";
-            Log(LogLevel::Error, "Logger", errorMsg, filename, function, lineNumber);
-        }
-    }
     void Logger::UpdateConfig(const LogConfig &config)
     {
         NorvesLib::Thread::ScopedLock lock(m_mutex);
@@ -444,31 +423,5 @@ namespace NorvesLib::Core::Logging
         String extension = String(logPath.extension().string());
 
         return stem + "." + String(std::to_string(index + 1)) + extension;
-    } // テンプレートの明示的インスタンス化
-    template void Logger::LogFormat<>(LogLevel, const String &, const char *, const char *, int32_t, const char *);
-    template void Logger::LogFormat<int>(LogLevel, const String &, const char *, const char *, int32_t, const char *, int &&);
-    template void Logger::LogFormat<int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, int &);
-    template void Logger::LogFormat<const char *>(LogLevel, const String &, const char *, const char *, int32_t, const char *, const char *&&);
-    // const char* lvalue reference variant (used by View/PostProcessStack pass name logging)
-    template void Logger::LogFormat<const char *&>(LogLevel, const String &, const char *, const char *, int32_t, const char *, const char *&);
-    template void Logger::LogFormat<double>(LogLevel, const String &, const char *, const char *, int32_t, const char *, double &&);
-    // unsigned int variants (used by RenderWorld logging)
-    template void Logger::LogFormat<unsigned int>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &&);
-    template void Logger::LogFormat<unsigned int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &);
-    template void Logger::LogFormat<unsigned int &, unsigned int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &, unsigned int &);
-    template void Logger::LogFormat<unsigned int, unsigned int &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &&, unsigned int &);
-    template void Logger::LogFormat<unsigned int, unsigned int, unsigned int>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned int &&, unsigned int &&, unsigned int &&);
-    // const char* + unsigned int variant (used by async texture loading)
-    template void Logger::LogFormat<const char *, unsigned int>(LogLevel, const String &, const char *, const char *, int32_t, const char *, const char *&&, unsigned int &&);
-    // size_t (unsigned __int64) variants (used by PersistentResourceCache)
-    template void Logger::LogFormat<unsigned long long>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned long long &&);
-    template void Logger::LogFormat<unsigned long long &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned long long &);
-    template void Logger::LogFormat<unsigned long long, unsigned long long>(LogLevel, const String &, const char *, const char *, int32_t, const char *, unsigned long long &&, unsigned long long &&);
-    // ScopedStat variants (used by Debug::ScopedStat::~ScopedStat)
-    template void Logger::LogFormat<const char *&, long long, double>(LogLevel, const String &, const char *, const char *, int32_t, const char *, const char *&, long long &&, double &&);
-    // float variants (used by Input system / Camera debugging)
-    template void Logger::LogFormat<float>(LogLevel, const String &, const char *, const char *, int32_t, const char *, float &&);
-    template void Logger::LogFormat<float &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, float &);
-    template void Logger::LogFormat<float &, float &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, float &, float &);
-    template void Logger::LogFormat<float &, float &, float &, float &, float &>(LogLevel, const String &, const char *, const char *, int32_t, const char *, float &, float &, float &, float &, float &);
+    }
 } // namespace NorvesLib::Core::Logging

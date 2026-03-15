@@ -6,6 +6,7 @@
 #include "Thread/Atomic.h"
 #include <memory>
 #include <functional>
+#include <format>
 
 namespace NorvesLib::Core::Logging
 {
@@ -181,6 +182,31 @@ namespace NorvesLib::Core::Logging
     inline void LogFatal(const String &category, const String &message)
     {
         Logger::GetInstance().Log(LogLevel::Fatal, category, message);
+    }
+
+    // ========================================
+    // LogFormat テンプレート実装
+    // ========================================
+    template <typename... Args>
+    void Logger::LogFormat(LogLevel level, const String &category,
+                           const char *filename, const char *function, int32_t lineNumber,
+                           const char *format, Args &&...args)
+    {
+        if (!IsLevelActive(level))
+        {
+            return;
+        }
+
+        try
+        {
+            String formattedMessage = String(std::vformat(std::string_view(format), std::make_format_args(args...)));
+            Log(level, category, formattedMessage, filename, function, lineNumber);
+        }
+        catch (const std::exception &e)
+        {
+            String errorMsg = String("Log format error: ") + e.what() + " (Original format: " + format + ")";
+            Log(LogLevel::Error, "Logger", errorMsg, filename, function, lineNumber);
+        }
     }
 
 } // namespace NorvesLib::Core::Logging
