@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RHI/RHITypes.h"
+#include "RHI/DeviceCapabilities.h"
 #include <cstdint>
 
 // 前方宣言
@@ -61,6 +62,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief シェーダーアセットの読み込み・コンパイル・キャッシュ管理 */
         ShaderManager *ShaderMgr = nullptr;
+
+        /** @brief デバイス能力情報（Neural Shaders / Mega Geometry等の判定用） */
+        const RHI::DeviceCapabilities *Capabilities = nullptr;
 
         /** @brief メインカメラ情報（ビュー/プロジェクション行列計算用） */
         const CameraProxy *MainCamera = nullptr;

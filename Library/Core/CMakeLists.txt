@@ -56,6 +56,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/SSRPass.cpp
     Private/Rendering/ForwardPass.cpp
     Private/Rendering/ShaderManager.cpp
+    Private/Rendering/NeuralMaterialResource.cpp
+    Private/Rendering/NeuralMaterialDecoder.cpp
+    Private/Rendering/NeuralMaterialDecodePass.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
@@ -86,6 +89,7 @@ set(PRIVATE_SOURCES
     Private/RHI/Vulkan/VulkanSampler.cpp
     Private/RHI/Vulkan/VulkanShader.cpp
     Private/RHI/Vulkan/VulkanShaderCompiler.cpp
+    Private/RHI/Vulkan/VulkanSlangCompiler.cpp
     Private/RHI/Vulkan/VulkanSwapChain.cpp
     Private/RHI/Vulkan/VulkanTexture.cpp
     Private/RHI/TransientResourcePool.cpp
@@ -186,6 +190,9 @@ set(PUBLIC_HEADERS
     Public/Rendering/SSRPass.h
     Public/Rendering/ForwardPass.h
     Public/Rendering/ShaderManager.h
+    Public/Rendering/NeuralMaterialResource.h
+    Public/Rendering/NeuralMaterialDecoder.h
+    Public/Rendering/NeuralMaterialDecodePass.h
     # Object
     Public/Object/Resource.h
     Public/Object/WorldObject.h
@@ -242,6 +249,7 @@ set(PUBLIC_HEADERS
     Public/RHI/IPipeline.h
     Public/RHI/IDescriptorSet.h
     Public/RHI/IDevice.h
+    Public/RHI/DeviceCapabilities.h
     Public/RHI/IShaderCompiler.h
     Public/RHI/IGPUResourceAllocator.h
     Public/RHI/TransientResourcePool.h
@@ -296,6 +304,17 @@ if(NOT SHADERC_LIB_RELEASE OR NOT SHADERC_LIB_DEBUG)
     message(FATAL_ERROR "shaderc libraries not found in Vulkan SDK")
 endif()
 
+# Slang SDK（オプション - Neural Shaders用）
+set(SLANG_SDK_DIR "" CACHE PATH "Path to Slang SDK root directory")
+if(SLANG_SDK_DIR AND EXISTS "${SLANG_SDK_DIR}/include/slang.h")
+    set(NORVES_HAS_SLANG TRUE)
+    find_library(SLANG_LIB slang PATHS "${SLANG_SDK_DIR}/lib" "${SLANG_SDK_DIR}/bin")
+    message(STATUS "Slang SDK found: ${SLANG_SDK_DIR}")
+else()
+    set(NORVES_HAS_SLANG FALSE)
+    message(STATUS "Slang SDK not found (SLANG_SDK_DIR not set or invalid). Neural shader compilation disabled.")
+endif()
+
 # 依存関係の設定
 target_link_libraries(${MODULE_NAME}
     PUBLIC
@@ -304,6 +323,13 @@ target_link_libraries(${MODULE_NAME}
         $<$<CONFIG:Debug>:${SHADERC_LIB_DEBUG}>
         $<$<NOT:$<CONFIG:Debug>>:${SHADERC_LIB_RELEASE}>
 )
+
+# Slang SDKリンク（オプション）
+if(NORVES_HAS_SLANG)
+    target_include_directories(${MODULE_NAME} PRIVATE "${SLANG_SDK_DIR}/include")
+    target_link_libraries(${MODULE_NAME} PRIVATE ${SLANG_LIB})
+    target_compile_definitions(${MODULE_NAME} PRIVATE NORVES_HAS_SLANG)
+endif()
 
 # シェーダーアセットディレクトリ（ソースからランタイムコンパイル用）
 set(NORVES_SHADER_DIR "${CMAKE_SOURCE_DIR}/Assets/Shaders")
@@ -346,6 +372,7 @@ source_group("RHI/Private" FILES
     Private/RHI/Vulkan/VulkanSampler.cpp
     Private/RHI/Vulkan/VulkanShader.cpp
     Private/RHI/Vulkan/VulkanShaderCompiler.cpp
+    Private/RHI/Vulkan/VulkanSlangCompiler.cpp
     Private/RHI/Vulkan/VulkanSwapChain.cpp
     Private/RHI/Vulkan/VulkanTexture.cpp
 )

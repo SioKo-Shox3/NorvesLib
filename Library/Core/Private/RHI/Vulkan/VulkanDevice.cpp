@@ -10,6 +10,7 @@
 #include "VulkanDescriptorSet.h"
 #include "VulkanCommandList.h"
 #include "VulkanSwapChain.h"
+#include "Logging/LogMacros.h"
 #include <iostream>
 #include <algorithm>
 #include "Container/Containers.h"
@@ -32,8 +33,8 @@ namespace NorvesLib::RHI::Vulkan
     const VariableArray<const char *> validationLayers = {
         "VK_LAYER_KHRONOS_validation"};
 
-    // 必要なデバイス拡張機能
-    const VariableArray<const char *> deviceExtensions = {
+    // 必要なデバイス拡張機能（基本セット）
+    const VariableArray<const char *> baseDeviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
     // ファクトリメソッド
@@ -60,6 +61,7 @@ namespace NorvesLib::RHI::Vulkan
         CreateLogicalDevice();
         CreateCommandPool();
         InitFormatMaps();
+        DetectCapabilities();
     }
 
     // デストラクタ
@@ -240,18 +242,39 @@ namespace NorvesLib::RHI::Vulkan
             queueCreateInfos.push_back(queueCreateInfo);
         }
 
-        // デバイス機能の設定
-        vk::PhysicalDeviceFeatures deviceFeatures{};
-        deviceFeatures.samplerAnisotropy = VK_TRUE;
-        deviceFeatures.fillModeNonSolid = VK_TRUE; // ワイヤーフレームなどのサポート
+        // デバイス機能の設定（Features2チェーンを使用）
+        vk::PhysicalDeviceFeatures2 features2{};
+        features2.features.samplerAnisotropy = VK_TRUE;
+        features2.features.fillModeNonSolid = VK_TRUE; // ワイヤーフレームなどのサポート
 
-        // デバイス作成情報
+        // Cooperative Vector 機能を検出してチェーンに追加
         auto extensions = GetDeviceExtensions();
 
+        bool bCooperativeVectorRequested = false;
+        for (const auto *ext : extensions)
+        {
+            if (String(ext) == String(VK_NV_COOPERATIVE_VECTOR_EXTENSION_NAME))
+            {
+                bCooperativeVectorRequested = true;
+                break;
+            }
+        }
+
+        if (bCooperativeVectorRequested)
+        {
+            m_cooperativeVectorFeatures = vk::PhysicalDeviceCooperativeVectorFeaturesNV{};
+            m_cooperativeVectorFeatures.cooperativeVector = VK_TRUE;
+            m_cooperativeVectorFeatures.cooperativeVectorTraining = VK_FALSE;
+
+            features2.pNext = &m_cooperativeVectorFeatures;
+        }
+
+        // デバイス作成情報
         vk::DeviceCreateInfo createInfo{};
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
-        createInfo.pEnabledFeatures = &deviceFeatures;
+        createInfo.pEnabledFeatures = nullptr; // Features2使用時はnullptr
+        createInfo.pNext = &features2;
         createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
         createInfo.ppEnabledExtensionNames = extensions.data();
 
@@ -393,7 +416,7 @@ namespace NorvesLib::RHI::Vulkan
         auto availableExtensions = extensionsResult.value;
 
         Set<String> requiredExtensions;
-        for (const auto &ext : deviceExtensions)
+        for (const auto &ext : baseDeviceExtensions)
         {
             requiredExtensions.insert(String(ext));
         }
@@ -442,7 +465,41 @@ namespace NorvesLib::RHI::Vulkan
     // 必要なデバイス拡張機能を取得
     VariableArray<const char *> VulkanDevice::GetDeviceExtensions()
     {
-        return deviceExtensions;
+        VariableArray<const char *> extensions = baseDeviceExtensions;
+
+        if (!m_physicalDevice)
+        {
+            return extensions;
+        }
+
+        // 利用可能な拡張を列挙
+        auto extensionsResult = m_physicalDevice.enumerateDeviceExtensionProperties();
+        if (extensionsResult.result != vk::Result::eSuccess)
+        {
+            return extensions;
+        }
+
+        auto available = extensionsResult.value;
+        auto hasExtension = [&available](const char *name) -> bool
+        {
+            for (const auto &ext : available)
+            {
+                if (String(ext.extensionName.data()) == String(name))
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // VK_NV_cooperative_vector（Neural Shaders）
+        if (hasExtension(VK_NV_COOPERATIVE_VECTOR_EXTENSION_NAME))
+        {
+            extensions.push_back(VK_NV_COOPERATIVE_VECTOR_EXTENSION_NAME);
+            NORVES_LOG_INFO("VulkanDevice", "Optional extension enabled: VK_NV_cooperative_vector");
+        }
+
+        return extensions;
     }
 
     // キューファミリーのインデックス取得
@@ -777,6 +834,79 @@ namespace NorvesLib::RHI::Vulkan
             correction.m11 = -1.0f; // Y反転（Vulkan NDCのY方向）
         }
         return projection * correction;
+    }
+
+    // デバイス能力の検出
+    void VulkanDevice::DetectCapabilities()
+    {
+        // 基本情報
+        auto props = m_physicalDevice.getProperties();
+        std::memcpy(m_Capabilities.DeviceName, props.deviceName.data(),
+                    std::min(sizeof(m_Capabilities.DeviceName) - 1, sizeof(props.deviceName)));
+        m_Capabilities.bIsNvidia = (props.vendorID == 0x10DE);
+        m_Capabilities.bIsDiscreteGPU = (props.deviceType == vk::PhysicalDeviceType::eDiscreteGpu);
+
+        // 利用可能な拡張を列挙
+        auto extensionsResult = m_physicalDevice.enumerateDeviceExtensionProperties();
+        Set<String> availableExtensions;
+        if (extensionsResult.result == vk::Result::eSuccess)
+        {
+            for (const auto &ext : extensionsResult.value)
+            {
+                availableExtensions.insert(String(ext.extensionName.data()));
+            }
+        }
+
+        // ========================================
+        // Neural Shaders (Cooperative Vector)
+        // ========================================
+        if (availableExtensions.contains(String(VK_NV_COOPERATIVE_VECTOR_EXTENSION_NAME)))
+        {
+            // Features2チェーンで実際のサポート状況を問い合わせ
+            vk::PhysicalDeviceCooperativeVectorFeaturesNV coopFeatures{};
+            vk::PhysicalDeviceFeatures2 features2Query{};
+            features2Query.pNext = &coopFeatures;
+            m_physicalDevice.getFeatures2(&features2Query);
+
+            m_Capabilities.NeuralShaders.bSupported = (coopFeatures.cooperativeVector == VK_TRUE);
+            m_Capabilities.NeuralShaders.bCooperativeVectorTraining = (coopFeatures.cooperativeVectorTraining == VK_TRUE);
+            m_Capabilities.NeuralShaders.bCooperativeVectorShaderConvert = m_Capabilities.NeuralShaders.bSupported;
+
+            // プロパティの取得
+            vk::PhysicalDeviceCooperativeVectorPropertiesNV coopProps{};
+            vk::PhysicalDeviceProperties2 props2{};
+            props2.pNext = &coopProps;
+            m_physicalDevice.getProperties2(&props2);
+
+            m_Capabilities.NeuralShaders.MaxCooperativeVectorComponents =
+                coopProps.maxCooperativeVectorComponents;
+
+            if (m_Capabilities.NeuralShaders.bSupported)
+            {
+                NORVES_LOG_INFO("VulkanDevice", "Cooperative Vector (Neural Shaders) supported: maxComponents=%u",
+                                m_Capabilities.NeuralShaders.MaxCooperativeVectorComponents);
+            }
+        }
+
+        // ========================================
+        // Mega Geometry (Cluster Acceleration Structure) - 検出のみ
+        // ========================================
+        m_Capabilities.MegaGeometry.bAccelerationStructureSupported =
+            availableExtensions.contains(String("VK_KHR_acceleration_structure"));
+        m_Capabilities.MegaGeometry.bRayTracingPipelineSupported =
+            availableExtensions.contains(String("VK_KHR_ray_tracing_pipeline"));
+        m_Capabilities.MegaGeometry.bSupported =
+            availableExtensions.contains(String("VK_NV_cluster_acceleration_structure")) &&
+            m_Capabilities.MegaGeometry.bAccelerationStructureSupported;
+
+        // サマリーログ
+        const char *deviceName = m_Capabilities.DeviceName;
+        NORVES_LOG_INFO("VulkanDevice", "Device Capabilities: GPU=%s, NVIDIA=%s, "
+                                        "NeuralShaders=%s, MegaGeometry=%s",
+                        deviceName,
+                        m_Capabilities.bIsNvidia ? "Yes" : "No",
+                        m_Capabilities.NeuralShaders.bSupported ? "Yes" : "No",
+                        m_Capabilities.MegaGeometry.bSupported ? "Yes" : "No");
     }
 
 } // namespace NorvesLib::RHI::Vulkan

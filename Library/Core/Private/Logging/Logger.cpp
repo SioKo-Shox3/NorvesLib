@@ -221,7 +221,6 @@ namespace NorvesLib::Core::Logging
         }
     }
 
-
     void Logger::UpdateConfig(const LogConfig &config)
     {
         NorvesLib::Thread::ScopedLock lock(m_mutex);

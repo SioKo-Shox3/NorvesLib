@@ -12,13 +12,20 @@ namespace NorvesLib::Core::Rendering
 
     void DrawCommand::CalculateSortKey(float depth, BlendMode blendMode)
     {
+        // コンピュートコマンドはソート不要
+        if (IsComputeCommand())
+        {
+            SortKey = 0;
+            return;
+        }
+
         // ソートキーの構成:
         // [63-56] ブレンドモード（不透明=0が先）
         // [55-32] マテリアルID（状態変更最小化）
         // [31-0]  深度（不透明は手前から、透明は奥から）
 
         uint64_t blendPart = static_cast<uint64_t>(blendMode) << 56;
-        uint64_t materialPart = static_cast<uint64_t>(MaterialHandle.Id) << 32;
+        uint64_t materialPart = static_cast<uint64_t>(Draw.MaterialHandle.Id) << 32;
 
         // 深度を正規化（0.0〜1.0を32bit整数に）
         uint32_t depthInt = static_cast<uint32_t>(depth * 4294967295.0f);
@@ -94,37 +101,39 @@ namespace NorvesLib::Core::Rendering
         for (const MeshBatch &batch : m_Batches)
         {
             DrawCommand cmd;
-            cmd.MeshHandle = batch.MeshHandle;
-            cmd.MaterialHandle = batch.MaterialHandle;
-            cmd.SubMeshIndex = batch.SubMeshIndex;
+            cmd.Type = DrawCommandType::DrawIndexed;
+            cmd.Draw.MeshHandle = batch.MeshHandle;
+            cmd.Draw.MaterialHandle = batch.MaterialHandle;
+            cmd.Draw.SubMeshIndex = batch.SubMeshIndex;
 
             if (batch.IsInstanced())
             {
                 // インスタンシング描画
-                cmd.bInstanced = true;
-                cmd.InstanceCount = batch.GetInstanceCount();
-                cmd.FirstInstance = 0;
+                cmd.Type = DrawCommandType::DrawIndexedInstanced;
+                cmd.Draw.bInstanced = true;
+                cmd.Draw.InstanceCount = batch.GetInstanceCount();
+                cmd.Draw.FirstInstance = 0;
                 // カスタムデータとフラグをコピー（最初のインスタンスの値を使用）
                 if (!batch.InstanceExtraData.empty())
                 {
                     const auto &extra = batch.InstanceExtraData[0];
-                    std::memcpy(cmd.CustomData, extra.CustomData, sizeof(cmd.CustomData));
-                    cmd.bCastShadow = extra.bCastShadow;
+                    std::memcpy(cmd.Draw.CustomData, extra.CustomData, sizeof(cmd.Draw.CustomData));
+                    cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
                 // TODO: インスタンスデータバッファへのオフセット設定
             }
             else if (batch.GetInstanceCount() == 1)
             {
                 // 単一描画
-                cmd.bInstanced = false;
-                cmd.InstanceCount = 1;
-                cmd.WorldMatrix = batch.InstanceTransforms[0];
+                cmd.Draw.bInstanced = false;
+                cmd.Draw.InstanceCount = 1;
+                cmd.Draw.WorldMatrix = batch.InstanceTransforms[0];
                 // カスタムデータとフラグをコピー
                 if (!batch.InstanceExtraData.empty())
                 {
                     const auto &extra = batch.InstanceExtraData[0];
-                    std::memcpy(cmd.CustomData, extra.CustomData, sizeof(cmd.CustomData));
-                    cmd.bCastShadow = extra.bCastShadow;
+                    std::memcpy(cmd.Draw.CustomData, extra.CustomData, sizeof(cmd.Draw.CustomData));
+                    cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
                 // TODO: 法線行列の計算
             }
@@ -189,7 +198,7 @@ namespace NorvesLib::Core::Rendering
             std::sort(commands.begin(), commands.end(),
                       [](const DrawCommand &a, const DrawCommand &b)
                       {
-                          return a.MaterialHandle.Id < b.MaterialHandle.Id;
+                          return a.Draw.MaterialHandle.Id < b.Draw.MaterialHandle.Id;
                       });
             break;
 
@@ -209,7 +218,7 @@ namespace NorvesLib::Core::Rendering
         {
             // TODO: マテリアルからブレンドモードを取得
             // 現在は単純にすべて不透明として扱う
-            bool bIsTransparent = false; // MaterialManager::IsTransparent(cmd.MaterialHandle);
+            bool bIsTransparent = false; // MaterialManager::IsTransparent(cmd.Draw.MaterialHandle);
 
             if (bIsTransparent)
             {

@@ -371,6 +371,20 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetPendingAsyncLoadCount() const;
 
         /**
+         * @brief 外部で作成済みのRHIテクスチャをハンドルとして登録
+         *
+         * NeuralMaterialResource等が独自に作成したテクスチャを
+         * ハンドルシステムに統合し、GBufferPass等から参照可能にします。
+         *
+         * @param rhiTexture 登録するRHIテクスチャ
+         * @param debugName デバッグ名
+         * @return テクスチャハンドル
+         */
+        TextureHandle RegisterExternalTexture(
+            Container::TSharedPtr<RHI::ITexture> rhiTexture,
+            const Container::String& debugName = "");
+
+        /**
          * @brief テクスチャを解放
          * @param handle テクスチャハンドル
          */

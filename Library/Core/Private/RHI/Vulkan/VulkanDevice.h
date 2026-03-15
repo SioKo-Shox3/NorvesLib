@@ -86,6 +86,7 @@ namespace NorvesLib::RHI::Vulkan
         ShaderCompilerPtr CreateShaderCompiler() override;
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
+        const DeviceCapabilities &GetCapabilities() const override { return m_Capabilities; }
         Math::Matrix4x4 AdjustProjectionForClipSpace(
             const Math::Matrix4x4 &projection, bool bApplyYFlip = true) const override;
 
@@ -133,6 +134,12 @@ namespace NorvesLib::RHI::Vulkan
         vk::PhysicalDeviceFeatures m_deviceFeatures{};
         vk::PhysicalDeviceMemoryProperties m_memoryProperties{};
 
+        // デバイス能力情報
+        DeviceCapabilities m_Capabilities{};
+
+        // Cooperative Vector 機能構造体（Features2チェーン用）
+        vk::PhysicalDeviceCooperativeVectorFeaturesNV m_cooperativeVectorFeatures{};
+
         // キューファミリー
         uint32_t m_graphicsQueueFamilyIndex = UINT32_MAX;
         uint32_t m_computeQueueFamilyIndex = UINT32_MAX;
@@ -163,6 +170,7 @@ namespace NorvesLib::RHI::Vulkan
         void CreateLogicalDevice();
         void CreateCommandPool();
         void InitFormatMaps();
+        void DetectCapabilities();
 
         // ヘルパー
         bool IsDeviceSuitable(vk::PhysicalDevice device);

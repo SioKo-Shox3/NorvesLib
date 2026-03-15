@@ -20,6 +20,7 @@
 #include "RHI/ITexture.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/IGPUResourceAllocator.h"
+#include "RHI/Vulkan/VulkanSlangCompiler.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
@@ -150,6 +151,14 @@ namespace NorvesLib::Core::Rendering
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize ShaderManager");
             return false;
+        }
+
+        // Slangコンパイラの設定（Neural Shaders対応GPUの場合）
+        if (m_Device->GetCapabilities().NeuralShaders.bSupported)
+        {
+            auto slangCompiler = Container::MakeShared<NorvesLib::RHI::Vulkan::VulkanSlangCompiler>();
+            m_ShaderManager.SetSlangCompiler(
+                Container::StaticPointerCast<RHI::IShaderCompiler>(slangCompiler));
         }
 
         // ========================================
@@ -532,6 +541,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.ResourceManager = m_ResourceManager;
         viewContext.MainCamera = m_bCameraSet ? &m_MainCamera : nullptr;
         viewContext.ShaderMgr = &m_ShaderManager;
+        viewContext.Capabilities = &m_Device->GetCapabilities();
 
         // パスチェーンが設定されたViewはパスベース描画を実行
         // パス未設定のViewはレガシーフローにフォールバック

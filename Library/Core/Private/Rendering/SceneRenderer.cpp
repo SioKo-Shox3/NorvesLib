@@ -137,9 +137,42 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // パイプラインをバインド（デフォルトパイプライン使用）
-        // TODO: マテリアルシステム完成後はMaterialHandleからパイプラインを解決
-        RHI::PipelinePtr pipeline = m_DefaultPipeline;
+        // ========================================
+        // Dispatchコマンド
+        // ========================================
+        if (command.IsComputeCommand())
+        {
+            // パイプラインをバインド
+            RHI::PipelinePtr pipeline = command.Pipeline;
+            if (!pipeline)
+            {
+                return;
+            }
+
+            commandList->SetPipeline(pipeline);
+
+            // ディスクリプタセットをバインド
+            if (command.DescriptorSet)
+            {
+                commandList->SetDescriptorSet(command.DescriptorSet, command.DescriptorSetSlot);
+            }
+
+            // Dispatch実行
+            commandList->Dispatch(
+                command.Compute.ThreadGroupCountX,
+                command.Compute.ThreadGroupCountY,
+                command.Compute.ThreadGroupCountZ);
+
+            ++m_Stats.DispatchCount;
+            return;
+        }
+
+        // ========================================
+        // グラフィックス描画コマンド
+        // ========================================
+
+        // パイプラインをバインド（コマンド指定があれば優先、なければデフォルト）
+        RHI::PipelinePtr pipeline = command.Pipeline ? command.Pipeline : m_DefaultPipeline;
         if (!pipeline)
         {
             return;
@@ -151,46 +184,47 @@ namespace NorvesLib::Core::Rendering
             m_BoundPipeline = pipeline;
         }
 
+        // ディスクリプタセットをバインド
+        if (command.DescriptorSet)
+        {
+            commandList->SetDescriptorSet(command.DescriptorSet, command.DescriptorSetSlot);
+        }
+
+        const auto &draw = command.Draw;
+
         // MeshHandleからGPUデータを解決
-        if (command.MeshHandle.IsValid() && m_ResourceCache)
+        if (draw.MeshHandle.IsValid() && m_ResourceCache)
         {
             // PersistentResourceCache経由でGPUバッファを取得
-            // Note: ResourceIdとMeshDataHandle.Idが対応する
-            // ここではCachedMeshGPUDataへの直接アクセスが必要
-            // → SceneRenderer用のルックアップ関数が必要
-
-            // 現時点ではフォールバック: MeshHandleベースで直接描画
-            // 将来的にはResourceRegistry経由でMeshResource→PersistentResourceCache→GPUデータ
         }
 
         // 頂点/インデックスバッファがある場合のインデックス描画
-        if (command.IndexCount > 0 && command.MeshHandle.IsValid())
+        if (draw.IndexCount > 0 && draw.MeshHandle.IsValid())
         {
-            if (command.bInstanced && command.InstanceCount > 1)
+            if (draw.bInstanced && draw.InstanceCount > 1)
             {
                 commandList->DrawIndexedInstanced(
-                    command.IndexCount,
-                    command.InstanceCount,
-                    command.IndexOffset,
-                    static_cast<int32_t>(command.VertexOffset),
-                    command.FirstInstance);
+                    draw.IndexCount,
+                    draw.InstanceCount,
+                    draw.IndexOffset,
+                    static_cast<int32_t>(draw.VertexOffset),
+                    draw.FirstInstance);
             }
             else
             {
                 commandList->DrawIndexed(
-                    command.IndexCount,
-                    command.IndexOffset,
-                    static_cast<int32_t>(command.VertexOffset));
+                    draw.IndexCount,
+                    draw.IndexOffset,
+                    static_cast<int32_t>(draw.VertexOffset));
             }
         }
         else
         {
             // 頂点バッファなし描画（シェーダー内蔵の頂点データ）
-            // VertexOffset を頂点数として再利用（Directモード用）
-            uint32_t vertexCount = command.VertexOffset > 0 ? command.VertexOffset : 3;
-            if (command.bInstanced && command.InstanceCount > 1)
+            uint32_t vertexCount = draw.VertexOffset > 0 ? draw.VertexOffset : 3;
+            if (draw.bInstanced && draw.InstanceCount > 1)
             {
-                commandList->DrawInstanced(vertexCount, command.InstanceCount, 0, command.FirstInstance);
+                commandList->DrawInstanced(vertexCount, draw.InstanceCount, 0, draw.FirstInstance);
             }
             else
             {
@@ -200,9 +234,9 @@ namespace NorvesLib::Core::Rendering
 
         // 統計更新
         ++m_Stats.DrawCallCount;
-        if (command.IndexCount > 0)
+        if (draw.IndexCount > 0)
         {
-            m_Stats.TriangleCount += command.IndexCount / 3;
+            m_Stats.TriangleCount += draw.IndexCount / 3;
         }
     }
 
@@ -255,7 +289,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // MeshHandleからGPUデータを解決
-        const auto *gpuData = resourceManager->GetMeshGPUData(command.MeshHandle);
+        const auto *gpuData = resourceManager->GetMeshGPUData(command.Draw.MeshHandle);
         if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer)
         {
             return false;
@@ -272,14 +306,14 @@ namespace NorvesLib::Core::Rendering
         commandList->SetIndexBuffer(gpuData->IndexBuffer, 0);
 
         // 描画
-        if (command.bInstanced && command.InstanceCount > 1)
+        if (command.Draw.bInstanced && command.Draw.InstanceCount > 1)
         {
             commandList->DrawIndexedInstanced(
                 gpuData->IndexCount,
-                command.InstanceCount,
+                command.Draw.InstanceCount,
                 0,
                 0,
-                command.FirstInstance);
+                command.Draw.FirstInstance);
         }
         else
         {
