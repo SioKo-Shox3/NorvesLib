@@ -11,6 +11,7 @@
 #include "Core/Public/Rendering/ProceduralMeshGenerator.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Rendering/SceneView.h"
+
 #include "Core/Public/Math/Matrix4x4.h"
 #include "Core/Public/Math/Quaternion.h"
 #include "Core/Public/Math/Vector3.h"
@@ -169,55 +170,55 @@ namespace Game::GameModes
                 silverUpdate->PendingTextureCount = 5;
 
                 resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_albedo.png",
-                    [silverUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        silverUpdate->CreateData.AlbedoTexture = handle;
-                        if (--silverUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                        }
-                    });
+                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     silverUpdate->CreateData.AlbedoTexture = handle;
+                                                     if (--silverUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
+                                                     }
+                                                 });
                 resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_normal-ogl.png",
-                    [silverUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        silverUpdate->CreateData.NormalTexture = handle;
-                        if (--silverUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                        }
-                    });
+                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     silverUpdate->CreateData.NormalTexture = handle;
+                                                     if (--silverUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
+                                                     }
+                                                 });
                 resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_metallic.png",
-                    [silverUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        silverUpdate->CreateData.MetallicTexture = handle;
-                        if (--silverUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                        }
-                    });
+                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     silverUpdate->CreateData.MetallicTexture = handle;
+                                                     if (--silverUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
+                                                     }
+                                                 });
                 resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_roughness.png",
-                    [silverUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        silverUpdate->CreateData.RoughnessTexture = handle;
-                        if (--silverUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                        }
-                    });
+                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     silverUpdate->CreateData.RoughnessTexture = handle;
+                                                     if (--silverUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
+                                                     }
+                                                 });
                 resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_ao.png",
-                    [silverUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        silverUpdate->CreateData.AOTexture = handle;
-                        if (--silverUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
-                        }
-                    });
+                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     silverUpdate->CreateData.AOTexture = handle;
+                                                     if (--silverUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
+                                                     }
+                                                 });
 
                 data.m_PendingMaterialUpdates.push_back(silverUpdate);
                 NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material created (textures loading async)");
@@ -236,55 +237,55 @@ namespace Game::GameModes
                 cobbleUpdate->PendingTextureCount = 5;
 
                 resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png",
-                    [cobbleUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        cobbleUpdate->CreateData.AlbedoTexture = handle;
-                        if (--cobbleUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                        }
-                    });
+                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     cobbleUpdate->CreateData.AlbedoTexture = handle;
+                                                     if (--cobbleUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
+                                                     }
+                                                 });
                 resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_gl_4k.png",
-                    [cobbleUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        cobbleUpdate->CreateData.NormalTexture = handle;
-                        if (--cobbleUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                        }
-                    });
+                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     cobbleUpdate->CreateData.NormalTexture = handle;
+                                                     if (--cobbleUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
+                                                     }
+                                                 });
                 resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png",
-                    [cobbleUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        cobbleUpdate->CreateData.RoughnessTexture = handle;
-                        if (--cobbleUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                        }
-                    });
+                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     cobbleUpdate->CreateData.RoughnessTexture = handle;
+                                                     if (--cobbleUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
+                                                     }
+                                                 });
                 resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png",
-                    [cobbleUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        cobbleUpdate->CreateData.AOTexture = handle;
-                        if (--cobbleUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                        }
-                    });
+                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     cobbleUpdate->CreateData.AOTexture = handle;
+                                                     if (--cobbleUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
+                                                     }
+                                                 });
                 resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
-                    [cobbleUpdate, &resourceManager](TextureHandle handle)
-                    {
-                        cobbleUpdate->CreateData.HeightTexture = handle;
-                        if (--cobbleUpdate->PendingTextureCount == 0)
-                        {
-                            resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
-                            NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
-                        }
-                    });
+                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                                                 {
+                                                     cobbleUpdate->CreateData.HeightTexture = handle;
+                                                     if (--cobbleUpdate->PendingTextureCount == 0)
+                                                     {
+                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
+                                                     }
+                                                 });
 
                 data.m_PendingMaterialUpdates.push_back(cobbleUpdate);
                 NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material created (textures loading async)");

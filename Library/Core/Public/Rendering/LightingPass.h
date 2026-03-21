@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "IViewPass.h"
+#include "NeuralBRDFData.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -30,6 +31,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief IBL強度 */
         float IBLIntensity = 0.2f;
+
+        /** @brief Neural BRDFウェイトファイルパス（空の場合は解析的BRDFを使用） */
+        Container::String NeuralBRDFWeightPath;
     };
 
     /**
@@ -137,6 +141,11 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_IBLSampler;         ///< IBL用サンプラー（Linear + ミップマップ）
         uint32_t m_EnvironmentMipLevels = 1;  ///< 環境マップのミップレベル数
         bool m_bIBLAvailable = false;         ///< IBLリソースが利用可能か
+
+        // Neural BRDF リソース
+        NeuralBRDFData m_NeuralBRDFData;         ///< 学習済みBRDFデータ
+        RHI::BufferPtr m_NeuralBRDFWeightBuffer; ///< GPU側重みStorageBuffer
+        bool m_bNeuralBRDFAvailable = false;     ///< Neural BRDFが利用可能か
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;

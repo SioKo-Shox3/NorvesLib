@@ -47,7 +47,7 @@ namespace NorvesLib::Core::Rendering
          * @param shaderManager シェーダーマネージャー
          * @return 成功時true
          */
-        bool Initialize(RHI::IDevice* device, ShaderManager* shaderManager);
+        bool Initialize(RHI::IDevice *device, ShaderManager *shaderManager);
 
         /**
          * @brief 終了処理
@@ -58,7 +58,7 @@ namespace NorvesLib::Core::Rendering
          * @brief デコード対象のNeuralMaterialResourceを登録
          * @param resource 登録するリソース
          */
-        void RegisterResource(NeuralMaterialResource* resource);
+        void RegisterResource(NeuralMaterialResource *resource);
 
         /**
          * @brief 登録済みリソースをクリア
@@ -73,7 +73,7 @@ namespace NorvesLib::Core::Rendering
          * DrawCommand::CreateDispatch()を使用し、Pipeline/DescriptorSetを設定します。
          * 1回のDispatchで全出力スロット（Albedo, Normal, ARM等）を同時にデコードします。
          */
-        void GenerateDecodeCommands(Container::VariableArray<DrawCommand>& outCommands);
+        void GenerateDecodeCommands(Container::VariableArray<DrawCommand> &outCommands);
 
         /**
          * @brief 初期化済みか
@@ -102,17 +102,17 @@ namespace NorvesLib::Core::Rendering
          *   binding 0: StorageBuffer (MLP重みデータ) - readonly
          *   binding 1～N: StorageTexture (出力テクスチャ) - writeonly
          */
-        RHI::DescriptorSetPtr CreateDescriptorSetForResource(NeuralMaterialResource* resource);
+        RHI::DescriptorSetPtr CreateDescriptorSetForResource(NeuralMaterialResource *resource);
 
     private:
-        RHI::IDevice* m_Device = nullptr;
-        ShaderManager* m_ShaderManager = nullptr;
+        RHI::IDevice *m_Device = nullptr;
+        ShaderManager *m_ShaderManager = nullptr;
 
         // コンピュートパイプライン
         RHI::PipelinePtr m_ComputePipeline;
 
         // デコード対象リソース
-        Container::VariableArray<NeuralMaterialResource*> m_Resources;
+        Container::VariableArray<NeuralMaterialResource *> m_Resources;
 
         bool m_bInitialized = false;
     };

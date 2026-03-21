@@ -195,8 +195,8 @@ namespace NorvesLib::Core
          * @param neuralMaterial NeuralMaterialResourceへのポインタ（nullptrで解除）
          * @param mapping 出力スロット→PBRスロットのマッピング
          */
-        void SetNeuralMaterial(Rendering::NeuralMaterialResource* neuralMaterial,
-                               const NeuralMaterialSlotMapping& mapping = NeuralMaterialSlotMapping::DefaultPBR());
+        void SetNeuralMaterial(Rendering::NeuralMaterialResource *neuralMaterial,
+                               const NeuralMaterialSlotMapping &mapping = NeuralMaterialSlotMapping::DefaultPBR());
 
         /**
          * @brief NeuralMaterialが設定されているか
@@ -250,7 +250,7 @@ namespace NorvesLib::Core
         bool m_bCastShadows = true;
 
         // NeuralMaterial統合
-        Rendering::NeuralMaterialResource* m_NeuralMaterial = nullptr; ///< NeuralMaterialリソース（非所有）
+        Rendering::NeuralMaterialResource *m_NeuralMaterial = nullptr; ///< NeuralMaterialリソース（非所有）
         NeuralMaterialSlotMapping m_NeuralSlotMapping;                 ///< スロットマッピング
 
         /**
@@ -260,7 +260,7 @@ namespace NorvesLib::Core
          * @return 解決済みTextureHandle
          */
         Rendering::TextureHandle ResolveNeuralSlot(uint32_t slotIndex,
-                                                    Rendering::TextureHandle fallback) const;
+                                                   Rendering::TextureHandle fallback) const;
     };
 
     // スマートポインタエイリアス

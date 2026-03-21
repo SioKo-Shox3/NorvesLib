@@ -3,6 +3,7 @@
 #include "RenderTypes.h"
 #include "VertexLayout.h"
 #include "MaterialTypes.h"
+#include "NeuralMaterialResource.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
@@ -322,11 +323,11 @@ namespace NorvesLib::Core::Rendering
          */
         struct AsyncTextureResult
         {
-            Container::String Path;           ///< リクエストパス
-            Container::String ResolvedPath;   ///< 解決済みパス
-            TextureCreateInfo CreateInfo;      ///< テクスチャ作成情報
+            Container::String Path;                      ///< リクエストパス
+            Container::String ResolvedPath;              ///< 解決済みパス
+            TextureCreateInfo CreateInfo;                ///< テクスチャ作成情報
             Container::VariableArray<uint8_t> PixelData; ///< デコード済みピクセルデータ
-            bool bSuccess = false;            ///< 読み込み成功フラグ
+            bool bSuccess = false;                       ///< 読み込み成功フラグ
         };
 
         /**
@@ -334,10 +335,10 @@ namespace NorvesLib::Core::Rendering
          */
         struct AsyncTextureRequest
         {
-            uint32_t RequestId = 0;           ///< リクエストID
-            Container::String Path;           ///< テクスチャパス
-            Thread::TaskPtr Task;             ///< ジョブシステムタスク
-            AsyncTextureResult Result;        ///< 読み込み結果
+            uint32_t RequestId = 0;                                  ///< リクエストID
+            Container::String Path;                                  ///< テクスチャパス
+            Thread::TaskPtr Task;                                    ///< ジョブシステムタスク
+            AsyncTextureResult Result;                               ///< 読み込み結果
             NorvesLib::Core::Delegate<void, TextureHandle> Callback; ///< 完了コールバック
         };
 
@@ -382,7 +383,7 @@ namespace NorvesLib::Core::Rendering
          */
         TextureHandle RegisterExternalTexture(
             Container::TSharedPtr<RHI::ITexture> rhiTexture,
-            const Container::String& debugName = "");
+            const Container::String &debugName = "");
 
         /**
          * @brief テクスチャを解放
@@ -526,6 +527,32 @@ namespace NorvesLib::Core::Rendering
         void ReleaseMaterial(MaterialHandle handle);
 
         // ========================================
+        // ニューラルマテリアル操作
+        // ========================================
+
+        /**
+         * @brief ニューラルマテリアルを作成
+         *
+         * NeuralMaterialResourceの生成・初期化・出力テクスチャ登録・マテリアル作成を
+         * 一括で行い、MaterialHandleを返します。
+         * GPUリソースのライフタイムはRenderResourceManagerが管理するため、
+         * シーン側での明示的な解放は不要です（ClearAllResourcesで自動解放）。
+         *
+         * @param desc ニューラルマテリアル記述
+         * @return マテリアルハンドル（失敗時Invalid）
+         */
+        MaterialHandle CreateNeuralMaterial(const NeuralMaterialDesc &desc);
+
+        /**
+         * @brief 登録済みニューラルマテリアルリソース一覧を取得（Rendering内部用）
+         *
+         * NeuralMaterialDecodePassのSetup()からプルモデルで呼び出されます。
+         *
+         * @return ニューラルマテリアルリソースのポインタ配列
+         */
+        Container::VariableArray<NeuralMaterialResource *> GetNeuralMaterialResources() const;
+
+        // ========================================
         // 内部リソースアクセス（Rendering内部用）
         // ========================================
 
@@ -621,6 +648,9 @@ namespace NorvesLib::Core::Rendering
 
         // マテリアルデータマップ（MaterialHandle::Id → マテリアル情報）
         Container::Map<uint64_t, MaterialResourceData> m_Materials;
+
+        // ニューラルマテリアルリソース（MaterialHandle::Id → NeuralMaterialResource）
+        Container::Map<uint64_t, Container::TSharedPtr<NeuralMaterialResource>> m_NeuralMaterials;
 
         // デフォルトサンプラー
         SamplerHandle m_DefaultSampler;

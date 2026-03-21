@@ -254,6 +254,7 @@ namespace NorvesLib::Core::Rendering
         LightingPassSettings lightingSettings;
         lightingSettings.EnvironmentMapPath = "Textures/Atmosphere/grasslands_sunset_4k.hdr";
         lightingSettings.IBLIntensity = 1.0f;
+        lightingSettings.NeuralBRDFWeightPath = "Data/disney.ns.bin";
         auto lightingPass = MakeUnique<LightingPass>(lightingSettings);
         lightingPass->SetSceneView(this);
         AddPass(std::move(lightingPass));

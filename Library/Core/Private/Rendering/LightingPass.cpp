@@ -82,7 +82,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t envMapMipLevels;    // uint （環境マップミップレベル数）
         uint32_t bIBLEnabled;        // uint （IBL有効フラグ）
         uint32_t bSSAOEnabled;       // uint （SSAO有効フラグ）
-        uint32_t _pad0;              // padding
+        uint32_t bNeuralBRDFEnabled; // uint （Neural BRDF有効フラグ）
         uint32_t _pad1;              // padding
         uint32_t _pad2;              // padding
     };
@@ -193,6 +193,49 @@ namespace NorvesLib::Core::Rendering
         m_bInitialized = true;
 
         // ========================================
+        // Neural BRDF ウェイトデータ読み込み
+        // ========================================
+        if (!m_Settings.NeuralBRDFWeightPath.empty())
+        {
+            Container::String resolvedPath = m_Settings.NeuralBRDFWeightPath;
+#ifdef NORVES_ASSET_DIR
+            if (resolvedPath.size() > 0 && resolvedPath[0] != '/' && resolvedPath[0] != '\\' &&
+                (resolvedPath.size() < 2 || resolvedPath[1] != ':'))
+            {
+                resolvedPath = Container::String(NORVES_ASSET_DIR) + "/" + resolvedPath;
+            }
+#endif
+
+            if (m_NeuralBRDFData.LoadFromFile(resolvedPath))
+            {
+                const auto &weightData = m_NeuralBRDFData.GetWeightDataFP32();
+                size_t bufferSize = m_NeuralBRDFData.GetWeightDataSizeFP32();
+
+                RHI::BufferDesc weightBufDesc(
+                    static_cast<uint64_t>(bufferSize),
+                    RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst,
+                    true, "NeuralBRDF_Weights");
+
+                m_NeuralBRDFWeightBuffer = m_Device->CreateBuffer(weightBufDesc);
+                if (m_NeuralBRDFWeightBuffer)
+                {
+                    m_NeuralBRDFWeightBuffer->Update(weightData.data(), bufferSize);
+                    m_bNeuralBRDFAvailable = true;
+                    NORVES_LOG_INFO("LightingPass", "Neural BRDF loaded: %zu parameters, %zu bytes",
+                                    weightData.size(), bufferSize);
+                }
+                else
+                {
+                    NORVES_LOG_WARNING("LightingPass", "Failed to create Neural BRDF weight buffer");
+                }
+            }
+            else
+            {
+                NORVES_LOG_WARNING("LightingPass", "Failed to load Neural BRDF weights, using analytical BRDF");
+            }
+        }
+
+        // ========================================
         // IBL (Image-Based Lighting) リソース初期化
         // ========================================
         if (!m_Settings.EnvironmentMapPath.empty())
@@ -255,6 +298,10 @@ namespace NorvesLib::Core::Rendering
         m_BrdfLutTexture.reset();
         m_IBLSampler.reset();
         m_bIBLAvailable = false;
+
+        // Neural BRDFリソース解放
+        m_NeuralBRDFWeightBuffer.reset();
+        m_bNeuralBRDFAvailable = false;
 
         m_Device = nullptr;
         m_SceneView = nullptr;
@@ -417,6 +464,16 @@ namespace NorvesLib::Core::Rendering
             ssaoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             ssaoBinding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(ssaoBinding);
+
+            // Neural BRDF weight buffer (binding=11, storage buffer)
+            if (m_bNeuralBRDFAvailable)
+            {
+                RHI::DescriptorBinding neuralWeightBinding;
+                neuralWeightBinding.binding = 11;
+                neuralWeightBinding.type = RHI::ResourceBindType::StructuredBuffer;
+                neuralWeightBinding.stages = RHI::ShaderStage::Pixel;
+                dsDesc.bindings.push_back(neuralWeightBinding);
+            }
 
             m_LightingDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
             if (!m_LightingDescriptorSet)
@@ -616,6 +673,14 @@ namespace NorvesLib::Core::Rendering
             m_LightingDescriptorSet->BindTexture(10, albedoPtr);
         }
         m_LightingDescriptorSet->BindSampler(10, m_GBufferSampler);
+
+        // Neural BRDFウェイトバッファバインド（binding=11）
+        if (m_bNeuralBRDFAvailable && m_NeuralBRDFWeightBuffer)
+        {
+            m_LightingDescriptorSet->BindStorageBuffer(
+                11, m_NeuralBRDFWeightBuffer, 0,
+                static_cast<uint32_t>(m_NeuralBRDFData.GetWeightDataSizeFP32()));
+        }
 
         m_LightingDescriptorSet->Update();
 
@@ -825,6 +890,7 @@ namespace NorvesLib::Core::Rendering
             bSSAOAvailable = (context.SharedResources->GetTexturePtr("SSAO") != nullptr);
         }
         params.bSSAOEnabled = bSSAOAvailable ? 1 : 0;
+        params.bNeuralBRDFEnabled = m_bNeuralBRDFAvailable ? 1 : 0;
 
         // IBL有効時はambientColor.wにIBL強度を設定
         if (m_bIBLAvailable)

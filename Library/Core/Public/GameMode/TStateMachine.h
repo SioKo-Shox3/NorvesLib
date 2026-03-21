@@ -23,7 +23,13 @@ namespace NorvesLib::Core::GameMode
         using StatePtr = Container::TUniquePtr<StateType>;
 
         TStateMachine() = default;
-        virtual ~TStateMachine() override = default;
+        virtual ~TStateMachine() override
+        {
+            if (m_CurrentState)
+            {
+                m_CurrentState->Leave(this);
+            }
+        }
 
         /**
          * @brief 次のステートを予約

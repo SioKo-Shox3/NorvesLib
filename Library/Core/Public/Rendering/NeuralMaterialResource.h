@@ -22,9 +22,9 @@ namespace NorvesLib::Core::Rendering
      */
     struct NeuralMaterialOutputSlot
     {
-        Container::String Name;                             ///< スロット名（"Albedo", "Normal", "ARM" 等）
+        Container::String Name;                                  ///< スロット名（"Albedo", "Normal", "ARM" 等）
         RHI::Format TextureFormat = RHI::Format::R8G8B8A8_UNORM; ///< 出力テクスチャフォーマット
-        uint32_t Channels = 4;                              ///< このスロットが使うMLPの出力チャンネル数
+        uint32_t Channels = 4;                                   ///< このスロットが使うMLPの出力チャンネル数
     };
 
     /**
@@ -36,13 +36,13 @@ namespace NorvesLib::Core::Rendering
     struct NeuralMaterialDesc
     {
         // MLP構成
-        uint32_t InputChannels = 2;  ///< 入力チャネル数（通常UV = 2）
-        uint32_t HiddenLayers = 4;   ///< 隠れ層の数
-        uint32_t HiddenWidth = 64;   ///< 隠れ層のニューロン数
+        uint32_t InputChannels = 2; ///< 入力チャネル数（通常UV = 2）
+        uint32_t HiddenLayers = 4;  ///< 隠れ層の数
+        uint32_t HiddenWidth = 64;  ///< 隠れ層のニューロン数
 
         // 出力解像度
-        uint32_t OutputWidth = 0;    ///< 出力テクスチャ幅
-        uint32_t OutputHeight = 0;   ///< 出力テクスチャ高さ
+        uint32_t OutputWidth = 0;  ///< 出力テクスチャ幅
+        uint32_t OutputHeight = 0; ///< 出力テクスチャ高さ
 
         // 出力スロット構成（外部設定可能）
         Container::VariableArray<NeuralMaterialOutputSlot> OutputSlots;
@@ -56,7 +56,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetTotalOutputChannels() const
         {
             uint32_t total = 0;
-            for (const auto& slot : OutputSlots)
+            for (const auto &slot : OutputSlots)
             {
                 total += slot.Channels;
             }
@@ -134,14 +134,14 @@ namespace NorvesLib::Core::Rendering
          * @param desc ネットワーク＋出力記述
          * @return 成功時true
          */
-        bool Initialize(RHI::IDevice* device, const NeuralMaterialDesc& desc);
+        bool Initialize(RHI::IDevice *device, const NeuralMaterialDesc &desc);
 
         /**
          * @brief 出力テクスチャをRenderResourceManagerにTextureHandleとして登録
          * @param resourceManager テクスチャハンドル登録先
          * @return 成功時true
          */
-        bool RegisterOutputTextures(RenderResourceManager& resourceManager);
+        bool RegisterOutputTextures(RenderResourceManager &resourceManager);
 
         /**
          * @brief 重みデータをアップロード
@@ -149,7 +149,7 @@ namespace NorvesLib::Core::Rendering
          * @param dataSize データサイズ
          * @return 成功時true
          */
-        bool UploadWeights(const void* weightData, size_t dataSize);
+        bool UploadWeights(const void *weightData, size_t dataSize);
 
         /**
          * @brief リソースを解放
@@ -173,7 +173,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetOutputSlotCount() const { return static_cast<uint32_t>(m_Desc.OutputSlots.size()); }
 
         /** @brief ネットワーク記述を取得 */
-        const NeuralMaterialDesc& GetDesc() const { return m_Desc; }
+        const NeuralMaterialDesc &GetDesc() const { return m_Desc; }
 
         /** @brief 初期化済みか */
         bool IsInitialized() const { return m_bInitialized; }
@@ -182,10 +182,10 @@ namespace NorvesLib::Core::Rendering
         size_t CalculateWeightBufferSize() const;
 
     private:
-        RHI::IDevice* m_Device = nullptr;
+        RHI::IDevice *m_Device = nullptr;
         NeuralMaterialDesc m_Desc;
 
-        RHI::BufferPtr m_WeightBuffer;                            ///< MLP重み/バイアスのStorageBuffer
+        RHI::BufferPtr m_WeightBuffer;                              ///< MLP重み/バイアスのStorageBuffer
         Container::VariableArray<RHI::TexturePtr> m_OutputTextures; ///< スロット別出力テクスチャ
         Container::VariableArray<TextureHandle> m_OutputHandles;    ///< スロット別TextureHandle
 
