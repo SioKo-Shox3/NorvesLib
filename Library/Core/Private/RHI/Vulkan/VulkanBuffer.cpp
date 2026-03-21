@@ -238,6 +238,16 @@ namespace NorvesLib::RHI::Vulkan
             usage |= vk::BufferUsageFlagBits::eTransferSrc;
         }
 
+        if ((m_desc.Usage & ResourceUsage::StorageBuffer) == ResourceUsage::StorageBuffer)
+        {
+            usage |= vk::BufferUsageFlagBits::eStorageBuffer;
+        }
+
+        if ((m_desc.Usage & ResourceUsage::IndirectBuffer) == ResourceUsage::IndirectBuffer)
+        {
+            usage |= vk::BufferUsageFlagBits::eIndirectBuffer;
+        }
+
         if ((m_desc.Usage & ResourceUsage::TransferDst) == ResourceUsage::TransferDst)
         {
             usage |= vk::BufferUsageFlagBits::eTransferDst;

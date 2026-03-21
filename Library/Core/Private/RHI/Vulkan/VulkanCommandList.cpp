@@ -41,6 +41,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::AccessFlagBits::eShaderRead;
         case ResourceState::UnorderedAccess:
             return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+        case ResourceState::IndirectArgument:
+            return vk::AccessFlagBits::eIndirectCommandRead;
         case ResourceState::CopySource:
             return vk::AccessFlagBits::eTransferRead;
         case ResourceState::CopyDest:
@@ -72,6 +74,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::PipelineStageFlagBits::eFragmentShader;
         case ResourceState::UnorderedAccess:
             return vk::PipelineStageFlagBits::eComputeShader;
+        case ResourceState::IndirectArgument:
+            return vk::PipelineStageFlagBits::eDrawIndirect;
         case ResourceState::CopySource:
         case ResourceState::CopyDest:
             return vk::PipelineStageFlagBits::eTransfer;
@@ -547,6 +551,29 @@ namespace NorvesLib::RHI::Vulkan
                                           uint32_t startVertexLocation, uint32_t startInstanceLocation)
     {
         m_commandBuffer.draw(vertexCount, instanceCount, startVertexLocation, startInstanceLocation);
+    }
+
+    void VulkanCommandList::DrawIndexedIndirect(BufferPtr indirectBuffer, uint64_t offset,
+                                                  uint32_t drawCount, uint32_t stride)
+    {
+        auto vkBuffer = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
+        if (!vkBuffer)
+        {
+            throw std::runtime_error("DrawIndexedIndirect: 無効な間接バッファです");
+        }
+
+        m_commandBuffer.drawIndexedIndirect(vkBuffer->GetVkBuffer(), offset, drawCount, stride);
+    }
+
+    void VulkanCommandList::FillBuffer(BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value)
+    {
+        auto vkBuffer = DynamicPointerCast<VulkanBuffer>(buffer);
+        if (!vkBuffer)
+        {
+            throw std::runtime_error("FillBuffer: 無効なバッファです");
+        }
+
+        m_commandBuffer.fillBuffer(vkBuffer->GetVkBuffer(), offset, size, value);
     }
 
     void VulkanCommandList::Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ)

@@ -195,6 +195,29 @@ namespace NorvesLib::RHI
                                    uint32_t startVertexLocation = 0, uint32_t startInstanceLocation = 0) = 0;
 
         /**
+         * @brief 間接描画（インデックス付き）
+         *
+         * GPU側バッファからDrawIndexedIndirectCommandを読み取って描画します。
+         * @param indirectBuffer 間接引数バッファ（VkDrawIndexedIndirectCommand配列）
+         * @param offset バッファ内のオフセット（バイト）
+         * @param drawCount 描画コマンド数
+         * @param stride コマンド間のストライド（バイト）
+         */
+        virtual void DrawIndexedIndirect(BufferPtr indirectBuffer, uint64_t offset,
+                                         uint32_t drawCount, uint32_t stride) = 0;
+
+        /**
+         * @brief バッファを指定値でフィル
+         *
+         * Indirect Drawのカウンタリセット等に使用します。
+         * @param buffer 対象バッファ
+         * @param offset オフセット（バイト）
+         * @param size サイズ（バイト）
+         * @param value フィル値（32bit）
+         */
+        virtual void FillBuffer(BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) = 0;
+
+        /**
          * @brief コンピュートシェーダーディスパッチ
          * @param threadGroupCountX Xスレッドグループ数
          * @param threadGroupCountY Yスレッドグループ数

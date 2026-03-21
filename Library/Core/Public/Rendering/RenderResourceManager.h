@@ -4,6 +4,7 @@
 #include "VertexLayout.h"
 #include "MaterialTypes.h"
 #include "NeuralMaterialResource.h"
+#include "MegaGeometry/MegaGeometryTypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
@@ -553,6 +554,34 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<NeuralMaterialResource *> GetNeuralMaterialResources() const;
 
         // ========================================
+        // MegaGeometry操作
+        // ========================================
+
+        /**
+         * @brief MegaMeshを作成
+         *
+         * クラスタ化済みのメッシュデータからGPUバッファ（VB/IB/ClusterSSBO）を作成し、
+         * MegaMeshHandleを返します。
+         *
+         * @param createInfo MegaMesh作成情報
+         * @return MegaMeshハンドル（失敗時Invalid）
+         */
+        MegaGeometry::MegaMeshHandle CreateMegaMesh(const MegaGeometry::MegaMeshCreateInfo& createInfo);
+
+        /**
+         * @brief MegaMeshのGPUデータを取得
+         * @param handle MegaMeshハンドル
+         * @return GPUデータへのポインタ（無効な場合nullptr）
+         */
+        const MegaGeometry::MegaMeshGPUData* GetMegaMeshGPUData(MegaGeometry::MegaMeshHandle handle) const;
+
+        /**
+         * @brief MegaMeshを解放
+         * @param handle MegaMeshハンドル
+         */
+        void ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle);
+
+        // ========================================
         // 内部リソースアクセス（Rendering内部用）
         // ========================================
 
@@ -651,6 +680,9 @@ namespace NorvesLib::Core::Rendering
 
         // ニューラルマテリアルリソース（MaterialHandle::Id → NeuralMaterialResource）
         Container::Map<uint64_t, Container::TSharedPtr<NeuralMaterialResource>> m_NeuralMaterials;
+
+        // MegaMesh GPUデータマップ（MegaMeshHandle::Id → GPUデータ）
+        Container::Map<uint64_t, MegaGeometry::MegaMeshGPUData> m_MegaMeshGPUDataMap;
 
         // デフォルトサンプラー
         SamplerHandle m_DefaultSampler;
