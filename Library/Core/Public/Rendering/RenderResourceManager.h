@@ -566,14 +566,14 @@ namespace NorvesLib::Core::Rendering
          * @param createInfo MegaMesh作成情報
          * @return MegaMeshハンドル（失敗時Invalid）
          */
-        MegaGeometry::MegaMeshHandle CreateMegaMesh(const MegaGeometry::MegaMeshCreateInfo& createInfo);
+        MegaGeometry::MegaMeshHandle CreateMegaMesh(const MegaGeometry::MegaMeshCreateInfo &createInfo);
 
         /**
          * @brief MegaMeshのGPUデータを取得
          * @param handle MegaMeshハンドル
          * @return GPUデータへのポインタ（無効な場合nullptr）
          */
-        const MegaGeometry::MegaMeshGPUData* GetMegaMeshGPUData(MegaGeometry::MegaMeshHandle handle) const;
+        const MegaGeometry::MegaMeshGPUData *GetMegaMeshGPUData(MegaGeometry::MegaMeshHandle handle) const;
 
         /**
          * @brief MegaMeshを解放

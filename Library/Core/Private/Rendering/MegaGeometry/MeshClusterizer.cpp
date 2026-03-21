@@ -15,11 +15,11 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         /**
          * @brief 頂点位置を取得
          */
-        inline void GetVertexPosition(const void* vertexData, uint32_t vertexStride,
-                                       uint32_t vertexIndex, float& x, float& y, float& z)
+        inline void GetVertexPosition(const void *vertexData, uint32_t vertexStride,
+                                      uint32_t vertexIndex, float &x, float &y, float &z)
         {
-            const auto* base = static_cast<const uint8_t*>(vertexData);
-            const auto* pos = reinterpret_cast<const float*>(base + static_cast<size_t>(vertexIndex) * vertexStride);
+            const auto *base = static_cast<const uint8_t *>(vertexData);
+            const auto *pos = reinterpret_cast<const float *>(base + static_cast<size_t>(vertexIndex) * vertexStride);
             x = pos[0];
             y = pos[1];
             z = pos[2];
@@ -28,9 +28,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         /**
          * @brief 三角形の法線を計算（正規化なし）
          */
-        inline void ComputeTriangleNormal(const void* vertexData, uint32_t vertexStride,
-                                            const uint32_t* indices, uint32_t triIndex,
-                                            float& nx, float& ny, float& nz)
+        inline void ComputeTriangleNormal(const void *vertexData, uint32_t vertexStride,
+                                          const uint32_t *indices, uint32_t triIndex,
+                                          float &nx, float &ny, float &nz)
         {
             uint32_t i0 = indices[triIndex * 3 + 0];
             uint32_t i1 = indices[triIndex * 3 + 1];
@@ -71,13 +71,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     // ========================================
 
     void MeshClusterizer::Clusterize(
-        const void* vertexPositions,
+        const void *vertexPositions,
         uint32_t vertexCount,
         uint32_t vertexStride,
-        const uint32_t* indexData,
+        const uint32_t *indexData,
         uint32_t indexCount,
-        VariableArray<MeshCluster>& outClusters,
-        VariableArray<uint32_t>& outIndices)
+        VariableArray<MeshCluster> &outClusters,
+        VariableArray<uint32_t> &outIndices)
     {
         outClusters.clear();
         outIndices.clear();
@@ -164,7 +164,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         // 並べ替えたインデックス配列を構築し、各クラスタのオフセットを設定
         outIndices.reserve(indexCount);
 
-        for (auto& clusterTriangles : clusterTriangleLists)
+        for (auto &clusterTriangles : clusterTriangleLists)
         {
             MeshCluster cluster;
             cluster.IndexOffset = static_cast<uint32_t>(outIndices.size());
@@ -199,7 +199,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     // ========================================
 
     MeshClusterizer::TriangleAdjacency MeshClusterizer::BuildAdjacencyGraph(
-        const uint32_t* indexData,
+        const uint32_t *indexData,
         uint32_t triangleCount,
         uint32_t vertexCount)
     {
@@ -227,7 +227,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         }
 
         // エッジを共有する三角形同士を隣接として登録
-        for (const auto& [edgeKey, triangles] : edgeToTriangles)
+        for (const auto &[edgeKey, triangles] : edgeToTriangles)
         {
             for (size_t i = 0; i < triangles.size(); ++i)
             {
@@ -237,13 +237,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
                     uint32_t triB = triangles[j];
 
                     // 重複チェック
-                    auto& neighborsA = result.Neighbors[triA];
+                    auto &neighborsA = result.Neighbors[triA];
                     if (std::find(neighborsA.begin(), neighborsA.end(), triB) == neighborsA.end())
                     {
                         neighborsA.push_back(triB);
                     }
 
-                    auto& neighborsB = result.Neighbors[triB];
+                    auto &neighborsB = result.Neighbors[triB];
                     if (std::find(neighborsB.begin(), neighborsB.end(), triA) == neighborsB.end())
                     {
                         neighborsB.push_back(triA);
@@ -260,11 +260,11 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     // ========================================
 
     void MeshClusterizer::ComputeTriangleCentroid(
-        const void* vertexPositions,
+        const void *vertexPositions,
         uint32_t vertexStride,
-        const uint32_t* indexData,
+        const uint32_t *indexData,
         uint32_t triangleIndex,
-        float& outX, float& outY, float& outZ)
+        float &outX, float &outY, float &outZ)
     {
         float x0, y0, z0, x1, y1, z1, x2, y2, z2;
         GetVertexPosition(vertexPositions, vertexStride, indexData[triangleIndex * 3 + 0], x0, y0, z0);
@@ -281,10 +281,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     // ========================================
 
     void MeshClusterizer::ComputeBoundingSphere(
-        const void* vertexPositions,
+        const void *vertexPositions,
         uint32_t vertexStride,
-        const uint32_t* indexData,
-        MeshCluster& cluster)
+        const uint32_t *indexData,
+        MeshCluster &cluster)
     {
         if (cluster.IndexCount == 0)
         {
@@ -302,12 +302,18 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             float x, y, z;
             GetVertexPosition(vertexPositions, vertexStride, idx, x, y, z);
 
-            if (x < minX) minX = x;
-            if (y < minY) minY = y;
-            if (z < minZ) minZ = z;
-            if (x > maxX) maxX = x;
-            if (y > maxY) maxY = y;
-            if (z > maxZ) maxZ = z;
+            if (x < minX)
+                minX = x;
+            if (y < minY)
+                minY = y;
+            if (z < minZ)
+                minZ = z;
+            if (x > maxX)
+                maxX = x;
+            if (y > maxY)
+                maxY = y;
+            if (z > maxZ)
+                maxZ = z;
         }
 
         // AABBの中心をスフィアの中心とする
@@ -341,10 +347,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     // ========================================
 
     void MeshClusterizer::ComputeNormalCone(
-        const void* vertexPositions,
+        const void *vertexPositions,
         uint32_t vertexStride,
-        const uint32_t* indexData,
-        MeshCluster& cluster)
+        const uint32_t *indexData,
+        MeshCluster &cluster)
     {
         if (cluster.IndexCount < 3)
         {
@@ -366,11 +372,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         {
             float nx, ny, nz;
             uint32_t tempIndices[3] =
-            {
-                indexData[cluster.IndexOffset + t * 3 + 0],
-                indexData[cluster.IndexOffset + t * 3 + 1],
-                indexData[cluster.IndexOffset + t * 3 + 2]
-            };
+                {
+                    indexData[cluster.IndexOffset + t * 3 + 0],
+                    indexData[cluster.IndexOffset + t * 3 + 1],
+                    indexData[cluster.IndexOffset + t * 3 + 2]};
 
             // 直接法線計算（インライン展開）
             float x0, y0, z0, x1, y1, z1, x2, y2, z2;

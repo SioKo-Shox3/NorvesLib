@@ -37,13 +37,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          * @param outIndices クラスタ順に並べ替えたインデックス配列
          */
         static void Clusterize(
-            const void* vertexPositions,
+            const void *vertexPositions,
             uint32_t vertexCount,
             uint32_t vertexStride,
-            const uint32_t* indexData,
+            const uint32_t *indexData,
             uint32_t indexCount,
-            VariableArray<MeshCluster>& outClusters,
-            VariableArray<uint32_t>& outIndices);
+            VariableArray<MeshCluster> &outClusters,
+            VariableArray<uint32_t> &outIndices);
 
         /**
          * @brief クラスタの法線コーンを計算
@@ -57,10 +57,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          * @param cluster 対象クラスタ（結果は直接書き込まれる）
          */
         static void ComputeNormalCone(
-            const void* vertexPositions,
+            const void *vertexPositions,
             uint32_t vertexStride,
-            const uint32_t* indexData,
-            MeshCluster& cluster);
+            const uint32_t *indexData,
+            MeshCluster &cluster);
 
         /**
          * @brief クラスタのバウンディングスフィアを計算
@@ -71,10 +71,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          * @param cluster 対象クラスタ（結果は直接書き込まれる）
          */
         static void ComputeBoundingSphere(
-            const void* vertexPositions,
+            const void *vertexPositions,
             uint32_t vertexStride,
-            const uint32_t* indexData,
-            MeshCluster& cluster);
+            const uint32_t *indexData,
+            MeshCluster &cluster);
 
     private:
         /**
@@ -89,7 +89,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          * @brief 三角形の隣接グラフを構築
          */
         static TriangleAdjacency BuildAdjacencyGraph(
-            const uint32_t* indexData,
+            const uint32_t *indexData,
             uint32_t triangleCount,
             uint32_t vertexCount);
 
@@ -97,11 +97,11 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          * @brief 三角形の重心を計算
          */
         static void ComputeTriangleCentroid(
-            const void* vertexPositions,
+            const void *vertexPositions,
             uint32_t vertexStride,
-            const uint32_t* indexData,
+            const uint32_t *indexData,
             uint32_t triangleIndex,
-            float& outX, float& outY, float& outZ);
+            float &outX, float &outY, float &outZ);
     };
 
 } // namespace NorvesLib::Core::Rendering::MegaGeometry

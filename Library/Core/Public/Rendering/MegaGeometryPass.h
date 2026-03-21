@@ -44,26 +44,26 @@ namespace NorvesLib::Core::Rendering
     class MegaGeometryPass : public IViewPass
     {
     public:
-        explicit MegaGeometryPass(const MegaGeometryPassSettings& settings = MegaGeometryPassSettings{});
+        explicit MegaGeometryPass(const MegaGeometryPassSettings &settings = MegaGeometryPassSettings{});
         ~MegaGeometryPass() override;
 
         // ========================================
         // IViewPass実装
         // ========================================
 
-        const char* GetName() const override { return "MegaGeometryPass"; }
+        const char *GetName() const override { return "MegaGeometryPass"; }
 
-        bool Initialize(ViewRenderContext& context) override;
+        bool Initialize(ViewRenderContext &context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext& context) override;
-        void Execute(ViewRenderContext& context) override;
+        void Setup(ViewRenderContext &context) override;
+        void Execute(ViewRenderContext &context) override;
 
         // ========================================
         // SceneView連携
         // ========================================
 
-        void SetSceneView(SceneView* sceneView) { m_SceneView = sceneView; }
-        void SetSceneRenderer(SceneRenderer* renderer) { m_SceneRenderer = renderer; }
+        void SetSceneView(SceneView *sceneView) { m_SceneView = sceneView; }
+        void SetSceneRenderer(SceneRenderer *renderer) { m_SceneRenderer = renderer; }
 
         // ========================================
         // MegaMesh登録
@@ -74,7 +74,7 @@ namespace NorvesLib::Core::Rendering
          * @param handle MegaMeshHandle
          * @param worldMatrix ワールド変換行列（列優先）
          */
-        void AddMegaMeshInstance(MegaGeometry::MegaMeshHandle handle, const float* worldMatrix);
+        void AddMegaMeshInstance(MegaGeometry::MegaMeshHandle handle, const float *worldMatrix);
 
         /**
          * @brief 描画対象のMegaMeshをクリア
@@ -89,12 +89,16 @@ namespace NorvesLib::Core::Rendering
         {
             float ViewMatrix[16];
             float ProjectionMatrix[16];
-            float CameraPosition[4];     // xyz + pad
-            float FrustumPlanes[6][4];   // 6 planes, each (nx, ny, nz, d)
+            float CameraPosition[4];   // xyz + pad
+            float FrustumPlanes[6][4]; // 6 planes, each (nx, ny, nz, d)
             uint32_t TotalClusterCount;
             uint32_t MaxDrawCount;
             float LODBias;
+            float ScreenHeight;     // スクリーン高さ（ピクセル）
+            float ProjectionFactor; // screenHeight / (2 * tan(fov/2))
             uint32_t Pad0;
+            uint32_t Pad1;
+            uint32_t Pad2;
         };
 
         /**
@@ -109,27 +113,27 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief カリング用GPUリソースを作成
          */
-        bool CreateCullResources(RHI::IDevice* device);
+        bool CreateCullResources(RHI::IDevice *device);
 
         /**
          * @brief GBuffer互換のグラフィックスパイプラインを作成
          */
-        bool CreateDrawPipeline(ViewRenderContext& context);
+        bool CreateDrawPipeline(ViewRenderContext &context);
 
         /**
          * @brief 視錐台平面を行列から抽出
          */
-        static void ExtractFrustumPlanes(const float* viewProj, float planes[6][4]);
+        static void ExtractFrustumPlanes(const float *viewProj, float planes[6][4]);
 
         // 設定
         MegaGeometryPassSettings m_Settings;
 
         // SceneView参照（外部所有）
-        SceneView* m_SceneView = nullptr;
-        SceneRenderer* m_SceneRenderer = nullptr;
+        SceneView *m_SceneView = nullptr;
+        SceneRenderer *m_SceneRenderer = nullptr;
 
         // デバイス参照
-        RHI::IDevice* m_Device = nullptr;
+        RHI::IDevice *m_Device = nullptr;
 
         // カリングコンピュートパイプライン
         RHI::PipelinePtr m_CullPipeline;
@@ -137,9 +141,9 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorSetPtr m_CullDescriptorSet;
 
         // カリング用GPUバッファ
-        RHI::BufferPtr m_CullUniformBuffer;       // CullUniformData UBO
-        RHI::BufferPtr m_IndirectDrawBuffer;       // DrawIndexedIndirectCommand[]
-        RHI::BufferPtr m_DrawCountBuffer;          // uint32_t visibleClusterCount
+        RHI::BufferPtr m_CullUniformBuffer;  // CullUniformData UBO
+        RHI::BufferPtr m_IndirectDrawBuffer; // DrawIndexedIndirectCommand[]
+        RHI::BufferPtr m_DrawCountBuffer;    // uint32_t visibleClusterCount
 
         // GBuffer描画用グラフィックスパイプライン
         RHI::PipelinePtr m_DrawPipeline;

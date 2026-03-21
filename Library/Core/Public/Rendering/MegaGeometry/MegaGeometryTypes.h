@@ -44,16 +44,16 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float ConeCutoff; // cos(coneHalfAngle)。-1.0fでカリング無効
 
         // インデックスバッファ参照
-        uint32_t IndexOffset;  // 統合IB中の開始インデックス
-        uint32_t IndexCount;   // このクラスタの三角形数 × 3
-        int32_t VertexOffset;  // 統合VB中のベース頂点オフセット
+        uint32_t IndexOffset;   // 統合IB中の開始インデックス
+        uint32_t IndexCount;    // このクラスタの三角形数 × 3
+        int32_t VertexOffset;   // 統合VB中のベース頂点オフセット
         uint32_t MaterialIndex; // マテリアルスロット
 
         // LOD情報
         uint32_t LODLevel;
-        float LODError;          // このクラスタの簡略化誤差
-        uint32_t ParentStart;    // 親クラスタグループの開始インデックス
-        uint32_t ParentCount;    // 親クラスタグループ数
+        float LODError;       // このクラスタの簡略化誤差
+        uint32_t ParentStart; // 親クラスタグループの開始インデックス
+        uint32_t ParentCount; // 親クラスタグループ数
     };
 
     /**
@@ -64,7 +64,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      */
     struct alignas(16) GPUInstanceData
     {
-        float WorldMatrix[16]; // 4x4ワールド変換行列（列優先）
+        float WorldMatrix[16];  // 4x4ワールド変換行列（列優先）
         uint32_t ClusterOffset; // ClusterBufferの開始インデックス
         uint32_t ClusterCount;  // このインスタンスのクラスタ数
         float BoundsRadius;     // インスタンスのバウンディング半径
@@ -114,8 +114,50 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t LODLevel = 0;
         float LODError = 0.0f;
 
+        // 親クラスタリンク（LOD DAG用）
+        uint32_t ParentStart = 0; // 全体クラスタ配列中の親クラスタ開始インデックス
+        uint32_t ParentCount = 0; // 親クラスタ数
+
         // マテリアル
         uint32_t MaterialIndex = 0;
+    };
+
+    // ========================================
+    // クラスタグループ（LOD階層構築用）
+    // ========================================
+
+    /**
+     * @brief クラスタグループ
+     *
+     * 空間的に近いクラスタをグループ化し、LOD階層構築時の
+     * 簡略化単位として使用します。
+     */
+    struct ClusterGroup
+    {
+        VariableArray<uint32_t> ClusterIndices; // グループ内のクラスタインデックス
+        BoundingSphere Bounds;                  // グループ全体のバウンディング
+        uint32_t LODLevel = 0;                  // このグループの元LODレベル
+    };
+
+    // ========================================
+    // LOD階層（構築結果）
+    // ========================================
+
+    /**
+     * @brief LOD階層データ
+     *
+     * LODHierarchyBuilderの構築結果として返される。
+     * 全LODレベルの統合クラスタ・頂点・インデックスデータを含みます。
+     */
+    struct LODHierarchy
+    {
+        VariableArray<MeshCluster> AllClusters; // 全LODレベルのクラスタ
+        VariableArray<uint32_t> AllIndices;     // 全LODレベルの統合インデックスデータ
+        VariableArray<uint8_t> AllVertices;     // 全LODレベルの統合頂点データ
+        uint32_t TotalVertexCount = 0;
+        uint32_t VertexStride = 0;  // 頂点ストライド
+        uint32_t LODLevelCount = 0; // LODレベル数
+        BoundingSphere TotalBounds; // 全体のバウンディング
     };
 
     // ========================================
@@ -130,13 +172,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     struct MegaMeshCreateInfo
     {
         // クラスタ化済みの頂点データ
-        const void* VertexData = nullptr;
+        const void *VertexData = nullptr;
         size_t VertexDataSize = 0;
         uint32_t VertexCount = 0;
         uint32_t VertexStride = 0;
 
         // クラスタ化済みのインデックスデータ
-        const uint32_t* IndexData = nullptr;
+        const uint32_t *IndexData = nullptr;
         uint32_t IndexCount = 0;
 
         // クラスタ情報
@@ -144,6 +186,12 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
         // バウンディング
         BoundingSphere TotalBounds;
+
+        // LOD階層構築オプション
+        bool bBuildLODHierarchy = true;      // LOD階層を自動構築するか
+        float LODSimplificationRatio = 0.5f; // 各LODでの三角形削減比率
+        uint32_t MaxLODLevels = 8;           // 最大LODレベル数
+        uint32_t MinTrianglesForLOD = 128;   // LOD構築終了条件
 
         // デバッグ
         String DebugName;
@@ -156,9 +204,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      */
     struct MegaMeshGPUData
     {
-        RHI::BufferPtr VertexBuffer;   // 統合頂点バッファ
-        RHI::BufferPtr IndexBuffer;    // 統合インデックスバッファ
-        RHI::BufferPtr ClusterBuffer;  // クラスタデータSSBO
+        RHI::BufferPtr VertexBuffer;  // 統合頂点バッファ
+        RHI::BufferPtr IndexBuffer;   // 統合インデックスバッファ
+        RHI::BufferPtr ClusterBuffer; // クラスタデータSSBO
 
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
@@ -174,7 +222,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     // ========================================
 
     /** @brief MegaMeshリソースのハンドルタグ */
-    struct MegaMeshHandleTag {};
+    struct MegaMeshHandleTag
+    {
+    };
 
     /** @brief MegaMeshリソースハンドル */
     using MegaMeshHandle = ResourceHandle<MegaMeshHandleTag>;

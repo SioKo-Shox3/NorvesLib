@@ -71,9 +71,9 @@ namespace NorvesLib::RHI
         IndexBuffer = 1 << 7,
         ConstantBuffer = 1 << 8,
         StorageBuffer = 1 << 9,       // ストレージバッファ（SSBO）
-        IndirectBuffer = 1 << 10,      // 間接描画引数バッファ
-        ShaderResource = ShaderRead,   // エイリアス: 互換性のため
-        UnorderedAccess = ShaderWrite  // エイリアス: 互換性のため
+        IndirectBuffer = 1 << 10,     // 間接描画引数バッファ
+        ShaderResource = ShaderRead,  // エイリアス: 互換性のため
+        UnorderedAccess = ShaderWrite // エイリアス: 互換性のため
     };
 
     inline ResourceUsage operator|(ResourceUsage a, ResourceUsage b)
