@@ -59,6 +59,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/NeuralMaterialResource.cpp
     Private/Rendering/NeuralMaterialDecoder.cpp
     Private/Rendering/NeuralMaterialDecodePass.cpp
+    # MegaGeometry
+    Private/Rendering/MegaGeometry/MeshClusterizer.cpp
+    Private/Rendering/MegaGeometryPass.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
@@ -193,6 +196,10 @@ set(PUBLIC_HEADERS
     Public/Rendering/NeuralMaterialResource.h
     Public/Rendering/NeuralMaterialDecoder.h
     Public/Rendering/NeuralMaterialDecodePass.h
+    Public/Rendering/MegaGeometryPass.h
+    # MegaGeometry types
+    Public/Rendering/MegaGeometry/MegaGeometryTypes.h
+    Public/Rendering/MegaGeometry/MeshClusterizer.h
     # Object
     Public/Object/Resource.h
     Public/Object/WorldObject.h

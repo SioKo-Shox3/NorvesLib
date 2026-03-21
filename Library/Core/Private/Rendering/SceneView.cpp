@@ -13,6 +13,7 @@
 #include "Rendering/SSRPass.h"
 #include "Rendering/PostProcessStack.h"
 #include "Rendering/NeuralMaterialDecodePass.h"
+#include "Rendering/MegaGeometryPass.h"
 #include "Math/VectorUtils.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
@@ -241,6 +242,13 @@ namespace NorvesLib::Core::Rendering
         gbufferPass->SetSceneView(this);
         gbufferPass->SetSceneRenderer(sceneRenderer);
         AddPass(std::move(gbufferPass));
+
+        // MegaGeometryPass: GPU駆動クラスターカリング + GBufferへのIndirectDraw
+        MegaGeometryPassSettings megaGeoSettings;
+        auto megaGeometryPass = MakeUnique<MegaGeometryPass>(megaGeoSettings);
+        megaGeometryPass->SetSceneView(this);
+        megaGeometryPass->SetSceneRenderer(sceneRenderer);
+        AddPass(std::move(megaGeometryPass));
 
         // SSAOPass: GBufferの深度・法線からスクリーンスペースAOを計算
         SSAOSettings ssaoSettings;

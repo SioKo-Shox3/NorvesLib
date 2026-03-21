@@ -680,6 +680,7 @@ namespace NorvesLib::Core::Rendering
         }
         m_NeuralMaterials.clear();
 
+        m_MegaMeshGPUDataMap.clear();
         m_MeshGPUDataMap.clear();
         m_Materials.clear();
         m_Buffers.clear();
@@ -873,6 +874,144 @@ namespace NorvesLib::Core::Rendering
             }
         }
         return result;
+    }
+
+    // ========================================
+    // MegaGeometry操作
+    // ========================================
+
+    MegaGeometry::MegaMeshHandle RenderResourceManager::CreateMegaMesh(
+        const MegaGeometry::MegaMeshCreateInfo& createInfo)
+    {
+        if (!m_bInitialized || !createInfo.VertexData || !createInfo.IndexData)
+        {
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+
+        if (createInfo.VertexDataSize == 0 || createInfo.IndexCount == 0 || createInfo.Clusters.empty())
+        {
+            NORVES_LOG_ERROR("RenderResourceManager", "MegaMesh作成情報が不正です: %s",
+                             createInfo.DebugName.c_str());
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+
+        // 頂点バッファ作成
+        Container::String vbName = createInfo.DebugName + "_VB";
+        RHI::BufferDesc vbDesc(
+            static_cast<uint64_t>(createInfo.VertexDataSize),
+            RHI::ResourceUsage::VertexBuffer | RHI::ResourceUsage::StorageBuffer,
+            true,
+            vbName.c_str());
+        auto vertexBuffer = m_Device->CreateBuffer(vbDesc);
+        if (!vertexBuffer)
+        {
+            NORVES_LOG_ERROR("RenderResourceManager", "MegaMeshの頂点バッファ作成に失敗: %s",
+                             createInfo.DebugName.c_str());
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+        vertexBuffer->Update(createInfo.VertexData, createInfo.VertexDataSize);
+
+        // インデックスバッファ作成
+        size_t ibSize = static_cast<size_t>(createInfo.IndexCount) * sizeof(uint32_t);
+        Container::String ibName = createInfo.DebugName + "_IB";
+        RHI::BufferDesc ibDesc(
+            static_cast<uint64_t>(ibSize),
+            RHI::ResourceUsage::IndexBuffer | RHI::ResourceUsage::StorageBuffer,
+            true,
+            ibName.c_str());
+        auto indexBuffer = m_Device->CreateBuffer(ibDesc);
+        if (!indexBuffer)
+        {
+            NORVES_LOG_ERROR("RenderResourceManager", "MegaMeshのインデックスバッファ作成に失敗: %s",
+                             createInfo.DebugName.c_str());
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+        indexBuffer->Update(createInfo.IndexData, ibSize);
+
+        // クラスタデータSSBO作成
+        // MeshCluster → GPUClusterData に変換
+        Container::VariableArray<MegaGeometry::GPUClusterData> gpuClusters;
+        gpuClusters.reserve(createInfo.Clusters.size());
+        for (const auto& cluster : createInfo.Clusters)
+        {
+            MegaGeometry::GPUClusterData gpuCluster{};
+            gpuCluster.BoundsCenterX = cluster.Bounds.CenterX;
+            gpuCluster.BoundsCenterY = cluster.Bounds.CenterY;
+            gpuCluster.BoundsCenterZ = cluster.Bounds.CenterZ;
+            gpuCluster.BoundsRadius = cluster.Bounds.Radius;
+            gpuCluster.ConeAxisX = cluster.ConeAxisX;
+            gpuCluster.ConeAxisY = cluster.ConeAxisY;
+            gpuCluster.ConeAxisZ = cluster.ConeAxisZ;
+            gpuCluster.ConeCutoff = cluster.ConeCutoff;
+            gpuCluster.IndexOffset = cluster.IndexOffset;
+            gpuCluster.IndexCount = cluster.IndexCount;
+            gpuCluster.VertexOffset = cluster.VertexOffset;
+            gpuCluster.MaterialIndex = cluster.MaterialIndex;
+            gpuCluster.LODLevel = cluster.LODLevel;
+            gpuCluster.LODError = cluster.LODError;
+            gpuCluster.ParentStart = 0;
+            gpuCluster.ParentCount = 0;
+            gpuClusters.push_back(gpuCluster);
+        }
+
+        size_t clusterBufferSize = gpuClusters.size() * sizeof(MegaGeometry::GPUClusterData);
+        Container::String cbName = createInfo.DebugName + "_ClusterSSBO";
+        RHI::BufferDesc cbDesc(
+            static_cast<uint64_t>(clusterBufferSize),
+            RHI::ResourceUsage::StorageBuffer,
+            true,
+            cbName.c_str());
+        auto clusterBuffer = m_Device->CreateBuffer(cbDesc);
+        if (!clusterBuffer)
+        {
+            NORVES_LOG_ERROR("RenderResourceManager", "MegaMeshのクラスタバッファ作成に失敗: %s",
+                             createInfo.DebugName.c_str());
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+        clusterBuffer->Update(gpuClusters.data(), clusterBufferSize);
+
+        // ハンドル割り当てとGPUデータ登録
+        auto handle = AllocateHandle<MegaGeometry::MegaMeshHandle>();
+
+        MegaGeometry::MegaMeshGPUData gpuData;
+        gpuData.VertexBuffer = vertexBuffer;
+        gpuData.IndexBuffer = indexBuffer;
+        gpuData.ClusterBuffer = clusterBuffer;
+        gpuData.VertexCount = createInfo.VertexCount;
+        gpuData.IndexCount = createInfo.IndexCount;
+        gpuData.ClusterCount = static_cast<uint32_t>(createInfo.Clusters.size());
+        gpuData.TotalBounds = createInfo.TotalBounds;
+        gpuData.DebugName = createInfo.DebugName;
+
+        Thread::ScopedLock lock(m_ResourceMutex);
+        m_MegaMeshGPUDataMap[handle.Id] = std::move(gpuData);
+
+        NORVES_LOG_INFO("RenderResourceManager",
+                        "MegaMesh作成完了: %s (頂点: %u, インデックス: %u, クラスタ: %u)",
+                        createInfo.DebugName.c_str(),
+                        createInfo.VertexCount,
+                        createInfo.IndexCount,
+                        static_cast<uint32_t>(createInfo.Clusters.size()));
+
+        return handle;
+    }
+
+    const MegaGeometry::MegaMeshGPUData* RenderResourceManager::GetMegaMeshGPUData(
+        MegaGeometry::MegaMeshHandle handle) const
+    {
+        Thread::ScopedLock lock(m_ResourceMutex);
+        auto it = m_MegaMeshGPUDataMap.find(handle.Id);
+        if (it == m_MegaMeshGPUDataMap.end())
+        {
+            return nullptr;
+        }
+        return &it->second;
+    }
+
+    void RenderResourceManager::ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle)
+    {
+        Thread::ScopedLock lock(m_ResourceMutex);
+        m_MegaMeshGPUDataMap.erase(handle.Id);
     }
 
     // ========================================

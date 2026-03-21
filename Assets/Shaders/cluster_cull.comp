@@ -1,0 +1,158 @@
+﻿#version 450
+
+// ========================================
+// Mega Geometry クラスタカリング コンピュートシェーダー
+//
+// 入力: クラスタデータSSBO + カメラ情報UBO
+// 出力: IndirectDrawコマンドバッファ + 可視クラスタ数カウンタ
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// ========================================
+// GPU構造体（MegaGeometryTypes.hと一致）
+// ========================================
+
+struct GPUClusterData
+{
+    vec4 boundsSphere;    // center.xyz + radius
+    vec4 normalCone;      // axis.xyz + cos(halfAngle)
+    uvec4 indexInfo;      // indexOffset, indexCount, vertexOffset, materialIndex
+    uvec4 lodInfo;        // lodLevel, lodError(asfloat), parentStart, parentCount
+};
+
+struct DrawIndexedIndirectCommand
+{
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
+};
+
+// ========================================
+// バインディング
+// ========================================
+
+// set 0, binding 0: カメラ・カリング用ユニフォーム
+layout(set = 0, binding = 0) uniform CullUniforms
+{
+    mat4 viewMatrix;
+    mat4 projectionMatrix;
+    vec4 cameraPosition;     // xyz = pos, w = unused
+    vec4 frustumPlanes[6];   // 6つの視錐台平面 (ax+by+cz+d=0, normal pointing inward)
+    uint totalClusterCount;
+    uint maxDrawCount;       // IndirectDrawバッファの最大エントリ数
+    float lodBias;           // LOD選択バイアス
+    uint pad0;
+} cullData;
+
+// set 0, binding 1: クラスタデータ入力（読み取り専用）
+layout(std430, set = 0, binding = 1) readonly buffer ClusterBuffer
+{
+    GPUClusterData clusters[];
+};
+
+// set 0, binding 2: IndirectDrawコマンド出力
+layout(std430, set = 0, binding = 2) writeonly buffer IndirectDrawBuffer
+{
+    DrawIndexedIndirectCommand drawCommands[];
+};
+
+// set 0, binding 3: 可視クラスタ数カウンタ（atomicAdd用）
+layout(std430, set = 0, binding = 3) buffer DrawCountBuffer
+{
+    uint visibleClusterCount;
+};
+
+// ========================================
+// カリング関数
+// ========================================
+
+/**
+ * @brief 球 vs 視錐台平面カリング
+ * @return true = カリング（不可視）
+ */
+bool FrustumCullSphere(vec3 center, float radius)
+{
+    for (int i = 0; i < 6; ++i)
+    {
+        float distance = dot(cullData.frustumPlanes[i].xyz, center)
+                       + cullData.frustumPlanes[i].w;
+        if (distance < -radius)
+        {
+            return true; // 完全に外側
+        }
+    }
+    return false; // 可視
+}
+
+/**
+ * @brief 法線コーン バックフェースカリング
+ *
+ * クラスタの全三角形が裏向きかを判定します。
+ * ConeCutoff < 0 の場合はカリング無効（常に可視）。
+ * @return true = カリング（全三角形が裏向き）
+ */
+bool NormalConeCull(vec3 coneAxis, float coneCutoff, vec3 clusterCenter)
+{
+    if (coneCutoff <= -1.0)
+    {
+        return false; // カリング無効
+    }
+
+    // カメラからクラスタ中心への方向
+    vec3 viewDir = normalize(clusterCenter - cullData.cameraPosition.xyz);
+
+    // コーン軸とビュー方向の内積
+    // クラスタの全法線がconeAxis周りのconeCutoff角度内にある場合、
+    // viewDirとconeAxisの内積がconeCutoff以上なら全て裏向き
+    float dotVal = dot(coneAxis, viewDir);
+
+    return dotVal > coneCutoff;
+}
+
+// ========================================
+// メインカーネル
+// ========================================
+
+void main()
+{
+    uint clusterIndex = gl_GlobalInvocationID.x;
+
+    if (clusterIndex >= cullData.totalClusterCount)
+    {
+        return;
+    }
+
+    GPUClusterData cluster = clusters[clusterIndex];
+
+    vec3 center = cluster.boundsSphere.xyz;
+    float radius = cluster.boundsSphere.w;
+
+    // 視錐台カリング
+    if (FrustumCullSphere(center, radius))
+    {
+        return;
+    }
+
+    // バックフェースカリング（法線コーン）
+    vec3 coneAxis = cluster.normalCone.xyz;
+    float coneCutoff = cluster.normalCone.w;
+    if (NormalConeCull(coneAxis, coneCutoff, center))
+    {
+        return;
+    }
+
+    // 可視クラスタ → IndirectDrawコマンドを生成
+    uint drawIndex = atomicAdd(visibleClusterCount, 1);
+
+    if (drawIndex < cullData.maxDrawCount)
+    {
+        drawCommands[drawIndex].indexCount = cluster.indexInfo.y;     // IndexCount
+        drawCommands[drawIndex].instanceCount = 1;
+        drawCommands[drawIndex].firstIndex = cluster.indexInfo.x;     // IndexOffset
+        drawCommands[drawIndex].vertexOffset = int(cluster.indexInfo.z); // VertexOffset
+        drawCommands[drawIndex].firstInstance = 0;
+    }
+}
