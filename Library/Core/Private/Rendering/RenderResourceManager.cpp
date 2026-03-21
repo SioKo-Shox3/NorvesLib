@@ -1,4 +1,5 @@
 #include "Rendering/RenderResourceManager.h"
+#include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "RHI/IDevice.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ITexture.h"
@@ -881,7 +882,7 @@ namespace NorvesLib::Core::Rendering
     // ========================================
 
     MegaGeometry::MegaMeshHandle RenderResourceManager::CreateMegaMesh(
-        const MegaGeometry::MegaMeshCreateInfo& createInfo)
+        const MegaGeometry::MegaMeshCreateInfo &createInfo)
     {
         if (!m_bInitialized || !createInfo.VertexData || !createInfo.IndexData)
         {
@@ -895,10 +896,54 @@ namespace NorvesLib::Core::Rendering
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
 
+        // LOD階層構築が有効な場合
+        const void *uploadVertexData = createInfo.VertexData;
+        size_t uploadVertexDataSize = createInfo.VertexDataSize;
+        const uint32_t *uploadIndexData = createInfo.IndexData;
+        uint32_t uploadIndexCount = createInfo.IndexCount;
+        uint32_t uploadVertexCount = createInfo.VertexCount;
+        const Container::VariableArray<MegaGeometry::MeshCluster> *uploadClusters = &createInfo.Clusters;
+        BoundingSphere uploadTotalBounds = createInfo.TotalBounds;
+
+        MegaGeometry::LODHierarchy lodHierarchy;
+
+        if (createInfo.bBuildLODHierarchy && createInfo.Clusters.size() > 1)
+        {
+            MegaGeometry::LODBuildSettings lodSettings;
+            lodSettings.SimplificationRatio = createInfo.LODSimplificationRatio;
+            lodSettings.MaxLODLevels = createInfo.MaxLODLevels;
+            lodSettings.MinTrianglesForLOD = createInfo.MinTrianglesForLOD;
+
+            lodHierarchy = MegaGeometry::LODHierarchyBuilder::Build(
+                createInfo.VertexData,
+                createInfo.VertexCount,
+                createInfo.VertexStride,
+                createInfo.IndexData,
+                createInfo.IndexCount,
+                lodSettings);
+
+            if (!lodHierarchy.AllClusters.empty())
+            {
+                uploadVertexData = lodHierarchy.AllVertices.data();
+                uploadVertexDataSize = lodHierarchy.AllVertices.size();
+                uploadIndexData = lodHierarchy.AllIndices.data();
+                uploadIndexCount = static_cast<uint32_t>(lodHierarchy.AllIndices.size());
+                uploadVertexCount = lodHierarchy.TotalVertexCount;
+                uploadClusters = &lodHierarchy.AllClusters;
+                uploadTotalBounds = lodHierarchy.TotalBounds;
+
+                NORVES_LOG_INFO("RenderResourceManager",
+                                "LOD階層構築成功: %s (%u レベル, %u クラスタ)",
+                                createInfo.DebugName.c_str(),
+                                lodHierarchy.LODLevelCount,
+                                static_cast<uint32_t>(lodHierarchy.AllClusters.size()));
+            }
+        }
+
         // 頂点バッファ作成
         Container::String vbName = createInfo.DebugName + "_VB";
         RHI::BufferDesc vbDesc(
-            static_cast<uint64_t>(createInfo.VertexDataSize),
+            static_cast<uint64_t>(uploadVertexDataSize),
             RHI::ResourceUsage::VertexBuffer | RHI::ResourceUsage::StorageBuffer,
             true,
             vbName.c_str());
@@ -909,10 +954,10 @@ namespace NorvesLib::Core::Rendering
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
-        vertexBuffer->Update(createInfo.VertexData, createInfo.VertexDataSize);
+        vertexBuffer->Update(uploadVertexData, uploadVertexDataSize);
 
         // インデックスバッファ作成
-        size_t ibSize = static_cast<size_t>(createInfo.IndexCount) * sizeof(uint32_t);
+        size_t ibSize = static_cast<size_t>(uploadIndexCount) * sizeof(uint32_t);
         Container::String ibName = createInfo.DebugName + "_IB";
         RHI::BufferDesc ibDesc(
             static_cast<uint64_t>(ibSize),
@@ -926,13 +971,13 @@ namespace NorvesLib::Core::Rendering
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
-        indexBuffer->Update(createInfo.IndexData, ibSize);
+        indexBuffer->Update(uploadIndexData, ibSize);
 
         // クラスタデータSSBO作成
         // MeshCluster → GPUClusterData に変換
         Container::VariableArray<MegaGeometry::GPUClusterData> gpuClusters;
-        gpuClusters.reserve(createInfo.Clusters.size());
-        for (const auto& cluster : createInfo.Clusters)
+        gpuClusters.reserve(uploadClusters->size());
+        for (const auto &cluster : *uploadClusters)
         {
             MegaGeometry::GPUClusterData gpuCluster{};
             gpuCluster.BoundsCenterX = cluster.Bounds.CenterX;
@@ -949,8 +994,8 @@ namespace NorvesLib::Core::Rendering
             gpuCluster.MaterialIndex = cluster.MaterialIndex;
             gpuCluster.LODLevel = cluster.LODLevel;
             gpuCluster.LODError = cluster.LODError;
-            gpuCluster.ParentStart = 0;
-            gpuCluster.ParentCount = 0;
+            gpuCluster.ParentStart = cluster.ParentStart;
+            gpuCluster.ParentCount = cluster.ParentCount;
             gpuClusters.push_back(gpuCluster);
         }
 
@@ -977,10 +1022,10 @@ namespace NorvesLib::Core::Rendering
         gpuData.VertexBuffer = vertexBuffer;
         gpuData.IndexBuffer = indexBuffer;
         gpuData.ClusterBuffer = clusterBuffer;
-        gpuData.VertexCount = createInfo.VertexCount;
-        gpuData.IndexCount = createInfo.IndexCount;
-        gpuData.ClusterCount = static_cast<uint32_t>(createInfo.Clusters.size());
-        gpuData.TotalBounds = createInfo.TotalBounds;
+        gpuData.VertexCount = uploadVertexCount;
+        gpuData.IndexCount = uploadIndexCount;
+        gpuData.ClusterCount = static_cast<uint32_t>(uploadClusters->size());
+        gpuData.TotalBounds = uploadTotalBounds;
         gpuData.DebugName = createInfo.DebugName;
 
         Thread::ScopedLock lock(m_ResourceMutex);
@@ -996,7 +1041,7 @@ namespace NorvesLib::Core::Rendering
         return handle;
     }
 
-    const MegaGeometry::MegaMeshGPUData* RenderResourceManager::GetMegaMeshGPUData(
+    const MegaGeometry::MegaMeshGPUData *RenderResourceManager::GetMegaMeshGPUData(
         MegaGeometry::MegaMeshHandle handle) const
     {
         Thread::ScopedLock lock(m_ResourceMutex);

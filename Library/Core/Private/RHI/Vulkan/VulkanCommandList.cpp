@@ -554,7 +554,7 @@ namespace NorvesLib::RHI::Vulkan
     }
 
     void VulkanCommandList::DrawIndexedIndirect(BufferPtr indirectBuffer, uint64_t offset,
-                                                  uint32_t drawCount, uint32_t stride)
+                                                uint32_t drawCount, uint32_t stride)
     {
         auto vkBuffer = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
         if (!vkBuffer)

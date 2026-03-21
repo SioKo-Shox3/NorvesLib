@@ -43,8 +43,12 @@ layout(set = 0, binding = 0) uniform CullUniforms
     vec4 frustumPlanes[6];   // 6つの視錐台平面 (ax+by+cz+d=0, normal pointing inward)
     uint totalClusterCount;
     uint maxDrawCount;       // IndirectDrawバッファの最大エントリ数
-    float lodBias;           // LOD選択バイアス
+    float lodBias;           // LOD選択バイアス（ピクセル単位の許容誤差）
+    float screenHeight;      // スクリーン高さ（ピクセル）
+    float projectionFactor;  // screenHeight / (2 * tan(fov/2))
     uint pad0;
+    uint pad1;
+    uint pad2;
 } cullData;
 
 // set 0, binding 1: クラスタデータ入力（読み取り専用）
@@ -112,6 +116,81 @@ bool NormalConeCull(vec3 coneAxis, float coneCutoff, vec3 clusterCenter)
     return dotVal > coneCutoff;
 }
 
+/**
+ * @brief LOD DAGカット判定
+ *
+ * このクラスタを描画すべきかを判定します。
+ * - LOD 0（最詳細）: 親が存在しないか、スクリーン誤差が許容範囲内なら描画
+ * - LOD N > 0: 自身の投影誤差が許容範囲内 かつ 親の投影誤差が範囲外なら描画
+ *
+ * @return true = このクラスタを描画すべき
+ */
+bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
+{
+    uint lodLevel = cluster.lodInfo.x;
+    float lodError = uintBitsToFloat(cluster.lodInfo.y);
+    uint parentStart = cluster.lodInfo.z;
+    uint parentCount = cluster.lodInfo.w;
+
+    // カメラからの距離
+    float dist = distance(center, cullData.cameraPosition.xyz);
+    dist = max(dist, 0.001); // 0除算防止
+
+    // このクラスタのスクリーン投影誤差（ピクセル単位）
+    float projectedError = lodError * cullData.projectionFactor / dist;
+
+    // LOD 0: 最詳細レベル → 常に描画候補（ただし親が十分なら親に任せる）
+    if (lodLevel == 0)
+    {
+        // 親がない場合は常に描画
+        if (parentCount == 0)
+        {
+            return true;
+        }
+
+        // 親の投影誤差をチェック: 親がlodBias以下なら親で十分 → 描画しない
+        for (uint i = 0; i < parentCount; ++i)
+        {
+            GPUClusterData parent = clusters[parentStart + i];
+            float parentError = uintBitsToFloat(parent.lodInfo.y);
+            float parentProjectedError = parentError * cullData.projectionFactor / dist;
+            if (parentProjectedError <= cullData.lodBias)
+            {
+                return false; // 親で十分
+            }
+        }
+
+        return true;
+    }
+
+    // LOD N > 0: 自身の投影誤差が許容範囲内のとき描画候補
+    if (projectedError > cullData.lodBias)
+    {
+        return false; // 自身の誤差が大きすぎる → より詳細なレベルを使う
+    }
+
+    // 親がない場合（最粗レベル）は描画
+    if (parentCount == 0)
+    {
+        return true;
+    }
+
+    // 親の投影誤差が許容範囲外なら、このレベルを描画
+    for (uint i = 0; i < parentCount; ++i)
+    {
+        GPUClusterData parent = clusters[parentStart + i];
+        float parentError = uintBitsToFloat(parent.lodInfo.y);
+        float parentProjectedError = parentError * cullData.projectionFactor / dist;
+        if (parentProjectedError > cullData.lodBias)
+        {
+            return true; // 親が粗すぎるので自身を描画
+        }
+    }
+
+    // 親の誤差も許容範囲内 → 親に任せる
+    return false;
+}
+
 // ========================================
 // メインカーネル
 // ========================================
@@ -140,6 +219,12 @@ void main()
     vec3 coneAxis = cluster.normalCone.xyz;
     float coneCutoff = cluster.normalCone.w;
     if (NormalConeCull(coneAxis, coneCutoff, center))
+    {
+        return;
+    }
+
+    // LOD DAGカット判定
+    if (!ShouldDrawCluster(cluster, center))
     {
         return;
     }

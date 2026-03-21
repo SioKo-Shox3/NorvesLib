@@ -29,7 +29,7 @@ namespace NorvesLib::Core::Rendering
     // コンストラクタ / デストラクタ
     // ========================================
 
-    MegaGeometryPass::MegaGeometryPass(const MegaGeometryPassSettings& settings)
+    MegaGeometryPass::MegaGeometryPass(const MegaGeometryPassSettings &settings)
         : m_Settings(settings)
     {
     }
@@ -46,7 +46,7 @@ namespace NorvesLib::Core::Rendering
     // Initialize
     // ========================================
 
-    bool MegaGeometryPass::Initialize(ViewRenderContext& context)
+    bool MegaGeometryPass::Initialize(ViewRenderContext &context)
     {
         m_Device = context.Device;
         if (!m_Device)
@@ -139,7 +139,7 @@ namespace NorvesLib::Core::Rendering
     // Setup
     // ========================================
 
-    void MegaGeometryPass::Setup(ViewRenderContext& context)
+    void MegaGeometryPass::Setup(ViewRenderContext &context)
     {
         // MegaMeshインスタンスが登録されていなければスキップ
         if (m_Instances.empty() || !m_CullPipeline)
@@ -185,7 +185,7 @@ namespace NorvesLib::Core::Rendering
     // Execute
     // ========================================
 
-    void MegaGeometryPass::Execute(ViewRenderContext& context)
+    void MegaGeometryPass::Execute(ViewRenderContext &context)
     {
         if (m_Instances.empty() || !m_CullPipeline || !context.CommandList || !context.ResourceManager)
         {
@@ -202,14 +202,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        auto* cmdList = context.CommandList;
+        auto *cmdList = context.CommandList;
 
         // ========================================
         // 各MegaMeshインスタンスに対してカリング + IndirectDraw
         // ========================================
-        for (const auto& instance : m_Instances)
+        for (const auto &instance : m_Instances)
         {
-            const auto* gpuData = context.ResourceManager->GetMegaMeshGPUData(instance.Handle);
+            const auto *gpuData = context.ResourceManager->GetMegaMeshGPUData(instance.Handle);
             if (!gpuData || gpuData->ClusterCount == 0)
             {
                 continue;
@@ -219,17 +219,17 @@ namespace NorvesLib::Core::Rendering
             // 1. DrawCountバッファをゼロクリア
             // ----------------------------------------
             cmdList->BufferBarrier(m_DrawCountBuffer,
-                                  RHI::ResourceState::Common,
-                                  RHI::ResourceState::CopyDest);
+                                   RHI::ResourceState::Common,
+                                   RHI::ResourceState::CopyDest);
             cmdList->FillBuffer(m_DrawCountBuffer, 0, sizeof(uint32_t), 0);
             cmdList->BufferBarrier(m_DrawCountBuffer,
-                                  RHI::ResourceState::CopyDest,
-                                  RHI::ResourceState::UnorderedAccess);
+                                   RHI::ResourceState::CopyDest,
+                                   RHI::ResourceState::UnorderedAccess);
 
             // IndirectDrawバッファもUAV状態に
             cmdList->BufferBarrier(m_IndirectDrawBuffer,
-                                  RHI::ResourceState::IndirectArgument,
-                                  RHI::ResourceState::UnorderedAccess);
+                                   RHI::ResourceState::IndirectArgument,
+                                   RHI::ResourceState::UnorderedAccess);
 
             // ----------------------------------------
             // 2. カリングユニフォーム更新
@@ -239,7 +239,7 @@ namespace NorvesLib::Core::Rendering
             // CameraProxyからView/Projection行列を構築
             using namespace NorvesLib::Math;
 
-            const auto& cam = *context.MainCamera;
+            const auto &cam = *context.MainCamera;
             Vector3 camPos(cam.PositionX, cam.PositionY, cam.PositionZ);
             Vector3 forward(cam.ForwardX, cam.ForwardY, cam.ForwardZ);
             Vector3 lookAt = camPos + forward;
@@ -270,7 +270,17 @@ namespace NorvesLib::Core::Rendering
             uniformData.TotalClusterCount = gpuData->ClusterCount;
             uniformData.MaxDrawCount = m_Settings.MaxDrawCount;
             uniformData.LODBias = m_Settings.LODBias;
+            uniformData.ScreenHeight = static_cast<float>(context.ScreenHeight);
+
+            // projectionFactor = screenHeight / (2 * tan(fov/2))
+            float halfFovTan = std::tan(fovRadians * 0.5f);
+            uniformData.ProjectionFactor = (halfFovTan > 1e-6f)
+                                               ? static_cast<float>(context.ScreenHeight) / (2.0f * halfFovTan)
+                                               : 1.0f;
+
             uniformData.Pad0 = 0;
+            uniformData.Pad1 = 0;
+            uniformData.Pad2 = 0;
 
             m_CullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
 
@@ -300,11 +310,11 @@ namespace NorvesLib::Core::Rendering
             // 5. バリア: Compute UAV → IndirectArgument
             // ----------------------------------------
             cmdList->BufferBarrier(m_IndirectDrawBuffer,
-                                  RHI::ResourceState::UnorderedAccess,
-                                  RHI::ResourceState::IndirectArgument);
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::IndirectArgument);
             cmdList->BufferBarrier(m_DrawCountBuffer,
-                                  RHI::ResourceState::UnorderedAccess,
-                                  RHI::ResourceState::IndirectArgument);
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::IndirectArgument);
 
             // ----------------------------------------
             // 6. GBuffer描画（IndirectDraw）
@@ -385,11 +395,11 @@ namespace NorvesLib::Core::Rendering
 
             // IndirectDrawバッファを次のフレーム用に戻す
             cmdList->BufferBarrier(m_IndirectDrawBuffer,
-                                  RHI::ResourceState::IndirectArgument,
-                                  RHI::ResourceState::Common);
+                                   RHI::ResourceState::IndirectArgument,
+                                   RHI::ResourceState::Common);
             cmdList->BufferBarrier(m_DrawCountBuffer,
-                                  RHI::ResourceState::IndirectArgument,
-                                  RHI::ResourceState::Common);
+                                   RHI::ResourceState::IndirectArgument,
+                                   RHI::ResourceState::Common);
         }
     }
 
@@ -397,7 +407,7 @@ namespace NorvesLib::Core::Rendering
     // MegaMeshインスタンス管理
     // ========================================
 
-    void MegaGeometryPass::AddMegaMeshInstance(MegaGeometry::MegaMeshHandle handle, const float* worldMatrix)
+    void MegaGeometryPass::AddMegaMeshInstance(MegaGeometry::MegaMeshHandle handle, const float *worldMatrix)
     {
         MegaMeshInstance instance;
         instance.Handle = handle;
@@ -426,7 +436,7 @@ namespace NorvesLib::Core::Rendering
     // カリング用GPUリソース作成
     // ========================================
 
-    bool MegaGeometryPass::CreateCullResources(RHI::IDevice* device)
+    bool MegaGeometryPass::CreateCullResources(RHI::IDevice *device)
     {
         // カリングユニフォームバッファ (UBO)
         RHI::BufferDesc uboDesc(
@@ -441,8 +451,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // IndirectDrawコマンドバッファ (SSBO + IndirectBuffer)
-        uint64_t indirectSize = static_cast<uint64_t>(m_Settings.MaxDrawCount)
-                              * sizeof(MegaGeometry::DrawIndexedIndirectCommand);
+        uint64_t indirectSize = static_cast<uint64_t>(m_Settings.MaxDrawCount) * sizeof(MegaGeometry::DrawIndexedIndirectCommand);
         RHI::BufferDesc indirectDesc(
             indirectSize,
             RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
@@ -510,7 +519,7 @@ namespace NorvesLib::Core::Rendering
     // GBuffer互換グラフィックスパイプライン作成
     // ========================================
 
-    bool MegaGeometryPass::CreateDrawPipeline(ViewRenderContext& context)
+    bool MegaGeometryPass::CreateDrawPipeline(ViewRenderContext &context)
     {
         if (!m_Device || !m_DrawVertexShader || !m_DrawFragmentShader)
         {
@@ -711,7 +720,7 @@ namespace NorvesLib::Core::Rendering
     // 視錐台平面抽出（Gribb/Hartmann法）
     // ========================================
 
-    void MegaGeometryPass::ExtractFrustumPlanes(const float* vp, float planes[6][4])
+    void MegaGeometryPass::ExtractFrustumPlanes(const float *vp, float planes[6][4])
     {
         // ViewProjection行列（列優先）から6つの視錐台平面を抽出
         // 各平面: ax + by + cz + d = 0 (法線は内側を向く)
