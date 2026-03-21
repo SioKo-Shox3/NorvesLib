@@ -15,7 +15,7 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
-    bool NeuralMaterialDecoder::Initialize(RHI::IDevice* device, ShaderManager* shaderManager)
+    bool NeuralMaterialDecoder::Initialize(RHI::IDevice *device, ShaderManager *shaderManager)
     {
         if (m_bInitialized)
         {
@@ -76,7 +76,7 @@ namespace NorvesLib::Core::Rendering
         m_bInitialized = false;
     }
 
-    void NeuralMaterialDecoder::RegisterResource(NeuralMaterialResource* resource)
+    void NeuralMaterialDecoder::RegisterResource(NeuralMaterialResource *resource)
     {
         if (resource && resource->IsInitialized())
         {
@@ -89,21 +89,21 @@ namespace NorvesLib::Core::Rendering
         m_Resources.clear();
     }
 
-    void NeuralMaterialDecoder::GenerateDecodeCommands(Container::VariableArray<DrawCommand>& outCommands)
+    void NeuralMaterialDecoder::GenerateDecodeCommands(Container::VariableArray<DrawCommand> &outCommands)
     {
         if (!m_bInitialized || !m_ComputePipeline || m_Resources.empty())
         {
             return;
         }
 
-        for (auto* resource : m_Resources)
+        for (auto *resource : m_Resources)
         {
             if (!resource || !resource->IsInitialized())
             {
                 continue;
             }
 
-            const auto& desc = resource->GetDesc();
+            const auto &desc = resource->GetDesc();
 
             // スレッドグループ数を計算
             uint32_t groupX = (desc.OutputWidth + ThreadGroupSizeX - 1) / ThreadGroupSizeX;
@@ -126,14 +126,14 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    RHI::DescriptorSetPtr NeuralMaterialDecoder::CreateDescriptorSetForResource(NeuralMaterialResource* resource)
+    RHI::DescriptorSetPtr NeuralMaterialDecoder::CreateDescriptorSetForResource(NeuralMaterialResource *resource)
     {
         if (!m_Device || !resource)
         {
             return nullptr;
         }
 
-        const auto& desc = resource->GetDesc();
+        const auto &desc = resource->GetDesc();
         uint32_t slotCount = static_cast<uint32_t>(desc.OutputSlots.size());
 
         if (slotCount > MaxOutputSlots)

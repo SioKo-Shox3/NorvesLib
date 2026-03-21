@@ -2,6 +2,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/RenderResourceManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
@@ -17,7 +18,7 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
-    bool NeuralMaterialDecodePass::Initialize(ViewRenderContext& context)
+    bool NeuralMaterialDecodePass::Initialize(ViewRenderContext &context)
     {
         if (!context.Device)
         {
@@ -40,7 +41,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_INFO("NeuralMaterialDecodePass",
                             "Cooperative Vector not supported - pass will be skipped");
             m_bInitialized = true;
-            return true; // 初期化自体は成功（非対応環境でも安全にスキップ）
+            return true;
         }
 
         // ========================================
@@ -70,40 +71,35 @@ namespace NorvesLib::Core::Rendering
     void NeuralMaterialDecodePass::Shutdown()
     {
         m_Decoder.Shutdown();
-
-        for (auto& resource : m_OwnedResources)
-        {
-            resource.Shutdown();
-        }
-        m_OwnedResources.clear();
+        m_FrameDecodeTargets.clear();
 
         m_Device = nullptr;
         m_SceneRenderer = nullptr;
         m_SceneView = nullptr;
     }
 
-    void NeuralMaterialDecodePass::Setup(ViewRenderContext& context)
+    void NeuralMaterialDecodePass::Setup(ViewRenderContext &context)
     {
         if (!m_bCooperativeVectorSupported || !m_Decoder.IsInitialized())
         {
             return;
         }
 
-        // 将来的にここでSceneViewから必要なNeuralMaterialResourceを収集し、
-        // デコーダーに登録する処理が入る。
-        // 現段階ではm_OwnedResourcesに事前登録されたリソースを使用。
+        // ResourceManagerからプルモデルでデコード対象を取得
+        m_FrameDecodeTargets.clear();
+        if (context.ResourceManager)
+        {
+            m_FrameDecodeTargets = context.ResourceManager->GetNeuralMaterialResources();
+        }
 
         m_Decoder.ClearResources();
-        for (auto& resource : m_OwnedResources)
+        for (auto *resource : m_FrameDecodeTargets)
         {
-            if (resource.IsInitialized())
-            {
-                m_Decoder.RegisterResource(&resource);
-            }
+            m_Decoder.RegisterResource(resource);
         }
     }
 
-    void NeuralMaterialDecodePass::Execute(ViewRenderContext& context)
+    void NeuralMaterialDecodePass::Execute(ViewRenderContext &context)
     {
         if (!m_bCooperativeVectorSupported || !m_Decoder.IsInitialized())
         {
@@ -134,19 +130,18 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // 出力テクスチャのバリア
         // （UnorderedAccess → ShaderResource へ遷移）
-        // 全スロットの出力テクスチャを遷移させる
         // ========================================
-        for (auto& resource : m_OwnedResources)
+        for (auto *resource : m_FrameDecodeTargets)
         {
-            if (!resource.IsInitialized())
+            if (!resource || !resource->IsInitialized())
             {
                 continue;
             }
 
-            const auto& desc = resource.GetDesc();
+            const auto &desc = resource->GetDesc();
             for (uint32_t i = 0; i < static_cast<uint32_t>(desc.OutputSlots.size()); ++i)
             {
-                auto outputTexture = resource.GetOutputTexture(i);
+                auto outputTexture = resource->GetOutputTexture(i);
                 if (outputTexture)
                 {
                     context.CommandList->TextureBarrier(

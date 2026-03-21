@@ -2,7 +2,6 @@
 
 #include "Rendering/IViewPass.h"
 #include "Rendering/NeuralMaterialDecoder.h"
-#include "Rendering/NeuralMaterialResource.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 
@@ -10,6 +9,7 @@ namespace NorvesLib::Core::Rendering
 {
     class SceneRenderer;
     class SceneView;
+    class NeuralMaterialResource;
 
     /**
      * @brief ニューラルマテリアルデコードパス
@@ -17,13 +17,10 @@ namespace NorvesLib::Core::Rendering
      * Cooperative Vector (VK_NV_cooperative_vector) を使用して、
      * ニューラルネットワークベースのマテリアルデコードをコンピュートシェーダーで実行します。
      *
-     * 1つのMLPから複数のPBRプロパティテクスチャ（Albedo, Normal, ARM等）を
-     * 一括デコードし、後続のGBufferPassから通常のテクスチャとしてサンプリングされます。
+     * デコード対象のNeuralMaterialResourceはRenderResourceManagerが管理し、
+     * 本パスはSetup()時にResourceManagerからプルモデルで取得します。
      *
      * パイプラインの位置: ShadowMap → **NeuralMaterialDecode** → GBuffer
-     *
-     * DrawCommand::CreateDispatch() を通じてDispatchコマンドを生成し、
-     * SceneRenderer経由でGPUコマンドを記録します。
      *
      * Cooperative Vector非対応環境ではパスが自動的にスキップされます。
      */
@@ -37,12 +34,12 @@ namespace NorvesLib::Core::Rendering
         // IViewPass実装
         // ========================================
 
-        const char* GetName() const override { return "NeuralMaterialDecodePass"; }
+        const char *GetName() const override { return "NeuralMaterialDecodePass"; }
 
-        bool Initialize(ViewRenderContext& context) override;
+        bool Initialize(ViewRenderContext &context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext& context) override;
-        void Execute(ViewRenderContext& context) override;
+        void Setup(ViewRenderContext &context) override;
+        void Execute(ViewRenderContext &context) override;
 
         // ========================================
         // リソース管理
@@ -51,23 +48,28 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief SceneRendererを設定
          */
-        void SetSceneRenderer(SceneRenderer* renderer) { m_SceneRenderer = renderer; }
+        void SetSceneRenderer(SceneRenderer *renderer) { m_SceneRenderer = renderer; }
 
         /**
          * @brief SceneViewを設定
          */
-        void SetSceneView(SceneView* view) { m_SceneView = view; }
+        void SetSceneView(SceneView *view) { m_SceneView = view; }
+
+        /**
+         * @brief Cooperative Vectorがサポートされているか
+         */
+        bool IsCooperativeVectorSupported() const { return m_bCooperativeVectorSupported; }
 
     private:
-        RHI::IDevice* m_Device = nullptr;
-        SceneRenderer* m_SceneRenderer = nullptr;
-        SceneView* m_SceneView = nullptr;
+        RHI::IDevice *m_Device = nullptr;
+        SceneRenderer *m_SceneRenderer = nullptr;
+        SceneView *m_SceneView = nullptr;
 
         // ニューラルマテリアルデコーダー
         NeuralMaterialDecoder m_Decoder;
 
-        // テスト用ダミーリソース（将来的にResourceRegistryから取得）
-        Container::VariableArray<NeuralMaterialResource> m_OwnedResources;
+        // Setup()でResourceManagerから取得したデコード対象（フレーム単位の一時キャッシュ）
+        Container::VariableArray<NeuralMaterialResource *> m_FrameDecodeTargets;
 
         // Cooperative Vectorサポート状況
         bool m_bCooperativeVectorSupported = false;

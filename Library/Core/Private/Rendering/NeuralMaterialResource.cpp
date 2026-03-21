@@ -13,7 +13,7 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
-    bool NeuralMaterialResource::Initialize(RHI::IDevice* device, const NeuralMaterialDesc& desc)
+    bool NeuralMaterialResource::Initialize(RHI::IDevice *device, const NeuralMaterialDesc &desc)
     {
         if (m_bInitialized)
         {
@@ -52,8 +52,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         Container::String bufferName = desc.DebugName.empty()
-            ? Container::String("NeuralMat_Weights")
-            : desc.DebugName + "_Weights";
+                                           ? Container::String("NeuralMat_Weights")
+                                           : desc.DebugName + "_Weights";
 
         RHI::BufferDesc bufferDesc(
             static_cast<uint64_t>(weightSize),
@@ -76,11 +76,11 @@ namespace NorvesLib::Core::Rendering
 
         for (size_t i = 0; i < desc.OutputSlots.size(); ++i)
         {
-            const auto& slot = desc.OutputSlots[i];
+            const auto &slot = desc.OutputSlots[i];
 
             Container::String textureName = desc.DebugName.empty()
-                ? Container::String("NeuralMat_") + slot.Name
-                : desc.DebugName + "_" + slot.Name;
+                                                ? Container::String("NeuralMat_") + slot.Name
+                                                : desc.DebugName + "_" + slot.Name;
 
             RHI::TextureDesc texDesc;
             texDesc.Width = desc.OutputWidth;
@@ -106,7 +106,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool NeuralMaterialResource::RegisterOutputTextures(RenderResourceManager& resourceManager)
+    bool NeuralMaterialResource::RegisterOutputTextures(RenderResourceManager &resourceManager)
     {
         if (!m_bInitialized)
         {
@@ -129,7 +129,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool NeuralMaterialResource::UploadWeights(const void* weightData, size_t dataSize)
+    bool NeuralMaterialResource::UploadWeights(const void *weightData, size_t dataSize)
     {
         if (!m_bInitialized || !m_WeightBuffer)
         {

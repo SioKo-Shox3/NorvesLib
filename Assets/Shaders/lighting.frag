@@ -21,7 +21,7 @@ layout(set = 0, binding = 4) uniform LightingParams
     uint envMapMipLevels;   // 環境マップミップレベル数
     uint bIBLEnabled;       // IBL有効フラグ
     uint bSSAOEnabled;      // SSAO有効フラグ
-    uint _pad0;
+    uint bNeuralBRDFEnabled; // Neural BRDF有効フラグ
     uint _pad1;
     uint _pad2;
 } params;
@@ -53,6 +53,12 @@ layout(set = 0, binding = 9) uniform sampler2D brdfLUT;   // BRDF LUT（split-su
 
 // SSAO (Screen-Space Ambient Occlusion)
 layout(set = 0, binding = 10) uniform sampler2D ssaoTexture;
+
+// Neural BRDF重みデータ（Disney BRDF MLP）
+layout(set = 0, binding = 11) readonly buffer NeuralBRDFWeights
+{
+    float data[];
+} neuralBRDF;
 
 layout(location = 0) out vec4 outColor;
 
@@ -270,6 +276,86 @@ float CalculateShadow(vec3 worldPos)
     return PCSSFilter(shadowUV, currentDepth, filterRadius);
 }
 
+// ========================================
+// Neural Disney BRDF評価
+// 事前学習済みMLP（30→32→32→32→4）による推論
+// 入力: NdotL, NdotV, NdotH, LdotH, roughness
+// 出力: BRDF応答値（rgb=BRDF, a=PDF）
+// ========================================
+
+// 重みオフセット定数（FP32 float配列インデックス）
+// Layer 0 (30→32): weights[0..959], biases[960..991]
+// Layer 1 (32→32): weights[992..2015], biases[2016..2047]
+// Layer 2 (32→32): weights[2048..3071], biases[3072..3103]
+// Layer 3 (32→4):  weights[3104..3231], biases[3232..3235]
+
+vec4 EvaluateNeuralBRDF(float NdotL, float NdotV, float NdotH, float LdotH, float roughness)
+{
+    // 周波数エンコーディング: 5入力 × 3周波数 × 2(sin/cos) = 30ニューロン
+    float encoded[30];
+    float features[5] = float[5](NdotL, NdotV, NdotH, LdotH, roughness);
+
+    for (int i = 0; i < 5; i++)
+    {
+        for (int k = 0; k < 3; k++)
+        {
+            float freq = exp2(float(k)) * PI * features[i];
+            encoded[i * 6 + k * 2]     = sin(freq);
+            encoded[i * 6 + k * 2 + 1] = cos(freq);
+        }
+    }
+
+    // Layer 0: 30→32, ReLU
+    float h0[32];
+    for (int o = 0; o < 32; o++)
+    {
+        float sum = neuralBRDF.data[960 + o];
+        for (int i = 0; i < 30; i++)
+        {
+            sum += encoded[i] * neuralBRDF.data[o * 30 + i];
+        }
+        h0[o] = max(sum, 0.0);
+    }
+
+    // Layer 1: 32→32, ReLU
+    float h1[32];
+    for (int o = 0; o < 32; o++)
+    {
+        float sum = neuralBRDF.data[2016 + o];
+        for (int i = 0; i < 32; i++)
+        {
+            sum += h0[i] * neuralBRDF.data[992 + o * 32 + i];
+        }
+        h1[o] = max(sum, 0.0);
+    }
+
+    // Layer 2: 32→32, ReLU
+    float h2[32];
+    for (int o = 0; o < 32; o++)
+    {
+        float sum = neuralBRDF.data[3072 + o];
+        for (int i = 0; i < 32; i++)
+        {
+            sum += h1[i] * neuralBRDF.data[2048 + o * 32 + i];
+        }
+        h2[o] = max(sum, 0.0);
+    }
+
+    // Layer 3: 32→4, exp活性化
+    vec4 result;
+    for (int o = 0; o < 4; o++)
+    {
+        float sum = neuralBRDF.data[3232 + o];
+        for (int i = 0; i < 32; i++)
+        {
+            sum += h2[i] * neuralBRDF.data[3104 + o * 32 + i];
+        }
+        result[o] = exp(sum);
+    }
+
+    return result;
+}
+
 void main()
 {
     // GBufferからデータを取得
@@ -373,14 +459,31 @@ void main()
         vec3 H = normalize(V + L);
         float NdotL = max(dot(N, L), 0.0);
 
-        // Cook-Torrance BRDF
-        float D = DistributionGGX(N, H, roughness);
-        float G = GeometrySmith(N, V, L, roughness);
-        vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+        vec3 specular;
+        vec3 F;
 
-        vec3 numerator = D * G * F;
-        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
-        vec3 specular = numerator / denominator;
+        if (params.bNeuralBRDFEnabled != 0u)
+        {
+            // Neural Disney BRDFによるスペキュラ評価
+            float NdotV_val = max(dot(N, V), 0.0);
+            float NdotH_val = max(dot(N, H), 0.0);
+            float LdotH_val = max(dot(L, H), 0.0);
+
+            vec4 neuralResult = EvaluateNeuralBRDF(NdotL, NdotV_val, NdotH_val, LdotH_val, roughness);
+            specular = neuralResult.rgb;
+            F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+        }
+        else
+        {
+            // Analytical Cook-Torrance BRDF
+            float D = DistributionGGX(N, H, roughness);
+            float G = GeometrySmith(N, V, L, roughness);
+            F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+
+            vec3 numerator = D * G * F;
+            float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
+            specular = numerator / denominator;
+        }
 
         // エネルギー保存
         vec3 kS = F;

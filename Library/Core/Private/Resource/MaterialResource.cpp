@@ -104,8 +104,8 @@ namespace NorvesLib::Core
     // NeuralMaterial統合
     // ========================================
 
-    void MaterialResource::SetNeuralMaterial(Rendering::NeuralMaterialResource* neuralMaterial,
-                                             const NeuralMaterialSlotMapping& mapping)
+    void MaterialResource::SetNeuralMaterial(Rendering::NeuralMaterialResource *neuralMaterial,
+                                             const NeuralMaterialSlotMapping &mapping)
     {
         m_NeuralMaterial = neuralMaterial;
         m_NeuralSlotMapping = mapping;
@@ -137,7 +137,7 @@ namespace NorvesLib::Core
     }
 
     Rendering::TextureHandle MaterialResource::ResolveNeuralSlot(uint32_t slotIndex,
-                                                                  Rendering::TextureHandle fallback) const
+                                                                 Rendering::TextureHandle fallback) const
     {
         if (m_NeuralMaterial && slotIndex != UINT32_MAX)
         {

@@ -354,7 +354,7 @@ namespace NorvesLib::Core::Rendering
 
     TextureHandle RenderResourceManager::RegisterExternalTexture(
         Container::TSharedPtr<RHI::ITexture> rhiTexture,
-        const Container::String& debugName)
+        const Container::String &debugName)
     {
         if (!m_bInitialized || !rhiTexture)
         {
@@ -365,7 +365,7 @@ namespace NorvesLib::Core::Rendering
 
         TextureResourceData data;
         data.RHITexture = rhiTexture;
-        data.Width = 0;   // 外部テクスチャのため詳細不明（必要に応じて拡張）
+        data.Width = 0; // 外部テクスチャのため詳細不明（必要に応じて拡張）
         data.Height = 0;
         data.Format = TextureCreateInfo::Format::RGBA8_UNORM; // デフォルト
         data.RefCount = 1;
@@ -670,6 +670,16 @@ namespace NorvesLib::Core::Rendering
     {
         Thread::ScopedLock lock(m_ResourceMutex);
 
+        // ニューラルマテリアルはGPUリソースを持つため、先にShutdownしてから解放
+        for (auto &[id, resource] : m_NeuralMaterials)
+        {
+            if (resource)
+            {
+                resource->Shutdown();
+            }
+        }
+        m_NeuralMaterials.clear();
+
         m_MeshGPUDataMap.clear();
         m_Materials.clear();
         m_Buffers.clear();
@@ -782,7 +792,87 @@ namespace NorvesLib::Core::Rendering
         }
 
         Thread::ScopedLock lock(m_ResourceMutex);
+        m_NeuralMaterials.erase(handle.Id);
         m_Materials.erase(handle.Id);
+    }
+
+    // ========================================
+    // ニューラルマテリアル操作
+    // ========================================
+
+    MaterialHandle RenderResourceManager::CreateNeuralMaterial(const NeuralMaterialDesc &desc)
+    {
+        if (!m_bInitialized || !m_Device)
+        {
+            return MaterialHandle::Invalid();
+        }
+
+        auto neuralMat = MakeShared<NeuralMaterialResource>();
+        if (!neuralMat->Initialize(m_Device.get(), desc))
+        {
+            NORVES_LOG_WARNING("RenderResourceManager", "Failed to initialize neural material: %s",
+                               desc.DebugName.c_str());
+            return MaterialHandle::Invalid();
+        }
+
+        if (!neuralMat->RegisterOutputTextures(*this))
+        {
+            NORVES_LOG_WARNING("RenderResourceManager", "Failed to register neural material output textures: %s",
+                               desc.DebugName.c_str());
+            return MaterialHandle::Invalid();
+        }
+
+        // 出力TextureHandleでマテリアルを作成
+        MaterialCreateData matInfo;
+        matInfo.DebugName = desc.DebugName;
+
+        // Albedoスロット(0)
+        TextureHandle albedoHandle = neuralMat->GetOutputTextureHandle(0);
+        if (albedoHandle.IsValid())
+        {
+            matInfo.AlbedoTexture = albedoHandle;
+        }
+
+        // Normalスロット(1)
+        if (neuralMat->GetOutputSlotCount() > 1)
+        {
+            TextureHandle normalHandle = neuralMat->GetOutputTextureHandle(1);
+            if (normalHandle.IsValid())
+            {
+                matInfo.NormalTexture = normalHandle;
+            }
+        }
+
+        MaterialHandle handle = CreateMaterial(matInfo);
+        if (!handle.IsValid())
+        {
+            return MaterialHandle::Invalid();
+        }
+
+        // 内部でNeuralMaterialResourceを保持
+        {
+            Thread::ScopedLock lock(m_ResourceMutex);
+            m_NeuralMaterials[handle.Id] = std::move(neuralMat);
+        }
+
+        NORVES_LOG_INFO("RenderResourceManager", "Neural material created: %s (handle=%llu)",
+                        desc.DebugName.c_str(), handle.Id);
+        return handle;
+    }
+
+    Container::VariableArray<NeuralMaterialResource *> RenderResourceManager::GetNeuralMaterialResources() const
+    {
+        Thread::ScopedLock lock(m_ResourceMutex);
+        Container::VariableArray<NeuralMaterialResource *> result;
+        result.reserve(m_NeuralMaterials.size());
+        for (const auto &[id, resource] : m_NeuralMaterials)
+        {
+            if (resource && resource->IsInitialized())
+            {
+                result.push_back(resource.get());
+            }
+        }
+        return result;
     }
 
     // ========================================
