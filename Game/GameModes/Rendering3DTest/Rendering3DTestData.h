@@ -50,10 +50,10 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::TextureHandle m_CheckerTextureHandle;
 
         // マテリアルハンドル
-        NorvesLib::Core::Rendering::MaterialHandle m_SilverMaterial;       // Silver PBR マテリアル
-        NorvesLib::Core::Rendering::MaterialHandle m_CobbleStoneMaterial;  // 石畳マテリアル
-        NorvesLib::Core::Rendering::MaterialHandle m_GroundMaterial;       // 地面マテリアル
-        NorvesLib::Core::Rendering::MaterialHandle m_LightSphereMaterial;  // 光源球体マテリアル
+        NorvesLib::Core::Rendering::MaterialHandle m_SilverMaterial;      // Silver PBR マテリアル
+        NorvesLib::Core::Rendering::MaterialHandle m_CobbleStoneMaterial; // 石畳マテリアル
+        NorvesLib::Core::Rendering::MaterialHandle m_GroundMaterial;      // 地面マテリアル
+        NorvesLib::Core::Rendering::MaterialHandle m_LightSphereMaterial; // 光源球体マテリアル
         // 非同期ロード用：マテリアル更新ペンディングリスト
         VariableArray<TSharedPtr<PendingMaterialUpdate>> m_PendingMaterialUpdates;
 

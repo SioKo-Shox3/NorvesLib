@@ -280,7 +280,7 @@ float CalculateShadow(vec3 worldPos)
 // Neural Disney BRDF評価
 // 事前学習済みMLP（30→32→32→32→4）による推論
 // 入力: NdotL, NdotV, NdotH, LdotH, roughness
-// 出力: BRDF応答値（rgb=BRDF, a=PDF）
+// 出力: 4コンポーネント (x=diffuse_scale, y=specular_GD, z=fresnel, w=clearcoat)
 // ========================================
 
 // 重みオフセット定数（FP32 float配列インデックス）
@@ -459,37 +459,6 @@ void main()
         vec3 H = normalize(V + L);
         float NdotL = max(dot(N, L), 0.0);
 
-        vec3 specular;
-        vec3 F;
-
-        if (params.bNeuralBRDFEnabled != 0u)
-        {
-            // Neural Disney BRDFによるスペキュラ評価
-            float NdotV_val = max(dot(N, V), 0.0);
-            float NdotH_val = max(dot(N, H), 0.0);
-            float LdotH_val = max(dot(L, H), 0.0);
-
-            vec4 neuralResult = EvaluateNeuralBRDF(NdotL, NdotV_val, NdotH_val, LdotH_val, roughness);
-            specular = neuralResult.rgb;
-            F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-        }
-        else
-        {
-            // Analytical Cook-Torrance BRDF
-            float D = DistributionGGX(N, H, roughness);
-            float G = GeometrySmith(N, V, L, roughness);
-            F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-
-            vec3 numerator = D * G * F;
-            float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
-            specular = numerator / denominator;
-        }
-
-        // エネルギー保存
-        vec3 kS = F;
-        vec3 kD = vec3(1.0) - kS;
-        kD *= 1.0 - metallic; // 金属はディフューズなし
-
         // シャドウ計算（ディレクショナルライトのみ）
         float shadow = 1.0;
         if (lightType < 0.5 && params.bShadowEnabled != 0u)
@@ -498,8 +467,44 @@ void main()
         }
 
         vec3 radiance = lightColor * NdotL * attenuation * shadow;
-        Lo_diffuse += (kD * albedo / PI) * radiance;
-        Lo_specular += specular * radiance;
+
+        if (params.bNeuralBRDFEnabled != 0u)
+        {
+            // Neural Disney BRDFによる評価
+            // 出力: x=diffuse_scale, y=specular_GD, z=fresnel, w=clearcoat
+            float NdotV_val = max(dot(N, V), 0.0);
+            float NdotH_val = max(dot(N, H), 0.0);
+            float LdotH_val = max(dot(L, H), 0.0);
+
+            vec4 nn = EvaluateNeuralBRDF(NdotL, NdotV_val, NdotH_val, LdotH_val, roughness);
+
+            // Disney BRDF再構成（RTXNS SimpleInferencing準拠）
+            vec3 Cspec0 = mix(vec3(0.04), albedo, metallic);
+            vec3 diffuseContrib = nn.x * albedo * (1.0 - metallic);
+            vec3 specularContrib = nn.y * mix(Cspec0, vec3(1.0), nn.z) + vec3(nn.w);
+
+            Lo_diffuse += diffuseContrib * radiance;
+            Lo_specular += specularContrib * radiance;
+        }
+        else
+        {
+            // Analytical Cook-Torrance BRDF
+            float D = DistributionGGX(N, H, roughness);
+            float G = GeometrySmith(N, V, L, roughness);
+            vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+
+            vec3 numerator = D * G * F;
+            float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
+            vec3 specular = numerator / denominator;
+
+            // エネルギー保存
+            vec3 kS = F;
+            vec3 kD = vec3(1.0) - kS;
+            kD *= 1.0 - metallic; // 金属はディフューズなし
+
+            Lo_diffuse += (kD * albedo / PI) * radiance;
+            Lo_specular += specular * radiance;
+        }
     }
 
     // エミッシブ（自発光）をGBufferから取得
