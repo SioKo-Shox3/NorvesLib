@@ -207,6 +207,24 @@ namespace NorvesLib::RHI
                                          uint32_t drawCount, uint32_t stride) = 0;
 
         /**
+         * @brief 間接描画（インデックス付き、GPU側カウント参照）
+         *
+         * GPU側バッファから実際のドローコール数を読み取り、
+         * 必要な分だけDrawIndexedIndirectCommandを実行します。
+         * Vulkan 1.2コア機能（vkCmdDrawIndexedIndirectCount）に対応。
+         *
+         * @param indirectBuffer 間接引数バッファ（VkDrawIndexedIndirectCommand配列）
+         * @param indirectOffset 間接バッファ内のオフセット（バイト）
+         * @param countBuffer ドローコール数を格納するバッファ（uint32_t）
+         * @param countOffset カウントバッファ内のオフセット（バイト）
+         * @param maxDrawCount 最大ドローコール数（安全上限）
+         * @param stride コマンド間のストライド（バイト）
+         */
+        virtual void DrawIndexedIndirectCount(BufferPtr indirectBuffer, uint64_t indirectOffset,
+                                              BufferPtr countBuffer, uint64_t countOffset,
+                                              uint32_t maxDrawCount, uint32_t stride) = 0;
+
+        /**
          * @brief バッファを指定値でフィル
          *
          * Indirect Drawのカウンタリセット等に使用します。

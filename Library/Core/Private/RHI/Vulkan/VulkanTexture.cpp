@@ -112,6 +112,16 @@ namespace NorvesLib::RHI::Vulkan
     {
         vk::Device vkDevice = m_device->GetVkDevice();
 
+        // per-mip ImageViewの破棄
+        for (auto mipView : m_mipImageViews)
+        {
+            if (mipView)
+            {
+                vkDevice.destroyImageView(mipView);
+            }
+        }
+        m_mipImageViews.clear();
+
         if (m_imageView)
         {
             vkDevice.destroyImageView(m_imageView);
@@ -276,6 +286,62 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("イメージビューの作成に失敗しました");
         }
         m_imageView = createResult.value;
+    }
+
+    vk::ImageView VulkanTexture::GetMipImageView(uint32_t mipLevel) const
+    {
+        if (mipLevel >= m_desc.MipLevels)
+        {
+            return m_imageView;
+        }
+
+        // 遅延生成: 必要なミップレベルのImageViewを初回アクセス時に作成
+        if (m_mipImageViews.empty())
+        {
+            m_mipImageViews.resize(m_desc.MipLevels, nullptr);
+        }
+
+        if (!m_mipImageViews[mipLevel])
+        {
+            vk::ImageViewCreateInfo viewInfo;
+            viewInfo.image = m_image;
+            viewInfo.viewType = vk::ImageViewType::e2D;
+            viewInfo.format = ConvertToVkFormat(m_desc.TextureFormat);
+            viewInfo.components.r = vk::ComponentSwizzle::eIdentity;
+            viewInfo.components.g = vk::ComponentSwizzle::eIdentity;
+            viewInfo.components.b = vk::ComponentSwizzle::eIdentity;
+            viewInfo.components.a = vk::ComponentSwizzle::eIdentity;
+
+            if ((m_desc.Usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
+            {
+                viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+            }
+            else
+            {
+                viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            }
+
+            viewInfo.subresourceRange.baseMipLevel = mipLevel;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+
+            vk::Device vkDevice = m_device->GetVkDevice();
+            auto createResult = vkDevice.createImageView(viewInfo);
+            if (createResult.result != vk::Result::eSuccess)
+            {
+                return m_imageView;
+            }
+            m_mipImageViews[mipLevel] = createResult.value;
+        }
+
+        return m_mipImageViews[mipLevel];
+    }
+
+    uint64_t VulkanTexture::GetMipImageViewHandle(uint32_t mipLevel) const
+    {
+        auto view = GetMipImageView(mipLevel);
+        return reinterpret_cast<uint64_t>(static_cast<VkImageView>(view));
     }
 
     void VulkanTexture::Update(const void *data, uint32_t rowPitch, uint32_t slicePitch,

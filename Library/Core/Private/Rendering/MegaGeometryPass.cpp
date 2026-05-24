@@ -14,6 +14,7 @@
 #include "RHI/IBuffer.h"
 #include "RHI/ITexture.h"
 #include "RHI/IDescriptorSet.h"
+#include "RHI/ISampler.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/DeviceCapabilities.h"
 #include "Text/IdentityPool.h"
@@ -98,6 +99,98 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // デフォルトPBRテクスチャの作成
+        auto createDefault1x1 = [this](const char *debugName, uint8_t r, uint8_t g, uint8_t b, uint8_t a) -> RHI::TexturePtr
+        {
+            RHI::TextureDesc texDesc;
+            texDesc.Width = 1;
+            texDesc.Height = 1;
+            texDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            texDesc.Usage = RHI::ResourceUsage::ShaderRead;
+            texDesc.DebugName = debugName;
+
+            auto tex = m_Device->CreateTexture(texDesc);
+            if (tex)
+            {
+                uint8_t pixel[4] = {r, g, b, a};
+                tex->Update(pixel, 4, 4);
+            }
+            return tex;
+        };
+
+        m_DefaultWhiteTexture = createDefault1x1("MegaGeometry_DefaultWhite", 255, 255, 255, 255);
+        m_DefaultFlatNormalTexture = createDefault1x1("MegaGeometry_DefaultFlatNormal", 128, 128, 255, 255);
+        m_DefaultBlackTexture = createDefault1x1("MegaGeometry_DefaultBlack", 0, 0, 0, 255);
+
+        if (!m_DefaultWhiteTexture || !m_DefaultFlatNormalTexture || !m_DefaultBlackTexture)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "デフォルトPBRテクスチャの作成に失敗");
+            return false;
+        }
+
+        // デフォルトLinearサンプラーの作成
+        RHI::SamplerDesc sampDesc;
+        sampDesc.filterMin = RHI::FilterMode::Linear;
+        sampDesc.filterMag = RHI::FilterMode::Linear;
+        sampDesc.filterMip = RHI::FilterMode::Linear;
+        sampDesc.addressU = RHI::TextureAddressMode::Wrap;
+        sampDesc.addressV = RHI::TextureAddressMode::Wrap;
+        sampDesc.addressW = RHI::TextureAddressMode::Wrap;
+        m_DefaultLinearSampler = m_Device->CreateSampler(sampDesc);
+        if (!m_DefaultLinearSampler)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "デフォルトサンプラーの作成に失敗");
+            return false;
+        }
+
+        // Hi-Z 深度ピラミッド用リソース作成
+        if (context.ShaderMgr)
+        {
+            m_HiZShader = context.ShaderMgr->LoadShader(
+                "hiz_generate.comp", RHI::ShaderStage::Compute);
+        }
+        if (m_HiZShader)
+        {
+            RHI::ComputePipelineDesc hiZPipelineDesc;
+            hiZPipelineDesc.computeShader = m_HiZShader;
+            m_HiZPipeline = m_Device->CreateComputePipeline(hiZPipelineDesc);
+
+            // Hi-Z用Nearestサンプラー（Clamp）
+            RHI::SamplerDesc hiZSampDesc;
+            hiZSampDesc.filterMin = RHI::FilterMode::Point;
+            hiZSampDesc.filterMag = RHI::FilterMode::Point;
+            hiZSampDesc.filterMip = RHI::FilterMode::Point;
+            hiZSampDesc.addressU = RHI::TextureAddressMode::Clamp;
+            hiZSampDesc.addressV = RHI::TextureAddressMode::Clamp;
+            hiZSampDesc.addressW = RHI::TextureAddressMode::Clamp;
+            m_HiZNearestSampler = m_Device->CreateSampler(hiZSampDesc);
+
+            // Hi-ZパラメータUBO (ivec2 destSize = 8 bytes, pad to 16)
+            RHI::BufferDesc hiZUboDesc(
+                16,
+                RHI::ResourceUsage::ConstantBuffer,
+                true,
+                "MegaGeometry_HiZParamsUBO");
+            m_HiZParamsBuffer = m_Device->CreateBuffer(hiZUboDesc);
+
+            if (!m_HiZPipeline || !m_HiZNearestSampler || !m_HiZParamsBuffer)
+            {
+                NORVES_LOG_WARNING("MegaGeometryPass", "Hi-Zリソースの作成に失敗。オクルージョンカリング無効");
+                m_HiZPipeline.reset();
+                m_HiZShader.reset();
+                m_HiZNearestSampler.reset();
+                m_HiZParamsBuffer.reset();
+            }
+            else
+            {
+                NORVES_LOG_INFO("MegaGeometryPass", "Hi-Zオクルージョンカリング有効");
+            }
+        }
+        else
+        {
+            NORVES_LOG_WARNING("MegaGeometryPass", "Hi-Zシェーダーの読み込みに失敗。オクルージョンカリング無効");
+        }
+
         m_bInitialized = true;
         NORVES_LOG_INFO("MegaGeometryPass", "初期化完了 (MaxDrawCount: %u)", m_Settings.MaxDrawCount);
         return true;
@@ -130,6 +223,19 @@ namespace NorvesLib::Core::Rendering
         m_EmissiveTexture.reset();
         m_DepthTexture.reset();
 
+        m_DefaultWhiteTexture.reset();
+        m_DefaultFlatNormalTexture.reset();
+        m_DefaultBlackTexture.reset();
+        m_DefaultLinearSampler.reset();
+
+        m_HiZTexture.reset();
+        m_HiZShader.reset();
+        m_HiZPipeline.reset();
+        m_HiZDescriptorSet.reset();
+        m_HiZParamsBuffer.reset();
+        m_HiZNearestSampler.reset();
+        m_HiZMipCount = 0;
+
         m_Instances.clear();
 
         m_bInitialized = false;
@@ -141,6 +247,27 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Setup(ViewRenderContext &context)
     {
+        m_Instances.clear();
+
+        if (m_SceneView)
+        {
+            const auto &megaGeometryProxies = m_SceneView->GetMegaGeometryProxies();
+            m_Instances.reserve(megaGeometryProxies.size());
+
+            for (const auto &proxy : megaGeometryProxies)
+            {
+                if (!proxy.IsValid())
+                {
+                    continue;
+                }
+
+                MegaMeshInstance instance;
+                instance.Handle = proxy.MegaMeshHandle;
+                std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
+                m_Instances.push_back(instance);
+            }
+        }
+
         // MegaMeshインスタンスが登録されていなければスキップ
         if (m_Instances.empty() || !m_CullPipeline)
         {
@@ -178,6 +305,15 @@ namespace NorvesLib::Core::Rendering
                 NORVES_LOG_ERROR("MegaGeometryPass", "描画パイプラインの作成に失敗");
                 return;
             }
+
+            // Hi-Z深度ピラミッドの作成・再作成
+            if (m_HiZPipeline)
+            {
+                if (!CreateHiZResources(context))
+                {
+                    NORVES_LOG_WARNING("MegaGeometryPass", "Hi-Zテクスチャの作成に失敗。オクルージョンカリング無効");
+                }
+            }
         }
     }
 
@@ -203,6 +339,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         auto *cmdList = context.CommandList;
+
+        // ========================================
+        // Hi-Z 深度ピラミッド生成（オクルージョンカリング用）
+        // ========================================
+        GenerateHiZPyramid(cmdList);
 
         // ========================================
         // 各MegaMeshインスタンスに対してカリング + IndirectDraw
@@ -253,8 +394,8 @@ namespace NorvesLib::Core::Rendering
                 fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
             projMat = context.Device->AdjustProjectionForClipSpace(projMat);
 
-            std::memcpy(uniformData.ViewMatrix, &viewMat, sizeof(float) * 16);
-            std::memcpy(uniformData.ProjectionMatrix, &projMat, sizeof(float) * 16);
+            MatrixUtils::TransposeToShaderData(viewMat, uniformData.ViewMatrix);
+            MatrixUtils::TransposeToShaderData(projMat, uniformData.ProjectionMatrix);
 
             uniformData.CameraPosition[0] = cam.PositionX;
             uniformData.CameraPosition[1] = cam.PositionY;
@@ -278,9 +419,21 @@ namespace NorvesLib::Core::Rendering
                                                ? static_cast<float>(context.ScreenHeight) / (2.0f * halfFovTan)
                                                : 1.0f;
 
-            uniformData.Pad0 = 0;
-            uniformData.Pad1 = 0;
-            uniformData.Pad2 = 0;
+            // Hi-Zオクルージョンカリングパラメータ
+            if (m_HiZTexture && m_HiZMipCount > 0)
+            {
+                uniformData.HiZWidth = m_HiZTexture->GetWidth();
+                uniformData.HiZHeight = m_HiZTexture->GetHeight();
+                uniformData.HiZMipCount = m_HiZMipCount;
+                uniformData.bHiZEnabled = 1;
+            }
+            else
+            {
+                uniformData.HiZWidth = 0;
+                uniformData.HiZHeight = 0;
+                uniformData.HiZMipCount = 0;
+                uniformData.bHiZEnabled = 0;
+            }
 
             m_CullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
 
@@ -295,6 +448,19 @@ namespace NorvesLib::Core::Rendering
                                                    static_cast<uint32_t>(m_Settings.MaxDrawCount * sizeof(MegaGeometry::DrawIndexedIndirectCommand)));
             m_CullDescriptorSet->BindStorageBuffer(3, m_DrawCountBuffer, 0,
                                                    sizeof(uint32_t));
+
+            // Hi-Zテクスチャバインド（無い場合はデフォルトテクスチャでフォールバック）
+            if (m_HiZTexture)
+            {
+                m_CullDescriptorSet->BindTexture(4, m_HiZTexture);
+                m_CullDescriptorSet->BindSampler(4, m_HiZNearestSampler);
+            }
+            else
+            {
+                m_CullDescriptorSet->BindTexture(4, m_DefaultBlackTexture);
+                m_CullDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+            }
+
             m_CullDescriptorSet->Update();
 
             // ----------------------------------------
@@ -334,17 +500,27 @@ namespace NorvesLib::Core::Rendering
 
             PerObjectUBO perObject{};
             std::memcpy(perObject.World, instance.WorldMatrix, sizeof(float) * 16);
-            std::memcpy(perObject.View, &viewMat, sizeof(float) * 16);
-            std::memcpy(perObject.Projection, &projMat, sizeof(float) * 16);
+            MatrixUtils::TransposeToShaderData(viewMat, perObject.View);
+            MatrixUtils::TransposeToShaderData(projMat, perObject.Projection);
             perObject.CameraPosition[0] = cam.PositionX;
             perObject.CameraPosition[1] = cam.PositionY;
             perObject.CameraPosition[2] = cam.PositionZ;
             perObject.CameraPosition[3] = 1.0f;
-            perObject.ObjectColor[0] = 1.0f;
-            perObject.ObjectColor[1] = 1.0f;
-            perObject.ObjectColor[2] = 1.0f;
-            perObject.ObjectColor[3] = 1.0f;
-            // EmissiveとPomParamsはゼロのまま
+
+            // マテリアル値を設定
+            const auto &mat = gpuData->Material;
+            perObject.ObjectColor[0] = mat.BaseColor[0];
+            perObject.ObjectColor[1] = mat.BaseColor[1];
+            perObject.ObjectColor[2] = mat.BaseColor[2];
+            perObject.ObjectColor[3] = mat.BaseColor[3];
+            perObject.EmissiveColor[0] = mat.EmissiveColor[0];
+            perObject.EmissiveColor[1] = mat.EmissiveColor[1];
+            perObject.EmissiveColor[2] = mat.EmissiveColor[2];
+            perObject.EmissiveColor[3] = mat.EmissiveColor[3];
+            perObject.PomParams[0] = mat.HeightScale;
+            perObject.PomParams[1] = mat.bHasHeightMap ? 1.0f : 0.0f;
+            perObject.PomParams[2] = 0.0f;
+            perObject.PomParams[3] = 0.0f;
 
             m_DrawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
 
@@ -373,6 +549,28 @@ namespace NorvesLib::Core::Rendering
 
             m_DrawDescriptorSet->BindConstantBuffer(0, m_DrawUniformBuffer, 0,
                                                     static_cast<uint32_t>(sizeof(PerObjectUBO)));
+
+            // PBRテクスチャバインド（マテリアルテクスチャまたはデフォルトにフォールバック）
+            auto albedo = mat.AlbedoTexture ? mat.AlbedoTexture : m_DefaultWhiteTexture;
+            auto normal = mat.NormalTexture ? mat.NormalTexture : m_DefaultFlatNormalTexture;
+            auto metallic = mat.MetallicTexture ? mat.MetallicTexture : m_DefaultBlackTexture;
+            auto roughness = mat.RoughnessTexture ? mat.RoughnessTexture : m_DefaultWhiteTexture;
+            auto ao = mat.AOTexture ? mat.AOTexture : m_DefaultWhiteTexture;
+            auto height = mat.HeightTexture ? mat.HeightTexture : m_DefaultBlackTexture;
+
+            m_DrawDescriptorSet->BindTexture(1, albedo);
+            m_DrawDescriptorSet->BindSampler(1, m_DefaultLinearSampler);
+            m_DrawDescriptorSet->BindTexture(2, normal);
+            m_DrawDescriptorSet->BindSampler(2, m_DefaultLinearSampler);
+            m_DrawDescriptorSet->BindTexture(3, metallic);
+            m_DrawDescriptorSet->BindSampler(3, m_DefaultLinearSampler);
+            m_DrawDescriptorSet->BindTexture(4, roughness);
+            m_DrawDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+            m_DrawDescriptorSet->BindTexture(5, ao);
+            m_DrawDescriptorSet->BindSampler(5, m_DefaultLinearSampler);
+            m_DrawDescriptorSet->BindTexture(6, height);
+            m_DrawDescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+
             m_DrawDescriptorSet->Update();
             cmdList->SetDescriptorSet(m_DrawDescriptorSet, 0);
 
@@ -381,15 +579,25 @@ namespace NorvesLib::Core::Rendering
             cmdList->SetIndexBuffer(gpuData->IndexBuffer, 0);
 
             // IndirectDraw発行
-            // 注意: drawCountはGPU側で計算された値に基づく。
-            // 最大値としてMaxDrawCountを渡し、実際の発行数はGPUが決定。
-            // ただし、Vulkan の drawIndexedIndirect は固定カウントのため、
-            // ここではMaxDrawCountをそのまま使う（無効なエントリはinstanceCount=0で無視される）。
-            // TODO: VK_KHR_draw_indirect_count対応でGPU側カウント参照
-            cmdList->DrawIndexedIndirect(
-                m_IndirectDrawBuffer, 0,
-                m_Settings.MaxDrawCount,
-                sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+            // DrawIndirectCount対応の場合はGPU側カウントを参照し、
+            // 実際に可視なクラスタ数だけドローコールを発行する。
+            // 非対応の場合はMaxDrawCountをそのまま使用（instanceCount=0で空振り）。
+            const auto &caps = m_Device->GetCapabilities();
+            if (caps.bDrawIndirectCount)
+            {
+                cmdList->DrawIndexedIndirectCount(
+                    m_IndirectDrawBuffer, 0,
+                    m_DrawCountBuffer, 0,
+                    m_Settings.MaxDrawCount,
+                    sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+            }
+            else
+            {
+                cmdList->DrawIndexedIndirect(
+                    m_IndirectDrawBuffer, 0,
+                    m_Settings.MaxDrawCount,
+                    sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+            }
 
             cmdList->EndRenderPass();
 
@@ -505,6 +713,13 @@ namespace NorvesLib::Core::Rendering
         countBinding.type = RHI::ResourceBindType::RWBuffer;
         countBinding.stages = RHI::ShaderStage::Compute;
         cullDsDesc.bindings.push_back(countBinding);
+
+        // binding 4: Hi-Z深度ピラミッド (CombinedImageSampler, readonly)
+        RHI::DescriptorBinding hiZBinding;
+        hiZBinding.binding = 4;
+        hiZBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        hiZBinding.stages = RHI::ShaderStage::Compute;
+        cullDsDesc.bindings.push_back(hiZBinding);
 
         m_CullDescriptorSet = device->CreateDescriptorSet(cullDsDesc);
         if (!m_CullDescriptorSet)
@@ -714,6 +929,162 @@ namespace NorvesLib::Core::Rendering
         }
 
         return true;
+    }
+
+    // ========================================
+    // Hi-Z 深度ピラミッドリソース作成
+    // ========================================
+
+    bool MegaGeometryPass::CreateHiZResources(ViewRenderContext &context)
+    {
+        if (!m_Device || !m_HiZPipeline || m_CurrentWidth == 0 || m_CurrentHeight == 0)
+        {
+            return false;
+        }
+
+        // 既存リソースをリセット
+        m_HiZTexture.reset();
+        m_HiZDescriptorSet.reset();
+
+        // Hi-Zテクスチャ: 半解像度ベース、ミップチェーン付き
+        uint32_t hiZWidth = (m_CurrentWidth + 1) / 2;
+        uint32_t hiZHeight = (m_CurrentHeight + 1) / 2;
+        uint32_t maxDim = (hiZWidth > hiZHeight) ? hiZWidth : hiZHeight;
+        m_HiZMipCount = static_cast<uint32_t>(std::floor(std::log2(static_cast<float>(maxDim)))) + 1;
+
+        RHI::TextureDesc hiZTexDesc;
+        hiZTexDesc.Width = hiZWidth;
+        hiZTexDesc.Height = hiZHeight;
+        hiZTexDesc.MipLevels = m_HiZMipCount;
+        hiZTexDesc.TextureFormat = RHI::Format::R32_FLOAT;
+        hiZTexDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite;
+        hiZTexDesc.DebugName = "MegaGeometry_HiZPyramid";
+
+        m_HiZTexture = m_Device->CreateTexture(hiZTexDesc);
+        if (!m_HiZTexture)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "Hi-Zテクスチャの作成に失敗 (%ux%u, %u mips)", hiZWidth, hiZHeight, m_HiZMipCount);
+            m_HiZMipCount = 0;
+            return false;
+        }
+
+        // Hi-Z生成用ディスクリプタセット
+        // binding 0: ソースミップ (CombinedImageSampler)
+        // binding 1: デストミップ (RWTexture / StorageImage)
+        // binding 2: HiZParams UBO (ConstantBuffer)
+        RHI::DescriptorSetDesc hiZDsDesc;
+
+        RHI::DescriptorBinding srcBinding;
+        srcBinding.binding = 0;
+        srcBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        srcBinding.stages = RHI::ShaderStage::Compute;
+        hiZDsDesc.bindings.push_back(srcBinding);
+
+        RHI::DescriptorBinding dstBinding;
+        dstBinding.binding = 1;
+        dstBinding.type = RHI::ResourceBindType::RWTexture;
+        dstBinding.stages = RHI::ShaderStage::Compute;
+        hiZDsDesc.bindings.push_back(dstBinding);
+
+        RHI::DescriptorBinding paramBinding;
+        paramBinding.binding = 2;
+        paramBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        paramBinding.stages = RHI::ShaderStage::Compute;
+        hiZDsDesc.bindings.push_back(paramBinding);
+
+        m_HiZDescriptorSet = m_Device->CreateDescriptorSet(hiZDsDesc);
+        if (!m_HiZDescriptorSet)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "Hi-Zディスクリプタセットの作成に失敗");
+            m_HiZTexture.reset();
+            m_HiZMipCount = 0;
+            return false;
+        }
+
+        NORVES_LOG_INFO("MegaGeometryPass", "Hi-Z深度ピラミッド作成 (%ux%u, %u mips)", hiZWidth, hiZHeight, m_HiZMipCount);
+        return true;
+    }
+
+    // ========================================
+    // Hi-Z 深度ピラミッド生成
+    // ========================================
+
+    void MegaGeometryPass::GenerateHiZPyramid(RHI::ICommandList *cmdList)
+    {
+        if (!m_HiZTexture || !m_HiZPipeline || !m_HiZDescriptorSet || m_HiZMipCount == 0)
+        {
+            return;
+        }
+
+        // GBuffer深度テクスチャをシェーダーリソースとして使用（既にShaderResource状態のはず）
+        // Hi-Zテクスチャ全ミップをUAV状態に遷移
+        cmdList->TextureBarrier(m_HiZTexture,
+                                RHI::ResourceState::Undefined,
+                                RHI::ResourceState::UnorderedAccess,
+                                0, 0, m_HiZMipCount, 0);
+
+        cmdList->SetPipeline(m_HiZPipeline);
+
+        uint32_t srcWidth = m_CurrentWidth;
+        uint32_t srcHeight = m_CurrentHeight;
+
+        for (uint32_t mip = 0; mip < m_HiZMipCount; ++mip)
+        {
+            uint32_t destWidth = (m_HiZTexture->GetWidth() >> mip);
+            uint32_t destHeight = (m_HiZTexture->GetHeight() >> mip);
+            if (destWidth < 1) destWidth = 1;
+            if (destHeight < 1) destHeight = 1;
+
+            // HiZParams UBO更新
+            int32_t params[4] = {
+                static_cast<int32_t>(destWidth),
+                static_cast<int32_t>(destHeight),
+                0, 0
+            };
+            m_HiZParamsBuffer->Update(params, 16);
+
+            // ソースバインド
+            if (mip == 0)
+            {
+                // 初回: GBuffer深度テクスチャを読み取り
+                m_HiZDescriptorSet->BindTexture(0, m_DepthTexture);
+                m_HiZDescriptorSet->BindSampler(0, m_HiZNearestSampler);
+            }
+            else
+            {
+                // 前のミップをシェーダーリソースに遷移
+                cmdList->TextureBarrier(m_HiZTexture,
+                                        RHI::ResourceState::UnorderedAccess,
+                                        RHI::ResourceState::ShaderResource,
+                                        mip - 1, 0, 1, 0);
+
+                // 前のミップをソースとしてバインド
+                m_HiZDescriptorSet->BindTexture(0, m_HiZTexture);
+                m_HiZDescriptorSet->BindSampler(0, m_HiZNearestSampler);
+            }
+
+            // デストミップをストレージテクスチャとしてバインド
+            m_HiZDescriptorSet->BindStorageTexture(1, m_HiZTexture, mip);
+
+            // パラメータUBO
+            m_HiZDescriptorSet->BindConstantBuffer(2, m_HiZParamsBuffer, 0, 16);
+            m_HiZDescriptorSet->Update();
+            cmdList->SetDescriptorSet(m_HiZDescriptorSet, 0);
+
+            // ディスパッチ（8x8ワークグループ）
+            uint32_t groupX = (destWidth + 7) / 8;
+            uint32_t groupY = (destHeight + 7) / 8;
+            cmdList->Dispatch(groupX, groupY, 1);
+
+            srcWidth = destWidth;
+            srcHeight = destHeight;
+        }
+
+        // 最後のミップをシェーダーリソースに遷移
+        cmdList->TextureBarrier(m_HiZTexture,
+                                RHI::ResourceState::UnorderedAccess,
+                                RHI::ResourceState::ShaderResource,
+                                m_HiZMipCount - 1, 0, 1, 0);
     }
 
     // ========================================

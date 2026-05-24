@@ -14,6 +14,7 @@ target_include_directories(${MODULE_NAME}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}  # ルートディレクトリを追加
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb  # stb_image.h（ARM分解用）
 )
 
 # 各ライブラリコンポーネントへの依存関係を設定

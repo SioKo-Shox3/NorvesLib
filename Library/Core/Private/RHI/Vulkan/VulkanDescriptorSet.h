@@ -108,6 +108,7 @@ namespace NorvesLib::RHI::Vulkan
         void BindSampler(uint32_t binding, SamplerPtr sampler) override;
         void BindStorageBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size) override;
         void BindStorageTexture(uint32_t binding, TexturePtr texture) override;
+        void BindStorageTexture(uint32_t binding, TexturePtr texture, uint32_t mipLevel) override;
         void Update() override;
 
         // Vulkan固有のメソッド (vulkan.hpp型)
@@ -141,6 +142,7 @@ namespace NorvesLib::RHI::Vulkan
             SamplerPtr sampler;
             uint64_t offset = 0;
             uint64_t range = VK_WHOLE_SIZE;
+            int32_t mipLevel = -1; // -1 = 全ミップ（デフォルト）、0+ = 特定ミップ
         };
 
         UnorderedMap<uint32_t, BindingInfo> m_bindings;

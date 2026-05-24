@@ -3,6 +3,7 @@
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Rendering/RenderResourceManager.h"
+#include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Core/Public/Thread/Mutex.h"
 
 namespace NorvesLib::Core
@@ -12,6 +13,7 @@ namespace NorvesLib::Core
     namespace Component
     {
         class MeshComponent;
+        class MegaGeometryComponent;
         class LightComponent;
         class PointLightComponent;
     } // namespace Component
@@ -61,11 +63,13 @@ namespace Game::GameModes
         NorvesLib::Core::WorldObject *m_pSphereObject = nullptr;
         NorvesLib::Core::WorldObject *m_pGroundObject = nullptr;
         NorvesLib::Core::WorldObject *m_pLightSphereObject = nullptr;
+        NorvesLib::Core::WorldObject *m_pBoulderObject = nullptr;
 
         // MeshComponent参照（WorldObjectが所有）
         NorvesLib::Core::Component::MeshComponent *m_pSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pGroundMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pLightSphereMeshComponent = nullptr;
+        NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
 
         // LightComponent参照（WorldObjectが所有）
         NorvesLib::Core::Component::LightComponent *m_pDirectionalLightComponent = nullptr;
@@ -82,6 +86,12 @@ namespace Game::GameModes
 
         // メッシュ登録済みフラグ
         bool m_bMeshesRegistered = false;
+
+        // ========================================
+        // MegaGeometry（Boulder）
+        // ========================================
+        NorvesLib::Core::Rendering::MegaGeometry::MegaMeshHandle m_BoulderMegaMeshHandle;
+        bool m_bBoulderMegaMeshRegistered = false;
     };
 
 } // namespace Game::GameModes

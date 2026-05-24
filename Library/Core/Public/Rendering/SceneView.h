@@ -97,10 +97,22 @@ namespace NorvesLib::Core::Rendering
         void AddLightProxy(const LightProxy &proxy);
 
         /**
+         * @brief MegaGeometryProxyを追加
+         * @param proxy 追加するProxy
+         */
+        void AddMegaGeometryProxy(const MegaGeometryProxy &proxy);
+
+        /**
          * @brief LightProxyを削除
          * @param objectId 削除するProxyのObjectId
          */
         void RemoveLightProxy(uint64_t objectId);
+
+        /**
+         * @brief MegaGeometryProxyを削除
+         * @param objectId 削除対象ObjectId
+         */
+        void RemoveMegaGeometryProxy(uint64_t objectId);
 
         /**
          * @brief MeshProxyを更新
@@ -115,9 +127,20 @@ namespace NorvesLib::Core::Rendering
         void UpdateLightProxy(const LightProxy &proxy);
 
         /**
+         * @brief MegaGeometryProxyを更新
+         * @param proxy 更新するProxy（ComponentIdで照合）
+         */
+        void UpdateMegaGeometryProxy(const MegaGeometryProxy &proxy);
+
+        /**
          * @brief すべてのProxyをクリア
          */
         void ClearAllProxies();
+
+        /**
+         * @brief MegaGeometryProxyのみクリア
+         */
+        void ClearMegaGeometryProxies();
 
         // ========================================
         // 描画フロー
@@ -212,6 +235,11 @@ namespace NorvesLib::Core::Rendering
         const Container::VariableArray<LightProxy> &GetLightProxies() const { return m_LightProxies; }
 
         /**
+         * @brief 収集されたMegaGeometryProxyを取得
+         */
+        const Container::VariableArray<MegaGeometryProxy> &GetMegaGeometryProxies() const { return m_MegaGeometryProxies; }
+
+        /**
          * @brief 可視MeshProxyを取得
          */
         const Container::VariableArray<MeshProxy *> &GetVisibleMeshProxies() const { return m_VisibleMeshProxies; }
@@ -289,6 +317,7 @@ namespace NorvesLib::Core::Rendering
     private:
         // MeshProxy（WorldからSceneViewに直接渡される）
         Container::VariableArray<MeshProxy> m_MeshProxies;
+        Container::VariableArray<MegaGeometryProxy> m_MegaGeometryProxies;
         Container::VariableArray<LightProxy> m_LightProxies;
 
         // 可視Proxy（カリング後）

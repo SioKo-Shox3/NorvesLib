@@ -70,9 +70,11 @@ set(PRIVATE_SOURCES
     # Resource
     Private/Resource/MeshResource.cpp
     Private/Resource/MaterialResource.cpp
+    Private/Resource/GLTFLoader.cpp
     # Component
     Private/Component/Component.cpp
     Private/Component/MeshComponent.cpp
+    Private/Component/MegaGeometryComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/PointLightComponent.cpp
     # Thread
@@ -218,9 +220,11 @@ set(PUBLIC_HEADERS
     # Resource
     Public/Resource/MeshResource.h
     Public/Resource/MaterialResource.h
+    Public/Resource/GLTFLoader.h
     # Component
     Public/Component/Component.h
     Public/Component/MeshComponent.h
+    Public/Component/MegaGeometryComponent.h
     Public/Component/LightComponent.h
     Public/Component/PointLightComponent.h
     # Math

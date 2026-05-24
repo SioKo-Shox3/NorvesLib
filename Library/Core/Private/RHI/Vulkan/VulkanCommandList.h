@@ -230,6 +230,9 @@ namespace NorvesLib::RHI::Vulkan
                            uint32_t startVertexLocation = 0, uint32_t startInstanceLocation = 0) override;
         void DrawIndexedIndirect(BufferPtr indirectBuffer, uint64_t offset,
                                  uint32_t drawCount, uint32_t stride) override;
+        void DrawIndexedIndirectCount(BufferPtr indirectBuffer, uint64_t indirectOffset,
+                                      BufferPtr countBuffer, uint64_t countOffset,
+                                      uint32_t maxDrawCount, uint32_t stride) override;
         void FillBuffer(BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) override;
         void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) override;
 

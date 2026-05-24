@@ -161,6 +161,34 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     };
 
     // ========================================
+    // MegaMesh マテリアル
+    // ========================================
+
+    /**
+     * @brief MegaMeshマテリアル
+     *
+     * MegaMesh単位のPBRマテリアル設定。
+     * テクスチャが未設定（nullptr）の場合はデフォルトの1x1テクスチャが使用されます。
+     */
+    struct MegaMeshMaterial
+    {
+        float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};     // ベースカラー RGBA
+        float EmissiveColor[4] = {0.0f, 0.0f, 0.0f, 0.0f}; // エミッシブ RGB + 強度
+
+        // PBRテクスチャ（nullptrの場合はデフォルトテクスチャを使用）
+        RHI::TexturePtr AlbedoTexture;
+        RHI::TexturePtr NormalTexture;
+        RHI::TexturePtr MetallicTexture;
+        RHI::TexturePtr RoughnessTexture;
+        RHI::TexturePtr AOTexture;
+        RHI::TexturePtr HeightTexture;
+
+        // POMパラメータ
+        float HeightScale = 0.0f;
+        bool bHasHeightMap = false;
+    };
+
+    // ========================================
     // MegaMesh記述子
     // ========================================
 
@@ -193,6 +221,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t MaxLODLevels = 8;           // 最大LODレベル数
         uint32_t MinTrianglesForLOD = 128;   // LOD構築終了条件
 
+        // マテリアル
+        MegaMeshMaterial Material;
+
         // デバッグ
         String DebugName;
     };
@@ -213,6 +244,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t ClusterCount = 0;
 
         BoundingSphere TotalBounds;
+
+        MegaMeshMaterial Material;
 
         String DebugName;
     };

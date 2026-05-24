@@ -565,6 +565,27 @@ namespace NorvesLib::RHI::Vulkan
         m_commandBuffer.drawIndexedIndirect(vkBuffer->GetVkBuffer(), offset, drawCount, stride);
     }
 
+    void VulkanCommandList::DrawIndexedIndirectCount(BufferPtr indirectBuffer, uint64_t indirectOffset,
+                                                     BufferPtr countBuffer, uint64_t countOffset,
+                                                     uint32_t maxDrawCount, uint32_t stride)
+    {
+        auto vkIndirect = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
+        if (!vkIndirect)
+        {
+            throw std::runtime_error("DrawIndexedIndirectCount: 無効な間接バッファです");
+        }
+        auto vkCount = DynamicPointerCast<VulkanBuffer>(countBuffer);
+        if (!vkCount)
+        {
+            throw std::runtime_error("DrawIndexedIndirectCount: 無効なカウントバッファです");
+        }
+
+        m_commandBuffer.drawIndexedIndirectCount(
+            vkIndirect->GetVkBuffer(), indirectOffset,
+            vkCount->GetVkBuffer(), countOffset,
+            maxDrawCount, stride);
+    }
+
     void VulkanCommandList::FillBuffer(BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value)
     {
         auto vkBuffer = DynamicPointerCast<VulkanBuffer>(buffer);
