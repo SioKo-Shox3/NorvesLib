@@ -266,9 +266,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             // 面の法線
             double e1x = v1.x - v0.x, e1y = v1.y - v0.y, e1z = v1.z - v0.z;
             double e2x = v2.x - v0.x, e2y = v2.y - v0.y, e2z = v2.z - v0.z;
-            double nx = e1y * e2z - e1z * e2y;
-            double ny = e1z * e2x - e1x * e2z;
-            double nz = e1x * e2y - e1y * e2x;
+            double nx = e2y * e1z - e2z * e1y;
+            double ny = e2z * e1x - e2x * e1z;
+            double nz = e2x * e1y - e2y * e1x;
             double len = std::sqrt(nx * nx + ny * ny + nz * nz);
             if (len > 1e-12)
             {

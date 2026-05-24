@@ -45,10 +45,10 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             float e1x = x1 - x0, e1y = y1 - y0, e1z = z1 - z0;
             float e2x = x2 - x0, e2y = y2 - y0, e2z = z2 - z0;
 
-            // cross product
-            nx = e1y * e2z - e1z * e2y;
-            ny = e1z * e2x - e1x * e2z;
-            nz = e1x * e2y - e1y * e2x;
+            // FrontFace::Clockwiseに合わせ、CW windingで外向き法線になる向きを採用する
+            nx = e2y * e1z - e2z * e1y;
+            ny = e2z * e1x - e2x * e1z;
+            nz = e2x * e1y - e2y * e1x;
         }
 
         /**
@@ -386,9 +386,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             float e1x = x1 - x0, e1y = y1 - y0, e1z = z1 - z0;
             float e2x = x2 - x0, e2y = y2 - y0, e2z = z2 - z0;
 
-            nx = e1y * e2z - e1z * e2y;
-            ny = e1z * e2x - e1x * e2z;
-            nz = e1x * e2y - e1y * e2x;
+            nx = e2y * e1z - e2z * e1y;
+            ny = e2z * e1x - e2x * e1z;
+            nz = e2x * e1y - e2y * e1x;
 
             // 正規化
             float len = std::sqrt(nx * nx + ny * ny + nz * nz);

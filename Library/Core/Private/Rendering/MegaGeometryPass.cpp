@@ -401,7 +401,9 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // Hi-Z 深度ピラミッド生成（オクルージョンカリング用）
         // ========================================
-        GenerateHiZPyramid(cmdList);
+        // 現状のMegaGeometryは、クラスタ球ベースのHi-Z判定が角度・距離依存で過剰カリングを起こし、
+        // モデル全体の消失や穴あきに繋がるため一旦無効化する。
+        // 専用の深度プレパスや、より保守的な遮蔽判定が整うまではFrustum/Backfaceのみで描画安定性を優先する。
 
         // ========================================
         // 各MegaMeshインスタンスに対してカリング + IndirectDraw
@@ -477,21 +479,11 @@ namespace NorvesLib::Core::Rendering
                                                ? static_cast<float>(context.ScreenHeight) / (2.0f * halfFovTan)
                                                : 1.0f;
 
-            // Hi-Zオクルージョンカリングパラメータ
-            if (m_HiZTexture && m_HiZMipCount > 0)
-            {
-                uniformData.HiZWidth = m_HiZTexture->GetWidth();
-                uniformData.HiZHeight = m_HiZTexture->GetHeight();
-                uniformData.HiZMipCount = m_HiZMipCount;
-                uniformData.bHiZEnabled = 1;
-            }
-            else
-            {
-                uniformData.HiZWidth = 0;
-                uniformData.HiZHeight = 0;
-                uniformData.HiZMipCount = 0;
-                uniformData.bHiZEnabled = 0;
-            }
+            // Hi-Zオクルージョンカリングは現状のクラスタ球近似が攻めすぎているため無効化
+            uniformData.HiZWidth = 0;
+            uniformData.HiZHeight = 0;
+            uniformData.HiZMipCount = 0;
+            uniformData.bHiZEnabled = 0;
 
             std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
             m_CullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
