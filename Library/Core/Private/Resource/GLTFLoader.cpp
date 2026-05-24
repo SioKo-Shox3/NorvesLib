@@ -471,6 +471,12 @@ namespace NorvesLib::Core::Resource
             return result;
         }
 
+        // glTFの標準CCW windingを、NorvesLibのFrontFace::Clockwise規約へ合わせる
+        for (uint32_t i = 0; i + 2 < indexCount; i += 3)
+        {
+            std::swap(result.Indices[i + 1], result.Indices[i + 2]);
+        }
+
         // ========================================
         // 8. テクスチャ情報の抽出
         // ========================================
