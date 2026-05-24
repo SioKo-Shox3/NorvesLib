@@ -46,9 +46,10 @@ layout(set = 0, binding = 0) uniform CullUniforms
     float lodBias;           // LOD選択バイアス（ピクセル単位の許容誤差）
     float screenHeight;      // スクリーン高さ（ピクセル）
     float projectionFactor;  // screenHeight / (2 * tan(fov/2))
-    uint pad0;
-    uint pad1;
-    uint pad2;
+    uint hiZWidth;           // Hi-Zテクスチャ幅（mip 0）
+    uint hiZHeight;          // Hi-Zテクスチャ高さ（mip 0）
+    uint hiZMipCount;        // Hi-Zミップレベル数
+    uint bHiZEnabled;        // Hi-Z有効フラグ
 } cullData;
 
 // set 0, binding 1: クラスタデータ入力（読み取り専用）
@@ -68,6 +69,9 @@ layout(std430, set = 0, binding = 3) buffer DrawCountBuffer
 {
     uint visibleClusterCount;
 };
+
+// set 0, binding 4: Hi-Z深度ピラミッド（オクルージョンカリング用）
+layout(set = 0, binding = 4) uniform sampler2D u_HiZTexture;
 
 // ========================================
 // カリング関数
@@ -114,6 +118,69 @@ bool NormalConeCull(vec3 coneAxis, float coneCutoff, vec3 clusterCenter)
     float dotVal = dot(coneAxis, viewDir);
 
     return dotVal > coneCutoff;
+}
+
+/**
+ * @brief Hi-Z深度ピラミッドによるオクルージョンカリング
+ *
+ * クラスタのバウンディング球をスクリーン空間に射影し、
+ * Hi-Zテクスチャと比較して完全に遮蔽されているかを判定。
+ * @return true = カリング（完全に遮蔽）
+ */
+bool OcclusionCullSphere(vec3 center, float radius)
+{
+    if (cullData.bHiZEnabled == 0)
+    {
+        return false;
+    }
+
+    // クリップ空間へ射影
+    vec4 clipCenter = cullData.projectionMatrix * cullData.viewMatrix * vec4(center, 1.0);
+    if (clipCenter.w <= 0.0)
+    {
+        return false; // カメラ背面
+    }
+
+    // NDC変換
+    vec3 ndc = clipCenter.xyz / clipCenter.w;
+
+    // スクリーン空間での半径を推定
+    float dist = distance(center, cullData.cameraPosition.xyz);
+    if (dist < 0.001)
+    {
+        return false;
+    }
+    float screenRadius = radius * cullData.projectionFactor / dist;
+
+    // NDC [-1,1] → UV [0,1]
+    vec2 screenCenter = ndc.xy * 0.5 + 0.5;
+    vec2 hiZSize = vec2(cullData.hiZWidth, cullData.hiZHeight);
+    vec2 pixelRadius = vec2(screenRadius) / hiZSize * hiZSize;
+
+    vec2 screenMin = screenCenter - screenRadius / hiZSize;
+    vec2 screenMax = screenCenter + screenRadius / hiZSize;
+
+    // 画面外なら遮蔽判定しない
+    if (screenMax.x < 0.0 || screenMin.x > 1.0 ||
+        screenMax.y < 0.0 || screenMin.y > 1.0)
+    {
+        return false;
+    }
+
+    // AABBサイズから適切なミップレベルを決定
+    vec2 aabbSizePixels = (screenMax - screenMin) * hiZSize;
+    float mipLevel = ceil(log2(max(aabbSizePixels.x, aabbSizePixels.y)));
+    mipLevel = clamp(mipLevel, 0.0, float(cullData.hiZMipCount - 1));
+
+    // Hi-Zサンプリング（AABB中心で保守的に1点サンプル）
+    vec2 sampleUV = clamp((screenMin + screenMax) * 0.5, vec2(0.0), vec2(1.0));
+    float hiZDepth = textureLod(u_HiZTexture, sampleUV, mipLevel).r;
+
+    // 球の最近深度を計算
+    float sphereNearZ = ndc.z - radius * abs(cullData.projectionMatrix[2][2]) / clipCenter.w;
+
+    // 球の最近深度がHi-Zより遠い → 完全に遮蔽
+    return sphereNearZ > hiZDepth;
 }
 
 /**
@@ -225,6 +292,12 @@ void main()
 
     // LOD DAGカット判定
     if (!ShouldDrawCluster(cluster, center))
+    {
+        return;
+    }
+
+    // Hi-Zオクルージョンカリング
+    if (OcclusionCullSphere(center, radius))
     {
         return;
     }

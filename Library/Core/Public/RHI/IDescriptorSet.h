@@ -87,6 +87,14 @@ namespace NorvesLib::RHI
         virtual void BindStorageTexture(uint32_t binding, TexturePtr texture) = 0;
 
         /**
+         * @brief ストレージテクスチャの特定ミップレベルをバインドする
+         * @param binding バインディングポイント
+         * @param texture バインドするテクスチャ
+         * @param mipLevel バインドするミップレベル
+         */
+        virtual void BindStorageTexture(uint32_t binding, TexturePtr texture, uint32_t mipLevel) = 0;
+
+        /**
          * @brief ディスクリプタセットをアップデートする
          * バインド設定をGPUに反映する
          */

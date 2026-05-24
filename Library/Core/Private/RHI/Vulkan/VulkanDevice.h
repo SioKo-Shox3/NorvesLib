@@ -140,6 +140,9 @@ namespace NorvesLib::RHI::Vulkan
         // Cooperative Vector 機能構造体（Features2チェーン用）
         vk::PhysicalDeviceCooperativeVectorFeaturesNV m_cooperativeVectorFeatures{};
 
+        // Vulkan 1.2 機能構造体（Features2チェーン用）
+        vk::PhysicalDeviceVulkan12Features m_vulkan12Features{};
+
         // キューファミリー
         uint32_t m_graphicsQueueFamilyIndex = UINT32_MAX;
         uint32_t m_computeQueueFamilyIndex = UINT32_MAX;

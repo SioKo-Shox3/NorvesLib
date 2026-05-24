@@ -96,9 +96,10 @@ namespace NorvesLib::Core::Rendering
             float LODBias;
             float ScreenHeight;     // スクリーン高さ（ピクセル）
             float ProjectionFactor; // screenHeight / (2 * tan(fov/2))
-            uint32_t Pad0;
-            uint32_t Pad1;
-            uint32_t Pad2;
+            uint32_t HiZWidth;      // Hi-Zテクスチャ幅（mip 0）
+            uint32_t HiZHeight;     // Hi-Zテクスチャ高さ（mip 0）
+            uint32_t HiZMipCount;   // ミップレベル数
+            uint32_t bHiZEnabled;   // Hi-Z有効フラグ（1=有効, 0=無効）
         };
 
         /**
@@ -124,6 +125,16 @@ namespace NorvesLib::Core::Rendering
          * @brief 視錐台平面を行列から抽出
          */
         static void ExtractFrustumPlanes(const float *viewProj, float planes[6][4]);
+
+        /**
+         * @brief Hi-Z深度ピラミッドのリソースを作成・再作成
+         */
+        bool CreateHiZResources(ViewRenderContext &context);
+
+        /**
+         * @brief Hi-Z深度ピラミッドを生成（GBuffer深度からダウンサンプル）
+         */
+        void GenerateHiZPyramid(RHI::ICommandList *cmdList);
 
         // 設定
         MegaGeometryPassSettings m_Settings;
@@ -164,6 +175,21 @@ namespace NorvesLib::Core::Rendering
         // PerObject UBO用ディスクリプタセット
         RHI::DescriptorSetPtr m_DrawDescriptorSet;
         RHI::BufferPtr m_DrawUniformBuffer;
+
+        // デフォルトPBRテクスチャ（マテリアル未設定時のフォールバック）
+        RHI::TexturePtr m_DefaultWhiteTexture;      // 1x1 白 — Albedo/AO/Roughnessデフォルト
+        RHI::TexturePtr m_DefaultFlatNormalTexture; // 1x1 フラット法線 (128,128,255) — Normalデフォルト
+        RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト
+        RHI::SamplerPtr m_DefaultLinearSampler;     // Linear/Wrapサンプラー
+
+        // Hi-Z 深度ピラミッド
+        RHI::TexturePtr m_HiZTexture;               // R32_FLOAT ミップチェーン
+        RHI::ShaderPtr m_HiZShader;                 // hiz_generate.comp
+        RHI::PipelinePtr m_HiZPipeline;             // Hi-Zダウンサンプルパイプライン
+        RHI::DescriptorSetPtr m_HiZDescriptorSet;   // Hi-Z生成用ディスクリプタ
+        RHI::BufferPtr m_HiZParamsBuffer;            // HiZParams UBO
+        RHI::SamplerPtr m_HiZNearestSampler;        // Nearest/Clampサンプラー
+        uint32_t m_HiZMipCount = 0;                 // Hi-Zミップレベル数
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;

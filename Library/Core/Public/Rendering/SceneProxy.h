@@ -3,6 +3,7 @@
 #include "RenderTypes.h"
 #include "MeshTypes.h"
 #include "MaterialTypes.h"
+#include "MegaGeometry/MegaGeometryTypes.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
 #include <cstdint>
@@ -176,6 +177,35 @@ namespace NorvesLib::Core::Rendering
     };
 
     // ========================================
+    // MegaGeometryProxy
+    // ========================================
+
+    /**
+     * @brief 描画用MegaGeometryプロキシ
+     *
+     * World/Component 系から MegaGeometryPass に渡す最小限のインスタンス情報。
+         */
+    struct MegaGeometryProxy
+    {
+        uint64_t ObjectId = 0;
+        uint64_t ComponentId = 0;
+
+        MegaGeometry::MegaMeshHandle MegaMeshHandle;
+
+        Math::Matrix4x4 WorldTransform;
+        BoundingSphere WorldBounds;
+
+        bool bVisible = true;
+        bool bCastShadow = true;
+        RenderLayer LayerMask = RenderLayer::Default;
+
+        bool IsValid() const
+        {
+            return MegaMeshHandle.IsValid() && bVisible;
+        }
+    };
+
+    // ========================================
     // LightProxy
     // ========================================
 
@@ -285,6 +315,9 @@ namespace NorvesLib::Core::Rendering
         // メッシュプロキシリスト
         Container::VariableArray<MeshProxy> MeshProxies;
 
+        // MegaGeometryプロキシリスト
+        Container::VariableArray<MegaGeometryProxy> MegaGeometryProxies;
+
         // ライトプロキシリスト
         Container::VariableArray<LightProxy> LightProxies;
 
@@ -305,6 +338,7 @@ namespace NorvesLib::Core::Rendering
         void Clear()
         {
             MeshProxies.clear();
+            MegaGeometryProxies.clear();
             LightProxies.clear();
             AdditionalCameras.clear();
         }
@@ -328,6 +362,17 @@ namespace NorvesLib::Core::Rendering
             if (proxy.IsValid())
             {
                 LightProxies.push_back(proxy);
+            }
+        }
+
+        /**
+         * @brief MegaGeometryプロキシを追加
+         */
+        void AddMegaGeometryProxy(const MegaGeometryProxy &proxy)
+        {
+            if (proxy.IsValid())
+            {
+                MegaGeometryProxies.push_back(proxy);
             }
         }
     };

@@ -250,6 +250,17 @@ namespace NorvesLib::RHI::Vulkan
         m_bNeedsUpdate = true;
     }
 
+    void VulkanDescriptorSet::BindStorageTexture(uint32_t binding, TexturePtr texture, uint32_t mipLevel)
+    {
+        BindingInfo info;
+        info.type = BindingInfo::ResourceType::Texture;
+        info.texture = texture;
+        info.mipLevel = static_cast<int32_t>(mipLevel);
+
+        m_bindings[binding] = info;
+        m_bNeedsUpdate = true;
+    }
+
     void VulkanDescriptorSet::BindSampler(uint32_t binding, SamplerPtr sampler)
     {
         // CombinedImageSamplerの場合、既存のテクスチャを保持してマージする
@@ -317,7 +328,16 @@ namespace NorvesLib::RHI::Vulkan
 
                 vk::DescriptorImageInfo imageInfo;
                 imageInfo.imageLayout = vkTexture->GetVkImageLayout();
-                imageInfo.imageView = vkTexture->GetVkImageView();
+
+                // per-mip ImageView指定がある場合はそちらを使用
+                if (info.mipLevel >= 0)
+                {
+                    imageInfo.imageView = vkTexture->GetMipImageView(static_cast<uint32_t>(info.mipLevel));
+                }
+                else
+                {
+                    imageInfo.imageView = vkTexture->GetVkImageView();
+                }
 
                 // CombinedImageSampler: テクスチャと同じバインドにサンプラーがある場合
                 if (info.sampler)

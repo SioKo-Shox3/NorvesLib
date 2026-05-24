@@ -54,6 +54,10 @@ namespace NorvesLib::RHI::Vulkan
         virtual void Update(const void *data, uint32_t rowPitch, uint32_t slicePitch,
                             uint32_t mipLevel = 0, uint32_t arrayIndex = 0) override;
 
+        // per-mip ImageView
+        uint64_t GetMipImageViewHandle(uint32_t mipLevel) const override;
+        vk::ImageView GetMipImageView(uint32_t mipLevel) const;
+
         // Vulkan固有のメソッド (vulkan.hpp型)
         vk::Image GetVkImage() const { return m_image; }
         vk::ImageView GetVkImageView() const { return m_imageView; }
@@ -90,6 +94,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::Image m_image;
         vk::DeviceMemory m_memory;
         vk::ImageView m_imageView;
+        mutable NorvesLib::Core::Container::VariableArray<vk::ImageView> m_mipImageViews;
         vk::ImageLayout m_currentLayout = vk::ImageLayout::eUndefined;
         bool m_bOwnsImage = true;
     };

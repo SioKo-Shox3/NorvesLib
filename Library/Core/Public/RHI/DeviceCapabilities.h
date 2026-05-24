@@ -89,6 +89,9 @@ namespace NorvesLib::RHI
 
         /** @brief コンピュートシェーダーのサポート */
         bool bComputeShader = true;
+
+        /** @brief DrawIndexedIndirectCount（Vulkan 1.2コア機能）のサポート */
+        bool bDrawIndirectCount = false;
     };
 
 } // namespace NorvesLib::RHI

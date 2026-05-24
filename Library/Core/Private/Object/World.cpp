@@ -1,6 +1,7 @@
 ﻿#include "Object/World.h"
 #include "Object/WorldObject.h"
 #include "Component/MeshComponent.h"
+#include "Component/MegaGeometryComponent.h"
 #include "Component/LightComponent.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneProxy.h"
@@ -125,6 +126,7 @@ namespace NorvesLib::Core
                 if (m_SceneView)
                 {
                     m_SceneView->RemoveMeshProxy(object->GetObjectId());
+                    m_SceneView->RemoveMegaGeometryProxy(object->GetObjectId());
 
                     // LightComponentのLightProxyも削除
                     auto components = object->GetComponents();
@@ -211,6 +213,8 @@ namespace NorvesLib::Core
             return;
         }
 
+        m_SceneView->ClearMegaGeometryProxies();
+
         // 全WorldObjectのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
         for (auto *inner : m_Inners)
         {
@@ -238,6 +242,17 @@ namespace NorvesLib::Core
 
                         // SceneViewに追加/更新
                         m_SceneView->UpdateMeshProxy(meshProxy);
+                    }
+                }
+
+                // MegaGeometryComponentの同期
+                auto *megaComp = ObjectUtility::CastTo<Component::MegaGeometryComponent>(comp);
+                if (megaComp && megaComp->IsEnabled())
+                {
+                    Rendering::MegaGeometryProxy megaProxy;
+                    if (megaComp->BuildMegaGeometryProxy(megaProxy))
+                    {
+                        m_SceneView->UpdateMegaGeometryProxy(megaProxy);
                     }
                 }
 
@@ -276,6 +291,7 @@ namespace NorvesLib::Core
             if (m_SceneView)
             {
                 m_SceneView->RemoveMeshProxy(obj->GetObjectId());
+                m_SceneView->RemoveMegaGeometryProxy(obj->GetObjectId());
 
                 // LightComponentのLightProxyも削除
                 auto components = obj->GetComponents();

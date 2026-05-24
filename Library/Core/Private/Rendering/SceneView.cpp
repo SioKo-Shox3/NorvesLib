@@ -96,12 +96,28 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void SceneView::AddMegaGeometryProxy(const MegaGeometryProxy &proxy)
+    {
+        if (proxy.IsValid())
+        {
+            m_MegaGeometryProxies.push_back(proxy);
+        }
+    }
+
     void SceneView::RemoveLightProxy(uint64_t objectId)
     {
         auto it = std::remove_if(m_LightProxies.begin(), m_LightProxies.end(),
                                  [objectId](const LightProxy &proxy)
                                  { return proxy.LightId == objectId; });
         m_LightProxies.erase(it, m_LightProxies.end());
+    }
+
+    void SceneView::RemoveMegaGeometryProxy(uint64_t objectId)
+    {
+        auto it = std::remove_if(m_MegaGeometryProxies.begin(), m_MegaGeometryProxies.end(),
+                                 [objectId](const MegaGeometryProxy &proxy)
+                                 { return proxy.ObjectId == objectId; });
+        m_MegaGeometryProxies.erase(it, m_MegaGeometryProxies.end());
     }
 
     void SceneView::UpdateMeshProxy(const MeshProxy &proxy)
@@ -132,11 +148,30 @@ namespace NorvesLib::Core::Rendering
         AddLightProxy(proxy);
     }
 
+    void SceneView::UpdateMegaGeometryProxy(const MegaGeometryProxy &proxy)
+    {
+        for (auto &existingProxy : m_MegaGeometryProxies)
+        {
+            if (existingProxy.ComponentId == proxy.ComponentId)
+            {
+                existingProxy = proxy;
+                return;
+            }
+        }
+        AddMegaGeometryProxy(proxy);
+    }
+
     void SceneView::ClearAllProxies()
     {
         m_MeshProxies.clear();
+        m_MegaGeometryProxies.clear();
         m_LightProxies.clear();
         m_VisibleMeshProxies.clear();
+    }
+
+    void SceneView::ClearMegaGeometryProxies()
+    {
+        m_MegaGeometryProxies.clear();
     }
 
     // ========================================

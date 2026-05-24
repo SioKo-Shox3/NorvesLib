@@ -1026,6 +1026,7 @@ namespace NorvesLib::Core::Rendering
         gpuData.IndexCount = uploadIndexCount;
         gpuData.ClusterCount = static_cast<uint32_t>(uploadClusters->size());
         gpuData.TotalBounds = uploadTotalBounds;
+        gpuData.Material = createInfo.Material;
         gpuData.DebugName = createInfo.DebugName;
 
         Thread::ScopedLock lock(m_ResourceMutex);

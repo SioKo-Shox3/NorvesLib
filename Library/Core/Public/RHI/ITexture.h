@@ -72,6 +72,15 @@ public:
      * @param arrayIndex 更新する配列インデックス
      */
     virtual void Update(const void* data, uint32_t rowPitch, uint32_t slicePitch, uint32_t mipLevel = 0, uint32_t arrayIndex = 0) = 0;
+
+    /**
+     * @brief 特定ミップレベル用のImageViewハンドルを取得
+     *
+     * コンピュートシェーダーで個々のミップレベルにimageStoreする場合に使用。
+     * @param mipLevel 対象のミップレベル
+     * @return プラットフォーム固有のハンドル（未サポートの場合は0）
+     */
+    virtual uint64_t GetMipImageViewHandle(uint32_t mipLevel) const { (void)mipLevel; return 0; }
 };
 
 } // namespace NorvesLib::RHI

@@ -1,0 +1,49 @@
+﻿#version 450
+
+// ========================================
+// Hi-Z 深度ピラミッド生成 コンピュートシェーダー
+//
+// 前ミップレベルの2x2テクセルから最大深度を取得し、
+// 次のミップレベルに書き込む（保守的深度ダウンサンプル）。
+//
+// Standard Depth (closer = smaller): max reduction
+// ========================================
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// 入力: 前ミップレベル（sampler2Dとして読み取り）
+layout(set = 0, binding = 0) uniform sampler2D u_SourceMip;
+
+// 出力: 次ミップレベル（imageStoreで書き込み）
+layout(set = 0, binding = 1, r32f) writeonly uniform image2D u_DestMip;
+
+// パラメータ
+layout(set = 0, binding = 2) uniform HiZParams
+{
+    ivec2 destSize; // 書き込み先ミップの解像度
+} params;
+
+void main()
+{
+    ivec2 destCoord = ivec2(gl_GlobalInvocationID.xy);
+
+    // 範囲外チェック
+    if (destCoord.x >= params.destSize.x || destCoord.y >= params.destSize.y)
+    {
+        return;
+    }
+
+    // 前ミップの対応する2x2領域の中心UVを計算
+    vec2 srcTexelSize = 1.0 / vec2(textureSize(u_SourceMip, 0));
+    vec2 srcUV = (vec2(destCoord) * 2.0 + 1.0) * srcTexelSize;
+
+    // 2x2テクセルの最大深度を取得（保守的: 遠い方の深度を保持）
+    float d00 = texture(u_SourceMip, srcUV + vec2(-0.5, -0.5) * srcTexelSize).r;
+    float d10 = texture(u_SourceMip, srcUV + vec2( 0.5, -0.5) * srcTexelSize).r;
+    float d01 = texture(u_SourceMip, srcUV + vec2(-0.5,  0.5) * srcTexelSize).r;
+    float d11 = texture(u_SourceMip, srcUV + vec2( 0.5,  0.5) * srcTexelSize).r;
+
+    float maxDepth = max(max(d00, d10), max(d01, d11));
+
+    imageStore(u_DestMip, destCoord, vec4(maxDepth, 0.0, 0.0, 0.0));
+}

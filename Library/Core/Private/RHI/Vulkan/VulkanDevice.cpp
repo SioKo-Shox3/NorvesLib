@@ -247,6 +247,11 @@ namespace NorvesLib::RHI::Vulkan
         features2.features.samplerAnisotropy = VK_TRUE;
         features2.features.fillModeNonSolid = VK_TRUE; // ワイヤーフレームなどのサポート
 
+        // Vulkan 1.2 機能: drawIndirectCount を有効化
+        m_vulkan12Features = vk::PhysicalDeviceVulkan12Features{};
+        m_vulkan12Features.drawIndirectCount = VK_TRUE;
+        features2.pNext = &m_vulkan12Features;
+
         // Cooperative Vector 機能を検出してチェーンに追加
         auto extensions = GetDeviceExtensions();
 
@@ -266,7 +271,9 @@ namespace NorvesLib::RHI::Vulkan
             m_cooperativeVectorFeatures.cooperativeVector = VK_TRUE;
             m_cooperativeVectorFeatures.cooperativeVectorTraining = VK_FALSE;
 
-            features2.pNext = &m_cooperativeVectorFeatures;
+            // Vulkan12FeaturesのpNextにチェーン
+            m_cooperativeVectorFeatures.pNext = nullptr;
+            m_vulkan12Features.pNext = &m_cooperativeVectorFeatures;
         }
 
         // デバイス作成情報
@@ -899,14 +906,31 @@ namespace NorvesLib::RHI::Vulkan
             availableExtensions.contains(String("VK_NV_cluster_acceleration_structure")) &&
             m_Capabilities.MegaGeometry.bAccelerationStructureSupported;
 
+        // ========================================
+        // Draw Indirect Count (Vulkan 1.2 コア機能)
+        // ========================================
+        {
+            vk::PhysicalDeviceVulkan12Features vulkan12Query{};
+            vk::PhysicalDeviceFeatures2 features2Query{};
+            features2Query.pNext = &vulkan12Query;
+            m_physicalDevice.getFeatures2(&features2Query);
+            m_Capabilities.bDrawIndirectCount = (vulkan12Query.drawIndirectCount == VK_TRUE);
+
+            if (m_Capabilities.bDrawIndirectCount)
+            {
+                NORVES_LOG_INFO("VulkanDevice", "DrawIndirectCount supported (Vulkan 1.2 core)");
+            }
+        }
+
         // サマリーログ
         const char *deviceName = m_Capabilities.DeviceName;
         NORVES_LOG_INFO("VulkanDevice", "Device Capabilities: GPU=%s, NVIDIA=%s, "
-                                        "NeuralShaders=%s, MegaGeometry=%s",
+                                        "NeuralShaders=%s, MegaGeometry=%s, DrawIndirectCount=%s",
                         deviceName,
                         m_Capabilities.bIsNvidia ? "Yes" : "No",
                         m_Capabilities.NeuralShaders.bSupported ? "Yes" : "No",
-                        m_Capabilities.MegaGeometry.bSupported ? "Yes" : "No");
+                        m_Capabilities.MegaGeometry.bSupported ? "Yes" : "No",
+                        m_Capabilities.bDrawIndirectCount ? "Yes" : "No");
     }
 
 } // namespace NorvesLib::RHI::Vulkan
