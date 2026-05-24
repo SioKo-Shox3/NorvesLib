@@ -68,20 +68,55 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // カリングコンピュートパイプライン作成
-        RHI::ComputePipelineDesc cullPipelineDesc;
-        cullPipelineDesc.computeShader = m_CullShader;
-        m_CullPipeline = m_Device->CreateComputePipeline(cullPipelineDesc);
-        if (!m_CullPipeline)
-        {
-            NORVES_LOG_ERROR("MegaGeometryPass", "カリングパイプラインの作成に失敗");
-            return false;
-        }
-
         // カリング用GPUリソース作成
         if (!CreateCullResources(m_Device))
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "カリング用GPUリソースの作成に失敗");
+            return false;
+        }
+
+        // カリングコンピュートパイプライン作成
+        RHI::ComputePipelineDesc cullPipelineDesc;
+        cullPipelineDesc.computeShader = m_CullShader;
+        {
+            RHI::DescriptorSetDesc cullDsDesc;
+
+            RHI::DescriptorBinding uniformBinding;
+            uniformBinding.binding = 0;
+            uniformBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            uniformBinding.stages = RHI::ShaderStage::Compute;
+            cullDsDesc.bindings.push_back(uniformBinding);
+
+            RHI::DescriptorBinding clusterBinding;
+            clusterBinding.binding = 1;
+            clusterBinding.type = RHI::ResourceBindType::RWBuffer;
+            clusterBinding.stages = RHI::ShaderStage::Compute;
+            cullDsDesc.bindings.push_back(clusterBinding);
+
+            RHI::DescriptorBinding indirectBinding;
+            indirectBinding.binding = 2;
+            indirectBinding.type = RHI::ResourceBindType::RWBuffer;
+            indirectBinding.stages = RHI::ShaderStage::Compute;
+            cullDsDesc.bindings.push_back(indirectBinding);
+
+            RHI::DescriptorBinding drawCountBinding;
+            drawCountBinding.binding = 3;
+            drawCountBinding.type = RHI::ResourceBindType::RWBuffer;
+            drawCountBinding.stages = RHI::ShaderStage::Compute;
+            cullDsDesc.bindings.push_back(drawCountBinding);
+
+            RHI::DescriptorBinding hiZBinding;
+            hiZBinding.binding = 4;
+            hiZBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            hiZBinding.stages = RHI::ShaderStage::Compute;
+            cullDsDesc.bindings.push_back(hiZBinding);
+
+            cullPipelineDesc.descriptorSetLayouts.push_back(cullDsDesc);
+        }
+        m_CullPipeline = m_Device->CreateComputePipeline(cullPipelineDesc);
+        if (!m_CullPipeline)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "カリングパイプラインの作成に失敗");
             return false;
         }
 
@@ -153,6 +188,29 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::ComputePipelineDesc hiZPipelineDesc;
             hiZPipelineDesc.computeShader = m_HiZShader;
+            {
+                RHI::DescriptorSetDesc hiZDsDesc;
+
+                RHI::DescriptorBinding srcBinding;
+                srcBinding.binding = 0;
+                srcBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+                srcBinding.stages = RHI::ShaderStage::Compute;
+                hiZDsDesc.bindings.push_back(srcBinding);
+
+                RHI::DescriptorBinding dstBinding;
+                dstBinding.binding = 1;
+                dstBinding.type = RHI::ResourceBindType::RWTexture;
+                dstBinding.stages = RHI::ShaderStage::Compute;
+                hiZDsDesc.bindings.push_back(dstBinding);
+
+                RHI::DescriptorBinding paramBinding;
+                paramBinding.binding = 2;
+                paramBinding.type = RHI::ResourceBindType::ConstantBuffer;
+                paramBinding.stages = RHI::ShaderStage::Compute;
+                hiZDsDesc.bindings.push_back(paramBinding);
+
+                hiZPipelineDesc.descriptorSetLayouts.push_back(hiZDsDesc);
+            }
             m_HiZPipeline = m_Device->CreateComputePipeline(hiZPipelineDesc);
 
             // Hi-Z用Nearestサンプラー（Clamp）

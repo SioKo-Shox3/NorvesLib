@@ -110,6 +110,9 @@ namespace NorvesLib::RHI
     struct ComputePipelineDesc
     {
         ShaderPtr computeShader;
+
+        // ディスクリプタセットレイアウト（パイプラインレイアウト用）
+        Core::Container::VariableArray<DescriptorSetDesc> descriptorSetLayouts;
     };
 
     /**

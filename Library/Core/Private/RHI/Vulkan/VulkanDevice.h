@@ -53,6 +53,8 @@ namespace NorvesLib::RHI::Vulkan
     class VulkanDevice : public IDevice
     {
     public:
+        static DescriptorType ConvertResourceBindType(ResourceBindType type);
+
         /**
          * @brief VulkanDeviceのファクトリメソッド
          * @param params 初期化パラメータ
