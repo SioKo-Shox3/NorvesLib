@@ -100,6 +100,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t HiZHeight;     // Hi-Zテクスチャ高さ（mip 0）
             uint32_t HiZMipCount;   // ミップレベル数
             uint32_t bHiZEnabled;   // Hi-Z有効フラグ（1=有効, 0=無効）
+            uint32_t Padding[3];    // std140でmat4を16バイト境界に揃える
+            float WorldMatrix[16];
         };
 
         /**

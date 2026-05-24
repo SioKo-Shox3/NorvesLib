@@ -493,6 +493,7 @@ namespace NorvesLib::Core::Rendering
                 uniformData.bHiZEnabled = 0;
             }
 
+            std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
             m_CullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
 
             // ----------------------------------------

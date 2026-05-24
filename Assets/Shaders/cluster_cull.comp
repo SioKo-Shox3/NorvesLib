@@ -50,6 +50,10 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint hiZHeight;          // Hi-Zテクスチャ高さ（mip 0）
     uint hiZMipCount;        // Hi-Zミップレベル数
     uint bHiZEnabled;        // Hi-Z有効フラグ
+    uint padding0;
+    uint padding1;
+    uint padding2;
+    mat4 worldMatrix;
 } cullData;
 
 // set 0, binding 1: クラスタデータ入力（読み取り専用）
@@ -118,6 +122,49 @@ bool NormalConeCull(vec3 coneAxis, float coneCutoff, vec3 clusterCenter)
     float dotVal = dot(coneAxis, viewDir);
 
     return dotVal > coneCutoff;
+}
+
+vec3 TransformClusterCenterToWorld(vec3 localCenter)
+{
+    return (cullData.worldMatrix * vec4(localCenter, 1.0)).xyz;
+}
+
+float ComputeWorldRadiusScale()
+{
+    float scaleX = length(cullData.worldMatrix[0].xyz);
+    float scaleY = length(cullData.worldMatrix[1].xyz);
+    float scaleZ = length(cullData.worldMatrix[2].xyz);
+    return max(scaleX, max(scaleY, scaleZ));
+}
+
+vec3 TransformConeAxisToWorld(vec3 localAxis)
+{
+    mat3 linearPart = mat3(cullData.worldMatrix);
+    float det = determinant(linearPart);
+
+    vec3 transformedAxis = localAxis;
+    if (abs(det) > 1e-6)
+    {
+        mat3 normalMatrix = transpose(inverse(linearPart));
+        if (det < 0.0)
+        {
+            normalMatrix = -normalMatrix;
+        }
+
+        transformedAxis = normalMatrix * localAxis;
+    }
+    else
+    {
+        transformedAxis = linearPart * localAxis;
+    }
+
+    float axisLengthSq = dot(transformedAxis, transformedAxis);
+    if (axisLengthSq <= 1e-8)
+    {
+        return localAxis;
+    }
+
+    return transformedAxis * inversesqrt(axisLengthSq);
 }
 
 /**
@@ -273,8 +320,10 @@ void main()
 
     GPUClusterData cluster = clusters[clusterIndex];
 
-    vec3 center = cluster.boundsSphere.xyz;
-    float radius = cluster.boundsSphere.w;
+    vec3 localCenter = cluster.boundsSphere.xyz;
+    float localRadius = cluster.boundsSphere.w;
+    vec3 center = TransformClusterCenterToWorld(localCenter);
+    float radius = localRadius * ComputeWorldRadiusScale();
 
     // 視錐台カリング
     if (FrustumCullSphere(center, radius))
@@ -283,7 +332,7 @@ void main()
     }
 
     // バックフェースカリング（法線コーン）
-    vec3 coneAxis = cluster.normalCone.xyz;
+    vec3 coneAxis = TransformConeAxisToWorld(cluster.normalCone.xyz);
     float coneCutoff = cluster.normalCone.w;
     if (NormalConeCull(coneAxis, coneCutoff, center))
     {
