@@ -761,7 +761,7 @@ namespace NorvesLib::RHI::Vulkan
     }
 
     // ResourceBindTypeからDescriptorTypeへの変換ヘルパー
-    static DescriptorType ConvertResourceBindType(ResourceBindType type)
+    DescriptorType VulkanDevice::ConvertResourceBindType(ResourceBindType type)
     {
         switch (type)
         {

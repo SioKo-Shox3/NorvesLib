@@ -389,9 +389,26 @@ namespace NorvesLib::RHI::Vulkan
             .module = vulkanShader->GetVkShaderModule(),
             .pName = "main"};
 
-        // ディスクリプタセットレイアウト（空のレイアウトで作成）
+        // ディスクリプタセットレイアウトを作成
         VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
-        // TODO: シェーダーリフレクションからディスクリプタセットレイアウトを取得する
+        for (const auto &dsDesc : m_desc.descriptorSetLayouts)
+        {
+            VariableArray<DescriptorBindingDesc> bindingDescs;
+            bindingDescs.reserve(dsDesc.bindings.size());
+
+            for (const auto &binding : dsDesc.bindings)
+            {
+                DescriptorBindingDesc bindingDesc;
+                bindingDesc.binding = binding.binding;
+                bindingDesc.type = VulkanDevice::ConvertResourceBindType(binding.type);
+                bindingDesc.stages = binding.stages;
+                bindingDesc.count = 1;
+                bindingDescs.push_back(bindingDesc);
+            }
+
+            auto layout = MakeShared<VulkanDescriptorSetLayout>(m_device, bindingDescs);
+            descriptorSetLayouts.push_back(layout);
+        }
 
         // パイプラインレイアウトの作成
         m_pipelineLayout = MakeShared<VulkanPipelineLayout>(m_device, descriptorSetLayouts);
