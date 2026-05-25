@@ -6,10 +6,233 @@
 #include "Thread/Atomic.h"
 #include <memory>
 #include <functional>
-#include <format>
+#include <cstdio>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
 
 namespace NorvesLib::Core::Logging
 {
+    namespace Detail
+    {
+        template <typename T>
+        class PrintfArgWrapper
+        {
+        public:
+            using StoredType = std::decay_t<T>;
+
+            explicit PrintfArgWrapper(T &&value)
+                : m_value(std::forward<T>(value))
+            {
+            }
+
+            decltype(auto) Get() const
+            {
+                if constexpr (std::is_enum_v<StoredType>)
+                {
+                    return static_cast<std::underlying_type_t<StoredType>>(m_value);
+                }
+                else
+                {
+                    return (m_value);
+                }
+            }
+
+        private:
+            StoredType m_value;
+        };
+
+        template <>
+        class PrintfArgWrapper<const String &>
+        {
+        public:
+            explicit PrintfArgWrapper(const String &value)
+                : m_value(value)
+            {
+            }
+
+            const char *Get() const
+            {
+                return m_value.empty() ? "" : m_value.c_str();
+            }
+
+        private:
+            String m_value;
+        };
+
+        template <>
+        class PrintfArgWrapper<String &>
+        {
+        public:
+            explicit PrintfArgWrapper(String &value)
+                : m_value(value)
+            {
+            }
+
+            const char *Get() const
+            {
+                return m_value.empty() ? "" : m_value.c_str();
+            }
+
+        private:
+            String m_value;
+        };
+
+        template <>
+        class PrintfArgWrapper<String &&>
+        {
+        public:
+            explicit PrintfArgWrapper(String &&value)
+                : m_value(std::move(value))
+            {
+            }
+
+            const char *Get() const
+            {
+                return m_value.empty() ? "" : m_value.c_str();
+            }
+
+        private:
+            String m_value;
+        };
+
+        template <>
+        class PrintfArgWrapper<const StringView &>
+        {
+        public:
+            explicit PrintfArgWrapper(const StringView &value)
+                : m_value(value)
+            {
+            }
+
+            const char *Get() const
+            {
+                return m_value.empty() ? "" : m_value.c_str();
+            }
+
+        private:
+            String m_value;
+        };
+
+        template <>
+        class PrintfArgWrapper<StringView &>
+        {
+        public:
+            explicit PrintfArgWrapper(StringView &value)
+                : m_value(value)
+            {
+            }
+
+            const char *Get() const
+            {
+                return m_value.empty() ? "" : m_value.c_str();
+            }
+
+        private:
+            String m_value;
+        };
+
+        template <>
+        class PrintfArgWrapper<StringView &&>
+        {
+        public:
+            explicit PrintfArgWrapper(StringView &&value)
+                : m_value(value)
+            {
+            }
+
+            const char *Get() const
+            {
+                return m_value.empty() ? "" : m_value.c_str();
+            }
+
+        private:
+            String m_value;
+        };
+
+        template <>
+        class PrintfArgWrapper<const std::string &>
+        {
+        public:
+            explicit PrintfArgWrapper(const std::string &value)
+                : m_value(value)
+            {
+            }
+
+            const char *Get() const
+            {
+                return m_value.c_str();
+            }
+
+        private:
+            std::string m_value;
+        };
+
+        template <>
+        class PrintfArgWrapper<std::string &>
+        {
+        public:
+            explicit PrintfArgWrapper(std::string &value)
+                : m_value(value)
+            {
+            }
+
+            const char *Get() const
+            {
+                return m_value.c_str();
+            }
+
+        private:
+            std::string m_value;
+        };
+
+        template <>
+        class PrintfArgWrapper<std::string &&>
+        {
+        public:
+            explicit PrintfArgWrapper(std::string &&value)
+                : m_value(std::move(value))
+            {
+            }
+
+            const char *Get() const
+            {
+                return m_value.c_str();
+            }
+
+        private:
+            std::string m_value;
+        };
+
+        template <typename... Args>
+        String FormatPrintfString(const char *format, Args &&...args)
+        {
+            auto wrappedArgs = std::make_tuple(PrintfArgWrapper<Args>(std::forward<Args>(args))...);
+
+            int requiredSize = std::apply(
+                [format](const auto &...wrapped)
+                {
+                    return std::snprintf(nullptr, 0, format, wrapped.Get()...);
+                },
+                wrappedArgs);
+
+            if (requiredSize < 0)
+            {
+                return {};
+            }
+
+            std::string buffer(static_cast<size_t>(requiredSize) + 1, '\0');
+            std::apply(
+                [&](const auto &...wrapped)
+                {
+                    std::snprintf(buffer.data(), buffer.size(), format, wrapped.Get()...);
+                },
+                wrappedArgs);
+
+            return String(buffer.c_str());
+        }
+    } // namespace Detail
 
     /**
      * @brief 高性能ログシステムのメインクラス
@@ -51,6 +274,8 @@ namespace NorvesLib::Core::Logging
 
         /**
          * @brief フォーマット付きログエントリを記録
+         *
+         * `%d`, `%u`, `%s`, `%zu`, `%.2f` などの printf 形式を使用します。
          */
         template <typename... Args>
         void LogFormat(LogLevel level, const String &category,
@@ -197,16 +422,27 @@ namespace NorvesLib::Core::Logging
             return;
         }
 
-        try
+        if (format == nullptr)
         {
-            String formattedMessage = String(std::vformat(std::string_view(format), std::make_format_args(args...)));
-            Log(level, category, formattedMessage, filename, function, lineNumber);
+            Log(level, category, String{}, filename, function, lineNumber);
+            return;
         }
-        catch (const std::exception &e)
+
+        if constexpr (sizeof...(Args) == 0)
         {
-            String errorMsg = String("Log format error: ") + e.what() + " (Original format: " + format + ")";
+            Log(level, category, String(format), filename, function, lineNumber);
+            return;
+        }
+
+        String formattedMessage = Detail::FormatPrintfString(format, std::forward<Args>(args)...);
+        if (formattedMessage.empty() && format[0] != '\0')
+        {
+            String errorMsg = String("Log format error (printf-style): ") + format;
             Log(LogLevel::Error, "Logger", errorMsg, filename, function, lineNumber);
+            return;
         }
+
+        Log(level, category, formattedMessage, filename, function, lineNumber);
     }
 
 } // namespace NorvesLib::Core::Logging

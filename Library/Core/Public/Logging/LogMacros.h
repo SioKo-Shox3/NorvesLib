@@ -12,9 +12,10 @@
  * 
  * ## 使用方法
  * 
- * すべてのログマクロはフォーマット機能を統合しています：
+ * すべてのログマクロは printf 形式のフォーマット機能を統合しています：
  * - 単純な文字列: `NORVES_LOG_INFO("Category", "メッセージ")`
  * - フォーマット付き: `NORVES_LOG_INFO("Category", "値: %d, 名前: %s", value, name)`
+ * - フォーマット書式は `%d`, `%u`, `%s`, `%zu`, `%.2f` などの printf スタイルです
  * 
  * 従来の `_F` サフィックス付きマクロも互換性のために残されています。
  */
@@ -73,7 +74,7 @@ namespace NorvesLib::Core::Logging
     } while (0)
 
 // ===== 統合ログマクロ =====
-// フォーマット引数がある場合は自動的にフォーマット版を使用
+// 文字列のみでも printf 形式でも同じ入口を使用する
 
 #define NORVES_LOG(level, category, ...)                                          \
     NORVES_LOG_FORMAT(level, category, __VA_ARGS__)
