@@ -14,14 +14,11 @@
 #include "Core/Public/Rendering/SceneView.h"
 #include "Core/Public/Rendering/RenderingCoordinator.h"
 #include "Core/Public/Rendering/MegaGeometryPass.h"
-#include "Core/Public/Rendering/MegaGeometry/MeshClusterizer.h"
-#include "Core/Public/Resource/GLTFLoader.h"
+#include "Core/Public/Resource/GLTFAnalyzer.h"
 
 #include "Core/Public/Math/Matrix4x4.h"
 #include "Core/Public/Math/Quaternion.h"
 #include "Core/Public/Math/Vector3.h"
-
-#include "stb_image.h"
 
 #include <cmath>
 
@@ -420,187 +417,45 @@ namespace Game::GameModes
         }
 
         // ========================================
-        // 3. MegaGeometry: glTFモデルのロードとMegaMesh登録
+        // 3. glTFモデルのロード
         // ========================================
         {
             auto& resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+            data.m_BoulderModelHandle = Resource::GLTFAnalyzer::LoadModel(
+                "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
+                resourceManager);
+            data.m_bBoulderModelLoaded = data.m_BoulderModelHandle.IsValid();
 
-            // glTFファイルのロード
-            auto gltfResult = Resource::GLTFLoader::Load("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
-            if (!gltfResult.bSuccess)
+            if (!data.m_bBoulderModelLoaded)
             {
-                NORVES_LOG_ERROR("Rendering3DTest", "glTFロードに失敗しました");
+                NORVES_LOG_ERROR("Rendering3DTest", "Boulderモデルのロードに失敗しました");
             }
             else
             {
-                NORVES_LOG_INFO("Rendering3DTest", "Boulder glTF loaded: %zu vertices, %zu indices",
-                                gltfResult.Vertices.size(), gltfResult.Indices.size());
-
-                // --- テクスチャの読み込み ---
-                NorvesLib::RHI::TexturePtr albedoTex;
-                NorvesLib::RHI::TexturePtr normalTex;
-                NorvesLib::RHI::TexturePtr aoTex;
-                NorvesLib::RHI::TexturePtr roughnessTex;
-                NorvesLib::RHI::TexturePtr metallicTex;
-
-                for (const auto& texInfo : gltfResult.Textures)
+                auto megaMeshHandle = resourceManager.GetModelMegaMeshHandle(data.m_BoulderModelHandle);
+                if (!megaMeshHandle.IsValid())
                 {
-                    if (texInfo.Type == Resource::GLTFTextureType::Albedo)
-                    {
-                        auto handle = resourceManager.LoadTexture(texInfo.FilePath);
-                        if (handle.IsValid())
-                        {
-                            albedoTex = resourceManager.GetRHITexturePtr(handle);
-                            NORVES_LOG_INFO("Rendering3DTest", "Boulder albedo texture loaded");
-                        }
-                    }
-                    else if (texInfo.Type == Resource::GLTFTextureType::Normal)
-                    {
-                        auto handle = resourceManager.LoadTexture(texInfo.FilePath);
-                        if (handle.IsValid())
-                        {
-                            normalTex = resourceManager.GetRHITexturePtr(handle);
-                            NORVES_LOG_INFO("Rendering3DTest", "Boulder normal texture loaded");
-                        }
-                    }
-                    else if (texInfo.Type == Resource::GLTFTextureType::ARM)
-                    {
-                        // ARM テクスチャの分解: R=AO, G=Roughness, B=Metallic
-                        int width = 0, height = 0, channels = 0;
-                        unsigned char* pixels = stbi_load(texInfo.FilePath.c_str(), &width, &height, &channels, 4);
-                        if (pixels && width > 0 && height > 0)
-                        {
-                            uint32_t texW = static_cast<uint32_t>(width);
-                            uint32_t texH = static_cast<uint32_t>(height);
-                            uint32_t pixelCount = texW * texH;
-
-                            VariableArray<uint8_t> aoData(pixelCount);
-                            VariableArray<uint8_t> roughnessData(pixelCount);
-                            VariableArray<uint8_t> metallicData(pixelCount);
-
-                            for (uint32_t i = 0; i < pixelCount; ++i)
-                            {
-                                aoData[i] = pixels[i * 4 + 0];        // R → AO
-                                roughnessData[i] = pixels[i * 4 + 1]; // G → Roughness
-                                metallicData[i] = pixels[i * 4 + 2];  // B → Metallic
-                            }
-                            stbi_image_free(pixels);
-
-                            // AO テクスチャ作成（R8_UNORM）
-                            TextureCreateInfo aoTexInfo;
-                            aoTexInfo.Width = texW;
-                            aoTexInfo.Height = texH;
-                            aoTexInfo.PixelFormat = TextureCreateInfo::Format::R8_UNORM;
-                            aoTexInfo.DebugName = "Boulder_AO";
-                            auto aoHandle = resourceManager.CreateTexture(aoTexInfo, aoData.data(), pixelCount);
-                            if (aoHandle.IsValid())
-                            {
-                                aoTex = resourceManager.GetRHITexturePtr(aoHandle);
-                            }
-
-                            // Roughness テクスチャ作成（R8_UNORM）
-                            TextureCreateInfo roughTexInfo;
-                            roughTexInfo.Width = texW;
-                            roughTexInfo.Height = texH;
-                            roughTexInfo.PixelFormat = TextureCreateInfo::Format::R8_UNORM;
-                            roughTexInfo.DebugName = "Boulder_Roughness";
-                            auto roughHandle = resourceManager.CreateTexture(roughTexInfo, roughnessData.data(), pixelCount);
-                            if (roughHandle.IsValid())
-                            {
-                                roughnessTex = resourceManager.GetRHITexturePtr(roughHandle);
-                            }
-
-                            // Metallic テクスチャ作成（R8_UNORM）
-                            TextureCreateInfo metalTexInfo;
-                            metalTexInfo.Width = texW;
-                            metalTexInfo.Height = texH;
-                            metalTexInfo.PixelFormat = TextureCreateInfo::Format::R8_UNORM;
-                            metalTexInfo.DebugName = "Boulder_Metallic";
-                            auto metalHandle = resourceManager.CreateTexture(metalTexInfo, metallicData.data(), pixelCount);
-                            if (metalHandle.IsValid())
-                            {
-                                metallicTex = resourceManager.GetRHITexturePtr(metalHandle);
-                            }
-
-                            NORVES_LOG_INFO("Rendering3DTest", "Boulder ARM texture decomposed (%ux%u)", texW, texH);
-                        }
-                        else
-                        {
-                            NORVES_LOG_ERROR("Rendering3DTest", "ARM texture load failed: %s", texInfo.FilePath.c_str());
-                            if (pixels)
-                            {
-                                stbi_image_free(pixels);
-                            }
-                        }
-                    }
+                    NORVES_LOG_ERROR("Rendering3DTest", "BoulderモデルからMegaMeshを取得できませんでした");
+                    resourceManager.ReleaseModel(data.m_BoulderModelHandle);
+                    data.m_BoulderModelHandle = ModelHandle::Invalid();
+                    data.m_bBoulderModelLoaded = false;
                 }
-
-                // --- クラスタリング ---
-                VariableArray<MeshCluster> clusters;
-                VariableArray<uint32_t> clusterizedIndices;
-                MeshClusterizer::Clusterize(
-                    gltfResult.Vertices.data(),
-                    static_cast<uint32_t>(gltfResult.Vertices.size()),
-                    sizeof(Mesh3DVertex),
-                    gltfResult.Indices.data(),
-                    static_cast<uint32_t>(gltfResult.Indices.size()),
-                    clusters,
-                    clusterizedIndices);
-
-                NORVES_LOG_INFO("Rendering3DTest", "Boulder clusterized: %zu clusters, %zu indices",
-                                clusters.size(), clusterizedIndices.size());
-
-                // --- MegaMesh作成情報の構築 ---
-                MegaMeshCreateInfo createInfo;
-                createInfo.VertexData = gltfResult.Vertices.data();
-                createInfo.VertexDataSize = gltfResult.Vertices.size() * sizeof(Mesh3DVertex);
-                createInfo.VertexCount = static_cast<uint32_t>(gltfResult.Vertices.size());
-                createInfo.VertexStride = sizeof(Mesh3DVertex);
-                createInfo.IndexData = clusterizedIndices.data();
-                createInfo.IndexCount = static_cast<uint32_t>(clusterizedIndices.size());
-                createInfo.Clusters = clusters;
-                // 現状のLOD階層構築はこのテストモデルで同期ロード時間が大きいため、
-                // まずはベースクラスタをそのまま登録してWorld経由の表示を優先する。
-                createInfo.bBuildLODHierarchy = false;
-                createInfo.DebugName = "Boulder_MegaMesh";
-
-                // マテリアル
-                createInfo.Material.BaseColor[0] = 1.0f;
-                createInfo.Material.BaseColor[1] = 1.0f;
-                createInfo.Material.BaseColor[2] = 1.0f;
-                createInfo.Material.BaseColor[3] = 1.0f;
-                createInfo.Material.AlbedoTexture = albedoTex;
-                createInfo.Material.NormalTexture = normalTex;
-                createInfo.Material.AOTexture = aoTex;
-                createInfo.Material.RoughnessTexture = roughnessTex;
-                createInfo.Material.MetallicTexture = metallicTex;
-
-                // MegaMesh登録
-                data.m_BoulderMegaMeshHandle = resourceManager.CreateMegaMesh(createInfo);
-                data.m_bBoulderMegaMeshRegistered = data.m_BoulderMegaMeshHandle.IsValid();
-
-                if (data.m_bBoulderMegaMeshRegistered)
+                else
                 {
-                    NORVES_LOG_INFO("Rendering3DTest", "Boulder MegaMesh registered successfully");
-
-                    auto &world = GEngine->GetWorld();
+                    auto& world = GEngine->GetWorld();
 
                     data.m_pBoulderObject = new WorldObject();
                     data.m_pBoulderObject->Initialize();
                     data.m_pBoulderObject->SetPosition(3.0f, 0.0f, 0.0f);
 
                     data.m_pBoulderMegaGeometryComponent = new Component::MegaGeometryComponent();
-                    data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(data.m_BoulderMegaMeshHandle);
+                    data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
                     data.m_pBoulderMegaGeometryComponent->SetCastShadow(true);
 
                     data.m_pBoulderObject->AddComponent(data.m_pBoulderMegaGeometryComponent);
                     world.AddObject(data.m_pBoulderObject);
 
-                    NORVES_LOG_INFO("Rendering3DTest", "Boulder MegaGeometry WorldObject created and added to World");
-                }
-                else
-                {
-                    NORVES_LOG_ERROR("Rendering3DTest", "Boulder MegaMesh registration failed");
+                    NORVES_LOG_INFO("Rendering3DTest", "Boulder model loaded and added to World");
                 }
             }
         }
@@ -647,12 +502,13 @@ namespace Game::GameModes
             data.m_bMeshesRegistered = false;
         }
 
-        // MegaMeshの解放
-        if (data.m_bBoulderMegaMeshRegistered)
+        // モデルの解放
+        if (data.m_bBoulderModelLoaded)
         {
             auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
-            resourceManager.ReleaseMegaMesh(data.m_BoulderMegaMeshHandle);
-            data.m_bBoulderMegaMeshRegistered = false;
+            resourceManager.ReleaseModel(data.m_BoulderModelHandle);
+            data.m_BoulderModelHandle = ModelHandle::Invalid();
+            data.m_bBoulderModelLoaded = false;
         }
 
         // WorldObjectはWorld破棄時にInner/Outerで自動解放されるため

@@ -88,10 +88,10 @@ namespace Game::GameModes
         bool m_bMeshesRegistered = false;
 
         // ========================================
-        // MegaGeometry（Boulder）
+        // glTF Model（Boulder）
         // ========================================
-        NorvesLib::Core::Rendering::MegaGeometry::MegaMeshHandle m_BoulderMegaMeshHandle;
-        bool m_bBoulderMegaMeshRegistered = false;
+        NorvesLib::Core::Rendering::ModelHandle m_BoulderModelHandle;
+        bool m_bBoulderModelLoaded = false;
     };
 
 } // namespace Game::GameModes

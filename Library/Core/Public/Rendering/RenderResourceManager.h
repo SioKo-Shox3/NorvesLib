@@ -206,6 +206,16 @@ namespace NorvesLib::Core::Rendering
         Container::String DebugName;
     };
 
+    /**
+     * @brief モデルリソースデータ（内部用）
+     */
+    struct ModelResourceData
+    {
+        MegaGeometry::MegaMeshHandle MegaMesh;
+        Container::String DebugName;
+        Container::String SourcePath;
+    };
+
     // ========================================
     // RenderResourceManager
     // ========================================
@@ -582,6 +592,34 @@ namespace NorvesLib::Core::Rendering
         void ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle);
 
         // ========================================
+        // モデル操作
+        // ========================================
+
+        /**
+         * @brief モデルリソースを登録
+         * @param megaMeshHandle モデルに対応するMegaMeshハンドル
+         * @param debugName デバッグ名
+         * @param sourcePath ソースファイルパス
+         * @return モデルハンドル
+         */
+        ModelHandle RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
+                                  const Container::String &debugName = "",
+                                  const Container::String &sourcePath = "");
+
+        /**
+         * @brief モデルに対応するMegaMeshハンドルを取得
+         * @param handle モデルハンドル
+         * @return MegaMeshハンドル（存在しない場合Invalid）
+         */
+        MegaGeometry::MegaMeshHandle GetModelMegaMeshHandle(ModelHandle handle) const;
+
+        /**
+         * @brief モデルリソースを解放
+         * @param handle モデルハンドル
+         */
+        void ReleaseModel(ModelHandle handle);
+
+        // ========================================
         // 内部リソースアクセス（Rendering内部用）
         // ========================================
 
@@ -683,6 +721,9 @@ namespace NorvesLib::Core::Rendering
 
         // MegaMesh GPUデータマップ（MegaMeshHandle::Id → GPUデータ）
         Container::Map<uint64_t, MegaGeometry::MegaMeshGPUData> m_MegaMeshGPUDataMap;
+
+        // モデルデータマップ（ModelHandle::Id → モデル情報）
+        Container::Map<uint64_t, ModelResourceData> m_Models;
 
         // デフォルトサンプラー
         SamplerHandle m_DefaultSampler;

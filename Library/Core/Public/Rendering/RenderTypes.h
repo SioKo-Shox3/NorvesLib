@@ -58,6 +58,9 @@ namespace NorvesLib::Core::Rendering
     struct MaterialHandleTag
     {
     };
+    struct ModelHandleTag
+    {
+    };
 
     /**
      * @brief バッファリソースへのハンドル
@@ -103,6 +106,11 @@ namespace NorvesLib::Core::Rendering
      * @brief マテリアルへのハンドル
      */
     using MaterialHandle = ResourceHandle<MaterialHandleTag>;
+
+    /**
+     * @brief モデルリソースへのハンドル
+     */
+    using ModelHandle = ResourceHandle<ModelHandleTag>;
 
     // ========================================
     // 描画用列挙型
