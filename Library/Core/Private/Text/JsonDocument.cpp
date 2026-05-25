@@ -72,7 +72,6 @@ namespace NorvesLib::Core
         bool ParseObject(size_t& outNodeIndex)
         {
             outNodeIndex = m_Document.CreateNode(JsonType::Object);
-            auto& node = m_Document.m_Nodes[outNodeIndex];
 
             Advance(); // {
             SkipWhitespace();
@@ -107,7 +106,7 @@ namespace NorvesLib::Core
                 JsonDocument::JsonObjectEntry entry;
                 entry.Key = std::move(key);
                 entry.NodeIndex = childNodeIndex;
-                node.ObjectChildren.push_back(std::move(entry));
+                m_Document.m_Nodes[outNodeIndex].ObjectChildren.push_back(std::move(entry));
 
                 SkipWhitespace();
                 if (ConsumeIf('}'))
@@ -127,7 +126,6 @@ namespace NorvesLib::Core
         bool ParseArray(size_t& outNodeIndex)
         {
             outNodeIndex = m_Document.CreateNode(JsonType::Array);
-            auto& node = m_Document.m_Nodes[outNodeIndex];
 
             Advance(); // [
             SkipWhitespace();
@@ -145,7 +143,7 @@ namespace NorvesLib::Core
                     return false;
                 }
 
-                node.ArrayChildren.push_back(childNodeIndex);
+                m_Document.m_Nodes[outNodeIndex].ArrayChildren.push_back(childNodeIndex);
 
                 SkipWhitespace();
                 if (ConsumeIf(']'))

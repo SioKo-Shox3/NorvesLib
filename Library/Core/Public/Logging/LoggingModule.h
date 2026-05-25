@@ -106,6 +106,7 @@ namespace NorvesLib
  * LOG_ERROR("Something went wrong");
  *
  * // フォーマット付きログ出力
+ * // printf 形式のフォーマット指定子を使用
  * LOG_INFO_F("User %s logged in with ID %d", userName, userId);
  *
  * // カテゴリ付きログ出力
