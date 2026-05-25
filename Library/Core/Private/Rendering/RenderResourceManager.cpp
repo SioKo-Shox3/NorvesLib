@@ -681,6 +681,7 @@ namespace NorvesLib::Core::Rendering
         }
         m_NeuralMaterials.clear();
 
+        m_Models.clear();
         m_MegaMeshGPUDataMap.clear();
         m_MeshGPUDataMap.clear();
         m_Materials.clear();
@@ -1058,6 +1059,70 @@ namespace NorvesLib::Core::Rendering
     {
         Thread::ScopedLock lock(m_ResourceMutex);
         m_MegaMeshGPUDataMap.erase(handle.Id);
+    }
+
+    ModelHandle RenderResourceManager::RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
+                                                     const Container::String &debugName,
+                                                     const Container::String &sourcePath)
+    {
+        if (!megaMeshHandle.IsValid())
+        {
+            return ModelHandle::Invalid();
+        }
+
+        auto handle = AllocateHandle<ModelHandle>();
+
+        ModelResourceData modelData;
+        modelData.MegaMesh = megaMeshHandle;
+        modelData.DebugName = debugName;
+        modelData.SourcePath = sourcePath;
+
+        Thread::ScopedLock lock(m_ResourceMutex);
+        m_Models[handle.Id] = std::move(modelData);
+        return handle;
+    }
+
+    MegaGeometry::MegaMeshHandle RenderResourceManager::GetModelMegaMeshHandle(ModelHandle handle) const
+    {
+        if (!handle.IsValid())
+        {
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+
+        Thread::ScopedLock lock(m_ResourceMutex);
+        auto it = m_Models.find(handle.Id);
+        if (it == m_Models.end())
+        {
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+
+        return it->second.MegaMesh;
+    }
+
+    void RenderResourceManager::ReleaseModel(ModelHandle handle)
+    {
+        if (!handle.IsValid())
+        {
+            return;
+        }
+
+        MegaGeometry::MegaMeshHandle megaMeshHandle = MegaGeometry::MegaMeshHandle::Invalid();
+        {
+            Thread::ScopedLock lock(m_ResourceMutex);
+            auto it = m_Models.find(handle.Id);
+            if (it == m_Models.end())
+            {
+                return;
+            }
+
+            megaMeshHandle = it->second.MegaMesh;
+            m_Models.erase(it);
+        }
+
+        if (megaMeshHandle.IsValid())
+        {
+            ReleaseMegaMesh(megaMeshHandle);
+        }
     }
 
     // ========================================

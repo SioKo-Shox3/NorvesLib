@@ -18,6 +18,7 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Text/IdentityPool.cpp
+    Private/Text/JsonDocument.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
     Private/Debug/DebugOutput.cpp
@@ -70,7 +71,7 @@ set(PRIVATE_SOURCES
     # Resource
     Private/Resource/MeshResource.cpp
     Private/Resource/MaterialResource.cpp
-    Private/Resource/GLTFLoader.cpp
+    Private/Resource/GLTFAnalyzer.cpp
     # Component
     Private/Component/Component.cpp
     Private/Component/MeshComponent.cpp
@@ -128,6 +129,7 @@ set(PUBLIC_HEADERS
     Public/CoreModule.h
     Public/Object/Object.h
     Public/Text/IdentityPool.h
+    Public/Text/JsonDocument.h
     Public/Container/Containers.h
     Public/Container/PointerTypes.h
     Public/Container/VariableArray.h
@@ -220,7 +222,7 @@ set(PUBLIC_HEADERS
     # Resource
     Public/Resource/MeshResource.h
     Public/Resource/MaterialResource.h
-    Public/Resource/GLTFLoader.h
+    Public/Resource/GLTFAnalyzer.h
     # Component
     Public/Component/Component.h
     Public/Component/MeshComponent.h
