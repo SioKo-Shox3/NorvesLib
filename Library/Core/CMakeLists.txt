@@ -54,6 +54,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/BloomPass.cpp
     Private/Rendering/SSAOPass.cpp
     Private/Rendering/FXAAPass.cpp
+    Private/Rendering/UpscalePass.cpp
     Private/Rendering/SSRPass.cpp
     Private/Rendering/ForwardPass.cpp
     Private/Rendering/ShaderManager.cpp
@@ -197,6 +198,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/BloomPass.h
     Public/Rendering/SSAOPass.h
     Public/Rendering/FXAAPass.h
+    Public/Rendering/UpscalePass.h
     Public/Rendering/SSRPass.h
     Public/Rendering/ForwardPass.h
     Public/Rendering/ShaderManager.h

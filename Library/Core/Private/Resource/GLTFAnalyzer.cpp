@@ -731,9 +731,22 @@ namespace NorvesLib::Core::Resource
                                      size_t pixelDataSize,
                                      NorvesLib::RHI::TexturePtr& outTexture)
         {
+            auto calculateMipCount = [](uint32_t textureWidth, uint32_t textureHeight) -> uint32_t
+            {
+                uint32_t mipLevels = 1;
+                while (textureWidth > 1 || textureHeight > 1)
+                {
+                    textureWidth = std::max(1u, textureWidth / 2);
+                    textureHeight = std::max(1u, textureHeight / 2);
+                    ++mipLevels;
+                }
+                return mipLevels;
+            };
+
             Rendering::TextureCreateInfo createInfo;
             createInfo.Width = width;
             createInfo.Height = height;
+            createInfo.MipLevels = calculateMipCount(width, height);
             createInfo.PixelFormat = format;
             createInfo.DebugName = debugName;
 

@@ -158,12 +158,13 @@ namespace NorvesLib::Core::Rendering
             }
 
             RHI::SamplerDesc sampDesc;
-            sampDesc.filterMin = RHI::FilterMode::Linear;
-            sampDesc.filterMag = RHI::FilterMode::Linear;
-            sampDesc.filterMip = RHI::FilterMode::Linear;
+            sampDesc.filterMin = RHI::FilterMode::Anisotropic;
+            sampDesc.filterMag = RHI::FilterMode::Anisotropic;
+            sampDesc.filterMip = RHI::FilterMode::Anisotropic;
             sampDesc.addressU = RHI::TextureAddressMode::Wrap;
             sampDesc.addressV = RHI::TextureAddressMode::Wrap;
             sampDesc.addressW = RHI::TextureAddressMode::Wrap;
+            sampDesc.maxAnisotropy = 4;
 
             m_DefaultLinearSampler = m_Device->CreateSampler(sampDesc);
             if (!m_DefaultLinearSampler)
@@ -211,8 +212,8 @@ namespace NorvesLib::Core::Rendering
     void GBufferPass::Setup(ViewRenderContext &context)
     {
         // GBufferサイズを決定
-        uint32_t width = m_Settings.Width > 0 ? m_Settings.Width : context.ScreenWidth;
-        uint32_t height = m_Settings.Height > 0 ? m_Settings.Height : context.ScreenHeight;
+        uint32_t width = m_Settings.Width > 0 ? m_Settings.Width : context.RenderWidth;
+        uint32_t height = m_Settings.Height > 0 ? m_Settings.Height : context.RenderHeight;
 
         if (width == 0 || height == 0)
         {
