@@ -7,6 +7,7 @@
 #include "VulkanRenderPass.h"
 #include "VulkanFramebuffer.h"
 #include "VulkanDescriptorSet.h"
+#include <algorithm>
 #include <stdexcept>
 #include <cstring>
 
@@ -718,6 +719,148 @@ namespace NorvesLib::RHI::Vulkan
             vk::ImageLayout::eTransferDstOptimal,
             1,
             &region);
+    }
+
+    void VulkanCommandList::GenerateMipmaps(TexturePtr texture)
+    {
+        auto vkTexture = DynamicPointerCast<VulkanTexture>(texture);
+        if (!vkTexture)
+        {
+            throw std::runtime_error("無効なテクスチャです");
+        }
+
+        uint32_t mipLevels = texture->GetMipLevels();
+        if (mipLevels <= 1)
+        {
+            return;
+        }
+
+        vk::Format vkFormat = m_device->ToVkFormat(texture->GetFormat());
+        vk::FormatProperties formatProperties = m_device->GetVkPhysicalDevice().getFormatProperties(vkFormat);
+        if ((formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear) !=
+            vk::FormatFeatureFlagBits::eSampledImageFilterLinear)
+        {
+            throw std::runtime_error("このテクスチャフォーマットは線形ブリットによるミップ生成をサポートしていません");
+        }
+
+        uint32_t layerCount = texture->GetArraySize() * (texture->IsCubemap() ? 6u : 1u);
+        int32_t mipWidth = static_cast<int32_t>(texture->GetWidth());
+        int32_t mipHeight = static_cast<int32_t>(texture->GetHeight());
+
+        vk::Image image = vkTexture->GetVkImage();
+
+        for (uint32_t mipLevel = 1; mipLevel < mipLevels; ++mipLevel)
+        {
+            vk::ImageMemoryBarrier dstBarrier;
+            dstBarrier.srcAccessMask = {};
+            dstBarrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+            dstBarrier.oldLayout = vk::ImageLayout::eUndefined;
+            dstBarrier.newLayout = vk::ImageLayout::eTransferDstOptimal;
+            dstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            dstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            dstBarrier.image = image;
+            dstBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            dstBarrier.subresourceRange.baseMipLevel = mipLevel;
+            dstBarrier.subresourceRange.levelCount = 1;
+            dstBarrier.subresourceRange.baseArrayLayer = 0;
+            dstBarrier.subresourceRange.layerCount = layerCount;
+
+            m_commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eTopOfPipe,
+                vk::PipelineStageFlagBits::eTransfer,
+                {},
+                0, nullptr,
+                0, nullptr,
+                1, &dstBarrier);
+
+            vk::ImageMemoryBarrier srcBarrier;
+            srcBarrier.srcAccessMask = vk::AccessFlagBits::eMemoryRead;
+            srcBarrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+            srcBarrier.oldLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            srcBarrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+            srcBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            srcBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            srcBarrier.image = image;
+            srcBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            srcBarrier.subresourceRange.baseMipLevel = mipLevel - 1;
+            srcBarrier.subresourceRange.levelCount = 1;
+            srcBarrier.subresourceRange.baseArrayLayer = 0;
+            srcBarrier.subresourceRange.layerCount = layerCount;
+
+            m_commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eAllCommands,
+                vk::PipelineStageFlagBits::eTransfer,
+                {},
+                0, nullptr,
+                0, nullptr,
+                1, &srcBarrier);
+
+            int32_t nextMipWidth = std::max(1, mipWidth / 2);
+            int32_t nextMipHeight = std::max(1, mipHeight / 2);
+
+            vk::ImageBlit blit;
+            blit.srcOffsets[0] = vk::Offset3D{0, 0, 0};
+            blit.srcOffsets[1] = vk::Offset3D{mipWidth, mipHeight, 1};
+            blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+            blit.srcSubresource.mipLevel = mipLevel - 1;
+            blit.srcSubresource.baseArrayLayer = 0;
+            blit.srcSubresource.layerCount = layerCount;
+            blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+            blit.dstOffsets[1] = vk::Offset3D{nextMipWidth, nextMipHeight, 1};
+            blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+            blit.dstSubresource.mipLevel = mipLevel;
+            blit.dstSubresource.baseArrayLayer = 0;
+            blit.dstSubresource.layerCount = layerCount;
+
+            m_commandBuffer.blitImage(
+                image, vk::ImageLayout::eTransferSrcOptimal,
+                image, vk::ImageLayout::eTransferDstOptimal,
+                1, &blit,
+                vk::Filter::eLinear);
+
+            vk::ImageMemoryBarrier restoreSrcBarrier;
+            restoreSrcBarrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+            restoreSrcBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+            restoreSrcBarrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
+            restoreSrcBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            restoreSrcBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            restoreSrcBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            restoreSrcBarrier.image = image;
+            restoreSrcBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            restoreSrcBarrier.subresourceRange.baseMipLevel = mipLevel - 1;
+            restoreSrcBarrier.subresourceRange.levelCount = 1;
+            restoreSrcBarrier.subresourceRange.baseArrayLayer = 0;
+            restoreSrcBarrier.subresourceRange.layerCount = layerCount;
+
+            vk::ImageMemoryBarrier promoteDstBarrier;
+            promoteDstBarrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+            promoteDstBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+            promoteDstBarrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+            promoteDstBarrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            promoteDstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            promoteDstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            promoteDstBarrier.image = image;
+            promoteDstBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            promoteDstBarrier.subresourceRange.baseMipLevel = mipLevel;
+            promoteDstBarrier.subresourceRange.levelCount = 1;
+            promoteDstBarrier.subresourceRange.baseArrayLayer = 0;
+            promoteDstBarrier.subresourceRange.layerCount = layerCount;
+
+            std::array<vk::ImageMemoryBarrier, 2> restoreBarriers = {restoreSrcBarrier, promoteDstBarrier};
+
+            m_commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eTransfer,
+                vk::PipelineStageFlagBits::eFragmentShader,
+                {},
+                0, nullptr,
+                0, nullptr,
+                static_cast<uint32_t>(restoreBarriers.size()), restoreBarriers.data());
+
+            mipWidth = nextMipWidth;
+            mipHeight = nextMipHeight;
+        }
+
+        vkTexture->SetVkImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 
     void VulkanCommandList::BufferBarrier(BufferPtr buffer, ResourceState beforeState, ResourceState afterState,

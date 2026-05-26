@@ -10,6 +10,7 @@
 #include "Rendering/ToneMappingPass.h"
 #include "Rendering/SSAOPass.h"
 #include "Rendering/FXAAPass.h"
+#include "Rendering/UpscalePass.h"
 #include "Rendering/SSRPass.h"
 #include "Rendering/PostProcessStack.h"
 #include "Rendering/NeuralMaterialDecodePass.h"
@@ -316,10 +317,10 @@ namespace NorvesLib::Core::Rendering
 
         // Bloom（ToneMappingの前にHDR空間でブルーム適用）
         BloomSettings bloomSettings;
-        bloomSettings.Threshold = 1.0f;
-        bloomSettings.Intensity = 1.5f;
-        bloomSettings.Radius = 3.0f;
-        bloomSettings.SoftKnee = 0.5f;
+        bloomSettings.Threshold = 1.15f;
+        bloomSettings.Intensity = 0.85f;
+        bloomSettings.Radius = 2.5f;
+        bloomSettings.SoftKnee = 0.35f;
         postProcessStack->AddPass(MakeUnique<BloomPass>(bloomSettings));
 
         // ToneMapping（HDR→LDR変換 + Vignette + Color Grading）
@@ -333,9 +334,12 @@ namespace NorvesLib::Core::Rendering
         fxaaSettings.SubpixelQuality = 0.75f;
         postProcessStack->AddPass(MakeUnique<FXAAPass>(fxaaSettings));
 
+        // Upscale（内部解像度描画時のみ最終画像をスクリーン解像度へ拡大）
+        postProcessStack->AddPass(MakeUnique<UpscalePass>());
+
         SetPostProcessStack(std::move(postProcessStack));
 
-        NORVES_LOG_INFO("SceneView", "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> SSR -> Bloom -> ToneMapping -> FXAA");
+        NORVES_LOG_INFO("SceneView", "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> SSR -> Bloom -> ToneMapping -> FXAA -> Upscale");
     }
 
     void SceneView::SetupForwardPipeline(SceneRenderer *sceneRenderer)
@@ -363,9 +367,10 @@ namespace NorvesLib::Core::Rendering
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
         postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
+        postProcessStack->AddPass(MakeUnique<UpscalePass>());
         SetPostProcessStack(std::move(postProcessStack));
 
-        NORVES_LOG_INFO("SceneView", "Forward pipeline configured: Forward -> ToneMapping");
+        NORVES_LOG_INFO("SceneView", "Forward pipeline configured: Forward -> ToneMapping -> Upscale");
     }
 
     void SceneView::CullProxies(Viewport *viewport)

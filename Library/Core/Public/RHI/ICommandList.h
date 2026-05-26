@@ -299,6 +299,12 @@ namespace NorvesLib::RHI
                                  uint32_t dstMipLevel = 0, uint32_t dstArrayIndex = 0) = 0;
 
         /**
+         * @brief テクスチャのミップチェーンを生成
+         * @param texture 対象テクスチャ
+         */
+        virtual void GenerateMipmaps(TexturePtr texture) = 0;
+
+        /**
          * @brief バッファのリソースバリア（状態遷移）
          * @param buffer バッファ
          * @param beforeState 遷移前の状態

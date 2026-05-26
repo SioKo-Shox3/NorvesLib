@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "RHI/ICommandList.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
@@ -248,6 +248,7 @@ namespace NorvesLib::RHI::Vulkan
                          uint32_t width, uint32_t height,
                          uint32_t srcMipLevel = 0, uint32_t srcArrayIndex = 0,
                          uint32_t dstMipLevel = 0, uint32_t dstArrayIndex = 0) override;
+        void GenerateMipmaps(TexturePtr texture) override;
 
         void BufferBarrier(BufferPtr buffer, ResourceState beforeState, ResourceState afterState,
                            uint64_t offset = 0, uint64_t size = 0) override;

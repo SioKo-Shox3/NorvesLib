@@ -36,6 +36,7 @@ namespace NorvesLib::Core::Rendering
         // 解像度
         uint32_t Width = 1280;
         uint32_t Height = 720;
+        float RenderScale = 1.0f;
 
         // フレームバッファ設定
         uint32_t BackBufferCount = 2;
@@ -195,6 +196,17 @@ namespace NorvesLib::Core::Rendering
             outHeight = m_Height;
         }
 
+        /**
+         * @brief 内部描画スケールを設定
+         * @param renderScale 0.5〜1.0 の描画スケール
+         */
+        void SetRenderScale(float renderScale);
+
+        /**
+         * @brief 内部描画スケールを取得
+         */
+        float GetRenderScale() const { return m_RenderScale; }
+
         // ========================================
         // 設定
         // ========================================
@@ -287,6 +299,7 @@ namespace NorvesLib::Core::Rendering
         // 設定
         bool m_bVSyncEnabled = true;
         bool m_bFullscreen = false;
+        float m_RenderScale = 1.0f;
         bool m_bMultiThreadedRendering = true;
 
         // デバッグ設定

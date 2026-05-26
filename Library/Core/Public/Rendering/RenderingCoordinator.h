@@ -46,6 +46,7 @@ namespace NorvesLib::Core::Rendering
         void *WindowHandle = nullptr;
         uint32_t Width = 1280;
         uint32_t Height = 720;
+        float RenderScale = 1.0f;
         uint32_t BackBufferCount = 2;
         bool bVSync = true;
         bool bEnableMultiThreadedRendering = true;
@@ -246,6 +247,17 @@ namespace NorvesLib::Core::Rendering
          */
         void Resize(uint32_t width, uint32_t height);
 
+        /**
+         * @brief 内部描画スケールを設定
+         * @param renderScale 0.5〜1.0 の描画スケール
+         */
+        void SetRenderScale(float renderScale);
+
+        /**
+         * @brief 内部描画スケールを取得
+         */
+        float GetRenderScale() const { return m_RenderScale; }
+
         // ========================================
         // 統計
         // ========================================
@@ -324,6 +336,9 @@ namespace NorvesLib::Core::Rendering
         // 設定
         uint32_t m_Width = 1280;
         uint32_t m_Height = 720;
+        uint32_t m_RenderWidth = 1280;
+        uint32_t m_RenderHeight = 720;
+        float m_RenderScale = 1.0f;
         bool m_bVSyncEnabled = true;
         bool m_bMultiThreadedRendering = true;
         uint32_t m_MaxDrawCallsPerFrame = 10000;
@@ -337,6 +352,8 @@ namespace NorvesLib::Core::Rendering
 
         // 状態
         bool m_bInitialized = false;
+
+        void UpdateRenderResolution(uint32_t screenWidth, uint32_t screenHeight);
     };
 
 } // namespace NorvesLib::Core::Rendering

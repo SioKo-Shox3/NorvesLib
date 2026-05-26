@@ -312,8 +312,8 @@ namespace NorvesLib::Core::Rendering
 
     void LightingPass::Setup(ViewRenderContext &context)
     {
-        uint32_t width = context.ScreenWidth;
-        uint32_t height = context.ScreenHeight;
+        uint32_t width = context.RenderWidth;
+        uint32_t height = context.RenderHeight;
 
         if (width == 0 || height == 0)
         {

@@ -19,6 +19,7 @@ namespace NorvesLib::Core::Rendering
 
         m_Width = settings.Width;
         m_Height = settings.Height;
+        m_RenderScale = settings.RenderScale;
         m_bVSyncEnabled = settings.bVSync;
         m_bFullscreen = settings.bFullscreen;
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
@@ -43,6 +44,7 @@ namespace NorvesLib::Core::Rendering
         coordSettings.WindowHandle = settings.WindowHandle;
         coordSettings.Width = settings.Width;
         coordSettings.Height = settings.Height;
+        coordSettings.RenderScale = settings.RenderScale;
         coordSettings.BackBufferCount = settings.BackBufferCount;
         coordSettings.bVSync = settings.bVSync;
         coordSettings.bEnableMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
@@ -169,6 +171,12 @@ namespace NorvesLib::Core::Rendering
 
         // RenderingCoordinatorにリサイズを委譲
         m_RenderingCoordinator.Resize(width, height);
+    }
+
+    void RenderWorld::SetRenderScale(float renderScale)
+    {
+        m_RenderScale = renderScale;
+        m_RenderingCoordinator.SetRenderScale(renderScale);
     }
 
     void RenderWorld::SetVSync(bool bEnabled)

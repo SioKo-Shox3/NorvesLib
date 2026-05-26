@@ -110,6 +110,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief スクリーン高さ */
         uint32_t ScreenHeight = 0;
 
+        /** @brief 内部描画幅 */
+        uint32_t RenderWidth = 0;
+
+        /** @brief 内部描画高さ */
+        uint32_t RenderHeight = 0;
+
         /** @brief 前フレームからの経過時間（秒） */
         float DeltaTime = 0.0f;
 

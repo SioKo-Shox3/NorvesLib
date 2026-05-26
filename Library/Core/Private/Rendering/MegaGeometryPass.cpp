@@ -349,8 +349,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 画面サイズ変更に対応
-        uint32_t width = context.ScreenWidth;
-        uint32_t height = context.ScreenHeight;
+        uint32_t width = context.RenderWidth;
+        uint32_t height = context.RenderHeight;
 
         if (width != m_CurrentWidth || height != m_CurrentHeight || !m_GBufferRenderPass)
         {
@@ -448,7 +448,7 @@ namespace NorvesLib::Core::Rendering
 
             Matrix4x4 viewMat = MatrixUtils::CreateLookAt(camPos, lookAt, upDir);
 
-            float aspectRatio = static_cast<float>(context.ScreenWidth) / static_cast<float>(context.ScreenHeight);
+            float aspectRatio = static_cast<float>(context.RenderWidth) / static_cast<float>(context.RenderHeight);
             float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
             Matrix4x4 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
                 fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
@@ -471,12 +471,12 @@ namespace NorvesLib::Core::Rendering
             uniformData.TotalClusterCount = gpuData->ClusterCount;
             uniformData.MaxDrawCount = m_Settings.MaxDrawCount;
             uniformData.LODBias = m_Settings.LODBias;
-            uniformData.ScreenHeight = static_cast<float>(context.ScreenHeight);
+            uniformData.ScreenHeight = static_cast<float>(context.RenderHeight);
 
             // projectionFactor = screenHeight / (2 * tan(fov/2))
             float halfFovTan = std::tan(fovRadians * 0.5f);
             uniformData.ProjectionFactor = (halfFovTan > 1e-6f)
-                                               ? static_cast<float>(context.ScreenHeight) / (2.0f * halfFovTan)
+                                               ? static_cast<float>(context.RenderHeight) / (2.0f * halfFovTan)
                                                : 1.0f;
 
             // Hi-Zオクルージョンカリングは現状のクラスタ球近似が攻めすぎているため無効化

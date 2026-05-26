@@ -3,7 +3,7 @@
 // ========================================
 // Bloom Post-Process Fragment Shader
 // ========================================
-// シングルパスブルーム：輝度抽出 + マルチサンプルガウスぼかし + 合成
+// シングルパスブルーム：輝度抽出 + 等方性カーネルぼかし + 合成
 // 入力: SceneColor (HDR R16G16B16A16_FLOAT)
 // 出力: Bloomed SceneColor (HDR R16G16B16A16_FLOAT)
 
@@ -45,66 +45,63 @@ void main()
     vec2 texelSize = 1.0 / textureSize(sceneColor, 0);
     vec3 originalColor = texture(sceneColor, fragUV).rgb;
 
-    // ========================================
-    // 13-tap ガウスブラーカーネル（2パス相当の近似）
-    // ========================================
-    // 中心 + 十字方向の複数サンプルで放射状ブラーを実現
-    float r = radius;
+    float r = max(radius, 0.5);
 
-    // ガウス重み（σ ≈ radius/2）
-    // オフセットと重み: 0, ±1, ±2, ±3, ±4, ±5, ±6 ピクセル分
-    const int SAMPLE_COUNT = 7;
-    float offsets[SAMPLE_COUNT] = float[](0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0);
-    float weights[SAMPLE_COUNT] = float[](
-        0.1964825501511404,
-        0.2969069646728344,
-        0.2195956136101940,
-        0.0449740700466070,
-        0.0045813026965520,
-        0.0003335213221380,
-        0.0000024688202280
+    const int SAMPLE_COUNT = 16;
+    vec2 sampleOffsets[SAMPLE_COUNT] = vec2[](
+        vec2( 0.0000,  0.0000),
+        vec2( 0.5278,  0.0935),
+        vec2(-0.4063,  0.2066),
+        vec2( 0.1398, -0.5453),
+        vec2(-0.2521, -0.4046),
+        vec2( 0.6350, -0.3192),
+        vec2(-0.6025, -0.0981),
+        vec2( 0.3177,  0.5670),
+        vec2(-0.1176,  0.7124),
+        vec2( 0.8219,  0.2143),
+        vec2(-0.7448,  0.3981),
+        vec2( 0.4922, -0.7486),
+        vec2(-0.5084, -0.7056),
+        vec2( 0.0532,  0.9148),
+        vec2(-0.8865, -0.3121),
+        vec2( 0.9116, -0.5110)
     );
 
-    // 明るい部分を抽出してブラー
-    vec3 bloomH = ExtractBright(originalColor) * weights[0];
-    vec3 bloomV = bloomH;
+    float sampleWeights[SAMPLE_COUNT] = float[](
+        0.1900,
+        0.1050,
+        0.0980,
+        0.0940,
+        0.0890,
+        0.0790,
+        0.0730,
+        0.0670,
+        0.0610,
+        0.0490,
+        0.0410,
+        0.0330,
+        0.0280,
+        0.0240,
+        0.0180,
+        0.0140
+    );
 
-    for (int i = 1; i < SAMPLE_COUNT; ++i)
+    vec3 bloomNear = vec3(0.0);
+    vec3 bloomFar = vec3(0.0);
+    float weightSum = 0.0;
+
+    for (int i = 0; i < SAMPLE_COUNT; ++i)
     {
-        float offset = offsets[i] * r;
+        vec2 ringNear = sampleOffsets[i] * texelSize * r * 2.0;
+        vec2 ringFar = sampleOffsets[i] * texelSize * r * 4.5;
+        float weight = sampleWeights[i];
 
-        // 水平方向サンプル
-        vec2 offsetH = vec2(offset * texelSize.x, 0.0);
-        bloomH += ExtractBright(texture(sceneColor, fragUV + offsetH).rgb) * weights[i];
-        bloomH += ExtractBright(texture(sceneColor, fragUV - offsetH).rgb) * weights[i];
-
-        // 垂直方向サンプル
-        vec2 offsetV = vec2(0.0, offset * texelSize.y);
-        bloomV += ExtractBright(texture(sceneColor, fragUV + offsetV).rgb) * weights[i];
-        bloomV += ExtractBright(texture(sceneColor, fragUV - offsetV).rgb) * weights[i];
+        bloomNear += ExtractBright(texture(sceneColor, fragUV + ringNear).rgb) * weight;
+        bloomFar += ExtractBright(texture(sceneColor, fragUV + ringFar).rgb) * weight;
+        weightSum += weight;
     }
 
-    // 対角方向も追加（ブルームの広がりをより自然に）
-    vec3 bloomD1 = ExtractBright(originalColor) * weights[0];
-    vec3 bloomD2 = bloomD1;
-
-    for (int i = 1; i < SAMPLE_COUNT; ++i)
-    {
-        float offset = offsets[i] * r * 0.7071; // 1/sqrt(2) 対角距離補正
-
-        // 対角方向1（左上→右下）
-        vec2 offsetD1 = vec2(offset * texelSize.x, offset * texelSize.y);
-        bloomD1 += ExtractBright(texture(sceneColor, fragUV + offsetD1).rgb) * weights[i];
-        bloomD1 += ExtractBright(texture(sceneColor, fragUV - offsetD1).rgb) * weights[i];
-
-        // 対角方向2（右上→左下）
-        vec2 offsetD2 = vec2(offset * texelSize.x, -offset * texelSize.y);
-        bloomD2 += ExtractBright(texture(sceneColor, fragUV + offsetD2).rgb) * weights[i];
-        bloomD2 += ExtractBright(texture(sceneColor, fragUV - offsetD2).rgb) * weights[i];
-    }
-
-    // 4方向のブルームを平均して合成
-    vec3 bloom = (bloomH + bloomV + bloomD1 + bloomD2) * 0.25;
+    vec3 bloom = (bloomNear * 0.68 + bloomFar * 0.32) / max(weightSum, 0.0001);
 
     // 元の色にブルームを加算
     vec3 result = originalColor + bloom * intensity;

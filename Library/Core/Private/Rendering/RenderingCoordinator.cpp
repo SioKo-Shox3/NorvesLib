@@ -25,6 +25,7 @@
 #include "Logging/LogMacros.h"
 #include <chrono>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering
@@ -45,6 +46,8 @@ namespace NorvesLib::Core::Rendering
 
         m_Width = settings.Width;
         m_Height = settings.Height;
+        m_RenderScale = std::clamp(settings.RenderScale, 0.5f, 1.0f);
+        UpdateRenderResolution(m_Width, m_Height);
         m_bVSyncEnabled = settings.bVSync;
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
         m_MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
@@ -536,6 +539,8 @@ namespace NorvesLib::Core::Rendering
         viewContext.FrameIndex = swapChain->GetCurrentFrameIndex();
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
+        viewContext.RenderWidth = m_RenderWidth;
+        viewContext.RenderHeight = m_RenderHeight;
         viewContext.DeltaTime = static_cast<float>(m_Stats.TotalFrameTimeMs * 0.001);
         viewContext.TotalTime = m_TotalTime;
         viewContext.ResourceManager = m_ResourceManager;
@@ -593,10 +598,15 @@ namespace NorvesLib::Core::Rendering
         {
             // ViewRenderContextにカメラとリソースマネージャーを設定
             // （Deferredパスチェーンで使用済みだが、ここで確認）
-            auto toneMappedTex = viewContext.SharedResources->GetTexturePtr("ToneMappedColor");
-            if (toneMappedTex && m_BlitPipeline && m_BlitDescriptorSet)
+            auto presentationTex = viewContext.SharedResources->GetTexturePtr("PresentationColor");
+            if (!presentationTex)
             {
-                m_BlitDescriptorSet->BindTexture(0, toneMappedTex);
+                presentationTex = viewContext.SharedResources->GetTexturePtr("ToneMappedColor");
+            }
+
+            if (presentationTex && m_BlitPipeline && m_BlitDescriptorSet)
+            {
+                m_BlitDescriptorSet->BindTexture(0, presentationTex);
                 m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
                 m_BlitDescriptorSet->Update();
 
@@ -703,6 +713,7 @@ namespace NorvesLib::Core::Rendering
 
         m_Width = width;
         m_Height = height;
+        UpdateRenderResolution(width, height);
 
         // Screenのリサイズ（SwapChainリサイズを含む）
         m_Screen.Resize(width, height);
@@ -720,6 +731,29 @@ namespace NorvesLib::Core::Rendering
                 view->Resize(width, height);
             }
         }
+    }
+
+    void RenderingCoordinator::SetRenderScale(float renderScale)
+    {
+        float clampedRenderScale = std::clamp(renderScale, 0.5f, 1.0f);
+        if (std::abs(m_RenderScale - clampedRenderScale) < 0.0001f)
+        {
+            return;
+        }
+
+        m_RenderScale = clampedRenderScale;
+        UpdateRenderResolution(m_Width, m_Height);
+
+        if (m_bInitialized)
+        {
+            Resize(m_Width, m_Height);
+        }
+    }
+
+    void RenderingCoordinator::UpdateRenderResolution(uint32_t screenWidth, uint32_t screenHeight)
+    {
+        m_RenderWidth = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(screenWidth) * static_cast<double>(m_RenderScale))));
+        m_RenderHeight = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(screenHeight) * static_cast<double>(m_RenderScale))));
     }
 
     bool RenderingCoordinator::CreateSwapChainFramebuffers()

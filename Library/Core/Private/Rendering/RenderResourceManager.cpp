@@ -1,7 +1,8 @@
-#include "Rendering/RenderResourceManager.h"
+﻿#include "Rendering/RenderResourceManager.h"
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "RHI/IDevice.h"
 #include "RHI/IBuffer.h"
+#include "RHI/ICommandList.h"
 #include "RHI/ITexture.h"
 #include "RHI/ISampler.h"
 #include "RHI/IShader.h"
@@ -12,9 +13,25 @@
 
 // stb_image（テクスチャファイル読み込み用）
 #include "stb_image.h"
+#include <algorithm>
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        uint32_t CalculateFullMipCount(uint32_t width, uint32_t height)
+        {
+            uint32_t mipLevels = 1;
+            while (width > 1 || height > 1)
+            {
+                width = std::max(1u, width / 2);
+                height = std::max(1u, height / 2);
+                ++mipLevels;
+            }
+            return mipLevels;
+        }
+    }
+
 
     bool RenderResourceManager::Initialize(Container::TSharedPtr<RHI::IDevice> device)
     {
@@ -161,6 +178,8 @@ namespace NorvesLib::Core::Rendering
             return TextureHandle::Invalid();
         }
 
+        uint32_t mipLevels = std::max(1u, createInfo.MipLevels);
+
         // TextureCreateInfo::Format → RHI::Format 変換
         RHI::Format rhiFormat = RHI::Format::R8G8B8A8_UNORM;
         switch (createInfo.PixelFormat)
@@ -195,10 +214,14 @@ namespace NorvesLib::Core::Rendering
         desc.Width = createInfo.Width;
         desc.Height = createInfo.Height;
         desc.Depth = createInfo.Depth;
-        desc.MipLevels = createInfo.MipLevels;
+        desc.MipLevels = mipLevels;
         desc.ArraySize = createInfo.ArraySize;
         desc.TextureFormat = rhiFormat;
         desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        if (mipLevels > 1)
+        {
+            desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
+        }
         desc.DebugName = createInfo.DebugName.c_str();
 
         if (createInfo.bRenderTarget)
@@ -274,6 +297,21 @@ namespace NorvesLib::Core::Rendering
             uint32_t rowPitch = createInfo.Width * bytesPerPixel;
             uint32_t slicePitch = rowPitch * createInfo.Height;
             it->second.RHITexture->Update(data, rowPitch, slicePitch);
+
+            if (createInfo.MipLevels > 1)
+            {
+                auto commandList = m_Device->CreateCommandList();
+                if (!commandList)
+                {
+                    NORVES_LOG_ERROR("RenderResourceManager", "Failed to create command list for mip generation");
+                    return handle;
+                }
+
+                commandList->Begin();
+                commandList->GenerateMipmaps(it->second.RHITexture);
+                commandList->End();
+                commandList->Submit(true);
+            }
         }
 
         return handle;
@@ -335,6 +373,7 @@ namespace NorvesLib::Core::Rendering
         TextureCreateInfo createInfo;
         createInfo.Width = static_cast<uint32_t>(width);
         createInfo.Height = static_cast<uint32_t>(height);
+        createInfo.MipLevels = CalculateFullMipCount(createInfo.Width, createInfo.Height);
         createInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
         createInfo.DebugName = path;
 
@@ -405,9 +444,9 @@ namespace NorvesLib::Core::Rendering
 
         // Linear + Wrap サンプラーを作成
         RHI::SamplerDesc desc;
-        desc.filterMin = RHI::FilterMode::Linear;
-        desc.filterMag = RHI::FilterMode::Linear;
-        desc.filterMip = RHI::FilterMode::Linear;
+        desc.filterMin = RHI::FilterMode::Anisotropic;
+        desc.filterMag = RHI::FilterMode::Anisotropic;
+        desc.filterMip = RHI::FilterMode::Anisotropic;
         desc.addressU = RHI::TextureAddressMode::Wrap;
         desc.addressV = RHI::TextureAddressMode::Wrap;
         desc.addressW = RHI::TextureAddressMode::Wrap;
