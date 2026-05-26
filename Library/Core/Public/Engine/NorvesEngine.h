@@ -150,6 +150,7 @@ namespace NorvesLib::Core
     private:
         Thread::Atomic<bool> m_isRunning;             ///< エンジンが実行中かどうか
         NorvesLib::Core::Container::String m_version; ///< エンジンのバージョン
+        uint64_t m_FrameCounter = 0;                  ///< AssetRegistry更新用フレーム番号
 
         // サブシステム（GEngineと寿命が一致）
         ResourceRegistry m_ResourceRegistry;                    ///< リソース管理

@@ -6,6 +6,10 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResourceManager.h"
 #include "Text/JsonDocument.h"
+#include "Thread/Atomic.h"
+#include "Thread/JobSystem.h"
+#include "Thread/Mutex.h"
+#include "Thread/Task.h"
 
 #include "stb_image.h"
 
@@ -65,6 +69,57 @@ namespace NorvesLib::Core::Resource
             String ArmPath;
             bool bDoubleSided = false;
         };
+
+        struct StagedTextureData
+        {
+            VariableArray<uint8_t> PixelData;
+            uint32_t Width = 0;
+            uint32_t Height = 0;
+            Rendering::TextureCreateInfo::Format Format = Rendering::TextureCreateInfo::Format::RGBA8_UNORM;
+            String DebugName;
+
+            bool HasData() const
+            {
+                return !PixelData.empty() && Width > 0 && Height > 0;
+            }
+        };
+
+        struct ModelStagingData
+        {
+            VariableArray<Rendering::Mesh3DVertex> Vertices;
+            VariableArray<uint32_t> ClusterizedIndices;
+            VariableArray<Rendering::MegaGeometry::MeshCluster> Clusters;
+            Rendering::BoundingSphere TotalBounds;
+            String DebugName;
+            String ResolvedPath;
+
+            StagedTextureData AlbedoTexture;
+            StagedTextureData NormalTexture;
+            StagedTextureData AOTexture;
+            StagedTextureData RoughnessTexture;
+            StagedTextureData MetallicTexture;
+        };
+
+        struct AsyncModelLoadResult
+        {
+            ModelStagingData Staging;
+            bool bSuccess = false;
+        };
+
+        struct AsyncModelLoadRequest
+        {
+            uint32_t RequestId = 0;
+            String Path;
+            String ResolvedPath;
+            Thread::TaskPtr Task;
+            AsyncModelLoadResult Result;
+            VariableArray<NorvesLib::Core::Delegate<void, Rendering::ModelHandle>> Callbacks;
+        };
+
+        Thread::Mutex g_AsyncModelLoadMutex;
+        VariableArray<TSharedPtr<AsyncModelLoadRequest>> g_PendingModelLoads;
+        Map<String, TSharedPtr<AsyncModelLoadRequest>> g_PendingModelLoadsByPath;
+        Thread::Atomic<uint32_t> g_NextAsyncModelLoadRequestId{1};
 
         String ResolveAssetPath(const String& path)
         {
@@ -760,10 +815,23 @@ namespace NorvesLib::Core::Resource
             return static_cast<bool>(outTexture);
         }
 
-        void LoadStandardTexture(Rendering::RenderResourceManager& resourceManager,
-                                 const String& texturePath,
-                                 const String& debugName,
-                                 NorvesLib::RHI::TexturePtr& outTexture)
+        void SetStagedTextureData(StagedTextureData& outTexture,
+                                  VariableArray<uint8_t>&& pixels,
+                                  uint32_t width,
+                                  uint32_t height,
+                                  Rendering::TextureCreateInfo::Format format,
+                                  const String& debugName)
+        {
+            outTexture.PixelData = std::move(pixels);
+            outTexture.Width = width;
+            outTexture.Height = height;
+            outTexture.Format = format;
+            outTexture.DebugName = debugName;
+        }
+
+        void StageStandardTexture(const String& texturePath,
+                                  const String& debugName,
+                                  StagedTextureData& outTexture)
         {
             if (texturePath.empty())
             {
@@ -778,25 +846,20 @@ namespace NorvesLib::Core::Resource
                 return;
             }
 
-            if (!CreateTextureFromPixels(resourceManager,
-                                         debugName,
-                                         width,
-                                         height,
-                                         Rendering::TextureCreateInfo::Format::RGBA8_UNORM,
-                                         pixels.data(),
-                                         pixels.size(),
-                                         outTexture))
-            {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to create texture: %s", texturePath.c_str());
-            }
+            SetStagedTextureData(
+                outTexture,
+                std::move(pixels),
+                width,
+                height,
+                Rendering::TextureCreateInfo::Format::RGBA8_UNORM,
+                debugName);
         }
 
-        void LoadArmTextures(Rendering::RenderResourceManager& resourceManager,
-                             const String& texturePath,
-                             const String& debugNamePrefix,
-                             NorvesLib::RHI::TexturePtr& outAOTexture,
-                             NorvesLib::RHI::TexturePtr& outRoughnessTexture,
-                             NorvesLib::RHI::TexturePtr& outMetallicTexture)
+        void StageArmTextures(const String& texturePath,
+                              const String& debugNamePrefix,
+                              StagedTextureData& outAOTexture,
+                              StagedTextureData& outRoughnessTexture,
+                              StagedTextureData& outMetallicTexture)
         {
             if (texturePath.empty())
             {
@@ -823,176 +886,319 @@ namespace NorvesLib::Core::Resource
                 metallicPixels[pixelIndex] = pixels[pixelIndex * 4 + 2];
             }
 
-            if (!CreateTextureFromPixels(resourceManager,
-                                         debugNamePrefix + "_AO",
-                                         width,
-                                         height,
-                                         Rendering::TextureCreateInfo::Format::R8_UNORM,
-                                         aoPixels.data(),
-                                         aoPixels.size(),
-                                         outAOTexture))
+            SetStagedTextureData(
+                outAOTexture,
+                std::move(aoPixels),
+                width,
+                height,
+                Rendering::TextureCreateInfo::Format::R8_UNORM,
+                debugNamePrefix + "_AO");
+            SetStagedTextureData(
+                outRoughnessTexture,
+                std::move(roughnessPixels),
+                width,
+                height,
+                Rendering::TextureCreateInfo::Format::R8_UNORM,
+                debugNamePrefix + "_Roughness");
+            SetStagedTextureData(
+                outMetallicTexture,
+                std::move(metallicPixels),
+                width,
+                height,
+                Rendering::TextureCreateInfo::Format::R8_UNORM,
+                debugNamePrefix + "_Metallic");
+        }
+
+        bool CreateTextureFromStagedData(Rendering::RenderResourceManager& resourceManager,
+                                         const StagedTextureData& stagedTexture,
+                                         NorvesLib::RHI::TexturePtr& outTexture)
+        {
+            if (!stagedTexture.HasData())
             {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to create AO texture: %s", texturePath.c_str());
+                return true;
             }
 
-            if (!CreateTextureFromPixels(resourceManager,
-                                         debugNamePrefix + "_Roughness",
-                                         width,
-                                         height,
-                                         Rendering::TextureCreateInfo::Format::R8_UNORM,
-                                         roughnessPixels.data(),
-                                         roughnessPixels.size(),
-                                         outRoughnessTexture))
+            return CreateTextureFromPixels(
+                resourceManager,
+                stagedTexture.DebugName,
+                stagedTexture.Width,
+                stagedTexture.Height,
+                stagedTexture.Format,
+                stagedTexture.PixelData.data(),
+                stagedTexture.PixelData.size(),
+                outTexture);
+        }
+
+        bool BuildModelStaging(const String& gltfPath, ModelStagingData& outStaging)
+        {
+            String resolvedGltfPath = ResolveAssetPath(gltfPath);
+            String jsonContent;
+            if (!ReadTextFile(resolvedGltfPath, jsonContent))
             {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to create roughness texture: %s", texturePath.c_str());
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to open glTF file: %s", resolvedGltfPath.c_str());
+                return false;
             }
 
-            if (!CreateTextureFromPixels(resourceManager,
-                                         debugNamePrefix + "_Metallic",
-                                         width,
-                                         height,
-                                         Rendering::TextureCreateInfo::Format::R8_UNORM,
-                                         metallicPixels.data(),
-                                         metallicPixels.size(),
-                                         outMetallicTexture))
+            JsonDocument document;
+            String parseError;
+            if (!JsonDocument::TryParse(jsonContent, document, &parseError))
             {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to create metallic texture: %s", texturePath.c_str());
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to parse glTF JSON: %s", parseError.c_str());
+                return false;
             }
+
+            JsonValue root = document.GetRoot();
+            if (!root.IsObject())
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "glTF root is not an object");
+                return false;
+            }
+
+            std::filesystem::path gltfFilePath(resolvedGltfPath.c_str());
+            std::filesystem::path gltfDirectory = gltfFilePath.parent_path();
+
+            VariableArray<AccessorInfo> accessors;
+            VariableArray<BufferViewInfo> bufferViews;
+            VariableArray<BufferInfo> buffers;
+            if (!ParseAccessors(root, accessors) ||
+                !ParseBufferViews(root, bufferViews) ||
+                !ParseBuffers(root, buffers))
+            {
+                return false;
+            }
+
+            VariableArray<VariableArray<uint8_t>> bufferData;
+            if (!LoadBuffers(buffers, gltfDirectory, bufferData))
+            {
+                return false;
+            }
+
+            PrimitiveInfo primitiveInfo;
+            if (!ParsePrimitiveInfo(root, primitiveInfo))
+            {
+                return false;
+            }
+
+            VariableArray<Rendering::Mesh3DVertex> vertices;
+            VariableArray<uint32_t> indices;
+            if (!ExtractMeshData(accessors, bufferViews, bufferData, primitiveInfo, vertices, indices))
+            {
+                return false;
+            }
+
+            VariableArray<Rendering::MegaGeometry::MeshCluster> clusters;
+            VariableArray<uint32_t> clusterizedIndices;
+            Rendering::MegaGeometry::MeshClusterizer::Clusterize(
+                vertices.data(),
+                static_cast<uint32_t>(vertices.size()),
+                sizeof(Rendering::Mesh3DVertex),
+                indices.data(),
+                static_cast<uint32_t>(indices.size()),
+                clusters,
+                clusterizedIndices);
+
+            if (clusters.empty() || clusterizedIndices.empty())
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "MeshClusterizer returned an empty result");
+                return false;
+            }
+
+            String debugName = primitiveInfo.MeshName;
+            if (debugName.empty())
+            {
+                debugName = String(gltfFilePath.stem().string().c_str());
+            }
+
+            MaterialTextureInfo materialInfo;
+            ParseMaterialTextures(root, gltfDirectory, primitiveInfo.MaterialIndex, materialInfo);
+
+            outStaging.Vertices = std::move(vertices);
+            outStaging.ClusterizedIndices = std::move(clusterizedIndices);
+            outStaging.Clusters = std::move(clusters);
+            outStaging.TotalBounds = CalculateBoundingSphere(outStaging.Vertices);
+            outStaging.DebugName = debugName;
+            outStaging.ResolvedPath = resolvedGltfPath;
+
+            StageStandardTexture(materialInfo.AlbedoPath, debugName + "_Albedo", outStaging.AlbedoTexture);
+            StageStandardTexture(materialInfo.NormalPath, debugName + "_Normal", outStaging.NormalTexture);
+            StageArmTextures(materialInfo.ArmPath,
+                             debugName,
+                             outStaging.AOTexture,
+                             outStaging.RoughnessTexture,
+                             outStaging.MetallicTexture);
+
+            return true;
+        }
+
+        Rendering::ModelHandle FinalizeModelStaging(const ModelStagingData& staging,
+                                                    Rendering::RenderResourceManager& resourceManager)
+        {
+            Rendering::MegaGeometry::MegaMeshMaterial material;
+            material.BaseColor[0] = 1.0f;
+            material.BaseColor[1] = 1.0f;
+            material.BaseColor[2] = 1.0f;
+            material.BaseColor[3] = 1.0f;
+
+            CreateTextureFromStagedData(resourceManager, staging.AlbedoTexture, material.AlbedoTexture);
+            CreateTextureFromStagedData(resourceManager, staging.NormalTexture, material.NormalTexture);
+            CreateTextureFromStagedData(resourceManager, staging.AOTexture, material.AOTexture);
+            CreateTextureFromStagedData(resourceManager, staging.RoughnessTexture, material.RoughnessTexture);
+            CreateTextureFromStagedData(resourceManager, staging.MetallicTexture, material.MetallicTexture);
+
+            Rendering::MegaGeometry::MegaMeshCreateInfo createInfo;
+            createInfo.VertexData = staging.Vertices.data();
+            createInfo.VertexDataSize = staging.Vertices.size() * sizeof(Rendering::Mesh3DVertex);
+            createInfo.VertexCount = static_cast<uint32_t>(staging.Vertices.size());
+            createInfo.VertexStride = sizeof(Rendering::Mesh3DVertex);
+            createInfo.IndexData = staging.ClusterizedIndices.data();
+            createInfo.IndexCount = static_cast<uint32_t>(staging.ClusterizedIndices.size());
+            createInfo.Clusters = staging.Clusters;
+            createInfo.TotalBounds = staging.TotalBounds;
+            createInfo.bBuildLODHierarchy = false;
+            createInfo.Material = material;
+            createInfo.DebugName = staging.DebugName;
+
+            Rendering::MegaGeometry::MegaMeshHandle megaMeshHandle = resourceManager.CreateMegaMesh(createInfo);
+            if (!megaMeshHandle.IsValid())
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to create MegaMesh: %s", staging.DebugName.c_str());
+                return Rendering::ModelHandle::Invalid();
+            }
+
+            Rendering::ModelHandle modelHandle = resourceManager.RegisterModel(
+                megaMeshHandle,
+                staging.DebugName,
+                staging.ResolvedPath);
+            if (!modelHandle.IsValid())
+            {
+                resourceManager.ReleaseMegaMesh(megaMeshHandle);
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to register model: %s", staging.DebugName.c_str());
+                return Rendering::ModelHandle::Invalid();
+            }
+
+            NORVES_LOG_INFO("GLTFAnalyzer", "glTF model loaded: %s", staging.DebugName.c_str());
+            return modelHandle;
         }
     } // anonymous namespace
 
     Rendering::ModelHandle GLTFAnalyzer::LoadModel(const String& gltfPath,
                                                    Rendering::RenderResourceManager& resourceManager)
     {
+        ModelStagingData staging;
+        if (!BuildModelStaging(gltfPath, staging))
+        {
+            return Rendering::ModelHandle::Invalid();
+        }
+
+        return FinalizeModelStaging(staging, resourceManager);
+    }
+
+    uint32_t GLTFAnalyzer::LoadModelAsync(const String& gltfPath,
+                                          Rendering::RenderResourceManager& resourceManager,
+                                          Delegate<void, Rendering::ModelHandle> callback)
+    {
+        if (!resourceManager.IsInitialized())
+        {
+            callback.InvokeIfBound(Rendering::ModelHandle::Invalid());
+            return 0;
+        }
+
         String resolvedGltfPath = ResolveAssetPath(gltfPath);
-        String jsonContent;
-        if (!ReadTextFile(resolvedGltfPath, jsonContent))
         {
-            NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to open glTF file: %s", resolvedGltfPath.c_str());
-            return Rendering::ModelHandle::Invalid();
+            Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+            auto pendingIt = g_PendingModelLoadsByPath.find(resolvedGltfPath);
+            if (pendingIt != g_PendingModelLoadsByPath.end() && pendingIt->second)
+            {
+                if (callback.IsBound())
+                {
+                    pendingIt->second->Callbacks.push_back(std::move(callback));
+                }
+                return pendingIt->second->RequestId;
+            }
         }
 
-        JsonDocument document;
-        String parseError;
-        if (!JsonDocument::TryParse(jsonContent, document, &parseError))
+        auto request = MakeShared<AsyncModelLoadRequest>();
+        request->RequestId = g_NextAsyncModelLoadRequestId.FetchAdd(1, std::memory_order_relaxed);
+        request->Path = gltfPath;
+        request->ResolvedPath = resolvedGltfPath;
+        if (callback.IsBound())
         {
-            NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to parse glTF JSON: %s", parseError.c_str());
-            return Rendering::ModelHandle::Invalid();
+            request->Callbacks.push_back(std::move(callback));
         }
 
-        JsonValue root = document.GetRoot();
-        if (!root.IsObject())
+        request->Task = Thread::Task::Create([request]()
         {
-            NORVES_LOG_ERROR("GLTFAnalyzer", "glTF root is not an object");
-            return Rendering::ModelHandle::Invalid();
+            request->Result.bSuccess = BuildModelStaging(request->ResolvedPath, request->Result.Staging);
+        }, Thread::TaskPriority::NORMAL);
+
+        {
+            Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+            g_PendingModelLoads.push_back(request);
+            g_PendingModelLoadsByPath[resolvedGltfPath] = request;
         }
 
-        std::filesystem::path gltfFilePath(resolvedGltfPath.c_str());
-        std::filesystem::path gltfDirectory = gltfFilePath.parent_path();
+        Thread::JobSystem::Get().SubmitTask(request->Task);
+        NORVES_LOG_INFO("GLTFAnalyzer", "Async glTF model load started: %s (RequestId=%u)",
+                        resolvedGltfPath.c_str(),
+                        static_cast<unsigned int>(request->RequestId));
+        return request->RequestId;
+    }
 
-        VariableArray<AccessorInfo> accessors;
-        VariableArray<BufferViewInfo> bufferViews;
-        VariableArray<BufferInfo> buffers;
-        if (!ParseAccessors(root, accessors) ||
-            !ParseBufferViews(root, bufferViews) ||
-            !ParseBuffers(root, buffers))
+    uint32_t GLTFAnalyzer::FlushCompletedModelLoads(Rendering::RenderResourceManager& resourceManager,
+                                                    uint32_t maxLoadsPerFrame)
+    {
+        VariableArray<TSharedPtr<AsyncModelLoadRequest>> completedRequests;
+
         {
-            return Rendering::ModelHandle::Invalid();
+            Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+            for (auto it = g_PendingModelLoads.begin(); it != g_PendingModelLoads.end();)
+            {
+                auto& request = *it;
+                if (!request || !request->Task || !request->Task->IsCompleted())
+                {
+                    ++it;
+                    continue;
+                }
+
+                g_PendingModelLoadsByPath.erase(request->ResolvedPath);
+                completedRequests.push_back(request);
+                it = g_PendingModelLoads.erase(it);
+
+                if (maxLoadsPerFrame > 0 &&
+                    completedRequests.size() >= static_cast<size_t>(maxLoadsPerFrame))
+                {
+                    break;
+                }
+            }
         }
 
-        VariableArray<VariableArray<uint8_t>> bufferData;
-        if (!LoadBuffers(buffers, gltfDirectory, bufferData))
+        uint32_t processedCount = 0;
+        for (const auto& request : completedRequests)
         {
-            return Rendering::ModelHandle::Invalid();
+            Rendering::ModelHandle modelHandle = Rendering::ModelHandle::Invalid();
+            if (request->Result.bSuccess)
+            {
+                modelHandle = FinalizeModelStaging(request->Result.Staging, resourceManager);
+            }
+            else
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Async glTF staging failed: %s", request->ResolvedPath.c_str());
+            }
+
+            for (const auto& callback : request->Callbacks)
+            {
+                callback.InvokeIfBound(modelHandle);
+            }
+            ++processedCount;
         }
 
-        PrimitiveInfo primitiveInfo;
-        if (!ParsePrimitiveInfo(root, primitiveInfo))
-        {
-            return Rendering::ModelHandle::Invalid();
-        }
+        return processedCount;
+    }
 
-        VariableArray<Rendering::Mesh3DVertex> vertices;
-        VariableArray<uint32_t> indices;
-        if (!ExtractMeshData(accessors, bufferViews, bufferData, primitiveInfo, vertices, indices))
-        {
-            return Rendering::ModelHandle::Invalid();
-        }
-
-        VariableArray<Rendering::MegaGeometry::MeshCluster> clusters;
-        VariableArray<uint32_t> clusterizedIndices;
-        Rendering::MegaGeometry::MeshClusterizer::Clusterize(
-            vertices.data(),
-            static_cast<uint32_t>(vertices.size()),
-            sizeof(Rendering::Mesh3DVertex),
-            indices.data(),
-            static_cast<uint32_t>(indices.size()),
-            clusters,
-            clusterizedIndices);
-
-        if (clusters.empty() || clusterizedIndices.empty())
-        {
-            NORVES_LOG_ERROR("GLTFAnalyzer", "MeshClusterizer returned an empty result");
-            return Rendering::ModelHandle::Invalid();
-        }
-
-        String debugName = primitiveInfo.MeshName;
-        if (debugName.empty())
-        {
-            debugName = String(gltfFilePath.stem().string().c_str());
-        }
-
-        MaterialTextureInfo materialInfo;
-        ParseMaterialTextures(root, gltfDirectory, primitiveInfo.MaterialIndex, materialInfo);
-
-        Rendering::MegaGeometry::MegaMeshMaterial material;
-        material.BaseColor[0] = 1.0f;
-        material.BaseColor[1] = 1.0f;
-        material.BaseColor[2] = 1.0f;
-        material.BaseColor[3] = 1.0f;
-
-        LoadStandardTexture(resourceManager, materialInfo.AlbedoPath, debugName + "_Albedo", material.AlbedoTexture);
-        LoadStandardTexture(resourceManager, materialInfo.NormalPath, debugName + "_Normal", material.NormalTexture);
-        LoadArmTextures(resourceManager,
-                        materialInfo.ArmPath,
-                        debugName,
-                        material.AOTexture,
-                        material.RoughnessTexture,
-                        material.MetallicTexture);
-
-        Rendering::MegaGeometry::MegaMeshCreateInfo createInfo;
-        createInfo.VertexData = vertices.data();
-        createInfo.VertexDataSize = vertices.size() * sizeof(Rendering::Mesh3DVertex);
-        createInfo.VertexCount = static_cast<uint32_t>(vertices.size());
-        createInfo.VertexStride = sizeof(Rendering::Mesh3DVertex);
-        createInfo.IndexData = clusterizedIndices.data();
-        createInfo.IndexCount = static_cast<uint32_t>(clusterizedIndices.size());
-        createInfo.Clusters = clusters;
-        createInfo.TotalBounds = CalculateBoundingSphere(vertices);
-        createInfo.bBuildLODHierarchy = false;
-        createInfo.Material = material;
-        createInfo.DebugName = debugName;
-
-        Rendering::MegaGeometry::MegaMeshHandle megaMeshHandle = resourceManager.CreateMegaMesh(createInfo);
-        if (!megaMeshHandle.IsValid())
-        {
-            NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to create MegaMesh: %s", debugName.c_str());
-            return Rendering::ModelHandle::Invalid();
-        }
-
-        Rendering::ModelHandle modelHandle = resourceManager.RegisterModel(
-            megaMeshHandle,
-            debugName,
-            resolvedGltfPath);
-        if (!modelHandle.IsValid())
-        {
-            resourceManager.ReleaseMegaMesh(megaMeshHandle);
-            NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to register model: %s", debugName.c_str());
-            return Rendering::ModelHandle::Invalid();
-        }
-
-        NORVES_LOG_INFO("GLTFAnalyzer", "glTF model loaded: %s", debugName.c_str());
-        return modelHandle;
+    uint32_t GLTFAnalyzer::GetPendingAsyncModelLoadCount()
+    {
+        Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+        return static_cast<uint32_t>(g_PendingModelLoads.size());
     }
 
 } // namespace NorvesLib::Core::Resource

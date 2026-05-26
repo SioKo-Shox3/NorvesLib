@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RenderWorld.h"
+#include "Resource/GLTFAnalyzer.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
 
@@ -103,6 +104,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        m_ResourceManager.FlushCompletedTextureLoads();
+        Resource::GLTFAnalyzer::FlushCompletedModelLoads(m_ResourceManager);
         m_RenderingCoordinator.BeginFrame();
     }
 

@@ -189,7 +189,7 @@ namespace NorvesLib::Core::Component
         if (outProxy.MaterialCount == 0)
         {
             outProxy.MaterialCount = 1;
-            outProxy.Materials[0] = Rendering::MaterialHandle{1}; // デフォルト
+            outProxy.Materials[0] = Rendering::MaterialHandle::Invalid();
         }
 
         // 描画フラグ
