@@ -732,6 +732,8 @@ namespace NorvesLib::Core::Rendering
         m_VertexLayouts.clear();
         m_TextureCache.clear();
         m_ShaderCache.clear();
+        m_PendingTextureLoads.clear();
+        m_PendingTextureLoadsByPath.clear();
     }
 
     RenderResourceManager::ResourceStats RenderResourceManager::GetResourceStats() const
@@ -1189,12 +1191,28 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        {
+            Thread::ScopedLock lock(m_AsyncLoadMutex);
+            auto pendingIt = m_PendingTextureLoadsByPath.find(resolvedPath);
+            if (pendingIt != m_PendingTextureLoadsByPath.end() && pendingIt->second)
+            {
+                if (callback.IsBound())
+                {
+                    pendingIt->second->Callbacks.push_back(std::move(callback));
+                }
+                return pendingIt->second->RequestId;
+            }
+        }
+
         auto request = Container::MakeShared<AsyncTextureRequest>();
         request->RequestId = m_NextAsyncRequestId.FetchAdd(1, std::memory_order_relaxed);
         request->Path = path;
-        request->Callback = std::move(callback);
         request->Result.Path = path;
         request->Result.ResolvedPath = resolvedPath;
+        if (callback.IsBound())
+        {
+            request->Callbacks.push_back(std::move(callback));
+        }
 
         // ファイルI/O + デコードをワーカースレッドで実行するタスクを作成
         auto taskFunction = [request]()
@@ -1264,6 +1282,7 @@ namespace NorvesLib::Core::Rendering
         {
             Thread::ScopedLock lock(m_AsyncLoadMutex);
             m_PendingTextureLoads.push_back(request);
+            m_PendingTextureLoadsByPath[resolvedPath] = request;
         }
 
         // JobSystemに投入
@@ -1277,23 +1296,31 @@ namespace NorvesLib::Core::Rendering
 
     uint32_t RenderResourceManager::FlushCompletedTextureLoads()
     {
-        Thread::ScopedLock lock(m_AsyncLoadMutex);
-
+        Container::VariableArray<Container::TSharedPtr<AsyncTextureRequest>> completedRequests;
         uint32_t processedCount = 0;
 
-        // 完了したリクエストを処理（後ろから走査して削除）
-        for (auto it = m_PendingTextureLoads.begin(); it != m_PendingTextureLoads.end();)
         {
-            auto &request = *it;
+            Thread::ScopedLock lock(m_AsyncLoadMutex);
 
-            if (!request->Task->IsCompleted())
+            // 完了したリクエストを切り離す
+            for (auto it = m_PendingTextureLoads.begin(); it != m_PendingTextureLoads.end();)
             {
-                ++it;
-                continue;
+                auto &request = *it;
+                if (!request || !request->Task || !request->Task->IsCompleted())
+                {
+                    ++it;
+                    continue;
+                }
+
+                m_PendingTextureLoadsByPath.erase(request->Result.ResolvedPath);
+                completedRequests.push_back(request);
+                it = m_PendingTextureLoads.erase(it);
             }
+        }
 
+        for (auto &request : completedRequests)
+        {
             auto &result = request->Result;
-
             if (result.bSuccess)
             {
                 // メインスレッドでGPUアップロード
@@ -1320,7 +1347,10 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 // コールバック実行
-                request->Callback.InvokeIfBound(handle);
+                for (const auto &callback : request->Callbacks)
+                {
+                    callback.InvokeIfBound(handle);
+                }
             }
             else
             {
@@ -1328,14 +1358,15 @@ namespace NorvesLib::Core::Rendering
                                  result.ResolvedPath.c_str());
 
                 // 失敗コールバック
-                request->Callback.InvokeIfBound(TextureHandle::Invalid());
+                for (const auto &callback : request->Callbacks)
+                {
+                    callback.InvokeIfBound(TextureHandle::Invalid());
+                }
             }
 
             // ピクセルデータ解放（GPUに転送済み）
             result.PixelData.clear();
             result.PixelData.shrink_to_fit();
-
-            it = m_PendingTextureLoads.erase(it);
             ++processedCount;
         }
 

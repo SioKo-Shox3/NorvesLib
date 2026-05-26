@@ -5,6 +5,8 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Text/IdentityPool.h"
+#include "Thread/Mutex.h"
+#include "Thread/Task.h"
 
 namespace NorvesLib::FileStream
 {
@@ -191,6 +193,8 @@ namespace NorvesLib::FileStream
         Core::Container::VariableArray<uint8_t> m_RawData;         ///< 生バイナリデータ
         PackageLoadState m_LoadState = PackageLoadState::Unloaded; ///< 読み込み状態
         uint64_t m_LastAccessFrame = 0;                            ///< 最終アクセスフレーム
+        mutable Thread::Mutex m_LoadMutex;                         ///< 非同期ロード保護
+        Thread::TaskPtr m_LoadTask;                                ///< 進行中のロードタスク
     };
 
     // スマートポインタエイリアス

@@ -64,11 +64,13 @@ namespace Game::GameModes
         NorvesLib::Core::WorldObject *m_pGroundObject = nullptr;
         NorvesLib::Core::WorldObject *m_pLightSphereObject = nullptr;
         NorvesLib::Core::WorldObject *m_pBoulderObject = nullptr;
+        NorvesLib::Core::WorldObject *m_pBoulderPlaceholderObject = nullptr;
 
         // MeshComponent参照（WorldObjectが所有）
         NorvesLib::Core::Component::MeshComponent *m_pSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pGroundMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pLightSphereMeshComponent = nullptr;
+        NorvesLib::Core::Component::MeshComponent *m_pBoulderPlaceholderMeshComponent = nullptr;
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
 
         // LightComponent参照（WorldObjectが所有）
@@ -91,7 +93,10 @@ namespace Game::GameModes
         // glTF Model（Boulder）
         // ========================================
         NorvesLib::Core::Rendering::ModelHandle m_BoulderModelHandle;
+        uint32_t m_BoulderLoadRequestId = 0;
         bool m_bBoulderModelLoaded = false;
+        bool m_bBoulderModelLoadPending = false;
+        bool m_bBoulderModelLoadCompleted = false;
     };
 
 } // namespace Game::GameModes

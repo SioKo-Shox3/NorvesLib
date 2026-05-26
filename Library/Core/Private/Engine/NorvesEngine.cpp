@@ -11,7 +11,7 @@ namespace NorvesLib::Core
     NorvesEngine GEngine;
 
     NorvesEngine::NorvesEngine()
-        : m_isRunning(false), m_version(String("1.0.0"))
+        : m_isRunning(false), m_version(String("1.0.0")), m_FrameCounter(0)
     {
         // コンストラクタで初期化する処理を追加
         LOG_INFO_F("NorvesEngine created. Version: %s", m_version.c_str());
@@ -66,6 +66,7 @@ namespace NorvesLib::Core
         // - 物理演算システムの初期化
 
         m_isRunning = true;
+        m_FrameCounter = 0;
         LOG_INFO("NorvesEngine initialized successfully");
 
         return true;
@@ -88,7 +89,7 @@ namespace NorvesLib::Core
         m_ResourceRegistry.CollectGarbage();
 
         // アセットレジストリの更新（GC、非同期ロード完了チェック等）
-        m_AssetRegistry.Update(deltaTime);
+        m_AssetRegistry.Update(m_FrameCounter++);
 
         // レンダリングフレームの処理
         if (m_RenderingCoordinator.IsInitialized())

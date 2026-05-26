@@ -84,24 +84,26 @@ namespace NorvesLib::Core
 
     FileStream::Package *AssetRegistry::LoadPackage(const Container::String &path)
     {
-        Thread::ScopedLock lock(m_Mutex);
-
         Identity pathId(path);
+        FileStream::Package *package = nullptr;
 
         // 既存パッケージを検索
-        auto it = m_PathToPackage.find(pathId);
-        if (it != m_PathToPackage.end())
         {
-            FileStream::Package *package = it->second;
-            if (package)
+            Thread::ScopedLock lock(m_Mutex);
+            auto it = m_PathToPackage.find(pathId);
+            if (it != m_PathToPackage.end())
             {
-                package->SetLastAccessFrame(m_CurrentFrame);
-                return package;
+                package = it->second;
+                if (package)
+                {
+                    package->SetLastAccessFrame(m_CurrentFrame);
+                    return package;
+                }
             }
+
+            package = CreatePackage(path);
         }
 
-        // 新規作成
-        FileStream::Package *package = CreatePackage(path);
         if (!package)
         {
             NORVES_LOG_ERROR("AssetRegistry", "Failed to create package: %s", path.c_str());
@@ -122,24 +124,26 @@ namespace NorvesLib::Core
 
     FileStream::Package *AssetRegistry::LoadPackageAsync(const Container::String &path)
     {
-        Thread::ScopedLock lock(m_Mutex);
-
         Identity pathId(path);
+        FileStream::Package *package = nullptr;
 
         // 既存パッケージを検索
-        auto it = m_PathToPackage.find(pathId);
-        if (it != m_PathToPackage.end())
         {
-            FileStream::Package *package = it->second;
-            if (package)
+            Thread::ScopedLock lock(m_Mutex);
+            auto it = m_PathToPackage.find(pathId);
+            if (it != m_PathToPackage.end())
             {
-                package->SetLastAccessFrame(m_CurrentFrame);
-                return package;
+                package = it->second;
+                if (package)
+                {
+                    package->SetLastAccessFrame(m_CurrentFrame);
+                    return package;
+                }
             }
+
+            package = CreatePackage(path);
         }
 
-        // 新規作成
-        FileStream::Package *package = CreatePackage(path);
         if (!package)
         {
             return nullptr;

@@ -2,12 +2,42 @@
 #include "FileStream/FileStream.h"
 #include "Object/Reflection.h"
 #include "Object/ObjectUtility.h"
+#include "Thread/JobSystem.h"
 
 namespace NorvesLib::FileStream
 {
     // IMPLEMENT_CLASSマクロが使用するCore型をインポート
     using NorvesLib::Core::ObjectUtility;
     using NorvesLib::Core::VariableContainer;
+
+    namespace
+    {
+        bool ReadPackageFile(const Core::Container::String &path,
+                             Core::Container::VariableArray<uint8_t> &outRawData)
+        {
+            auto fileStream = FileStream::Create(path, FileMode::Read, FileAccess::Read, FileShare::Read);
+            if (!fileStream || !fileStream->IsOpen())
+            {
+                return false;
+            }
+
+            int64_t fileSize = fileStream->GetSize();
+            if (fileSize <= 0)
+            {
+                return false;
+            }
+
+            outRawData.resize(static_cast<size_t>(fileSize));
+            size_t bytesRead = fileStream->Read(outRawData.data(), outRawData.size());
+            if (bytesRead != static_cast<size_t>(fileSize))
+            {
+                outRawData.clear();
+                return false;
+            }
+
+            return true;
+        }
+    }
 
     // ========================================
     // リフレクション実装
@@ -74,6 +104,23 @@ namespace NorvesLib::FileStream
 
     bool Package::Load(const Core::Container::String &path)
     {
+        Thread::TaskPtr pendingTask;
+        {
+            Thread::ScopedLock lock(m_LoadMutex);
+            if (m_LoadTask && !m_LoadTask->IsCompleted() && m_LoadState == PackageLoadState::Loading)
+            {
+                pendingTask = m_LoadTask;
+            }
+        }
+        if (pendingTask)
+        {
+            pendingTask->Wait();
+        }
+        {
+            Thread::ScopedLock lock(m_LoadMutex);
+            m_LoadTask.reset();
+        }
+
         // 既にロード済みの場合は何もしない
         if (m_LoadState == PackageLoadState::Loaded && m_FilePath == path)
         {
@@ -85,46 +132,99 @@ namespace NorvesLib::FileStream
         m_FilePath = path;
         m_PackageName = Core::Identity(path);
 
-        // FileStreamを使用してファイルを読み込み
-        auto fileStream = FileStream::Create(path, FileMode::Read, FileAccess::Read, FileShare::Read);
-        if (!fileStream || !fileStream->IsOpen())
+        Core::Container::VariableArray<uint8_t> rawData;
+        if (!ReadPackageFile(path, rawData))
         {
             m_LoadState = PackageLoadState::Failed;
             return false;
         }
 
-        // ファイルサイズを取得
-        int64_t fileSize = fileStream->GetSize();
-        if (fileSize <= 0)
-        {
-            m_LoadState = PackageLoadState::Failed;
-            return false;
-        }
-
-        // バッファを確保してデータを読み込み
-        m_RawData.resize(static_cast<size_t>(fileSize));
-        size_t bytesRead = fileStream->Read(m_RawData.data(), m_RawData.size());
-
-        if (bytesRead != static_cast<size_t>(fileSize))
-        {
-            m_RawData.clear();
-            m_LoadState = PackageLoadState::Failed;
-            return false;
-        }
-
+        m_RawData = std::move(rawData);
         m_LoadState = PackageLoadState::Loaded;
         return true;
     }
 
     bool Package::LoadAsync(const Core::Container::String &path)
     {
-        // TODO: 非同期読み込み実装
-        // 現時点では同期読み込みにフォールバック
-        return Load(path);
+        {
+            Thread::ScopedLock lock(m_LoadMutex);
+            if (m_LoadTask && !m_LoadTask->IsCompleted() && m_FilePath == path)
+            {
+                return true;
+            }
+        }
+
+        Thread::TaskPtr pendingTask;
+        {
+            Thread::ScopedLock lock(m_LoadMutex);
+            if (m_LoadTask && !m_LoadTask->IsCompleted())
+            {
+                pendingTask = m_LoadTask;
+            }
+        }
+        if (pendingTask)
+        {
+            pendingTask->Wait();
+        }
+
+        {
+            Thread::ScopedLock lock(m_LoadMutex);
+            m_FilePath = path;
+            m_PackageName = Core::Identity(path);
+            m_RawData.clear();
+            m_LoadState = PackageLoadState::Loading;
+        }
+
+        auto task = Thread::Task::Create([this, path]()
+        {
+            Core::Container::VariableArray<uint8_t> rawData;
+            bool bSuccess = ReadPackageFile(path, rawData);
+
+            Thread::ScopedLock lock(m_LoadMutex);
+            if (m_FilePath != path)
+            {
+                return;
+            }
+
+            if (!bSuccess)
+            {
+                m_RawData.clear();
+                m_LoadState = PackageLoadState::Failed;
+                return;
+            }
+
+            m_RawData = std::move(rawData);
+            m_LoadState = PackageLoadState::Loaded;
+        }, Thread::TaskPriority::NORMAL);
+
+        {
+            Thread::ScopedLock lock(m_LoadMutex);
+            m_LoadTask = task;
+        }
+
+        Thread::JobSystem::Get().SubmitTask(task);
+        return true;
     }
 
     void Package::Unload()
     {
+        Thread::TaskPtr pendingTask;
+        {
+            Thread::ScopedLock lock(m_LoadMutex);
+            if (m_LoadTask && !m_LoadTask->IsCompleted())
+            {
+                pendingTask = m_LoadTask;
+            }
+        }
+        if (pendingTask)
+        {
+            pendingTask->Wait();
+        }
+        {
+            Thread::ScopedLock lock(m_LoadMutex);
+            m_LoadTask.reset();
+        }
+
         m_RawData.clear();
         m_RawData.shrink_to_fit();
         m_LoadState = PackageLoadState::Unloaded;

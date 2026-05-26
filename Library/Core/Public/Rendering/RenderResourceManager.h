@@ -350,7 +350,7 @@ namespace NorvesLib::Core::Rendering
             Container::String Path;                                  ///< テクスチャパス
             Thread::TaskPtr Task;                                    ///< ジョブシステムタスク
             AsyncTextureResult Result;                               ///< 読み込み結果
-            NorvesLib::Core::Delegate<void, TextureHandle> Callback; ///< 完了コールバック
+            Container::VariableArray<NorvesLib::Core::Delegate<void, TextureHandle>> Callbacks; ///< 完了コールバック群
         };
 
         /**
@@ -734,6 +734,7 @@ namespace NorvesLib::Core::Rendering
 
         // 非同期テクスチャ読み込みキュー
         Container::VariableArray<Container::TSharedPtr<AsyncTextureRequest>> m_PendingTextureLoads;
+        Container::Map<Container::String, Container::TSharedPtr<AsyncTextureRequest>> m_PendingTextureLoadsByPath;
         mutable Thread::Mutex m_AsyncLoadMutex;
         Thread::Atomic<uint32_t> m_NextAsyncRequestId{1};
 

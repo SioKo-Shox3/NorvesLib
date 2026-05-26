@@ -420,43 +420,46 @@ namespace Game::GameModes
         // 3. glTFモデルのロード
         // ========================================
         {
+            auto& world = GEngine->GetWorld();
             auto& resourceManager = GEngine->GetRenderWorld().GetResourceManager();
-            data.m_BoulderModelHandle = Resource::GLTFAnalyzer::LoadModel(
-                "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
-                resourceManager);
-            data.m_bBoulderModelLoaded = data.m_BoulderModelHandle.IsValid();
 
-            if (!data.m_bBoulderModelLoaded)
+            // 非同期ロード中に表示する簡易プレースホルダ
+            data.m_pBoulderPlaceholderObject = new WorldObject();
+            data.m_pBoulderPlaceholderObject->Initialize();
+            data.m_pBoulderPlaceholderObject->SetPosition(3.0f, 0.5f, 0.0f);
+            data.m_pBoulderPlaceholderObject->SetScale(0.75f, 0.75f, 0.75f);
+
+            data.m_pBoulderPlaceholderMeshComponent = new Component::MeshComponent();
+            data.m_pBoulderPlaceholderMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
+            data.m_pBoulderPlaceholderMeshComponent->SetMaterial(0, data.m_SilverMaterial);
+            data.m_pBoulderPlaceholderMeshComponent->SetCastShadow(true);
+
+            data.m_pBoulderPlaceholderObject->AddComponent(data.m_pBoulderPlaceholderMeshComponent);
+            world.AddObject(data.m_pBoulderPlaceholderObject);
+
+            data.m_bBoulderModelLoaded = false;
+            data.m_bBoulderModelLoadPending = true;
+            data.m_bBoulderModelLoadCompleted = false;
+            data.m_BoulderLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+                "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
+                resourceManager,
+                [&data](ModelHandle handle)
+                {
+                    data.m_BoulderModelHandle = handle;
+                    data.m_bBoulderModelLoaded = handle.IsValid();
+                    data.m_bBoulderModelLoadPending = false;
+                    data.m_bBoulderModelLoadCompleted = true;
+                });
+
+            if (data.m_BoulderLoadRequestId == 0)
             {
-                NORVES_LOG_ERROR("Rendering3DTest", "Boulderモデルのロードに失敗しました");
+                data.m_bBoulderModelLoadPending = false;
+                data.m_bBoulderModelLoadCompleted = true;
+                NORVES_LOG_ERROR("Rendering3DTest", "Boulderモデルの非同期ロード開始に失敗しました");
             }
             else
             {
-                auto megaMeshHandle = resourceManager.GetModelMegaMeshHandle(data.m_BoulderModelHandle);
-                if (!megaMeshHandle.IsValid())
-                {
-                    NORVES_LOG_ERROR("Rendering3DTest", "BoulderモデルからMegaMeshを取得できませんでした");
-                    resourceManager.ReleaseModel(data.m_BoulderModelHandle);
-                    data.m_BoulderModelHandle = ModelHandle::Invalid();
-                    data.m_bBoulderModelLoaded = false;
-                }
-                else
-                {
-                    auto& world = GEngine->GetWorld();
-
-                    data.m_pBoulderObject = new WorldObject();
-                    data.m_pBoulderObject->Initialize();
-                    data.m_pBoulderObject->SetPosition(3.0f, 0.0f, 0.0f);
-
-                    data.m_pBoulderMegaGeometryComponent = new Component::MegaGeometryComponent();
-                    data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
-                    data.m_pBoulderMegaGeometryComponent->SetCastShadow(true);
-
-                    data.m_pBoulderObject->AddComponent(data.m_pBoulderMegaGeometryComponent);
-                    world.AddObject(data.m_pBoulderObject);
-
-                    NORVES_LOG_INFO("Rendering3DTest", "Boulder model loaded and added to World");
-                }
+                NORVES_LOG_INFO("Rendering3DTest", "Boulder model async load started");
             }
         }
     }
@@ -467,10 +470,52 @@ namespace Game::GameModes
 
         data.m_ElapsedTime += deltaTime;
 
-        // 非同期テクスチャ読み込みの完了をフラッシュ（GPUアップロード+マテリアル更新）
+        if (data.m_bBoulderModelLoadCompleted)
         {
-            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
-            resourceManager.FlushCompletedTextureLoads();
+            data.m_bBoulderModelLoadCompleted = false;
+
+            if (!data.m_bBoulderModelLoaded)
+            {
+                NORVES_LOG_ERROR("Rendering3DTest", "Boulderモデルのロードに失敗しました");
+            }
+            else
+            {
+                auto &world = GEngine->GetWorld();
+                auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+                auto megaMeshHandle = resourceManager.GetModelMegaMeshHandle(data.m_BoulderModelHandle);
+                if (!megaMeshHandle.IsValid())
+                {
+                    NORVES_LOG_ERROR("Rendering3DTest", "BoulderモデルからMegaMeshを取得できませんでした");
+                    resourceManager.ReleaseModel(data.m_BoulderModelHandle);
+                    data.m_BoulderModelHandle = ModelHandle::Invalid();
+                    data.m_bBoulderModelLoaded = false;
+                }
+                else
+                {
+                    if (data.m_pBoulderPlaceholderObject)
+                    {
+                        world.RemoveObject(data.m_pBoulderPlaceholderObject);
+                        data.m_pBoulderPlaceholderObject = nullptr;
+                        data.m_pBoulderPlaceholderMeshComponent = nullptr;
+                    }
+
+                    if (!data.m_pBoulderObject)
+                    {
+                        data.m_pBoulderObject = new WorldObject();
+                        data.m_pBoulderObject->Initialize();
+                        data.m_pBoulderObject->SetPosition(3.0f, 0.0f, 0.0f);
+
+                        data.m_pBoulderMegaGeometryComponent = new Component::MegaGeometryComponent();
+                        data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
+                        data.m_pBoulderMegaGeometryComponent->SetCastShadow(true);
+
+                        data.m_pBoulderObject->AddComponent(data.m_pBoulderMegaGeometryComponent);
+                        world.AddObject(data.m_pBoulderObject);
+                    }
+
+                    NORVES_LOG_INFO("Rendering3DTest", "Boulder model loaded and added to World");
+                }
+            }
         }
 
         // 球体をY軸回転させる
@@ -517,13 +562,18 @@ namespace Game::GameModes
         data.m_pGroundObject = nullptr;
         data.m_pLightSphereObject = nullptr;
         data.m_pBoulderObject = nullptr;
+        data.m_pBoulderPlaceholderObject = nullptr;
         data.m_pDirectionalLightObject = nullptr;
         data.m_pSphereMeshComponent = nullptr;
         data.m_pGroundMeshComponent = nullptr;
         data.m_pLightSphereMeshComponent = nullptr;
+        data.m_pBoulderPlaceholderMeshComponent = nullptr;
         data.m_pBoulderMegaGeometryComponent = nullptr;
         data.m_pDirectionalLightComponent = nullptr;
         data.m_pPointLightComponent = nullptr;
+        data.m_BoulderLoadRequestId = 0;
+        data.m_bBoulderModelLoadPending = false;
+        data.m_bBoulderModelLoadCompleted = false;
 
         // 非同期マテリアル更新のクリア
         data.m_PendingMaterialUpdates.clear();
