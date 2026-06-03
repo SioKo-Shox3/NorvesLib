@@ -122,4 +122,5 @@ desktop.ini
 
 # ログファイル
 *.log
-build_output.txt
+build_output*.txt
+/refactoring_issue.md
