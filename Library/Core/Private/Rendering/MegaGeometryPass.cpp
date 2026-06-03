@@ -1,4 +1,5 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
+#include "Rendering/FrameCommand.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderResourceManager.h"
 #include "Rendering/SceneView.h"
@@ -262,16 +263,16 @@ namespace NorvesLib::Core::Rendering
     {
         m_CullPipeline.reset();
         m_CullShader.reset();
-        m_CullDescriptorSet.reset();
-        m_CullUniformBuffer.reset();
         m_IndirectDrawBuffer.reset();
         m_DrawCountBuffer.reset();
+        m_CullUniformBuffers.clear();
+        m_CullDescriptorSets.clear();
 
         m_DrawPipeline.reset();
         m_DrawVertexShader.reset();
         m_DrawFragmentShader.reset();
-        m_DrawDescriptorSet.reset();
-        m_DrawUniformBuffer.reset();
+        m_DrawUniformBuffers.clear();
+        m_DrawDescriptorSets.clear();
 
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
@@ -307,9 +308,9 @@ namespace NorvesLib::Core::Rendering
     {
         m_Instances.clear();
 
-        if (m_SceneView)
+        if (context.SnapshotMegaGeometryProxies)
         {
-            const auto &megaGeometryProxies = m_SceneView->GetMegaGeometryProxies();
+            const auto &megaGeometryProxies = *context.SnapshotMegaGeometryProxies;
             m_Instances.reserve(megaGeometryProxies.size());
 
             for (const auto &proxy : megaGeometryProxies)
@@ -381,7 +382,7 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Execute(ViewRenderContext &context)
     {
-        if (m_Instances.empty() || !m_CullPipeline || !context.CommandList || !context.ResourceManager)
+        if (m_Instances.empty() || !m_CullPipeline || !context.ResourceManager)
         {
             return;
         }
@@ -396,7 +397,28 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        auto *cmdList = context.CommandList;
+        context.EnqueueMegaGeometryPass(this);
+    }
+
+    void MegaGeometryPass::RecordFrameCommand(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList)
+    {
+        if (m_Instances.empty() || !m_CullPipeline || !commandList || !command.ResourceManager || !command.bHasMainCamera)
+        {
+            return;
+        }
+
+        if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !m_DrawPipeline)
+        {
+            return;
+        }
+
+        if (!EnsurePerInstanceBindings(static_cast<uint32_t>(m_Instances.size())))
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "Failed to prepare per-instance bindings");
+            return;
+        }
+
+        auto *cmdList = commandList;
 
         // ========================================
         // Hi-Z 深度ピラミッド生成（オクルージョンカリング用）
@@ -408,12 +430,24 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // 各MegaMeshインスタンスに対してカリング + IndirectDraw
         // ========================================
-        for (const auto &instance : m_Instances)
+        for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
         {
-            const auto *gpuData = context.ResourceManager->GetMegaMeshGPUData(instance.Handle);
+            const auto &instance = m_Instances[instanceIndex];
+            const auto *gpuData = command.ResourceManager->GetMegaMeshGPUData(instance.Handle);
             if (!gpuData || gpuData->ClusterCount == 0)
             {
                 continue;
+            }
+
+            auto cullUniformBuffer = m_CullUniformBuffers[instanceIndex];
+            auto cullDescriptorSet = m_CullDescriptorSets[instanceIndex];
+            auto drawUniformBuffer = m_DrawUniformBuffers[instanceIndex];
+            auto drawDescriptorSet = m_DrawDescriptorSets[instanceIndex];
+
+            if (!cullUniformBuffer || !cullDescriptorSet || !drawUniformBuffer || !drawDescriptorSet)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "Invalid per-instance MegaGeometry binding at slot %zu", instanceIndex);
+                return;
             }
 
             // ----------------------------------------
@@ -427,9 +461,17 @@ namespace NorvesLib::Core::Rendering
                                    RHI::ResourceState::CopyDest,
                                    RHI::ResourceState::UnorderedAccess);
 
-            // IndirectDrawバッファもUAV状態に
+            // IndirectDrawバッファもゼロクリアしてからUAV状態にする
             cmdList->BufferBarrier(m_IndirectDrawBuffer,
                                    RHI::ResourceState::IndirectArgument,
+                                   RHI::ResourceState::CopyDest);
+            cmdList->FillBuffer(m_IndirectDrawBuffer,
+                                0,
+                                static_cast<uint64_t>(m_Settings.MaxDrawCount) *
+                                    sizeof(MegaGeometry::DrawIndexedIndirectCommand),
+                                0);
+            cmdList->BufferBarrier(m_IndirectDrawBuffer,
+                                   RHI::ResourceState::CopyDest,
                                    RHI::ResourceState::UnorderedAccess);
 
             // ----------------------------------------
@@ -440,7 +482,7 @@ namespace NorvesLib::Core::Rendering
             // CameraProxyからView/Projection行列を構築
             using namespace NorvesLib::Math;
 
-            const auto &cam = *context.MainCamera;
+            const auto &cam = command.MainCamera;
             Vector3 camPos(cam.PositionX, cam.PositionY, cam.PositionZ);
             Vector3 forward(cam.ForwardX, cam.ForwardY, cam.ForwardZ);
             Vector3 lookAt = camPos + forward;
@@ -448,11 +490,11 @@ namespace NorvesLib::Core::Rendering
 
             Matrix4x4 viewMat = MatrixUtils::CreateLookAt(camPos, lookAt, upDir);
 
-            float aspectRatio = static_cast<float>(context.RenderWidth) / static_cast<float>(context.RenderHeight);
+            float aspectRatio = static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight);
             float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
             Matrix4x4 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
                 fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
-            projMat = context.Device->AdjustProjectionForClipSpace(projMat);
+            projMat = m_Device->AdjustProjectionForClipSpace(projMat);
 
             MatrixUtils::TransposeToShaderData(viewMat, uniformData.ViewMatrix);
             MatrixUtils::TransposeToShaderData(projMat, uniformData.ProjectionMatrix);
@@ -471,12 +513,12 @@ namespace NorvesLib::Core::Rendering
             uniformData.TotalClusterCount = gpuData->ClusterCount;
             uniformData.MaxDrawCount = m_Settings.MaxDrawCount;
             uniformData.LODBias = m_Settings.LODBias;
-            uniformData.ScreenHeight = static_cast<float>(context.RenderHeight);
+            uniformData.ScreenHeight = static_cast<float>(m_CurrentHeight);
 
             // projectionFactor = screenHeight / (2 * tan(fov/2))
             float halfFovTan = std::tan(fovRadians * 0.5f);
             uniformData.ProjectionFactor = (halfFovTan > 1e-6f)
-                                               ? static_cast<float>(context.RenderHeight) / (2.0f * halfFovTan)
+                                               ? static_cast<float>(m_CurrentHeight) / (2.0f * halfFovTan)
                                                : 1.0f;
 
             // Hi-Zオクルージョンカリングは現状のクラスタ球近似が攻めすぎているため無効化
@@ -486,39 +528,39 @@ namespace NorvesLib::Core::Rendering
             uniformData.bHiZEnabled = 0;
 
             std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
-            m_CullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
+            cullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
 
             // ----------------------------------------
             // 3. カリングディスクリプタセット更新
             // ----------------------------------------
-            m_CullDescriptorSet->BindConstantBuffer(0, m_CullUniformBuffer, 0,
-                                                    static_cast<uint32_t>(sizeof(CullUniformData)));
-            m_CullDescriptorSet->BindStorageBuffer(1, gpuData->ClusterBuffer, 0,
-                                                   static_cast<uint32_t>(gpuData->ClusterCount * sizeof(MegaGeometry::GPUClusterData)));
-            m_CullDescriptorSet->BindStorageBuffer(2, m_IndirectDrawBuffer, 0,
-                                                   static_cast<uint32_t>(m_Settings.MaxDrawCount * sizeof(MegaGeometry::DrawIndexedIndirectCommand)));
-            m_CullDescriptorSet->BindStorageBuffer(3, m_DrawCountBuffer, 0,
-                                                   sizeof(uint32_t));
+            cullDescriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
+                                                  static_cast<uint32_t>(sizeof(CullUniformData)));
+            cullDescriptorSet->BindStorageBuffer(1, gpuData->ClusterBuffer, 0,
+                                                 static_cast<uint32_t>(gpuData->ClusterCount * sizeof(MegaGeometry::GPUClusterData)));
+            cullDescriptorSet->BindStorageBuffer(2, m_IndirectDrawBuffer, 0,
+                                                 static_cast<uint32_t>(m_Settings.MaxDrawCount * sizeof(MegaGeometry::DrawIndexedIndirectCommand)));
+            cullDescriptorSet->BindStorageBuffer(3, m_DrawCountBuffer, 0,
+                                                 sizeof(uint32_t));
 
             // Hi-Zテクスチャバインド（無い場合はデフォルトテクスチャでフォールバック）
             if (m_HiZTexture)
             {
-                m_CullDescriptorSet->BindTexture(4, m_HiZTexture);
-                m_CullDescriptorSet->BindSampler(4, m_HiZNearestSampler);
+                cullDescriptorSet->BindTexture(4, m_HiZTexture);
+                cullDescriptorSet->BindSampler(4, m_HiZNearestSampler);
             }
             else
             {
-                m_CullDescriptorSet->BindTexture(4, m_DefaultBlackTexture);
-                m_CullDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+                cullDescriptorSet->BindTexture(4, m_DefaultBlackTexture);
+                cullDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
             }
 
-            m_CullDescriptorSet->Update();
+            cullDescriptorSet->Update();
 
             // ----------------------------------------
             // 4. カリングコンピュートディスパッチ
             // ----------------------------------------
             cmdList->SetPipeline(m_CullPipeline);
-            cmdList->SetDescriptorSet(m_CullDescriptorSet, 0);
+            cmdList->SetDescriptorSet(cullDescriptorSet, 0);
 
             uint32_t groupCount = (gpuData->ClusterCount + 63) / 64;
             cmdList->Dispatch(groupCount, 1, 1);
@@ -573,7 +615,7 @@ namespace NorvesLib::Core::Rendering
             perObject.PomParams[2] = 0.0f;
             perObject.PomParams[3] = 0.0f;
 
-            m_DrawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
+            drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
 
             // GBufferレンダーパス開始
             cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
@@ -598,8 +640,8 @@ namespace NorvesLib::Core::Rendering
             // パイプラインとデスクリプタ設定
             cmdList->SetPipeline(m_DrawPipeline);
 
-            m_DrawDescriptorSet->BindConstantBuffer(0, m_DrawUniformBuffer, 0,
-                                                    static_cast<uint32_t>(sizeof(PerObjectUBO)));
+            drawDescriptorSet->BindConstantBuffer(0, drawUniformBuffer, 0,
+                                                  static_cast<uint32_t>(sizeof(PerObjectUBO)));
 
             // PBRテクスチャバインド（マテリアルテクスチャまたはデフォルトにフォールバック）
             auto albedo = mat.AlbedoTexture ? mat.AlbedoTexture : m_DefaultWhiteTexture;
@@ -609,21 +651,21 @@ namespace NorvesLib::Core::Rendering
             auto ao = mat.AOTexture ? mat.AOTexture : m_DefaultWhiteTexture;
             auto height = mat.HeightTexture ? mat.HeightTexture : m_DefaultBlackTexture;
 
-            m_DrawDescriptorSet->BindTexture(1, albedo);
-            m_DrawDescriptorSet->BindSampler(1, m_DefaultLinearSampler);
-            m_DrawDescriptorSet->BindTexture(2, normal);
-            m_DrawDescriptorSet->BindSampler(2, m_DefaultLinearSampler);
-            m_DrawDescriptorSet->BindTexture(3, metallic);
-            m_DrawDescriptorSet->BindSampler(3, m_DefaultLinearSampler);
-            m_DrawDescriptorSet->BindTexture(4, roughness);
-            m_DrawDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
-            m_DrawDescriptorSet->BindTexture(5, ao);
-            m_DrawDescriptorSet->BindSampler(5, m_DefaultLinearSampler);
-            m_DrawDescriptorSet->BindTexture(6, height);
-            m_DrawDescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            drawDescriptorSet->BindTexture(1, albedo);
+            drawDescriptorSet->BindSampler(1, m_DefaultLinearSampler);
+            drawDescriptorSet->BindTexture(2, normal);
+            drawDescriptorSet->BindSampler(2, m_DefaultLinearSampler);
+            drawDescriptorSet->BindTexture(3, metallic);
+            drawDescriptorSet->BindSampler(3, m_DefaultLinearSampler);
+            drawDescriptorSet->BindTexture(4, roughness);
+            drawDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+            drawDescriptorSet->BindTexture(5, ao);
+            drawDescriptorSet->BindSampler(5, m_DefaultLinearSampler);
+            drawDescriptorSet->BindTexture(6, height);
+            drawDescriptorSet->BindSampler(6, m_DefaultLinearSampler);
 
-            m_DrawDescriptorSet->Update();
-            cmdList->SetDescriptorSet(m_DrawDescriptorSet, 0);
+            drawDescriptorSet->Update();
+            cmdList->SetDescriptorSet(drawDescriptorSet, 0);
 
             // 頂点/インデックスバッファ設定
             cmdList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
@@ -697,18 +739,6 @@ namespace NorvesLib::Core::Rendering
 
     bool MegaGeometryPass::CreateCullResources(RHI::IDevice *device)
     {
-        // カリングユニフォームバッファ (UBO)
-        RHI::BufferDesc uboDesc(
-            sizeof(CullUniformData),
-            RHI::ResourceUsage::ConstantBuffer,
-            true,
-            "MegaGeometry_CullUBO");
-        m_CullUniformBuffer = device->CreateBuffer(uboDesc);
-        if (!m_CullUniformBuffer)
-        {
-            return false;
-        }
-
         // IndirectDrawコマンドバッファ (SSBO + IndirectBuffer)
         uint64_t indirectSize = static_cast<uint64_t>(m_Settings.MaxDrawCount) * sizeof(MegaGeometry::DrawIndexedIndirectCommand);
         RHI::BufferDesc indirectDesc(
@@ -725,55 +755,11 @@ namespace NorvesLib::Core::Rendering
         // DrawCountバッファ（atomic counter用 SSBO）
         RHI::BufferDesc countDesc(
             sizeof(uint32_t),
-            RHI::ResourceUsage::StorageBuffer,
+            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
             false,
             "MegaGeometry_DrawCount");
         m_DrawCountBuffer = device->CreateBuffer(countDesc);
         if (!m_DrawCountBuffer)
-        {
-            return false;
-        }
-
-        // カリング用ディスクリプタセット作成
-        RHI::DescriptorSetDesc cullDsDesc;
-
-        // binding 0: CullUniforms (UBO)
-        RHI::DescriptorBinding uboBinding;
-        uboBinding.binding = 0;
-        uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        uboBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(uboBinding);
-
-        // binding 1: ClusterBuffer (SSBO, readonly)
-        RHI::DescriptorBinding clusterBinding;
-        clusterBinding.binding = 1;
-        clusterBinding.type = RHI::ResourceBindType::StructuredBuffer;
-        clusterBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(clusterBinding);
-
-        // binding 2: IndirectDrawBuffer (SSBO, writeonly)
-        RHI::DescriptorBinding indirectBinding;
-        indirectBinding.binding = 2;
-        indirectBinding.type = RHI::ResourceBindType::RWBuffer;
-        indirectBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(indirectBinding);
-
-        // binding 3: DrawCountBuffer (SSBO, read-write)
-        RHI::DescriptorBinding countBinding;
-        countBinding.binding = 3;
-        countBinding.type = RHI::ResourceBindType::RWBuffer;
-        countBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(countBinding);
-
-        // binding 4: Hi-Z深度ピラミッド (CombinedImageSampler, readonly)
-        RHI::DescriptorBinding hiZBinding;
-        hiZBinding.binding = 4;
-        hiZBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        hiZBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(hiZBinding);
-
-        m_CullDescriptorSet = device->CreateDescriptorSet(cullDsDesc);
-        if (!m_CullDescriptorSet)
         {
             return false;
         }
@@ -959,24 +945,94 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // PerObject UBO作成
-        constexpr uint32_t PER_OBJECT_UBO_SIZE = 256; // world(64) + view(64) + proj(64) + cam(16) + color(16) + emissive(16) + pom(16)
-        RHI::BufferDesc drawUboDesc(
-            PER_OBJECT_UBO_SIZE,
-            RHI::ResourceUsage::ConstantBuffer,
-            true,
-            "MegaGeometry_DrawUBO");
-        m_DrawUniformBuffer = m_Device->CreateBuffer(drawUboDesc);
-        if (!m_DrawUniformBuffer)
+        return true;
+    }
+
+    bool MegaGeometryPass::EnsurePerInstanceBindings(uint32_t requiredCount)
+    {
+        if (!m_Device)
         {
             return false;
         }
 
-        // 描画用ディスクリプタセット作成
-        m_DrawDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-        if (!m_DrawDescriptorSet)
+        RHI::DescriptorSetDesc cullDsDesc;
+        RHI::DescriptorBinding cullUboBinding;
+        cullUboBinding.binding = 0;
+        cullUboBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        cullUboBinding.stages = RHI::ShaderStage::Compute;
+        cullDsDesc.bindings.push_back(cullUboBinding);
+
+        RHI::DescriptorBinding clusterBinding;
+        clusterBinding.binding = 1;
+        clusterBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        clusterBinding.stages = RHI::ShaderStage::Compute;
+        cullDsDesc.bindings.push_back(clusterBinding);
+
+        RHI::DescriptorBinding indirectBinding;
+        indirectBinding.binding = 2;
+        indirectBinding.type = RHI::ResourceBindType::RWBuffer;
+        indirectBinding.stages = RHI::ShaderStage::Compute;
+        cullDsDesc.bindings.push_back(indirectBinding);
+
+        RHI::DescriptorBinding countBinding;
+        countBinding.binding = 3;
+        countBinding.type = RHI::ResourceBindType::RWBuffer;
+        countBinding.stages = RHI::ShaderStage::Compute;
+        cullDsDesc.bindings.push_back(countBinding);
+
+        RHI::DescriptorBinding hiZBinding;
+        hiZBinding.binding = 4;
+        hiZBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        hiZBinding.stages = RHI::ShaderStage::Compute;
+        cullDsDesc.bindings.push_back(hiZBinding);
+
+        RHI::DescriptorSetDesc drawDsDesc;
+        RHI::DescriptorBinding drawUboBinding;
+        drawUboBinding.binding = 0;
+        drawUboBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        drawUboBinding.stages = RHI::ShaderStage::Vertex;
+        drawDsDesc.bindings.push_back(drawUboBinding);
+
+        for (uint32_t i = 1; i <= 6; ++i)
         {
-            return false;
+            RHI::DescriptorBinding texBinding;
+            texBinding.binding = i;
+            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            texBinding.stages = RHI::ShaderStage::Pixel;
+            drawDsDesc.bindings.push_back(texBinding);
+        }
+
+        while (m_CullUniformBuffers.size() < requiredCount)
+        {
+            RHI::BufferDesc cullUboDesc(
+                sizeof(CullUniformData),
+                RHI::ResourceUsage::ConstantBuffer,
+                true,
+                "MegaGeometry_CullUBO");
+            auto cullUniformBuffer = m_Device->CreateBuffer(cullUboDesc);
+            auto cullDescriptorSet = m_Device->CreateDescriptorSet(cullDsDesc);
+            if (!cullUniformBuffer || !cullDescriptorSet)
+            {
+                return false;
+            }
+
+            constexpr uint32_t PER_OBJECT_UBO_SIZE = 256;
+            RHI::BufferDesc drawUboDesc(
+                PER_OBJECT_UBO_SIZE,
+                RHI::ResourceUsage::ConstantBuffer,
+                true,
+                "MegaGeometry_DrawUBO");
+            auto drawUniformBuffer = m_Device->CreateBuffer(drawUboDesc);
+            auto drawDescriptorSet = m_Device->CreateDescriptorSet(drawDsDesc);
+            if (!drawUniformBuffer || !drawDescriptorSet)
+            {
+                return false;
+            }
+
+            m_CullUniformBuffers.push_back(cullUniformBuffer);
+            m_CullDescriptorSets.push_back(cullDescriptorSet);
+            m_DrawUniformBuffers.push_back(drawUniformBuffer);
+            m_DrawDescriptorSets.push_back(drawDescriptorSet);
         }
 
         return true;

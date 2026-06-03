@@ -109,6 +109,7 @@ namespace NorvesLib::RHI::Vulkan
          * @return フォーマット
          */
         Format GetFormat() const override { return m_format; }
+        bool ConsumePresentationDirty() override;
 
         uint32_t GetCurrentFrameIndex() const override { return m_currentFrame; }
         uint32_t GetMaxFramesInFlight() const override { return MAX_FRAMES_IN_FLIGHT; }
@@ -143,7 +144,8 @@ namespace NorvesLib::RHI::Vulkan
         VariableArray<vk::Semaphore> m_renderFinishedSemaphores;
         VariableArray<vk::Fence> m_inFlightFences;
         uint32_t m_currentFrame = 0;
-        static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+        static constexpr int MAX_FRAMES_IN_FLIGHT = 1;
+        bool m_bPresentationDirty = false;
 
         // 初期化メソッド
         void CreateSurface();

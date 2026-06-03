@@ -7,6 +7,7 @@
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Thread/Atomic.h"
 #include <cstdint>
 
 // 前方宣言
@@ -184,6 +185,9 @@ namespace NorvesLib::Core::Rendering
          * @brief 解像度を変更
          * @param width 新しい幅
          * @param height 新しい高さ
+         *
+         * 初期化前または同サイズの場合は無視します。
+         * Render中に呼ばれた場合はBeginFrame時に安全に適用します。
          */
         void Resize(uint32_t width, uint32_t height);
 
@@ -192,8 +196,8 @@ namespace NorvesLib::Core::Rendering
          */
         void GetResolution(uint32_t &outWidth, uint32_t &outHeight) const
         {
-            outWidth = m_Width;
-            outHeight = m_Height;
+            outWidth = m_PendingWidth.Load(std::memory_order_acquire);
+            outHeight = m_PendingHeight.Load(std::memory_order_acquire);
         }
 
         /**
@@ -315,6 +319,15 @@ namespace NorvesLib::Core::Rendering
 
         // 初期化フラグ
         bool m_bInitialized = false;
+
+        // ========================================
+        // リサイズ保留
+        // ========================================
+
+        // Render中にResizeが呼ばれた場合はBeginFrame冒頭で安全に適用する
+        Thread::Atomic<bool> m_bResizePending{false};
+        Thread::Atomic<uint32_t> m_PendingWidth{0};
+        Thread::Atomic<uint32_t> m_PendingHeight{0};
     };
 
 } // namespace NorvesLib::Core::Rendering

@@ -131,7 +131,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void Screen::BeginFrame()
+    bool Screen::BeginFrame()
     {
         // フレーム開始時にView間共有リソースをクリア
         m_SharedResourceRegistry.BeginFrame();
@@ -143,8 +143,11 @@ namespace NorvesLib::Core::Rendering
             {
                 // SwapChainのリクリエーションが必要な場合がある（ウィンドウリサイズ等）
                 NORVES_LOG_WARNING("Screen", "SwapChain::BeginFrame() failed - may need recreation");
+                return false;
             }
         }
+
+        return true;
     }
 
     void Screen::CompositeViews()

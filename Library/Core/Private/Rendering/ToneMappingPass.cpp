@@ -340,10 +340,6 @@ namespace NorvesLib::Core::Rendering
         m_ToneMappingDescriptorSet->BindSampler(0, m_SceneColorSampler);
         m_ToneMappingDescriptorSet->Update();
 
-        // レンダーパス開始
-        context.CommandList->BeginRenderPass(m_ToneMappingRenderPass, m_ToneMappingFramebuffer);
-
-        // ビューポート・シザー設定
         RHI::Viewport viewport;
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -351,24 +347,19 @@ namespace NorvesLib::Core::Rendering
         viewport.height = static_cast<float>(m_CurrentHeight);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        context.CommandList->SetViewport(viewport);
 
         RHI::ScissorRect scissor;
         scissor.left = 0;
         scissor.top = 0;
         scissor.right = static_cast<int32_t>(m_CurrentWidth);
         scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
-        context.CommandList->SetScissor(scissor);
 
-        // パイプラインとディスクリプタセットをバインド
-        context.CommandList->SetPipeline(m_ToneMappingPipeline);
-        context.CommandList->SetDescriptorSet(m_ToneMappingDescriptorSet, 0);
-
-        // フルスクリーントライアングル描画
-        context.CommandList->Draw(3, 0);
-
-        // レンダーパス終了
-        context.CommandList->EndRenderPass();
+        context.EnqueueFullscreenPass(m_ToneMappingRenderPass,
+                                      m_ToneMappingFramebuffer,
+                                      viewport,
+                                      scissor,
+                                      m_ToneMappingPipeline,
+                                      m_ToneMappingDescriptorSet);
     }
 
 } // namespace NorvesLib::Core::Rendering

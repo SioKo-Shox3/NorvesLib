@@ -144,10 +144,9 @@ namespace NorvesLib::Core::Rendering
                 auto outputTexture = resource->GetOutputTexture(i);
                 if (outputTexture)
                 {
-                    context.CommandList->TextureBarrier(
-                        outputTexture,
-                        RHI::ResourceState::UnorderedAccess,
-                        RHI::ResourceState::ShaderResource);
+                    context.EnqueueTextureBarrier(outputTexture,
+                                                 RHI::ResourceState::UnorderedAccess,
+                                                 RHI::ResourceState::ShaderResource);
                 }
             }
         }

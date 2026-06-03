@@ -2,6 +2,11 @@
 
 #include "RHI/RHITypes.h"
 #include "RHI/DeviceCapabilities.h"
+#include "DrawCommand.h"
+#include "FrameCommand.h"
+#include "SceneRenderer.h"
+#include "SceneProxy.h"
+#include "Container/Containers.h"
 #include <cstdint>
 
 // 前方宣言
@@ -20,7 +25,7 @@ namespace NorvesLib::Core::Rendering
     class SharedResourceRegistry;
     class RenderResourceManager;
     class ShaderManager;
-    struct CameraProxy;
+    class MegaGeometryPass;
 
     /**
      * @brief View描画コンテキスト
@@ -68,6 +73,95 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief メインカメラ情報（ビュー/プロジェクション行列計算用） */
         const CameraProxy *MainCamera = nullptr;
+
+        // ========================================
+        // DrawCommand / Proxyスナップショット（FramePacketから指す、RenderThread読み取り専用）
+        // ========================================
+
+        /** @brief 全DrawCommandスナップショット（GameThreadが生成、パスが読み取る） */
+        const Container::VariableArray<DrawCommand> *SnapshotDrawCommands = nullptr;
+
+        /** @brief 不透明DrawCommandスナップショット */
+        const Container::VariableArray<DrawCommand> *SnapshotOpaqueCommands = nullptr;
+
+        /** @brief 半透明DrawCommandスナップショット */
+        const Container::VariableArray<DrawCommand> *SnapshotTransparentCommands = nullptr;
+
+        /** @brief LightProxyスナップショット（FramePacket::Scene.LightProxiesを指す） */
+        const Container::VariableArray<LightProxy> *SnapshotLightProxies = nullptr;
+
+        /** @brief MegaGeometryProxyスナップショット（FramePacket::Scene.MegaGeometryProxiesを指す） */
+        const Container::VariableArray<MegaGeometryProxy> *SnapshotMegaGeometryProxies = nullptr;
+
+        // ========================================
+        // FrameCommand queue（mixed mode migration 用）
+        // ========================================
+
+        /** @brief FrameCommand を ICommandList に変換する唯一の実行レイヤ */
+        SceneRenderer* Renderer = nullptr;
+
+        /** @brief pass が enqueue した FrameCommand の一時キュー */
+        Container::VariableArray<FrameCommand>* PendingFrameCommands = nullptr;
+
+        void EnqueueFrameCommand(const FrameCommand& command)
+        {
+            if (PendingFrameCommands)
+            {
+                PendingFrameCommands->push_back(command);
+                return;
+            }
+
+            if (Renderer && CommandList)
+            {
+                Container::VariableArray<FrameCommand> immediateCommands;
+                immediateCommands.push_back(command);
+                Renderer->ExecuteFrameCommands(immediateCommands, CommandList);
+            }
+        }
+
+        void EnqueueFullscreenPass(RHI::RenderPassPtr renderPass,
+                                   RHI::FramebufferPtr framebuffer,
+                                   const RHI::Viewport& viewport,
+                                   const RHI::ScissorRect& scissor,
+                                   RHI::PipelinePtr pipeline,
+                                   RHI::DescriptorSetPtr descriptorSet,
+                                   uint32_t descriptorSetSlot = 0,
+                                   uint32_t vertexCount = 3)
+        {
+            EnqueueFrameCommand(FrameCommand::CreateFullscreenPass(renderPass,
+                                                                   framebuffer,
+                                                                   viewport,
+                                                                   scissor,
+                                                                   pipeline,
+                                                                   descriptorSet,
+                                                                   descriptorSetSlot,
+                                                                   vertexCount));
+        }
+
+        void EnqueueTextureBarrier(RHI::TexturePtr texture,
+                                   RHI::ResourceState beforeState,
+                                   RHI::ResourceState afterState,
+                                   uint32_t mipLevel = 0,
+                                   uint32_t arrayIndex = 0,
+                                   uint32_t mipCount = 0,
+                                   uint32_t arrayCount = 0)
+        {
+            EnqueueFrameCommand(FrameCommand::CreateTextureBarrier(texture,
+                                                                  beforeState,
+                                                                  afterState,
+                                                                  mipLevel,
+                                                                  arrayIndex,
+                                                                  mipCount,
+                                                                  arrayCount));
+        }
+
+        void EnqueueMegaGeometryPass(MegaGeometryPass* pass)
+        {
+            EnqueueFrameCommand(FrameCommand::CreateMegaGeometryPass(pass,
+                                                                   ResourceManager,
+                                                                   MainCamera ? *MainCamera : CameraProxy{},
+                                                                   MainCamera != nullptr));
+        }
 
         // ========================================
         // 現在のレンダーパスコンテキスト

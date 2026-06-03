@@ -308,10 +308,6 @@ namespace NorvesLib::Core::Rendering
         m_BloomDescriptorSet->BindSampler(0, m_SceneColorSampler);
         m_BloomDescriptorSet->Update();
 
-        // レンダーパス開始
-        context.CommandList->BeginRenderPass(m_BloomRenderPass, m_BloomFramebuffer);
-
-        // ビューポート・シザー設定
         RHI::Viewport viewport;
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -319,24 +315,19 @@ namespace NorvesLib::Core::Rendering
         viewport.height = static_cast<float>(m_CurrentHeight);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        context.CommandList->SetViewport(viewport);
 
         RHI::ScissorRect scissor;
         scissor.left = 0;
         scissor.top = 0;
         scissor.right = static_cast<int32_t>(m_CurrentWidth);
         scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
-        context.CommandList->SetScissor(scissor);
 
-        // パイプラインとディスクリプタセットをバインド
-        context.CommandList->SetPipeline(m_BloomPipeline);
-        context.CommandList->SetDescriptorSet(m_BloomDescriptorSet, 0);
-
-        // フルスクリーントライアングル描画
-        context.CommandList->Draw(3, 0);
-
-        // レンダーパス終了
-        context.CommandList->EndRenderPass();
+        context.EnqueueFullscreenPass(m_BloomRenderPass,
+                                      m_BloomFramebuffer,
+                                      viewport,
+                                      scissor,
+                                      m_BloomPipeline,
+                                      m_BloomDescriptorSet);
 
         // ブルーム適用済みSceneColorとしてSharedResourceRegistryに上書き登録
         // → 後段のToneMappingPassが "SceneColor" として読み取る

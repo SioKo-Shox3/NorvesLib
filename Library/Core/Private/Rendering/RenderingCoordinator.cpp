@@ -137,6 +137,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create render pass");
             return false;
         }
+        m_SwapChainFormat = swapChain->GetFormat();
 
         // ========================================
         // 5. Framebuffers（スワップチェーンイメージごと）
@@ -338,6 +339,12 @@ namespace NorvesLib::Core::Rendering
             m_Device->WaitIdle();
         }
 
+        // Writing中のパケットを安全にキャンセル（シャットダウン前のGT書き込み中断）
+        m_PacketManager.CancelInflightWrites();
+
+        // Readyな未消費パケットも全て解放（シャットダウン後は消費されないため）
+        m_PacketManager.DrainUnconsumedPackets();
+
         // Viewの破棄
         for (auto &view : m_Views)
         {
@@ -370,6 +377,7 @@ namespace NorvesLib::Core::Rendering
 
         // フレームバッファ・レンダーパスの解放
         m_SwapChainFramebuffers.clear();
+        m_bSwapChainFramebuffersReady = false;
         m_RenderPass.reset();
 
         // コマンドリストの解放
@@ -407,8 +415,17 @@ namespace NorvesLib::Core::Rendering
         m_LastFrameTime = currentTime;
         m_TotalTime += deltaTime;
 
+        // 未消費のReadyパケットを先に解放してスロット枯渇を防ぐ
+        // （RenderThreadが動作していない場合はReadyパケットが蓄積するため）
+        m_PacketManager.DrainUnconsumedPackets();
+
         // 書き込み用パケットを取得
         m_CurrentPacket = m_PacketManager.AcquireForWrite();
+        if (!m_CurrentPacket)
+        {
+            NORVES_LOG_WARNING("RenderingCoordinator",
+                               "BeginFrame: all FramePacket slots occupied, skipping packet acquisition this frame");
+        }
         if (m_CurrentPacket)
         {
             m_CurrentPacket->FrameNumber = m_Stats.FrameNumber;
@@ -422,7 +439,8 @@ namespace NorvesLib::Core::Rendering
             m_Stats.FPS = 1.0f / deltaTime;
         }
 
-        m_Screen.BeginFrame();
+        // Screen.BeginFrame（swapchain acquire）はRenderFrame内に移動。
+        // GT側ではパケット取得のみ行い、swapchainへの触れは行わない。
     }
 
     void RenderingCoordinator::CollectScene()
@@ -459,18 +477,46 @@ namespace NorvesLib::Core::Rendering
 
         m_FrameDrawCommands.clear();
 
-        // 各SceneViewでDrawCommand生成
-        // 注: カリングとバッチングはSceneView::Render()内でViewportごとに行われる
         NORVES_STAT_TIME_START(cmdGen);
 
-        for (auto &view : m_Views)
+        // メインSceneViewのDrawCommandを生成してフレームパケットにスナップショット
+        if (m_MainSceneView)
         {
-            if (SceneView *sceneView = dynamic_cast<SceneView *>(view.get()))
+            // GameThreadでDrawCommandを生成（RenderThreadはスナップショットを参照する）
+            m_MainSceneView->PrepareDrawCommands();
+
+            const auto &viewCommands = m_MainSceneView->GetDrawCommands();
+            if (!viewCommands.empty())
             {
-                // DrawCommandを収集
-                const auto &viewCommands = sceneView->GetDrawCommands();
                 m_FrameDrawCommands.insert(m_FrameDrawCommands.end(),
                                            viewCommands.begin(), viewCommands.end());
+            }
+
+            // フレームパケットにスナップショット
+            if (m_CurrentPacket)
+            {
+                // カメラとProxyをスナップショット
+                m_CurrentPacket->bHasMainCamera = false;
+                if (m_bCameraSet)
+                {
+                    auto mainCamera = m_MainCamera;
+                    if (!mainCamera.IsValid())
+                    {
+                        mainCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
+                        mainCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+                    }
+
+                    m_CurrentPacket->Scene.MainCamera = mainCamera;
+                    m_CurrentPacket->bHasMainCamera = true;
+                }
+                m_CurrentPacket->Scene.MeshProxies = m_MainSceneView->GetMeshProxies();
+                m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
+                m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
+
+                // DrawCommandをスナップショット
+                m_CurrentPacket->DrawCommands = m_MainSceneView->GetDrawCommands();
+                m_CurrentPacket->OpaqueCommands = m_MainSceneView->GetOpaqueCommands();
+                m_CurrentPacket->TransparentCommands = m_MainSceneView->GetTransparentCommands();
             }
         }
 
@@ -479,23 +525,24 @@ namespace NorvesLib::Core::Rendering
         NORVES_STAT_ADD(m_Stats.DrawCalls, static_cast<uint32_t>(m_FrameDrawCommands.size()));
     }
 
-    void RenderingCoordinator::EndFrame()
+    FramePacket* RenderingCoordinator::EndFrame()
     {
         if (!m_bInitialized)
         {
-            return;
+            return nullptr;
         }
 
-        // 書き込み完了をマーク
+        // 書き込み完了をマーク（Writing→Ready）
+        // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
+        FramePacket* finishedPacket = m_CurrentPacket;
         if (m_CurrentPacket)
         {
             m_PacketManager.FinishWrite(m_CurrentPacket);
             m_CurrentPacket = nullptr;
         }
 
-        // Screen経由でコマンドリストをサブミット＆Present
-        m_Screen.EndFrame(m_CommandList);
         m_Stats.FrameNumber++;
+        return finishedPacket;
     }
 
     void RenderingCoordinator::RenderFrame(FramePacket *packet)
@@ -505,13 +552,62 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        if (packet &&
+            !packet->CompareExchangeState(FramePacketState::Queued, FramePacketState::Reading))
+        {
+            packet->CompareExchangeState(FramePacketState::Ready, FramePacketState::Reading);
+        }
+
         auto swapChain = m_Screen.GetSwapChain();
         if (!swapChain)
         {
             return;
         }
 
+        // swapchain acquire（旧BeginFrame経路から移動）
+        // RenderThreadまたはSTインライン経路でここを呼ぶ。
+        if (!m_Screen.BeginFrame())
+        {
+            const uint32_t swapChainWidth = swapChain->GetWidth();
+            const uint32_t swapChainHeight = swapChain->GetHeight();
+
+            m_Width = swapChainWidth;
+            m_Height = swapChainHeight;
+            UpdateRenderResolution(swapChainWidth, swapChainHeight);
+
+            if (!RecreateSwapChainPresentationResources())
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator",
+                                 "Failed to recreate swapchain presentation resources after acquire failure");
+            }
+
+            for (auto &view : m_Views)
+            {
+                if (view)
+                {
+                    view->Resize(swapChainWidth, swapChainHeight);
+                }
+            }
+
+            return;
+        }
+
         uint32_t imageIndex = swapChain->GetCurrentBackBufferIndex();
+
+        if (!m_bSwapChainFramebuffersReady && !RecreateSwapChainPresentationResources())
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Swapchain presentation resources are not ready");
+            return;
+        }
+
+        if (imageIndex >= m_SwapChainFramebuffers.size())
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator",
+                             "Swapchain framebuffer index out of range: image=%u framebufferCount=%zu",
+                             imageIndex,
+                             m_SwapChainFramebuffers.size());
+            return;
+        }
 
         // フレーム別コマンドバッファを選択（ダブルバッファリングでの同期問題を回避）
         m_CommandList->SetFrameIndex(swapChain->GetCurrentFrameIndex());
@@ -528,6 +624,7 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         // ViewRenderContextを構築（パスチェーン対応の新フロー）
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
         ViewRenderContext viewContext;
         viewContext.CommandList = m_CommandList.get();
         viewContext.Device = m_Device.get();
@@ -544,35 +641,45 @@ namespace NorvesLib::Core::Rendering
         viewContext.DeltaTime = static_cast<float>(m_Stats.TotalFrameTimeMs * 0.001);
         viewContext.TotalTime = m_TotalTime;
         viewContext.ResourceManager = m_ResourceManager;
-        viewContext.MainCamera = m_bCameraSet ? &m_MainCamera : nullptr;
         viewContext.ShaderMgr = &m_ShaderManager;
         viewContext.Capabilities = &m_Device->GetCapabilities();
+        viewContext.Renderer = &m_SceneRenderer;
+        viewContext.PendingFrameCommands = &pendingFrameCommands;
+
+        // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
+        if (packet)
+        {
+            viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;
+            viewContext.SnapshotDrawCommands = &packet->DrawCommands;
+            viewContext.SnapshotOpaqueCommands = &packet->OpaqueCommands;
+            viewContext.SnapshotTransparentCommands = &packet->TransparentCommands;
+            viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
+            viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
+        }
+        else
+        {
+            viewContext.MainCamera = m_bCameraSet ? &m_MainCamera : nullptr;
+            if (m_MainSceneView)
+            {
+                m_MainSceneView->PrepareDrawCommands();
+                viewContext.SnapshotDrawCommands = &m_MainSceneView->GetDrawCommands();
+                viewContext.SnapshotOpaqueCommands = &m_MainSceneView->GetOpaqueCommands();
+                viewContext.SnapshotTransparentCommands = &m_MainSceneView->GetTransparentCommands();
+                viewContext.SnapshotLightProxies = &m_MainSceneView->GetLightProxies();
+                viewContext.SnapshotMegaGeometryProxies = &m_MainSceneView->GetMegaGeometryProxies();
+            }
+        }
 
         // パスチェーンが設定されたViewはパスベース描画を実行
-        // パス未設定のViewはレガシーフローにフォールバック
         if (m_MainSceneView && m_MainSceneView->GetPassCount() > 0)
         {
             // パスベース描画（GBuffer→Lighting→PostProcess or Forward→PostProcess）
             m_MainSceneView->Render(viewContext);
         }
-        else if (m_MainSceneView)
+        else if (viewContext.SnapshotDrawCommands)
         {
-            // レガシーフロー: Cull → Batch → GenerateCommands
-            m_MainSceneView->PrepareDrawCommands();
-
-            const auto &drawCommands = m_MainSceneView->GetDrawCommands();
-            if (!drawCommands.empty())
-            {
-                // SceneRenderer経由でDrawCommandを実行
-                m_SceneRenderer.ExecuteDrawCommands(drawCommands, m_CommandList.get());
-            }
+            ExecuteDrawCommands(*viewContext.SnapshotDrawCommands);
         }
-
-        // ========================================
-        // スワップチェーンレンダーパス開始（直接描画用）
-        // Deferredパスは上で既に完了、ここから先はスワップチェーンに直接描画
-        // ========================================
-        m_CommandList->BeginRenderPass(m_RenderPass, m_SwapChainFramebuffers[imageIndex]);
 
         // ビューポート設定
         RHI::Viewport viewport;
@@ -590,34 +697,39 @@ namespace NorvesLib::Core::Rendering
         scissor.top = 0;
         scissor.right = static_cast<int32_t>(swapChain->GetWidth());
         scissor.bottom = static_cast<int32_t>(swapChain->GetHeight());
-        m_CommandList->SetScissor(scissor);
+
+        if (!pendingFrameCommands.empty())
+        {
+            m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
+            pendingFrameCommands.clear();
+        }
 
         // ========================================
         // Blit合成: ToneMappedColor → スワップチェーン
         // ========================================
+        auto presentationTex = viewContext.SharedResources->GetTexturePtr("PresentationColor");
+        if (!presentationTex)
         {
-            // ViewRenderContextにカメラとリソースマネージャーを設定
-            // （Deferredパスチェーンで使用済みだが、ここで確認）
-            auto presentationTex = viewContext.SharedResources->GetTexturePtr("PresentationColor");
-            if (!presentationTex)
-            {
-                presentationTex = viewContext.SharedResources->GetTexturePtr("ToneMappedColor");
-            }
-
-            if (presentationTex && m_BlitPipeline && m_BlitDescriptorSet)
-            {
-                m_BlitDescriptorSet->BindTexture(0, presentationTex);
-                m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
-                m_BlitDescriptorSet->Update();
-
-                m_CommandList->SetPipeline(m_BlitPipeline);
-                m_CommandList->SetDescriptorSet(m_BlitDescriptorSet, 0);
-                m_CommandList->Draw(3, 0); // フルスクリーン三角形
-            }
+            presentationTex = viewContext.SharedResources->GetTexturePtr("ToneMappedColor");
         }
 
-        // レンダーパス終了
-        m_CommandList->EndRenderPass();
+        const bool bCanBlitToSwapChain = presentationTex && m_BlitPipeline && m_BlitDescriptorSet;
+        if (bCanBlitToSwapChain)
+        {
+            m_BlitDescriptorSet->BindTexture(0, presentationTex);
+            m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
+            m_BlitDescriptorSet->Update();
+        }
+
+        pendingFrameCommands.push_back(
+            FrameCommand::CreateFullscreenPass(m_RenderPass,
+                                               m_SwapChainFramebuffers[imageIndex],
+                                               viewport,
+                                               scissor,
+                                               bCanBlitToSwapChain ? m_BlitPipeline : nullptr,
+                                               bCanBlitToSwapChain ? m_BlitDescriptorSet : nullptr));
+        m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
+        pendingFrameCommands.clear();
 
         // コマンド録画終了
         m_CommandList->End();
@@ -629,6 +741,37 @@ namespace NorvesLib::Core::Rendering
         const auto &rendererStats = m_SceneRenderer.GetStats();
         m_Stats.DrawCalls = rendererStats.DrawCallCount;
         m_Stats.TrianglesRendered = rendererStats.TriangleCount;
+
+        // コマンドリストをサブミット＆Present（旧EndFrame経路から移動）
+        m_Screen.EndFrame(m_CommandList);
+
+        const bool bPresentationDirty = swapChain->ConsumePresentationDirty();
+        const uint32_t presentWidth = swapChain->GetWidth();
+        const uint32_t presentHeight = swapChain->GetHeight();
+        const uint32_t presentBackBufferCount = swapChain->GetBufferCount();
+        const RHI::Format presentFormat = swapChain->GetFormat();
+        if (bPresentationDirty ||
+            presentWidth != m_Width ||
+            presentHeight != m_Height ||
+            presentFormat != m_SwapChainFormat ||
+            presentBackBufferCount != m_SwapChainFramebuffers.size())
+        {
+            m_Width = presentWidth;
+            m_Height = presentHeight;
+            m_SwapChainFormat = presentFormat;
+            m_bSwapChainFramebuffersReady = false;
+            m_SwapChainFramebuffers.clear();
+            m_DepthTexture.reset();
+
+            UpdateRenderResolution(presentWidth, presentHeight);
+            for (auto &view : m_Views)
+            {
+                if (view)
+                {
+                    view->Resize(presentWidth, presentHeight);
+                }
+            }
+        }
     }
 
     void RenderingCoordinator::ExecuteDrawCommands(const Container::VariableArray<DrawCommand> &commands)
@@ -652,6 +795,14 @@ namespace NorvesLib::Core::Rendering
     {
         // Screen::EndFrame()内でSwapChain::EndFrame(commandList)がsubmit+presentを行うため、
         // この関数は将来的なマルチスレッドレンダリング用に予約
+    }
+
+    void RenderingCoordinator::ReleasePacket(FramePacket *packet)
+    {
+        if (packet)
+        {
+            m_PacketManager.FinishRead(packet);
+        }
     }
 
     Container::TSharedPtr<SceneView> RenderingCoordinator::CreateSceneView(const SceneViewSettings &settings)
@@ -711,6 +862,13 @@ namespace NorvesLib::Core::Rendering
             m_Device->WaitIdle();
         }
 
+        // リサイズ前にWriting中のパケットをキャンセル
+        // （新しいフレームバッファが確保されるまでGTの書き込みを止める）
+        m_PacketManager.CancelInflightWrites();
+
+        // Readyな未消費パケットも解放（リサイズ後はフレームデータが無効になるため）
+        m_PacketManager.DrainUnconsumedPackets();
+
         m_Width = width;
         m_Height = height;
         UpdateRenderResolution(width, height);
@@ -719,9 +877,10 @@ namespace NorvesLib::Core::Rendering
         m_Screen.Resize(width, height);
 
         // フレームバッファの再作成（デプスバッファも含む）
-        m_SwapChainFramebuffers.clear();
-        m_DepthTexture.reset();
-        CreateSwapChainFramebuffers();
+        if (!RecreateSwapChainPresentationResources())
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate swapchain presentation resources during resize");
+        }
 
         // 各Viewのリサイズ
         for (auto &view : m_Views)
@@ -758,6 +917,10 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderingCoordinator::CreateSwapChainFramebuffers()
     {
+        m_bSwapChainFramebuffersReady = false;
+        m_SwapChainFramebuffers.clear();
+        m_DepthTexture.reset();
+
         auto swapChain = m_Screen.GetSwapChain();
         if (!swapChain || !m_RenderPass)
         {
@@ -798,7 +961,123 @@ namespace NorvesLib::Core::Rendering
         }
 
         LOG_INFO("Created %u swapchain framebuffers with depth buffer", imageCount);
+        m_bSwapChainFramebuffersReady = true;
         return true;
+    }
+
+    bool RenderingCoordinator::RecreateSwapChainPresentationResources()
+    {
+        auto swapChain = m_Screen.GetSwapChain();
+        if (!swapChain || !m_Device)
+        {
+            return false;
+        }
+
+        RHI::AttachmentDesc colorAttachment;
+        colorAttachment.format = swapChain->GetFormat();
+        colorAttachment.isDepthStencil = false;
+        colorAttachment.clear = true;
+        colorAttachment.clearColor[0] = 0.392f;
+        colorAttachment.clearColor[1] = 0.584f;
+        colorAttachment.clearColor[2] = 0.929f;
+        colorAttachment.clearColor[3] = 1.0f;
+        colorAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
+        colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        colorAttachment.initialState = RHI::ResourceState::Undefined;
+        colorAttachment.finalState = RHI::ResourceState::Present;
+
+        RHI::AttachmentDesc depthAttachment;
+        depthAttachment.format = RHI::Format::D32_FLOAT;
+        depthAttachment.isDepthStencil = true;
+        depthAttachment.clear = true;
+        depthAttachment.clearDepth = 1.0f;
+        depthAttachment.clearStencil = 0;
+        depthAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
+        depthAttachment.storeOp = RHI::AttachmentStoreOp::DontCare;
+        depthAttachment.initialState = RHI::ResourceState::Undefined;
+        depthAttachment.finalState = RHI::ResourceState::DepthWrite;
+
+        RHI::RenderPassDesc renderPassDesc;
+        renderPassDesc.colorAttachments.push_back(colorAttachment);
+        renderPassDesc.depthStencilAttachment = depthAttachment;
+        renderPassDesc.hasDepthStencil = true;
+
+        m_RenderPass = m_Device->CreateRenderPass(renderPassDesc);
+        if (!m_RenderPass)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate swapchain render pass");
+            return false;
+        }
+        m_SwapChainFormat = swapChain->GetFormat();
+
+        if (m_BlitVertexShader && m_BlitFragmentShader && m_BlitDescriptorSet)
+        {
+            RHI::DescriptorSetDesc blitDsDesc;
+            RHI::DescriptorBinding texBinding;
+            texBinding.binding = 0;
+            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            texBinding.stages = RHI::ShaderStage::Pixel;
+            blitDsDesc.bindings.push_back(texBinding);
+
+            RHI::GraphicsPipelineDesc blitPipelineDesc;
+            blitPipelineDesc.vertexShader = m_BlitVertexShader;
+            blitPipelineDesc.pixelShader = m_BlitFragmentShader;
+            blitPipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+            blitPipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+            blitPipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+            blitPipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+            blitPipelineDesc.rasterState.lineWidth = 1.0f;
+            blitPipelineDesc.depthStencilState.depthTestEnable = false;
+            blitPipelineDesc.depthStencilState.depthWriteEnable = false;
+
+            RHI::BlendAttachmentDesc blitBlend;
+            blitBlend.blendEnable = false;
+            blitBlend.colorWriteMask = RHI::ColorWriteMask::All;
+            blitPipelineDesc.blendState.attachments.push_back(blitBlend);
+            blitPipelineDesc.renderPass = m_RenderPass;
+            blitPipelineDesc.descriptorSetLayouts.push_back(blitDsDesc);
+
+            m_BlitPipeline = m_Device->CreateGraphicsPipeline(blitPipelineDesc);
+            if (!m_BlitPipeline)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate blit pipeline");
+                return false;
+            }
+        }
+
+        if (m_TriangleVertexShader && m_TriangleFragmentShader)
+        {
+            RHI::GraphicsPipelineDesc triPipelineDesc;
+            triPipelineDesc.vertexShader = m_TriangleVertexShader;
+            triPipelineDesc.pixelShader = m_TriangleFragmentShader;
+            triPipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+            triPipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+            triPipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+            triPipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+            triPipelineDesc.rasterState.lineWidth = 1.0f;
+            triPipelineDesc.depthStencilState.depthTestEnable = false;
+            triPipelineDesc.depthStencilState.depthWriteEnable = false;
+
+            RHI::BlendAttachmentDesc triBlend;
+            triBlend.blendEnable = false;
+            triBlend.colorWriteMask = RHI::ColorWriteMask::All;
+            triPipelineDesc.blendState.attachments.push_back(triBlend);
+            triPipelineDesc.renderPass = m_RenderPass;
+
+            m_TrianglePipeline = m_Device->CreateGraphicsPipeline(triPipelineDesc);
+            if (!m_TrianglePipeline)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate triangle pipeline");
+                return false;
+            }
+        }
+
+        const bool bCreated = CreateSwapChainFramebuffers();
+        if (bCreated)
+        {
+            swapChain->ConsumePresentationDirty();
+        }
+        return bCreated;
     }
 
 } // namespace NorvesLib::Core::Rendering

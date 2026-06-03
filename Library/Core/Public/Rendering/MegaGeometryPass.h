@@ -11,6 +11,7 @@ namespace NorvesLib::Core::Rendering
     class SceneView;
     class SceneRenderer;
     class RenderResourceManager;
+    struct MegaGeometryPassCommand;
 
     /**
      * @brief MegaGeometryパス設定
@@ -57,6 +58,7 @@ namespace NorvesLib::Core::Rendering
         void Shutdown() override;
         void Setup(ViewRenderContext &context) override;
         void Execute(ViewRenderContext &context) override;
+        void RecordFrameCommand(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList);
 
         // ========================================
         // SceneView連携
@@ -124,6 +126,11 @@ namespace NorvesLib::Core::Rendering
         bool CreateDrawPipeline(ViewRenderContext &context);
 
         /**
+         * @brief インスタンスごとに安定した UBO / DescriptorSet を確保
+         */
+        bool EnsurePerInstanceBindings(uint32_t requiredCount);
+
+        /**
          * @brief 視錐台平面を行列から抽出
          */
         static void ExtractFrustumPlanes(const float *viewProj, float planes[6][4]);
@@ -151,12 +158,12 @@ namespace NorvesLib::Core::Rendering
         // カリングコンピュートパイプライン
         RHI::PipelinePtr m_CullPipeline;
         RHI::ShaderPtr m_CullShader;
-        RHI::DescriptorSetPtr m_CullDescriptorSet;
 
         // カリング用GPUバッファ
-        RHI::BufferPtr m_CullUniformBuffer;  // CullUniformData UBO
         RHI::BufferPtr m_IndirectDrawBuffer; // DrawIndexedIndirectCommand[]
         RHI::BufferPtr m_DrawCountBuffer;    // uint32_t visibleClusterCount
+        Container::VariableArray<RHI::BufferPtr> m_CullUniformBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_CullDescriptorSets;
 
         // GBuffer描画用グラフィックスパイプライン
         RHI::PipelinePtr m_DrawPipeline;
@@ -175,8 +182,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DepthTexture;
 
         // PerObject UBO用ディスクリプタセット
-        RHI::DescriptorSetPtr m_DrawDescriptorSet;
-        RHI::BufferPtr m_DrawUniformBuffer;
+        Container::VariableArray<RHI::BufferPtr> m_DrawUniformBuffers;
+        Container::VariableArray<RHI::DescriptorSetPtr> m_DrawDescriptorSets;
 
         // デフォルトPBRテクスチャ（マテリアル未設定時のフォールバック）
         RHI::TexturePtr m_DefaultWhiteTexture;      // 1x1 白 — Albedo/AO/Roughnessデフォルト

@@ -3,6 +3,7 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Rendering/DrawCommand.h"
+#include "Rendering/FrameCommand.h"
 #include "RHI/RHITypes.h"
 #include <cstdint>
 
@@ -130,16 +131,12 @@ namespace NorvesLib::Core::Rendering
                                  RHI::ICommandList *commandList);
 
         /**
-         * @brief パイプラインのみの単純な描画を実行します
+         * @brief FrameCommandを実行します
+         * @param commands FrameCommand配列
          * @param commandList コマンドリスト
-         * @param pipeline パイプライン
-         * @param vertexCount 頂点数
-         *
-         * 頂点バッファなしのシェーダー内蔵描画（テスト用）。
          */
-        void DrawDirect(RHI::ICommandList *commandList,
-                        RHI::PipelinePtr pipeline,
-                        uint32_t vertexCount);
+        void ExecuteFrameCommands(const Container::VariableArray<FrameCommand> &commands,
+                                  RHI::ICommandList *commandList);
 
         /**
          * @brief 単一DrawCommandのメッシュ描画をコマンドリストに記録します
@@ -182,6 +179,13 @@ namespace NorvesLib::Core::Rendering
          * @param commandList コマンドリスト
          */
         void ExecuteDrawCommand(const DrawCommand &command, RHI::ICommandList *commandList);
+
+        /**
+         * @brief 単一のFrameCommandを実行します
+         * @param command FrameCommand
+         * @param commandList コマンドリスト
+         */
+        void ExecuteFrameCommand(const FrameCommand &command, RHI::ICommandList *commandList);
 
         /**
          * @brief バッチされたDrawCommandを実行します

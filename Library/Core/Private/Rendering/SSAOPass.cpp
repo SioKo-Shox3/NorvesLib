@@ -613,9 +613,6 @@ namespace NorvesLib::Core::Rendering
         m_SSAODescriptorSet->BindSampler(1, m_LinearClampSampler);
         m_SSAODescriptorSet->Update();
 
-        // SSAOレンダーパス実行
-        context.CommandList->BeginRenderPass(m_SSAORenderPass, m_SSAOFramebuffer);
-
         RHI::Viewport viewport;
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -623,19 +620,18 @@ namespace NorvesLib::Core::Rendering
         viewport.height = static_cast<float>(m_CurrentHeight);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        context.CommandList->SetViewport(viewport);
 
         RHI::ScissorRect scissor;
         scissor.left = 0;
         scissor.top = 0;
         scissor.right = static_cast<int32_t>(m_CurrentWidth);
         scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
-        context.CommandList->SetScissor(scissor);
-
-        context.CommandList->SetPipeline(m_SSAOPipeline);
-        context.CommandList->SetDescriptorSet(m_SSAODescriptorSet, 0);
-        context.CommandList->Draw(3, 0);
-        context.CommandList->EndRenderPass();
+        context.EnqueueFullscreenPass(m_SSAORenderPass,
+                                      m_SSAOFramebuffer,
+                                      viewport,
+                                      scissor,
+                                      m_SSAOPipeline,
+                                      m_SSAODescriptorSet);
 
         // ========================================
         // パス2: ブラー
@@ -655,13 +651,12 @@ namespace NorvesLib::Core::Rendering
         m_BlurDescriptorSet->BindSampler(1, m_LinearClampSampler);
         m_BlurDescriptorSet->Update();
 
-        context.CommandList->BeginRenderPass(m_BlurRenderPass, m_BlurFramebuffer);
-        context.CommandList->SetViewport(viewport);
-        context.CommandList->SetScissor(scissor);
-        context.CommandList->SetPipeline(m_BlurPipeline);
-        context.CommandList->SetDescriptorSet(m_BlurDescriptorSet, 0);
-        context.CommandList->Draw(3, 0);
-        context.CommandList->EndRenderPass();
+        context.EnqueueFullscreenPass(m_BlurRenderPass,
+                                      m_BlurFramebuffer,
+                                      viewport,
+                                      scissor,
+                                      m_BlurPipeline,
+                                      m_BlurDescriptorSet);
 
         // 結果をSharedResourceRegistryに登録
         if (context.SharedResources)

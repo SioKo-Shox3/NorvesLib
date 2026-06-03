@@ -2,6 +2,7 @@
 
 #include "RenderTypes.h"
 #include "SceneProxy.h"
+#include "DrawCommand.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
 #include <cstdint>
@@ -14,10 +15,12 @@ namespace NorvesLib::Core::Rendering
      */
     enum class FramePacketState : uint8_t
     {
-        Empty,   // 空（書き込み可能）
-        Writing, // 書き込み中
-        Ready,   // 読み取り可能
-        Reading  // 読み取り中
+        Empty,     // 空（書き込み可能）
+        Writing,   // 書き込み中
+        Ready,     // 読み取り可能
+        Queued,    // RenderThread待機中
+        Reading,   // 読み取り中
+        Recycling  // Clear中の一時状態
     };
 
     // ========================================
@@ -45,7 +48,21 @@ namespace NorvesLib::Core::Rendering
         // シーンデータ
         // ========================================
 
+        bool bHasMainCamera = false;
         SceneProxy Scene;
+
+        // ========================================
+        // DrawCommandスナップショット（GameThreadで生成、RenderThreadで読み取り専用）
+        // ========================================
+
+        /** @brief 全DrawCommandのスナップショット */
+        Container::VariableArray<DrawCommand> DrawCommands;
+
+        /** @brief 不透明DrawCommandのスナップショット */
+        Container::VariableArray<DrawCommand> OpaqueCommands;
+
+        /** @brief 半透明DrawCommandのスナップショット */
+        Container::VariableArray<DrawCommand> TransparentCommands;
 
         // ========================================
         // 状態管理
@@ -65,7 +82,11 @@ namespace NorvesLib::Core::Rendering
             FrameNumber = 0;
             DeltaTime = 0.0f;
             TotalTime = 0.0;
+            bHasMainCamera = false;
             Scene.Clear();
+            DrawCommands.clear();
+            OpaqueCommands.clear();
+            TransparentCommands.clear();
         }
 
         /**
@@ -163,25 +184,20 @@ namespace NorvesLib::Core::Rendering
         {
             uint32_t writeIdx = m_WriteIndex.Load(std::memory_order_acquire);
 
-            // 現在のバッファが書き込み可能かチェック
-            if (m_Packets[writeIdx].CompareExchangeState(FramePacketState::Empty,
-                                                         FramePacketState::Writing))
+            // 全スロットをスキャン（writeIdxから順に）して最初の空きを取得
+            for (uint32_t attempt = 0; attempt < FRAME_PACKET_BUFFER_COUNT; ++attempt)
             {
-                m_Packets[writeIdx].FrameNumber = m_CurrentFrameNumber.FetchAdd(1, std::memory_order_relaxed);
-                return &m_Packets[writeIdx];
-            }
-
-            // 次のバッファを試す
-            uint32_t nextIdx = (writeIdx + 1) % FRAME_PACKET_BUFFER_COUNT;
-            if (m_Packets[nextIdx].CompareExchangeState(FramePacketState::Empty,
+                uint32_t idx = (writeIdx + attempt) % FRAME_PACKET_BUFFER_COUNT;
+                if (m_Packets[idx].CompareExchangeState(FramePacketState::Empty,
                                                         FramePacketState::Writing))
-            {
-                m_WriteIndex.Store(nextIdx, std::memory_order_release);
-                m_Packets[nextIdx].FrameNumber = m_CurrentFrameNumber.FetchAdd(1, std::memory_order_relaxed);
-                return &m_Packets[nextIdx];
+                {
+                    m_WriteIndex.Store(idx, std::memory_order_release);
+                    m_Packets[idx].FrameNumber = m_CurrentFrameNumber.FetchAdd(1, std::memory_order_relaxed);
+                    return &m_Packets[idx];
+                }
             }
 
-            // バッファが全て使用中
+            // 全バッファが使用中
             return nullptr;
         }
 
@@ -254,6 +270,16 @@ namespace NorvesLib::Core::Rendering
                 {
                     return latestReady;
                 }
+
+                // CASレースに負けた場合、Readyな任意のパケットを取得（フレーム番号順不問）
+                for (uint32_t i = 0; i < FRAME_PACKET_BUFFER_COUNT; ++i)
+                {
+                    if (m_Packets[i].CompareExchangeState(FramePacketState::Ready,
+                                                          FramePacketState::Reading))
+                    {
+                        return &m_Packets[i];
+                    }
+                }
             }
 
             return nullptr;
@@ -273,6 +299,116 @@ namespace NorvesLib::Core::Rendering
                 packet->Clear();
                 packet->SetState(FramePacketState::Empty);
             }
+        }
+
+        // ========================================
+        // シャットダウン・リサイズ補助
+        // ========================================
+
+        /**
+         * @brief Writing状態のパケットをEmptyに戻す
+         *
+         * シャットダウンやリサイズ前にGameThread側の書き込みを安全に中断する。
+         * Reading中のパケットはRenderThread完了を待つ必要があるため変更しない。
+         */
+        void CancelInflightWrites()
+        {
+            for (uint32_t i = 0; i < FRAME_PACKET_BUFFER_COUNT; ++i)
+            {
+                // Writing→Recyclingへ遷移して排他的に回収する
+                if (m_Packets[i].CompareExchangeState(FramePacketState::Writing,
+                                                      FramePacketState::Recycling))
+                {
+                    m_Packets[i].Clear();
+                    m_Packets[i].SetState(FramePacketState::Empty);
+                }
+            }
+        }
+
+        /**
+         * @brief Ready状態の未消費パケットをEmptyに戻す
+         *
+         * RenderThreadが動作していない（シングルスレッドモード）場合や
+         * AcquireForWriteが失敗する前にGameThread側から呼び出し、
+         * 蓄積したReadyパケットを再利用可能にします。
+         *
+         * 安全性: Ready→Writing（一時確保）→Clear→Emptyの順で遷移するため、
+         * 並行するAcquireForWriteがClear前に同一スロットを取得しません。
+         *
+         * @return 解放したパケット数
+         */
+        uint32_t DrainUnconsumedPackets()
+        {
+            uint32_t count = 0;
+            for (uint32_t i = 0; i < FRAME_PACKET_BUFFER_COUNT; ++i)
+            {
+                // Ready→Writingに遷移して一時確保（AcquireForWriteとの競合防止）
+                if (m_Packets[i].CompareExchangeState(FramePacketState::Ready,
+                                                      FramePacketState::Writing))
+                {
+                    m_Packets[i].Clear();
+                    m_Packets[i].SetState(FramePacketState::Empty);
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        /**
+         * @brief Reading状態のパケットが全てなくなるまでスピン待機
+         *
+         * RenderThreadがAcquireForRead()/FinishRead()経由で
+         * Reading状態を運用している構成向けの補助です。
+         * 現在のシングルスレッド経路では同期境界としては使いません。
+         *
+         * @param maxSpinCount 最大スピン回数（デフォルト: 50000）
+         * @return Readingパケットが全て消えた場合true、タイムアウトでfalse
+         */
+        bool SpinUntilReadingDrained(uint32_t maxSpinCount = 50000u) const
+        {
+            for (uint32_t spin = 0u; spin <= maxSpinCount; ++spin)
+            {
+                bool bHasReading = false;
+                for (uint32_t i = 0; i < FRAME_PACKET_BUFFER_COUNT; ++i)
+                {
+                    const auto state = m_Packets[i].GetState();
+                    if (state == FramePacketState::Queued ||
+                        state == FramePacketState::Reading)
+                    {
+                        bHasReading = true;
+                        break;
+                    }
+                }
+                if (!bHasReading)
+                {
+                    return true;
+                }
+                // キャッシュ同期フェンスを挿入して過剰なキャッシュ衝突を軽減
+                std::atomic_thread_fence(std::memory_order_seq_cst);
+            }
+            return false;
+        }
+
+        /**
+         * @brief Writing/Reading状態のパケットが存在するか
+         *
+         * シャットダウン・リサイズ前のドレイン確認に使用する。
+         * @return inflight（処理中）のパケットがある場合true
+         */
+        bool HasInflightPackets() const
+        {
+            for (uint32_t i = 0; i < FRAME_PACKET_BUFFER_COUNT; ++i)
+            {
+                auto s = m_Packets[i].GetState();
+                if (s == FramePacketState::Writing ||
+                    s == FramePacketState::Queued ||
+                    s == FramePacketState::Reading ||
+                    s == FramePacketState::Recycling)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         // ========================================

@@ -2,12 +2,32 @@
 #include "Rendering/Viewport.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/PostProcessStack.h"
+#include "Rendering/SceneRenderer.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Logging/LogMacros.h"
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        void FlushPendingFrameCommands(ViewRenderContext &context)
+        {
+            if (!context.Renderer || !context.PendingFrameCommands || !context.CommandList)
+            {
+                return;
+            }
+
+            if (context.PendingFrameCommands->empty())
+            {
+                return;
+            }
+
+            context.Renderer->ExecuteFrameCommands(*context.PendingFrameCommands, context.CommandList);
+            context.PendingFrameCommands->clear();
+        }
+    } // namespace
+
 
     View::View() = default;
 
@@ -216,9 +236,11 @@ namespace NorvesLib::Core::Rendering
                 }
             }
 
+            FlushPendingFrameCommands(context);
             // Setup → Execute
             pass->Setup(context);
             pass->Execute(context);
+            FlushPendingFrameCommands(context);
         }
     }
 

@@ -250,10 +250,6 @@ namespace NorvesLib::Core::Rendering
             context.SharedResources->RegisterTexturePtr("GBuffer_Depth", m_DepthTexture);
         }
 
-        // GBufferレンダーパス開始
-        context.CommandList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
-
-        // ビューポート・シザー設定
         RHI::Viewport viewport;
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -261,22 +257,17 @@ namespace NorvesLib::Core::Rendering
         viewport.height = static_cast<float>(m_CurrentHeight);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        context.CommandList->SetViewport(viewport);
 
         RHI::ScissorRect scissor;
         scissor.left = 0;
         scissor.top = 0;
         scissor.right = static_cast<int32_t>(m_CurrentWidth);
         scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
-        context.CommandList->SetScissor(scissor);
-
-        // GBufferパイプラインを設定
-        context.CommandList->SetPipeline(m_GBufferPipeline);
 
         // ========================================
         // DrawCommand駆動の描画
         // ========================================
-        if (m_SceneView && m_SceneRenderer && context.ResourceManager)
+        if (m_SceneRenderer && context.ResourceManager && context.SnapshotOpaqueCommands)
         {
             // カメラ行列の構築
             using namespace NorvesLib::Math;
@@ -330,8 +321,10 @@ namespace NorvesLib::Core::Rendering
             // フレーム開始時にアロケータリセット
             m_UniformAllocator.Reset();
 
-            // DrawCommand配列を取得（SceneViewが事前生成）
-            const auto &opaqueCommands = m_SceneView->GetOpaqueCommands();
+            auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+
+            // DrawCommand配列を取得（GameThreadでスナップショット済み）
+            const auto &opaqueCommands = *context.SnapshotOpaqueCommands;
             for (const auto &cmd : opaqueCommands)
             {
                 // UBOスロット確保
@@ -435,14 +428,20 @@ namespace NorvesLib::Core::Rendering
                 allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
                 allocation.DescriptorSet->Update();
 
-                // SceneRenderer経由で描画記録
-                m_SceneRenderer->RecordMeshDrawCall(cmd, context.CommandList,
-                                                    context.ResourceManager, allocation.DescriptorSet, 0);
+                DrawCommand drawCommand = cmd;
+                drawCommand.Pipeline = m_GBufferPipeline;
+                drawCommand.DescriptorSet = allocation.DescriptorSet;
+                drawCommand.DescriptorSetSlot = 0;
+                gBufferCommands->push_back(drawCommand);
             }
-        }
 
-        // レンダーパス終了
-        context.CommandList->EndRenderPass();
+            context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_GBufferRenderPass,
+                                                                         m_GBufferFramebuffer,
+                                                                         gBufferCommands,
+                                                                         viewport,
+                                                                         scissor,
+                                                                         context.ResourceManager));
+        }
     }
 
     bool GBufferPass::CreateGBufferResources(uint32_t width, uint32_t height, ViewRenderContext &context)

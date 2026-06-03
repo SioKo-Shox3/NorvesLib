@@ -287,12 +287,6 @@ namespace NorvesLib::Core::Rendering
             context.SharedResources->RegisterTexturePtr("ShadowMap", m_ShadowMapTexture);
         }
 
-        // ========================================
-        // シャドウマップレンダーパス開始
-        // ========================================
-        context.CommandList->BeginRenderPass(m_ShadowRenderPass, m_ShadowFramebuffer);
-
-        // ビューポート・シザー設定
         RHI::Viewport viewport;
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -300,22 +294,17 @@ namespace NorvesLib::Core::Rendering
         viewport.height = static_cast<float>(m_Settings.Resolution);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        context.CommandList->SetViewport(viewport);
 
         RHI::ScissorRect scissor;
         scissor.left = 0;
         scissor.top = 0;
         scissor.right = static_cast<int32_t>(m_Settings.Resolution);
         scissor.bottom = static_cast<int32_t>(m_Settings.Resolution);
-        context.CommandList->SetScissor(scissor);
-
-        // パイプライン設定
-        context.CommandList->SetPipeline(m_ShadowPipeline);
 
         // ========================================
         // DrawCommand駆動の描画（影を落とすメッシュのみ）
         // ========================================
-        if (m_SceneView && m_SceneRenderer && context.ResourceManager)
+        if (m_SceneRenderer && context.ResourceManager && context.SnapshotDrawCommands)
         {
             // UBOデータ構造体（shadow.vertのShadowMVPに対応）
             struct ShadowPerObjectUBO
@@ -328,8 +317,10 @@ namespace NorvesLib::Core::Rendering
             // フレーム開始時にアロケータリセット
             m_UniformAllocator.Reset();
 
+            auto shadowCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+
             // DrawCommand配列を取得し、影を落とすコマンドのみ描画
-            const auto &drawCommands = m_SceneView->GetDrawCommands();
+            const auto &drawCommands = *context.SnapshotDrawCommands;
             for (const auto &cmd : drawCommands)
             {
                 if (!cmd.Draw.bCastShadow)
@@ -354,14 +345,20 @@ namespace NorvesLib::Core::Rendering
                 // UBO更新
                 allocation.UniformBuffer->Update(&uboData, sizeof(ShadowPerObjectUBO));
 
-                // SceneRenderer経由で描画記録
-                m_SceneRenderer->RecordMeshDrawCall(cmd, context.CommandList,
-                                                    context.ResourceManager, allocation.DescriptorSet, 0);
+                DrawCommand drawCommand = cmd;
+                drawCommand.Pipeline = m_ShadowPipeline;
+                drawCommand.DescriptorSet = allocation.DescriptorSet;
+                drawCommand.DescriptorSetSlot = 0;
+                shadowCommands->push_back(drawCommand);
             }
-        }
 
-        // レンダーパス終了
-        context.CommandList->EndRenderPass();
+            context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_ShadowRenderPass,
+                                                                         m_ShadowFramebuffer,
+                                                                         shadowCommands,
+                                                                         viewport,
+                                                                         scissor,
+                                                                         context.ResourceManager));
+        }
     }
 
 } // namespace NorvesLib::Core::Rendering

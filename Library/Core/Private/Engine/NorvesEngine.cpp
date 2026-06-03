@@ -97,7 +97,9 @@ namespace NorvesLib::Core
             m_RenderingCoordinator.BeginFrame();
             m_RenderingCoordinator.CollectScene();
             m_RenderingCoordinator.GenerateDrawCommands();
-            m_RenderingCoordinator.EndFrame();
+            Rendering::FramePacket* packet = m_RenderingCoordinator.EndFrame();
+            m_RenderingCoordinator.RenderFrame(packet);
+            m_RenderingCoordinator.ReleasePacket(packet);
         }
     }
 
