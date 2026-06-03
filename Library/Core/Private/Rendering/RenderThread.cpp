@@ -28,6 +28,8 @@ namespace NorvesLib::Core::Rendering
 
     void RenderThread::Start()
     {
+        Thread::ScopedLock lock(m_FrameMutex);
+
         auto currentState = GetState();
         if (currentState != RenderThreadState::Stopped)
         {
@@ -48,9 +50,13 @@ namespace NorvesLib::Core::Rendering
 
     void RenderThread::Stop()
     {
+        m_FrameMutex.Lock();
+
         auto currentState = GetState();
-        if (currentState != RenderThreadState::Running)
+        if (currentState != RenderThreadState::Running &&
+            currentState != RenderThreadState::Starting)
         {
+            m_FrameMutex.Unlock();
             return;
         }
 
@@ -59,12 +65,22 @@ namespace NorvesLib::Core::Rendering
         // 終了フラグを設定
         m_bShouldExit.Store(true, std::memory_order_release);
 
-        // 待機解除のため新フレームを通知
+        if (m_CurrentPacket &&
+            m_CurrentPacket->CompareExchangeState(FramePacketState::Queued,
+                                                  FramePacketState::Recycling))
         {
-            Thread::ScopedLock lock(m_FrameMutex);
-            m_bNewFrameReady.Store(true, std::memory_order_release);
+            m_CurrentPacket->Clear();
+            m_CurrentPacket->SetState(FramePacketState::Empty);
         }
+
+        // RenderLoop待機とWaitForIdle待機の両方を解除
+        m_CurrentPacket = nullptr;
+        m_bNewFrameReady.Store(false, std::memory_order_release);
+        m_bFrameComplete.Store(true, std::memory_order_release);
+        m_FrameMutex.Unlock();
+
         m_FrameCondition.NotifyOne();
+        m_IdleCondition.NotifyAll();
 
         // スレッド終了を待機
         if (m_Thread && m_Thread->Joinable())
@@ -84,12 +100,15 @@ namespace NorvesLib::Core::Rendering
 
     void RenderThread::WaitForFrame()
     {
-        // フレーム完了を待機
+        // 実行中フレームがなく、かつ保留中フレームもない状態を待機する
         m_FrameMutex.Lock();
         m_IdleCondition.Wait(m_FrameMutex,
                              [this]()
                              {
-                                 return m_bFrameComplete.Load(std::memory_order_acquire);
+                                 return ((m_bFrameComplete.Load(std::memory_order_acquire) &&
+                                         !m_bNewFrameReady.Load(std::memory_order_acquire) &&
+                                         m_CurrentPacket == nullptr) ||
+                                        m_bShouldExit.Load(std::memory_order_acquire));
                              });
         m_FrameMutex.Unlock();
     }
@@ -102,8 +121,24 @@ namespace NorvesLib::Core::Rendering
     void RenderThread::NotifyNewFrame(FramePacket *packet)
     {
         m_FrameMutex.Lock();
+
+        if (m_CurrentPacket && m_CurrentPacket != packet)
+        {
+            if (m_CurrentPacket->CompareExchangeState(FramePacketState::Queued,
+                                                      FramePacketState::Recycling))
+            {
+                m_CurrentPacket->Clear();
+                m_CurrentPacket->SetState(FramePacketState::Empty);
+            }
+        }
+
+        if (packet)
+        {
+            packet->CompareExchangeState(FramePacketState::Ready, FramePacketState::Queued);
+        }
+
         m_CurrentPacket = packet;
-        m_bNewFrameReady.Store(true, std::memory_order_release);
+        m_bNewFrameReady.Store(packet != nullptr, std::memory_order_release);
         m_bFrameComplete.Store(false, std::memory_order_release);
         m_FrameMutex.Unlock();
 
@@ -129,9 +164,9 @@ namespace NorvesLib::Core::Rendering
                 break;
             }
 
-            // フレーム準備完了フラグをクリア
-            m_bNewFrameReady.Store(false, std::memory_order_release);
             FramePacket *packet = m_CurrentPacket;
+            m_CurrentPacket = nullptr;
+            m_bNewFrameReady.Store(false, std::memory_order_release);
             m_FrameMutex.Unlock();
 
             // レンダリング実行
@@ -140,6 +175,8 @@ namespace NorvesLib::Core::Rendering
             if (m_Coordinator && packet)
             {
                 m_Coordinator->RenderFrame(packet);
+                // 描画完了後にパケットをEmpty状態に戻して再利用可能にする
+                m_Coordinator->ReleasePacket(packet);
             }
 
             auto endTime = std::chrono::high_resolution_clock::now();

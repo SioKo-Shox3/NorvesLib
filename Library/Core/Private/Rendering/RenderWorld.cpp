@@ -24,6 +24,9 @@ namespace NorvesLib::Core::Rendering
         m_bVSyncEnabled = settings.bVSync;
         m_bFullscreen = settings.bFullscreen;
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
+        m_bResizePending.Store(false, std::memory_order_release);
+        m_PendingWidth.Store(settings.Width, std::memory_order_release);
+        m_PendingHeight.Store(settings.Height, std::memory_order_release);
 
         // ========================================
         // 1. RHI Device (passed from Engine layer)
@@ -70,6 +73,20 @@ namespace NorvesLib::Core::Rendering
         // RenderingCoordinatorにResourceManagerを設定
         m_RenderingCoordinator.SetResourceManager(&m_ResourceManager);
 
+        // ========================================
+        // 4. RenderThread初期化・起動（マルチスレッドレンダリング有効時のみ）
+        // ========================================
+        if (m_bMultiThreadedRendering)
+        {
+            if (!m_RenderThread.Initialize(&m_RenderingCoordinator))
+            {
+                NORVES_LOG_ERROR("Rendering", "Failed to initialize RenderThread");
+                return false;
+            }
+            m_RenderThread.Start();
+            LOG_INFO("RenderThread started (multi-threaded rendering enabled)");
+        }
+
         m_bInitialized = true;
         LOG_INFO("RenderWorld::Initialize() - Initialization completed successfully");
         return true;
@@ -83,6 +100,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         LOG_INFO("RenderWorld::Shutdown() - Starting shutdown");
+
+        // RenderThreadを先に停止してからリソース破棄へ進む
+        // （Coordinatorのリソースへのアクセスが残らないようにする）
+        m_RenderThread.Shutdown();
+        m_bResizePending.Store(false, std::memory_order_release);
 
         // RenderResourceManagerの終了（メッシュGPUリソース等の解放）
         m_ResourceManager.Shutdown();
@@ -104,6 +126,22 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 保留中のリサイズをフレーム開始時に安全に適用する
+        bool bExpectedResizePending = true;
+        if (m_bResizePending.CompareExchangeStrong(bExpectedResizePending,
+                                                   false,
+                                                   std::memory_order_acq_rel,
+                                                   std::memory_order_acquire))
+        {
+            uint32_t w = m_PendingWidth.Load(std::memory_order_acquire);
+            uint32_t h = m_PendingHeight.Load(std::memory_order_acquire);
+
+            WaitForRender();
+            m_Width = w;
+            m_Height = h;
+            m_RenderingCoordinator.Resize(w, h);
+        }
+
         m_ResourceManager.FlushCompletedTextureLoads();
         Resource::GLTFAnalyzer::FlushCompletedModelLoads(m_ResourceManager);
         m_RenderingCoordinator.BeginFrame();
@@ -116,7 +154,10 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        m_RenderingCoordinator.RenderFrame(nullptr);
+        // GT側の作業: シーン収集 → DrawCommandスナップショット生成
+        // 実際の描画（swapchain acquire/submit/present）はEndFrame経由でRTまたはSTが担当。
+        m_RenderingCoordinator.CollectScene();
+        m_RenderingCoordinator.GenerateDrawCommands();
     }
 
     void RenderWorld::CollectScene()
@@ -141,7 +182,30 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        m_RenderingCoordinator.EndFrame();
+        // パケットを確定（Writing→Ready）して返す
+        FramePacket *packet = m_RenderingCoordinator.EndFrame();
+
+        if (m_bMultiThreadedRendering && m_RenderThread.IsRunning())
+        {
+            // ========================================
+            // MT経路: RenderThreadにパケットを渡して非同期描画
+            // ========================================
+            // NotifyNewFrame内でpacketはReading状態に遷移されるため
+            // GT側のDrainUnconsumedPacketsと競合しない。
+            if (packet)
+            {
+                m_RenderThread.NotifyNewFrame(packet);
+            }
+        }
+        else
+        {
+            // ========================================
+            // ST経路: GameThreadでインライン描画
+            // ========================================
+            // packetがnullptrの場合はRenderFrame内のliveデータフォールバックを使用
+            m_RenderingCoordinator.RenderFrame(packet);
+            m_RenderingCoordinator.ReleasePacket(packet);
+        }
 
         // 統計更新
         m_Stats.FrameNumber++;
@@ -149,7 +213,11 @@ namespace NorvesLib::Core::Rendering
 
     void RenderWorld::WaitForRender()
     {
-        if (m_Device)
+        if (m_RenderThread.IsRunning())
+        {
+            m_RenderThread.WaitForIdle();
+        }
+        else if (m_Device)
         {
             m_Device->WaitIdle();
         }
@@ -167,13 +235,22 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        LOG_INFO("RenderWorld::Resize(%u, %u)", width, height);
+        const uint32_t currentWidth = m_PendingWidth.Load(std::memory_order_acquire);
+        const uint32_t currentHeight = m_PendingHeight.Load(std::memory_order_acquire);
+        const bool bResizePending = m_bResizePending.Load(std::memory_order_acquire);
 
-        m_Width = width;
-        m_Height = height;
+        // 同サイズなら何もしない
+        if (width == currentWidth && height == currentHeight && !bResizePending)
+        {
+            return;
+        }
 
-        // RenderingCoordinatorにリサイズを委譲
-        m_RenderingCoordinator.Resize(width, height);
+        LOG_INFO("RenderWorld::Resize(%u, %u) - queued for next BeginFrame", width, height);
+
+        // BeginFrame冒頭で安全に適用できるよう保留にする
+        m_PendingWidth.Store(width, std::memory_order_release);
+        m_PendingHeight.Store(height, std::memory_order_release);
+        m_bResizePending.Store(true, std::memory_order_release);
     }
 
     void RenderWorld::SetRenderScale(float renderScale)

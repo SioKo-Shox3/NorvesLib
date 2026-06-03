@@ -1,10 +1,30 @@
 ﻿#include "Rendering/PostProcessStack.h"
+#include "Rendering/SceneRenderer.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Logging/LogMacros.h"
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        void FlushPendingFrameCommands(ViewRenderContext &context)
+        {
+            if (!context.Renderer || !context.PendingFrameCommands || !context.CommandList)
+            {
+                return;
+            }
+
+            if (context.PendingFrameCommands->empty())
+            {
+                return;
+            }
+
+            context.Renderer->ExecuteFrameCommands(*context.PendingFrameCommands, context.CommandList);
+            context.PendingFrameCommands->clear();
+        }
+    } // namespace
+
 
     PostProcessStack::~PostProcessStack()
     {
@@ -168,7 +188,9 @@ namespace NorvesLib::Core::Rendering
         {
             if (pass && pass->IsEnabled() && pass->IsInitialized())
             {
+                FlushPendingFrameCommands(context);
                 pass->Execute(context);
+                FlushPendingFrameCommands(context);
             }
         }
     }

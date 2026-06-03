@@ -31,6 +31,7 @@ namespace NorvesLib::RHI
          * @return フォーマット
          */
         virtual Format GetFormat() const = 0;
+        virtual bool ConsumePresentationDirty() = 0;
 
         /**
          * @brief バックバッファ数を取得

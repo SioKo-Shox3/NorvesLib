@@ -136,21 +136,36 @@ namespace NorvesLib::Core::Rendering
         void GenerateDrawCommands();
 
         /**
-         * @brief フレーム終了
+         * @brief フレーム終了（GameThread）
          *
-         * FramePacketを確定し、レンダリングに備えます。
+         * FramePacketを確定（Writing→Ready）してポインタを返します。
+         * Screen.EndFrame（submit/present）はRenderFrame内に移動済みです。
+         *
+         * @return 完成したFramePacket（BeginFrameでスロット取得失敗時はnullptr）
          */
-        void EndFrame();
+        FramePacket* EndFrame();
 
         // ========================================
         // レンダリング実行（RenderThread）
         // ========================================
 
         /**
-         * @brief 1フレームを描画
-         * @param packet フレームパケット
+         * @brief 1フレームを描画（RenderThread または GameThread ST経路）
+         *
+         * Screen.BeginFrame（swapchain acquire）と
+         * Screen.EndFrame（submit + present）をこの関数内で実行します。
+         * @param packet フレームパケット（nullptr時はliveデータにフォールバック）
          */
         void RenderFrame(FramePacket *packet);
+
+        /**
+         * @brief RenderThread側でのパケット解放（RenderThread用）
+         *
+         * パケットの状態をReading→Emptyにして再利用可能にします。
+         * RenderFrame呼び出し後に必ず呼んでください。
+         * @param packet 解放するパケット（nullptrは無視）
+         */
+        void ReleasePacket(FramePacket *packet);
 
         /**
          * @brief DrawCommandを実行
@@ -218,6 +233,11 @@ namespace NorvesLib::Core::Rendering
         const SceneRenderer &GetSceneRenderer() const { return m_SceneRenderer; }
 
         /**
+         * @brief MegaGeometryパスが有効かどうか
+         */
+        bool IsMegaGeometryPassEnabled() const { return m_bMegaGeometryPassEnabled; }
+
+        /**
          * @brief リソースマネージャーを設定
          */
         void SetResourceManager(RenderResourceManager *manager) { m_ResourceManager = manager; }
@@ -280,6 +300,12 @@ namespace NorvesLib::Core::Rendering
          */
         bool CreateSwapChainFramebuffers();
 
+        /**
+         * @brief スワップチェーン依存の描画リソースを再生成
+         * @return 成功時true
+         */
+        bool RecreateSwapChainPresentationResources();
+
         // RHIリソース
         Container::TSharedPtr<RHI::IDevice> m_Device;
         Container::TSharedPtr<RHI::ICommandList> m_CommandList;
@@ -287,6 +313,8 @@ namespace NorvesLib::Core::Rendering
         // レンダーパス・フレームバッファ（Screen SwapChain用）
         Container::TSharedPtr<RHI::IRenderPass> m_RenderPass;
         Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_SwapChainFramebuffers;
+        bool m_bSwapChainFramebuffersReady = false;
+        RHI::Format m_SwapChainFormat = RHI::Format::UNKNOWN;
 
         // テスト三角形用リソース（将来的にマテリアルシステムに移行）
         Container::TSharedPtr<RHI::IPipeline> m_TrianglePipeline;
@@ -341,6 +369,7 @@ namespace NorvesLib::Core::Rendering
         float m_RenderScale = 1.0f;
         bool m_bVSyncEnabled = true;
         bool m_bMultiThreadedRendering = true;
+        bool m_bMegaGeometryPassEnabled = false;
         uint32_t m_MaxDrawCallsPerFrame = 10000;
 
         // 統計（Debug::RenderingStats使用）

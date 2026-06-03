@@ -126,14 +126,17 @@ namespace NorvesLib::Core::Rendering
 
     void ForwardPass::Execute(ViewRenderContext &context)
     {
-        if (!context.CommandList || !m_SceneView || !m_SceneRenderer)
+        if (!context.CommandList || !m_SceneRenderer)
         {
             return;
         }
 
-        // DrawCommandの準備（Cull → Batch → GenerateCommands）
-        m_SceneView->PrepareDrawCommands();
-        const auto &drawCommands = m_SceneView->GetDrawCommands();
+        // スナップショットからDrawCommandを参照（GameThreadで生成済み）
+        if (!context.SnapshotDrawCommands)
+        {
+            return;
+        }
+        const auto &drawCommands = *context.SnapshotDrawCommands;
 
         // SharedResourceRegistryに出力を登録（非nullテクスチャのみ）
         if (m_bRegisterOutputs && context.SharedResources)
@@ -162,10 +165,9 @@ namespace NorvesLib::Core::Rendering
             if (m_bTransparentOnly)
             {
                 // 半透明のみ（ディファードレンダリングと併用時）
-                const auto &transparentCommands = m_SceneView->GetTransparentCommands();
-                if (!transparentCommands.empty())
+                if (context.SnapshotTransparentCommands && !context.SnapshotTransparentCommands->empty())
                 {
-                    m_SceneRenderer->ExecuteDrawCommands(transparentCommands, context.CommandList);
+                    m_SceneRenderer->ExecuteDrawCommands(*context.SnapshotTransparentCommands, context.CommandList);
                 }
             }
             else
@@ -178,29 +180,7 @@ namespace NorvesLib::Core::Rendering
         {
             // 独自レンダーパスモード: 独自レンダーターゲットへの描画
             // TransientPool経由で取得したカラー/深度バッファに描画
-            //
-            // TODO: TransientResourcePool統合後に実装
-            // context.CommandList->BeginRenderPass(m_ForwardRenderPass, m_ForwardFramebuffer);
-            //
-            // RHI::Viewport viewport;
-            // viewport.x = 0.0f;
-            // viewport.y = 0.0f;
-            // viewport.width = static_cast<float>(m_CurrentWidth);
-            // viewport.height = static_cast<float>(m_CurrentHeight);
-            // viewport.minDepth = 0.0f;
-            // viewport.maxDepth = 1.0f;
-            // context.CommandList->SetViewport(viewport);
-            //
-            // RHI::ScissorRect scissor;
-            // scissor.left = 0;
-            // scissor.top = 0;
-            // scissor.right = static_cast<int32_t>(m_CurrentWidth);
-            // scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
-            // context.CommandList->SetScissor(scissor);
-            //
-            // m_SceneRenderer->ExecuteDrawCommands(drawCommands, context.CommandList);
-            //
-            // context.CommandList->EndRenderPass();
+            // TODO: TransientResourcePool統合後に FrameCommand ベースで実装
         }
     }
 

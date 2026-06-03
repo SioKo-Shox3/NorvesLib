@@ -684,10 +684,6 @@ namespace NorvesLib::Core::Rendering
 
         m_LightingDescriptorSet->Update();
 
-        // ライティングレンダーパス開始
-        context.CommandList->BeginRenderPass(m_LightingRenderPass, m_LightingFramebuffer);
-
-        // ビューポート・シザー設定
         RHI::Viewport viewport;
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -695,24 +691,19 @@ namespace NorvesLib::Core::Rendering
         viewport.height = static_cast<float>(m_CurrentHeight);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        context.CommandList->SetViewport(viewport);
 
         RHI::ScissorRect scissor;
         scissor.left = 0;
         scissor.top = 0;
         scissor.right = static_cast<int32_t>(m_CurrentWidth);
         scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
-        context.CommandList->SetScissor(scissor);
 
-        // パイプラインとディスクリプタセットをバインド
-        context.CommandList->SetPipeline(m_LightingPipeline);
-        context.CommandList->SetDescriptorSet(m_LightingDescriptorSet, 0);
-
-        // フルスクリーントライアングル描画（頂点数3）
-        context.CommandList->Draw(3, 0);
-
-        // レンダーパス終了
-        context.CommandList->EndRenderPass();
+        context.EnqueueFullscreenPass(m_LightingRenderPass,
+                                      m_LightingFramebuffer,
+                                      viewport,
+                                      scissor,
+                                      m_LightingPipeline,
+                                      m_LightingDescriptorSet);
     }
 
     void LightingPass::UpdateLightBuffer(ViewRenderContext &context, bool bShadowAvailable)
@@ -817,9 +808,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t lightCount = 0;
         GPULightData lightArray[MAX_LIGHTS] = {};
 
-        if (m_SceneView)
+        if (context.SnapshotLightProxies)
         {
-            const auto &lightProxies = m_SceneView->GetLightProxies();
+            const auto &lightProxies = *context.SnapshotLightProxies;
             for (const auto &proxy : lightProxies)
             {
                 if (lightCount >= MAX_LIGHTS)

@@ -141,7 +141,7 @@ namespace NorvesLib::Core::Rendering
          *
          * 次のバックバッファを取得し、描画準備を行います。
          */
-        void BeginFrame();
+        bool BeginFrame();
 
         /**
          * @brief 全Viewの出力を合成

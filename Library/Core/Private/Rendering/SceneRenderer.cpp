@@ -1,4 +1,5 @@
 ﻿#include "Rendering/SceneRenderer.h"
+#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/PersistentResourceCache.h"
 #include "Rendering/RenderResourceManager.h"
@@ -130,6 +131,20 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void SceneRenderer::ExecuteFrameCommands(const Container::VariableArray<FrameCommand> &commands,
+                                             RHI::ICommandList *commandList)
+    {
+        if (commands.empty() || !commandList)
+        {
+            return;
+        }
+
+        for (const FrameCommand &command : commands)
+        {
+            ExecuteFrameCommand(command, commandList);
+        }
+    }
+
     void SceneRenderer::ExecuteDrawCommand(const DrawCommand &command, RHI::ICommandList *commandList)
     {
         if (!commandList)
@@ -240,6 +255,119 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void SceneRenderer::ExecuteFrameCommand(const FrameCommand &command, RHI::ICommandList *commandList)
+    {
+        if (!commandList)
+        {
+            return;
+        }
+
+        switch (command.Type)
+        {
+        case FrameCommandType::GeometryPass:
+        {
+            const GeometryPassCommand &geometryPass = command.GeometryPass;
+            if (!geometryPass.RenderPass || !geometryPass.Framebuffer || !geometryPass.DrawCommands)
+            {
+                return;
+            }
+
+            commandList->BeginRenderPass(geometryPass.RenderPass, geometryPass.Framebuffer);
+            commandList->SetViewport(geometryPass.Viewport);
+            commandList->SetScissor(geometryPass.Scissor);
+            m_BoundPipeline = nullptr;
+
+            for (const DrawCommand &drawCommand : *geometryPass.DrawCommands)
+            {
+                RHI::PipelinePtr pipeline = drawCommand.Pipeline ? drawCommand.Pipeline : m_DefaultPipeline;
+                if (pipeline && pipeline != m_BoundPipeline)
+                {
+                    commandList->SetPipeline(pipeline);
+                    m_BoundPipeline = pipeline;
+                }
+
+                if (drawCommand.Draw.MeshHandle.IsValid() && geometryPass.ResourceManager)
+                {
+                    RecordMeshDrawCall(drawCommand,
+                                       commandList,
+                                       geometryPass.ResourceManager,
+                                       drawCommand.DescriptorSet,
+                                       drawCommand.DescriptorSetSlot);
+                    continue;
+                }
+
+                ExecuteDrawCommand(drawCommand, commandList);
+            }
+
+            commandList->EndRenderPass();
+            return;
+        }
+
+        case FrameCommandType::FullscreenPass:
+        {
+            const FullscreenPassCommand &fullscreenPass = command.FullscreenPass;
+            if (!fullscreenPass.RenderPass || !fullscreenPass.Framebuffer)
+            {
+                return;
+            }
+
+            commandList->BeginRenderPass(fullscreenPass.RenderPass, fullscreenPass.Framebuffer);
+            commandList->SetViewport(fullscreenPass.Viewport);
+            commandList->SetScissor(fullscreenPass.Scissor);
+            m_BoundPipeline = nullptr;
+
+            if (fullscreenPass.Pipeline && fullscreenPass.VertexCount > 0)
+            {
+                commandList->SetPipeline(fullscreenPass.Pipeline);
+                if (fullscreenPass.DescriptorSet)
+                {
+                    commandList->SetDescriptorSet(fullscreenPass.DescriptorSet,
+                                                  fullscreenPass.DescriptorSetSlot);
+                }
+
+                commandList->Draw(fullscreenPass.VertexCount, 0);
+                ++m_Stats.DrawCallCount;
+                m_Stats.TriangleCount += fullscreenPass.VertexCount / 3;
+            }
+
+            commandList->EndRenderPass();
+            return;
+        }
+
+        case FrameCommandType::TextureBarrier:
+        {
+            const TextureBarrierCommand &barrier = command.TextureBarrier;
+            if (!barrier.Texture)
+            {
+                return;
+            }
+
+            commandList->TextureBarrier(barrier.Texture,
+                                        barrier.BeforeState,
+                                        barrier.AfterState,
+                                        barrier.MipLevel,
+                                        barrier.ArrayIndex,
+                                        barrier.MipCount,
+                                        barrier.ArrayCount);
+            return;
+        }
+
+        case FrameCommandType::MegaGeometryPass:
+        {
+            const MegaGeometryPassCommand &megaGeometryPass = command.MegaGeometry;
+            if (!megaGeometryPass.Pass)
+            {
+                return;
+            }
+
+            megaGeometryPass.Pass->RecordFrameCommand(megaGeometryPass, commandList);
+            return;
+        }
+        }
+
+        return;
+    }
+
     void SceneRenderer::ExecuteBatch(const Container::VariableArray<DrawCommand> &commands,
                                      size_t startIndex, size_t count,
                                      RHI::ICommandList *commandList)
@@ -249,22 +377,6 @@ namespace NorvesLib::Core::Rendering
         {
             ExecuteDrawCommand(commands[i], commandList);
         }
-    }
-
-    void SceneRenderer::DrawDirect(RHI::ICommandList *commandList,
-                                   RHI::PipelinePtr pipeline,
-                                   uint32_t vertexCount)
-    {
-        if (!commandList || !pipeline)
-        {
-            return;
-        }
-
-        commandList->SetPipeline(pipeline);
-        commandList->Draw(vertexCount, 0);
-
-        ++m_Stats.DrawCallCount;
-        m_Stats.TriangleCount += vertexCount / 3;
     }
 
     void SceneRenderer::ResetStats()

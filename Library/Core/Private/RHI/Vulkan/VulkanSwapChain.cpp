@@ -155,6 +155,14 @@ namespace NorvesLib::RHI::Vulkan
         CleanupSwapChain();
         CreateSwapChain();
         CreateImageViews();
+        m_bPresentationDirty = true;
+    }
+
+    bool VulkanSwapChain::ConsumePresentationDirty()
+    {
+        const bool bWasDirty = m_bPresentationDirty;
+        m_bPresentationDirty = false;
+        return bWasDirty;
     }
 
     // フレーム開始（フェンス待機＋イメージ取得）
@@ -396,6 +404,7 @@ namespace NorvesLib::RHI::Vulkan
     {
         // バックバッファテクスチャをクリア
         m_backBufferTextures.clear();
+        m_bPresentationDirty = false;
 
         // スワップチェーンを破棄
         if (m_swapChain)

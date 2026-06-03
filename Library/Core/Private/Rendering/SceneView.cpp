@@ -227,9 +227,8 @@ namespace NorvesLib::Core::Rendering
         // パスチェーンが存在すれば基底クラスのパスベース描画を実行
         if (GetPassCount() > 0)
         {
-            // DrawCommand生成（パス実行前にデータ準備）
-            PrepareDrawCommands();
-
+            // DrawCommandはGameThreadのGenerateDrawCommands()でスナップショット済み
+            // context.SnapshotDrawCommands等から各パスが参照する
             View::Render(context);
         }
         else

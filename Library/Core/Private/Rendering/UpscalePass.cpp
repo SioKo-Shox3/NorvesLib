@@ -207,8 +207,6 @@ namespace NorvesLib::Core::Rendering
         m_DescriptorSet->BindSampler(0, m_LinearSampler);
         m_DescriptorSet->Update();
 
-        context.CommandList->BeginRenderPass(m_RenderPass, m_Framebuffer);
-
         RHI::Viewport viewport;
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -216,19 +214,19 @@ namespace NorvesLib::Core::Rendering
         viewport.height = static_cast<float>(m_CurrentHeight);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        context.CommandList->SetViewport(viewport);
 
         RHI::ScissorRect scissor;
         scissor.left = 0;
         scissor.top = 0;
         scissor.right = static_cast<int32_t>(m_CurrentWidth);
         scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
-        context.CommandList->SetScissor(scissor);
 
-        context.CommandList->SetPipeline(m_Pipeline);
-        context.CommandList->SetDescriptorSet(m_DescriptorSet, 0);
-        context.CommandList->Draw(3, 0);
-        context.CommandList->EndRenderPass();
+        context.EnqueueFullscreenPass(m_RenderPass,
+                                      m_Framebuffer,
+                                      viewport,
+                                      scissor,
+                                      m_Pipeline,
+                                      m_DescriptorSet);
 
         context.SharedResources->RegisterTexturePtr("PresentationColor", m_OutputTexture);
     }
