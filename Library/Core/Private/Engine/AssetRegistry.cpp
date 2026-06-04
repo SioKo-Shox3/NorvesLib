@@ -2,6 +2,7 @@
 #include "FileStream/Package.h"
 #include "Object/Reflection.h"
 #include "Logging/LogMacros.h"
+#include <memory>
 
 namespace NorvesLib::Core
 {
@@ -180,24 +181,44 @@ namespace NorvesLib::Core
             return;
         }
 
-        Thread::ScopedLock lock(m_Mutex);
+        Container::String packagePath = package->GetFilePath();
+        {
+            Thread::ScopedLock lock(m_Mutex);
 
-        // マップから削除
-        Identity pathId(package->GetFilePath());
-        m_PathToPackage.erase(pathId);
+            // マップから削除
+            Identity pathId(packagePath);
+            m_PathToPackage.erase(pathId);
+        }
 
         // PackageはこのAssetRegistryのInnerなので、RemoveInnerで解放
         RemoveInner(package);
 
-        NORVES_LOG_DEBUG("AssetRegistry", "Unloaded package: %s", package->GetFilePath().c_str());
+        NORVES_LOG_DEBUG("AssetRegistry", "Unloaded package: %s", packagePath.c_str());
     }
 
     void AssetRegistry::UnloadAll()
     {
-        Thread::ScopedLock lock(m_Mutex);
+        Container::VariableArray<FileStream::Package *> packages;
+        {
+            Thread::ScopedLock lock(m_Mutex);
 
-        // マップをクリア（Packageへの参照も解放される）
-        m_PathToPackage.clear();
+            packages.reserve(m_PathToPackage.size());
+            for (auto &[pathId, package] : m_PathToPackage)
+            {
+                if (package)
+                {
+                    packages.push_back(package);
+                }
+            }
+
+            // マップをクリア
+            m_PathToPackage.clear();
+        }
+
+        for (auto *package : packages)
+        {
+            RemoveInner(package);
+        }
 
         NORVES_LOG_INFO("AssetRegistry", "All packages unloaded");
     }
@@ -205,7 +226,7 @@ namespace NorvesLib::Core
     FileStream::Package *AssetRegistry::CreatePackage(const Container::String &path)
     {
         // Packageを作成してInnerとして登録
-        auto package = Container::MakeShared<FileStream::Package>();
+        std::unique_ptr<FileStream::Package> package = std::make_unique<FileStream::Package>();
         if (!package)
         {
             return nullptr;
@@ -214,13 +235,16 @@ namespace NorvesLib::Core
         package->Initialize();
 
         // このAssetRegistryのInnerとして登録
-        AddInner(package.get());
+        if (!AddInner(package.get()))
+        {
+            return nullptr;
+        }
 
         // マップに登録
         Identity pathId(path);
         m_PathToPackage[pathId] = package.get();
 
-        return package.get();
+        return package.release();
     }
 
     // ========================================
@@ -249,28 +273,52 @@ namespace NorvesLib::Core
 
     size_t AssetRegistry::CollectLRU()
     {
-        Thread::ScopedLock lock(m_Mutex);
-
-        size_t currentMemory = GetTotalMemoryUsage();
-        if (currentMemory <= m_MaxCacheSize)
-        {
-            return 0;
-        }
-
         // LRUで古いパッケージを収集
         Container::VariableArray<FileStream::Package *> toRemove;
-
-        for (auto &[pathId, package] : m_PathToPackage)
         {
-            if (!package)
+            Thread::ScopedLock lock(m_Mutex);
+
+            size_t currentMemory = 0;
+            for (const auto &[pathId, package] : m_PathToPackage)
             {
-                continue;
+                if (package && package->IsLoaded())
+                {
+                    currentMemory += package->GetMemorySize();
+                }
+            }
+            if (currentMemory <= m_MaxCacheSize)
+            {
+                return 0;
             }
 
-            uint64_t framesSinceAccess = m_CurrentFrame - package->GetLastAccessFrame();
-            if (framesSinceAccess > m_LRUFrameThreshold)
+            for (auto &[pathId, package] : m_PathToPackage)
             {
-                toRemove.push_back(package);
+                if (!package)
+                {
+                    continue;
+                }
+
+                uint64_t framesSinceAccess = m_CurrentFrame - package->GetLastAccessFrame();
+                if (framesSinceAccess > m_LRUFrameThreshold)
+                {
+                    toRemove.push_back(package);
+                    if (package->IsLoaded())
+                    {
+                        size_t packageMemory = package->GetMemorySize();
+                        currentMemory = packageMemory < currentMemory ? currentMemory - packageMemory : 0;
+                    }
+
+                    if (currentMemory <= m_MaxCacheSize)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            for (auto *package : toRemove)
+            {
+                Identity pathId(package->GetFilePath());
+                m_PathToPackage.erase(pathId);
             }
         }
 
@@ -278,15 +326,9 @@ namespace NorvesLib::Core
         size_t removedCount = 0;
         for (auto *package : toRemove)
         {
-            Identity pathId(package->GetFilePath());
-            m_PathToPackage.erase(pathId);
-            RemoveInner(package);
-            ++removedCount;
-
-            // メモリ使用量をチェック
-            if (GetTotalMemoryUsage() <= m_MaxCacheSize)
+            if (RemoveInner(package))
             {
-                break;
+                ++removedCount;
             }
         }
 

@@ -66,7 +66,6 @@ namespace NorvesLib::Core
             {
                 obj->OnRemovedFromWorld();
             }
-            inner->Finalize();
             RemoveInner(inner);
         }
 
@@ -78,11 +77,11 @@ namespace NorvesLib::Core
         LOG_INFO("World::Finalize() - Complete");
     }
 
-    void World::AddObject(WorldObject *object)
+    bool World::AddObject(WorldObject *object)
     {
         if (!object || !HasFlag(OF_Initialized))
         {
-            return;
+            return false;
         }
 
         // 重複チェック（既にInnerに存在するか）
@@ -91,14 +90,14 @@ namespace NorvesLib::Core
             if (inner == object)
             {
                 NORVES_LOG_WARNING("World", "Object already in World");
-                return;
+                return false;
             }
         }
 
         if (object->GetOuter() != nullptr)
         {
             NORVES_LOG_WARNING("World", "Object already has an outer");
-            return;
+            return false;
         }
 
         if (!object->HasFlag(OF_Initialized))
@@ -107,10 +106,9 @@ namespace NorvesLib::Core
         }
 
         // Innerとして追加（Outerも自動設定される）
-        AddInner(object);
-        if (object->GetOuter() != this)
+        if (!AddInner(object))
         {
-            return;
+            return false;
         }
 
         // オブジェクトIDを付与
@@ -122,6 +120,7 @@ namespace NorvesLib::Core
         NORVES_LOG_DEBUG("World", "Object added (ID=%llu), total: %llu",
                          object->GetObjectId(),
                          static_cast<uint64_t>(GetObjectCount()));
+        return true;
     }
 
     void World::RemoveObject(WorldObject *object)
@@ -156,7 +155,6 @@ namespace NorvesLib::Core
 
                 // ライフサイクル通知
                 object->OnRemovedFromWorld();
-                object->Finalize();
 
                 // Innerから除去（Outerも自動クリアされる）
                 RemoveInner(object);
@@ -321,7 +319,6 @@ namespace NorvesLib::Core
             }
 
             obj->OnRemovedFromWorld();
-            obj->Finalize();
             RemoveInner(obj);
         }
 

@@ -55,11 +55,6 @@ namespace NorvesLib::Core
         while (!m_Inners.empty())
         {
             IUnknown *inner = m_Inners.back();
-            if (auto *comp = ObjectUtility::CastTo<Component::Component>(inner))
-            {
-                comp->EndPlay();
-            }
-            inner->Finalize();
             RemoveInner(inner);
         }
 
@@ -93,11 +88,11 @@ namespace NorvesLib::Core
     // コンポーネント管理（Outer/Inner経由）
     // ========================================
 
-    void WorldObject::AddComponent(Component::Component *component)
+    bool WorldObject::AddComponent(Component::Component *component)
     {
         if (!component)
         {
-            return;
+            return false;
         }
 
         // 重複チェック（既にInnerに存在するか）
@@ -105,20 +100,20 @@ namespace NorvesLib::Core
         {
             if (inner == component)
             {
-                return;
+                return false;
             }
         }
 
         // Innerとして追加（Outerも自動設定される）
-        AddInner(component);
-        if (component->GetOuter() != this)
+        if (!AddInner(component))
         {
-            return;
+            return false;
         }
 
         // ライフサイクル
         component->Initialize();
         component->BeginPlay();
+        return true;
     }
 
     void WorldObject::RemoveComponent(Component::Component *component)
@@ -133,9 +128,6 @@ namespace NorvesLib::Core
         {
             if (inner == component)
             {
-                component->EndPlay();
-                component->Finalize();
-
                 // Innerから除去（Outerも自動クリアされる）
                 RemoveInner(component);
                 return;

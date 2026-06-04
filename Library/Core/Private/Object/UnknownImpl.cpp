@@ -263,38 +263,41 @@ namespace NorvesLib::Core
         return m_Inners;
     }
 
-    void UnknownImpl::AddInner(IUnknown *inner)
+    bool UnknownImpl::AddInner(IUnknown *inner)
     {
-        if (inner)
+        if (!inner)
         {
-            UnknownImpl *innerImpl = dynamic_cast<UnknownImpl *>(inner);
-            if (!innerImpl || inner == this)
-            {
-                return;
-            }
-
-            // すでに子リストに存在しないか確認
-            for (IUnknown *existingInner : m_Inners)
-            {
-                if (existingInner == inner)
-                {
-                    return; // すでに存在する場合は何もしない
-                }
-            }
-
-            if (innerImpl->GetOuter() != nullptr)
-            {
-                return;
-            }
-
-            inner->AddRef();
-
-            // 子リストに追加
-            m_Inners.push_back(inner);
-
-            // InnerのOuterを自身に設定
-            innerImpl->SetOuter(this);
+            return false;
         }
+
+        UnknownImpl *innerImpl = dynamic_cast<UnknownImpl *>(inner);
+        if (!innerImpl || inner == this)
+        {
+            return false;
+        }
+
+        // すでに子リストに存在しないか確認
+        for (IUnknown *existingInner : m_Inners)
+        {
+            if (existingInner == inner)
+            {
+                return false;
+            }
+        }
+
+        if (innerImpl->GetOuter() != nullptr)
+        {
+            return false;
+        }
+
+        inner->AddRef();
+
+        // 子リストに追加
+        m_Inners.push_back(inner);
+
+        // InnerのOuterを自身に設定
+        innerImpl->SetOuter(this);
+        return true;
     }
 
     bool UnknownImpl::RemoveInner(IUnknown *inner)

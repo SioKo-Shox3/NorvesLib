@@ -6,6 +6,7 @@
 #include "Component/Component.h"
 #include "Container/Containers.h"
 #include <cstdint>
+#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -60,15 +61,12 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
-            T *object = new T(std::forward<Args>(args)...);
-            object->Initialize();
-            AddObject(object);
-            if (object->GetWorld() != this)
+            std::unique_ptr<T> object = std::make_unique<T>(std::forward<Args>(args)...);
+            if (!AddObject(object.get()))
             {
-                delete object;
                 return nullptr;
             }
-            return object;
+            return object.release();
         }
 
         /**
@@ -87,21 +85,19 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
-            T *component = new T(std::forward<Args>(args)...);
-            owner->AddComponent(component);
-            if (component->GetOwner() != owner)
+            std::unique_ptr<T> component = std::make_unique<T>(std::forward<Args>(args)...);
+            if (!owner->AddComponent(component.get()))
             {
-                delete component;
                 return nullptr;
             }
-            return component;
+            return component.release();
         }
 
         /**
          * @brief WorldObjectをInnerとして追加
          * @param object 追加するWorldObject（OuterがこのWorldに設定されます）
          */
-        void AddObject(WorldObject *object);
+        bool AddObject(WorldObject *object);
 
         /**
          * @brief WorldObjectをInnerから除去
