@@ -2,6 +2,7 @@
 
 #include "Debug/DebugConfig.h"
 #include "Container/Containers.h"
+#include "Thread/Mutex.h"
 #include <chrono>
 
 /**
@@ -15,6 +16,22 @@
 namespace NorvesLib::Debug
 {
     using namespace NorvesLib::Core::Container;
+
+    namespace Detail
+    {
+        constexpr size_t MaxFrameProfileEvents = 256;
+    }
+
+    /**
+     * @brief 1つのCPUスコープ計測イベント
+     */
+    struct ProfileEvent
+    {
+        String Name;
+        String Category;
+        float DurationMs = 0.0f;
+        uint32_t ThreadId = 0;
+    };
 
     /**
      * @brief スタット用のスコープ計測クラス
@@ -80,6 +97,54 @@ namespace NorvesLib::Debug
     };
 
     /**
+     * @brief 1フレーム分の統合プロファイル
+     *
+     * GameThread / RenderThread / GPU の時間を同じフレーム番号で参照するための集約情報です。
+     */
+    struct FrameProfile : public IStats
+    {
+        uint64_t FrameNumber = 0;
+        float DeltaTime = 0.0f;
+        float FPS = 0.0f;
+
+        float GameThreadTimeMs = 0.0f;
+        float RenderPrepareTimeMs = 0.0f;
+        float RenderThreadTimeMs = 0.0f;
+        float RenderFrameTimeMs = 0.0f;
+        float CPUFrameTimeMs = 0.0f;
+        float GPUFrameTimeMs = 0.0f;
+        float TotalFrameTimeMs = 0.0f;
+
+        uint32_t DrawCalls = 0;
+        uint32_t TrianglesRendered = 0;
+        uint32_t VisibleObjects = 0;
+        uint32_t BatchCount = 0;
+
+        VariableArray<ProfileEvent> Events;
+
+        void Reset() override
+        {
+            FrameNumber = 0;
+            DeltaTime = 0.0f;
+            FPS = 0.0f;
+            GameThreadTimeMs = 0.0f;
+            RenderPrepareTimeMs = 0.0f;
+            RenderThreadTimeMs = 0.0f;
+            RenderFrameTimeMs = 0.0f;
+            CPUFrameTimeMs = 0.0f;
+            GPUFrameTimeMs = 0.0f;
+            TotalFrameTimeMs = 0.0f;
+            DrawCalls = 0;
+            TrianglesRendered = 0;
+            VisibleObjects = 0;
+            BatchCount = 0;
+            Events.clear();
+        }
+
+        String ToString() const override;
+    };
+
+    /**
      * @brief レンダリングスタット情報
      * 
      * レンダリングパイプラインの各段階の計測情報を保持します。
@@ -103,6 +168,9 @@ namespace NorvesLib::Debug
         float CullingTimeMs = 0.0f;
         float BatchingTimeMs = 0.0f;
         float CommandGenerationTimeMs = 0.0f;
+        float GameThreadTimeMs = 0.0f;
+        float RenderThreadTimeMs = 0.0f;
+        float RenderFrameTimeMs = 0.0f;
         float GPUTimeMs = 0.0f;
         float TotalFrameTimeMs = 0.0f;
 
@@ -120,6 +188,9 @@ namespace NorvesLib::Debug
             CullingTimeMs = 0.0f;
             BatchingTimeMs = 0.0f;
             CommandGenerationTimeMs = 0.0f;
+            GameThreadTimeMs = 0.0f;
+            RenderThreadTimeMs = 0.0f;
+            RenderFrameTimeMs = 0.0f;
             GPUTimeMs = 0.0f;
             TotalFrameTimeMs = 0.0f;
         }
@@ -175,6 +246,12 @@ namespace NorvesLib::Debug
         const RenderingStats& GetRenderingStats() const { return m_RenderingStats; }
 
         /**
+         * @brief 最新フレームプロファイルを取得
+         */
+        FrameProfile GetFrameProfileSnapshot() const;
+        const FrameProfile& GetFrameProfile() const { return m_FrameProfile; }
+
+        /**
          * @brief メモリスタットを取得
          */
         MemoryStats& GetMemoryStats() { return m_MemoryStats; }
@@ -185,9 +262,23 @@ namespace NorvesLib::Debug
          */
         void ResetAll()
         {
+            NorvesLib::Thread::ScopedLock lock(m_Mutex);
+            m_FrameProfile.Reset();
             m_RenderingStats.Reset();
             m_MemoryStats.Reset();
         }
+
+        static StatsManager& Get();
+
+        void BeginFrame(uint64_t frameNumber, float deltaTime);
+        void EndFrame();
+        void RecordScope(const char* name, const char* category, float durationMs);
+        void SetGameThreadTimeMs(float timeMs);
+        void SetRenderPrepareTimeMs(float timeMs);
+        void SetRenderThreadTimeMs(float timeMs);
+        void SetRenderFrameTimeMs(float timeMs);
+        void SetGPUFrameTimeMs(float timeMs);
+        void UpdateRenderingStats(const RenderingStats& stats);
 
         /**
          * @brief スタット有効かどうか
@@ -202,6 +293,8 @@ namespace NorvesLib::Debug
         }
 
     private:
+        mutable NorvesLib::Thread::Mutex m_Mutex;
+        FrameProfile m_FrameProfile;
         RenderingStats m_RenderingStats;
         MemoryStats m_MemoryStats;
     };
@@ -229,6 +322,12 @@ namespace NorvesLib::Debug
 
 #define NORVES_STAT_SCOPE_CATEGORY(name, category) \
     NorvesLib::Debug::ScopedStat __scopedStat_##__LINE__(name, category)
+
+#define NORVES_PROFILE_SCOPE(name) \
+    NORVES_STAT_SCOPE(name)
+
+#define NORVES_PROFILE_SCOPE_CATEGORY(name, category) \
+    NORVES_STAT_SCOPE_CATEGORY(name, category)
 
 /**
  * @brief 関数スコープ計測マクロ
@@ -284,5 +383,7 @@ namespace NorvesLib::Debug
 #define NORVES_STAT_ADD(counter, value) do {} while(0)
 #define NORVES_STAT_TIME_START(name) do {} while(0)
 #define NORVES_STAT_TIME_END(name, targetMs) do {} while(0)
+#define NORVES_PROFILE_SCOPE(name) do {} while(0)
+#define NORVES_PROFILE_SCOPE_CATEGORY(name, category) do {} while(0)
 
 #endif // NORVES_ENABLE_STATS
