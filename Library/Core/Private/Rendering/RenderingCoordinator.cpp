@@ -553,7 +553,13 @@ namespace NorvesLib::Core::Rendering
         }
 
 #if NORVES_ENABLE_STATS
-        auto renderFrameStartTime = std::chrono::high_resolution_clock::now();
+        auto &statsManager = NorvesLib::Debug::StatsManager::Get();
+        const bool bTraceActive = statsManager.IsTraceActive();
+        std::chrono::high_resolution_clock::time_point renderFrameStartTime;
+        if (bTraceActive)
+        {
+            renderFrameStartTime = std::chrono::high_resolution_clock::now();
+        }
 #endif
 
         if (packet &&
@@ -623,16 +629,19 @@ namespace NorvesLib::Core::Rendering
         m_CommandList->BeginRecording();
 
 #if NORVES_ENABLE_STATS
-        const float latestGPUTimeMs = m_CommandList->GetLastGPUTimestampDurationMs();
-        if (latestGPUTimeMs > 0.0f)
+        if (bTraceActive)
         {
-            m_Stats.GPUTimeMs = latestGPUTimeMs;
-            NorvesLib::Debug::StatsManager::Get().SetGPUFrameTimeMs(latestGPUTimeMs);
-        }
+            const float latestGPUTimeMs = m_CommandList->GetLastGPUTimestampDurationMs();
+            if (latestGPUTimeMs > 0.0f)
+            {
+                m_Stats.GPUTimeMs = latestGPUTimeMs;
+                statsManager.SetGPUFrameTimeMs(latestGPUTimeMs);
+            }
 
-        if (m_CommandList->SupportsGPUTimestamps())
-        {
-            m_CommandList->BeginGPUTimestamp("FrameGPU");
+            if (m_CommandList->SupportsGPUTimestamps())
+            {
+                m_CommandList->BeginGPUTimestamp("FrameGPU");
+            }
         }
 #endif
 
@@ -751,7 +760,7 @@ namespace NorvesLib::Core::Rendering
 
         // コマンド録画終了
 #if NORVES_ENABLE_STATS
-        if (m_CommandList->SupportsGPUTimestamps())
+        if (bTraceActive && m_CommandList->SupportsGPUTimestamps())
         {
             m_CommandList->EndGPUTimestamp();
         }
@@ -770,13 +779,16 @@ namespace NorvesLib::Core::Rendering
         m_Screen.EndFrame(m_CommandList);
 
 #if NORVES_ENABLE_STATS
-        auto renderFrameEndTime = std::chrono::high_resolution_clock::now();
-        m_Stats.RenderFrameTimeMs =
-            std::chrono::duration<float, std::milli>(renderFrameEndTime - renderFrameStartTime).count();
-        m_Stats.TotalFrameTimeMs = std::max(std::max(m_Stats.GameThreadTimeMs, m_Stats.RenderThreadTimeMs),
-                                            std::max(m_Stats.RenderFrameTimeMs, m_Stats.GPUTimeMs));
-        NorvesLib::Debug::StatsManager::Get().SetRenderFrameTimeMs(m_Stats.RenderFrameTimeMs);
-        NorvesLib::Debug::StatsManager::Get().UpdateRenderingStats(m_Stats);
+        if (bTraceActive)
+        {
+            auto renderFrameEndTime = std::chrono::high_resolution_clock::now();
+            m_Stats.RenderFrameTimeMs =
+                std::chrono::duration<float, std::milli>(renderFrameEndTime - renderFrameStartTime).count();
+            m_Stats.TotalFrameTimeMs = std::max(std::max(m_Stats.GameThreadTimeMs, m_Stats.RenderThreadTimeMs),
+                                                std::max(m_Stats.RenderFrameTimeMs, m_Stats.GPUTimeMs));
+            statsManager.SetRenderFrameTimeMs(m_Stats.RenderFrameTimeMs);
+            statsManager.UpdateRenderingStats(m_Stats);
+        }
 #endif
 
         const bool bPresentationDirty = swapChain->ConsumePresentationDirty();

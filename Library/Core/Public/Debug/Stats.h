@@ -2,8 +2,10 @@
 
 #include "Debug/DebugConfig.h"
 #include "Container/Containers.h"
+#include "Thread/Atomic.h"
 #include "Thread/Mutex.h"
 #include <chrono>
+#include <fstream>
 
 /**
  * @file Stats.h
@@ -270,6 +272,18 @@ namespace NorvesLib::Debug
 
         static StatsManager& Get();
 
+        bool StartTrace(const String& outputPath = String("NorvesLib.trace.csv"));
+        void StopTrace();
+        bool IsTraceActive() const
+        {
+#if NORVES_ENABLE_STATS
+            return m_bTraceActive.Load(std::memory_order_acquire);
+#else
+            return false;
+#endif
+        }
+        String GetTraceOutputPath() const;
+
         void BeginFrame(uint64_t frameNumber, float deltaTime);
         void EndFrame();
         void RecordScope(const char* name, const char* category, float durationMs);
@@ -293,10 +307,18 @@ namespace NorvesLib::Debug
         }
 
     private:
+        void WriteTraceHeader();
+        void WriteFrameTraceLine();
+        void WriteScopeTraceLine(const ProfileEvent& event);
+
+    private:
+        NorvesLib::Thread::Atomic<bool> m_bTraceActive{false};
         mutable NorvesLib::Thread::Mutex m_Mutex;
         FrameProfile m_FrameProfile;
         RenderingStats m_RenderingStats;
         MemoryStats m_MemoryStats;
+        String m_TraceOutputPath = String("NorvesLib.trace.csv");
+        std::ofstream m_TraceFile;
     };
 
 } // namespace NorvesLib::Debug
@@ -351,25 +373,34 @@ namespace NorvesLib::Debug
  * @brief カウンター増加マクロ
  */
 #define NORVES_STAT_INC(counter) \
-    ++(counter)
+    do { \
+        if (NorvesLib::Debug::StatsManager::Get().IsTraceActive()) { ++(counter); } \
+    } while (0)
 
 #define NORVES_STAT_ADD(counter, value) \
-    (counter) += (value)
+    do { \
+        if (NorvesLib::Debug::StatsManager::Get().IsTraceActive()) { (counter) += (value); } \
+    } while (0)
 
 /**
  * @brief 時間計測開始マクロ
  */
 #define NORVES_STAT_TIME_START(name) \
-    auto __statTimeStart_##name = std::chrono::high_resolution_clock::now()
+    std::chrono::high_resolution_clock::time_point __statTimeStart_##name{}; \
+    if (NorvesLib::Debug::StatsManager::Get().IsTraceActive()) { \
+        __statTimeStart_##name = std::chrono::high_resolution_clock::now(); \
+    }
 
 /**
  * @brief 時間計測終了マクロ（ミリ秒で保存）
  */
 #define NORVES_STAT_TIME_END(name, targetMs) \
     do { \
-        auto __statTimeEnd_##name = std::chrono::high_resolution_clock::now(); \
-        (targetMs) = std::chrono::duration<float, std::milli>( \
-            __statTimeEnd_##name - __statTimeStart_##name).count(); \
+        if (NorvesLib::Debug::StatsManager::Get().IsTraceActive()) { \
+            auto __statTimeEnd_##name = std::chrono::high_resolution_clock::now(); \
+            (targetMs) = std::chrono::duration<float, std::milli>( \
+                __statTimeEnd_##name - __statTimeStart_##name).count(); \
+        } \
     } while(0)
 
 #else // NORVES_ENABLE_STATS
