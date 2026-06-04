@@ -10,6 +10,11 @@ namespace NorvesLib::Core
         return instance;
     }
 
+    uint64_t ClassRegistry::AllocateClassId()
+    {
+        return m_NextClassId++;
+    }
+
     void ClassRegistry::RegisterClass(const IClass *cls)
     {
         if (!cls)
@@ -18,6 +23,14 @@ namespace NorvesLib::Core
         }
 
         const Identity &className = cls->GetClassName();
+        auto idIt = m_ClassesById.find(cls->GetClassId());
+        if (idIt != m_ClassesById.end() && idIt->second != cls)
+        {
+            NORVES_LOG_ERROR("ClassRegistry", "ClassId collision detected for class: %s",
+                             className.ToString().c_str());
+            return;
+        }
+
         m_ClassesByName[className] = cls;
         m_ClassesById[cls->GetClassId()] = cls;
     }

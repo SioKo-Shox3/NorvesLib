@@ -260,8 +260,7 @@ namespace NorvesLib::Core
         // クラスIDを生成するヘルパー関数
         static uint64_t GenerateClassId()
         {
-            static uint64_t nextId = 1;
-            return nextId++;
+            return ClassRegistry::Get().AllocateClassId();
         }
 
     private:

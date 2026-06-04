@@ -289,8 +289,13 @@ namespace NorvesLib::Core
     class TClassProperty : public ClassProperty
     {
     public:
-        TClassProperty(const Identity &name, const IClass *type, size_t offset, size_t size, uint32_t flags = 0)
-            : ClassProperty(name, type, offset, size, flags), m_DefaultValue()
+        using MutableGetter = T &(*)(IUnknown *);
+        using ConstGetter = const T &(*)(const IUnknown *);
+
+        TClassProperty(const Identity &name, const IClass *type, size_t offset, size_t size, uint32_t flags = 0,
+                       MutableGetter mutableGetter = nullptr, ConstGetter constGetter = nullptr)
+            : ClassProperty(name, type, offset, size, flags), m_DefaultValue(),
+              m_MutableGetter(mutableGetter), m_ConstGetter(constGetter)
         {
         }
 
@@ -310,6 +315,11 @@ namespace NorvesLib::Core
          */
         T &GetRef(IUnknown *instance) const
         {
+            if (m_MutableGetter)
+            {
+                return m_MutableGetter(instance);
+            }
+
             auto *base = reinterpret_cast<uint8_t *>(instance);
             auto *property = reinterpret_cast<TPropertyValue<T> *>(base + m_Offset);
             return property->Get();
@@ -322,6 +332,11 @@ namespace NorvesLib::Core
          */
         const T &GetRef(const IUnknown *instance) const
         {
+            if (m_ConstGetter)
+            {
+                return m_ConstGetter(instance);
+            }
+
             const auto *base = reinterpret_cast<const uint8_t *>(instance);
             const auto *property = reinterpret_cast<const TPropertyValue<T> *>(base + m_Offset);
             return property->Get();
@@ -406,6 +421,8 @@ namespace NorvesLib::Core
 
     private:
         T m_DefaultValue; // プロパティのデフォルト値
+        MutableGetter m_MutableGetter;
+        ConstGetter m_ConstGetter;
     };
 
     /**
@@ -925,6 +942,12 @@ namespace NorvesLib::Core
         static ClassRegistry &Get();
 
         /**
+         * @brief 新しいクラスIDを発行します
+         * @return 一意なクラスID
+         */
+        uint64_t AllocateClassId();
+
+        /**
          * @brief クラス情報を登録します
          * @param cls 登録するクラス情報
          */
@@ -959,6 +982,9 @@ namespace NorvesLib::Core
 
         // クラスIDからクラス情報へのマップ
         Container::UnorderedMap<uint64_t, const IClass *> m_ClassesById;
+
+        // 次に割り当てるクラスID。Object基本クラスは0を予約する。
+        uint64_t m_NextClassId = 1;
     };
 
 } // namespace NorvesLib::Core

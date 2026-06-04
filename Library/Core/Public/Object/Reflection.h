@@ -71,7 +71,15 @@ private:                                                                        
     static inline void RegisterProperty_##Name()                                                                     \
     {                                                                                                                \
         s_PropertyPtr_##Name = static_cast<const NorvesLib::Core::TClassProperty<Type> *>(                           \
-            s_PropertyRegistry.Register<Type>(NorvesLib::Core::Container::String(#Name), offsetof(__ThisClass, Name), sizeof(Type))); \
+            s_PropertyRegistry.Register<Type>(NorvesLib::Core::Container::String(#Name), 0, sizeof(Type), 0,         \
+                [](NorvesLib::Core::IUnknown *obj) -> Type &                                                        \
+                {                                                                                                    \
+                    return static_cast<__ThisClass *>(obj)->Name.Get();                                              \
+                },                                                                                                   \
+                [](const NorvesLib::Core::IUnknown *obj) -> const Type &                                             \
+                {                                                                                                    \
+                    return static_cast<const __ThisClass *>(obj)->Name.Get();                                        \
+                }));                                                                                                 \
     }                                                                                                                \
     /* 自動登録を行うための静的変数 */                                                                               \
     static inline bool s_PropertyRegistered_##Name = []() { \
@@ -126,11 +134,14 @@ public:                                                                         
     public:
         // プロパティ登録関数
         template <typename PropertyType>
-        const ClassProperty *Register(const Container::String &name, size_t offset, size_t size, uint32_t flags = 0)
+        const ClassProperty *Register(const Container::String &name, size_t offset, size_t size, uint32_t flags = 0,
+                                      typename TClassProperty<PropertyType>::MutableGetter mutableGetter = nullptr,
+                                      typename TClassProperty<PropertyType>::ConstGetter constGetter = nullptr)
         {
             // プロパティ情報を作成
             const IClass *propertyTypeClass = nullptr; // 通常はTClass<PropertyType>::StaticClass()などで取得
-            auto property = std::make_shared<TClassProperty<PropertyType>>(Identity(name), propertyTypeClass, offset, size, flags);
+            auto property = std::make_shared<TClassProperty<PropertyType>>(
+                Identity(name), propertyTypeClass, offset, size, flags, mutableGetter, constGetter);
 
             // 登録されたプロパティリストに追加
             m_Properties.push_back(property);
