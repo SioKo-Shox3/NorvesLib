@@ -8,6 +8,7 @@
 #include "VulkanFramebuffer.h"
 #include "VulkanDescriptorSet.h"
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 #include <cstring>
 
@@ -191,11 +192,19 @@ namespace NorvesLib::RHI::Vulkan
 
         // ディスクリプタプールの作成
         CreateDescriptorPool();
+
+#if NORVES_ENABLE_STATS
+        CreateTimestampQueryPool();
+#endif
     }
 
     VulkanCommandList::~VulkanCommandList()
     {
         m_device->GetVkDevice().waitIdle();
+
+#if NORVES_ENABLE_STATS
+        DestroyTimestampQueryPool();
+#endif
 
         DestroyDescriptorPool();
 
@@ -219,6 +228,10 @@ namespace NorvesLib::RHI::Vulkan
         (void)m_device->GetVkDevice().waitForFences(1, &m_fence, vk::True, UINT64_MAX);
         (void)m_device->GetVkDevice().resetFences(1, &m_fence);
 
+#if NORVES_ENABLE_STATS
+        ResolveGPUTimestampResult();
+#endif
+
         Reset();
 
         vk::CommandBufferBeginInfo beginInfo;
@@ -236,6 +249,10 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::BeginRecording()
     {
         // 現在のフレームのコマンドバッファを使用（SetFrameIndexで設定済み）
+#if NORVES_ENABLE_STATS
+        ResolveGPUTimestampResult();
+#endif
+
         Reset();
 
         vk::CommandBufferBeginInfo beginInfo;
@@ -268,6 +285,13 @@ namespace NorvesLib::RHI::Vulkan
             EndRenderPass();
         }
 
+#if NORVES_ENABLE_STATS
+        if (m_bTimestampQueryActive)
+        {
+            EndGPUTimestamp();
+        }
+#endif
+
         auto result = m_commandBuffer.end();
         if (result != vk::Result::eSuccess)
         {
@@ -275,6 +299,65 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bIsRecording = false;
+    }
+
+    bool VulkanCommandList::SupportsGPUTimestamps() const
+    {
+#if NORVES_ENABLE_STATS
+        return m_bTimestampSupported;
+#else
+        return false;
+#endif
+    }
+
+    void VulkanCommandList::BeginGPUTimestamp(const char* markerName)
+    {
+#if NORVES_ENABLE_STATS
+        (void)markerName;
+
+        if (!m_bTimestampSupported || !m_bIsRecording || m_bTimestampQueryActive)
+        {
+            return;
+        }
+
+        const uint32_t queryBaseIndex = GetTimestampQueryBaseIndex();
+        m_commandBuffer.resetQueryPool(m_timestampQueryPool, queryBaseIndex, 2);
+        m_commandBuffer.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe,
+                                       m_timestampQueryPool,
+                                       queryBaseIndex);
+
+        m_bTimestampQueryPending[m_currentFrameIndex] = false;
+        m_bTimestampQueryActive = true;
+#else
+        (void)markerName;
+#endif
+    }
+
+    void VulkanCommandList::EndGPUTimestamp()
+    {
+#if NORVES_ENABLE_STATS
+        if (!m_bTimestampSupported || !m_bIsRecording || !m_bTimestampQueryActive)
+        {
+            return;
+        }
+
+        const uint32_t queryBaseIndex = GetTimestampQueryBaseIndex();
+        m_commandBuffer.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
+                                       m_timestampQueryPool,
+                                       queryBaseIndex + 1);
+
+        m_bTimestampQueryPending[m_currentFrameIndex] = true;
+        m_bTimestampQueryActive = false;
+#endif
+    }
+
+    float VulkanCommandList::GetLastGPUTimestampDurationMs() const
+    {
+#if NORVES_ENABLE_STATS
+        return m_lastGPUTimestampDurationMs;
+#else
+        return 0.0f;
+#endif
     }
 
     void VulkanCommandList::Submit(bool bWaitForCompletion)
@@ -1008,6 +1091,91 @@ namespace NorvesLib::RHI::Vulkan
         m_barrierTracker.imageStates.clear();
     }
 
+#if NORVES_ENABLE_STATS
+    void VulkanCommandList::CreateTimestampQueryPool()
+    {
+        auto queueFamilies = m_device->GetVkPhysicalDevice().getQueueFamilyProperties();
+        const uint32_t graphicsQueueFamilyIndex = m_device->GetGraphicsQueueFamilyIndex();
+        if (graphicsQueueFamilyIndex >= queueFamilies.size())
+        {
+            return;
+        }
+
+        auto deviceProperties = m_device->GetVkPhysicalDevice().getProperties();
+        m_timestampPeriodNs = deviceProperties.limits.timestampPeriod;
+        m_bTimestampSupported =
+            queueFamilies[graphicsQueueFamilyIndex].timestampValidBits > 0 &&
+            m_timestampPeriodNs > 0.0f;
+
+        if (!m_bTimestampSupported)
+        {
+            return;
+        }
+
+        vk::QueryPoolCreateInfo queryPoolInfo;
+        queryPoolInfo.queryType = vk::QueryType::eTimestamp;
+        queryPoolInfo.queryCount = MAX_COMMAND_BUFFERS * 2;
+
+        auto result = m_device->GetVkDevice().createQueryPool(queryPoolInfo);
+        if (result.result != vk::Result::eSuccess)
+        {
+            m_bTimestampSupported = false;
+            return;
+        }
+
+        m_timestampQueryPool = result.value;
+    }
+
+    void VulkanCommandList::DestroyTimestampQueryPool()
+    {
+        if (m_timestampQueryPool)
+        {
+            m_device->GetVkDevice().destroyQueryPool(m_timestampQueryPool);
+            m_timestampQueryPool = nullptr;
+        }
+
+        m_bTimestampSupported = false;
+        m_bTimestampQueryActive = false;
+        std::fill(m_bTimestampQueryPending,
+                  m_bTimestampQueryPending + MAX_COMMAND_BUFFERS,
+                  false);
+    }
+
+    void VulkanCommandList::ResolveGPUTimestampResult()
+    {
+        if (!m_bTimestampSupported || !m_bTimestampQueryPending[m_currentFrameIndex])
+        {
+            return;
+        }
+
+        std::array<uint64_t, 2> timestamps = {};
+        const uint32_t queryBaseIndex = GetTimestampQueryBaseIndex();
+        auto result = m_device->GetVkDevice().getQueryPoolResults(
+            m_timestampQueryPool,
+            queryBaseIndex,
+            static_cast<uint32_t>(timestamps.size()),
+            sizeof(uint64_t) * timestamps.size(),
+            timestamps.data(),
+            sizeof(uint64_t),
+            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+
+        if (result == vk::Result::eSuccess && timestamps[1] >= timestamps[0])
+        {
+            const double elapsedNs =
+                static_cast<double>(timestamps[1] - timestamps[0]) *
+                static_cast<double>(m_timestampPeriodNs);
+            m_lastGPUTimestampDurationMs = static_cast<float>(elapsedNs / 1000000.0);
+        }
+
+        m_bTimestampQueryPending[m_currentFrameIndex] = false;
+    }
+
+    uint32_t VulkanCommandList::GetTimestampQueryBaseIndex() const
+    {
+        return m_currentFrameIndex * 2;
+    }
+#endif
+
     void VulkanCommandList::Reset()
     {
         m_currentPipeline = nullptr;
@@ -1020,6 +1188,10 @@ namespace NorvesLib::RHI::Vulkan
         m_descriptorSetCache.clear();
         m_activeRenderPass.reset();
         m_activeFramebuffer.reset();
+
+#if NORVES_ENABLE_STATS
+        m_bTimestampQueryActive = false;
+#endif
 
         m_commandBuffer.reset({});
     }

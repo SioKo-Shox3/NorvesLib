@@ -76,6 +76,41 @@ namespace NorvesLib::RHI
         virtual void End() = 0;
 
         /**
+         * @brief GPUタイムスタンプ計測に対応しているか
+         *
+         * デバッグ/開発ビルドのプロファイル用任意機能です。
+         * 未対応バックエンドでは既定で何もしません。
+         */
+        virtual bool SupportsGPUTimestamps() const
+        {
+            return false;
+        }
+
+        /**
+         * @brief GPUタイムスタンプ計測を開始
+         * @param markerName 計測区間名（実装側で必要な場合のみ使用）
+         */
+        virtual void BeginGPUTimestamp(const char* markerName = nullptr)
+        {
+            (void)markerName;
+        }
+
+        /**
+         * @brief GPUタイムスタンプ計測を終了
+         */
+        virtual void EndGPUTimestamp()
+        {
+        }
+
+        /**
+         * @brief 直近で取得できたGPU計測時間（ミリ秒）
+         */
+        virtual float GetLastGPUTimestampDurationMs() const
+        {
+            return 0.0f;
+        }
+
+        /**
          * @brief コマンドリストの実行
          * コマンドリストをGPUに送信して実行します。
          * @param waitForCompletion 完了を待つかどうか

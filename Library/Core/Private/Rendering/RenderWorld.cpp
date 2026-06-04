@@ -1,7 +1,9 @@
 ﻿#include "Rendering/RenderWorld.h"
 #include "Resource/GLTFAnalyzer.h"
 #include "RHI/IDevice.h"
+#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
+#include <chrono>
 
 using namespace NorvesLib::Core::Container;
 
@@ -154,10 +156,21 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+#if NORVES_ENABLE_STATS
+        auto renderPrepareStartTime = std::chrono::high_resolution_clock::now();
+#endif
+
         // GT側の作業: シーン収集 → DrawCommandスナップショット生成
         // 実際の描画（swapchain acquire/submit/present）はEndFrame経由でRTまたはSTが担当。
         m_RenderingCoordinator.CollectScene();
         m_RenderingCoordinator.GenerateDrawCommands();
+
+#if NORVES_ENABLE_STATS
+        auto renderPrepareEndTime = std::chrono::high_resolution_clock::now();
+        const float renderPrepareTimeMs =
+            std::chrono::duration<float, std::milli>(renderPrepareEndTime - renderPrepareStartTime).count();
+        NorvesLib::Debug::StatsManager::Get().SetRenderPrepareTimeMs(renderPrepareTimeMs);
+#endif
     }
 
     void RenderWorld::CollectScene()
@@ -209,6 +222,17 @@ namespace NorvesLib::Core::Rendering
 
         // 統計更新
         m_Stats.FrameNumber++;
+#if NORVES_ENABLE_STATS
+        const auto &coordStats = m_RenderingCoordinator.GetStats();
+        m_Stats.DeltaTime = coordStats.DeltaTime;
+        m_Stats.FPS = coordStats.FPS;
+        m_Stats.DrawCalls = coordStats.DrawCalls;
+        m_Stats.TrianglesRendered = coordStats.TrianglesRendered;
+        m_Stats.VisibleObjects = coordStats.VisibleObjects;
+        m_Stats.GameThreadTimeMs = coordStats.GameThreadTimeMs;
+        m_Stats.RenderThreadTimeMs = m_RenderThread.GetStats().FrameTimeMs;
+        m_Stats.GPUTimeMs = coordStats.GPUTimeMs;
+#endif
     }
 
     void RenderWorld::WaitForRender()

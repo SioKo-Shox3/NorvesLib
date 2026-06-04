@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Debug/DebugConfig.h"
 #include "RHI/ICommandList.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
@@ -206,6 +207,10 @@ namespace NorvesLib::RHI::Vulkan
         void BeginRecording() override;
         void SetFrameIndex(uint32_t frameIndex) override;
         void End() override;
+        bool SupportsGPUTimestamps() const override;
+        void BeginGPUTimestamp(const char* markerName = nullptr) override;
+        void EndGPUTimestamp() override;
+        float GetLastGPUTimestampDurationMs() const override;
         void Submit(bool bWaitForCompletion = false) override;
 
         void BeginRenderPass(RenderPassPtr renderPass, FramebufferPtr framebuffer) override;
@@ -367,6 +372,13 @@ namespace NorvesLib::RHI::Vulkan
         vk::DescriptorSet GetOrCreateDescriptorSet(uint32_t setIndex, vk::DescriptorSetLayout layout);
         void BindDescriptorSets();
 
+#if NORVES_ENABLE_STATS
+        void CreateTimestampQueryPool();
+        void DestroyTimestampQueryPool();
+        void ResolveGPUTimestampResult();
+        uint32_t GetTimestampQueryBaseIndex() const;
+#endif
+
         // リソース参照の追加（リソース解放防止用）
         template <typename T>
         void AddTemporaryResource(TSharedPtr<T> resource)
@@ -378,6 +390,15 @@ namespace NorvesLib::RHI::Vulkan
         vk::PipelineStageFlags ToVkPipelineStage(ShaderStage stage) const;
         // シェーダーステージをVkシェーダーステージに変換
         vk::ShaderStageFlags ToVkShaderStageFlags(ShaderStage stage) const;
+
+#if NORVES_ENABLE_STATS
+        vk::QueryPool m_timestampQueryPool;
+        bool m_bTimestampSupported = false;
+        bool m_bTimestampQueryPending[MAX_COMMAND_BUFFERS] = {};
+        bool m_bTimestampQueryActive = false;
+        float m_lastGPUTimestampDurationMs = 0.0f;
+        float m_timestampPeriodNs = 0.0f;
+#endif
     };
 
 } // namespace NorvesLib::RHI::Vulkan

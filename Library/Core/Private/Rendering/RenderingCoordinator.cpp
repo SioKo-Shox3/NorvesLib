@@ -552,6 +552,10 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+#if NORVES_ENABLE_STATS
+        auto renderFrameStartTime = std::chrono::high_resolution_clock::now();
+#endif
+
         if (packet &&
             !packet->CompareExchangeState(FramePacketState::Queued, FramePacketState::Reading))
         {
@@ -617,6 +621,20 @@ namespace NorvesLib::Core::Rendering
 
         // コマンド録画開始
         m_CommandList->BeginRecording();
+
+#if NORVES_ENABLE_STATS
+        const float latestGPUTimeMs = m_CommandList->GetLastGPUTimestampDurationMs();
+        if (latestGPUTimeMs > 0.0f)
+        {
+            m_Stats.GPUTimeMs = latestGPUTimeMs;
+            NorvesLib::Debug::StatsManager::Get().SetGPUFrameTimeMs(latestGPUTimeMs);
+        }
+
+        if (m_CommandList->SupportsGPUTimestamps())
+        {
+            m_CommandList->BeginGPUTimestamp("FrameGPU");
+        }
+#endif
 
         // ========================================
         // Deferredパスチェーン描画（スワップチェーンレンダーパスの外で実行）
@@ -732,6 +750,12 @@ namespace NorvesLib::Core::Rendering
         pendingFrameCommands.clear();
 
         // コマンド録画終了
+#if NORVES_ENABLE_STATS
+        if (m_CommandList->SupportsGPUTimestamps())
+        {
+            m_CommandList->EndGPUTimestamp();
+        }
+#endif
         m_CommandList->End();
 
         // SceneRendererフレーム終了
@@ -744,6 +768,16 @@ namespace NorvesLib::Core::Rendering
 
         // コマンドリストをサブミット＆Present（旧EndFrame経路から移動）
         m_Screen.EndFrame(m_CommandList);
+
+#if NORVES_ENABLE_STATS
+        auto renderFrameEndTime = std::chrono::high_resolution_clock::now();
+        m_Stats.RenderFrameTimeMs =
+            std::chrono::duration<float, std::milli>(renderFrameEndTime - renderFrameStartTime).count();
+        m_Stats.TotalFrameTimeMs = std::max(std::max(m_Stats.GameThreadTimeMs, m_Stats.RenderThreadTimeMs),
+                                            std::max(m_Stats.RenderFrameTimeMs, m_Stats.GPUTimeMs));
+        NorvesLib::Debug::StatsManager::Get().SetRenderFrameTimeMs(m_Stats.RenderFrameTimeMs);
+        NorvesLib::Debug::StatsManager::Get().UpdateRenderingStats(m_Stats);
+#endif
 
         const bool bPresentationDirty = swapChain->ConsumePresentationDirty();
         const uint32_t presentWidth = swapChain->GetWidth();

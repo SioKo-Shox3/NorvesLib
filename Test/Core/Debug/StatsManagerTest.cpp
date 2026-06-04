@@ -28,8 +28,8 @@ int main()
     assert(profile.RenderThreadTimeMs == 3.0f);
     assert(profile.RenderFrameTimeMs == 2.5f);
     assert(profile.GPUFrameTimeMs == 1.25f);
-    assert(profile.CPUFrameTimeMs == 5.0f);
-    assert(profile.TotalFrameTimeMs == 5.0f);
+    assert(profile.CPUFrameTimeMs == 3.0f);
+    assert(profile.TotalFrameTimeMs == 3.0f);
     assert(profile.Events.size() == 1);
     assert(profile.Events[0].Name == "UnitScope");
     assert(profile.Events[0].Category == "Test");
