@@ -23,7 +23,12 @@ namespace NorvesLib::Core::Logging
      */
     inline bool InitializeLogging(const LogConfig &config = LogConfig{})
     {
+#if NORVES_ENABLE_LOGGING
         return Logger::GetInstance().Initialize(config);
+#else
+        (void)config;
+        return true;
+#endif
     }
 
     /**
@@ -31,7 +36,9 @@ namespace NorvesLib::Core::Logging
      */
     inline void ShutdownLogging()
     {
+#if NORVES_ENABLE_LOGGING
         Logger::GetInstance().Shutdown();
+#endif
     }
 
     /**
@@ -40,9 +47,13 @@ namespace NorvesLib::Core::Logging
      */
     inline void SetLogLevel(LogLevel level)
     {
+#if NORVES_ENABLE_LOGGING
         LogConfig config = Logger::GetInstance().GetConfig();
         config.minLevel = level;
         Logger::GetInstance().UpdateConfig(config);
+#else
+        (void)level;
+#endif
     }
 
     /**
@@ -51,6 +62,7 @@ namespace NorvesLib::Core::Logging
      */
     inline void SetLogFormat(bool useJsonFormat = false)
     {
+#if NORVES_ENABLE_LOGGING
         if (useJsonFormat)
         {
             Logger::GetInstance().SetFormatter(MakeShared<JsonLogFormatter>());
@@ -59,6 +71,9 @@ namespace NorvesLib::Core::Logging
         {
             Logger::GetInstance().SetFormatter(MakeShared<StandardLogFormatter>());
         }
+#else
+        (void)useJsonFormat;
+#endif
     }
 
     /**

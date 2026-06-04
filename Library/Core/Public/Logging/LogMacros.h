@@ -46,6 +46,8 @@ namespace NorvesLib::Core::Logging
 #define NORVES_LOG_INTERNAL_EXPAND(x) x
 #define NORVES_LOG_INTERNAL_GET_MACRO(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, NAME, ...) NAME
 
+#if NORVES_ENABLE_LOGGING
+
 // 基本ログマクロ（フォーマットなし）
 #define NORVES_LOG_SIMPLE(level, category, message)                               \
     do                                                                            \
@@ -72,6 +74,20 @@ namespace NorvesLib::Core::Logging
                 format, ##__VA_ARGS__);                                           \
         }                                                                         \
     } while (0)
+
+#else
+
+#define NORVES_LOG_SIMPLE(level, category, message) \
+    do                                              \
+    {                                               \
+    } while (0)
+
+#define NORVES_LOG_FORMAT(level, category, format, ...) \
+    do                                                  \
+    {                                                   \
+    } while (0)
+
+#endif
 
 // ===== 統合ログマクロ =====
 // 文字列のみでも printf 形式でも同じ入口を使用する
@@ -161,6 +177,8 @@ namespace NorvesLib::Core::Logging
 
 // ===== 条件付きログマクロ =====
 
+#if NORVES_ENABLE_LOGGING
+
 #define NORVES_LOG_IF(condition, level, category, message)                                       \
     do                                                                                           \
     {                                                                                            \
@@ -170,6 +188,15 @@ namespace NorvesLib::Core::Logging
         }                                                                                        \
     } while (0)
 
+#else
+
+#define NORVES_LOG_IF(condition, level, category, message) \
+    do                                                     \
+    {                                                      \
+    } while (0)
+
+#endif
+
 #define LOG_ERROR_IF(condition, message) \
     NORVES_LOG_IF(condition, NorvesLib::Core::Logging::LogLevel::Error, "General", message)
 
@@ -178,7 +205,7 @@ namespace NorvesLib::Core::Logging
 
 // ===== デバッグ専用マクロ（リリースビルドでは無効化） =====
 
-#ifdef _DEBUG
+#if NORVES_ENABLE_LOGGING && NORVES_ENABLE_DEBUG_OUTPUT
 #define NORVES_DEBUG_LOG(category, message) \
     NORVES_LOG_DEBUG(category, message)
 
@@ -211,11 +238,13 @@ namespace NorvesLib::Core::Logging
 
 // ===== 関数スコープトレース用マクロ =====
 
+#if NORVES_ENABLE_PROFILING
+
 #define NORVES_FUNCTION_TRACE() \
-    NORVES_LOG_TRACE("Function", NorvesLib::Core::Container::String("Entering ") + __FUNCTION__)
+    NORVES_LOG_TRACE_F("Function", "Entering %s", __FUNCTION__)
 
 #define NORVES_FUNCTION_TRACE_CATEGORY(category) \
-    NORVES_LOG_TRACE(category, NorvesLib::Core::Container::String("Entering ") + __FUNCTION__)
+    NORVES_LOG_TRACE_F(category, "Entering %s", __FUNCTION__)
 
 // ===== パフォーマンス測定用マクロ =====
 
@@ -229,3 +258,27 @@ namespace NorvesLib::Core::Logging
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_##name); \
         NORVES_LOG_INFO_F(category, "Performance [%s]: %lld microseconds", #name, duration.count());         \
     } while (0)
+
+#else
+
+#define NORVES_FUNCTION_TRACE() \
+    do                          \
+    {                           \
+    } while (0)
+
+#define NORVES_FUNCTION_TRACE_CATEGORY(category) \
+    do                                          \
+    {                                           \
+    } while (0)
+
+#define NORVES_LOG_PERFORMANCE_START(name) \
+    do                                     \
+    {                                      \
+    } while (0)
+
+#define NORVES_LOG_PERFORMANCE_END(name, category) \
+    do                                             \
+    {                                              \
+    } while (0)
+
+#endif

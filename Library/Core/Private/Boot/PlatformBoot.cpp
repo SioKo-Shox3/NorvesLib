@@ -2,6 +2,7 @@
 #include "Boot/BootConfig.h"
 #include "Application/ApplicationFactory.h"
 #include "Engine/ApplicationProcessor.h"
+#include "Debug/DebugConfig.h"
 #include "Logging/LoggingModule.h"
 #include "Logging/LogMacros.h"
 #include "Container/Containers.h"
@@ -29,7 +30,7 @@ namespace NorvesLib
                 // コンソールの割り当て（デバッグビルドのみ、または設定による）
                 if (config.bEnableDebugConsole)
                 {
-#ifdef _DEBUG
+#if NORVES_ENABLE_DEBUG_OUTPUT
                     if (!AttachConsole(ATTACH_PARENT_PROCESS))
                     {
                         AllocConsole();
@@ -61,7 +62,7 @@ namespace NorvesLib
                 (void)commandLine;
 
                 // コンソールの割り当て（デバッグビルドのみ）
-#ifdef _DEBUG
+#if NORVES_ENABLE_DEBUG_OUTPUT
                 if (!AttachConsole(ATTACH_PARENT_PROCESS))
                 {
                     AllocConsole();
@@ -95,7 +96,7 @@ namespace NorvesLib
             {
 #ifdef _WIN32
                 // コンソールのクリーンアップ（デバッグビルドのみ）
-#ifdef _DEBUG
+#if NORVES_ENABLE_DEBUG_OUTPUT
                 FreeConsole();
 #endif
 #endif
@@ -250,7 +251,7 @@ namespace NorvesLib
                 // デバッグコンソールの割り当て
                 if (config.bEnableDebugConsole)
                 {
-#ifdef _DEBUG
+#if NORVES_ENABLE_DEBUG_OUTPUT
                     if (AllocConsole())
                     {
                         FILE *fp;
@@ -290,7 +291,7 @@ namespace NorvesLib
                 // ロガー終了
                 Logging::ShutdownLogging();
 
-#ifdef _DEBUG
+#if NORVES_ENABLE_DEBUG_OUTPUT
                 if (config.bEnableDebugConsole)
                 {
                     std::wcout << L"Press any key to exit..." << std::endl;

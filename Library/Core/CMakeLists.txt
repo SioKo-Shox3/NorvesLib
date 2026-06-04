@@ -148,6 +148,7 @@ set(PUBLIC_HEADERS
     Public/Logging/LoggingModule.h
     Public/Logging/Logger.h
     Public/Logging/LogMacros.h
+    Public/Debug/DebugConfig.h
     Public/Debug/DebugOutput.h
     Public/Debug/Stats.h
     Public/EngineGlobals/MemoryOverrides.h
@@ -316,6 +317,17 @@ target_include_directories(${MODULE_NAME}
     PRIVATE 
         Private
         ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb  # stb_image.h
+)
+
+target_compile_definitions(${MODULE_NAME}
+    PUBLIC
+        NORVES_BUILD_DEBUG=$<IF:$<CONFIG:Debug>,1,0>
+        NORVES_BUILD_DEVELOPMENT=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
+        NORVES_BUILD_RELEASE=$<IF:$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>,1,0>
+        NORVES_ENABLE_LOGGING=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
+        NORVES_ENABLE_DEBUG_OUTPUT=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
+        NORVES_ENABLE_STATS=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
+        NORVES_ENABLE_PROFILING=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
 )
 
 # shaderc（Vulkan SDK同梱のランタイムシェーダーコンパイラ）

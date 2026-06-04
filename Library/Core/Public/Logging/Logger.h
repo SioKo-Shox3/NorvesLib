@@ -381,32 +381,62 @@ namespace NorvesLib::Core::Logging
      */
     inline void LogTrace(const String &category, const String &message)
     {
+#if NORVES_ENABLE_LOGGING
         Logger::GetInstance().Log(LogLevel::Trace, category, message);
+#else
+        (void)category;
+        (void)message;
+#endif
     }
 
     inline void LogDebug(const String &category, const String &message)
     {
+#if NORVES_ENABLE_LOGGING
         Logger::GetInstance().Log(LogLevel::Debug, category, message);
+#else
+        (void)category;
+        (void)message;
+#endif
     }
 
     inline void LogInfo(const String &category, const String &message)
     {
+#if NORVES_ENABLE_LOGGING
         Logger::GetInstance().Log(LogLevel::Info, category, message);
+#else
+        (void)category;
+        (void)message;
+#endif
     }
 
     inline void LogWarning(const String &category, const String &message)
     {
+#if NORVES_ENABLE_LOGGING
         Logger::GetInstance().Log(LogLevel::Warning, category, message);
+#else
+        (void)category;
+        (void)message;
+#endif
     }
 
     inline void LogError(const String &category, const String &message)
     {
+#if NORVES_ENABLE_LOGGING
         Logger::GetInstance().Log(LogLevel::Error, category, message);
+#else
+        (void)category;
+        (void)message;
+#endif
     }
 
     inline void LogFatal(const String &category, const String &message)
     {
+#if NORVES_ENABLE_LOGGING
         Logger::GetInstance().Log(LogLevel::Fatal, category, message);
+#else
+        (void)category;
+        (void)message;
+#endif
     }
 
     // ========================================
@@ -417,6 +447,16 @@ namespace NorvesLib::Core::Logging
                            const char *filename, const char *function, int32_t lineNumber,
                            const char *format, Args &&...args)
     {
+#if !NORVES_ENABLE_LOGGING
+        (void)level;
+        (void)category;
+        (void)filename;
+        (void)function;
+        (void)lineNumber;
+        (void)format;
+        ((void)args, ...);
+        return;
+#else
         if (!IsLevelActive(level))
         {
             return;
@@ -443,6 +483,7 @@ namespace NorvesLib::Core::Logging
         }
 
         Log(level, category, formattedMessage, filename, function, lineNumber);
+#endif
     }
 
 } // namespace NorvesLib::Core::Logging
