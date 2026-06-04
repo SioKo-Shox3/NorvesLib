@@ -36,48 +36,18 @@ namespace NorvesLib::Core::Logging
             return true;
         }
 
-#ifdef _WIN32
-        OutputDebugStringA("Logger::Initialize - Step 1: Starting initialization\n");
-        printf("Logger::Initialize - Step 1: Starting initialization\n");
-        fflush(stdout);
-#endif
         NorvesLib::Thread::ScopedLock lock(m_mutex);
-
-#ifdef _WIN32
-        OutputDebugStringA("Logger::Initialize - Step 2: Acquired mutex lock\n");
-        printf("Logger::Initialize - Step 2: Acquired mutex lock\n");
-        fflush(stdout);
-#endif
 
         m_config = config;
         m_bShutdown.Store(false);
 
-#ifdef _WIN32
-        OutputDebugStringA("Logger::Initialize - Step 3: Config set\n");
-        printf("Logger::Initialize - Step 3: Config set\n");
-        fflush(stdout);
-#endif
-
         // デフォルトフォーマッターを設定
         if (!m_formatter)
         {
-#ifdef _WIN32
-            OutputDebugStringA("Logger::Initialize - Step 4: Creating StandardLogFormatter\n");
-            printf("Logger::Initialize - Step 4: Creating StandardLogFormatter\n");
-            fflush(stdout);
-#endif
             m_formatter = MakeShared<StandardLogFormatter>();
-#ifdef _WIN32
-            OutputDebugStringA("Logger::Initialize - Step 5: StandardLogFormatter created\n");
-            printf("Logger::Initialize - Step 5: StandardLogFormatter created\n");
-            fflush(stdout);
-#endif
         } // ファイル出力の初期化
         if (m_config.outputType == LogOutput::File || m_config.outputType == LogOutput::Both)
         {
-#ifdef _WIN32
-            OutputDebugStringA("Logger::Initialize - Step 6: Creating FileStream\n");
-#endif
             // まずWriteモードでファイルを開いて古いデータをクリア
             m_logFileStream = NorvesLib::FileStream::FileStream::Create(
                 m_config.logFilePath,
@@ -94,10 +64,6 @@ namespace NorvesLib::Core::Logging
                     NorvesLib::FileStream::FileAccess::Write);
             }
 
-#ifdef _WIN32
-            OutputDebugStringA("Logger::Initialize - Step 7: FileStream created and cleared\n");
-#endif
-
             if (!m_logFileStream || !m_logFileStream->IsOpen())
             {
                 // ファイル出力に失敗した場合、コンソール出力のみに変更
@@ -107,53 +73,27 @@ namespace NorvesLib::Core::Logging
             }
         } // Windows コンソールでのUTF-8サポート
 #ifdef _WIN32
-        OutputDebugStringA("Logger::Initialize - Step 8: Setting console UTF-8\n");
-        printf("Logger::Initialize - Step 8: Setting console UTF-8\n");
-        fflush(stdout);
-
         // 一時的にUTF-8設定をスキップ
         /*
         SetConsoleOutputCP(CP_UTF8);
         _setmode(_fileno(stdout), _O_U8TEXT);
         _setmode(_fileno(stderr), _O_U8TEXT);
         */
-
-        OutputDebugStringA("Logger::Initialize - Step 9: Console UTF-8 set (skipped)\n");
-        printf("Logger::Initialize - Step 9: Console UTF-8 set (skipped)\n");
-        fflush(stdout);
 #endif
 
         // 非同期ログ処理の開始
         if (m_config.bAsyncLogging)
         {
-#ifdef _WIN32
-            OutputDebugStringA("Logger::Initialize - Step 10: Creating async task\n");
-#endif
             m_workerTask = NorvesLib::Thread::Task::Create([this]()
                                                            { AsyncLogWorker(); });
-#ifdef _WIN32
-            OutputDebugStringA("Logger::Initialize - Step 11: Submitting task to JobSystem\n");
-#endif
             NorvesLib::Thread::JobSystem::Get().SubmitTask(m_workerTask);
-#ifdef _WIN32
-            OutputDebugStringA("Logger::Initialize - Step 12: Task submitted\n");
-#endif
         }
 
-#ifdef _WIN32
-        OutputDebugStringA("Logger::Initialize - Step 13: Setting initialized flag\n");
-#endif
         m_bInitialized.Store(true);
 
-#ifdef _WIN32
-        OutputDebugStringA("Logger::Initialize - Step 14: About to log initialization message\n");
-#endif
         // 初期化完了ログ（一時的に無効化してダブルフリーエラーを回避）
         // Log(LogLevel::Info, "Logger", "Logger initialized successfully");
 
-#ifdef _WIN32
-        OutputDebugStringA("Logger::Initialize - Step 15: Initialization complete\n");
-#endif
         return true;
 #endif
     }
@@ -327,7 +267,8 @@ namespace NorvesLib::Core::Logging
         String formattedMessage = m_formatter->Format(entry);
 
         // コンソール出力
-        if (m_config.outputType == LogOutput::Console || m_config.outputType == LogOutput::Both)
+        if ((m_config.outputType == LogOutput::Console || m_config.outputType == LogOutput::Both) &&
+            entry.level >= m_config.consoleMinLevel)
         {
             WriteToConsole(formattedMessage, entry.level);
         }
@@ -383,45 +324,22 @@ namespace NorvesLib::Core::Logging
     }
     void Logger::WriteToFile(const String &formattedMessage)
     {
-#ifdef _WIN32
-        OutputDebugStringA("Logger::WriteToFile - Entry\n");
-#endif
-
         if (!m_logFileStream || !m_logFileStream->IsOpen())
         {
-#ifdef _WIN32
-            OutputDebugStringA("Logger::WriteToFile - File stream not open\n");
-#endif
             return;
         }
-
-#ifdef _WIN32
-        OutputDebugStringA("Logger::WriteToFile - Creating message with newline\n");
-#endif
 
         // 修正されたStringクラスを使用した安全な文字列連結
         String messageWithNewline = formattedMessage;
         messageWithNewline += "\n";
 
-#ifdef _WIN32
-        OutputDebugStringA("Logger::WriteToFile - Writing to file stream\n");
-#endif
-
         size_t bytesWritten = m_logFileStream->WriteString(messageWithNewline);
-
-#ifdef _WIN32
-        OutputDebugStringA("Logger::WriteToFile - File write completed\n");
-#endif
 
         if (bytesWritten > 0)
         {
             m_currentFileSize.FetchAdd(bytesWritten);
             CheckAndRotateLogFile();
         }
-
-#ifdef _WIN32
-        OutputDebugStringA("Logger::WriteToFile - Exit\n");
-#endif
     }
     uint32_t Logger::GetCurrentThreadId() const
     {

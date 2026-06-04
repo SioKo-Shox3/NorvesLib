@@ -93,7 +93,7 @@ namespace NorvesLib::Core::Input
         m_State.AddMouseScroll(delta);
 
         float accumulatedScroll = m_State.GetMouseState().ScrollDelta;
-        NORVES_LOG_INFO("Input", "InjectMouseScroll: delta={:.3f}, accumulated={:.3f}", delta, accumulatedScroll);
+        NORVES_LOG_DEBUG("Input", "InjectMouseScroll: delta={:.3f}, accumulated={:.3f}", delta, accumulatedScroll);
 
         // イベントを発火
         MouseScrollEvent event;

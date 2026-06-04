@@ -101,8 +101,8 @@ namespace Game
             {
                 float dist = m_CameraController.GetDistance();
                 auto pos = m_CameraController.GetPosition();
-                NORVES_LOG_INFO("Input", "ScrollDelta={:.3f}, CamDist={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
-                                scroll, dist, pos.x, pos.y, pos.z);
+                NORVES_LOG_DEBUG("Input", "ScrollDelta={:.3f}, CamDist={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
+                                 scroll, dist, pos.x, pos.y, pos.z);
             }
         }
 

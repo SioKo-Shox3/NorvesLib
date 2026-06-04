@@ -57,6 +57,21 @@ namespace NorvesLib::Core::Logging
     }
 
     /**
+     * @brief コンソール出力用のログレベルを設定する便利関数
+     * @param level コンソールに表示する最小ログレベル
+     */
+    inline void SetConsoleLogLevel(LogLevel level)
+    {
+#if NORVES_ENABLE_LOGGING
+        LogConfig config = Logger::GetInstance().GetConfig();
+        config.consoleMinLevel = level;
+        Logger::GetInstance().UpdateConfig(config);
+#else
+        (void)level;
+#endif
+    }
+
+    /**
      * @brief ログフォーマッターを設定する便利関数
      * @param useJsonFormat JSON形式を使用する場合true
      */
@@ -79,13 +94,15 @@ namespace NorvesLib::Core::Logging
     /**
      * @brief カスタムログ設定を作成するヘルパー関数
      */
-    inline LogConfig CreateLogConfig(LogLevel minLevel = LogLevel::Info,
+    inline LogConfig CreateLogConfig(LogLevel minLevel = LogLevel::Trace,
                                      LogOutput outputType = LogOutput::Both,
                                      const String &logFilePath = String("NorvesLib.log"),
-                                     bool asyncLogging = true)
+                                     bool asyncLogging = true,
+                                     LogLevel consoleMinLevel = LogLevel::Warning)
     {
         LogConfig config;
         config.minLevel = minLevel;
+        config.consoleMinLevel = consoleMinLevel;
         config.outputType = outputType;
         config.logFilePath = logFilePath;
         config.bAsyncLogging = asyncLogging;
@@ -104,6 +121,7 @@ namespace NorvesLib
     // 便利な初期化・終了関数
     using Core::Logging::CreateLogConfig;
     using Core::Logging::InitializeLogging;
+    using Core::Logging::SetConsoleLogLevel;
     using Core::Logging::SetLogFormat;
     using Core::Logging::SetLogLevel;
     using Core::Logging::ShutdownLogging;
