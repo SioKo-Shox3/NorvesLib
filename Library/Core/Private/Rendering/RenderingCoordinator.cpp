@@ -20,7 +20,6 @@
 #include "RHI/ITexture.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/IGPUResourceAllocator.h"
-#include "RHI/Vulkan/VulkanSlangCompiler.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
@@ -160,9 +159,16 @@ namespace NorvesLib::Core::Rendering
         // Slangコンパイラの設定（Neural Shaders対応GPUの場合）
         if (m_Device->GetCapabilities().NeuralShaders.bSupported)
         {
-            auto slangCompiler = Container::MakeShared<NorvesLib::RHI::Vulkan::VulkanSlangCompiler>();
-            m_ShaderManager.SetSlangCompiler(
-                Container::StaticPointerCast<RHI::IShaderCompiler>(slangCompiler));
+            auto slangCompiler = m_Device->CreateSlangShaderCompiler();
+            if (slangCompiler)
+            {
+                m_ShaderManager.SetSlangCompiler(slangCompiler);
+            }
+            else
+            {
+                NORVES_LOG_WARNING("RenderingCoordinator",
+                                   "Device reports Neural Shaders support but no Slang compiler is available");
+            }
         }
 
         // ========================================

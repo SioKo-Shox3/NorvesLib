@@ -25,7 +25,7 @@ namespace NorvesLib::Core::Rendering
     {
         RHI::RenderPassPtr RenderPass;
         RHI::FramebufferPtr Framebuffer;
-        TSharedPtr<Container::VariableArray<DrawCommand>> DrawCommands;
+        Container::TSharedPtr<Container::VariableArray<DrawCommand>> DrawCommands;
         RenderResourceManager* ResourceManager = nullptr;
         RHI::Viewport Viewport;
         RHI::ScissorRect Scissor;
@@ -72,7 +72,7 @@ namespace NorvesLib::Core::Rendering
 
         static FrameCommand CreateGeometryPass(RHI::RenderPassPtr renderPass,
                                                RHI::FramebufferPtr framebuffer,
-                                               TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
+                                               Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
                                                const RHI::Viewport& viewport,
                                                const RHI::ScissorRect& scissor,
                                                RenderResourceManager* resourceManager = nullptr)

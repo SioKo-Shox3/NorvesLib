@@ -4,10 +4,11 @@
 #include "Container/Containers.h"
 #include <cstdint>
 
-using namespace NorvesLib::Core::Container;
-
 namespace NorvesLib::RHI
 {
+    using NorvesLib::Core::Container::String;
+    using NorvesLib::Core::Container::TSharedPtr;
+    using NorvesLib::Core::Container::VariableArray;
 
     /**
      * @brief シェーダーコンパイル結果

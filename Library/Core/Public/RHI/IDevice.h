@@ -245,6 +245,12 @@ namespace NorvesLib::RHI
         virtual ShaderCompilerPtr CreateShaderCompiler() = 0;
 
         /**
+         * @brief Slangシェーダーコンパイラを作成
+         * @return 対応するRHI用Slangコンパイラ。未対応の場合はnullptr
+         */
+        virtual ShaderCompilerPtr CreateSlangShaderCompiler() { return nullptr; }
+
+        /**
          * @brief コマンドキューを待機
          */
         virtual void WaitIdle() = 0;
