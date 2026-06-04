@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Debug/DebugConfig.h"
 #include "Container/Containers.h"
 #include "Thread/Mutex.h"
 #include "FileStream/FileStreamModule.h"

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Debug/DebugConfig.h"
 #include "Container/Containers.h"
 #include <chrono>
 
@@ -10,15 +11,6 @@
  * リリースビルドでは計測系は動作しないように設計されています。
  * デバッグ/開発ビルドでのみ有効になります。
  */
-
-// リリースビルドでスタット機能を無効化
-#ifndef NORVES_ENABLE_STATS
-    #ifdef _DEBUG
-        #define NORVES_ENABLE_STATS 1
-    #else
-        #define NORVES_ENABLE_STATS 0
-    #endif
-#endif
 
 namespace NorvesLib::Debug
 {

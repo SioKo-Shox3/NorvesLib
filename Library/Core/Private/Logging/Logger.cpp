@@ -27,6 +27,10 @@ namespace NorvesLib::Core::Logging
     }
     bool Logger::Initialize(const LogConfig &config)
     {
+#if !NORVES_ENABLE_LOGGING
+        (void)config;
+        return true;
+#else
         if (m_bInitialized.Load())
         {
             return true;
@@ -36,7 +40,8 @@ namespace NorvesLib::Core::Logging
         OutputDebugStringA("Logger::Initialize - Step 1: Starting initialization\n");
         printf("Logger::Initialize - Step 1: Starting initialization\n");
         fflush(stdout);
-#endif NorvesLib::Thread::ScopedLock lock(m_mutex);
+#endif
+        NorvesLib::Thread::ScopedLock lock(m_mutex);
 
 #ifdef _WIN32
         OutputDebugStringA("Logger::Initialize - Step 2: Acquired mutex lock\n");
@@ -150,10 +155,14 @@ namespace NorvesLib::Core::Logging
         OutputDebugStringA("Logger::Initialize - Step 15: Initialization complete\n");
 #endif
         return true;
+#endif
     }
 
     void Logger::Shutdown()
     {
+#if !NORVES_ENABLE_LOGGING
+        return;
+#else
         if (!m_bInitialized.Load())
         {
             return;
@@ -186,11 +195,21 @@ namespace NorvesLib::Core::Logging
         }
 
         m_bInitialized.Store(false);
+#endif
     }
 
     void Logger::Log(LogLevel level, const String &category, const String &message,
                      const char *filename, const char *function, int32_t lineNumber)
     {
+#if !NORVES_ENABLE_LOGGING
+        (void)level;
+        (void)category;
+        (void)message;
+        (void)filename;
+        (void)function;
+        (void)lineNumber;
+        return;
+#else
         if (!IsLevelActive(level) || m_bShutdown.Load())
         {
             return;
@@ -219,6 +238,7 @@ namespace NorvesLib::Core::Logging
             // 同期処理で即座に出力
             ProcessLogEntry(entry);
         }
+#endif
     }
 
     void Logger::UpdateConfig(const LogConfig &config)
@@ -235,7 +255,12 @@ namespace NorvesLib::Core::Logging
 
     bool Logger::IsLevelActive(LogLevel level) const
     {
+#if !NORVES_ENABLE_LOGGING
+        (void)level;
+        return false;
+#else
         return level >= m_config.minLevel;
+#endif
     }
 
     void Logger::Flush()
