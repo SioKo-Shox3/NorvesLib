@@ -19,6 +19,28 @@ int main()
     assert(animalClass != nullptr);
     assert(dogClass != nullptr);
     assert(dogClass->IsChildOf(animalClass));
+    assert(ClassRegistry::Get().FindClass(animalClass->GetClassId()) == animalClass);
+    assert(ClassRegistry::Get().FindClass(dogClass->GetClassId()) == dogClass);
+    assert(animalClass->GetClassId() != dogClass->GetClassId());
+
+    const IClass *worldClass = World::StaticClass();
+    const IClass *worldObjectClass = WorldObject::StaticClass();
+    const IClass *componentClass = NorvesLib::Core::Component::Component::StaticClass();
+    assert(worldClass != nullptr);
+    assert(worldObjectClass != nullptr);
+    assert(componentClass != nullptr);
+    assert(ClassRegistry::Get().FindClass(worldClass->GetClassId()) == worldClass);
+    assert(ClassRegistry::Get().FindClass(worldObjectClass->GetClassId()) == worldObjectClass);
+    assert(ClassRegistry::Get().FindClass(componentClass->GetClassId()) == componentClass);
+
+    auto registeredClasses = ClassRegistry::Get().GetAllClasses();
+    for (size_t i = 0; i < registeredClasses.size(); ++i)
+    {
+        for (size_t j = i + 1; j < registeredClasses.size(); ++j)
+        {
+            assert(registeredClasses[i]->GetClassId() != registeredClasses[j]->GetClassId());
+        }
+    }
 
     Dog dog;
     dog.Initialize();
