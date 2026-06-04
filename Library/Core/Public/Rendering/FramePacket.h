@@ -296,6 +296,11 @@ namespace NorvesLib::Core::Rendering
         {
             if (packet)
             {
+                if (!packet->CompareExchangeState(FramePacketState::Reading,
+                                                  FramePacketState::Recycling))
+                {
+                    return;
+                }
                 packet->Clear();
                 packet->SetState(FramePacketState::Empty);
             }

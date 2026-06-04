@@ -226,7 +226,7 @@ namespace NorvesLib::Core
             return;
         }
 
-        m_SceneView->ClearMegaGeometryProxies();
+        m_SceneView->ClearAllProxies();
 
         // 全WorldObjectのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
         for (auto *inner : m_Inners)

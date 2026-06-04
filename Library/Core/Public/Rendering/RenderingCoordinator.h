@@ -154,7 +154,7 @@ namespace NorvesLib::Core::Rendering
          *
          * Screen.BeginFrame（swapchain acquire）と
          * Screen.EndFrame（submit + present）をこの関数内で実行します。
-         * @param packet フレームパケット（nullptr時はliveデータにフォールバック）
+         * @param packet フレームパケット。nullptrの場合は描画をスキップする。
          */
         void RenderFrame(FramePacket *packet);
 

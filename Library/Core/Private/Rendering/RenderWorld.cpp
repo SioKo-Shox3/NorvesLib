@@ -212,8 +212,8 @@ namespace NorvesLib::Core::Rendering
             // ========================================
             // MT経路: RenderThreadにパケットを渡して非同期描画
             // ========================================
-            // NotifyNewFrame内でpacketはReading状態に遷移されるため
-            // GT側のDrainUnconsumedPacketsと競合しない。
+            // NotifyNewFrame内でpacketはQueued状態に遷移されるため
+            // 以後はRenderThreadの所有として扱う。
             if (packet)
             {
                 m_RenderThread.NotifyNewFrame(packet);
@@ -224,7 +224,6 @@ namespace NorvesLib::Core::Rendering
             // ========================================
             // ST経路: GameThreadでインライン描画
             // ========================================
-            // packetがnullptrの場合はRenderFrame内のliveデータフォールバックを使用
             m_RenderingCoordinator.RenderFrame(packet);
             m_RenderingCoordinator.ReleasePacket(packet);
         }
