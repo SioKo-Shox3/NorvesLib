@@ -1,5 +1,6 @@
 ﻿#include "Rendering/RenderThread.h"
 #include "Rendering/RenderingCoordinator.h"
+#include "Debug/Stats.h"
 #include <chrono>
 
 namespace NorvesLib::Core::Rendering
@@ -170,7 +171,9 @@ namespace NorvesLib::Core::Rendering
             m_FrameMutex.Unlock();
 
             // レンダリング実行
+#if NORVES_ENABLE_STATS
             auto startTime = std::chrono::high_resolution_clock::now();
+#endif
 
             if (m_Coordinator && packet)
             {
@@ -179,12 +182,17 @@ namespace NorvesLib::Core::Rendering
                 m_Coordinator->ReleasePacket(packet);
             }
 
+#if NORVES_ENABLE_STATS
             auto endTime = std::chrono::high_resolution_clock::now();
             float frameTime = std::chrono::duration<float, std::milli>(endTime - startTime).count();
 
             // 統計を更新
             m_Stats.FramesRendered++;
             m_Stats.FrameTimeMs = frameTime;
+            NorvesLib::Debug::StatsManager::Get().SetRenderThreadTimeMs(frameTime);
+#else
+            m_Stats.FramesRendered++;
+#endif
 
             // フレーム完了を通知
             m_FrameMutex.Lock();

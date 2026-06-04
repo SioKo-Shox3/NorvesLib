@@ -1,5 +1,6 @@
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
+#include <algorithm>
 #include <sstream>
 
 #ifdef _WIN32
@@ -20,6 +21,12 @@ namespace NorvesLib::Debug
 #else
             return static_cast<uint32_t>(syscall(SYS_gettid));
 #endif
+        }
+
+        void UpdateFrameTotals(FrameProfile &profile)
+        {
+            profile.CPUFrameTimeMs = std::max(profile.GameThreadTimeMs, profile.RenderThreadTimeMs);
+            profile.TotalFrameTimeMs = std::max(profile.CPUFrameTimeMs, profile.GPUFrameTimeMs);
         }
     } // namespace
 
@@ -144,8 +151,7 @@ namespace NorvesLib::Debug
     {
 #if NORVES_ENABLE_STATS
         NorvesLib::Thread::ScopedLock lock(m_Mutex);
-        m_FrameProfile.CPUFrameTimeMs = m_FrameProfile.GameThreadTimeMs + m_FrameProfile.RenderThreadTimeMs;
-        m_FrameProfile.TotalFrameTimeMs = m_FrameProfile.CPUFrameTimeMs;
+        UpdateFrameTotals(m_FrameProfile);
 
         m_RenderingStats.GameThreadTimeMs = m_FrameProfile.GameThreadTimeMs;
         m_RenderingStats.RenderThreadTimeMs = m_FrameProfile.RenderThreadTimeMs;
@@ -182,6 +188,7 @@ namespace NorvesLib::Debug
 #if NORVES_ENABLE_STATS
         NorvesLib::Thread::ScopedLock lock(m_Mutex);
         m_FrameProfile.GameThreadTimeMs = timeMs;
+        UpdateFrameTotals(m_FrameProfile);
         m_RenderingStats.GameThreadTimeMs = timeMs;
 #else
         (void)timeMs;
@@ -204,6 +211,7 @@ namespace NorvesLib::Debug
 #if NORVES_ENABLE_STATS
         NorvesLib::Thread::ScopedLock lock(m_Mutex);
         m_FrameProfile.RenderThreadTimeMs = timeMs;
+        UpdateFrameTotals(m_FrameProfile);
         m_RenderingStats.RenderThreadTimeMs = timeMs;
 #else
         (void)timeMs;
@@ -226,6 +234,7 @@ namespace NorvesLib::Debug
 #if NORVES_ENABLE_STATS
         NorvesLib::Thread::ScopedLock lock(m_Mutex);
         m_FrameProfile.GPUFrameTimeMs = timeMs;
+        UpdateFrameTotals(m_FrameProfile);
         m_RenderingStats.GPUTimeMs = timeMs;
 #else
         (void)timeMs;
@@ -244,6 +253,7 @@ namespace NorvesLib::Debug
         m_FrameProfile.RenderPrepareTimeMs = stats.CommandGenerationTimeMs;
         m_FrameProfile.RenderFrameTimeMs = stats.RenderFrameTimeMs;
         m_FrameProfile.GPUFrameTimeMs = stats.GPUTimeMs;
+        UpdateFrameTotals(m_FrameProfile);
 #else
         (void)stats;
 #endif

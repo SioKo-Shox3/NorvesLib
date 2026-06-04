@@ -11,6 +11,7 @@
 #include "Rendering/SceneView.h"
 #include "RHI/Vulkan/VulkanRHI.h"
 #include "RHI/RHIConfig.h"
+#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Thread/JobSystem.h"
 #include <chrono>
@@ -288,9 +289,17 @@ namespace NorvesLib::Core::Engine
 
     void ApplicationProcessor::Tick()
     {
+#if NORVES_ENABLE_STATS
+        auto gameThreadStartTime = std::chrono::high_resolution_clock::now();
+#endif
+
         // デルタタイムを計算
         float deltaTime = CalculateDeltaTime();
         GEngine->SetDeltaTime(deltaTime);
+
+#if NORVES_ENABLE_STATS
+        Debug::StatsManager::Get().BeginFrame(GEngine->GetFrameCount(), deltaTime);
+#endif
 
         // 注: BeginFrame()はRun()ループ内でProcessPlatformMessagesの前に呼ばれている
 
@@ -339,6 +348,14 @@ namespace NorvesLib::Core::Engine
 
         // 入力システムのフレーム終了
         GEngine->GetInputSystem().EndFrame();
+
+#if NORVES_ENABLE_STATS
+        auto gameThreadEndTime = std::chrono::high_resolution_clock::now();
+        const float gameThreadTimeMs =
+            std::chrono::duration<float, std::milli>(gameThreadEndTime - gameThreadStartTime).count();
+        Debug::StatsManager::Get().SetGameThreadTimeMs(gameThreadTimeMs);
+        Debug::StatsManager::Get().EndFrame();
+#endif
     }
 
     bool ApplicationProcessor::ProcessPlatformMessages()
