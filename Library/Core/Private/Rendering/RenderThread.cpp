@@ -172,7 +172,13 @@ namespace NorvesLib::Core::Rendering
 
             // レンダリング実行
 #if NORVES_ENABLE_STATS
-            auto startTime = std::chrono::high_resolution_clock::now();
+            auto &statsManager = NorvesLib::Debug::StatsManager::Get();
+            const bool bTraceActive = statsManager.IsTraceActive();
+            std::chrono::high_resolution_clock::time_point startTime;
+            if (bTraceActive)
+            {
+                startTime = std::chrono::high_resolution_clock::now();
+            }
 #endif
 
             if (m_Coordinator && packet)
@@ -183,13 +189,15 @@ namespace NorvesLib::Core::Rendering
             }
 
 #if NORVES_ENABLE_STATS
-            auto endTime = std::chrono::high_resolution_clock::now();
-            float frameTime = std::chrono::duration<float, std::milli>(endTime - startTime).count();
-
             // 統計を更新
             m_Stats.FramesRendered++;
-            m_Stats.FrameTimeMs = frameTime;
-            NorvesLib::Debug::StatsManager::Get().SetRenderThreadTimeMs(frameTime);
+            if (bTraceActive)
+            {
+                auto endTime = std::chrono::high_resolution_clock::now();
+                float frameTime = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+                m_Stats.FrameTimeMs = frameTime;
+                statsManager.SetRenderThreadTimeMs(frameTime);
+            }
 #else
             m_Stats.FramesRendered++;
 #endif

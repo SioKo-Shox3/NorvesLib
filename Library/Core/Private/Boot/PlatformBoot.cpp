@@ -3,10 +3,14 @@
 #include "Application/ApplicationFactory.h"
 #include "Engine/ApplicationProcessor.h"
 #include "Debug/DebugConfig.h"
+#include "Debug/Stats.h"
 #include "Logging/LoggingModule.h"
 #include "Logging/LogMacros.h"
 #include "Container/Containers.h"
 #include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -23,6 +27,70 @@ namespace NorvesLib
             // 前方宣言
             Container::String GetExecutablePath();
             bool SetWorkingDirectory(const Container::String &path);
+
+#if NORVES_ENABLE_STATS
+            struct TraceLaunchOptions
+            {
+                bool bEnableTrace = false;
+                std::string TraceFilePath = "NorvesLib.trace.csv";
+            };
+
+            bool StartsWith(const std::string &value, const std::string &prefix)
+            {
+                return value.rfind(prefix, 0) == 0;
+            }
+
+            TraceLaunchOptions ParseTraceLaunchOptions(const BootConfig &config)
+            {
+                TraceLaunchOptions options;
+
+#ifdef _WIN32
+                std::string commandLine = config.lpCmdLine ? std::string(config.lpCmdLine) : std::string{};
+#else
+                std::string commandLine;
+                (void)config;
+#endif
+
+                std::istringstream stream(commandLine);
+                std::vector<std::string> args;
+                std::string token;
+                while (stream >> token)
+                {
+                    args.push_back(token);
+                }
+
+                for (size_t i = 0; i < args.size(); ++i)
+                {
+                    const std::string &arg = args[i];
+                    if (arg == "--trace" || arg == "-trace" || arg == "/trace")
+                    {
+                        options.bEnableTrace = true;
+                    }
+                    else if (StartsWith(arg, "--trace-file="))
+                    {
+                        options.bEnableTrace = true;
+                        options.TraceFilePath = arg.substr(std::string("--trace-file=").size());
+                    }
+                    else if (StartsWith(arg, "-traceFile="))
+                    {
+                        options.bEnableTrace = true;
+                        options.TraceFilePath = arg.substr(std::string("-traceFile=").size());
+                    }
+                    else if ((arg == "--trace-file" || arg == "-traceFile") && i + 1 < args.size())
+                    {
+                        options.bEnableTrace = true;
+                        options.TraceFilePath = args[++i];
+                    }
+                }
+
+                if (options.TraceFilePath.empty())
+                {
+                    options.TraceFilePath = "NorvesLib.trace.csv";
+                }
+
+                return options;
+            }
+#endif
 
             bool InitializePlatform(const BootConfig &config)
             {
@@ -281,10 +349,23 @@ namespace NorvesLib
                     return -1;
                 }
 
+#if NORVES_ENABLE_STATS
+                TraceLaunchOptions traceOptions = ParseTraceLaunchOptions(config);
+                if (traceOptions.bEnableTrace &&
+                    !Debug::StatsManager::Get().StartTrace(Container::String(traceOptions.TraceFilePath.c_str())))
+                {
+                    NORVES_LOG_WARNING("Trace", "Failed to open trace file: %s", traceOptions.TraceFilePath.c_str());
+                }
+#endif
+
                 LOG_INFO("PlatformBoot::Boot() - Starting application...");
 
                 // アプリケーション実行
                 int result = RunApplication(config);
+
+#if NORVES_ENABLE_STATS
+                Debug::StatsManager::Get().StopTrace();
+#endif
 
                 LOG_INFO("PlatformBoot::Boot() - Application finished");
 
