@@ -75,7 +75,7 @@ namespace NorvesLib::Core
          * @brief コンポーネントを追加
          * @param component 追加するコンポーネント
          */
-        void AddComponent(Component::Component *component);
+        bool AddComponent(Component::Component *component);
 
         /**
          * @brief コンポーネントを削除

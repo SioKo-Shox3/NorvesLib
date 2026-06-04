@@ -315,7 +315,7 @@ namespace NorvesLib::Core
          * @brief 子オブジェクト（Inner）を追加します
          * @param inner 追加する子オブジェクト
          */
-        virtual void AddInner(IUnknown *inner) = 0;
+        virtual bool AddInner(IUnknown *inner) = 0;
 
         /**
          * @brief 子オブジェクト（Inner）を削除します
@@ -378,7 +378,7 @@ namespace NorvesLib::Core
         virtual const IUnknown *GetOuter() const override;
         void SetOuter(IUnknown *outer); // SetOuterメソッドを追加（非virtual）
         virtual const Container::VariableArray<IUnknown *> &GetInners() const override;
-        virtual void AddInner(IUnknown *inner) override;
+        virtual bool AddInner(IUnknown *inner) override;
         virtual bool RemoveInner(IUnknown *inner) override;
 
     protected:

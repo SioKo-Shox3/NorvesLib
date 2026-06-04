@@ -47,6 +47,23 @@ int main()
     assert(*cloneAge == 5);
     cloneUnknown->Release();
 
+    Dog outerDog;
+    outerDog.Initialize();
+    Dog *ownedDog = ObjectUtility::CreateTypedObject<Dog>(&outerDog);
+    assert(ownedDog != nullptr);
+    assert(ownedDog->GetOuter() == &outerDog);
+    assert(ownedDog->GetRefCount() == 1);
+    assert(ownedDog->HasFlag(OF_Initialized));
+    assert(ObjectUtility::DestroyObject(ownedDog));
+    assert(outerDog.GetInners().empty());
+
+    Dog *standaloneDog = ObjectUtility::CreateTypedObject<Dog>();
+    assert(standaloneDog != nullptr);
+    assert(standaloneDog->GetOuter() == nullptr);
+    assert(standaloneDog->GetRefCount() == 1);
+    assert(standaloneDog->HasFlag(OF_Initialized));
+    assert(ObjectUtility::DestroyObject(standaloneDog));
+
     World world;
     world.Initialize();
     WorldObject *object = world.SpawnObject<WorldObject>();
@@ -59,6 +76,11 @@ int main()
     assert(component != nullptr);
     assert(component->GetOwner() == object);
     assert(component->GetRefCount() == 1);
+    object->RemoveComponent(component);
+    assert(object->GetComponents().empty());
+
+    component = world.CreateComponent<NorvesLib::Core::Component::Component>(object);
+    assert(component != nullptr);
 
     object->MarkForDestroy();
     world.Tick(0.016f);

@@ -17,9 +17,16 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
+            newObject->Initialize();
+
             if (outer)
             {
-                outer->AddInner(newObject);
+                if (!outer->AddInner(newObject))
+                {
+                    newObject->Finalize();
+                    delete newObject;
+                    return nullptr;
+                }
             }
             else
             {
@@ -28,7 +35,7 @@ namespace NorvesLib::Core
 
             return newObject;
         }
-        catch (const std::exception &e)
+        catch (const std::exception &)
         {
             // 例外が発生した場合はnullptrを返す
             return nullptr;
@@ -103,6 +110,11 @@ namespace NorvesLib::Core
 
         try
         {
+            if (IUnknown *outer = object->GetOuter())
+            {
+                return outer->RemoveInner(object);
+            }
+
             if (object->GetRefCount() > 0)
             {
                 object->Release();
@@ -205,11 +217,18 @@ namespace NorvesLib::Core
                 }
                 else
                 {
-                    unknownImpl->SetOuter(nullptr);
+                    if (IUnknown *currentOuter = object->GetOuter())
+                    {
+                        currentOuter->RemoveInner(object);
+                    }
+                    else
+                    {
+                        unknownImpl->SetOuter(nullptr);
+                    }
                 }
             }
         }
-        catch (const std::exception &e)
+        catch (const std::exception &)
         {
             // 例外が発生した場合は何もしない
         }
