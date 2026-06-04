@@ -4,10 +4,12 @@
 #include "Container/PointerTypes.h"
 #include "Container/Containers.h"
 
-using namespace NorvesLib::Core::Container;
-
 namespace NorvesLib::RHI
 {
+    using NorvesLib::Core::Container::DynamicPointerCast;
+    using NorvesLib::Core::Container::MakeShared;
+    using NorvesLib::Core::Container::StaticPointerCast;
+    using NorvesLib::Core::Container::TSharedPtr;
 
     /**
      * @brief レンダリングAPIの種類を定義する列挙型

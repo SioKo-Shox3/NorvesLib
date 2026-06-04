@@ -4,6 +4,7 @@
 #include "VulkanSampler.h"
 #include "VulkanShader.h"
 #include "VulkanShaderCompiler.h"
+#include "VulkanSlangCompiler.h"
 #include "VulkanPipeline.h"
 #include "VulkanRenderPass.h"
 #include "VulkanFramebuffer.h"
@@ -826,6 +827,12 @@ namespace NorvesLib::RHI::Vulkan
     ShaderCompilerPtr VulkanDevice::CreateShaderCompiler()
     {
         auto compiler = MakeShared<VulkanShaderCompiler>();
+        return StaticPointerCast<IShaderCompiler>(compiler);
+    }
+
+    ShaderCompilerPtr VulkanDevice::CreateSlangShaderCompiler()
+    {
+        auto compiler = MakeShared<VulkanSlangCompiler>();
         return StaticPointerCast<IShaderCompiler>(compiler);
     }
 
