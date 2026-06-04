@@ -415,9 +415,12 @@ namespace NorvesLib::Core::Rendering
         m_LastFrameTime = currentTime;
         m_TotalTime += deltaTime;
 
-        // 未消費のReadyパケットを先に解放してスロット枯渇を防ぐ
-        // （RenderThreadが動作していない場合はReadyパケットが蓄積するため）
-        m_PacketManager.DrainUnconsumedPackets();
+        // ST経路ではReadyパケットがRTに消費されないため、フレーム開始時に再利用する。
+        // MT経路ではReady→QueuedのハンドオフをRT側が行うため、ここでは触らない。
+        if (!m_bMultiThreadedRendering)
+        {
+            m_PacketManager.DrainUnconsumedPackets();
+        }
 
         // 書き込み用パケットを取得
         m_CurrentPacket = m_PacketManager.AcquireForWrite();
@@ -547,7 +550,7 @@ namespace NorvesLib::Core::Rendering
 
     void RenderingCoordinator::RenderFrame(FramePacket *packet)
     {
-        if (!m_bInitialized)
+        if (!m_bInitialized || !packet)
         {
             return;
         }
@@ -562,10 +565,15 @@ namespace NorvesLib::Core::Rendering
         }
 #endif
 
-        if (packet &&
-            !packet->CompareExchangeState(FramePacketState::Queued, FramePacketState::Reading))
+        bool bCanReadPacket = packet->GetState() == FramePacketState::Reading;
+        if (!bCanReadPacket)
         {
-            packet->CompareExchangeState(FramePacketState::Ready, FramePacketState::Reading);
+            bCanReadPacket = packet->CompareExchangeState(FramePacketState::Queued, FramePacketState::Reading) ||
+                             packet->CompareExchangeState(FramePacketState::Ready, FramePacketState::Reading);
+        }
+        if (!bCanReadPacket)
+        {
+            return;
         }
 
         auto swapChain = m_Screen.GetSwapChain();
@@ -674,28 +682,12 @@ namespace NorvesLib::Core::Rendering
         viewContext.PendingFrameCommands = &pendingFrameCommands;
 
         // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
-        if (packet)
-        {
-            viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;
-            viewContext.SnapshotDrawCommands = &packet->DrawCommands;
-            viewContext.SnapshotOpaqueCommands = &packet->OpaqueCommands;
-            viewContext.SnapshotTransparentCommands = &packet->TransparentCommands;
-            viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
-            viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
-        }
-        else
-        {
-            viewContext.MainCamera = m_bCameraSet ? &m_MainCamera : nullptr;
-            if (m_MainSceneView)
-            {
-                m_MainSceneView->PrepareDrawCommands();
-                viewContext.SnapshotDrawCommands = &m_MainSceneView->GetDrawCommands();
-                viewContext.SnapshotOpaqueCommands = &m_MainSceneView->GetOpaqueCommands();
-                viewContext.SnapshotTransparentCommands = &m_MainSceneView->GetTransparentCommands();
-                viewContext.SnapshotLightProxies = &m_MainSceneView->GetLightProxies();
-                viewContext.SnapshotMegaGeometryProxies = &m_MainSceneView->GetMegaGeometryProxies();
-            }
-        }
+        viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;
+        viewContext.SnapshotDrawCommands = &packet->DrawCommands;
+        viewContext.SnapshotOpaqueCommands = &packet->OpaqueCommands;
+        viewContext.SnapshotTransparentCommands = &packet->TransparentCommands;
+        viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
+        viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 
         // パスチェーンが設定されたViewはパスベース描画を実行
         if (m_MainSceneView && m_MainSceneView->GetPassCount() > 0)
