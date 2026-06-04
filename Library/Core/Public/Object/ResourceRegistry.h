@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "Object/Resource.h"
 #include "Container/Containers.h"
@@ -7,158 +7,412 @@
 #include "Thread/Atomic.h"
 #include "Text/IdentityPool.h"
 #include <cstdint>
+#include <limits>
+#include <type_traits>
+#include <typeindex>
+#include <utility>
 
 namespace NorvesLib::Core
 {
     /**
-     * @brief リソースレジストリ
+     * @brief Typed handle for fast CPU Resource lookup.
+     */
+    template <typename T>
+    struct ResourceHandle
+    {
+        static constexpr uint32_t InvalidIndex = std::numeric_limits<uint32_t>::max();
+
+        uint32_t Index = InvalidIndex;
+        uint32_t Generation = 0;
+        uint64_t ResourceId = 0;
+
+        bool IsValid() const
+        {
+            return Index != InvalidIndex && Generation != 0 && ResourceId != 0;
+        }
+
+        explicit operator bool() const { return IsValid(); }
+
+        bool operator==(const ResourceHandle &other) const
+        {
+            return Index == other.Index &&
+                   Generation == other.Generation &&
+                   ResourceId == other.ResourceId;
+        }
+
+        bool operator!=(const ResourceHandle &other) const
+        {
+            return !(*this == other);
+        }
+
+        static ResourceHandle Invalid()
+        {
+            return {};
+        }
+    };
+
+    /**
+     * @brief CPU Resource registry.
      *
-     * GEngineが保持するサブシステムとして、すべてのResourceの管理を行います。
-     *
-     * 責務:
-     * - Resourceのライフサイクル管理（参照カウント方式）
-     * - 重複ロード防止のためのキャッシュ機能
-     * - リソースパスからのロード/取得
-     * - 未使用リソースのガベージコレクション
-     *
-     * 使用例:
-     * ```cpp
-     * // リソースのロード（キャッシュがあればキャッシュから返す）
-     * auto texture = GEngine.GetResourceRegistry().Load<TextureResource>("path/to/texture.png");
-     *
-     * // リソースの取得（ロード済みリソースのみ）
-     * auto mesh = GEngine.GetResourceRegistry().Get<MeshResource>(resourceId);
-     * ```
+     * Resources are stored in per-type pools and resolved by generation handles.
+     * The existing TSharedPtr-based API remains for compatibility.
      */
     class ResourceRegistry
     {
-    public:
-        /**
-         * @brief コンストラクタ
-         */
-        ResourceRegistry() = default;
-
-        /**
-         * @brief デストラクタ
-         */
-        ~ResourceRegistry();
-
-        /**
-         * @brief 初期化
-         * @return 初期化成功時true
-         */
-        bool Initialize();
-
-        /**
-         * @brief 終了処理
-         */
-        void Shutdown();
-
-        /**
-         * @brief 初期化済みかどうか
-         */
-        bool IsInitialized() const { return m_bInitialized; }
-
-        // ========================================
-        // リソースのロード/取得
-        // ========================================
-
-        /**
-         * @brief リソースをロードまたはキャッシュから取得
-         * @tparam T リソース型（Resourceを継承している必要あり）
-         * @param path リソースパス
-         * @return リソースへの共有ポインタ
-         */
-        template <typename T>
-        Container::TSharedPtr<T> Load(const Container::String &path)
+    private:
+        class IResourcePool
         {
-            static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
+        public:
+            virtual ~IResourcePool() = default;
+            virtual size_t CollectGarbage() = 0;
+            virtual void UnloadAll() = 0;
+            virtual size_t GetResourceCount() const = 0;
+            virtual size_t GetCachedPathCount() const = 0;
+            virtual size_t GetTotalMemoryUsage() const = 0;
+        };
 
-            Identity pathId(path);
-
-            // キャッシュをチェック
+        template <typename T>
+        class TResourcePool final : public IResourcePool
+        {
+        public:
+            struct Slot
             {
-                Thread::ScopedLock lock(m_Mutex);
-                auto it = m_PathToResource.find(pathId);
-                if (it != m_PathToResource.end())
+                Container::TSharedPtr<T> Resource;
+                Identity Path;
+                uint64_t ResourceId = 0;
+                uint32_t Generation = 1;
+                bool bOccupied = false;
+            };
+
+            ResourceHandle<T> Register(Container::TSharedPtr<T> resource, const Container::String &path)
+            {
+                if (!resource)
                 {
-                    // キャッシュヒット - 弱参照から共有ポインタを取得
-                    if (auto resource = it->second.lock())
+                    return ResourceHandle<T>::Invalid();
+                }
+
+                const uint64_t resourceId = resource->GetResourceId();
+                auto idIt = m_IdToIndex.find(resourceId);
+                if (idIt != m_IdToIndex.end())
+                {
+                    Slot &slot = m_Slots[idIt->second];
+                    slot.Resource = resource;
+                    return MakeHandle(idIt->second, slot);
+                }
+
+                uint32_t index = 0;
+                if (!m_FreeList.empty())
+                {
+                    index = m_FreeList.back();
+                    m_FreeList.pop_back();
+                }
+                else
+                {
+                    index = static_cast<uint32_t>(m_Slots.size());
+                    m_Slots.push_back(Slot{});
+                }
+
+                Slot &slot = m_Slots[index];
+                slot.Resource = std::move(resource);
+                slot.ResourceId = resourceId;
+                slot.Path = path.empty() ? Identity() : Identity(path);
+                slot.bOccupied = true;
+                if (slot.Generation == 0)
+                {
+                    slot.Generation = 1;
+                }
+
+                m_IdToIndex[slot.ResourceId] = index;
+                if (slot.Path.IsValid())
+                {
+                    m_PathToIndex[slot.Path] = index;
+                }
+
+                return MakeHandle(index, slot);
+            }
+
+            Container::TSharedPtr<T> Resolve(ResourceHandle<T> handle) const
+            {
+                if (!IsHandleAlive(handle))
+                {
+                    return nullptr;
+                }
+                return m_Slots[handle.Index].Resource;
+            }
+
+            ResourceHandle<T> FindByPath(const Identity &path) const
+            {
+                auto it = m_PathToIndex.find(path);
+                if (it == m_PathToIndex.end())
+                {
+                    return ResourceHandle<T>::Invalid();
+                }
+
+                const uint32_t index = it->second;
+                if (index >= m_Slots.size())
+                {
+                    return ResourceHandle<T>::Invalid();
+                }
+
+                const Slot &slot = m_Slots[index];
+                if (!slot.bOccupied || !slot.Resource)
+                {
+                    return ResourceHandle<T>::Invalid();
+                }
+
+                return MakeHandle(index, slot);
+            }
+
+            ResourceHandle<T> FindById(uint64_t resourceId) const
+            {
+                auto it = m_IdToIndex.find(resourceId);
+                if (it == m_IdToIndex.end())
+                {
+                    return ResourceHandle<T>::Invalid();
+                }
+
+                const uint32_t index = it->second;
+                if (index >= m_Slots.size())
+                {
+                    return ResourceHandle<T>::Invalid();
+                }
+
+                const Slot &slot = m_Slots[index];
+                if (!slot.bOccupied || !slot.Resource)
+                {
+                    return ResourceHandle<T>::Invalid();
+                }
+
+                return MakeHandle(index, slot);
+            }
+
+            size_t CollectGarbage() override
+            {
+                size_t removedCount = 0;
+                for (uint32_t index = 0; index < m_Slots.size(); ++index)
+                {
+                    Slot &slot = m_Slots[index];
+                    if (!slot.bOccupied || !slot.Resource)
                     {
-                        return Container::DynamicPointerCast<T>(resource);
+                        continue;
                     }
-                    // 弱参照が無効なら削除
-                    m_PathToResource.erase(it);
+
+                    if (slot.Resource.use_count() <= 1)
+                    {
+                        ReleaseSlot(index);
+                        ++removedCount;
+                    }
+                }
+                return removedCount;
+            }
+
+            void UnloadAll() override
+            {
+                for (uint32_t index = 0; index < m_Slots.size(); ++index)
+                {
+                    Slot &slot = m_Slots[index];
+                    if (slot.bOccupied)
+                    {
+                        ReleaseSlot(index);
+                    }
                 }
             }
 
-            // 新規作成
+            size_t GetResourceCount() const override
+            {
+                size_t count = 0;
+                for (const Slot &slot : m_Slots)
+                {
+                    if (slot.bOccupied && slot.Resource)
+                    {
+                        ++count;
+                    }
+                }
+                return count;
+            }
+
+            size_t GetCachedPathCount() const override
+            {
+                return m_PathToIndex.size();
+            }
+
+            size_t GetTotalMemoryUsage() const override
+            {
+                size_t totalSize = 0;
+                for (const Slot &slot : m_Slots)
+                {
+                    if (slot.bOccupied && slot.Resource)
+                    {
+                        totalSize += slot.Resource->GetMemorySize();
+                    }
+                }
+                return totalSize;
+            }
+
+        private:
+            static ResourceHandle<T> MakeHandle(uint32_t index, const Slot &slot)
+            {
+                ResourceHandle<T> handle;
+                handle.Index = index;
+                handle.Generation = slot.Generation;
+                handle.ResourceId = slot.ResourceId;
+                return handle;
+            }
+
+            bool IsHandleAlive(ResourceHandle<T> handle) const
+            {
+                if (!handle.IsValid() || handle.Index >= m_Slots.size())
+                {
+                    return false;
+                }
+
+                const Slot &slot = m_Slots[handle.Index];
+                return slot.bOccupied &&
+                       slot.Generation == handle.Generation &&
+                       slot.ResourceId == handle.ResourceId &&
+                       slot.Resource != nullptr;
+            }
+
+            void ReleaseSlot(uint32_t index)
+            {
+                Slot &slot = m_Slots[index];
+                if (slot.Path.IsValid())
+                {
+                    m_PathToIndex.erase(slot.Path);
+                }
+                if (slot.ResourceId != 0)
+                {
+                    m_IdToIndex.erase(slot.ResourceId);
+                }
+
+                if (slot.Resource)
+                {
+                    slot.Resource->Unload();
+                    slot.Resource.reset();
+                }
+
+                slot.Path = Identity();
+                slot.ResourceId = 0;
+                slot.bOccupied = false;
+                ++slot.Generation;
+                if (slot.Generation == 0)
+                {
+                    slot.Generation = 1;
+                }
+                m_FreeList.push_back(index);
+            }
+
+            Container::VariableArray<Slot> m_Slots;
+            Container::VariableArray<uint32_t> m_FreeList;
+            Container::UnorderedMap<Identity, uint32_t, Identity::Hasher> m_PathToIndex;
+            Container::UnorderedMap<uint64_t, uint32_t> m_IdToIndex;
+        };
+
+    public:
+        ResourceRegistry() = default;
+        ~ResourceRegistry();
+
+        bool Initialize();
+        void Shutdown();
+        bool IsInitialized() const { return m_bInitialized; }
+
+        template <typename T>
+        ResourceHandle<T> LoadHandle(const Container::String &path)
+        {
+            static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
+
+            ResourceHandle<T> cachedHandle = FindHandle<T>(path);
+            if (cachedHandle.IsValid())
+            {
+                return cachedHandle;
+            }
+
             auto resource = CreateResource<T>(path);
             if (resource && resource->Load())
             {
-                RegisterResource(resource, path);
-                return resource;
+                return Register<T>(resource, path);
             }
 
-            return nullptr;
+            return ResourceHandle<T>::Invalid();
         }
 
-        /**
-         * @brief リソースIDからリソースを取得
-         * @tparam T リソース型
-         * @param resourceId リソースID
-         * @return リソースへの共有ポインタ（見つからない場合はnullptr）
-         */
         template <typename T>
-        Container::TSharedPtr<T> Get(uint64_t resourceId)
+        Container::TSharedPtr<T> Load(const Container::String &path)
+        {
+            return Resolve(LoadHandle<T>(path));
+        }
+
+        template <typename T>
+        ResourceHandle<T> Register(Container::TSharedPtr<T> resource, const Container::String &path = "")
+        {
+            static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
+
+            if (!resource)
+            {
+                return ResourceHandle<T>::Invalid();
+            }
+
+            if (resource->GetResourceId() == 0)
+            {
+                resource->SetResourceId(GenerateResourceId());
+            }
+            if (!path.empty())
+            {
+                resource->SetResourcePath(path);
+                resource->SetResourceName(Identity(path));
+            }
+            else if (!resource->GetResourceName().IsValid())
+            {
+                resource->SetResourceName(Identity("TransientResource"));
+            }
+
+            Thread::ScopedLock lock(m_Mutex);
+            return GetOrCreatePool<T>().Register(resource, path);
+        }
+
+        template <typename T>
+        Container::TSharedPtr<T> Resolve(ResourceHandle<T> handle) const
         {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
 
             Thread::ScopedLock lock(m_Mutex);
-            auto it = m_IdToResource.find(resourceId);
-            if (it != m_IdToResource.end())
-            {
-                if (auto resource = it->second.lock())
-                {
-                    return Container::DynamicPointerCast<T>(resource);
-                }
-                // 弱参照が無効なら削除
-                m_IdToResource.erase(it);
-            }
-            return nullptr;
+            const auto *pool = FindPool<T>();
+            return pool ? pool->Resolve(handle) : nullptr;
         }
 
-        /**
-         * @brief リソースパスからリソースを取得（ロード済みのみ）
-         * @tparam T リソース型
-         * @param path リソースパス
-         * @return リソースへの共有ポインタ（見つからない場合はnullptr）
-         */
         template <typename T>
-        Container::TSharedPtr<T> Find(const Container::String &path)
+        ResourceHandle<T> GetHandle(uint64_t resourceId) const
+        {
+            static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
+
+            Thread::ScopedLock lock(m_Mutex);
+            const auto *pool = FindPool<T>();
+            return pool ? pool->FindById(resourceId) : ResourceHandle<T>::Invalid();
+        }
+
+        template <typename T>
+        Container::TSharedPtr<T> Get(uint64_t resourceId)
+        {
+            return Resolve(GetHandle<T>(resourceId));
+        }
+
+        template <typename T>
+        ResourceHandle<T> FindHandle(const Container::String &path) const
         {
             static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
 
             Identity pathId(path);
             Thread::ScopedLock lock(m_Mutex);
-            auto it = m_PathToResource.find(pathId);
-            if (it != m_PathToResource.end())
-            {
-                if (auto resource = it->second.lock())
-                {
-                    return Container::DynamicPointerCast<T>(resource);
-                }
-                m_PathToResource.erase(it);
-            }
-            return nullptr;
+            const auto *pool = FindPool<T>();
+            return pool ? pool->FindByPath(pathId) : ResourceHandle<T>::Invalid();
         }
 
-        /**
-         * @brief 新しいリソースを作成（ロードはしない）
-         * @tparam T リソース型
-         * @param path リソースパス
-         * @return リソースへの共有ポインタ
-         */
+        template <typename T>
+        Container::TSharedPtr<T> Find(const Container::String &path)
+        {
+            return Resolve(FindHandle<T>(path));
+        }
+
         template <typename T>
         Container::TSharedPtr<T> CreateResource(const Container::String &path)
         {
@@ -175,12 +429,13 @@ namespace NorvesLib::Core
             return resource;
         }
 
-        /**
-         * @brief リソースを作成して登録（ファイルパスなし）
-         * @tparam T リソース型
-         * @param name リソース名
-         * @return リソースへの共有ポインタ
-         */
+        template <typename T>
+        ResourceHandle<T> CreateTransientHandle(const Container::String &name)
+        {
+            auto resource = CreateTransient<T>(name);
+            return resource ? GetHandle<T>(resource->GetResourceId()) : ResourceHandle<T>::Invalid();
+        }
+
         template <typename T>
         Container::TSharedPtr<T> CreateTransient(const Container::String &name)
         {
@@ -189,84 +444,57 @@ namespace NorvesLib::Core
             auto resource = Container::MakeShared<T>();
             if (resource)
             {
-                uint64_t id = GenerateResourceId();
-                resource->SetResourceId(id);
+                resource->SetResourceId(GenerateResourceId());
                 resource->SetResourceName(Identity(name));
                 resource->Initialize();
-
-                // 一時リソースとしてIDのみ登録
-                Thread::ScopedLock lock(m_Mutex);
-                m_IdToResource[id] = resource;
+                Register<T>(resource);
             }
             return resource;
         }
 
-        // ========================================
-        // ガベージコレクション
-        // ========================================
-
-        /**
-         * @brief 未使用リソースをクリーンアップ
-         * 弱参照が無効になったエントリを削除
-         * @return 削除されたエントリ数
-         */
         size_t CollectGarbage();
-
-        /**
-         * @brief すべてのリソースをアンロード
-         */
         void UnloadAll();
 
-        // ========================================
-        // 統計情報
-        // ========================================
-
-        /**
-         * @brief 登録されているリソース数を取得
-         */
         size_t GetResourceCount() const;
-
-        /**
-         * @brief キャッシュされているパス数を取得
-         */
         size_t GetCachedPathCount() const;
-
-        /**
-         * @brief 合計メモリ使用量を取得（概算）
-         */
         size_t GetTotalMemoryUsage() const;
 
     private:
-        /**
-         * @brief リソースを登録
-         * @param resource リソース
-         * @param path リソースパス
-         */
-        void RegisterResource(Container::TSharedPtr<Resource> resource, const Container::String &path);
+        template <typename T>
+        TResourcePool<T> &GetOrCreatePool()
+        {
+            const std::type_index typeKey(typeid(T));
+            auto it = m_TypePools.find(typeKey);
+            if (it != m_TypePools.end())
+            {
+                return *static_cast<TResourcePool<T> *>(it->second.get());
+            }
 
-        /**
-         * @brief リソースIDを生成
-         * @return 新しいリソースID
-         */
+            auto pool = Container::MakeUnique<TResourcePool<T>>();
+            TResourcePool<T> *poolPtr = pool.get();
+            m_TypePools.emplace(typeKey, std::move(pool));
+            return *poolPtr;
+        }
+
+        template <typename T>
+        const TResourcePool<T> *FindPool() const
+        {
+            const std::type_index typeKey(typeid(T));
+            auto it = m_TypePools.find(typeKey);
+            if (it == m_TypePools.end())
+            {
+                return nullptr;
+            }
+            return static_cast<const TResourcePool<T> *>(it->second.get());
+        }
+
         uint64_t GenerateResourceId();
 
-        // 初期化フラグ
         bool m_bInitialized = false;
-
-        // リソースID生成カウンター
         Thread::Atomic<uint64_t> m_NextResourceId{1};
-
-        // リソースキャッシュ（弱参照で保持）
-        // パス（Identity） -> リソース
-        Container::UnorderedMap<Identity, Container::TWeakPtr<Resource>, Identity::Hasher> m_PathToResource;
-
-        // ID -> リソース
-        Container::UnorderedMap<uint64_t, Container::TWeakPtr<Resource>> m_IdToResource;
-
-        // スレッドセーフ用ミューテックス
+        Container::UnorderedMap<std::type_index, Container::TUniquePtr<IResourcePool>> m_TypePools;
         mutable Thread::Mutex m_Mutex;
 
-        // コピー禁止
         ResourceRegistry(const ResourceRegistry &) = delete;
         ResourceRegistry &operator=(const ResourceRegistry &) = delete;
     };

@@ -212,6 +212,12 @@ namespace NorvesLib::Core
         virtual uint32_t Release() const = 0;
 
         /**
+         * @brief 現在の参照カウントを取得します
+         * @return 現在の参照カウント
+         */
+        virtual uint32_t GetRefCount() const = 0;
+
+        /**
          * @brief オブジェクトのクラス情報を取得します
          * @return このオブジェクトのクラス情報へのポインタ
          */
@@ -354,6 +360,7 @@ namespace NorvesLib::Core
         // IUnknownインターフェースの実装
         virtual uint32_t AddRef() const override;
         virtual uint32_t Release() const override;
+        virtual uint32_t GetRefCount() const override;
         virtual bool HasFlag(uint32_t flag) const override;
         virtual void SetFlag(uint32_t flag, bool value) override;
         virtual void *GetPropertyValue(const Identity &propertyName) override;

@@ -11,22 +11,19 @@ namespace NorvesLib::Core
 
         try
         {
-            // クラス情報のNewInstanceメソッドを使用して新しいインスタンスを生成
-            // 親子関係の設定はここで行うため、outer引数は渡さない
             IUnknown *newObject = cls->NewInstance();
+            if (!newObject)
+            {
+                return nullptr;
+            }
 
-            // 親子関係の設定（指定されていれば）
-            if (newObject && outer)
+            if (outer)
             {
                 outer->AddInner(newObject);
-
-                // 親オブジェクト参照を設定
-                // dynamic_castを使用してUnknownImplにキャスト
-                UnknownImpl *unknownImpl = dynamic_cast<UnknownImpl *>(newObject);
-                if (unknownImpl)
-                {
-                    unknownImpl->SetOuter(outer); // SetOuterメソッドを使用
-                }
+            }
+            else
+            {
+                newObject->AddRef();
             }
 
             return newObject;
@@ -104,13 +101,17 @@ namespace NorvesLib::Core
             return false;
         }
 
-        // オブジェクトの破棄処理
-        // ここでは単純にdeleteを使用していますが、
-        // メモリプールやガベージコレクションを使用する場合は
-        // 適切な破棄メカニズムに置き換えてください
         try
         {
-            delete object;
+            if (object->GetRefCount() > 0)
+            {
+                object->Release();
+            }
+            else
+            {
+                object->Finalize();
+                delete object;
+            }
             return true;
         }
         catch (...)
@@ -198,12 +199,13 @@ namespace NorvesLib::Core
             UnknownImpl *unknownImpl = dynamic_cast<UnknownImpl *>(object);
             if (unknownImpl)
             {
-                unknownImpl->SetOuter(outer);
-
-                // outerにinnerとして追加
                 if (outer)
                 {
                     outer->AddInner(object);
+                }
+                else
+                {
+                    unknownImpl->SetOuter(nullptr);
                 }
             }
         }

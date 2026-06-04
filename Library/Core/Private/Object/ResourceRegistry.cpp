@@ -1,4 +1,4 @@
-﻿#include "Object/ResourceRegistry.h"
+#include "Object/ResourceRegistry.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core
@@ -32,43 +32,16 @@ namespace NorvesLib::Core
             return;
         }
 
-        // すべてのリソースをアンロード
         UnloadAll();
 
-        // キャッシュをクリア
         {
             Thread::ScopedLock lock(m_Mutex);
-            m_PathToResource.clear();
-            m_IdToResource.clear();
+            m_TypePools.clear();
         }
 
         m_bInitialized = false;
 
         NORVES_LOG_INFO("ResourceRegistry", "ResourceRegistry shutdown");
-    }
-
-    void ResourceRegistry::RegisterResource(Container::TSharedPtr<Resource> resource, const Container::String &path)
-    {
-        if (!resource)
-        {
-            return;
-        }
-
-        Thread::ScopedLock lock(m_Mutex);
-
-        uint64_t id = resource->GetResourceId();
-
-        // パスが指定されていればパスキャッシュにも登録
-        if (!path.empty())
-        {
-            Identity pathId(path);
-            m_PathToResource[pathId] = resource;
-        }
-
-        // IDキャッシュに登録
-        m_IdToResource[id] = resource;
-
-        NORVES_LOG_DEBUG("ResourceRegistry", "Registered resource: %s (ID: %llu)", path.c_str(), id);
     }
 
     uint64_t ResourceRegistry::GenerateResourceId()
@@ -81,38 +54,17 @@ namespace NorvesLib::Core
         size_t removedCount = 0;
 
         Thread::ScopedLock lock(m_Mutex);
-
-        // パスキャッシュから無効なエントリを削除
-        for (auto it = m_PathToResource.begin(); it != m_PathToResource.end();)
+        for (auto &pair : m_TypePools)
         {
-            if (it->second.expired())
+            if (pair.second)
             {
-                it = m_PathToResource.erase(it);
-                ++removedCount;
-            }
-            else
-            {
-                ++it;
-            }
-        }
-
-        // IDキャッシュから無効なエントリを削除
-        for (auto it = m_IdToResource.begin(); it != m_IdToResource.end();)
-        {
-            if (it->second.expired())
-            {
-                it = m_IdToResource.erase(it);
-                ++removedCount;
-            }
-            else
-            {
-                ++it;
+                removedCount += pair.second->CollectGarbage();
             }
         }
 
         if (removedCount > 0)
         {
-            NORVES_LOG_DEBUG("ResourceRegistry", "Garbage collected %zu entries", removedCount);
+            NORVES_LOG_DEBUG("ResourceRegistry", "Garbage collected %zu resources", removedCount);
         }
 
         return removedCount;
@@ -121,13 +73,11 @@ namespace NorvesLib::Core
     void ResourceRegistry::UnloadAll()
     {
         Thread::ScopedLock lock(m_Mutex);
-
-        // すべてのリソースをアンロード
-        for (auto &pair : m_IdToResource)
+        for (auto &pair : m_TypePools)
         {
-            if (auto resource = pair.second.lock())
+            if (pair.second)
             {
-                resource->Unload();
+                pair.second->UnloadAll();
             }
         }
 
@@ -136,46 +86,49 @@ namespace NorvesLib::Core
 
     size_t ResourceRegistry::GetResourceCount() const
     {
-        Thread::ScopedLock lock(m_Mutex);
-
         size_t count = 0;
-        for (const auto &pair : m_IdToResource)
+
+        Thread::ScopedLock lock(m_Mutex);
+        for (const auto &pair : m_TypePools)
         {
-            if (!pair.second.expired())
+            if (pair.second)
             {
-                ++count;
+                count += pair.second->GetResourceCount();
             }
         }
+
         return count;
     }
 
     size_t ResourceRegistry::GetCachedPathCount() const
     {
-        Thread::ScopedLock lock(m_Mutex);
-
         size_t count = 0;
-        for (const auto &pair : m_PathToResource)
+
+        Thread::ScopedLock lock(m_Mutex);
+        for (const auto &pair : m_TypePools)
         {
-            if (!pair.second.expired())
+            if (pair.second)
             {
-                ++count;
+                count += pair.second->GetCachedPathCount();
             }
         }
+
         return count;
     }
 
     size_t ResourceRegistry::GetTotalMemoryUsage() const
     {
-        Thread::ScopedLock lock(m_Mutex);
-
         size_t totalSize = 0;
-        for (const auto &pair : m_IdToResource)
+
+        Thread::ScopedLock lock(m_Mutex);
+        for (const auto &pair : m_TypePools)
         {
-            if (auto resource = pair.second.lock())
+            if (pair.second)
             {
-                totalSize += resource->GetMemorySize();
+                totalSize += pair.second->GetTotalMemoryUsage();
             }
         }
+
         return totalSize;
     }
 

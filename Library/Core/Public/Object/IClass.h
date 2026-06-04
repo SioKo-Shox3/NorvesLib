@@ -1,6 +1,11 @@
 ﻿#pragma once
 
+#include <algorithm>
+#include <cstring>
 #include <memory>
+#include <ostream>
+#include <type_traits>
+#include <utility>
 #include "IUnknown.h"
 #include "Container/Containers.h" // Core::Containerのすべてのコンテナ
 #include "Text/IdentityPool.h"
@@ -119,6 +124,11 @@ namespace NorvesLib::Core
             return true;
         }
 
+        virtual void CaptureDefaultValue(const IUnknown *instance)
+        {
+            (void)instance;
+        }
+
     protected:
         Identity m_Name;      // 変数名
         const IClass *m_Type; // 型情報
@@ -201,6 +211,77 @@ namespace NorvesLib::Core
     };
 
     /**
+     * @brief PROPERTYマクロで宣言される値ラッパー
+     *
+     * 通常のメンバアクセスと反射アクセスが同じ実値を参照するよう、
+     * ClassPropertyはこのラッパー内の値をメンバオフセットから解決します。
+     */
+    template <typename T>
+    class TPropertyValue
+    {
+    public:
+        TPropertyValue() : m_Value{} {}
+        TPropertyValue(const T &value) : m_Value(value) {}
+        TPropertyValue(T &&value) : m_Value(std::move(value)) {}
+
+        operator T &() { return m_Value; }
+        operator const T &() const { return m_Value; }
+
+        TPropertyValue &operator=(const T &value)
+        {
+            m_Value = value;
+            return *this;
+        }
+
+        TPropertyValue &operator=(T &&value)
+        {
+            m_Value = std::move(value);
+            return *this;
+        }
+
+        T *operator->() { return &m_Value; }
+        const T *operator->() const { return &m_Value; }
+
+        TPropertyValue &operator++()
+        {
+            ++m_Value;
+            return *this;
+        }
+
+        T operator++(int)
+        {
+            T old = m_Value;
+            ++m_Value;
+            return old;
+        }
+
+        TPropertyValue &operator--()
+        {
+            --m_Value;
+            return *this;
+        }
+
+        T operator--(int)
+        {
+            T old = m_Value;
+            --m_Value;
+            return old;
+        }
+
+        T &Get() { return m_Value; }
+        const T &Get() const { return m_Value; }
+
+    private:
+        T m_Value;
+    };
+
+    template <typename CharT, typename Traits, typename T>
+    std::basic_ostream<CharT, Traits> &operator<<(std::basic_ostream<CharT, Traits> &os, const TPropertyValue<T> &value)
+    {
+        return os << value.Get();
+    }
+
+    /**
      * @brief 型付きのプロパティクラス
      * @tparam T プロパティの型
      */
@@ -229,8 +310,9 @@ namespace NorvesLib::Core
          */
         T &GetRef(IUnknown *instance) const
         {
-            void *data = instance->GetVariableContainer()->GetAt(m_Offset);
-            return *static_cast<T *>(data);
+            auto *base = reinterpret_cast<uint8_t *>(instance);
+            auto *property = reinterpret_cast<TPropertyValue<T> *>(base + m_Offset);
+            return property->Get();
         }
 
         /**
@@ -240,8 +322,9 @@ namespace NorvesLib::Core
          */
         const T &GetRef(const IUnknown *instance) const
         {
-            const void *data = instance->GetVariableContainer()->GetAt(m_Offset);
-            return *static_cast<const T *>(data);
+            const auto *base = reinterpret_cast<const uint8_t *>(instance);
+            const auto *property = reinterpret_cast<const TPropertyValue<T> *>(base + m_Offset);
+            return property->Get();
         }
 
         /**
@@ -253,6 +336,24 @@ namespace NorvesLib::Core
         {
             T &ref = GetRef(instance);
             ref = value;
+        }
+
+        virtual const void *GetValuePtr(const IUnknown *instance) const override
+        {
+            if (!instance)
+            {
+                return nullptr;
+            }
+            return &GetRef(instance);
+        }
+
+        virtual void *GetValuePtr(IUnknown *instance) const override
+        {
+            if (!instance)
+            {
+                return nullptr;
+            }
+            return &GetRef(instance);
         }
 
         /**
@@ -282,6 +383,25 @@ namespace NorvesLib::Core
         void ApplyDefaultValue(IUnknown *instance) const override
         {
             SetValue(instance, m_DefaultValue);
+        }
+
+        bool CopyValueFrom(IUnknown *destInstance, const IUnknown *srcInstance) const override
+        {
+            if (!destInstance || !srcInstance)
+            {
+                return false;
+            }
+
+            SetValue(destInstance, GetRef(srcInstance));
+            return true;
+        }
+
+        void CaptureDefaultValue(const IUnknown *instance) override
+        {
+            if (instance)
+            {
+                m_DefaultValue = GetRef(instance);
+            }
         }
 
     private:
@@ -457,6 +577,47 @@ namespace NorvesLib::Core
         uint32_t m_Flags;                                          // フラグ
     };
 
+    template <typename ClassType, typename ReturnType>
+    class TClassFunction : public ClassFunction
+    {
+    public:
+        using FunctionPointer = ReturnType (ClassType::*)();
+
+        TClassFunction(const Identity &name, FunctionPointer function, const IClass *returnType, uint32_t flags = 0)
+            : ClassFunction(name, returnType, flags), m_Function(function)
+        {
+        }
+
+        bool Invoke(IUnknown *instance, const void *const *parameters, void *result) const override
+        {
+            (void)parameters;
+
+            ClassType *typedInstance = dynamic_cast<ClassType *>(instance);
+            if (!typedInstance || !m_Function)
+            {
+                return false;
+            }
+
+            if constexpr (std::is_void_v<ReturnType>)
+            {
+                (typedInstance->*m_Function)();
+                return true;
+            }
+            else
+            {
+                ReturnType value = (typedInstance->*m_Function)();
+                if (result)
+                {
+                    *static_cast<ReturnType *>(result) = value;
+                }
+                return true;
+            }
+        }
+
+    private:
+        FunctionPointer m_Function;
+    };
+
     /**
      * @brief フィールドクラス（基底）
      * クラスメンバー情報を格納するコンテナの基底クラス
@@ -502,6 +663,13 @@ namespace NorvesLib::Core
             {
                 return it->second.get();
             }
+
+            auto inheritedIt = m_InheritedProperties.find(name);
+            if (inheritedIt != m_InheritedProperties.end())
+            {
+                return inheritedIt->second;
+            }
+
             return nullptr;
         }
 
@@ -512,7 +680,11 @@ namespace NorvesLib::Core
         Container::VariableArray<const ClassProperty *> GetAllProperties() const
         {
             Container::VariableArray<const ClassProperty *> result;
-            result.reserve(m_Properties.size());
+            result.reserve(m_InheritedProperties.size() + m_Properties.size());
+            for (const auto &pair : m_InheritedProperties)
+            {
+                result.push_back(pair.second);
+            }
             for (const auto &pair : m_Properties)
             {
                 result.push_back(pair.second.get());
@@ -593,6 +765,13 @@ namespace NorvesLib::Core
             {
                 return it->second.get();
             }
+
+            auto inheritedIt = m_InheritedFunctions.find(name);
+            if (inheritedIt != m_InheritedFunctions.end())
+            {
+                return inheritedIt->second;
+            }
+
             return nullptr;
         }
 
@@ -603,7 +782,11 @@ namespace NorvesLib::Core
         Container::VariableArray<const ClassFunction *> GetAllFunctions() const
         {
             Container::VariableArray<const ClassFunction *> result;
-            result.reserve(m_Functions.size());
+            result.reserve(m_InheritedFunctions.size() + m_Functions.size());
+            for (const auto &pair : m_InheritedFunctions)
+            {
+                result.push_back(pair.second);
+            }
             for (const auto &pair : m_Functions)
             {
                 result.push_back(pair.second.get());

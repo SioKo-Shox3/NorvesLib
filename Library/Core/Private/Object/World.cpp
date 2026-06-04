@@ -59,17 +59,16 @@ namespace NorvesLib::Core
         LOG_INFO("World::Finalize() - Destroying %llu objects",
                  static_cast<uint64_t>(GetObjectCount()));
 
-        // 全InnerのWorldObjectを逆順にFinalize
-        for (auto it = m_Inners.rbegin(); it != m_Inners.rend(); ++it)
+        while (!m_Inners.empty())
         {
-            if (auto *obj = ObjectUtility::CastTo<WorldObject>(*it))
+            IUnknown *inner = m_Inners.back();
+            if (auto *obj = ObjectUtility::CastTo<WorldObject>(inner))
             {
                 obj->OnRemovedFromWorld();
             }
-            (*it)->Finalize();
-            static_cast<UnknownImpl *>(*it)->SetOuter(nullptr);
+            inner->Finalize();
+            RemoveInner(inner);
         }
-        m_Inners.clear();
 
         m_SceneView = nullptr;
         NextObjectId = 1;
@@ -96,11 +95,26 @@ namespace NorvesLib::Core
             }
         }
 
-        // オブジェクトIDを付与
-        object->SetObjectId(NextObjectId++);
+        if (object->GetOuter() != nullptr)
+        {
+            NORVES_LOG_WARNING("World", "Object already has an outer");
+            return;
+        }
+
+        if (!object->HasFlag(OF_Initialized))
+        {
+            object->Initialize();
+        }
 
         // Innerとして追加（Outerも自動設定される）
         AddInner(object);
+        if (object->GetOuter() != this)
+        {
+            return;
+        }
+
+        // オブジェクトIDを付与
+        object->SetObjectId(NextObjectId++);
 
         // ライフサイクル通知
         object->OnAddedToWorld();
@@ -142,6 +156,7 @@ namespace NorvesLib::Core
 
                 // ライフサイクル通知
                 object->OnRemovedFromWorld();
+                object->Finalize();
 
                 // Innerから除去（Outerも自動クリアされる）
                 RemoveInner(object);
@@ -306,8 +321,8 @@ namespace NorvesLib::Core
             }
 
             obj->OnRemovedFromWorld();
-            RemoveInner(obj);
             obj->Finalize();
+            RemoveInner(obj);
         }
 
         if (!toRemove.empty())

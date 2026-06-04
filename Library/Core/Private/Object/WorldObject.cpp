@@ -52,17 +52,16 @@ namespace NorvesLib::Core
             return;
         }
 
-        // Innerの全ComponentをFinalize
-        for (auto it = m_Inners.rbegin(); it != m_Inners.rend(); ++it)
+        while (!m_Inners.empty())
         {
-            if (auto *comp = ObjectUtility::CastTo<Component::Component>(*it))
+            IUnknown *inner = m_Inners.back();
+            if (auto *comp = ObjectUtility::CastTo<Component::Component>(inner))
             {
                 comp->EndPlay();
             }
-            (*it)->Finalize();
-            static_cast<UnknownImpl *>(*it)->SetOuter(nullptr);
+            inner->Finalize();
+            RemoveInner(inner);
         }
-        m_Inners.clear();
 
         Object::Finalize();
     }
@@ -112,6 +111,10 @@ namespace NorvesLib::Core
 
         // Innerとして追加（Outerも自動設定される）
         AddInner(component);
+        if (component->GetOuter() != this)
+        {
+            return;
+        }
 
         // ライフサイクル
         component->Initialize();

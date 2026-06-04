@@ -2,6 +2,7 @@
 
 #include "Object/IUnknown.h"
 #include "Object/Object.h"
+#include "Object/Reflection.h"
 #include <string>
 
 namespace NorvesLib::Test
@@ -32,7 +33,6 @@ namespace NorvesLib::Test
     class Dog : public Animal
     {
         REFLECTION_CLASS(Dog, Animal)  // REFLECT_CLASS_PARENTからREFLECTION_CLASSに変更
-        using __ThisClass = Dog;  // __ThisClassの定義を追加（リフレクションに必要）
 
     public:
         Dog();

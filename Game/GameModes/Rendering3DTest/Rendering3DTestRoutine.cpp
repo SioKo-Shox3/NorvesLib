@@ -319,13 +319,12 @@ namespace Game::GameModes
             auto &world = GEngine->GetWorld();
 
             // --- 球体オブジェクト ---
-            data.m_pSphereObject = new WorldObject();
-            data.m_pSphereObject->Initialize();
+            data.m_pSphereObject = world.SpawnObject<WorldObject>();
 
             // 球体を地面の上に配置（半径1.0 + 地面Y=-1.0 → Y=0.5で浮かせる）
             data.m_pSphereObject->SetPosition(0.0f, 0.5f, 0.0f);
 
-            data.m_pSphereMeshComponent = new Component::MeshComponent();
+            data.m_pSphereMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pSphereObject);
             data.m_pSphereMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
             data.m_pSphereMeshComponent->SetCastShadow(true);
             // オブジェクトカラー（白 = テクスチャカラーをそのまま使用）
@@ -336,19 +335,15 @@ namespace Game::GameModes
             // CobbleStoneFloor（石畳）マテリアルを適用
             data.m_pSphereMeshComponent->SetMaterial(0, data.m_CobbleStoneMaterial);
 
-            data.m_pSphereObject->AddComponent(data.m_pSphereMeshComponent);
-            world.AddObject(data.m_pSphereObject);
-
             LOG_INFO("Sphere WorldObject created and added to World");
 
             // --- 地面オブジェクト ---
-            data.m_pGroundObject = new WorldObject();
-            data.m_pGroundObject->Initialize();
+            data.m_pGroundObject = world.SpawnObject<WorldObject>();
 
             // 地面をY=-1.0に配置
             data.m_pGroundObject->SetPosition(0.0f, -1.0f, 0.0f);
 
-            data.m_pGroundMeshComponent = new Component::MeshComponent();
+            data.m_pGroundMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pGroundObject);
             data.m_pGroundMeshComponent->SetMeshHandle(data.m_GroundMeshHandle);
             data.m_pGroundMeshComponent->SetCastShadow(false);
             // オブジェクトカラー（暗い緑灰色）→ CustomData
@@ -359,19 +354,15 @@ namespace Game::GameModes
             // 地面マテリアルを適用
             data.m_pGroundMeshComponent->SetMaterial(0, data.m_GroundMaterial);
 
-            data.m_pGroundObject->AddComponent(data.m_pGroundMeshComponent);
-            world.AddObject(data.m_pGroundObject);
-
             LOG_INFO("Ground WorldObject created and added to World");
 
             // --- ポイントライト光源球体オブジェクト ---
-            data.m_pLightSphereObject = new WorldObject();
-            data.m_pLightSphereObject->Initialize();
+            data.m_pLightSphereObject = world.SpawnObject<WorldObject>();
 
             // 球体の横に配置（X=4.0, Y=1.0, Z=0.0）――少し遠め
             data.m_pLightSphereObject->SetPosition(4.0f, 1.0f, 0.0f);
 
-            data.m_pLightSphereMeshComponent = new Component::MeshComponent();
+            data.m_pLightSphereMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pLightSphereObject);
             data.m_pLightSphereMeshComponent->SetMeshHandle(data.m_LightSphereMeshHandle);
             data.m_pLightSphereMeshComponent->SetCastShadow(false); // 光源自体は影を落とさない
             // 明るい黄色（発光体の見た目）
@@ -382,37 +373,26 @@ namespace Game::GameModes
             // 光源球体マテリアル（エミッシブ設定はマテリアル側に移動済み）
             data.m_pLightSphereMeshComponent->SetMaterial(0, data.m_LightSphereMaterial);
 
-            data.m_pLightSphereObject->AddComponent(data.m_pLightSphereMeshComponent);
-
             // PointLightComponentの追加（SceneViewへのLightProxy登録はWorld::SyncToSceneView()で自動化）
-            data.m_pPointLightComponent = new Component::PointLightComponent();
+            data.m_pPointLightComponent = world.CreateComponent<Component::PointLightComponent>(data.m_pLightSphereObject);
             data.m_pPointLightComponent->SetLightColor(1.0f, 0.9f, 0.3f);
             data.m_pPointLightComponent->SetIntensity(2.0f);
             data.m_pPointLightComponent->SetRange(10.0f);
             data.m_pPointLightComponent->SetLightVisible(true);
             data.m_pPointLightComponent->SetCastShadows(false);
-            data.m_pLightSphereObject->AddComponent(data.m_pPointLightComponent);
-
-            world.AddObject(data.m_pLightSphereObject);
-
             LOG_INFO("Light sphere WorldObject created and added to World");
 
             // --- ディレクショナルライト（シャドウ方向と一致） ---
-            data.m_pDirectionalLightObject = new WorldObject();
-            data.m_pDirectionalLightObject->Initialize();
+            data.m_pDirectionalLightObject = world.SpawnObject<WorldObject>();
             data.m_pDirectionalLightObject->SetPosition(0.0f, 0.0f, 0.0f);
 
-            data.m_pDirectionalLightComponent = new Component::LightComponent();
+            data.m_pDirectionalLightComponent = world.CreateComponent<Component::LightComponent>(data.m_pDirectionalLightObject);
             // LightComponentはデフォルトでDirectional型
             data.m_pDirectionalLightComponent->SetLightColor(1.0f, 1.0f, 1.0f);
             data.m_pDirectionalLightComponent->SetIntensity(1.0f);
             data.m_pDirectionalLightComponent->SetLightDirection(-0.577f, -0.577f, -0.577f);
             data.m_pDirectionalLightComponent->SetLightVisible(true);
             data.m_pDirectionalLightComponent->SetCastShadows(true);
-            data.m_pDirectionalLightObject->AddComponent(data.m_pDirectionalLightComponent);
-
-            world.AddObject(data.m_pDirectionalLightObject);
-
             LOG_INFO("Directional light created and added to World");
         }
 
@@ -424,18 +404,14 @@ namespace Game::GameModes
             auto& resourceManager = GEngine->GetRenderWorld().GetResourceManager();
 
             // 非同期ロード中に表示する簡易プレースホルダ
-            data.m_pBoulderPlaceholderObject = new WorldObject();
-            data.m_pBoulderPlaceholderObject->Initialize();
+            data.m_pBoulderPlaceholderObject = world.SpawnObject<WorldObject>();
             data.m_pBoulderPlaceholderObject->SetPosition(3.0f, 0.5f, 0.0f);
             data.m_pBoulderPlaceholderObject->SetScale(0.75f, 0.75f, 0.75f);
 
-            data.m_pBoulderPlaceholderMeshComponent = new Component::MeshComponent();
+            data.m_pBoulderPlaceholderMeshComponent = world.CreateComponent<Component::MeshComponent>(data.m_pBoulderPlaceholderObject);
             data.m_pBoulderPlaceholderMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
             data.m_pBoulderPlaceholderMeshComponent->SetMaterial(0, data.m_SilverMaterial);
             data.m_pBoulderPlaceholderMeshComponent->SetCastShadow(true);
-
-            data.m_pBoulderPlaceholderObject->AddComponent(data.m_pBoulderPlaceholderMeshComponent);
-            world.AddObject(data.m_pBoulderPlaceholderObject);
 
             data.m_bBoulderModelLoaded = false;
             data.m_bBoulderModelLoadPending = true;
@@ -501,16 +477,12 @@ namespace Game::GameModes
 
                     if (!data.m_pBoulderObject)
                     {
-                        data.m_pBoulderObject = new WorldObject();
-                        data.m_pBoulderObject->Initialize();
+                        data.m_pBoulderObject = world.SpawnObject<WorldObject>();
                         data.m_pBoulderObject->SetPosition(3.0f, 0.0f, 0.0f);
 
-                        data.m_pBoulderMegaGeometryComponent = new Component::MegaGeometryComponent();
+                        data.m_pBoulderMegaGeometryComponent = world.CreateComponent<Component::MegaGeometryComponent>(data.m_pBoulderObject);
                         data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
                         data.m_pBoulderMegaGeometryComponent->SetCastShadow(true);
-
-                        data.m_pBoulderObject->AddComponent(data.m_pBoulderMegaGeometryComponent);
-                        world.AddObject(data.m_pBoulderObject);
                     }
 
                     NORVES_LOG_INFO("Rendering3DTest", "Boulder model loaded and added to World");
