@@ -2,8 +2,12 @@
 
 #include "Object.h"
 #include "Reflection.h"
+#include "WorldObject.h"
+#include "Component/Component.h"
 #include "Container/Containers.h"
 #include <cstdint>
+#include <type_traits>
+#include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -40,6 +44,58 @@ namespace NorvesLib::Core
 
         virtual void Initialize() override;
         virtual void Finalize() override;
+
+        /**
+         * @brief World管理下のWorldObjectを新規生成します
+         * @tparam T WorldObject派生型
+         * @return 生成されたWorldObject。所有権はWorldが持ちます。
+         */
+        template <typename T = WorldObject, typename... Args>
+        T *SpawnObject(Args &&...args)
+        {
+            static_assert(std::is_base_of_v<WorldObject, T>, "T must derive from WorldObject");
+
+            if (!HasFlag(OF_Initialized))
+            {
+                return nullptr;
+            }
+
+            T *object = new T(std::forward<Args>(args)...);
+            object->Initialize();
+            AddObject(object);
+            if (object->GetWorld() != this)
+            {
+                delete object;
+                return nullptr;
+            }
+            return object;
+        }
+
+        /**
+         * @brief WorldObjectに紐づくComponentを新規生成します
+         * @tparam T Component派生型
+         * @param owner コンポーネントを所有するWorldObject
+         * @return 生成されたComponent。所有権はownerが持ちます。
+         */
+        template <typename T, typename... Args>
+        T *CreateComponent(WorldObject *owner, Args &&...args)
+        {
+            static_assert(std::is_base_of_v<Component::Component, T>, "T must derive from Component");
+
+            if (!owner || owner->GetWorld() != this)
+            {
+                return nullptr;
+            }
+
+            T *component = new T(std::forward<Args>(args)...);
+            owner->AddComponent(component);
+            if (component->GetOwner() != owner)
+            {
+                delete component;
+                return nullptr;
+            }
+            return component;
+        }
 
         /**
          * @brief WorldObjectをInnerとして追加

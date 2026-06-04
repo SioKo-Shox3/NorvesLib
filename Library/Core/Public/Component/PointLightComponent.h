@@ -22,12 +22,11 @@ namespace NorvesLib::Core::Component
      *
      * 使用例:
      * @code
-     * auto* pointLight = new PointLightComponent();
+     * auto* worldObject = world.SpawnObject<WorldObject>();
+     * auto* pointLight = world.CreateComponent<PointLightComponent>(worldObject);
      * pointLight->SetLightColor(1.0f, 0.9f, 0.3f);
      * pointLight->SetIntensity(3.0f);
      * pointLight->SetRange(8.0f);
-     * worldObject->AddComponent(pointLight);
-     * world.AddObject(worldObject);
      * // → World::SyncToSceneView()でSceneViewに自動登録
      * @endcode
      */

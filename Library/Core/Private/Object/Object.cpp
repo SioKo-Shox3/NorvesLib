@@ -21,6 +21,7 @@ namespace NorvesLib::Core
 
                 // デフォルトオブジェクトを作成
                 m_DefaultObject = new Object();
+                m_DefaultObject->SetFlag(OF_DefaultObject, true);
 
                 // FieldInitializerを使用してデフォルト値を設定
                 FieldInitializer initializer;

@@ -78,6 +78,13 @@ namespace NorvesLib::Core
                     m_DefaultObject->Initialize();
                     // デフォルトオブジェクトフラグを設定
                     m_DefaultObject->SetFlag(OF_DefaultObject, true);
+                    for (const ClassProperty *property : GetAllProperties())
+                    {
+                        if (property)
+                        {
+                            const_cast<ClassProperty *>(property)->CaptureDefaultValue(m_DefaultObject.get());
+                        }
+                    }
                 }
             }
             return m_DefaultObject.get();
@@ -166,16 +173,20 @@ namespace NorvesLib::Core
 
             try
             {
-                // デフォルトオブジェクトからコピーして新しいインスタンスを作成
-                IUnknown *newObject = new T(static_cast<const T *>(defaultObject));
+                IUnknown *newObject = new T();
 
                 if (newObject)
                 {
                     // デフォルトオブジェクトのフラグは引き継がない
                     newObject->SetFlag(OF_DefaultObject, false);
 
-                    // デフォルト値を適用
-                    ObjectUtility::ApplyDefaultValues(newObject);
+                    for (const ClassProperty *property : GetAllProperties())
+                    {
+                        if (property)
+                        {
+                            property->CopyValueFrom(newObject, defaultObject);
+                        }
+                    }
                 }
 
                 return newObject;

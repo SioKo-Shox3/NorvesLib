@@ -5,17 +5,13 @@
 namespace NorvesLib::Core
 {
     UnknownImpl::UnknownImpl()
-        : m_RefCount(0), m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
-          ,
-          m_VariableContainer(nullptr), m_Outer(nullptr)
+        : m_RefCount(0), m_Flags(0), m_VariableContainer(nullptr), m_Outer(nullptr)
     {
         InitializeVariableContainer();
     }
 
     UnknownImpl::UnknownImpl(const FieldInitializer *initializer)
-        : m_RefCount(0), m_Flags(OF_DefaultObject) // デフォルトオブジェクトフラグを設定
-          ,
-          m_VariableContainer(nullptr), m_Outer(nullptr)
+        : m_RefCount(0), m_Flags(0), m_VariableContainer(nullptr), m_Outer(nullptr)
     {
         InitializeVariableContainer();
 
@@ -40,9 +36,7 @@ namespace NorvesLib::Core
     }
 
     UnknownImpl::UnknownImpl(const IUnknown *sourceObject)
-        : m_RefCount(0), m_Flags(0) // 通常オブジェクトとして初期化
-          ,
-          m_VariableContainer(nullptr), m_Outer(nullptr)
+        : m_RefCount(0), m_Flags(0), m_VariableContainer(nullptr), m_Outer(nullptr)
     {
         // 変数コンテナを初期化
         InitializeVariableContainer();
@@ -56,7 +50,23 @@ namespace NorvesLib::Core
 
     UnknownImpl::~UnknownImpl()
     {
-        // VariableContainerはスマートポインタで自動的に解放されます
+        while (!m_Inners.empty())
+        {
+            IUnknown *inner = m_Inners.back();
+            m_Inners.pop_back();
+
+            if (auto *innerImpl = dynamic_cast<UnknownImpl *>(inner))
+            {
+                innerImpl->SetOuter(nullptr);
+            }
+
+            if (inner)
+            {
+                inner->Release();
+            }
+        }
+
+        m_Outer = nullptr;
     }
 
     uint32_t UnknownImpl::AddRef() const
@@ -66,12 +76,33 @@ namespace NorvesLib::Core
 
     uint32_t UnknownImpl::Release() const
     {
-        uint32_t count = --m_RefCount;
-        if (count == 0 && !HasFlag(OF_DefaultObject)) // デフォルトオブジェクトは自動削除しない
+        uint32_t current = m_RefCount.GetValue(std::memory_order_acquire);
+        while (current > 0)
         {
-            delete this;
+            const uint32_t next = current - 1;
+            if (m_RefCount.CompareExchangeStrong(
+                    current,
+                    next,
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire))
+            {
+                if (next == 0 && !HasFlag(OF_DefaultObject))
+                {
+                    auto *mutableThis = const_cast<UnknownImpl *>(this);
+                    mutableThis->SetFlag(OF_PendingDestroy, true);
+                    mutableThis->Finalize();
+                    delete mutableThis;
+                }
+                return next;
+            }
         }
-        return count;
+
+        return 0;
+    }
+
+    uint32_t UnknownImpl::GetRefCount() const
+    {
+        return m_RefCount.GetValue(std::memory_order_acquire);
     }
 
     bool UnknownImpl::HasFlag(uint32_t flag) const
@@ -236,6 +267,12 @@ namespace NorvesLib::Core
     {
         if (inner)
         {
+            UnknownImpl *innerImpl = dynamic_cast<UnknownImpl *>(inner);
+            if (!innerImpl || inner == this)
+            {
+                return;
+            }
+
             // すでに子リストに存在しないか確認
             for (IUnknown *existingInner : m_Inners)
             {
@@ -245,11 +282,18 @@ namespace NorvesLib::Core
                 }
             }
 
+            if (innerImpl->GetOuter() != nullptr)
+            {
+                return;
+            }
+
+            inner->AddRef();
+
             // 子リストに追加
             m_Inners.push_back(inner);
 
             // InnerのOuterを自身に設定
-            static_cast<UnknownImpl *>(inner)->SetOuter(this);
+            innerImpl->SetOuter(this);
         }
     }
 
@@ -262,10 +306,16 @@ namespace NorvesLib::Core
             {
                 if (m_Inners[i] == inner)
                 {
+                    UnknownImpl *innerImpl = dynamic_cast<UnknownImpl *>(inner);
+
                     // InnerのOuterをクリア
-                    static_cast<UnknownImpl *>(inner)->SetOuter(nullptr);
+                    if (innerImpl)
+                    {
+                        innerImpl->SetOuter(nullptr);
+                    }
 
                     m_Inners.erase(m_Inners.begin() + i);
+                    inner->Release();
                     return true; // 削除成功
                 }
             }
