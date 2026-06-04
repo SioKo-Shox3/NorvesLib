@@ -338,7 +338,7 @@ namespace NorvesLib
                                                     : config.LogFileName;
 
                 Logging::LogConfig logConfig = Logging::CreateLogConfig(
-                    Logging::LogLevel::Info,
+                    Logging::LogLevel::Trace,
                     Logging::LogOutput::Both,
                     logFileName,
                     false);

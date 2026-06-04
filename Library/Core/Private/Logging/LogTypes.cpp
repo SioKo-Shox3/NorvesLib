@@ -27,9 +27,8 @@ namespace NorvesLib::Core::Logging
         oss << "[" << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S")
             << "." << std::setfill('0') << std::setw(3) << ms.count() << "] ";
 
-        // ログレベル（カラー付き）
-        oss << "[" << GetLogLevelColor(entry.level) << LogLevelToString(entry.level)
-            << RESET_COLOR << "] ";
+        // ログレベル
+        oss << "[" << LogLevelToString(entry.level) << "] ";
 
         // スレッドID
         oss << "[T:" << std::setfill('0') << std::setw(4) << entry.threadId << "] ";

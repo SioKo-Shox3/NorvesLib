@@ -10,7 +10,7 @@ namespace NorvesLib::Core
     bool Initialize()
     { // ログシステムの初期化
         Logging::LogConfig config = Logging::CreateLogConfig(
-            Logging::LogLevel::Info,
+            Logging::LogLevel::Trace,
             Logging::LogOutput::Both,
             String("NorvesLib.log"));
 

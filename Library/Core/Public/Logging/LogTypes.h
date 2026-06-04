@@ -56,7 +56,8 @@ namespace NorvesLib::Core::Logging
      */
     struct LogConfig
     {
-        LogLevel minLevel = LogLevel::Info;
+        LogLevel minLevel = LogLevel::Trace;
+        LogLevel consoleMinLevel = LogLevel::Warning;
         LogOutput outputType = LogOutput::Both;
         String logFilePath = "NorvesLib.log";
         bool bIncludeTimestamp = true;
