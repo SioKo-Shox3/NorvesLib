@@ -25,6 +25,38 @@ namespace NorvesLib::Math
         Vector4 Extents;
     };
 
+    enum class ClipSpaceFrustumPlane
+    {
+        Left = 0,
+        Right,
+        Bottom,
+        Top,
+        Near,
+        Far,
+        Count
+    };
+
+    struct ClipSpaceFrustumPlanes
+    {
+        Vector4 Planes[6];
+
+        const Vector4 &Get(ClipSpaceFrustumPlane plane) const
+        {
+            return Planes[static_cast<int>(plane)];
+        }
+
+        void CopyToShaderData(float outPlanes[6][4]) const
+        {
+            for (int i = 0; i < 6; ++i)
+            {
+                outPlanes[i][0] = Planes[i].x;
+                outPlanes[i][1] = Planes[i].y;
+                outPlanes[i][2] = Planes[i].z;
+                outPlanes[i][3] = Planes[i].w;
+            }
+        }
+    };
+
     /**
      * @brief テンプレート化された行列ユーティリティクラス
      * @tparam Layout 対象とする行列のレイアウト
@@ -511,6 +543,41 @@ namespace NorvesLib::Math
             }
 
             return true;
+        }
+
+        static Vector4 NormalizeClipSpacePlane(const Vector4 &plane)
+        {
+            const float length = std::sqrt(plane.x * plane.x + plane.y * plane.y + plane.z * plane.z);
+            if (length > 1e-8f)
+            {
+                return plane / length;
+            }
+            return plane;
+        }
+
+        static ClipSpaceFrustumPlanes ExtractClipSpaceFrustumPlanes(
+            const MatrixType &viewProjection,
+            ClipSpaceDepthRange depthRange = ClipSpaceDepthRange::NegativeOneToOne)
+        {
+            const Vector4 row0 = viewProjection.GetRow(0);
+            const Vector4 row1 = viewProjection.GetRow(1);
+            const Vector4 row2 = viewProjection.GetRow(2);
+            const Vector4 row3 = viewProjection.GetRow(3);
+
+            ClipSpaceFrustumPlanes result;
+            result.Planes[static_cast<int>(ClipSpaceFrustumPlane::Left)] =
+                NormalizeClipSpacePlane(row3 + row0);
+            result.Planes[static_cast<int>(ClipSpaceFrustumPlane::Right)] =
+                NormalizeClipSpacePlane(row3 - row0);
+            result.Planes[static_cast<int>(ClipSpaceFrustumPlane::Bottom)] =
+                NormalizeClipSpacePlane(row3 + row1);
+            result.Planes[static_cast<int>(ClipSpaceFrustumPlane::Top)] =
+                NormalizeClipSpacePlane(row3 - row1);
+            result.Planes[static_cast<int>(ClipSpaceFrustumPlane::Near)] =
+                NormalizeClipSpacePlane(depthRange == ClipSpaceDepthRange::ZeroToOne ? row2 : row3 + row2);
+            result.Planes[static_cast<int>(ClipSpaceFrustumPlane::Far)] =
+                NormalizeClipSpacePlane(row3 - row2);
+            return result;
         }
 
         /**

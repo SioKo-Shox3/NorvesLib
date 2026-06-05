@@ -32,6 +32,11 @@ namespace
     {
         return std::abs(lhs - rhs) <= tolerance;
     }
+
+    float PlaneNormalLength(const NorvesLib::Math::Vector4 &plane)
+    {
+        return std::sqrt(plane.x * plane.x + plane.y * plane.y + plane.z * plane.z);
+    }
 }
 
 int main()
@@ -80,6 +85,26 @@ int main()
         assert(!NorvesLib::Math::MatrixUtils::IntersectsClipSpace(
             behindCameraSphere,
             NorvesLib::Math::ClipSpaceDepthRange::ZeroToOne));
+    }
+
+    {
+        CameraProxy camera = MakeCamera();
+        const CameraViewConstants constants = CameraViewConstants::Build(camera, 16.0f / 9.0f);
+        const auto frustumPlanes = NorvesLib::Math::MatrixUtils::ExtractClipSpaceFrustumPlanes(
+            constants.CullingViewProjectionMatrix,
+            NorvesLib::Math::ClipSpaceDepthRange::ZeroToOne);
+
+        float shaderPlanes[6][4] = {};
+        frustumPlanes.CopyToShaderData(shaderPlanes);
+
+        for (int i = 0; i < 6; ++i)
+        {
+            assert(IsNearlyEqual(PlaneNormalLength(frustumPlanes.Planes[i]), 1.0f));
+            assert(IsNearlyEqual(shaderPlanes[i][0], frustumPlanes.Planes[i].x));
+            assert(IsNearlyEqual(shaderPlanes[i][1], frustumPlanes.Planes[i].y));
+            assert(IsNearlyEqual(shaderPlanes[i][2], frustumPlanes.Planes[i].z));
+            assert(IsNearlyEqual(shaderPlanes[i][3], frustumPlanes.Planes[i].w));
+        }
     }
 
     {

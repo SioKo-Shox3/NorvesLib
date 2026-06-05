@@ -131,11 +131,6 @@ namespace NorvesLib::Core::Rendering
         bool EnsurePerInstanceBindings(uint32_t requiredCount);
 
         /**
-         * @brief 視錐台平面を行列から抽出
-         */
-        static void ExtractFrustumPlanes(const float *viewProj, float planes[6][4]);
-
-        /**
          * @brief Hi-Z深度ピラミッドのリソースを作成・再作成
          */
         bool CreateHiZResources(ViewRenderContext &context);
