@@ -2,6 +2,7 @@
 
 #include "Object.h"
 #include "Reflection.h"
+#include "PropertyBag.h"
 #include "Container/Containers.h"
 #include "Text/IdentityPool.h"
 
@@ -17,6 +18,20 @@ namespace NorvesLib::Core
         Loaded,   // ロード完了
         Failed,   // ロード失敗
         Unloading // アンロード中
+    };
+
+    using ResourceId = uint64_t;
+    using ResourceType = Identity;
+    using ResourceLoadState = ResourceState;
+
+    struct ResourceMetadata
+    {
+        Container::String URI;
+        ResourceType Type;
+        uint64_t VersionHash = 0;
+        Container::VariableArray<Container::String> Dependencies;
+        PropertyBag ImportSettings;
+        PropertyBag PreviewMetadata;
     };
 
     /**
@@ -86,6 +101,10 @@ namespace NorvesLib::Core
          * @return リソースID
          */
         uint64_t GetResourceId() const { return m_ResourceId; }
+        ResourceId GetId() const { return m_ResourceId; }
+        ResourceType GetType() const { return m_Metadata.Type; }
+        const ResourceMetadata &GetMetadata() const { return m_Metadata; }
+        ResourceLoadState GetLoadState() const { return m_State; }
 
         /**
          * @brief リソースパスを取得します
@@ -134,6 +153,11 @@ namespace NorvesLib::Core
          */
         virtual size_t GetMemorySize() const { return 0; }
 
+        /**
+         * @brief Resource commandをFunctionDescとして取得します。
+         */
+        static Container::VariableArray<FunctionDesc> BuildResourceFunctionDescs();
+
     protected:
         /**
          * @brief リソースIDを設定します（内部用）
@@ -145,13 +169,19 @@ namespace NorvesLib::Core
          * @brief リソースパスを設定します（内部用）
          * @param path リソースパス
          */
-        void SetResourcePath(const Container::String &path) { m_ResourcePath = path; }
+        void SetResourcePath(const Container::String &path)
+        {
+            m_ResourcePath = path;
+            m_Metadata.URI = path;
+        }
 
         /**
          * @brief リソース名を設定します（内部用）
          * @param name リソース名
          */
         void SetResourceName(const Identity &name) { m_ResourceName = name; }
+
+        void SetResourceType(const ResourceType &type) { m_Metadata.Type = type; }
 
         /**
          * @brief リソース状態を設定します（内部用）
@@ -167,6 +197,7 @@ namespace NorvesLib::Core
         Container::String m_ResourcePath;                // リソースのファイルパス
         Identity m_ResourceName;                         // リソース名
         ResourceState m_State = ResourceState::Unloaded; // リソース状態
+        ResourceMetadata m_Metadata;                      // リソースメタデータ
     };
 
 } // namespace NorvesLib::Core

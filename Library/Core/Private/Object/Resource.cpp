@@ -10,17 +10,20 @@ namespace NorvesLib::Core
     Resource::Resource()
         : Object()
     {
+        m_Metadata.Type = Identity("Resource");
     }
 
     Resource::Resource(const FieldInitializer *initializer)
         : Object(initializer)
     {
+        m_Metadata.Type = Identity("Resource");
     }
 
     Resource::Resource(const IUnknown *sourceObject)
         : Object(sourceObject)
     {
         // Objectのコンストラクタですべての必要な処理は行われる
+        m_Metadata.Type = Identity("Resource");
     }
 
     Resource::~Resource()
@@ -104,6 +107,81 @@ namespace NorvesLib::Core
         // 派生クラスでこのメソッドをオーバーライドして実装
 
         m_State = ResourceState::Unloaded;
+    }
+
+    Container::VariableArray<FunctionDesc> Resource::BuildResourceFunctionDescs()
+    {
+        Container::VariableArray<FunctionDesc> result;
+
+        auto makeDesc = [](const char *name, FunctionDesc::InvokeFn invoke)
+        {
+            FunctionDesc desc;
+            desc.StableId = MakeStableSchemaId("NorvesLib", "Function", Container::StringView("Resource"), Container::StringView(name));
+            desc.Name = name;
+            desc.ReturnType = TypeRegistry::Get().GetTypeId<bool>();
+            desc.Flags = FunctionFlags::RuntimeCallable |
+                         FunctionFlags::EditorCallable |
+                         FunctionFlags::GameThreadOnly |
+                         FunctionFlags::Mutating;
+            desc.Thread = ThreadPolicy::GameThreadOnly;
+            desc.Invoke = invoke;
+            return desc;
+        };
+
+        result.push_back(makeDesc("Reload", [](IUnknown *instance, const Container::VariableArray<PropertyValue> &arguments, PropertyValue *outReturnValue)
+        {
+            (void)arguments;
+            Resource *resource = ObjectUtility::CastTo<Resource>(instance);
+            if (!resource || !outReturnValue)
+            {
+                return false;
+            }
+            resource->Unload();
+            const bool bLoaded = resource->Load();
+            outReturnValue->Set<bool>(bLoaded);
+            return true;
+        }));
+
+        result.push_back(makeDesc("Reimport", [](IUnknown *instance, const Container::VariableArray<PropertyValue> &arguments, PropertyValue *outReturnValue)
+        {
+            (void)arguments;
+            Resource *resource = ObjectUtility::CastTo<Resource>(instance);
+            if (!resource || !outReturnValue)
+            {
+                return false;
+            }
+            resource->Unload();
+            const bool bLoaded = resource->Load();
+            outReturnValue->Set<bool>(bLoaded);
+            return true;
+        }));
+
+        result.push_back(makeDesc("Unload", [](IUnknown *instance, const Container::VariableArray<PropertyValue> &arguments, PropertyValue *outReturnValue)
+        {
+            (void)arguments;
+            Resource *resource = ObjectUtility::CastTo<Resource>(instance);
+            if (!resource || !outReturnValue)
+            {
+                return false;
+            }
+            resource->Unload();
+            outReturnValue->Set<bool>(!resource->IsLoaded());
+            return true;
+        }));
+
+        result.push_back(makeDesc("Pin", [](IUnknown *instance, const Container::VariableArray<PropertyValue> &arguments, PropertyValue *outReturnValue)
+        {
+            (void)arguments;
+            Resource *resource = ObjectUtility::CastTo<Resource>(instance);
+            if (!resource || !outReturnValue)
+            {
+                return false;
+            }
+            outReturnValue->Set<bool>(true);
+            return true;
+        }));
+
+        return result;
     }
 
 } // namespace NorvesLib::Core

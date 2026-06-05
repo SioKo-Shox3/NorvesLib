@@ -132,4 +132,20 @@ namespace NorvesLib::Core
         return totalSize;
     }
 
+    Container::VariableArray<ResourceRecord> ResourceRegistry::GetRecords() const
+    {
+        Container::VariableArray<ResourceRecord> records;
+
+        Thread::ScopedLock lock(m_Mutex);
+        for (const auto &pair : m_TypePools)
+        {
+            if (pair.second)
+            {
+                pair.second->AppendRecords(records);
+            }
+        }
+
+        return records;
+    }
+
 } // namespace NorvesLib::Core
