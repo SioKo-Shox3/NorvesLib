@@ -22,6 +22,48 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        Math::Matrix4x4 BuildCullingViewProjection(const CameraProxy &camera, float aspectRatio)
+        {
+            if (aspectRatio <= 0.0f)
+            {
+                aspectRatio = 1.0f;
+            }
+
+            const Math::Vector3 cameraPosition(
+                camera.PositionX,
+                camera.PositionY,
+                camera.PositionZ);
+            const Math::Vector3 forward(camera.ForwardX, camera.ForwardY, camera.ForwardZ);
+            const Math::Vector3 up(camera.UpX, camera.UpY, camera.UpZ);
+            const Math::Vector3 target = cameraPosition + forward;
+
+            const Math::Matrix4x4 viewMatrix = Math::MatrixUtils::CreateLookAt(cameraPosition, target, up);
+
+            Math::Matrix4x4 projectionMatrix;
+            if (camera.Projection == ProjectionType::Orthographic)
+            {
+                projectionMatrix = Math::MatrixUtils::CreateOrthographic(
+                    camera.OrthoWidth,
+                    camera.OrthoWidth / aspectRatio,
+                    camera.NearPlane,
+                    camera.FarPlane);
+            }
+            else
+            {
+                projectionMatrix = Math::MatrixUtils::CreatePerspectiveFieldOfView(
+                    camera.FieldOfView * (3.14159265f / 180.0f),
+                    aspectRatio,
+                    camera.NearPlane,
+                    camera.FarPlane);
+            }
+
+            const Math::Matrix4x4 clipSpaceCorrection = Math::MatrixUtils::CreateScale(1.0f, 1.0f, -1.0f);
+
+            return projectionMatrix * clipSpaceCorrection * viewMatrix;
+        }
+    }
 
     bool SceneView::Initialize(const SceneViewSettings &settings)
     {
@@ -384,8 +426,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        const Math::Matrix4x4 &viewProjection = viewport->GetViewProjectionMatrix();
         const CameraProxy &camera = viewport->GetCamera();
+        const Math::Matrix4x4 viewProjection = BuildCullingViewProjection(camera, viewport->GetAspectRatio());
 
         // カメラ位置を取得（CameraProxyから直接取得）
         Math::Vector3 cameraPosition(
@@ -442,45 +484,25 @@ namespace NorvesLib::Core::Rendering
             camera.PositionX,
             camera.PositionY,
             camera.PositionZ);
-        Math::Vector3 forward(camera.ForwardX, camera.ForwardY, camera.ForwardZ);
-        Math::Vector3 up(camera.UpX, camera.UpY, camera.UpZ);
-        Math::Vector3 target = cameraPosition + forward;
-
-        Math::Matrix4x4 viewMatrix = Math::MatrixUtils::CreateLookAt(cameraPosition, target, up);
-
         float aspectRatio = camera.AspectRatio;
-        if (viewport.RenderHeight > 0)
-        {
-            aspectRatio = static_cast<float>(viewport.RenderWidth) / static_cast<float>(viewport.RenderHeight);
-        }
-        else if (viewport.PixelRect.Height > 0.0f)
+        if (viewport.PixelRect.Height > 0.0f)
         {
             aspectRatio = viewport.PixelRect.Width / viewport.PixelRect.Height;
+        }
+        else if (camera.Viewport.Height > 0.0f)
+        {
+            aspectRatio = camera.Viewport.Width / camera.Viewport.Height;
+        }
+        else if (viewport.RenderHeight > 0)
+        {
+            aspectRatio = static_cast<float>(viewport.RenderWidth) / static_cast<float>(viewport.RenderHeight);
         }
         if (aspectRatio <= 0.0f)
         {
             aspectRatio = 1.0f;
         }
 
-        Math::Matrix4x4 projectionMatrix;
-        if (camera.Projection == ProjectionType::Orthographic)
-        {
-            projectionMatrix = Math::MatrixUtils::CreateOrthographic(
-                camera.OrthoWidth,
-                camera.OrthoWidth / aspectRatio,
-                camera.NearPlane,
-                camera.FarPlane);
-        }
-        else
-        {
-            projectionMatrix = Math::MatrixUtils::CreatePerspectiveFieldOfView(
-                camera.FieldOfView * (3.14159265f / 180.0f),
-                aspectRatio,
-                camera.NearPlane,
-                camera.FarPlane);
-        }
-
-        const Math::Matrix4x4 viewProjection = viewMatrix * projectionMatrix;
+        const Math::Matrix4x4 viewProjection = BuildCullingViewProjection(camera, aspectRatio);
 
         for (MeshProxy &proxy : m_MeshProxies)
         {
@@ -636,38 +658,10 @@ namespace NorvesLib::Core::Rendering
         // バウンディングスフィアの中心を変換し、範囲内かチェック
         const BoundingSphere &bounds = proxy.WorldBounds;
 
-        // クリップ空間に変換
-        float x = bounds.CenterX * viewProjection.m00 +
-                  bounds.CenterY * viewProjection.m10 +
-                  bounds.CenterZ * viewProjection.m20 + viewProjection.m30;
-        float y = bounds.CenterX * viewProjection.m01 +
-                  bounds.CenterY * viewProjection.m11 +
-                  bounds.CenterZ * viewProjection.m21 + viewProjection.m31;
-        float z = bounds.CenterX * viewProjection.m02 +
-                  bounds.CenterY * viewProjection.m12 +
-                  bounds.CenterZ * viewProjection.m22 + viewProjection.m32;
-        float w = bounds.CenterX * viewProjection.m03 +
-                  bounds.CenterY * viewProjection.m13 +
-                  bounds.CenterZ * viewProjection.m23 + viewProjection.m33;
-
-        // wが負の場合は背面
-        if (w <= 0.0f)
-        {
-            return false;
-        }
-
-        // 半径をwで調整
-        float radius = bounds.Radius;
-
-        // 6平面のうち1つでも外なら不可視
-        if (x + radius < -w || x - radius > w)
-            return false;
-        if (y + radius < -w || y - radius > w)
-            return false;
-        if (z + radius < 0.0f || z - radius > w)
-            return false; // Near/Far
-
-        return true;
+        const Math::Vector3 center(bounds.CenterX, bounds.CenterY, bounds.CenterZ);
+        const Math::ClipSpaceSphereBounds clipBounds =
+            Math::MatrixUtils::TransformSphereToClipSpace(viewProjection, center, bounds.Radius);
+        return Math::MatrixUtils::IntersectsClipSpace(clipBounds, Math::ClipSpaceDepthRange::ZeroToOne);
     }
 
     bool SceneView::DistanceCull(const MeshProxy &proxy, const Math::Vector3 &cameraPosition) const
