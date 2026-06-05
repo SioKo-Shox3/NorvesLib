@@ -1,6 +1,6 @@
 #include "Animal.h"
 #include "Object/ObjectHeap.h"
-#include "Object/ObjectUtility.h"
+#include "Object/ObjectPropertyOps.h"
 #include <cassert>
 #include <iostream>
 
@@ -19,7 +19,7 @@ int main()
     destination.Initialize();
     *static_cast<int *>(destination.GetPropertyValue(Identity("Age"))) = 1;
 
-    const int copied = ObjectUtility::CopyEditableProperties(destination, source);
+    const int copied = CopyEditableProperties(destination, source);
     assert(copied > 0);
     assert(*static_cast<int *>(destination.GetPropertyValue(Identity("Age"))) == 9);
 

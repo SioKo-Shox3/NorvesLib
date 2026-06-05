@@ -1,6 +1,6 @@
 #include "Object/ObjectHeap.h"
 #include "Object/IClass.h"
-#include "Object/ObjectUtility.h"
+#include "Object/ObjectCast.h"
 #include <chrono>
 #include <sstream>
 
@@ -19,7 +19,7 @@ namespace NorvesLib::Core
         }
 
         IUnknown *unknown = cls->NewInstance(outer);
-        Object *object = ObjectUtility::CastTo<Object>(unknown);
+        Object *object = CastTo<Object>(unknown);
         if (!object)
         {
             delete unknown;
@@ -501,7 +501,7 @@ namespace NorvesLib::Core
 
         for (IUnknown *inner : slot.Instance->GetInners())
         {
-            Object *innerObject = ObjectUtility::CastTo<Object>(inner);
+            Object *innerObject = CastTo<Object>(inner);
             if (!innerObject)
             {
                 continue;
@@ -565,7 +565,7 @@ namespace NorvesLib::Core
 
         for (IUnknown *inner : object->GetInners())
         {
-            Object *innerObject = ObjectUtility::CastTo<Object>(inner);
+            Object *innerObject = CastTo<Object>(inner);
             if (!innerObject)
             {
                 continue;

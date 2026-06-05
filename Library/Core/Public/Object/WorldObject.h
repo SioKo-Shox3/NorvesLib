@@ -93,7 +93,7 @@ namespace NorvesLib::Core
         {
             for (auto *inner : GetInners())
             {
-                if (T *cast = ObjectUtility::CastTo<T>(inner))
+                if (T *cast = CastTo<T>(inner))
                 {
                     return cast;
                 }

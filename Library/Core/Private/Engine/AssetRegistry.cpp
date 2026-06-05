@@ -1,6 +1,5 @@
 ﻿#include "Engine/AssetRegistry.h"
 #include "FileStream/Package.h"
-#include "Object/ObjectUtility.h"
 #include "Object/Reflection.h"
 #include "Logging/LogMacros.h"
 
@@ -13,6 +12,44 @@ namespace NorvesLib::Core
 
     // IMPLEMENT_CLASSマクロを使用してリフレクション実装を生成
     IMPLEMENT_CLASS(AssetRegistry, Object)
+
+    namespace
+    {
+        bool DestroyRegistryPackage(AssetRegistry &owner, FileStream::Package *package)
+        {
+            if (!package)
+            {
+                return false;
+            }
+
+            IUnknown *outer = package->GetOuter();
+            if (outer == &owner)
+            {
+                if (!owner.RemoveInner(package))
+                {
+                    return false;
+                }
+            }
+            else if (outer)
+            {
+                return false;
+            }
+            else
+            {
+                owner.RemoveInner(package);
+            }
+
+            if (package->HasFlag(OF_HeapOwned))
+            {
+                package->SetFlag(OF_PendingDestroy, true);
+                return true;
+            }
+
+            package->Finalize();
+            delete package;
+            return true;
+        }
+    }
 
     // ========================================
     // コンストラクタ・デストラクタ
@@ -191,7 +228,7 @@ namespace NorvesLib::Core
         }
 
         // PackageはこのAssetRegistryのInnerなので、親子関係解除と破棄をまとめて行う
-        ObjectUtility::DestroyObject(package);
+        DestroyRegistryPackage(*this, package);
 
         NORVES_LOG_DEBUG("AssetRegistry", "Unloaded package: %s", packagePath.c_str());
     }
@@ -217,7 +254,7 @@ namespace NorvesLib::Core
 
         for (auto *package : packages)
         {
-            ObjectUtility::DestroyObject(package);
+            DestroyRegistryPackage(*this, package);
         }
 
         NORVES_LOG_INFO("AssetRegistry", "All packages unloaded");
@@ -226,7 +263,17 @@ namespace NorvesLib::Core
     FileStream::Package *AssetRegistry::CreatePackage(const Container::String &path)
     {
         // Packageを作成してInnerとして登録
-        FileStream::Package *package = ObjectUtility::CreateTypedObject<FileStream::Package>();
+        FileStream::Package *package = nullptr;
+        try
+        {
+            package = new FileStream::Package();
+            package->Initialize();
+        }
+        catch (...)
+        {
+            delete package;
+            return nullptr;
+        }
         if (!package)
         {
             return nullptr;
@@ -235,7 +282,7 @@ namespace NorvesLib::Core
         // このAssetRegistryのInnerとして登録
         if (!AddInner(package))
         {
-            ObjectUtility::DestroyObject(package);
+            DestroyRegistryPackage(*this, package);
             return nullptr;
         }
 
@@ -325,7 +372,7 @@ namespace NorvesLib::Core
         size_t removedCount = 0;
         for (auto *package : toRemove)
         {
-            if (ObjectUtility::DestroyObject(package))
+            if (DestroyRegistryPackage(*this, package))
             {
                 ++removedCount;
             }

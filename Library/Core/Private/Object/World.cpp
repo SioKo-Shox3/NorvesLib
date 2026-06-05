@@ -11,6 +11,44 @@ namespace NorvesLib::Core
 {
     IMPLEMENT_CLASS(World, Object)
 
+    namespace
+    {
+        bool DestroyContextOwnedInner(IUnknown &owner, IUnknown *inner)
+        {
+            if (!inner)
+            {
+                return false;
+            }
+
+            IUnknown *outer = inner->GetOuter();
+            if (outer == &owner)
+            {
+                if (!owner.RemoveInner(inner))
+                {
+                    return false;
+                }
+            }
+            else if (outer)
+            {
+                return false;
+            }
+            else
+            {
+                owner.RemoveInner(inner);
+            }
+
+            if (inner->HasFlag(OF_HeapOwned))
+            {
+                inner->SetFlag(OF_PendingDestroy, true);
+                return true;
+            }
+
+            inner->Finalize();
+            delete inner;
+            return true;
+        }
+    }
+
     World::World()
         : Object()
     {
@@ -62,11 +100,11 @@ namespace NorvesLib::Core
         while (!m_Inners.empty())
         {
             IUnknown *inner = m_Inners.back();
-            if (auto *obj = ObjectUtility::CastTo<WorldObject>(inner))
+            if (auto *obj = CastTo<WorldObject>(inner))
             {
                 obj->OnRemovedFromWorld();
             }
-            if (!ObjectUtility::DestroyObject(inner))
+            if (!DestroyContextOwnedInner(*this, inner))
             {
                 RemoveInner(inner);
             }
@@ -148,7 +186,7 @@ namespace NorvesLib::Core
                     auto components = object->GetComponents();
                     for (auto* comp : components)
                     {
-                        auto* lightComp = ObjectUtility::CastTo<Component::LightComponent>(comp);
+                        auto* lightComp = CastTo<Component::LightComponent>(comp);
                         if (lightComp)
                         {
                             m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
@@ -160,7 +198,7 @@ namespace NorvesLib::Core
                 object->OnRemovedFromWorld();
 
                 // Innerから除去して破棄する
-                if (!ObjectUtility::DestroyObject(object))
+                if (!DestroyContextOwnedInner(*this, object))
                 {
                     RemoveInner(object);
                 }
@@ -177,7 +215,7 @@ namespace NorvesLib::Core
         Container::VariableArray<WorldObject *> result;
         for (auto *inner : m_Inners)
         {
-            if (auto *obj = ObjectUtility::CastTo<WorldObject>(inner))
+            if (auto *obj = CastTo<WorldObject>(inner))
             {
                 result.push_back(obj);
             }
@@ -190,7 +228,7 @@ namespace NorvesLib::Core
         size_t count = 0;
         for (auto *inner : m_Inners)
         {
-            if (ObjectUtility::CastTo<WorldObject>(inner))
+            if (CastTo<WorldObject>(inner))
             {
                 ++count;
             }
@@ -208,7 +246,7 @@ namespace NorvesLib::Core
         // 全InnerのWorldObjectをTick
         for (auto *inner : m_Inners)
         {
-            auto *obj = ObjectUtility::CastTo<WorldObject>(inner);
+            auto *obj = CastTo<WorldObject>(inner);
             if (obj && obj->IsActive() && obj->IsTickEnabled() && !obj->IsPendingDestroy())
             {
                 obj->Tick(deltaTime);
@@ -237,7 +275,7 @@ namespace NorvesLib::Core
         // 全WorldObjectのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
         for (auto *inner : m_Inners)
         {
-            auto *obj = ObjectUtility::CastTo<WorldObject>(inner);
+            auto *obj = CastTo<WorldObject>(inner);
             if (!obj || !obj->IsActive() || obj->IsPendingDestroy())
             {
                 continue;
@@ -248,7 +286,7 @@ namespace NorvesLib::Core
             for (auto *comp : components)
             {
                 // MeshComponentの同期
-                auto *meshComp = ObjectUtility::CastTo<Component::MeshComponent>(comp);
+                auto *meshComp = CastTo<Component::MeshComponent>(comp);
                 if (meshComp && meshComp->IsEnabled())
                 {
                     // MeshProxyを構築
@@ -265,7 +303,7 @@ namespace NorvesLib::Core
                 }
 
                 // MegaGeometryComponentの同期
-                auto *megaComp = ObjectUtility::CastTo<Component::MegaGeometryComponent>(comp);
+                auto *megaComp = CastTo<Component::MegaGeometryComponent>(comp);
                 if (megaComp && megaComp->IsEnabled())
                 {
                     Rendering::MegaGeometryProxy megaProxy;
@@ -276,7 +314,7 @@ namespace NorvesLib::Core
                 }
 
                 // LightComponentの同期
-                auto *lightComp = ObjectUtility::CastTo<Component::LightComponent>(comp);
+                auto *lightComp = CastTo<Component::LightComponent>(comp);
                 if (lightComp && lightComp->IsEnabled())
                 {
                     // LightProxyを構築
@@ -297,7 +335,7 @@ namespace NorvesLib::Core
         Container::VariableArray<WorldObject *> toRemove;
         for (auto *inner : m_Inners)
         {
-            auto *obj = ObjectUtility::CastTo<WorldObject>(inner);
+            auto *obj = CastTo<WorldObject>(inner);
             if (obj && obj->IsPendingDestroy())
             {
                 toRemove.push_back(obj);
@@ -316,7 +354,7 @@ namespace NorvesLib::Core
                 auto components = obj->GetComponents();
                 for (auto* comp : components)
                 {
-                    auto* lightComp = ObjectUtility::CastTo<Component::LightComponent>(comp);
+                    auto* lightComp = CastTo<Component::LightComponent>(comp);
                     if (lightComp)
                     {
                         m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
@@ -325,7 +363,7 @@ namespace NorvesLib::Core
             }
 
             obj->OnRemovedFromWorld();
-            if (!ObjectUtility::DestroyObject(obj))
+            if (!DestroyContextOwnedInner(*this, obj))
             {
                 RemoveInner(obj);
             }

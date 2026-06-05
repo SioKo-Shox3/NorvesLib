@@ -61,7 +61,7 @@ namespace NorvesLib::Core
         T *Resolve(ObjectHandle handle) const
         {
             static_assert(std::is_base_of_v<Object, T>, "T must derive from Object");
-            return ObjectUtility::CastTo<T>(Resolve(handle));
+            return CastTo<T>(Resolve(handle));
         }
 
         ObjectHandle GetHandle(const Object *object) const;

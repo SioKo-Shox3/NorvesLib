@@ -1,14 +1,10 @@
 ﻿#include "FileStream/Package.h"
 #include "FileStream/FileStream.h"
 #include "Object/Reflection.h"
-#include "Object/ObjectUtility.h"
 #include "Thread/JobSystem.h"
 
 namespace NorvesLib::FileStream
 {
-    // IMPLEMENT_CLASSマクロが使用するCore型をインポート
-    using NorvesLib::Core::ObjectUtility;
-
     namespace
     {
         bool ReadPackageFile(const Core::Container::String &path,

@@ -1,7 +1,7 @@
 ﻿#include "Object/Object.h"
 #include "Object/IClass.h"
 #include "Object/IValue.h"
-#include "Object/ObjectUtility.h"
+#include "Object/ObjectPropertyOps.h"
 
 namespace NorvesLib::Core
 {
@@ -173,7 +173,7 @@ namespace NorvesLib::Core
             return false;
         }
 
-        ObjectUtility::ApplyInitialValues(this, initializer);
+        ApplyInitialValues(this, initializer);
         return true;
     }
 

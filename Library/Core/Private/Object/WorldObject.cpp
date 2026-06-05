@@ -1,13 +1,51 @@
 ﻿#include "Object/WorldObject.h"
 #include "Object/World.h"
 #include "Object/Reflection.h"
-#include "Object/ObjectUtility.h"
+#include "Object/ObjectCast.h"
 #include "Component/Component.h"
 
 namespace NorvesLib::Core
 {
     // IMPLEMENT_CLASSマクロを使用してリフレクション実装を生成
     IMPLEMENT_CLASS(WorldObject, Object)
+
+    namespace
+    {
+        bool DestroyContextOwnedInner(IUnknown &owner, IUnknown *inner)
+        {
+            if (!inner)
+            {
+                return false;
+            }
+
+            IUnknown *outer = inner->GetOuter();
+            if (outer == &owner)
+            {
+                if (!owner.RemoveInner(inner))
+                {
+                    return false;
+                }
+            }
+            else if (outer)
+            {
+                return false;
+            }
+            else
+            {
+                owner.RemoveInner(inner);
+            }
+
+            if (inner->HasFlag(OF_HeapOwned))
+            {
+                inner->SetFlag(OF_PendingDestroy, true);
+                return true;
+            }
+
+            inner->Finalize();
+            delete inner;
+            return true;
+        }
+    }
 
     WorldObject::WorldObject()
         : Object()
@@ -55,7 +93,7 @@ namespace NorvesLib::Core
         while (!m_Inners.empty())
         {
             IUnknown *inner = m_Inners.back();
-            if (!ObjectUtility::DestroyObject(inner))
+            if (!DestroyContextOwnedInner(*this, inner))
             {
                 RemoveInner(inner);
             }
@@ -79,12 +117,12 @@ namespace NorvesLib::Core
     World *WorldObject::GetWorld() const
     {
         // Outer関係はオーナーシップの概念であり、constの制約を受けない
-        return ObjectUtility::CastTo<World>(const_cast<IUnknown *>(GetOuter()));
+        return CastTo<World>(const_cast<IUnknown *>(GetOuter()));
     }
 
     bool WorldObject::IsInWorld() const
     {
-        return ObjectUtility::CastTo<World>(GetOuter()) != nullptr;
+        return CastTo<World>(GetOuter()) != nullptr;
     }
 
     // ========================================
@@ -132,7 +170,7 @@ namespace NorvesLib::Core
             if (inner == component)
             {
                 // Innerから除去して破棄する
-                if (!ObjectUtility::DestroyObject(component))
+                if (!DestroyContextOwnedInner(*this, component))
                 {
                     RemoveInner(component);
                 }
@@ -146,7 +184,7 @@ namespace NorvesLib::Core
         Container::VariableArray<Component::Component *> result;
         for (auto *inner : m_Inners)
         {
-            if (auto *comp = ObjectUtility::CastTo<Component::Component>(inner))
+            if (auto *comp = CastTo<Component::Component>(inner))
             {
                 result.push_back(comp);
             }
@@ -158,7 +196,7 @@ namespace NorvesLib::Core
     {
         for (auto *inner : m_Inners)
         {
-            auto *comp = ObjectUtility::CastTo<Component::Component>(inner);
+            auto *comp = CastTo<Component::Component>(inner);
             if (comp && comp->IsActive() && comp->IsTickEnabled())
             {
                 comp->Tick(deltaTime);

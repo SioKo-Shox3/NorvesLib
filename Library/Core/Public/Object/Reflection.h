@@ -4,7 +4,6 @@
 #include "IUnknown.h"
 #include "TValue.h"
 #include "TClass.h"
-#include "ObjectUtility.h"
 #include "Container/Containers.h" // Core::Containerのすべてのコンテナ
 #include "Text/IdentityPool.h"
 #include <typeindex>
