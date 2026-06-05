@@ -10,6 +10,7 @@
 #include "Rendering/RenderResourceManager.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/PresentationComposer.h"
+#include "Rendering/RenderFrameExecutor.h"
 #include "RHI/ISampler.h"
 #include "RHI/IDevice.h"
 #include "RHI/ISwapChain.h"
@@ -109,38 +110,6 @@ namespace NorvesLib::Core::Rendering
             return plan;
         }
 
-        const ViewportRenderPlan *FindPrimaryViewportRenderPlan(const FramePacket &packet)
-        {
-            const ViewportRenderPlan *fallbackViewport = nullptr;
-
-            for (const auto &viewPlan : packet.Views)
-            {
-                if (!viewPlan.bEnabled)
-                {
-                    continue;
-                }
-
-                for (const auto &viewportPlan : viewPlan.Viewports)
-                {
-                    if (!viewportPlan.HasDrawableExtent())
-                    {
-                        continue;
-                    }
-
-                    if (!fallbackViewport)
-                    {
-                        fallbackViewport = &viewportPlan;
-                    }
-
-                    if (static_cast<ViewType>(viewPlan.ViewType) == ViewType::Scene)
-                    {
-                        return &viewportPlan;
-                    }
-                }
-            }
-
-            return fallbackViewport;
-        }
     } // namespace
 
     // ========================================
@@ -928,124 +897,33 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 
-        auto applyViewportRenderPlan = [&viewContext](const ViewportRenderPlan *viewportPlan)
-        {
-            if (!viewportPlan)
-            {
-                viewContext.CurrentViewport = nullptr;
-                viewContext.CurrentCamera = nullptr;
-                viewContext.CurrentDrawCommands = nullptr;
-                viewContext.CurrentOpaqueCommands = nullptr;
-                viewContext.CurrentTransparentCommands = nullptr;
-                return;
-            }
-
-            viewContext.CurrentViewport = viewportPlan;
-            viewContext.CurrentCamera = viewportPlan->bHasCamera ? &viewportPlan->Camera : nullptr;
-            viewContext.CurrentDrawCommands = &viewportPlan->DrawCommands;
-            viewContext.CurrentOpaqueCommands = &viewportPlan->OpaqueCommands;
-            viewContext.CurrentTransparentCommands = &viewportPlan->TransparentCommands;
-        };
-
-        auto flushPendingFrameCommands = [&]()
-        {
-            if (!pendingFrameCommands.empty())
-            {
-                m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
-                pendingFrameCommands.clear();
-            }
-        };
-
         PresentationComposer presentationComposer;
-        auto blitActivePresentation = [&](bool bClearPresentation)
-        {
-            PresentationComposeRequest request;
-            request.Context = &viewContext;
-            request.Renderer = &m_SceneRenderer;
-            request.CommandList = m_CommandList.get();
-            request.ClearRenderPass = m_RenderPass;
-            request.LoadRenderPass = m_PresentationLoadRenderPass;
-            request.ClearFramebuffer = m_SwapChainFramebuffers[imageIndex];
-            request.LoadFramebuffer = m_PresentationLoadFramebuffers[imageIndex];
-            request.BlitPipeline = m_BlitPipeline;
-            request.BlitDescriptorSet = m_BlitDescriptorSet;
-            request.BlitSampler = m_BlitSampler;
-            request.bClearPresentation = bClearPresentation;
-            presentationComposer.Compose(request);
-        };
-
-        auto renderViewForCurrentViewport = [&](View *view) -> bool
-        {
-            if (!view || !view->IsEnabled())
-            {
-                return false;
-            }
-
-            if (view->GetPassCount() > 0)
-            {
-                view->Render(viewContext);
-                return true;
-            }
-
-            const auto *activeDrawCommands = viewContext.GetActiveDrawCommands();
-            if (activeDrawCommands && !activeDrawCommands->empty())
-            {
-                ExecuteDrawCommands(*activeDrawCommands);
-                return true;
-            }
-
-            return false;
-        };
-
-        bool bRenderedAnyViewport = false;
-        uint32_t presentationBlitCount = 0;
         const auto &screenViews = m_Screen.GetViews();
+        PresentationComposeRequest presentationRequest;
+        presentationRequest.Context = &viewContext;
+        presentationRequest.Renderer = &m_SceneRenderer;
+        presentationRequest.CommandList = m_CommandList.get();
+        presentationRequest.ClearRenderPass = m_RenderPass;
+        presentationRequest.LoadRenderPass = m_PresentationLoadRenderPass;
+        presentationRequest.ClearFramebuffer = m_SwapChainFramebuffers[imageIndex];
+        presentationRequest.LoadFramebuffer = m_PresentationLoadFramebuffers[imageIndex];
+        presentationRequest.BlitPipeline = m_BlitPipeline;
+        presentationRequest.BlitDescriptorSet = m_BlitDescriptorSet;
+        presentationRequest.BlitSampler = m_BlitSampler;
 
-        for (const ViewRenderPlan &viewPlan : packet->Views)
-        {
-            if (!viewPlan.bEnabled)
-            {
-                continue;
-            }
+        RenderFrameExecutionRequest executionRequest;
+        executionRequest.Packet = packet;
+        executionRequest.Views = &screenViews;
+        executionRequest.FallbackView = m_MainSceneView.get();
+        executionRequest.Context = &viewContext;
+        executionRequest.Renderer = &m_SceneRenderer;
+        executionRequest.CommandList = m_CommandList.get();
+        executionRequest.PendingFrameCommands = &pendingFrameCommands;
+        executionRequest.Presentation = &presentationComposer;
+        executionRequest.PresentationRequest = presentationRequest;
 
-            if (viewPlan.ViewId >= screenViews.size())
-            {
-                continue;
-            }
-
-            auto view = screenViews[viewPlan.ViewId];
-            if (!view)
-            {
-                continue;
-            }
-
-            for (const ViewportRenderPlan &viewportPlan : viewPlan.Viewports)
-            {
-                if (!viewportPlan.HasDrawableExtent())
-                {
-                    continue;
-                }
-
-                applyViewportRenderPlan(&viewportPlan);
-                if (!renderViewForCurrentViewport(view.get()))
-                {
-                    continue;
-                }
-
-                flushPendingFrameCommands();
-                blitActivePresentation(presentationBlitCount == 0);
-                ++presentationBlitCount;
-                bRenderedAnyViewport = true;
-            }
-        }
-
-        if (!bRenderedAnyViewport)
-        {
-            applyViewportRenderPlan(FindPrimaryViewportRenderPlan(*packet));
-            renderViewForCurrentViewport(m_MainSceneView.get());
-            flushPendingFrameCommands();
-            blitActivePresentation(true);
-        }
+        RenderFrameExecutor frameExecutor;
+        frameExecutor.Execute(executionRequest);
 
         // コマンド録画終了
 #if NORVES_ENABLE_STATS
