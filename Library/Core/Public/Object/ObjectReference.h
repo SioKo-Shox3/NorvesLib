@@ -12,8 +12,6 @@ namespace NorvesLib::Core
     class ObjectRef
     {
     public:
-        static_assert(std::is_base_of_v<Object, T>, "T must derive from Object");
-
         ObjectRef()
         {
             EnsureTypeRegistered();
@@ -77,8 +75,6 @@ namespace NorvesLib::Core
     class WeakObjectRef
     {
     public:
-        static_assert(std::is_base_of_v<Object, T>, "T must derive from Object");
-
         WeakObjectRef() = default;
         WeakObjectRef(ObjectHeap *heap, ObjectHandle handle)
             : m_Heap(heap), m_Handle(handle)

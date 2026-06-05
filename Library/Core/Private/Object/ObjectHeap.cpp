@@ -90,6 +90,46 @@ namespace NorvesLib::Core
         return destroyedCount;
     }
 
+    ObjectHeap::GCStats ObjectHeap::CollectGarbage()
+    {
+        GCStats stats;
+        stats.DestroyQueuedObjects = ProcessDestroyQueue();
+
+        ClearMarks();
+
+        for (ObjectHandle root : m_Roots)
+        {
+            MarkObject(root, stats.MarkedObjects);
+        }
+        for (ObjectHandle root : m_ExternalRoots)
+        {
+            MarkObject(root, stats.MarkedObjects);
+        }
+        for (ObjectHandle pinned : m_PinnedObjects)
+        {
+            MarkObject(pinned, stats.MarkedObjects);
+        }
+
+        for (uint32_t index = 0; index < m_Slots.size(); ++index)
+        {
+            Slot &slot = m_Slots[index];
+            if (slot.State == SlotState::Free || !slot.Instance)
+            {
+                continue;
+            }
+
+            if (slot.Instance->HasFlag(OF_PendingDestroy) || !slot.bMarked)
+            {
+                if (ReleaseSlot(index))
+                {
+                    ++stats.SweptObjects;
+                }
+            }
+        }
+
+        return stats;
+    }
+
     void ObjectHeap::DestroyAll()
     {
         m_DestroyQueue.clear();
@@ -166,6 +206,36 @@ namespace NorvesLib::Core
         return MakeHandle(index, slot);
     }
 
+    bool ObjectHeap::AddRoot(ObjectHandle handle)
+    {
+        return AddUniqueHandle(m_Roots, handle);
+    }
+
+    bool ObjectHeap::RemoveRoot(ObjectHandle handle)
+    {
+        return RemoveHandle(m_Roots, handle);
+    }
+
+    bool ObjectHeap::AddExternalRoot(ObjectHandle handle)
+    {
+        return AddUniqueHandle(m_ExternalRoots, handle);
+    }
+
+    bool ObjectHeap::RemoveExternalRoot(ObjectHandle handle)
+    {
+        return RemoveHandle(m_ExternalRoots, handle);
+    }
+
+    bool ObjectHeap::PinObject(ObjectHandle handle)
+    {
+        return AddUniqueHandle(m_PinnedObjects, handle);
+    }
+
+    bool ObjectHeap::UnpinObject(ObjectHandle handle)
+    {
+        return RemoveHandle(m_PinnedObjects, handle);
+    }
+
     bool ObjectHeap::IsHandleAlive(ObjectHandle handle) const
     {
         if (!handle.IsValid())
@@ -209,6 +279,7 @@ namespace NorvesLib::Core
 
         object->SetFlag(OF_HeapOwned, false);
         object->SetFlag(OF_PendingDestroy, true);
+        object->OnDestroying();
         object->Finalize();
         delete object;
 
@@ -242,6 +313,87 @@ namespace NorvesLib::Core
         return ObjectHandle{
             .Id = static_cast<ObjectId>(index) + 1,
             .Generation = slot.Generation};
+    }
+
+    bool ObjectHeap::AddUniqueHandle(Container::VariableArray<ObjectHandle> &handles, ObjectHandle handle)
+    {
+        if (!IsHandleAlive(handle))
+        {
+            return false;
+        }
+
+        for (ObjectHandle existing : handles)
+        {
+            if (existing == handle)
+            {
+                return true;
+            }
+        }
+
+        handles.push_back(handle);
+        return true;
+    }
+
+    bool ObjectHeap::RemoveHandle(Container::VariableArray<ObjectHandle> &handles, ObjectHandle handle)
+    {
+        for (auto it = handles.begin(); it != handles.end(); ++it)
+        {
+            if (*it == handle)
+            {
+                handles.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool ObjectHeap::MarkObject(ObjectHandle handle, size_t &markedCount)
+    {
+        if (!IsHandleAlive(handle))
+        {
+            return false;
+        }
+
+        Slot &slot = m_Slots[static_cast<uint32_t>(handle.Id - 1)];
+        if (slot.bMarked || !slot.Instance || slot.Instance->HasFlag(OF_PendingDestroy))
+        {
+            return false;
+        }
+
+        slot.bMarked = true;
+        ++markedCount;
+
+        ReferenceCollector collector;
+        slot.Instance->AddReferencedObjects(collector);
+        for (ObjectHandle referenced : collector.GetObjectHandles())
+        {
+            MarkObject(referenced, markedCount);
+        }
+
+        for (IUnknown *inner : slot.Instance->GetInners())
+        {
+            Object *innerObject = ObjectUtility::CastTo<Object>(inner);
+            if (!innerObject)
+            {
+                continue;
+            }
+
+            ObjectHandle innerHandle = GetHandle(innerObject);
+            if (innerHandle)
+            {
+                MarkObject(innerHandle, markedCount);
+            }
+        }
+
+        return true;
+    }
+
+    void ObjectHeap::ClearMarks()
+    {
+        for (Slot &slot : m_Slots)
+        {
+            slot.bMarked = false;
+        }
     }
 
 } // namespace NorvesLib::Core
