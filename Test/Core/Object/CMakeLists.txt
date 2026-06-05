@@ -18,6 +18,18 @@ target_include_directories(ResourceRegistryTest PRIVATE
 )
 set_target_properties(ResourceRegistryTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(RuntimeSchemaSnapshotTest
+    RuntimeSchemaSnapshotTest.cpp
+    Animal.cpp
+)
+target_link_libraries(RuntimeSchemaSnapshotTest PRIVATE Core)
+target_include_directories(RuntimeSchemaSnapshotTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_target_properties(RuntimeSchemaSnapshotTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
+add_test(NAME RuntimeSchemaSnapshotTest COMMAND RuntimeSchemaSnapshotTest)
