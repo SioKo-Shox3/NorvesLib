@@ -12,6 +12,8 @@ set(PRIVATE_SOURCES
     Private/Object/Object.cpp
     Private/Object/UnknownImpl.cpp
     Private/Object/ObjectUtility.cpp
+    Private/Object/ObjectHeap.cpp
+    Private/Object/ObjectResolver.cpp
     Private/Object/ClassRegistry.cpp
     Private/Object/Resource.cpp
     Private/Object/WorldObject.cpp
@@ -214,6 +216,9 @@ set(PUBLIC_HEADERS
     Public/Rendering/MegaGeometry/ClusterGroupBuilder.h
     Public/Rendering/MegaGeometry/LODHierarchyBuilder.h
     # Object
+    Public/Object/ObjectHandle.h
+    Public/Object/ObjectHeap.h
+    Public/Object/ObjectResolver.h
     Public/Object/Resource.h
     Public/Object/RuntimeSchema.h
     Public/Object/WorldObject.h
