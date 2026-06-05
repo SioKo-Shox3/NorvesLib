@@ -75,7 +75,9 @@ Makefile
 *.idb
 *.pdb
 ipch/
-.vscode/
+.vscode/*
+!.vscode/
+!.vscode/mcp.json
 *.vsidx
 
 # コンパイル生成物
@@ -111,9 +113,11 @@ compile_commands.json
 Thumbs.db
 desktop.ini
 
-# 環境設定ファイル（必要に応じてコメントアウト）
-#.env
-#.envrc
+# 環境設定ファイル
+.env
+.env.*
+!.env.example
+.envrc
 
 # 任意の依存関係管理ツールのディレクトリ
 /vendor/
