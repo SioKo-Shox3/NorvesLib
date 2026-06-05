@@ -29,3 +29,13 @@ target_include_directories(ViewScreenTopologyTest PRIVATE
 )
 set_target_properties(ViewScreenTopologyTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ViewScreenTopologyTest COMMAND ViewScreenTopologyTest)
+
+add_executable(SceneViewViewportCommandTest
+    SceneViewViewportCommandTest.cpp
+)
+target_link_libraries(SceneViewViewportCommandTest PRIVATE Core)
+target_include_directories(SceneViewViewportCommandTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneViewViewportCommandTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SceneViewViewportCommandTest COMMAND SceneViewViewportCommandTest)

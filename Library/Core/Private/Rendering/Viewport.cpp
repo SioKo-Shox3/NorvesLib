@@ -67,6 +67,12 @@ namespace NorvesLib::Core::Rendering
         m_MaxDepth = maxDepth;
     }
 
+    void Viewport::GetDepthRange(float &outMinDepth, float &outMaxDepth) const
+    {
+        outMinDepth = m_MinDepth;
+        outMaxDepth = m_MaxDepth;
+    }
+
     void Viewport::GetPixelRect(uint32_t screenWidth, uint32_t screenHeight,
                                 uint32_t &outX, uint32_t &outY,
                                 uint32_t &outWidth, uint32_t &outHeight) const

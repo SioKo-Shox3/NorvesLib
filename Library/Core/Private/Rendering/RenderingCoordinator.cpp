@@ -30,6 +30,84 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        ViewportSnapshot BuildViewportSnapshot(const Viewport &viewport,
+                                               uint32_t viewId,
+                                               uint32_t viewportId,
+                                               uint32_t renderWidth,
+                                               uint32_t renderHeight,
+                                               const CameraProxy *fallbackCamera)
+        {
+            ViewportSnapshot snapshot;
+            snapshot.ViewId = viewId;
+            snapshot.ViewportId = viewportId;
+            snapshot.bEnabled = viewport.IsEnabled();
+            snapshot.RenderWidth = renderWidth;
+            snapshot.RenderHeight = renderHeight;
+
+            float x = 0.0f;
+            float y = 0.0f;
+            float width = 0.0f;
+            float height = 0.0f;
+            viewport.GetRect(x, y, width, height);
+
+            float minDepth = 0.0f;
+            float maxDepth = 1.0f;
+            viewport.GetDepthRange(minDepth, maxDepth);
+
+            snapshot.NormalizedRect.X = x;
+            snapshot.NormalizedRect.Y = y;
+            snapshot.NormalizedRect.Width = width;
+            snapshot.NormalizedRect.Height = height;
+            snapshot.NormalizedRect.MinDepth = minDepth;
+            snapshot.NormalizedRect.MaxDepth = maxDepth;
+
+            uint32_t pixelX = 0;
+            uint32_t pixelY = 0;
+            uint32_t pixelWidth = 0;
+            uint32_t pixelHeight = 0;
+            viewport.GetPixelRect(renderWidth, renderHeight, pixelX, pixelY, pixelWidth, pixelHeight);
+
+            snapshot.PixelRect.X = static_cast<float>(pixelX);
+            snapshot.PixelRect.Y = static_cast<float>(pixelY);
+            snapshot.PixelRect.Width = static_cast<float>(pixelWidth);
+            snapshot.PixelRect.Height = static_cast<float>(pixelHeight);
+            snapshot.PixelRect.MinDepth = minDepth;
+            snapshot.PixelRect.MaxDepth = maxDepth;
+
+            snapshot.Scissor.Left = static_cast<int32_t>(pixelX);
+            snapshot.Scissor.Top = static_cast<int32_t>(pixelY);
+            snapshot.Scissor.Right = static_cast<int32_t>(pixelX + pixelWidth);
+            snapshot.Scissor.Bottom = static_cast<int32_t>(pixelY + pixelHeight);
+
+            CameraProxy camera = viewport.GetCamera();
+            if (!camera.IsValid() && fallbackCamera)
+            {
+                camera = *fallbackCamera;
+            }
+
+            if (!camera.IsValid() && pixelWidth > 0 && pixelHeight > 0)
+            {
+                camera.Viewport.X = static_cast<float>(pixelX);
+                camera.Viewport.Y = static_cast<float>(pixelY);
+                camera.Viewport.Width = static_cast<float>(pixelWidth);
+                camera.Viewport.Height = static_cast<float>(pixelHeight);
+                camera.Viewport.MinDepth = minDepth;
+                camera.Viewport.MaxDepth = maxDepth;
+            }
+
+            if (pixelHeight > 0)
+            {
+                camera.AspectRatio = static_cast<float>(pixelWidth) / static_cast<float>(pixelHeight);
+            }
+
+            snapshot.Camera = camera;
+            snapshot.bHasCamera = camera.IsValid();
+
+            return snapshot;
+        }
+    } // namespace
 
     // ========================================
     // RenderingCoordinator
@@ -508,14 +586,38 @@ namespace NorvesLib::Core::Rendering
         // メインSceneViewのDrawCommandを生成してフレームパケットにスナップショット
         if (m_MainSceneView)
         {
-            // GameThreadでDrawCommandを生成（RenderThreadはスナップショットを参照する）
-            m_MainSceneView->PrepareDrawCommands();
+            ViewportSnapshot mainViewportSnapshot;
+            bool bHasViewportSnapshot = false;
+            auto mainViewport = m_MainSceneView->GetMainViewport();
+            if (mainViewport)
+            {
+                mainViewportSnapshot = BuildViewportSnapshot(*mainViewport,
+                                                             0,
+                                                             0,
+                                                             m_RenderWidth,
+                                                             m_RenderHeight,
+                                                             m_bCameraSet ? &m_MainCamera : nullptr);
+                bHasViewportSnapshot = true;
+                m_MainSceneView->PrepareDrawCommandsForViewport(mainViewportSnapshot);
+            }
+            else
+            {
+                // Viewport未作成時の互換フォールバック。
+                m_MainSceneView->PrepareDrawCommands();
+            }
 
             const auto &viewCommands = m_MainSceneView->GetDrawCommands();
             if (!viewCommands.empty())
             {
                 m_FrameDrawCommands.insert(m_FrameDrawCommands.end(),
                                            viewCommands.begin(), viewCommands.end());
+            }
+
+            if (bHasViewportSnapshot)
+            {
+                mainViewportSnapshot.DrawCommands = m_MainSceneView->GetDrawCommands();
+                mainViewportSnapshot.OpaqueCommands = m_MainSceneView->GetOpaqueCommands();
+                mainViewportSnapshot.TransparentCommands = m_MainSceneView->GetTransparentCommands();
             }
 
             // フレームパケットにスナップショット
@@ -543,6 +645,18 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->DrawCommands = m_MainSceneView->GetDrawCommands();
                 m_CurrentPacket->OpaqueCommands = m_MainSceneView->GetOpaqueCommands();
                 m_CurrentPacket->TransparentCommands = m_MainSceneView->GetTransparentCommands();
+
+                m_CurrentPacket->Views.clear();
+                if (bHasViewportSnapshot)
+                {
+                    ViewFrameSnapshot viewSnapshot;
+                    viewSnapshot.ViewId = 0;
+                    viewSnapshot.ViewType = static_cast<uint8_t>(m_MainSceneView->GetViewType());
+                    viewSnapshot.Priority = 0;
+                    viewSnapshot.bEnabled = m_MainSceneView->IsEnabled();
+                    viewSnapshot.Viewports.push_back(mainViewportSnapshot);
+                    m_CurrentPacket->Views.push_back(viewSnapshot);
+                }
             }
         }
 

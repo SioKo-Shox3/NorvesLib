@@ -15,6 +15,7 @@
 #include "Rendering/PostProcessStack.h"
 #include "Rendering/NeuralMaterialDecodePass.h"
 #include "Rendering/MegaGeometryPass.h"
+#include "Math/MatrixUtils.h"
 #include "Math/VectorUtils.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
@@ -421,6 +422,93 @@ namespace NorvesLib::Core::Rendering
         m_Stats.CullingTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
     }
 
+    void SceneView::CullProxies(const ViewportSnapshot &viewport)
+    {
+        auto startTime = std::chrono::high_resolution_clock::now();
+
+        m_VisibleMeshProxies.clear();
+
+        if (!viewport.bHasCamera)
+        {
+            m_Stats.VisibleProxies = 0;
+            m_Stats.CulledProxies = m_Stats.CollectedProxies;
+            auto endTime = std::chrono::high_resolution_clock::now();
+            m_Stats.CullingTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+            return;
+        }
+
+        const CameraProxy &camera = viewport.Camera;
+        Math::Vector3 cameraPosition(
+            camera.PositionX,
+            camera.PositionY,
+            camera.PositionZ);
+        Math::Vector3 forward(camera.ForwardX, camera.ForwardY, camera.ForwardZ);
+        Math::Vector3 up(camera.UpX, camera.UpY, camera.UpZ);
+        Math::Vector3 target = cameraPosition + forward;
+
+        Math::Matrix4x4 viewMatrix = Math::MatrixUtils::CreateLookAt(cameraPosition, target, up);
+
+        float aspectRatio = camera.AspectRatio;
+        if (viewport.RenderHeight > 0)
+        {
+            aspectRatio = static_cast<float>(viewport.RenderWidth) / static_cast<float>(viewport.RenderHeight);
+        }
+        else if (viewport.PixelRect.Height > 0.0f)
+        {
+            aspectRatio = viewport.PixelRect.Width / viewport.PixelRect.Height;
+        }
+        if (aspectRatio <= 0.0f)
+        {
+            aspectRatio = 1.0f;
+        }
+
+        Math::Matrix4x4 projectionMatrix;
+        if (camera.Projection == ProjectionType::Orthographic)
+        {
+            projectionMatrix = Math::MatrixUtils::CreateOrthographic(
+                camera.OrthoWidth,
+                camera.OrthoWidth / aspectRatio,
+                camera.NearPlane,
+                camera.FarPlane);
+        }
+        else
+        {
+            projectionMatrix = Math::MatrixUtils::CreatePerspectiveFieldOfView(
+                camera.FieldOfView * (3.14159265f / 180.0f),
+                aspectRatio,
+                camera.NearPlane,
+                camera.FarPlane);
+        }
+
+        const Math::Matrix4x4 viewProjection = viewMatrix * projectionMatrix;
+
+        for (MeshProxy &proxy : m_MeshProxies)
+        {
+            bool bVisible = true;
+
+            if (m_bEnableFrustumCulling && bVisible)
+            {
+                bVisible = FrustumCull(proxy, viewProjection);
+            }
+
+            if (m_bEnableDistanceCulling && bVisible)
+            {
+                bVisible = DistanceCull(proxy, cameraPosition);
+            }
+
+            if (bVisible)
+            {
+                m_VisibleMeshProxies.push_back(&proxy);
+            }
+        }
+
+        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size());
+        m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
+
+        auto endTime = std::chrono::high_resolution_clock::now();
+        m_Stats.CullingTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+    }
+
     void SceneView::BatchProxies()
     {
         auto startTime = std::chrono::high_resolution_clock::now();
@@ -505,6 +593,40 @@ namespace NorvesLib::Core::Rendering
         BatchProxies();
 
         // DrawCommand生成
+        GenerateCommands();
+    }
+
+    void SceneView::PrepareDrawCommandsForViewport(const ViewportSnapshot &viewport)
+    {
+        if (!m_bInitialized)
+        {
+            return;
+        }
+
+        m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
+        m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
+
+        if (viewport.bHasCamera)
+        {
+            CullProxies(viewport);
+        }
+        else
+        {
+            m_VisibleMeshProxies.clear();
+            for (MeshProxy &proxy : m_MeshProxies)
+            {
+                if (proxy.bVisible)
+                {
+                    m_VisibleMeshProxies.push_back(&proxy);
+                }
+            }
+
+            m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size());
+            m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
+            m_Stats.CullingTimeMs = 0.0f;
+        }
+
+        BatchProxies();
         GenerateCommands();
     }
 
