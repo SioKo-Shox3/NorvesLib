@@ -218,8 +218,12 @@ set(PUBLIC_HEADERS
     # Object
     Public/Object/ObjectHandle.h
     Public/Object/ObjectHeap.h
+    Public/Object/ObjectReference.h
     Public/Object/ObjectResolver.h
+    Public/Object/PropertyBag.h
+    Public/Object/ReferenceCollector.h
     Public/Object/Resource.h
+    Public/Object/ResourceRef.h
     Public/Object/RuntimeSchema.h
     Public/Object/WorldObject.h
     Public/Object/ResourceRegistry.h
