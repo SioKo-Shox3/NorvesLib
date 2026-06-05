@@ -2,6 +2,7 @@
 #include "Rendering/Screen.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/View.h"
+#include "Rendering/Viewport.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/ViewRenderContext.h"
@@ -290,6 +291,22 @@ namespace NorvesLib::Core::Rendering
             m_Screen.Shutdown();
             return false;
         }
+
+        auto mainViewport = Container::MakeShared<Viewport>();
+        ViewportSettings viewportSettings;
+        viewportSettings.X = 0.0f;
+        viewportSettings.Y = 0.0f;
+        viewportSettings.Width = 1.0f;
+        viewportSettings.Height = 1.0f;
+        if (!mainViewport->Initialize(viewportSettings))
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize main Viewport");
+            m_MainSceneView->Shutdown();
+            m_MainSceneView.reset();
+            m_Screen.Shutdown();
+            return false;
+        }
+        m_MainSceneView->AddViewport(mainViewport);
 
         m_Screen.AddView(m_MainSceneView, 0);
         m_Views.push_back(m_MainSceneView);
@@ -888,6 +905,25 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetMainCamera(const CameraProxy &camera)
     {
         m_MainCamera = camera;
+        if (!m_MainCamera.IsValid())
+        {
+            m_MainCamera.Viewport.X = 0.0f;
+            m_MainCamera.Viewport.Y = 0.0f;
+            m_MainCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
+            m_MainCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+            m_MainCamera.Viewport.MinDepth = 0.0f;
+            m_MainCamera.Viewport.MaxDepth = 1.0f;
+        }
+
+        if (m_MainSceneView)
+        {
+            auto mainViewport = m_MainSceneView->GetMainViewport();
+            if (mainViewport)
+            {
+                mainViewport->SetCamera(m_MainCamera);
+            }
+        }
+
         m_bCameraSet = true;
     }
 
