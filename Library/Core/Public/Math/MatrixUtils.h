@@ -13,6 +13,17 @@
 
 namespace NorvesLib::Math
 {
+    enum class ClipSpaceDepthRange
+    {
+        ZeroToOne,
+        NegativeOneToOne
+    };
+
+    struct ClipSpaceSphereBounds
+    {
+        Vector4 Center;
+        Vector4 Extents;
+    };
 
     /**
      * @brief テンプレート化された行列ユーティリティクラス
@@ -425,6 +436,81 @@ namespace NorvesLib::Math
             }
 
             return result;
+        }
+
+        static Vector4 TransformPoint(const MatrixType &matrix, const Vector3 &point)
+        {
+            return matrix * Vector4(point, 1.0f);
+        }
+
+        static Vector4 TransformVector(const MatrixType &matrix, const Vector3 &vector)
+        {
+            return matrix * Vector4(vector, 0.0f);
+        }
+
+        static ClipSpaceSphereBounds TransformSphereToClipSpace(const MatrixType &matrix,
+                                                                const Vector3 &center,
+                                                                float radius)
+        {
+            const Vector4 centerClip = TransformPoint(matrix, center);
+            const Vector4 axisX = TransformVector(matrix, Vector3(radius, 0.0f, 0.0f));
+            const Vector4 axisY = TransformVector(matrix, Vector3(0.0f, radius, 0.0f));
+            const Vector4 axisZ = TransformVector(matrix, Vector3(0.0f, 0.0f, radius));
+
+            ClipSpaceSphereBounds bounds;
+            bounds.Center = centerClip;
+            bounds.Extents = Vector4(
+                std::abs(axisX.x) + std::abs(axisY.x) + std::abs(axisZ.x),
+                std::abs(axisX.y) + std::abs(axisY.y) + std::abs(axisZ.y),
+                std::abs(axisX.z) + std::abs(axisY.z) + std::abs(axisZ.z),
+                std::abs(axisX.w) + std::abs(axisY.w) + std::abs(axisZ.w));
+            return bounds;
+        }
+
+        static bool IntersectsClipSpace(const ClipSpaceSphereBounds &bounds,
+                                        ClipSpaceDepthRange depthRange = ClipSpaceDepthRange::ZeroToOne)
+        {
+            const Vector4 &center = bounds.Center;
+            const Vector4 &extent = bounds.Extents;
+            const float xwExtent = extent.x + extent.w;
+            const float ywExtent = extent.y + extent.w;
+            const float zwExtent = extent.z + extent.w;
+
+            if (center.x + center.w + xwExtent < 0.0f)
+            {
+                return false;
+            }
+            if (-center.x + center.w + xwExtent < 0.0f)
+            {
+                return false;
+            }
+            if (center.y + center.w + ywExtent < 0.0f)
+            {
+                return false;
+            }
+            if (-center.y + center.w + ywExtent < 0.0f)
+            {
+                return false;
+            }
+
+            if (depthRange == ClipSpaceDepthRange::ZeroToOne)
+            {
+                if (center.z + extent.z < 0.0f)
+                {
+                    return false;
+                }
+            }
+            else if (center.z + center.w + zwExtent < 0.0f)
+            {
+                return false;
+            }
+
+            if (-center.z + center.w + zwExtent < 0.0f)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         /**

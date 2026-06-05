@@ -6,14 +6,23 @@ using namespace NorvesLib::Core::Rendering;
 
 namespace
 {
-    MeshProxy MakeProxy(uint64_t objectId, uint64_t meshId, uint64_t materialId)
+    MeshProxy MakeProxy(uint64_t objectId,
+                        uint64_t meshId,
+                        uint64_t materialId,
+                        float centerX = 0.0f,
+                        float centerY = 0.0f,
+                        float centerZ = 0.0f,
+                        float radius = 1.0f)
     {
         MeshProxy proxy;
         proxy.ObjectId = objectId;
         proxy.MeshHandle.Id = meshId;
         proxy.MaterialCount = 1;
         proxy.Materials[0].Id = materialId;
-        proxy.WorldBounds.Radius = 1.0f;
+        proxy.WorldBounds.CenterX = centerX;
+        proxy.WorldBounds.CenterY = centerY;
+        proxy.WorldBounds.CenterZ = centerZ;
+        proxy.WorldBounds.Radius = radius;
         return proxy;
     }
 
@@ -43,30 +52,60 @@ int main()
 {
     std::cout << "SceneViewViewportCommandTest start\n";
 
-    SceneView view;
-    SceneViewSettings settings;
-    settings.bEnableFrustumCulling = false;
-    settings.bEnableDistanceCulling = false;
-    assert(view.Initialize(settings));
+    {
+        SceneView view;
+        SceneViewSettings settings;
+        settings.bEnableFrustumCulling = false;
+        settings.bEnableDistanceCulling = false;
+        assert(view.Initialize(settings));
 
-    view.AddMeshProxy(MakeProxy(1, 100, 200));
-    view.AddMeshProxy(MakeProxy(2, 100, 200));
+        view.AddMeshProxy(MakeProxy(1, 100, 200));
+        view.AddMeshProxy(MakeProxy(2, 100, 200));
 
-    ViewportSnapshot snapshot = MakeSnapshot();
-    assert(snapshot.bHasCamera);
+        ViewportSnapshot snapshot = MakeSnapshot();
+        assert(snapshot.bHasCamera);
 
-    view.PrepareDrawCommandsForViewport(snapshot);
+        view.PrepareDrawCommandsForViewport(snapshot);
 
-    const auto &commands = view.GetDrawCommands();
-    assert(commands.size() == 1);
-    assert(commands[0].Type == DrawCommandType::DrawIndexedInstanced);
-    assert(commands[0].Draw.bInstanced);
-    assert(commands[0].Draw.InstanceCount == 2);
-    assert(view.GetStats().VisibleProxies == 2);
-    assert(view.GetStats().BatchCount == 1);
-    assert(view.GetStats().DrawCommandCount == 1);
+        const auto &commands = view.GetDrawCommands();
+        assert(commands.size() == 1);
+        assert(commands[0].Type == DrawCommandType::DrawIndexedInstanced);
+        assert(commands[0].Draw.bInstanced);
+        assert(commands[0].Draw.InstanceCount == 2);
+        assert(view.GetStats().VisibleProxies == 2);
+        assert(view.GetStats().BatchCount == 1);
+        assert(view.GetStats().DrawCommandCount == 1);
 
-    view.Shutdown();
+        view.Shutdown();
+    }
+
+    {
+        SceneView view;
+        SceneViewSettings settings;
+        settings.bEnableFrustumCulling = true;
+        settings.bEnableDistanceCulling = false;
+        assert(view.Initialize(settings));
+
+        view.AddMeshProxy(MakeProxy(1, 100, 200, 0.0f, 0.5f, 0.0f, 1.0f));
+        view.AddMeshProxy(MakeProxy(2, 100, 200, 0.0f, -1.0f, 0.0f, 7.1f));
+        view.AddMeshProxy(MakeProxy(3, 100, 200, 4.0f, 1.0f, 0.0f, 0.2f));
+        view.AddMeshProxy(MakeProxy(4, 100, 200, 0.0f, 2.5f, 8.0f, 0.5f));
+
+        ViewportSnapshot snapshot = MakeSnapshot();
+        assert(snapshot.bHasCamera);
+
+        view.PrepareDrawCommandsForViewport(snapshot);
+
+        const auto &commands = view.GetDrawCommands();
+        assert(commands.size() == 1);
+        assert(commands[0].Type == DrawCommandType::DrawIndexedInstanced);
+        assert(commands[0].Draw.bInstanced);
+        assert(commands[0].Draw.InstanceCount == 3);
+        assert(view.GetStats().VisibleProxies == 3);
+        assert(view.GetStats().CulledProxies == 1);
+
+        view.Shutdown();
+    }
 
     std::cout << "SceneViewViewportCommandTest passed\n";
     return 0;
