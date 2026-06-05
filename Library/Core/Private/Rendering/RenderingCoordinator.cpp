@@ -854,12 +854,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (imageIndex >= m_SwapChainFramebuffers.size())
+        if (imageIndex >= m_SwapChainFramebuffers.size() ||
+            imageIndex >= m_PresentationLoadFramebuffers.size())
         {
             NORVES_LOG_ERROR("RenderingCoordinator",
-                             "Swapchain framebuffer index out of range: image=%u framebufferCount=%zu",
+                             "Swapchain framebuffer index out of range: image=%u framebufferCount=%zu loadFramebufferCount=%zu",
                              imageIndex,
-                             m_SwapChainFramebuffers.size());
+                             m_SwapChainFramebuffers.size(),
+                             m_PresentationLoadFramebuffers.size());
             return;
         }
 
@@ -925,65 +927,144 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 
-        if (const ViewportSnapshot *viewportSnapshot = FindPrimaryViewportSnapshot(*packet))
+        auto applyViewportSnapshot = [&viewContext](const ViewportSnapshot *viewportSnapshot)
         {
+            if (!viewportSnapshot)
+            {
+                viewContext.CurrentViewport = nullptr;
+                viewContext.CurrentCamera = nullptr;
+                viewContext.CurrentDrawCommands = nullptr;
+                viewContext.CurrentOpaqueCommands = nullptr;
+                viewContext.CurrentTransparentCommands = nullptr;
+                return;
+            }
+
             viewContext.CurrentViewport = viewportSnapshot;
             viewContext.CurrentCamera = viewportSnapshot->bHasCamera ? &viewportSnapshot->Camera : nullptr;
             viewContext.CurrentDrawCommands = &viewportSnapshot->DrawCommands;
             viewContext.CurrentOpaqueCommands = &viewportSnapshot->OpaqueCommands;
             viewContext.CurrentTransparentCommands = &viewportSnapshot->TransparentCommands;
-        }
+        };
 
-        // パスチェーンが設定されたViewはパスベース描画を実行
-        if (m_MainSceneView && m_MainSceneView->GetPassCount() > 0)
+        auto flushPendingFrameCommands = [&]()
         {
-            // パスベース描画（GBuffer→Lighting→PostProcess or Forward→PostProcess）
-            m_MainSceneView->Render(viewContext);
-        }
-        else if (viewContext.GetActiveDrawCommands())
+            if (!pendingFrameCommands.empty())
+            {
+                m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
+                pendingFrameCommands.clear();
+            }
+        };
+
+        auto blitActivePresentation = [&](bool bClearPresentation)
         {
-            ExecuteDrawCommands(*viewContext.GetActiveDrawCommands());
-        }
+            RHI::Viewport viewport = viewContext.GetActiveOutputViewport();
+            RHI::ScissorRect scissor = viewContext.GetActiveOutputScissor();
 
-        // ビューポート設定
-        RHI::Viewport viewport = viewContext.GetActiveOutputViewport();
-        m_CommandList->SetViewport(viewport);
+            m_CommandList->SetViewport(viewport);
+            m_CommandList->SetScissor(scissor);
 
-        // シザー設定
-        RHI::ScissorRect scissor = viewContext.GetActiveOutputScissor();
+            auto presentationTex = viewContext.SharedResources->GetTexturePtr("PresentationColor");
+            if (!presentationTex)
+            {
+                presentationTex = viewContext.SharedResources->GetTexturePtr("ToneMappedColor");
+            }
 
-        if (!pendingFrameCommands.empty())
-        {
+            const bool bCanBlitToSwapChain = presentationTex && m_BlitPipeline && m_BlitDescriptorSet;
+            if (bCanBlitToSwapChain)
+            {
+                m_BlitDescriptorSet->BindTexture(0, presentationTex);
+                m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
+                m_BlitDescriptorSet->Update();
+            }
+
+            auto renderPass = bClearPresentation ? m_RenderPass : m_PresentationLoadRenderPass;
+            auto framebuffer = bClearPresentation
+                                   ? m_SwapChainFramebuffers[imageIndex]
+                                   : m_PresentationLoadFramebuffers[imageIndex];
+
+            pendingFrameCommands.push_back(
+                FrameCommand::CreateFullscreenPass(renderPass,
+                                                   framebuffer,
+                                                   viewport,
+                                                   scissor,
+                                                   bCanBlitToSwapChain ? m_BlitPipeline : nullptr,
+                                                   bCanBlitToSwapChain ? m_BlitDescriptorSet : nullptr));
             m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
             pendingFrameCommands.clear();
-        }
+        };
 
-        // ========================================
-        // Blit合成: ToneMappedColor → スワップチェーン
-        // ========================================
-        auto presentationTex = viewContext.SharedResources->GetTexturePtr("PresentationColor");
-        if (!presentationTex)
+        auto renderViewForCurrentViewport = [&](View *view) -> bool
         {
-            presentationTex = viewContext.SharedResources->GetTexturePtr("ToneMappedColor");
-        }
+            if (!view || !view->IsEnabled())
+            {
+                return false;
+            }
 
-        const bool bCanBlitToSwapChain = presentationTex && m_BlitPipeline && m_BlitDescriptorSet;
-        if (bCanBlitToSwapChain)
+            if (view->GetPassCount() > 0)
+            {
+                view->Render(viewContext);
+                return true;
+            }
+
+            const auto *activeDrawCommands = viewContext.GetActiveDrawCommands();
+            if (activeDrawCommands && !activeDrawCommands->empty())
+            {
+                ExecuteDrawCommands(*activeDrawCommands);
+                return true;
+            }
+
+            return false;
+        };
+
+        bool bRenderedAnyViewport = false;
+        uint32_t presentationBlitCount = 0;
+        const auto &screenViews = m_Screen.GetViews();
+
+        for (const ViewFrameSnapshot &viewSnapshot : packet->Views)
         {
-            m_BlitDescriptorSet->BindTexture(0, presentationTex);
-            m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
-            m_BlitDescriptorSet->Update();
+            if (!viewSnapshot.bEnabled)
+            {
+                continue;
+            }
+
+            if (viewSnapshot.ViewId >= screenViews.size())
+            {
+                continue;
+            }
+
+            auto view = screenViews[viewSnapshot.ViewId];
+            if (!view)
+            {
+                continue;
+            }
+
+            for (const ViewportSnapshot &viewportSnapshot : viewSnapshot.Viewports)
+            {
+                if (!viewportSnapshot.HasDrawableExtent())
+                {
+                    continue;
+                }
+
+                applyViewportSnapshot(&viewportSnapshot);
+                if (!renderViewForCurrentViewport(view.get()))
+                {
+                    continue;
+                }
+
+                flushPendingFrameCommands();
+                blitActivePresentation(presentationBlitCount == 0);
+                ++presentationBlitCount;
+                bRenderedAnyViewport = true;
+            }
         }
 
-        pendingFrameCommands.push_back(
-            FrameCommand::CreateFullscreenPass(m_RenderPass,
-                                               m_SwapChainFramebuffers[imageIndex],
-                                               viewport,
-                                               scissor,
-                                               bCanBlitToSwapChain ? m_BlitPipeline : nullptr,
-                                               bCanBlitToSwapChain ? m_BlitDescriptorSet : nullptr));
-        m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
-        pendingFrameCommands.clear();
+        if (!bRenderedAnyViewport)
+        {
+            applyViewportSnapshot(FindPrimaryViewportSnapshot(*packet));
+            renderViewForCurrentViewport(m_MainSceneView.get());
+            flushPendingFrameCommands();
+            blitActivePresentation(true);
+        }
 
         // コマンド録画終了
 #if NORVES_ENABLE_STATS
