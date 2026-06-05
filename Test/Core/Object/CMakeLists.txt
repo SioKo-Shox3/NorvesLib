@@ -51,9 +51,21 @@ target_include_directories(PropertyBagTest PRIVATE
 )
 set_target_properties(PropertyBagTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(InvocationQueueTest
+    InvocationQueueTest.cpp
+    Animal.cpp
+)
+target_link_libraries(InvocationQueueTest PRIVATE Core)
+target_include_directories(InvocationQueueTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_target_properties(InvocationQueueTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
 add_test(NAME RuntimeSchemaSnapshotTest COMMAND RuntimeSchemaSnapshotTest)
 add_test(NAME ObjectHeapTest COMMAND ObjectHeapTest)
 add_test(NAME PropertyBagTest COMMAND PropertyBagTest)
+add_test(NAME InvocationQueueTest COMMAND InvocationQueueTest)
