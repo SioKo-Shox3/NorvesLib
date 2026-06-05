@@ -1,6 +1,8 @@
 #include "Object/ObjectHeap.h"
 #include "Object/IClass.h"
 #include "Object/ObjectUtility.h"
+#include <chrono>
+#include <sstream>
 
 namespace NorvesLib::Core
 {
@@ -128,6 +130,128 @@ namespace NorvesLib::Core
         }
 
         return stats;
+    }
+
+    ObjectHeap::GCStats ObjectHeap::CollectIncremental(GCBudget budget)
+    {
+        if (budget.MaxObjectsPerFrame == 0)
+        {
+            budget.MaxObjectsPerFrame = 1;
+        }
+
+        if (m_Incremental.Phase == IncrementalPhase::Idle)
+        {
+            StartIncrementalGC();
+            m_Incremental.Stats.DestroyQueuedObjects = ProcessDestroyQueue();
+        }
+
+        const auto startTime = std::chrono::steady_clock::now();
+        size_t processedObjects = 0;
+        auto canContinue = [&]()
+        {
+            if (processedObjects >= budget.MaxObjectsPerFrame)
+            {
+                return false;
+            }
+            if (budget.MaxTimeMs <= 0.0)
+            {
+                return true;
+            }
+
+            const auto elapsed = std::chrono::steady_clock::now() - startTime;
+            const double elapsedMs = std::chrono::duration<double, std::milli>(elapsed).count();
+            return elapsedMs < budget.MaxTimeMs;
+        };
+
+        while (m_Incremental.Phase == IncrementalPhase::Mark && canContinue())
+        {
+            if (m_Incremental.MarkStack.empty())
+            {
+                m_Incremental.Phase = IncrementalPhase::Sweep;
+                m_Incremental.SweepIndex = 0;
+                break;
+            }
+
+            ObjectHandle handle = m_Incremental.MarkStack.back();
+            m_Incremental.MarkStack.pop_back();
+            ++processedObjects;
+
+            if (!IsHandleAlive(handle))
+            {
+                continue;
+            }
+
+            Slot &slot = m_Slots[static_cast<uint32_t>(handle.Id - 1)];
+            if (slot.bMarked || !slot.Instance || slot.Instance->HasFlag(OF_PendingDestroy))
+            {
+                continue;
+            }
+
+            slot.bMarked = true;
+            ++m_Incremental.Stats.MarkedObjects;
+            PushReferences(slot.Instance, m_Incremental.MarkStack);
+        }
+
+        while (m_Incremental.Phase == IncrementalPhase::Sweep && canContinue())
+        {
+            if (m_Incremental.SweepIndex >= m_Slots.size())
+            {
+                m_Incremental.Phase = IncrementalPhase::Idle;
+                m_Incremental.MarkStack.clear();
+                break;
+            }
+
+            const uint32_t index = m_Incremental.SweepIndex++;
+            Slot &slot = m_Slots[index];
+            if (slot.State == SlotState::Free || !slot.Instance)
+            {
+                continue;
+            }
+
+            ++processedObjects;
+            if (slot.Instance->HasFlag(OF_PendingDestroy) || !slot.bMarked)
+            {
+                if (ReleaseSlot(index))
+                {
+                    ++m_Incremental.Stats.SweptObjects;
+                }
+            }
+        }
+
+        return m_Incremental.Stats;
+    }
+
+    bool ObjectHeap::IsIncrementalGCActive() const
+    {
+        return m_Incremental.Phase != IncrementalPhase::Idle;
+    }
+
+    void ObjectHeap::ResetIncrementalGC()
+    {
+        m_Incremental = IncrementalState{};
+        ClearMarks();
+    }
+
+    Container::String ObjectHeap::DumpGCState() const
+    {
+        const char *phaseName = "Idle";
+        if (m_Incremental.Phase == IncrementalPhase::Mark)
+        {
+            phaseName = "Mark";
+        }
+        else if (m_Incremental.Phase == IncrementalPhase::Sweep)
+        {
+            phaseName = "Sweep";
+        }
+
+        std::ostringstream stream;
+        stream << "Phase=" << phaseName
+               << " Live=" << GetLiveObjectCount()
+               << " Marked=" << m_Incremental.Stats.MarkedObjects
+               << " Swept=" << m_Incremental.Stats.SweptObjects
+               << " PendingMark=" << m_Incremental.MarkStack.size()
+               << " SweepIndex=" << m_Incremental.SweepIndex;
+        return Container::String(stream.str());
     }
 
     void ObjectHeap::DestroyAll()
@@ -393,6 +517,60 @@ namespace NorvesLib::Core
         for (Slot &slot : m_Slots)
         {
             slot.bMarked = false;
+        }
+    }
+
+    void ObjectHeap::StartIncrementalGC()
+    {
+        ClearMarks();
+        m_Incremental = IncrementalState{};
+        m_Incremental.Phase = IncrementalPhase::Mark;
+        PushRootSet(m_Incremental.MarkStack);
+    }
+
+    void ObjectHeap::PushRootSet(Container::VariableArray<ObjectHandle> &stack) const
+    {
+        for (ObjectHandle root : m_Roots)
+        {
+            stack.push_back(root);
+        }
+        for (ObjectHandle root : m_ExternalRoots)
+        {
+            stack.push_back(root);
+        }
+        for (ObjectHandle pinned : m_PinnedObjects)
+        {
+            stack.push_back(pinned);
+        }
+    }
+
+    void ObjectHeap::PushReferences(Object *object, Container::VariableArray<ObjectHandle> &stack) const
+    {
+        if (!object)
+        {
+            return;
+        }
+
+        ReferenceCollector collector;
+        object->AddReferencedObjects(collector);
+        for (ObjectHandle referenced : collector.GetObjectHandles())
+        {
+            stack.push_back(referenced);
+        }
+
+        for (IUnknown *inner : object->GetInners())
+        {
+            Object *innerObject = ObjectUtility::CastTo<Object>(inner);
+            if (!innerObject)
+            {
+                continue;
+            }
+
+            ObjectHandle innerHandle = GetHandle(innerObject);
+            if (innerHandle)
+            {
+                stack.push_back(innerHandle);
+            }
         }
     }
 
