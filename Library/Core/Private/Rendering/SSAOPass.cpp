@@ -569,11 +569,12 @@ namespace NorvesLib::Core::Rendering
         GPUSSAOParams ssaoParams = {};
 
         // プロジェクション行列を計算（CameraProxyのパラメータから）
-        if (context.MainCamera)
+        const CameraProxy *activeCamera = context.GetActiveCamera();
+        if (activeCamera)
         {
             using namespace NorvesLib::Math;
 
-            const auto &cam = *context.MainCamera;
+            const auto &cam = *activeCamera;
             float aspectRatio = (m_CurrentHeight > 0)
                                     ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
                                     : 16.0f / 9.0f;

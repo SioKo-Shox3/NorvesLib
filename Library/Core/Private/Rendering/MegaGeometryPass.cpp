@@ -392,7 +392,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!context.MainCamera)
+        if (!context.GetActiveCamera())
         {
             return;
         }

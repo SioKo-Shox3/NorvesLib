@@ -119,6 +119,26 @@ namespace NorvesLib::Core::Rendering
         /** @brief pass が enqueue した FrameCommand の一時キュー */
         Container::VariableArray<FrameCommand>* PendingFrameCommands = nullptr;
 
+        const CameraProxy *GetActiveCamera() const
+        {
+            return CurrentCamera ? CurrentCamera : MainCamera;
+        }
+
+        const Container::VariableArray<DrawCommand> *GetActiveDrawCommands() const
+        {
+            return CurrentDrawCommands ? CurrentDrawCommands : SnapshotDrawCommands;
+        }
+
+        const Container::VariableArray<DrawCommand> *GetActiveOpaqueCommands() const
+        {
+            return CurrentOpaqueCommands ? CurrentOpaqueCommands : SnapshotOpaqueCommands;
+        }
+
+        const Container::VariableArray<DrawCommand> *GetActiveTransparentCommands() const
+        {
+            return CurrentTransparentCommands ? CurrentTransparentCommands : SnapshotTransparentCommands;
+        }
+
         void EnqueueFrameCommand(const FrameCommand& command)
         {
             if (PendingFrameCommands)
@@ -173,10 +193,11 @@ namespace NorvesLib::Core::Rendering
 
         void EnqueueMegaGeometryPass(MegaGeometryPass* pass)
         {
+            const CameraProxy *activeCamera = GetActiveCamera();
             EnqueueFrameCommand(FrameCommand::CreateMegaGeometryPass(pass,
                                                                    ResourceManager,
-                                                                   MainCamera ? *MainCamera : CameraProxy{},
-                                                                   MainCamera != nullptr));
+                                                                   activeCamera ? *activeCamera : CameraProxy{},
+                                                                   activeCamera != nullptr));
         }
 
         // ========================================

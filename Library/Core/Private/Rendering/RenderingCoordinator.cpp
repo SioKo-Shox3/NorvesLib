@@ -826,15 +826,25 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 
+        if (!packet->Views.empty() && !packet->Views[0].Viewports.empty())
+        {
+            const ViewportSnapshot &viewportSnapshot = packet->Views[0].Viewports[0];
+            viewContext.CurrentViewport = &viewportSnapshot;
+            viewContext.CurrentCamera = viewportSnapshot.bHasCamera ? &viewportSnapshot.Camera : nullptr;
+            viewContext.CurrentDrawCommands = &viewportSnapshot.DrawCommands;
+            viewContext.CurrentOpaqueCommands = &viewportSnapshot.OpaqueCommands;
+            viewContext.CurrentTransparentCommands = &viewportSnapshot.TransparentCommands;
+        }
+
         // パスチェーンが設定されたViewはパスベース描画を実行
         if (m_MainSceneView && m_MainSceneView->GetPassCount() > 0)
         {
             // パスベース描画（GBuffer→Lighting→PostProcess or Forward→PostProcess）
             m_MainSceneView->Render(viewContext);
         }
-        else if (viewContext.SnapshotDrawCommands)
+        else if (viewContext.GetActiveDrawCommands())
         {
-            ExecuteDrawCommands(*viewContext.SnapshotDrawCommands);
+            ExecuteDrawCommands(*viewContext.GetActiveDrawCommands());
         }
 
         // ビューポート設定

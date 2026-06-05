@@ -39,3 +39,13 @@ target_include_directories(SceneViewViewportCommandTest PRIVATE
 )
 set_target_properties(SceneViewViewportCommandTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SceneViewViewportCommandTest COMMAND SceneViewViewportCommandTest)
+
+add_executable(ViewRenderContextActiveInputTest
+    ViewRenderContextActiveInputTest.cpp
+)
+target_link_libraries(ViewRenderContextActiveInputTest PRIVATE Core)
+target_include_directories(ViewRenderContextActiveInputTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ViewRenderContextActiveInputTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ViewRenderContextActiveInputTest COMMAND ViewRenderContextActiveInputTest)

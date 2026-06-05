@@ -304,7 +304,8 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // DrawCommand駆動の描画（影を落とすメッシュのみ）
         // ========================================
-        if (m_SceneRenderer && context.ResourceManager && context.SnapshotDrawCommands)
+        const auto *activeDrawCommands = context.GetActiveDrawCommands();
+        if (m_SceneRenderer && context.ResourceManager && activeDrawCommands)
         {
             // UBOデータ構造体（shadow.vertのShadowMVPに対応）
             struct ShadowPerObjectUBO
@@ -320,7 +321,7 @@ namespace NorvesLib::Core::Rendering
             auto shadowCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
             // DrawCommand配列を取得し、影を落とすコマンドのみ描画
-            const auto &drawCommands = *context.SnapshotDrawCommands;
+            const auto &drawCommands = *activeDrawCommands;
             for (const auto &cmd : drawCommands)
             {
                 if (!cmd.Draw.bCastShadow)

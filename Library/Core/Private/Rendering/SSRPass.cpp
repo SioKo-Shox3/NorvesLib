@@ -331,9 +331,10 @@ namespace NorvesLib::Core::Rendering
         params.bEnabled = m_Settings.bEnabled ? 1u : 0u;
 
         // ビューとプロジェクション行列
-        if (context.MainCamera)
+        const CameraProxy *activeCamera = context.GetActiveCamera();
+        if (activeCamera)
         {
-            const auto &cam = *context.MainCamera;
+            const auto &cam = *activeCamera;
 
             float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
             float aspectRatio = static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight);
