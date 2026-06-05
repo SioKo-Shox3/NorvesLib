@@ -107,6 +107,39 @@ namespace NorvesLib::Core::Rendering
 
             return snapshot;
         }
+
+        const ViewportSnapshot *FindPrimaryViewportSnapshot(const FramePacket &packet)
+        {
+            const ViewportSnapshot *fallbackViewport = nullptr;
+
+            for (const auto &viewSnapshot : packet.Views)
+            {
+                if (!viewSnapshot.bEnabled)
+                {
+                    continue;
+                }
+
+                for (const auto &viewportSnapshot : viewSnapshot.Viewports)
+                {
+                    if (!viewportSnapshot.HasDrawableExtent())
+                    {
+                        continue;
+                    }
+
+                    if (!fallbackViewport)
+                    {
+                        fallbackViewport = &viewportSnapshot;
+                    }
+
+                    if (static_cast<ViewType>(viewSnapshot.ViewType) == ViewType::Scene)
+                    {
+                        return &viewportSnapshot;
+                    }
+                }
+            }
+
+            return fallbackViewport;
+        }
     } // namespace
 
     // ========================================
@@ -583,80 +616,122 @@ namespace NorvesLib::Core::Rendering
 
         NORVES_STAT_TIME_START(cmdGen);
 
-        // メインSceneViewのDrawCommandを生成してフレームパケットにスナップショット
-        if (m_MainSceneView)
+        if (m_CurrentPacket)
         {
-            ViewportSnapshot mainViewportSnapshot;
-            bool bHasViewportSnapshot = false;
-            auto mainViewport = m_MainSceneView->GetMainViewport();
-            if (mainViewport)
+            m_CurrentPacket->bHasMainCamera = false;
+            if (m_bCameraSet)
             {
-                mainViewportSnapshot = BuildViewportSnapshot(*mainViewport,
-                                                             0,
-                                                             0,
-                                                             m_RenderWidth,
-                                                             m_RenderHeight,
-                                                             m_bCameraSet ? &m_MainCamera : nullptr);
-                bHasViewportSnapshot = true;
-                m_MainSceneView->PrepareDrawCommandsForViewport(mainViewportSnapshot);
-            }
-            else
-            {
-                // Viewport未作成時の互換フォールバック。
-                m_MainSceneView->PrepareDrawCommands();
-            }
-
-            const auto &viewCommands = m_MainSceneView->GetDrawCommands();
-            if (!viewCommands.empty())
-            {
-                m_FrameDrawCommands.insert(m_FrameDrawCommands.end(),
-                                           viewCommands.begin(), viewCommands.end());
-            }
-
-            if (bHasViewportSnapshot)
-            {
-                mainViewportSnapshot.DrawCommands = m_MainSceneView->GetDrawCommands();
-                mainViewportSnapshot.OpaqueCommands = m_MainSceneView->GetOpaqueCommands();
-                mainViewportSnapshot.TransparentCommands = m_MainSceneView->GetTransparentCommands();
-            }
-
-            // フレームパケットにスナップショット
-            if (m_CurrentPacket)
-            {
-                // カメラとProxyをスナップショット
-                m_CurrentPacket->bHasMainCamera = false;
-                if (m_bCameraSet)
+                auto mainCamera = m_MainCamera;
+                if (!mainCamera.IsValid())
                 {
-                    auto mainCamera = m_MainCamera;
-                    if (!mainCamera.IsValid())
-                    {
-                        mainCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
-                        mainCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
-                    }
-
-                    m_CurrentPacket->Scene.MainCamera = mainCamera;
-                    m_CurrentPacket->bHasMainCamera = true;
+                    mainCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
+                    mainCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
                 }
+
+                m_CurrentPacket->Scene.MainCamera = mainCamera;
+                m_CurrentPacket->bHasMainCamera = true;
+            }
+
+            if (m_MainSceneView)
+            {
                 m_CurrentPacket->Scene.MeshProxies = m_MainSceneView->GetMeshProxies();
                 m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
+            }
 
-                // DrawCommandをスナップショット
-                m_CurrentPacket->DrawCommands = m_MainSceneView->GetDrawCommands();
-                m_CurrentPacket->OpaqueCommands = m_MainSceneView->GetOpaqueCommands();
-                m_CurrentPacket->TransparentCommands = m_MainSceneView->GetTransparentCommands();
+            m_CurrentPacket->DrawCommands.clear();
+            m_CurrentPacket->OpaqueCommands.clear();
+            m_CurrentPacket->TransparentCommands.clear();
+            m_CurrentPacket->Views.clear();
+        }
 
-                m_CurrentPacket->Views.clear();
-                if (bHasViewportSnapshot)
+        bool bLegacyCommandsSet = false;
+        const auto &screenViews = m_Screen.GetViews();
+        for (uint32_t viewIndex = 0; viewIndex < screenViews.size(); ++viewIndex)
+        {
+            const auto &view = screenViews[viewIndex];
+            if (!view)
+            {
+                continue;
+            }
+
+            ViewFrameSnapshot viewSnapshot;
+            viewSnapshot.ViewId = viewIndex;
+            viewSnapshot.ViewType = static_cast<uint8_t>(view->GetViewType());
+            viewSnapshot.Priority = static_cast<int32_t>(viewIndex);
+            viewSnapshot.bEnabled = view->IsEnabled();
+
+            auto sceneView = Container::DynamicPointerCast<SceneView>(view);
+            const bool bIsMainSceneView = sceneView && sceneView == m_MainSceneView;
+            const uint32_t viewportCount = view->GetViewportCount();
+
+            if (sceneView && viewportCount == 0 && view->IsEnabled())
+            {
+                // Viewport未作成時の互換フォールバック。
+                sceneView->PrepareDrawCommands();
+
+                const auto &viewCommands = sceneView->GetDrawCommands();
+                if (!viewCommands.empty())
                 {
-                    ViewFrameSnapshot viewSnapshot;
-                    viewSnapshot.ViewId = 0;
-                    viewSnapshot.ViewType = static_cast<uint8_t>(m_MainSceneView->GetViewType());
-                    viewSnapshot.Priority = 0;
-                    viewSnapshot.bEnabled = m_MainSceneView->IsEnabled();
-                    viewSnapshot.Viewports.push_back(mainViewportSnapshot);
-                    m_CurrentPacket->Views.push_back(viewSnapshot);
+                    m_FrameDrawCommands.insert(m_FrameDrawCommands.end(),
+                                               viewCommands.begin(), viewCommands.end());
                 }
+
+                if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
+                {
+                    m_CurrentPacket->DrawCommands = sceneView->GetDrawCommands();
+                    m_CurrentPacket->OpaqueCommands = sceneView->GetOpaqueCommands();
+                    m_CurrentPacket->TransparentCommands = sceneView->GetTransparentCommands();
+                    bLegacyCommandsSet = true;
+                }
+            }
+
+            for (uint32_t viewportIndex = 0; viewportIndex < viewportCount; ++viewportIndex)
+            {
+                auto viewport = view->GetViewport(viewportIndex);
+                if (!viewport)
+                {
+                    continue;
+                }
+
+                const CameraProxy *fallbackCamera =
+                    (bIsMainSceneView && m_bCameraSet) ? &m_MainCamera : nullptr;
+                ViewportSnapshot viewportSnapshot = BuildViewportSnapshot(*viewport,
+                                                                          viewIndex,
+                                                                          viewportIndex,
+                                                                          m_RenderWidth,
+                                                                          m_RenderHeight,
+                                                                          fallbackCamera);
+
+                if (sceneView && view->IsEnabled() && viewportSnapshot.HasDrawableExtent())
+                {
+                    sceneView->PrepareDrawCommandsForViewport(viewportSnapshot);
+                    viewportSnapshot.DrawCommands = sceneView->GetDrawCommands();
+                    viewportSnapshot.OpaqueCommands = sceneView->GetOpaqueCommands();
+                    viewportSnapshot.TransparentCommands = sceneView->GetTransparentCommands();
+
+                    const auto &viewCommands = sceneView->GetDrawCommands();
+                    if (!viewCommands.empty())
+                    {
+                        m_FrameDrawCommands.insert(m_FrameDrawCommands.end(),
+                                                   viewCommands.begin(), viewCommands.end());
+                    }
+
+                    if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
+                    {
+                        m_CurrentPacket->DrawCommands = sceneView->GetDrawCommands();
+                        m_CurrentPacket->OpaqueCommands = sceneView->GetOpaqueCommands();
+                        m_CurrentPacket->TransparentCommands = sceneView->GetTransparentCommands();
+                        bLegacyCommandsSet = true;
+                    }
+                }
+
+                viewSnapshot.Viewports.push_back(viewportSnapshot);
+            }
+
+            if (m_CurrentPacket)
+            {
+                m_CurrentPacket->Views.push_back(viewSnapshot);
             }
         }
 
@@ -826,14 +901,13 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 
-        if (!packet->Views.empty() && !packet->Views[0].Viewports.empty())
+        if (const ViewportSnapshot *viewportSnapshot = FindPrimaryViewportSnapshot(*packet))
         {
-            const ViewportSnapshot &viewportSnapshot = packet->Views[0].Viewports[0];
-            viewContext.CurrentViewport = &viewportSnapshot;
-            viewContext.CurrentCamera = viewportSnapshot.bHasCamera ? &viewportSnapshot.Camera : nullptr;
-            viewContext.CurrentDrawCommands = &viewportSnapshot.DrawCommands;
-            viewContext.CurrentOpaqueCommands = &viewportSnapshot.OpaqueCommands;
-            viewContext.CurrentTransparentCommands = &viewportSnapshot.TransparentCommands;
+            viewContext.CurrentViewport = viewportSnapshot;
+            viewContext.CurrentCamera = viewportSnapshot->bHasCamera ? &viewportSnapshot->Camera : nullptr;
+            viewContext.CurrentDrawCommands = &viewportSnapshot->DrawCommands;
+            viewContext.CurrentOpaqueCommands = &viewportSnapshot->OpaqueCommands;
+            viewContext.CurrentTransparentCommands = &viewportSnapshot->TransparentCommands;
         }
 
         // パスチェーンが設定されたViewはパスベース描画を実行
@@ -1003,6 +1077,7 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
+        m_Screen.AddView(sceneView, 0);
         m_Views.push_back(sceneView);
         return sceneView;
     }
