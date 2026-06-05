@@ -139,6 +139,87 @@ namespace NorvesLib::Core::Rendering
             return CurrentTransparentCommands ? CurrentTransparentCommands : SnapshotTransparentCommands;
         }
 
+        uint32_t GetActiveRenderWidth() const
+        {
+            if (CurrentViewport && CurrentViewport->HasDrawableExtent())
+            {
+                return static_cast<uint32_t>(CurrentViewport->PixelRect.Width);
+            }
+            return RenderWidth;
+        }
+
+        uint32_t GetActiveRenderHeight() const
+        {
+            if (CurrentViewport && CurrentViewport->HasDrawableExtent())
+            {
+                return static_cast<uint32_t>(CurrentViewport->PixelRect.Height);
+            }
+            return RenderHeight;
+        }
+
+        float GetActiveAspectRatio() const
+        {
+            const uint32_t height = GetActiveRenderHeight();
+            return height > 0
+                       ? static_cast<float>(GetActiveRenderWidth()) / static_cast<float>(height)
+                       : 1.0f;
+        }
+
+        RHI::Viewport GetActiveLocalViewport() const
+        {
+            const bool bHasActiveViewport = CurrentViewport && CurrentViewport->HasDrawableExtent();
+            RHI::Viewport viewport;
+            viewport.x = 0.0f;
+            viewport.y = 0.0f;
+            viewport.width = static_cast<float>(GetActiveRenderWidth());
+            viewport.height = static_cast<float>(GetActiveRenderHeight());
+            viewport.minDepth = bHasActiveViewport ? CurrentViewport->PixelRect.MinDepth : 0.0f;
+            viewport.maxDepth = bHasActiveViewport ? CurrentViewport->PixelRect.MaxDepth : 1.0f;
+            return viewport;
+        }
+
+        RHI::ScissorRect GetActiveLocalScissor() const
+        {
+            RHI::ScissorRect scissor;
+            scissor.left = 0;
+            scissor.top = 0;
+            scissor.right = static_cast<int32_t>(GetActiveRenderWidth());
+            scissor.bottom = static_cast<int32_t>(GetActiveRenderHeight());
+            return scissor;
+        }
+
+        RHI::Viewport GetActiveOutputViewport() const
+        {
+            if (!CurrentViewport || !CurrentViewport->HasDrawableExtent())
+            {
+                return GetActiveLocalViewport();
+            }
+
+            RHI::Viewport viewport;
+            viewport.x = CurrentViewport->PixelRect.X;
+            viewport.y = CurrentViewport->PixelRect.Y;
+            viewport.width = CurrentViewport->PixelRect.Width;
+            viewport.height = CurrentViewport->PixelRect.Height;
+            viewport.minDepth = CurrentViewport->PixelRect.MinDepth;
+            viewport.maxDepth = CurrentViewport->PixelRect.MaxDepth;
+            return viewport;
+        }
+
+        RHI::ScissorRect GetActiveOutputScissor() const
+        {
+            if (!CurrentViewport || !CurrentViewport->HasDrawableExtent())
+            {
+                return GetActiveLocalScissor();
+            }
+
+            RHI::ScissorRect scissor;
+            scissor.left = CurrentViewport->Scissor.Left;
+            scissor.top = CurrentViewport->Scissor.Top;
+            scissor.right = CurrentViewport->Scissor.Right;
+            scissor.bottom = CurrentViewport->Scissor.Bottom;
+            return scissor;
+        }
+
         void EnqueueFrameCommand(const FrameCommand& command)
         {
             if (PendingFrameCommands)
@@ -197,7 +278,9 @@ namespace NorvesLib::Core::Rendering
             EnqueueFrameCommand(FrameCommand::CreateMegaGeometryPass(pass,
                                                                    ResourceManager,
                                                                    activeCamera ? *activeCamera : CameraProxy{},
-                                                                   activeCamera != nullptr));
+                                                                   activeCamera != nullptr,
+                                                                   GetActiveLocalViewport(),
+                                                                   GetActiveLocalScissor()));
         }
 
         // ========================================

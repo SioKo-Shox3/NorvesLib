@@ -60,6 +60,8 @@ namespace NorvesLib::Core::Rendering
         RenderResourceManager* ResourceManager = nullptr;
         CameraProxy MainCamera;
         bool bHasMainCamera = false;
+        RHI::Viewport Viewport;
+        RHI::ScissorRect Scissor;
     };
 
     struct FrameCommand
@@ -133,7 +135,9 @@ namespace NorvesLib::Core::Rendering
         static FrameCommand CreateMegaGeometryPass(MegaGeometryPass* pass,
                                                    RenderResourceManager* resourceManager,
                                                    const CameraProxy& mainCamera,
-                                                   bool bHasMainCamera)
+                                                   bool bHasMainCamera,
+                                                   const RHI::Viewport& viewport,
+                                                   const RHI::ScissorRect& scissor)
         {
             FrameCommand command;
             command.Type = FrameCommandType::MegaGeometryPass;
@@ -141,6 +145,8 @@ namespace NorvesLib::Core::Rendering
             command.MegaGeometry.ResourceManager = resourceManager;
             command.MegaGeometry.MainCamera = mainCamera;
             command.MegaGeometry.bHasMainCamera = bHasMainCamera;
+            command.MegaGeometry.Viewport = viewport;
+            command.MegaGeometry.Scissor = scissor;
             return command;
         }
     };

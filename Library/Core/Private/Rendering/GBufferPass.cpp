@@ -212,8 +212,8 @@ namespace NorvesLib::Core::Rendering
     void GBufferPass::Setup(ViewRenderContext &context)
     {
         // GBufferサイズを決定
-        uint32_t width = m_Settings.Width > 0 ? m_Settings.Width : context.RenderWidth;
-        uint32_t height = m_Settings.Height > 0 ? m_Settings.Height : context.RenderHeight;
+        uint32_t width = m_Settings.Width > 0 ? m_Settings.Width : context.GetActiveRenderWidth();
+        uint32_t height = m_Settings.Height > 0 ? m_Settings.Height : context.GetActiveRenderHeight();
 
         if (width == 0 || height == 0)
         {
@@ -250,19 +250,8 @@ namespace NorvesLib::Core::Rendering
             context.SharedResources->RegisterTexturePtr("GBuffer_Depth", m_DepthTexture);
         }
 
-        RHI::Viewport viewport;
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = static_cast<float>(m_CurrentWidth);
-        viewport.height = static_cast<float>(m_CurrentHeight);
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-
-        RHI::ScissorRect scissor;
-        scissor.left = 0;
-        scissor.top = 0;
-        scissor.right = static_cast<int32_t>(m_CurrentWidth);
-        scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
+        RHI::Viewport viewport = context.GetActiveLocalViewport();
+        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
 
         // ========================================
         // DrawCommand駆動の描画
@@ -288,7 +277,7 @@ namespace NorvesLib::Core::Rendering
 
                 viewMat = MatrixUtils::CreateLookAt(camPos, lookAt, upDir);
 
-                float aspectRatio = static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight);
+                float aspectRatio = context.GetActiveAspectRatio();
                 float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
                 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
                     fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
