@@ -69,3 +69,13 @@ target_include_directories(SceneViewProxyReconcileTest PRIVATE
 )
 set_target_properties(SceneViewProxyReconcileTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyReconcileTest)
+
+add_executable(RenderFrameExecutorPlanTest
+    RenderFrameExecutorPlanTest.cpp
+)
+target_link_libraries(RenderFrameExecutorPlanTest PRIVATE Core)
+target_include_directories(RenderFrameExecutorPlanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderFrameExecutorPlanTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderFrameExecutorPlanTest COMMAND RenderFrameExecutorPlanTest)
