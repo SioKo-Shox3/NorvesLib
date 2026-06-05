@@ -5,7 +5,7 @@
 #include "TClass.h"
 #include "Container/Containers.h"
 #include "ReferenceCollector.h"
-#include "ObjectUtility.h"
+#include "ObjectCast.h"
 
 namespace NorvesLib::Core
 {
@@ -105,7 +105,7 @@ namespace NorvesLib::Core
         template <typename T>
         bool IsA() const
         {
-            return ObjectUtility::IsA<T>(this);
+            return NorvesLib::Core::IsA<T>(this);
         }
 
         /**
@@ -116,7 +116,7 @@ namespace NorvesLib::Core
         template <typename T>
         T *Cast()
         {
-            return ObjectUtility::CastTo<T>(this);
+            return CastTo<T>(this);
         }
 
         /**
@@ -127,7 +127,7 @@ namespace NorvesLib::Core
         template <typename T>
         const T *Cast() const
         {
-            return ObjectUtility::CastTo<T>(this);
+            return CastTo<T>(this);
         }
 
         /**

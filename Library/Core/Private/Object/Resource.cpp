@@ -1,6 +1,7 @@
 ﻿#include "Object/Resource.h"
 #include "Object/Reflection.h"
-#include "Object/ObjectUtility.h"
+#include "Object/ObjectCast.h"
+#include "Object/ObjectPropertyOps.h"
 
 namespace NorvesLib::Core
 {
@@ -45,7 +46,7 @@ namespace NorvesLib::Core
             return false;
         }
 
-        ObjectUtility::ApplyInitialValues(this, initializer);
+        ApplyInitialValues(this, initializer);
         return true;
     }
 
@@ -116,7 +117,7 @@ namespace NorvesLib::Core
         result.push_back(makeDesc("Reload", [](IUnknown *instance, const Container::VariableArray<PropertyValue> &arguments, PropertyValue *outReturnValue)
         {
             (void)arguments;
-            Resource *resource = ObjectUtility::CastTo<Resource>(instance);
+            Resource *resource = CastTo<Resource>(instance);
             if (!resource || !outReturnValue)
             {
                 return false;
@@ -130,7 +131,7 @@ namespace NorvesLib::Core
         result.push_back(makeDesc("Reimport", [](IUnknown *instance, const Container::VariableArray<PropertyValue> &arguments, PropertyValue *outReturnValue)
         {
             (void)arguments;
-            Resource *resource = ObjectUtility::CastTo<Resource>(instance);
+            Resource *resource = CastTo<Resource>(instance);
             if (!resource || !outReturnValue)
             {
                 return false;
@@ -144,7 +145,7 @@ namespace NorvesLib::Core
         result.push_back(makeDesc("Unload", [](IUnknown *instance, const Container::VariableArray<PropertyValue> &arguments, PropertyValue *outReturnValue)
         {
             (void)arguments;
-            Resource *resource = ObjectUtility::CastTo<Resource>(instance);
+            Resource *resource = CastTo<Resource>(instance);
             if (!resource || !outReturnValue)
             {
                 return false;
@@ -157,7 +158,7 @@ namespace NorvesLib::Core
         result.push_back(makeDesc("Pin", [](IUnknown *instance, const Container::VariableArray<PropertyValue> &arguments, PropertyValue *outReturnValue)
         {
             (void)arguments;
-            Resource *resource = ObjectUtility::CastTo<Resource>(instance);
+            Resource *resource = CastTo<Resource>(instance);
             if (!resource || !outReturnValue)
             {
                 return false;

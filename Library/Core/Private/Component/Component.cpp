@@ -83,12 +83,12 @@ namespace NorvesLib::Core::Component
 
     WorldObject *Component::GetOwner()
     {
-        return ObjectUtility::CastTo<WorldObject>(GetOuter());
+        return CastTo<WorldObject>(GetOuter());
     }
 
     const WorldObject *Component::GetOwner() const
     {
-        return ObjectUtility::CastTo<WorldObject>(GetOuter());
+        return CastTo<WorldObject>(GetOuter());
     }
 
     uint64_t Component::GetOwnerId() const

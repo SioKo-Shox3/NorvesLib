@@ -59,7 +59,16 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
-            T *object = ObjectUtility::CreateTypedObject<T>();
+            T *object = nullptr;
+            try
+            {
+                object = new T();
+            }
+            catch (...)
+            {
+                return nullptr;
+            }
+
             if (!object)
             {
                 return nullptr;
@@ -67,7 +76,11 @@ namespace NorvesLib::Core
 
             if (!AddObject(object))
             {
-                ObjectUtility::DestroyObject(object);
+                if (object->HasFlag(OF_Initialized))
+                {
+                    object->Finalize();
+                }
+                delete object;
                 return nullptr;
             }
 
@@ -90,7 +103,16 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
-            T *component = ObjectUtility::CreateTypedObject<T>();
+            T *component = nullptr;
+            try
+            {
+                component = new T();
+            }
+            catch (...)
+            {
+                return nullptr;
+            }
+
             if (!component)
             {
                 return nullptr;
@@ -98,7 +120,7 @@ namespace NorvesLib::Core
 
             if (!owner->AddComponent(component))
             {
-                ObjectUtility::DestroyObject(component);
+                delete component;
                 return nullptr;
             }
 

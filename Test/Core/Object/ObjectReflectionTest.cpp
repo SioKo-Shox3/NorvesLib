@@ -1,6 +1,6 @@
 #include "Animal.h"
 #include "Component/Component.h"
-#include "Object/ObjectUtility.h"
+#include "Object/ObjectPropertyOps.h"
 #include "Object/World.h"
 #include "Object/WorldObject.h"
 #include <cassert>
@@ -63,7 +63,7 @@ int main()
 
     Dog copiedDog;
     copiedDog.Initialize();
-    assert(ObjectUtility::CopyEditableProperties(copiedDog, dog) > 0);
+    assert(CopyEditableProperties(copiedDog, dog) > 0);
     auto *copiedAge = static_cast<int *>(copiedDog.GetPropertyValue(Identity("Age")));
     assert(copiedAge != nullptr);
     assert(*copiedAge == 5);
@@ -82,27 +82,36 @@ int main()
     assert(*initializer.GetInitialValue<int>(dogAgeStableId) == 12);
     assert(initializer.GetPropertyBag().Has(dogAgeStableId));
 
-    Dog *initializedDog = ObjectUtility::CreateTypedObject<Dog>(&initializer);
+    Dog *initializedDog = new Dog();
     assert(initializedDog != nullptr);
+    initializedDog->Initialize();
+    ApplyInitialValues(initializedDog, &initializer);
     auto *initializedAge = static_cast<int *>(initializedDog->GetPropertyValue(Identity("Age")));
     assert(initializedAge != nullptr);
     assert(*initializedAge == 12);
-    assert(ObjectUtility::DestroyObject(initializedDog));
+    initializedDog->Finalize();
+    delete initializedDog;
 
     Dog outerDog;
     outerDog.Initialize();
-    Dog *ownedDog = ObjectUtility::CreateTypedObject<Dog>(&outerDog);
+    Dog *ownedDog = new Dog();
     assert(ownedDog != nullptr);
+    ownedDog->Initialize();
+    assert(outerDog.AddInner(ownedDog));
     assert(ownedDog->GetOuter() == &outerDog);
     assert(ownedDog->HasFlag(OF_Initialized));
-    assert(ObjectUtility::DestroyObject(ownedDog));
+    assert(outerDog.RemoveInner(ownedDog));
+    ownedDog->Finalize();
+    delete ownedDog;
     assert(outerDog.GetInners().empty());
 
-    Dog *standaloneDog = ObjectUtility::CreateTypedObject<Dog>();
+    Dog *standaloneDog = new Dog();
     assert(standaloneDog != nullptr);
+    standaloneDog->Initialize();
     assert(standaloneDog->GetOuter() == nullptr);
     assert(standaloneDog->HasFlag(OF_Initialized));
-    assert(ObjectUtility::DestroyObject(standaloneDog));
+    standaloneDog->Finalize();
+    delete standaloneDog;
 
     World world;
     world.Initialize();

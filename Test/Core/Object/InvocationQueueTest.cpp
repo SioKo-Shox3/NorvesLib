@@ -50,7 +50,7 @@ namespace
         desc.Invoke = [](NorvesLib::Core::IUnknown *instance, const Container::VariableArray<PropertyValue> &arguments, PropertyValue *outReturnValue)
         {
             (void)arguments;
-            Dog *dog = ObjectUtility::CastTo<Dog>(instance);
+            Dog *dog = CastTo<Dog>(instance);
             if (!dog || !outReturnValue)
             {
                 return false;

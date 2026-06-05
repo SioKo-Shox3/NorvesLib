@@ -3,7 +3,6 @@
 #include <memory>
 #include <type_traits>
 #include "IClass.h"
-#include "ObjectUtility.h"
 #include "Container/Containers.h"
 #include "Text/IdentityPool.h"
 

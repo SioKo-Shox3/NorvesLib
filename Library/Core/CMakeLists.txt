@@ -11,7 +11,7 @@ set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Object/Object.cpp
     Private/Object/UnknownImpl.cpp
-    Private/Object/ObjectUtility.cpp
+    Private/Object/ObjectPropertyOps.cpp
     Private/Object/ObjectHeap.cpp
     Private/Object/ObjectResolver.cpp
     Private/Object/Invocation.cpp
@@ -219,8 +219,10 @@ set(PUBLIC_HEADERS
     Public/Rendering/MegaGeometry/LODHierarchyBuilder.h
     # Object
     Public/Object/Invocation.h
+    Public/Object/ObjectCast.h
     Public/Object/ObjectHandle.h
     Public/Object/ObjectHeap.h
+    Public/Object/ObjectPropertyOps.h
     Public/Object/ObjectReference.h
     Public/Object/ObjectResolver.h
     Public/Object/PropertyBag.h
