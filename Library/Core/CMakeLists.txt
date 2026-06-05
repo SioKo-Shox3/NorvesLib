@@ -215,6 +215,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/MegaGeometry/LODHierarchyBuilder.h
     # Object
     Public/Object/Resource.h
+    Public/Object/RuntimeSchema.h
     Public/Object/WorldObject.h
     Public/Object/ResourceRegistry.h
     Public/Object/World.h

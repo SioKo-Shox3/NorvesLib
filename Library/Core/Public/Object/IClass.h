@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <utility>
 #include "IUnknown.h"
+#include "RuntimeSchema.h"
 #include "Container/Containers.h" // Core::Containerのすべてのコンテナ
 #include "Text/IdentityPool.h"
 
@@ -58,6 +59,12 @@ namespace NorvesLib::Core
          * @return フラグ値
          */
         uint32_t GetFlags() const { return m_Flags; }
+
+        /**
+         * @brief Runtime schemaで使う型IDを取得します。
+         * 旧ClassPropertyでは型情報を持たない場合があるため、既定値は無効IDです。
+         */
+        virtual TypeId GetRuntimeTypeId() const { return InvalidSchemaId; }
 
         /**
          * @brief プロパティの初期値を適用します
@@ -419,6 +426,11 @@ namespace NorvesLib::Core
             }
         }
 
+        TypeId GetRuntimeTypeId() const override
+        {
+            return TypeRegistry::Get().GetTypeId<T>();
+        }
+
     private:
         T m_DefaultValue; // プロパティのデフォルト値
         MutableGetter m_MutableGetter;
@@ -578,6 +590,11 @@ namespace NorvesLib::Core
         uint32_t GetFlags() const { return m_Flags; }
 
         /**
+         * @brief Runtime schemaで使う戻り値TypeIdを取得します。
+         */
+        virtual TypeId GetRuntimeReturnTypeId() const { return InvalidSchemaId; }
+
+        /**
          * @brief 関数を呼び出します
          * @param instance オブジェクトインスタンス
          * @param parameters 関数パラメータの配列
@@ -628,6 +645,18 @@ namespace NorvesLib::Core
                     *static_cast<ReturnType *>(result) = value;
                 }
                 return true;
+            }
+        }
+
+        TypeId GetRuntimeReturnTypeId() const override
+        {
+            if constexpr (std::is_void_v<ReturnType>)
+            {
+                return InvalidSchemaId;
+            }
+            else
+            {
+                return TypeRegistry::Get().GetTypeId<ReturnType>();
             }
         }
 
@@ -927,6 +956,63 @@ namespace NorvesLib::Core
          */
         virtual void InitializeVariableContainer(void *container) const = 0;
     };
+
+    inline ClassInfo BuildClassInfoSnapshot(const IClass &cls, const char *moduleName = "NorvesLib")
+    {
+        ClassInfo info;
+        info.Id = cls.GetClassId();
+        info.StableId = MakeStableSchemaId(moduleName, "Class", cls.GetClassName().GetView());
+        info.Name = cls.GetClassName().ToString();
+        info.ParentId = cls.GetParentClass() ? cls.GetParentClass()->GetClassId() : InvalidSchemaId;
+
+        Container::VariableArray<const ClassProperty *> properties = cls.GetAllProperties();
+        info.Properties.reserve(properties.size());
+        for (const ClassProperty *property : properties)
+        {
+            if (!property)
+            {
+                continue;
+            }
+
+            PropertyDesc desc;
+            desc.Id = property->GetName().GetHash();
+            desc.StableId = MakeStableSchemaId(
+                moduleName,
+                "Property",
+                cls.GetClassName().GetView(),
+                property->GetName().GetView());
+            desc.Name = property->GetName().ToString();
+            desc.Type = property->GetRuntimeTypeId();
+            desc.Flags = static_cast<PropertyFlags>(property->GetFlags());
+            desc.Storage = StorageKind::Member;
+            info.Properties.push_back(std::move(desc));
+        }
+
+        Container::VariableArray<const ClassFunction *> functions = cls.GetAllFunctions();
+        info.Functions.reserve(functions.size());
+        for (const ClassFunction *function : functions)
+        {
+            if (!function)
+            {
+                continue;
+            }
+
+            FunctionDesc desc;
+            desc.Id = function->GetName().GetHash();
+            desc.StableId = MakeStableSchemaId(
+                moduleName,
+                "Function",
+                cls.GetClassName().GetView(),
+                function->GetName().GetView());
+            desc.Name = function->GetName().ToString();
+            desc.ReturnType = function->GetRuntimeReturnTypeId();
+            desc.Flags = static_cast<FunctionFlags>(function->GetFlags());
+            desc.Thread = ThreadPolicy::GameThreadOnly;
+            info.Functions.push_back(std::move(desc));
+        }
+
+        return info;
+    }
 
     /**
      * @brief クラスレジストリ
