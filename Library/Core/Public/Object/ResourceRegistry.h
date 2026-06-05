@@ -14,6 +14,18 @@
 
 namespace NorvesLib::Core
 {
+    struct ResourceRecord
+    {
+        ResourceId Id = 0;
+        uint32_t Generation = 0;
+        Container::String URI;
+        ResourceType Type;
+        ResourceLoadState LoadState = ResourceState::Unloaded;
+        uint64_t VersionHash = 0;
+        size_t DependencyCount = 0;
+        size_t MemoryUsage = 0;
+    };
+
     /**
      * @brief Typed handle for fast CPU Resource lookup.
      */
@@ -69,6 +81,7 @@ namespace NorvesLib::Core
             virtual size_t GetResourceCount() const = 0;
             virtual size_t GetCachedPathCount() const = 0;
             virtual size_t GetTotalMemoryUsage() const = 0;
+            virtual void AppendRecords(Container::VariableArray<ResourceRecord> &outRecords) const = 0;
         };
 
         template <typename T>
@@ -247,6 +260,29 @@ namespace NorvesLib::Core
                     }
                 }
                 return totalSize;
+            }
+
+            void AppendRecords(Container::VariableArray<ResourceRecord> &outRecords) const override
+            {
+                for (const Slot &slot : m_Slots)
+                {
+                    if (!slot.bOccupied || !slot.Resource)
+                    {
+                        continue;
+                    }
+
+                    const ResourceMetadata &metadata = slot.Resource->GetMetadata();
+                    ResourceRecord record;
+                    record.Id = slot.ResourceId;
+                    record.Generation = slot.Generation;
+                    record.URI = metadata.URI;
+                    record.Type = metadata.Type;
+                    record.LoadState = slot.Resource->GetLoadState();
+                    record.VersionHash = metadata.VersionHash;
+                    record.DependencyCount = metadata.Dependencies.size();
+                    record.MemoryUsage = slot.Resource->GetMemorySize();
+                    outRecords.push_back(std::move(record));
+                }
             }
 
         private:
@@ -458,6 +494,7 @@ namespace NorvesLib::Core
         size_t GetResourceCount() const;
         size_t GetCachedPathCount() const;
         size_t GetTotalMemoryUsage() const;
+        Container::VariableArray<ResourceRecord> GetRecords() const;
 
     private:
         template <typename T>

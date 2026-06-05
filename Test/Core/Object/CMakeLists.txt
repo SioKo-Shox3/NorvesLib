@@ -62,6 +62,15 @@ target_include_directories(InvocationQueueTest PRIVATE
 )
 set_target_properties(InvocationQueueTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(ResourceMetadataTest
+    ResourceMetadataTest.cpp
+)
+target_link_libraries(ResourceMetadataTest PRIVATE Core)
+target_include_directories(ResourceMetadataTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ResourceMetadataTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
@@ -69,3 +78,4 @@ add_test(NAME RuntimeSchemaSnapshotTest COMMAND RuntimeSchemaSnapshotTest)
 add_test(NAME ObjectHeapTest COMMAND ObjectHeapTest)
 add_test(NAME PropertyBagTest COMMAND PropertyBagTest)
 add_test(NAME InvocationQueueTest COMMAND InvocationQueueTest)
+add_test(NAME ResourceMetadataTest COMMAND ResourceMetadataTest)
