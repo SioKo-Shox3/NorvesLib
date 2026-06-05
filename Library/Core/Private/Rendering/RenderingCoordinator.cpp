@@ -248,6 +248,28 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create render pass");
             return false;
         }
+
+        RHI::AttachmentDesc loadColorAttachment = colorAttachment;
+        loadColorAttachment.clear = false;
+        loadColorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        loadColorAttachment.initialState = RHI::ResourceState::Present;
+
+        RHI::AttachmentDesc loadDepthAttachment = depthAttachment;
+        loadDepthAttachment.clear = false;
+        loadDepthAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        loadDepthAttachment.initialState = RHI::ResourceState::DepthWrite;
+
+        RHI::RenderPassDesc loadRenderPassDesc;
+        loadRenderPassDesc.colorAttachments.push_back(loadColorAttachment);
+        loadRenderPassDesc.depthStencilAttachment = loadDepthAttachment;
+        loadRenderPassDesc.hasDepthStencil = true;
+
+        m_PresentationLoadRenderPass = m_Device->CreateRenderPass(loadRenderPassDesc);
+        if (!m_PresentationLoadRenderPass)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create presentation load render pass");
+            return false;
+        }
         m_SwapChainFormat = swapChain->GetFormat();
 
         // ========================================
@@ -511,8 +533,10 @@ namespace NorvesLib::Core::Rendering
 
         // フレームバッファ・レンダーパスの解放
         m_SwapChainFramebuffers.clear();
+        m_PresentationLoadFramebuffers.clear();
         m_bSwapChainFramebuffersReady = false;
         m_RenderPass.reset();
+        m_PresentationLoadRenderPass.reset();
 
         // コマンドリストの解放
         m_CommandList.reset();
@@ -1010,6 +1034,7 @@ namespace NorvesLib::Core::Rendering
             m_SwapChainFormat = presentFormat;
             m_bSwapChainFramebuffersReady = false;
             m_SwapChainFramebuffers.clear();
+            m_PresentationLoadFramebuffers.clear();
             m_DepthTexture.reset();
 
             UpdateRenderResolution(presentWidth, presentHeight);
@@ -1188,10 +1213,11 @@ namespace NorvesLib::Core::Rendering
     {
         m_bSwapChainFramebuffersReady = false;
         m_SwapChainFramebuffers.clear();
+        m_PresentationLoadFramebuffers.clear();
         m_DepthTexture.reset();
 
         auto swapChain = m_Screen.GetSwapChain();
-        if (!swapChain || !m_RenderPass)
+        if (!swapChain || !m_RenderPass || !m_PresentationLoadRenderPass)
         {
             return false;
         }
@@ -1209,6 +1235,7 @@ namespace NorvesLib::Core::Rendering
 
         uint32_t imageCount = swapChain->GetBufferCount();
         m_SwapChainFramebuffers.reserve(imageCount);
+        m_PresentationLoadFramebuffers.reserve(imageCount);
 
         for (uint32_t i = 0; i < imageCount; ++i)
         {
@@ -1227,6 +1254,16 @@ namespace NorvesLib::Core::Rendering
             }
 
             m_SwapChainFramebuffers.push_back(framebuffer);
+
+            fbDesc.renderPass = m_PresentationLoadRenderPass;
+            auto loadFramebuffer = m_Device->CreateFramebuffer(fbDesc);
+            if (!loadFramebuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create presentation load framebuffer for swapchain image %u", i);
+                return false;
+            }
+
+            m_PresentationLoadFramebuffers.push_back(loadFramebuffer);
         }
 
         LOG_INFO("Created %u swapchain framebuffers with depth buffer", imageCount);
@@ -1275,6 +1312,28 @@ namespace NorvesLib::Core::Rendering
         if (!m_RenderPass)
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate swapchain render pass");
+            return false;
+        }
+
+        RHI::AttachmentDesc loadColorAttachment = colorAttachment;
+        loadColorAttachment.clear = false;
+        loadColorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        loadColorAttachment.initialState = RHI::ResourceState::Present;
+
+        RHI::AttachmentDesc loadDepthAttachment = depthAttachment;
+        loadDepthAttachment.clear = false;
+        loadDepthAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        loadDepthAttachment.initialState = RHI::ResourceState::DepthWrite;
+
+        RHI::RenderPassDesc loadRenderPassDesc;
+        loadRenderPassDesc.colorAttachments.push_back(loadColorAttachment);
+        loadRenderPassDesc.depthStencilAttachment = loadDepthAttachment;
+        loadRenderPassDesc.hasDepthStencil = true;
+
+        m_PresentationLoadRenderPass = m_Device->CreateRenderPass(loadRenderPassDesc);
+        if (!m_PresentationLoadRenderPass)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate presentation load render pass");
             return false;
         }
         m_SwapChainFormat = swapChain->GetFormat();
