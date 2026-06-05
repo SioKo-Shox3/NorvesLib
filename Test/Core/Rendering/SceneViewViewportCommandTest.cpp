@@ -68,13 +68,16 @@ int main()
         view.PrepareDrawCommandsForViewport(snapshot);
 
         const auto &commands = view.GetDrawCommands();
-        assert(commands.size() == 1);
-        assert(commands[0].Type == DrawCommandType::DrawIndexedInstanced);
-        assert(commands[0].Draw.bInstanced);
-        assert(commands[0].Draw.InstanceCount == 2);
+        assert(commands.size() == 2);
+        assert(commands[0].Type == DrawCommandType::DrawIndexed);
+        assert(commands[1].Type == DrawCommandType::DrawIndexed);
+        assert(!commands[0].Draw.bInstanced);
+        assert(!commands[1].Draw.bInstanced);
+        assert(commands[0].Draw.InstanceCount == 1);
+        assert(commands[1].Draw.InstanceCount == 1);
         assert(view.GetStats().VisibleProxies == 2);
         assert(view.GetStats().BatchCount == 1);
-        assert(view.GetStats().DrawCommandCount == 1);
+        assert(view.GetStats().DrawCommandCount == 2);
 
         view.Shutdown();
     }
@@ -97,12 +100,16 @@ int main()
         view.PrepareDrawCommandsForViewport(snapshot);
 
         const auto &commands = view.GetDrawCommands();
-        assert(commands.size() == 1);
-        assert(commands[0].Type == DrawCommandType::DrawIndexedInstanced);
-        assert(commands[0].Draw.bInstanced);
-        assert(commands[0].Draw.InstanceCount == 3);
+        assert(commands.size() == 3);
+        assert(commands[0].Type == DrawCommandType::DrawIndexed);
+        assert(commands[1].Type == DrawCommandType::DrawIndexed);
+        assert(commands[2].Type == DrawCommandType::DrawIndexed);
+        assert(!commands[0].Draw.bInstanced);
+        assert(!commands[1].Draw.bInstanced);
+        assert(!commands[2].Draw.bInstanced);
         assert(view.GetStats().VisibleProxies == 3);
         assert(view.GetStats().CulledProxies == 1);
+        assert(view.GetStats().DrawCommandCount == 3);
 
         view.Shutdown();
     }
