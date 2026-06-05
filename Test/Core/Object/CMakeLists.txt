@@ -91,6 +91,17 @@ target_include_directories(IncrementalGCTest PRIVATE
 )
 set_target_properties(IncrementalGCTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(SchemaProjectionTest
+    SchemaProjectionTest.cpp
+    Animal.cpp
+)
+target_link_libraries(SchemaProjectionTest PRIVATE Core)
+target_include_directories(SchemaProjectionTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_target_properties(SchemaProjectionTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
@@ -101,3 +112,4 @@ add_test(NAME InvocationQueueTest COMMAND InvocationQueueTest)
 add_test(NAME ResourceMetadataTest COMMAND ResourceMetadataTest)
 add_test(NAME ObjectGCTest COMMAND ObjectGCTest)
 add_test(NAME IncrementalGCTest COMMAND IncrementalGCTest)
+add_test(NAME SchemaProjectionTest COMMAND SchemaProjectionTest)

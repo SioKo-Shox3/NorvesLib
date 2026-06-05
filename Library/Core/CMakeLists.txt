@@ -15,6 +15,7 @@ set(PRIVATE_SOURCES
     Private/Object/ObjectHeap.cpp
     Private/Object/ObjectResolver.cpp
     Private/Object/Invocation.cpp
+    Private/Object/SchemaProjection.cpp
     Private/Object/ClassRegistry.cpp
     Private/Object/Resource.cpp
     Private/Object/WorldObject.cpp
@@ -227,6 +228,7 @@ set(PUBLIC_HEADERS
     Public/Object/Resource.h
     Public/Object/ResourceRef.h
     Public/Object/RuntimeSchema.h
+    Public/Object/SchemaProjection.h
     Public/Object/WorldObject.h
     Public/Object/ResourceRegistry.h
     Public/Object/World.h
