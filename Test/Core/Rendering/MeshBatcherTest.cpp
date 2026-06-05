@@ -42,17 +42,26 @@ int main()
         batcher.EndBatching();
         batcher.GenerateDrawCommands(commands);
 
-        assert(commands.size() == 1);
-        assert(commands[0].Type == DrawCommandType::DrawIndexedInstanced);
-        assert(commands[0].Draw.bInstanced);
-        assert(commands[0].Draw.InstanceCount == 2);
+        assert(commands.size() == 2);
+        assert(commands[0].Type == DrawCommandType::DrawIndexed);
+        assert(commands[1].Type == DrawCommandType::DrawIndexed);
+        assert(!commands[0].Draw.bInstanced);
+        assert(!commands[1].Draw.bInstanced);
+        assert(commands[0].Draw.InstanceCount == 1);
+        assert(commands[1].Draw.InstanceCount == 1);
         assert(commands[0].Draw.MeshHandle.Id == 100);
+        assert(commands[1].Draw.MeshHandle.Id == 100);
         assert(commands[0].Draw.MaterialHandle.Id == 200);
+        assert(commands[1].Draw.MaterialHandle.Id == 200);
+        assert(commands[0].Draw.WorldMatrix.m30 == 0.0f);
+        assert(commands[1].Draw.WorldMatrix.m30 == 3.0f);
+        assert(commands[0].Draw.CustomData[0] == 1.0f);
+        assert(commands[1].Draw.CustomData[0] == 2.0f);
         assert(batcher.GetStats().TotalProxies == 2);
         assert(batcher.GetStats().TotalBatches == 1);
-        assert(batcher.GetStats().TotalDrawCommands == 1);
-        assert(batcher.GetStats().InstancedDrawCalls == 1);
-        assert(batcher.GetStats().SavedDrawCalls == 1);
+        assert(batcher.GetStats().TotalDrawCommands == 2);
+        assert(batcher.GetStats().InstancedDrawCalls == 0);
+        assert(batcher.GetStats().SavedDrawCalls == 0);
     }
 
     {

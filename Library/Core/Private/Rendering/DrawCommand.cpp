@@ -100,14 +100,14 @@ namespace NorvesLib::Core::Rendering
 
         for (const MeshBatch &batch : m_Batches)
         {
-            DrawCommand cmd;
-            cmd.Type = DrawCommandType::DrawIndexed;
-            cmd.Draw.MeshHandle = batch.MeshHandle;
-            cmd.Draw.MaterialHandle = batch.MaterialHandle;
-            cmd.Draw.SubMeshIndex = batch.SubMeshIndex;
-
             if (batch.IsInstanced())
             {
+                DrawCommand cmd;
+                cmd.Type = DrawCommandType::DrawIndexed;
+                cmd.Draw.MeshHandle = batch.MeshHandle;
+                cmd.Draw.MaterialHandle = batch.MaterialHandle;
+                cmd.Draw.SubMeshIndex = batch.SubMeshIndex;
+
                 // インスタンシング描画
                 cmd.Type = DrawCommandType::DrawIndexedInstanced;
                 cmd.Draw.bInstanced = true;
@@ -121,24 +121,30 @@ namespace NorvesLib::Core::Rendering
                     cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
                 // TODO: インスタンスデータバッファへのオフセット設定
+                outCommands.push_back(cmd);
+                continue;
             }
-            else if (batch.GetInstanceCount() == 1)
+
+            for (uint32_t instanceIndex = 0; instanceIndex < batch.GetInstanceCount(); ++instanceIndex)
             {
-                // 単一描画
+                DrawCommand cmd;
+                cmd.Type = DrawCommandType::DrawIndexed;
+                cmd.Draw.MeshHandle = batch.MeshHandle;
+                cmd.Draw.MaterialHandle = batch.MaterialHandle;
+                cmd.Draw.SubMeshIndex = batch.SubMeshIndex;
                 cmd.Draw.bInstanced = false;
                 cmd.Draw.InstanceCount = 1;
-                cmd.Draw.WorldMatrix = batch.InstanceTransforms[0];
+                cmd.Draw.WorldMatrix = batch.InstanceTransforms[instanceIndex];
                 // カスタムデータとフラグをコピー
-                if (!batch.InstanceExtraData.empty())
+                if (instanceIndex < batch.InstanceExtraData.size())
                 {
-                    const auto &extra = batch.InstanceExtraData[0];
+                    const auto &extra = batch.InstanceExtraData[instanceIndex];
                     std::memcpy(cmd.Draw.CustomData, extra.CustomData, sizeof(cmd.Draw.CustomData));
                     cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
                 // TODO: 法線行列の計算
+                outCommands.push_back(cmd);
             }
-
-            outCommands.push_back(cmd);
         }
 
         m_Stats.TotalDrawCommands = static_cast<uint32_t>(outCommands.size());

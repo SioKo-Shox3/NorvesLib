@@ -290,11 +290,12 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief インスタンシング描画が有効か
          *
-         * 2つ以上のインスタンスがあればインスタンシング描画
+         * GPU instance data path is not wired yet, so grouped instances are
+         * expanded to individual DrawCommand entries for correctness.
          */
         bool IsInstanced() const
         {
-            return InstanceTransforms.size() > 1;
+            return false;
         }
     };
 
