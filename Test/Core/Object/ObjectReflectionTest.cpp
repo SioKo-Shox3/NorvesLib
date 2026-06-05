@@ -68,6 +68,27 @@ int main()
     assert(copiedAge != nullptr);
     assert(*copiedAge == 5);
 
+    FieldInitializer initializer;
+    initializer.SetInitialValue(Identity("Age"), 11);
+    const StablePropertyId dogAgeStableId = MakeStableSchemaId(
+        "NorvesLib",
+        "Property",
+        Container::StringView("Dog"),
+        Container::StringView("Age"));
+    initializer.SetInitialValue(dogAgeStableId, 12);
+    assert(initializer.GetInitialValue<int>(Identity("Age")) != nullptr);
+    assert(*initializer.GetInitialValue<int>(Identity("Age")) == 11);
+    assert(initializer.GetInitialValue<int>(dogAgeStableId) != nullptr);
+    assert(*initializer.GetInitialValue<int>(dogAgeStableId) == 12);
+    assert(initializer.GetPropertyBag().Has(dogAgeStableId));
+
+    Dog *initializedDog = ObjectUtility::CreateTypedObject<Dog>(&initializer);
+    assert(initializedDog != nullptr);
+    auto *initializedAge = static_cast<int *>(initializedDog->GetPropertyValue(Identity("Age")));
+    assert(initializedAge != nullptr);
+    assert(*initializedAge == 12);
+    assert(ObjectUtility::DestroyObject(initializedDog));
+
     Dog outerDog;
     outerDog.Initialize();
     Dog *ownedDog = ObjectUtility::CreateTypedObject<Dog>(&outerDog);

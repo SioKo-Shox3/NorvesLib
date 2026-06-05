@@ -12,6 +12,15 @@ namespace NorvesLib::Core
             static ObjectHeap s_ObjectHeap;
             return s_ObjectHeap;
         }
+
+        StablePropertyId MakeInitializerStablePropertyId(const IClass &cls, const ClassProperty &property)
+        {
+            return MakeStableSchemaId(
+                "NorvesLib",
+                "Property",
+                cls.GetClassName().GetView(),
+                property.GetName().GetView());
+        }
     }
 
     IUnknown *CreateObjectImpl(const IClass *cls, IUnknown *outer = nullptr)
@@ -187,10 +196,24 @@ namespace NorvesLib::Core
         // 適用された初期値の数をカウント
         int appliedCount = 0;
 
-        // 各プロパティに初期値を適用
         for (const ClassProperty *prop : properties)
         {
-            if (prop && prop->ApplyInitialValue(object, initializer))
+            if (!prop)
+            {
+                continue;
+            }
+
+            const StablePropertyId stablePropertyId = MakeInitializerStablePropertyId(*cls, *prop);
+            if (const PropertyValue *stableValue = initializer->FindValue(stablePropertyId))
+            {
+                if (prop->ApplyValue(object, *stableValue))
+                {
+                    appliedCount++;
+                }
+                continue;
+            }
+
+            if (prop->ApplyInitialValue(object, initializer))
             {
                 appliedCount++;
             }

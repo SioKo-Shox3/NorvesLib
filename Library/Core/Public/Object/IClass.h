@@ -8,6 +8,7 @@
 #include <utility>
 #include "IUnknown.h"
 #include "RuntimeSchema.h"
+#include "Object/PropertyBag.h"
 #include "Container/Containers.h" // Core::Containerのすべてのコンテナ
 #include "Text/IdentityPool.h"
 
@@ -65,6 +66,16 @@ namespace NorvesLib::Core
          * 旧ClassPropertyでは型情報を持たない場合があるため、既定値は無効IDです。
          */
         virtual TypeId GetRuntimeTypeId() const { return InvalidSchemaId; }
+
+        /**
+         * @brief Runtime schema値をプロパティへ適用します。
+         */
+        virtual bool ApplyValue(IUnknown *instance, const PropertyValue &value) const
+        {
+            (void)instance;
+            (void)value;
+            return false;
+        }
 
         /**
          * @brief プロパティの初期値を適用します
@@ -137,8 +148,10 @@ namespace NorvesLib::Core
     };
 
     /**
-     * @brief フィールド初期化クラス
-     * プロパティの初期値を管理します
+     * @brief Object生成後に適用するProperty override set
+     *
+     * 名前キーはC++側の簡易生成API向け、StablePropertyIdキーはschema/editor連携向けです。
+     * 値のcopy/destroy/serialize/AddReferencesはPropertyValue/PropertyBagが担います。
      */
     class FieldInitializer
     {
@@ -154,8 +167,26 @@ namespace NorvesLib::Core
         template <typename T>
         void SetInitialValue(const Identity &propertyName, const T &value)
         {
-            auto valuePtr = std::make_shared<InitialValue<T>>(value);
-            m_InitialValues[propertyName] = std::move(valuePtr);
+            SetValue(propertyName, PropertyValue::Create<T>(value));
+        }
+
+        template <typename T>
+        void SetInitialValue(StablePropertyId propertyId, const T &value)
+        {
+            SetValue(propertyId, PropertyValue::Create<T>(value));
+        }
+
+        void SetValue(const Identity &propertyName, PropertyValue value)
+        {
+            if (propertyName.IsValid())
+            {
+                m_ValuesByName[propertyName] = std::move(value);
+            }
+        }
+
+        void SetValue(StablePropertyId propertyId, PropertyValue value)
+        {
+            m_ValuesByStableId.SetValue(propertyId, std::move(value));
         }
 
         /**
@@ -165,7 +196,12 @@ namespace NorvesLib::Core
          */
         bool HasInitialValue(const Identity &propertyName) const
         {
-            return m_InitialValues.find(propertyName) != m_InitialValues.end();
+            return m_ValuesByName.find(propertyName) != m_ValuesByName.end();
+        }
+
+        bool HasInitialValue(StablePropertyId propertyId) const
+        {
+            return m_ValuesByStableId.Has(propertyId);
         }
 
         /**
@@ -176,37 +212,63 @@ namespace NorvesLib::Core
         template <typename T>
         const T *GetInitialValue(const Identity &propertyName) const
         {
-            auto it = m_InitialValues.find(propertyName);
-            if (it != m_InitialValues.end())
-            {
-                auto typedValue = dynamic_cast<InitialValue<T> *>(it->second.get());
-                if (typedValue)
-                {
-                    return &typedValue->Value;
-                }
-            }
-            return nullptr;
+            const PropertyValue *value = FindValue(propertyName);
+            return value ? value->Get<T>() : nullptr;
+        }
+
+        template <typename T>
+        const T *GetInitialValue(StablePropertyId propertyId) const
+        {
+            const PropertyValue *value = FindValue(propertyId);
+            return value ? value->Get<T>() : nullptr;
+        }
+
+        PropertyValue *FindValue(const Identity &propertyName)
+        {
+            auto it = m_ValuesByName.find(propertyName);
+            return it != m_ValuesByName.end() ? &it->second : nullptr;
+        }
+
+        const PropertyValue *FindValue(const Identity &propertyName) const
+        {
+            auto it = m_ValuesByName.find(propertyName);
+            return it != m_ValuesByName.end() ? &it->second : nullptr;
+        }
+
+        PropertyValue *FindValue(StablePropertyId propertyId)
+        {
+            return m_ValuesByStableId.Find(propertyId);
+        }
+
+        const PropertyValue *FindValue(StablePropertyId propertyId) const
+        {
+            return m_ValuesByStableId.Find(propertyId);
+        }
+
+        PropertyBag &GetPropertyBag()
+        {
+            return m_ValuesByStableId;
+        }
+
+        const PropertyBag &GetPropertyBag() const
+        {
+            return m_ValuesByStableId;
+        }
+
+        size_t GetValueCount() const
+        {
+            return m_ValuesByName.size() + m_ValuesByStableId.GetValueCount();
+        }
+
+        void Clear()
+        {
+            m_ValuesByName.clear();
+            m_ValuesByStableId.Clear();
         }
 
     private:
-        // 初期値の基底クラス
-        class IInitialValue
-        {
-        public:
-            virtual ~IInitialValue() = default;
-        };
-
-        // 型付き初期値
-        template <typename T>
-        class InitialValue : public IInitialValue
-        {
-        public:
-            explicit InitialValue(const T &value) : Value(value) {}
-            T Value;
-        };
-
-        // プロパティ名から初期値へのマップ
-        Container::UnorderedMap<Identity, std::shared_ptr<IInitialValue>, Identity::Hasher> m_InitialValues;
+        Container::UnorderedMap<Identity, PropertyValue, Identity::Hasher> m_ValuesByName;
+        PropertyBag m_ValuesByStableId;
     };
 
     /**
@@ -376,15 +438,31 @@ namespace NorvesLib::Core
          * @param initializer 初期値を提供する初期化子
          * @return 初期値が適用された場合はtrue
          */
+        bool ApplyValue(IUnknown *instance, const PropertyValue &value) const override
+        {
+            if (!instance)
+            {
+                return false;
+            }
+
+            const T *typedValue = value.Get<T>();
+            if (!typedValue)
+            {
+                return false;
+            }
+
+            SetValue(instance, *typedValue);
+            return true;
+        }
+
         bool ApplyInitialValue(IUnknown *instance, const FieldInitializer *initializer) const override
         {
-            if (initializer && initializer->HasInitialValue(m_Name))
+            if (initializer)
             {
-                const T *value = initializer->GetInitialValue<T>(m_Name);
+                const PropertyValue *value = initializer->FindValue(m_Name);
                 if (value)
                 {
-                    SetValue(instance, *value);
-                    return true;
+                    return ApplyValue(instance, *value);
                 }
             }
             return false;
