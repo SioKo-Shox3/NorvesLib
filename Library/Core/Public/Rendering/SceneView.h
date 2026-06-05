@@ -7,6 +7,7 @@
 #include "DrawCommand.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Container/UnorderedSet.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -92,6 +93,12 @@ namespace NorvesLib::Core::Rendering
         void RemoveMeshProxy(uint64_t objectId);
 
         /**
+         * @brief 生存ObjectIdに含まれないMeshProxyを削除
+         * @param liveObjectIds 現在World側で有効なMesh所有ObjectId
+         */
+        void RemoveStaleMeshProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds);
+
+        /**
          * @brief LightProxyを追加
          * @param proxy 追加するProxy
          */
@@ -110,10 +117,22 @@ namespace NorvesLib::Core::Rendering
         void RemoveLightProxy(uint64_t objectId);
 
         /**
+         * @brief 生存LightIdに含まれないLightProxyを削除
+         * @param liveLightIds 現在World側で有効なLightComponentId
+         */
+        void RemoveStaleLightProxies(const Container::UnorderedSet<uint64_t> &liveLightIds);
+
+        /**
          * @brief MegaGeometryProxyを削除
          * @param objectId 削除対象ObjectId
          */
         void RemoveMegaGeometryProxy(uint64_t objectId);
+
+        /**
+         * @brief 生存ObjectIdに含まれないMegaGeometryProxyを削除
+         * @param liveObjectIds 現在World側で有効なMegaGeometry所有ObjectId
+         */
+        void RemoveStaleMegaGeometryProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds);
 
         /**
          * @brief MeshProxyを更新

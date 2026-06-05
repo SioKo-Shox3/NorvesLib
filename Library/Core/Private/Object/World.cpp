@@ -6,6 +6,7 @@
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneProxy.h"
 #include "Logging/LogMacros.h"
+#include "Container/UnorderedSet.h"
 
 namespace NorvesLib::Core
 {
@@ -270,7 +271,11 @@ namespace NorvesLib::Core
             return;
         }
 
-        m_SceneView->ClearAllProxies();
+        Container::UnorderedSet<uint64_t> liveMeshObjectIds;
+        Container::UnorderedSet<uint64_t> liveMegaGeometryObjectIds;
+        Container::UnorderedSet<uint64_t> liveLightIds;
+        liveMeshObjectIds.reserve(m_Inners.size());
+        liveMegaGeometryObjectIds.reserve(m_Inners.size());
 
         // 全WorldObjectのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
         for (auto *inner : m_Inners)
@@ -299,6 +304,7 @@ namespace NorvesLib::Core
 
                         // SceneViewに追加/更新
                         m_SceneView->UpdateMeshProxy(meshProxy);
+                        liveMeshObjectIds.insert(meshProxy.ObjectId);
                     }
                 }
 
@@ -309,7 +315,10 @@ namespace NorvesLib::Core
                     Rendering::MegaGeometryProxy megaProxy;
                     if (megaComp->BuildMegaGeometryProxy(megaProxy))
                     {
+                        megaProxy.ObjectId = obj->GetObjectId();
+                        megaProxy.ComponentId = megaComp->GetComponentId();
                         m_SceneView->UpdateMegaGeometryProxy(megaProxy);
+                        liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
                     }
                 }
 
@@ -321,12 +330,19 @@ namespace NorvesLib::Core
                     Rendering::LightProxy lightProxy;
                     if (lightComp->BuildLightProxy(lightProxy))
                     {
+                        lightProxy.LightId = lightComp->GetComponentId();
+
                         // SceneViewに追加/更新
                         m_SceneView->UpdateLightProxy(lightProxy);
+                        liveLightIds.insert(lightProxy.LightId);
                     }
                 }
             }
         }
+
+        m_SceneView->RemoveStaleMeshProxies(liveMeshObjectIds);
+        m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
+        m_SceneView->RemoveStaleLightProxies(liveLightIds);
     }
 
     void World::CleanupDestroyedObjects()

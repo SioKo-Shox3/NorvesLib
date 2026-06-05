@@ -86,6 +86,22 @@ namespace NorvesLib::Core::Rendering
         auto it = std::remove_if(m_MeshProxies.begin(), m_MeshProxies.end(),
                                  [objectId](const MeshProxy &proxy)
                                  { return proxy.ObjectId == objectId; });
+        if (it != m_MeshProxies.end())
+        {
+            m_VisibleMeshProxies.clear();
+        }
+        m_MeshProxies.erase(it, m_MeshProxies.end());
+    }
+
+    void SceneView::RemoveStaleMeshProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds)
+    {
+        auto it = std::remove_if(m_MeshProxies.begin(), m_MeshProxies.end(),
+                                 [&liveObjectIds](const MeshProxy &proxy)
+                                 { return liveObjectIds.find(proxy.ObjectId) == liveObjectIds.end(); });
+        if (it != m_MeshProxies.end())
+        {
+            m_VisibleMeshProxies.clear();
+        }
         m_MeshProxies.erase(it, m_MeshProxies.end());
     }
 
@@ -113,11 +129,27 @@ namespace NorvesLib::Core::Rendering
         m_LightProxies.erase(it, m_LightProxies.end());
     }
 
+    void SceneView::RemoveStaleLightProxies(const Container::UnorderedSet<uint64_t> &liveLightIds)
+    {
+        auto it = std::remove_if(m_LightProxies.begin(), m_LightProxies.end(),
+                                 [&liveLightIds](const LightProxy &proxy)
+                                 { return liveLightIds.find(proxy.LightId) == liveLightIds.end(); });
+        m_LightProxies.erase(it, m_LightProxies.end());
+    }
+
     void SceneView::RemoveMegaGeometryProxy(uint64_t objectId)
     {
         auto it = std::remove_if(m_MegaGeometryProxies.begin(), m_MegaGeometryProxies.end(),
                                  [objectId](const MegaGeometryProxy &proxy)
                                  { return proxy.ObjectId == objectId; });
+        m_MegaGeometryProxies.erase(it, m_MegaGeometryProxies.end());
+    }
+
+    void SceneView::RemoveStaleMegaGeometryProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds)
+    {
+        auto it = std::remove_if(m_MegaGeometryProxies.begin(), m_MegaGeometryProxies.end(),
+                                 [&liveObjectIds](const MegaGeometryProxy &proxy)
+                                 { return liveObjectIds.find(proxy.ObjectId) == liveObjectIds.end(); });
         m_MegaGeometryProxies.erase(it, m_MegaGeometryProxies.end());
     }
 
