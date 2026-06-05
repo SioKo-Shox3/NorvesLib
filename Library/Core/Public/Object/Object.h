@@ -65,6 +65,16 @@ namespace NorvesLib::Core
         virtual void Finalize() override;
 
         /**
+         * @brief ObjectHeap/GC向けに破棄予約します。
+         */
+        virtual void Destroy();
+
+        /**
+         * @brief 破棄予約済みかどうかを返します。
+         */
+        virtual bool IsPendingDestroy() const;
+
+        /**
          * @brief GCが追跡する参照を列挙します。
          */
         virtual void AddReferencedObjects(ReferenceCollector &collector) const { (void)collector; }
