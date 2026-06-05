@@ -126,6 +126,11 @@ namespace NorvesLib::Core::Rendering
          */
         void SetDepthRange(float minDepth, float maxDepth);
 
+        /**
+         * @brief 深度範囲を取得
+         */
+        void GetDepthRange(float &outMinDepth, float &outMaxDepth) const;
+
         // ========================================
         // ピクセル座標への変換
         // ========================================

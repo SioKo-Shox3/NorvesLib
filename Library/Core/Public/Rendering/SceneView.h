@@ -2,6 +2,7 @@
 
 #include "View.h"
 #include "Viewport.h"
+#include "ViewportSnapshot.h"
 #include "SceneProxy.h"
 #include "DrawCommand.h"
 #include "Container/Containers.h"
@@ -192,6 +193,12 @@ namespace NorvesLib::Core::Rendering
         void CullProxies(Viewport *viewport);
 
         /**
+         * @brief Viewport snapshotを使ってProxyをカリング
+         * @param viewport 対象Viewport snapshot
+         */
+        void CullProxies(const ViewportSnapshot &viewport);
+
+        /**
          * @brief Proxyをバッチング
          *
          * MeshBatcherを使用してProxyをバッチ化します。
@@ -219,6 +226,16 @@ namespace NorvesLib::Core::Rendering
          * Viewport/Camera未設定時のフォールバック用。
          */
         void PrepareDrawCommands();
+
+        /**
+         * @brief Viewport snapshotに対応するDrawCommand準備
+         *
+         * GameThread上でViewportごとのCamera/Rectに基づいて
+         * カリング、バッチング、DrawCommand生成を行います。
+         *
+         * @param viewport 対象Viewport snapshot
+         */
+        void PrepareDrawCommandsForViewport(const ViewportSnapshot &viewport);
 
         // ========================================
         // Proxy直接アクセス
