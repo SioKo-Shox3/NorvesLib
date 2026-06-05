@@ -9,6 +9,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/RenderResourceManager.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/PresentationComposer.h"
 #include "RHI/ISampler.h"
 #include "RHI/IDevice.h"
 #include "RHI/ISwapChain.h"
@@ -955,42 +956,22 @@ namespace NorvesLib::Core::Rendering
             }
         };
 
+        PresentationComposer presentationComposer;
         auto blitActivePresentation = [&](bool bClearPresentation)
         {
-            RHI::Viewport viewport = viewContext.GetActiveOutputViewport();
-            RHI::ScissorRect scissor = viewContext.GetActiveOutputScissor();
-
-            m_CommandList->SetViewport(viewport);
-            m_CommandList->SetScissor(scissor);
-
-            auto presentationTex = viewContext.SharedResources->GetTexturePtr("PresentationColor");
-            if (!presentationTex)
-            {
-                presentationTex = viewContext.SharedResources->GetTexturePtr("ToneMappedColor");
-            }
-
-            const bool bCanBlitToSwapChain = presentationTex && m_BlitPipeline && m_BlitDescriptorSet;
-            if (bCanBlitToSwapChain)
-            {
-                m_BlitDescriptorSet->BindTexture(0, presentationTex);
-                m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
-                m_BlitDescriptorSet->Update();
-            }
-
-            auto renderPass = bClearPresentation ? m_RenderPass : m_PresentationLoadRenderPass;
-            auto framebuffer = bClearPresentation
-                                   ? m_SwapChainFramebuffers[imageIndex]
-                                   : m_PresentationLoadFramebuffers[imageIndex];
-
-            pendingFrameCommands.push_back(
-                FrameCommand::CreateFullscreenPass(renderPass,
-                                                   framebuffer,
-                                                   viewport,
-                                                   scissor,
-                                                   bCanBlitToSwapChain ? m_BlitPipeline : nullptr,
-                                                   bCanBlitToSwapChain ? m_BlitDescriptorSet : nullptr));
-            m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
-            pendingFrameCommands.clear();
+            PresentationComposeRequest request;
+            request.Context = &viewContext;
+            request.Renderer = &m_SceneRenderer;
+            request.CommandList = m_CommandList.get();
+            request.ClearRenderPass = m_RenderPass;
+            request.LoadRenderPass = m_PresentationLoadRenderPass;
+            request.ClearFramebuffer = m_SwapChainFramebuffers[imageIndex];
+            request.LoadFramebuffer = m_PresentationLoadFramebuffers[imageIndex];
+            request.BlitPipeline = m_BlitPipeline;
+            request.BlitDescriptorSet = m_BlitDescriptorSet;
+            request.BlitSampler = m_BlitSampler;
+            request.bClearPresentation = bClearPresentation;
+            presentationComposer.Compose(request);
         };
 
         auto renderViewForCurrentViewport = [&](View *view) -> bool

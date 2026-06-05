@@ -45,6 +45,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DrawCommand.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderThread.cpp
+    Private/Rendering/PresentationComposer.cpp
     Private/Rendering/PersistentResourceCache.cpp
     Private/Rendering/SceneRenderer.cpp
     Private/Rendering/RenderWorld.cpp
@@ -194,6 +195,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SceneView.h
     Public/Rendering/DrawCommand.h
     Public/Rendering/RenderingCoordinator.h
+    Public/Rendering/PresentationComposer.h
     Public/Rendering/PersistentResourceCache.h
     Public/Rendering/SceneRenderer.h
     Public/Rendering/ViewRenderContext.h
