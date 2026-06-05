@@ -66,11 +66,11 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<DrawCommand> TransparentCommands;
 
         // ========================================
-        // View/Viewportスナップショット（新描画フロー用）
+        // View/Viewport render plan（新描画フロー用）
         // ========================================
 
         /** @brief Screen配下のView/Viewportごとの描画入力 */
-        Container::VariableArray<ViewFrameSnapshot> Views;
+        Container::VariableArray<ViewRenderPlan> Views;
 
         // ========================================
         // 状態管理
