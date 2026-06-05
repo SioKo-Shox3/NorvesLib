@@ -3,10 +3,9 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/CameraViewConstants.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
-#include "Math/Matrix4x4.h"
-#include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Rendering
@@ -334,29 +333,12 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (activeCamera)
         {
-            const auto &cam = *activeCamera;
-
-            float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
-            float aspectRatio = context.GetActiveAspectRatio();
-
-            Matrix4x4 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
-                fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
-            // RHI側でAPI固有のクリップ空間補正を適用
-            projMat = context.Device->AdjustProjectionForClipSpace(projMat);
-
-            Matrix4x4 viewMat = MatrixUtils::CreateLookAt(
-                {cam.PositionX, cam.PositionY, cam.PositionZ},
-                {cam.PositionX + cam.ForwardX, cam.PositionY + cam.ForwardY, cam.PositionZ + cam.ForwardZ},
-                {cam.UpX, cam.UpY, cam.UpZ});
-
-            MatrixUtils::TransposeToShaderData(projMat, params.projection);
-            MatrixUtils::TransposeToShaderData(viewMat, params.view);
-
-            // 逆行列
-            Matrix4x4 invProj = MatrixUtils::Inverse(projMat);
-            Matrix4x4 invView = MatrixUtils::Inverse(viewMat);
-            MatrixUtils::TransposeToShaderData(invProj, params.invProjection);
-            MatrixUtils::TransposeToShaderData(invView, params.invView);
+            const CameraViewConstants cameraConstants =
+                CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
+            cameraConstants.CopyShaderProjection(params.projection);
+            cameraConstants.CopyShaderView(params.view);
+            cameraConstants.CopyShaderInverseProjection(params.invProjection);
+            cameraConstants.CopyShaderInverseView(params.invView);
         }
 
         m_ParamsBuffer->Update(&params, sizeof(GPUSSRParams));

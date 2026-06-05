@@ -6,6 +6,7 @@
 #include "Rendering/RenderResourceManager.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
@@ -262,33 +263,15 @@ namespace NorvesLib::Core::Rendering
             // カメラ行列の構築
             using namespace NorvesLib::Math;
 
-            Matrix4x4 viewMat = Matrix4x4::Identity;
-            Matrix4x4 projMat = Matrix4x4::Identity;
+            CameraViewConstants cameraConstants;
             float cameraPos[4] = {0.0f, 1.5f, 4.0f, 1.0f};
 
             const CameraProxy *activeCamera = context.GetActiveCamera();
             if (activeCamera)
             {
-                const auto &cam = *activeCamera;
-                Vector3 camPos(cam.PositionX, cam.PositionY, cam.PositionZ);
-                Vector3 forward(cam.ForwardX, cam.ForwardY, cam.ForwardZ);
-                Vector3 lookAt = camPos + forward;
-                Vector3 upDir(cam.UpX, cam.UpY, cam.UpZ);
-
-                viewMat = MatrixUtils::CreateLookAt(camPos, lookAt, upDir);
-
-                float aspectRatio = context.GetActiveAspectRatio();
-                float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
-                projMat = MatrixUtils::CreatePerspectiveFieldOfView(
-                    fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
-
-                // RHI側でAPI固有のクリップ空間補正を適用
-                projMat = context.Device->AdjustProjectionForClipSpace(projMat);
-
-                cameraPos[0] = cam.PositionX;
-                cameraPos[1] = cam.PositionY;
-                cameraPos[2] = cam.PositionZ;
-                cameraPos[3] = 1.0f;
+                cameraConstants =
+                    CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
+                cameraConstants.CopyCameraPosition(cameraPos);
             }
 
             // UBOデータ構造体（std140レイアウト）
@@ -306,8 +289,8 @@ namespace NorvesLib::Core::Rendering
             // ビュー・プロジェクション行列を事前変換
             float viewData[16];
             float projData[16];
-            MatrixUtils::TransposeToShaderData(viewMat, viewData);
-            MatrixUtils::TransposeToShaderData(projMat, projData);
+            cameraConstants.CopyShaderView(viewData);
+            cameraConstants.CopyShaderProjection(projData);
 
             // フレーム開始時にアロケータリセット
             m_UniformAllocator.Reset();

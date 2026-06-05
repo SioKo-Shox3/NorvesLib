@@ -40,6 +40,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
     Private/Rendering/Viewport.cpp
+    Private/Rendering/CameraViewConstants.cpp
     Private/Rendering/SceneView.cpp
     Private/Rendering/DrawCommand.cpp
     Private/Rendering/RenderingCoordinator.cpp
@@ -187,6 +188,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/Screen.h
     Public/Rendering/View.h
     Public/Rendering/Viewport.h
+    Public/Rendering/CameraViewConstants.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
     Public/Rendering/DrawCommand.h

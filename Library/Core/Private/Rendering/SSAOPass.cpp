@@ -3,10 +3,9 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/CameraViewConstants.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
-#include "Math/Matrix4x4.h"
-#include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
 
 #include <cmath>
@@ -572,25 +571,15 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (activeCamera)
         {
-            using namespace NorvesLib::Math;
-
-            const auto &cam = *activeCamera;
-            float aspectRatio = context.GetActiveAspectRatio();
-            float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
-            Matrix4x4 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
-                fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
-
-            // RHI側でAPI固有のクリップ空間補正を適用
-            projMat = context.Device->AdjustProjectionForClipSpace(projMat);
-
+            const CameraViewConstants cameraConstants =
+                CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             float projData[16];
-            MatrixUtils::TransposeToShaderData(projMat, projData);
+            cameraConstants.CopyShaderProjection(projData);
             std::memcpy(ssaoParams.projection, projData, sizeof(projData));
 
             // 逆プロジェクション行列
-            Matrix4x4 invProjMat = MatrixUtils::Inverse(projMat);
             float invProjData[16];
-            MatrixUtils::TransposeToShaderData(invProjMat, invProjData);
+            cameraConstants.CopyShaderInverseProjection(invProjData);
             std::memcpy(ssaoParams.invProjection, invProjData, sizeof(invProjData));
         }
 
