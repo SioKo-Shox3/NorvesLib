@@ -4,6 +4,7 @@
 #include "RHI/DeviceCapabilities.h"
 #include "DrawCommand.h"
 #include "FrameCommand.h"
+#include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
 #include "SceneProxy.h"
 #include "Container/Containers.h"
@@ -74,6 +75,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief メインカメラ情報（ビュー/プロジェクション行列計算用） */
         const CameraProxy *MainCamera = nullptr;
 
+        /** @brief 現在描画中のViewportスナップショット（新描画フロー用） */
+        const ViewportSnapshot *CurrentViewport = nullptr;
+
+        /** @brief 現在描画中のViewportに対応するカメラ */
+        const CameraProxy *CurrentCamera = nullptr;
+
         // ========================================
         // DrawCommand / Proxyスナップショット（FramePacketから指す、RenderThread読み取り専用）
         // ========================================
@@ -86,6 +93,15 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 半透明DrawCommandスナップショット */
         const Container::VariableArray<DrawCommand> *SnapshotTransparentCommands = nullptr;
+
+        /** @brief 現在描画中のViewportに対応する全DrawCommand */
+        const Container::VariableArray<DrawCommand> *CurrentDrawCommands = nullptr;
+
+        /** @brief 現在描画中のViewportに対応する不透明DrawCommand */
+        const Container::VariableArray<DrawCommand> *CurrentOpaqueCommands = nullptr;
+
+        /** @brief 現在描画中のViewportに対応する半透明DrawCommand */
+        const Container::VariableArray<DrawCommand> *CurrentTransparentCommands = nullptr;
 
         /** @brief LightProxyスナップショット（FramePacket::Scene.LightProxiesを指す） */
         const Container::VariableArray<LightProxy> *SnapshotLightProxies = nullptr;
