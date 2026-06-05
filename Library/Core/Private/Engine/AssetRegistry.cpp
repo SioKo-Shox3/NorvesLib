@@ -1,8 +1,8 @@
 ﻿#include "Engine/AssetRegistry.h"
 #include "FileStream/Package.h"
+#include "Object/ObjectUtility.h"
 #include "Object/Reflection.h"
 #include "Logging/LogMacros.h"
-#include <memory>
 
 namespace NorvesLib::Core
 {
@@ -190,8 +190,8 @@ namespace NorvesLib::Core
             m_PathToPackage.erase(pathId);
         }
 
-        // PackageはこのAssetRegistryのInnerなので、RemoveInnerで解放
-        RemoveInner(package);
+        // PackageはこのAssetRegistryのInnerなので、親子関係解除と破棄をまとめて行う
+        ObjectUtility::DestroyObject(package);
 
         NORVES_LOG_DEBUG("AssetRegistry", "Unloaded package: %s", packagePath.c_str());
     }
@@ -217,7 +217,7 @@ namespace NorvesLib::Core
 
         for (auto *package : packages)
         {
-            RemoveInner(package);
+            ObjectUtility::DestroyObject(package);
         }
 
         NORVES_LOG_INFO("AssetRegistry", "All packages unloaded");
@@ -226,25 +226,24 @@ namespace NorvesLib::Core
     FileStream::Package *AssetRegistry::CreatePackage(const Container::String &path)
     {
         // Packageを作成してInnerとして登録
-        std::unique_ptr<FileStream::Package> package = std::make_unique<FileStream::Package>();
+        FileStream::Package *package = ObjectUtility::CreateTypedObject<FileStream::Package>();
         if (!package)
         {
             return nullptr;
         }
 
-        package->Initialize();
-
         // このAssetRegistryのInnerとして登録
-        if (!AddInner(package.get()))
+        if (!AddInner(package))
         {
+            ObjectUtility::DestroyObject(package);
             return nullptr;
         }
 
         // マップに登録
         Identity pathId(path);
-        m_PathToPackage[pathId] = package.get();
+        m_PathToPackage[pathId] = package;
 
-        return package.release();
+        return package;
     }
 
     // ========================================
@@ -326,7 +325,7 @@ namespace NorvesLib::Core
         size_t removedCount = 0;
         for (auto *package : toRemove)
         {
-            if (RemoveInner(package))
+            if (ObjectUtility::DestroyObject(package))
             {
                 ++removedCount;
             }

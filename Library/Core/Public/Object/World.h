@@ -6,9 +6,7 @@
 #include "Component/Component.h"
 #include "Container/Containers.h"
 #include <cstdint>
-#include <memory>
 #include <type_traits>
-#include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -51,8 +49,8 @@ namespace NorvesLib::Core
          * @tparam T WorldObject派生型
          * @return 生成されたWorldObject。所有権はWorldが持ちます。
          */
-        template <typename T = WorldObject, typename... Args>
-        T *SpawnObject(Args &&...args)
+        template <typename T = WorldObject>
+        T *SpawnObject()
         {
             static_assert(std::is_base_of_v<WorldObject, T>, "T must derive from WorldObject");
 
@@ -61,12 +59,19 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
-            std::unique_ptr<T> object = std::make_unique<T>(std::forward<Args>(args)...);
-            if (!AddObject(object.get()))
+            T *object = ObjectUtility::CreateTypedObject<T>();
+            if (!object)
             {
                 return nullptr;
             }
-            return object.release();
+
+            if (!AddObject(object))
+            {
+                ObjectUtility::DestroyObject(object);
+                return nullptr;
+            }
+
+            return object;
         }
 
         /**
@@ -75,8 +80,8 @@ namespace NorvesLib::Core
          * @param owner コンポーネントを所有するWorldObject
          * @return 生成されたComponent。所有権はownerが持ちます。
          */
-        template <typename T, typename... Args>
-        T *CreateComponent(WorldObject *owner, Args &&...args)
+        template <typename T>
+        T *CreateComponent(WorldObject *owner)
         {
             static_assert(std::is_base_of_v<Component::Component, T>, "T must derive from Component");
 
@@ -85,12 +90,19 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
-            std::unique_ptr<T> component = std::make_unique<T>(std::forward<Args>(args)...);
-            if (!owner->AddComponent(component.get()))
+            T *component = ObjectUtility::CreateTypedObject<T>();
+            if (!component)
             {
                 return nullptr;
             }
-            return component.release();
+
+            if (!owner->AddComponent(component))
+            {
+                ObjectUtility::DestroyObject(component);
+                return nullptr;
+            }
+
+            return component;
         }
 
         /**

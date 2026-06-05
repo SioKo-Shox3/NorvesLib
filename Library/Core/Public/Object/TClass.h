@@ -66,30 +66,6 @@ namespace NorvesLib::Core
             return false;
         }
 
-        virtual const IUnknown *GetDefaultObject() const override
-        {
-            if (!m_DefaultObject)
-            {
-                // ObjectUtilityを使用せず直接生成
-                // デフォルトコンストラクタでデフォルトオブジェクトを作成
-                m_DefaultObject.reset(new T());
-                if (m_DefaultObject)
-                {
-                    m_DefaultObject->Initialize();
-                    // デフォルトオブジェクトフラグを設定
-                    m_DefaultObject->SetFlag(OF_DefaultObject, true);
-                    for (const ClassProperty *property : GetAllProperties())
-                    {
-                        if (property)
-                        {
-                            const_cast<ClassProperty *>(property)->CaptureDefaultValue(m_DefaultObject.get());
-                        }
-                    }
-                }
-            }
-            return m_DefaultObject.get();
-        }
-
         virtual const PropertyField *GetPropertyField() const override
         {
             return m_PropertyField.get();
@@ -125,23 +101,6 @@ namespace NorvesLib::Core
             return m_ClassId;
         }
 
-        virtual size_t GetVariableContainerSize() const override
-        {
-            return m_PropertyField->GetTotalSize();
-        }
-
-        virtual void InitializeVariableContainer(void *container) const override
-        {
-            // 単純な初期化（クラスの詳細に応じて、より複雑な初期化が必要かもしれない）
-            if (container)
-            {
-                std::memset(container, 0, GetVariableContainerSize());
-
-                // 必要に応じて、個別のプロパティのデフォルト値を設定する
-                // この例では単純に0で初期化
-            }
-        }
-
         // シングルトンインスタンス取得（Parent指定版とそうでない版を統一）
         static TClass<T, Parent> &GetInstance()
         {
@@ -157,39 +116,11 @@ namespace NorvesLib::Core
             }
         }
 
-        // クラス情報の初期化
-        void Initialize(const Container::String &className, T *defaultObject)
-        {
-            m_ClassName = Identity(className);
-            m_DefaultObject.reset(defaultObject);
-        }
-
         virtual IUnknown *NewInstance([[maybe_unused]] IUnknown *outer = nullptr) const override
         {
-            // デフォルトオブジェクトを取得
-            const IUnknown *defaultObject = GetDefaultObject();
-            if (!defaultObject)
-                return nullptr;
-
             try
             {
-                IUnknown *newObject = new T();
-
-                if (newObject)
-                {
-                    // デフォルトオブジェクトのフラグは引き継がない
-                    newObject->SetFlag(OF_DefaultObject, false);
-
-                    for (const ClassProperty *property : GetAllProperties())
-                    {
-                        if (property)
-                        {
-                            property->CopyValueFrom(newObject, defaultObject);
-                        }
-                    }
-                }
-
-                return newObject;
+                return new T();
             }
             catch ([[maybe_unused]] const std::exception &e)
             {
@@ -268,7 +199,6 @@ namespace NorvesLib::Core
         const IClass *m_ParentClass;                    // 親クラス
         std::unique_ptr<PropertyField> m_PropertyField; // プロパティフィールド
         std::unique_ptr<FunctionField> m_FunctionField; // 関数フィールド
-        mutable std::unique_ptr<T> m_DefaultObject;     // デフォルトオブジェクト
         uint64_t m_ClassId;                             // クラスID
     };
 

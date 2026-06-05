@@ -66,7 +66,10 @@ namespace NorvesLib::Core
             {
                 obj->OnRemovedFromWorld();
             }
-            RemoveInner(inner);
+            if (!ObjectUtility::DestroyObject(inner))
+            {
+                RemoveInner(inner);
+            }
         }
 
         m_SceneView = nullptr;
@@ -156,8 +159,11 @@ namespace NorvesLib::Core
                 // ライフサイクル通知
                 object->OnRemovedFromWorld();
 
-                // Innerから除去（Outerも自動クリアされる）
-                RemoveInner(object);
+                // Innerから除去して破棄する
+                if (!ObjectUtility::DestroyObject(object))
+                {
+                    RemoveInner(object);
+                }
 
                 NORVES_LOG_DEBUG("World", "Object removed, remaining: %llu",
                                  static_cast<uint64_t>(GetObjectCount()));
@@ -319,7 +325,10 @@ namespace NorvesLib::Core
             }
 
             obj->OnRemovedFromWorld();
-            RemoveInner(obj);
+            if (!ObjectUtility::DestroyObject(obj))
+            {
+                RemoveInner(obj);
+            }
         }
 
         if (!toRemove.empty())

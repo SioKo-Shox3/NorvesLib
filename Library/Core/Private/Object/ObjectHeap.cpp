@@ -401,6 +401,11 @@ namespace NorvesLib::Core
         Object *object = slot.Instance;
         m_ObjectToIndex.erase(object);
 
+        if (IUnknown *outer = object->GetOuter())
+        {
+            outer->RemoveInner(object);
+        }
+
         object->SetFlag(OF_HeapOwned, false);
         object->SetFlag(OF_PendingDestroy, true);
         object->OnDestroying();

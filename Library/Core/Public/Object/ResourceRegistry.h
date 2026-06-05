@@ -67,7 +67,7 @@ namespace NorvesLib::Core
      * @brief CPU Resource registry.
      *
      * Resources are stored in per-type pools and resolved by generation handles.
-     * The existing TSharedPtr-based API remains for compatibility.
+     * ResourceRef can keep shared ownership while handles provide stable lookup.
      */
     class ResourceRegistry
     {

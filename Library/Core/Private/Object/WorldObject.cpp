@@ -55,7 +55,10 @@ namespace NorvesLib::Core
         while (!m_Inners.empty())
         {
             IUnknown *inner = m_Inners.back();
-            RemoveInner(inner);
+            if (!ObjectUtility::DestroyObject(inner))
+            {
+                RemoveInner(inner);
+            }
         }
 
         Object::Finalize();
@@ -128,8 +131,11 @@ namespace NorvesLib::Core
         {
             if (inner == component)
             {
-                // Innerから除去（Outerも自動クリアされる）
-                RemoveInner(component);
+                // Innerから除去して破棄する
+                if (!ObjectUtility::DestroyObject(component))
+                {
+                    RemoveInner(component);
+                }
                 return;
             }
         }
