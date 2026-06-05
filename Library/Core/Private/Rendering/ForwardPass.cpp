@@ -67,8 +67,8 @@ namespace NorvesLib::Core::Rendering
 
     void ForwardPass::Setup(ViewRenderContext &context)
     {
-        uint32_t width = context.RenderWidth;
-        uint32_t height = context.RenderHeight;
+        uint32_t width = context.GetActiveRenderWidth();
+        uint32_t height = context.GetActiveRenderHeight();
 
         if (width == 0 || height == 0)
         {

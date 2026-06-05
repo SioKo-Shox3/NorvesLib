@@ -922,21 +922,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ビューポート設定
-        RHI::Viewport viewport;
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = static_cast<float>(swapChain->GetWidth());
-        viewport.height = static_cast<float>(swapChain->GetHeight());
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
+        RHI::Viewport viewport = viewContext.GetActiveOutputViewport();
         m_CommandList->SetViewport(viewport);
 
         // シザー設定
-        RHI::ScissorRect scissor;
-        scissor.left = 0;
-        scissor.top = 0;
-        scissor.right = static_cast<int32_t>(swapChain->GetWidth());
-        scissor.bottom = static_cast<int32_t>(swapChain->GetHeight());
+        RHI::ScissorRect scissor = viewContext.GetActiveOutputScissor();
 
         if (!pendingFrameCommands.empty())
         {

@@ -350,8 +350,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 画面サイズ変更に対応
-        uint32_t width = context.RenderWidth;
-        uint32_t height = context.RenderHeight;
+        uint32_t width = context.GetActiveRenderWidth();
+        uint32_t height = context.GetActiveRenderHeight();
 
         if (width != m_CurrentWidth || height != m_CurrentHeight || !m_GBufferRenderPass)
         {
@@ -621,21 +621,8 @@ namespace NorvesLib::Core::Rendering
             cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
 
             // ビューポート・シザー設定
-            RHI::Viewport viewport;
-            viewport.x = 0.0f;
-            viewport.y = 0.0f;
-            viewport.width = static_cast<float>(m_CurrentWidth);
-            viewport.height = static_cast<float>(m_CurrentHeight);
-            viewport.minDepth = 0.0f;
-            viewport.maxDepth = 1.0f;
-            cmdList->SetViewport(viewport);
-
-            RHI::ScissorRect scissor;
-            scissor.left = 0;
-            scissor.top = 0;
-            scissor.right = static_cast<int32_t>(m_CurrentWidth);
-            scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
-            cmdList->SetScissor(scissor);
+            cmdList->SetViewport(command.Viewport);
+            cmdList->SetScissor(command.Scissor);
 
             // パイプラインとデスクリプタ設定
             cmdList->SetPipeline(m_DrawPipeline);

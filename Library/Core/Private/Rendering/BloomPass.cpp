@@ -136,8 +136,8 @@ namespace NorvesLib::Core::Rendering
 
     void BloomPass::Setup(ViewRenderContext &context)
     {
-        uint32_t width = context.RenderWidth;
-        uint32_t height = context.RenderHeight;
+        uint32_t width = context.GetActiveRenderWidth();
+        uint32_t height = context.GetActiveRenderHeight();
 
         if (width == 0 || height == 0)
         {
@@ -308,19 +308,8 @@ namespace NorvesLib::Core::Rendering
         m_BloomDescriptorSet->BindSampler(0, m_SceneColorSampler);
         m_BloomDescriptorSet->Update();
 
-        RHI::Viewport viewport;
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = static_cast<float>(m_CurrentWidth);
-        viewport.height = static_cast<float>(m_CurrentHeight);
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-
-        RHI::ScissorRect scissor;
-        scissor.left = 0;
-        scissor.top = 0;
-        scissor.right = static_cast<int32_t>(m_CurrentWidth);
-        scissor.bottom = static_cast<int32_t>(m_CurrentHeight);
+        RHI::Viewport viewport = context.GetActiveLocalViewport();
+        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
 
         context.EnqueueFullscreenPass(m_BloomRenderPass,
                                       m_BloomFramebuffer,
