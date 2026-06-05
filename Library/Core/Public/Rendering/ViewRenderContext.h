@@ -76,7 +76,7 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy *MainCamera = nullptr;
 
         /** @brief 現在描画中のViewportスナップショット（新描画フロー用） */
-        const ViewportSnapshot *CurrentViewport = nullptr;
+        const ViewportRenderPlan *CurrentViewport = nullptr;
 
         /** @brief 現在描画中のViewportに対応するカメラ */
         const CameraProxy *CurrentCamera = nullptr;

@@ -189,6 +189,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/View.h
     Public/Rendering/Viewport.h
     Public/Rendering/CameraViewConstants.h
+    Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
     Public/Rendering/DrawCommand.h

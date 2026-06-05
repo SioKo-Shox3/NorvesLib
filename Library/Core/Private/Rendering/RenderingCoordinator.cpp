@@ -32,19 +32,19 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        ViewportSnapshot BuildViewportSnapshot(const Viewport &viewport,
-                                               uint32_t viewId,
-                                               uint32_t viewportId,
-                                               uint32_t renderWidth,
-                                               uint32_t renderHeight,
-                                               const CameraProxy *fallbackCamera)
+        ViewportRenderPlan BuildViewportRenderPlan(const Viewport &viewport,
+                                                   uint32_t viewId,
+                                                   uint32_t viewportId,
+                                                   uint32_t renderWidth,
+                                                   uint32_t renderHeight,
+                                                   const CameraProxy *fallbackCamera)
         {
-            ViewportSnapshot snapshot;
-            snapshot.ViewId = viewId;
-            snapshot.ViewportId = viewportId;
-            snapshot.bEnabled = viewport.IsEnabled();
-            snapshot.RenderWidth = renderWidth;
-            snapshot.RenderHeight = renderHeight;
+            ViewportRenderPlan plan;
+            plan.ViewId = viewId;
+            plan.ViewportId = viewportId;
+            plan.bEnabled = viewport.IsEnabled();
+            plan.RenderWidth = renderWidth;
+            plan.RenderHeight = renderHeight;
 
             float x = 0.0f;
             float y = 0.0f;
@@ -56,12 +56,12 @@ namespace NorvesLib::Core::Rendering
             float maxDepth = 1.0f;
             viewport.GetDepthRange(minDepth, maxDepth);
 
-            snapshot.NormalizedRect.X = x;
-            snapshot.NormalizedRect.Y = y;
-            snapshot.NormalizedRect.Width = width;
-            snapshot.NormalizedRect.Height = height;
-            snapshot.NormalizedRect.MinDepth = minDepth;
-            snapshot.NormalizedRect.MaxDepth = maxDepth;
+            plan.NormalizedRect.X = x;
+            plan.NormalizedRect.Y = y;
+            plan.NormalizedRect.Width = width;
+            plan.NormalizedRect.Height = height;
+            plan.NormalizedRect.MinDepth = minDepth;
+            plan.NormalizedRect.MaxDepth = maxDepth;
 
             uint32_t pixelX = 0;
             uint32_t pixelY = 0;
@@ -69,17 +69,17 @@ namespace NorvesLib::Core::Rendering
             uint32_t pixelHeight = 0;
             viewport.GetPixelRect(renderWidth, renderHeight, pixelX, pixelY, pixelWidth, pixelHeight);
 
-            snapshot.PixelRect.X = static_cast<float>(pixelX);
-            snapshot.PixelRect.Y = static_cast<float>(pixelY);
-            snapshot.PixelRect.Width = static_cast<float>(pixelWidth);
-            snapshot.PixelRect.Height = static_cast<float>(pixelHeight);
-            snapshot.PixelRect.MinDepth = minDepth;
-            snapshot.PixelRect.MaxDepth = maxDepth;
+            plan.PixelRect.X = static_cast<float>(pixelX);
+            plan.PixelRect.Y = static_cast<float>(pixelY);
+            plan.PixelRect.Width = static_cast<float>(pixelWidth);
+            plan.PixelRect.Height = static_cast<float>(pixelHeight);
+            plan.PixelRect.MinDepth = minDepth;
+            plan.PixelRect.MaxDepth = maxDepth;
 
-            snapshot.Scissor.Left = static_cast<int32_t>(pixelX);
-            snapshot.Scissor.Top = static_cast<int32_t>(pixelY);
-            snapshot.Scissor.Right = static_cast<int32_t>(pixelX + pixelWidth);
-            snapshot.Scissor.Bottom = static_cast<int32_t>(pixelY + pixelHeight);
+            plan.Scissor.Left = static_cast<int32_t>(pixelX);
+            plan.Scissor.Top = static_cast<int32_t>(pixelY);
+            plan.Scissor.Right = static_cast<int32_t>(pixelX + pixelWidth);
+            plan.Scissor.Bottom = static_cast<int32_t>(pixelY + pixelHeight);
 
             CameraProxy camera = viewport.GetCamera();
             if (!camera.IsValid() && fallbackCamera)
@@ -102,38 +102,38 @@ namespace NorvesLib::Core::Rendering
                 camera.AspectRatio = static_cast<float>(pixelWidth) / static_cast<float>(pixelHeight);
             }
 
-            snapshot.Camera = camera;
-            snapshot.bHasCamera = camera.IsValid();
+            plan.Camera = camera;
+            plan.bHasCamera = camera.IsValid();
 
-            return snapshot;
+            return plan;
         }
 
-        const ViewportSnapshot *FindPrimaryViewportSnapshot(const FramePacket &packet)
+        const ViewportRenderPlan *FindPrimaryViewportRenderPlan(const FramePacket &packet)
         {
-            const ViewportSnapshot *fallbackViewport = nullptr;
+            const ViewportRenderPlan *fallbackViewport = nullptr;
 
-            for (const auto &viewSnapshot : packet.Views)
+            for (const auto &viewPlan : packet.Views)
             {
-                if (!viewSnapshot.bEnabled)
+                if (!viewPlan.bEnabled)
                 {
                     continue;
                 }
 
-                for (const auto &viewportSnapshot : viewSnapshot.Viewports)
+                for (const auto &viewportPlan : viewPlan.Viewports)
                 {
-                    if (!viewportSnapshot.HasDrawableExtent())
+                    if (!viewportPlan.HasDrawableExtent())
                     {
                         continue;
                     }
 
                     if (!fallbackViewport)
                     {
-                        fallbackViewport = &viewportSnapshot;
+                        fallbackViewport = &viewportPlan;
                     }
 
-                    if (static_cast<ViewType>(viewSnapshot.ViewType) == ViewType::Scene)
+                    if (static_cast<ViewType>(viewPlan.ViewType) == ViewType::Scene)
                     {
-                        return &viewportSnapshot;
+                        return &viewportPlan;
                     }
                 }
             }
@@ -679,11 +679,11 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
-            ViewFrameSnapshot viewSnapshot;
-            viewSnapshot.ViewId = viewIndex;
-            viewSnapshot.ViewType = static_cast<uint8_t>(view->GetViewType());
-            viewSnapshot.Priority = static_cast<int32_t>(viewIndex);
-            viewSnapshot.bEnabled = view->IsEnabled();
+            ViewRenderPlan viewPlan;
+            viewPlan.ViewId = viewIndex;
+            viewPlan.ViewType = static_cast<uint8_t>(view->GetViewType());
+            viewPlan.Priority = static_cast<int32_t>(viewIndex);
+            viewPlan.bEnabled = view->IsEnabled();
 
             auto sceneView = Container::DynamicPointerCast<SceneView>(view);
             const bool bIsMainSceneView = sceneView && sceneView == m_MainSceneView;
@@ -720,19 +720,19 @@ namespace NorvesLib::Core::Rendering
 
                 const CameraProxy *fallbackCamera =
                     (bIsMainSceneView && m_bCameraSet) ? &m_MainCamera : nullptr;
-                ViewportSnapshot viewportSnapshot = BuildViewportSnapshot(*viewport,
+                ViewportRenderPlan viewportPlan = BuildViewportRenderPlan(*viewport,
                                                                           viewIndex,
                                                                           viewportIndex,
                                                                           m_RenderWidth,
                                                                           m_RenderHeight,
                                                                           fallbackCamera);
 
-                if (sceneView && view->IsEnabled() && viewportSnapshot.HasDrawableExtent())
+                if (sceneView && view->IsEnabled() && viewportPlan.HasDrawableExtent())
                 {
-                    sceneView->PrepareDrawCommandsForViewport(viewportSnapshot);
-                    viewportSnapshot.DrawCommands = sceneView->GetDrawCommands();
-                    viewportSnapshot.OpaqueCommands = sceneView->GetOpaqueCommands();
-                    viewportSnapshot.TransparentCommands = sceneView->GetTransparentCommands();
+                    sceneView->PrepareDrawCommandsForViewport(viewportPlan);
+                    viewportPlan.DrawCommands = sceneView->GetDrawCommands();
+                    viewportPlan.OpaqueCommands = sceneView->GetOpaqueCommands();
+                    viewportPlan.TransparentCommands = sceneView->GetTransparentCommands();
 
                     const auto &viewCommands = sceneView->GetDrawCommands();
                     if (!viewCommands.empty())
@@ -750,12 +750,12 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
 
-                viewSnapshot.Viewports.push_back(viewportSnapshot);
+                viewPlan.Viewports.push_back(viewportPlan);
             }
 
             if (m_CurrentPacket)
             {
-                m_CurrentPacket->Views.push_back(viewSnapshot);
+                m_CurrentPacket->Views.push_back(viewPlan);
             }
         }
 
@@ -927,9 +927,9 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 
-        auto applyViewportSnapshot = [&viewContext](const ViewportSnapshot *viewportSnapshot)
+        auto applyViewportRenderPlan = [&viewContext](const ViewportRenderPlan *viewportPlan)
         {
-            if (!viewportSnapshot)
+            if (!viewportPlan)
             {
                 viewContext.CurrentViewport = nullptr;
                 viewContext.CurrentCamera = nullptr;
@@ -939,11 +939,11 @@ namespace NorvesLib::Core::Rendering
                 return;
             }
 
-            viewContext.CurrentViewport = viewportSnapshot;
-            viewContext.CurrentCamera = viewportSnapshot->bHasCamera ? &viewportSnapshot->Camera : nullptr;
-            viewContext.CurrentDrawCommands = &viewportSnapshot->DrawCommands;
-            viewContext.CurrentOpaqueCommands = &viewportSnapshot->OpaqueCommands;
-            viewContext.CurrentTransparentCommands = &viewportSnapshot->TransparentCommands;
+            viewContext.CurrentViewport = viewportPlan;
+            viewContext.CurrentCamera = viewportPlan->bHasCamera ? &viewportPlan->Camera : nullptr;
+            viewContext.CurrentDrawCommands = &viewportPlan->DrawCommands;
+            viewContext.CurrentOpaqueCommands = &viewportPlan->OpaqueCommands;
+            viewContext.CurrentTransparentCommands = &viewportPlan->TransparentCommands;
         };
 
         auto flushPendingFrameCommands = [&]()
@@ -1020,32 +1020,32 @@ namespace NorvesLib::Core::Rendering
         uint32_t presentationBlitCount = 0;
         const auto &screenViews = m_Screen.GetViews();
 
-        for (const ViewFrameSnapshot &viewSnapshot : packet->Views)
+        for (const ViewRenderPlan &viewPlan : packet->Views)
         {
-            if (!viewSnapshot.bEnabled)
+            if (!viewPlan.bEnabled)
             {
                 continue;
             }
 
-            if (viewSnapshot.ViewId >= screenViews.size())
+            if (viewPlan.ViewId >= screenViews.size())
             {
                 continue;
             }
 
-            auto view = screenViews[viewSnapshot.ViewId];
+            auto view = screenViews[viewPlan.ViewId];
             if (!view)
             {
                 continue;
             }
 
-            for (const ViewportSnapshot &viewportSnapshot : viewSnapshot.Viewports)
+            for (const ViewportRenderPlan &viewportPlan : viewPlan.Viewports)
             {
-                if (!viewportSnapshot.HasDrawableExtent())
+                if (!viewportPlan.HasDrawableExtent())
                 {
                     continue;
                 }
 
-                applyViewportSnapshot(&viewportSnapshot);
+                applyViewportRenderPlan(&viewportPlan);
                 if (!renderViewForCurrentViewport(view.get()))
                 {
                     continue;
@@ -1060,7 +1060,7 @@ namespace NorvesLib::Core::Rendering
 
         if (!bRenderedAnyViewport)
         {
-            applyViewportSnapshot(FindPrimaryViewportSnapshot(*packet));
+            applyViewportRenderPlan(FindPrimaryViewportRenderPlan(*packet));
             renderViewForCurrentViewport(m_MainSceneView.get());
             flushPendingFrameCommands();
             blitActivePresentation(true);
