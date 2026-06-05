@@ -81,6 +81,16 @@ target_include_directories(ObjectGCTest PRIVATE
 )
 set_target_properties(ObjectGCTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(IncrementalGCTest
+    IncrementalGCTest.cpp
+)
+target_link_libraries(IncrementalGCTest PRIVATE Core)
+target_include_directories(IncrementalGCTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_target_properties(IncrementalGCTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
@@ -90,3 +100,4 @@ add_test(NAME PropertyBagTest COMMAND PropertyBagTest)
 add_test(NAME InvocationQueueTest COMMAND InvocationQueueTest)
 add_test(NAME ResourceMetadataTest COMMAND ResourceMetadataTest)
 add_test(NAME ObjectGCTest COMMAND ObjectGCTest)
+add_test(NAME IncrementalGCTest COMMAND IncrementalGCTest)
