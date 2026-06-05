@@ -39,29 +39,14 @@ namespace NorvesLib::Core
 
     bool Resource::Initialize(const FieldInitializer *initializer)
     {
-        // 基本初期化
         Object::Initialize();
-
-        if (initializer)
+        if (!initializer)
         {
-            const IClass *cls = GetClass();
-            if (cls)
-            {
-                const Container::VariableArray<const ClassProperty *> properties = cls->GetAllProperties();
-
-                // 各プロパティに初期値を適用
-                for (const ClassProperty *prop : properties)
-                {
-                    if (prop)
-                    {
-                        prop->ApplyInitialValue(this, initializer);
-                    }
-                }
-                return true;
-            }
+            return false;
         }
 
-        return false;
+        ObjectUtility::ApplyInitialValues(this, initializer);
+        return true;
     }
 
     void Resource::Finalize()

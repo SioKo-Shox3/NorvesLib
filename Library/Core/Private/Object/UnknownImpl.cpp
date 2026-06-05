@@ -11,24 +11,7 @@ namespace NorvesLib::Core
     UnknownImpl::UnknownImpl(const FieldInitializer *initializer)
         : m_Flags(0), m_Outer(nullptr)
     {
-        if (initializer)
-        {
-            // デフォルトオブジェクトにフィールド初期化子を適用
-            const IClass *cls = GetClass();
-            if (cls)
-            {
-                const Container::VariableArray<const ClassProperty *> properties = cls->GetAllProperties();
-
-                // 各プロパティに初期値を適用
-                for (const ClassProperty *prop : properties)
-                {
-                    if (prop)
-                    {
-                        prop->ApplyInitialValue(this, initializer);
-                    }
-                }
-            }
-        }
+        (void)initializer;
     }
 
     UnknownImpl::UnknownImpl(const IUnknown *sourceObject)
