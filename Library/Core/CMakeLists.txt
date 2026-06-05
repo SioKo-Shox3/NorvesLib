@@ -187,6 +187,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/Screen.h
     Public/Rendering/View.h
     Public/Rendering/Viewport.h
+    Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
     Public/Rendering/DrawCommand.h
     Public/Rendering/RenderingCoordinator.h

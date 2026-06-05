@@ -3,6 +3,7 @@
 #include "RenderTypes.h"
 #include "SceneProxy.h"
 #include "DrawCommand.h"
+#include "ViewportSnapshot.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
 #include <cstdint>
@@ -65,6 +66,13 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<DrawCommand> TransparentCommands;
 
         // ========================================
+        // View/Viewportスナップショット（新描画フロー用）
+        // ========================================
+
+        /** @brief Screen配下のView/Viewportごとの描画入力 */
+        Container::VariableArray<ViewFrameSnapshot> Views;
+
+        // ========================================
         // 状態管理
         // ========================================
 
@@ -87,6 +95,7 @@ namespace NorvesLib::Core::Rendering
             DrawCommands.clear();
             OpaqueCommands.clear();
             TransparentCommands.clear();
+            Views.clear();
         }
 
         /**

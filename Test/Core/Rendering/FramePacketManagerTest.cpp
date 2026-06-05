@@ -26,6 +26,28 @@ int main()
     manager.FinishRead(readPacket);
     assert(manager.IsEmpty());
 
+    {
+        FramePacket standalonePacket;
+        ViewFrameSnapshot viewSnapshot;
+        viewSnapshot.ViewId = 7;
+        viewSnapshot.Priority = 3;
+        ViewportSnapshot viewportSnapshot;
+        viewportSnapshot.ViewId = 7;
+        viewportSnapshot.ViewportId = 2;
+        viewportSnapshot.RenderWidth = 640;
+        viewportSnapshot.RenderHeight = 360;
+        viewportSnapshot.PixelRect.Width = 640.0f;
+        viewportSnapshot.PixelRect.Height = 360.0f;
+        assert(viewportSnapshot.HasDrawableExtent());
+        viewSnapshot.Viewports.push_back(viewportSnapshot);
+        standalonePacket.Views.push_back(viewSnapshot);
+        standalonePacket.Clear();
+        assert(standalonePacket.Views.empty());
+        assert(standalonePacket.DrawCommands.empty());
+        assert(standalonePacket.OpaqueCommands.empty());
+        assert(standalonePacket.TransparentCommands.empty());
+    }
+
     packet = manager.AcquireForWrite();
     assert(packet != nullptr);
     manager.FinishWrite(packet);
