@@ -240,6 +240,16 @@ namespace NorvesLib::Core
         UnknownImpl::Finalize();
     }
 
+    void Object::Destroy()
+    {
+        SetFlag(OF_PendingDestroy, true);
+    }
+
+    bool Object::IsPendingDestroy() const
+    {
+        return HasFlag(OF_PendingDestroy);
+    }
+
     IUnknown *Object::Clone() const
     {
         // ObjectはREFLECTION_CLASSを使用しないので、手動でクローンを実装

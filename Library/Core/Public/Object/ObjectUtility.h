@@ -8,6 +8,8 @@
 
 namespace NorvesLib::Core
 {
+    class Object;
+
     /**
      * @brief Objectユーティリティクラス
      * Object関連の生成・破棄のユーティリティ関数を提供します
@@ -206,6 +208,12 @@ namespace NorvesLib::Core
          * @return 適用されたデフォルト値の数
          */
         static int ApplyDefaultValues(IUnknown* object);
+
+        /**
+         * @brief Reflection property schemaに基づいて編集可能な値をコピーします。
+         * Cloneの代替となる低レベル property copy APIです。
+         */
+        static int CopyEditableProperties(Object &dst, const Object &src);
     };
 
 } // namespace NorvesLib::Core

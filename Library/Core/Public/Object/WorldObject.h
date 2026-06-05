@@ -228,13 +228,17 @@ namespace NorvesLib::Core
          *
          * 次のフレーム終了時にWorldから削除され、破棄されます。
          */
-        void MarkForDestroy() { bPendingDestroy = true; }
+        void MarkForDestroy()
+        {
+            bPendingDestroy = true;
+            Object::Destroy();
+        }
 
         /**
          * @brief 破棄予約されているかどうか
          * @return 破棄予約されている場合true
          */
-        bool IsPendingDestroy() const { return bPendingDestroy; }
+        bool IsPendingDestroy() const { return bPendingDestroy || Object::IsPendingDestroy(); }
 
     protected:
         // ========================================

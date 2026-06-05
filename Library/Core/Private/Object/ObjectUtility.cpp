@@ -230,6 +230,39 @@ namespace NorvesLib::Core
         return appliedCount;
     }
 
+    int ObjectUtility::CopyEditableProperties(Object &dst, const Object &src)
+    {
+        const IClass *srcClass = src.GetClass();
+        const IClass *dstClass = dst.GetClass();
+        if (!srcClass || !dstClass || !dstClass->IsChildOf(srcClass))
+        {
+            return 0;
+        }
+
+        Container::VariableArray<const ClassProperty *> properties = srcClass->GetAllProperties();
+        int copiedCount = 0;
+        for (const ClassProperty *srcProperty : properties)
+        {
+            if (!srcProperty)
+            {
+                continue;
+            }
+
+            const ClassProperty *dstProperty = dstClass->GetProperty(srcProperty->GetName());
+            if (!dstProperty)
+            {
+                continue;
+            }
+
+            if (dstProperty->CopyValueFrom(&dst, &src))
+            {
+                ++copiedCount;
+            }
+        }
+
+        return copiedCount;
+    }
+
     void SetOuter(IUnknown *object, IUnknown *outer)
     {
         if (!object)
