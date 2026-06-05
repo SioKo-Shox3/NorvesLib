@@ -40,6 +40,16 @@ target_include_directories(SceneViewViewportCommandTest PRIVATE
 set_target_properties(SceneViewViewportCommandTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SceneViewViewportCommandTest COMMAND SceneViewViewportCommandTest)
 
+add_executable(CameraViewConstantsTest
+    CameraViewConstantsTest.cpp
+)
+target_link_libraries(CameraViewConstantsTest PRIVATE Core)
+target_include_directories(CameraViewConstantsTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CameraViewConstantsTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CameraViewConstantsTest COMMAND CameraViewConstantsTest)
+
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp
 )

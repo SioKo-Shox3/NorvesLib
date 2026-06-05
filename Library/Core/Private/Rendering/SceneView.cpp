@@ -15,56 +15,13 @@
 #include "Rendering/PostProcessStack.h"
 #include "Rendering/NeuralMaterialDecodePass.h"
 #include "Rendering/MegaGeometryPass.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Math/MatrixUtils.h"
-#include "Math/VectorUtils.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
 
 namespace NorvesLib::Core::Rendering
 {
-    namespace
-    {
-        Math::Matrix4x4 BuildCullingViewProjection(const CameraProxy &camera, float aspectRatio)
-        {
-            if (aspectRatio <= 0.0f)
-            {
-                aspectRatio = 1.0f;
-            }
-
-            const Math::Vector3 cameraPosition(
-                camera.PositionX,
-                camera.PositionY,
-                camera.PositionZ);
-            const Math::Vector3 forward(camera.ForwardX, camera.ForwardY, camera.ForwardZ);
-            const Math::Vector3 up(camera.UpX, camera.UpY, camera.UpZ);
-            const Math::Vector3 target = cameraPosition + forward;
-
-            const Math::Matrix4x4 viewMatrix = Math::MatrixUtils::CreateLookAt(cameraPosition, target, up);
-
-            Math::Matrix4x4 projectionMatrix;
-            if (camera.Projection == ProjectionType::Orthographic)
-            {
-                projectionMatrix = Math::MatrixUtils::CreateOrthographic(
-                    camera.OrthoWidth,
-                    camera.OrthoWidth / aspectRatio,
-                    camera.NearPlane,
-                    camera.FarPlane);
-            }
-            else
-            {
-                projectionMatrix = Math::MatrixUtils::CreatePerspectiveFieldOfView(
-                    camera.FieldOfView * (3.14159265f / 180.0f),
-                    aspectRatio,
-                    camera.NearPlane,
-                    camera.FarPlane);
-            }
-
-            const Math::Matrix4x4 clipSpaceCorrection = Math::MatrixUtils::CreateScale(1.0f, 1.0f, -1.0f);
-
-            return projectionMatrix * clipSpaceCorrection * viewMatrix;
-        }
-    }
-
     bool SceneView::Initialize(const SceneViewSettings &settings)
     {
         // 基底クラスの初期化
@@ -427,7 +384,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         const CameraProxy &camera = viewport->GetCamera();
-        const Math::Matrix4x4 viewProjection = BuildCullingViewProjection(camera, viewport->GetAspectRatio());
+        const Math::Matrix4x4 viewProjection =
+            CameraViewConstants::BuildCullingViewProjectionMatrix(camera, viewport->GetAspectRatio());
 
         // カメラ位置を取得（CameraProxyから直接取得）
         Math::Vector3 cameraPosition(
@@ -502,7 +460,8 @@ namespace NorvesLib::Core::Rendering
             aspectRatio = 1.0f;
         }
 
-        const Math::Matrix4x4 viewProjection = BuildCullingViewProjection(camera, aspectRatio);
+        const Math::Matrix4x4 viewProjection =
+            CameraViewConstants::BuildCullingViewProjectionMatrix(camera, aspectRatio);
 
         for (MeshProxy &proxy : m_MeshProxies)
         {

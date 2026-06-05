@@ -3,6 +3,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/SceneView.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
@@ -702,35 +703,13 @@ namespace NorvesLib::Core::Rendering
 
         using namespace NorvesLib::Math;
 
-        // ========================================
-        // カメラ行列の計算（GBufferPassと同じロジック）
-        // ========================================
-        Matrix4x4 viewMat = Matrix4x4::Identity;
-        Matrix4x4 projMat = Matrix4x4::Identity;
-
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (activeCamera)
         {
-            const auto &cam = *activeCamera;
-            Vector3 camPos(cam.PositionX, cam.PositionY, cam.PositionZ);
-            Vector3 forward(cam.ForwardX, cam.ForwardY, cam.ForwardZ);
-            Vector3 lookAt = camPos + forward;
-            Vector3 upDir(cam.UpX, cam.UpY, cam.UpZ);
-
-            viewMat = MatrixUtils::CreateLookAt(camPos, lookAt, upDir);
-
-            float aspectRatio = context.GetActiveAspectRatio();
-            float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
-            projMat = MatrixUtils::CreatePerspectiveFieldOfView(
-                fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
-
-            // RHI側でAPI固有のクリップ空間補正を適用
-            projMat = context.Device->AdjustProjectionForClipSpace(projMat);
-
-            params.cameraPosition[0] = cam.PositionX;
-            params.cameraPosition[1] = cam.PositionY;
-            params.cameraPosition[2] = cam.PositionZ;
-            params.cameraPosition[3] = 1.0f;
+            const CameraViewConstants cameraConstants =
+                CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
+            cameraConstants.CopyCameraPosition(params.cameraPosition);
+            cameraConstants.CopyShaderInverseViewProjection(params.invViewProjection);
         }
         else
         {
@@ -738,12 +717,8 @@ namespace NorvesLib::Core::Rendering
             params.cameraPosition[1] = 2.0f;
             params.cameraPosition[2] = 5.0f;
             params.cameraPosition[3] = 1.0f;
+            MatrixUtils::TransposeToShaderData(Matrix4x4::Identity, params.invViewProjection);
         }
-
-        // invViewProjection行列の計算
-        Matrix4x4 vpMat = projMat * viewMat;
-        Matrix4x4 invVPMat = MatrixUtils::Inverse(vpMat);
-        MatrixUtils::TransposeToShaderData(invVPMat, params.invViewProjection);
 
         // アンビエントカラー
         params.ambientColor[0] = m_Settings.AmbientColor[0];
