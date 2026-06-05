@@ -312,7 +312,9 @@ namespace NorvesLib::Core::Rendering
 
         // レンダーパス・フレームバッファ（Screen SwapChain用）
         Container::TSharedPtr<RHI::IRenderPass> m_RenderPass;
+        Container::TSharedPtr<RHI::IRenderPass> m_PresentationLoadRenderPass;
         Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_SwapChainFramebuffers;
+        Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_PresentationLoadFramebuffers;
         bool m_bSwapChainFramebuffersReady = false;
         RHI::Format m_SwapChainFormat = RHI::Format::UNKNOWN;
 
