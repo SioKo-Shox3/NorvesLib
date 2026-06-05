@@ -40,8 +40,20 @@ target_include_directories(ObjectHeapTest PRIVATE
 )
 set_target_properties(ObjectHeapTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(PropertyBagTest
+    PropertyBagTest.cpp
+    Animal.cpp
+)
+target_link_libraries(PropertyBagTest PRIVATE Core)
+target_include_directories(PropertyBagTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_target_properties(PropertyBagTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
 add_test(NAME RuntimeSchemaSnapshotTest COMMAND RuntimeSchemaSnapshotTest)
 add_test(NAME ObjectHeapTest COMMAND ObjectHeapTest)
+add_test(NAME PropertyBagTest COMMAND PropertyBagTest)

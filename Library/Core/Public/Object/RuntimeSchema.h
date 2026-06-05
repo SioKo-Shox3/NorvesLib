@@ -340,7 +340,9 @@ namespace NorvesLib::Core
         }
 
         template <typename T>
-        TypeId Register(Container::String name = Detail::DefaultTypeName<T>(), TypeKind kind = Detail::TypeKindOf<T>::Value)
+        TypeId Register(Container::String name = Detail::DefaultTypeName<T>(),
+                        TypeKind kind = Detail::TypeKindOf<T>::Value,
+                        TypeOps overrideOps = {})
         {
             using ValueType = std::remove_cv_t<T>;
             const std::type_index typeKey(typeid(ValueType));
@@ -371,6 +373,30 @@ namespace NorvesLib::Core
             };
             info.Ops.Serialize = &Detail::SerializeValue<ValueType>;
             info.Ops.Deserialize = &Detail::DeserializeValue<ValueType>;
+            if (overrideOps.Copy)
+            {
+                info.Ops.Copy = overrideOps.Copy;
+            }
+            if (overrideOps.Move)
+            {
+                info.Ops.Move = overrideOps.Move;
+            }
+            if (overrideOps.Destroy)
+            {
+                info.Ops.Destroy = overrideOps.Destroy;
+            }
+            if (overrideOps.Serialize)
+            {
+                info.Ops.Serialize = overrideOps.Serialize;
+            }
+            if (overrideOps.Deserialize)
+            {
+                info.Ops.Deserialize = overrideOps.Deserialize;
+            }
+            if (overrideOps.AddReferences)
+            {
+                info.Ops.AddReferences = overrideOps.AddReferences;
+            }
 
             const TypeId id = info.Id;
             m_TypeIdsByCppType.emplace(typeKey, id);
@@ -526,6 +552,15 @@ namespace NorvesLib::Core
         {
             const TypeInfo *typeInfo = TypeRegistry::Get().Find(m_Type);
             return typeInfo && typeInfo->Ops.Serialize && typeInfo->Ops.Serialize(m_Data, outValue);
+        }
+
+        void AddReferences(ReferenceCollector &collector) const
+        {
+            const TypeInfo *typeInfo = TypeRegistry::Get().Find(m_Type);
+            if (typeInfo && typeInfo->Ops.AddReferences)
+            {
+                typeInfo->Ops.AddReferences(m_Data, collector);
+            }
         }
 
         bool Equals(const PropertyValue &other) const
