@@ -12,6 +12,13 @@ namespace NorvesLib::Core
     class ObjectHeap
     {
     public:
+        struct GCStats
+        {
+            size_t MarkedObjects = 0;
+            size_t SweptObjects = 0;
+            size_t DestroyQueuedObjects = 0;
+        };
+
         ObjectHeap() = default;
         ~ObjectHeap();
 
@@ -28,7 +35,15 @@ namespace NorvesLib::Core
         bool EnqueueDestroy(ObjectHandle handle);
         bool DestroyNow(ObjectHandle handle);
         size_t ProcessDestroyQueue();
+        GCStats CollectGarbage();
         void DestroyAll();
+
+        bool AddRoot(ObjectHandle handle);
+        bool RemoveRoot(ObjectHandle handle);
+        bool AddExternalRoot(ObjectHandle handle);
+        bool RemoveExternalRoot(ObjectHandle handle);
+        bool PinObject(ObjectHandle handle);
+        bool UnpinObject(ObjectHandle handle);
 
         Object *Resolve(ObjectHandle handle) const;
 
@@ -56,6 +71,7 @@ namespace NorvesLib::Core
             Object *Instance = nullptr;
             uint32_t Generation = 1;
             SlotState State = SlotState::Free;
+            bool bMarked = false;
         };
 
         ObjectHandle Adopt(Object *object);
@@ -63,10 +79,17 @@ namespace NorvesLib::Core
         bool ReleaseSlot(uint32_t index);
         uint32_t AllocateSlot();
         static ObjectHandle MakeHandle(uint32_t index, const Slot &slot);
+        bool AddUniqueHandle(Container::VariableArray<ObjectHandle> &handles, ObjectHandle handle);
+        bool RemoveHandle(Container::VariableArray<ObjectHandle> &handles, ObjectHandle handle);
+        bool MarkObject(ObjectHandle handle, size_t &markedCount);
+        void ClearMarks();
 
         Container::VariableArray<Slot> m_Slots;
         Container::VariableArray<uint32_t> m_FreeList;
         Container::VariableArray<uint32_t> m_DestroyQueue;
+        Container::VariableArray<ObjectHandle> m_Roots;
+        Container::VariableArray<ObjectHandle> m_ExternalRoots;
+        Container::VariableArray<ObjectHandle> m_PinnedObjects;
         Container::UnorderedMap<const Object *, uint32_t> m_ObjectToIndex;
     };
 

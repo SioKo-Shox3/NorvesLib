@@ -4,6 +4,7 @@
 #include "IClass.h"
 #include "TClass.h"
 #include "Container/Containers.h"
+#include "ReferenceCollector.h"
 #include "ObjectUtility.h"
 
 namespace NorvesLib::Core
@@ -62,6 +63,16 @@ namespace NorvesLib::Core
          * @brief オブジェクトの破棄前処理を行います
          */
         virtual void Finalize() override;
+
+        /**
+         * @brief GCが追跡する参照を列挙します。
+         */
+        virtual void AddReferencedObjects(ReferenceCollector &collector) const { (void)collector; }
+
+        /**
+         * @brief ObjectHeapがメモリを解放する直前に呼び出します。
+         */
+        virtual void OnDestroying() {}
 
         /**
          * @brief オブジェクトのクローンを作成します

@@ -71,6 +71,16 @@ target_include_directories(ResourceMetadataTest PRIVATE
 )
 set_target_properties(ResourceMetadataTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(ObjectGCTest
+    ObjectGCTest.cpp
+)
+target_link_libraries(ObjectGCTest PRIVATE Core)
+target_include_directories(ObjectGCTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_target_properties(ObjectGCTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
@@ -79,3 +89,4 @@ add_test(NAME ObjectHeapTest COMMAND ObjectHeapTest)
 add_test(NAME PropertyBagTest COMMAND PropertyBagTest)
 add_test(NAME InvocationQueueTest COMMAND InvocationQueueTest)
 add_test(NAME ResourceMetadataTest COMMAND ResourceMetadataTest)
+add_test(NAME ObjectGCTest COMMAND ObjectGCTest)
