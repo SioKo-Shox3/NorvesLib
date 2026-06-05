@@ -59,3 +59,13 @@ target_include_directories(ViewRenderContextActiveInputTest PRIVATE
 )
 set_target_properties(ViewRenderContextActiveInputTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ViewRenderContextActiveInputTest COMMAND ViewRenderContextActiveInputTest)
+
+add_executable(SceneViewProxyReconcileTest
+    SceneViewProxyReconcileTest.cpp
+)
+target_link_libraries(SceneViewProxyReconcileTest PRIVATE Core)
+target_include_directories(SceneViewProxyReconcileTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneViewProxyReconcileTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyReconcileTest)
