@@ -415,7 +415,8 @@ namespace NorvesLib::Core
         OF_GarbageCollect = 1 << 2, // GC対象
         OF_Transient = 1 << 3,      // 一時的なオブジェクト
         OF_Persistent = 1 << 4,     // 永続的なオブジェクト
-        OF_DefaultObject = 1 << 5   // デフォルトオブジェクト
+        OF_DefaultObject = 1 << 5,  // デフォルトオブジェクト
+        OF_HeapOwned = 1 << 6       // ObjectHeapがメモリを所有している
     };
 
 } // namespace NorvesLib::Core

@@ -1,9 +1,19 @@
 ﻿#include "Object/ObjectUtility.h"
 #include "Object/IClass.h"
+#include "Object/ObjectHeap.h"
 #include <memory>
 
 namespace NorvesLib::Core
 {
+    namespace
+    {
+        ObjectHeap &GetCompatibilityObjectHeap()
+        {
+            static ObjectHeap s_ObjectHeap;
+            return s_ObjectHeap;
+        }
+    }
+
     IUnknown *CreateObjectImpl(const IClass *cls, IUnknown *outer = nullptr)
     {
         if (!cls)
@@ -11,20 +21,19 @@ namespace NorvesLib::Core
 
         try
         {
-            IUnknown *newObject = cls->NewInstance();
+            ObjectHeap &heap = GetCompatibilityObjectHeap();
+            ObjectHandle handle = heap.Create(cls);
+            IUnknown *newObject = heap.Resolve(handle);
             if (!newObject)
             {
                 return nullptr;
             }
 
-            newObject->Initialize();
-
             if (outer)
             {
                 if (!outer->AddInner(newObject))
                 {
-                    newObject->Finalize();
-                    delete newObject;
+                    heap.DestroyNow(handle);
                     return nullptr;
                 }
             }
@@ -112,7 +121,30 @@ namespace NorvesLib::Core
         {
             if (IUnknown *outer = object->GetOuter())
             {
-                return outer->RemoveInner(object);
+                const bool bHeapOwned = object->HasFlag(OF_HeapOwned);
+                ObjectHandle handle = bHeapOwned ? GetCompatibilityObjectHeap().GetHandle(ObjectUtility::CastTo<Object>(object)) : ObjectHandle{};
+                const bool bRemoved = outer->RemoveInner(object);
+                if (bRemoved && bHeapOwned && handle)
+                {
+                    GetCompatibilityObjectHeap().DestroyNow(handle);
+                }
+                return bRemoved;
+            }
+
+            if (object->HasFlag(OF_HeapOwned))
+            {
+                ObjectHeap &heap = GetCompatibilityObjectHeap();
+                ObjectHandle handle = heap.GetHandle(ObjectUtility::CastTo<Object>(object));
+                if (!handle)
+                {
+                    return false;
+                }
+
+                if (object->GetRefCount() > 0)
+                {
+                    object->Release();
+                }
+                return heap.DestroyNow(handle);
             }
 
             if (object->GetRefCount() > 0)

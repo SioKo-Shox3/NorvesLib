@@ -90,6 +90,10 @@ namespace NorvesLib::Core
                 {
                     auto *mutableThis = const_cast<UnknownImpl *>(this);
                     mutableThis->SetFlag(OF_PendingDestroy, true);
+                    if (HasFlag(OF_HeapOwned))
+                    {
+                        return next;
+                    }
                     mutableThis->Finalize();
                     delete mutableThis;
                 }

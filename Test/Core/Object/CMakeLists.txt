@@ -29,7 +29,19 @@ target_include_directories(RuntimeSchemaSnapshotTest PRIVATE
 )
 set_target_properties(RuntimeSchemaSnapshotTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(ObjectHeapTest
+    ObjectHeapTest.cpp
+    Animal.cpp
+)
+target_link_libraries(ObjectHeapTest PRIVATE Core)
+target_include_directories(ObjectHeapTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_target_properties(ObjectHeapTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
 add_test(NAME RuntimeSchemaSnapshotTest COMMAND RuntimeSchemaSnapshotTest)
+add_test(NAME ObjectHeapTest COMMAND ObjectHeapTest)
