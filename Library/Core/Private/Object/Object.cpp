@@ -14,33 +14,14 @@ namespace NorvesLib::Core
             ObjectClass()
                 : m_ClassName("Object"), m_ClassId(0) // Object基本クラスには0のIDを割り当てる
                   ,
-                  m_PropertyField(new PropertyField()), m_FunctionField(new FunctionField()), m_DefaultObject(nullptr)
+                  m_PropertyField(new PropertyField()), m_FunctionField(new FunctionField())
             {
                 // クラスレジストリに登録
                 ClassRegistry::Get().RegisterClass(this);
-
-                // デフォルトオブジェクトを作成
-                m_DefaultObject = new Object();
-                m_DefaultObject->SetFlag(OF_DefaultObject, true);
-
-                // FieldInitializerを使用してデフォルト値を設定
-                FieldInitializer initializer;
-                // ここでObjectクラスのデフォルト値をsetup
-                // 例: initializer.SetInitialValue<int>("PropertyName", defaultValue);
-
-                // デフォルトオブジェクトを初期化
-                m_DefaultObject->Initialize();
             }
 
             ~ObjectClass()
             {
-                // デフォルトオブジェクトを解放
-                if (m_DefaultObject)
-                {
-                    delete m_DefaultObject;
-                    m_DefaultObject = nullptr;
-                }
-
                 // フィールドを解放
                 if (m_PropertyField)
                 {
@@ -84,15 +65,10 @@ namespace NorvesLib::Core
                 return false;
             }
 
-            virtual const IUnknown *GetDefaultObject() const override
-            {
-                return m_DefaultObject;
-            }
-
             virtual IUnknown *NewInstance(IUnknown *outer = nullptr) const override
             {
-                // デフォルトオブジェクトをコピーして新しいインスタンスを作成
-                return new Object(m_DefaultObject);
+                (void)outer;
+                return new Object();
             }
 
             virtual const PropertyField *GetPropertyField() const override
@@ -146,30 +122,11 @@ namespace NorvesLib::Core
                 return m_ClassId;
             }
 
-            virtual size_t GetVariableContainerSize() const override
-            {
-                if (m_PropertyField)
-                {
-                    return m_PropertyField->GetTotalSize();
-                }
-                return 0;
-            }
-
-            virtual void InitializeVariableContainer(void *container) const override
-            {
-                // 基本的な初期化を行う（すべて0に設定）
-                if (container)
-                {
-                    std::memset(container, 0, GetVariableContainerSize());
-                }
-            }
-
         private:
             Identity m_ClassName;
             uint64_t m_ClassId;
             PropertyField *m_PropertyField;
             FunctionField *m_FunctionField;
-            Object *m_DefaultObject;
         };
 
         // 静的クラスインスタンス
@@ -248,38 +205,6 @@ namespace NorvesLib::Core
     bool Object::IsPendingDestroy() const
     {
         return HasFlag(OF_PendingDestroy);
-    }
-
-    IUnknown *Object::Clone() const
-    {
-        // ObjectはREFLECTION_CLASSを使用しないので、手動でクローンを実装
-        Object *newInstance = new Object();
-        if (newInstance)
-        {
-            // コンテナデータをコピー
-            const VariableContainer *srcContainer = GetVariableContainer();
-            VariableContainer *dstContainer = newInstance->GetVariableContainer();
-            if (srcContainer && dstContainer)
-            {
-                const void *srcData = srcContainer->GetData();
-                void *dstData = dstContainer->GetData();
-                if (srcData && dstData && srcContainer->GetSize() > 0)
-                {
-                    std::memcpy(dstData, srcData, srcContainer->GetSize());
-                }
-            }
-        }
-        return newInstance;
-    }
-
-    IUnknown *Object::Clone(const FieldInitializer *initializer) const
-    {
-        Object *newInstance = static_cast<Object *>(Clone());
-        if (newInstance && initializer)
-        {
-            ObjectUtility::ApplyInitialValues(newInstance, initializer);
-        }
-        return newInstance;
     }
 
     const Identity &Object::GetTypeName() const

@@ -38,14 +38,14 @@ namespace NorvesLib::Core
      * @brief リソースの基底クラス
      *
      * Worldに依存しない、テクスチャ・メッシュ・マテリアル等のデータリソースの基底クラス。
-     * Objectを継承して参照カウント管理機能を実装します。
+     * Objectとしてリフレクション可能で、ResourceRegistry管理対象として扱います。
      *
      * 責任者: GEngine（ResourceRegistry経由）
-     * 寿命管理: IUnknownの参照カウント（AddRef/Release）で管理
+     * 寿命管理: ResourceRegistryとResourceRefで管理
      *
      * WorldObjectとの違い:
      * - WorldObjectはWorldのInnerとして管理され、Worldと寿命が一致
-     * - ResourceはGEngineが管理し、参照カウントで寿命を制御
+     * - ResourceはGEngineが管理し、ResourceRefで到達可能性と寿命を制御
      * - WorldやWorldObjectが破棄されてもResourceは生存可能
      */
     class Resource : public Object

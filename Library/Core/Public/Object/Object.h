@@ -11,7 +11,7 @@ namespace NorvesLib::Core
 {
     /**
      * @brief 全てのオブジェクトの基底クラス
-     * UnknownImplを継承して参照カウント管理機能を実装します
+     * UnknownImplを継承してObjectHeap/GC向けの基本機能を実装します
      */
     class Object : public UnknownImpl
     {
@@ -83,19 +83,6 @@ namespace NorvesLib::Core
          * @brief ObjectHeapがメモリを解放する直前に呼び出します。
          */
         virtual void OnDestroying() {}
-
-        /**
-         * @brief オブジェクトのクローンを作成します
-         * @return クローンされたオブジェクトへのポインタ
-         */
-        virtual IUnknown *Clone() const override;
-
-        /**
-         * @brief フィールド初期化子を使用してオブジェクトのクローンを作成します
-         * @param initializer フィールド初期化子
-         * @return クローンされたオブジェクトへのポインタ
-         */
-        virtual IUnknown *Clone(const FieldInitializer *initializer) const override;
 
         /**
          * @brief オブジェクトの型を文字列として取得します

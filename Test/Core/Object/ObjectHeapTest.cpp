@@ -23,8 +23,7 @@ int main()
     assert(heap.GetHandle(dog) == dogHandle);
     assert(heap.GetLiveObjectCount() == 1);
 
-    assert(dog->AddRef() == 1);
-    assert(dog->Release() == 0);
+    dog->Destroy();
     assert(dog->HasFlag(OF_PendingDestroy));
     assert(heap.Resolve<Dog>(dogHandle) == dog);
 

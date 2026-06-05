@@ -18,8 +18,6 @@ namespace NorvesLib::Core
 public:                                                                          \
     static const NorvesLib::Core::TClass<Class, ParentClass> *StaticClass();     \
     virtual const NorvesLib::Core::IClass *GetClass() const override { return StaticClass(); } \
-    virtual NorvesLib::Core::IUnknown *Clone() const override;                   \
-    virtual NorvesLib::Core::IUnknown *Clone(const NorvesLib::Core::FieldInitializer *initializer) const override; \
                                                                                  \
 private:                                                                         \
     using __ThisClass = Class; /* リフレクション用にクラス名を定義 */            \
@@ -34,33 +32,6 @@ private:                                                                        
     {                                                                            \
         static NorvesLib::Core::TClass<Class, ParentClass> s_ClassInfo(#Class);  \
         return &s_ClassInfo;                                                     \
-    }                                                                            \
-                                                                                 \
-    NorvesLib::Core::IUnknown *Class::Clone() const                              \
-    {                                                                            \
-        Class *newInstance = new Class();                                        \
-        if (newInstance)                                                         \
-        {                                                                        \
-            newInstance->AddRef();                                               \
-            for (const NorvesLib::Core::ClassProperty *property : GetClass()->GetAllProperties()) \
-            {                                                                    \
-                if (property)                                                    \
-                {                                                                \
-                    property->CopyValueFrom(newInstance, this);                  \
-                }                                                                \
-            }                                                                    \
-        }                                                                        \
-        return newInstance;                                                      \
-    }                                                                            \
-                                                                                 \
-    NorvesLib::Core::IUnknown *Class::Clone(const NorvesLib::Core::FieldInitializer *initializer) const \
-    {                                                                            \
-        Class *newInstance = static_cast<Class *>(Clone());                      \
-        if (newInstance && initializer)                                          \
-        {                                                                        \
-            NorvesLib::Core::ObjectUtility::ApplyInitialValues(newInstance, initializer); \
-        }                                                                        \
-        return newInstance;                                                      \
     }
 
 // プロパティ宣言用マクロ（自動登録機能付き）

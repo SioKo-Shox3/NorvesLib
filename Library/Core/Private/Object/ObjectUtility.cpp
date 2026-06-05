@@ -37,10 +37,6 @@ namespace NorvesLib::Core
                     return nullptr;
                 }
             }
-            else
-            {
-                newObject->AddRef();
-            }
 
             return newObject;
         }
@@ -119,43 +115,49 @@ namespace NorvesLib::Core
 
         try
         {
-            if (IUnknown *outer = object->GetOuter())
+            const bool bHeapOwned = object->HasFlag(OF_HeapOwned);
+            ObjectHandle handle;
+            if (bHeapOwned)
             {
-                const bool bHeapOwned = object->HasFlag(OF_HeapOwned);
-                ObjectHandle handle = bHeapOwned ? GetCompatibilityObjectHeap().GetHandle(ObjectUtility::CastTo<Object>(object)) : ObjectHandle{};
-                const bool bRemoved = outer->RemoveInner(object);
-                if (bRemoved && bHeapOwned && handle)
-                {
-                    GetCompatibilityObjectHeap().DestroyNow(handle);
-                }
-                return bRemoved;
-            }
-
-            if (object->HasFlag(OF_HeapOwned))
-            {
-                ObjectHeap &heap = GetCompatibilityObjectHeap();
-                ObjectHandle handle = heap.GetHandle(ObjectUtility::CastTo<Object>(object));
-                if (!handle)
+                Object *objectInstance = ObjectUtility::CastTo<Object>(object);
+                if (!objectInstance)
                 {
                     return false;
                 }
 
-                if (object->GetRefCount() > 0)
+                handle = GetCompatibilityObjectHeap().GetHandle(objectInstance);
+                if (!handle)
                 {
-                    object->Release();
+                    object->SetFlag(OF_PendingDestroy, true);
+                    return false;
                 }
-                return heap.DestroyNow(handle);
             }
 
-            if (object->GetRefCount() > 0)
+            if (IUnknown *outer = object->GetOuter())
             {
-                object->Release();
-            }
-            else
-            {
+                const bool bRemoved = outer->RemoveInner(object);
+                if (!bRemoved)
+                {
+                    return false;
+                }
+
+                if (bHeapOwned)
+                {
+                    return GetCompatibilityObjectHeap().DestroyNow(handle);
+                }
+
                 object->Finalize();
                 delete object;
+                return true;
             }
+
+            if (bHeapOwned)
+            {
+                return GetCompatibilityObjectHeap().DestroyNow(handle);
+            }
+
+            object->Finalize();
+            delete object;
             return true;
         }
         catch (...)

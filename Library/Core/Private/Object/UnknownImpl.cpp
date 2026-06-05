@@ -1,20 +1,16 @@
 ﻿#include "Object/IUnknown.h"
 #include "Object/IClass.h"
-#include "Object/ObjectUtility.h"
 
 namespace NorvesLib::Core
 {
     UnknownImpl::UnknownImpl()
-        : m_RefCount(0), m_Flags(0), m_VariableContainer(nullptr), m_Outer(nullptr)
+        : m_Flags(0), m_Outer(nullptr)
     {
-        InitializeVariableContainer();
     }
 
     UnknownImpl::UnknownImpl(const FieldInitializer *initializer)
-        : m_RefCount(0), m_Flags(0), m_VariableContainer(nullptr), m_Outer(nullptr)
+        : m_Flags(0), m_Outer(nullptr)
     {
-        InitializeVariableContainer();
-
         if (initializer)
         {
             // デフォルトオブジェクトにフィールド初期化子を適用
@@ -36,11 +32,8 @@ namespace NorvesLib::Core
     }
 
     UnknownImpl::UnknownImpl(const IUnknown *sourceObject)
-        : m_RefCount(0), m_Flags(0), m_VariableContainer(nullptr), m_Outer(nullptr)
+        : m_Flags(0), m_Outer(nullptr)
     {
-        // 変数コンテナを初期化
-        InitializeVariableContainer();
-
         // ソースオブジェクトからデータをコピー
         if (sourceObject)
         {
@@ -60,53 +53,18 @@ namespace NorvesLib::Core
                 innerImpl->SetOuter(nullptr);
             }
 
-            if (inner)
+            if (inner->HasFlag(OF_HeapOwned))
             {
-                inner->Release();
+                inner->SetFlag(OF_PendingDestroy, true);
+            }
+            else
+            {
+                inner->Finalize();
+                delete inner;
             }
         }
 
         m_Outer = nullptr;
-    }
-
-    uint32_t UnknownImpl::AddRef() const
-    {
-        return ++m_RefCount;
-    }
-
-    uint32_t UnknownImpl::Release() const
-    {
-        uint32_t current = m_RefCount.GetValue(std::memory_order_acquire);
-        while (current > 0)
-        {
-            const uint32_t next = current - 1;
-            if (m_RefCount.CompareExchangeStrong(
-                    current,
-                    next,
-                    std::memory_order_acq_rel,
-                    std::memory_order_acquire))
-            {
-                if (next == 0 && !HasFlag(OF_DefaultObject))
-                {
-                    auto *mutableThis = const_cast<UnknownImpl *>(this);
-                    mutableThis->SetFlag(OF_PendingDestroy, true);
-                    if (HasFlag(OF_HeapOwned))
-                    {
-                        return next;
-                    }
-                    mutableThis->Finalize();
-                    delete mutableThis;
-                }
-                return next;
-            }
-        }
-
-        return 0;
-    }
-
-    uint32_t UnknownImpl::GetRefCount() const
-    {
-        return m_RefCount.GetValue(std::memory_order_acquire);
     }
 
     bool UnknownImpl::HasFlag(uint32_t flag) const
@@ -166,16 +124,6 @@ namespace NorvesLib::Core
         return property->GetValuePtr(this);
     }
 
-    VariableContainer *UnknownImpl::GetVariableContainer()
-    {
-        return m_VariableContainer.get();
-    }
-
-    const VariableContainer *UnknownImpl::GetVariableContainer() const
-    {
-        return m_VariableContainer.get();
-    }
-
     const IClass *UnknownImpl::GetClass() const
     {
         // サブクラスでオーバーライドされるため、基底クラスではnullptrを返す
@@ -194,25 +142,6 @@ namespace NorvesLib::Core
         SetFlag(OF_Initialized, false);
     }
 
-    bool UnknownImpl::IsDefaultObject() const
-    {
-        return HasFlag(OF_DefaultObject);
-    }
-
-    void UnknownImpl::InitializeVariableContainer()
-    {
-        const IClass *cls = GetClass();
-        if (cls)
-        {
-            size_t containerSize = cls->GetVariableContainerSize();
-            if (containerSize > 0)
-            {
-                m_VariableContainer = std::make_unique<VariableContainer>(containerSize);
-                cls->InitializeVariableContainer(m_VariableContainer->GetData());
-            }
-        }
-    }
-
     void UnknownImpl::CopyFromObject(const IUnknown *sourceObject)
     {
         if (!sourceObject)
@@ -220,28 +149,11 @@ namespace NorvesLib::Core
             return;
         }
 
-        // VariableContainerをコピー
-        const VariableContainer *srcContainer = sourceObject->GetVariableContainer();
-        if (srcContainer && m_VariableContainer)
+        for (uint32_t flag = OF_Initialized; flag <= OF_Persistent; flag <<= 1)
         {
-            m_VariableContainer->CopyFrom(srcContainer);
-        }
-
-        // フラグをコピー (DefaultObjectフラグは除く)
-        if (sourceObject->IsDefaultObject())
-        {
-            // デフォルトオブジェクトからコピーする場合、DefaultObjectフラグを除く
-            m_Flags = sourceObject->HasFlag(OF_Initialized) ? OF_Initialized : 0;
-        }
-        else
-        {
-            // 通常オブジェクトからコピーする場合、通常のフラグをすべてコピー
-            for (uint32_t flag = OF_Initialized; flag <= OF_Persistent; flag <<= 1)
+            if (sourceObject->HasFlag(flag))
             {
-                if (sourceObject->HasFlag(flag))
-                {
-                    SetFlag(flag, true);
-                }
+                SetFlag(flag, true);
             }
         }
     }
@@ -294,8 +206,6 @@ namespace NorvesLib::Core
             return false;
         }
 
-        inner->AddRef();
-
         // 子リストに追加
         m_Inners.push_back(inner);
 
@@ -322,7 +232,6 @@ namespace NorvesLib::Core
                     }
 
                     m_Inners.erase(m_Inners.begin() + i);
-                    inner->Release();
                     return true; // 削除成功
                 }
             }

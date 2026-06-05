@@ -61,20 +61,18 @@ int main()
     assert(bmiFunction->Invoke(&dog, nullptr, &bmi));
     assert(std::fabs(bmi - 7.5f) < 0.001f);
 
-    NorvesLib::Core::IUnknown *cloneUnknown = dog.Clone();
-    Dog *cloneDog = ObjectUtility::CastTo<Dog>(cloneUnknown);
-    assert(cloneDog != nullptr);
-    auto *cloneAge = static_cast<int *>(cloneDog->GetPropertyValue(Identity("Age")));
-    assert(cloneAge != nullptr);
-    assert(*cloneAge == 5);
-    cloneUnknown->Release();
+    Dog copiedDog;
+    copiedDog.Initialize();
+    assert(ObjectUtility::CopyEditableProperties(copiedDog, dog) > 0);
+    auto *copiedAge = static_cast<int *>(copiedDog.GetPropertyValue(Identity("Age")));
+    assert(copiedAge != nullptr);
+    assert(*copiedAge == 5);
 
     Dog outerDog;
     outerDog.Initialize();
     Dog *ownedDog = ObjectUtility::CreateTypedObject<Dog>(&outerDog);
     assert(ownedDog != nullptr);
     assert(ownedDog->GetOuter() == &outerDog);
-    assert(ownedDog->GetRefCount() == 1);
     assert(ownedDog->HasFlag(OF_Initialized));
     assert(ObjectUtility::DestroyObject(ownedDog));
     assert(outerDog.GetInners().empty());
@@ -82,7 +80,6 @@ int main()
     Dog *standaloneDog = ObjectUtility::CreateTypedObject<Dog>();
     assert(standaloneDog != nullptr);
     assert(standaloneDog->GetOuter() == nullptr);
-    assert(standaloneDog->GetRefCount() == 1);
     assert(standaloneDog->HasFlag(OF_Initialized));
     assert(ObjectUtility::DestroyObject(standaloneDog));
 
@@ -91,13 +88,11 @@ int main()
     WorldObject *object = world.SpawnObject<WorldObject>();
     assert(object != nullptr);
     assert(object->GetWorld() == &world);
-    assert(object->GetRefCount() == 1);
     assert(world.GetObjectCount() == 1);
 
     auto *component = world.CreateComponent<NorvesLib::Core::Component::Component>(object);
     assert(component != nullptr);
     assert(component->GetOwner() == object);
-    assert(component->GetRefCount() == 1);
     object->RemoveComponent(component);
     assert(object->GetComponents().empty());
 

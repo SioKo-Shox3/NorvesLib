@@ -44,7 +44,7 @@ namespace NorvesLib::Core
 
         /**
          * @brief 変数へのオフセットを取得します
-         * @return VariableContainer内のオフセット
+         * @return オブジェクトメンバ内のオフセット
          */
         size_t GetOffset() const { return m_Offset; }
 
@@ -87,12 +87,8 @@ namespace NorvesLib::Core
          */
         virtual const void *GetValuePtr(const IUnknown *instance) const
         {
-            if (!instance)
-                return nullptr;
-            const VariableContainer *container = instance->GetVariableContainer();
-            if (!container)
-                return nullptr;
-            return container->GetAt(m_Offset);
+            (void)instance;
+            return nullptr;
         }
 
         /**
@@ -102,12 +98,8 @@ namespace NorvesLib::Core
          */
         virtual void *GetValuePtr(IUnknown *instance) const
         {
-            if (!instance)
-                return nullptr;
-            VariableContainer *container = instance->GetVariableContainer();
-            if (!container)
-                return nullptr;
-            return container->GetAt(m_Offset);
+            (void)instance;
+            return nullptr;
         }
 
         /**
@@ -139,7 +131,7 @@ namespace NorvesLib::Core
     protected:
         Identity m_Name;      // 変数名
         const IClass *m_Type; // 型情報
-        size_t m_Offset;      // VariableContainer内のオフセット
+        size_t m_Offset;      // オブジェクトメンバ内のオフセット
         size_t m_Size;        // サイズ（バイト単位）
         uint32_t m_Flags;     // フラグ
     };
@@ -861,7 +853,7 @@ namespace NorvesLib::Core
 
     /**
      * @brief クラス情報を定義するインターフェース
-     * クラスの継承関係、メンバ変数、メンバ関数の情報およびデフォルトインスタンスを管理します
+     * クラスの継承関係、メンバ変数、メンバ関数の情報を管理します
      */
     class IClass
     {
@@ -886,12 +878,6 @@ namespace NorvesLib::Core
          * @return 継承している場合はtrue
          */
         virtual bool IsChildOf(const IClass *cls) const = 0;
-
-        /**
-         * @brief デフォルトオブジェクトを取得します
-         * @return デフォルトオブジェクトへのポインタ
-         */
-        virtual const IUnknown *GetDefaultObject() const = 0;
 
         /**
          * @brief このクラスの新しいインスタンスを作成します
@@ -944,17 +930,6 @@ namespace NorvesLib::Core
          */
         virtual uint64_t GetClassId() const = 0;
 
-        /**
-         * @brief VariableContainerのサイズを取得します
-         * @return バイト単位のサイズ
-         */
-        virtual size_t GetVariableContainerSize() const = 0;
-
-        /**
-         * @brief VariableContainerの初期化を行います
-         * @param container 初期化するメモリ領域
-         */
-        virtual void InitializeVariableContainer(void *container) const = 0;
     };
 
     inline ClassInfo BuildClassInfoSnapshot(const IClass &cls, const char *moduleName = "NorvesLib")

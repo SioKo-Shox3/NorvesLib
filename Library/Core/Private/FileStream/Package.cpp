@@ -8,7 +8,6 @@ namespace NorvesLib::FileStream
 {
     // IMPLEMENT_CLASSマクロが使用するCore型をインポート
     using NorvesLib::Core::ObjectUtility;
-    using NorvesLib::Core::VariableContainer;
 
     namespace
     {

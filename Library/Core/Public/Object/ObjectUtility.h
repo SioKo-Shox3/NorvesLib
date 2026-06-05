@@ -211,7 +211,7 @@ namespace NorvesLib::Core
 
         /**
          * @brief Reflection property schemaに基づいて編集可能な値をコピーします。
-         * Cloneの代替となる低レベル property copy APIです。
+         * 低レベル property copy APIです。
          */
         static int CopyEditableProperties(Object &dst, const Object &src);
     };
