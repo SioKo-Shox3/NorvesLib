@@ -719,9 +719,10 @@ namespace NorvesLib::Core::Rendering
         Matrix4x4 viewMat = Matrix4x4::Identity;
         Matrix4x4 projMat = Matrix4x4::Identity;
 
-        if (context.MainCamera)
+        const CameraProxy *activeCamera = context.GetActiveCamera();
+        if (activeCamera)
         {
-            const auto &cam = *context.MainCamera;
+            const auto &cam = *activeCamera;
             Vector3 camPos(cam.PositionX, cam.PositionY, cam.PositionZ);
             Vector3 forward(cam.ForwardX, cam.ForwardY, cam.ForwardZ);
             Vector3 lookAt = camPos + forward;

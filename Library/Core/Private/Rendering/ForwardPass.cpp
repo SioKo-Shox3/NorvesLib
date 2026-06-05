@@ -132,11 +132,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         // スナップショットからDrawCommandを参照（GameThreadで生成済み）
-        if (!context.SnapshotDrawCommands)
+        const auto *activeDrawCommands = context.GetActiveDrawCommands();
+        if (!activeDrawCommands)
         {
             return;
         }
-        const auto &drawCommands = *context.SnapshotDrawCommands;
+        const auto &drawCommands = *activeDrawCommands;
 
         // SharedResourceRegistryに出力を登録（非nullテクスチャのみ）
         if (m_bRegisterOutputs && context.SharedResources)
@@ -165,9 +166,10 @@ namespace NorvesLib::Core::Rendering
             if (m_bTransparentOnly)
             {
                 // 半透明のみ（ディファードレンダリングと併用時）
-                if (context.SnapshotTransparentCommands && !context.SnapshotTransparentCommands->empty())
+                const auto *activeTransparentCommands = context.GetActiveTransparentCommands();
+                if (activeTransparentCommands && !activeTransparentCommands->empty())
                 {
-                    m_SceneRenderer->ExecuteDrawCommands(*context.SnapshotTransparentCommands, context.CommandList);
+                    m_SceneRenderer->ExecuteDrawCommands(*activeTransparentCommands, context.CommandList);
                 }
             }
             else

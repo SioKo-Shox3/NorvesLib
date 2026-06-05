@@ -267,7 +267,8 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // DrawCommand駆動の描画
         // ========================================
-        if (m_SceneRenderer && context.ResourceManager && context.SnapshotOpaqueCommands)
+        const auto *activeOpaqueCommands = context.GetActiveOpaqueCommands();
+        if (m_SceneRenderer && context.ResourceManager && activeOpaqueCommands)
         {
             // カメラ行列の構築
             using namespace NorvesLib::Math;
@@ -276,9 +277,10 @@ namespace NorvesLib::Core::Rendering
             Matrix4x4 projMat = Matrix4x4::Identity;
             float cameraPos[4] = {0.0f, 1.5f, 4.0f, 1.0f};
 
-            if (context.MainCamera)
+            const CameraProxy *activeCamera = context.GetActiveCamera();
+            if (activeCamera)
             {
-                const auto &cam = *context.MainCamera;
+                const auto &cam = *activeCamera;
                 Vector3 camPos(cam.PositionX, cam.PositionY, cam.PositionZ);
                 Vector3 forward(cam.ForwardX, cam.ForwardY, cam.ForwardZ);
                 Vector3 lookAt = camPos + forward;
@@ -324,7 +326,7 @@ namespace NorvesLib::Core::Rendering
             auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
             // DrawCommand配列を取得（GameThreadでスナップショット済み）
-            const auto &opaqueCommands = *context.SnapshotOpaqueCommands;
+            const auto &opaqueCommands = *activeOpaqueCommands;
             for (const auto &cmd : opaqueCommands)
             {
                 // UBOスロット確保
