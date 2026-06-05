@@ -8,7 +8,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
-#include "Math/VectorUtils.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Math/MatrixUtils.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
@@ -483,32 +483,21 @@ namespace NorvesLib::Core::Rendering
             using namespace NorvesLib::Math;
 
             const auto &cam = command.MainCamera;
-            Vector3 camPos(cam.PositionX, cam.PositionY, cam.PositionZ);
-            Vector3 forward(cam.ForwardX, cam.ForwardY, cam.ForwardZ);
-            Vector3 lookAt = camPos + forward;
-            Vector3 upDir(cam.UpX, cam.UpY, cam.UpZ);
+            const float aspectRatio = m_CurrentHeight > 0
+                                          ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
+                                          : 1.0f;
+            const CameraViewConstants cameraConstants =
+                CameraViewConstants::BuildForDevice(cam, aspectRatio, m_Device);
 
-            Matrix4x4 viewMat = MatrixUtils::CreateLookAt(camPos, lookAt, upDir);
-
-            float aspectRatio = static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight);
-            float fovRadians = cam.FieldOfView * (3.14159265f / 180.0f);
-            Matrix4x4 projMat = MatrixUtils::CreatePerspectiveFieldOfView(
-                fovRadians, aspectRatio, cam.NearPlane, cam.FarPlane);
-            projMat = m_Device->AdjustProjectionForClipSpace(projMat);
-
-            MatrixUtils::TransposeToShaderData(viewMat, uniformData.ViewMatrix);
-            MatrixUtils::TransposeToShaderData(projMat, uniformData.ProjectionMatrix);
-
-            uniformData.CameraPosition[0] = cam.PositionX;
-            uniformData.CameraPosition[1] = cam.PositionY;
-            uniformData.CameraPosition[2] = cam.PositionZ;
+            cameraConstants.CopyShaderView(uniformData.ViewMatrix);
+            cameraConstants.CopyShaderProjection(uniformData.ProjectionMatrix);
+            cameraConstants.CopyCameraPosition(uniformData.CameraPosition);
             uniformData.CameraPosition[3] = 0.0f;
 
-            // ViewProjection行列を計算して視錐台平面を抽出
-            Matrix4x4 vpMat = projMat * viewMat;
-            float viewProj[16];
-            std::memcpy(viewProj, &vpMat, sizeof(float) * 16);
-            ExtractFrustumPlanes(viewProj, uniformData.FrustumPlanes);
+            const ClipSpaceFrustumPlanes frustumPlanes =
+                MatrixUtils::ExtractClipSpaceFrustumPlanes(cameraConstants.ViewProjectionMatrix,
+                                                           ClipSpaceDepthRange::ZeroToOne);
+            frustumPlanes.CopyToShaderData(uniformData.FrustumPlanes);
 
             uniformData.TotalClusterCount = gpuData->ClusterCount;
             uniformData.MaxDrawCount = m_Settings.MaxDrawCount;
@@ -516,7 +505,7 @@ namespace NorvesLib::Core::Rendering
             uniformData.ScreenHeight = static_cast<float>(m_CurrentHeight);
 
             // projectionFactor = screenHeight / (2 * tan(fov/2))
-            float halfFovTan = std::tan(fovRadians * 0.5f);
+            float halfFovTan = std::tan(cameraConstants.FieldOfViewRadians * 0.5f);
             uniformData.ProjectionFactor = (halfFovTan > 1e-6f)
                                                ? static_cast<float>(m_CurrentHeight) / (2.0f * halfFovTan)
                                                : 1.0f;
@@ -593,12 +582,9 @@ namespace NorvesLib::Core::Rendering
 
             PerObjectUBO perObject{};
             std::memcpy(perObject.World, instance.WorldMatrix, sizeof(float) * 16);
-            MatrixUtils::TransposeToShaderData(viewMat, perObject.View);
-            MatrixUtils::TransposeToShaderData(projMat, perObject.Projection);
-            perObject.CameraPosition[0] = cam.PositionX;
-            perObject.CameraPosition[1] = cam.PositionY;
-            perObject.CameraPosition[2] = cam.PositionZ;
-            perObject.CameraPosition[3] = 1.0f;
+            cameraConstants.CopyShaderView(perObject.View);
+            cameraConstants.CopyShaderProjection(perObject.Projection);
+            cameraConstants.CopyCameraPosition(perObject.CameraPosition);
 
             // マテリアル値を設定
             const auto &mat = gpuData->Material;
@@ -1179,67 +1165,6 @@ namespace NorvesLib::Core::Rendering
                                 RHI::ResourceState::UnorderedAccess,
                                 RHI::ResourceState::ShaderResource,
                                 m_HiZMipCount - 1, 0, 1, 0);
-    }
-
-    // ========================================
-    // 視錐台平面抽出（Gribb/Hartmann法）
-    // ========================================
-
-    void MegaGeometryPass::ExtractFrustumPlanes(const float *vp, float planes[6][4])
-    {
-        // ViewProjection行列（列優先）から6つの視錐台平面を抽出
-        // 各平面: ax + by + cz + d = 0 (法線は内側を向く)
-
-        // Left plane
-        planes[0][0] = vp[3] + vp[0];
-        planes[0][1] = vp[7] + vp[4];
-        planes[0][2] = vp[11] + vp[8];
-        planes[0][3] = vp[15] + vp[12];
-
-        // Right plane
-        planes[1][0] = vp[3] - vp[0];
-        planes[1][1] = vp[7] - vp[4];
-        planes[1][2] = vp[11] - vp[8];
-        planes[1][3] = vp[15] - vp[12];
-
-        // Bottom plane
-        planes[2][0] = vp[3] + vp[1];
-        planes[2][1] = vp[7] + vp[5];
-        planes[2][2] = vp[11] + vp[9];
-        planes[2][3] = vp[15] + vp[13];
-
-        // Top plane
-        planes[3][0] = vp[3] - vp[1];
-        planes[3][1] = vp[7] - vp[5];
-        planes[3][2] = vp[11] - vp[9];
-        planes[3][3] = vp[15] - vp[13];
-
-        // Near plane
-        planes[4][0] = vp[3] + vp[2];
-        planes[4][1] = vp[7] + vp[6];
-        planes[4][2] = vp[11] + vp[10];
-        planes[4][3] = vp[15] + vp[14];
-
-        // Far plane
-        planes[5][0] = vp[3] - vp[2];
-        planes[5][1] = vp[7] - vp[6];
-        planes[5][2] = vp[11] - vp[10];
-        planes[5][3] = vp[15] - vp[14];
-
-        // 正規化
-        for (int i = 0; i < 6; ++i)
-        {
-            float len = std::sqrt(planes[i][0] * planes[i][0] +
-                                  planes[i][1] * planes[i][1] +
-                                  planes[i][2] * planes[i][2]);
-            if (len > 1e-8f)
-            {
-                planes[i][0] /= len;
-                planes[i][1] /= len;
-                planes[i][2] /= len;
-                planes[i][3] /= len;
-            }
-        }
     }
 
 } // namespace NorvesLib::Core::Rendering
