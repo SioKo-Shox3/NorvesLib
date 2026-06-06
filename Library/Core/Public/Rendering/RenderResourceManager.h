@@ -28,6 +28,7 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    struct CookedTextureAsyncPayload;
 
     // ========================================
     // リソース作成情報
@@ -82,6 +83,19 @@ namespace NorvesLib::Core::Rendering
         bool bDepthStencil = false;
 
         Container::String DebugName;
+    };
+
+    enum class TextureAssetFallbackMode : uint8_t
+    {
+        FailOnCookedFailure,
+        DebugAllowLooseFallback
+    };
+
+    enum class TextureLoadSource : uint8_t
+    {
+        LegacyFile,
+        LooseStbi,
+        CookedNvtex
     };
 
     /**
@@ -235,12 +249,12 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief コンストラクタ
          */
-        RenderResourceManager() = default;
+        RenderResourceManager();
 
         /**
          * @brief デストラクタ
          */
-        ~RenderResourceManager() = default;
+        ~RenderResourceManager();
 
         /**
          * @brief 初期化
@@ -325,6 +339,12 @@ namespace NorvesLib::Core::Rendering
          */
         TextureHandle LoadTexture(const Container::String &path);
 
+        bool SetTextureAssetRoot(const Container::String &assetRoot);
+        bool LoadTextureAssetManifestFromJsonText(const Container::String &jsonText,
+                                                  const Container::String &sourceName = Container::String());
+        bool ResetTextureAssetManifest();
+        bool SetTextureAssetFallbackMode(TextureAssetFallbackMode mode);
+
         // ========================================
         // 非同期テクスチャ読み込み
         // ========================================
@@ -336,8 +356,14 @@ namespace NorvesLib::Core::Rendering
         {
             Container::String Path;                      ///< リクエストパス
             Container::String ResolvedPath;              ///< 解決済みパス
+            Container::String CacheKey;                  ///< キャッシュ/ペンディングキー
+            Container::AnsiString LogicalPath;           ///< 正規化済み論理パス
             TextureCreateInfo CreateInfo;                ///< テクスチャ作成情報
             Container::VariableArray<uint8_t> PixelData; ///< デコード済みピクセルデータ
+            Container::TSharedPtr<CookedTextureAsyncPayload> CookedTexture; ///< cooked texture payload
+            TextureLoadSource Source = TextureLoadSource::LegacyFile;       ///< 読み込み元
+            TextureAssetFallbackMode FallbackMode = TextureAssetFallbackMode::FailOnCookedFailure; ///< cooked failure fallback
+            uint64_t AssetGeneration = 0;                ///< asset設定世代
             bool bSuccess = false;                       ///< 読み込み成功フラグ
         };
 
@@ -348,6 +374,7 @@ namespace NorvesLib::Core::Rendering
         {
             uint32_t RequestId = 0;                                  ///< リクエストID
             Container::String Path;                                  ///< テクスチャパス
+            Container::String CacheKey;                              ///< キャッシュ/ペンディングキー
             Thread::TaskPtr Task;                                    ///< ジョブシステムタスク
             AsyncTextureResult Result;                               ///< 読み込み結果
             Container::VariableArray<NorvesLib::Core::Delegate<void, TextureHandle>> Callbacks; ///< 完了コールバック群
@@ -680,6 +707,8 @@ namespace NorvesLib::Core::Rendering
         ResourceStats GetResourceStats() const;
 
     private:
+        struct TextureAssetState;
+
         // コピー・ムーブ禁止
         RenderResourceManager(const RenderResourceManager &) = delete;
         RenderResourceManager &operator=(const RenderResourceManager &) = delete;
@@ -735,11 +764,19 @@ namespace NorvesLib::Core::Rendering
         // 非同期テクスチャ読み込みキュー
         Container::VariableArray<Container::TSharedPtr<AsyncTextureRequest>> m_PendingTextureLoads;
         Container::Map<Container::String, Container::TSharedPtr<AsyncTextureRequest>> m_PendingTextureLoadsByPath;
+        uint32_t m_ActiveTextureLoadFlushCount = 0;
         mutable Thread::Mutex m_AsyncLoadMutex;
         Thread::Atomic<uint32_t> m_NextAsyncRequestId{1};
 
+        // Texture asset resolution state. Lock order when nested: texture asset -> async load -> resource.
+        Container::TUniquePtr<TextureAssetState> m_TextureAssetState;
+        mutable Thread::Mutex m_TextureAssetMutex;
+
         // パス解決ヘルパー（LoadTextureとLoadTextureAsyncで共通使用）
         Container::String ResolveTexturePath(const Container::String &path) const;
+        TextureAssetState &GetTextureAssetStateLocked();
+        TextureHandle RegisterUploadedTexture(Container::TSharedPtr<RHI::ITexture> rhiTexture,
+                                              const TextureCreateInfo &createInfo);
 
         // ハンドルID生成用
         Thread::Atomic<uint64_t> m_NextHandleId{1};

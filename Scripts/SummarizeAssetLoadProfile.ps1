@@ -14,6 +14,8 @@ $DurationKeys = @(
     "read_ms",
     "decode_ms",
     "copy_ms",
+    "resolve_ms",
+    "parse_ms",
     "texture_create_ms",
     "upload_ms",
     "mipgen_ms",
@@ -353,7 +355,18 @@ Write-MarkdownTable `
 Write-Output ""
 
 $textureRecords = $records | Where-Object {
-    $_.Stage -in @("texture_async_worker", "gltf_image_read", "gltf_image_decode", "gltf_image_copy")
+    $_.Stage -in @(
+        "texture_sync_stbi_file",
+        "texture_sync_stbi_memory",
+        "texture_async_worker",
+        "texture_asset_resolve",
+        "texture_cooked_parse",
+        "texture_cooked_upload",
+        "texture_async_upload_fallback_decode",
+        "gltf_image_read",
+        "gltf_image_decode",
+        "gltf_image_copy"
+    )
 }
 
 $textureRows = @()
@@ -363,37 +376,90 @@ foreach ($group in ($textureRecords | Group-Object { Get-Field $_.Fields "path" 
     }
 
     $items = @($group.Group)
+    $source = Get-FirstFieldFromStages $items @(
+        "texture_cooked_upload",
+        "texture_cooked_parse",
+        "texture_async_worker",
+        "texture_sync_stbi_file",
+        "texture_sync_stbi_memory",
+        "texture_asset_resolve",
+        "texture_async_upload_fallback_decode"
+    ) "source"
+
     $readMs = (Sum-StageMetric -Records $items -Stage "texture_async_worker" -Metric "read_ms")
+    $syncFileReadMs = (Sum-StageMetric -Records $items -Stage "texture_sync_stbi_file" -Metric "ms" -UseMsField)
+    if ($null -ne $syncFileReadMs) {
+        $readMs = (0.0 + $(if ($null -ne $readMs) { $readMs } else { 0.0 }) + $syncFileReadMs)
+    }
+
     $gltfReadMs = (Sum-StageMetric -Records $items -Stage "gltf_image_read" -Metric "ms" -UseMsField)
     if ($null -ne $gltfReadMs) {
         $readMs = (0.0 + $(if ($null -ne $readMs) { $readMs } else { 0.0 }) + $gltfReadMs)
     }
 
     $decodeMs = (Sum-StageMetric -Records $items -Stage "texture_async_worker" -Metric "decode_ms")
+    $syncMemoryDecodeMs = (Sum-StageMetric -Records $items -Stage "texture_sync_stbi_memory" -Metric "decode_ms")
+    if ($null -ne $syncMemoryDecodeMs) {
+        $decodeMs = (0.0 + $(if ($null -ne $decodeMs) { $decodeMs } else { 0.0 }) + $syncMemoryDecodeMs)
+    }
+
+    $fallbackDecodeMs = (Sum-StageMetric -Records $items -Stage "texture_async_upload_fallback_decode" -Metric "decode_ms")
+    if ($null -ne $fallbackDecodeMs) {
+        $decodeMs = (0.0 + $(if ($null -ne $decodeMs) { $decodeMs } else { 0.0 }) + $fallbackDecodeMs)
+    }
+
     $gltfDecodeMs = (Sum-StageMetric -Records $items -Stage "gltf_image_decode" -Metric "ms" -UseMsField)
     if ($null -ne $gltfDecodeMs) {
         $decodeMs = (0.0 + $(if ($null -ne $decodeMs) { $decodeMs } else { 0.0 }) + $gltfDecodeMs)
     }
 
     $copyMs = (Sum-StageMetric -Records $items -Stage "texture_async_worker" -Metric "copy_ms")
+    $syncMemoryCopyMs = (Sum-StageMetric -Records $items -Stage "texture_sync_stbi_memory" -Metric "copy_ms")
+    if ($null -ne $syncMemoryCopyMs) {
+        $copyMs = (0.0 + $(if ($null -ne $copyMs) { $copyMs } else { 0.0 }) + $syncMemoryCopyMs)
+    }
+
+    $fallbackCopyMs = (Sum-StageMetric -Records $items -Stage "texture_async_upload_fallback_decode" -Metric "copy_ms")
+    if ($null -ne $fallbackCopyMs) {
+        $copyMs = (0.0 + $(if ($null -ne $copyMs) { $copyMs } else { 0.0 }) + $fallbackCopyMs)
+    }
+
     $gltfCopyMs = (Sum-StageMetric -Records $items -Stage "gltf_image_copy" -Metric "ms" -UseMsField)
     if ($null -ne $gltfCopyMs) {
         $copyMs = (0.0 + $(if ($null -ne $copyMs) { $copyMs } else { 0.0 }) + $gltfCopyMs)
     }
 
+    $resolveMs = (Sum-StageMetric -Records $items -Stage "texture_asset_resolve" -Metric "resolve_ms")
+    $workerResolveMs = (Sum-StageMetric -Records $items -Stage "texture_async_worker" -Metric "resolve_ms")
+    if ($null -ne $workerResolveMs) {
+        $resolveMs = (0.0 + $(if ($null -ne $resolveMs) { $resolveMs } else { 0.0 }) + $workerResolveMs)
+    }
+
+    $parseMs = (Sum-StageMetric -Records $items -Stage "texture_cooked_parse" -Metric "parse_ms")
+    $workerParseMs = (Sum-StageMetric -Records $items -Stage "texture_async_worker" -Metric "parse_ms")
+    if ($null -ne $workerParseMs) {
+        $parseMs = (0.0 + $(if ($null -ne $parseMs) { $parseMs } else { 0.0 }) + $workerParseMs)
+    }
+
+    $uploadMs = (Sum-StageMetric -Records $items -Stage "texture_cooked_upload" -Metric "upload_ms")
+
     $stageNames = ($items | ForEach-Object { $_.Stage } | Sort-Object -Unique) -join ","
-    $width = Get-FirstFieldFromStages $items @("texture_async_worker", "gltf_image_decode", "gltf_image_copy") "width"
-    $height = Get-FirstFieldFromStages $items @("texture_async_worker", "gltf_image_decode", "gltf_image_copy") "height"
-    $channels = Get-FirstFieldFromStages $items @("texture_async_worker", "gltf_image_decode") "channels"
+    $width = Get-FirstFieldFromStages $items @("texture_cooked_upload", "texture_async_worker", "texture_sync_stbi_file", "texture_sync_stbi_memory", "gltf_image_decode", "gltf_image_copy") "width"
+    $height = Get-FirstFieldFromStages $items @("texture_cooked_upload", "texture_async_worker", "texture_sync_stbi_file", "texture_sync_stbi_memory", "gltf_image_decode", "gltf_image_copy") "height"
+    $channels = Get-FirstFieldFromStages $items @("texture_async_worker", "texture_sync_stbi_file", "texture_sync_stbi_memory", "gltf_image_decode") "channels"
 
     $textureRows += ,@(
         $group.Name,
+        $source,
         $stageNames,
         (Format-Number $readMs),
+        (Format-Number $resolveMs),
+        (Format-Number $parseMs),
         (Format-Number $decodeMs),
         (Format-Number $copyMs),
+        (Format-Number $uploadMs),
         (Format-Integer (Get-MaxFieldFromRecords $items @("file_bytes", "bytes"))),
-        (Format-Integer (Get-MaxFieldFromRecords $items @("pixel_bytes"))),
+        (Format-Integer (Get-MaxFieldFromRecords $items @("pixel_bytes", "uploaded_bytes"))),
         $width,
         $height,
         $channels
@@ -404,7 +470,7 @@ Write-Output "## Texture Source"
 Write-Output ""
 if ($textureRows.Count -gt 0) {
     Write-MarkdownTable `
-        -Headers @("path", "stages", "read_ms", "decode_ms", "copy_ms", "file_bytes", "pixel_bytes", "width", "height", "channels") `
+        -Headers @("path", "source", "stages", "read_ms", "resolve_ms", "parse_ms", "decode_ms", "copy_ms", "upload_ms", "file_bytes", "pixel_bytes", "width", "height", "channels") `
         -Rows $textureRows
 }
 else {
