@@ -13,6 +13,7 @@ set(PRIVATE_SOURCES
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
     Private/Asset/AssetPath.cpp
+    Private/Asset/AssetSystem.cpp
     Private/Object/Object.cpp
     Private/Object/UnknownImpl.cpp
     Private/Object/ObjectPropertyOps.cpp
@@ -144,6 +145,8 @@ set(PUBLIC_HEADERS
     Public/Asset/AssetManifest.h
     Public/Asset/AssetPackageFormat.h
     Public/Asset/AssetReadRequest.h
+    Public/Asset/AssetResolveResult.h
+    Public/Asset/AssetSystem.h
     Public/Asset/AssetPath.h
     Public/Object/Object.h
     Public/Text/IdentityPool.h
