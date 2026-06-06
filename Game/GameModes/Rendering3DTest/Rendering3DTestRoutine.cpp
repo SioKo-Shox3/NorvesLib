@@ -416,8 +416,11 @@ namespace Game::GameModes
             data.m_bBoulderModelLoaded = false;
             data.m_bBoulderModelLoadPending = true;
             data.m_bBoulderModelLoadCompleted = false;
+            const String modelPath = data.m_ModelPath.empty()
+                                         ? String("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf")
+                                         : data.m_ModelPath;
             data.m_BoulderLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
-                "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
+                modelPath,
                 resourceManager,
                 [&data](ModelHandle handle)
                 {
@@ -435,7 +438,7 @@ namespace Game::GameModes
             }
             else
             {
-                NORVES_LOG_INFO("Rendering3DTest", "Boulder model async load started");
+                NORVES_LOG_INFO("Rendering3DTest", "Boulder model async load started: %s", modelPath.c_str());
             }
         }
     }

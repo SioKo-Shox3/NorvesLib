@@ -13,13 +13,17 @@ param(
 
     [string]$SpecPath = "Assets/AssetSets/Rendering3DTestSilverTextures.json",
 
+    [string]$ModelPath = "",
+
+    [ValidateSet("Direct", "GltfPrepared")]
+    [string]$ExpectedLoadMode = "Direct",
+
     [string]$LogPath = ".\Game.log"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ExpectedTextureCount = 5
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 
 function Test-IsUncPath {
@@ -332,8 +336,8 @@ function Read-TextureLogPathsFromSpec {
     }
 
     $textures = @($texturesValue)
-    if ($textures.Count -ne $ExpectedTextureCount) {
-        throw "Cooked texture Game smoke expects exactly $ExpectedTextureCount texture specs, got $($textures.Count)"
+    if ($textures.Count -eq 0) {
+        throw "Cooked texture Game smoke expects at least one texture spec"
     }
 
     $logPaths = @()
@@ -350,9 +354,33 @@ function Read-TextureLogPathsFromSpec {
             throw "Texture asset set spec contains duplicate logical_path: $logicalPath"
         }
         $seenLogicalPaths[$logicalPath] = $true
+
+        $sourcePath = Normalize-ManifestPath `
+            -Path (Get-JsonPropertyValue -Object $textures[$i] -Name "source_path" -Context $context) `
+            -Name "$context source_path"
+        $resolvedSourcePath = Resolve-RepoRelativePath -Path $sourcePath -Name "$context source_path"
+        if (-not (Test-Path -LiteralPath $resolvedSourcePath -PathType Leaf)) {
+            throw "$context source_path not found: $resolvedSourcePath"
+        }
+
+        $usage = "standard"
+        if (Test-JsonPropertyExists -Object $textures[$i] -Name "usage") {
+            $usageValue = Get-JsonPropertyValue -Object $textures[$i] -Name "usage" -Context $context
+            if (($usageValue -isnot [string]) -or [string]::IsNullOrWhiteSpace($usageValue)) {
+                throw "$context usage must be a non-empty string when present"
+            }
+            $usage = $usageValue.Trim()
+        }
+        if (($usage -ne "standard") -and ($usage -ne "arm")) {
+            throw "$context usage must be standard or arm: $usage"
+        }
+
         $logPaths += [pscustomobject]@{
             RequestPath = $requestPath
             LogicalPath = $logicalPath
+            SourcePath = $sourcePath
+            ResolvedSourcePath = $resolvedSourcePath
+            Usage = $usage
         }
     }
 
@@ -367,6 +395,14 @@ $AssetCookPath = Assert-ExistingFile -Path $AssetCookExe -Name "AssetCook"
 $GamePath = Assert-ExistingFile -Path $GameExe -Name "Game"
 $ResolvedSpecPath = Assert-ExistingFile -Path $SpecPath -Name "Texture asset set spec"
 $TextureLogPaths = Read-TextureLogPathsFromSpec -ResolvedSpecPath $ResolvedSpecPath
+$GameModelPath = ""
+if (-not [string]::IsNullOrWhiteSpace($ModelPath)) {
+    $GameModelPath = Normalize-ManifestPath -Path $ModelPath -Name "ModelPath"
+    [void](Assert-ExistingFile -Path $GameModelPath -Name "ModelPath")
+}
+if (($ExpectedLoadMode -eq "GltfPrepared") -and [string]::IsNullOrWhiteSpace($GameModelPath)) {
+    throw "GltfPrepared smoke requires -ModelPath"
+}
 $CookTextureAssetSetScript = Assert-ExistingFile `
     -Path "Scripts/CookTextureAssetSet.ps1" `
     -Name "CookTextureAssetSet helper"
@@ -417,16 +453,21 @@ if (Test-Path -LiteralPath $ResolvedLogPath) {
     Remove-Item -LiteralPath $ResolvedLogPath -Force
 }
 
+$GameArguments = @(
+    "--exit-after-frames=$FrameCount",
+    "--texture-asset-root", $RuntimeRoot,
+    "--texture-asset-manifest", $ManifestPath
+)
+if (-not [string]::IsNullOrWhiteSpace($GameModelPath)) {
+    $GameArguments += @("--rendering3dtest-model", $GameModelPath)
+}
+
 Invoke-CheckedProcess `
     -ExePath $GamePath `
     -WorkingDirectory $RepoRoot `
     -TimeoutSeconds $TimeoutSeconds `
     -Name "Game" `
-    -Arguments @(
-        "--exit-after-frames=$FrameCount",
-        "--texture-asset-root", $RuntimeRoot,
-        "--texture-asset-manifest", $ManifestPath
-    )
+    -Arguments $GameArguments
 
 if (-not (Test-Path -LiteralPath $ResolvedLogPath -PathType Leaf)) {
     throw "Game log was not written: $ResolvedLogPath"
@@ -435,22 +476,72 @@ if (-not (Test-Path -LiteralPath $ResolvedLogPath -PathType Leaf)) {
 $LogLines = Get-Content -LiteralPath $ResolvedLogPath
 $CookedSourceMatchCount = 0
 $CookedUploadMatchCount = 0
+$PreparedUploadMatchCount = 0
+$PreparedFinalizeMatchCount = 0
+$PreparedSplitMatchCount = 0
 
 foreach ($textureLogPath in $TextureLogPaths) {
     $escapedRequestPath = [regex]::Escape($textureLogPath.RequestPath)
     $escapedLogicalPath = [regex]::Escape($textureLogPath.LogicalPath)
 
-    $cookedSourceMatches = Require-LogMatch `
-        -Lines $LogLines `
-        -Pattern "stage=texture_asset_resolve (?=.*source=cooked_nvtex)(?=.*path=`"$escapedRequestPath`")(?=.*logical_path=`"$escapedLogicalPath`")(?=.*success=1)" `
-        -Reason "Expected successful cooked nvtex source log for $($textureLogPath.RequestPath)"
-    $CookedSourceMatchCount += $cookedSourceMatches.Count
+    if ($ExpectedLoadMode -eq "Direct") {
+        $cookedSourceMatches = Require-LogMatch `
+            -Lines $LogLines `
+            -Pattern "stage=texture_asset_resolve (?=.*source=cooked_nvtex)(?=.*path=`"$escapedRequestPath`")(?=.*logical_path=`"$escapedLogicalPath`")(?=.*success=1)" `
+            -Reason "Expected successful cooked nvtex source log for $($textureLogPath.RequestPath)"
+        $CookedSourceMatchCount += $cookedSourceMatches.Count
 
-    $cookedUploadMatches = Require-LogMatch `
+        $cookedUploadMatches = Require-LogMatch `
+            -Lines $LogLines `
+            -Pattern "stage=texture_cooked_upload (?=.*source=cooked_nvtex)(?=.*path=`"$escapedRequestPath`")(?=.*logical_path=`"$escapedLogicalPath`")(?=.*success=1)" `
+            -Reason "Expected successful cooked texture upload log for $($textureLogPath.RequestPath)"
+        $CookedUploadMatchCount += $cookedUploadMatches.Count
+
+        Forbid-LogMatch `
+            -Lines $LogLines `
+            -Pattern "(?=.*source=loose_stbi)(?=.*path=`"$escapedRequestPath`")" `
+            -Reason "Unexpected loose_stbi source log for $($textureLogPath.RequestPath)"
+        continue
+    }
+
+    $prepareMatches = Require-LogMatch `
         -Lines $LogLines `
-        -Pattern "stage=texture_cooked_upload (?=.*source=cooked_nvtex)(?=.*path=`"$escapedRequestPath`")(?=.*logical_path=`"$escapedLogicalPath`")(?=.*success=1)" `
-        -Reason "Expected successful cooked texture upload log for $($textureLogPath.RequestPath)"
-    $CookedUploadMatchCount += $cookedUploadMatches.Count
+        -Pattern "stage=texture_prepare_asset (?=.*path=`"$escapedRequestPath`")(?=.*logical_path=`"$escapedLogicalPath`")(?=.*status=CookedReady)" `
+        -Reason "Expected CookedReady prepared texture log for $($textureLogPath.RequestPath)"
+    $CookedSourceMatchCount += $prepareMatches.Count
+
+    if ($textureLogPath.Usage -eq "arm") {
+        $splitMatches = Require-LogMatch `
+            -Lines $LogLines `
+            -Pattern "stage=texture_prepared_split (?=.*path=`"$escapedRequestPath`")(?=.*logical_path=`"$escapedLogicalPath`")(?=.*success=1)" `
+            -Reason "Expected prepared ARM split log for $($textureLogPath.RequestPath)"
+        $PreparedSplitMatchCount += $splitMatches.Count
+    }
+    else {
+        $preparedUploadMatches = Require-LogMatch `
+            -Lines $LogLines `
+            -Pattern "stage=texture_prepared_cooked_upload (?=.*source=cooked_nvtex)(?=.*path=`"$escapedRequestPath`")(?=.*logical_path=`"$escapedLogicalPath`")(?=.*success=1)" `
+            -Reason "Expected prepared cooked upload log for $($textureLogPath.RequestPath)"
+        $PreparedUploadMatchCount += $preparedUploadMatches.Count
+
+        $preparedFinalizeMatches = Require-LogMatch `
+            -Lines $LogLines `
+            -Pattern "stage=texture_prepared_finalize (?=.*source=cooked_nvtex)(?=.*path=`"$escapedRequestPath`")(?=.*success=1)" `
+            -Reason "Expected prepared finalize log for $($textureLogPath.RequestPath)"
+        $PreparedFinalizeMatchCount += $preparedFinalizeMatches.Count
+    }
+
+    $sourcePathVariants = @(
+        $textureLogPath.ResolvedSourcePath,
+        ($textureLogPath.ResolvedSourcePath -replace '\\', '/')
+    ) | Select-Object -Unique
+    foreach ($sourcePathVariant in $sourcePathVariants) {
+        $escapedSourcePath = [regex]::Escape($sourcePathVariant)
+        Forbid-LogMatch `
+            -Lines $LogLines `
+            -Pattern "stage=gltf_image_(read|decode) (?=.*path=`"$escapedSourcePath`")" `
+            -Reason "Unexpected glTF image read/decode for cooked-ready source path $sourcePathVariant"
+    }
 
     Forbid-LogMatch `
         -Lines $LogLines `
@@ -458,10 +549,18 @@ foreach ($textureLogPath in $TextureLogPaths) {
         -Reason "Unexpected loose_stbi source log for $($textureLogPath.RequestPath)"
 }
 
-Require-LogMatch `
-    -Lines $LogLines `
-    -Pattern "Silver PBR material textures loaded" `
-    -Reason "Expected Silver PBR material textures loaded log"
+if ($ExpectedLoadMode -eq "Direct") {
+    Require-LogMatch `
+        -Lines $LogLines `
+        -Pattern "Silver PBR material textures loaded" `
+        -Reason "Expected Silver PBR material textures loaded log"
+}
+else {
+    Require-LogMatch `
+        -Lines $LogLines `
+        -Pattern "Boulder model loaded and added to World" `
+        -Reason "Expected glTF model loaded log"
+}
 
 Write-Host "Cooked texture Game smoke passed."
 Write-Host "Runtime root: $RuntimeRoot"
@@ -469,3 +568,6 @@ Write-Host "Manifest: $ManifestPath"
 Write-Host "Log: $ResolvedLogPath"
 Write-Host "Cooked source logs: $CookedSourceMatchCount"
 Write-Host "Cooked upload logs: $CookedUploadMatchCount"
+Write-Host "Prepared upload logs: $PreparedUploadMatchCount"
+Write-Host "Prepared finalize logs: $PreparedFinalizeMatchCount"
+Write-Host "Prepared split logs: $PreparedSplitMatchCount"

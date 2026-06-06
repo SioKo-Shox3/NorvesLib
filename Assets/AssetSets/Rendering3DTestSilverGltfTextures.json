@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "Rendering3DTestSilverGltfTextures",
+  "package_root": "Cooked/SilverGltf",
+  "default_variant": "default",
+  "textures": [
+    {
+      "logical_path": "Assets/Models/Rendering3DTestSilverGltf/textures/silver_albedo.png",
+      "source_path": "Assets/Models/Rendering3DTestSilverGltf/textures/silver_albedo.png",
+      "format": "nvtex.v0.rgba8.srgb",
+      "usage": "standard",
+      "package_name": "silver_albedo.nvpkg",
+      "entry_name": "Assets/Models/Rendering3DTestSilverGltf/textures/silver_albedo.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Rendering3DTestSilverGltf/textures/silver_normal-ogl.png",
+      "source_path": "Assets/Models/Rendering3DTestSilverGltf/textures/silver_normal-ogl.png",
+      "format": "nvtex.v0.rgba8.linear",
+      "usage": "standard",
+      "package_name": "silver_normal-ogl.nvpkg",
+      "entry_name": "Assets/Models/Rendering3DTestSilverGltf/textures/silver_normal-ogl.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Rendering3DTestSilverGltf/textures/silver_arm.png",
+      "source_path": "Assets/Models/Rendering3DTestSilverGltf/textures/silver_arm.png",
+      "format": "nvtex.v0.rgba8.linear",
+      "usage": "arm",
+      "package_name": "silver_arm.nvpkg",
+      "entry_name": "Assets/Models/Rendering3DTestSilverGltf/textures/silver_arm.nvtex"
+    }
+  ]
+}

@@ -92,6 +92,7 @@ namespace Game::GameModes
         // ========================================
         // glTF Model（Boulder）
         // ========================================
+        String m_ModelPath;
         NorvesLib::Core::Rendering::ModelHandle m_BoulderModelHandle;
         uint32_t m_BoulderLoadRequestId = 0;
         bool m_bBoulderModelLoaded = false;

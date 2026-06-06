@@ -47,6 +47,11 @@ namespace NorvesLib::Core::Resource
                                                  uint32_t maxLoadsPerFrame = 1);
 
         /**
+         * @brief Detaches and waits for pending asynchronous glTF model loads without invoking callbacks.
+         */
+        static void CancelPendingModelLoadsAndWait();
+
+        /**
          * @brief Gets the number of pending asynchronous glTF model loads.
          * @return Pending request count.
          */
