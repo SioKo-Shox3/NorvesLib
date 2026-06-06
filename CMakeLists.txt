@@ -15,6 +15,9 @@ endif()
 # NorvesLibライブラリ
 add_subdirectory(Library)
 
+# ツール
+add_subdirectory(Tools)
+
 # Gameアプリケーション
 add_subdirectory(Game)
 
