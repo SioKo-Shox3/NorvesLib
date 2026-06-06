@@ -140,6 +140,7 @@ set(PUBLIC_HEADERS
     Public/CoreModule.h
     Public/Asset/AssetBlob.h
     Public/Asset/AssetFileReader.h
+    Public/Asset/AssetPackageFormat.h
     Public/Asset/AssetReadRequest.h
     Public/Asset/AssetPath.h
     Public/Object/Object.h
