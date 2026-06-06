@@ -94,7 +94,29 @@ namespace NorvesLib::RHI::Vulkan
         height = std::max(1u, desc.Height >> mipLevel);
         depth = (desc.Dimension == TextureDimension::Texture3D) ? std::max(1u, desc.Depth >> mipLevel) : 1;
     }
+    uint32_t ResolveSubresourceCount(uint32_t baseIndex,
+                                     uint32_t requestedCount,
+                                     uint32_t totalCount,
+                                     uint32_t remainingSentinel,
+                                     const char *label)
+    {
+        if (totalCount == 0 || baseIndex >= totalCount)
+        {
+            throw std::runtime_error(label);
+        }
 
+        if (requestedCount == remainingSentinel)
+        {
+            return totalCount - baseIndex;
+        }
+
+        if (requestedCount == 0 || requestedCount > totalCount - baseIndex)
+        {
+            throw std::runtime_error(label);
+        }
+
+        return requestedCount;
+    }
     VulkanTexture::VulkanTexture(TSharedPtr<VulkanDevice> device, const TextureDesc &desc)
         : m_device(device), m_desc(desc), m_bOwnsImage(true)
     {
@@ -646,9 +668,22 @@ namespace NorvesLib::RHI::Vulkan
         };
 
         const uint32_t mipLevelBegin = subresourceRange.baseMipLevel;
-        const uint32_t mipLevelEnd = subresourceRange.baseMipLevel + subresourceRange.levelCount;
+        const uint32_t mipLevelCount = ResolveSubresourceCount(
+            subresourceRange.baseMipLevel,
+            subresourceRange.levelCount,
+            m_desc.MipLevels,
+            VK_REMAINING_MIP_LEVELS,
+            "無効なミップレベル範囲です");
+        const uint32_t mipLevelEnd = mipLevelBegin + mipLevelCount;
+
         const uint32_t arrayLayerBegin = subresourceRange.baseArrayLayer;
-        const uint32_t arrayLayerEnd = subresourceRange.baseArrayLayer + subresourceRange.layerCount;
+        const uint32_t arrayLayerCount = ResolveSubresourceCount(
+            subresourceRange.baseArrayLayer,
+            subresourceRange.layerCount,
+            GetTotalArrayLayerCount(),
+            VK_REMAINING_ARRAY_LAYERS,
+            "無効な配列レイヤー範囲です");
+        const uint32_t arrayLayerEnd = arrayLayerBegin + arrayLayerCount;
         bool bTransitioned = false;
 
         for (uint32_t mipLevel = mipLevelBegin; mipLevel < mipLevelEnd; ++mipLevel)
