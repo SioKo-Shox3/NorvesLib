@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "name": "Rendering3DTestSilverTextures",
+  "package_root": "Cooked/Silver",
+  "default_variant": "default",
+  "textures": [
+    {
+      "logical_path": "Assets/Textures/Silver/silver_albedo.png",
+      "source_path": "Assets/Textures/Silver/silver_albedo.png",
+      "format": "nvtex.v0.rgba8.srgb",
+      "package_name": "silver_albedo.nvpkg",
+      "entry_name": "Assets/Textures/Silver/silver_albedo.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/Silver/silver_normal-ogl.png",
+      "source_path": "Assets/Textures/Silver/silver_normal-ogl.png",
+      "format": "nvtex.v0.rgba8.linear",
+      "package_name": "silver_normal-ogl.nvpkg",
+      "entry_name": "Assets/Textures/Silver/silver_normal-ogl.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/Silver/silver_metallic.png",
+      "source_path": "Assets/Textures/Silver/silver_metallic.png",
+      "format": "nvtex.v0.r8.linear",
+      "package_name": "silver_metallic.nvpkg",
+      "entry_name": "Assets/Textures/Silver/silver_metallic.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/Silver/silver_roughness.png",
+      "source_path": "Assets/Textures/Silver/silver_roughness.png",
+      "format": "nvtex.v0.r8.linear",
+      "package_name": "silver_roughness.nvpkg",
+      "entry_name": "Assets/Textures/Silver/silver_roughness.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/Silver/silver_ao.png",
+      "source_path": "Assets/Textures/Silver/silver_ao.png",
+      "format": "nvtex.v0.r8.linear",
+      "package_name": "silver_ao.nvpkg",
+      "entry_name": "Assets/Textures/Silver/silver_ao.nvtex"
+    }
+  ]
+}

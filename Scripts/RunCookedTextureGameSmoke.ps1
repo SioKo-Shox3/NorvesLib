@@ -11,6 +11,8 @@ param(
 
     [string]$SmokeDir = ".\build\CookedTextureGameSmoke\Debug",
 
+    [string]$SpecPath = "Assets/AssetSets/Rendering3DTestSilverTextures.json",
+
     [string]$LogPath = ".\Game.log"
 )
 
@@ -18,48 +20,58 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ExpectedTextureCount = 5
-$TextureSpecs = @(
-    [pscustomobject]@{
-        LogicalPath = "Assets/Textures/Silver/silver_albedo.png"
-        SourcePath = ".\Assets\Textures\Silver\silver_albedo.png"
-        Format = "nvtex.v0.rgba8.srgb"
-        PackageName = "silver_albedo.nvpkg"
-        EntryPath = "Assets/Textures/Silver/silver_albedo.nvtex"
-    },
-    [pscustomobject]@{
-        LogicalPath = "Assets/Textures/Silver/silver_normal-ogl.png"
-        SourcePath = ".\Assets\Textures\Silver\silver_normal-ogl.png"
-        Format = "nvtex.v0.rgba8.linear"
-        PackageName = "silver_normal-ogl.nvpkg"
-        EntryPath = "Assets/Textures/Silver/silver_normal-ogl.nvtex"
-    },
-    [pscustomobject]@{
-        LogicalPath = "Assets/Textures/Silver/silver_metallic.png"
-        SourcePath = ".\Assets\Textures\Silver\silver_metallic.png"
-        Format = "nvtex.v0.r8.linear"
-        PackageName = "silver_metallic.nvpkg"
-        EntryPath = "Assets/Textures/Silver/silver_metallic.nvtex"
-    },
-    [pscustomobject]@{
-        LogicalPath = "Assets/Textures/Silver/silver_roughness.png"
-        SourcePath = ".\Assets\Textures\Silver\silver_roughness.png"
-        Format = "nvtex.v0.r8.linear"
-        PackageName = "silver_roughness.nvpkg"
-        EntryPath = "Assets/Textures/Silver/silver_roughness.nvtex"
-    },
-    [pscustomobject]@{
-        LogicalPath = "Assets/Textures/Silver/silver_ao.png"
-        SourcePath = ".\Assets\Textures\Silver\silver_ao.png"
-        Format = "nvtex.v0.r8.linear"
-        PackageName = "silver_ao.nvpkg"
-        EntryPath = "Assets/Textures/Silver/silver_ao.nvtex"
-    }
-)
+$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 
-function Resolve-RepoRelativePath {
+function Test-IsUncPath {
     param([string]$Path)
 
-    if ([System.IO.Path]::IsPathRooted($Path)) {
+    return $Path.Trim() -match '^[\\/]{2}'
+}
+
+function Test-IsDriveQualifiedAbsolutePath {
+    param([string]$Path)
+
+    return $Path.Trim() -match '^[A-Za-z]:[\\/]'
+}
+
+function Test-IsDriveRelativePath {
+    param([string]$Path)
+
+    return $Path.Trim() -match '^[A-Za-z]:(?![\\/])'
+}
+
+function Test-IsRootRelativePath {
+    param([string]$Path)
+
+    $trimmed = $Path.Trim()
+    if (Test-IsUncPath $trimmed) {
+        return $false
+    }
+
+    return $trimmed.StartsWith('\') -or $trimmed.StartsWith('/')
+}
+
+function Test-IsAbsolutePath {
+    param([string]$Path)
+
+    return (Test-IsUncPath $Path) -or (Test-IsDriveQualifiedAbsolutePath $Path)
+}
+
+function Resolve-RepoRelativePath {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Name must not be empty"
+    }
+
+    if ((Test-IsDriveRelativePath $Path) -or (Test-IsRootRelativePath $Path)) {
+        throw "$Name must be absolute or repository-relative: $Path"
+    }
+
+    if (Test-IsAbsolutePath $Path) {
         return [System.IO.Path]::GetFullPath($Path)
     }
 
@@ -70,9 +82,15 @@ function Normalize-PathForBoundary {
     param([string]$Path)
 
     $fullPath = [System.IO.Path]::GetFullPath($Path)
-    return $fullPath.TrimEnd(
-        [System.IO.Path]::DirectorySeparatorChar,
-        [System.IO.Path]::AltDirectorySeparatorChar)
+    $root = [System.IO.Path]::GetPathRoot($fullPath)
+
+    while (($fullPath.Length -gt $root.Length) -and
+           ($fullPath.EndsWith([string][System.IO.Path]::DirectorySeparatorChar) -or
+            $fullPath.EndsWith([string][System.IO.Path]::AltDirectorySeparatorChar))) {
+        $fullPath = $fullPath.Substring(0, $fullPath.Length - 1)
+    }
+
+    return $fullPath
 }
 
 function Test-PathUnderOrEqual {
@@ -109,7 +127,7 @@ function Assert-ExistingFile {
         [string]$Name
     )
 
-    $resolved = Resolve-RepoRelativePath $Path
+    $resolved = Resolve-RepoRelativePath -Path $Path -Name $Name
     if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
         throw "$Name not found: $resolved"
     }
@@ -212,111 +230,149 @@ function Get-JsonPropertyValue {
     return $Object.PSObject.Properties[$Name].Value
 }
 
-function Get-ManifestAssets {
+function Assert-VersionOne {
     param(
-        [object]$Manifest,
-        [string]$ManifestName
+        [object]$Value,
+        [string]$Context
     )
 
-    if (-not (Test-JsonPropertyExists -Object $Manifest -Name "assets")) {
-        throw "$ManifestName is missing required field: assets"
+    $integerTypes = @(
+        [byte], [sbyte], [int16], [uint16],
+        [int], [uint32], [long], [uint64]
+    )
+    $isInteger = $false
+    foreach ($type in $integerTypes) {
+        if ($Value -is $type) {
+            $isInteger = $true
+            break
+        }
     }
 
-    $assets = Get-JsonPropertyValue -Object $Manifest -Name "assets" -Context $ManifestName
-    if ($null -eq $assets) {
-        return @()
-    }
-
-    return @($assets)
-}
-
-function Assert-AggregateManifest {
-    param(
-        [object[]]$Assets,
-        [int]$ExpectedCount,
-        [string]$RuntimeRoot,
-        [string]$PackageParentPath,
-        [string]$ManifestName
-    )
-
-    if ($Assets.Count -ne $ExpectedCount) {
-        throw "$ManifestName must contain exactly $ExpectedCount assets, got $($Assets.Count)"
-    }
-
-    $requiredFields = @(
-        "logical_path",
-        "kind",
-        "source_hash",
-        "variant",
-        "format",
-        "cooked_package",
-        "entry_name",
-        "entry_type",
-        "cooked_hash",
-        "cooked_version"
-    )
-    $nonEmptyStringFields = @(
-        "logical_path",
-        "kind",
-        "source_hash",
-        "variant",
-        "format",
-        "cooked_package",
-        "entry_name",
-        "entry_type",
-        "cooked_hash"
-    )
-    $seenKeys = @{}
-
-    for ($i = 0; $i -lt $Assets.Count; ++$i) {
-        $asset = $Assets[$i]
-        $context = "$ManifestName asset[$i]"
-
-        foreach ($field in $requiredFields) {
-            $value = Get-JsonPropertyValue -Object $asset -Name $field -Context $context
-            if (($nonEmptyStringFields -contains $field) -and [string]::IsNullOrWhiteSpace([string]$value)) {
-                throw "$context has an empty required field: $field"
-            }
-        }
-
-        $logicalPath = Get-JsonPropertyValue -Object $asset -Name "logical_path" -Context $context
-        $kind = Get-JsonPropertyValue -Object $asset -Name "kind" -Context $context
-        $variant = Get-JsonPropertyValue -Object $asset -Name "variant" -Context $context
-        $key = "$logicalPath|$kind|$variant"
-        if ($seenKeys.ContainsKey($key)) {
-            throw "$ManifestName contains duplicate logical_path|kind|variant key: $key"
-        }
-        $seenKeys[$key] = $true
-
-        $cookedPackage = Get-JsonPropertyValue -Object $asset -Name "cooked_package" -Context $context
-        if ([System.IO.Path]::IsPathRooted($cookedPackage)) {
-            throw "$context cooked_package must be RuntimeRoot-relative: $cookedPackage"
-        }
-
-        $packagePath = [System.IO.Path]::GetFullPath((Join-Path $RuntimeRoot $cookedPackage))
-        if (-not (Test-PathUnderOrEqual -Path $packagePath -ParentPath $RuntimeRoot)) {
-            throw "$context cooked_package escapes RuntimeRoot: $cookedPackage"
-        }
-        if (-not (Test-PathUnderOrEqual -Path $packagePath -ParentPath $PackageParentPath)) {
-            throw "$context cooked_package must be under Cooked/Silver: $cookedPackage"
-        }
-        if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
-            throw "$context cooked package not found: $packagePath"
-        }
+    if ((-not $isInteger) -or ([int64]$Value -ne 1)) {
+        throw "$Context version must be integer 1"
     }
 }
 
-$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+function Normalize-ManifestPath {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Name must not be empty"
+    }
+
+    $trimmed = $Path.Trim()
+    if ($trimmed -match '[\x00-\x1f\x7f]') {
+        throw "$Name must not contain control characters: $Path"
+    }
+
+    if ((Test-IsAbsolutePath $trimmed) -or
+        (Test-IsDriveRelativePath $trimmed) -or
+        (Test-IsRootRelativePath $trimmed)) {
+        throw "$Name must be a relative manifest path: $Path"
+    }
+
+    $slashPath = $trimmed -replace '\\', '/'
+    $segments = @($slashPath -split '/')
+    $normalizedSegments = @()
+    foreach ($segment in $segments) {
+        if ([string]::IsNullOrWhiteSpace($segment)) {
+            throw "$Name contains an empty path segment: $Path"
+        }
+        if (($segment -eq ".") -or ($segment -eq "..")) {
+            throw "$Name must not contain traversal segments: $Path"
+        }
+
+        $normalizedSegments += $segment
+    }
+
+    return $normalizedSegments -join '/'
+}
+
+function ConvertTo-AssetCookLogicalPath {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    $normalizedPath = Normalize-ManifestPath -Path $Path -Name $Name
+    if ($normalizedPath -eq "Assets") {
+        throw "$Name must include a path below Assets: $Path"
+    }
+
+    if ($normalizedPath.StartsWith("Assets/", [System.StringComparison]::Ordinal)) {
+        $normalizedPath = $normalizedPath.Substring(7)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($normalizedPath)) {
+        throw "$Name must have a non-empty logical path: $Path"
+    }
+
+    return $normalizedPath
+}
+
+function Read-TextureLogPathsFromSpec {
+    param([string]$ResolvedSpecPath)
+
+    try {
+        $spec = Get-Content -LiteralPath $ResolvedSpecPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "Failed to read texture asset set spec: $ResolvedSpecPath`n$($_.Exception.Message)"
+    }
+
+    $version = Get-JsonPropertyValue -Object $spec -Name "version" -Context "Texture asset set spec"
+    Assert-VersionOne -Value $version -Context "Texture asset set spec"
+
+    $texturesValue = Get-JsonPropertyValue -Object $spec -Name "textures" -Context "Texture asset set spec"
+    if ($texturesValue -isnot [System.Array]) {
+        throw "Texture asset set spec textures must be an array"
+    }
+
+    $textures = @($texturesValue)
+    if ($textures.Count -ne $ExpectedTextureCount) {
+        throw "Cooked texture Game smoke expects exactly $ExpectedTextureCount texture specs, got $($textures.Count)"
+    }
+
+    $logPaths = @()
+    $seenLogicalPaths = @{}
+    for ($i = 0; $i -lt $textures.Count; ++$i) {
+        $context = "Texture asset set spec textures[$i]"
+        $requestPath = Normalize-ManifestPath `
+            -Path (Get-JsonPropertyValue -Object $textures[$i] -Name "logical_path" -Context $context) `
+            -Name "$context logical_path"
+        $logicalPath = ConvertTo-AssetCookLogicalPath `
+            -Path $requestPath `
+            -Name "$context logical_path"
+        if ($seenLogicalPaths.ContainsKey($logicalPath)) {
+            throw "Texture asset set spec contains duplicate logical_path: $logicalPath"
+        }
+        $seenLogicalPaths[$logicalPath] = $true
+        $logPaths += [pscustomobject]@{
+            RequestPath = $requestPath
+            LogicalPath = $logicalPath
+        }
+    }
+
+    return ,$logPaths
+}
+
+if ($TimeoutSeconds -le 0) {
+    throw "TimeoutSeconds must be greater than zero"
+}
+
 $AssetCookPath = Assert-ExistingFile -Path $AssetCookExe -Name "AssetCook"
 $GamePath = Assert-ExistingFile -Path $GameExe -Name "Game"
-$SourceTexturePathsByLogicalPath = @{}
-foreach ($textureSpec in $TextureSpecs) {
-    $SourceTexturePathsByLogicalPath[$textureSpec.LogicalPath] = Assert-ExistingFile `
-        -Path $textureSpec.SourcePath `
-        -Name "Source texture $($textureSpec.LogicalPath)"
-}
-$ResolvedSmokeDir = Resolve-RepoRelativePath $SmokeDir
-$ResolvedLogPath = Resolve-RepoRelativePath $LogPath
+$ResolvedSpecPath = Assert-ExistingFile -Path $SpecPath -Name "Texture asset set spec"
+$TextureLogPaths = Read-TextureLogPathsFromSpec -ResolvedSpecPath $ResolvedSpecPath
+$CookTextureAssetSetScript = Assert-ExistingFile `
+    -Path "Scripts/CookTextureAssetSet.ps1" `
+    -Name "CookTextureAssetSet helper"
+
+$ResolvedSmokeDir = Resolve-RepoRelativePath -Path $SmokeDir -Name "SmokeDir"
+$ResolvedLogPath = Resolve-RepoRelativePath -Path $LogPath -Name "LogPath"
 
 $BuildRoot = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "build"))
 $CookedTextureGameSmokeRoot = [System.IO.Path]::GetFullPath((Join-Path $BuildRoot "CookedTextureGameSmoke"))
@@ -348,57 +404,14 @@ if (Test-Path -LiteralPath $ResolvedSmokeDir) {
 }
 
 $RuntimeRoot = Join-Path $ResolvedSmokeDir "RuntimeRoot"
-$CookedSilverDir = Join-Path $RuntimeRoot "Cooked\Silver"
-New-Item -ItemType Directory -Path $CookedSilverDir -Force | Out-Null
-
 $ManifestPath = Join-Path $RuntimeRoot "manifest.json"
-$AggregateAssets = @()
 
-foreach ($textureSpec in $TextureSpecs) {
-    $packagePath = Join-Path $CookedSilverDir $textureSpec.PackageName
-    $sourceTexturePath = $SourceTexturePathsByLogicalPath[$textureSpec.LogicalPath]
-
-    Invoke-CheckedProcess `
-        -ExePath $AssetCookPath `
-        -WorkingDirectory $RepoRoot `
-        -TimeoutSeconds $TimeoutSeconds `
-        -Name "AssetCook" `
-        -Arguments @(
-            "--input", $sourceTexturePath,
-            "--out", $packagePath,
-            "--manifest", $ManifestPath,
-            "--logical", $textureSpec.LogicalPath,
-            "--kind", "texture",
-            "--entry", $textureSpec.EntryPath,
-            "--entry-type", "Tex0",
-            "--format", $textureSpec.Format,
-            "--variant", "default"
-        )
-
-    $singleManifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-    $singleAssets = @(Get-ManifestAssets `
-        -Manifest $singleManifest `
-        -ManifestName "AssetCook manifest for $($textureSpec.LogicalPath)")
-    if ($singleAssets.Count -ne 1) {
-        throw "AssetCook manifest for $($textureSpec.LogicalPath) must contain exactly 1 asset, got $($singleAssets.Count)"
-    }
-
-    $AggregateAssets += $singleAssets[0]
-}
-
-Assert-AggregateManifest `
-    -Assets $AggregateAssets `
-    -ExpectedCount $ExpectedTextureCount `
+& $CookTextureAssetSetScript `
+    -AssetCookExe $AssetCookPath `
+    -SpecPath $ResolvedSpecPath `
     -RuntimeRoot $RuntimeRoot `
-    -PackageParentPath $CookedSilverDir `
-    -ManifestName "Aggregate manifest"
-
-$AggregateManifest = [ordered]@{
-    version = 1
-    assets = @($AggregateAssets)
-}
-$AggregateJson = $AggregateManifest | ConvertTo-Json -Depth 16
-[System.IO.File]::WriteAllText($ManifestPath, $AggregateJson, [System.Text.UTF8Encoding]::new($false))
+    -ManifestPath $ManifestPath `
+    -TimeoutSeconds $TimeoutSeconds
 
 if (Test-Path -LiteralPath $ResolvedLogPath) {
     Remove-Item -LiteralPath $ResolvedLogPath -Force
@@ -423,25 +436,26 @@ $LogLines = Get-Content -LiteralPath $ResolvedLogPath
 $CookedSourceMatchCount = 0
 $CookedUploadMatchCount = 0
 
-foreach ($textureSpec in $TextureSpecs) {
-    $escapedTarget = [regex]::Escape($textureSpec.LogicalPath)
+foreach ($textureLogPath in $TextureLogPaths) {
+    $escapedRequestPath = [regex]::Escape($textureLogPath.RequestPath)
+    $escapedLogicalPath = [regex]::Escape($textureLogPath.LogicalPath)
 
     $cookedSourceMatches = Require-LogMatch `
         -Lines $LogLines `
-        -Pattern "stage=texture_asset_resolve (?=.*source=cooked_nvtex)(?=.*path=`"$escapedTarget`")(?=.*success=1)" `
-        -Reason "Expected successful cooked nvtex source log for $($textureSpec.LogicalPath)"
+        -Pattern "stage=texture_asset_resolve (?=.*source=cooked_nvtex)(?=.*path=`"$escapedRequestPath`")(?=.*logical_path=`"$escapedLogicalPath`")(?=.*success=1)" `
+        -Reason "Expected successful cooked nvtex source log for $($textureLogPath.RequestPath)"
     $CookedSourceMatchCount += $cookedSourceMatches.Count
 
     $cookedUploadMatches = Require-LogMatch `
         -Lines $LogLines `
-        -Pattern "stage=texture_cooked_upload (?=.*source=cooked_nvtex)(?=.*path=`"$escapedTarget`")(?=.*success=1)" `
-        -Reason "Expected successful cooked texture upload log for $($textureSpec.LogicalPath)"
+        -Pattern "stage=texture_cooked_upload (?=.*source=cooked_nvtex)(?=.*path=`"$escapedRequestPath`")(?=.*logical_path=`"$escapedLogicalPath`")(?=.*success=1)" `
+        -Reason "Expected successful cooked texture upload log for $($textureLogPath.RequestPath)"
     $CookedUploadMatchCount += $cookedUploadMatches.Count
 
     Forbid-LogMatch `
         -Lines $LogLines `
-        -Pattern "(?=.*source=loose_stbi)(?=.*path=`"$escapedTarget`")" `
-        -Reason "Unexpected loose_stbi source log for $($textureSpec.LogicalPath)"
+        -Pattern "(?=.*source=loose_stbi)(?=.*path=`"$escapedRequestPath`")" `
+        -Reason "Unexpected loose_stbi source log for $($textureLogPath.RequestPath)"
 }
 
 Require-LogMatch `
