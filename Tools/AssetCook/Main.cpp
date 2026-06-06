@@ -1,3 +1,6 @@
+#include "TextureCooker.h"
+
+#include "Asset/CookedTextureFormat.h"
 #include "Asset/AssetManifest.h"
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/AssetPath.h"
@@ -21,6 +24,7 @@
 namespace
 {
     using NorvesLib::Core::Asset::AssetKind;
+    using NorvesLib::Core::Asset::AssetBlob;
     using NorvesLib::Core::Asset::AssetPackageCompression;
     using NorvesLib::Core::Asset::AssetPackageFourCC;
     using NorvesLib::Core::Asset::AssetPath;
@@ -30,6 +34,7 @@ namespace
     using NorvesLib::Core::Asset::FormatAssetHashHex;
     using NorvesLib::Core::Asset::FormatAssetPackageFourCCText;
     using NorvesLib::Core::Asset::MakeAssetPackageFourCC;
+    using NorvesLib::Core::Asset::ParseCookedTexture;
     using NorvesLib::Core::Asset::AssetPackageFormatV1::EndianMarker;
     using NorvesLib::Core::Asset::AssetPackageFormatV1::EntryRecordSize;
     using NorvesLib::Core::Asset::AssetPackageFormatV1::HeaderSize;
@@ -613,6 +618,66 @@ namespace
         return true;
     }
 
+    bool ValidateCookedTexturePayload(const std::vector<uint8_t> &expectedPayload, std::string &error)
+    {
+        const NorvesLib::Core::Container::Span<const uint8_t> span(expectedPayload.data(), expectedPayload.size());
+        const NorvesLib::Core::Asset::CookedTextureParseResult result =
+            ParseCookedTexture(AssetBlob::CopyBytes(span, "AssetCook self-validation"));
+        if (!result.Succeeded())
+        {
+            error = "self-validation failed: cooked texture parse failed: status=" +
+                    std::to_string(static_cast<int>(result.Status));
+            return false;
+        }
+
+        return true;
+    }
+
+    bool ValidateCookedTexturePackageOutput(const std::filesystem::path &packagePath,
+                                            const std::string &entryName,
+                                            AssetPackageFourCC entryType,
+                                            const std::vector<uint8_t> &expectedPayload,
+                                            std::string &error)
+    {
+        std::vector<uint8_t> packageBytes;
+        if (!ReadBinaryFile(packagePath, packageBytes, error))
+        {
+            return false;
+        }
+
+        NorvesLib::FileStream::Package package;
+        const NorvesLib::Core::Container::Span<const uint8_t> packageSpan(packageBytes.data(), packageBytes.size());
+        if (!package.LoadFromMemory(packageSpan))
+        {
+            error = "self-validation failed: package parse failed";
+            return false;
+        }
+
+        NorvesLib::FileStream::PackageEntry entry;
+        if (!package.FindEntry(NorvesLib::Core::Container::AnsiString(entryName), entryType, entry))
+        {
+            error = "self-validation failed: package entry missing";
+            return false;
+        }
+
+        const AssetBlob blob = package.OpenEntry(entry);
+        if (!blob.IsValid() || !CompareBytes(blob.GetData(), blob.GetSize(), expectedPayload))
+        {
+            error = "self-validation failed: package entry bytes mismatch";
+            return false;
+        }
+
+        const NorvesLib::Core::Asset::CookedTextureParseResult result = ParseCookedTexture(blob);
+        if (!result.Succeeded())
+        {
+            error = "self-validation failed: package cooked texture parse failed: status=" +
+                    std::to_string(static_cast<int>(result.Status));
+            return false;
+        }
+
+        return true;
+    }
+
     bool ValidateManifestOutput(const std::filesystem::path &manifestPath,
                                 const std::string &manifestJson,
                                 std::string &error)
@@ -631,6 +696,7 @@ namespace
     bool ValidateAssetSystemOutput(const std::filesystem::path &manifestPath,
                                    const std::string &manifestJson,
                                    const std::string &logicalPath,
+                                   AssetKind kind,
                                    const std::string &variant,
                                    const std::vector<uint8_t> &expectedPayload,
                                    std::string &error)
@@ -645,7 +711,7 @@ namespace
         }
 
         const NorvesLib::Core::Asset::AssetResolveResult result =
-            system.ResolveAsset(logicalPath.c_str(), AssetKind::Raw, variant.c_str());
+            system.ResolveAsset(logicalPath.c_str(), kind, variant.c_str());
         if (!result.Succeeded() || result.Status != AssetResolveStatus::SuccessCooked || !result.UsedCooked())
         {
             error = "self-validation failed: AssetSystem cooked resolve failed";
@@ -801,15 +867,31 @@ namespace
             return false;
         }
 
-        if (outOptions.Kind != "raw")
+        if (outOptions.Kind == "raw")
         {
-            error = "only --kind raw is supported in Phase 8";
-            return false;
+            if (outOptions.Format != "raw.v0")
+            {
+                error = "--kind raw requires --format raw.v0";
+                return false;
+            }
         }
-
-        if (outOptions.Format != "raw.v0")
+        else if (outOptions.Kind == "texture")
         {
-            error = "only --format raw.v0 is supported in Phase 8";
+            if (!NorvesLib::Tools::AssetCook::IsSupportedTextureCookFormat(outOptions.Format))
+            {
+                error = "unsupported texture --format";
+                return false;
+            }
+
+            if (outOptions.EntryTypeText != "Tex0")
+            {
+                error = "--kind texture requires --entry-type Tex0";
+                return false;
+            }
+        }
+        else
+        {
+            error = "--kind must be raw or texture";
             return false;
         }
 
@@ -821,7 +903,11 @@ namespace
         std::cerr
             << "Usage: AssetCook --input <file> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind raw --entry <entry> --entry-type Raw "
-            << "--format raw.v0 --variant default\n";
+            << "--format raw.v0 --variant default\n"
+            << "       AssetCook --input <image> --out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
+            << "--format nvtex.v0.rgba8.srgb|nvtex.v0.rgba8.linear|nvtex.v0.rg8.linear|nvtex.v0.r8.linear "
+            << "--variant default\n";
     }
 
     bool CookRawAsset(const CookOptions &options, std::string &error)
@@ -897,7 +983,7 @@ namespace
 
         if (!ValidatePackageOutput(packagePath, entryName, entryType, inputBytes, error) ||
             !ValidateManifestOutput(manifestPath, manifestJson, error) ||
-            !ValidateAssetSystemOutput(manifestPath, manifestJson, logicalPath, options.Variant, inputBytes, error))
+            !ValidateAssetSystemOutput(manifestPath, manifestJson, logicalPath, AssetKind::Raw, options.Variant, inputBytes, error))
         {
             return false;
         }
@@ -905,6 +991,125 @@ namespace
         std::cout << "AssetCook wrote package=\"" << packagePath.generic_string()
                   << "\" manifest=\"" << manifestPath.generic_string()
                   << "\" bytes=" << inputBytes.size() << "\n";
+        return true;
+    }
+
+    bool CookTextureAsset(const CookOptions &options, std::string &error)
+    {
+        std::filesystem::path inputPath;
+        std::filesystem::path packagePath;
+        std::filesystem::path manifestPath;
+        if (!MakeAbsolutePath(options.InputPath, inputPath, error) ||
+            !MakeAbsolutePath(options.PackagePath, packagePath, error) ||
+            !MakeAbsolutePath(options.ManifestPath, manifestPath, error))
+        {
+            return false;
+        }
+
+        std::vector<uint8_t> inputBytes;
+        if (!ReadBinaryFile(inputPath, inputBytes, error))
+        {
+            return false;
+        }
+
+        std::string logicalPath;
+        std::string entryName;
+        if (!NormalizeManifestPathField("logical_path", options.LogicalPath, logicalPath, error) ||
+            !NormalizeManifestPathField("entry_name", options.EntryName, entryName, error) ||
+            !ValidateAsciiJsonField("variant", options.Variant, error) ||
+            !ValidateAsciiJsonField("format", options.Format, error))
+        {
+            return false;
+        }
+
+        AssetPackageFourCC entryType = 0;
+        std::string entryTypeText;
+        if (!ParseEntryType(options.EntryTypeText, entryType, entryTypeText, error))
+        {
+            return false;
+        }
+
+        if (entryTypeText != "Tex0")
+        {
+            error = "--kind texture requires --entry-type Tex0";
+            return false;
+        }
+
+        NorvesLib::Tools::AssetCook::TextureCookResult textureResult;
+        if (!NorvesLib::Tools::AssetCook::CookTextureToNvtex(inputBytes.data(),
+                                                             inputBytes.size(),
+                                                             options.Format,
+                                                             inputPath.generic_string(),
+                                                             textureResult,
+                                                             error))
+        {
+            return false;
+        }
+
+        if (!ValidateCookedTexturePayload(textureResult.NvtexBytes, error))
+        {
+            return false;
+        }
+
+        const std::filesystem::path manifestParent = manifestPath.parent_path();
+        std::string cookedPackagePath;
+        if (!MakeCookedPackageManifestPath(packagePath, manifestParent, cookedPackagePath, error))
+        {
+            return false;
+        }
+
+        uint64_t cookedHash = 0;
+        std::vector<uint8_t> packageBytes;
+        if (!BuildSingleEntryPackage(entryName, entryType, textureResult.NvtexBytes, packageBytes, cookedHash, error))
+        {
+            return false;
+        }
+
+        const uint64_t sourceHash = ComputeAssetPackagePayloadHash(inputBytes.data(), inputBytes.size());
+        std::string manifestJson;
+        if (!BuildManifestJson(logicalPath,
+                               options.Kind,
+                               sourceHash,
+                               options.Variant,
+                               options.Format,
+                               cookedPackagePath,
+                               entryName,
+                               entryTypeText,
+                               cookedHash,
+                               manifestJson,
+                               error))
+        {
+            return false;
+        }
+
+        if (!WriteBinaryFile(packagePath, packageBytes, error) ||
+            !WriteTextFile(manifestPath, manifestJson, error))
+        {
+            return false;
+        }
+
+        if (!ValidateCookedTexturePackageOutput(packagePath, entryName, entryType, textureResult.NvtexBytes, error) ||
+            !ValidateManifestOutput(manifestPath, manifestJson, error) ||
+            !ValidateAssetSystemOutput(manifestPath,
+                                       manifestJson,
+                                       logicalPath,
+                                       AssetKind::Texture,
+                                       options.Variant,
+                                       textureResult.NvtexBytes,
+                                       error))
+        {
+            return false;
+        }
+
+        std::cout << "AssetCook wrote texture package=\"" << packagePath.generic_string()
+                  << "\" manifest=\"" << manifestPath.generic_string()
+                  << "\" source_bytes=" << inputBytes.size()
+                  << " nvtex_bytes=" << textureResult.NvtexBytes.size()
+                  << " width=" << textureResult.Width
+                  << " height=" << textureResult.Height
+                  << " mips=" << textureResult.MipCount
+                  << " bytes_per_pixel=" << textureResult.BytesPerPixel
+                  << "\n";
         return true;
     }
 }
@@ -923,7 +1128,10 @@ int main(int argc, char **argv)
         return error.empty() ? 0 : 1;
     }
 
-    if (!CookRawAsset(options, error))
+    const bool bSucceeded = options.Kind == "raw"
+                                ? CookRawAsset(options, error)
+                                : CookTextureAsset(options, error);
+    if (!bSucceeded)
     {
         std::cerr << "AssetCook error: " << error << "\n";
         return 1;

@@ -1,0 +1,80 @@
+if(NOT DEFINED ASSET_COOK_EXE)
+    message(FATAL_ERROR "ASSET_COOK_EXE is required")
+endif()
+
+if(NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "SMOKE_DIR is required")
+endif()
+
+file(MAKE_DIRECTORY "${SMOKE_DIR}")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/Cooked")
+
+set(INPUT_IMAGE "${SMOKE_DIR}/sample_texture.ppm")
+set(OUTPUT_PACKAGE "${SMOKE_DIR}/Cooked/sample_texture.nvpkg")
+set(OUTPUT_MANIFEST "${SMOKE_DIR}/manifest.json")
+
+file(WRITE "${INPUT_IMAGE}" "P6\n4 2\n127\nABCDEFGHIJKLMNOPQRSTUVWX")
+
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}"
+        --input "${INPUT_IMAGE}"
+        --out "${OUTPUT_PACKAGE}"
+        --manifest "${OUTPUT_MANIFEST}"
+        --logical "Textures/sample_texture.nvtex"
+        --kind texture
+        --entry "Textures/sample_texture.nvtex"
+        --entry-type Tex0
+        --format nvtex.v0.rgba8.srgb
+        --variant default
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr
+)
+
+if(NOT result EQUAL 0)
+    message(STATUS "${stdout}")
+    message(STATUS "${stderr}")
+    message(FATAL_ERROR "AssetCook texture smoke failed with exit code ${result}")
+endif()
+
+message(STATUS "${stdout}")
+
+set(ODD_INPUT_IMAGE "${SMOKE_DIR}/odd_texture.pgm")
+set(ODD_OUTPUT_PACKAGE "${SMOKE_DIR}/Cooked/odd_texture.nvpkg")
+set(ODD_OUTPUT_MANIFEST "${SMOKE_DIR}/odd_manifest.json")
+
+file(WRITE "${ODD_INPUT_IMAGE}" "P5\n3 3\n255 ABCDEFGHI")
+
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}"
+        --input "${ODD_INPUT_IMAGE}"
+        --out "${ODD_OUTPUT_PACKAGE}"
+        --manifest "${ODD_OUTPUT_MANIFEST}"
+        --logical "Textures/odd_texture.nvtex"
+        --kind texture
+        --entry "odd.nvtex"
+        --entry-type Tex0
+        --format nvtex.v0.r8.linear
+        --variant default
+    RESULT_VARIABLE odd_result
+    OUTPUT_VARIABLE odd_stdout
+    ERROR_VARIABLE odd_stderr
+)
+
+if(NOT odd_result EQUAL 0)
+    message(STATUS "${odd_stdout}")
+    message(STATUS "${odd_stderr}")
+    message(FATAL_ERROR "AssetCook odd texture smoke failed with exit code ${odd_result}")
+endif()
+
+file(READ "${ODD_OUTPUT_PACKAGE}" odd_package_hex HEX)
+
+# The chosen single-entry package uses a 176-byte package payload offset.
+# Its 3x3 R8 .nvtex has mip payload at 176, with mip1 after the 9-byte base mip.
+math(EXPR odd_mip1_hex_offset "(176 + 176 + 9) * 2")
+string(SUBSTRING "${odd_package_hex}" ${odd_mip1_hex_offset} 2 odd_mip1_hex)
+if(NOT odd_mip1_hex STREQUAL "45")
+    message(FATAL_ERROR "Odd texture mip1 did not include edge texels: expected 45, got ${odd_mip1_hex}")
+endif()
+
+message(STATUS "${odd_stdout}")
