@@ -14,6 +14,7 @@
 #include <Shellapi.h>
 #include <string>
 #include <system_error>
+#include <utility>
 
 // GameMode関連
 #include "Core/Public/GameMode/TStateMachine.h"
@@ -31,6 +32,8 @@ namespace Game
     {
         constexpr const TCHAR *kTextureAssetRootOption = TEXT("--texture-asset-root");
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
+        constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
+        constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
 
         std::basic_string<TCHAR> ToStdString(const String &value)
         {
@@ -216,6 +219,7 @@ namespace Game
         m_bHasTextureAssetRuntimeConfig = false;
         m_TextureAssetRoot = {};
         m_TextureAssetManifestPath = {};
+        m_Rendering3DTestModelPath = {};
 
         VariableArray<String> processArgs = GetProcessCommandLineArguments();
         const VariableArray<String> &parseArgs = processArgs.empty() ? args : processArgs;
@@ -296,6 +300,42 @@ namespace Game
                     LOG_ERROR_F("Texture asset command line parse failed: %s", parseError.c_str());
                     return false;
                 }
+                continue;
+            }
+
+            bool bMatchedModel = false;
+            bool bModelHasInlineValue = false;
+            String modelInlineValue;
+            if (!TryMatchTextureAssetOption(parseArgs[i],
+                                            kRendering3DTestModelOption,
+                                            bMatchedModel,
+                                            bModelHasInlineValue,
+                                            modelInlineValue,
+                                            parseError))
+            {
+                LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                return false;
+            }
+
+            if (bMatchedModel)
+            {
+                if (!m_Rendering3DTestModelPath.empty())
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: duplicate --rendering3dtest-model");
+                    return false;
+                }
+
+                if (!ReadTextureAssetOptionValue(parseArgs,
+                                                 i,
+                                                 kRendering3DTestModelOption,
+                                                 bModelHasInlineValue,
+                                                 modelInlineValue,
+                                                 m_Rendering3DTestModelPath,
+                                                 parseError))
+                {
+                    LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                    return false;
+                }
             }
         }
 
@@ -313,6 +353,11 @@ namespace Game
             LOG_INFO_F("Texture asset runtime config parsed root=\"%s\" manifest=\"%s\"",
                        m_TextureAssetRoot.c_str(),
                        m_TextureAssetManifestPath.c_str());
+        }
+        if (!m_Rendering3DTestModelPath.empty())
+        {
+            LOG_INFO_F("Rendering3DTest model path parsed path=\"%s\"",
+                       m_Rendering3DTestModelPath.c_str());
         }
 
         return true;
@@ -537,7 +582,12 @@ namespace Game
         auto stateMachine = MakeUnique<TStateMachine<IGameMode, GameModeFactory>>();
 
         // 3Dレンダリングテストモードを初期ステートとして設定
-        stateMachine->ReserveState(MakeUnique<Rendering3DTestMode>());
+        auto rendering3DTestMode = MakeUnique<Rendering3DTestMode>();
+        rendering3DTestMode->GetData().m_ModelPath =
+            m_Rendering3DTestModelPath.empty()
+                ? String(kDefaultRendering3DTestModelPath)
+                : m_Rendering3DTestModelPath;
+        stateMachine->ReserveState(std::move(rendering3DTestMode));
 
         LOG_INFO("3Dレンダリングテストモードを開始します");
 

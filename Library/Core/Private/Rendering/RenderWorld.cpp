@@ -122,6 +122,9 @@ namespace NorvesLib::Core::Rendering
         m_RenderThread.Shutdown();
         m_bResizePending.Store(false, std::memory_order_release);
 
+        // glTF worker tasks may prepare texture assets through the ResourceManager.
+        Resource::GLTFAnalyzer::CancelPendingModelLoadsAndWait();
+
         // RenderResourceManagerの終了（メッシュGPUリソース等の解放）
         m_ResourceManager.Shutdown();
 

@@ -44,6 +44,7 @@ namespace Game
         bool m_bHasTextureAssetRuntimeConfig = false;
         NorvesLib::Core::Container::String m_TextureAssetRoot;
         NorvesLib::Core::Container::String m_TextureAssetManifestPath;
+        NorvesLib::Core::Container::String m_Rendering3DTestModelPath;
 
         // ========================================
         // 入力コントローラー
