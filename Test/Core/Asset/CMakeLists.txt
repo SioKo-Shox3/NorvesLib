@@ -16,6 +16,16 @@ target_include_directories(AssetPathTest PRIVATE
 )
 set_target_properties(AssetPathTest PROPERTIES FOLDER "Test/Core/Asset")
 
+add_executable(AssetFileReaderTest
+    AssetFileReaderTest.cpp
+)
+target_link_libraries(AssetFileReaderTest PRIVATE Core)
+target_include_directories(AssetFileReaderTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(AssetFileReaderTest PROPERTIES FOLDER "Test/Core/Asset")
+
 include(CTest)
 add_test(NAME AssetBlobLifetimeTest COMMAND AssetBlobLifetimeTest)
 add_test(NAME AssetPathTest COMMAND AssetPathTest)
+add_test(NAME AssetFileReaderTest COMMAND AssetFileReaderTest)
