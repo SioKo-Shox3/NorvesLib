@@ -62,7 +62,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::Image GetVkImage() const { return m_image; }
         vk::ImageView GetVkImageView() const { return m_imageView; }
         vk::ImageLayout GetVkImageLayout() const { return m_currentLayout; }
-        void SetVkImageLayout(vk::ImageLayout layout) { m_currentLayout = layout; }
+        void SetVkImageLayout(vk::ImageLayout layout);
 
         /**
          * @brief イメージレイアウトの遷移
@@ -87,6 +87,12 @@ namespace NorvesLib::RHI::Vulkan
     private:
         void CreateTexture();
         void CreateImageView();
+        void InitializeSubresourceLayouts(vk::ImageLayout layout);
+        uint32_t GetTotalArrayLayerCount() const;
+        uint32_t GetSubresourceLayoutIndex(uint32_t mipLevel, uint32_t arrayLayer) const;
+        vk::ImageLayout GetTrackedSubresourceLayout(uint32_t mipLevel, uint32_t arrayLayer) const;
+        void SetTrackedSubresourceLayout(uint32_t mipLevel, uint32_t arrayLayer, vk::ImageLayout layout);
+        void RefreshCurrentLayoutFromSubresources();
 
     private:
         TSharedPtr<VulkanDevice> m_device;
@@ -95,6 +101,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::DeviceMemory m_memory;
         vk::ImageView m_imageView;
         mutable NorvesLib::Core::Container::VariableArray<vk::ImageView> m_mipImageViews;
+        NorvesLib::Core::Container::VariableArray<vk::ImageLayout> m_subresourceLayouts;
         vk::ImageLayout m_currentLayout = vk::ImageLayout::eUndefined;
         bool m_bOwnsImage = true;
     };

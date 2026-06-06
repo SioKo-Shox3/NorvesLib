@@ -79,3 +79,14 @@ target_include_directories(RenderFrameExecutorPlanTest PRIVATE
 )
 set_target_properties(RenderFrameExecutorPlanTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderFrameExecutorPlanTest COMMAND RenderFrameExecutorPlanTest)
+
+add_executable(CookedTextureUploadTest
+    CookedTextureUploadTest.cpp
+)
+target_link_libraries(CookedTextureUploadTest PRIVATE Core)
+target_include_directories(CookedTextureUploadTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(CookedTextureUploadTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CookedTextureUploadTest COMMAND CookedTextureUploadTest)

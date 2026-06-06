@@ -58,6 +58,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/RenderWorld.cpp
     Private/Rendering/SharedResourceRegistry.cpp
     Private/Rendering/RenderResourceManager.cpp
+    Private/Rendering/CookedTextureUpload.cpp
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
