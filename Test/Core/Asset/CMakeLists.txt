@@ -1,0 +1,21 @@
+add_executable(AssetBlobLifetimeTest
+    AssetBlobLifetimeTest.cpp
+)
+target_link_libraries(AssetBlobLifetimeTest PRIVATE Core)
+target_include_directories(AssetBlobLifetimeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(AssetBlobLifetimeTest PROPERTIES FOLDER "Test/Core/Asset")
+
+add_executable(AssetPathTest
+    AssetPathTest.cpp
+)
+target_link_libraries(AssetPathTest PRIVATE Core)
+target_include_directories(AssetPathTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(AssetPathTest PROPERTIES FOLDER "Test/Core/Asset")
+
+include(CTest)
+add_test(NAME AssetBlobLifetimeTest COMMAND AssetBlobLifetimeTest)
+add_test(NAME AssetPathTest COMMAND AssetPathTest)

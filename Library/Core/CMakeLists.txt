@@ -9,6 +9,8 @@ find_package(Vulkan REQUIRED)
 # ソースファイルの定義
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
+    Private/Asset/AssetBlob.cpp
+    Private/Asset/AssetPath.cpp
     Private/Object/Object.cpp
     Private/Object/UnknownImpl.cpp
     Private/Object/ObjectPropertyOps.cpp
@@ -135,6 +137,8 @@ set(PRIVATE_SOURCES
 
 set(PUBLIC_HEADERS
     Public/CoreModule.h
+    Public/Asset/AssetBlob.h
+    Public/Asset/AssetPath.h
     Public/Object/Object.h
     Public/Text/IdentityPool.h
     Public/Text/JsonDocument.h
