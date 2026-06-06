@@ -108,6 +108,7 @@ namespace NorvesLib::Core::Engine
         // 時間計測用
         uint64_t m_LastFrameTime = 0;
         float m_TargetFrameTime = 1.0f / 60.0f; // デフォルト60FPS
+        uint64_t m_ExitAfterFrames = 0;         // 0は無効
     };
 
 } // namespace NorvesLib::Core::Engine
