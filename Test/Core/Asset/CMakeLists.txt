@@ -34,8 +34,18 @@ target_include_directories(PackageFormatTest PRIVATE
 )
 set_target_properties(PackageFormatTest PROPERTIES FOLDER "Test/Core/Asset")
 
+add_executable(AssetManifestTest
+    AssetManifestTest.cpp
+)
+target_link_libraries(AssetManifestTest PRIVATE Core)
+target_include_directories(AssetManifestTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(AssetManifestTest PROPERTIES FOLDER "Test/Core/Asset")
+
 include(CTest)
 add_test(NAME AssetBlobLifetimeTest COMMAND AssetBlobLifetimeTest)
 add_test(NAME AssetPathTest COMMAND AssetPathTest)
 add_test(NAME AssetFileReaderTest COMMAND AssetFileReaderTest)
 add_test(NAME PackageFormatTest COMMAND PackageFormatTest)
+add_test(NAME AssetManifestTest COMMAND AssetManifestTest)
