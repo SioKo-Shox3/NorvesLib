@@ -100,3 +100,23 @@ target_include_directories(RenderResourceManagerTextureAssetTest PRIVATE
 )
 set_target_properties(RenderResourceManagerTextureAssetTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderResourceManagerTextureAssetTest COMMAND RenderResourceManagerTextureAssetTest)
+
+add_executable(RenderResourceManagerAssetCookSmokeTest
+    RenderResourceManagerAssetCookSmokeTest.cpp
+)
+target_link_libraries(RenderResourceManagerAssetCookSmokeTest PRIVATE Core)
+target_include_directories(RenderResourceManagerAssetCookSmokeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+add_dependencies(RenderResourceManagerAssetCookSmokeTest AssetCook)
+set_target_properties(RenderResourceManagerAssetCookSmokeTest PROPERTIES FOLDER "Test/Core/Rendering")
+
+set(RENDER_RESOURCE_MANAGER_ASSET_COOK_SMOKE_DIR
+    "${CMAKE_BINARY_DIR}/RenderResourceManagerAssetCookSmoke/$<CONFIG>")
+add_test(NAME RenderResourceManagerAssetCookSmoke
+    COMMAND ${CMAKE_COMMAND}
+        "-DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>"
+        "-DRUNTIME_TEST_EXE=$<TARGET_FILE:RenderResourceManagerAssetCookSmokeTest>"
+        "-DSMOKE_DIR=${RENDER_RESOURCE_MANAGER_ASSET_COOK_SMOKE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/RenderResourceManagerAssetCookSmoke.cmake.in"
+)

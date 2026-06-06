@@ -1,0 +1,73 @@
+if(NOT DEFINED ASSET_COOK_EXE)
+    message(FATAL_ERROR "ASSET_COOK_EXE is required")
+endif()
+
+if(NOT DEFINED RUNTIME_TEST_EXE)
+    message(FATAL_ERROR "RUNTIME_TEST_EXE is required")
+endif()
+
+if(NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "SMOKE_DIR is required")
+endif()
+
+file(REMOVE_RECURSE "${SMOKE_DIR}")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/Source")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/RuntimeRoot/Cooked")
+
+set(SOURCE_IMAGE "${SMOKE_DIR}/Source/runtime_cooked.ppm")
+set(RUNTIME_ROOT "${SMOKE_DIR}/RuntimeRoot")
+set(OUTPUT_PACKAGE "${RUNTIME_ROOT}/Cooked/runtime_cooked.nvpkg")
+set(OUTPUT_MANIFEST "${RUNTIME_ROOT}/manifest.json")
+set(LOGICAL_PATH "Textures/runtime_cooked.ppm")
+set(ENTRY_NAME "Textures/runtime_cooked.nvtex")
+
+file(WRITE "${SOURCE_IMAGE}" "P6\n4 2\n255\nABCDEFGHIJKLMNOPQRSTUVWX")
+
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}"
+        --input "${SOURCE_IMAGE}"
+        --out "${OUTPUT_PACKAGE}"
+        --manifest "${OUTPUT_MANIFEST}"
+        --logical "${LOGICAL_PATH}"
+        --kind texture
+        --entry "${ENTRY_NAME}"
+        --entry-type Tex0
+        --format nvtex.v0.rgba8.srgb
+        --variant default
+    RESULT_VARIABLE cook_result
+    OUTPUT_VARIABLE cook_stdout
+    ERROR_VARIABLE cook_stderr
+)
+
+if(NOT cook_result EQUAL 0)
+    message(STATUS "${cook_stdout}")
+    message(STATUS "${cook_stderr}")
+    message(FATAL_ERROR "AssetCook texture runtime smoke cook step failed with exit code ${cook_result}")
+endif()
+
+execute_process(
+    COMMAND "${RUNTIME_TEST_EXE}"
+        --asset-root "${RUNTIME_ROOT}"
+        --manifest "${OUTPUT_MANIFEST}"
+        --package "${OUTPUT_PACKAGE}"
+        --logical "${LOGICAL_PATH}"
+        --entry "${ENTRY_NAME}"
+        --width 4
+        --height 2
+        --mips 3
+        --format R8G8B8A8_SRGB
+    RESULT_VARIABLE runtime_result
+    OUTPUT_VARIABLE runtime_stdout
+    ERROR_VARIABLE runtime_stderr
+)
+
+if(NOT runtime_result EQUAL 0)
+    message(STATUS "${cook_stdout}")
+    message(STATUS "${cook_stderr}")
+    message(STATUS "${runtime_stdout}")
+    message(STATUS "${runtime_stderr}")
+    message(FATAL_ERROR "RenderResourceManager AssetCook smoke failed with exit code ${runtime_result}")
+endif()
+
+message(STATUS "${cook_stdout}")
+message(STATUS "${runtime_stdout}")
