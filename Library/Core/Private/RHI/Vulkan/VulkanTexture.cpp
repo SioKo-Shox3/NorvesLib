@@ -98,6 +98,7 @@ namespace NorvesLib::RHI::Vulkan
     VulkanTexture::VulkanTexture(TSharedPtr<VulkanDevice> device, const TextureDesc &desc)
         : m_device(device), m_desc(desc), m_bOwnsImage(true)
     {
+        InitializeSubresourceLayouts(vk::ImageLayout::eUndefined);
         CreateTexture();
         CreateImageView();
     }
@@ -105,6 +106,7 @@ namespace NorvesLib::RHI::Vulkan
     VulkanTexture::VulkanTexture(TSharedPtr<VulkanDevice> device, const TextureDesc &desc, vk::Image image)
         : m_device(device), m_desc(desc), m_image(image), m_bOwnsImage(false)
     {
+        InitializeSubresourceLayouts(vk::ImageLayout::eUndefined);
         CreateImageView();
     }
 
@@ -217,6 +219,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_currentLayout = vk::ImageLayout::eUndefined;
+        InitializeSubresourceLayouts(vk::ImageLayout::eUndefined);
     }
 
     void VulkanTexture::CreateImageView()
@@ -342,6 +345,82 @@ namespace NorvesLib::RHI::Vulkan
     {
         auto view = GetMipImageView(mipLevel);
         return reinterpret_cast<uint64_t>(static_cast<VkImageView>(view));
+    }
+
+    void VulkanTexture::SetVkImageLayout(vk::ImageLayout layout)
+    {
+        m_currentLayout = layout;
+        InitializeSubresourceLayouts(layout);
+    }
+
+    uint32_t VulkanTexture::GetTotalArrayLayerCount() const
+    {
+        return m_desc.ArraySize * (m_desc.IsCubemap ? 6u : 1u);
+    }
+
+    void VulkanTexture::InitializeSubresourceLayouts(vk::ImageLayout layout)
+    {
+        const uint32_t mipLevels = std::max(1u, m_desc.MipLevels);
+        const uint32_t arrayLayers = std::max(1u, GetTotalArrayLayerCount());
+        m_subresourceLayouts.assign(
+            static_cast<size_t>(mipLevels) * static_cast<size_t>(arrayLayers),
+            layout);
+        m_currentLayout = layout;
+    }
+
+    uint32_t VulkanTexture::GetSubresourceLayoutIndex(uint32_t mipLevel, uint32_t arrayLayer) const
+    {
+        return mipLevel * std::max(1u, GetTotalArrayLayerCount()) + arrayLayer;
+    }
+
+    vk::ImageLayout VulkanTexture::GetTrackedSubresourceLayout(uint32_t mipLevel, uint32_t arrayLayer) const
+    {
+        if (m_subresourceLayouts.empty())
+        {
+            return m_currentLayout;
+        }
+
+        const uint32_t layoutIndex = GetSubresourceLayoutIndex(mipLevel, arrayLayer);
+        if (layoutIndex >= m_subresourceLayouts.size())
+        {
+            return m_currentLayout;
+        }
+
+        return m_subresourceLayouts[layoutIndex];
+    }
+
+    void VulkanTexture::SetTrackedSubresourceLayout(uint32_t mipLevel, uint32_t arrayLayer, vk::ImageLayout layout)
+    {
+        if (m_subresourceLayouts.empty())
+        {
+            InitializeSubresourceLayouts(m_currentLayout);
+        }
+
+        const uint32_t layoutIndex = GetSubresourceLayoutIndex(mipLevel, arrayLayer);
+        if (layoutIndex < m_subresourceLayouts.size())
+        {
+            m_subresourceLayouts[layoutIndex] = layout;
+        }
+    }
+
+    void VulkanTexture::RefreshCurrentLayoutFromSubresources()
+    {
+        if (m_subresourceLayouts.empty())
+        {
+            return;
+        }
+
+        const vk::ImageLayout firstLayout = m_subresourceLayouts.front();
+        for (const vk::ImageLayout layout : m_subresourceLayouts)
+        {
+            if (layout != firstLayout)
+            {
+                m_currentLayout = vk::ImageLayout::eUndefined;
+                return;
+            }
+        }
+
+        m_currentLayout = firstLayout;
     }
 
     void VulkanTexture::Update(const void *data, uint32_t rowPitch, uint32_t slicePitch,
@@ -502,83 +581,119 @@ namespace NorvesLib::RHI::Vulkan
         vk::ImageLayout newLayout,
         vk::ImageSubresourceRange subresourceRange)
     {
-        if (m_currentLayout == newLayout)
+        if (m_subresourceLayouts.empty())
         {
-            return;
+            InitializeSubresourceLayouts(m_currentLayout);
         }
 
-        vk::ImageMemoryBarrier barrier;
-        barrier.oldLayout = m_currentLayout;
-        barrier.newLayout = newLayout;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = m_image;
-        barrier.subresourceRange = subresourceRange;
+        auto configureBarrierStages = [](vk::ImageLayout oldLayout,
+                                         vk::ImageLayout targetLayout,
+                                         vk::ImageMemoryBarrier &barrier,
+                                         vk::PipelineStageFlags &sourceStage,
+                                         vk::PipelineStageFlags &destinationStage)
+        {
+            // レイアウト遷移に応じてアクセスマスクとステージを設定
+            if (oldLayout == vk::ImageLayout::eUndefined &&
+                targetLayout == vk::ImageLayout::eTransferDstOptimal)
+            {
+                barrier.srcAccessMask = {};
+                barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+                sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+                destinationStage = vk::PipelineStageFlagBits::eTransfer;
+            }
+            else if (oldLayout == vk::ImageLayout::eTransferDstOptimal &&
+                     targetLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
+            {
+                barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+                barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+                sourceStage = vk::PipelineStageFlagBits::eTransfer;
+                destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+            }
+            else if (oldLayout == vk::ImageLayout::eUndefined &&
+                     targetLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal)
+            {
+                barrier.srcAccessMask = {};
+                barrier.dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentRead |
+                                        vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+                sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+                destinationStage = vk::PipelineStageFlagBits::eEarlyFragmentTests;
+            }
+            else if (oldLayout == vk::ImageLayout::eUndefined &&
+                     targetLayout == vk::ImageLayout::eColorAttachmentOptimal)
+            {
+                barrier.srcAccessMask = {};
+                barrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead |
+                                        vk::AccessFlagBits::eColorAttachmentWrite;
+                sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+                destinationStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+            }
+            else if (oldLayout == vk::ImageLayout::eUndefined &&
+                     targetLayout == vk::ImageLayout::eGeneral)
+            {
+                barrier.srcAccessMask = {};
+                barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+                sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+                destinationStage = vk::PipelineStageFlagBits::eComputeShader;
+            }
+            else
+            {
+                // 一般的な遷移（最もパフォーマンスが低いが安全）
+                barrier.srcAccessMask = vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite;
+                barrier.dstAccessMask = vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite;
+                sourceStage = vk::PipelineStageFlagBits::eAllCommands;
+                destinationStage = vk::PipelineStageFlagBits::eAllCommands;
+            }
+        };
 
-        vk::PipelineStageFlags sourceStage;
-        vk::PipelineStageFlags destinationStage;
+        const uint32_t mipLevelBegin = subresourceRange.baseMipLevel;
+        const uint32_t mipLevelEnd = subresourceRange.baseMipLevel + subresourceRange.levelCount;
+        const uint32_t arrayLayerBegin = subresourceRange.baseArrayLayer;
+        const uint32_t arrayLayerEnd = subresourceRange.baseArrayLayer + subresourceRange.layerCount;
+        bool bTransitioned = false;
 
-        // レイアウト遷移に応じてアクセスマスクとステージを設定
-        if (m_currentLayout == vk::ImageLayout::eUndefined &&
-            newLayout == vk::ImageLayout::eTransferDstOptimal)
+        for (uint32_t mipLevel = mipLevelBegin; mipLevel < mipLevelEnd; ++mipLevel)
         {
-            barrier.srcAccessMask = {};
-            barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
-            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-            destinationStage = vk::PipelineStageFlagBits::eTransfer;
-        }
-        else if (m_currentLayout == vk::ImageLayout::eTransferDstOptimal &&
-                 newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
-        {
-            barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-            barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-            sourceStage = vk::PipelineStageFlagBits::eTransfer;
-            destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
-        }
-        else if (m_currentLayout == vk::ImageLayout::eUndefined &&
-                 newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal)
-        {
-            barrier.srcAccessMask = {};
-            barrier.dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentRead |
-                                    vk::AccessFlagBits::eDepthStencilAttachmentWrite;
-            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-            destinationStage = vk::PipelineStageFlagBits::eEarlyFragmentTests;
-        }
-        else if (m_currentLayout == vk::ImageLayout::eUndefined &&
-                 newLayout == vk::ImageLayout::eColorAttachmentOptimal)
-        {
-            barrier.srcAccessMask = {};
-            barrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead |
-                                    vk::AccessFlagBits::eColorAttachmentWrite;
-            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-            destinationStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-        }
-        else if (m_currentLayout == vk::ImageLayout::eUndefined &&
-                 newLayout == vk::ImageLayout::eGeneral)
-        {
-            barrier.srcAccessMask = {};
-            barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
-            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-            destinationStage = vk::PipelineStageFlagBits::eComputeShader;
-        }
-        else
-        {
-            // 一般的な遷移（最もパフォーマンスが低いが安全）
-            barrier.srcAccessMask = vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite;
-            barrier.dstAccessMask = vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite;
-            sourceStage = vk::PipelineStageFlagBits::eAllCommands;
-            destinationStage = vk::PipelineStageFlagBits::eAllCommands;
+            for (uint32_t arrayLayer = arrayLayerBegin; arrayLayer < arrayLayerEnd; ++arrayLayer)
+            {
+                const vk::ImageLayout oldLayout = GetTrackedSubresourceLayout(mipLevel, arrayLayer);
+                if (oldLayout == newLayout)
+                {
+                    continue;
+                }
+
+                vk::ImageMemoryBarrier barrier;
+                barrier.oldLayout = oldLayout;
+                barrier.newLayout = newLayout;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = m_image;
+                barrier.subresourceRange = subresourceRange;
+                barrier.subresourceRange.baseMipLevel = mipLevel;
+                barrier.subresourceRange.levelCount = 1;
+                barrier.subresourceRange.baseArrayLayer = arrayLayer;
+                barrier.subresourceRange.layerCount = 1;
+
+                vk::PipelineStageFlags sourceStage;
+                vk::PipelineStageFlags destinationStage;
+                configureBarrierStages(oldLayout, newLayout, barrier, sourceStage, destinationStage);
+
+                cmdBuffer.pipelineBarrier(
+                    sourceStage,
+                    destinationStage,
+                    {},
+                    0, nullptr,
+                    0, nullptr,
+                    1, &barrier);
+
+                SetTrackedSubresourceLayout(mipLevel, arrayLayer, newLayout);
+                bTransitioned = true;
+            }
         }
 
-        cmdBuffer.pipelineBarrier(
-            sourceStage,
-            destinationStage,
-            {},
-            0, nullptr,
-            0, nullptr,
-            1, &barrier);
-
-        m_currentLayout = newLayout;
+        if (bTransitioned)
+        {
+            RefreshCurrentLayoutFromSubresources();
+        }
     }
 
     void VulkanTexture::TransitionLayout(
