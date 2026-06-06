@@ -1,3 +1,4 @@
 add_subdirectory(Object)
 add_subdirectory(Debug)
 add_subdirectory(Rendering)
+add_subdirectory(Asset)
