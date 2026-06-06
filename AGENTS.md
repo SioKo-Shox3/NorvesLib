@@ -36,7 +36,9 @@ Tests are small executable programs registered with CTest. Use `assert` and clea
 Recent commits use short imperative summaries, mostly Japanese with occasional English, without rigid prefixes. Keep commits focused on one logical change, for example `ログ書式とJsonDocumentの安定性を修正する` or `Fix MegaGeometry culling orientation`. Pull requests should include the intent, affected modules, build/test commands run, linked issues when applicable, and screenshots or logs for rendering or game-visible changes.
 
 ## Multi-Agent Workflow
-Use the main agent as the orchestrator for non-trivial work. The orchestrator owns phase decomposition, architecture decisions, sequencing, integration, commit boundaries, and final review.
+Use the main agent as the orchestrator for non-trivial work. The orchestrator owns phase decomposition, architecture decisions, sequencing, integration, commit boundaries, validation coordination, and final acceptance decisions.
+
+For repository work that requires a phase plan or file edits, the orchestrator must launch sub-agents for phase planning, implementation, and review instead of performing those roles itself. The planning, implementation, and review roles must be assigned to sub-agents, and the implementation and review roles must always be performed by different agents. The orchestrator may define the overall phase sequence, assign scopes, integrate results, run validation, manage commit boundaries, and make final acceptance decisions, but it must not author the concrete phase plan, perform the file edits, or serve as the implementation reviewer for work it supervised.
 
 At task intake, split the work into explicit phases before editing code. Each phase should be small enough to review, validate, commit, and push independently when possible. If a requested change cannot be cleanly split, state why and define the smallest practical checkpoint. Do not start implementing a later phase until the earlier dependent phase has passed its implementation review and validation gate.
 
@@ -54,7 +56,7 @@ After implementing each phase, perform an implementation review before committin
 
 Commit and push by phase when the phase is independently valid. Use focused Japanese commit messages matching the repository style. Do not bundle unrelated phases into one commit unless they are inseparable and the reason is stated. Before staging, explicitly exclude unrelated user changes and generated outputs. After committing, push the current branch when remote configuration allows it.
 
-Use sub-agents for concrete, bounded work that can progress without blocking the orchestrator's immediate next step. Suitable sub-agent tasks include independent codebase inspection, narrow implementation in a disjoint file set, focused test additions, log or CI analysis, and independent diff review. Avoid delegating the critical-path task that the orchestrator must decide next.
+Use sub-agents for concrete, bounded work that can progress without blocking the orchestrator's immediate next step. Suitable sub-agent tasks include independent codebase inspection, narrow implementation in a disjoint file set, focused test additions, log or CI analysis, and independent diff review. Avoid delegating critical-path architecture decisions that the orchestrator must make, except that required phase planning, implementation, and review work must still be assigned to sub-agents as described above.
 
 When assigning sub-agents, define their scope precisely:
 - The phase and objective they support.
@@ -64,7 +66,7 @@ When assigning sub-agents, define their scope precisely:
 
 Assign disjoint write scopes to sub-agents. Examples: one agent may handle `Library/Core/Private/Rendering/*`, another `Assets/Shaders/*`, and another `Test/<Module>/*`. Shared files such as public headers, central CMake files, build configuration, serialization schemas, and core lifetime managers must have a single owner or be edited sequentially by the orchestrator. Do not ask multiple agents to edit the same file set unless the orchestrator explicitly sequences the work.
 
-Integrate sub-agent results through the orchestrator. Treat sub-agent output as proposed work, not final work, until the orchestrator has reviewed the diff, confirmed it matches the phase plan, checked API boundaries and ownership, and rerun the relevant validation. Sub-agent results must not be committed directly without this integration review.
+Integrate sub-agent results through the orchestrator. Treat sub-agent output as proposed work, not final work, until the orchestrator has inspected the diff for integration and final acceptance, confirmed it matches the phase plan, checked API boundaries and ownership, and rerun the relevant validation. Sub-agent results must not be committed directly without this integration check.
 
 For each phase completion, prefer this gate: implementation integrated, implementation review complete, relevant targets build, CTest or focused executable tests pass, and rendering/game-visible changes have logs or screenshots when practical. For final task completion, all phases must be committed or intentionally left uncommitted with a stated reason, and the remaining working tree state must be reported.
 
