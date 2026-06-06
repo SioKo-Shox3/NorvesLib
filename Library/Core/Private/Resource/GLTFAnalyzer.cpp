@@ -14,9 +14,15 @@
 #include "stb_image.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+
+namespace NorvesLib::Core::Rendering
+{
+    const char* SetTextureCreateUploadProfileRoleForCurrentThread(const char* role);
+}
 
 namespace NorvesLib::Core::Resource
 {
@@ -28,6 +34,35 @@ namespace NorvesLib::Core::Resource
         constexpr uint32_t GLTF_UINT16_COMPONENT = 5123;
         constexpr uint32_t GLTF_UINT32_COMPONENT = 5125;
         constexpr uint32_t INVALID_GLTF_INDEX = UINT32_MAX;
+
+        using LoadProfileClock = std::chrono::steady_clock;
+
+        LoadProfileClock::time_point LoadProfileNow()
+        {
+            return LoadProfileClock::now();
+        }
+
+        double LoadProfileElapsedMs(LoadProfileClock::time_point startTime)
+        {
+            return std::chrono::duration<double, std::milli>(LoadProfileClock::now() - startTime).count();
+        }
+
+        class ScopedTextureCreateUploadProfileRole
+        {
+        public:
+            explicit ScopedTextureCreateUploadProfileRole(const char* role)
+                : m_PreviousRole(Rendering::SetTextureCreateUploadProfileRoleForCurrentThread(role))
+            {
+            }
+
+            ~ScopedTextureCreateUploadProfileRole()
+            {
+                Rendering::SetTextureCreateUploadProfileRoleForCurrentThread(m_PreviousRole);
+            }
+
+        private:
+            const char* m_PreviousRole = "caller";
+        };
 
         struct AccessorInfo
         {
@@ -100,6 +135,26 @@ namespace NorvesLib::Core::Resource
             StagedTextureData MetallicTexture;
         };
 
+        size_t GetStagedTextureBytes(const ModelStagingData& staging)
+        {
+            return staging.AlbedoTexture.PixelData.size() +
+                   staging.NormalTexture.PixelData.size() +
+                   staging.AOTexture.PixelData.size() +
+                   staging.RoughnessTexture.PixelData.size() +
+                   staging.MetallicTexture.PixelData.size();
+        }
+
+        uint32_t GetStagedTextureCount(const ModelStagingData& staging)
+        {
+            uint32_t count = 0;
+            count += staging.AlbedoTexture.HasData() ? 1u : 0u;
+            count += staging.NormalTexture.HasData() ? 1u : 0u;
+            count += staging.AOTexture.HasData() ? 1u : 0u;
+            count += staging.RoughnessTexture.HasData() ? 1u : 0u;
+            count += staging.MetallicTexture.HasData() ? 1u : 0u;
+            return count;
+        }
+
         struct AsyncModelLoadResult
         {
             ModelStagingData Staging;
@@ -154,8 +209,13 @@ namespace NorvesLib::Core::Resource
             return uri.size() >= 5 && uri.substr(0, 5) == "data:";
         }
 
-        bool ReadTextFile(const String& path, String& outContent)
+        bool ReadTextFile(const String& path,
+                          String& outContent,
+                          const char* role,
+                          uint32_t requestId,
+                          const char* stage)
         {
+            auto readStartTime = LoadProfileNow();
             auto fileStream = NorvesLib::FileStream::FileStream::Create(
                 path,
                 NorvesLib::FileStream::FileMode::Read,
@@ -163,16 +223,37 @@ namespace NorvesLib::Core::Resource
                 NorvesLib::FileStream::FileShare::Read);
             if (!fileStream || !fileStream->IsOpen())
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=%s role=%s request_id=%u path=\"%s\" bytes=0 ms=%.3f success=0",
+                                stage,
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                path.c_str(),
+                                LoadProfileElapsedMs(readStartTime));
                 return false;
             }
 
             outContent = fileStream->ReadString();
             fileStream->Close();
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=%s role=%s request_id=%u path=\"%s\" bytes=%zu ms=%.3f success=1",
+                            stage,
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            path.c_str(),
+                            outContent.size(),
+                            LoadProfileElapsedMs(readStartTime));
             return true;
         }
 
-        bool ReadBinaryFile(const String& path, VariableArray<uint8_t>& outData)
+        bool ReadBinaryFile(const String& path,
+                            VariableArray<uint8_t>& outData,
+                            const char* role,
+                            uint32_t requestId,
+                            const char* stage)
         {
+            auto readStartTime = LoadProfileNow();
+            size_t bytesRead = 0;
             auto fileStream = NorvesLib::FileStream::FileStream::Create(
                 path,
                 NorvesLib::FileStream::FileMode::Read,
@@ -180,6 +261,14 @@ namespace NorvesLib::Core::Resource
                 NorvesLib::FileStream::FileShare::Read);
             if (!fileStream || !fileStream->IsOpen())
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=%s role=%s request_id=%u path=\"%s\" bytes=%zu ms=%.3f success=0",
+                                stage,
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                path.c_str(),
+                                bytesRead,
+                                LoadProfileElapsedMs(readStartTime));
                 return false;
             }
 
@@ -187,6 +276,15 @@ namespace NorvesLib::Core::Resource
             if (fileSize < 0)
             {
                 fileStream->Close();
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=%s role=%s request_id=%u path=\"%s\" bytes=%zu file_size=%lld ms=%.3f success=0",
+                                stage,
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                path.c_str(),
+                                bytesRead,
+                                static_cast<long long>(fileSize),
+                                LoadProfileElapsedMs(readStartTime));
                 return false;
             }
 
@@ -194,12 +292,30 @@ namespace NorvesLib::Core::Resource
             if (fileSize == 0)
             {
                 fileStream->Close();
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=%s role=%s request_id=%u path=\"%s\" bytes=0 file_size=0 ms=%.3f success=1",
+                                stage,
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                path.c_str(),
+                                LoadProfileElapsedMs(readStartTime));
                 return true;
             }
 
-            size_t bytesRead = fileStream->Read(outData.data(), outData.size());
+            bytesRead = fileStream->Read(outData.data(), outData.size());
             fileStream->Close();
-            return bytesRead == outData.size();
+            bool bSuccess = bytesRead == outData.size();
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=%s role=%s request_id=%u path=\"%s\" bytes=%zu file_size=%lld ms=%.3f success=%d",
+                            stage,
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            path.c_str(),
+                            bytesRead,
+                            static_cast<long long>(fileSize),
+                            LoadProfileElapsedMs(readStartTime),
+                            bSuccess ? 1 : 0);
+            return bSuccess;
         }
 
         size_t GetComponentSize(uint32_t componentType)
@@ -395,7 +511,9 @@ namespace NorvesLib::Core::Resource
 
         bool LoadBuffers(const VariableArray<BufferInfo>& buffers,
                          const std::filesystem::path& gltfDirectory,
-                         VariableArray<VariableArray<uint8_t>>& outBufferData)
+                         VariableArray<VariableArray<uint8_t>>& outBufferData,
+                         const char* role,
+                         uint32_t requestId)
         {
             outBufferData.clear();
             outBufferData.resize(buffers.size());
@@ -416,7 +534,7 @@ namespace NorvesLib::Core::Resource
                 }
 
                 String bufferPath = NormalizePath(gltfDirectory / buffer.Uri.c_str());
-                if (!ReadBinaryFile(bufferPath, outBufferData[index]))
+                if (!ReadBinaryFile(bufferPath, outBufferData[index], role, requestId, "gltf_buffer_read"))
                 {
                     NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to read buffer file: %s", bufferPath.c_str());
                     return false;
@@ -738,10 +856,12 @@ namespace NorvesLib::Core::Resource
         bool DecodeImageFile(const String& filePath,
                              VariableArray<uint8_t>& outPixels,
                              uint32_t& outWidth,
-                             uint32_t& outHeight)
+                             uint32_t& outHeight,
+                             const char* role,
+                             uint32_t requestId)
         {
             VariableArray<uint8_t> fileData;
-            if (!ReadBinaryFile(filePath, fileData) || fileData.empty())
+            if (!ReadBinaryFile(filePath, fileData, role, requestId, "gltf_image_read") || fileData.empty())
             {
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to read image file: %s", filePath.c_str());
                 return false;
@@ -750,6 +870,7 @@ namespace NorvesLib::Core::Resource
             int width = 0;
             int height = 0;
             int channels = 0;
+            auto decodeStartTime = LoadProfileNow();
             unsigned char* pPixels = stbi_load_from_memory(
                 fileData.data(),
                 static_cast<int>(fileData.size()),
@@ -757,8 +878,19 @@ namespace NorvesLib::Core::Resource
                 &height,
                 &channels,
                 4);
+            double decodeMs = LoadProfileElapsedMs(decodeStartTime);
             if (pPixels == nullptr || width <= 0 || height <= 0)
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=gltf_image_decode role=%s request_id=%u path=\"%s\" file_bytes=%zu width=%d height=%d channels=%d ms=%.3f success=0",
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                filePath.c_str(),
+                                fileData.size(),
+                                width,
+                                height,
+                                channels,
+                                decodeMs);
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to decode image file: %s", filePath.c_str());
                 if (pPixels != nullptr)
                 {
@@ -767,13 +899,35 @@ namespace NorvesLib::Core::Resource
                 return false;
             }
 
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_image_decode role=%s request_id=%u path=\"%s\" file_bytes=%zu width=%d height=%d channels=%d ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            filePath.c_str(),
+                            fileData.size(),
+                            width,
+                            height,
+                            channels,
+                            decodeMs);
+
             outWidth = static_cast<uint32_t>(width);
             outHeight = static_cast<uint32_t>(height);
 
             size_t pixelDataSize = static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 4;
+            auto copyStartTime = LoadProfileNow();
             outPixels.resize(pixelDataSize);
             std::memcpy(outPixels.data(), pPixels, pixelDataSize);
+            double copyMs = LoadProfileElapsedMs(copyStartTime);
             stbi_image_free(pPixels);
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_image_copy role=%s request_id=%u path=\"%s\" pixel_bytes=%zu width=%u height=%u ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            filePath.c_str(),
+                            pixelDataSize,
+                            outWidth,
+                            outHeight,
+                            copyMs);
             return true;
         }
 
@@ -829,21 +983,23 @@ namespace NorvesLib::Core::Resource
             outTexture.DebugName = debugName;
         }
 
-        void StageStandardTexture(const String& texturePath,
+        bool StageStandardTexture(const String& texturePath,
                                   const String& debugName,
-                                  StagedTextureData& outTexture)
+                                  StagedTextureData& outTexture,
+                                  const char* role,
+                                  uint32_t requestId)
         {
             if (texturePath.empty())
             {
-                return;
+                return true;
             }
 
             VariableArray<uint8_t> pixels;
             uint32_t width = 0;
             uint32_t height = 0;
-            if (!DecodeImageFile(texturePath, pixels, width, height))
+            if (!DecodeImageFile(texturePath, pixels, width, height, role, requestId))
             {
-                return;
+                return false;
             }
 
             SetStagedTextureData(
@@ -853,25 +1009,28 @@ namespace NorvesLib::Core::Resource
                 height,
                 Rendering::TextureCreateInfo::Format::RGBA8_UNORM,
                 debugName);
+            return true;
         }
 
-        void StageArmTextures(const String& texturePath,
+        bool StageArmTextures(const String& texturePath,
                               const String& debugNamePrefix,
                               StagedTextureData& outAOTexture,
                               StagedTextureData& outRoughnessTexture,
-                              StagedTextureData& outMetallicTexture)
+                              StagedTextureData& outMetallicTexture,
+                              const char* role,
+                              uint32_t requestId)
         {
             if (texturePath.empty())
             {
-                return;
+                return true;
             }
 
             VariableArray<uint8_t> pixels;
             uint32_t width = 0;
             uint32_t height = 0;
-            if (!DecodeImageFile(texturePath, pixels, width, height))
+            if (!DecodeImageFile(texturePath, pixels, width, height, role, requestId))
             {
-                return;
+                return false;
             }
 
             size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
@@ -907,6 +1066,7 @@ namespace NorvesLib::Core::Resource
                 height,
                 Rendering::TextureCreateInfo::Format::R8_UNORM,
                 debugNamePrefix + "_Metallic");
+            return true;
         }
 
         bool CreateTextureFromStagedData(Rendering::RenderResourceManager& resourceManager,
@@ -929,11 +1089,15 @@ namespace NorvesLib::Core::Resource
                 outTexture);
         }
 
-        bool BuildModelStaging(const String& gltfPath, ModelStagingData& outStaging)
+        bool BuildModelStaging(const String& gltfPath,
+                               ModelStagingData& outStaging,
+                               const char* role,
+                               uint32_t requestId)
         {
+            auto totalStartTime = LoadProfileNow();
             String resolvedGltfPath = ResolveAssetPath(gltfPath);
             String jsonContent;
-            if (!ReadTextFile(resolvedGltfPath, jsonContent))
+            if (!ReadTextFile(resolvedGltfPath, jsonContent, role, requestId, "gltf_text_read"))
             {
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to open glTF file: %s", resolvedGltfPath.c_str());
                 return false;
@@ -941,11 +1105,26 @@ namespace NorvesLib::Core::Resource
 
             JsonDocument document;
             String parseError;
+            auto jsonParseStartTime = LoadProfileNow();
             if (!JsonDocument::TryParse(jsonContent, document, &parseError))
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=gltf_json_parse role=%s request_id=%u path=\"%s\" json_bytes=%zu ms=%.3f success=0",
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                resolvedGltfPath.c_str(),
+                                jsonContent.size(),
+                                LoadProfileElapsedMs(jsonParseStartTime));
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to parse glTF JSON: %s", parseError.c_str());
                 return false;
             }
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_json_parse role=%s request_id=%u path=\"%s\" json_bytes=%zu ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            resolvedGltfPath.c_str(),
+                            jsonContent.size(),
+                            LoadProfileElapsedMs(jsonParseStartTime));
 
             JsonValue root = document.GetRoot();
             if (!root.IsObject())
@@ -960,34 +1139,115 @@ namespace NorvesLib::Core::Resource
             VariableArray<AccessorInfo> accessors;
             VariableArray<BufferViewInfo> bufferViews;
             VariableArray<BufferInfo> buffers;
+            auto metadataParseStartTime = LoadProfileNow();
             if (!ParseAccessors(root, accessors) ||
                 !ParseBufferViews(root, bufferViews) ||
                 !ParseBuffers(root, buffers))
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=gltf_buffer_metadata_parse role=%s request_id=%u path=\"%s\" accessors=%zu buffer_views=%zu buffers=%zu ms=%.3f success=0",
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                resolvedGltfPath.c_str(),
+                                accessors.size(),
+                                bufferViews.size(),
+                                buffers.size(),
+                                LoadProfileElapsedMs(metadataParseStartTime));
                 return false;
             }
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_buffer_metadata_parse role=%s request_id=%u path=\"%s\" accessors=%zu buffer_views=%zu buffers=%zu ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            resolvedGltfPath.c_str(),
+                            accessors.size(),
+                            bufferViews.size(),
+                            buffers.size(),
+                            LoadProfileElapsedMs(metadataParseStartTime));
 
             VariableArray<VariableArray<uint8_t>> bufferData;
-            if (!LoadBuffers(buffers, gltfDirectory, bufferData))
+            auto bufferReadTotalStartTime = LoadProfileNow();
+            if (!LoadBuffers(buffers, gltfDirectory, bufferData, role, requestId))
             {
+                size_t bufferBytes = 0;
+                for (const auto& buffer : bufferData)
+                {
+                    bufferBytes += buffer.size();
+                }
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=gltf_buffer_read_total role=%s request_id=%u path=\"%s\" buffers=%zu bytes=%zu ms=%.3f success=0",
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                resolvedGltfPath.c_str(),
+                                buffers.size(),
+                                bufferBytes,
+                                LoadProfileElapsedMs(bufferReadTotalStartTime));
                 return false;
             }
+            size_t bufferBytes = 0;
+            for (const auto& buffer : bufferData)
+            {
+                bufferBytes += buffer.size();
+            }
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_buffer_read_total role=%s request_id=%u path=\"%s\" buffers=%zu bytes=%zu ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            resolvedGltfPath.c_str(),
+                            buffers.size(),
+                            bufferBytes,
+                            LoadProfileElapsedMs(bufferReadTotalStartTime));
 
             PrimitiveInfo primitiveInfo;
+            auto primitiveParseStartTime = LoadProfileNow();
             if (!ParsePrimitiveInfo(root, primitiveInfo))
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=gltf_primitive_parse role=%s request_id=%u path=\"%s\" ms=%.3f success=0",
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                resolvedGltfPath.c_str(),
+                                LoadProfileElapsedMs(primitiveParseStartTime));
                 return false;
             }
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_primitive_parse role=%s request_id=%u path=\"%s\" mesh=\"%s\" material_index=%u ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            resolvedGltfPath.c_str(),
+                            primitiveInfo.MeshName.c_str(),
+                            static_cast<unsigned int>(primitiveInfo.MaterialIndex),
+                            LoadProfileElapsedMs(primitiveParseStartTime));
 
             VariableArray<Rendering::Mesh3DVertex> vertices;
             VariableArray<uint32_t> indices;
+            auto meshExtractStartTime = LoadProfileNow();
             if (!ExtractMeshData(accessors, bufferViews, bufferData, primitiveInfo, vertices, indices))
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=gltf_mesh_extract role=%s request_id=%u path=\"%s\" vertices=%zu indices=%zu ms=%.3f success=0",
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                resolvedGltfPath.c_str(),
+                                vertices.size(),
+                                indices.size(),
+                                LoadProfileElapsedMs(meshExtractStartTime));
                 return false;
             }
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_mesh_extract role=%s request_id=%u path=\"%s\" vertices=%zu indices=%zu vertex_bytes=%zu index_bytes=%zu ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            resolvedGltfPath.c_str(),
+                            vertices.size(),
+                            indices.size(),
+                            vertices.size() * sizeof(Rendering::Mesh3DVertex),
+                            indices.size() * sizeof(uint32_t),
+                            LoadProfileElapsedMs(meshExtractStartTime));
 
             VariableArray<Rendering::MegaGeometry::MeshCluster> clusters;
             VariableArray<uint32_t> clusterizedIndices;
+            auto clusterizeStartTime = LoadProfileNow();
             Rendering::MegaGeometry::MeshClusterizer::Clusterize(
                 vertices.data(),
                 static_cast<uint32_t>(vertices.size()),
@@ -999,9 +1259,27 @@ namespace NorvesLib::Core::Resource
 
             if (clusters.empty() || clusterizedIndices.empty())
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=gltf_clusterize role=%s request_id=%u path=\"%s\" clusters=%zu clusterized_indices=%zu ms=%.3f success=0",
+                                role,
+                                static_cast<unsigned int>(requestId),
+                                resolvedGltfPath.c_str(),
+                                clusters.size(),
+                                clusterizedIndices.size(),
+                                LoadProfileElapsedMs(clusterizeStartTime));
                 NORVES_LOG_ERROR("GLTFAnalyzer", "MeshClusterizer returned an empty result");
                 return false;
             }
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_clusterize role=%s request_id=%u path=\"%s\" clusters=%zu clusterized_indices=%zu cluster_bytes=%zu index_bytes=%zu ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            resolvedGltfPath.c_str(),
+                            clusters.size(),
+                            clusterizedIndices.size(),
+                            clusters.size() * sizeof(Rendering::MegaGeometry::MeshCluster),
+                            clusterizedIndices.size() * sizeof(uint32_t),
+                            LoadProfileElapsedMs(clusterizeStartTime));
 
             String debugName = primitiveInfo.MeshName;
             if (debugName.empty())
@@ -1010,7 +1288,18 @@ namespace NorvesLib::Core::Resource
             }
 
             MaterialTextureInfo materialInfo;
-            ParseMaterialTextures(root, gltfDirectory, primitiveInfo.MaterialIndex, materialInfo);
+            auto materialTextureParseStartTime = LoadProfileNow();
+            bool bMaterialTextureParseSuccess = ParseMaterialTextures(root, gltfDirectory, primitiveInfo.MaterialIndex, materialInfo);
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_material_texture_parse role=%s request_id=%u path=\"%s\" albedo=%d normal=%d arm=%d ms=%.3f success=%d",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            resolvedGltfPath.c_str(),
+                            materialInfo.AlbedoPath.empty() ? 0 : 1,
+                            materialInfo.NormalPath.empty() ? 0 : 1,
+                            materialInfo.ArmPath.empty() ? 0 : 1,
+                            LoadProfileElapsedMs(materialTextureParseStartTime),
+                            bMaterialTextureParseSuccess ? 1 : 0);
 
             outStaging.Vertices = std::move(vertices);
             outStaging.ClusterizedIndices = std::move(clusterizedIndices);
@@ -1019,31 +1308,102 @@ namespace NorvesLib::Core::Resource
             outStaging.DebugName = debugName;
             outStaging.ResolvedPath = resolvedGltfPath;
 
-            StageStandardTexture(materialInfo.AlbedoPath, debugName + "_Albedo", outStaging.AlbedoTexture);
-            StageStandardTexture(materialInfo.NormalPath, debugName + "_Normal", outStaging.NormalTexture);
-            StageArmTextures(materialInfo.ArmPath,
-                             debugName,
-                             outStaging.AOTexture,
-                             outStaging.RoughnessTexture,
-                             outStaging.MetallicTexture);
+            auto textureStagingStartTime = LoadProfileNow();
+            bool bAlbedoStagingSuccess = StageStandardTexture(
+                materialInfo.AlbedoPath,
+                debugName + "_Albedo",
+                outStaging.AlbedoTexture,
+                role,
+                requestId);
+            bool bNormalStagingSuccess = StageStandardTexture(
+                materialInfo.NormalPath,
+                debugName + "_Normal",
+                outStaging.NormalTexture,
+                role,
+                requestId);
+            bool bArmStagingSuccess = StageArmTextures(
+                materialInfo.ArmPath,
+                debugName,
+                outStaging.AOTexture,
+                outStaging.RoughnessTexture,
+                outStaging.MetallicTexture,
+                role,
+                requestId);
+            bool bTextureStagingSuccess =
+                bAlbedoStagingSuccess &&
+                bNormalStagingSuccess &&
+                bArmStagingSuccess;
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_texture_staging role=%s request_id=%u path=\"%s\" textures=%u texture_bytes=%zu ms=%.3f success=%d",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            resolvedGltfPath.c_str(),
+                            static_cast<unsigned int>(GetStagedTextureCount(outStaging)),
+                            GetStagedTextureBytes(outStaging),
+                            LoadProfileElapsedMs(textureStagingStartTime),
+                            bTextureStagingSuccess ? 1 : 0);
 
+            size_t vertexBytes = outStaging.Vertices.size() * sizeof(Rendering::Mesh3DVertex);
+            size_t indexBytes = outStaging.ClusterizedIndices.size() * sizeof(uint32_t);
+            size_t clusterBytes = outStaging.Clusters.size() * sizeof(Rendering::MegaGeometry::MeshCluster);
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_staging_total role=%s request_id=%u path=\"%s\" debug_name=\"%s\" vertices=%zu indices=%zu clusters=%zu vertex_bytes=%zu index_bytes=%zu cluster_bytes=%zu texture_bytes=%zu cpu_staging_bytes=%zu ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            resolvedGltfPath.c_str(),
+                            outStaging.DebugName.c_str(),
+                            outStaging.Vertices.size(),
+                            outStaging.ClusterizedIndices.size(),
+                            outStaging.Clusters.size(),
+                            vertexBytes,
+                            indexBytes,
+                            clusterBytes,
+                            GetStagedTextureBytes(outStaging),
+                            vertexBytes + indexBytes + clusterBytes + GetStagedTextureBytes(outStaging),
+                            LoadProfileElapsedMs(totalStartTime));
             return true;
         }
-
         Rendering::ModelHandle FinalizeModelStaging(const ModelStagingData& staging,
-                                                    Rendering::RenderResourceManager& resourceManager)
+                                                    Rendering::RenderResourceManager& resourceManager,
+                                                    const char* role,
+                                                    uint32_t requestId)
         {
+            auto totalStartTime = LoadProfileNow();
             Rendering::MegaGeometry::MegaMeshMaterial material;
             material.BaseColor[0] = 1.0f;
             material.BaseColor[1] = 1.0f;
             material.BaseColor[2] = 1.0f;
             material.BaseColor[3] = 1.0f;
 
-            CreateTextureFromStagedData(resourceManager, staging.AlbedoTexture, material.AlbedoTexture);
-            CreateTextureFromStagedData(resourceManager, staging.NormalTexture, material.NormalTexture);
-            CreateTextureFromStagedData(resourceManager, staging.AOTexture, material.AOTexture);
-            CreateTextureFromStagedData(resourceManager, staging.RoughnessTexture, material.RoughnessTexture);
-            CreateTextureFromStagedData(resourceManager, staging.MetallicTexture, material.MetallicTexture);
+            auto textureFinalizeStartTime = LoadProfileNow();
+            bool bAlbedoFinalizeSuccess = false;
+            bool bNormalFinalizeSuccess = false;
+            bool bAOFinalizeSuccess = false;
+            bool bRoughnessFinalizeSuccess = false;
+            bool bMetallicFinalizeSuccess = false;
+            {
+                ScopedTextureCreateUploadProfileRole profileRole(role);
+                bAlbedoFinalizeSuccess = CreateTextureFromStagedData(resourceManager, staging.AlbedoTexture, material.AlbedoTexture);
+                bNormalFinalizeSuccess = CreateTextureFromStagedData(resourceManager, staging.NormalTexture, material.NormalTexture);
+                bAOFinalizeSuccess = CreateTextureFromStagedData(resourceManager, staging.AOTexture, material.AOTexture);
+                bRoughnessFinalizeSuccess = CreateTextureFromStagedData(resourceManager, staging.RoughnessTexture, material.RoughnessTexture);
+                bMetallicFinalizeSuccess = CreateTextureFromStagedData(resourceManager, staging.MetallicTexture, material.MetallicTexture);
+            }
+            bool bTextureFinalizeSuccess =
+                bAlbedoFinalizeSuccess &&
+                bNormalFinalizeSuccess &&
+                bAOFinalizeSuccess &&
+                bRoughnessFinalizeSuccess &&
+                bMetallicFinalizeSuccess;
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_finalize_textures role=%s request_id=%u debug_name=\"%s\" textures=%u texture_bytes=%zu ms=%.3f success=%d",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            staging.DebugName.c_str(),
+                            static_cast<unsigned int>(GetStagedTextureCount(staging)),
+                            GetStagedTextureBytes(staging),
+                            LoadProfileElapsedMs(textureFinalizeStartTime),
+                            bTextureFinalizeSuccess ? 1 : 0);
 
             Rendering::MegaGeometry::MegaMeshCreateInfo createInfo;
             createInfo.VertexData = staging.Vertices.data();
@@ -1058,17 +1418,39 @@ namespace NorvesLib::Core::Resource
             createInfo.Material = material;
             createInfo.DebugName = staging.DebugName;
 
+            auto megaMeshCreateStartTime = LoadProfileNow();
             Rendering::MegaGeometry::MegaMeshHandle megaMeshHandle = resourceManager.CreateMegaMesh(createInfo);
+            double megaMeshCreateMs = LoadProfileElapsedMs(megaMeshCreateStartTime);
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_finalize_megamesh role=%s request_id=%u debug_name=\"%s\" vertices=%zu indices=%zu clusters=%zu ms=%.3f success=%d",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            staging.DebugName.c_str(),
+                            staging.Vertices.size(),
+                            staging.ClusterizedIndices.size(),
+                            staging.Clusters.size(),
+                            megaMeshCreateMs,
+                            megaMeshHandle.IsValid() ? 1 : 0);
             if (!megaMeshHandle.IsValid())
             {
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to create MegaMesh: %s", staging.DebugName.c_str());
                 return Rendering::ModelHandle::Invalid();
             }
 
+            auto modelRegisterStartTime = LoadProfileNow();
             Rendering::ModelHandle modelHandle = resourceManager.RegisterModel(
                 megaMeshHandle,
                 staging.DebugName,
                 staging.ResolvedPath);
+            double modelRegisterMs = LoadProfileElapsedMs(modelRegisterStartTime);
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_finalize_register role=%s request_id=%u debug_name=\"%s\" path=\"%s\" ms=%.3f success=%d",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            staging.DebugName.c_str(),
+                            staging.ResolvedPath.c_str(),
+                            modelRegisterMs,
+                            modelHandle.IsValid() ? 1 : 0);
             if (!modelHandle.IsValid())
             {
                 resourceManager.ReleaseMegaMesh(megaMeshHandle);
@@ -1077,6 +1459,14 @@ namespace NorvesLib::Core::Resource
             }
 
             NORVES_LOG_INFO("GLTFAnalyzer", "glTF model loaded: %s", staging.DebugName.c_str());
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_finalize_total role=%s request_id=%u debug_name=\"%s\" path=\"%s\" texture_bytes=%zu ms=%.3f success=1",
+                            role,
+                            static_cast<unsigned int>(requestId),
+                            staging.DebugName.c_str(),
+                            staging.ResolvedPath.c_str(),
+                            GetStagedTextureBytes(staging),
+                            LoadProfileElapsedMs(totalStartTime));
             return modelHandle;
         }
     } // anonymous namespace
@@ -1085,12 +1475,12 @@ namespace NorvesLib::Core::Resource
                                                    Rendering::RenderResourceManager& resourceManager)
     {
         ModelStagingData staging;
-        if (!BuildModelStaging(gltfPath, staging))
+        if (!BuildModelStaging(gltfPath, staging, "caller", 0))
         {
             return Rendering::ModelHandle::Invalid();
         }
 
-        return FinalizeModelStaging(staging, resourceManager);
+        return FinalizeModelStaging(staging, resourceManager, "caller", 0);
     }
 
     uint32_t GLTFAnalyzer::LoadModelAsync(const String& gltfPath,
@@ -1128,7 +1518,11 @@ namespace NorvesLib::Core::Resource
 
         request->Task = Thread::Task::Create([request]()
         {
-            request->Result.bSuccess = BuildModelStaging(request->ResolvedPath, request->Result.Staging);
+            request->Result.bSuccess = BuildModelStaging(
+                request->ResolvedPath,
+                request->Result.Staging,
+                "worker",
+                request->RequestId);
         }, Thread::TaskPriority::NORMAL);
 
         {
@@ -1147,9 +1541,12 @@ namespace NorvesLib::Core::Resource
     uint32_t GLTFAnalyzer::FlushCompletedModelLoads(Rendering::RenderResourceManager& resourceManager,
                                                     uint32_t maxLoadsPerFrame)
     {
+        auto flushStartTime = LoadProfileNow();
         VariableArray<TSharedPtr<AsyncModelLoadRequest>> completedRequests;
+        double detachMs = 0.0;
 
         {
+            auto detachStartTime = LoadProfileNow();
             Thread::ScopedLock lock(g_AsyncModelLoadMutex);
             for (auto it = g_PendingModelLoads.begin(); it != g_PendingModelLoads.end();)
             {
@@ -1170,18 +1567,34 @@ namespace NorvesLib::Core::Resource
                     break;
                 }
             }
+            detachMs = LoadProfileElapsedMs(detachStartTime);
         }
 
         uint32_t processedCount = 0;
+        uint32_t successCount = 0;
+        uint32_t failedCount = 0;
         for (const auto& request : completedRequests)
         {
             Rendering::ModelHandle modelHandle = Rendering::ModelHandle::Invalid();
             if (request->Result.bSuccess)
             {
-                modelHandle = FinalizeModelStaging(request->Result.Staging, resourceManager);
+                modelHandle = FinalizeModelStaging(
+                    request->Result.Staging,
+                    resourceManager,
+                    "main_render",
+                    request->RequestId);
+                if (modelHandle.IsValid())
+                {
+                    ++successCount;
+                }
+                else
+                {
+                    ++failedCount;
+                }
             }
             else
             {
+                ++failedCount;
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Async glTF staging failed: %s", request->ResolvedPath.c_str());
             }
 
@@ -1190,6 +1603,18 @@ namespace NorvesLib::Core::Resource
                 callback.InvokeIfBound(modelHandle);
             }
             ++processedCount;
+        }
+
+        if (processedCount > 0)
+        {
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=gltf_model_flush role=main_render processed=%u success=%u failed=%u max_loads_per_frame=%u detach_ms=%.3f flush_ms=%.3f",
+                            static_cast<unsigned int>(processedCount),
+                            static_cast<unsigned int>(successCount),
+                            static_cast<unsigned int>(failedCount),
+                            static_cast<unsigned int>(maxLoadsPerFrame),
+                            detachMs,
+                            LoadProfileElapsedMs(flushStartTime));
         }
 
         return processedCount;

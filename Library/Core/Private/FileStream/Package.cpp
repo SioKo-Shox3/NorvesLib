@@ -1,35 +1,79 @@
 ﻿#include "FileStream/Package.h"
 #include "FileStream/FileStream.h"
+#include "Logging/LogMacros.h"
 #include "Object/Reflection.h"
 #include "Thread/JobSystem.h"
+#include <chrono>
 
 namespace NorvesLib::FileStream
 {
     namespace
     {
-        bool ReadPackageFile(const Core::Container::String &path,
-                             Core::Container::VariableArray<uint8_t> &outRawData)
+        using LoadProfileClock = std::chrono::steady_clock;
+
+        LoadProfileClock::time_point LoadProfileNow()
         {
+            return LoadProfileClock::now();
+        }
+
+        double LoadProfileElapsedMs(LoadProfileClock::time_point startTime)
+        {
+            return std::chrono::duration<double, std::milli>(LoadProfileClock::now() - startTime).count();
+        }
+
+        bool ReadPackageFile(const Core::Container::String &path,
+                             Core::Container::VariableArray<uint8_t> &outRawData,
+                             const char *role)
+        {
+            auto readStartTime = LoadProfileNow();
+            size_t bytesRead = 0;
             auto fileStream = FileStream::Create(path, FileMode::Read, FileAccess::Read, FileShare::Read);
             if (!fileStream || !fileStream->IsOpen())
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=package_read role=%s path=\"%s\" bytes=%zu ms=%.3f success=0",
+                                role,
+                                path.c_str(),
+                                bytesRead,
+                                LoadProfileElapsedMs(readStartTime));
                 return false;
             }
 
             int64_t fileSize = fileStream->GetSize();
             if (fileSize <= 0)
             {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=package_read role=%s path=\"%s\" bytes=%zu file_size=%lld ms=%.3f success=0",
+                                role,
+                                path.c_str(),
+                                bytesRead,
+                                static_cast<long long>(fileSize),
+                                LoadProfileElapsedMs(readStartTime));
                 return false;
             }
 
             outRawData.resize(static_cast<size_t>(fileSize));
-            size_t bytesRead = fileStream->Read(outRawData.data(), outRawData.size());
+            bytesRead = fileStream->Read(outRawData.data(), outRawData.size());
             if (bytesRead != static_cast<size_t>(fileSize))
             {
                 outRawData.clear();
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=package_read role=%s path=\"%s\" bytes=%zu file_size=%lld ms=%.3f success=0",
+                                role,
+                                path.c_str(),
+                                bytesRead,
+                                static_cast<long long>(fileSize),
+                                LoadProfileElapsedMs(readStartTime));
                 return false;
             }
 
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=package_read role=%s path=\"%s\" bytes=%zu file_size=%lld ms=%.3f success=1",
+                            role,
+                            path.c_str(),
+                            bytesRead,
+                            static_cast<long long>(fileSize),
+                            LoadProfileElapsedMs(readStartTime));
             return true;
         }
     }
@@ -128,7 +172,7 @@ namespace NorvesLib::FileStream
         m_PackageName = Core::Identity(path);
 
         Core::Container::VariableArray<uint8_t> rawData;
-        if (!ReadPackageFile(path, rawData))
+        if (!ReadPackageFile(path, rawData, "caller"))
         {
             m_LoadState = PackageLoadState::Failed;
             return false;
@@ -173,7 +217,7 @@ namespace NorvesLib::FileStream
         auto task = Thread::Task::Create([this, path]()
         {
             Core::Container::VariableArray<uint8_t> rawData;
-            bool bSuccess = ReadPackageFile(path, rawData);
+            bool bSuccess = ReadPackageFile(path, rawData, "worker");
 
             Thread::ScopedLock lock(m_LoadMutex);
             if (m_FilePath != path)

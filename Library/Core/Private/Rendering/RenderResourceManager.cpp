@@ -14,11 +14,49 @@
 // stb_image（テクスチャファイル読み込み用）
 #include "stb_image.h"
 #include <algorithm>
+#include <chrono>
 
 namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        using LoadProfileClock = std::chrono::steady_clock;
+
+        LoadProfileClock::time_point LoadProfileNow()
+        {
+            return LoadProfileClock::now();
+        }
+
+        double LoadProfileElapsedMs(LoadProfileClock::time_point startTime)
+        {
+            return std::chrono::duration<double, std::milli>(LoadProfileClock::now() - startTime).count();
+        }
+
+        thread_local const char* g_TextureCreateUploadProfileRole = "caller";
+
+        const char* GetTextureCreateUploadProfileRole()
+        {
+            return g_TextureCreateUploadProfileRole;
+        }
+
+        class ScopedTextureCreateUploadProfileRole
+        {
+        public:
+            explicit ScopedTextureCreateUploadProfileRole(const char* role)
+                : m_PreviousRole(g_TextureCreateUploadProfileRole)
+            {
+                g_TextureCreateUploadProfileRole = (role != nullptr && role[0] != '\0') ? role : "caller";
+            }
+
+            ~ScopedTextureCreateUploadProfileRole()
+            {
+                g_TextureCreateUploadProfileRole = m_PreviousRole;
+            }
+
+        private:
+            const char* m_PreviousRole = "caller";
+        };
+
         uint32_t CalculateFullMipCount(uint32_t width, uint32_t height)
         {
             uint32_t mipLevels = 1;
@@ -30,6 +68,33 @@ namespace NorvesLib::Core::Rendering
             }
             return mipLevels;
         }
+
+        uint32_t GetTextureBytesPerPixel(TextureCreateInfo::Format format)
+        {
+            switch (format)
+            {
+            case TextureCreateInfo::Format::R8_UNORM:
+                return 1;
+            case TextureCreateInfo::Format::RG8_UNORM:
+                return 2;
+            case TextureCreateInfo::Format::RGBA8_UNORM:
+            case TextureCreateInfo::Format::RGBA8_SRGB:
+                return 4;
+            case TextureCreateInfo::Format::RGBA16_FLOAT:
+                return 8;
+            case TextureCreateInfo::Format::RGBA32_FLOAT:
+                return 16;
+            default:
+                return 4;
+            }
+        }
+    }
+
+    const char* SetTextureCreateUploadProfileRoleForCurrentThread(const char* role)
+    {
+        const char* previousRole = g_TextureCreateUploadProfileRole;
+        g_TextureCreateUploadProfileRole = (role != nullptr && role[0] != '\0') ? role : "caller";
+        return previousRole;
     }
 
 
@@ -259,61 +324,77 @@ namespace NorvesLib::Core::Rendering
     TextureHandle RenderResourceManager::CreateTexture(const TextureCreateInfo &createInfo,
                                                        const void *data, size_t dataSize)
     {
+        uint32_t effectiveMipLevels = std::max(1u, createInfo.MipLevels);
+        auto createStartTime = LoadProfileNow();
         auto handle = CreateTexture(createInfo);
+        double textureCreateMs = LoadProfileElapsedMs(createStartTime);
+        const char* profileRole = GetTextureCreateUploadProfileRole();
         if (!handle.IsValid() || !data || dataSize == 0)
         {
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=texture_create_upload role=%s debug_name=\"%s\" data_size=%zu mip_levels=%u texture_create_ms=%.3f upload_ms=0.000 mipgen_ms=0.000 success=%d",
+                            profileRole,
+                            createInfo.DebugName.c_str(),
+                            dataSize,
+                            effectiveMipLevels,
+                            textureCreateMs,
+                            handle.IsValid() ? 1 : 0);
             return handle;
         }
 
         // テクスチャにデータをアップロード
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_Textures.find(handle.Id);
-        if (it != m_Textures.end() && it->second.RHITexture)
+        double uploadMs = 0.0;
+        double mipgenMs = 0.0;
+        bool bTextureFound = false;
+        bool bUploadAttempted = false;
+        bool bMipgenSuccess = true;
         {
-            uint32_t bytesPerPixel = 4; // RGBA8のデフォルト
-            switch (createInfo.PixelFormat)
+            Thread::ScopedLock lock(m_ResourceMutex);
+            auto it = m_Textures.find(handle.Id);
+            if (it != m_Textures.end() && it->second.RHITexture)
             {
-            case TextureCreateInfo::Format::R8_UNORM:
-                bytesPerPixel = 1;
-                break;
-            case TextureCreateInfo::Format::RG8_UNORM:
-                bytesPerPixel = 2;
-                break;
-            case TextureCreateInfo::Format::RGBA8_UNORM:
-            case TextureCreateInfo::Format::RGBA8_SRGB:
-                bytesPerPixel = 4;
-                break;
-            case TextureCreateInfo::Format::RGBA16_FLOAT:
-                bytesPerPixel = 8;
-                break;
-            case TextureCreateInfo::Format::RGBA32_FLOAT:
-                bytesPerPixel = 16;
-                break;
-            default:
-                bytesPerPixel = 4;
-                break;
-            }
+                bTextureFound = true;
+                uint32_t bytesPerPixel = GetTextureBytesPerPixel(createInfo.PixelFormat);
 
-            uint32_t rowPitch = createInfo.Width * bytesPerPixel;
-            uint32_t slicePitch = rowPitch * createInfo.Height;
-            it->second.RHITexture->Update(data, rowPitch, slicePitch);
+                uint32_t rowPitch = createInfo.Width * bytesPerPixel;
+                uint32_t slicePitch = rowPitch * createInfo.Height;
+                auto uploadStartTime = LoadProfileNow();
+                it->second.RHITexture->Update(data, rowPitch, slicePitch);
+                uploadMs = LoadProfileElapsedMs(uploadStartTime);
+                bUploadAttempted = true;
 
-            if (createInfo.MipLevels > 1)
-            {
-                auto commandList = m_Device->CreateCommandList();
-                if (!commandList)
+                if (effectiveMipLevels > 1)
                 {
-                    NORVES_LOG_ERROR("RenderResourceManager", "Failed to create command list for mip generation");
-                    return handle;
+                    auto mipgenStartTime = LoadProfileNow();
+                    auto commandList = m_Device->CreateCommandList();
+                    if (!commandList)
+                    {
+                        bMipgenSuccess = false;
+                        NORVES_LOG_ERROR("RenderResourceManager", "Failed to create command list for mip generation");
+                    }
+                    else
+                    {
+                        commandList->Begin();
+                        commandList->GenerateMipmaps(it->second.RHITexture);
+                        commandList->End();
+                        commandList->Submit(true);
+                    }
+                    mipgenMs = LoadProfileElapsedMs(mipgenStartTime);
                 }
-
-                commandList->Begin();
-                commandList->GenerateMipmaps(it->second.RHITexture);
-                commandList->End();
-                commandList->Submit(true);
             }
         }
 
+        bool bSuccess = handle.IsValid() && bTextureFound && bUploadAttempted && bMipgenSuccess;
+        NORVES_LOG_INFO("AssetLoadProfile",
+                        "stage=texture_create_upload role=%s debug_name=\"%s\" data_size=%zu mip_levels=%u texture_create_ms=%.3f upload_ms=%.3f mipgen_ms=%.3f success=%d",
+                        profileRole,
+                        createInfo.DebugName.c_str(),
+                        dataSize,
+                        effectiveMipLevels,
+                        textureCreateMs,
+                        uploadMs,
+                        mipgenMs,
+                        bSuccess ? 1 : 0);
         return handle;
     }
 
@@ -362,7 +443,21 @@ namespace NorvesLib::Core::Rendering
 
         // stb_imageでファイルを読み込み
         int width = 0, height = 0, channels = 0;
+        auto stbiStartTime = LoadProfileNow();
         unsigned char *pixels = stbi_load(resolvedPath.c_str(), &width, &height, &channels, 4); // RGBA強制
+        double stbiFileMs = LoadProfileElapsedMs(stbiStartTime);
+        size_t pixelDataSize = pixels && width > 0 && height > 0
+                                   ? static_cast<size_t>(width) * static_cast<size_t>(height) * 4
+                                   : 0;
+        NORVES_LOG_INFO("AssetLoadProfile",
+                        "stage=texture_sync_stbi_file role=caller path=\"%s\" width=%d height=%d channels=%d pixel_bytes=%zu ms=%.3f success=%d",
+                        resolvedPath.c_str(),
+                        width,
+                        height,
+                        channels,
+                        pixelDataSize,
+                        stbiFileMs,
+                        pixels ? 1 : 0);
         if (!pixels)
         {
             NORVES_LOG_ERROR("RenderResourceManager", "Failed to load texture file");
@@ -377,8 +472,7 @@ namespace NorvesLib::Core::Rendering
         createInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
         createInfo.DebugName = path;
 
-        size_t dataSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
-        auto handle = CreateTexture(createInfo, pixels, dataSize);
+        auto handle = CreateTexture(createInfo, pixels, pixelDataSize);
 
         stbi_image_free(pixels);
 
@@ -983,20 +1077,31 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 頂点バッファ作成
+        double vertexUploadMs = 0.0;
+        double indexUploadMs = 0.0;
+        double clusterUploadMs = 0.0;
         Container::String vbName = createInfo.DebugName + "_VB";
         RHI::BufferDesc vbDesc(
             static_cast<uint64_t>(uploadVertexDataSize),
             RHI::ResourceUsage::VertexBuffer | RHI::ResourceUsage::StorageBuffer,
             true,
             vbName.c_str());
+        auto vertexUploadStartTime = LoadProfileNow();
         auto vertexBuffer = m_Device->CreateBuffer(vbDesc);
         if (!vertexBuffer)
         {
+            vertexUploadMs = LoadProfileElapsedMs(vertexUploadStartTime);
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%zu index_bytes=0 cluster_bytes=0 vertex_ms=%.3f index_ms=0.000 cluster_ms=0.000 success=0",
+                            createInfo.DebugName.c_str(),
+                            uploadVertexDataSize,
+                            vertexUploadMs);
             NORVES_LOG_ERROR("RenderResourceManager", "MegaMeshの頂点バッファ作成に失敗: %s",
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
         vertexBuffer->Update(uploadVertexData, uploadVertexDataSize);
+        vertexUploadMs = LoadProfileElapsedMs(vertexUploadStartTime);
 
         // インデックスバッファ作成
         size_t ibSize = static_cast<size_t>(uploadIndexCount) * sizeof(uint32_t);
@@ -1006,14 +1111,24 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceUsage::IndexBuffer | RHI::ResourceUsage::StorageBuffer,
             true,
             ibName.c_str());
+        auto indexUploadStartTime = LoadProfileNow();
         auto indexBuffer = m_Device->CreateBuffer(ibDesc);
         if (!indexBuffer)
         {
+            indexUploadMs = LoadProfileElapsedMs(indexUploadStartTime);
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%zu index_bytes=%zu cluster_bytes=0 vertex_ms=%.3f index_ms=%.3f cluster_ms=0.000 success=0",
+                            createInfo.DebugName.c_str(),
+                            uploadVertexDataSize,
+                            ibSize,
+                            vertexUploadMs,
+                            indexUploadMs);
             NORVES_LOG_ERROR("RenderResourceManager", "MegaMeshのインデックスバッファ作成に失敗: %s",
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
         indexBuffer->Update(uploadIndexData, ibSize);
+        indexUploadMs = LoadProfileElapsedMs(indexUploadStartTime);
 
         // クラスタデータSSBO作成
         // MeshCluster → GPUClusterData に変換
@@ -1048,14 +1163,26 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceUsage::StorageBuffer,
             true,
             cbName.c_str());
+        auto clusterUploadStartTime = LoadProfileNow();
         auto clusterBuffer = m_Device->CreateBuffer(cbDesc);
         if (!clusterBuffer)
         {
+            clusterUploadMs = LoadProfileElapsedMs(clusterUploadStartTime);
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%zu index_bytes=%zu cluster_bytes=%zu vertex_ms=%.3f index_ms=%.3f cluster_ms=%.3f success=0",
+                            createInfo.DebugName.c_str(),
+                            uploadVertexDataSize,
+                            ibSize,
+                            clusterBufferSize,
+                            vertexUploadMs,
+                            indexUploadMs,
+                            clusterUploadMs);
             NORVES_LOG_ERROR("RenderResourceManager", "MegaMeshのクラスタバッファ作成に失敗: %s",
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
         clusterBuffer->Update(gpuClusters.data(), clusterBufferSize);
+        clusterUploadMs = LoadProfileElapsedMs(clusterUploadStartTime);
 
         // ハンドル割り当てとGPUデータ登録
         auto handle = AllocateHandle<MegaGeometry::MegaMeshHandle>();
@@ -1071,8 +1198,10 @@ namespace NorvesLib::Core::Rendering
         gpuData.Material = createInfo.Material;
         gpuData.DebugName = createInfo.DebugName;
 
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_MegaMeshGPUDataMap[handle.Id] = std::move(gpuData);
+        {
+            Thread::ScopedLock lock(m_ResourceMutex);
+            m_MegaMeshGPUDataMap[handle.Id] = std::move(gpuData);
+        }
 
         NORVES_LOG_INFO("RenderResourceManager",
                         "MegaMesh作成完了: %s (頂点: %u, インデックス: %u, クラスタ: %u)",
@@ -1080,6 +1209,16 @@ namespace NorvesLib::Core::Rendering
                         createInfo.VertexCount,
                         createInfo.IndexCount,
                         static_cast<uint32_t>(createInfo.Clusters.size()));
+
+        NORVES_LOG_INFO("AssetLoadProfile",
+                        "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%zu index_bytes=%zu cluster_bytes=%zu vertex_ms=%.3f index_ms=%.3f cluster_ms=%.3f success=1",
+                        createInfo.DebugName.c_str(),
+                        uploadVertexDataSize,
+                        ibSize,
+                        clusterBufferSize,
+                        vertexUploadMs,
+                        indexUploadMs,
+                        clusterUploadMs);
 
         return handle;
     }
@@ -1218,8 +1357,35 @@ namespace NorvesLib::Core::Rendering
         auto taskFunction = [request]()
         {
             auto &result = request->Result;
+            double readMs = 0.0;
+            double decodeMs = 0.0;
+            double copyMs = 0.0;
+            size_t fileBytes = 0;
+            size_t pixelBytes = 0;
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+
+            auto logAsyncTextureProfile = [&]()
+            {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=texture_async_worker role=worker request_id=%u path=\"%s\" resolved_path=\"%s\" read_ms=%.3f file_bytes=%zu decode_ms=%.3f copy_ms=%.3f pixel_bytes=%zu width=%d height=%d channels=%d success=%d",
+                                static_cast<unsigned int>(request->RequestId),
+                                result.Path.c_str(),
+                                result.ResolvedPath.c_str(),
+                                readMs,
+                                fileBytes,
+                                decodeMs,
+                                copyMs,
+                                pixelBytes,
+                                width,
+                                height,
+                                channels,
+                                result.bSuccess ? 1 : 0);
+            };
 
             // FileStreamでバイナリ読み込み
+            auto readStartTime = LoadProfileNow();
             auto fileStream = NorvesLib::FileStream::FileStream::Create(
                 result.ResolvedPath,
                 NorvesLib::FileStream::FileMode::Read,
@@ -1229,6 +1395,8 @@ namespace NorvesLib::Core::Rendering
             if (!fileStream || !fileStream->IsOpen())
             {
                 result.bSuccess = false;
+                readMs = LoadProfileElapsedMs(readStartTime);
+                logAsyncTextureProfile();
                 return;
             }
 
@@ -1236,6 +1404,8 @@ namespace NorvesLib::Core::Rendering
             if (fileSize <= 0)
             {
                 result.bSuccess = false;
+                readMs = LoadProfileElapsedMs(readStartTime);
+                logAsyncTextureProfile();
                 return;
             }
 
@@ -1243,30 +1413,37 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<uint8_t> fileData(static_cast<size_t>(fileSize));
             size_t bytesRead = fileStream->Read(fileData.data(), static_cast<size_t>(fileSize));
             fileStream->Close();
+            readMs = LoadProfileElapsedMs(readStartTime);
+            fileBytes = bytesRead;
 
             if (bytesRead != static_cast<size_t>(fileSize))
             {
                 result.bSuccess = false;
+                logAsyncTextureProfile();
                 return;
             }
 
             // stbi_load_from_memoryでデコード（ワーカースレッドで実行）
-            int width = 0, height = 0, channels = 0;
+            auto decodeStartTime = LoadProfileNow();
             unsigned char *pixels = stbi_load_from_memory(
                 fileData.data(),
                 static_cast<int>(fileData.size()),
                 &width, &height, &channels, 4); // RGBA強制
+            decodeMs = LoadProfileElapsedMs(decodeStartTime);
 
             if (!pixels)
             {
                 result.bSuccess = false;
+                logAsyncTextureProfile();
                 return;
             }
 
             // デコード結果をリクエストに保存
-            size_t pixelDataSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
-            result.PixelData.resize(pixelDataSize);
-            std::memcpy(result.PixelData.data(), pixels, pixelDataSize);
+            pixelBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+            auto copyStartTime = LoadProfileNow();
+            result.PixelData.resize(pixelBytes);
+            std::memcpy(result.PixelData.data(), pixels, pixelBytes);
+            copyMs = LoadProfileElapsedMs(copyStartTime);
             stbi_image_free(pixels);
 
             result.CreateInfo.Width = static_cast<uint32_t>(width);
@@ -1274,6 +1451,7 @@ namespace NorvesLib::Core::Rendering
             result.CreateInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
             result.CreateInfo.DebugName = result.Path;
             result.bSuccess = true;
+            logAsyncTextureProfile();
         };
 
         request->Task = Thread::Task::Create(taskFunction, Thread::TaskPriority::NORMAL);
@@ -1296,10 +1474,15 @@ namespace NorvesLib::Core::Rendering
 
     uint32_t RenderResourceManager::FlushCompletedTextureLoads()
     {
+        auto flushStartTime = LoadProfileNow();
         Container::VariableArray<Container::TSharedPtr<AsyncTextureRequest>> completedRequests;
         uint32_t processedCount = 0;
+        uint32_t successCount = 0;
+        uint32_t failedCount = 0;
+        double detachMs = 0.0;
 
         {
+            auto detachStartTime = LoadProfileNow();
             Thread::ScopedLock lock(m_AsyncLoadMutex);
 
             // 完了したリクエストを切り離す
@@ -1316,6 +1499,7 @@ namespace NorvesLib::Core::Rendering
                 completedRequests.push_back(request);
                 it = m_PendingTextureLoads.erase(it);
             }
+            detachMs = LoadProfileElapsedMs(detachStartTime);
         }
 
         for (auto &request : completedRequests)
@@ -1324,13 +1508,18 @@ namespace NorvesLib::Core::Rendering
             if (result.bSuccess)
             {
                 // メインスレッドでGPUアップロード
-                auto handle = CreateTexture(
-                    result.CreateInfo,
-                    result.PixelData.data(),
-                    result.PixelData.size());
+                TextureHandle handle = TextureHandle::Invalid();
+                {
+                    ScopedTextureCreateUploadProfileRole profileRole("main_render");
+                    handle = CreateTexture(
+                        result.CreateInfo,
+                        result.PixelData.data(),
+                        result.PixelData.size());
+                }
 
                 if (handle.IsValid())
                 {
+                    ++successCount;
                     // キャッシュ登録
                     {
                         Thread::ScopedLock resourceLock(m_ResourceMutex);
@@ -1342,6 +1531,7 @@ namespace NorvesLib::Core::Rendering
                 }
                 else
                 {
+                    ++failedCount;
                     NORVES_LOG_ERROR("RenderResourceManager", "Async texture GPU upload failed: %s",
                                      result.Path.c_str());
                 }
@@ -1354,6 +1544,7 @@ namespace NorvesLib::Core::Rendering
             }
             else
             {
+                ++failedCount;
                 NORVES_LOG_ERROR("RenderResourceManager", "Async texture load failed: %s",
                                  result.ResolvedPath.c_str());
 
@@ -1368,6 +1559,17 @@ namespace NorvesLib::Core::Rendering
             result.PixelData.clear();
             result.PixelData.shrink_to_fit();
             ++processedCount;
+        }
+
+        if (processedCount > 0)
+        {
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=texture_async_flush role=main_render processed=%u success=%u failed=%u detach_ms=%.3f flush_ms=%.3f",
+                            static_cast<unsigned int>(processedCount),
+                            static_cast<unsigned int>(successCount),
+                            static_cast<unsigned int>(failedCount),
+                            detachMs,
+                            LoadProfileElapsedMs(flushStartTime));
         }
 
         return processedCount;
