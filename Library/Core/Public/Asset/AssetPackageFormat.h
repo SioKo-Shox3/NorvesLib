@@ -15,6 +15,8 @@ namespace NorvesLib::Core::Asset
                (static_cast<AssetPackageFourCC>(static_cast<uint8_t>(d)) << 24);
     }
 
+    [[nodiscard]] constexpr uint64_t ComputeAssetPackagePayloadHash(const uint8_t *data, size_t size) noexcept;
+
     enum class AssetPackageCompression : uint32_t
     {
         None = 0
@@ -74,5 +76,16 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t PayloadHash = 48;       // uint64, FNV-1a over stored payload bytes
             inline constexpr size_t Reserved0 = 56;         // uint64, reserved zero
         }
+    }
+
+    [[nodiscard]] constexpr uint64_t ComputeAssetPackagePayloadHash(const uint8_t *data, size_t size) noexcept
+    {
+        uint64_t hash = AssetPackageFormatV1::Fnv1a64OffsetBasis;
+        for (size_t index = 0; index < size; ++index)
+        {
+            hash ^= static_cast<uint64_t>(data[index]);
+            hash *= AssetPackageFormatV1::Fnv1a64Prime;
+        }
+        return hash;
     }
 }

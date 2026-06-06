@@ -230,17 +230,6 @@ namespace NorvesLib::FileStream
                    storage[3] == 'K';
         }
 
-        uint64_t ComputeFnv1a64(const uint8_t *data, size_t size)
-        {
-            uint64_t hash = Core::Asset::AssetPackageFormatV1::Fnv1a64OffsetBasis;
-            for (size_t index = 0; index < size; ++index)
-            {
-                hash ^= static_cast<uint64_t>(data[index]);
-                hash *= Core::Asset::AssetPackageFormatV1::Fnv1a64Prime;
-            }
-            return hash;
-        }
-
         PackageEntry MakeRawEntry(const StoragePtr &storage)
         {
             PackageEntry entry;
@@ -250,7 +239,7 @@ namespace NorvesLib::FileStream
             entry.DataOffset = 0;
             entry.StoredSize = storage ? storage->size() : 0;
             entry.UncompressedSize = entry.StoredSize;
-            entry.PayloadHash = storage ? ComputeFnv1a64(storage->data(), storage->size())
+            entry.PayloadHash = storage ? Core::Asset::ComputeAssetPackagePayloadHash(storage->data(), storage->size())
                                         : Core::Asset::AssetPackageFormatV1::ZeroSizePayloadHash;
             return entry;
         }
@@ -425,7 +414,7 @@ namespace NorvesLib::FileStream
                     return false;
                 }
 
-                const uint64_t computedHash = ComputeFnv1a64(storedSize > 0 ? data + dataOffset : nullptr, storedSize);
+                const uint64_t computedHash = Core::Asset::ComputeAssetPackagePayloadHash(storedSize > 0 ? data + dataOffset : nullptr, storedSize);
                 if (computedHash != payloadHash)
                 {
                     return false;
