@@ -283,7 +283,15 @@ if ($RequireCompleteModelFlush) {
 
     $hasTextureStage = $false
     foreach ($stage in $stageSet.Keys) {
-        if ($stage -eq "texture_async_worker" -or $stage -match "texture.*flush") {
+        if ($stage -in @(
+                "texture_async_worker",
+                "texture_asset_resolve",
+                "texture_cooked_upload",
+                "texture_prepare_asset",
+                "texture_prepared_cooked_upload",
+                "texture_prepared_finalize",
+                "texture_prepared_split"
+            ) -or $stage -match "texture.*flush") {
             $hasTextureStage = $true
             break
         }
@@ -362,6 +370,10 @@ $textureRecords = $records | Where-Object {
         "texture_asset_resolve",
         "texture_cooked_parse",
         "texture_cooked_upload",
+        "texture_prepare_asset",
+        "texture_prepared_cooked_upload",
+        "texture_prepared_finalize",
+        "texture_prepared_split",
         "texture_async_upload_fallback_decode",
         "gltf_image_read",
         "gltf_image_decode",
@@ -378,6 +390,9 @@ foreach ($group in ($textureRecords | Group-Object { Get-Field $_.Fields "path" 
     $items = @($group.Group)
     $source = Get-FirstFieldFromStages $items @(
         "texture_cooked_upload",
+        "texture_prepared_cooked_upload",
+        "texture_prepared_finalize",
+        "texture_prepare_asset",
         "texture_cooked_parse",
         "texture_async_worker",
         "texture_sync_stbi_file",
@@ -442,10 +457,29 @@ foreach ($group in ($textureRecords | Group-Object { Get-Field $_.Fields "path" 
     }
 
     $uploadMs = (Sum-StageMetric -Records $items -Stage "texture_cooked_upload" -Metric "upload_ms")
+    $preparedUploadMs = (Sum-StageMetric -Records $items -Stage "texture_prepared_cooked_upload" -Metric "upload_ms")
+    if ($null -ne $preparedUploadMs) {
+        $uploadMs = (0.0 + $(if ($null -ne $uploadMs) { $uploadMs } else { 0.0 }) + $preparedUploadMs)
+    }
+
+    $preparedSplitCount = @($items | Where-Object { $_.Stage -eq "texture_prepared_split" }).Count
+    $preparedFinalizeSuccess = $null
+    $preparedFinalizeRecords = @($items | Where-Object { $_.Stage -eq "texture_prepared_finalize" })
+    if ($preparedFinalizeRecords.Count -gt 0) {
+        $preparedFinalizeSuccessTotal = 0.0
+        foreach ($preparedFinalizeRecord in $preparedFinalizeRecords) {
+            $successValue = Get-NumberField $preparedFinalizeRecord.Fields "success"
+            if ($null -ne $successValue) {
+                $preparedFinalizeSuccessTotal += $successValue
+            }
+        }
+        $preparedFinalizeSuccess = $preparedFinalizeSuccessTotal
+    }
 
     $stageNames = ($items | ForEach-Object { $_.Stage } | Sort-Object -Unique) -join ","
-    $width = Get-FirstFieldFromStages $items @("texture_cooked_upload", "texture_async_worker", "texture_sync_stbi_file", "texture_sync_stbi_memory", "gltf_image_decode", "gltf_image_copy") "width"
-    $height = Get-FirstFieldFromStages $items @("texture_cooked_upload", "texture_async_worker", "texture_sync_stbi_file", "texture_sync_stbi_memory", "gltf_image_decode", "gltf_image_copy") "height"
+    $preparedStatus = Get-FirstFieldFromStages $items @("texture_prepare_asset") "status"
+    $width = Get-FirstFieldFromStages $items @("texture_prepared_cooked_upload", "texture_prepared_split", "texture_cooked_upload", "texture_async_worker", "texture_sync_stbi_file", "texture_sync_stbi_memory", "gltf_image_decode", "gltf_image_copy") "width"
+    $height = Get-FirstFieldFromStages $items @("texture_prepared_cooked_upload", "texture_prepared_split", "texture_cooked_upload", "texture_async_worker", "texture_sync_stbi_file", "texture_sync_stbi_memory", "gltf_image_decode", "gltf_image_copy") "height"
     $channels = Get-FirstFieldFromStages $items @("texture_async_worker", "texture_sync_stbi_file", "texture_sync_stbi_memory", "gltf_image_decode") "channels"
 
     $textureRows += ,@(
@@ -458,8 +492,11 @@ foreach ($group in ($textureRecords | Group-Object { Get-Field $_.Fields "path" 
         (Format-Number $decodeMs),
         (Format-Number $copyMs),
         (Format-Number $uploadMs),
+        $preparedStatus,
+        (Format-Integer $preparedSplitCount),
+        (Format-Integer $preparedFinalizeSuccess),
         (Format-Integer (Get-MaxFieldFromRecords $items @("file_bytes", "bytes"))),
-        (Format-Integer (Get-MaxFieldFromRecords $items @("pixel_bytes", "uploaded_bytes"))),
+        (Format-Integer (Get-MaxFieldFromRecords $items @("pixel_bytes", "uploaded_bytes", "pixels"))),
         $width,
         $height,
         $channels
@@ -470,7 +507,7 @@ Write-Output "## Texture Source"
 Write-Output ""
 if ($textureRows.Count -gt 0) {
     Write-MarkdownTable `
-        -Headers @("path", "source", "stages", "read_ms", "resolve_ms", "parse_ms", "decode_ms", "copy_ms", "upload_ms", "file_bytes", "pixel_bytes", "width", "height", "channels") `
+        -Headers @("path", "source", "stages", "read_ms", "resolve_ms", "parse_ms", "decode_ms", "copy_ms", "upload_ms", "prepared_status", "prepared_split_count", "prepared_finalize_success", "file_bytes", "pixel_bytes", "width", "height", "channels") `
         -Rows $textureRows
 }
 else {
@@ -487,6 +524,7 @@ $modelStages = @(
     "gltf_clusterize",
     "gltf_texture_staging",
     "gltf_staging_total",
+    "gltf_finalize_textures",
     "gltf_finalize_total"
 )
 $modelRecords = $records | Where-Object { $_.Stage -in $modelStages }
@@ -513,7 +551,9 @@ foreach ($group in ($modelRecords | Group-Object { Get-Field $_.Fields "request_
         (Get-FirstFieldFromStages $items @("gltf_staging_total") "vertices"),
         (Get-FirstFieldFromStages $items @("gltf_staging_total") "indices"),
         (Get-FirstFieldFromStages $items @("gltf_staging_total") "clusters"),
-        (Get-FirstFieldFromStages $items @("gltf_staging_total") "cpu_staging_bytes")
+        (Get-FirstFieldFromStages $items @("gltf_staging_total") "cpu_staging_bytes"),
+        (Format-Integer (Get-MaxFieldFromRecords $items @("loose_texture_bytes"))),
+        (Format-Integer (Get-MaxFieldFromRecords $items @("prepared_textures")))
     )
 }
 
@@ -521,7 +561,7 @@ Write-Output "## glTF / Model"
 Write-Output ""
 if ($modelRows.Count -gt 0) {
     Write-MarkdownTable `
-        -Headers @("request_id", "path", "json_parse_ms", "buffer_read_ms", "mesh_extract_ms", "clusterize_ms", "texture_staging_ms", "staging_total_ms", "finalize_ms", "vertices", "indices", "clusters", "cpu_staging_bytes") `
+        -Headers @("request_id", "path", "json_parse_ms", "buffer_read_ms", "mesh_extract_ms", "clusterize_ms", "texture_staging_ms", "staging_total_ms", "finalize_ms", "vertices", "indices", "clusters", "cpu_staging_bytes", "loose_texture_bytes", "prepared_textures") `
         -Rows $modelRows
 }
 else {

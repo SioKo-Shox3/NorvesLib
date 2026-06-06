@@ -63,6 +63,21 @@ The default mode fails. It does not silently fallback to loose assets.
 Debug fallback mode:
 Cooked failure may fallback to loose assets only when the decision requires an explicit log. The decision preserves failure kind, logical path, cooked package, entry name, and reason so Phase 7 can log the exact fallback.
 
+## Prepared Texture Asset Semantics
+
+Phase 16A adds prepared cooked texture loading to `RenderResourceManager`. The prepared API is cooked-only: it resolves manifest entries, reads the package, parses `nvtex`, and returns a prepared payload for later render-side finalization. It does not loose-read or decode an image file.
+
+Generic prepared status handling:
+
+- `CookedReady`: the caller may finalize the prepared payload through `FinalizePreparedTextureAsset()`.
+- `ManifestMissingLooseFallback`, `VariantMissingLooseFallback`, and `DebugLooseFallback`: the caller may use its loose fallback path.
+- `ManifestInvalid`: fail. A broken manifest is not treated as missing.
+- Cooked package read, package parse, entry missing, hash mismatch, and cooked texture parse failures: fail by default; only explicit debug fallback mode can turn these into `DebugLooseFallback`.
+
+`GLTFAnalyzer` has one caller-specific compatibility rule. Invalid request path, invalid logical path, and absolute-path prepared statuses are treated as loose fallback opportunities only inside the glTF caller because glTF can still have a resolved local image file path. That behavior is not a generic cooked failure fallback rule for the prepared API.
+
+For glTF image URIs with `data:` payloads, the current behavior is preserved: they are unsupported and do not produce a staged texture. Phase 16 does not add data URI decoding.
+
 ## Ownership
 
 `AssetManifest` owns metadata only. It does not own package objects, file bytes, decoded images, or RHI resources.
