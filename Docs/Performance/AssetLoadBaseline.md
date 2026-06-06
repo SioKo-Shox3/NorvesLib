@@ -2,6 +2,8 @@
 
 This document records the pre-AssetCook runtime asset loading baseline. The values are for comparison only; this is a Debug build and the numbers are not absolute performance targets.
 
+Post-AssetCook scoped texture-path comparison: [AssetLoadPostCookComparison.md](AssetLoadPostCookComparison.md).
+
 ## Run Condition
 
 | item | value |
