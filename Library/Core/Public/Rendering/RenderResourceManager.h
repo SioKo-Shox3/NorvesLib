@@ -98,6 +98,51 @@ namespace NorvesLib::Core::Rendering
         CookedNvtex
     };
 
+    enum class PreparedTextureAssetStatus : uint8_t
+    {
+        InvalidRequest,
+        InvalidPath,
+        AbsolutePathUnsupported,
+        ManifestInvalid,
+        ManifestMissingLooseFallback,
+        VariantMissingLooseFallback,
+        CookedPackageReadFailed,
+        CookedPackageParseFailed,
+        CookedEntryMissing,
+        CookedEntryHashMismatch,
+        CookedTextureParseFailed,
+        DebugLooseFallback,
+        CookedReady
+    };
+
+    struct PreparedTextureAsset
+    {
+        PreparedTextureAssetStatus Status = PreparedTextureAssetStatus::InvalidRequest;
+        Container::String RequestPath;
+        Container::String ResolvedFallbackPath;
+        Container::AnsiString LogicalPath;
+        Container::String CacheKey;
+        uint64_t Generation = 0;
+        TextureAssetFallbackMode FallbackMode = TextureAssetFallbackMode::FailOnCookedFailure;
+        TextureLoadSource Source = TextureLoadSource::LegacyFile;
+        Container::TSharedPtr<CookedTextureAsyncPayload> Payload;
+        Container::String Reason;
+
+        [[nodiscard]] bool HasCookedPayload() const noexcept;
+        [[nodiscard]] bool ShouldUseLooseFallback() const noexcept;
+        [[nodiscard]] bool Failed() const noexcept;
+    };
+
+    struct PreparedCookedTextureMip0RGBA8UNormLinearSplit
+    {
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        Container::VariableArray<uint8_t> R;
+        Container::VariableArray<uint8_t> G;
+        Container::VariableArray<uint8_t> B;
+        Container::VariableArray<uint8_t> A;
+    };
+
     /**
      * @brief シェーダー作成情報
      */
@@ -344,6 +389,23 @@ namespace NorvesLib::Core::Rendering
                                                   const Container::String &sourceName = Container::String());
         bool ResetTextureAssetManifest();
         bool SetTextureAssetFallbackMode(TextureAssetFallbackMode mode);
+
+        [[nodiscard]] PreparedTextureAsset PrepareTextureAssetForWorker(
+            const Container::String &requestPath,
+            const Container::String &resolvedFallbackPath = {},
+            const char *role = "worker",
+            uint32_t requestId = 0);
+        [[nodiscard]] bool IsPreparedTextureAssetCurrent(const PreparedTextureAsset &prepared) const;
+        [[nodiscard]] TextureHandle FinalizePreparedTextureAsset(
+            const PreparedTextureAsset &prepared,
+            const char *role = "main_render",
+            uint32_t requestId = 0);
+        [[nodiscard]] bool TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(
+            const PreparedTextureAsset &prepared,
+            PreparedCookedTextureMip0RGBA8UNormLinearSplit &outSplit,
+            Container::String *pOutReason = nullptr,
+            const char *role = "worker",
+            uint32_t requestId = 0) const;
 
         // ========================================
         // 非同期テクスチャ読み込み

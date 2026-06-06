@@ -101,6 +101,16 @@ target_include_directories(RenderResourceManagerTextureAssetTest PRIVATE
 set_target_properties(RenderResourceManagerTextureAssetTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderResourceManagerTextureAssetTest COMMAND RenderResourceManagerTextureAssetTest)
 
+add_executable(RenderResourceManagerPreparedTextureAssetTest
+    RenderResourceManagerPreparedTextureAssetTest.cpp
+)
+target_link_libraries(RenderResourceManagerPreparedTextureAssetTest PRIVATE Core)
+target_include_directories(RenderResourceManagerPreparedTextureAssetTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderResourceManagerPreparedTextureAssetTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderResourceManagerPreparedTextureAssetTest COMMAND RenderResourceManagerPreparedTextureAssetTest)
+
 add_executable(RenderResourceManagerAssetCookSmokeTest
     RenderResourceManagerAssetCookSmokeTest.cpp
 )
