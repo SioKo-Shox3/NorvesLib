@@ -10,6 +10,7 @@ find_package(Vulkan REQUIRED)
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Asset/AssetBlob.cpp
+    Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetPath.cpp
     Private/Object/Object.cpp
     Private/Object/UnknownImpl.cpp
@@ -138,6 +139,8 @@ set(PRIVATE_SOURCES
 set(PUBLIC_HEADERS
     Public/CoreModule.h
     Public/Asset/AssetBlob.h
+    Public/Asset/AssetFileReader.h
+    Public/Asset/AssetReadRequest.h
     Public/Asset/AssetPath.h
     Public/Object/Object.h
     Public/Text/IdentityPool.h
