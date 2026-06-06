@@ -9,6 +9,20 @@ using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        using LoadProfileClock = std::chrono::steady_clock;
+
+        LoadProfileClock::time_point LoadProfileNow()
+        {
+            return LoadProfileClock::now();
+        }
+
+        double LoadProfileElapsedMs(LoadProfileClock::time_point startTime)
+        {
+            return std::chrono::duration<double, std::milli>(LoadProfileClock::now() - startTime).count();
+        }
+    }
 
     bool RenderWorld::Initialize(const RenderWorldSettings &settings)
     {
@@ -144,8 +158,27 @@ namespace NorvesLib::Core::Rendering
             m_RenderingCoordinator.Resize(w, h);
         }
 
-        m_ResourceManager.FlushCompletedTextureLoads();
-        Resource::GLTFAnalyzer::FlushCompletedModelLoads(m_ResourceManager);
+        auto textureFlushStartTime = LoadProfileNow();
+        uint32_t textureFlushProcessed = m_ResourceManager.FlushCompletedTextureLoads();
+        double textureFlushMs = LoadProfileElapsedMs(textureFlushStartTime);
+        if (textureFlushProcessed > 0)
+        {
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=renderworld_texture_flush role=main_render processed=%u ms=%.3f success=1",
+                            static_cast<unsigned int>(textureFlushProcessed),
+                            textureFlushMs);
+        }
+
+        auto modelFlushStartTime = LoadProfileNow();
+        uint32_t modelFlushProcessed = Resource::GLTFAnalyzer::FlushCompletedModelLoads(m_ResourceManager);
+        double modelFlushMs = LoadProfileElapsedMs(modelFlushStartTime);
+        if (modelFlushProcessed > 0)
+        {
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=renderworld_model_flush role=main_render processed=%u ms=%.3f success=1",
+                            static_cast<unsigned int>(modelFlushProcessed),
+                            modelFlushMs);
+        }
         m_RenderingCoordinator.BeginFrame();
     }
 
