@@ -37,8 +37,13 @@ namespace Game
         CreateGameModeStateMachine() override;
 
     private:
+        bool ApplyTextureAssetRuntimeConfig();
+
         // ゲーム固有のメンバー変数
         bool m_bIsPaused = false;
+        bool m_bHasTextureAssetRuntimeConfig = false;
+        NorvesLib::Core::Container::String m_TextureAssetRoot;
+        NorvesLib::Core::Container::String m_TextureAssetManifestPath;
 
         // ========================================
         // 入力コントローラー
