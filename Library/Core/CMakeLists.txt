@@ -195,6 +195,8 @@ set(PUBLIC_HEADERS
     Public/GameMode/GameModeTypes.h
     # Rendering
     Public/Rendering/RenderTypes.h
+    Public/Rendering/GpuResourceTypes.h
+    Public/Rendering/TextureAssetTypes.h
     Public/Rendering/VertexLayout.h
     Public/Rendering/MeshTypes.h
     Public/Rendering/MaterialTypes.h
