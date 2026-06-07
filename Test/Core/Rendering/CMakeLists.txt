@@ -131,6 +131,16 @@ target_include_directories(RenderResourceManagerResourceContractTest PRIVATE
 set_target_properties(RenderResourceManagerResourceContractTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderResourceManagerResourceContractTest COMMAND RenderResourceManagerResourceContractTest)
 
+add_executable(RenderResourceManagerMaterialStoreTest
+    RenderResourceManagerMaterialStoreTest.cpp
+)
+target_link_libraries(RenderResourceManagerMaterialStoreTest PRIVATE Core)
+target_include_directories(RenderResourceManagerMaterialStoreTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderResourceManagerMaterialStoreTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderResourceManagerMaterialStoreTest COMMAND RenderResourceManagerMaterialStoreTest)
+
 add_executable(RenderResourceManagerAssetCookSmokeTest
     RenderResourceManagerAssetCookSmokeTest.cpp
 )

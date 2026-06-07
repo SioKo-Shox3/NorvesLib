@@ -32,6 +32,7 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class GpuResourceStore;
+    class RenderMaterialStore;
     class TextureAsyncLoadQueue;
     class TextureAssetResolver;
 
@@ -604,6 +605,9 @@ namespace NorvesLib::Core::Rendering
         // 低レベルGPUリソース
         Container::TUniquePtr<GpuResourceStore> m_GpuResources;
 
+        // マテリアルストア
+        Container::TUniquePtr<RenderMaterialStore> m_MaterialStore;
+
         // テクスチャキャッシュ（パス→ハンドル）
         Container::Map<Container::String, TextureHandle> m_TextureCache;
 
@@ -612,12 +616,6 @@ namespace NorvesLib::Core::Rendering
 
         // メッシュGPUデータマップ（MeshDataHandle::Id → GPUバッファ）
         Container::Map<uint64_t, MeshGPUData> m_MeshGPUDataMap;
-
-        // マテリアルデータマップ（MaterialHandle::Id → マテリアル情報）
-        Container::Map<uint64_t, MaterialResourceData> m_Materials;
-
-        // ニューラルマテリアルリソース（MaterialHandle::Id → NeuralMaterialResource）
-        Container::Map<uint64_t, Container::TSharedPtr<NeuralMaterialResource>> m_NeuralMaterials;
 
         // MegaMesh GPUデータマップ（MegaMeshHandle::Id → GPUデータ）
         Container::Map<uint64_t, MegaGeometry::MegaMeshGPUData> m_MegaMeshGPUDataMap;
