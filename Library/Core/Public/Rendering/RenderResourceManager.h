@@ -31,6 +31,7 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    class GpuResourceStore;
     class TextureAssetResolver;
 
     /**
@@ -593,16 +594,14 @@ namespace NorvesLib::Core::Rendering
             return handle;
         }
 
+        // ハンドルID生成用
+        Thread::Atomic<uint64_t> m_NextHandleId{1};
+
         // RHIデバイス
         Container::TSharedPtr<RHI::IDevice> m_Device;
 
-        // リソースマップ
-        Container::Map<uint64_t, BufferResourceData> m_Buffers;
-        Container::Map<uint64_t, TextureResourceData> m_Textures;
-        Container::Map<uint64_t, SamplerResourceData> m_Samplers;
-        Container::Map<uint64_t, ShaderResourceData> m_Shaders;
-        Container::Map<uint64_t, PipelineResourceData> m_Pipelines;
-        Container::Map<uint64_t, VertexLayout> m_VertexLayouts;
+        // 低レベルGPUリソース
+        Container::TUniquePtr<GpuResourceStore> m_GpuResources;
 
         // テクスチャキャッシュ（パス→ハンドル）
         Container::Map<Container::String, TextureHandle> m_TextureCache;
@@ -625,10 +624,6 @@ namespace NorvesLib::Core::Rendering
         // モデルデータマップ（ModelHandle::Id → モデル情報）
         Container::Map<uint64_t, ModelResourceData> m_Models;
 
-        // デフォルトサンプラー
-        SamplerHandle m_DefaultSampler;
-        SamplerHandle m_PointSampler;
-
         // スレッドセーフ用ミューテックス
         mutable Thread::Mutex m_ResourceMutex;
 
@@ -646,9 +641,6 @@ namespace NorvesLib::Core::Rendering
         TextureAssetResolver &GetTextureAssetResolverLocked();
         TextureHandle RegisterUploadedTexture(Container::TSharedPtr<RHI::ITexture> rhiTexture,
                                               const TextureCreateInfo &createInfo);
-
-        // ハンドルID生成用
-        Thread::Atomic<uint64_t> m_NextHandleId{1};
 
         // 初期化フラグ
         bool m_bInitialized = false;

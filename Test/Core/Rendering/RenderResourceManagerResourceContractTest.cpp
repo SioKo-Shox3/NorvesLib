@@ -11,6 +11,7 @@
 #include "RHI/ISwapChain.h"
 
 #include <cassert>
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
@@ -67,9 +68,75 @@ namespace
         NorvesLib::RHI::TextureDesc Desc;
     };
 
+    class FakeBuffer final : public NorvesLib::RHI::IBuffer
+    {
+    public:
+        explicit FakeBuffer(const NorvesLib::RHI::BufferDesc &desc)
+            : Desc(desc),
+              Bytes(static_cast<size_t>(desc.Size))
+        {
+        }
+
+        uint64_t GetSize() const override { return Desc.Size; }
+
+        void *Map(uint64_t offset = 0, uint64_t size = 0) override
+        {
+            (void)size;
+            return offset < Bytes.size() ? Bytes.data() + offset : nullptr;
+        }
+
+        void Unmap() override {}
+
+        void Update(const void *data, uint64_t size, uint64_t offset = 0) override
+        {
+            LastUpdateSize = size;
+            LastUpdateOffset = offset;
+            if (data == nullptr || offset + size > Bytes.size())
+            {
+                return;
+            }
+
+            std::memcpy(Bytes.data() + offset, data, static_cast<size_t>(size));
+        }
+
+        NorvesLib::RHI::ResourceUsage GetUsage() const override { return Desc.Usage; }
+
+        NorvesLib::RHI::BufferDesc Desc;
+        std::vector<uint8_t> Bytes;
+        uint64_t LastUpdateSize = 0;
+        uint64_t LastUpdateOffset = 0;
+    };
+
+    class FakeSampler final : public NorvesLib::RHI::ISampler
+    {
+    public:
+        explicit FakeSampler(const NorvesLib::RHI::SamplerDesc &desc)
+            : Desc(desc)
+        {
+        }
+
+        NorvesLib::RHI::FilterMode GetFilterMin() const override { return Desc.filterMin; }
+        NorvesLib::RHI::FilterMode GetFilterMag() const override { return Desc.filterMag; }
+        NorvesLib::RHI::FilterMode GetFilterMip() const override { return Desc.filterMip; }
+        NorvesLib::RHI::TextureAddressMode GetAddressModeU() const override { return Desc.addressU; }
+        NorvesLib::RHI::TextureAddressMode GetAddressModeV() const override { return Desc.addressV; }
+        NorvesLib::RHI::TextureAddressMode GetAddressModeW() const override { return Desc.addressW; }
+        uint32_t GetMaxAnisotropy() const override { return Desc.maxAnisotropy; }
+        NorvesLib::RHI::CompareFunc GetCompareFunc() const override { return Desc.compareFunc; }
+
+        NorvesLib::RHI::SamplerDesc Desc;
+    };
+
     class FakeDevice final : public NorvesLib::RHI::IDevice
     {
     public:
+        NorvesLib::RHI::BufferPtr CreateBuffer(const NorvesLib::RHI::BufferDesc &desc) override
+        {
+            CreatedBufferDescs.push_back(desc);
+            LastBuffer = MakeShared<FakeBuffer>(desc);
+            return LastBuffer;
+        }
+
         NorvesLib::RHI::TexturePtr CreateTexture(const NorvesLib::RHI::TextureDesc &desc) override
         {
             CreatedTextureDescs.push_back(desc);
@@ -77,8 +144,13 @@ namespace
             return LastTexture;
         }
 
-        NorvesLib::RHI::BufferPtr CreateBuffer(const NorvesLib::RHI::BufferDesc &) override { return {}; }
-        NorvesLib::RHI::SamplerPtr CreateSampler(const NorvesLib::RHI::SamplerDesc &) override { return {}; }
+        NorvesLib::RHI::SamplerPtr CreateSampler(const NorvesLib::RHI::SamplerDesc &desc) override
+        {
+            CreatedSamplerDescs.push_back(desc);
+            LastSampler = MakeShared<FakeSampler>(desc);
+            return LastSampler;
+        }
+
         NorvesLib::RHI::ShaderPtr CreateShader(const NorvesLib::RHI::ShaderDesc &) override { return {}; }
         NorvesLib::RHI::CommandListPtr CreateCommandList() override { return {}; }
         NorvesLib::RHI::SwapChainPtr CreateSwapChain(const NorvesLib::RHI::SwapChainDesc &) override { return {}; }
@@ -100,8 +172,12 @@ namespace
         }
 
         NorvesLib::RHI::DeviceCapabilities Capabilities;
+        std::vector<NorvesLib::RHI::BufferDesc> CreatedBufferDescs;
         std::vector<NorvesLib::RHI::TextureDesc> CreatedTextureDescs;
+        std::vector<NorvesLib::RHI::SamplerDesc> CreatedSamplerDescs;
+        NorvesLib::Core::Container::TSharedPtr<FakeBuffer> LastBuffer;
         NorvesLib::Core::Container::TSharedPtr<FakeTexture> LastTexture;
+        NorvesLib::Core::Container::TSharedPtr<FakeSampler> LastSampler;
     };
 
     TextureCreateInfo MakeTextureCreateInfo(const char *debugName)
@@ -147,6 +223,61 @@ int main()
 
     auto device = MakeShared<FakeDevice>();
     assert(manager.Initialize(device));
+
+    BufferCreateInfo bufferInfo;
+    bufferInfo.Size = 64;
+    bufferInfo.bHostVisible = true;
+    bufferInfo.UsageType = BufferCreateInfo::Usage::Vertex;
+    bufferInfo.DebugName = "ContractBuffer";
+
+    const uint32_t bufferData[4] = {1, 2, 3, 4};
+    const BufferHandle bufferHandle = manager.CreateBuffer(bufferInfo, bufferData, sizeof(bufferData));
+    assert(bufferHandle.IsValid());
+    assert(device->CreatedBufferDescs.size() == 1);
+    assert(device->CreatedBufferDescs[0].Size == bufferInfo.Size);
+    assert(device->CreatedBufferDescs[0].Usage == NorvesLib::RHI::ResourceUsage::VertexBuffer);
+    assert(manager.GetResourceStats().BufferCount == 1);
+    assert(manager.GetResourceStats().TotalBufferMemory == bufferInfo.Size);
+    assert(manager.GetRHIBuffer(bufferHandle) == device->LastBuffer.get());
+    assert(device->LastBuffer->LastUpdateSize == sizeof(bufferData));
+
+    const uint32_t updatedData[2] = {7, 8};
+    assert(manager.UpdateBuffer(bufferHandle, updatedData, sizeof(updatedData)));
+    assert(device->LastBuffer->LastUpdateSize == sizeof(updatedData));
+
+    manager.ReleaseBuffer(BufferHandle::Invalid());
+    assert(manager.GetResourceStats().BufferCount == 1);
+    manager.ReleaseBuffer(bufferHandle);
+    assert(manager.GetResourceStats().BufferCount == 0);
+    assert(manager.GetRHIBuffer(bufferHandle) == nullptr);
+
+    const SamplerHandle defaultSampler = manager.GetDefaultSampler();
+    assert(defaultSampler.IsValid());
+    assert(device->CreatedSamplerDescs.size() == 1);
+    assert(device->CreatedSamplerDescs[0].filterMin == NorvesLib::RHI::FilterMode::Anisotropic);
+    assert(manager.GetResourceStats().SamplerCount == 1);
+    assert(manager.GetDefaultSampler().Id == defaultSampler.Id);
+    assert(device->CreatedSamplerDescs.size() == 1);
+
+    const SamplerHandle pointSampler = manager.GetPointSampler();
+    assert(pointSampler.IsValid());
+    assert(device->CreatedSamplerDescs.size() == 2);
+    assert(device->CreatedSamplerDescs[1].filterMin == NorvesLib::RHI::FilterMode::Point);
+    assert(manager.GetResourceStats().SamplerCount == 2);
+    manager.ReleaseSampler(defaultSampler);
+    assert(manager.GetResourceStats().SamplerCount == 1);
+    manager.ReleaseSampler(pointSampler);
+    assert(manager.GetResourceStats().SamplerCount == 0);
+
+    VertexLayout layout = VertexLayout::CreateStandard();
+    const VertexLayoutHandle layoutHandle = manager.RegisterVertexLayout(layout);
+    assert(layoutHandle.IsValid());
+    const VertexLayout *registeredLayout = manager.GetVertexLayout(layoutHandle);
+    assert(registeredLayout != nullptr);
+    assert(registeredLayout->Stride == layout.Stride);
+    assert(registeredLayout->HasSemantic(VertexSemantic::Position));
+    assert(registeredLayout->HasSemantic(VertexSemantic::Normal));
+    assert(manager.GetVertexLayout(VertexLayoutHandle::Invalid()) == nullptr);
 
     const TextureHandle ownedHandle = manager.CreateTexture(createInfo);
     assert(ownedHandle.IsValid());
