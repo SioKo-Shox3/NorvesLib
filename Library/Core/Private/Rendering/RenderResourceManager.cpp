@@ -4,10 +4,7 @@
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/TextureAssetLoader.h"
 #include "Rendering/TextureAssetResolver.h"
-#include "Asset/AssetFileReader.h"
-#include "Asset/AssetResolveResult.h"
 #include "Asset/AssetSystem.h"
-#include "Asset/CookedTextureFormat.h"
 #include "RHI/IDevice.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -17,12 +14,9 @@
 #include "RHI/IGPUResourceAllocator.h"
 #include "Logging/LogMacros.h"
 #include "Thread/JobSystem.h"
-#include "FileStream/FileStream.h"
-#include "FileStream/Package.h"
 
 #include <algorithm>
 #include <chrono>
-#include <limits>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -66,11 +60,6 @@ namespace NorvesLib::Core::Rendering
             const char* m_PreviousRole = "caller";
         };
 
-        Container::String ToString(const Container::AnsiString &value)
-        {
-            return Container::String(value.c_str());
-        }
-
         const char *NormalizeProfileRole(const char *role, const char *fallback)
         {
             return (role != nullptr && role[0] != '\0') ? role : fallback;
@@ -87,87 +76,6 @@ namespace NorvesLib::Core::Rendering
             case TextureLoadSource::LegacyFile:
             default:
                 return "legacy_file";
-            }
-        }
-
-        const char *GetAssetManifestResolveStatusName(Asset::AssetManifestResolveStatus status)
-        {
-            switch (status)
-            {
-            case Asset::AssetManifestResolveStatus::CookedReferenceFound:
-                return "CookedReferenceFound";
-            case Asset::AssetManifestResolveStatus::LooseFallbackManifestMissing:
-                return "LooseFallbackManifestMissing";
-            case Asset::AssetManifestResolveStatus::LooseFallbackVariantMissing:
-                return "LooseFallbackVariantMissing";
-            case Asset::AssetManifestResolveStatus::InvalidRequest:
-                return "InvalidRequest";
-            case Asset::AssetManifestResolveStatus::InvalidManifest:
-                return "InvalidManifest";
-            default:
-                return "Unknown";
-            }
-        }
-
-        const char *GetAssetReadStatusName(Asset::AssetReadStatus status)
-        {
-            switch (status)
-            {
-            case Asset::AssetReadStatus::Success:
-                return "Success";
-            case Asset::AssetReadStatus::InvalidRequest:
-                return "InvalidRequest";
-            case Asset::AssetReadStatus::InvalidAssetRoot:
-                return "InvalidAssetRoot";
-            case Asset::AssetReadStatus::InvalidPath:
-                return "InvalidPath";
-            case Asset::AssetReadStatus::FileNotFound:
-                return "FileNotFound";
-            case Asset::AssetReadStatus::OpenFailed:
-                return "OpenFailed";
-            case Asset::AssetReadStatus::SizeQueryFailed:
-                return "SizeQueryFailed";
-            case Asset::AssetReadStatus::SizeTooLarge:
-                return "SizeTooLarge";
-            case Asset::AssetReadStatus::ReadFailed:
-                return "ReadFailed";
-            default:
-                return "Unknown";
-            }
-        }
-
-        const char *GetPreparedTextureAssetStatusName(PreparedTextureAssetStatus status)
-        {
-            switch (status)
-            {
-            case PreparedTextureAssetStatus::InvalidRequest:
-                return "InvalidRequest";
-            case PreparedTextureAssetStatus::InvalidPath:
-                return "InvalidPath";
-            case PreparedTextureAssetStatus::AbsolutePathUnsupported:
-                return "AbsolutePathUnsupported";
-            case PreparedTextureAssetStatus::ManifestInvalid:
-                return "ManifestInvalid";
-            case PreparedTextureAssetStatus::ManifestMissingLooseFallback:
-                return "ManifestMissingLooseFallback";
-            case PreparedTextureAssetStatus::VariantMissingLooseFallback:
-                return "VariantMissingLooseFallback";
-            case PreparedTextureAssetStatus::CookedPackageReadFailed:
-                return "CookedPackageReadFailed";
-            case PreparedTextureAssetStatus::CookedPackageParseFailed:
-                return "CookedPackageParseFailed";
-            case PreparedTextureAssetStatus::CookedEntryMissing:
-                return "CookedEntryMissing";
-            case PreparedTextureAssetStatus::CookedEntryHashMismatch:
-                return "CookedEntryHashMismatch";
-            case PreparedTextureAssetStatus::CookedTextureParseFailed:
-                return "CookedTextureParseFailed";
-            case PreparedTextureAssetStatus::DebugLooseFallback:
-                return "DebugLooseFallback";
-            case PreparedTextureAssetStatus::CookedReady:
-                return "CookedReady";
-            default:
-                return "Unknown";
             }
         }
 
@@ -198,56 +106,6 @@ namespace NorvesLib::Core::Rendering
             case PreparedTextureAssetStatus::CookedReady:
             default:
                 return false;
-            }
-        }
-
-        PreparedTextureAssetStatus ApplyPreparedCookedFailureFallback(
-            PreparedTextureAssetStatus cookedFailureStatus,
-            TextureAssetFallbackMode fallbackMode)
-        {
-            if (TextureAssetResolver::AllowsDebugLooseFallback(fallbackMode))
-            {
-                return PreparedTextureAssetStatus::DebugLooseFallback;
-            }
-
-            return cookedFailureStatus;
-        }
-
-        void SetPreparedTextureAssetStatus(PreparedTextureAsset &prepared,
-                                           PreparedTextureAssetStatus status,
-                                           const char *reason)
-        {
-            prepared.Status = status;
-            prepared.Reason = reason != nullptr ? Container::String(reason) : Container::String();
-            if (IsPreparedTextureAssetLooseFallbackStatus(status))
-            {
-                prepared.Source = TextureLoadSource::LooseStbi;
-            }
-            else if (status == PreparedTextureAssetStatus::CookedReady ||
-                     status == PreparedTextureAssetStatus::CookedPackageReadFailed ||
-                     status == PreparedTextureAssetStatus::CookedPackageParseFailed ||
-                     status == PreparedTextureAssetStatus::CookedEntryMissing ||
-                     status == PreparedTextureAssetStatus::CookedEntryHashMismatch ||
-                     status == PreparedTextureAssetStatus::CookedTextureParseFailed)
-            {
-                prepared.Source = TextureLoadSource::CookedNvtex;
-            }
-        }
-
-        const char *GetCookedTextureParseStatusName(Asset::CookedTextureParseStatus status)
-        {
-            switch (status)
-            {
-            case Asset::CookedTextureParseStatus::Success:
-                return "Success";
-            case Asset::CookedTextureParseStatus::BadMagic:
-                return "BadMagic";
-            case Asset::CookedTextureParseStatus::PayloadHashMismatch:
-                return "PayloadHashMismatch";
-            case Asset::CookedTextureParseStatus::InvalidBlob:
-                return "InvalidBlob";
-            default:
-                return "Failure";
             }
         }
 
@@ -408,32 +266,15 @@ namespace NorvesLib::Core::Rendering
         const char *role,
         uint32_t requestId)
     {
-        const char *profileRole = NormalizeProfileRole(role, "worker");
-
         PreparedTextureAssetPlan plan;
         plan.Prepared.RequestPath = requestPath;
         plan.Prepared.ResolvedFallbackPath = resolvedFallbackPath;
 
-        auto finish = [&](PreparedTextureAssetStatus status, const char *reason)
-        {
-            SetPreparedTextureAssetStatus(plan.Prepared, status, reason);
-            NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=texture_prepare_asset role=%s request_id=%u path=\"%s\" logical_path=\"%s\" cache_key=\"%s\" generation=%llu status=%s source=%s reason=\"%s\"",
-                            profileRole,
-                            static_cast<unsigned int>(requestId),
-                            plan.Prepared.RequestPath.c_str(),
-                            plan.Prepared.LogicalPath.c_str(),
-                            plan.Prepared.CacheKey.c_str(),
-                            static_cast<unsigned long long>(plan.Prepared.Generation),
-                            GetPreparedTextureAssetStatusName(plan.Prepared.Status),
-                            GetTextureLoadSourceName(plan.Prepared.Source),
-                            plan.Prepared.Reason.c_str());
-            return plan.Prepared;
-        };
-
         if (requestPath.empty())
         {
-            return finish(PreparedTextureAssetStatus::InvalidRequest, "request path is empty");
+            plan.BlockedStatus = PreparedTextureAssetStatus::InvalidRequest;
+            plan.BlockedReason = "request path is empty";
+            return TextureAssetLoader::PrepareForWorker(plan, role, requestId);
         }
 
         {
@@ -441,147 +282,7 @@ namespace NorvesLib::Core::Rendering
             plan = GetTextureAssetResolverLocked().BuildPreparedTexturePlan(requestPath, resolvedFallbackPath);
         }
 
-        if (!plan.bReadyForManifest)
-        {
-            return finish(plan.BlockedStatus, plan.BlockedReason);
-        }
-
-        auto resolveStartTime = LoadProfileNow();
-        const Asset::AssetManifestResolveResult manifestResult =
-            TextureAssetResolver::FindPreparedCookedVariant(plan);
-        const double resolveMs = LoadProfileElapsedMs(resolveStartTime);
-        NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=texture_prepare_manifest role=%s request_id=%u path=\"%s\" logical_path=\"%s\" resolve_ms=%.3f manifest_status=%s",
-                        profileRole,
-                        static_cast<unsigned int>(requestId),
-                        plan.Prepared.RequestPath.c_str(),
-                        plan.Prepared.LogicalPath.c_str(),
-                        resolveMs,
-                        GetAssetManifestResolveStatusName(manifestResult.Status));
-
-        switch (manifestResult.Status)
-        {
-        case Asset::AssetManifestResolveStatus::CookedReferenceFound:
-            break;
-        case Asset::AssetManifestResolveStatus::LooseFallbackManifestMissing:
-            return finish(PreparedTextureAssetStatus::ManifestMissingLooseFallback, "asset manifest is not loaded");
-        case Asset::AssetManifestResolveStatus::LooseFallbackVariantMissing:
-            return finish(PreparedTextureAssetStatus::VariantMissingLooseFallback, "asset manifest variant is missing");
-        case Asset::AssetManifestResolveStatus::InvalidManifest:
-            return finish(PreparedTextureAssetStatus::ManifestInvalid, "asset manifest is invalid");
-        case Asset::AssetManifestResolveStatus::InvalidRequest:
-        default:
-            return finish(PreparedTextureAssetStatus::InvalidPath, "asset manifest request is invalid");
-        }
-
-        plan.Prepared.Source = TextureLoadSource::CookedNvtex;
-
-        Asset::AssetFileReader packageReader(plan.AssetRoot);
-        Asset::AssetReadRequest packageReadRequest;
-        packageReadRequest.InputPath = manifestResult.Reference.CookedPackage;
-        packageReadRequest.AssetRoot = {};
-        packageReadRequest.bAllowAbsolutePath = false;
-
-        auto packageReadStartTime = LoadProfileNow();
-        const Asset::AssetReadResult packageRead = packageReader.Read(packageReadRequest);
-        const double packageReadMs = LoadProfileElapsedMs(packageReadStartTime);
-        NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=texture_prepare_package_read role=%s request_id=%u path=\"%s\" logical_path=\"%s\" package=\"%s\" bytes=%zu read_ms=%.3f status=%s success=%d",
-                        profileRole,
-                        static_cast<unsigned int>(requestId),
-                        plan.Prepared.RequestPath.c_str(),
-                        plan.Prepared.LogicalPath.c_str(),
-                        manifestResult.Reference.CookedPackage.c_str(),
-                        packageRead.BytesRead,
-                        packageReadMs,
-                        GetAssetReadStatusName(packageRead.Status),
-                        packageRead.Succeeded() ? 1 : 0);
-
-        if (!packageRead.Succeeded())
-        {
-            const PreparedTextureAssetStatus status = ApplyPreparedCookedFailureFallback(
-                PreparedTextureAssetStatus::CookedPackageReadFailed,
-                plan.Prepared.FallbackMode);
-            return finish(status, "cooked package read failed");
-        }
-
-        NorvesLib::FileStream::Package package;
-        auto packageParseStartTime = LoadProfileNow();
-        const bool bPackageParsed = package.LoadFromMemory(
-            packageRead.Blob.GetSpan(),
-            ToString(packageRead.Blob.GetSourcePath()));
-        const double packageParseMs = LoadProfileElapsedMs(packageParseStartTime);
-        NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=texture_prepare_package_parse role=%s request_id=%u path=\"%s\" logical_path=\"%s\" package=\"%s\" parse_ms=%.3f success=%d",
-                        profileRole,
-                        static_cast<unsigned int>(requestId),
-                        plan.Prepared.RequestPath.c_str(),
-                        plan.Prepared.LogicalPath.c_str(),
-                        manifestResult.Reference.CookedPackage.c_str(),
-                        packageParseMs,
-                        bPackageParsed ? 1 : 0);
-
-        if (!bPackageParsed)
-        {
-            const PreparedTextureAssetStatus status = ApplyPreparedCookedFailureFallback(
-                PreparedTextureAssetStatus::CookedPackageParseFailed,
-                plan.Prepared.FallbackMode);
-            return finish(status, "cooked package parse failed");
-        }
-
-        NorvesLib::FileStream::PackageEntry entry;
-        if (!package.FindEntry(manifestResult.Reference.EntryName, manifestResult.Reference.EntryType, entry))
-        {
-            const PreparedTextureAssetStatus status = ApplyPreparedCookedFailureFallback(
-                PreparedTextureAssetStatus::CookedEntryMissing,
-                plan.Prepared.FallbackMode);
-            return finish(status, "cooked entry is missing");
-        }
-
-        Asset::AssetBlob cookedBlob = package.OpenEntry(entry);
-        if (!cookedBlob.IsValid())
-        {
-            const PreparedTextureAssetStatus status = ApplyPreparedCookedFailureFallback(
-                PreparedTextureAssetStatus::CookedEntryMissing,
-                plan.Prepared.FallbackMode);
-            return finish(status, "cooked entry open failed");
-        }
-
-        const uint64_t cookedHash = Asset::ComputeAssetPackagePayloadHash(cookedBlob.GetData(), cookedBlob.GetSize());
-        if (cookedHash != manifestResult.Reference.CookedHash)
-        {
-            const PreparedTextureAssetStatus status = ApplyPreparedCookedFailureFallback(
-                PreparedTextureAssetStatus::CookedEntryHashMismatch,
-                plan.Prepared.FallbackMode);
-            return finish(status, "cooked entry hash mismatch");
-        }
-
-        const size_t cookedBlobBytes = cookedBlob.GetSize();
-        auto parseStartTime = LoadProfileNow();
-        Asset::CookedTextureParseResult parseResult = Asset::ParseCookedTexture(std::move(cookedBlob));
-        const double parseMs = LoadProfileElapsedMs(parseStartTime);
-        NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=texture_prepare_cooked_parse role=%s source=cooked_nvtex request_id=%u path=\"%s\" logical_path=\"%s\" file_bytes=%zu parse_ms=%.3f status=%s success=%d",
-                        profileRole,
-                        static_cast<unsigned int>(requestId),
-                        plan.Prepared.RequestPath.c_str(),
-                        plan.Prepared.LogicalPath.c_str(),
-                        cookedBlobBytes,
-                        parseMs,
-                        GetCookedTextureParseStatusName(parseResult.Status),
-                        parseResult.Succeeded() ? 1 : 0);
-
-        if (!parseResult.Succeeded())
-        {
-            const PreparedTextureAssetStatus status = ApplyPreparedCookedFailureFallback(
-                PreparedTextureAssetStatus::CookedTextureParseFailed,
-                plan.Prepared.FallbackMode);
-            return finish(status, "cooked texture parse failed");
-        }
-
-        plan.Prepared.Payload = Container::MakeShared<CookedTextureAsyncPayload>();
-        plan.Prepared.Payload->Texture = std::move(parseResult.Texture);
-        return finish(PreparedTextureAssetStatus::CookedReady, "");
+        return TextureAssetLoader::PrepareForWorker(plan, role, requestId);
     }
 
     bool RenderResourceManager::IsPreparedTextureAssetCurrent(const PreparedTextureAsset &prepared) const
@@ -717,108 +418,12 @@ namespace NorvesLib::Core::Rendering
         const char *role,
         uint32_t requestId) const
     {
-        const char *profileRole = NormalizeProfileRole(role, "worker");
-
-        auto fail = [&](const char *reason)
-        {
-            outSplit = PreparedCookedTextureMip0RGBA8UNormLinearSplit();
-            if (pOutReason != nullptr)
-            {
-                *pOutReason = reason != nullptr ? Container::String(reason) : Container::String();
-            }
-            NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=texture_prepared_split role=%s request_id=%u path=\"%s\" logical_path=\"%s\" success=0 reason=\"%s\"",
-                            profileRole,
-                            static_cast<unsigned int>(requestId),
-                            prepared.RequestPath.c_str(),
-                            prepared.LogicalPath.c_str(),
-                            reason != nullptr ? reason : "");
-            return false;
-        };
-
-        if (prepared.Status != PreparedTextureAssetStatus::CookedReady)
-        {
-            return fail("not cooked ready");
-        }
-
-        if (!prepared.Payload)
-        {
-            return fail("payload missing");
-        }
-
-        const Asset::CookedTextureData &texture = prepared.Payload->Texture;
-        if (texture.LayerCount != 1)
-        {
-            return fail("unsupported layer count");
-        }
-
-        if (texture.PixelFormat != Asset::CookedTexturePixelFormat::RGBA8UNorm)
-        {
-            return fail("unsupported pixel format");
-        }
-
-        if (texture.ColorSpace != Asset::CookedTextureColorSpace::Linear)
-        {
-            return fail("unsupported color space");
-        }
-
-        if (texture.Width == 0 || texture.Height == 0 || texture.Mips.empty())
-        {
-            return fail("mip0 missing");
-        }
-
-        uint64_t pixelCount64 = 0;
-        if (texture.Width > std::numeric_limits<uint64_t>::max() / texture.Height)
-        {
-            return fail("mip0 size overflow");
-        }
-        pixelCount64 = static_cast<uint64_t>(texture.Width) * static_cast<uint64_t>(texture.Height);
-        if (pixelCount64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
-            pixelCount64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max() / 4u))
-        {
-            return fail("mip0 size overflow");
-        }
-
-        const size_t pixelCount = static_cast<size_t>(pixelCount64);
-        const size_t expectedMipBytes = pixelCount * 4u;
-        const Container::Span<const uint8_t> mip0 = texture.GetMipBytes(0);
-        if (mip0.size() != expectedMipBytes)
-        {
-            return fail("mip0 size mismatch");
-        }
-
-        PreparedCookedTextureMip0RGBA8UNormLinearSplit split;
-        split.Width = texture.Width;
-        split.Height = texture.Height;
-        split.R.resize(pixelCount);
-        split.G.resize(pixelCount);
-        split.B.resize(pixelCount);
-        split.A.resize(pixelCount);
-        for (size_t index = 0; index < pixelCount; ++index)
-        {
-            const size_t baseIndex = index * 4u;
-            split.R[index] = mip0[baseIndex + 0];
-            split.G[index] = mip0[baseIndex + 1];
-            split.B[index] = mip0[baseIndex + 2];
-            split.A[index] = mip0[baseIndex + 3];
-        }
-
-        outSplit = std::move(split);
-        if (pOutReason != nullptr)
-        {
-            pOutReason->clear();
-        }
-
-        NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=texture_prepared_split role=%s request_id=%u path=\"%s\" logical_path=\"%s\" width=%u height=%u pixels=%zu success=1",
-                        profileRole,
-                        static_cast<unsigned int>(requestId),
-                        prepared.RequestPath.c_str(),
-                        prepared.LogicalPath.c_str(),
-                        outSplit.Width,
-                        outSplit.Height,
-                        pixelCount);
-        return true;
+        return TextureAssetLoader::TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(
+            prepared,
+            outSplit,
+            pOutReason,
+            role,
+            requestId);
     }
 
 

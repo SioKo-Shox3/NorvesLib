@@ -81,5 +81,15 @@ namespace NorvesLib::Core::Rendering
             const Container::String &path,
             const Container::AnsiString &logicalPath,
             const Container::String &resolvedPath);
+        [[nodiscard]] static PreparedTextureAsset PrepareForWorker(
+            const PreparedTextureAssetPlan &plan,
+            const char *role,
+            uint32_t requestId);
+        [[nodiscard]] static bool TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(
+            const PreparedTextureAsset &prepared,
+            PreparedCookedTextureMip0RGBA8UNormLinearSplit &outSplit,
+            Container::String *pOutReason,
+            const char *role,
+            uint32_t requestId);
     };
 }
