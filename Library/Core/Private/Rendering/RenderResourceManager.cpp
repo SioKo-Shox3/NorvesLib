@@ -1,8 +1,8 @@
 ﻿#include "Rendering/RenderResourceManager.h"
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "Rendering/CookedTextureUpload.h"
+#include "Rendering/TextureAssetResolver.h"
 #include "Asset/AssetFileReader.h"
-#include "Asset/AssetPath.h"
 #include "Asset/AssetResolveResult.h"
 #include "Asset/AssetSystem.h"
 #include "Asset/CookedTextureFormat.h"
@@ -25,7 +25,6 @@
 #include <climits>
 #include <cstring>
 #include <limits>
-#include <string>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -35,40 +34,9 @@ namespace NorvesLib::Core::Rendering
         Asset::CookedTextureData Texture;
     };
 
-    struct RenderResourceManager::TextureAssetState
-    {
-        Container::AnsiString AssetRoot;
-        Container::String ManifestJson;
-        Container::String ManifestSourceName;
-        bool bManifestLoadAttempted = false;
-        Asset::AssetFallbackMode FallbackMode = Asset::AssetFallbackMode::FailOnCookedFailure;
-        uint64_t Generation = 1;
-        Container::TSharedPtr<const Asset::AssetSystem> System;
-    };
-
     namespace
     {
         using LoadProfileClock = std::chrono::steady_clock;
-
-        struct TextureAssetLoadPlan
-        {
-            bool bUseAssetSystem = false;
-            bool bPathValid = false;
-            Container::String RequestPath;
-            Container::String ResolvedPath;
-            Container::String CacheKey;
-            Container::AnsiString LogicalPath;
-            uint64_t Generation = 0;
-            Asset::AssetFallbackMode FallbackMode = Asset::AssetFallbackMode::FailOnCookedFailure;
-            Container::TSharedPtr<const Asset::AssetSystem> AssetSystem;
-        };
-
-        struct PreparedTextureAssetPlan
-        {
-            PreparedTextureAsset Prepared;
-            Container::AnsiString AssetRoot;
-            Container::TSharedPtr<const Asset::AssetSystem> AssetSystem;
-        };
 
         struct DecodedTextureMemory
         {
@@ -157,67 +125,9 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        Container::AnsiString ToAnsiString(const Container::String &value)
-        {
-            return Container::AnsiString(value.c_str());
-        }
-
         Container::String ToString(const Container::AnsiString &value)
         {
             return Container::String(value.c_str());
-        }
-
-        Container::AnsiString GetDefaultTextureAssetRoot()
-        {
-#ifdef NORVES_ASSET_DIR
-            return Container::AnsiString(NORVES_ASSET_DIR);
-#else
-            return {};
-#endif
-        }
-
-        Container::TSharedPtr<const Asset::AssetSystem> CreateTextureAssetSystemSnapshot(
-            const Container::AnsiString &assetRoot,
-            const Container::String &manifestJson,
-            const Container::String &manifestSourceName,
-            bool bManifestLoadAttempted)
-        {
-            auto system = Container::MakeShared<Asset::AssetSystem>(assetRoot);
-            if (bManifestLoadAttempted)
-            {
-                const bool bLoaded = system->LoadManifestFromJsonText(manifestJson, ToAnsiString(manifestSourceName));
-                (void)bLoaded;
-            }
-            return system;
-        }
-
-        Asset::AssetFallbackMode ToAssetFallbackMode(TextureAssetFallbackMode mode)
-        {
-            switch (mode)
-            {
-            case TextureAssetFallbackMode::DebugAllowLooseFallback:
-                return Asset::AssetFallbackMode::DebugAllowLooseFallback;
-            case TextureAssetFallbackMode::FailOnCookedFailure:
-            default:
-                return Asset::AssetFallbackMode::FailOnCookedFailure;
-            }
-        }
-
-        TextureAssetFallbackMode ToTextureAssetFallbackMode(Asset::AssetFallbackMode mode)
-        {
-            switch (mode)
-            {
-            case Asset::AssetFallbackMode::DebugAllowLooseFallback:
-                return TextureAssetFallbackMode::DebugAllowLooseFallback;
-            case Asset::AssetFallbackMode::FailOnCookedFailure:
-            default:
-                return TextureAssetFallbackMode::FailOnCookedFailure;
-            }
-        }
-
-        bool AllowsDebugLooseFallback(TextureAssetFallbackMode mode)
-        {
-            return mode == TextureAssetFallbackMode::DebugAllowLooseFallback;
         }
 
         const char *NormalizeProfileRole(const char *role, const char *fallback)
@@ -381,7 +291,7 @@ namespace NorvesLib::Core::Rendering
             PreparedTextureAssetStatus cookedFailureStatus,
             TextureAssetFallbackMode fallbackMode)
         {
-            if (AllowsDebugLooseFallback(fallbackMode))
+            if (TextureAssetResolver::AllowsDebugLooseFallback(fallbackMode))
             {
                 return PreparedTextureAssetStatus::DebugLooseFallback;
             }
@@ -452,23 +362,6 @@ namespace NorvesLib::Core::Rendering
             default:
                 return "Unknown";
             }
-        }
-
-        Container::String MakeLegacyTextureCacheKey(const Container::String &resolvedPath)
-        {
-            Container::String cacheKey("legacy:");
-            cacheKey += resolvedPath;
-            return cacheKey;
-        }
-
-        Container::String MakeAssetTextureCacheKey(uint64_t generation, const Container::AnsiString &logicalPath)
-        {
-            Container::String cacheKey("asset:");
-            const std::string generationText = std::to_string(generation);
-            cacheKey += generationText.c_str();
-            cacheKey += ":default:";
-            cacheKey += logicalPath.c_str();
-            return cacheKey;
         }
 
         bool DecodeStbiBytes(const uint8_t *bytes,
@@ -602,20 +495,14 @@ namespace NorvesLib::Core::Rendering
 
     RenderResourceManager::~RenderResourceManager() = default;
 
-    RenderResourceManager::TextureAssetState &RenderResourceManager::GetTextureAssetStateLocked()
+    TextureAssetResolver &RenderResourceManager::GetTextureAssetResolverLocked()
     {
-        if (!m_TextureAssetState)
+        if (!m_TextureAssetResolver)
         {
-            m_TextureAssetState = Container::MakeUnique<TextureAssetState>();
-            m_TextureAssetState->AssetRoot = GetDefaultTextureAssetRoot();
-            m_TextureAssetState->System = CreateTextureAssetSystemSnapshot(
-                m_TextureAssetState->AssetRoot,
-                m_TextureAssetState->ManifestJson,
-                m_TextureAssetState->ManifestSourceName,
-                m_TextureAssetState->bManifestLoadAttempted);
+            m_TextureAssetResolver = Container::MakeUnique<TextureAssetResolver>();
         }
 
-        return *m_TextureAssetState;
+        return *m_TextureAssetResolver;
     }
 
     TextureHandle RenderResourceManager::RegisterUploadedTexture(
@@ -653,15 +540,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        TextureAssetState &state = GetTextureAssetStateLocked();
-        const Container::AnsiString newRoot = ToAnsiString(assetRoot);
-        state.System = CreateTextureAssetSystemSnapshot(
-            newRoot,
-            state.ManifestJson,
-            state.ManifestSourceName,
-            state.bManifestLoadAttempted);
-        state.AssetRoot = newRoot;
-        ++state.Generation;
+        GetTextureAssetResolverLocked().SetAssetRoot(assetRoot);
 
         Thread::ScopedLock resourceLock(m_ResourceMutex);
         m_TextureCache.clear();
@@ -681,14 +560,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        TextureAssetState &state = GetTextureAssetStateLocked();
-        auto newSystem = Container::MakeShared<Asset::AssetSystem>(state.AssetRoot);
-        const bool bLoaded = newSystem->LoadManifestFromJsonText(jsonText, ToAnsiString(sourceName));
-        state.System = newSystem;
-        state.ManifestJson = jsonText;
-        state.ManifestSourceName = sourceName;
-        state.bManifestLoadAttempted = true;
-        ++state.Generation;
+        const bool bLoaded = GetTextureAssetResolverLocked().LoadManifestFromJsonText(jsonText, sourceName);
 
         Thread::ScopedLock resourceLock(m_ResourceMutex);
         m_TextureCache.clear();
@@ -706,12 +578,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        TextureAssetState &state = GetTextureAssetStateLocked();
-        state.System = Container::MakeShared<Asset::AssetSystem>(state.AssetRoot);
-        state.ManifestJson.clear();
-        state.ManifestSourceName.clear();
-        state.bManifestLoadAttempted = false;
-        ++state.Generation;
+        GetTextureAssetResolverLocked().ResetManifest();
 
         Thread::ScopedLock resourceLock(m_ResourceMutex);
         m_TextureCache.clear();
@@ -729,9 +596,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        TextureAssetState &state = GetTextureAssetStateLocked();
-        state.FallbackMode = ToAssetFallbackMode(mode);
-        ++state.Generation;
+        GetTextureAssetResolverLocked().SetFallbackMode(mode);
 
         Thread::ScopedLock resourceLock(m_ResourceMutex);
         m_TextureCache.clear();
@@ -772,55 +637,19 @@ namespace NorvesLib::Core::Rendering
             return finish(PreparedTextureAssetStatus::InvalidRequest, "request path is empty");
         }
 
-        Asset::AssetPath assetPath;
         {
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
-            TextureAssetState &state = GetTextureAssetStateLocked();
-            plan.Prepared.Generation = state.Generation;
-            plan.Prepared.FallbackMode = ToTextureAssetFallbackMode(state.FallbackMode);
-            plan.AssetRoot = state.AssetRoot;
-            plan.AssetSystem = state.System;
-            assetPath = Asset::AssetPath::Normalize(ToAnsiString(requestPath), state.AssetRoot);
+            plan = GetTextureAssetResolverLocked().BuildPreparedTexturePlan(requestPath, resolvedFallbackPath);
         }
 
-        if (!assetPath.IsValid())
+        if (!plan.bReadyForManifest)
         {
-            return finish(PreparedTextureAssetStatus::InvalidPath, "asset path is invalid");
-        }
-
-        if (assetPath.IsAbsolute())
-        {
-            if (plan.Prepared.ResolvedFallbackPath.empty() && assetPath.HasResolvedPath())
-            {
-                plan.Prepared.ResolvedFallbackPath = ToString(assetPath.GetResolvedPath());
-            }
-            return finish(PreparedTextureAssetStatus::AbsolutePathUnsupported, "absolute asset path is unsupported");
-        }
-
-        if (!assetPath.HasLogicalPath())
-        {
-            return finish(PreparedTextureAssetStatus::InvalidPath, "asset path has no logical path");
-        }
-
-        plan.Prepared.LogicalPath = assetPath.GetLogicalPath();
-        plan.Prepared.CacheKey = MakeAssetTextureCacheKey(plan.Prepared.Generation, plan.Prepared.LogicalPath);
-        if (plan.Prepared.ResolvedFallbackPath.empty())
-        {
-            plan.Prepared.ResolvedFallbackPath = assetPath.HasResolvedPath()
-                                                    ? ToString(assetPath.GetResolvedPath())
-                                                    : ResolveTexturePath(requestPath);
-        }
-
-        if (!plan.AssetSystem)
-        {
-            return finish(PreparedTextureAssetStatus::ManifestInvalid, "asset system is unavailable");
+            return finish(plan.BlockedStatus, plan.BlockedReason);
         }
 
         auto resolveStartTime = LoadProfileNow();
-        const Asset::AssetManifestResolveResult manifestResult = plan.AssetSystem->FindCookedVariant(
-            plan.Prepared.LogicalPath,
-            Asset::AssetKind::Texture,
-            Asset::AssetManifest::DefaultVariant);
+        const Asset::AssetManifestResolveResult manifestResult =
+            TextureAssetResolver::FindPreparedCookedVariant(plan);
         const double resolveMs = LoadProfileElapsedMs(resolveStartTime);
         NORVES_LOG_INFO("AssetLoadProfile",
                         "stage=texture_prepare_manifest role=%s request_id=%u path=\"%s\" logical_path=\"%s\" resolve_ms=%.3f manifest_status=%s",
@@ -964,7 +793,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
-        return m_TextureAssetState && m_TextureAssetState->Generation == prepared.Generation;
+        return m_TextureAssetResolver && m_TextureAssetResolver->IsGenerationCurrent(prepared.Generation);
     }
 
     TextureHandle RenderResourceManager::FinalizePreparedTextureAsset(
@@ -980,7 +809,7 @@ namespace NorvesLib::Core::Rendering
 
         {
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
-            if (GetTextureAssetStateLocked().Generation != prepared.Generation)
+            if (!GetTextureAssetResolverLocked().IsGenerationCurrent(prepared.Generation))
             {
                 return TextureHandle::Invalid();
             }
@@ -1036,7 +865,7 @@ namespace NorvesLib::Core::Rendering
         bool bReleasedNewHandle = false;
         {
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
-            const bool bCurrent = GetTextureAssetStateLocked().Generation == prepared.Generation;
+            const bool bCurrent = GetTextureAssetResolverLocked().IsGenerationCurrent(prepared.Generation);
 
             Thread::ScopedLock resourceLock(m_ResourceMutex);
             if (!bCurrent)
@@ -1488,30 +1317,6 @@ namespace NorvesLib::Core::Rendering
         return handle;
     }
 
-    Container::String RenderResourceManager::ResolveTexturePath(const Container::String &path) const
-    {
-        Container::String resolvedPath = path;
-#ifdef NORVES_ASSET_DIR
-        // 相対パスの場合（ドライブレター/UNCパスでない場合）NORVES_ASSET_DIRをベースにする
-        if (path.size() > 0 && path[0] != '/' && path[0] != '\\' &&
-            (path.size() < 2 || path[1] != ':'))
-        {
-            // "Assets/" プレフィックスを除去してNORVES_ASSET_DIRに結合
-            Container::String relativePath = path;
-            if (relativePath.size() > 7)
-            {
-                Container::String prefix = relativePath.substr(0, 7);
-                if (prefix == "Assets/" || prefix == "Assets\\")
-                {
-                    relativePath = relativePath.substr(7);
-                }
-            }
-            resolvedPath = Container::String(NORVES_ASSET_DIR) + "/" + relativePath;
-        }
-#endif
-        return resolvedPath;
-    }
-
     TextureHandle RenderResourceManager::LoadTexture(const Container::String &path)
     {
         if (!m_bInitialized)
@@ -1521,41 +1326,14 @@ namespace NorvesLib::Core::Rendering
 
         auto buildPlan = [this](const Container::String &requestPath)
         {
-            TextureAssetLoadPlan plan;
-            plan.RequestPath = requestPath;
-
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
-            TextureAssetState &state = GetTextureAssetStateLocked();
-            const Asset::AssetPath assetPath = Asset::AssetPath::Normalize(ToAnsiString(requestPath), state.AssetRoot);
-            plan.Generation = state.Generation;
-            plan.FallbackMode = state.FallbackMode;
-
-            if (assetPath.IsValid() && assetPath.HasLogicalPath() && !assetPath.IsAbsolute())
-            {
-                plan.bUseAssetSystem = true;
-                plan.bPathValid = true;
-                plan.LogicalPath = assetPath.GetLogicalPath();
-                plan.ResolvedPath = assetPath.HasResolvedPath()
-                                        ? ToString(assetPath.GetResolvedPath())
-                                        : ResolveTexturePath(requestPath);
-                plan.CacheKey = MakeAssetTextureCacheKey(plan.Generation, plan.LogicalPath);
-                plan.AssetSystem = state.System;
-                return plan;
-            }
-
-            plan.bUseAssetSystem = false;
-            plan.bPathValid = assetPath.IsValid();
-            plan.ResolvedPath = (assetPath.IsValid() && assetPath.HasResolvedPath())
-                                    ? ToString(assetPath.GetResolvedPath())
-                                    : ResolveTexturePath(requestPath);
-            plan.CacheKey = MakeLegacyTextureCacheKey(plan.ResolvedPath);
-            return plan;
+            return GetTextureAssetResolverLocked().BuildTextureLoadPlan(requestPath);
         };
 
         auto isGenerationCurrent = [this](uint64_t generation)
         {
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
-            return GetTextureAssetStateLocked().Generation == generation;
+            return GetTextureAssetResolverLocked().IsGenerationCurrent(generation);
         };
 
         TextureAssetLoadPlan plan = buildPlan(path);
@@ -2609,35 +2387,8 @@ namespace NorvesLib::Core::Rendering
 
         auto buildPlan = [this](const Container::String &requestPath)
         {
-            TextureAssetLoadPlan plan;
-            plan.RequestPath = requestPath;
-
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
-            TextureAssetState &state = GetTextureAssetStateLocked();
-            const Asset::AssetPath assetPath = Asset::AssetPath::Normalize(ToAnsiString(requestPath), state.AssetRoot);
-            plan.Generation = state.Generation;
-            plan.FallbackMode = state.FallbackMode;
-
-            if (assetPath.IsValid() && assetPath.HasLogicalPath() && !assetPath.IsAbsolute())
-            {
-                plan.bUseAssetSystem = true;
-                plan.bPathValid = true;
-                plan.LogicalPath = assetPath.GetLogicalPath();
-                plan.ResolvedPath = assetPath.HasResolvedPath()
-                                        ? ToString(assetPath.GetResolvedPath())
-                                        : ResolveTexturePath(requestPath);
-                plan.CacheKey = MakeAssetTextureCacheKey(plan.Generation, plan.LogicalPath);
-                plan.AssetSystem = state.System;
-                return plan;
-            }
-
-            plan.bUseAssetSystem = false;
-            plan.bPathValid = assetPath.IsValid();
-            plan.ResolvedPath = (assetPath.IsValid() && assetPath.HasResolvedPath())
-                                    ? ToString(assetPath.GetResolvedPath())
-                                    : ResolveTexturePath(requestPath);
-            plan.CacheKey = MakeLegacyTextureCacheKey(plan.ResolvedPath);
-            return plan;
+            return GetTextureAssetResolverLocked().BuildTextureLoadPlan(requestPath);
         };
 
         TextureAssetLoadPlan plan = buildPlan(path);
@@ -2680,7 +2431,7 @@ namespace NorvesLib::Core::Rendering
         request->Result.CacheKey = plan.CacheKey;
         request->Result.LogicalPath = plan.LogicalPath;
         request->Result.AssetGeneration = plan.Generation;
-        request->Result.FallbackMode = ToTextureAssetFallbackMode(plan.FallbackMode);
+        request->Result.FallbackMode = TextureAssetResolver::ToTextureAssetFallbackMode(plan.FallbackMode);
         if (callback.IsBound())
         {
             request->Callbacks.push_back(std::move(callback));
@@ -2882,7 +2633,7 @@ namespace NorvesLib::Core::Rendering
 
             if (!parseResult.Succeeded())
             {
-                if (AllowsDebugLooseFallback(result.FallbackMode))
+                if (TextureAssetResolver::AllowsDebugLooseFallback(result.FallbackMode))
                 {
                     NORVES_LOG_INFO("AssetLoadProfile",
                                     "stage=texture_asset_debug_fallback role=worker source=loose_stbi path=\"%s\" logical_path=\"%s\" reason=\"cooked texture parse failed\"",
@@ -2981,7 +2732,7 @@ namespace NorvesLib::Core::Rendering
         auto isGenerationCurrent = [this](uint64_t generation)
         {
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
-            return GetTextureAssetStateLocked().Generation == generation;
+            return GetTextureAssetResolverLocked().IsGenerationCurrent(generation);
         };
 
         auto cacheTextureIfCurrent = [this, &isGenerationCurrent](const AsyncTextureResult &result, TextureHandle handle)
@@ -3114,7 +2865,7 @@ namespace NorvesLib::Core::Rendering
                                     GetCookedTextureUploadStatusName(uploadResult.Status),
                                     handle.IsValid() ? 1 : 0);
 
-                    if (!handle.IsValid() && AllowsDebugLooseFallback(result.FallbackMode))
+                    if (!handle.IsValid() && TextureAssetResolver::AllowsDebugLooseFallback(result.FallbackMode))
                     {
                         bDebugFallbackAttempted = true;
                         NORVES_LOG_INFO("AssetLoadProfile",
