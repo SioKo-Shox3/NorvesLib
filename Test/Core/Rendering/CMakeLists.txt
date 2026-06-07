@@ -141,6 +141,16 @@ target_include_directories(RenderResourceManagerProceduralMeshStoreTest PRIVATE
 set_target_properties(RenderResourceManagerProceduralMeshStoreTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderResourceManagerProceduralMeshStoreTest COMMAND RenderResourceManagerProceduralMeshStoreTest)
 
+add_executable(RenderResourceManagerMegaGeometryStoreTest
+    RenderResourceManagerMegaGeometryStoreTest.cpp
+)
+target_link_libraries(RenderResourceManagerMegaGeometryStoreTest PRIVATE Core)
+target_include_directories(RenderResourceManagerMegaGeometryStoreTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderResourceManagerMegaGeometryStoreTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderResourceManagerMegaGeometryStoreTest COMMAND RenderResourceManagerMegaGeometryStoreTest)
+
 add_executable(RenderResourceManagerMaterialStoreTest
     RenderResourceManagerMaterialStoreTest.cpp
 )
