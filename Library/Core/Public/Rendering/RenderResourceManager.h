@@ -619,9 +619,6 @@ namespace NorvesLib::Core::Rendering
         // テクスチャキャッシュ（パス→ハンドル）
         Container::Map<Container::String, TextureHandle> m_TextureCache;
 
-        // シェーダーキャッシュ（パス→ハンドル）
-        Container::Map<Container::String, ShaderHandle> m_ShaderCache;
-
         // スレッドセーフ用ミューテックス
         mutable Thread::Mutex m_ResourceMutex;
 
