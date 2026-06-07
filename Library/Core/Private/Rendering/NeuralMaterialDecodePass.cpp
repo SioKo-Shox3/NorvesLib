@@ -85,7 +85,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // ResourceManagerからプルモデルでデコード対象を取得
+        // ViewRenderContext::ResourceManagerからプルモデルでデコード対象を取得
         m_FrameDecodeTargets.clear();
         if (context.ResourceManager)
         {

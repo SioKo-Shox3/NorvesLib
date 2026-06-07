@@ -1,11 +1,23 @@
 # Render Resource Responsibility Refactor
 
-## Why Rename-Only Is Insufficient
+## Current Public API
 
-`RenderResourceManager` currently acts as a GPU resource factory, handle registry, texture
-asset resolver, sync and async texture loader, material registry, neural material owner,
-mesh/MegaMesh/model registry, and lifetime cleanup point. Renaming the class would preserve
-that broad responsibility and keep inviting unrelated behavior into the same type.
+`RenderResourceRegistry` is the primary public API for render resource access. It remains
+the compatibility facade that game and rendering callers use for handle-based creation,
+lookup, and release while the concrete responsibilities are split behind it.
+
+`RenderResourceManager` remains only as source compatibility: legacy includes, aliases,
+and compatibility accessors may still expose that name. New documentation, comments, and
+usage examples should prefer `RenderResourceRegistry` unless referring to an existing
+compatibility surface or a concrete field name such as `ViewRenderContext::ResourceManager`.
+
+## Why Rename-Only Was Insufficient
+
+Historically, `RenderResourceManager` accumulated GPU resource factory behavior, handle
+registry behavior, texture asset resolution, sync and async texture loading, material
+registration, neural material ownership, mesh/MegaMesh/model registration, and lifetime
+cleanup. A rename alone would have preserved that broad responsibility and kept inviting
+unrelated behavior into the same type.
 
 The refactor goal is to make each responsibility hard to misplace. Names should describe
 what the type owns or decides, and broad access should be replaced by explicit dependencies.
@@ -32,6 +44,10 @@ what the type owns or decides, and broad access should be replaced by explicit d
 - `RenderResourceAccess`: non-owning dependency injection bundle passed to frame,
   pass, loader, and analyzer code where narrow dependencies are needed.
 
+`RenderResourceRegistry` should stay a compatibility-oriented facade over these
+components. New behavior should be added to the specific store, loader, resolver, or
+runtime that owns the data and lifetime rules, not to the registry facade.
+
 ## Resolver Boundary
 
 `TextureAssetResolver` must not own package read, `Package` parse, cooked entry hash
@@ -41,11 +57,15 @@ work and belong in `TextureAssetLoader` or a narrowly named preparer used by the
 The resolver should answer only: what logical asset is being requested, what generation
 and fallback policy apply, and what cooked or loose reference should the loader attempt.
 
-## RenderResourceSet Boundary
+## Registry And RenderResourceSet Boundaries
 
-`RenderResourceSet` is not a new facade. It owns the split components and exposes
+`RenderResourceRegistry` is the public facade and compatibility boundary. It may route
+existing API calls to the split implementation, but it should not become the owner of new
+domain behavior.
+
+`RenderResourceSet` is not a second facade. It owns the split components and exposes
 initialize, shutdown, and accessors. New behavior should be added to a specific store,
-loader, or resolver, not to the aggregate.
+loader, resolver, or runtime, not to the aggregate.
 
 Shutdown order should be:
 
