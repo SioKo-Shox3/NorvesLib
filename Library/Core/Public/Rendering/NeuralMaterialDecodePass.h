@@ -17,8 +17,8 @@ namespace NorvesLib::Core::Rendering
      * Cooperative Vector (VK_NV_cooperative_vector) を使用して、
      * ニューラルネットワークベースのマテリアルデコードをコンピュートシェーダーで実行します。
      *
-     * デコード対象のNeuralMaterialResourceはRenderResourceManagerが管理し、
-     * 本パスはSetup()時にResourceManagerからプルモデルで取得します。
+     * デコード対象のNeuralMaterialResourceはRenderResourceRegistry経由で管理され、
+     * 本パスはSetup()時にViewRenderContext::ResourceManagerからプルモデルで取得します。
      *
      * パイプラインの位置: ShadowMap → **NeuralMaterialDecode** → GBuffer
      *
@@ -68,7 +68,7 @@ namespace NorvesLib::Core::Rendering
         // ニューラルマテリアルデコーダー
         NeuralMaterialDecoder m_Decoder;
 
-        // Setup()でResourceManagerから取得したデコード対象（フレーム単位の一時キャッシュ）
+        // Setup()でViewRenderContext::ResourceManagerから取得したデコード対象（フレーム単位の一時キャッシュ）
         Container::VariableArray<NeuralMaterialResource *> m_FrameDecodeTargets;
 
         // Cooperative Vectorサポート状況

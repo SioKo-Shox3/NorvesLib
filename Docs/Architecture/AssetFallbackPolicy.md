@@ -65,7 +65,7 @@ Cooked failure may fallback to loose assets only when the decision requires an e
 
 ## Prepared Texture Asset Semantics
 
-Phase 16A adds prepared cooked texture loading to `RenderResourceManager`. The prepared API is cooked-only: it resolves manifest entries, reads the package, parses `nvtex`, and returns a prepared payload for later render-side finalization. It does not loose-read or decode an image file.
+Phase 16A adds prepared cooked texture loading through the primary `RenderResourceRegistry` API. The legacy `RenderResourceManager` name may still reach the same API through source compatibility aliases or accessors, but new callers and documentation should use `RenderResourceRegistry`. The prepared API is cooked-only: it resolves manifest entries, reads the package, parses `nvtex`, and returns a prepared payload for later render-side finalization. It does not loose-read or decode an image file.
 
 Generic prepared status handling:
 
