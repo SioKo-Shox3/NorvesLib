@@ -508,6 +508,29 @@ namespace
         std::filesystem::remove_all(root);
     }
 
+    void TestFinalizeAfterShutdownReturnsInvalidWithoutGpuWork()
+    {
+        const std::filesystem::path root = CreateTestRoot("FinalizeAfterShutdown");
+        const std::vector<uint8_t> textureBytes = BuildCookedTextureBytes(
+            2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
+
+        auto device = MakeShared<FakeDevice>();
+        RenderResourceManager manager;
+        assert(manager.Initialize(device));
+        ConfigureRoot(manager, root);
+
+        const PreparedTextureAsset prepared = PrepareReadyAsset(manager, root, textureBytes);
+        assert(prepared.Status == PreparedTextureAssetStatus::CookedReady);
+        manager.Shutdown();
+
+        const TextureHandle handle = manager.FinalizePreparedTextureAsset(prepared);
+        assert(!handle.IsValid());
+        assert(device->CreatedTextureDescs.empty());
+        assert(manager.GetResourceStats().TextureCount == 0);
+
+        std::filesystem::remove_all(root);
+    }
+
     void TestFinalizePostUploadDuplicateCacheReleasesNewHandle()
     {
         const std::filesystem::path root = CreateTestRoot("FinalizePostUploadDuplicate");
@@ -884,6 +907,7 @@ int main()
 
     TestPrepareCookedReadyIncludesRequiredFields();
     TestFinalizeCookedReadyUploadsAndCaches();
+    TestFinalizeAfterShutdownReturnsInvalidWithoutGpuWork();
     TestFinalizePostUploadDuplicateCacheReleasesNewHandle();
     TestFinalizeChecksGenerationBeforeUpload();
     TestFinalizePostUploadGenerationRaceDiscardsUpload();

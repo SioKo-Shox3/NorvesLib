@@ -10,9 +10,7 @@
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
-#include "Thread/Mutex.h"
 #include "Thread/Atomic.h"
-#include "Thread/Task.h"
 #include "Delegate/Delegate.h"
 #include <cstddef>
 #include <cstdint>
@@ -36,9 +34,7 @@ namespace NorvesLib::Core::Rendering
     class MegaGeometryResourceStore;
     class ProceduralMeshGpuStore;
     class RenderMaterialStore;
-    class TextureAsyncLoadQueue;
-    class TextureHandleCache;
-    class TextureAssetResolver;
+    class TextureAssetRuntime;
 
     /**
      * @brief マテリアル作成情報
@@ -590,19 +586,8 @@ namespace NorvesLib::Core::Rendering
         // MegaGeometry GPU/モデルリソース
         Container::TUniquePtr<MegaGeometryResourceStore> m_MegaGeometryResources;
 
-        // テクスチャ索引（パス→ハンドル）
-        Container::TUniquePtr<TextureHandleCache> m_TextureHandleCache;
-
-        // 非同期テクスチャ読み込みキュー
-        Container::TUniquePtr<TextureAsyncLoadQueue> m_TextureAsyncLoads;
-
-        // Texture asset resolution state. Lock order when nested: texture asset -> async queue -> texture cache.
-        Container::TUniquePtr<TextureAssetResolver> m_TextureAssetResolver;
-        mutable Thread::Mutex m_TextureAssetMutex;
-
-        TextureAssetResolver &GetTextureAssetResolverLocked();
-        TextureHandle RegisterUploadedTexture(Container::TSharedPtr<RHI::ITexture> rhiTexture,
-                                              const TextureCreateInfo &createInfo);
+        // テクスチャアセット実行時状態
+        Container::TUniquePtr<TextureAssetRuntime> m_TextureAssets;
 
         // 初期化フラグ
         bool m_bInitialized = false;

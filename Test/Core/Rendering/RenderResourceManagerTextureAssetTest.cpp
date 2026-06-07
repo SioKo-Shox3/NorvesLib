@@ -419,6 +419,81 @@ namespace
                                        textureBytes}}));
     }
 
+    void TestPreInitTextureAssetConfigSurvivesInitialize()
+    {
+        const std::filesystem::path root = CreateTestRoot("PreInitConfig");
+        WriteBinaryFile(root / "Textures" / "Cooked.tga", BuildTga1x1());
+
+        auto device = MakeShared<FakeDevice>();
+        RenderResourceManager manager;
+        ConfigureRoot(manager, root);
+        assert(manager.SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
+        assert(manager.LoadTextureAssetManifestFromJsonText(
+            BuildManifest(1, "Textures/Cooked.tga", "Cooked/Missing.nvpkg")));
+
+        assert(manager.Initialize(device));
+        const TextureHandle handle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        assert(handle.IsValid());
+        assert(device->CreatedTextureDescs.size() == 1);
+        assert(device->LastTexture);
+        assert(device->LastTexture->Updates.size() == 1);
+
+        manager.Shutdown();
+        std::filesystem::remove_all(root);
+    }
+
+    void TestShutdownTextureAssetDelegatesReturnInvalidOrZero()
+    {
+        const std::filesystem::path root = CreateTestRoot("ShutdownDelegates");
+
+        auto device = MakeShared<FakeDevice>();
+        RenderResourceManager manager;
+        ConfigureRoot(manager, root);
+        assert(manager.Initialize(device));
+        manager.Shutdown();
+
+        bool bCallbackInvoked = false;
+        assert(!manager.LoadTexture(ToCoreString("Textures/Missing.tga")).IsValid());
+        assert(manager.LoadTextureAsync(
+                   ToCoreString("Textures/Missing.tga"),
+                   NorvesLib::Core::Delegate<void, TextureHandle>([&bCallbackInvoked](TextureHandle) {
+                       bCallbackInvoked = true;
+                   })) == 0);
+        assert(!bCallbackInvoked);
+        assert(manager.FlushCompletedTextureLoads() == 0);
+        assert(manager.GetPendingAsyncLoadCount() == 0);
+
+        std::filesystem::remove_all(root);
+    }
+
+    void TestReinitializePreservesConfigAndClearsTextureAssetCache()
+    {
+        const std::filesystem::path root = CreateTestRoot("ReinitializeConfigCache");
+        const std::vector<uint8_t> textureBytes = BuildCookedTextureBytes(2, 1);
+        WriteCookedPackage(root, textureBytes);
+
+        auto device = MakeShared<FakeDevice>();
+        RenderResourceManager manager;
+        ConfigureRoot(manager, root);
+        assert(manager.LoadTextureAssetManifestFromJsonText(
+            BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()))));
+
+        assert(manager.Initialize(device));
+        const TextureHandle firstHandle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        assert(firstHandle.IsValid());
+        assert(device->CreatedTextureDescs.size() == 1);
+        manager.Shutdown();
+
+        assert(manager.Initialize(device));
+        const TextureHandle secondHandle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        assert(secondHandle.IsValid());
+        assert(secondHandle != firstHandle);
+        assert(device->CreatedTextureDescs.size() == 2);
+
+        manager.Shutdown();
+        std::filesystem::remove_all(root);
+    }
+
     void TestSyncCookedPathDoesNotNeedLooseFile()
     {
         const std::filesystem::path root = CreateTestRoot("SyncCooked");
@@ -673,6 +748,9 @@ int main()
 
     NorvesLib::Thread::JobSystem::Get().Initialize(2);
 
+    TestPreInitTextureAssetConfigSurvivesInitialize();
+    TestShutdownTextureAssetDelegatesReturnInvalidOrZero();
+    TestReinitializePreservesConfigAndClearsTextureAssetCache();
     TestSyncCookedPathDoesNotNeedLooseFile();
     TestAsyncCookedPathAndPendingGenerationGuard();
     TestAsyncCacheHitCallbackRunsAfterCacheLockRelease();
