@@ -8,6 +8,7 @@
 #include "Rendering/TextureAssetLoader.h"
 #include "Rendering/TextureHandleCache.h"
 #include "Rendering/TextureAssetResolver.h"
+#include "Rendering/TextureUploadProfile.h"
 #include "Asset/AssetSystem.h"
 #include "RHI/IDevice.h"
 #include "RHI/IBuffer.h"
@@ -37,31 +38,6 @@ namespace NorvesLib::Core::Rendering
         {
             return std::chrono::duration<double, std::milli>(LoadProfileClock::now() - startTime).count();
         }
-
-        thread_local const char* g_TextureCreateUploadProfileRole = "caller";
-
-        const char* GetTextureCreateUploadProfileRole()
-        {
-            return g_TextureCreateUploadProfileRole;
-        }
-
-        class ScopedTextureCreateUploadProfileRole
-        {
-        public:
-            explicit ScopedTextureCreateUploadProfileRole(const char* role)
-                : m_PreviousRole(g_TextureCreateUploadProfileRole)
-            {
-                g_TextureCreateUploadProfileRole = (role != nullptr && role[0] != '\0') ? role : "caller";
-            }
-
-            ~ScopedTextureCreateUploadProfileRole()
-            {
-                g_TextureCreateUploadProfileRole = m_PreviousRole;
-            }
-
-        private:
-            const char* m_PreviousRole = "caller";
-        };
 
         const char *NormalizeProfileRole(const char *role, const char *fallback)
         {
@@ -139,13 +115,6 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-    }
-
-    const char* SetTextureCreateUploadProfileRoleForCurrentThread(const char* role)
-    {
-        const char* previousRole = g_TextureCreateUploadProfileRole;
-        g_TextureCreateUploadProfileRole = (role != nullptr && role[0] != '\0') ? role : "caller";
-        return previousRole;
     }
 
     bool PreparedTextureAsset::HasCookedPayload() const noexcept
@@ -541,7 +510,7 @@ namespace NorvesLib::Core::Rendering
         auto createStartTime = LoadProfileNow();
         auto handle = CreateTexture(createInfo);
         double textureCreateMs = LoadProfileElapsedMs(createStartTime);
-        const char* profileRole = GetTextureCreateUploadProfileRole();
+        const char* profileRole = GetTextureCreateUploadProfileRoleForCurrentThread();
         if (!handle.IsValid() || !data || dataSize == 0)
         {
             NORVES_LOG_INFO("AssetLoadProfile",

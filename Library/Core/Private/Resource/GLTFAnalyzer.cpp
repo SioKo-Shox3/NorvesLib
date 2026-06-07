@@ -5,6 +5,7 @@
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResourceManager.h"
+#include "Rendering/TextureUploadProfile.h"
 #include "Text/JsonDocument.h"
 #include "Thread/Atomic.h"
 #include "Thread/JobSystem.h"
@@ -19,11 +20,6 @@
 #include <cstring>
 #include <filesystem>
 #include <utility>
-
-namespace NorvesLib::Core::Rendering
-{
-    const char* SetTextureCreateUploadProfileRoleForCurrentThread(const char* role);
-}
 
 namespace NorvesLib::Core::Resource
 {
@@ -47,23 +43,6 @@ namespace NorvesLib::Core::Resource
         {
             return std::chrono::duration<double, std::milli>(LoadProfileClock::now() - startTime).count();
         }
-
-        class ScopedTextureCreateUploadProfileRole
-        {
-        public:
-            explicit ScopedTextureCreateUploadProfileRole(const char* role)
-                : m_PreviousRole(Rendering::SetTextureCreateUploadProfileRoleForCurrentThread(role))
-            {
-            }
-
-            ~ScopedTextureCreateUploadProfileRole()
-            {
-                Rendering::SetTextureCreateUploadProfileRoleForCurrentThread(m_PreviousRole);
-            }
-
-        private:
-            const char* m_PreviousRole = "caller";
-        };
 
         struct AccessorInfo
         {
@@ -1653,7 +1632,7 @@ namespace NorvesLib::Core::Resource
             bool bRoughnessFinalizeSuccess = false;
             bool bMetallicFinalizeSuccess = false;
             {
-                ScopedTextureCreateUploadProfileRole profileRole(role);
+                Rendering::ScopedTextureCreateUploadProfileRole profileRole(role);
                 bAlbedoFinalizeSuccess = CreateTextureFromStagedData(resourceManager, staging.AlbedoTexture, material.AlbedoTexture, role, requestId);
                 bNormalFinalizeSuccess = CreateTextureFromStagedData(resourceManager, staging.NormalTexture, material.NormalTexture, role, requestId);
                 bAOFinalizeSuccess = CreateTextureFromStagedData(resourceManager, staging.AOTexture, material.AOTexture, role, requestId);

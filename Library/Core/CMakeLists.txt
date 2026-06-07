@@ -66,6 +66,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/TextureAssetLoader.cpp
     Private/Rendering/TextureHandleCache.cpp
     Private/Rendering/TextureAssetResolver.cpp
+    Private/Rendering/TextureUploadProfile.cpp
     Private/Rendering/CookedTextureUpload.cpp
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
@@ -205,6 +206,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/RenderTypes.h
     Public/Rendering/GpuResourceTypes.h
     Public/Rendering/TextureAssetTypes.h
+    Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h
     Public/Rendering/MeshTypes.h
     Public/Rendering/MaterialTypes.h
