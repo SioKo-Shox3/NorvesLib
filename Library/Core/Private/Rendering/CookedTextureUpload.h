@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Asset/CookedTextureFormat.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/GpuResourceTypes.h"
 #include "RHI/IDevice.h"
 
 #include <cstddef>

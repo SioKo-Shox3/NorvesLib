@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "GpuResourceTypes.h"
+#include "TextureAssetTypes.h"
 #include "VertexLayout.h"
 #include "MaterialTypes.h"
 #include "NeuralMaterialResource.h"
@@ -11,6 +13,7 @@
 #include "Thread/Atomic.h"
 #include "Thread/Task.h"
 #include "Delegate/Delegate.h"
+#include <cstddef>
 #include <cstdint>
 
 // 前方宣言
@@ -28,192 +31,6 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
-    struct CookedTextureAsyncPayload;
-
-    // ========================================
-    // リソース作成情報
-    // ========================================
-
-    /**
-     * @brief バッファ作成情報
-     */
-    struct BufferCreateInfo
-    {
-        size_t Size = 0;
-        bool bHostVisible = false; // CPUからアクセス可能か
-
-        enum class Usage
-        {
-            Vertex,
-            Index,
-            Constant,
-            Structured,
-            Storage
-        } UsageType = Usage::Vertex;
-
-        Container::String DebugName;
-    };
-
-    /**
-     * @brief テクスチャ作成情報
-     */
-    struct TextureCreateInfo
-    {
-        uint32_t Width = 1;
-        uint32_t Height = 1;
-        uint32_t Depth = 1;
-        uint32_t MipLevels = 1;
-        uint32_t ArraySize = 1;
-
-        enum class Format
-        {
-            RGBA8_UNORM,
-            RGBA8_SRGB,
-            RGBA16_FLOAT,
-            RGBA32_FLOAT,
-            R8_UNORM,
-            RG8_UNORM,
-            D24_S8,
-            D32_FLOAT
-        } PixelFormat = Format::RGBA8_UNORM;
-
-        TextureType Type = TextureType::Texture2D;
-
-        bool bRenderTarget = false;
-        bool bDepthStencil = false;
-
-        Container::String DebugName;
-    };
-
-    enum class TextureAssetFallbackMode : uint8_t
-    {
-        FailOnCookedFailure,
-        DebugAllowLooseFallback
-    };
-
-    enum class TextureLoadSource : uint8_t
-    {
-        LegacyFile,
-        LooseStbi,
-        CookedNvtex
-    };
-
-    enum class PreparedTextureAssetStatus : uint8_t
-    {
-        InvalidRequest,
-        InvalidPath,
-        AbsolutePathUnsupported,
-        ManifestInvalid,
-        ManifestMissingLooseFallback,
-        VariantMissingLooseFallback,
-        CookedPackageReadFailed,
-        CookedPackageParseFailed,
-        CookedEntryMissing,
-        CookedEntryHashMismatch,
-        CookedTextureParseFailed,
-        DebugLooseFallback,
-        CookedReady
-    };
-
-    struct PreparedTextureAsset
-    {
-        PreparedTextureAssetStatus Status = PreparedTextureAssetStatus::InvalidRequest;
-        Container::String RequestPath;
-        Container::String ResolvedFallbackPath;
-        Container::AnsiString LogicalPath;
-        Container::String CacheKey;
-        uint64_t Generation = 0;
-        TextureAssetFallbackMode FallbackMode = TextureAssetFallbackMode::FailOnCookedFailure;
-        TextureLoadSource Source = TextureLoadSource::LegacyFile;
-        Container::TSharedPtr<CookedTextureAsyncPayload> Payload;
-        Container::String Reason;
-
-        [[nodiscard]] bool HasCookedPayload() const noexcept;
-        [[nodiscard]] bool ShouldUseLooseFallback() const noexcept;
-        [[nodiscard]] bool Failed() const noexcept;
-    };
-
-    struct PreparedCookedTextureMip0RGBA8UNormLinearSplit
-    {
-        uint32_t Width = 0;
-        uint32_t Height = 0;
-        Container::VariableArray<uint8_t> R;
-        Container::VariableArray<uint8_t> G;
-        Container::VariableArray<uint8_t> B;
-        Container::VariableArray<uint8_t> A;
-    };
-
-    /**
-     * @brief シェーダー作成情報
-     */
-    struct ShaderCreateInfo
-    {
-        ShaderStage Stage = ShaderStage::Vertex;
-        Container::String EntryPoint = "main";
-        Container::VariableArray<uint8_t> ByteCode;
-        Container::String DebugName;
-    };
-
-    // ========================================
-    // 内部リソースデータ
-    // ========================================
-
-    /**
-     * @brief バッファリソースデータ（内部用）
-     */
-    struct BufferResourceData
-    {
-        Container::TSharedPtr<RHI::IBuffer> RHIBuffer;
-        size_t Size = 0;
-        BufferCreateInfo::Usage Usage;
-        uint32_t RefCount = 0;
-        Container::String DebugName;
-    };
-
-    /**
-     * @brief テクスチャリソースデータ（内部用）
-     */
-    struct TextureResourceData
-    {
-        Container::TSharedPtr<RHI::ITexture> RHITexture;
-        uint32_t Width = 0;
-        uint32_t Height = 0;
-        TextureCreateInfo::Format Format;
-        uint32_t RefCount = 0;
-        Container::String DebugName;
-    };
-
-    /**
-     * @brief サンプラーリソースデータ（内部用）
-     */
-    struct SamplerResourceData
-    {
-        Container::TSharedPtr<RHI::ISampler> RHISampler;
-        uint32_t RefCount = 0;
-        Container::String DebugName;
-    };
-
-    /**
-     * @brief シェーダーリソースデータ（内部用）
-     */
-    struct ShaderResourceData
-    {
-        Container::TSharedPtr<RHI::IShader> RHIShader;
-        ShaderStage Stage;
-        uint32_t RefCount = 0;
-        Container::String DebugName;
-    };
-
-    /**
-     * @brief パイプラインリソースデータ（内部用）
-     */
-    struct PipelineResourceData
-    {
-        Container::TSharedPtr<RHI::IPipeline> RHIPipeline;
-        uint32_t RefCount = 0;
-        Container::String DebugName;
-    };
-
     /**
      * @brief マテリアル作成情報
      */
@@ -757,15 +574,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief リソース統計を取得
          */
-        struct ResourceStats
-        {
-            uint32_t BufferCount = 0;
-            uint32_t TextureCount = 0;
-            uint32_t ShaderCount = 0;
-            uint32_t SamplerCount = 0;
-            size_t TotalBufferMemory = 0;
-            size_t TotalTextureMemory = 0;
-        };
+        using ResourceStats = ::NorvesLib::Core::Rendering::ResourceStats;
         ResourceStats GetResourceStats() const;
 
     private:
