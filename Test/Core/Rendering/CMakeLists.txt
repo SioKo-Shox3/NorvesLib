@@ -111,6 +111,26 @@ target_include_directories(RenderResourceManagerPreparedTextureAssetTest PRIVATE
 set_target_properties(RenderResourceManagerPreparedTextureAssetTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderResourceManagerPreparedTextureAssetTest COMMAND RenderResourceManagerPreparedTextureAssetTest)
 
+add_executable(RenderResourceManagerAssetLoadProfileContractTest
+    RenderResourceManagerAssetLoadProfileContractTest.cpp
+)
+target_link_libraries(RenderResourceManagerAssetLoadProfileContractTest PRIVATE Core)
+target_include_directories(RenderResourceManagerAssetLoadProfileContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderResourceManagerAssetLoadProfileContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderResourceManagerAssetLoadProfileContractTest COMMAND RenderResourceManagerAssetLoadProfileContractTest)
+
+add_executable(RenderResourceManagerResourceContractTest
+    RenderResourceManagerResourceContractTest.cpp
+)
+target_link_libraries(RenderResourceManagerResourceContractTest PRIVATE Core)
+target_include_directories(RenderResourceManagerResourceContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderResourceManagerResourceContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderResourceManagerResourceContractTest COMMAND RenderResourceManagerResourceContractTest)
+
 add_executable(RenderResourceManagerAssetCookSmokeTest
     RenderResourceManagerAssetCookSmokeTest.cpp
 )
