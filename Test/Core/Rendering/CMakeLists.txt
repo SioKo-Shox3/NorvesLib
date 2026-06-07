@@ -91,6 +91,17 @@ target_include_directories(CookedTextureUploadTest PRIVATE
 set_target_properties(CookedTextureUploadTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CookedTextureUploadTest COMMAND CookedTextureUploadTest)
 
+add_executable(TextureHandleCacheTest
+    TextureHandleCacheTest.cpp
+)
+target_link_libraries(TextureHandleCacheTest PRIVATE Core)
+target_include_directories(TextureHandleCacheTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(TextureHandleCacheTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME TextureHandleCacheTest COMMAND TextureHandleCacheTest)
+
 add_executable(RenderResourceManagerTextureAssetTest
     RenderResourceManagerTextureAssetTest.cpp
 )

@@ -6,6 +6,7 @@
 #include "Rendering/RenderMaterialStore.h"
 #include "Rendering/TextureAsyncLoadQueue.h"
 #include "Rendering/TextureAssetLoader.h"
+#include "Rendering/TextureHandleCache.h"
 #include "Rendering/TextureAssetResolver.h"
 #include "Asset/AssetSystem.h"
 #include "RHI/IDevice.h"
@@ -163,7 +164,8 @@ namespace NorvesLib::Core::Rendering
     }
 
     RenderResourceManager::RenderResourceManager()
-        : m_MaterialStore(Container::MakeUnique<RenderMaterialStore>(m_NextHandleId))
+        : m_MaterialStore(Container::MakeUnique<RenderMaterialStore>(m_NextHandleId)),
+          m_TextureHandleCache(Container::MakeUnique<TextureHandleCache>())
     {
     }
 
@@ -203,8 +205,10 @@ namespace NorvesLib::Core::Rendering
 
         GetTextureAssetResolverLocked().SetAssetRoot(assetRoot);
 
-        Thread::ScopedLock resourceLock(m_ResourceMutex);
-        m_TextureCache.clear();
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
         return true;
     }
 
@@ -222,8 +226,10 @@ namespace NorvesLib::Core::Rendering
 
         const bool bLoaded = GetTextureAssetResolverLocked().LoadManifestFromJsonText(jsonText, sourceName);
 
-        Thread::ScopedLock resourceLock(m_ResourceMutex);
-        m_TextureCache.clear();
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
         return bLoaded;
     }
 
@@ -239,8 +245,10 @@ namespace NorvesLib::Core::Rendering
 
         GetTextureAssetResolverLocked().ResetManifest();
 
-        Thread::ScopedLock resourceLock(m_ResourceMutex);
-        m_TextureCache.clear();
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
         return true;
     }
 
@@ -256,8 +264,10 @@ namespace NorvesLib::Core::Rendering
 
         GetTextureAssetResolverLocked().SetFallbackMode(mode);
 
-        Thread::ScopedLock resourceLock(m_ResourceMutex);
-        m_TextureCache.clear();
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
         return true;
     }
 
@@ -315,11 +325,12 @@ namespace NorvesLib::Core::Rendering
                 return TextureHandle::Invalid();
             }
 
-            Thread::ScopedLock resourceLock(m_ResourceMutex);
-            auto cacheIt = m_TextureCache.find(prepared.CacheKey);
-            if (cacheIt != m_TextureCache.end())
+            const TextureHandle cachedHandle = m_TextureHandleCache
+                                                   ? m_TextureHandleCache->Find(prepared.CacheKey)
+                                                   : TextureHandle::Invalid();
+            if (cachedHandle.IsValid())
             {
-                return cacheIt->second;
+                return cachedHandle;
             }
         }
 
@@ -368,33 +379,28 @@ namespace NorvesLib::Core::Rendering
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
             const bool bCurrent = GetTextureAssetResolverLocked().IsGenerationCurrent(prepared.Generation);
 
-            Thread::ScopedLock resourceLock(m_ResourceMutex);
             if (!bCurrent)
             {
-                if (m_GpuResources)
-                {
-                    m_GpuResources->ReleaseTexture(handle);
-                }
                 resultHandle = TextureHandle::Invalid();
                 bReleasedNewHandle = true;
             }
             else
             {
-                auto cacheIt = m_TextureCache.find(prepared.CacheKey);
-                if (cacheIt != m_TextureCache.end())
+                bCached = m_TextureHandleCache
+                              ? m_TextureHandleCache->StoreIfAbsent(prepared.CacheKey, handle, &resultHandle)
+                              : false;
+                if (!bCached)
                 {
-                    if (m_GpuResources)
-                    {
-                        m_GpuResources->ReleaseTexture(handle);
-                    }
-                    resultHandle = cacheIt->second;
                     bReleasedNewHandle = true;
                 }
-                else
-                {
-                    m_TextureCache[prepared.CacheKey] = handle;
-                    bCached = true;
-                }
+            }
+        }
+
+        if (bReleasedNewHandle && handle.IsValid() && m_GpuResources)
+        {
+            if (resultHandle != handle || !resultHandle.IsValid())
+            {
+                m_GpuResources->ReleaseTexture(handle);
             }
         }
 
@@ -593,13 +599,12 @@ namespace NorvesLib::Core::Rendering
         TextureAssetLoadPlan plan = buildPlan(path);
 
         // キャッシュチェック
+        const TextureHandle cachedHandle = m_TextureHandleCache
+                                               ? m_TextureHandleCache->Find(plan.CacheKey)
+                                               : TextureHandle::Invalid();
+        if (cachedHandle.IsValid())
         {
-            Thread::ScopedLock lock(m_ResourceMutex);
-            auto it = m_TextureCache.find(plan.CacheKey);
-            if (it != m_TextureCache.end())
-            {
-                return it->second;
-            }
+            return cachedHandle;
         }
 
         auto cacheTextureIfCurrent = [this, &isGenerationCurrent](const TextureAssetLoadPlan &loadPlan, TextureHandle handle)
@@ -609,8 +614,10 @@ namespace NorvesLib::Core::Rendering
                 return;
             }
 
-            Thread::ScopedLock lock(m_ResourceMutex);
-            m_TextureCache[loadPlan.CacheKey] = handle;
+            if (m_TextureHandleCache)
+            {
+                m_TextureHandleCache->Store(loadPlan.CacheKey, handle);
+            }
         };
 
         auto uploadCpuTexture = [this, &cacheTextureIfCurrent](const TextureAssetLoadPlan &loadPlan,
@@ -868,17 +875,18 @@ namespace NorvesLib::Core::Rendering
             m_MegaGeometryResources->Clear();
         }
 
-        Thread::ScopedLock lock(m_ResourceMutex);
         if (m_GpuResources)
         {
             m_GpuResources->Clear();
         }
-        m_TextureCache.clear();
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
     }
 
     RenderResourceManager::ResourceStats RenderResourceManager::GetResourceStats() const
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
         return m_GpuResources ? m_GpuResources->GetResourceStats() : ResourceStats();
     }
 
@@ -1012,14 +1020,13 @@ namespace NorvesLib::Core::Rendering
         TextureAssetLoadPlan plan = buildPlan(path);
 
         // キャッシュチェック（既に読み込み済みなら即コールバック）
+        const TextureHandle cachedHandle = m_TextureHandleCache
+                                               ? m_TextureHandleCache->Find(plan.CacheKey)
+                                               : TextureHandle::Invalid();
+        if (cachedHandle.IsValid())
         {
-            Thread::ScopedLock lock(m_ResourceMutex);
-            auto it = m_TextureCache.find(plan.CacheKey);
-            if (it != m_TextureCache.end())
-            {
-                callback.InvokeIfBound(it->second);
-                return 0; // 即完了のためリクエストIDは不要
-            }
+            callback.InvokeIfBound(cachedHandle);
+            return 0; // 即完了のためリクエストIDは不要
         }
 
         const uint32_t duplicateRequestId = m_TextureAsyncLoads->TryAppendDuplicate(plan.CacheKey, callback);
@@ -1103,8 +1110,10 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            Thread::ScopedLock resourceLock(m_ResourceMutex);
-            m_TextureCache[result.CacheKey] = handle;
+            if (m_TextureHandleCache)
+            {
+                m_TextureHandleCache->Store(result.CacheKey, handle);
+            }
             return true;
         };
 
