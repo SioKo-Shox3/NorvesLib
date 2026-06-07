@@ -1,0 +1,863 @@
+#include "Rendering/TextureAssetRuntime.h"
+
+#include "Rendering/CookedTextureUpload.h"
+#include "Rendering/GpuResourceStore.h"
+#include "Rendering/TextureAsyncLoadQueue.h"
+#include "Rendering/TextureAssetLoader.h"
+#include "Rendering/TextureAssetResolver.h"
+#include "Rendering/TextureHandleCache.h"
+#include "Rendering/TextureUploadProfile.h"
+
+#include "Logging/LogMacros.h"
+#include "RHI/IDevice.h"
+
+#include <algorithm>
+#include <chrono>
+#include <utility>
+
+namespace NorvesLib::Core::Rendering
+{
+    namespace
+    {
+        using LoadProfileClock = std::chrono::steady_clock;
+
+        LoadProfileClock::time_point LoadProfileNow()
+        {
+            return LoadProfileClock::now();
+        }
+
+        double LoadProfileElapsedMs(LoadProfileClock::time_point startTime)
+        {
+            return std::chrono::duration<double, std::milli>(LoadProfileClock::now() - startTime).count();
+        }
+
+        const char *NormalizeProfileRole(const char *role, const char *fallback)
+        {
+            return (role != nullptr && role[0] != '\0') ? role : fallback;
+        }
+
+        const char *GetTextureLoadSourceName(TextureLoadSource source)
+        {
+            switch (source)
+            {
+            case TextureLoadSource::CookedNvtex:
+                return "cooked_nvtex";
+            case TextureLoadSource::LooseStbi:
+                return "loose_stbi";
+            case TextureLoadSource::LegacyFile:
+            default:
+                return "legacy_file";
+            }
+        }
+
+        const char *GetCookedTextureUploadStatusName(CookedTextureUploadStatus status)
+        {
+            switch (status)
+            {
+            case CookedTextureUploadStatus::Success:
+                return "Success";
+            case CookedTextureUploadStatus::InvalidDevice:
+                return "InvalidDevice";
+            case CookedTextureUploadStatus::InvalidTexture:
+                return "InvalidTexture";
+            case CookedTextureUploadStatus::InvalidDimensions:
+                return "InvalidDimensions";
+            case CookedTextureUploadStatus::UnsupportedFormat:
+                return "UnsupportedFormat";
+            case CookedTextureUploadStatus::InvalidMipData:
+                return "InvalidMipData";
+            case CookedTextureUploadStatus::IntegerOverflow:
+                return "IntegerOverflow";
+            case CookedTextureUploadStatus::TextureCreationFailed:
+                return "TextureCreationFailed";
+            case CookedTextureUploadStatus::UploadFailed:
+                return "UploadFailed";
+            default:
+                return "Unknown";
+            }
+        }
+    }
+
+    TextureAssetRuntime::TextureAssetRuntime()
+        : m_TextureHandleCache(Container::MakeUnique<TextureHandleCache>())
+    {
+    }
+
+    TextureAssetRuntime::~TextureAssetRuntime() = default;
+
+    void TextureAssetRuntime::Bind(RHI::IDevice *pDevice, GpuResourceStore *pGpuResources)
+    {
+        if (!pDevice || !pGpuResources)
+        {
+            return;
+        }
+
+        m_pDevice = pDevice;
+        m_pGpuResources = pGpuResources;
+        if (!m_TextureAsyncLoads)
+        {
+            m_TextureAsyncLoads = Container::MakeUnique<TextureAsyncLoadQueue>();
+        }
+    }
+
+    void TextureAssetRuntime::Unbind()
+    {
+        m_pDevice = nullptr;
+        m_pGpuResources = nullptr;
+        m_TextureAsyncLoads.reset();
+    }
+
+    void TextureAssetRuntime::ClearRuntimeResources()
+    {
+        Thread::ScopedLock assetLock(m_TextureAssetMutex);
+        if (m_TextureAsyncLoads)
+        {
+            m_TextureAsyncLoads->ClearPending();
+        }
+
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
+    }
+
+    bool TextureAssetRuntime::IsBound() const noexcept
+    {
+        return m_pDevice != nullptr && m_pGpuResources != nullptr;
+    }
+
+    TextureAssetResolver &TextureAssetRuntime::GetTextureAssetResolverLocked()
+    {
+        if (!m_TextureAssetResolver)
+        {
+            m_TextureAssetResolver = Container::MakeUnique<TextureAssetResolver>();
+        }
+
+        return *m_TextureAssetResolver;
+    }
+
+    TextureHandle TextureAssetRuntime::RegisterUploadedTexture(
+        Container::TSharedPtr<RHI::ITexture> rhiTexture,
+        const TextureCreateInfo &createInfo)
+    {
+        if (!IsBound() || !rhiTexture)
+        {
+            return TextureHandle::Invalid();
+        }
+
+        return m_pGpuResources->RegisterUploadedTexture(std::move(rhiTexture), createInfo);
+    }
+
+    void TextureAssetRuntime::ReleaseTexture(TextureHandle handle)
+    {
+        if (!m_pGpuResources)
+        {
+            return;
+        }
+
+        m_pGpuResources->ReleaseTexture(handle);
+    }
+
+    TextureHandle TextureAssetRuntime::CreateTexture(const TextureCreateInfo &createInfo,
+                                                     const void *data,
+                                                     size_t dataSize)
+    {
+        uint32_t effectiveMipLevels = std::max(1u, createInfo.MipLevels);
+        auto createStartTime = LoadProfileNow();
+        TextureHandle handle = IsBound()
+                                   ? m_pGpuResources->CreateTexture(createInfo)
+                                   : TextureHandle::Invalid();
+        double textureCreateMs = LoadProfileElapsedMs(createStartTime);
+        const char *profileRole = GetTextureCreateUploadProfileRoleForCurrentThread();
+        if (!handle.IsValid() || !data || dataSize == 0)
+        {
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=texture_create_upload role=%s debug_name=\"%s\" data_size=%zu mip_levels=%u texture_create_ms=%.3f upload_ms=0.000 mipgen_ms=0.000 success=%d",
+                            profileRole,
+                            createInfo.DebugName.c_str(),
+                            dataSize,
+                            effectiveMipLevels,
+                            textureCreateMs,
+                            handle.IsValid() ? 1 : 0);
+            return handle;
+        }
+
+        const GpuResourceStore::TextureUploadResult uploadResult =
+            m_pGpuResources
+                ? m_pGpuResources->UploadTextureData(handle, createInfo, data, dataSize)
+                : GpuResourceStore::TextureUploadResult();
+
+        bool bSuccess = handle.IsValid() &&
+                        uploadResult.bTextureFound &&
+                        uploadResult.bUploadAttempted &&
+                        uploadResult.bMipgenSuccess;
+        NORVES_LOG_INFO("AssetLoadProfile",
+                        "stage=texture_create_upload role=%s debug_name=\"%s\" data_size=%zu mip_levels=%u texture_create_ms=%.3f upload_ms=%.3f mipgen_ms=%.3f success=%d",
+                        profileRole,
+                        createInfo.DebugName.c_str(),
+                        dataSize,
+                        effectiveMipLevels,
+                        textureCreateMs,
+                        uploadResult.UploadMs,
+                        uploadResult.MipgenMs,
+                        bSuccess ? 1 : 0);
+        return handle;
+    }
+
+    bool TextureAssetRuntime::SetTextureAssetRoot(const Container::String &assetRoot)
+    {
+        Thread::ScopedLock assetLock(m_TextureAssetMutex);
+        if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
+        {
+            NORVES_LOG_WARNING("RenderResourceManager",
+                               "SetTextureAssetRoot rejected while async texture loads are pending");
+            return false;
+        }
+
+        GetTextureAssetResolverLocked().SetAssetRoot(assetRoot);
+
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
+        return true;
+    }
+
+    bool TextureAssetRuntime::LoadTextureAssetManifestFromJsonText(
+        const Container::String &jsonText,
+        const Container::String &sourceName)
+    {
+        Thread::ScopedLock assetLock(m_TextureAssetMutex);
+        if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
+        {
+            NORVES_LOG_WARNING("RenderResourceManager",
+                               "LoadTextureAssetManifestFromJsonText rejected while async texture loads are pending");
+            return false;
+        }
+
+        const bool bLoaded = GetTextureAssetResolverLocked().LoadManifestFromJsonText(jsonText, sourceName);
+
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
+        return bLoaded;
+    }
+
+    bool TextureAssetRuntime::ResetTextureAssetManifest()
+    {
+        Thread::ScopedLock assetLock(m_TextureAssetMutex);
+        if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
+        {
+            NORVES_LOG_WARNING("RenderResourceManager",
+                               "ResetTextureAssetManifest rejected while async texture loads are pending");
+            return false;
+        }
+
+        GetTextureAssetResolverLocked().ResetManifest();
+
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
+        return true;
+    }
+
+    bool TextureAssetRuntime::SetTextureAssetFallbackMode(TextureAssetFallbackMode mode)
+    {
+        Thread::ScopedLock assetLock(m_TextureAssetMutex);
+        if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
+        {
+            NORVES_LOG_WARNING("RenderResourceManager",
+                               "SetTextureAssetFallbackMode rejected while async texture loads are pending");
+            return false;
+        }
+
+        GetTextureAssetResolverLocked().SetFallbackMode(mode);
+
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
+        return true;
+    }
+
+    PreparedTextureAsset TextureAssetRuntime::PrepareTextureAssetForWorker(
+        const Container::String &requestPath,
+        const Container::String &resolvedFallbackPath,
+        const char *role,
+        uint32_t requestId)
+    {
+        PreparedTextureAssetPlan plan;
+        plan.Prepared.RequestPath = requestPath;
+        plan.Prepared.ResolvedFallbackPath = resolvedFallbackPath;
+
+        if (requestPath.empty())
+        {
+            plan.BlockedStatus = PreparedTextureAssetStatus::InvalidRequest;
+            plan.BlockedReason = "request path is empty";
+            return TextureAssetLoader::PrepareForWorker(plan, role, requestId);
+        }
+
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            plan = GetTextureAssetResolverLocked().BuildPreparedTexturePlan(requestPath, resolvedFallbackPath);
+        }
+
+        return TextureAssetLoader::PrepareForWorker(plan, role, requestId);
+    }
+
+    bool TextureAssetRuntime::IsPreparedTextureAssetCurrent(const PreparedTextureAsset &prepared) const
+    {
+        if (prepared.Generation == 0)
+        {
+            return false;
+        }
+
+        Thread::ScopedLock assetLock(m_TextureAssetMutex);
+        return m_TextureAssetResolver && m_TextureAssetResolver->IsGenerationCurrent(prepared.Generation);
+    }
+
+    TextureHandle TextureAssetRuntime::FinalizePreparedTextureAsset(
+        const PreparedTextureAsset &prepared,
+        const char *role,
+        uint32_t requestId)
+    {
+        const char *profileRole = NormalizeProfileRole(role, "main_render");
+        if (prepared.Status != PreparedTextureAssetStatus::CookedReady || !prepared.Payload || !IsBound())
+        {
+            return TextureHandle::Invalid();
+        }
+
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            if (!GetTextureAssetResolverLocked().IsGenerationCurrent(prepared.Generation))
+            {
+                return TextureHandle::Invalid();
+            }
+
+            const TextureHandle cachedHandle = m_TextureHandleCache
+                                                   ? m_TextureHandleCache->Find(prepared.CacheKey)
+                                                   : TextureHandle::Invalid();
+            if (cachedHandle.IsValid())
+            {
+                return cachedHandle;
+            }
+        }
+
+        auto payload = prepared.Payload;
+        auto uploadStartTime = LoadProfileNow();
+        CookedTextureUploadResult uploadResult = CreateAndUploadCookedTexture(
+            m_pDevice,
+            payload->Texture,
+            prepared.RequestPath);
+        const double uploadMs = LoadProfileElapsedMs(uploadStartTime);
+        NORVES_LOG_INFO("AssetLoadProfile",
+                        "stage=texture_prepared_cooked_upload role=%s source=cooked_nvtex request_id=%u path=\"%s\" logical_path=\"%s\" width=%u height=%u mip_levels=%u layers=%u uploaded_bytes=%zu upload_ms=%.3f status=%s success=%d",
+                        profileRole,
+                        static_cast<unsigned int>(requestId),
+                        prepared.RequestPath.c_str(),
+                        prepared.LogicalPath.c_str(),
+                        uploadResult.CreateInfo.Width,
+                        uploadResult.CreateInfo.Height,
+                        uploadResult.CreateInfo.MipLevels,
+                        uploadResult.CreateInfo.ArraySize,
+                        uploadResult.UploadedBytes,
+                        uploadMs,
+                        GetCookedTextureUploadStatusName(uploadResult.Status),
+                        uploadResult.Succeeded() ? 1 : 0);
+
+        if (!uploadResult.Succeeded())
+        {
+            return TextureHandle::Invalid();
+        }
+
+        if (!IsPreparedTextureAssetCurrent(prepared))
+        {
+            return TextureHandle::Invalid();
+        }
+
+        TextureHandle handle = RegisterUploadedTexture(std::move(uploadResult.Texture), uploadResult.CreateInfo);
+        if (!handle.IsValid())
+        {
+            return TextureHandle::Invalid();
+        }
+
+        TextureHandle resultHandle = handle;
+        bool bCached = false;
+        bool bReleasedNewHandle = false;
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            const bool bCurrent = GetTextureAssetResolverLocked().IsGenerationCurrent(prepared.Generation);
+
+            if (!bCurrent)
+            {
+                resultHandle = TextureHandle::Invalid();
+                bReleasedNewHandle = true;
+            }
+            else
+            {
+                bCached = m_TextureHandleCache
+                              ? m_TextureHandleCache->StoreIfAbsent(prepared.CacheKey, handle, &resultHandle)
+                              : false;
+                if (!bCached)
+                {
+                    bReleasedNewHandle = true;
+                }
+            }
+        }
+
+        if (bReleasedNewHandle && handle.IsValid())
+        {
+            if (resultHandle != handle || !resultHandle.IsValid())
+            {
+                ReleaseTexture(handle);
+            }
+        }
+
+        NORVES_LOG_INFO("AssetLoadProfile",
+                        "stage=texture_prepared_finalize role=%s source=cooked_nvtex request_id=%u path=\"%s\" cache_key=\"%s\" generation=%llu cached=%d released_new_handle=%d success=%d",
+                        profileRole,
+                        static_cast<unsigned int>(requestId),
+                        prepared.RequestPath.c_str(),
+                        prepared.CacheKey.c_str(),
+                        static_cast<unsigned long long>(prepared.Generation),
+                        bCached ? 1 : 0,
+                        bReleasedNewHandle ? 1 : 0,
+                        resultHandle.IsValid() ? 1 : 0);
+
+        return resultHandle;
+    }
+
+    bool TextureAssetRuntime::TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(
+        const PreparedTextureAsset &prepared,
+        PreparedCookedTextureMip0RGBA8UNormLinearSplit &outSplit,
+        Container::String *pOutReason,
+        const char *role,
+        uint32_t requestId) const
+    {
+        return TextureAssetLoader::TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(
+            prepared,
+            outSplit,
+            pOutReason,
+            role,
+            requestId);
+    }
+
+    TextureHandle TextureAssetRuntime::LoadTexture(const Container::String &path)
+    {
+        if (!IsBound())
+        {
+            return TextureHandle::Invalid();
+        }
+
+        auto buildPlan = [this](const Container::String &requestPath)
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            return GetTextureAssetResolverLocked().BuildTextureLoadPlan(requestPath);
+        };
+
+        auto isGenerationCurrent = [this](uint64_t generation)
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            return GetTextureAssetResolverLocked().IsGenerationCurrent(generation);
+        };
+
+        TextureAssetLoadPlan plan = buildPlan(path);
+
+        const TextureHandle cachedHandle = m_TextureHandleCache
+                                               ? m_TextureHandleCache->Find(plan.CacheKey)
+                                               : TextureHandle::Invalid();
+        if (cachedHandle.IsValid())
+        {
+            return cachedHandle;
+        }
+
+        auto cacheTextureIfCurrent = [this, &isGenerationCurrent](const TextureAssetLoadPlan &loadPlan, TextureHandle handle)
+        {
+            if (!handle.IsValid() || !isGenerationCurrent(loadPlan.Generation))
+            {
+                return;
+            }
+
+            if (m_TextureHandleCache)
+            {
+                m_TextureHandleCache->Store(loadPlan.CacheKey, handle);
+            }
+        };
+
+        auto uploadCpuTexture = [this, &cacheTextureIfCurrent](const TextureAssetLoadPlan &loadPlan,
+                                                               TextureAssetCpuLoadResult &loadResult)
+        {
+            TextureHandle handle = CreateTexture(
+                loadResult.CreateInfo,
+                loadResult.GetPixelData(),
+                loadResult.PixelDataSize);
+            if (handle.IsValid())
+            {
+                cacheTextureIfCurrent(loadPlan, handle);
+                NORVES_LOG_INFO("RenderResourceManager", "Texture loaded successfully");
+            }
+
+            return handle;
+        };
+
+        TextureAssetCpuLoadResult loadResult = TextureAssetLoader::LoadForCaller(plan);
+        if (!loadResult.bSuccess)
+        {
+            return TextureHandle::Invalid();
+        }
+
+        if (loadResult.Source != TextureLoadSource::CookedNvtex || !loadResult.CookedTexture)
+        {
+            return uploadCpuTexture(plan, loadResult);
+        }
+
+        auto uploadStartTime = LoadProfileNow();
+        CookedTextureUploadResult uploadResult = CreateAndUploadCookedTexture(
+            m_pDevice,
+            loadResult.CookedTexture->Texture,
+            plan.RequestPath);
+        const double uploadMs = LoadProfileElapsedMs(uploadStartTime);
+        TextureHandle handle = uploadResult.Succeeded()
+                                   ? RegisterUploadedTexture(uploadResult.Texture, uploadResult.CreateInfo)
+                                   : TextureHandle::Invalid();
+        NORVES_LOG_INFO("AssetLoadProfile",
+                        "stage=texture_cooked_upload role=caller source=cooked_nvtex path=\"%s\" logical_path=\"%s\" width=%u height=%u mip_levels=%u layers=%u uploaded_bytes=%zu upload_ms=%.3f status=%s success=%d",
+                        plan.RequestPath.c_str(),
+                        plan.LogicalPath.c_str(),
+                        uploadResult.CreateInfo.Width,
+                        uploadResult.CreateInfo.Height,
+                        uploadResult.CreateInfo.MipLevels,
+                        uploadResult.CreateInfo.ArraySize,
+                        uploadResult.UploadedBytes,
+                        uploadMs,
+                        GetCookedTextureUploadStatusName(uploadResult.Status),
+                        handle.IsValid() ? 1 : 0);
+
+        if (!handle.IsValid() && plan.FallbackMode == Asset::AssetFallbackMode::DebugAllowLooseFallback)
+        {
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=texture_asset_debug_fallback role=caller source=loose_stbi path=\"%s\" logical_path=\"%s\" reason=\"cooked texture upload failed\"",
+                            plan.RequestPath.c_str(),
+                            plan.LogicalPath.c_str());
+            TextureAssetCpuLoadResult fallbackResult = TextureAssetLoader::LoadLooseFileForCaller(
+                plan,
+                TextureLoadSource::LooseStbi);
+            if (!fallbackResult.bSuccess)
+            {
+                return TextureHandle::Invalid();
+            }
+            return uploadCpuTexture(plan, fallbackResult);
+        }
+
+        cacheTextureIfCurrent(plan, handle);
+        return handle;
+    }
+
+    uint32_t TextureAssetRuntime::LoadTextureAsync(const Container::String &path,
+                                                   NorvesLib::Core::Delegate<void, TextureHandle> callback)
+    {
+        if (!IsBound())
+        {
+            return 0;
+        }
+
+        if (!m_TextureAsyncLoads)
+        {
+            m_TextureAsyncLoads = Container::MakeUnique<TextureAsyncLoadQueue>();
+        }
+
+        auto buildPlan = [this](const Container::String &requestPath)
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            return GetTextureAssetResolverLocked().BuildTextureLoadPlan(requestPath);
+        };
+
+        TextureAssetLoadPlan plan = buildPlan(path);
+
+        const TextureHandle cachedHandle = m_TextureHandleCache
+                                               ? m_TextureHandleCache->Find(plan.CacheKey)
+                                               : TextureHandle::Invalid();
+        if (cachedHandle.IsValid())
+        {
+            callback.InvokeIfBound(cachedHandle);
+            return 0;
+        }
+
+        const uint32_t duplicateRequestId = m_TextureAsyncLoads->TryAppendDuplicate(plan.CacheKey, callback);
+        if (duplicateRequestId != 0)
+        {
+            return duplicateRequestId;
+        }
+
+        auto request = m_TextureAsyncLoads->CreateRequest(
+            plan,
+            TextureAssetResolver::ToTextureAssetFallbackMode(plan.FallbackMode),
+            std::move(callback));
+        if (!request)
+        {
+            return 0;
+        }
+
+        auto taskFunction = [request, plan]()
+        {
+            TextureAssetCpuLoadResult cpuResult = TextureAssetLoader::LoadForWorker(
+                plan,
+                request->RequestId);
+
+            auto &result = request->Result;
+            result.Path = std::move(cpuResult.Path);
+            result.ResolvedPath = std::move(cpuResult.ResolvedPath);
+            result.CacheKey = std::move(cpuResult.CacheKey);
+            result.LogicalPath = std::move(cpuResult.LogicalPath);
+            result.CreateInfo = std::move(cpuResult.CreateInfo);
+            result.PixelData = std::move(cpuResult.PixelData);
+            result.CookedTexture = std::move(cpuResult.CookedTexture);
+            result.Source = cpuResult.Source;
+            result.FallbackMode = cpuResult.FallbackMode;
+            result.AssetGeneration = cpuResult.AssetGeneration;
+            result.bSuccess = cpuResult.bSuccess;
+        };
+
+        request->Task = Thread::Task::Create(taskFunction, Thread::TaskPriority::NORMAL);
+
+        const TextureAsyncLoadQueue::EnqueueResult enqueueResult =
+            m_TextureAsyncLoads->EnqueueOrAppendDuplicateAndSubmit(request);
+        if (enqueueResult.bSubmitted)
+        {
+            NORVES_LOG_INFO("RenderResourceManager", "Async texture load started: %s (RequestId=%u)",
+                            path.c_str(), static_cast<unsigned int>(request->RequestId));
+        }
+
+        return enqueueResult.RequestId;
+    }
+
+    uint32_t TextureAssetRuntime::FlushCompletedTextureLoads()
+    {
+        if (!IsBound())
+        {
+            return 0;
+        }
+
+        auto flushStartTime = LoadProfileNow();
+        TextureAsyncLoadQueue::CompletedBatch completedBatch;
+        uint32_t processedCount = 0;
+        uint32_t successCount = 0;
+        uint32_t failedCount = 0;
+        double detachMs = 0.0;
+
+        {
+            auto detachStartTime = LoadProfileNow();
+            if (m_TextureAsyncLoads)
+            {
+                completedBatch = m_TextureAsyncLoads->DetachCompletedRequests();
+            }
+            detachMs = LoadProfileElapsedMs(detachStartTime);
+        }
+        auto &completedRequests = completedBatch.Requests;
+
+        auto isGenerationCurrent = [this](uint64_t generation)
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            return GetTextureAssetResolverLocked().IsGenerationCurrent(generation);
+        };
+
+        auto cacheTextureIfCurrent = [this, &isGenerationCurrent](const TextureAsyncResult &result, TextureHandle handle)
+        {
+            if (!handle.IsValid() || !isGenerationCurrent(result.AssetGeneration))
+            {
+                return false;
+            }
+
+            if (m_TextureHandleCache)
+            {
+                m_TextureHandleCache->Store(result.CacheKey, handle);
+            }
+            return true;
+        };
+
+        auto loadLooseFallbackOnMain = [this](const TextureAsyncResult &result)
+        {
+            TextureAssetLooseDecodeResult decoded = TextureAssetLoader::DecodeLooseFallbackForMainRender(
+                result.Path,
+                result.LogicalPath,
+                result.ResolvedPath);
+            if (!decoded.bSuccess)
+            {
+                return TextureHandle::Invalid();
+            }
+
+            ScopedTextureCreateUploadProfileRole profileRole("main_render");
+            return CreateTexture(decoded.CreateInfo, decoded.PixelData.data(), decoded.PixelData.size());
+        };
+
+        auto takeCallbacksAndReleasePendingMap = [this](const Container::TSharedPtr<TextureAsyncRequest> &request)
+        {
+            TextureAsyncLoadQueue::CallbackList callbacks;
+            if (!request)
+            {
+                return callbacks;
+            }
+
+            if (m_TextureAsyncLoads)
+            {
+                return m_TextureAsyncLoads->TakeCallbacksAndRelease(request);
+            }
+
+            callbacks = std::move(request->Callbacks);
+            request->Callbacks.clear();
+            return callbacks;
+        };
+
+        for (auto &request : completedRequests)
+        {
+            auto &result = request->Result;
+            if (!isGenerationCurrent(result.AssetGeneration))
+            {
+                ++failedCount;
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=texture_async_stale role=main_render source=%s request_id=%u path=\"%s\" cache_key=\"%s\" result_generation=%llu success=0",
+                                GetTextureLoadSourceName(result.Source),
+                                static_cast<unsigned int>(request->RequestId),
+                                result.Path.c_str(),
+                                result.CacheKey.c_str(),
+                                static_cast<unsigned long long>(result.AssetGeneration));
+
+                auto callbacks = takeCallbacksAndReleasePendingMap(request);
+                for (const auto &callback : callbacks)
+                {
+                    callback.InvokeIfBound(TextureHandle::Invalid());
+                }
+
+                result.PixelData.clear();
+                result.PixelData.shrink_to_fit();
+                result.CookedTexture.reset();
+                ++processedCount;
+                continue;
+            }
+
+            if (result.bSuccess)
+            {
+                TextureHandle handle = TextureHandle::Invalid();
+                bool bDebugFallbackAttempted = false;
+                bool bCached = false;
+                if (result.Source == TextureLoadSource::CookedNvtex && result.CookedTexture)
+                {
+                    auto uploadStartTime = LoadProfileNow();
+                    CookedTextureUploadResult uploadResult = CreateAndUploadCookedTexture(
+                        m_pDevice,
+                        result.CookedTexture->Texture,
+                        result.Path);
+                    const double uploadMs = LoadProfileElapsedMs(uploadStartTime);
+                    handle = uploadResult.Succeeded()
+                                 ? RegisterUploadedTexture(uploadResult.Texture, uploadResult.CreateInfo)
+                                 : TextureHandle::Invalid();
+                    NORVES_LOG_INFO("AssetLoadProfile",
+                                    "stage=texture_cooked_upload role=main_render source=cooked_nvtex request_id=%u path=\"%s\" logical_path=\"%s\" width=%u height=%u mip_levels=%u layers=%u uploaded_bytes=%zu upload_ms=%.3f status=%s success=%d",
+                                    static_cast<unsigned int>(request->RequestId),
+                                    result.Path.c_str(),
+                                    result.LogicalPath.c_str(),
+                                    uploadResult.CreateInfo.Width,
+                                    uploadResult.CreateInfo.Height,
+                                    uploadResult.CreateInfo.MipLevels,
+                                    uploadResult.CreateInfo.ArraySize,
+                                    uploadResult.UploadedBytes,
+                                    uploadMs,
+                                    GetCookedTextureUploadStatusName(uploadResult.Status),
+                                    handle.IsValid() ? 1 : 0);
+
+                    if (!handle.IsValid() && TextureAssetResolver::AllowsDebugLooseFallback(result.FallbackMode))
+                    {
+                        bDebugFallbackAttempted = true;
+                        NORVES_LOG_INFO("AssetLoadProfile",
+                                        "stage=texture_asset_debug_fallback role=main_render source=loose_stbi path=\"%s\" logical_path=\"%s\" reason=\"cooked texture upload failed\"",
+                                        result.Path.c_str(),
+                                        result.LogicalPath.c_str());
+                        handle = loadLooseFallbackOnMain(result);
+                    }
+                }
+                else
+                {
+                    ScopedTextureCreateUploadProfileRole profileRole("main_render");
+                    handle = CreateTexture(
+                        result.CreateInfo,
+                        result.PixelData.data(),
+                        result.PixelData.size());
+                }
+
+                if (handle.IsValid())
+                {
+                    ++successCount;
+                    bCached = cacheTextureIfCurrent(result, handle);
+
+                    NORVES_LOG_INFO("RenderResourceManager", "Async texture loaded: %s",
+                                    result.Path.c_str());
+                }
+                else
+                {
+                    ++failedCount;
+                    NORVES_LOG_ERROR("RenderResourceManager", "Async texture GPU upload failed: %s",
+                                     result.Path.c_str());
+                }
+
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=texture_async_upload_result role=main_render source=%s request_id=%u path=\"%s\" cache_key=\"%s\" generation=%llu debug_fallback=%d cached=%d success=%d",
+                                GetTextureLoadSourceName(result.Source),
+                                static_cast<unsigned int>(request->RequestId),
+                                result.Path.c_str(),
+                                result.CacheKey.c_str(),
+                                static_cast<unsigned long long>(result.AssetGeneration),
+                                bDebugFallbackAttempted ? 1 : 0,
+                                bCached ? 1 : 0,
+                                handle.IsValid() ? 1 : 0);
+
+                auto callbacks = takeCallbacksAndReleasePendingMap(request);
+                for (const auto &callback : callbacks)
+                {
+                    callback.InvokeIfBound(handle);
+                }
+            }
+            else
+            {
+                ++failedCount;
+                NORVES_LOG_ERROR("RenderResourceManager", "Async texture load failed: %s",
+                                 result.ResolvedPath.c_str());
+
+                auto callbacks = takeCallbacksAndReleasePendingMap(request);
+                for (const auto &callback : callbacks)
+                {
+                    callback.InvokeIfBound(TextureHandle::Invalid());
+                }
+            }
+
+            result.PixelData.clear();
+            result.PixelData.shrink_to_fit();
+            result.CookedTexture.reset();
+            ++processedCount;
+        }
+
+        if (processedCount > 0)
+        {
+            NORVES_LOG_INFO("AssetLoadProfile",
+                            "stage=texture_async_flush role=main_render processed=%u success=%u failed=%u detach_ms=%.3f flush_ms=%.3f",
+                            static_cast<unsigned int>(processedCount),
+                            static_cast<unsigned int>(successCount),
+                            static_cast<unsigned int>(failedCount),
+                            detachMs,
+                            LoadProfileElapsedMs(flushStartTime));
+        }
+
+        return processedCount;
+    }
+
+    uint32_t TextureAssetRuntime::GetPendingAsyncLoadCount() const
+    {
+        if (!IsBound())
+        {
+            return 0;
+        }
+
+        return m_TextureAsyncLoads ? m_TextureAsyncLoads->GetPendingCount() : 0;
+    }
+}
