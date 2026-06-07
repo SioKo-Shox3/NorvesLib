@@ -1,6 +1,7 @@
 ﻿#include "Rendering/RenderResourceManager.h"
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "Rendering/CookedTextureUpload.h"
+#include "Rendering/GpuResourceStore.h"
 #include "Rendering/TextureAssetResolver.h"
 #include "Asset/AssetFileReader.h"
 #include "Asset/AssetResolveResult.h"
@@ -103,26 +104,6 @@ namespace NorvesLib::Core::Rendering
                 ++mipLevels;
             }
             return mipLevels;
-        }
-
-        uint32_t GetTextureBytesPerPixel(TextureCreateInfo::Format format)
-        {
-            switch (format)
-            {
-            case TextureCreateInfo::Format::R8_UNORM:
-                return 1;
-            case TextureCreateInfo::Format::RG8_UNORM:
-                return 2;
-            case TextureCreateInfo::Format::RGBA8_UNORM:
-            case TextureCreateInfo::Format::RGBA8_SRGB:
-                return 4;
-            case TextureCreateInfo::Format::RGBA16_FLOAT:
-                return 8;
-            case TextureCreateInfo::Format::RGBA32_FLOAT:
-                return 16;
-            default:
-                return 4;
-            }
         }
 
         Container::String ToString(const Container::AnsiString &value)
@@ -509,24 +490,12 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::ITexture> rhiTexture,
         const TextureCreateInfo &createInfo)
     {
-        if (!m_bInitialized || !rhiTexture)
+        if (!m_bInitialized || !m_GpuResources || !rhiTexture)
         {
             return TextureHandle::Invalid();
         }
 
-        auto handle = AllocateHandle<TextureHandle>();
-
-        TextureResourceData data;
-        data.RHITexture = std::move(rhiTexture);
-        data.Width = createInfo.Width;
-        data.Height = createInfo.Height;
-        data.Format = createInfo.PixelFormat;
-        data.RefCount = 1;
-        data.DebugName = createInfo.DebugName;
-
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Textures[handle.Id] = std::move(data);
-        return handle;
+        return m_GpuResources->RegisterUploadedTexture(std::move(rhiTexture), createInfo);
     }
 
     bool RenderResourceManager::SetTextureAssetRoot(const Container::String &assetRoot)
@@ -870,7 +839,10 @@ namespace NorvesLib::Core::Rendering
             Thread::ScopedLock resourceLock(m_ResourceMutex);
             if (!bCurrent)
             {
-                m_Textures.erase(handle.Id);
+                if (m_GpuResources)
+                {
+                    m_GpuResources->ReleaseTexture(handle);
+                }
                 resultHandle = TextureHandle::Invalid();
                 bReleasedNewHandle = true;
             }
@@ -879,7 +851,10 @@ namespace NorvesLib::Core::Rendering
                 auto cacheIt = m_TextureCache.find(prepared.CacheKey);
                 if (cacheIt != m_TextureCache.end())
                 {
-                    m_Textures.erase(handle.Id);
+                    if (m_GpuResources)
+                    {
+                        m_GpuResources->ReleaseTexture(handle);
+                    }
                     resultHandle = cacheIt->second;
                     bReleasedNewHandle = true;
                 }
@@ -1031,6 +1006,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_GpuResources = Container::MakeUnique<GpuResourceStore>(m_Device, m_NextHandleId);
         m_bInitialized = true;
         LOG_INFO("RenderResourceManager initialized");
         return true;
@@ -1044,6 +1020,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         ClearAllResources();
+        m_GpuResources.reset();
         m_Device.reset();
         m_bInitialized = false;
         LOG_INFO("RenderResourceManager shutdown");
@@ -1055,100 +1032,44 @@ namespace NorvesLib::Core::Rendering
 
     BufferHandle RenderResourceManager::CreateBuffer(const BufferCreateInfo &createInfo)
     {
-        if (!m_bInitialized)
+        if (!m_bInitialized || !m_GpuResources)
         {
             return BufferHandle::Invalid();
         }
 
-        RHI::ResourceUsage usage = RHI::ResourceUsage::VertexBuffer;
-        switch (createInfo.UsageType)
-        {
-        case BufferCreateInfo::Usage::Vertex:
-            usage = RHI::ResourceUsage::VertexBuffer;
-            break;
-        case BufferCreateInfo::Usage::Index:
-            usage = RHI::ResourceUsage::IndexBuffer;
-            break;
-        case BufferCreateInfo::Usage::Constant:
-            usage = RHI::ResourceUsage::ConstantBuffer;
-            break;
-        case BufferCreateInfo::Usage::Structured:
-            usage = RHI::ResourceUsage::ShaderRead;
-            break;
-        case BufferCreateInfo::Usage::Storage:
-            usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite;
-            break;
-        default:
-            usage = RHI::ResourceUsage::VertexBuffer;
-            break;
-        }
-
-        RHI::BufferDesc desc(
-            static_cast<uint64_t>(createInfo.Size),
-            usage,
-            createInfo.bHostVisible,
-            createInfo.DebugName.c_str());
-
-        auto buffer = m_Device->CreateBuffer(desc);
-        if (!buffer)
-        {
-            return BufferHandle::Invalid();
-        }
-
-        auto handle = AllocateHandle<BufferHandle>();
-
-        BufferResourceData data;
-        data.RHIBuffer = buffer;
-        data.Size = createInfo.Size;
-        data.Usage = createInfo.UsageType;
-        data.RefCount = 1;
-        data.DebugName = createInfo.DebugName;
-
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Buffers[handle.Id] = std::move(data);
-
-        return handle;
+        return m_GpuResources->CreateBuffer(createInfo);
     }
 
     BufferHandle RenderResourceManager::CreateBuffer(const BufferCreateInfo &createInfo,
                                                      const void *data, size_t dataSize)
     {
-        auto handle = CreateBuffer(createInfo);
-        if (handle.IsValid() && data && dataSize > 0)
+        if (!m_bInitialized || !m_GpuResources)
         {
-            UpdateBuffer(handle, data, dataSize);
+            return BufferHandle::Invalid();
         }
-        return handle;
+
+        return m_GpuResources->CreateBuffer(createInfo, data, dataSize);
     }
 
     bool RenderResourceManager::UpdateBuffer(BufferHandle handle, const void *data,
                                              size_t dataSize, size_t offset)
     {
-        if (!handle.IsValid() || !data)
+        if (!m_GpuResources)
         {
             return false;
         }
 
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_Buffers.find(handle.Id);
-        if (it == m_Buffers.end() || !it->second.RHIBuffer)
-        {
-            return false;
-        }
-
-        it->second.RHIBuffer->Update(data, dataSize);
-        return true;
+        return m_GpuResources->UpdateBuffer(handle, data, dataSize, offset);
     }
 
     void RenderResourceManager::ReleaseBuffer(BufferHandle handle)
     {
-        if (!handle.IsValid())
+        if (!m_GpuResources)
         {
             return;
         }
 
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Buffers.erase(handle.Id);
+        m_GpuResources->ReleaseBuffer(handle);
     }
 
     // ========================================
@@ -1157,87 +1078,12 @@ namespace NorvesLib::Core::Rendering
 
     TextureHandle RenderResourceManager::CreateTexture(const TextureCreateInfo &createInfo)
     {
-        if (!m_bInitialized)
+        if (!m_bInitialized || !m_GpuResources)
         {
             return TextureHandle::Invalid();
         }
 
-        uint32_t mipLevels = std::max(1u, createInfo.MipLevels);
-
-        // TextureCreateInfo::Format → RHI::Format 変換
-        RHI::Format rhiFormat = RHI::Format::R8G8B8A8_UNORM;
-        switch (createInfo.PixelFormat)
-        {
-        case TextureCreateInfo::Format::RGBA8_UNORM:
-            rhiFormat = RHI::Format::R8G8B8A8_UNORM;
-            break;
-        case TextureCreateInfo::Format::RGBA8_SRGB:
-            rhiFormat = RHI::Format::R8G8B8A8_SRGB;
-            break;
-        case TextureCreateInfo::Format::RGBA16_FLOAT:
-            rhiFormat = RHI::Format::R16G16B16A16_FLOAT;
-            break;
-        case TextureCreateInfo::Format::RGBA32_FLOAT:
-            rhiFormat = RHI::Format::R32G32B32A32_FLOAT;
-            break;
-        case TextureCreateInfo::Format::R8_UNORM:
-            rhiFormat = RHI::Format::R8_UNORM;
-            break;
-        case TextureCreateInfo::Format::RG8_UNORM:
-            rhiFormat = RHI::Format::R8G8_UNORM;
-            break;
-        case TextureCreateInfo::Format::D24_S8:
-            rhiFormat = RHI::Format::D24_UNORM_S8_UINT;
-            break;
-        case TextureCreateInfo::Format::D32_FLOAT:
-            rhiFormat = RHI::Format::D32_FLOAT;
-            break;
-        }
-
-        RHI::TextureDesc desc;
-        desc.Width = createInfo.Width;
-        desc.Height = createInfo.Height;
-        desc.Depth = createInfo.Depth;
-        desc.MipLevels = mipLevels;
-        desc.ArraySize = createInfo.ArraySize;
-        desc.TextureFormat = rhiFormat;
-        desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
-        if (mipLevels > 1)
-        {
-            desc.Usage = desc.Usage | RHI::ResourceUsage::TransferSrc;
-        }
-        desc.DebugName = createInfo.DebugName.c_str();
-
-        if (createInfo.bRenderTarget)
-        {
-            desc.Usage = desc.Usage | RHI::ResourceUsage::RenderTarget;
-        }
-        if (createInfo.bDepthStencil)
-        {
-            desc.Usage = desc.Usage | RHI::ResourceUsage::DepthStencil;
-        }
-
-        auto rhiTexture = m_Device->CreateTexture(desc);
-        if (!rhiTexture)
-        {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create texture");
-            return TextureHandle::Invalid();
-        }
-
-        auto handle = AllocateHandle<TextureHandle>();
-
-        TextureResourceData data;
-        data.RHITexture = rhiTexture;
-        data.Width = createInfo.Width;
-        data.Height = createInfo.Height;
-        data.Format = createInfo.PixelFormat;
-        data.RefCount = 1;
-        data.DebugName = createInfo.DebugName;
-
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Textures[handle.Id] = std::move(data);
-
-        return handle;
+        return m_GpuResources->CreateTexture(createInfo);
     }
 
     TextureHandle RenderResourceManager::CreateTexture(const TextureCreateInfo &createInfo,
@@ -1261,49 +1107,15 @@ namespace NorvesLib::Core::Rendering
             return handle;
         }
 
-        // テクスチャにデータをアップロード
-        double uploadMs = 0.0;
-        double mipgenMs = 0.0;
-        bool bTextureFound = false;
-        bool bUploadAttempted = false;
-        bool bMipgenSuccess = true;
-        {
-            Thread::ScopedLock lock(m_ResourceMutex);
-            auto it = m_Textures.find(handle.Id);
-            if (it != m_Textures.end() && it->second.RHITexture)
-            {
-                bTextureFound = true;
-                uint32_t bytesPerPixel = GetTextureBytesPerPixel(createInfo.PixelFormat);
+        const GpuResourceStore::TextureUploadResult uploadResult =
+            m_GpuResources
+                ? m_GpuResources->UploadTextureData(handle, createInfo, data, dataSize)
+                : GpuResourceStore::TextureUploadResult();
 
-                uint32_t rowPitch = createInfo.Width * bytesPerPixel;
-                uint32_t slicePitch = rowPitch * createInfo.Height;
-                auto uploadStartTime = LoadProfileNow();
-                it->second.RHITexture->Update(data, rowPitch, slicePitch);
-                uploadMs = LoadProfileElapsedMs(uploadStartTime);
-                bUploadAttempted = true;
-
-                if (effectiveMipLevels > 1)
-                {
-                    auto mipgenStartTime = LoadProfileNow();
-                    auto commandList = m_Device->CreateCommandList();
-                    if (!commandList)
-                    {
-                        bMipgenSuccess = false;
-                        NORVES_LOG_ERROR("RenderResourceManager", "Failed to create command list for mip generation");
-                    }
-                    else
-                    {
-                        commandList->Begin();
-                        commandList->GenerateMipmaps(it->second.RHITexture);
-                        commandList->End();
-                        commandList->Submit(true);
-                    }
-                    mipgenMs = LoadProfileElapsedMs(mipgenStartTime);
-                }
-            }
-        }
-
-        bool bSuccess = handle.IsValid() && bTextureFound && bUploadAttempted && bMipgenSuccess;
+        bool bSuccess = handle.IsValid() &&
+                        uploadResult.bTextureFound &&
+                        uploadResult.bUploadAttempted &&
+                        uploadResult.bMipgenSuccess;
         NORVES_LOG_INFO("AssetLoadProfile",
                         "stage=texture_create_upload role=%s debug_name=\"%s\" data_size=%zu mip_levels=%u texture_create_ms=%.3f upload_ms=%.3f mipgen_ms=%.3f success=%d",
                         profileRole,
@@ -1311,8 +1123,8 @@ namespace NorvesLib::Core::Rendering
                         dataSize,
                         effectiveMipLevels,
                         textureCreateMs,
-                        uploadMs,
-                        mipgenMs,
+                        uploadResult.UploadMs,
+                        uploadResult.MipgenMs,
                         bSuccess ? 1 : 0);
         return handle;
     }
@@ -1556,39 +1368,22 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::ITexture> rhiTexture,
         const Container::String &debugName)
     {
-        if (!m_bInitialized || !rhiTexture)
+        if (!m_bInitialized || !m_GpuResources || !rhiTexture)
         {
             return TextureHandle::Invalid();
         }
 
-        auto handle = AllocateHandle<TextureHandle>();
-
-        TextureResourceData data;
-        data.RHITexture = rhiTexture;
-        data.Width = 0; // 外部テクスチャのため詳細不明（必要に応じて拡張）
-        data.Height = 0;
-        data.Format = TextureCreateInfo::Format::RGBA8_UNORM; // デフォルト
-        data.RefCount = 1;
-        data.DebugName = debugName;
-
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Textures[handle.Id] = std::move(data);
-
-        NORVES_LOG_DEBUG("RenderResourceManager", "External texture registered: %s (handle=%llu)",
-                         debugName.c_str(), handle.Id);
-
-        return handle;
+        return m_GpuResources->RegisterExternalTexture(std::move(rhiTexture), debugName);
     }
 
     void RenderResourceManager::ReleaseTexture(TextureHandle handle)
     {
-        if (!handle.IsValid())
+        if (!m_GpuResources)
         {
             return;
         }
 
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Textures.erase(handle.Id);
+        m_GpuResources->ReleaseTexture(handle);
     }
 
     // ========================================
@@ -1597,86 +1392,32 @@ namespace NorvesLib::Core::Rendering
 
     SamplerHandle RenderResourceManager::GetDefaultSampler()
     {
-        if (m_DefaultSampler.IsValid())
+        if (!m_GpuResources)
         {
-            return m_DefaultSampler;
-        }
-
-        // Linear + Wrap サンプラーを作成
-        RHI::SamplerDesc desc;
-        desc.filterMin = RHI::FilterMode::Anisotropic;
-        desc.filterMag = RHI::FilterMode::Anisotropic;
-        desc.filterMip = RHI::FilterMode::Anisotropic;
-        desc.addressU = RHI::TextureAddressMode::Wrap;
-        desc.addressV = RHI::TextureAddressMode::Wrap;
-        desc.addressW = RHI::TextureAddressMode::Wrap;
-        desc.maxAnisotropy = 4;
-
-        auto rhiSampler = m_Device->CreateSampler(desc);
-        if (!rhiSampler)
-        {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create default sampler");
             return SamplerHandle::Invalid();
         }
 
-        m_DefaultSampler = AllocateHandle<SamplerHandle>();
-
-        SamplerResourceData data;
-        data.RHISampler = rhiSampler;
-        data.RefCount = 1;
-        data.DebugName = "DefaultSampler";
-
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Samplers[m_DefaultSampler.Id] = std::move(data);
-
-        return m_DefaultSampler;
+        return m_GpuResources->GetDefaultSampler();
     }
 
     SamplerHandle RenderResourceManager::GetPointSampler()
     {
-        if (m_PointSampler.IsValid())
+        if (!m_GpuResources)
         {
-            return m_PointSampler;
-        }
-
-        // Point + Clamp サンプラーを作成
-        RHI::SamplerDesc desc;
-        desc.filterMin = RHI::FilterMode::Point;
-        desc.filterMag = RHI::FilterMode::Point;
-        desc.filterMip = RHI::FilterMode::Point;
-        desc.addressU = RHI::TextureAddressMode::Clamp;
-        desc.addressV = RHI::TextureAddressMode::Clamp;
-        desc.addressW = RHI::TextureAddressMode::Clamp;
-
-        auto rhiSampler = m_Device->CreateSampler(desc);
-        if (!rhiSampler)
-        {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create point sampler");
             return SamplerHandle::Invalid();
         }
 
-        m_PointSampler = AllocateHandle<SamplerHandle>();
-
-        SamplerResourceData data;
-        data.RHISampler = rhiSampler;
-        data.RefCount = 1;
-        data.DebugName = "PointSampler";
-
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Samplers[m_PointSampler.Id] = std::move(data);
-
-        return m_PointSampler;
+        return m_GpuResources->GetPointSampler();
     }
 
     void RenderResourceManager::ReleaseSampler(SamplerHandle handle)
     {
-        if (!handle.IsValid())
+        if (!m_GpuResources)
         {
             return;
         }
 
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Samplers.erase(handle.Id);
+        m_GpuResources->ReleaseSampler(handle);
     }
 
     // ========================================
@@ -1685,25 +1426,22 @@ namespace NorvesLib::Core::Rendering
 
     ShaderHandle RenderResourceManager::CreateShader(const ShaderCreateInfo &createInfo)
     {
-        // TODO: シェーダー作成の実装
-        return ShaderHandle::Invalid();
+        return m_GpuResources ? m_GpuResources->CreateShader(createInfo) : ShaderHandle::Invalid();
     }
 
     ShaderHandle RenderResourceManager::LoadShader(const Container::String &path, ShaderStage stage)
     {
-        // TODO: ファイルからシェーダーロードの実装
-        return ShaderHandle::Invalid();
+        return m_GpuResources ? m_GpuResources->LoadShader(path, stage) : ShaderHandle::Invalid();
     }
 
     void RenderResourceManager::ReleaseShader(ShaderHandle handle)
     {
-        if (!handle.IsValid())
+        if (!m_GpuResources)
         {
             return;
         }
 
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Shaders.erase(handle.Id);
+        m_GpuResources->ReleaseShader(handle);
     }
 
     // ========================================
@@ -1712,21 +1450,12 @@ namespace NorvesLib::Core::Rendering
 
     VertexLayoutHandle RenderResourceManager::RegisterVertexLayout(const VertexLayout &layout)
     {
-        auto handle = AllocateHandle<VertexLayoutHandle>();
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_VertexLayouts[handle.Id] = layout;
-        return handle;
+        return m_GpuResources ? m_GpuResources->RegisterVertexLayout(layout) : VertexLayoutHandle::Invalid();
     }
 
     const VertexLayout *RenderResourceManager::GetVertexLayout(VertexLayoutHandle handle) const
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_VertexLayouts.find(handle.Id);
-        if (it != m_VertexLayouts.end())
-        {
-            return &it->second;
-        }
-        return nullptr;
+        return m_GpuResources ? m_GpuResources->GetVertexLayout(handle) : nullptr;
     }
 
     // ========================================
@@ -1735,46 +1464,22 @@ namespace NorvesLib::Core::Rendering
 
     RHI::IBuffer *RenderResourceManager::GetRHIBuffer(BufferHandle handle) const
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_Buffers.find(handle.Id);
-        if (it != m_Buffers.end())
-        {
-            return it->second.RHIBuffer.get();
-        }
-        return nullptr;
+        return m_GpuResources ? m_GpuResources->GetRHIBuffer(handle) : nullptr;
     }
 
     RHI::ITexture *RenderResourceManager::GetRHITexture(TextureHandle handle) const
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_Textures.find(handle.Id);
-        if (it != m_Textures.end())
-        {
-            return it->second.RHITexture.get();
-        }
-        return nullptr;
+        return m_GpuResources ? m_GpuResources->GetRHITexture(handle) : nullptr;
     }
 
     Container::TSharedPtr<RHI::ITexture> RenderResourceManager::GetRHITexturePtr(TextureHandle handle) const
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_Textures.find(handle.Id);
-        if (it != m_Textures.end())
-        {
-            return it->second.RHITexture;
-        }
-        return nullptr;
+        return m_GpuResources ? m_GpuResources->GetRHITexturePtr(handle) : nullptr;
     }
 
     RHI::IShader *RenderResourceManager::GetRHIShader(ShaderHandle handle) const
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_Shaders.find(handle.Id);
-        if (it != m_Shaders.end())
-        {
-            return it->second.RHIShader.get();
-        }
-        return nullptr;
+        return m_GpuResources ? m_GpuResources->GetRHIShader(handle) : nullptr;
     }
 
     // ========================================
@@ -1885,12 +1590,10 @@ namespace NorvesLib::Core::Rendering
         m_MegaMeshGPUDataMap.clear();
         m_MeshGPUDataMap.clear();
         m_Materials.clear();
-        m_Buffers.clear();
-        m_Textures.clear();
-        m_Samplers.clear();
-        m_Shaders.clear();
-        m_Pipelines.clear();
-        m_VertexLayouts.clear();
+        if (m_GpuResources)
+        {
+            m_GpuResources->Clear();
+        }
         m_TextureCache.clear();
         m_ShaderCache.clear();
         m_PendingTextureLoads.clear();
@@ -1901,19 +1604,7 @@ namespace NorvesLib::Core::Rendering
     RenderResourceManager::ResourceStats RenderResourceManager::GetResourceStats() const
     {
         Thread::ScopedLock lock(m_ResourceMutex);
-
-        ResourceStats stats;
-        stats.BufferCount = static_cast<uint32_t>(m_Buffers.size());
-        stats.TextureCount = static_cast<uint32_t>(m_Textures.size());
-        stats.ShaderCount = static_cast<uint32_t>(m_Shaders.size());
-        stats.SamplerCount = static_cast<uint32_t>(m_Samplers.size());
-
-        for (const auto &[id, data] : m_Buffers)
-        {
-            stats.TotalBufferMemory += data.Size;
-        }
-
-        return stats;
+        return m_GpuResources ? m_GpuResources->GetResourceStats() : ResourceStats();
     }
 
     // ========================================
