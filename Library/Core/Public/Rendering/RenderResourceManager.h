@@ -31,6 +31,8 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    class TextureAssetResolver;
+
     /**
      * @brief マテリアル作成情報
      */
@@ -578,8 +580,6 @@ namespace NorvesLib::Core::Rendering
         ResourceStats GetResourceStats() const;
 
     private:
-        struct TextureAssetState;
-
         // コピー・ムーブ禁止
         RenderResourceManager(const RenderResourceManager &) = delete;
         RenderResourceManager &operator=(const RenderResourceManager &) = delete;
@@ -640,12 +640,10 @@ namespace NorvesLib::Core::Rendering
         Thread::Atomic<uint32_t> m_NextAsyncRequestId{1};
 
         // Texture asset resolution state. Lock order when nested: texture asset -> async load -> resource.
-        Container::TUniquePtr<TextureAssetState> m_TextureAssetState;
+        Container::TUniquePtr<TextureAssetResolver> m_TextureAssetResolver;
         mutable Thread::Mutex m_TextureAssetMutex;
 
-        // パス解決ヘルパー（LoadTextureとLoadTextureAsyncで共通使用）
-        Container::String ResolveTexturePath(const Container::String &path) const;
-        TextureAssetState &GetTextureAssetStateLocked();
+        TextureAssetResolver &GetTextureAssetResolverLocked();
         TextureHandle RegisterUploadedTexture(Container::TSharedPtr<RHI::ITexture> rhiTexture,
                                               const TextureCreateInfo &createInfo);
 
