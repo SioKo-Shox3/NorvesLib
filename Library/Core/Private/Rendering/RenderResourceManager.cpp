@@ -2,6 +2,7 @@
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "Rendering/CookedTextureUpload.h"
 #include "Rendering/GpuResourceStore.h"
+#include "Rendering/ProceduralMeshGpuStore.h"
 #include "Rendering/RenderMaterialStore.h"
 #include "Rendering/TextureAsyncLoadQueue.h"
 #include "Rendering/TextureAssetLoader.h"
@@ -442,6 +443,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_GpuResources = Container::MakeUnique<GpuResourceStore>(m_Device, m_NextHandleId);
+        m_ProceduralMeshes = Container::MakeUnique<ProceduralMeshGpuStore>(m_Device);
         m_TextureAsyncLoads = Container::MakeUnique<TextureAsyncLoadQueue>();
         m_bInitialized = true;
         LOG_INFO("RenderResourceManager initialized");
@@ -457,6 +459,7 @@ namespace NorvesLib::Core::Rendering
 
         ClearAllResources();
         m_TextureAsyncLoads.reset();
+        m_ProceduralMeshes.reset();
         m_GpuResources.reset();
         m_Device.reset();
         m_bInitialized = false;
@@ -803,76 +806,33 @@ namespace NorvesLib::Core::Rendering
                                              const void *vertices, size_t vertexSize,
                                              const uint32_t *indices, uint32_t indexCount)
     {
-        if (!m_bInitialized || !handle.IsValid() || !vertices || !indices || indexCount == 0)
+        if (!m_bInitialized ||
+            !m_Device ||
+            !m_ProceduralMeshes ||
+            !handle.IsValid() ||
+            !vertices ||
+            !indices ||
+            indexCount == 0)
         {
             return false;
         }
 
-        // 既に登録済みなら上書き
-        UnregisterMesh(handle);
-
-        // 頂点バッファ作成
-        RHI::BufferDesc vbDesc(
-            static_cast<uint64_t>(vertexSize),
-            RHI::ResourceUsage::VertexBuffer,
-            true,
-            "MeshVB");
-        auto vertexBuffer = m_Device->CreateBuffer(vbDesc);
-        if (!vertexBuffer)
-        {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create vertex buffer for mesh");
-            return false;
-        }
-        vertexBuffer->Update(vertices, vertexSize);
-
-        // インデックスバッファ作成
-        size_t ibSize = static_cast<size_t>(indexCount) * sizeof(uint32_t);
-        RHI::BufferDesc ibDesc(
-            static_cast<uint64_t>(ibSize),
-            RHI::ResourceUsage::IndexBuffer,
-            true,
-            "MeshIB");
-        auto indexBuffer = m_Device->CreateBuffer(ibDesc);
-        if (!indexBuffer)
-        {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create index buffer for mesh");
-            return false;
-        }
-        indexBuffer->Update(indices, ibSize);
-
-        // 登録
-        MeshGPUData gpuData;
-        gpuData.VertexBuffer = vertexBuffer;
-        gpuData.IndexBuffer = indexBuffer;
-        gpuData.IndexCount = indexCount;
-
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_MeshGPUDataMap[handle.Id] = std::move(gpuData);
-
-        NORVES_LOG_INFO("RenderResourceManager", "Mesh registered successfully");
-        return true;
+        return m_ProceduralMeshes->RegisterMesh(handle, vertices, vertexSize, indices, indexCount);
     }
 
     const RenderResourceManager::MeshGPUData *RenderResourceManager::GetMeshGPUData(MeshDataHandle handle) const
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_MeshGPUDataMap.find(handle.Id);
-        if (it != m_MeshGPUDataMap.end())
-        {
-            return &it->second;
-        }
-        return nullptr;
+        return m_ProceduralMeshes ? m_ProceduralMeshes->GetMeshGPUData(handle) : nullptr;
     }
 
     void RenderResourceManager::UnregisterMesh(MeshDataHandle handle)
     {
-        if (!handle.IsValid())
+        if (!m_ProceduralMeshes)
         {
             return;
         }
 
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_MeshGPUDataMap.erase(handle.Id);
+        m_ProceduralMeshes->UnregisterMesh(handle);
     }
 
     // ========================================
@@ -896,11 +856,15 @@ namespace NorvesLib::Core::Rendering
             m_MaterialStore->Clear();
         }
 
+        if (m_ProceduralMeshes)
+        {
+            m_ProceduralMeshes->Clear();
+        }
+
         Thread::ScopedLock lock(m_ResourceMutex);
 
         m_Models.clear();
         m_MegaMeshGPUDataMap.clear();
-        m_MeshGPUDataMap.clear();
         if (m_GpuResources)
         {
             m_GpuResources->Clear();

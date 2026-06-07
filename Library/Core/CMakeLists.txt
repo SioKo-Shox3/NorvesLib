@@ -58,6 +58,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/RenderWorld.cpp
     Private/Rendering/SharedResourceRegistry.cpp
     Private/Rendering/RenderResourceManager.cpp
+    Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
     Private/Rendering/GpuResourceStore.cpp
     Private/Rendering/TextureAsyncLoadQueue.cpp

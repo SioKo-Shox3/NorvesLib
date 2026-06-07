@@ -131,6 +131,16 @@ target_include_directories(RenderResourceManagerResourceContractTest PRIVATE
 set_target_properties(RenderResourceManagerResourceContractTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderResourceManagerResourceContractTest COMMAND RenderResourceManagerResourceContractTest)
 
+add_executable(RenderResourceManagerProceduralMeshStoreTest
+    RenderResourceManagerProceduralMeshStoreTest.cpp
+)
+target_link_libraries(RenderResourceManagerProceduralMeshStoreTest PRIVATE Core)
+target_include_directories(RenderResourceManagerProceduralMeshStoreTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderResourceManagerProceduralMeshStoreTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderResourceManagerProceduralMeshStoreTest COMMAND RenderResourceManagerProceduralMeshStoreTest)
+
 add_executable(RenderResourceManagerMaterialStoreTest
     RenderResourceManagerMaterialStoreTest.cpp
 )
