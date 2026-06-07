@@ -36,6 +36,7 @@ namespace NorvesLib::Core::Rendering
     class ProceduralMeshGpuStore;
     class RenderMaterialStore;
     class TextureAsyncLoadQueue;
+    class TextureHandleCache;
     class TextureAssetResolver;
 
     /**
@@ -616,16 +617,13 @@ namespace NorvesLib::Core::Rendering
         // MegaGeometry GPU/モデルリソース
         Container::TUniquePtr<MegaGeometryResourceStore> m_MegaGeometryResources;
 
-        // テクスチャキャッシュ（パス→ハンドル）
-        Container::Map<Container::String, TextureHandle> m_TextureCache;
-
-        // スレッドセーフ用ミューテックス
-        mutable Thread::Mutex m_ResourceMutex;
+        // テクスチャ索引（パス→ハンドル）
+        Container::TUniquePtr<TextureHandleCache> m_TextureHandleCache;
 
         // 非同期テクスチャ読み込みキュー
         Container::TUniquePtr<TextureAsyncLoadQueue> m_TextureAsyncLoads;
 
-        // Texture asset resolution state. Lock order when nested: texture asset -> async queue -> resource.
+        // Texture asset resolution state. Lock order when nested: texture asset -> async queue -> texture cache.
         Container::TUniquePtr<TextureAssetResolver> m_TextureAssetResolver;
         mutable Thread::Mutex m_TextureAssetMutex;
 

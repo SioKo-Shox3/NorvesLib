@@ -508,6 +508,42 @@ namespace
         std::filesystem::remove_all(root);
     }
 
+    void TestFinalizePostUploadDuplicateCacheReleasesNewHandle()
+    {
+        const std::filesystem::path root = CreateTestRoot("FinalizePostUploadDuplicate");
+        const std::vector<uint8_t> textureBytes = BuildCookedTextureBytes(
+            2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
+
+        auto device = MakeShared<FakeDevice>();
+        RenderResourceManager manager;
+        assert(manager.Initialize(device));
+        ConfigureRoot(manager, root);
+
+        const PreparedTextureAsset prepared = PrepareReadyAsset(manager, root, textureBytes);
+        bool bNestedFinalizeStarted = false;
+        TextureHandle nestedHandle = TextureHandle::Invalid();
+        device->OnFirstTextureUpdate = [&]()
+        {
+            if (bNestedFinalizeStarted)
+            {
+                return;
+            }
+
+            bNestedFinalizeStarted = true;
+            nestedHandle = manager.FinalizePreparedTextureAsset(prepared);
+            assert(nestedHandle.IsValid());
+        };
+
+        const TextureHandle outerHandle = manager.FinalizePreparedTextureAsset(prepared);
+        assert(bNestedFinalizeStarted);
+        assert(outerHandle == nestedHandle);
+        assert(device->CreatedTextureDescs.size() == 2);
+        assert(manager.GetResourceStats().TextureCount == 1);
+
+        manager.Shutdown();
+        std::filesystem::remove_all(root);
+    }
+
     void TestFinalizeChecksGenerationBeforeUpload()
     {
         const std::filesystem::path root = CreateTestRoot("FinalizeGenerationBeforeUpload");
@@ -848,6 +884,7 @@ int main()
 
     TestPrepareCookedReadyIncludesRequiredFields();
     TestFinalizeCookedReadyUploadsAndCaches();
+    TestFinalizePostUploadDuplicateCacheReleasesNewHandle();
     TestFinalizeChecksGenerationBeforeUpload();
     TestFinalizePostUploadGenerationRaceDiscardsUpload();
     TestIsPreparedTextureAssetCurrentGenerationTransitions();

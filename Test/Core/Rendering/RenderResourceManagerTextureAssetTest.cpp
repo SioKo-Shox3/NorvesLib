@@ -505,6 +505,45 @@ namespace
         std::filesystem::remove_all(root);
     }
 
+    void TestAsyncCacheHitCallbackRunsAfterCacheLockRelease()
+    {
+        const std::filesystem::path root = CreateTestRoot("AsyncCacheHitLock");
+        const std::vector<uint8_t> textureBytes = BuildCookedTextureBytes(2, 1);
+        WriteCookedPackage(root, textureBytes);
+
+        auto device = MakeShared<FakeDevice>();
+        RenderResourceManager manager;
+        assert(manager.Initialize(device));
+        ConfigureRoot(manager, root);
+        assert(manager.LoadTextureAssetManifestFromJsonText(
+            BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()))));
+
+        const TextureHandle cachedHandle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        assert(cachedHandle.IsValid());
+
+        bool bCallbackInvoked = false;
+        bool bConfigMutationSucceeded = false;
+        TextureHandle callbackHandle = TextureHandle::Invalid();
+        const uint32_t requestId = manager.LoadTextureAsync(
+            ToCoreString("Textures/Cooked.tga"),
+            NorvesLib::Core::Delegate<void, TextureHandle>(
+                [&manager, &bCallbackInvoked, &bConfigMutationSucceeded, &callbackHandle](TextureHandle handle) {
+                    bCallbackInvoked = true;
+                    callbackHandle = handle;
+                    bConfigMutationSucceeded = manager.ResetTextureAssetManifest();
+                }));
+
+        assert(requestId == 0);
+        assert(bCallbackInvoked);
+        assert(callbackHandle == cachedHandle);
+        assert(bConfigMutationSucceeded);
+        assert(manager.GetPendingAsyncLoadCount() == 0);
+        assert(device->CreatedTextureDescs.size() == 1);
+
+        manager.Shutdown();
+        std::filesystem::remove_all(root);
+    }
+
     void TestAsyncDebugFallbackLogsEvenWhenLooseMissing()
     {
         const std::filesystem::path root = CreateTestRoot("AsyncDebugFallbackLooseMissing");
@@ -636,6 +675,7 @@ int main()
 
     TestSyncCookedPathDoesNotNeedLooseFile();
     TestAsyncCookedPathAndPendingGenerationGuard();
+    TestAsyncCacheHitCallbackRunsAfterCacheLockRelease();
     TestManifestMissingUsesLooseFallback();
     TestInvalidManifestDoesNotFallback();
     TestDebugFallbackForCookedFailure();

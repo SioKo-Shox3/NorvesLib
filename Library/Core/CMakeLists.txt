@@ -64,6 +64,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/GpuResourceStore.cpp
     Private/Rendering/TextureAsyncLoadQueue.cpp
     Private/Rendering/TextureAssetLoader.cpp
+    Private/Rendering/TextureHandleCache.cpp
     Private/Rendering/TextureAssetResolver.cpp
     Private/Rendering/CookedTextureUpload.cpp
     Private/Rendering/DynamicUniformAllocator.cpp
