@@ -2,6 +2,7 @@
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "Rendering/CookedTextureUpload.h"
 #include "Rendering/GpuResourceStore.h"
+#include "Rendering/TextureAsyncLoadQueue.h"
 #include "Rendering/TextureAssetLoader.h"
 #include "Rendering/TextureAssetResolver.h"
 #include "Asset/AssetSystem.h"
@@ -13,7 +14,6 @@
 #include "RHI/IShader.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "Logging/LogMacros.h"
-#include "Thread/JobSystem.h"
 
 #include <algorithm>
 #include <chrono>
@@ -189,8 +189,7 @@ namespace NorvesLib::Core::Rendering
     bool RenderResourceManager::SetTextureAssetRoot(const Container::String &assetRoot)
     {
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
-        Thread::ScopedLock asyncLock(m_AsyncLoadMutex);
-        if (!m_PendingTextureLoads.empty() || m_ActiveTextureLoadFlushCount != 0)
+        if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
         {
             NORVES_LOG_WARNING("RenderResourceManager",
                                "SetTextureAssetRoot rejected while async texture loads are pending");
@@ -209,8 +208,7 @@ namespace NorvesLib::Core::Rendering
         const Container::String &sourceName)
     {
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
-        Thread::ScopedLock asyncLock(m_AsyncLoadMutex);
-        if (!m_PendingTextureLoads.empty() || m_ActiveTextureLoadFlushCount != 0)
+        if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
         {
             NORVES_LOG_WARNING("RenderResourceManager",
                                "LoadTextureAssetManifestFromJsonText rejected while async texture loads are pending");
@@ -227,8 +225,7 @@ namespace NorvesLib::Core::Rendering
     bool RenderResourceManager::ResetTextureAssetManifest()
     {
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
-        Thread::ScopedLock asyncLock(m_AsyncLoadMutex);
-        if (!m_PendingTextureLoads.empty() || m_ActiveTextureLoadFlushCount != 0)
+        if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
         {
             NORVES_LOG_WARNING("RenderResourceManager",
                                "ResetTextureAssetManifest rejected while async texture loads are pending");
@@ -245,8 +242,7 @@ namespace NorvesLib::Core::Rendering
     bool RenderResourceManager::SetTextureAssetFallbackMode(TextureAssetFallbackMode mode)
     {
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
-        Thread::ScopedLock asyncLock(m_AsyncLoadMutex);
-        if (!m_PendingTextureLoads.empty() || m_ActiveTextureLoadFlushCount != 0)
+        if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
         {
             NORVES_LOG_WARNING("RenderResourceManager",
                                "SetTextureAssetFallbackMode rejected while async texture loads are pending");
@@ -442,6 +438,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_GpuResources = Container::MakeUnique<GpuResourceStore>(m_Device, m_NextHandleId);
+        m_TextureAsyncLoads = Container::MakeUnique<TextureAsyncLoadQueue>();
         m_bInitialized = true;
         LOG_INFO("RenderResourceManager initialized");
         return true;
@@ -455,6 +452,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         ClearAllResources();
+        m_TextureAsyncLoads.reset();
         m_GpuResources.reset();
         m_Device.reset();
         m_bInitialized = false;
@@ -884,7 +882,11 @@ namespace NorvesLib::Core::Rendering
 
     void RenderResourceManager::ClearAllResources()
     {
-        Thread::ScopedLock asyncLock(m_AsyncLoadMutex);
+        if (m_TextureAsyncLoads)
+        {
+            m_TextureAsyncLoads->ClearPending();
+        }
+
         Thread::ScopedLock lock(m_ResourceMutex);
 
         // ニューラルマテリアルはGPUリソースを持つため、先にShutdownしてから解放
@@ -907,9 +909,6 @@ namespace NorvesLib::Core::Rendering
         }
         m_TextureCache.clear();
         m_ShaderCache.clear();
-        m_PendingTextureLoads.clear();
-        m_PendingTextureLoadsByPath.clear();
-        m_ActiveTextureLoadFlushCount = 0;
     }
 
     RenderResourceManager::ResourceStats RenderResourceManager::GetResourceStats() const
@@ -1387,6 +1386,11 @@ namespace NorvesLib::Core::Rendering
             return 0;
         }
 
+        if (!m_TextureAsyncLoads)
+        {
+            m_TextureAsyncLoads = Container::MakeUnique<TextureAsyncLoadQueue>();
+        }
+
         auto buildPlan = [this](const Container::String &requestPath)
         {
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
@@ -1406,37 +1410,19 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        const uint32_t duplicateRequestId = m_TextureAsyncLoads->TryAppendDuplicate(plan.CacheKey, callback);
+        if (duplicateRequestId != 0)
         {
-            Thread::ScopedLock lock(m_AsyncLoadMutex);
-            auto pendingIt = m_PendingTextureLoadsByPath.find(plan.CacheKey);
-            if (pendingIt != m_PendingTextureLoadsByPath.end() && pendingIt->second)
-            {
-                if (callback.IsBound())
-                {
-                    pendingIt->second->Callbacks.push_back(std::move(callback));
-                }
-                NORVES_LOG_INFO("AssetLoadProfile",
-                                "stage=texture_async_duplicate_collapsed role=caller request_id=%u cache_key=\"%s\" completed=%d",
-                                static_cast<unsigned int>(pendingIt->second->RequestId),
-                                plan.CacheKey.c_str(),
-                                (pendingIt->second->Task && pendingIt->second->Task->IsCompleted()) ? 1 : 0);
-                return pendingIt->second->RequestId;
-            }
+            return duplicateRequestId;
         }
 
-        auto request = Container::MakeShared<AsyncTextureRequest>();
-        request->RequestId = m_NextAsyncRequestId.FetchAdd(1, std::memory_order_relaxed);
-        request->Path = path;
-        request->CacheKey = plan.CacheKey;
-        request->Result.Path = path;
-        request->Result.ResolvedPath = plan.ResolvedPath;
-        request->Result.CacheKey = plan.CacheKey;
-        request->Result.LogicalPath = plan.LogicalPath;
-        request->Result.AssetGeneration = plan.Generation;
-        request->Result.FallbackMode = TextureAssetResolver::ToTextureAssetFallbackMode(plan.FallbackMode);
-        if (callback.IsBound())
+        auto request = m_TextureAsyncLoads->CreateRequest(
+            plan,
+            TextureAssetResolver::ToTextureAssetFallbackMode(plan.FallbackMode),
+            std::move(callback));
+        if (!request)
         {
-            request->Callbacks.push_back(std::move(callback));
+            return 0;
         }
 
         // ファイルI/O + デコードをワーカースレッドで実行するタスクを作成
@@ -1462,45 +1448,21 @@ namespace NorvesLib::Core::Rendering
 
         request->Task = Thread::Task::Create(taskFunction, Thread::TaskPriority::NORMAL);
 
-        // ペンディングリストに追加
+        const TextureAsyncLoadQueue::EnqueueResult enqueueResult =
+            m_TextureAsyncLoads->EnqueueOrAppendDuplicateAndSubmit(request);
+        if (enqueueResult.bSubmitted)
         {
-            Thread::ScopedLock lock(m_AsyncLoadMutex);
-            auto pendingIt = m_PendingTextureLoadsByPath.find(plan.CacheKey);
-            if (pendingIt != m_PendingTextureLoadsByPath.end() && pendingIt->second)
-            {
-                for (auto &pendingCallback : request->Callbacks)
-                {
-                    if (pendingCallback.IsBound())
-                    {
-                        pendingIt->second->Callbacks.push_back(std::move(pendingCallback));
-                    }
-                }
-
-                NORVES_LOG_INFO("AssetLoadProfile",
-                                "stage=texture_async_duplicate_collapsed role=caller request_id=%u cache_key=\"%s\" completed=%d insert_recheck=1",
-                                static_cast<unsigned int>(pendingIt->second->RequestId),
-                                plan.CacheKey.c_str(),
-                                (pendingIt->second->Task && pendingIt->second->Task->IsCompleted()) ? 1 : 0);
-                return pendingIt->second->RequestId;
-            }
-
-            m_PendingTextureLoads.push_back(request);
-            m_PendingTextureLoadsByPath[plan.CacheKey] = request;
+            NORVES_LOG_INFO("RenderResourceManager", "Async texture load started: %s (RequestId=%u)",
+                            path.c_str(), static_cast<unsigned int>(request->RequestId));
         }
 
-        // JobSystemに投入
-        Thread::JobSystem::Get().SubmitTask(request->Task);
-
-        NORVES_LOG_INFO("RenderResourceManager", "Async texture load started: %s (RequestId=%u)",
-                        path.c_str(), static_cast<unsigned int>(request->RequestId));
-
-        return request->RequestId;
+        return enqueueResult.RequestId;
     }
 
     uint32_t RenderResourceManager::FlushCompletedTextureLoads()
     {
         auto flushStartTime = LoadProfileNow();
-        Container::VariableArray<Container::TSharedPtr<AsyncTextureRequest>> completedRequests;
+        TextureAsyncLoadQueue::CompletedBatch completedBatch;
         uint32_t processedCount = 0;
         uint32_t successCount = 0;
         uint32_t failedCount = 0;
@@ -1508,27 +1470,13 @@ namespace NorvesLib::Core::Rendering
 
         {
             auto detachStartTime = LoadProfileNow();
-            Thread::ScopedLock lock(m_AsyncLoadMutex);
-
-            // 完了したリクエストを切り離す
-            for (auto it = m_PendingTextureLoads.begin(); it != m_PendingTextureLoads.end();)
+            if (m_TextureAsyncLoads)
             {
-                auto &request = *it;
-                if (!request || !request->Task || !request->Task->IsCompleted())
-                {
-                    ++it;
-                    continue;
-                }
-
-                completedRequests.push_back(request);
-                it = m_PendingTextureLoads.erase(it);
-            }
-            if (!completedRequests.empty())
-            {
-                ++m_ActiveTextureLoadFlushCount;
+                completedBatch = m_TextureAsyncLoads->DetachCompletedRequests();
             }
             detachMs = LoadProfileElapsedMs(detachStartTime);
         }
+        auto &completedRequests = completedBatch.Requests;
 
         auto isGenerationCurrent = [this](uint64_t generation)
         {
@@ -1565,17 +1513,15 @@ namespace NorvesLib::Core::Rendering
 
         auto takeCallbacksAndReleasePendingMap = [this](const Container::TSharedPtr<AsyncTextureRequest> &request)
         {
-            Container::VariableArray<NorvesLib::Core::Delegate<void, TextureHandle>> callbacks;
+            TextureAsyncLoadQueue::CallbackList callbacks;
             if (!request)
             {
                 return callbacks;
             }
 
-            Thread::ScopedLock lock(m_AsyncLoadMutex);
-            auto pendingIt = m_PendingTextureLoadsByPath.find(request->CacheKey);
-            if (pendingIt != m_PendingTextureLoadsByPath.end() && pendingIt->second == request)
+            if (m_TextureAsyncLoads)
             {
-                m_PendingTextureLoadsByPath.erase(pendingIt);
+                return m_TextureAsyncLoads->TakeCallbacksAndRelease(request);
             }
 
             callbacks = std::move(request->Callbacks);
@@ -1714,15 +1660,6 @@ namespace NorvesLib::Core::Rendering
             ++processedCount;
         }
 
-        if (!completedRequests.empty())
-        {
-            Thread::ScopedLock lock(m_AsyncLoadMutex);
-            if (m_ActiveTextureLoadFlushCount > 0)
-            {
-                --m_ActiveTextureLoadFlushCount;
-            }
-        }
-
         if (processedCount > 0)
         {
             NORVES_LOG_INFO("AssetLoadProfile",
@@ -1739,8 +1676,7 @@ namespace NorvesLib::Core::Rendering
 
     uint32_t RenderResourceManager::GetPendingAsyncLoadCount() const
     {
-        Thread::ScopedLock lock(m_AsyncLoadMutex);
-        return static_cast<uint32_t>(m_PendingTextureLoads.size());
+        return m_TextureAsyncLoads ? m_TextureAsyncLoads->GetPendingCount() : 0;
     }
 
 } // namespace NorvesLib::Core::Rendering

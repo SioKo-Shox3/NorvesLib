@@ -59,6 +59,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/SharedResourceRegistry.cpp
     Private/Rendering/RenderResourceManager.cpp
     Private/Rendering/GpuResourceStore.cpp
+    Private/Rendering/TextureAsyncLoadQueue.cpp
     Private/Rendering/TextureAssetLoader.cpp
     Private/Rendering/TextureAssetResolver.cpp
     Private/Rendering/CookedTextureUpload.cpp
