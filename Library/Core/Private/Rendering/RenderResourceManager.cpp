@@ -874,7 +874,6 @@ namespace NorvesLib::Core::Rendering
             m_GpuResources->Clear();
         }
         m_TextureCache.clear();
-        m_ShaderCache.clear();
     }
 
     RenderResourceManager::ResourceStats RenderResourceManager::GetResourceStats() const
