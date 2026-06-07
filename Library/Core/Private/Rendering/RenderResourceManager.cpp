@@ -2,6 +2,7 @@
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
 #include "Rendering/CookedTextureUpload.h"
 #include "Rendering/GpuResourceStore.h"
+#include "Rendering/RenderMaterialStore.h"
 #include "Rendering/TextureAsyncLoadQueue.h"
 #include "Rendering/TextureAssetLoader.h"
 #include "Rendering/TextureAssetResolver.h"
@@ -160,7 +161,10 @@ namespace NorvesLib::Core::Rendering
         return IsPreparedTextureAssetFailureStatus(Status);
     }
 
-    RenderResourceManager::RenderResourceManager() = default;
+    RenderResourceManager::RenderResourceManager()
+        : m_MaterialStore(Container::MakeUnique<RenderMaterialStore>(m_NextHandleId))
+    {
+    }
 
     RenderResourceManager::~RenderResourceManager() = default;
 
@@ -887,22 +891,16 @@ namespace NorvesLib::Core::Rendering
             m_TextureAsyncLoads->ClearPending();
         }
 
-        Thread::ScopedLock lock(m_ResourceMutex);
-
-        // ニューラルマテリアルはGPUリソースを持つため、先にShutdownしてから解放
-        for (auto &[id, resource] : m_NeuralMaterials)
+        if (m_MaterialStore)
         {
-            if (resource)
-            {
-                resource->Shutdown();
-            }
+            m_MaterialStore->Clear();
         }
-        m_NeuralMaterials.clear();
+
+        Thread::ScopedLock lock(m_ResourceMutex);
 
         m_Models.clear();
         m_MegaMeshGPUDataMap.clear();
         m_MeshGPUDataMap.clear();
-        m_Materials.clear();
         if (m_GpuResources)
         {
             m_GpuResources->Clear();
@@ -923,84 +921,27 @@ namespace NorvesLib::Core::Rendering
 
     MaterialHandle RenderResourceManager::CreateMaterial(const MaterialCreateData &createInfo)
     {
-        auto handle = AllocateHandle<MaterialHandle>();
-
-        MaterialResourceData data;
-        data.AlbedoTexture = createInfo.AlbedoTexture;
-        data.NormalTexture = createInfo.NormalTexture;
-        data.MetallicTexture = createInfo.MetallicTexture;
-        data.RoughnessTexture = createInfo.RoughnessTexture;
-        data.AOTexture = createInfo.AOTexture;
-        data.HeightTexture = createInfo.HeightTexture;
-        data.HeightScale = createInfo.HeightScale;
-        data.EmissiveColor[0] = createInfo.EmissiveColor[0];
-        data.EmissiveColor[1] = createInfo.EmissiveColor[1];
-        data.EmissiveColor[2] = createInfo.EmissiveColor[2];
-        data.EmissiveStrength = createInfo.EmissiveStrength;
-        data.Blend = createInfo.Blend;
-        data.Shading = createInfo.Shading;
-        data.bTwoSided = createInfo.bTwoSided;
-        data.bCastShadows = createInfo.bCastShadows;
-        data.RefCount = 1;
-        data.DebugName = createInfo.DebugName;
-
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_Materials[handle.Id] = std::move(data);
-
-        return handle;
+        return m_MaterialStore ? m_MaterialStore->CreateMaterial(createInfo) : MaterialHandle::Invalid();
     }
 
     const MaterialResourceData *RenderResourceManager::GetMaterialData(MaterialHandle handle) const
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_Materials.find(handle.Id);
-        if (it != m_Materials.end())
-        {
-            return &it->second;
-        }
-        return nullptr;
+        return m_MaterialStore ? m_MaterialStore->GetMaterialData(handle) : nullptr;
     }
 
     bool RenderResourceManager::UpdateMaterial(MaterialHandle handle, const MaterialCreateData &createInfo)
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
-        auto it = m_Materials.find(handle.Id);
-        if (it == m_Materials.end())
-        {
-            return false;
-        }
-
-        auto &data = it->second;
-        data.AlbedoTexture = createInfo.AlbedoTexture;
-        data.NormalTexture = createInfo.NormalTexture;
-        data.MetallicTexture = createInfo.MetallicTexture;
-        data.RoughnessTexture = createInfo.RoughnessTexture;
-        data.AOTexture = createInfo.AOTexture;
-        data.HeightTexture = createInfo.HeightTexture;
-        data.HeightScale = createInfo.HeightScale;
-        data.EmissiveColor[0] = createInfo.EmissiveColor[0];
-        data.EmissiveColor[1] = createInfo.EmissiveColor[1];
-        data.EmissiveColor[2] = createInfo.EmissiveColor[2];
-        data.EmissiveStrength = createInfo.EmissiveStrength;
-        data.Blend = createInfo.Blend;
-        data.Shading = createInfo.Shading;
-        data.bTwoSided = createInfo.bTwoSided;
-        data.bCastShadows = createInfo.bCastShadows;
-        data.DebugName = createInfo.DebugName;
-
-        return true;
+        return m_MaterialStore ? m_MaterialStore->UpdateMaterial(handle, createInfo) : false;
     }
 
     void RenderResourceManager::ReleaseMaterial(MaterialHandle handle)
     {
-        if (!handle.IsValid())
+        if (!m_MaterialStore)
         {
             return;
         }
 
-        Thread::ScopedLock lock(m_ResourceMutex);
-        m_NeuralMaterials.erase(handle.Id);
-        m_Materials.erase(handle.Id);
+        m_MaterialStore->ReleaseMaterial(handle);
     }
 
     // ========================================
@@ -1009,77 +950,18 @@ namespace NorvesLib::Core::Rendering
 
     MaterialHandle RenderResourceManager::CreateNeuralMaterial(const NeuralMaterialDesc &desc)
     {
-        if (!m_bInitialized || !m_Device)
+        if (!m_bInitialized || !m_Device || !m_MaterialStore)
         {
             return MaterialHandle::Invalid();
         }
 
-        auto neuralMat = MakeShared<NeuralMaterialResource>();
-        if (!neuralMat->Initialize(m_Device.get(), desc))
-        {
-            NORVES_LOG_WARNING("RenderResourceManager", "Failed to initialize neural material: %s",
-                               desc.DebugName.c_str());
-            return MaterialHandle::Invalid();
-        }
-
-        if (!neuralMat->RegisterOutputTextures(*this))
-        {
-            NORVES_LOG_WARNING("RenderResourceManager", "Failed to register neural material output textures: %s",
-                               desc.DebugName.c_str());
-            return MaterialHandle::Invalid();
-        }
-
-        // 出力TextureHandleでマテリアルを作成
-        MaterialCreateData matInfo;
-        matInfo.DebugName = desc.DebugName;
-
-        // Albedoスロット(0)
-        TextureHandle albedoHandle = neuralMat->GetOutputTextureHandle(0);
-        if (albedoHandle.IsValid())
-        {
-            matInfo.AlbedoTexture = albedoHandle;
-        }
-
-        // Normalスロット(1)
-        if (neuralMat->GetOutputSlotCount() > 1)
-        {
-            TextureHandle normalHandle = neuralMat->GetOutputTextureHandle(1);
-            if (normalHandle.IsValid())
-            {
-                matInfo.NormalTexture = normalHandle;
-            }
-        }
-
-        MaterialHandle handle = CreateMaterial(matInfo);
-        if (!handle.IsValid())
-        {
-            return MaterialHandle::Invalid();
-        }
-
-        // 内部でNeuralMaterialResourceを保持
-        {
-            Thread::ScopedLock lock(m_ResourceMutex);
-            m_NeuralMaterials[handle.Id] = std::move(neuralMat);
-        }
-
-        NORVES_LOG_INFO("RenderResourceManager", "Neural material created: %s (handle=%llu)",
-                        desc.DebugName.c_str(), handle.Id);
-        return handle;
+        return m_MaterialStore->CreateNeuralMaterial(m_Device.get(), *this, desc);
     }
 
     Container::VariableArray<NeuralMaterialResource *> RenderResourceManager::GetNeuralMaterialResources() const
     {
-        Thread::ScopedLock lock(m_ResourceMutex);
-        Container::VariableArray<NeuralMaterialResource *> result;
-        result.reserve(m_NeuralMaterials.size());
-        for (const auto &[id, resource] : m_NeuralMaterials)
-        {
-            if (resource && resource->IsInitialized())
-            {
-                result.push_back(resource.get());
-            }
-        }
-        return result;
+        return m_MaterialStore ? m_MaterialStore->GetNeuralMaterialResources()
+                               : Container::VariableArray<NeuralMaterialResource *>();
     }
 
     // ========================================
