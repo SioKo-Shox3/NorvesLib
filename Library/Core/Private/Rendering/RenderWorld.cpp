@@ -78,16 +78,16 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
-        // 3. RenderResourceManager初期化
+        // 3. RenderResourceRegistry初期化
         // ========================================
-        if (!m_ResourceManager.Initialize(m_Device))
+        if (!m_ResourceRegistry.Initialize(m_Device))
         {
             NORVES_LOG_ERROR("Rendering", "Failed to initialize RenderResourceManager");
             return false;
         }
 
-        // RenderingCoordinatorにResourceManagerを設定
-        m_RenderingCoordinator.SetResourceManager(&m_ResourceManager);
+        // RenderingCoordinatorにResourceRegistryを設定
+        m_RenderingCoordinator.SetResourceRegistry(&m_ResourceRegistry);
 
         // ========================================
         // 4. RenderThread初期化・起動（マルチスレッドレンダリング有効時のみ）
@@ -122,11 +122,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderThread.Shutdown();
         m_bResizePending.Store(false, std::memory_order_release);
 
-        // glTF worker tasks may prepare texture assets through the ResourceManager.
+        // glTF worker tasks may prepare texture assets through the ResourceRegistry.
         Resource::GLTFAnalyzer::CancelPendingModelLoadsAndWait();
 
-        // RenderResourceManagerの終了（メッシュGPUリソース等の解放）
-        m_ResourceManager.Shutdown();
+        // RenderResourceRegistryの終了（メッシュGPUリソース等の解放）
+        m_ResourceRegistry.Shutdown();
 
         // RenderingCoordinatorの終了（RHIリソース解放を含む）
         m_RenderingCoordinator.Shutdown();
@@ -162,7 +162,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         auto textureFlushStartTime = LoadProfileNow();
-        uint32_t textureFlushProcessed = m_ResourceManager.FlushCompletedTextureLoads();
+        uint32_t textureFlushProcessed = m_ResourceRegistry.FlushCompletedTextureLoads();
         double textureFlushMs = LoadProfileElapsedMs(textureFlushStartTime);
         if (textureFlushProcessed > 0)
         {
@@ -173,7 +173,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         auto modelFlushStartTime = LoadProfileNow();
-        uint32_t modelFlushProcessed = Resource::GLTFAnalyzer::FlushCompletedModelLoads(m_ResourceManager);
+        uint32_t modelFlushProcessed = Resource::GLTFAnalyzer::FlushCompletedModelLoads(m_ResourceRegistry);
         double modelFlushMs = LoadProfileElapsedMs(modelFlushStartTime);
         if (modelFlushProcessed > 0)
         {

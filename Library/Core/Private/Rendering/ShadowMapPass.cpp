@@ -3,7 +3,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResourceRegistry.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"

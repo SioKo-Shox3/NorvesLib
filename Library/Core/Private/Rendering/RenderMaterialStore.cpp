@@ -140,7 +140,7 @@ namespace NorvesLib::Core::Rendering
 
     MaterialHandle RenderMaterialStore::CreateNeuralMaterial(
         RHI::IDevice *device,
-        RenderResourceManager &resourceManager,
+        RenderResourceRegistry &resourceRegistry,
         const NeuralMaterialDesc &desc)
     {
         if (!device)
@@ -156,7 +156,7 @@ namespace NorvesLib::Core::Rendering
             return MaterialHandle::Invalid();
         }
 
-        if (!neuralMaterial->RegisterOutputTextures(resourceManager))
+        if (!neuralMaterial->RegisterOutputTextures(resourceRegistry))
         {
             NORVES_LOG_WARNING("RenderMaterialStore", "Failed to register neural material output textures: %s",
                                desc.DebugName.c_str());

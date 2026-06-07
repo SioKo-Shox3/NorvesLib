@@ -8,7 +8,7 @@
 #include "Core/Public/Component/LightComponent.h"
 #include "Core/Public/Component/PointLightComponent.h"
 #include "Core/Public/Rendering/RenderWorld.h"
-#include "Core/Public/Rendering/RenderResourceManager.h"
+#include "Core/Public/Rendering/RenderResourceRegistry.h"
 #include "Core/Public/Rendering/ProceduralMeshGenerator.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Rendering/SceneView.h"
@@ -44,14 +44,14 @@ namespace Game::GameModes
         // 1. プロシージャルメッシュの生成とGPU登録
         // ========================================
         {
-            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+            auto &resourceRegistry = GEngine->GetRenderWorld().GetResourceRegistry();
 
             // 球体メッシュの生成
             VariableArray<Mesh3DVertex> sphereVertices;
             VariableArray<uint32_t> sphereIndices;
             ProceduralMeshGenerator::GenerateUVSphere(1.0f, 32, 16, sphereVertices, sphereIndices);
 
-            bool bSphereOk = resourceManager.RegisterMesh(
+            bool bSphereOk = resourceRegistry.RegisterMesh(
                 data.m_SphereMeshHandle,
                 sphereVertices.data(),
                 static_cast<uint32_t>(sphereVertices.size() * sizeof(Mesh3DVertex)),
@@ -73,7 +73,7 @@ namespace Game::GameModes
             VariableArray<uint32_t> groundIndices;
             ProceduralMeshGenerator::GeneratePlane(10.0f, 10.0f, 4, 4, groundVertices, groundIndices);
 
-            bool bGroundOk = resourceManager.RegisterMesh(
+            bool bGroundOk = resourceRegistry.RegisterMesh(
                 data.m_GroundMeshHandle,
                 groundVertices.data(),
                 static_cast<uint32_t>(groundVertices.size() * sizeof(Mesh3DVertex)),
@@ -97,7 +97,7 @@ namespace Game::GameModes
             VariableArray<uint32_t> lightSphereIndices;
             ProceduralMeshGenerator::GenerateUVSphere(0.15f, 16, 8, lightSphereVertices, lightSphereIndices);
 
-            bool bLightSphereOk = resourceManager.RegisterMesh(
+            bool bLightSphereOk = resourceRegistry.RegisterMesh(
                 data.m_LightSphereMeshHandle,
                 lightSphereVertices.data(),
                 static_cast<uint32_t>(lightSphereVertices.size() * sizeof(Mesh3DVertex)),
@@ -117,7 +117,7 @@ namespace Game::GameModes
         // 1.5 プロシージャルチェッカーボードテクスチャ生成
         // ========================================
         {
-            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+            auto &resourceRegistry = GEngine->GetRenderWorld().GetResourceRegistry();
 
             constexpr uint32_t TEX_SIZE = 256;
             constexpr uint32_t CHECKER_SIZE = 32; // 32ピクセルごとに色が切り替わる
@@ -143,7 +143,7 @@ namespace Game::GameModes
             texInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
             texInfo.DebugName = "CheckerboardTexture";
 
-            data.m_CheckerTextureHandle = resourceManager.CreateTexture(
+            data.m_CheckerTextureHandle = resourceRegistry.CreateTexture(
                 texInfo, checkerData.data(), static_cast<uint32_t>(checkerData.size()));
 
             if (data.m_CheckerTextureHandle.IsValid())
@@ -160,13 +160,13 @@ namespace Game::GameModes
         // 1.6 マテリアルの作成（テクスチャは非同期読み込み）
         // ========================================
         {
-            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+            auto &resourceRegistry = GEngine->GetRenderWorld().GetResourceRegistry();
 
             // --- Silver PBRマテリアル（テクスチャなしで先に作成、後で差し替え） ---
             {
                 MaterialCreateData silverMatInfo;
                 silverMatInfo.DebugName = "SilverPBR";
-                data.m_SilverMaterial = resourceManager.CreateMaterial(silverMatInfo);
+                data.m_SilverMaterial = resourceRegistry.CreateMaterial(silverMatInfo);
 
                 // テクスチャの非同期読み込みリクエスト
                 auto silverUpdate = MakeShared<PendingMaterialUpdate>();
@@ -174,53 +174,53 @@ namespace Game::GameModes
                 silverUpdate->CreateData = silverMatInfo;
                 silverUpdate->PendingTextureCount = 5;
 
-                resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_albedo.png",
-                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/Silver/silver_albedo.png",
+                                                 [silverUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      silverUpdate->CreateData.AlbedoTexture = handle;
                                                      if (--silverUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
                                                      }
                                                  });
-                resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_normal-ogl.png",
-                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/Silver/silver_normal-ogl.png",
+                                                 [silverUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      silverUpdate->CreateData.NormalTexture = handle;
                                                      if (--silverUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
                                                      }
                                                  });
-                resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_metallic.png",
-                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/Silver/silver_metallic.png",
+                                                 [silverUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      silverUpdate->CreateData.MetallicTexture = handle;
                                                      if (--silverUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
                                                      }
                                                  });
-                resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_roughness.png",
-                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/Silver/silver_roughness.png",
+                                                 [silverUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      silverUpdate->CreateData.RoughnessTexture = handle;
                                                      if (--silverUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
                                                      }
                                                  });
-                resourceManager.LoadTextureAsync("Assets/Textures/Silver/silver_ao.png",
-                                                 [silverUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/Silver/silver_ao.png",
+                                                 [silverUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      silverUpdate->CreateData.AOTexture = handle;
                                                      if (--silverUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(silverUpdate->TargetMaterial, silverUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "Silver PBR material textures loaded");
                                                      }
                                                  });
@@ -234,60 +234,60 @@ namespace Game::GameModes
                 MaterialCreateData cobbleMatInfo;
                 cobbleMatInfo.HeightScale = 0.05f;
                 cobbleMatInfo.DebugName = "CobbleStoneFloor";
-                data.m_CobbleStoneMaterial = resourceManager.CreateMaterial(cobbleMatInfo);
+                data.m_CobbleStoneMaterial = resourceRegistry.CreateMaterial(cobbleMatInfo);
 
                 auto cobbleUpdate = MakeShared<PendingMaterialUpdate>();
                 cobbleUpdate->TargetMaterial = data.m_CobbleStoneMaterial;
                 cobbleUpdate->CreateData = cobbleMatInfo;
                 cobbleUpdate->PendingTextureCount = 5;
 
-                resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png",
-                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png",
+                                                 [cobbleUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.AlbedoTexture = handle;
                                                      if (--cobbleUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
                                                      }
                                                  });
-                resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_gl_4k.png",
-                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_gl_4k.png",
+                                                 [cobbleUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.NormalTexture = handle;
                                                      if (--cobbleUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
                                                      }
                                                  });
-                resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png",
-                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png",
+                                                 [cobbleUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.RoughnessTexture = handle;
                                                      if (--cobbleUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
                                                      }
                                                  });
-                resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png",
-                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png",
+                                                 [cobbleUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.AOTexture = handle;
                                                      if (--cobbleUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
                                                      }
                                                  });
-                resourceManager.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
-                                                 [cobbleUpdate, &resourceManager](TextureHandle handle)
+                resourceRegistry.LoadTextureAsync("Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
+                                                 [cobbleUpdate, &resourceRegistry](TextureHandle handle)
                                                  {
                                                      cobbleUpdate->CreateData.HeightTexture = handle;
                                                      if (--cobbleUpdate->PendingTextureCount == 0)
                                                      {
-                                                         resourceManager.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
+                                                         resourceRegistry.UpdateMaterial(cobbleUpdate->TargetMaterial, cobbleUpdate->CreateData);
                                                          NORVES_LOG_INFO("Rendering3DTest", "CobbleStoneFloor material textures loaded");
                                                      }
                                                  });
@@ -300,7 +300,7 @@ namespace Game::GameModes
             MaterialCreateData groundMatInfo;
             groundMatInfo.AlbedoTexture = data.m_CheckerTextureHandle;
             groundMatInfo.DebugName = "Ground";
-            data.m_GroundMaterial = resourceManager.CreateMaterial(groundMatInfo);
+            data.m_GroundMaterial = resourceRegistry.CreateMaterial(groundMatInfo);
 
             // 光源球体マテリアル作成（エミッシブ、テクスチャ不要）
             MaterialCreateData lightSphereMatInfo;
@@ -309,7 +309,7 @@ namespace Game::GameModes
             lightSphereMatInfo.EmissiveColor[2] = 0.3f;
             lightSphereMatInfo.EmissiveStrength = 8.0f;
             lightSphereMatInfo.DebugName = "LightSphere";
-            data.m_LightSphereMaterial = resourceManager.CreateMaterial(lightSphereMatInfo);
+            data.m_LightSphereMaterial = resourceRegistry.CreateMaterial(lightSphereMatInfo);
         }
 
         // ========================================
@@ -401,7 +401,7 @@ namespace Game::GameModes
         // ========================================
         {
             auto& world = GEngine->GetWorld();
-            auto& resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+            auto& resourceRegistry = GEngine->GetRenderWorld().GetResourceRegistry();
 
             // 非同期ロード中に表示する簡易プレースホルダ
             data.m_pBoulderPlaceholderObject = world.SpawnObject<WorldObject>();
@@ -421,7 +421,7 @@ namespace Game::GameModes
                                          : data.m_ModelPath;
             data.m_BoulderLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
                 modelPath,
-                resourceManager,
+                resourceRegistry,
                 [&data](ModelHandle handle)
                 {
                     data.m_BoulderModelHandle = handle;
@@ -460,12 +460,12 @@ namespace Game::GameModes
             else
             {
                 auto &world = GEngine->GetWorld();
-                auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
-                auto megaMeshHandle = resourceManager.GetModelMegaMeshHandle(data.m_BoulderModelHandle);
+                auto &resourceRegistry = GEngine->GetRenderWorld().GetResourceRegistry();
+                auto megaMeshHandle = resourceRegistry.GetModelMegaMeshHandle(data.m_BoulderModelHandle);
                 if (!megaMeshHandle.IsValid())
                 {
                     NORVES_LOG_ERROR("Rendering3DTest", "BoulderモデルからMegaMeshを取得できませんでした");
-                    resourceManager.ReleaseModel(data.m_BoulderModelHandle);
+                    resourceRegistry.ReleaseModel(data.m_BoulderModelHandle);
                     data.m_BoulderModelHandle = ModelHandle::Invalid();
                     data.m_bBoulderModelLoaded = false;
                 }
@@ -515,18 +515,18 @@ namespace Game::GameModes
         // メッシュの登録解除
         if (data.m_bMeshesRegistered)
         {
-            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
-            resourceManager.UnregisterMesh(data.m_SphereMeshHandle);
-            resourceManager.UnregisterMesh(data.m_GroundMeshHandle);
-            resourceManager.UnregisterMesh(data.m_LightSphereMeshHandle);
+            auto &resourceRegistry = GEngine->GetRenderWorld().GetResourceRegistry();
+            resourceRegistry.UnregisterMesh(data.m_SphereMeshHandle);
+            resourceRegistry.UnregisterMesh(data.m_GroundMeshHandle);
+            resourceRegistry.UnregisterMesh(data.m_LightSphereMeshHandle);
             data.m_bMeshesRegistered = false;
         }
 
         // モデルの解放
         if (data.m_bBoulderModelLoaded)
         {
-            auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
-            resourceManager.ReleaseModel(data.m_BoulderModelHandle);
+            auto &resourceRegistry = GEngine->GetRenderWorld().GetResourceRegistry();
+            resourceRegistry.ReleaseModel(data.m_BoulderModelHandle);
             data.m_BoulderModelHandle = ModelHandle::Invalid();
             data.m_bBoulderModelLoaded = false;
         }

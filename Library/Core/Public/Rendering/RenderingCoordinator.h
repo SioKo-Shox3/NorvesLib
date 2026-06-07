@@ -8,6 +8,7 @@
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
 #include "ShaderManager.h"
+#include "Rendering/RenderResourceRegistryFwd.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
@@ -33,7 +34,6 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     // 前方宣言
-    class RenderResourceManager;
 
     /**
      * @brief レンダリング調整設定
@@ -240,7 +240,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief リソースマネージャーを設定
          */
-        void SetResourceManager(RenderResourceManager *manager) { m_ResourceManager = manager; }
+        void SetResourceRegistry(RenderResourceRegistry *registry) { m_ResourceRegistry = registry; }
+        void SetResourceManager(RenderResourceManager *manager) { SetResourceRegistry(manager); }
 
         // ========================================
         // RHIアクセス
@@ -351,7 +352,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<Container::TSharedPtr<View>> m_Views;
 
         // リソースマネージャー（外部参照）
-        RenderResourceManager *m_ResourceManager = nullptr;
+        RenderResourceRegistry *m_ResourceRegistry = nullptr;
 
         // FramePacket管理
         FramePacketManager m_PacketManager;

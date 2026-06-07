@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResourceRegistry.h"
 
 namespace NorvesLib::RHI
 {
@@ -24,7 +24,7 @@ namespace NorvesLib::Core::Rendering
         void ReleaseMaterial(MaterialHandle handle);
 
         MaterialHandle CreateNeuralMaterial(RHI::IDevice *device,
-                                            RenderResourceManager &resourceManager,
+                                            RenderResourceRegistry &resourceRegistry,
                                             const NeuralMaterialDesc &desc);
         Container::VariableArray<NeuralMaterialResource *> GetNeuralMaterialResources() const;
 

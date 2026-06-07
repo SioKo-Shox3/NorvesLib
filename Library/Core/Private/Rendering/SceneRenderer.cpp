@@ -2,7 +2,7 @@
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/PersistentResourceCache.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResourceRegistry.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IBuffer.h"
@@ -391,17 +391,17 @@ namespace NorvesLib::Core::Rendering
 
     bool SceneRenderer::RecordMeshDrawCall(const DrawCommand &command,
                                            RHI::ICommandList *commandList,
-                                           RenderResourceManager *resourceManager,
+                                           RenderResourceRegistry *resourceRegistry,
                                            RHI::DescriptorSetPtr descriptorSet,
                                            uint32_t descriptorSetSlot)
     {
-        if (!commandList || !resourceManager)
+        if (!commandList || !resourceRegistry)
         {
             return false;
         }
 
         // MeshHandleからGPUデータを解決
-        const auto *gpuData = resourceManager->GetMeshGPUData(command.Draw.MeshHandle);
+        const auto *gpuData = resourceRegistry->GetMeshGPUData(command.Draw.MeshHandle);
         if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer)
         {
             return false;

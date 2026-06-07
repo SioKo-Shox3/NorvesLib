@@ -1,5 +1,5 @@
 ﻿#include "Rendering/NeuralMaterialResource.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResourceRegistry.h"
 #include "RHI/IDevice.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ITexture.h"
@@ -106,7 +106,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool NeuralMaterialResource::RegisterOutputTextures(RenderResourceManager &resourceManager)
+    bool NeuralMaterialResource::RegisterOutputTextures(RenderResourceRegistry &resourceRegistry)
     {
         if (!m_bInitialized)
         {
@@ -121,7 +121,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
-            m_OutputHandles[i] = resourceManager.RegisterExternalTexture(
+            m_OutputHandles[i] = resourceRegistry.RegisterExternalTexture(
                 m_OutputTextures[i],
                 m_Desc.OutputSlots[i].Name);
         }

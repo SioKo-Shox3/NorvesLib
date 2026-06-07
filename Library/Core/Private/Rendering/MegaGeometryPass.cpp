@@ -1,7 +1,7 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/ViewRenderContext.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResourceRegistry.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShaderManager.h"
