@@ -63,18 +63,18 @@ namespace NorvesLib::Core
      *
      * 使用例:
      * ```cpp
-     * auto &resourceManager = GEngine->GetRenderWorld().GetResourceManager();
+     * auto &resourceRegistry = GEngine->GetRenderWorld().GetResourceRegistry();
      *
      * // テクスチャを個別にロード
-     * auto albedoTex = resourceManager.LoadTexture("Assets/Textures/Silver/silver_albedo.png");
-     * auto normalTex = resourceManager.LoadTexture("Assets/Textures/Silver/silver_normal-ogl.png");
+     * auto albedoTex = resourceRegistry.LoadTexture("Assets/Textures/Silver/silver_albedo.png");
+     * auto normalTex = resourceRegistry.LoadTexture("Assets/Textures/Silver/silver_normal-ogl.png");
      *
      * // マテリアルを作成
      * MaterialResourceCreateInfo info;
      * info.AlbedoTexture = albedoTex;
      * info.NormalTexture = normalTex;
      * info.DebugName = "Silver";
-     * auto matHandle = resourceManager.CreateMaterial(info);
+     * auto matHandle = resourceRegistry.CreateMaterial(info);
      *
      * // メッシュにマテリアルを設定
      * meshComponent->SetMaterial(0, matHandle);

@@ -3,6 +3,7 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Rendering/DrawCommand.h"
+#include "Rendering/RenderResourceRegistryFwd.h"
 #include "Rendering/SceneProxy.h"
 #include "RHI/ICommandList.h"
 #include "RHI/RHITypes.h"
@@ -10,7 +11,6 @@
 
 namespace NorvesLib::Core::Rendering
 {
-    class RenderResourceManager;
     class MegaGeometryPass;
 
     enum class FrameCommandType : uint8_t
@@ -26,7 +26,7 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassPtr RenderPass;
         RHI::FramebufferPtr Framebuffer;
         Container::TSharedPtr<Container::VariableArray<DrawCommand>> DrawCommands;
-        RenderResourceManager* ResourceManager = nullptr;
+        RenderResourceRegistry* ResourceManager = nullptr;
         RHI::Viewport Viewport;
         RHI::ScissorRect Scissor;
     };
@@ -57,7 +57,7 @@ namespace NorvesLib::Core::Rendering
     struct MegaGeometryPassCommand
     {
         MegaGeometryPass* Pass = nullptr;
-        RenderResourceManager* ResourceManager = nullptr;
+        RenderResourceRegistry* ResourceManager = nullptr;
         CameraProxy MainCamera;
         bool bHasMainCamera = false;
         RHI::Viewport Viewport;
@@ -77,7 +77,7 @@ namespace NorvesLib::Core::Rendering
                                                Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
                                                const RHI::Viewport& viewport,
                                                const RHI::ScissorRect& scissor,
-                                               RenderResourceManager* resourceManager = nullptr)
+                                               RenderResourceRegistry* resourceManager = nullptr)
         {
             FrameCommand command;
             command.Type = FrameCommandType::GeometryPass;
@@ -133,7 +133,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         static FrameCommand CreateMegaGeometryPass(MegaGeometryPass* pass,
-                                                   RenderResourceManager* resourceManager,
+                                                   RenderResourceRegistry* resourceManager,
                                                    const CameraProxy& mainCamera,
                                                    bool bHasMainCamera,
                                                    const RHI::Viewport& viewport,

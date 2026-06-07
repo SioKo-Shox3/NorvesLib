@@ -7,7 +7,7 @@
 #include "Rendering/FramePacket.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/RenderFrameExecutor.h"
@@ -883,7 +883,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.RenderHeight = m_RenderHeight;
         viewContext.DeltaTime = static_cast<float>(m_Stats.TotalFrameTimeMs * 0.001);
         viewContext.TotalTime = m_TotalTime;
-        viewContext.ResourceManager = m_ResourceManager;
+        viewContext.ResourceManager = m_ResourceRegistry;
         viewContext.ShaderMgr = &m_ShaderManager;
         viewContext.Capabilities = &m_Device->GetCapabilities();
         viewContext.Renderer = &m_SceneRenderer;

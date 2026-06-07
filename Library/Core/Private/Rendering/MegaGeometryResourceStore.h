@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResourceRegistry.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Atomic.h"

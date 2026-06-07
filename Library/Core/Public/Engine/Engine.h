@@ -249,12 +249,17 @@ namespace NorvesLib::Core::Engine
         }
 
         /**
-         * @brief レンダリングリソースマネージャーを取得
-         * @return RenderResourceManagerへの参照
+         * @brief レンダリングリソースレジストリを取得
+         * @return RenderResourceRegistryへの参照
          */
+        Rendering::RenderResourceRegistry &GetRenderResourceRegistry()
+        {
+            return m_RenderWorld.GetResourceRegistry();
+        }
+
         Rendering::RenderResourceManager &GetRenderResourceManager()
         {
-            return m_RenderWorld.GetResourceManager();
+            return GetRenderResourceRegistry();
         }
 
         // ========== ゲームワールド ==========

@@ -2,7 +2,7 @@
 
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Container/PointerTypes.h"
-#include "Core/Public/Rendering/RenderResourceManager.h"
+#include "Core/Public/Rendering/RenderResourceRegistry.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Core/Public/Thread/Mutex.h"
 

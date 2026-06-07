@@ -57,7 +57,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/SceneRenderer.cpp
     Private/Rendering/RenderWorld.cpp
     Private/Rendering/SharedResourceRegistry.cpp
-    Private/Rendering/RenderResourceManager.cpp
+    Private/Rendering/RenderResourceRegistry.cpp
     Private/Rendering/TextureAssetRuntime.cpp
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
@@ -213,6 +213,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/MaterialTypes.h
     Public/Rendering/SceneProxy.h
     Public/Rendering/FramePacket.h
+    Public/Rendering/RenderResourceRegistryFwd.h
+    Public/Rendering/RenderResourceRegistry.h
     Public/Rendering/RenderResourceManager.h
     Public/Rendering/RenderThread.h
     Public/Rendering/RenderWorld.h

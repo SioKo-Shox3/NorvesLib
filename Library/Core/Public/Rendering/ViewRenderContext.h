@@ -3,6 +3,7 @@
 #include "RHI/RHITypes.h"
 #include "RHI/DeviceCapabilities.h"
 #include "DrawCommand.h"
+#include "Rendering/RenderResourceRegistryFwd.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
@@ -24,7 +25,6 @@ namespace NorvesLib::Core::Rendering
 {
     // 前方宣言
     class SharedResourceRegistry;
-    class RenderResourceManager;
     class ShaderManager;
     class MegaGeometryPass;
 
@@ -64,7 +64,7 @@ namespace NorvesLib::Core::Rendering
         SharedResourceRegistry *SharedResources = nullptr;
 
         /** @brief メッシュGPUデータ等を管理するリソースマネージャー */
-        RenderResourceManager *ResourceManager = nullptr;
+        RenderResourceRegistry *ResourceManager = nullptr;
 
         /** @brief シェーダーアセットの読み込み・コンパイル・キャッシュ管理 */
         ShaderManager *ShaderMgr = nullptr;

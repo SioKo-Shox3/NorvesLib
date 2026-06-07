@@ -1,4 +1,4 @@
-﻿#include "Rendering/RenderResourceManager.h"
+﻿#include "Rendering/RenderResourceRegistry.h"
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/MegaGeometryResourceStore.h"
 #include "Rendering/ProceduralMeshGpuStore.h"
@@ -67,37 +67,37 @@ namespace NorvesLib::Core::Rendering
         return IsPreparedTextureAssetFailureStatus(Status);
     }
 
-    RenderResourceManager::RenderResourceManager()
+    RenderResourceRegistry::RenderResourceRegistry()
         : m_MaterialStore(Container::MakeUnique<RenderMaterialStore>(m_NextHandleId)),
           m_TextureAssets(Container::MakeUnique<TextureAssetRuntime>())
     {
     }
 
-    RenderResourceManager::~RenderResourceManager() = default;
+    RenderResourceRegistry::~RenderResourceRegistry() = default;
 
-    bool RenderResourceManager::SetTextureAssetRoot(const Container::String &assetRoot)
+    bool RenderResourceRegistry::SetTextureAssetRoot(const Container::String &assetRoot)
     {
         return m_TextureAssets ? m_TextureAssets->SetTextureAssetRoot(assetRoot) : false;
     }
 
-    bool RenderResourceManager::LoadTextureAssetManifestFromJsonText(
+    bool RenderResourceRegistry::LoadTextureAssetManifestFromJsonText(
         const Container::String &jsonText,
         const Container::String &sourceName)
     {
         return m_TextureAssets ? m_TextureAssets->LoadTextureAssetManifestFromJsonText(jsonText, sourceName) : false;
     }
 
-    bool RenderResourceManager::ResetTextureAssetManifest()
+    bool RenderResourceRegistry::ResetTextureAssetManifest()
     {
         return m_TextureAssets ? m_TextureAssets->ResetTextureAssetManifest() : false;
     }
 
-    bool RenderResourceManager::SetTextureAssetFallbackMode(TextureAssetFallbackMode mode)
+    bool RenderResourceRegistry::SetTextureAssetFallbackMode(TextureAssetFallbackMode mode)
     {
         return m_TextureAssets ? m_TextureAssets->SetTextureAssetFallbackMode(mode) : false;
     }
 
-    PreparedTextureAsset RenderResourceManager::PrepareTextureAssetForWorker(
+    PreparedTextureAsset RenderResourceRegistry::PrepareTextureAssetForWorker(
         const Container::String &requestPath,
         const Container::String &resolvedFallbackPath,
         const char *role,
@@ -108,12 +108,12 @@ namespace NorvesLib::Core::Rendering
                    : PreparedTextureAsset();
     }
 
-    bool RenderResourceManager::IsPreparedTextureAssetCurrent(const PreparedTextureAsset &prepared) const
+    bool RenderResourceRegistry::IsPreparedTextureAssetCurrent(const PreparedTextureAsset &prepared) const
     {
         return m_TextureAssets ? m_TextureAssets->IsPreparedTextureAssetCurrent(prepared) : false;
     }
 
-    TextureHandle RenderResourceManager::FinalizePreparedTextureAsset(
+    TextureHandle RenderResourceRegistry::FinalizePreparedTextureAsset(
         const PreparedTextureAsset &prepared,
         const char *role,
         uint32_t requestId)
@@ -123,7 +123,7 @@ namespace NorvesLib::Core::Rendering
                    : TextureHandle::Invalid();
     }
 
-    bool RenderResourceManager::TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(
+    bool RenderResourceRegistry::TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(
         const PreparedTextureAsset &prepared,
         PreparedCookedTextureMip0RGBA8UNormLinearSplit &outSplit,
         Container::String *pOutReason,
@@ -141,7 +141,7 @@ namespace NorvesLib::Core::Rendering
     }
 
 
-    bool RenderResourceManager::Initialize(Container::TSharedPtr<RHI::IDevice> device)
+    bool RenderResourceRegistry::Initialize(Container::TSharedPtr<RHI::IDevice> device)
     {
         if (m_bInitialized)
         {
@@ -167,7 +167,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void RenderResourceManager::Shutdown()
+    void RenderResourceRegistry::Shutdown()
     {
         if (!m_bInitialized)
         {
@@ -191,7 +191,7 @@ namespace NorvesLib::Core::Rendering
     // バッファ操作
     // ========================================
 
-    BufferHandle RenderResourceManager::CreateBuffer(const BufferCreateInfo &createInfo)
+    BufferHandle RenderResourceRegistry::CreateBuffer(const BufferCreateInfo &createInfo)
     {
         if (!m_bInitialized || !m_GpuResources)
         {
@@ -201,7 +201,7 @@ namespace NorvesLib::Core::Rendering
         return m_GpuResources->CreateBuffer(createInfo);
     }
 
-    BufferHandle RenderResourceManager::CreateBuffer(const BufferCreateInfo &createInfo,
+    BufferHandle RenderResourceRegistry::CreateBuffer(const BufferCreateInfo &createInfo,
                                                      const void *data, size_t dataSize)
     {
         if (!m_bInitialized || !m_GpuResources)
@@ -212,7 +212,7 @@ namespace NorvesLib::Core::Rendering
         return m_GpuResources->CreateBuffer(createInfo, data, dataSize);
     }
 
-    bool RenderResourceManager::UpdateBuffer(BufferHandle handle, const void *data,
+    bool RenderResourceRegistry::UpdateBuffer(BufferHandle handle, const void *data,
                                              size_t dataSize, size_t offset)
     {
         if (!m_GpuResources)
@@ -223,7 +223,7 @@ namespace NorvesLib::Core::Rendering
         return m_GpuResources->UpdateBuffer(handle, data, dataSize, offset);
     }
 
-    void RenderResourceManager::ReleaseBuffer(BufferHandle handle)
+    void RenderResourceRegistry::ReleaseBuffer(BufferHandle handle)
     {
         if (!m_GpuResources)
         {
@@ -237,7 +237,7 @@ namespace NorvesLib::Core::Rendering
     // テクスチャ操作
     // ========================================
 
-    TextureHandle RenderResourceManager::CreateTexture(const TextureCreateInfo &createInfo)
+    TextureHandle RenderResourceRegistry::CreateTexture(const TextureCreateInfo &createInfo)
     {
         if (!m_bInitialized || !m_GpuResources)
         {
@@ -247,7 +247,7 @@ namespace NorvesLib::Core::Rendering
         return m_GpuResources->CreateTexture(createInfo);
     }
 
-    TextureHandle RenderResourceManager::CreateTexture(const TextureCreateInfo &createInfo,
+    TextureHandle RenderResourceRegistry::CreateTexture(const TextureCreateInfo &createInfo,
                                                        const void *data, size_t dataSize)
     {
         return m_TextureAssets
@@ -255,12 +255,12 @@ namespace NorvesLib::Core::Rendering
                    : TextureHandle::Invalid();
     }
 
-    TextureHandle RenderResourceManager::LoadTexture(const Container::String &path)
+    TextureHandle RenderResourceRegistry::LoadTexture(const Container::String &path)
     {
         return m_TextureAssets ? m_TextureAssets->LoadTexture(path) : TextureHandle::Invalid();
     }
 
-    TextureHandle RenderResourceManager::RegisterExternalTexture(
+    TextureHandle RenderResourceRegistry::RegisterExternalTexture(
         Container::TSharedPtr<RHI::ITexture> rhiTexture,
         const Container::String &debugName)
     {
@@ -272,7 +272,7 @@ namespace NorvesLib::Core::Rendering
         return m_GpuResources->RegisterExternalTexture(std::move(rhiTexture), debugName);
     }
 
-    void RenderResourceManager::ReleaseTexture(TextureHandle handle)
+    void RenderResourceRegistry::ReleaseTexture(TextureHandle handle)
     {
         if (!m_GpuResources)
         {
@@ -286,7 +286,7 @@ namespace NorvesLib::Core::Rendering
     // サンプラー操作
     // ========================================
 
-    SamplerHandle RenderResourceManager::GetDefaultSampler()
+    SamplerHandle RenderResourceRegistry::GetDefaultSampler()
     {
         if (!m_GpuResources)
         {
@@ -296,7 +296,7 @@ namespace NorvesLib::Core::Rendering
         return m_GpuResources->GetDefaultSampler();
     }
 
-    SamplerHandle RenderResourceManager::GetPointSampler()
+    SamplerHandle RenderResourceRegistry::GetPointSampler()
     {
         if (!m_GpuResources)
         {
@@ -306,7 +306,7 @@ namespace NorvesLib::Core::Rendering
         return m_GpuResources->GetPointSampler();
     }
 
-    void RenderResourceManager::ReleaseSampler(SamplerHandle handle)
+    void RenderResourceRegistry::ReleaseSampler(SamplerHandle handle)
     {
         if (!m_GpuResources)
         {
@@ -320,17 +320,17 @@ namespace NorvesLib::Core::Rendering
     // シェーダー操作
     // ========================================
 
-    ShaderHandle RenderResourceManager::CreateShader(const ShaderCreateInfo &createInfo)
+    ShaderHandle RenderResourceRegistry::CreateShader(const ShaderCreateInfo &createInfo)
     {
         return m_GpuResources ? m_GpuResources->CreateShader(createInfo) : ShaderHandle::Invalid();
     }
 
-    ShaderHandle RenderResourceManager::LoadShader(const Container::String &path, ShaderStage stage)
+    ShaderHandle RenderResourceRegistry::LoadShader(const Container::String &path, ShaderStage stage)
     {
         return m_GpuResources ? m_GpuResources->LoadShader(path, stage) : ShaderHandle::Invalid();
     }
 
-    void RenderResourceManager::ReleaseShader(ShaderHandle handle)
+    void RenderResourceRegistry::ReleaseShader(ShaderHandle handle)
     {
         if (!m_GpuResources)
         {
@@ -344,12 +344,12 @@ namespace NorvesLib::Core::Rendering
     // 頂点レイアウト操作
     // ========================================
 
-    VertexLayoutHandle RenderResourceManager::RegisterVertexLayout(const VertexLayout &layout)
+    VertexLayoutHandle RenderResourceRegistry::RegisterVertexLayout(const VertexLayout &layout)
     {
         return m_GpuResources ? m_GpuResources->RegisterVertexLayout(layout) : VertexLayoutHandle::Invalid();
     }
 
-    const VertexLayout *RenderResourceManager::GetVertexLayout(VertexLayoutHandle handle) const
+    const VertexLayout *RenderResourceRegistry::GetVertexLayout(VertexLayoutHandle handle) const
     {
         return m_GpuResources ? m_GpuResources->GetVertexLayout(handle) : nullptr;
     }
@@ -358,22 +358,22 @@ namespace NorvesLib::Core::Rendering
     // 内部リソースアクセス
     // ========================================
 
-    RHI::IBuffer *RenderResourceManager::GetRHIBuffer(BufferHandle handle) const
+    RHI::IBuffer *RenderResourceRegistry::GetRHIBuffer(BufferHandle handle) const
     {
         return m_GpuResources ? m_GpuResources->GetRHIBuffer(handle) : nullptr;
     }
 
-    RHI::ITexture *RenderResourceManager::GetRHITexture(TextureHandle handle) const
+    RHI::ITexture *RenderResourceRegistry::GetRHITexture(TextureHandle handle) const
     {
         return m_GpuResources ? m_GpuResources->GetRHITexture(handle) : nullptr;
     }
 
-    Container::TSharedPtr<RHI::ITexture> RenderResourceManager::GetRHITexturePtr(TextureHandle handle) const
+    Container::TSharedPtr<RHI::ITexture> RenderResourceRegistry::GetRHITexturePtr(TextureHandle handle) const
     {
         return m_GpuResources ? m_GpuResources->GetRHITexturePtr(handle) : nullptr;
     }
 
-    RHI::IShader *RenderResourceManager::GetRHIShader(ShaderHandle handle) const
+    RHI::IShader *RenderResourceRegistry::GetRHIShader(ShaderHandle handle) const
     {
         return m_GpuResources ? m_GpuResources->GetRHIShader(handle) : nullptr;
     }
@@ -382,7 +382,7 @@ namespace NorvesLib::Core::Rendering
     // メッシュ操作
     // ========================================
 
-    bool RenderResourceManager::RegisterMesh(MeshDataHandle handle,
+    bool RenderResourceRegistry::RegisterMesh(MeshDataHandle handle,
                                              const void *vertices, size_t vertexSize,
                                              const uint32_t *indices, uint32_t indexCount)
     {
@@ -400,12 +400,12 @@ namespace NorvesLib::Core::Rendering
         return m_ProceduralMeshes->RegisterMesh(handle, vertices, vertexSize, indices, indexCount);
     }
 
-    const RenderResourceManager::MeshGPUData *RenderResourceManager::GetMeshGPUData(MeshDataHandle handle) const
+    const RenderResourceRegistry::MeshGPUData *RenderResourceRegistry::GetMeshGPUData(MeshDataHandle handle) const
     {
         return m_ProceduralMeshes ? m_ProceduralMeshes->GetMeshGPUData(handle) : nullptr;
     }
 
-    void RenderResourceManager::UnregisterMesh(MeshDataHandle handle)
+    void RenderResourceRegistry::UnregisterMesh(MeshDataHandle handle)
     {
         if (!m_ProceduralMeshes)
         {
@@ -419,12 +419,12 @@ namespace NorvesLib::Core::Rendering
     // リソース管理
     // ========================================
 
-    void RenderResourceManager::CleanupUnusedResources()
+    void RenderResourceRegistry::CleanupUnusedResources()
     {
         // TODO: 参照カウントベースのクリーンアップ
     }
 
-    void RenderResourceManager::ClearAllResources()
+    void RenderResourceRegistry::ClearAllResources()
     {
         if (m_TextureAssets)
         {
@@ -452,7 +452,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    RenderResourceManager::ResourceStats RenderResourceManager::GetResourceStats() const
+    RenderResourceRegistry::ResourceStats RenderResourceRegistry::GetResourceStats() const
     {
         return m_GpuResources ? m_GpuResources->GetResourceStats() : ResourceStats();
     }
@@ -461,22 +461,22 @@ namespace NorvesLib::Core::Rendering
     // マテリアル操作
     // ========================================
 
-    MaterialHandle RenderResourceManager::CreateMaterial(const MaterialCreateData &createInfo)
+    MaterialHandle RenderResourceRegistry::CreateMaterial(const MaterialCreateData &createInfo)
     {
         return m_MaterialStore ? m_MaterialStore->CreateMaterial(createInfo) : MaterialHandle::Invalid();
     }
 
-    const MaterialResourceData *RenderResourceManager::GetMaterialData(MaterialHandle handle) const
+    const MaterialResourceData *RenderResourceRegistry::GetMaterialData(MaterialHandle handle) const
     {
         return m_MaterialStore ? m_MaterialStore->GetMaterialData(handle) : nullptr;
     }
 
-    bool RenderResourceManager::UpdateMaterial(MaterialHandle handle, const MaterialCreateData &createInfo)
+    bool RenderResourceRegistry::UpdateMaterial(MaterialHandle handle, const MaterialCreateData &createInfo)
     {
         return m_MaterialStore ? m_MaterialStore->UpdateMaterial(handle, createInfo) : false;
     }
 
-    void RenderResourceManager::ReleaseMaterial(MaterialHandle handle)
+    void RenderResourceRegistry::ReleaseMaterial(MaterialHandle handle)
     {
         if (!m_MaterialStore)
         {
@@ -490,7 +490,7 @@ namespace NorvesLib::Core::Rendering
     // ニューラルマテリアル操作
     // ========================================
 
-    MaterialHandle RenderResourceManager::CreateNeuralMaterial(const NeuralMaterialDesc &desc)
+    MaterialHandle RenderResourceRegistry::CreateNeuralMaterial(const NeuralMaterialDesc &desc)
     {
         if (!m_bInitialized || !m_Device || !m_MaterialStore)
         {
@@ -500,7 +500,7 @@ namespace NorvesLib::Core::Rendering
         return m_MaterialStore->CreateNeuralMaterial(m_Device.get(), *this, desc);
     }
 
-    Container::VariableArray<NeuralMaterialResource *> RenderResourceManager::GetNeuralMaterialResources() const
+    Container::VariableArray<NeuralMaterialResource *> RenderResourceRegistry::GetNeuralMaterialResources() const
     {
         return m_MaterialStore ? m_MaterialStore->GetNeuralMaterialResources()
                                : Container::VariableArray<NeuralMaterialResource *>();
@@ -510,7 +510,7 @@ namespace NorvesLib::Core::Rendering
     // MegaGeometry操作
     // ========================================
 
-    MegaGeometry::MegaMeshHandle RenderResourceManager::CreateMegaMesh(
+    MegaGeometry::MegaMeshHandle RenderResourceRegistry::CreateMegaMesh(
         const MegaGeometry::MegaMeshCreateInfo &createInfo)
     {
         if (!m_bInitialized || !m_MegaGeometryResources)
@@ -521,13 +521,13 @@ namespace NorvesLib::Core::Rendering
         return m_MegaGeometryResources->CreateMegaMesh(createInfo);
     }
 
-    const MegaGeometry::MegaMeshGPUData *RenderResourceManager::GetMegaMeshGPUData(
+    const MegaGeometry::MegaMeshGPUData *RenderResourceRegistry::GetMegaMeshGPUData(
         MegaGeometry::MegaMeshHandle handle) const
     {
         return m_MegaGeometryResources ? m_MegaGeometryResources->GetMegaMeshGPUData(handle) : nullptr;
     }
 
-    void RenderResourceManager::ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle)
+    void RenderResourceRegistry::ReleaseMegaMesh(MegaGeometry::MegaMeshHandle handle)
     {
         if (!m_MegaGeometryResources)
         {
@@ -537,7 +537,7 @@ namespace NorvesLib::Core::Rendering
         m_MegaGeometryResources->ReleaseMegaMesh(handle);
     }
 
-    ModelHandle RenderResourceManager::RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
+    ModelHandle RenderResourceRegistry::RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
                                                      const Container::String &debugName,
                                                      const Container::String &sourcePath)
     {
@@ -545,13 +545,13 @@ namespace NorvesLib::Core::Rendering
                                        : ModelHandle::Invalid();
     }
 
-    MegaGeometry::MegaMeshHandle RenderResourceManager::GetModelMegaMeshHandle(ModelHandle handle) const
+    MegaGeometry::MegaMeshHandle RenderResourceRegistry::GetModelMegaMeshHandle(ModelHandle handle) const
     {
         return m_MegaGeometryResources ? m_MegaGeometryResources->GetModelMegaMeshHandle(handle)
                                        : MegaGeometry::MegaMeshHandle::Invalid();
     }
 
-    void RenderResourceManager::ReleaseModel(ModelHandle handle)
+    void RenderResourceRegistry::ReleaseModel(ModelHandle handle)
     {
         if (!m_MegaGeometryResources)
         {
@@ -565,18 +565,18 @@ namespace NorvesLib::Core::Rendering
     // 非同期テクスチャ読み込み
     // ========================================
 
-    uint32_t RenderResourceManager::LoadTextureAsync(const Container::String &path,
+    uint32_t RenderResourceRegistry::LoadTextureAsync(const Container::String &path,
                                                      NorvesLib::Core::Delegate<void, TextureHandle> callback)
     {
         return m_TextureAssets ? m_TextureAssets->LoadTextureAsync(path, std::move(callback)) : 0;
     }
 
-    uint32_t RenderResourceManager::FlushCompletedTextureLoads()
+    uint32_t RenderResourceRegistry::FlushCompletedTextureLoads()
     {
         return m_TextureAssets ? m_TextureAssets->FlushCompletedTextureLoads() : 0;
     }
 
-    uint32_t RenderResourceManager::GetPendingAsyncLoadCount() const
+    uint32_t RenderResourceRegistry::GetPendingAsyncLoadCount() const
     {
         return m_TextureAssets ? m_TextureAssets->GetPendingAsyncLoadCount() : 0;
     }

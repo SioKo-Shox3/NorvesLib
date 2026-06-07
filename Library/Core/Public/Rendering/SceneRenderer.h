@@ -3,6 +3,7 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Rendering/DrawCommand.h"
+#include "Rendering/RenderResourceRegistryFwd.h"
 #include "Rendering/FrameCommand.h"
 #include "RHI/RHITypes.h"
 #include <cstdint>
@@ -153,7 +154,7 @@ namespace NorvesLib::Core::Rendering
          */
         bool RecordMeshDrawCall(const DrawCommand &command,
                                 RHI::ICommandList *commandList,
-                                class RenderResourceManager *resourceManager,
+                                RenderResourceRegistry *resourceManager,
                                 RHI::DescriptorSetPtr descriptorSet,
                                 uint32_t descriptorSetSlot = 0);
 
