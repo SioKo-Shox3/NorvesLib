@@ -32,6 +32,7 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class GpuResourceStore;
+    class TextureAsyncLoadQueue;
     class TextureAssetResolver;
 
     /**
@@ -628,13 +629,9 @@ namespace NorvesLib::Core::Rendering
         mutable Thread::Mutex m_ResourceMutex;
 
         // 非同期テクスチャ読み込みキュー
-        Container::VariableArray<Container::TSharedPtr<AsyncTextureRequest>> m_PendingTextureLoads;
-        Container::Map<Container::String, Container::TSharedPtr<AsyncTextureRequest>> m_PendingTextureLoadsByPath;
-        uint32_t m_ActiveTextureLoadFlushCount = 0;
-        mutable Thread::Mutex m_AsyncLoadMutex;
-        Thread::Atomic<uint32_t> m_NextAsyncRequestId{1};
+        Container::TUniquePtr<TextureAsyncLoadQueue> m_TextureAsyncLoads;
 
-        // Texture asset resolution state. Lock order when nested: texture asset -> async load -> resource.
+        // Texture asset resolution state. Lock order when nested: texture asset -> async queue -> resource.
         Container::TUniquePtr<TextureAssetResolver> m_TextureAssetResolver;
         mutable Thread::Mutex m_TextureAssetMutex;
 

@@ -460,11 +460,16 @@ namespace
             BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()))));
 
         std::vector<TextureHandle> callbacks;
+        bool bConfigMutationRejectedDuringFlushCallback = false;
         const uint32_t requestA = manager.LoadTextureAsync(
             ToCoreString("Textures/Cooked.tga"),
-            NorvesLib::Core::Delegate<void, TextureHandle>([&callbacks](TextureHandle handle) {
-                callbacks.push_back(handle);
-            }));
+            NorvesLib::Core::Delegate<void, TextureHandle>(
+                [&callbacks, &manager, &root, &bConfigMutationRejectedDuringFlushCallback](TextureHandle handle) {
+                    callbacks.push_back(handle);
+                    bConfigMutationRejectedDuringFlushCallback =
+                        !manager.SetTextureAssetRoot(ToCoreString(ToAssetString(root)));
+                }));
+        assert(manager.GetPendingAsyncLoadCount() == 1);
         const uint32_t requestB = manager.LoadTextureAsync(
             ToCoreString("Textures/Cooked.tga"),
             NorvesLib::Core::Delegate<void, TextureHandle>([&callbacks](TextureHandle handle) {
@@ -473,6 +478,7 @@ namespace
 
         assert(requestA != 0);
         assert(requestB == requestA);
+        assert(manager.GetPendingAsyncLoadCount() == 1);
         assert(!manager.SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
 
         NorvesLib::Thread::JobSystem::Get().WaitForAll();
@@ -482,8 +488,11 @@ namespace
                 callbacks.push_back(handle);
             }));
         assert(requestC == requestA);
+        assert(manager.GetPendingAsyncLoadCount() == 1);
 
         assert(manager.FlushCompletedTextureLoads() == 1);
+        assert(manager.GetPendingAsyncLoadCount() == 0);
+        assert(bConfigMutationRejectedDuringFlushCallback);
         assert(callbacks.size() == 3);
         assert(callbacks[0].IsValid());
         assert(callbacks[1].IsValid());
