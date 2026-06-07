@@ -1,8 +1,10 @@
 #pragma once
 
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/TextureAsyncTypes.h"
 
 #include "Container/Containers.h"
+#include "Container/PointerTypes.h"
+#include "Delegate/Delegate.h"
 #include "Thread/Atomic.h"
 #include "Thread/Mutex.h"
 
@@ -18,7 +20,7 @@ namespace NorvesLib::Core::Rendering
         struct State;
 
     public:
-        using RequestPtr = Container::TSharedPtr<RenderResourceManager::AsyncTextureRequest>;
+        using RequestPtr = Container::TSharedPtr<TextureAsyncRequest>;
         using Callback = NorvesLib::Core::Delegate<void, TextureHandle>;
         using CallbackList = Container::VariableArray<Callback>;
 

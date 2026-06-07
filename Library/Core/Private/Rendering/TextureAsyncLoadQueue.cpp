@@ -79,7 +79,7 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
-        auto request = Container::MakeShared<RenderResourceManager::AsyncTextureRequest>();
+        auto request = Container::MakeShared<TextureAsyncRequest>();
         request->RequestId = state->NextAsyncRequestId.FetchAdd(1, std::memory_order_relaxed);
         request->Path = plan.RequestPath;
         request->CacheKey = plan.CacheKey;

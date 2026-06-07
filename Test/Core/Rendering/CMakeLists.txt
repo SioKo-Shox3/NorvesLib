@@ -102,6 +102,17 @@ target_include_directories(TextureHandleCacheTest PRIVATE
 set_target_properties(TextureHandleCacheTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME TextureHandleCacheTest COMMAND TextureHandleCacheTest)
 
+add_executable(RenderResourceManagerAsyncTextureTypesTest
+    RenderResourceManagerAsyncTextureTypesTest.cpp
+)
+target_link_libraries(RenderResourceManagerAsyncTextureTypesTest PRIVATE Core)
+target_include_directories(RenderResourceManagerAsyncTextureTypesTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(RenderResourceManagerAsyncTextureTypesTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderResourceManagerAsyncTextureTypesTest COMMAND RenderResourceManagerAsyncTextureTypesTest)
+
 add_executable(RenderResourceManagerTextureAssetTest
     RenderResourceManagerTextureAssetTest.cpp
 )

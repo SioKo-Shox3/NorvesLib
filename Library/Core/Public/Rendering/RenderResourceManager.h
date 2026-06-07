@@ -3,6 +3,7 @@
 #include "RenderTypes.h"
 #include "GpuResourceTypes.h"
 #include "TextureAssetTypes.h"
+#include "Rendering/TextureAsyncTypes.h"
 #include "VertexLayout.h"
 #include "MaterialTypes.h"
 #include "NeuralMaterialResource.h"
@@ -236,36 +237,8 @@ namespace NorvesLib::Core::Rendering
         // 非同期テクスチャ読み込み
         // ========================================
 
-        /**
-         * @brief 非同期テクスチャ読み込みの完了データ
-         */
-        struct AsyncTextureResult
-        {
-            Container::String Path;                      ///< リクエストパス
-            Container::String ResolvedPath;              ///< 解決済みパス
-            Container::String CacheKey;                  ///< キャッシュ/ペンディングキー
-            Container::AnsiString LogicalPath;           ///< 正規化済み論理パス
-            TextureCreateInfo CreateInfo;                ///< テクスチャ作成情報
-            Container::VariableArray<uint8_t> PixelData; ///< デコード済みピクセルデータ
-            Container::TSharedPtr<CookedTextureAsyncPayload> CookedTexture; ///< cooked texture payload
-            TextureLoadSource Source = TextureLoadSource::LegacyFile;       ///< 読み込み元
-            TextureAssetFallbackMode FallbackMode = TextureAssetFallbackMode::FailOnCookedFailure; ///< cooked failure fallback
-            uint64_t AssetGeneration = 0;                ///< asset設定世代
-            bool bSuccess = false;                       ///< 読み込み成功フラグ
-        };
-
-        /**
-         * @brief 非同期テクスチャ読み込みリクエスト
-         */
-        struct AsyncTextureRequest
-        {
-            uint32_t RequestId = 0;                                  ///< リクエストID
-            Container::String Path;                                  ///< テクスチャパス
-            Container::String CacheKey;                              ///< キャッシュ/ペンディングキー
-            Thread::TaskPtr Task;                                    ///< ジョブシステムタスク
-            AsyncTextureResult Result;                               ///< 読み込み結果
-            Container::VariableArray<NorvesLib::Core::Delegate<void, TextureHandle>> Callbacks; ///< 完了コールバック群
-        };
+        using AsyncTextureResult = TextureAsyncResult;
+        using AsyncTextureRequest = TextureAsyncRequest;
 
         /**
          * @brief ファイルからテクスチャを非同期ロード
