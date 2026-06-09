@@ -2,7 +2,6 @@
 
 #include "RHI/RHITypes.h"
 #include "RenderTypes.h"
-#include "Rendering/RenderResourceRegistryFwd.h"
 #include "Container/Containers.h"
 #include <cstdint>
 
@@ -13,6 +12,8 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    class ITextureHandleRegistrar;
+
     /**
      * @brief ニューラルマテリアルの出力スロット定義
      *
@@ -112,7 +113,7 @@ namespace NorvesLib::Core::Rendering
      * 1つのMLPで複数のPBRプロパティ（Albedo, Normal, ARM等）を一括デコードし、
      * 各出力テクスチャに分配書き込みします。
      *
-     * 出力テクスチャはRenderResourceRegistryにTextureHandleとして登録され、
+     * 出力テクスチャはITextureHandleRegistrarにTextureHandleとして登録され、
      * GBufferPassが通常のテクスチャと同じ経路で参照できます。
      *
      * 責務:
@@ -136,11 +137,17 @@ namespace NorvesLib::Core::Rendering
         bool Initialize(RHI::IDevice *device, const NeuralMaterialDesc &desc);
 
         /**
-         * @brief 出力テクスチャをRenderResourceRegistryにTextureHandleとして登録
-         * @param resourceRegistry テクスチャハンドル登録先
+         * @brief 出力テクスチャをTextureHandleとして登録
+         * @param textureRegistrar テクスチャハンドル登録先
          * @return 成功時true
          */
-        bool RegisterOutputTextures(RenderResourceRegistry &resourceRegistry);
+        bool RegisterOutputTextures(ITextureHandleRegistrar &textureRegistrar);
+
+        /**
+         * @brief 登録済み出力テクスチャハンドルを解放
+         * @param textureRegistrar 登録時と同じテクスチャハンドル登録先
+         */
+        void ReleaseOutputTextures(ITextureHandleRegistrar &textureRegistrar);
 
         /**
          * @brief 重みデータをアップロード

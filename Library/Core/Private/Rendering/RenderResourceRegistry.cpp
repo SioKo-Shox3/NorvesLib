@@ -73,7 +73,10 @@ namespace NorvesLib::Core::Rendering
     {
     }
 
-    RenderResourceRegistry::~RenderResourceRegistry() = default;
+    RenderResourceRegistry::~RenderResourceRegistry()
+    {
+        Shutdown();
+    }
 
     bool RenderResourceRegistry::SetTextureAssetRoot(const Container::String &assetRoot)
     {
@@ -426,14 +429,14 @@ namespace NorvesLib::Core::Rendering
 
     void RenderResourceRegistry::ClearAllResources()
     {
+        if (m_MaterialStore)
+        {
+            m_MaterialStore->Clear(*this);
+        }
+
         if (m_TextureAssets)
         {
             m_TextureAssets->ClearRuntimeResources();
-        }
-
-        if (m_MaterialStore)
-        {
-            m_MaterialStore->Clear();
         }
 
         if (m_ProceduralMeshes)
@@ -483,7 +486,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        m_MaterialStore->ReleaseMaterial(handle);
+        m_MaterialStore->ReleaseMaterial(handle, *this);
     }
 
     // ========================================

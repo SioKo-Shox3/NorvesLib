@@ -164,7 +164,7 @@ int main()
     assert(device->CreatedBufferDescs[1].Usage == NorvesLib::RHI::ResourceUsage::IndexBuffer);
     assert(manager.GetResourceStats().BufferCount == 0);
 
-    const RenderResourceManager::MeshGPUData *gpuData = manager.GetMeshGPUData(meshHandle);
+    const ProceduralMeshGPUData *gpuData = manager.GetMeshGPUData(meshHandle);
     assert(gpuData != nullptr);
     assert(gpuData->VertexBuffer);
     assert(gpuData->IndexBuffer);

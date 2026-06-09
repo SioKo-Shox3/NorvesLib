@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Rendering/ITextureHandleRegistrar.h"
+#include "Rendering/ProceduralMeshGPUData.h"
 #include "Rendering/RenderResourceRegistryFwd.h"
 #include "RenderTypes.h"
 #include "GpuResourceTypes.h"
@@ -38,57 +40,6 @@ namespace NorvesLib::Core::Rendering
     class TextureAssetRuntime;
 
     /**
-     * @brief マテリアル作成情報
-     */
-    struct MaterialCreateData
-    {
-        TextureHandle AlbedoTexture;
-        TextureHandle NormalTexture;
-        TextureHandle MetallicTexture;
-        TextureHandle RoughnessTexture;
-        TextureHandle AOTexture;
-        TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
-
-        float HeightScale = 0.05f; ///< POMの高さスケール（0.0～0.1程度が自然）
-
-        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
-        float EmissiveStrength = 0.0f;
-
-        BlendMode Blend = BlendMode::Opaque;
-        ShadingModel Shading = ShadingModel::DefaultLit;
-        bool bTwoSided = false;
-        bool bCastShadows = true;
-
-        Container::String DebugName;
-    };
-
-    /**
-     * @brief マテリアルリソースデータ（内部用）
-     */
-    struct MaterialResourceData
-    {
-        TextureHandle AlbedoTexture;
-        TextureHandle NormalTexture;
-        TextureHandle MetallicTexture;
-        TextureHandle RoughnessTexture;
-        TextureHandle AOTexture;
-        TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
-
-        float HeightScale = 0.05f; ///< POMの高さスケール
-
-        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
-        float EmissiveStrength = 0.0f;
-
-        BlendMode Blend = BlendMode::Opaque;
-        ShadingModel Shading = ShadingModel::DefaultLit;
-        bool bTwoSided = false;
-        bool bCastShadows = true;
-
-        uint32_t RefCount = 0;
-        Container::String DebugName;
-    };
-
-    /**
      * @brief モデルリソースデータ（内部用）
      */
     struct ModelResourceData
@@ -114,7 +65,7 @@ namespace NorvesLib::Core::Rendering
      * 新しい責務は具体的なstore/loader/resolver/runtimeへ配置し、
      * この型は既存API互換のファサードとして維持します。
      */
-    class RenderResourceRegistry
+    class RenderResourceRegistry : public ITextureHandleRegistrar
     {
     public:
         /**
@@ -281,13 +232,13 @@ namespace NorvesLib::Core::Rendering
          */
         TextureHandle RegisterExternalTexture(
             Container::TSharedPtr<RHI::ITexture> rhiTexture,
-            const Container::String &debugName = "");
+            const Container::String &debugName = Container::String()) override;
 
         /**
          * @brief テクスチャを解放
          * @param handle テクスチャハンドル
          */
-        void ReleaseTexture(TextureHandle handle);
+        void ReleaseTexture(TextureHandle handle) override;
 
         // ========================================
         // サンプラー操作
@@ -359,12 +310,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief メッシュのGPUデータ（VB/IB/インデックス数）
          */
-        struct MeshGPUData
-        {
-            Container::TSharedPtr<RHI::IBuffer> VertexBuffer;
-            Container::TSharedPtr<RHI::IBuffer> IndexBuffer;
-            uint32_t IndexCount = 0;
-        };
+        using MeshGPUData = ProceduralMeshGPUData;
 
         /**
          * @brief プロシージャルメッシュをGPUに登録

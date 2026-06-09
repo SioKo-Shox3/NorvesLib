@@ -1,5 +1,5 @@
 ﻿#include "Rendering/NeuralMaterialResource.h"
-#include "Rendering/RenderResourceRegistry.h"
+#include "Rendering/ITextureHandleRegistrar.h"
 #include "RHI/IDevice.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ITexture.h"
@@ -106,7 +106,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool NeuralMaterialResource::RegisterOutputTextures(RenderResourceRegistry &resourceRegistry)
+    bool NeuralMaterialResource::RegisterOutputTextures(ITextureHandleRegistrar &textureRegistrar)
     {
         if (!m_bInitialized)
         {
@@ -114,19 +114,56 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        ReleaseOutputTextures(textureRegistrar);
+
+        if (m_OutputTextures.size() != m_Desc.OutputSlots.size())
+        {
+            NORVES_LOG_ERROR("NeuralMaterialResource", "Output texture count does not match output slots");
+            return false;
+        }
+
+        if (m_OutputHandles.size() != m_OutputTextures.size())
+        {
+            m_OutputHandles.assign(m_OutputTextures.size(), TextureHandle::Invalid());
+        }
+
         for (size_t i = 0; i < m_OutputTextures.size(); ++i)
         {
             if (!m_OutputTextures[i])
             {
-                continue;
+                NORVES_LOG_ERROR("NeuralMaterialResource", "Output texture for slot %zu is null", i);
+                return false;
             }
+        }
 
-            m_OutputHandles[i] = resourceRegistry.RegisterExternalTexture(
+        for (size_t i = 0; i < m_OutputTextures.size(); ++i)
+        {
+            TextureHandle handle = textureRegistrar.RegisterExternalTexture(
                 m_OutputTextures[i],
                 m_Desc.OutputSlots[i].Name);
+            if (!handle.IsValid())
+            {
+                NORVES_LOG_ERROR("NeuralMaterialResource", "Failed to register output texture for slot %zu", i);
+                ReleaseOutputTextures(textureRegistrar);
+                return false;
+            }
+
+            m_OutputHandles[i] = handle;
         }
 
         return true;
+    }
+
+    void NeuralMaterialResource::ReleaseOutputTextures(ITextureHandleRegistrar &textureRegistrar)
+    {
+        for (TextureHandle &handle : m_OutputHandles)
+        {
+            if (handle.IsValid())
+            {
+                textureRegistrar.ReleaseTexture(handle);
+                handle = TextureHandle::Invalid();
+            }
+        }
     }
 
     bool NeuralMaterialResource::UploadWeights(const void *weightData, size_t dataSize)

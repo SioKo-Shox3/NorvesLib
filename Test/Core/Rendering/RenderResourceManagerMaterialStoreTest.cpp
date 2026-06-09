@@ -1,4 +1,6 @@
 #include "Rendering/RenderResourceManager.h"
+#include "Rendering/ITextureHandleRegistrar.h"
+#include "Rendering/NeuralMaterialResource.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "RHI/ITexture.h"
@@ -155,6 +157,60 @@ namespace
         return handle;
     }
 
+    class FakeRegistrar final : public ITextureHandleRegistrar
+    {
+    public:
+        TextureHandle RegisterExternalTexture(
+            NorvesLib::Core::Container::TSharedPtr<NorvesLib::RHI::ITexture> rhiTexture,
+            const NorvesLib::Core::Container::String &debugName = NorvesLib::Core::Container::String()) override
+        {
+            (void)debugName;
+            ++RegisterCalls;
+            if (!rhiTexture || (FailOnRegisterCall != 0 && RegisterCalls == FailOnRegisterCall))
+            {
+                return TextureHandle::Invalid();
+            }
+
+            TextureHandle handle = MakeTextureHandle(NextHandleId++);
+            RegisteredHandles.push_back(handle);
+            ActiveHandles.push_back(handle);
+            return handle;
+        }
+
+        void ReleaseTexture(TextureHandle handle) override
+        {
+            ReleasedHandles.push_back(handle);
+            for (auto it = ActiveHandles.begin(); it != ActiveHandles.end(); ++it)
+            {
+                if (it->Id == handle.Id)
+                {
+                    ActiveHandles.erase(it);
+                    return;
+                }
+            }
+        }
+
+        size_t CountReleased(TextureHandle handle) const
+        {
+            size_t count = 0;
+            for (TextureHandle releasedHandle : ReleasedHandles)
+            {
+                if (releasedHandle.Id == handle.Id)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        size_t RegisterCalls = 0;
+        size_t FailOnRegisterCall = 0;
+        uint64_t NextHandleId = 1000;
+        std::vector<TextureHandle> RegisteredHandles;
+        std::vector<TextureHandle> ReleasedHandles;
+        std::vector<TextureHandle> ActiveHandles;
+    };
+
     MaterialCreateData MakeMaterialCreateData(const char *debugName, uint64_t baseTextureId)
     {
         MaterialCreateData createInfo;
@@ -198,6 +254,34 @@ namespace
         assert(data->RefCount == 1);
         assert(data->DebugName == expected.DebugName);
     }
+
+    void TestNeuralMaterialPartialRegistrationFailure()
+    {
+        auto device = MakeShared<FakeDevice>();
+        NeuralMaterialDesc desc = NeuralMaterialDesc::DefaultPBR(8, 8);
+        desc.DebugName = "PartialRegistrationFailure";
+
+        NeuralMaterialResource resource;
+        assert(resource.Initialize(device.get(), desc));
+
+        FakeRegistrar registrar;
+        registrar.FailOnRegisterCall = 2;
+        assert(!resource.RegisterOutputTextures(registrar));
+        assert(registrar.RegisterCalls == 2);
+        assert(registrar.RegisteredHandles.size() == 1);
+        assert(registrar.ReleasedHandles.size() == 1);
+        assert(registrar.CountReleased(registrar.RegisteredHandles[0]) == 1);
+        assert(registrar.ActiveHandles.empty());
+
+        for (uint32_t slotIndex = 0; slotIndex < resource.GetOutputSlotCount(); ++slotIndex)
+        {
+            assert(!resource.GetOutputTextureHandle(slotIndex).IsValid());
+        }
+
+        resource.ReleaseOutputTextures(registrar);
+        assert(registrar.ReleasedHandles.size() == 1);
+        resource.Shutdown();
+    }
 }
 
 int main()
@@ -208,6 +292,8 @@ int main()
 #endif
 
     std::cout << "RenderResourceManagerMaterialStoreTest start\n";
+
+    TestNeuralMaterialPartialRegistrationFailure();
 
     RenderResourceManager manager;
 
@@ -247,6 +333,7 @@ int main()
     assert(neuralMaterialData->NormalTexture.IsValid());
     assert(device->CreatedBufferDescs.size() == 1);
     assert(device->CreatedTextureDescs.size() == neuralDesc.OutputSlots.size());
+    assert(manager.GetResourceStats().TextureCount == neuralDesc.OutputSlots.size());
 
     auto neuralResources = manager.GetNeuralMaterialResources();
     assert(neuralResources.size() == 1);
@@ -258,11 +345,13 @@ int main()
     manager.ReleaseMaterial(neuralHandle);
     assert(manager.GetMaterialData(neuralHandle) == nullptr);
     assert(manager.GetNeuralMaterialResources().empty());
+    assert(manager.GetResourceStats().TextureCount == 0);
 
     const MaterialHandle clearHandle = manager.CreateNeuralMaterial(neuralDesc);
     assert(clearHandle.IsValid());
     assert(manager.GetMaterialData(clearHandle) != nullptr);
     assert(manager.GetNeuralMaterialResources().size() == 1);
+    assert(manager.GetResourceStats().TextureCount == neuralDesc.OutputSlots.size());
 
     manager.ClearAllResources();
     assert(manager.GetMaterialData(clearHandle) == nullptr);

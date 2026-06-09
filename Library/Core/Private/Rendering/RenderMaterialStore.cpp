@@ -1,5 +1,6 @@
 #include "Rendering/RenderMaterialStore.h"
 
+#include "Rendering/ITextureHandleRegistrar.h"
 #include "Logging/LogMacros.h"
 #include "RHI/IDevice.h"
 
@@ -65,7 +66,7 @@ namespace NorvesLib::Core::Rendering
 
     RenderMaterialStore::~RenderMaterialStore()
     {
-        Clear();
+        ClearUnregistered();
     }
 
     MaterialHandle RenderMaterialStore::AllocateMaterialHandle()
@@ -112,7 +113,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void RenderMaterialStore::ReleaseMaterial(MaterialHandle handle)
+    void RenderMaterialStore::ReleaseMaterial(MaterialHandle handle, ITextureHandleRegistrar &textureRegistrar)
     {
         if (!handle.IsValid())
         {
@@ -134,13 +135,14 @@ namespace NorvesLib::Core::Rendering
 
         if (neuralMaterial)
         {
+            neuralMaterial->ReleaseOutputTextures(textureRegistrar);
             neuralMaterial->Shutdown();
         }
     }
 
     MaterialHandle RenderMaterialStore::CreateNeuralMaterial(
         RHI::IDevice *device,
-        RenderResourceRegistry &resourceRegistry,
+        ITextureHandleRegistrar &textureRegistrar,
         const NeuralMaterialDesc &desc)
     {
         if (!device)
@@ -156,7 +158,7 @@ namespace NorvesLib::Core::Rendering
             return MaterialHandle::Invalid();
         }
 
-        if (!neuralMaterial->RegisterOutputTextures(resourceRegistry))
+        if (!neuralMaterial->RegisterOutputTextures(textureRegistrar))
         {
             NORVES_LOG_WARNING("RenderMaterialStore", "Failed to register neural material output textures: %s",
                                desc.DebugName.c_str());
@@ -196,20 +198,84 @@ namespace NorvesLib::Core::Rendering
         return result;
     }
 
-    void RenderMaterialStore::Clear()
+    void RenderMaterialStore::Clear(ITextureHandleRegistrar &textureRegistrar)
     {
-        Thread::ScopedLock lock(m_Mutex);
-        for (auto &[id, resource] : m_NeuralMaterials)
+        Container::VariableArray<Container::TSharedPtr<NeuralMaterialResource>> neuralMaterials;
+
         {
-            (void)id;
+            Thread::ScopedLock lock(m_Mutex);
+            neuralMaterials.reserve(m_NeuralMaterials.size());
+            for (auto &[id, resource] : m_NeuralMaterials)
+            {
+                (void)id;
+                if (resource)
+                {
+                    neuralMaterials.push_back(std::move(resource));
+                }
+            }
+
+            m_NeuralMaterials.clear();
+            m_Materials.clear();
+        }
+
+        for (auto &resource : neuralMaterials)
+        {
             if (resource)
             {
+                resource->ReleaseOutputTextures(textureRegistrar);
                 resource->Shutdown();
             }
         }
+    }
 
-        m_NeuralMaterials.clear();
-        m_Materials.clear();
+    void RenderMaterialStore::ClearUnregistered()
+    {
+        Container::VariableArray<Container::TSharedPtr<NeuralMaterialResource>> neuralMaterials;
+
+        {
+            Thread::ScopedLock lock(m_Mutex);
+            neuralMaterials.reserve(m_NeuralMaterials.size());
+            for (auto &[id, resource] : m_NeuralMaterials)
+            {
+                (void)id;
+                if (resource)
+                {
+                    neuralMaterials.push_back(std::move(resource));
+                }
+            }
+
+            m_NeuralMaterials.clear();
+            m_Materials.clear();
+        }
+
+        for (auto &resource : neuralMaterials)
+        {
+            if (resource)
+            {
+                ShutdownNeuralMaterialWithoutRegistrar(*resource);
+            }
+        }
+    }
+
+    void RenderMaterialStore::ShutdownNeuralMaterialWithoutRegistrar(NeuralMaterialResource &neuralMaterial)
+    {
+        bool bHasRegisteredTextureHandles = false;
+        for (uint32_t slotIndex = 0; slotIndex < neuralMaterial.GetOutputSlotCount(); ++slotIndex)
+        {
+            if (neuralMaterial.GetOutputTextureHandle(slotIndex).IsValid())
+            {
+                bHasRegisteredTextureHandles = true;
+                break;
+            }
+        }
+
+        if (bHasRegisteredTextureHandles)
+        {
+            NORVES_LOG_ERROR("RenderMaterialStore",
+                             "Neural material destroyed with registered texture handles; call Clear(registrar) first");
+        }
+
+        neuralMaterial.Shutdown();
     }
 
 } // namespace NorvesLib::Core::Rendering

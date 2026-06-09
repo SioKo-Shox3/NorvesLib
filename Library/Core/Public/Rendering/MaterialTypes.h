@@ -219,6 +219,57 @@ namespace NorvesLib::Core::Rendering
         Custom      // カスタム
     };
 
+    /**
+     * @brief マテリアル作成情報
+     */
+    struct MaterialCreateData
+    {
+        TextureHandle AlbedoTexture;
+        TextureHandle NormalTexture;
+        TextureHandle MetallicTexture;
+        TextureHandle RoughnessTexture;
+        TextureHandle AOTexture;
+        TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
+
+        float HeightScale = 0.05f; ///< POMの高さスケール（0.0～0.1程度が自然）
+
+        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
+        float EmissiveStrength = 0.0f;
+
+        BlendMode Blend = BlendMode::Opaque;
+        ShadingModel Shading = ShadingModel::DefaultLit;
+        bool bTwoSided = false;
+        bool bCastShadows = true;
+
+        Container::String DebugName;
+    };
+
+    /**
+     * @brief マテリアルリソースデータ（内部用）
+     */
+    struct MaterialResourceData
+    {
+        TextureHandle AlbedoTexture;
+        TextureHandle NormalTexture;
+        TextureHandle MetallicTexture;
+        TextureHandle RoughnessTexture;
+        TextureHandle AOTexture;
+        TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
+
+        float HeightScale = 0.05f; ///< POMの高さスケール
+
+        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
+        float EmissiveStrength = 0.0f;
+
+        BlendMode Blend = BlendMode::Opaque;
+        ShadingModel Shading = ShadingModel::DefaultLit;
+        bool bTwoSided = false;
+        bool bCastShadows = true;
+
+        uint32_t RefCount = 0;
+        Container::String DebugName;
+    };
+
     // ========================================
     // マテリアル定義
     // ========================================
