@@ -1,7 +1,7 @@
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/AssetManifest.h"
 #include "Asset/CookedTextureFormat.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResources.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -406,9 +406,9 @@ namespace
         return ToCoreString(json);
     }
 
-    void ConfigureRoot(RenderResourceManager &manager, const std::filesystem::path &root)
+    void ConfigureRoot(RenderResources &manager, const std::filesystem::path &root)
     {
-        assert(manager.SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
+        assert(manager.Textures().SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
     }
 
     void WriteCookedPackage(const std::filesystem::path &root,
@@ -422,18 +422,18 @@ namespace
                                        textureBytes}}));
     }
 
-    PreparedTextureAsset PrepareReadyAsset(RenderResourceManager &manager,
+    PreparedTextureAsset PrepareReadyAsset(RenderResources &manager,
                                            const std::filesystem::path &root,
                                            const std::vector<uint8_t> &textureBytes,
                                            const char *logicalPath = "Textures/Cooked.tga")
     {
         WriteCookedPackage(root, "Cooked/Textures.nvpkg", "Textures/Cooked.nvtex", textureBytes);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()),
                           logicalPath,
                           "Cooked/Textures.nvpkg",
                           "Textures/Cooked.nvtex")));
-        return manager.PrepareTextureAssetForWorker(ToCoreString(logicalPath));
+        return manager.Textures().PrepareTextureAssetForWorker(ToCoreString(logicalPath));
     }
 
     void AssertLooseFallbackStatus(const PreparedTextureAsset &prepared, PreparedTextureAssetStatus expectedStatus)
@@ -460,7 +460,7 @@ namespace
             2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
@@ -489,18 +489,18 @@ namespace
             2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
         const PreparedTextureAsset prepared = PrepareReadyAsset(manager, root, textureBytes);
-        const TextureHandle firstHandle = manager.FinalizePreparedTextureAsset(prepared);
+        const TextureHandle firstHandle = manager.Textures().FinalizePreparedTextureAsset(prepared);
         assert(firstHandle.IsValid());
         assert(device->CreatedTextureDescs.size() == 1);
         assert(device->LastTexture);
         assert(device->LastTexture->Updates.size() == 2);
 
-        const TextureHandle cachedHandle = manager.FinalizePreparedTextureAsset(prepared);
+        const TextureHandle cachedHandle = manager.Textures().FinalizePreparedTextureAsset(prepared);
         assert(cachedHandle == firstHandle);
         assert(device->CreatedTextureDescs.size() == 1);
 
@@ -515,7 +515,7 @@ namespace
             2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
@@ -523,7 +523,7 @@ namespace
         assert(prepared.Status == PreparedTextureAssetStatus::CookedReady);
         manager.Shutdown();
 
-        const TextureHandle handle = manager.FinalizePreparedTextureAsset(prepared);
+        const TextureHandle handle = manager.Textures().FinalizePreparedTextureAsset(prepared);
         assert(!handle.IsValid());
         assert(device->CreatedTextureDescs.empty());
         assert(manager.GetResourceStats().TextureCount == 0);
@@ -538,7 +538,7 @@ namespace
             2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
@@ -553,11 +553,11 @@ namespace
             }
 
             bNestedFinalizeStarted = true;
-            nestedHandle = manager.FinalizePreparedTextureAsset(prepared);
+            nestedHandle = manager.Textures().FinalizePreparedTextureAsset(prepared);
             assert(nestedHandle.IsValid());
         };
 
-        const TextureHandle outerHandle = manager.FinalizePreparedTextureAsset(prepared);
+        const TextureHandle outerHandle = manager.Textures().FinalizePreparedTextureAsset(prepared);
         assert(bNestedFinalizeStarted);
         assert(outerHandle == nestedHandle);
         assert(device->CreatedTextureDescs.size() == 2);
@@ -574,14 +574,14 @@ namespace
             2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
         const PreparedTextureAsset prepared = PrepareReadyAsset(manager, root, textureBytes);
-        assert(manager.ResetTextureAssetManifest());
+        assert(manager.Textures().ResetTextureAssetManifest());
 
-        const TextureHandle handle = manager.FinalizePreparedTextureAsset(prepared);
+        const TextureHandle handle = manager.Textures().FinalizePreparedTextureAsset(prepared);
         assert(!handle.IsValid());
         assert(device->CreatedTextureDescs.empty());
 
@@ -596,17 +596,17 @@ namespace
             2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
         const PreparedTextureAsset prepared = PrepareReadyAsset(manager, root, textureBytes);
         device->OnFirstTextureUpdate = [&manager]()
         {
-            assert(manager.ResetTextureAssetManifest());
+            assert(manager.Textures().ResetTextureAssetManifest());
         };
 
-        const TextureHandle handle = manager.FinalizePreparedTextureAsset(prepared);
+        const TextureHandle handle = manager.Textures().FinalizePreparedTextureAsset(prepared);
         assert(!handle.IsValid());
         assert(device->CreatedTextureDescs.size() == 1);
         assert(manager.GetResourceStats().TextureCount == 0);
@@ -622,24 +622,24 @@ namespace
             2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
         PreparedTextureAsset prepared = PrepareReadyAsset(manager, root, textureBytes);
-        assert(manager.IsPreparedTextureAssetCurrent(prepared));
-        assert(manager.ResetTextureAssetManifest());
-        assert(!manager.IsPreparedTextureAssetCurrent(prepared));
+        assert(manager.Textures().IsPreparedTextureAssetCurrent(prepared));
+        assert(manager.Textures().ResetTextureAssetManifest());
+        assert(!manager.Textures().IsPreparedTextureAssetCurrent(prepared));
 
         prepared = PrepareReadyAsset(manager, root, textureBytes);
-        assert(manager.IsPreparedTextureAssetCurrent(prepared));
-        assert(manager.SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
-        assert(!manager.IsPreparedTextureAssetCurrent(prepared));
+        assert(manager.Textures().IsPreparedTextureAssetCurrent(prepared));
+        assert(manager.Textures().SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
+        assert(!manager.Textures().IsPreparedTextureAssetCurrent(prepared));
 
-        prepared = manager.PrepareTextureAssetForWorker(ToCoreString("Textures/Cooked.tga"));
-        assert(manager.IsPreparedTextureAssetCurrent(prepared));
-        assert(manager.SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
-        assert(!manager.IsPreparedTextureAssetCurrent(prepared));
+        prepared = manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/Cooked.tga"));
+        assert(manager.Textures().IsPreparedTextureAssetCurrent(prepared));
+        assert(manager.Textures().SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
+        assert(!manager.Textures().IsPreparedTextureAssetCurrent(prepared));
 
         manager.Shutdown();
         std::filesystem::remove_all(root);
@@ -650,11 +650,11 @@ namespace
         const std::filesystem::path root = CreateTestRoot("ManifestMissing");
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
-        const PreparedTextureAsset prepared = manager.PrepareTextureAssetForWorker(ToCoreString("Textures/MissingLoose.tga"));
+        const PreparedTextureAsset prepared = manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/MissingLoose.tga"));
         AssertLooseFallbackStatus(prepared, PreparedTextureAssetStatus::ManifestMissingLooseFallback);
         assert(prepared.ResolvedFallbackPath == ToCoreString(ToAssetString(root / "Textures" / "MissingLoose.tga")));
         assert(device->CreatedTextureDescs.empty());
@@ -670,16 +670,16 @@ namespace
             1, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
         WriteCookedPackage(root, "Cooked/Textures.nvpkg", "Textures/Cooked.nvtex", textureBytes);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()),
                           "Textures/Other.tga")));
 
-        const PreparedTextureAsset prepared = manager.PrepareTextureAssetForWorker(ToCoreString("Textures/MissingVariant.tga"));
+        const PreparedTextureAsset prepared = manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/MissingVariant.tga"));
         AssertLooseFallbackStatus(prepared, PreparedTextureAssetStatus::VariantMissingLooseFallback);
         assert(device->CreatedTextureDescs.empty());
 
@@ -692,15 +692,15 @@ namespace
         const std::filesystem::path root = CreateTestRoot("InvalidAbsolute");
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
-        AssertFailureStatus(manager.PrepareTextureAssetForWorker(String()), PreparedTextureAssetStatus::InvalidRequest);
-        AssertFailureStatus(manager.PrepareTextureAssetForWorker(ToCoreString("../escape.tga")), PreparedTextureAssetStatus::InvalidPath);
+        AssertFailureStatus(manager.Textures().PrepareTextureAssetForWorker(String()), PreparedTextureAssetStatus::InvalidRequest);
+        AssertFailureStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("../escape.tga")), PreparedTextureAssetStatus::InvalidPath);
 
         const std::string absolutePath = ToAssetString(root / "Textures" / "Absolute.tga");
-        AssertFailureStatus(manager.PrepareTextureAssetForWorker(ToCoreString(absolutePath)),
+        AssertFailureStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString(absolutePath)),
                             PreparedTextureAssetStatus::AbsolutePathUnsupported);
 
         manager.Shutdown();
@@ -715,31 +715,31 @@ namespace
         const uint64_t textureHash = ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size());
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(textureHash, "Textures/MissingPackage.tga", "Cooked/Missing.nvpkg", "Textures/Cooked.nvtex")));
-        AssertFailureStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/MissingPackage.tga")),
+        AssertFailureStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/MissingPackage.tga")),
                             PreparedTextureAssetStatus::CookedPackageReadFailed);
 
         WriteBinaryFile(root / "Cooked" / "BadPackage.nvpkg", {'N', 'V', 'P', 'K', 'x'});
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(textureHash, "Textures/BadPackage.tga", "Cooked/BadPackage.nvpkg", "Textures/Cooked.nvtex")));
-        AssertFailureStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/BadPackage.tga")),
+        AssertFailureStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/BadPackage.tga")),
                             PreparedTextureAssetStatus::CookedPackageParseFailed);
 
         WriteCookedPackage(root, "Cooked/EntryMissing.nvpkg", "Textures/Other.nvtex", textureBytes);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(textureHash, "Textures/EntryMissing.tga", "Cooked/EntryMissing.nvpkg", "Textures/Cooked.nvtex")));
-        AssertFailureStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/EntryMissing.tga")),
+        AssertFailureStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/EntryMissing.tga")),
                             PreparedTextureAssetStatus::CookedEntryMissing);
 
         WriteCookedPackage(root, "Cooked/HashMismatch.nvpkg", "Textures/Cooked.nvtex", textureBytes);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(textureHash + 1u, "Textures/HashMismatch.tga", "Cooked/HashMismatch.nvpkg", "Textures/Cooked.nvtex")));
-        AssertFailureStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/HashMismatch.tga")),
+        AssertFailureStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/HashMismatch.tga")),
                             PreparedTextureAssetStatus::CookedEntryHashMismatch);
 
         manager.Shutdown();
@@ -756,38 +756,38 @@ namespace
         const uint64_t invalidTextureHash = ComputeAssetPackagePayloadHash(invalidTextureBytes.data(), invalidTextureBytes.size());
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
-        assert(manager.SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
+        assert(manager.Textures().SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
 
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(textureHash, "Textures/MissingPackage.tga", "Cooked/Missing.nvpkg", "Textures/Cooked.nvtex")));
-        AssertLooseFallbackStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/MissingPackage.tga")),
+        AssertLooseFallbackStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/MissingPackage.tga")),
                                   PreparedTextureAssetStatus::DebugLooseFallback);
 
         WriteBinaryFile(root / "Cooked" / "BadPackage.nvpkg", {'N', 'V', 'P', 'K', 'x'});
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(textureHash, "Textures/BadPackage.tga", "Cooked/BadPackage.nvpkg", "Textures/Cooked.nvtex")));
-        AssertLooseFallbackStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/BadPackage.tga")),
+        AssertLooseFallbackStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/BadPackage.tga")),
                                   PreparedTextureAssetStatus::DebugLooseFallback);
 
         WriteCookedPackage(root, "Cooked/EntryMissing.nvpkg", "Textures/Other.nvtex", textureBytes);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(textureHash, "Textures/EntryMissing.tga", "Cooked/EntryMissing.nvpkg", "Textures/Cooked.nvtex")));
-        AssertLooseFallbackStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/EntryMissing.tga")),
+        AssertLooseFallbackStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/EntryMissing.tga")),
                                   PreparedTextureAssetStatus::DebugLooseFallback);
 
         WriteCookedPackage(root, "Cooked/HashMismatch.nvpkg", "Textures/Cooked.nvtex", textureBytes);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(textureHash + 1u, "Textures/HashMismatch.tga", "Cooked/HashMismatch.nvpkg", "Textures/Cooked.nvtex")));
-        AssertLooseFallbackStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/HashMismatch.tga")),
+        AssertLooseFallbackStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/HashMismatch.tga")),
                                   PreparedTextureAssetStatus::DebugLooseFallback);
 
         WriteCookedPackage(root, "Cooked/BadNvtex.nvpkg", "Textures/Cooked.nvtex", invalidTextureBytes);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(invalidTextureHash, "Textures/BadNvtex.tga", "Cooked/BadNvtex.nvpkg", "Textures/Cooked.nvtex")));
-        AssertLooseFallbackStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/BadNvtex.tga")),
+        AssertLooseFallbackStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/BadNvtex.tga")),
                                   PreparedTextureAssetStatus::DebugLooseFallback);
 
         assert(device->CreatedTextureDescs.empty());
@@ -803,14 +803,14 @@ namespace
         const uint64_t invalidTextureHash = ComputeAssetPackagePayloadHash(invalidTextureBytes.data(), invalidTextureBytes.size());
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
         WriteCookedPackage(root, "Cooked/BadNvtex.nvpkg", "Textures/Cooked.nvtex", invalidTextureBytes);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(invalidTextureHash, "Textures/BadNvtex.tga", "Cooked/BadNvtex.nvpkg", "Textures/Cooked.nvtex")));
-        AssertFailureStatus(manager.PrepareTextureAssetForWorker(ToCoreString("Textures/BadNvtex.tga")),
+        AssertFailureStatus(manager.Textures().PrepareTextureAssetForWorker(ToCoreString("Textures/BadNvtex.tga")),
                             PreparedTextureAssetStatus::CookedTextureParseFailed);
 
         manager.Shutdown();
@@ -824,14 +824,14 @@ namespace
             2, 1, 1, CookedTexturePixelFormat::RGBA8UNorm, CookedTextureColorSpace::Linear);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
         const PreparedTextureAsset prepared = PrepareReadyAsset(manager, root, textureBytes);
         PreparedCookedTextureMip0RGBA8UNormLinearSplit split;
         String reason("expected failure");
-        assert(manager.TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(prepared, split, &reason));
+        assert(manager.Textures().TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(prepared, split, &reason));
         assert(reason.empty());
         assert(split.Width == 2);
         assert(split.Height == 1);
@@ -855,7 +855,7 @@ namespace
         const std::vector<uint8_t> textureBytes = BuildCookedTextureBytes(2, 1, layerCount, pixelFormat, colorSpace);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
@@ -866,7 +866,7 @@ namespace
         split.Width = 99;
         split.R.push_back(1);
         String reason;
-        assert(!manager.TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(prepared, split, &reason));
+        assert(!manager.Textures().TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(prepared, split, &reason));
         assert(split.Width == 0);
         assert(split.R.empty());
         assert(!reason.empty());

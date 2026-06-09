@@ -3,7 +3,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
-#include "Rendering/RenderResourceRegistry.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
@@ -258,7 +258,10 @@ namespace NorvesLib::Core::Rendering
         // DrawCommand駆動の描画
         // ========================================
         const auto *activeOpaqueCommands = context.GetActiveOpaqueCommands();
-        if (m_SceneRenderer && context.ResourceManager && activeOpaqueCommands)
+        auto *materials = context.Resources.Materials;
+        auto *textures = context.Resources.Textures;
+        auto *meshes = context.Resources.Meshes;
+        if (m_SceneRenderer && materials && textures && meshes && activeOpaqueCommands)
         {
             // カメラ行列の構築
             using namespace NorvesLib::Math;
@@ -333,9 +336,9 @@ namespace NorvesLib::Core::Rendering
                 float matEmissiveR = 0.0f, matEmissiveG = 0.0f, matEmissiveB = 0.0f;
                 float matEmissiveStrength = 0.0f;
 
-                if (cmd.Draw.MaterialHandle.IsValid() && context.ResourceManager)
+                if (cmd.Draw.MaterialHandle.IsValid() && materials)
                 {
-                    const auto *matData = context.ResourceManager->GetMaterialData(cmd.Draw.MaterialHandle);
+                    const auto *matData = materials->GetData(cmd.Draw.MaterialHandle);
                     if (matData)
                     {
                         matAlbedo = matData->AlbedoTexture;
@@ -370,9 +373,9 @@ namespace NorvesLib::Core::Rendering
                 // PBRテクスチャバインド（マテリアル経由、未設定ならデフォルトテクスチャ）
                 auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTex) -> RHI::TexturePtr
                 {
-                    if (handle.IsValid() && context.ResourceManager)
+                    if (handle.IsValid() && textures)
                     {
-                        auto tex = context.ResourceManager->GetRHITexturePtr(handle);
+                        auto tex = textures->GetRHITexturePtr(handle);
                         if (tex)
                         {
                             return tex;
@@ -414,7 +417,7 @@ namespace NorvesLib::Core::Rendering
                                                                          gBufferCommands,
                                                                          viewport,
                                                                          scissor,
-                                                                         context.ResourceManager));
+                                                                         meshes));
         }
     }
 

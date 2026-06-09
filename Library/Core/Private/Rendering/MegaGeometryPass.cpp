@@ -1,7 +1,7 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/ViewRenderContext.h"
-#include "Rendering/RenderResourceRegistry.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShaderManager.h"
@@ -382,7 +382,7 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Execute(ViewRenderContext &context)
     {
-        if (m_Instances.empty() || !m_CullPipeline || !context.ResourceManager)
+        if (m_Instances.empty() || !m_CullPipeline || !context.Resources.MegaGeometry)
         {
             return;
         }
@@ -402,7 +402,7 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::RecordFrameCommand(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList)
     {
-        if (m_Instances.empty() || !m_CullPipeline || !commandList || !command.ResourceManager || !command.bHasMainCamera)
+        if (m_Instances.empty() || !m_CullPipeline || !commandList || !command.MegaGeometry || !command.bHasMainCamera)
         {
             return;
         }
@@ -433,7 +433,7 @@ namespace NorvesLib::Core::Rendering
         for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
         {
             const auto &instance = m_Instances[instanceIndex];
-            const auto *gpuData = command.ResourceManager->GetMegaMeshGPUData(instance.Handle);
+            const auto *gpuData = command.MegaGeometry->GetMegaMeshGPUData(instance.Handle);
             if (!gpuData || gpuData->ClusterCount == 0)
             {
                 continue;

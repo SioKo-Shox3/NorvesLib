@@ -3,7 +3,7 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Rendering/DrawCommand.h"
-#include "Rendering/RenderResourceRegistryFwd.h"
+#include "Rendering/RenderResourcesFwd.h"
 #include "Rendering/SceneProxy.h"
 #include "RHI/ICommandList.h"
 #include "RHI/RHITypes.h"
@@ -26,7 +26,7 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassPtr RenderPass;
         RHI::FramebufferPtr Framebuffer;
         Container::TSharedPtr<Container::VariableArray<DrawCommand>> DrawCommands;
-        RenderResourceRegistry* ResourceManager = nullptr;
+        MeshResources* Meshes = nullptr;
         RHI::Viewport Viewport;
         RHI::ScissorRect Scissor;
     };
@@ -57,7 +57,7 @@ namespace NorvesLib::Core::Rendering
     struct MegaGeometryPassCommand
     {
         MegaGeometryPass* Pass = nullptr;
-        RenderResourceRegistry* ResourceManager = nullptr;
+        MegaGeometryResources* MegaGeometry = nullptr;
         CameraProxy MainCamera;
         bool bHasMainCamera = false;
         RHI::Viewport Viewport;
@@ -77,14 +77,14 @@ namespace NorvesLib::Core::Rendering
                                                Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
                                                const RHI::Viewport& viewport,
                                                const RHI::ScissorRect& scissor,
-                                               RenderResourceRegistry* resourceManager = nullptr)
+                                               MeshResources* meshes = nullptr)
         {
             FrameCommand command;
             command.Type = FrameCommandType::GeometryPass;
             command.GeometryPass.RenderPass = renderPass;
             command.GeometryPass.Framebuffer = framebuffer;
             command.GeometryPass.DrawCommands = drawCommands;
-            command.GeometryPass.ResourceManager = resourceManager;
+            command.GeometryPass.Meshes = meshes;
             command.GeometryPass.Viewport = viewport;
             command.GeometryPass.Scissor = scissor;
             return command;
@@ -133,7 +133,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         static FrameCommand CreateMegaGeometryPass(MegaGeometryPass* pass,
-                                                   RenderResourceRegistry* resourceManager,
+                                                   MegaGeometryResources* megaGeometry,
                                                    const CameraProxy& mainCamera,
                                                    bool bHasMainCamera,
                                                    const RHI::Viewport& viewport,
@@ -142,7 +142,7 @@ namespace NorvesLib::Core::Rendering
             FrameCommand command;
             command.Type = FrameCommandType::MegaGeometryPass;
             command.MegaGeometry.Pass = pass;
-            command.MegaGeometry.ResourceManager = resourceManager;
+            command.MegaGeometry.MegaGeometry = megaGeometry;
             command.MegaGeometry.MainCamera = mainCamera;
             command.MegaGeometry.bHasMainCamera = bHasMainCamera;
             command.MegaGeometry.Viewport = viewport;

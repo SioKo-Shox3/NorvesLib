@@ -5,7 +5,7 @@
 #include "Core/Public/Object/WorldObject.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Input/InputSystem.h"
-#include "Core/Public/Rendering/RenderResourceRegistry.h"
+#include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include <cmath>
 #include <filesystem>
@@ -473,8 +473,8 @@ namespace Game
             return false;
         }
 
-        auto &resourceRegistry = GEngine->GetRenderWorld().GetResourceRegistry();
-        if (!resourceRegistry.SetTextureAssetRoot(m_TextureAssetRoot))
+        auto &textures = GEngine->GetRenderResources().Textures();
+        if (!textures.SetTextureAssetRoot(m_TextureAssetRoot))
         {
             LOG_ERROR_F("Texture asset runtime setup failed: SetTextureAssetRoot rejected root=\"%s\"",
                         m_TextureAssetRoot.c_str());
@@ -482,7 +482,7 @@ namespace Game
         }
 
         const String manifestText = MakeStringFromUtf8Bytes(manifestBytes);
-        if (!resourceRegistry.LoadTextureAssetManifestFromJsonText(manifestText, m_TextureAssetManifestPath))
+        if (!textures.LoadTextureAssetManifestFromJsonText(manifestText, m_TextureAssetManifestPath))
         {
             LOG_ERROR_F("Texture asset runtime setup failed: texture asset manifest parse failed path=\"%s\"",
                         m_TextureAssetManifestPath.c_str());

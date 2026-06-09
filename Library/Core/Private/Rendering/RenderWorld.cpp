@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RenderWorld.h"
+#include "Rendering/RenderResourceContexts.h"
 #include "Resource/GLTFAnalyzer.h"
 #include "RHI/IDevice.h"
 #include "Debug/Stats.h"
@@ -78,16 +79,16 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
-        // 3. RenderResourceRegistry初期化
+        // 3. RenderResources初期化
         // ========================================
-        if (!m_ResourceRegistry.Initialize(m_Device))
+        if (!m_RenderResources.Initialize(m_Device))
         {
-            NORVES_LOG_ERROR("Rendering", "Failed to initialize RenderResourceManager");
+            NORVES_LOG_ERROR("Rendering", "Failed to initialize RenderResources");
             return false;
         }
 
-        // RenderingCoordinatorにResourceRegistryを設定
-        m_RenderingCoordinator.SetResourceRegistry(&m_ResourceRegistry);
+        // RenderingCoordinatorにRenderResourcesを設定
+        m_RenderingCoordinator.SetRenderResources(&m_RenderResources);
 
         // ========================================
         // 4. RenderThread初期化・起動（マルチスレッドレンダリング有効時のみ）
@@ -122,11 +123,10 @@ namespace NorvesLib::Core::Rendering
         m_RenderThread.Shutdown();
         m_bResizePending.Store(false, std::memory_order_release);
 
-        // glTF worker tasks may prepare texture assets through the ResourceRegistry.
         Resource::GLTFAnalyzer::CancelPendingModelLoadsAndWait();
 
-        // RenderResourceRegistryの終了（メッシュGPUリソース等の解放）
-        m_ResourceRegistry.Shutdown();
+        // RenderResourcesの終了（メッシュGPUリソース等の解放）
+        m_RenderResources.Shutdown();
 
         // RenderingCoordinatorの終了（RHIリソース解放を含む）
         m_RenderingCoordinator.Shutdown();
@@ -162,7 +162,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         auto textureFlushStartTime = LoadProfileNow();
-        uint32_t textureFlushProcessed = m_ResourceRegistry.FlushCompletedTextureLoads();
+        uint32_t textureFlushProcessed = m_RenderResources.Textures().FlushCompletedTextureLoads();
         double textureFlushMs = LoadProfileElapsedMs(textureFlushStartTime);
         if (textureFlushProcessed > 0)
         {
@@ -173,7 +173,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         auto modelFlushStartTime = LoadProfileNow();
-        uint32_t modelFlushProcessed = Resource::GLTFAnalyzer::FlushCompletedModelLoads(m_ResourceRegistry);
+        ModelLoadResourceContext modelLoadContext{
+            m_RenderResources.Textures(),
+            m_RenderResources.MegaGeometry()};
+        uint32_t modelFlushProcessed = Resource::GLTFAnalyzer::FlushCompletedModelLoads(modelLoadContext);
         double modelFlushMs = LoadProfileElapsedMs(modelFlushStartTime);
         if (modelFlushProcessed > 0)
         {

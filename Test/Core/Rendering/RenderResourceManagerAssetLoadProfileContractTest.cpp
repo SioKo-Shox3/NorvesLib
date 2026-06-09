@@ -3,7 +3,7 @@
 #include "Asset/CookedTextureFormat.h"
 #include "Debug/DebugConfig.h"
 #include "Logging/Logger.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResources.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -482,10 +482,10 @@ int main()
     WriteCookedPackage(root, "Cooked/Prepared.nvpkg", "Textures/Prepared.nvtex", preparedTexture);
 
     auto device = MakeShared<FakeDevice>();
-    RenderResourceManager manager;
+    RenderResources manager;
     assert(manager.Initialize(device));
-    assert(manager.SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
-    assert(manager.LoadTextureAssetManifestFromJsonText(
+    assert(manager.Textures().SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
+    assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
         BuildManifest({
             {"Textures/Direct.tga",
              "Cooked/Direct.nvpkg",
@@ -501,33 +501,33 @@ int main()
              ComputeAssetPackagePayloadHash(preparedTexture.data(), preparedTexture.size())},
         })));
 
-    const TextureHandle directHandle = manager.LoadTexture(ToCoreString("Textures/Direct.tga"));
+    const TextureHandle directHandle = manager.Textures().LoadTexture(ToCoreString("Textures/Direct.tga"));
     assert(directHandle.IsValid());
 
     std::vector<TextureHandle> callbacks;
-    const uint32_t asyncRequestId = manager.LoadTextureAsync(
+    const uint32_t asyncRequestId = manager.Textures().LoadTextureAsync(
         ToCoreString("Textures/Async.tga"),
         NorvesLib::Core::Delegate<void, TextureHandle>([&callbacks](TextureHandle handle) {
             callbacks.push_back(handle);
         }));
     assert(asyncRequestId != 0);
     NorvesLib::Thread::JobSystem::Get().WaitForAll();
-    assert(manager.FlushCompletedTextureLoads() == 1);
+    assert(manager.Textures().FlushCompletedTextureLoads() == 1);
     assert(callbacks.size() == 1);
     assert(callbacks[0].IsValid());
 
-    const PreparedTextureAsset prepared = manager.PrepareTextureAssetForWorker(
+    const PreparedTextureAsset prepared = manager.Textures().PrepareTextureAssetForWorker(
         ToCoreString("Textures/Prepared.tga"),
         String(),
         "worker",
         77);
     assert(prepared.Status == PreparedTextureAssetStatus::CookedReady);
-    const TextureHandle preparedHandle = manager.FinalizePreparedTextureAsset(prepared, "main_render", 77);
+    const TextureHandle preparedHandle = manager.Textures().FinalizePreparedTextureAsset(prepared, "main_render", 77);
     assert(preparedHandle.IsValid());
 
     PreparedCookedTextureMip0RGBA8UNormLinearSplit split;
     String splitReason;
-    assert(manager.TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(prepared, split, &splitReason, "worker", 77));
+    assert(manager.Textures().TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(prepared, split, &splitReason, "worker", 77));
     assert(splitReason.empty());
     assert(split.Width == 2);
     assert(split.Height == 1);

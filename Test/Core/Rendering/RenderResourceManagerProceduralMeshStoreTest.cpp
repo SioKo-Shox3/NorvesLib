@@ -1,4 +1,4 @@
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResources.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "RHI/IFramebuffer.h"
@@ -139,32 +139,32 @@ int main()
 
     std::cout << "RenderResourceManagerProceduralMeshStoreTest start\n";
 
-    RenderResourceManager manager;
+    RenderResources manager;
     const MeshDataHandle meshHandle = MakeMeshHandle(77);
     const MeshDataHandle invalidHandle = MeshDataHandle::Invalid();
     const float verticesA[6] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
     const uint32_t indicesA[3] = {0, 1, 0};
 
-    assert(!manager.RegisterMesh(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
-    assert(manager.GetMeshGPUData(meshHandle) == nullptr);
+    assert(!manager.Meshes().Register(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
+    assert(manager.Meshes().GetGPUData(meshHandle) == nullptr);
     assert(manager.GetResourceStats().BufferCount == 0);
 
     auto device = MakeShared<FakeDevice>();
     assert(manager.Initialize(device));
 
-    assert(!manager.RegisterMesh(invalidHandle, verticesA, sizeof(verticesA), indicesA, 3));
-    assert(!manager.RegisterMesh(meshHandle, nullptr, sizeof(verticesA), indicesA, 3));
-    assert(!manager.RegisterMesh(meshHandle, verticesA, sizeof(verticesA), nullptr, 3));
-    assert(!manager.RegisterMesh(meshHandle, verticesA, sizeof(verticesA), indicesA, 0));
+    assert(!manager.Meshes().Register(invalidHandle, verticesA, sizeof(verticesA), indicesA, 3));
+    assert(!manager.Meshes().Register(meshHandle, nullptr, sizeof(verticesA), indicesA, 3));
+    assert(!manager.Meshes().Register(meshHandle, verticesA, sizeof(verticesA), nullptr, 3));
+    assert(!manager.Meshes().Register(meshHandle, verticesA, sizeof(verticesA), indicesA, 0));
     assert(device->CreatedBufferDescs.empty());
 
-    assert(manager.RegisterMesh(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
+    assert(manager.Meshes().Register(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
     assert(device->CreatedBufferDescs.size() == 2);
     assert(device->CreatedBufferDescs[0].Usage == NorvesLib::RHI::ResourceUsage::VertexBuffer);
     assert(device->CreatedBufferDescs[1].Usage == NorvesLib::RHI::ResourceUsage::IndexBuffer);
     assert(manager.GetResourceStats().BufferCount == 0);
 
-    const ProceduralMeshGPUData *gpuData = manager.GetMeshGPUData(meshHandle);
+    const ProceduralMeshGPUData *gpuData = manager.Meshes().GetGPUData(meshHandle);
     assert(gpuData != nullptr);
     assert(gpuData->VertexBuffer);
     assert(gpuData->IndexBuffer);
@@ -175,10 +175,10 @@ int main()
     const auto firstVertexBuffer = gpuData->VertexBuffer;
     const float verticesB[9] = {0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f};
     const uint32_t indicesB[6] = {0, 1, 2, 2, 1, 0};
-    assert(manager.RegisterMesh(meshHandle, verticesB, sizeof(verticesB), indicesB, 6));
+    assert(manager.Meshes().Register(meshHandle, verticesB, sizeof(verticesB), indicesB, 6));
     assert(device->CreatedBufferDescs.size() == 4);
 
-    gpuData = manager.GetMeshGPUData(meshHandle);
+    gpuData = manager.Meshes().GetGPUData(meshHandle);
     assert(gpuData != nullptr);
     assert(gpuData->IndexCount == 6);
     assert(gpuData->VertexBuffer);
@@ -188,30 +188,30 @@ int main()
     assert(manager.GetResourceStats().BufferCount == 0);
 
     device->FailBufferCreateIndex = device->CreatedBufferDescs.size() + 1;
-    assert(!manager.RegisterMesh(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
-    assert(manager.GetMeshGPUData(meshHandle) == nullptr);
+    assert(!manager.Meshes().Register(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
+    assert(manager.Meshes().GetGPUData(meshHandle) == nullptr);
     assert(manager.GetResourceStats().BufferCount == 0);
     device->FailBufferCreateIndex = 0;
 
-    assert(manager.RegisterMesh(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
-    assert(manager.GetMeshGPUData(meshHandle) != nullptr);
+    assert(manager.Meshes().Register(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
+    assert(manager.Meshes().GetGPUData(meshHandle) != nullptr);
 
-    manager.UnregisterMesh(invalidHandle);
-    assert(manager.GetMeshGPUData(meshHandle) != nullptr);
+    manager.Meshes().Unregister(invalidHandle);
+    assert(manager.Meshes().GetGPUData(meshHandle) != nullptr);
 
-    manager.UnregisterMesh(meshHandle);
-    assert(manager.GetMeshGPUData(meshHandle) == nullptr);
+    manager.Meshes().Unregister(meshHandle);
+    assert(manager.Meshes().GetGPUData(meshHandle) == nullptr);
 
-    assert(manager.RegisterMesh(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
-    assert(manager.GetMeshGPUData(meshHandle) != nullptr);
+    assert(manager.Meshes().Register(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
+    assert(manager.Meshes().GetGPUData(meshHandle) != nullptr);
     manager.ClearAllResources();
-    assert(manager.GetMeshGPUData(meshHandle) == nullptr);
+    assert(manager.Meshes().GetGPUData(meshHandle) == nullptr);
     assert(manager.GetResourceStats().BufferCount == 0);
 
-    assert(manager.RegisterMesh(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
-    assert(manager.GetMeshGPUData(meshHandle) != nullptr);
+    assert(manager.Meshes().Register(meshHandle, verticesA, sizeof(verticesA), indicesA, 3));
+    assert(manager.Meshes().GetGPUData(meshHandle) != nullptr);
     manager.Shutdown();
-    assert(manager.GetMeshGPUData(meshHandle) == nullptr);
+    assert(manager.Meshes().GetGPUData(meshHandle) == nullptr);
     assert(manager.GetResourceStats().BufferCount == 0);
 
     std::cout << "RenderResourceManagerProceduralMeshStoreTest passed\n";

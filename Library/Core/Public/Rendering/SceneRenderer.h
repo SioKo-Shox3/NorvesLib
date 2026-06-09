@@ -3,8 +3,8 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Rendering/DrawCommand.h"
-#include "Rendering/RenderResourceRegistryFwd.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/RenderResourcesFwd.h"
 #include "RHI/RHITypes.h"
 #include <cstdint>
 
@@ -147,14 +147,14 @@ namespace NorvesLib::Core::Rendering
          *
          * @param command 描画コマンド
          * @param commandList コマンドリスト
-         * @param resourceManager レンダリングリソースマネージャ
+         * @param meshResources メッシュリソース
          * @param descriptorSet UBOバインド済みディスクリプタセット
          * @param descriptorSetSlot ディスクリプタセットスロット
          * @return 描画に成功した場合true
          */
         bool RecordMeshDrawCall(const DrawCommand &command,
                                 RHI::ICommandList *commandList,
-                                RenderResourceRegistry *resourceManager,
+                                MeshResources *meshResources,
                                 RHI::DescriptorSetPtr descriptorSet,
                                 uint32_t descriptorSetSlot = 0);
 

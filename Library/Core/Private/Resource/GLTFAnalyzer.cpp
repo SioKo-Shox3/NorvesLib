@@ -4,7 +4,7 @@
 #include "Logging/LogMacros.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Rendering/ProceduralMeshGenerator.h"
-#include "Rendering/RenderResourceRegistry.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/TextureUploadProfile.h"
 #include "Text/JsonDocument.h"
 #include "Thread/Atomic.h"
@@ -130,6 +130,7 @@ namespace NorvesLib::Core::Resource
             Rendering::BoundingSphere TotalBounds;
             String DebugName;
             String ResolvedPath;
+            MaterialTextureInfo TextureReferences;
 
             StagedTextureData AlbedoTexture;
             StagedTextureData NormalTexture;
@@ -986,7 +987,7 @@ namespace NorvesLib::Core::Resource
             return true;
         }
 
-        bool CreateTextureFromPixels(Rendering::RenderResourceRegistry& resourceRegistry,
+        bool CreateTextureFromPixels(Rendering::TextureResources& textures,
                                      const String& debugName,
                                      uint32_t width,
                                      uint32_t height,
@@ -1014,13 +1015,13 @@ namespace NorvesLib::Core::Resource
             createInfo.PixelFormat = format;
             createInfo.DebugName = debugName;
 
-            Rendering::TextureHandle textureHandle = resourceRegistry.CreateTexture(createInfo, pPixelData, pixelDataSize);
+            Rendering::TextureHandle textureHandle = textures.CreateTexture(createInfo, pPixelData, pixelDataSize);
             if (!textureHandle.IsValid())
             {
                 return false;
             }
 
-            outTexture = resourceRegistry.GetRHITexturePtr(textureHandle);
+            outTexture = textures.GetRHITexturePtr(textureHandle);
             return static_cast<bool>(outTexture);
         }
 
@@ -1158,7 +1159,6 @@ namespace NorvesLib::Core::Resource
         bool StageStandardTexture(const TextureReference& textureReference,
                                   const String& debugName,
                                   StagedTextureData& outTexture,
-                                  Rendering::RenderResourceRegistry& resourceRegistry,
                                   const char* role,
                                   uint32_t requestId)
         {
@@ -1169,22 +1169,7 @@ namespace NorvesLib::Core::Resource
 
             if (!textureReference.RequestPath.empty())
             {
-                Rendering::PreparedTextureAsset prepared = resourceRegistry.PrepareTextureAssetForWorker(
-                    textureReference.RequestPath,
-                    textureReference.ResolvedFallbackPath,
-                    role,
-                    requestId);
-
-                if (prepared.Status == Rendering::PreparedTextureAssetStatus::CookedReady)
-                {
-                    SetPreparedStagedTextureData(outTexture, std::move(prepared), debugName);
-                    return true;
-                }
-
-                if (!ShouldUseLooseFallbackForPreparedStatus(prepared.Status))
-                {
-                    return false;
-                }
+                return true;
             }
 
             return DecodeStandardTextureFallback(textureReference, debugName, outTexture, role, requestId);
@@ -1195,7 +1180,6 @@ namespace NorvesLib::Core::Resource
                               StagedTextureData& outAOTexture,
                               StagedTextureData& outRoughnessTexture,
                               StagedTextureData& outMetallicTexture,
-                              Rendering::RenderResourceRegistry& resourceRegistry,
                               const char* role,
                               uint32_t requestId)
         {
@@ -1206,70 +1190,7 @@ namespace NorvesLib::Core::Resource
 
             if (!textureReference.RequestPath.empty())
             {
-                Rendering::PreparedTextureAsset prepared = resourceRegistry.PrepareTextureAssetForWorker(
-                    textureReference.RequestPath,
-                    textureReference.ResolvedFallbackPath,
-                    role,
-                    requestId);
-
-                if (prepared.Status == Rendering::PreparedTextureAssetStatus::CookedReady)
-                {
-                    Rendering::PreparedCookedTextureMip0RGBA8UNormLinearSplit split;
-                    String splitReason;
-                    if (!resourceRegistry.TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(
-                            prepared,
-                            split,
-                            &splitReason,
-                            role,
-                            requestId))
-                    {
-                        if (prepared.FallbackMode == Rendering::TextureAssetFallbackMode::DebugAllowLooseFallback)
-                        {
-                            return DecodeArmTextureFallback(
-                                textureReference,
-                                debugNamePrefix,
-                                outAOTexture,
-                                outRoughnessTexture,
-                                outMetallicTexture,
-                                role,
-                                requestId);
-                        }
-
-                        NORVES_LOG_ERROR("GLTFAnalyzer",
-                                         "Failed to split cooked ARM texture: %s (%s)",
-                                         textureReference.RequestPath.c_str(),
-                                         splitReason.c_str());
-                        return false;
-                    }
-
-                    SetStagedTextureData(
-                        outAOTexture,
-                        std::move(split.R),
-                        split.Width,
-                        split.Height,
-                        Rendering::TextureCreateInfo::Format::R8_UNORM,
-                        debugNamePrefix + "_AO");
-                    SetStagedTextureData(
-                        outRoughnessTexture,
-                        std::move(split.G),
-                        split.Width,
-                        split.Height,
-                        Rendering::TextureCreateInfo::Format::R8_UNORM,
-                        debugNamePrefix + "_Roughness");
-                    SetStagedTextureData(
-                        outMetallicTexture,
-                        std::move(split.B),
-                        split.Width,
-                        split.Height,
-                        Rendering::TextureCreateInfo::Format::R8_UNORM,
-                        debugNamePrefix + "_Metallic");
-                    return true;
-                }
-
-                if (!ShouldUseLooseFallbackForPreparedStatus(prepared.Status))
-                {
-                    return false;
-                }
+                return true;
             }
 
             return DecodeArmTextureFallback(
@@ -1282,7 +1203,7 @@ namespace NorvesLib::Core::Resource
                 requestId);
         }
 
-        bool CreateTextureFromStagedData(Rendering::RenderResourceRegistry& resourceRegistry,
+        bool CreateTextureFromStagedData(Rendering::TextureResources& textures,
                                          const StagedTextureData& stagedTexture,
                                          NorvesLib::RHI::TexturePtr& outTexture,
                                          const char* role,
@@ -1295,7 +1216,12 @@ namespace NorvesLib::Core::Resource
 
             if (stagedTexture.HasPreparedTexture())
             {
-                Rendering::TextureHandle textureHandle = resourceRegistry.FinalizePreparedTextureAsset(
+                if (!textures.IsPreparedTextureAssetCurrent(stagedTexture.PreparedTexture))
+                {
+                    return false;
+                }
+
+                Rendering::TextureHandle textureHandle = textures.FinalizePreparedTextureAsset(
                     stagedTexture.PreparedTexture,
                     role,
                     requestId);
@@ -1304,7 +1230,7 @@ namespace NorvesLib::Core::Resource
                     return false;
                 }
 
-                outTexture = resourceRegistry.GetRHITexturePtr(textureHandle);
+                outTexture = textures.GetRHITexturePtr(textureHandle);
                 return static_cast<bool>(outTexture);
             }
 
@@ -1314,7 +1240,7 @@ namespace NorvesLib::Core::Resource
             }
 
             return CreateTextureFromPixels(
-                resourceRegistry,
+                textures,
                 stagedTexture.DebugName,
                 stagedTexture.Width,
                 stagedTexture.Height,
@@ -1324,9 +1250,177 @@ namespace NorvesLib::Core::Resource
                 outTexture);
         }
 
+        bool CreateStandardTextureFromReference(Rendering::TextureResources& textures,
+                                                const TextureReference& textureReference,
+                                                const String& debugName,
+                                                NorvesLib::RHI::TexturePtr& outTexture,
+                                                const char* role,
+                                                uint32_t requestId)
+        {
+            if (!textureReference.HasReference())
+            {
+                return true;
+            }
+
+            if (!textureReference.RequestPath.empty())
+            {
+                Rendering::PreparedTextureAsset prepared = textures.PrepareTextureAssetForWorker(
+                    textureReference.RequestPath,
+                    textureReference.ResolvedFallbackPath,
+                    role,
+                    requestId);
+
+                if (prepared.Status == Rendering::PreparedTextureAssetStatus::CookedReady)
+                {
+                    if (!textures.IsPreparedTextureAssetCurrent(prepared))
+                    {
+                        return false;
+                    }
+
+                    Rendering::TextureHandle textureHandle = textures.FinalizePreparedTextureAsset(
+                        prepared,
+                        role,
+                        requestId);
+                    if (!textureHandle.IsValid())
+                    {
+                        return false;
+                    }
+
+                    outTexture = textures.GetRHITexturePtr(textureHandle);
+                    return static_cast<bool>(outTexture);
+                }
+
+                if (!ShouldUseLooseFallbackForPreparedStatus(prepared.Status))
+                {
+                    return false;
+                }
+            }
+
+            StagedTextureData looseFallback;
+            if (!DecodeStandardTextureFallback(textureReference, debugName, looseFallback, role, requestId))
+            {
+                return false;
+            }
+
+            return CreateTextureFromStagedData(textures, looseFallback, outTexture, role, requestId);
+        }
+
+        bool CreateArmTexturesFromReference(Rendering::TextureResources& textures,
+                                            const TextureReference& textureReference,
+                                            const String& debugNamePrefix,
+                                            NorvesLib::RHI::TexturePtr& outAOTexture,
+                                            NorvesLib::RHI::TexturePtr& outRoughnessTexture,
+                                            NorvesLib::RHI::TexturePtr& outMetallicTexture,
+                                            const char* role,
+                                            uint32_t requestId)
+        {
+            if (!textureReference.HasReference())
+            {
+                return true;
+            }
+
+            StagedTextureData aoStaging;
+            StagedTextureData roughnessStaging;
+            StagedTextureData metallicStaging;
+
+            if (!textureReference.RequestPath.empty())
+            {
+                Rendering::PreparedTextureAsset prepared = textures.PrepareTextureAssetForWorker(
+                    textureReference.RequestPath,
+                    textureReference.ResolvedFallbackPath,
+                    role,
+                    requestId);
+
+                if (prepared.Status == Rendering::PreparedTextureAssetStatus::CookedReady)
+                {
+                    if (!textures.IsPreparedTextureAssetCurrent(prepared))
+                    {
+                        return false;
+                    }
+
+                    Rendering::PreparedCookedTextureMip0RGBA8UNormLinearSplit split;
+                    String splitReason;
+                    if (!textures.TrySplitPreparedCookedTextureMip0RGBA8UNormLinear(
+                            prepared,
+                            split,
+                            &splitReason,
+                            role,
+                            requestId))
+                    {
+                        if (prepared.FallbackMode == Rendering::TextureAssetFallbackMode::DebugAllowLooseFallback)
+                        {
+                            if (!DecodeArmTextureFallback(
+                                    textureReference,
+                                    debugNamePrefix,
+                                    aoStaging,
+                                    roughnessStaging,
+                                    metallicStaging,
+                                    role,
+                                    requestId))
+                            {
+                                return false;
+                            }
+                        }
+                        else
+                        {
+                            NORVES_LOG_ERROR("GLTFAnalyzer",
+                                             "Failed to split cooked ARM texture: %s (%s)",
+                                             textureReference.RequestPath.c_str(),
+                                             splitReason.c_str());
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        SetStagedTextureData(
+                            aoStaging,
+                            std::move(split.R),
+                            split.Width,
+                            split.Height,
+                            Rendering::TextureCreateInfo::Format::R8_UNORM,
+                            debugNamePrefix + "_AO");
+                        SetStagedTextureData(
+                            roughnessStaging,
+                            std::move(split.G),
+                            split.Width,
+                            split.Height,
+                            Rendering::TextureCreateInfo::Format::R8_UNORM,
+                            debugNamePrefix + "_Roughness");
+                        SetStagedTextureData(
+                            metallicStaging,
+                            std::move(split.B),
+                            split.Width,
+                            split.Height,
+                            Rendering::TextureCreateInfo::Format::R8_UNORM,
+                            debugNamePrefix + "_Metallic");
+                    }
+                }
+                else if (!ShouldUseLooseFallbackForPreparedStatus(prepared.Status))
+                {
+                    return false;
+                }
+            }
+
+            if (!aoStaging.HasData() &&
+                !DecodeArmTextureFallback(
+                    textureReference,
+                    debugNamePrefix,
+                    aoStaging,
+                    roughnessStaging,
+                    metallicStaging,
+                    role,
+                    requestId))
+            {
+                return false;
+            }
+
+            return CreateTextureFromStagedData(textures, aoStaging, outAOTexture, role, requestId) &&
+                   CreateTextureFromStagedData(textures, roughnessStaging, outRoughnessTexture, role, requestId) &&
+                   CreateTextureFromStagedData(textures, metallicStaging, outMetallicTexture, role, requestId);
+        }
+
         bool BuildModelStaging(const String& gltfRequestPath,
                                const String& resolvedGltfPath,
-                               Rendering::RenderResourceRegistry& resourceRegistry,
                                ModelStagingData& outStaging,
                                const char* role,
                                uint32_t requestId)
@@ -1548,20 +1642,19 @@ namespace NorvesLib::Core::Resource
             outStaging.TotalBounds = CalculateBoundingSphere(outStaging.Vertices);
             outStaging.DebugName = debugName;
             outStaging.ResolvedPath = resolvedGltfPath;
+            outStaging.TextureReferences = materialInfo;
 
             auto textureStagingStartTime = LoadProfileNow();
             bool bAlbedoStagingSuccess = StageStandardTexture(
                 materialInfo.Albedo,
                 debugName + "_Albedo",
                 outStaging.AlbedoTexture,
-                resourceRegistry,
                 role,
                 requestId);
             bool bNormalStagingSuccess = StageStandardTexture(
                 materialInfo.Normal,
                 debugName + "_Normal",
                 outStaging.NormalTexture,
-                resourceRegistry,
                 role,
                 requestId);
             bool bArmStagingSuccess = StageArmTextures(
@@ -1570,7 +1663,6 @@ namespace NorvesLib::Core::Resource
                 outStaging.AOTexture,
                 outStaging.RoughnessTexture,
                 outStaging.MetallicTexture,
-                resourceRegistry,
                 role,
                 requestId);
             bool bTextureStagingSuccess =
@@ -1614,7 +1706,7 @@ namespace NorvesLib::Core::Resource
             return true;
         }
         Rendering::ModelHandle FinalizeModelStaging(const ModelStagingData& staging,
-                                                    Rendering::RenderResourceRegistry& resourceRegistry,
+                                                    Rendering::ModelLoadResourceContext resources,
                                                     const char* role,
                                                     uint32_t requestId)
         {
@@ -1633,11 +1725,33 @@ namespace NorvesLib::Core::Resource
             bool bMetallicFinalizeSuccess = false;
             {
                 Rendering::ScopedTextureCreateUploadProfileRole profileRole(role);
-                bAlbedoFinalizeSuccess = CreateTextureFromStagedData(resourceRegistry, staging.AlbedoTexture, material.AlbedoTexture, role, requestId);
-                bNormalFinalizeSuccess = CreateTextureFromStagedData(resourceRegistry, staging.NormalTexture, material.NormalTexture, role, requestId);
-                bAOFinalizeSuccess = CreateTextureFromStagedData(resourceRegistry, staging.AOTexture, material.AOTexture, role, requestId);
-                bRoughnessFinalizeSuccess = CreateTextureFromStagedData(resourceRegistry, staging.RoughnessTexture, material.RoughnessTexture, role, requestId);
-                bMetallicFinalizeSuccess = CreateTextureFromStagedData(resourceRegistry, staging.MetallicTexture, material.MetallicTexture, role, requestId);
+                bAlbedoFinalizeSuccess = staging.AlbedoTexture.HasData()
+                                              ? CreateTextureFromStagedData(resources.Textures, staging.AlbedoTexture, material.AlbedoTexture, role, requestId)
+                                              : CreateStandardTextureFromReference(resources.Textures, staging.TextureReferences.Albedo, staging.DebugName + "_Albedo", material.AlbedoTexture, role, requestId);
+                bNormalFinalizeSuccess = staging.NormalTexture.HasData()
+                                             ? CreateTextureFromStagedData(resources.Textures, staging.NormalTexture, material.NormalTexture, role, requestId)
+                                             : CreateStandardTextureFromReference(resources.Textures, staging.TextureReferences.Normal, staging.DebugName + "_Normal", material.NormalTexture, role, requestId);
+                if (staging.AOTexture.HasData() ||
+                    staging.RoughnessTexture.HasData() ||
+                    staging.MetallicTexture.HasData())
+                {
+                    bAOFinalizeSuccess = CreateTextureFromStagedData(resources.Textures, staging.AOTexture, material.AOTexture, role, requestId);
+                    bRoughnessFinalizeSuccess = CreateTextureFromStagedData(resources.Textures, staging.RoughnessTexture, material.RoughnessTexture, role, requestId);
+                    bMetallicFinalizeSuccess = CreateTextureFromStagedData(resources.Textures, staging.MetallicTexture, material.MetallicTexture, role, requestId);
+                }
+                else
+                {
+                    bAOFinalizeSuccess = bRoughnessFinalizeSuccess = bMetallicFinalizeSuccess =
+                        CreateArmTexturesFromReference(
+                            resources.Textures,
+                            staging.TextureReferences.Arm,
+                            staging.DebugName,
+                            material.AOTexture,
+                            material.RoughnessTexture,
+                            material.MetallicTexture,
+                            role,
+                            requestId);
+                }
             }
             bool bTextureFinalizeSuccess =
                 bAlbedoFinalizeSuccess &&
@@ -1674,7 +1788,7 @@ namespace NorvesLib::Core::Resource
             createInfo.DebugName = staging.DebugName;
 
             auto megaMeshCreateStartTime = LoadProfileNow();
-            Rendering::MegaGeometry::MegaMeshHandle megaMeshHandle = resourceRegistry.CreateMegaMesh(createInfo);
+            Rendering::MegaGeometry::MegaMeshHandle megaMeshHandle = resources.MegaGeometry.CreateMegaMesh(createInfo);
             double megaMeshCreateMs = LoadProfileElapsedMs(megaMeshCreateStartTime);
             NORVES_LOG_INFO("AssetLoadProfile",
                             "stage=gltf_finalize_megamesh role=%s request_id=%u debug_name=\"%s\" vertices=%zu indices=%zu clusters=%zu ms=%.3f success=%d",
@@ -1693,7 +1807,7 @@ namespace NorvesLib::Core::Resource
             }
 
             auto modelRegisterStartTime = LoadProfileNow();
-            Rendering::ModelHandle modelHandle = resourceRegistry.RegisterModel(
+            Rendering::ModelHandle modelHandle = resources.MegaGeometry.RegisterModel(
                 megaMeshHandle,
                 staging.DebugName,
                 staging.ResolvedPath);
@@ -1708,7 +1822,7 @@ namespace NorvesLib::Core::Resource
                             modelHandle.IsValid() ? 1 : 0);
             if (!modelHandle.IsValid())
             {
-                resourceRegistry.ReleaseMegaMesh(megaMeshHandle);
+                resources.MegaGeometry.ReleaseMegaMesh(megaMeshHandle);
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to register model: %s", staging.DebugName.c_str());
                 return Rendering::ModelHandle::Invalid();
             }
@@ -1728,27 +1842,23 @@ namespace NorvesLib::Core::Resource
     } // anonymous namespace
 
     Rendering::ModelHandle GLTFAnalyzer::LoadModel(const String& gltfPath,
-                                                   Rendering::RenderResourceRegistry& resourceRegistry)
+                                                   Rendering::ModelLoadResourceContext resources)
     {
         ModelStagingData staging;
         String resolvedGltfPath = ResolveAssetPath(gltfPath);
-        if (!BuildModelStaging(gltfPath, resolvedGltfPath, resourceRegistry, staging, "caller", 0))
+        if (!BuildModelStaging(gltfPath, resolvedGltfPath, staging, "caller", 0))
         {
             return Rendering::ModelHandle::Invalid();
         }
 
-        return FinalizeModelStaging(staging, resourceRegistry, "caller", 0);
+        return FinalizeModelStaging(staging, resources, "caller", 0);
     }
 
     uint32_t GLTFAnalyzer::LoadModelAsync(const String& gltfPath,
-                                          Rendering::RenderResourceRegistry& resourceRegistry,
+                                          Rendering::ModelLoadResourceContext resources,
                                           Delegate<void, Rendering::ModelHandle> callback)
     {
-        if (!resourceRegistry.IsInitialized())
-        {
-            callback.InvokeIfBound(Rendering::ModelHandle::Invalid());
-            return 0;
-        }
+        (void)resources;
 
         String resolvedGltfPath = ResolveAssetPath(gltfPath);
         {
@@ -1773,12 +1883,11 @@ namespace NorvesLib::Core::Resource
             request->Callbacks.push_back(std::move(callback));
         }
 
-        request->Task = Thread::Task::Create([request, &resourceRegistry]()
+        request->Task = Thread::Task::Create([request]()
         {
             request->Result.bSuccess = BuildModelStaging(
                 request->Path,
                 request->ResolvedPath,
-                resourceRegistry,
                 request->Result.Staging,
                 "worker",
                 request->RequestId);
@@ -1797,7 +1906,7 @@ namespace NorvesLib::Core::Resource
         return request->RequestId;
     }
 
-    uint32_t GLTFAnalyzer::FlushCompletedModelLoads(Rendering::RenderResourceRegistry& resourceRegistry,
+    uint32_t GLTFAnalyzer::FlushCompletedModelLoads(Rendering::ModelLoadResourceContext resources,
                                                     uint32_t maxLoadsPerFrame)
     {
         auto flushStartTime = LoadProfileNow();
@@ -1839,7 +1948,7 @@ namespace NorvesLib::Core::Resource
             {
                 modelHandle = FinalizeModelStaging(
                     request->Result.Staging,
-                    resourceRegistry,
+                    resources,
                     "main_render",
                     request->RequestId);
                 if (modelHandle.IsValid())

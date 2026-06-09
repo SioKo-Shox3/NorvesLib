@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Rendering/RenderResourceRegistry.h"
+#include "Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Rendering/RenderTypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Atomic.h"
@@ -15,6 +16,13 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    struct ModelResourceData
+    {
+        MegaGeometry::MegaMeshHandle MegaMesh;
+        Container::String DebugName;
+        Container::String SourcePath;
+    };
+
     class MegaGeometryResourceStore final
     {
     public:

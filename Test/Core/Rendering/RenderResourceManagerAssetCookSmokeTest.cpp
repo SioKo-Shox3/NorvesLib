@@ -1,7 +1,7 @@
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedTextureFormat.h"
 #include "FileStream/Package.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResources.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -359,12 +359,12 @@ namespace
         }
     }
 
-    void ConfigureManager(RenderResourceManager &manager,
+    void ConfigureManager(RenderResources &manager,
                           const Options &options,
                           const std::string &manifestText)
     {
-        Require(manager.SetTextureAssetRoot(ToCoreString(options.AssetRoot)), "texture asset root must be set");
-        Require(manager.LoadTextureAssetManifestFromJsonText(ToCoreString(manifestText), ToCoreString(options.ManifestPath)),
+        Require(manager.Textures().SetTextureAssetRoot(ToCoreString(options.AssetRoot)), "texture asset root must be set");
+        Require(manager.Textures().LoadTextureAssetManifestFromJsonText(ToCoreString(manifestText), ToCoreString(options.ManifestPath)),
                 "texture asset manifest must load");
     }
 
@@ -373,11 +373,11 @@ namespace
                             const CookedTextureData &expectedTexture)
     {
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         Require(manager.Initialize(device), "sync manager must initialize");
         ConfigureManager(manager, options, manifestText);
 
-        const TextureHandle handle = manager.LoadTexture(ToCoreString(options.LogicalPath));
+        const TextureHandle handle = manager.Textures().LoadTexture(ToCoreString(options.LogicalPath));
         Require(handle.IsValid(), "sync cooked texture load must return a valid handle");
         VerifyUploads(options, *device, expectedTexture);
 
@@ -389,12 +389,12 @@ namespace
                              const CookedTextureData &expectedTexture)
     {
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         Require(manager.Initialize(device), "async manager must initialize");
         ConfigureManager(manager, options, manifestText);
 
         std::vector<TextureHandle> callbacks;
-        const uint32_t requestId = manager.LoadTextureAsync(
+        const uint32_t requestId = manager.Textures().LoadTextureAsync(
             ToCoreString(options.LogicalPath),
             NorvesLib::Core::Delegate<void, TextureHandle>([&callbacks](TextureHandle handle) {
                 callbacks.push_back(handle);
@@ -402,7 +402,7 @@ namespace
         Require(requestId != 0, "async cooked load must not complete through cache immediately");
 
         NorvesLib::Thread::JobSystem::Get().WaitForAll();
-        Require(manager.FlushCompletedTextureLoads() == 1, "async flush must process one cooked texture");
+        Require(manager.Textures().FlushCompletedTextureLoads() == 1, "async flush must process one cooked texture");
         Require(callbacks.size() == 1, "async callback count must be one");
         Require(callbacks[0].IsValid(), "async callback texture handle must be valid");
         VerifyUploads(options, *device, expectedTexture);

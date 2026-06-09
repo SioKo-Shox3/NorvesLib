@@ -1,4 +1,4 @@
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResources.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 
@@ -214,24 +214,24 @@ namespace
 
     void TestCreateBeforeInitialize()
     {
-        RenderResourceManager manager;
+        RenderResources manager;
         MeshFixture mesh("PreInitializeMega");
 
-        const auto handle = manager.CreateMegaMesh(mesh.CreateInfo);
+        const auto handle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
         assert(!handle.IsValid());
-        assert(manager.GetMegaMeshGPUData(handle) == nullptr);
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(handle) == nullptr);
     }
 
     void TestInvalidCreateInfoCreatesNoBuffers()
     {
-        RenderResourceManager manager;
+        RenderResources manager;
         auto device = MakeShared<FakeDevice>();
         assert(manager.Initialize(device));
 
         MeshFixture mesh("InvalidMega");
         mesh.CreateInfo.VertexDataSize = 0;
 
-        const auto handle = manager.CreateMegaMesh(mesh.CreateInfo);
+        const auto handle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
         assert(!handle.IsValid());
         assert(device->CreatedBufferDescs.empty());
         assert(manager.GetResourceStats().BufferCount == 0);
@@ -239,16 +239,16 @@ namespace
 
     void TestSuccessfulNoLodUpload()
     {
-        RenderResourceManager manager;
+        RenderResources manager;
         auto device = MakeShared<FakeDevice>();
         assert(manager.Initialize(device));
 
         MeshFixture mesh("NoLodMega");
-        const auto handle = manager.CreateMegaMesh(mesh.CreateInfo);
+        const auto handle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
         assert(handle.IsValid());
         AssertNoLodUploadBuffers(*device);
 
-        const auto *gpuData = manager.GetMegaMeshGPUData(handle);
+        const auto *gpuData = manager.MegaGeometry().GetMegaMeshGPUData(handle);
         assert(gpuData != nullptr);
         assert(gpuData->VertexBuffer);
         assert(gpuData->IndexBuffer);
@@ -270,96 +270,96 @@ namespace
 
     void TestSharedHandleCounter()
     {
-        RenderResourceManager manager;
+        RenderResources manager;
         auto device = MakeShared<FakeDevice>();
         assert(manager.Initialize(device));
 
-        const BufferHandle buffer = manager.CreateBuffer(MakeCounterBufferInfo());
+        const BufferHandle buffer = manager.Gpu().CreateBuffer(MakeCounterBufferInfo());
         assert(buffer.IsValid());
         assert(buffer.Id == 1);
 
         MeshFixture mesh("CounterMega");
-        const auto megaMesh = manager.CreateMegaMesh(mesh.CreateInfo);
+        const auto megaMesh = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
         assert(megaMesh.IsValid());
         assert(megaMesh.Id == 2);
 
-        const ModelHandle model = manager.RegisterModel(megaMesh, "CounterModel", "counter.mesh");
+        const ModelHandle model = manager.MegaGeometry().RegisterModel(megaMesh, "CounterModel", "counter.mesh");
         assert(model.IsValid());
         assert(model.Id == 3);
 
-        const BufferHandle secondBuffer = manager.CreateBuffer(MakeCounterBufferInfo());
+        const BufferHandle secondBuffer = manager.Gpu().CreateBuffer(MakeCounterBufferInfo());
         assert(secondBuffer.IsValid());
         assert(secondBuffer.Id == 4);
     }
 
     void TestCreateFailureDoesNotRegister(size_t failBufferCreateIndex)
     {
-        RenderResourceManager manager;
+        RenderResources manager;
         auto device = MakeShared<FakeDevice>();
         assert(manager.Initialize(device));
         device->FailBufferCreateIndex = failBufferCreateIndex;
 
         MeshFixture mesh("FailureMega");
-        const auto failedHandle = manager.CreateMegaMesh(mesh.CreateInfo);
+        const auto failedHandle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
         assert(!failedHandle.IsValid());
-        assert(manager.GetMegaMeshGPUData(MakeMegaMeshHandle(1)) == nullptr);
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(MakeMegaMeshHandle(1)) == nullptr);
         assert(manager.GetResourceStats().BufferCount == 0);
 
         device->FailBufferCreateIndex = 0;
-        const auto retryHandle = manager.CreateMegaMesh(mesh.CreateInfo);
+        const auto retryHandle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
         assert(retryHandle.IsValid());
         assert(retryHandle.Id == 1);
-        assert(manager.GetMegaMeshGPUData(retryHandle) != nullptr);
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(retryHandle) != nullptr);
     }
 
     void TestModelRegisterAndReleaseCoupledMegaMesh()
     {
-        RenderResourceManager manager;
+        RenderResources manager;
         auto device = MakeShared<FakeDevice>();
         assert(manager.Initialize(device));
 
         MeshFixture mesh("ModelMega");
-        const auto megaMesh = manager.CreateMegaMesh(mesh.CreateInfo);
+        const auto megaMesh = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
         assert(megaMesh.IsValid());
 
-        const ModelHandle invalidModel = manager.RegisterModel(MegaGeometry::MegaMeshHandle::Invalid());
+        const ModelHandle invalidModel = manager.MegaGeometry().RegisterModel(MegaGeometry::MegaMeshHandle::Invalid());
         assert(!invalidModel.IsValid());
 
-        const ModelHandle model = manager.RegisterModel(megaMesh, "Model", "model.mesh");
+        const ModelHandle model = manager.MegaGeometry().RegisterModel(megaMesh, "Model", "model.mesh");
         assert(model.IsValid());
-        assert(manager.GetModelMegaMeshHandle(model).Id == megaMesh.Id);
+        assert(manager.MegaGeometry().GetModelMegaMeshHandle(model).Id == megaMesh.Id);
 
-        manager.ReleaseModel(model);
-        assert(!manager.GetModelMegaMeshHandle(model).IsValid());
-        assert(manager.GetMegaMeshGPUData(megaMesh) == nullptr);
+        manager.MegaGeometry().ReleaseModel(model);
+        assert(!manager.MegaGeometry().GetModelMegaMeshHandle(model).IsValid());
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(megaMesh) == nullptr);
     }
 
     void TestReleaseClearShutdown()
     {
-        RenderResourceManager manager;
+        RenderResources manager;
         auto device = MakeShared<FakeDevice>();
         assert(manager.Initialize(device));
 
         MeshFixture releaseMesh("ReleaseMega");
-        const auto releaseHandle = manager.CreateMegaMesh(releaseMesh.CreateInfo);
+        const auto releaseHandle = manager.MegaGeometry().CreateMegaMesh(releaseMesh.CreateInfo);
         assert(releaseHandle.IsValid());
-        manager.ReleaseMegaMesh(MegaGeometry::MegaMeshHandle::Invalid());
-        assert(manager.GetMegaMeshGPUData(releaseHandle) != nullptr);
-        manager.ReleaseMegaMesh(releaseHandle);
-        assert(manager.GetMegaMeshGPUData(releaseHandle) == nullptr);
+        manager.MegaGeometry().ReleaseMegaMesh(MegaGeometry::MegaMeshHandle::Invalid());
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(releaseHandle) != nullptr);
+        manager.MegaGeometry().ReleaseMegaMesh(releaseHandle);
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(releaseHandle) == nullptr);
 
         MeshFixture clearMesh("ClearMega");
-        const auto clearHandle = manager.CreateMegaMesh(clearMesh.CreateInfo);
+        const auto clearHandle = manager.MegaGeometry().CreateMegaMesh(clearMesh.CreateInfo);
         assert(clearHandle.IsValid());
         manager.ClearAllResources();
-        assert(manager.GetMegaMeshGPUData(clearHandle) == nullptr);
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(clearHandle) == nullptr);
         assert(manager.GetResourceStats().BufferCount == 0);
 
         MeshFixture shutdownMesh("ShutdownMega");
-        const auto shutdownHandle = manager.CreateMegaMesh(shutdownMesh.CreateInfo);
+        const auto shutdownHandle = manager.MegaGeometry().CreateMegaMesh(shutdownMesh.CreateInfo);
         assert(shutdownHandle.IsValid());
         manager.Shutdown();
-        assert(manager.GetMegaMeshGPUData(shutdownHandle) == nullptr);
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(shutdownHandle) == nullptr);
         assert(manager.GetResourceStats().BufferCount == 0);
     }
 }

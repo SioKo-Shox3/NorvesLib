@@ -3,7 +3,7 @@
 #include "RenderTypes.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
-#include "RenderResourceRegistry.h"
+#include "RenderResources.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -158,16 +158,16 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         /**
-         * @brief リソースレジストリを取得
+         * @brief レンダリングリソースを取得
          */
-        RenderResourceRegistry &GetResourceRegistry()
+        RenderResources &GetRenderResources()
         {
-            return m_ResourceRegistry;
+            return m_RenderResources;
         }
 
-        RenderResourceManager &GetResourceManager()
+        const RenderResources &GetRenderResources() const
         {
-            return GetResourceRegistry();
+            return m_RenderResources;
         }
 
         /**
@@ -298,7 +298,7 @@ namespace NorvesLib::Core::Rendering
         RenderingCoordinator m_RenderingCoordinator;
 
         // サブシステム（GEngine配下で実体保持）
-        RenderResourceRegistry m_ResourceRegistry;
+        RenderResources m_RenderResources;
         RenderThread m_RenderThread;
 
         // 解像度

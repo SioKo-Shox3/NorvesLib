@@ -2,7 +2,7 @@
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/PersistentResourceCache.h"
-#include "Rendering/RenderResourceRegistry.h"
+#include "Rendering/RenderResources.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IBuffer.h"
@@ -286,11 +286,11 @@ namespace NorvesLib::Core::Rendering
                     m_BoundPipeline = pipeline;
                 }
 
-                if (drawCommand.Draw.MeshHandle.IsValid() && geometryPass.ResourceManager)
+                if (drawCommand.Draw.MeshHandle.IsValid() && geometryPass.Meshes)
                 {
                     RecordMeshDrawCall(drawCommand,
                                        commandList,
-                                       geometryPass.ResourceManager,
+                                       geometryPass.Meshes,
                                        drawCommand.DescriptorSet,
                                        drawCommand.DescriptorSetSlot);
                     continue;
@@ -391,17 +391,17 @@ namespace NorvesLib::Core::Rendering
 
     bool SceneRenderer::RecordMeshDrawCall(const DrawCommand &command,
                                            RHI::ICommandList *commandList,
-                                           RenderResourceRegistry *resourceRegistry,
+                                           MeshResources *meshResources,
                                            RHI::DescriptorSetPtr descriptorSet,
                                            uint32_t descriptorSetSlot)
     {
-        if (!commandList || !resourceRegistry)
+        if (!commandList || !meshResources)
         {
             return false;
         }
 
         // MeshHandleからGPUデータを解決
-        const auto *gpuData = resourceRegistry->GetMeshGPUData(command.Draw.MeshHandle);
+        const auto *gpuData = meshResources->GetGPUData(command.Draw.MeshHandle);
         if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer)
         {
             return false;

@@ -2,7 +2,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/ViewRenderContext.h"
-#include "Rendering/RenderResourceRegistry.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
@@ -85,11 +85,11 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // ViewRenderContext::ResourceManagerからプルモデルでデコード対象を取得
+        // ViewRenderContext::Resources.Materialsからプルモデルでデコード対象を取得
         m_FrameDecodeTargets.clear();
-        if (context.ResourceManager)
+        if (context.Resources.Materials)
         {
-            m_FrameDecodeTargets = context.ResourceManager->GetNeuralMaterialResources();
+            m_FrameDecodeTargets = context.Resources.Materials->GetNeuralResources();
         }
 
         m_Decoder.ClearResources();

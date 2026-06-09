@@ -3,7 +3,6 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
-#include "Rendering/RenderResourceRegistry.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
@@ -305,7 +304,8 @@ namespace NorvesLib::Core::Rendering
         // DrawCommand駆動の描画（影を落とすメッシュのみ）
         // ========================================
         const auto *activeDrawCommands = context.GetActiveDrawCommands();
-        if (m_SceneRenderer && context.ResourceManager && activeDrawCommands)
+        auto *meshes = context.Resources.Meshes;
+        if (m_SceneRenderer && meshes && activeDrawCommands)
         {
             // UBOデータ構造体（shadow.vertのShadowMVPに対応）
             struct ShadowPerObjectUBO
@@ -358,7 +358,7 @@ namespace NorvesLib::Core::Rendering
                                                                          shadowCommands,
                                                                          viewport,
                                                                          scissor,
-                                                                         context.ResourceManager));
+                                                                         meshes));
         }
     }
 
