@@ -211,6 +211,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/VertexLayout.h
     Public/Rendering/MeshTypes.h
     Public/Rendering/MaterialTypes.h
+    Public/Rendering/ITextureHandleRegistrar.h
+    Public/Rendering/ProceduralMeshGPUData.h
     Public/Rendering/SceneProxy.h
     Public/Rendering/FramePacket.h
     Public/Rendering/RenderResourceRegistryFwd.h

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Rendering/RenderResourceRegistry.h"
+#include "Rendering/ProceduralMeshGPUData.h"
+#include "Rendering/RenderTypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
@@ -29,13 +30,13 @@ namespace NorvesLib::Core::Rendering
                           size_t vertexSize,
                           const uint32_t *indices,
                           uint32_t indexCount);
-        const RenderResourceRegistry::MeshGPUData *GetMeshGPUData(MeshDataHandle handle) const;
+        const ProceduralMeshGPUData *GetMeshGPUData(MeshDataHandle handle) const;
         void UnregisterMesh(MeshDataHandle handle);
         void Clear();
 
     private:
         Container::TSharedPtr<RHI::IDevice> m_Device;
-        Container::Map<uint64_t, RenderResourceRegistry::MeshGPUData> m_Meshes;
+        Container::Map<uint64_t, ProceduralMeshGPUData> m_Meshes;
         mutable Thread::Mutex m_Mutex;
     };
 

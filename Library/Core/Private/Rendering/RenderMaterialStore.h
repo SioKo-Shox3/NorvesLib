@@ -1,6 +1,14 @@
 #pragma once
 
-#include "Rendering/RenderResourceRegistry.h"
+#include "Rendering/MaterialTypes.h"
+#include "Rendering/NeuralMaterialResource.h"
+#include "Rendering/RenderTypes.h"
+#include "Container/Containers.h"
+#include "Container/PointerTypes.h"
+#include "Thread/Atomic.h"
+#include "Thread/Mutex.h"
+
+#include <cstdint>
 
 namespace NorvesLib::RHI
 {
@@ -9,6 +17,8 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    class ITextureHandleRegistrar;
+
     class RenderMaterialStore
     {
     public:
@@ -21,17 +31,19 @@ namespace NorvesLib::Core::Rendering
         MaterialHandle CreateMaterial(const MaterialCreateData &createInfo);
         const MaterialResourceData *GetMaterialData(MaterialHandle handle) const;
         bool UpdateMaterial(MaterialHandle handle, const MaterialCreateData &createInfo);
-        void ReleaseMaterial(MaterialHandle handle);
+        void ReleaseMaterial(MaterialHandle handle, ITextureHandleRegistrar &textureRegistrar);
 
         MaterialHandle CreateNeuralMaterial(RHI::IDevice *device,
-                                            RenderResourceRegistry &resourceRegistry,
+                                            ITextureHandleRegistrar &textureRegistrar,
                                             const NeuralMaterialDesc &desc);
         Container::VariableArray<NeuralMaterialResource *> GetNeuralMaterialResources() const;
 
-        void Clear();
+        void Clear(ITextureHandleRegistrar &textureRegistrar);
 
     private:
         MaterialHandle AllocateMaterialHandle();
+        void ClearUnregistered();
+        void ShutdownNeuralMaterialWithoutRegistrar(NeuralMaterialResource &neuralMaterial);
 
         Container::Map<uint64_t, MaterialResourceData> m_Materials;
         Container::Map<uint64_t, Container::TSharedPtr<NeuralMaterialResource>> m_NeuralMaterials;

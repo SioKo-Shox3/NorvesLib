@@ -58,7 +58,7 @@ namespace NorvesLib::Core::Rendering
         }
         indexBuffer->Update(indices, ibSize);
 
-        RenderResourceRegistry::MeshGPUData gpuData;
+        ProceduralMeshGPUData gpuData;
         gpuData.VertexBuffer = vertexBuffer;
         gpuData.IndexBuffer = indexBuffer;
         gpuData.IndexCount = indexCount;
@@ -72,7 +72,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    const RenderResourceRegistry::MeshGPUData *ProceduralMeshGpuStore::GetMeshGPUData(MeshDataHandle handle) const
+    const ProceduralMeshGPUData *ProceduralMeshGpuStore::GetMeshGPUData(MeshDataHandle handle) const
     {
         Thread::ScopedLock lock(m_Mutex);
         auto it = m_Meshes.find(handle.Id);
