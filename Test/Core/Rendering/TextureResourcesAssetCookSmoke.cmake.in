@@ -66,7 +66,7 @@ if(NOT runtime_result EQUAL 0)
     message(STATUS "${cook_stderr}")
     message(STATUS "${runtime_stdout}")
     message(STATUS "${runtime_stderr}")
-    message(FATAL_ERROR "RenderResourceManager AssetCook smoke failed with exit code ${runtime_result}")
+    message(FATAL_ERROR "TextureResources AssetCook smoke failed with exit code ${runtime_result}")
 endif()
 
 message(STATUS "${cook_stdout}")

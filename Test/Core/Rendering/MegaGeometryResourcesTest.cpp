@@ -371,7 +371,7 @@ int main()
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 
-    std::cout << "RenderResourceManagerMegaGeometryStoreTest start\n";
+    std::cout << "MegaGeometryResourcesTest start\n";
 
     TestCreateBeforeInitialize();
     TestInvalidCreateInfoCreatesNoBuffers();
@@ -383,6 +383,6 @@ int main()
     TestModelRegisterAndReleaseCoupledMegaMesh();
     TestReleaseClearShutdown();
 
-    std::cout << "RenderResourceManagerMegaGeometryStoreTest passed\n";
+    std::cout << "MegaGeometryResourcesTest passed\n";
     return 0;
 }

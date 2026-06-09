@@ -71,10 +71,10 @@ int main()
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 
-    std::cout << "RenderResourceManagerAsyncTextureTypesTest start\n";
+    std::cout << "TextureAsyncTypesTest start\n";
 
     TestTextureCreateUploadProfileRole();
 
-    std::cout << "RenderResourceManagerAsyncTextureTypesTest passed\n";
+    std::cout << "TextureAsyncTypesTest passed\n";
     return 0;
 }

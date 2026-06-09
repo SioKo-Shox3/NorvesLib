@@ -157,7 +157,7 @@ namespace
     {
         const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
         std::filesystem::path root = std::filesystem::temp_directory_path() /
-                                     ("NorvesLibRRMAssetLoadProfileContract_" + std::to_string(now));
+                                     ("NorvesLibTextureResourcesAssetLoadProfileContract_" + std::to_string(now));
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root);
         return root;
@@ -463,10 +463,10 @@ int main()
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 
-    std::cout << "RenderResourceManagerAssetLoadProfileContractTest start\n";
+    std::cout << "TextureResourcesAssetLoadProfileContractTest start\n";
 
 #if !NORVES_ENABLE_LOGGING
-    std::cout << "RenderResourceManagerAssetLoadProfileContractTest skipped: NORVES_ENABLE_LOGGING == 0\n";
+    std::cout << "TextureResourcesAssetLoadProfileContractTest skipped: NORVES_ENABLE_LOGGING == 0\n";
     return 0;
 #else
     const std::filesystem::path root = CreateTestRoot();
@@ -550,7 +550,7 @@ int main()
 
     std::filesystem::remove_all(root);
 
-    std::cout << "RenderResourceManagerAssetLoadProfileContractTest passed\n";
+    std::cout << "TextureResourcesAssetLoadProfileContractTest passed\n";
     return 0;
 #endif
 }

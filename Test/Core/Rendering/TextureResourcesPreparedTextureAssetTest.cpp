@@ -154,7 +154,7 @@ namespace
     {
         const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
         std::filesystem::path root = std::filesystem::temp_directory_path() /
-                                     (std::string("NorvesLibRRMPreparedTextureAssetTest_") + name + "_" + std::to_string(now));
+                                     (std::string("NorvesLibTextureResourcesPreparedTextureAssetTest_") + name + "_" + std::to_string(now));
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root);
         return root;
@@ -903,7 +903,7 @@ int main()
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 
-    std::cout << "RenderResourceManagerPreparedTextureAssetTest start\n";
+    std::cout << "TextureResourcesPreparedTextureAssetTest start\n";
 
     TestPrepareCookedReadyIncludesRequiredFields();
     TestFinalizeCookedReadyUploadsAndCaches();
@@ -921,6 +921,6 @@ int main()
     TestSplitMip0RGBA8UNormLinearSucceeds();
     TestSplitFailsForUnsupportedCookedPayload();
 
-    std::cout << "RenderResourceManagerPreparedTextureAssetTest passed\n";
+    std::cout << "TextureResourcesPreparedTextureAssetTest passed\n";
     return 0;
 }

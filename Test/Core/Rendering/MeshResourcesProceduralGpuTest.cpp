@@ -137,7 +137,7 @@ int main()
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 
-    std::cout << "RenderResourceManagerProceduralMeshStoreTest start\n";
+    std::cout << "MeshResourcesProceduralGpuTest start\n";
 
     RenderResources manager;
     const MeshDataHandle meshHandle = MakeMeshHandle(77);
@@ -214,6 +214,6 @@ int main()
     assert(manager.Meshes().GetGPUData(meshHandle) == nullptr);
     assert(manager.GetResourceStats().BufferCount == 0);
 
-    std::cout << "RenderResourceManagerProceduralMeshStoreTest passed\n";
+    std::cout << "MeshResourcesProceduralGpuTest passed\n";
     return 0;
 }
