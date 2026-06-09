@@ -213,7 +213,7 @@ int main()
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 
-    std::cout << "RenderResourceManagerResourceContractTest start\n";
+    std::cout << "RenderResourcesDomainContractTest start\n";
 
     RenderResources manager;
     const TextureCreateInfo createInfo = MakeTextureCreateInfo("OwnedTexture");
@@ -318,6 +318,6 @@ int main()
     assert(manager.Textures().GetRHITexture(shutdownHandle) == nullptr);
     assert(!manager.Textures().GetRHITexturePtr(shutdownHandle));
 
-    std::cout << "RenderResourceManagerResourceContractTest passed\n";
+    std::cout << "RenderResourcesDomainContractTest passed\n";
     return 0;
 }

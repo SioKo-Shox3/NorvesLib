@@ -102,103 +102,103 @@ target_include_directories(TextureHandleCacheTest PRIVATE
 set_target_properties(TextureHandleCacheTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME TextureHandleCacheTest COMMAND TextureHandleCacheTest)
 
-add_executable(RenderResourceManagerAsyncTextureTypesTest
-    RenderResourceManagerAsyncTextureTypesTest.cpp
+add_executable(TextureAsyncTypesTest
+    TextureAsyncTypesTest.cpp
 )
-target_link_libraries(RenderResourceManagerAsyncTextureTypesTest PRIVATE Core)
-target_include_directories(RenderResourceManagerAsyncTextureTypesTest PRIVATE
+target_link_libraries(TextureAsyncTypesTest PRIVATE Core)
+target_include_directories(TextureAsyncTypesTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
-set_target_properties(RenderResourceManagerAsyncTextureTypesTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME RenderResourceManagerAsyncTextureTypesTest COMMAND RenderResourceManagerAsyncTextureTypesTest)
+set_target_properties(TextureAsyncTypesTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME TextureAsyncTypesTest COMMAND TextureAsyncTypesTest)
 
-add_executable(RenderResourceManagerTextureAssetTest
-    RenderResourceManagerTextureAssetTest.cpp
+add_executable(TextureResourcesTextureAssetTest
+    TextureResourcesTextureAssetTest.cpp
 )
-target_link_libraries(RenderResourceManagerTextureAssetTest PRIVATE Core)
-target_include_directories(RenderResourceManagerTextureAssetTest PRIVATE
+target_link_libraries(TextureResourcesTextureAssetTest PRIVATE Core)
+target_include_directories(TextureResourcesTextureAssetTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(RenderResourceManagerTextureAssetTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME RenderResourceManagerTextureAssetTest COMMAND RenderResourceManagerTextureAssetTest)
+set_target_properties(TextureResourcesTextureAssetTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME TextureResourcesTextureAssetTest COMMAND TextureResourcesTextureAssetTest)
 
-add_executable(RenderResourceManagerPreparedTextureAssetTest
-    RenderResourceManagerPreparedTextureAssetTest.cpp
+add_executable(TextureResourcesPreparedTextureAssetTest
+    TextureResourcesPreparedTextureAssetTest.cpp
 )
-target_link_libraries(RenderResourceManagerPreparedTextureAssetTest PRIVATE Core)
-target_include_directories(RenderResourceManagerPreparedTextureAssetTest PRIVATE
+target_link_libraries(TextureResourcesPreparedTextureAssetTest PRIVATE Core)
+target_include_directories(TextureResourcesPreparedTextureAssetTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(RenderResourceManagerPreparedTextureAssetTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME RenderResourceManagerPreparedTextureAssetTest COMMAND RenderResourceManagerPreparedTextureAssetTest)
+set_target_properties(TextureResourcesPreparedTextureAssetTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME TextureResourcesPreparedTextureAssetTest COMMAND TextureResourcesPreparedTextureAssetTest)
 
-add_executable(RenderResourceManagerAssetLoadProfileContractTest
-    RenderResourceManagerAssetLoadProfileContractTest.cpp
+add_executable(TextureResourcesAssetLoadProfileContractTest
+    TextureResourcesAssetLoadProfileContractTest.cpp
 )
-target_link_libraries(RenderResourceManagerAssetLoadProfileContractTest PRIVATE Core)
-target_include_directories(RenderResourceManagerAssetLoadProfileContractTest PRIVATE
+target_link_libraries(TextureResourcesAssetLoadProfileContractTest PRIVATE Core)
+target_include_directories(TextureResourcesAssetLoadProfileContractTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(RenderResourceManagerAssetLoadProfileContractTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME RenderResourceManagerAssetLoadProfileContractTest COMMAND RenderResourceManagerAssetLoadProfileContractTest)
+set_target_properties(TextureResourcesAssetLoadProfileContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME TextureResourcesAssetLoadProfileContractTest COMMAND TextureResourcesAssetLoadProfileContractTest)
 
-add_executable(RenderResourceManagerResourceContractTest
-    RenderResourceManagerResourceContractTest.cpp
+add_executable(RenderResourcesDomainContractTest
+    RenderResourcesDomainContractTest.cpp
 )
-target_link_libraries(RenderResourceManagerResourceContractTest PRIVATE Core)
-target_include_directories(RenderResourceManagerResourceContractTest PRIVATE
+target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
+target_include_directories(RenderResourcesDomainContractTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(RenderResourceManagerResourceContractTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME RenderResourceManagerResourceContractTest COMMAND RenderResourceManagerResourceContractTest)
+set_target_properties(RenderResourcesDomainContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainContractTest)
 
-add_executable(RenderResourceManagerProceduralMeshStoreTest
-    RenderResourceManagerProceduralMeshStoreTest.cpp
+add_executable(MeshResourcesProceduralGpuTest
+    MeshResourcesProceduralGpuTest.cpp
 )
-target_link_libraries(RenderResourceManagerProceduralMeshStoreTest PRIVATE Core)
-target_include_directories(RenderResourceManagerProceduralMeshStoreTest PRIVATE
+target_link_libraries(MeshResourcesProceduralGpuTest PRIVATE Core)
+target_include_directories(MeshResourcesProceduralGpuTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(RenderResourceManagerProceduralMeshStoreTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME RenderResourceManagerProceduralMeshStoreTest COMMAND RenderResourceManagerProceduralMeshStoreTest)
+set_target_properties(MeshResourcesProceduralGpuTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MeshResourcesProceduralGpuTest COMMAND MeshResourcesProceduralGpuTest)
 
-add_executable(RenderResourceManagerMegaGeometryStoreTest
-    RenderResourceManagerMegaGeometryStoreTest.cpp
+add_executable(MegaGeometryResourcesTest
+    MegaGeometryResourcesTest.cpp
 )
-target_link_libraries(RenderResourceManagerMegaGeometryStoreTest PRIVATE Core)
-target_include_directories(RenderResourceManagerMegaGeometryStoreTest PRIVATE
+target_link_libraries(MegaGeometryResourcesTest PRIVATE Core)
+target_include_directories(MegaGeometryResourcesTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(RenderResourceManagerMegaGeometryStoreTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME RenderResourceManagerMegaGeometryStoreTest COMMAND RenderResourceManagerMegaGeometryStoreTest)
+set_target_properties(MegaGeometryResourcesTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MegaGeometryResourcesTest COMMAND MegaGeometryResourcesTest)
 
-add_executable(RenderResourceManagerMaterialStoreTest
-    RenderResourceManagerMaterialStoreTest.cpp
+add_executable(MaterialResourcesTest
+    MaterialResourcesTest.cpp
 )
-target_link_libraries(RenderResourceManagerMaterialStoreTest PRIVATE Core)
-target_include_directories(RenderResourceManagerMaterialStoreTest PRIVATE
+target_link_libraries(MaterialResourcesTest PRIVATE Core)
+target_include_directories(MaterialResourcesTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-set_target_properties(RenderResourceManagerMaterialStoreTest PROPERTIES FOLDER "Test/Core/Rendering")
-add_test(NAME RenderResourceManagerMaterialStoreTest COMMAND RenderResourceManagerMaterialStoreTest)
+set_target_properties(MaterialResourcesTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MaterialResourcesTest COMMAND MaterialResourcesTest)
 
-add_executable(RenderResourceManagerAssetCookSmokeTest
-    RenderResourceManagerAssetCookSmokeTest.cpp
+add_executable(TextureResourcesAssetCookSmokeTest
+    TextureResourcesAssetCookSmokeTest.cpp
 )
-target_link_libraries(RenderResourceManagerAssetCookSmokeTest PRIVATE Core)
-target_include_directories(RenderResourceManagerAssetCookSmokeTest PRIVATE
+target_link_libraries(TextureResourcesAssetCookSmokeTest PRIVATE Core)
+target_include_directories(TextureResourcesAssetCookSmokeTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
-add_dependencies(RenderResourceManagerAssetCookSmokeTest AssetCook)
-set_target_properties(RenderResourceManagerAssetCookSmokeTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_dependencies(TextureResourcesAssetCookSmokeTest AssetCook)
+set_target_properties(TextureResourcesAssetCookSmokeTest PROPERTIES FOLDER "Test/Core/Rendering")
 
-set(RENDER_RESOURCE_MANAGER_ASSET_COOK_SMOKE_DIR
-    "${CMAKE_BINARY_DIR}/RenderResourceManagerAssetCookSmoke/$<CONFIG>")
-add_test(NAME RenderResourceManagerAssetCookSmoke
+set(TEXTURE_RESOURCES_ASSET_COOK_SMOKE_DIR
+    "${CMAKE_BINARY_DIR}/TextureResourcesAssetCookSmoke/$<CONFIG>")
+add_test(NAME TextureResourcesAssetCookSmoke
     COMMAND ${CMAKE_COMMAND}
         "-DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>"
-        "-DRUNTIME_TEST_EXE=$<TARGET_FILE:RenderResourceManagerAssetCookSmokeTest>"
-        "-DSMOKE_DIR=${RENDER_RESOURCE_MANAGER_ASSET_COOK_SMOKE_DIR}"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/RenderResourceManagerAssetCookSmoke.cmake.in"
+        "-DRUNTIME_TEST_EXE=$<TARGET_FILE:TextureResourcesAssetCookSmokeTest>"
+        "-DSMOKE_DIR=${TEXTURE_RESOURCES_ASSET_COOK_SMOKE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/TextureResourcesAssetCookSmoke.cmake.in"
 )

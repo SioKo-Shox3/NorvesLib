@@ -418,7 +418,7 @@ int main(int argc, char **argv)
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 
-    std::cout << "RenderResourceManagerAssetCookSmokeTest start\n";
+    std::cout << "TextureResourcesAssetCookSmokeTest start\n";
 
     const Options options = ParseOptions(argc, argv);
     Require(std::filesystem::exists(options.AssetRoot), "asset root must exist");
@@ -435,6 +435,6 @@ int main(int argc, char **argv)
     TestAsyncCookedPath(options, manifestText, expectedTexture);
     NorvesLib::Thread::JobSystem::Get().Shutdown();
 
-    std::cout << "RenderResourceManagerAssetCookSmokeTest passed\n";
+    std::cout << "TextureResourcesAssetCookSmokeTest passed\n";
     return 0;
 }

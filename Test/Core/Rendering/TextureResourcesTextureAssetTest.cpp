@@ -145,7 +145,7 @@ namespace
     {
         const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
         std::filesystem::path root = std::filesystem::temp_directory_path() /
-                                     (std::string("NorvesLibRRMTextureAssetTest_") + name + "_" + std::to_string(now));
+                                     (std::string("NorvesLibTextureResourcesTextureAssetTest_") + name + "_" + std::to_string(now));
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root);
         return root;
@@ -744,7 +744,7 @@ int main()
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 
-    std::cout << "RenderResourceManagerTextureAssetTest start\n";
+    std::cout << "TextureResourcesTextureAssetTest start\n";
 
     NorvesLib::Thread::JobSystem::Get().Initialize(2);
 
@@ -762,6 +762,6 @@ int main()
 
     NorvesLib::Thread::JobSystem::Get().Shutdown();
 
-    std::cout << "RenderResourceManagerTextureAssetTest passed\n";
+    std::cout << "TextureResourcesTextureAssetTest passed\n";
     return 0;
 }

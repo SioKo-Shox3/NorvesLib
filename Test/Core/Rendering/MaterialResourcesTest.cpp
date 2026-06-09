@@ -291,7 +291,7 @@ int main()
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
 
-    std::cout << "RenderResourceManagerMaterialStoreTest start\n";
+    std::cout << "MaterialResourcesTest start\n";
 
     TestNeuralMaterialPartialRegistrationFailure();
 
@@ -360,6 +360,6 @@ int main()
 
     manager.Shutdown();
 
-    std::cout << "RenderResourceManagerMaterialStoreTest passed\n";
+    std::cout << "MaterialResourcesTest passed\n";
     return 0;
 }
