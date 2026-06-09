@@ -1,4 +1,4 @@
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResources.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -215,9 +215,9 @@ int main()
 
     std::cout << "RenderResourceManagerResourceContractTest start\n";
 
-    RenderResourceManager manager;
+    RenderResources manager;
     const TextureCreateInfo createInfo = MakeTextureCreateInfo("OwnedTexture");
-    const TextureHandle preInitializeHandle = manager.CreateTexture(createInfo);
+    const TextureHandle preInitializeHandle = manager.Textures().CreateTexture(createInfo);
     assert(!preInitializeHandle.IsValid());
     assert(manager.GetResourceStats().TextureCount == 0);
 
@@ -231,92 +231,92 @@ int main()
     bufferInfo.DebugName = "ContractBuffer";
 
     const uint32_t bufferData[4] = {1, 2, 3, 4};
-    const BufferHandle bufferHandle = manager.CreateBuffer(bufferInfo, bufferData, sizeof(bufferData));
+    const BufferHandle bufferHandle = manager.Gpu().CreateBuffer(bufferInfo, bufferData, sizeof(bufferData));
     assert(bufferHandle.IsValid());
     assert(device->CreatedBufferDescs.size() == 1);
     assert(device->CreatedBufferDescs[0].Size == bufferInfo.Size);
     assert(device->CreatedBufferDescs[0].Usage == NorvesLib::RHI::ResourceUsage::VertexBuffer);
     assert(manager.GetResourceStats().BufferCount == 1);
     assert(manager.GetResourceStats().TotalBufferMemory == bufferInfo.Size);
-    assert(manager.GetRHIBuffer(bufferHandle) == device->LastBuffer.get());
+    assert(manager.Gpu().GetRHIBuffer(bufferHandle) == device->LastBuffer.get());
     assert(device->LastBuffer->LastUpdateSize == sizeof(bufferData));
 
     const uint32_t updatedData[2] = {7, 8};
-    assert(manager.UpdateBuffer(bufferHandle, updatedData, sizeof(updatedData)));
+    assert(manager.Gpu().UpdateBuffer(bufferHandle, updatedData, sizeof(updatedData)));
     assert(device->LastBuffer->LastUpdateSize == sizeof(updatedData));
 
-    manager.ReleaseBuffer(BufferHandle::Invalid());
+    manager.Gpu().ReleaseBuffer(BufferHandle::Invalid());
     assert(manager.GetResourceStats().BufferCount == 1);
-    manager.ReleaseBuffer(bufferHandle);
+    manager.Gpu().ReleaseBuffer(bufferHandle);
     assert(manager.GetResourceStats().BufferCount == 0);
-    assert(manager.GetRHIBuffer(bufferHandle) == nullptr);
+    assert(manager.Gpu().GetRHIBuffer(bufferHandle) == nullptr);
 
-    const SamplerHandle defaultSampler = manager.GetDefaultSampler();
+    const SamplerHandle defaultSampler = manager.Gpu().GetDefaultSampler();
     assert(defaultSampler.IsValid());
     assert(device->CreatedSamplerDescs.size() == 1);
     assert(device->CreatedSamplerDescs[0].filterMin == NorvesLib::RHI::FilterMode::Anisotropic);
     assert(manager.GetResourceStats().SamplerCount == 1);
-    assert(manager.GetDefaultSampler().Id == defaultSampler.Id);
+    assert(manager.Gpu().GetDefaultSampler().Id == defaultSampler.Id);
     assert(device->CreatedSamplerDescs.size() == 1);
 
-    const SamplerHandle pointSampler = manager.GetPointSampler();
+    const SamplerHandle pointSampler = manager.Gpu().GetPointSampler();
     assert(pointSampler.IsValid());
     assert(device->CreatedSamplerDescs.size() == 2);
     assert(device->CreatedSamplerDescs[1].filterMin == NorvesLib::RHI::FilterMode::Point);
     assert(manager.GetResourceStats().SamplerCount == 2);
-    manager.ReleaseSampler(defaultSampler);
+    manager.Gpu().ReleaseSampler(defaultSampler);
     assert(manager.GetResourceStats().SamplerCount == 1);
-    manager.ReleaseSampler(pointSampler);
+    manager.Gpu().ReleaseSampler(pointSampler);
     assert(manager.GetResourceStats().SamplerCount == 0);
 
     VertexLayout layout = VertexLayout::CreateStandard();
-    const VertexLayoutHandle layoutHandle = manager.RegisterVertexLayout(layout);
+    const VertexLayoutHandle layoutHandle = manager.Gpu().RegisterVertexLayout(layout);
     assert(layoutHandle.IsValid());
-    const VertexLayout *registeredLayout = manager.GetVertexLayout(layoutHandle);
+    const VertexLayout *registeredLayout = manager.Gpu().GetVertexLayout(layoutHandle);
     assert(registeredLayout != nullptr);
     assert(registeredLayout->Stride == layout.Stride);
     assert(registeredLayout->HasSemantic(VertexSemantic::Position));
     assert(registeredLayout->HasSemantic(VertexSemantic::Normal));
-    assert(manager.GetVertexLayout(VertexLayoutHandle::Invalid()) == nullptr);
+    assert(manager.Gpu().GetVertexLayout(VertexLayoutHandle::Invalid()) == nullptr);
 
-    const TextureHandle ownedHandle = manager.CreateTexture(createInfo);
+    const TextureHandle ownedHandle = manager.Textures().CreateTexture(createInfo);
     assert(ownedHandle.IsValid());
     assert(device->CreatedTextureDescs.size() == 1);
     assert(manager.GetResourceStats().TextureCount == 1);
 
-    NorvesLib::RHI::ITexture *ownedRaw = manager.GetRHITexture(ownedHandle);
-    auto ownedShared = manager.GetRHITexturePtr(ownedHandle);
+    NorvesLib::RHI::ITexture *ownedRaw = manager.Textures().GetRHITexture(ownedHandle);
+    auto ownedShared = manager.Textures().GetRHITexturePtr(ownedHandle);
     assert(ownedRaw != nullptr);
     assert(ownedShared);
     assert(ownedShared.get() == ownedRaw);
     assert(ownedRaw == device->LastTexture.get());
 
-    manager.ReleaseTexture(TextureHandle::Invalid());
+    manager.Textures().ReleaseTexture(TextureHandle::Invalid());
     assert(manager.GetResourceStats().TextureCount == 1);
 
-    manager.ReleaseTexture(ownedHandle);
+    manager.Textures().ReleaseTexture(ownedHandle);
     assert(manager.GetResourceStats().TextureCount == 0);
-    assert(manager.GetRHITexture(ownedHandle) == nullptr);
-    assert(!manager.GetRHITexturePtr(ownedHandle));
+    assert(manager.Textures().GetRHITexture(ownedHandle) == nullptr);
+    assert(!manager.Textures().GetRHITexturePtr(ownedHandle));
 
     auto externalTexture = MakeShared<FakeTexture>(MakeExternalTextureDesc());
-    const TextureHandle externalHandle = manager.RegisterExternalTexture(externalTexture, "ExternalTexture");
+    const TextureHandle externalHandle = manager.Textures().RegisterExternalTexture(externalTexture, "ExternalTexture");
     assert(externalHandle.IsValid());
     assert(manager.GetResourceStats().TextureCount == 1);
-    assert(manager.GetRHITexture(externalHandle) == externalTexture.get());
-    assert(manager.GetRHITexturePtr(externalHandle).get() == externalTexture.get());
+    assert(manager.Textures().GetRHITexture(externalHandle) == externalTexture.get());
+    assert(manager.Textures().GetRHITexturePtr(externalHandle).get() == externalTexture.get());
 
-    manager.ReleaseTexture(externalHandle);
+    manager.Textures().ReleaseTexture(externalHandle);
     assert(manager.GetResourceStats().TextureCount == 0);
-    assert(manager.GetRHITexture(externalHandle) == nullptr);
+    assert(manager.Textures().GetRHITexture(externalHandle) == nullptr);
 
-    const TextureHandle shutdownHandle = manager.CreateTexture(createInfo);
+    const TextureHandle shutdownHandle = manager.Textures().CreateTexture(createInfo);
     assert(shutdownHandle.IsValid());
     assert(manager.GetResourceStats().TextureCount == 1);
     manager.Shutdown();
     assert(manager.GetResourceStats().TextureCount == 0);
-    assert(manager.GetRHITexture(shutdownHandle) == nullptr);
-    assert(!manager.GetRHITexturePtr(shutdownHandle));
+    assert(manager.Textures().GetRHITexture(shutdownHandle) == nullptr);
+    assert(!manager.Textures().GetRHITexturePtr(shutdownHandle));
 
     std::cout << "RenderResourceManagerResourceContractTest passed\n";
     return 0;

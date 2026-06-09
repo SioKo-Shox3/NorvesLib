@@ -1,9 +1,9 @@
 #include "Rendering/TextureAsyncLoadQueue.h"
-#include "Rendering/RenderResourceRegistry.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/TextureAsyncTypes.h"
 #include "Rendering/TextureUploadProfile.h"
 
 #include <cassert>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -25,11 +25,8 @@
 
 using namespace NorvesLib::Core::Rendering;
 
-static_assert(std::is_same_v<RenderResourceManager, RenderResourceRegistry>);
-static_assert(std::is_same_v<RenderResourceRegistry::AsyncTextureResult, TextureAsyncResult>);
-static_assert(std::is_same_v<RenderResourceRegistry::AsyncTextureRequest, TextureAsyncRequest>);
-static_assert(std::is_same_v<RenderResourceManager::AsyncTextureResult, TextureAsyncResult>);
-static_assert(std::is_same_v<RenderResourceManager::AsyncTextureRequest, TextureAsyncRequest>);
+static_assert(std::is_same_v<decltype(TextureAsyncRequest::RequestId), uint32_t>);
+static_assert(std::is_same_v<decltype(TextureAsyncResult::Source), TextureLoadSource>);
 static_assert(std::is_same_v<TextureAsyncLoadQueue::RequestPtr,
                              NorvesLib::Core::Container::TSharedPtr<TextureAsyncRequest>>);
 

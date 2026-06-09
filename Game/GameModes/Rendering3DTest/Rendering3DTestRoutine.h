@@ -21,7 +21,7 @@ namespace Game::GameModes
          * @param data ゲームモードデータ
          *
          * ProceduralMeshGeneratorで球とPlaneを生成、
-         * RenderResourceRegistryに登録、
+         * RenderResourcesに登録、
          * WorldにObjectとMeshComponentを追加。
          */
         void Enter(NorvesLib::Core::GameMode::IStateMachine *proc, Rendering3DTestData &data);

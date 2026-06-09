@@ -3,7 +3,7 @@
 #include "RHI/RHITypes.h"
 #include "RHI/DeviceCapabilities.h"
 #include "DrawCommand.h"
-#include "Rendering/RenderResourceRegistryFwd.h"
+#include "Rendering/RenderResourceContexts.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
@@ -63,8 +63,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief View間でリソースを共有するためのレジストリ */
         SharedResourceRegistry *SharedResources = nullptr;
 
-        /** @brief メッシュGPUデータ等を管理するリソースマネージャー */
-        RenderResourceRegistry *ResourceManager = nullptr;
+        /** @brief フレーム実行中だけ有効なレンダリングリソースドメイン */
+        RenderResourceFrameContext Resources;
 
         /** @brief シェーダーアセットの読み込み・コンパイル・キャッシュ管理 */
         ShaderManager *ShaderMgr = nullptr;
@@ -276,7 +276,7 @@ namespace NorvesLib::Core::Rendering
         {
             const CameraProxy *activeCamera = GetActiveCamera();
             EnqueueFrameCommand(FrameCommand::CreateMegaGeometryPass(pass,
-                                                                   ResourceManager,
+                                                                   Resources.MegaGeometry,
                                                                    activeCamera ? *activeCamera : CameraProxy{},
                                                                    activeCamera != nullptr,
                                                                    GetActiveLocalViewport(),

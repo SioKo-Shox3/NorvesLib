@@ -1,4 +1,4 @@
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/ITextureHandleRegistrar.h"
 #include "Rendering/NeuralMaterialResource.h"
 #include "RHI/IBuffer.h"
@@ -295,28 +295,28 @@ int main()
 
     TestNeuralMaterialPartialRegistrationFailure();
 
-    RenderResourceManager manager;
+    RenderResources manager;
 
     NeuralMaterialDesc preInitializeNeuralDesc = NeuralMaterialDesc::DefaultPBR(4, 4);
     preInitializeNeuralDesc.DebugName = "PreInitializeNeural";
-    assert(!manager.CreateNeuralMaterial(preInitializeNeuralDesc).IsValid());
+    assert(!manager.Materials().CreateNeural(preInitializeNeuralDesc).IsValid());
 
     const MaterialCreateData initialMaterial = MakeMaterialCreateData("PlainInitial", 10);
-    const MaterialHandle materialHandle = manager.CreateMaterial(initialMaterial);
+    const MaterialHandle materialHandle = manager.Materials().Create(initialMaterial);
     assert(materialHandle.IsValid());
-    AssertMaterialDataMatches(manager.GetMaterialData(materialHandle), initialMaterial);
+    AssertMaterialDataMatches(manager.Materials().GetData(materialHandle), initialMaterial);
 
     const MaterialCreateData updatedMaterial = MakeMaterialCreateData("PlainUpdated", 30);
-    assert(manager.UpdateMaterial(materialHandle, updatedMaterial));
-    AssertMaterialDataMatches(manager.GetMaterialData(materialHandle), updatedMaterial);
+    assert(manager.Materials().Update(materialHandle, updatedMaterial));
+    AssertMaterialDataMatches(manager.Materials().GetData(materialHandle), updatedMaterial);
 
-    assert(!manager.UpdateMaterial(MaterialHandle::Invalid(), updatedMaterial));
-    manager.ReleaseMaterial(MaterialHandle::Invalid());
-    AssertMaterialDataMatches(manager.GetMaterialData(materialHandle), updatedMaterial);
+    assert(!manager.Materials().Update(MaterialHandle::Invalid(), updatedMaterial));
+    manager.Materials().Release(MaterialHandle::Invalid());
+    AssertMaterialDataMatches(manager.Materials().GetData(materialHandle), updatedMaterial);
 
-    manager.ReleaseMaterial(materialHandle);
-    assert(manager.GetMaterialData(materialHandle) == nullptr);
-    manager.ReleaseMaterial(materialHandle);
+    manager.Materials().Release(materialHandle);
+    assert(manager.Materials().GetData(materialHandle) == nullptr);
+    manager.Materials().Release(materialHandle);
 
     auto device = MakeShared<FakeDevice>();
     assert(manager.Initialize(device));
@@ -324,9 +324,9 @@ int main()
     NeuralMaterialDesc neuralDesc = NeuralMaterialDesc::DefaultPBR(16, 8);
     neuralDesc.DebugName = "NeuralStore";
 
-    const MaterialHandle neuralHandle = manager.CreateNeuralMaterial(neuralDesc);
+    const MaterialHandle neuralHandle = manager.Materials().CreateNeural(neuralDesc);
     assert(neuralHandle.IsValid());
-    const MaterialResourceData *neuralMaterialData = manager.GetMaterialData(neuralHandle);
+    const MaterialResourceData *neuralMaterialData = manager.Materials().GetData(neuralHandle);
     assert(neuralMaterialData != nullptr);
     assert(neuralMaterialData->DebugName == neuralDesc.DebugName);
     assert(neuralMaterialData->AlbedoTexture.IsValid());
@@ -335,27 +335,27 @@ int main()
     assert(device->CreatedTextureDescs.size() == neuralDesc.OutputSlots.size());
     assert(manager.GetResourceStats().TextureCount == neuralDesc.OutputSlots.size());
 
-    auto neuralResources = manager.GetNeuralMaterialResources();
+    auto neuralResources = manager.Materials().GetNeuralResources();
     assert(neuralResources.size() == 1);
     assert(neuralResources[0]->IsInitialized());
     assert(neuralResources[0]->GetOutputSlotCount() == neuralDesc.OutputSlots.size());
     assert(neuralResources[0]->GetOutputTextureHandle(0).Id == neuralMaterialData->AlbedoTexture.Id);
     assert(neuralResources[0]->GetOutputTextureHandle(1).Id == neuralMaterialData->NormalTexture.Id);
 
-    manager.ReleaseMaterial(neuralHandle);
-    assert(manager.GetMaterialData(neuralHandle) == nullptr);
-    assert(manager.GetNeuralMaterialResources().empty());
+    manager.Materials().Release(neuralHandle);
+    assert(manager.Materials().GetData(neuralHandle) == nullptr);
+    assert(manager.Materials().GetNeuralResources().empty());
     assert(manager.GetResourceStats().TextureCount == 0);
 
-    const MaterialHandle clearHandle = manager.CreateNeuralMaterial(neuralDesc);
+    const MaterialHandle clearHandle = manager.Materials().CreateNeural(neuralDesc);
     assert(clearHandle.IsValid());
-    assert(manager.GetMaterialData(clearHandle) != nullptr);
-    assert(manager.GetNeuralMaterialResources().size() == 1);
+    assert(manager.Materials().GetData(clearHandle) != nullptr);
+    assert(manager.Materials().GetNeuralResources().size() == 1);
     assert(manager.GetResourceStats().TextureCount == neuralDesc.OutputSlots.size());
 
     manager.ClearAllResources();
-    assert(manager.GetMaterialData(clearHandle) == nullptr);
-    assert(manager.GetNeuralMaterialResources().empty());
+    assert(manager.Materials().GetData(clearHandle) == nullptr);
+    assert(manager.Materials().GetNeuralResources().empty());
     assert(manager.GetResourceStats().TextureCount == 0);
 
     manager.Shutdown();

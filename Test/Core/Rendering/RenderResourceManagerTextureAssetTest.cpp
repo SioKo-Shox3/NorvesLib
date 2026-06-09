@@ -1,7 +1,7 @@
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/AssetManifest.h"
 #include "Asset/CookedTextureFormat.h"
-#include "Rendering/RenderResourceManager.h"
+#include "Rendering/RenderResources.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -406,9 +406,9 @@ namespace
         return ToCoreString(json);
     }
 
-    void ConfigureRoot(RenderResourceManager &manager, const std::filesystem::path &root)
+    void ConfigureRoot(RenderResources &manager, const std::filesystem::path &root)
     {
-        assert(manager.SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
+        assert(manager.Textures().SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
     }
 
     void WriteCookedPackage(const std::filesystem::path &root, const std::vector<uint8_t> &textureBytes)
@@ -425,14 +425,14 @@ namespace
         WriteBinaryFile(root / "Textures" / "Cooked.tga", BuildTga1x1());
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         ConfigureRoot(manager, root);
-        assert(manager.SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(1, "Textures/Cooked.tga", "Cooked/Missing.nvpkg")));
 
         assert(manager.Initialize(device));
-        const TextureHandle handle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        const TextureHandle handle = manager.Textures().LoadTexture(ToCoreString("Textures/Cooked.tga"));
         assert(handle.IsValid());
         assert(device->CreatedTextureDescs.size() == 1);
         assert(device->LastTexture);
@@ -447,21 +447,21 @@ namespace
         const std::filesystem::path root = CreateTestRoot("ShutdownDelegates");
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         ConfigureRoot(manager, root);
         assert(manager.Initialize(device));
         manager.Shutdown();
 
         bool bCallbackInvoked = false;
-        assert(!manager.LoadTexture(ToCoreString("Textures/Missing.tga")).IsValid());
-        assert(manager.LoadTextureAsync(
+        assert(!manager.Textures().LoadTexture(ToCoreString("Textures/Missing.tga")).IsValid());
+        assert(manager.Textures().LoadTextureAsync(
                    ToCoreString("Textures/Missing.tga"),
                    NorvesLib::Core::Delegate<void, TextureHandle>([&bCallbackInvoked](TextureHandle) {
                        bCallbackInvoked = true;
                    })) == 0);
         assert(!bCallbackInvoked);
-        assert(manager.FlushCompletedTextureLoads() == 0);
-        assert(manager.GetPendingAsyncLoadCount() == 0);
+        assert(manager.Textures().FlushCompletedTextureLoads() == 0);
+        assert(manager.Textures().GetPendingAsyncLoadCount() == 0);
 
         std::filesystem::remove_all(root);
     }
@@ -473,19 +473,19 @@ namespace
         WriteCookedPackage(root, textureBytes);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         ConfigureRoot(manager, root);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()))));
 
         assert(manager.Initialize(device));
-        const TextureHandle firstHandle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        const TextureHandle firstHandle = manager.Textures().LoadTexture(ToCoreString("Textures/Cooked.tga"));
         assert(firstHandle.IsValid());
         assert(device->CreatedTextureDescs.size() == 1);
         manager.Shutdown();
 
         assert(manager.Initialize(device));
-        const TextureHandle secondHandle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        const TextureHandle secondHandle = manager.Textures().LoadTexture(ToCoreString("Textures/Cooked.tga"));
         assert(secondHandle.IsValid());
         assert(secondHandle != firstHandle);
         assert(device->CreatedTextureDescs.size() == 2);
@@ -501,13 +501,13 @@ namespace
         WriteCookedPackage(root, textureBytes);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()))));
 
-        const TextureHandle handle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        const TextureHandle handle = manager.Textures().LoadTexture(ToCoreString("Textures/Cooked.tga"));
         assert(handle.IsValid());
         assert(device->CreatedTextureDescs.size() == 1);
         assert(device->CreatedTextureDescs[0].TextureFormat == NorvesLib::RHI::Format::R8G8B8A8_SRGB);
@@ -528,24 +528,24 @@ namespace
         WriteCookedPackage(root, textureBytes);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()))));
 
         std::vector<TextureHandle> callbacks;
         bool bConfigMutationRejectedDuringFlushCallback = false;
-        const uint32_t requestA = manager.LoadTextureAsync(
+        const uint32_t requestA = manager.Textures().LoadTextureAsync(
             ToCoreString("Textures/Cooked.tga"),
             NorvesLib::Core::Delegate<void, TextureHandle>(
                 [&callbacks, &manager, &root, &bConfigMutationRejectedDuringFlushCallback](TextureHandle handle) {
                     callbacks.push_back(handle);
                     bConfigMutationRejectedDuringFlushCallback =
-                        !manager.SetTextureAssetRoot(ToCoreString(ToAssetString(root)));
+                        !manager.Textures().SetTextureAssetRoot(ToCoreString(ToAssetString(root)));
                 }));
-        assert(manager.GetPendingAsyncLoadCount() == 1);
-        const uint32_t requestB = manager.LoadTextureAsync(
+        assert(manager.Textures().GetPendingAsyncLoadCount() == 1);
+        const uint32_t requestB = manager.Textures().LoadTextureAsync(
             ToCoreString("Textures/Cooked.tga"),
             NorvesLib::Core::Delegate<void, TextureHandle>([&callbacks](TextureHandle handle) {
                 callbacks.push_back(handle);
@@ -553,20 +553,20 @@ namespace
 
         assert(requestA != 0);
         assert(requestB == requestA);
-        assert(manager.GetPendingAsyncLoadCount() == 1);
-        assert(!manager.SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
+        assert(manager.Textures().GetPendingAsyncLoadCount() == 1);
+        assert(!manager.Textures().SetTextureAssetRoot(ToCoreString(ToAssetString(root))));
 
         NorvesLib::Thread::JobSystem::Get().WaitForAll();
-        const uint32_t requestC = manager.LoadTextureAsync(
+        const uint32_t requestC = manager.Textures().LoadTextureAsync(
             ToCoreString("Textures/Cooked.tga"),
             NorvesLib::Core::Delegate<void, TextureHandle>([&callbacks](TextureHandle handle) {
                 callbacks.push_back(handle);
             }));
         assert(requestC == requestA);
-        assert(manager.GetPendingAsyncLoadCount() == 1);
+        assert(manager.Textures().GetPendingAsyncLoadCount() == 1);
 
-        assert(manager.FlushCompletedTextureLoads() == 1);
-        assert(manager.GetPendingAsyncLoadCount() == 0);
+        assert(manager.Textures().FlushCompletedTextureLoads() == 1);
+        assert(manager.Textures().GetPendingAsyncLoadCount() == 0);
         assert(bConfigMutationRejectedDuringFlushCallback);
         assert(callbacks.size() == 3);
         assert(callbacks[0].IsValid());
@@ -587,32 +587,32 @@ namespace
         WriteCookedPackage(root, textureBytes);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()))));
 
-        const TextureHandle cachedHandle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        const TextureHandle cachedHandle = manager.Textures().LoadTexture(ToCoreString("Textures/Cooked.tga"));
         assert(cachedHandle.IsValid());
 
         bool bCallbackInvoked = false;
         bool bConfigMutationSucceeded = false;
         TextureHandle callbackHandle = TextureHandle::Invalid();
-        const uint32_t requestId = manager.LoadTextureAsync(
+        const uint32_t requestId = manager.Textures().LoadTextureAsync(
             ToCoreString("Textures/Cooked.tga"),
             NorvesLib::Core::Delegate<void, TextureHandle>(
                 [&manager, &bCallbackInvoked, &bConfigMutationSucceeded, &callbackHandle](TextureHandle handle) {
                     bCallbackInvoked = true;
                     callbackHandle = handle;
-                    bConfigMutationSucceeded = manager.ResetTextureAssetManifest();
+                    bConfigMutationSucceeded = manager.Textures().ResetTextureAssetManifest();
                 }));
 
         assert(requestId == 0);
         assert(bCallbackInvoked);
         assert(callbackHandle == cachedHandle);
         assert(bConfigMutationSucceeded);
-        assert(manager.GetPendingAsyncLoadCount() == 0);
+        assert(manager.Textures().GetPendingAsyncLoadCount() == 0);
         assert(device->CreatedTextureDescs.size() == 1);
 
         manager.Shutdown();
@@ -624,15 +624,15 @@ namespace
         const std::filesystem::path root = CreateTestRoot("AsyncDebugFallbackLooseMissing");
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
-        assert(manager.SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(1, "Textures/Cooked.tga", "Cooked/Missing.nvpkg")));
 
         std::vector<TextureHandle> callbacks;
-        const uint32_t requestId = manager.LoadTextureAsync(
+        const uint32_t requestId = manager.Textures().LoadTextureAsync(
             ToCoreString("Textures/Cooked.tga"),
             NorvesLib::Core::Delegate<void, TextureHandle>([&callbacks](TextureHandle handle) {
                 callbacks.push_back(handle);
@@ -640,7 +640,7 @@ namespace
 
         assert(requestId != 0);
         NorvesLib::Thread::JobSystem::Get().WaitForAll();
-        assert(manager.FlushCompletedTextureLoads() == 1);
+        assert(manager.Textures().FlushCompletedTextureLoads() == 1);
         assert(callbacks.size() == 1);
         assert(!callbacks[0].IsValid());
         assert(device->CreatedTextureDescs.empty());
@@ -655,11 +655,11 @@ namespace
         WriteBinaryFile(root / "Textures" / "Loose.tga", BuildTga1x1());
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
 
-        const TextureHandle handle = manager.LoadTexture(ToCoreString("Textures/Loose.tga"));
+        const TextureHandle handle = manager.Textures().LoadTexture(ToCoreString("Textures/Loose.tga"));
         assert(handle.IsValid());
         assert(device->CreatedTextureDescs.size() == 1);
         assert(device->LastTexture);
@@ -676,12 +676,12 @@ namespace
         WriteBinaryFile(root / "Textures" / "Loose.tga", BuildTga1x1());
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
-        assert(!manager.LoadTextureAssetManifestFromJsonText(ToCoreString("{"), ToCoreString("broken.manifest.json")));
+        assert(!manager.Textures().LoadTextureAssetManifestFromJsonText(ToCoreString("{"), ToCoreString("broken.manifest.json")));
 
-        const TextureHandle handle = manager.LoadTexture(ToCoreString("Textures/Loose.tga"));
+        const TextureHandle handle = manager.Textures().LoadTexture(ToCoreString("Textures/Loose.tga"));
         assert(!handle.IsValid());
         assert(device->CreatedTextureDescs.empty());
 
@@ -695,14 +695,14 @@ namespace
         WriteBinaryFile(root / "Textures" / "Cooked.tga", BuildTga1x1());
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
-        assert(manager.SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().SetTextureAssetFallbackMode(TextureAssetFallbackMode::DebugAllowLooseFallback));
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(1, "Textures/Cooked.tga", "Cooked/Missing.nvpkg")));
 
-        const TextureHandle handle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        const TextureHandle handle = manager.Textures().LoadTexture(ToCoreString("Textures/Cooked.tga"));
         assert(handle.IsValid());
         assert(device->CreatedTextureDescs.size() == 1);
         assert(device->LastTexture);
@@ -719,17 +719,17 @@ namespace
         WriteCookedPackage(root, textureBytes);
 
         auto device = MakeShared<FakeDevice>();
-        RenderResourceManager manager;
+        RenderResources manager;
         assert(manager.Initialize(device));
         ConfigureRoot(manager, root);
-        assert(manager.LoadTextureAssetManifestFromJsonText(
+        assert(manager.Textures().LoadTextureAssetManifestFromJsonText(
             BuildManifest(ComputeAssetPackagePayloadHash(textureBytes.data(), textureBytes.size()))));
 
-        const TextureHandle cookedHandle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        const TextureHandle cookedHandle = manager.Textures().LoadTexture(ToCoreString("Textures/Cooked.tga"));
         assert(cookedHandle.IsValid());
-        assert(manager.ResetTextureAssetManifest());
+        assert(manager.Textures().ResetTextureAssetManifest());
 
-        const TextureHandle missingLooseHandle = manager.LoadTexture(ToCoreString("Textures/Cooked.tga"));
+        const TextureHandle missingLooseHandle = manager.Textures().LoadTexture(ToCoreString("Textures/Cooked.tga"));
         assert(!missingLooseHandle.IsValid());
 
         manager.Shutdown();
