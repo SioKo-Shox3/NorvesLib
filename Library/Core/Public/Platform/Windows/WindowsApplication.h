@@ -39,6 +39,9 @@ namespace NorvesLib
                 virtual NorvesLib::IWindow *GetMainWindow() override;
                 virtual void RegisterWindow(Core::Container::TSharedPtr<NorvesLib::IWindow> window) override;
                 virtual void UnregisterWindow(Core::Container::TSharedPtr<NorvesLib::IWindow> window) override;
+                virtual void PumpMessages() override;
+                virtual bool IsExitRequested() const override;
+                virtual int GetExitCode() const override;
 
                 /**
                  * @brief HINSTANCEの取得
@@ -53,18 +56,13 @@ namespace NorvesLib
                 const Core::Container::VariableArray<Core::Container::String> &GetCommandLineArgs() const;
 
             private:
-                /**
-                 * @brief Windowsメッセージループの処理
-                 * @return 終了コード
-                 */
-                int ProcessWindowsMessages();
-
-            private:
                 HINSTANCE m_hInstance;                                                                     // アプリケーションインスタンスハンドル
                 Core::Container::VariableArray<Core::Container::TSharedPtr<NorvesLib::IWindow>> m_windows; // ウィンドウリスト
                 Core::Container::TSharedPtr<NorvesLib::IWindow> m_mainWindow;                              // メインウィンドウ
                 bool m_isRunning;                                                                          // 実行中フラグ
                 Core::Container::VariableArray<Core::Container::String> m_args;                            // コマンドライン引数
+                bool m_bExitRequested;                                                                     // 終了要求フラグ
+                int m_ExitCode;                                                                            // 終了コード
             };
 
         } // namespace Platform
