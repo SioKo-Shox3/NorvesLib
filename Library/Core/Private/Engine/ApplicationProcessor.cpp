@@ -8,8 +8,7 @@
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/SceneView.h"
-#include "RHI/Vulkan/VulkanRHI.h"
-#include "RHI/RHIConfig.h"
+#include "RHI/RHIDeviceFactory.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Thread/JobSystem.h"
@@ -192,23 +191,30 @@ namespace NorvesLib::Core::Engine
         }
 
         // RHI初期化（エンジン層の責務）
-        if (!RHI_INITIALIZE())
         {
-            LOG_ERROR("Failed to initialize RHI");
-            return false;
+            RHI::RHIDeviceDesc deviceDesc;
+            deviceDesc.Api = config.Api;
+            deviceDesc.bEnableValidation = config.bEnableRHIValidation;
+
+            m_Device = RHI::CreateRHIDevice(deviceDesc);
+            if (!m_Device)
+            {
+                LOG_ERROR("Failed to initialize RHI");
+                return false;
+            }
         }
         LOG_INFO("RHI initialized successfully");
 
         // レンダリングシステムを初期化
         {
             Rendering::RenderWorldSettings renderSettings;
-            renderSettings.Device = RHI_GET_DEVICE();
+            renderSettings.Device = m_Device;
             renderSettings.WindowHandle = GEngine->GetMainWindow()->GetNativeHandle();
             renderSettings.Width = config.WindowWidth;
             renderSettings.Height = config.WindowHeight;
             renderSettings.BackBufferCount = 2;
             renderSettings.bVSync = true;
-            renderSettings.bEnableValidation = true;
+            renderSettings.bEnableValidation = config.bEnableRHIValidation;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {
@@ -321,7 +327,7 @@ namespace NorvesLib::Core::Engine
             GEngine->GetRenderWorld().Shutdown();
 
             // RHI終了（エンジン層の責務）
-            RHI_SHUTDOWN();
+            m_Device.reset();
             LOG_INFO("RHI shutdown completed");
 
             // GameModeステートマシンを解放

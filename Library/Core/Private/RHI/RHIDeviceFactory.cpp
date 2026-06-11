@@ -2,6 +2,7 @@
 #include "Platform/PlatformGraphics.h"
 #include "RHI/Vulkan/VulkanDevice.h"
 #include "Logging/LogMacros.h"
+#include <exception>
 
 namespace NorvesLib::RHI
 {
@@ -20,9 +21,17 @@ namespace NorvesLib::RHI
         case GraphicsAPI::Vulkan:
         {
             LOG_INFO("CreateRHIDevice: Initializing Vulkan backend");
-            Vulkan::VulkanInitParams params;
-            params.bEnableValidation = desc.bEnableValidation;
-            return Vulkan::VulkanDevice::Create(params);
+            try
+            {
+                Vulkan::VulkanInitParams params;
+                params.bEnableValidation = desc.bEnableValidation;
+                return Vulkan::VulkanDevice::Create(params);
+            }
+            catch (const std::exception& e)
+            {
+                NORVES_LOG_ERROR("RHI", "CreateRHIDevice: Vulkan backend initialization failed: %s", e.what());
+                return nullptr;
+            }
         }
 
         case GraphicsAPI::D3D12:
