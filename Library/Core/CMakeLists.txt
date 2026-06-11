@@ -38,7 +38,9 @@ set(PRIVATE_SOURCES
     Private/Platform/Windows/WindowsApplicationFactory.cpp
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp
-    Private/Boot/PlatformBoot.cpp
+    Private/Platform/Windows/WindowsPlatformProcess.cpp
+    Private/Platform/Windows/WindowsPlatformConsole.cpp
+    Private/Boot/AppLauncher.cpp
     Private/Application/ApplicationFactory.cpp
     Private/Engine/Engine.cpp
     Private/Engine/NorvesEngine.cpp
@@ -187,13 +189,14 @@ set(PUBLIC_HEADERS
     Public/Debug/Stats.h
     Public/EngineGlobals/MemoryOverrides.h
     Public/Platform/NativeWindowHandle.h
+    Public/Platform/PlatformProcess.h
+    Public/Platform/PlatformConsole.h
     Public/Platform/Windows/WindowsApplication.h
     Public/Platform/Windows/WindowsApplicationFactory.h
     Public/Platform/Windows/WindowsWindow.h
-    Public/Boot/PlatformBoot.h
+    Public/Boot/AppLauncher.h
     Public/Boot/BootConfig.h
     Public/Boot/EntryPoint.h
-    Public/Boot/IPlatformBoot.h
     Public/Application/ApplicationFactory.h
     Public/Application/IApplicationHandler.h
     Public/Application/ApplicationHandlerBase.h
