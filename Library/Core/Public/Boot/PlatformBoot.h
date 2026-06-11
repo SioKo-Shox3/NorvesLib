@@ -64,12 +64,6 @@ namespace NorvesLib
             bool InitializePlatform(HINSTANCE hInstance, const String &commandLine);
 
             /**
-             * @brief Windowsメッセージを処理する
-             * @return 処理されたメッセージ数
-             */
-            int ProcessWindowsMessages();
-
-            /**
              * @brief アプリケーションを実行する統一エントリーポイント（Windows用レガシーAPI）
              * @param hInstance アプリケーションインスタンスハンドル
              * @param hPrevInstance 前のインスタンスハンドル（現在は常にNULL）

@@ -462,20 +462,20 @@ namespace NorvesLib::Core::Engine
 
     bool ApplicationProcessor::ProcessPlatformMessages()
     {
-#ifdef _WIN32
-        MSG msg = {};
-        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+        auto* platformApp = GEngine ? GEngine->GetPlatformApp() : nullptr;
+        if (!platformApp)
         {
-            if (msg.message == WM_QUIT)
-            {
-                GEngine->RequestExit(static_cast<int>(msg.wParam));
-                return false;
-            }
-
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            return true;
         }
-#endif
+
+        platformApp->PumpMessages();
+
+        if (platformApp->IsExitRequested())
+        {
+            GEngine->RequestExit(platformApp->GetExitCode());
+            return false;
+        }
+
         return true;
     }
 

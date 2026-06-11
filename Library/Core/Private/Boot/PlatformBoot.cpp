@@ -198,29 +198,6 @@ namespace NorvesLib
                 return Core::Boot::ApplicationFactory::CreateDefaultApplication();
             }
 
-#ifdef _WIN32
-            int ProcessWindowsMessages()
-            {
-                MSG msg = {};
-                int messageCount = 0;
-
-                while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
-                {
-                    ++messageCount;
-
-                    if (msg.message == WM_QUIT)
-                    {
-                        break;
-                    }
-
-                    TranslateMessage(&msg);
-                    DispatchMessage(&msg);
-                }
-
-                return messageCount;
-            }
-#endif
-
             // 新しいAPIを使用したRunApplication
             int RunApplication(const BootConfig &config)
             {
