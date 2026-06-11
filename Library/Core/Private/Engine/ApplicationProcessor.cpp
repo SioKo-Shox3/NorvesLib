@@ -5,7 +5,7 @@
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
 #include "Application/ApplicationFactory.h"
-#include "Platform/Windows/WindowsApplicationFactory.h"
+#include "Platform/PlatformApplicationFactory.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/SceneView.h"
@@ -518,11 +518,10 @@ namespace NorvesLib::Core::Engine
 
     bool ApplicationProcessor::CreatePlatformApplication(const Boot::BootConfig &config)
     {
-#ifdef _WIN32
-        auto platformApp = Platform::WindowsApplicationFactory::CreateWindowsApplication();
+        auto platformApp = Platform::CreatePlatformApplication();
         if (!platformApp)
         {
-            LOG_ERROR("Failed to create Windows application");
+            LOG_ERROR("Failed to create platform application");
             return false;
         }
 
@@ -535,16 +534,11 @@ namespace NorvesLib::Core::Engine
         GEngine->SetPlatformApp(std::move(platformApp));
         LOG_INFO("Platform application created and initialized");
         return true;
-#else
-        LOG_ERROR("Unsupported platform");
-        return false;
-#endif
     }
 
     bool ApplicationProcessor::CreateMainWindow(const Boot::BootConfig &config)
     {
-#ifdef _WIN32
-        auto window = Platform::WindowsApplicationFactory::CreateWindowsWindow();
+        auto window = Platform::CreatePlatformWindow();
         if (!window)
         {
             LOG_ERROR("Failed to create window");
@@ -570,11 +564,6 @@ namespace NorvesLib::Core::Engine
         GEngine->SetMainWindow(window);
         LOG_INFO("Main window created successfully");
         return true;
-#else
-        (void)config;
-        LOG_ERROR("Unsupported platform");
-        return false;
-#endif
     }
 
 } // namespace NorvesLib::Core::Engine

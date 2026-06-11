@@ -36,6 +36,7 @@ set(PRIVATE_SOURCES
     Private/EngineGlobals/MemoryOverrides.cpp
     Private/Platform/Windows/WindowsApplication.cpp
     Private/Platform/Windows/WindowsApplicationFactory.cpp
+    Private/Platform/Windows/WindowsPlatformApplicationFactory.cpp
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp
     Private/Platform/Windows/WindowsPlatformProcess.cpp
@@ -189,6 +190,7 @@ set(PUBLIC_HEADERS
     Public/Debug/Stats.h
     Public/EngineGlobals/MemoryOverrides.h
     Public/Platform/NativeWindowHandle.h
+    Public/Platform/PlatformApplicationFactory.h
     Public/Platform/PlatformProcess.h
     Public/Platform/PlatformConsole.h
     Public/Platform/Windows/WindowsApplication.h
