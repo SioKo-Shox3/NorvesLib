@@ -40,6 +40,7 @@ set(PRIVATE_SOURCES
     Private/Platform/Windows/WindowsEntryPoint.cpp
     Private/Platform/Windows/WindowsPlatformProcess.cpp
     Private/Platform/Windows/WindowsPlatformConsole.cpp
+    Private/Platform/Windows/WindowsPlatformGraphics.cpp
     Private/Boot/AppLauncher.cpp
     Private/Engine/Engine.cpp
     Private/Engine/NorvesEngine.cpp
@@ -114,6 +115,8 @@ set(PRIVATE_SOURCES
     Private/Thread/Task.cpp
     Private/Thread/Thread.cpp
     Private/Thread/WorkStealingQueue.cpp
+    # RHI
+    Private/RHI/RHIDeviceFactory.cpp
     # RHI Vulkan
     Private/RHI/Vulkan/VulkanBuffer.cpp
     Private/RHI/Vulkan/VulkanCommandList.cpp
@@ -188,6 +191,7 @@ set(PUBLIC_HEADERS
     Public/Debug/Stats.h
     Public/EngineGlobals/MemoryOverrides.h
     Public/Platform/NativeWindowHandle.h
+    Public/Platform/PlatformGraphics.h
     Public/Platform/PlatformApplicationFactory.h
     Public/Platform/PlatformProcess.h
     Public/Platform/PlatformConsole.h
@@ -316,6 +320,8 @@ set(PUBLIC_HEADERS
     Public/Thread/ThreadLocalStorage.h
     Public/Thread/WorkStealingQueue.h
     # RHI
+    Public/RHI/RHIDeviceDesc.h
+    Public/RHI/RHIDeviceFactory.h
     Public/RHI/RHITypes.h
     Public/RHI/RHIConfig.h
     Public/RHI/RHIContext.h

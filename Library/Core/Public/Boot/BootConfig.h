@@ -3,6 +3,8 @@
 #include "Container/String.h"
 #include "Container/VariableArray.h"
 #include "Container/PointerTypes.h"
+#include "Debug/DebugConfig.h"
+#include "RHI/RHIDeviceDesc.h"
 
 namespace NorvesLib::Core::Application
 {
@@ -64,6 +66,24 @@ namespace NorvesLib::Core::Boot
          * @brief デバッグコンソール有効（Windowsのみ）
          */
         bool bEnableDebugConsole = true;
+
+        // ========== RHI設定 ==========
+
+        /**
+         * @brief 使用するグラフィックスAPI
+         * Default の場合はプラットフォームの既定APIが選択されます（現在 Windows では Vulkan）。
+         */
+        RHI::GraphicsAPI Api = RHI::GraphicsAPI::Default;
+
+        /**
+         * @brief RHI バリデーションレイヤーを有効にするか
+         * デフォルトは Debug ビルドで true、Release ビルドで false（NORVES_BUILD_DEBUG 連動）。
+         */
+#if NORVES_BUILD_DEBUG
+        bool bEnableRHIValidation = true;
+#else
+        bool bEnableRHIValidation = false;
+#endif
 
         // ========== ロギング設定 ==========
 
