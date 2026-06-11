@@ -352,9 +352,13 @@ namespace NorvesLib
                 return m_isActive;
             }
 
-            void *WindowsWindow::GetNativeHandle() const
+            NativeWindowHandle WindowsWindow::GetNativeHandle() const
             {
-                return m_hWnd;
+                NativeWindowHandle handle;
+                handle.WindowType = NativeWindowHandle::Type::Win32;
+                handle.Handle1 = m_hWnd;
+                handle.Handle2 = m_hInstance;
+                return handle;
             }
 
             HWND WindowsWindow::GetHWND() const

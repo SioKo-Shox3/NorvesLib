@@ -261,9 +261,18 @@ namespace NorvesLib::RHI::Vulkan
     {
 #ifdef _WIN32
         // Windowsプラットフォーム用のサーフェス作成
+        if (m_desc.windowHandle.WindowType != Core::Platform::NativeWindowHandle::Type::Win32)
+        {
+            throw std::runtime_error("ウィンドウハンドルの種別がWin32ではありません");
+        }
+        if (m_desc.windowHandle.Handle1 == nullptr || m_desc.windowHandle.Handle2 == nullptr)
+        {
+            throw std::runtime_error("Win32ウィンドウハンドルが無効です");
+        }
+
         vk::Win32SurfaceCreateInfoKHR createInfo = {};
-        createInfo.hwnd = static_cast<HWND>(m_desc.windowHandle);
-        createInfo.hinstance = GetModuleHandle(nullptr);
+        createInfo.hwnd = static_cast<HWND>(m_desc.windowHandle.Handle1);
+        createInfo.hinstance = static_cast<HINSTANCE>(m_desc.windowHandle.Handle2);
 
         auto surfaceResult = m_device->GetVkInstance().createWin32SurfaceKHR(createInfo);
         if (surfaceResult.result != vk::Result::eSuccess)

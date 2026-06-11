@@ -185,6 +185,7 @@ set(PUBLIC_HEADERS
     Public/Debug/DebugOutput.h
     Public/Debug/Stats.h
     Public/EngineGlobals/MemoryOverrides.h
+    Public/Platform/NativeWindowHandle.h
     Public/Platform/Windows/WindowsApplication.h
     Public/Platform/Windows/WindowsApplicationFactory.h
     Public/Platform/Windows/WindowsWindow.h

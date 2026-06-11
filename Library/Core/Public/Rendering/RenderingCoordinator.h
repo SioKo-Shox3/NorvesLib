@@ -9,6 +9,7 @@
 #include "ViewRenderContext.h"
 #include "ShaderManager.h"
 #include "Rendering/RenderResourcesFwd.h"
+#include "Platform/NativeWindowHandle.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
@@ -43,7 +44,7 @@ namespace NorvesLib::Core::Rendering
         // RHIデバイス（RenderWorldから渡される）
         Container::TSharedPtr<RHI::IDevice> Device;
 
-        void *WindowHandle = nullptr;
+        Platform::NativeWindowHandle WindowHandle;
         uint32_t Width = 1280;
         uint32_t Height = 720;
         float RenderScale = 1.0f;

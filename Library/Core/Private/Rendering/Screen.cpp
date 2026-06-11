@@ -22,7 +22,7 @@ namespace NorvesLib::Core::Rendering
         m_bFullscreen = settings.bFullscreen;
 
         // SwapChain作成
-        if (m_Device && settings.WindowHandle)
+        if (m_Device && settings.WindowHandle.IsValid())
         {
             RHI::SwapChainDesc swapChainDesc;
             swapChainDesc.windowHandle = settings.WindowHandle;
