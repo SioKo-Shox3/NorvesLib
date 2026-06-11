@@ -3,6 +3,7 @@
 #include "Container/PointerTypes.h"
 #include "Container/String.h"
 #include "Container/VariableArray.h"
+#include "RHI/RHITypes.h"
 
 namespace NorvesLib::Core::Application
 {
@@ -105,6 +106,8 @@ namespace NorvesLib::Core::Engine
         bool CreateMainWindow(const Boot::BootConfig &config);
 
     private:
+        // ApplicationProcessor がデバイス寿命を管理。RenderWorld 終了後に解放。
+        RHI::DevicePtr m_Device;
         // 時間計測用
         uint64_t m_LastFrameTime = 0;
         float m_TargetFrameTime = 1.0f / 60.0f; // デフォルト60FPS
