@@ -39,7 +39,7 @@ namespace NorvesLib::Core::Rendering
         auto vertexBuffer = m_Device->CreateBuffer(vbDesc);
         if (!vertexBuffer)
         {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create vertex buffer for mesh");
+            NORVES_LOG_ERROR("MeshResources", "Failed to create vertex buffer for mesh");
             return false;
         }
         vertexBuffer->Update(vertices, vertexSize);
@@ -53,7 +53,7 @@ namespace NorvesLib::Core::Rendering
         auto indexBuffer = m_Device->CreateBuffer(ibDesc);
         if (!indexBuffer)
         {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create index buffer for mesh");
+            NORVES_LOG_ERROR("MeshResources", "Failed to create index buffer for mesh");
             return false;
         }
         indexBuffer->Update(indices, ibSize);
@@ -68,7 +68,7 @@ namespace NorvesLib::Core::Rendering
             m_Meshes[handle.Id] = std::move(gpuData);
         }
 
-        NORVES_LOG_INFO("RenderResourceManager", "Mesh registered successfully");
+        NORVES_LOG_INFO("MeshResources", "Mesh registered successfully");
         return true;
     }
 

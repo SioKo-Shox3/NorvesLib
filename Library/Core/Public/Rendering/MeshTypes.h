@@ -70,7 +70,7 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief メッシュ作成情報
      *
-     * RenderResourceRegistry経由でGPUバッファを作成するための情報。
+     * MeshResources経由でGPUバッファを作成するための情報。
      * Game側からはこの構造体を通じてのみメッシュを作成できます。
      */
     struct MeshCreateInfo

@@ -624,7 +624,7 @@ namespace NorvesLib::Core::Rendering
                         pixels ? 1 : 0);
         if (!pixels)
         {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to load texture file: %s", plan.ResolvedPath.c_str());
+            NORVES_LOG_ERROR("TextureResources", "Failed to load texture file: %s", plan.ResolvedPath.c_str());
             return result;
         }
 
@@ -676,7 +676,7 @@ namespace NorvesLib::Core::Rendering
 
         if (!resolveResult.Succeeded())
         {
-            NORVES_LOG_ERROR("RenderResourceManager", "Texture asset resolve failed: %s", resolveResult.Reason.c_str());
+            NORVES_LOG_ERROR("TextureResources", "Texture asset resolve failed: %s", resolveResult.Reason.c_str());
             return result;
         }
 

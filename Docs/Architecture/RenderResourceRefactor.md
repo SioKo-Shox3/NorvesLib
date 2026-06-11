@@ -2,78 +2,92 @@
 
 ## Current Public API
 
-`RenderResourceRegistry` is the primary public API for render resource access. It remains
-the compatibility facade that game and rendering callers use for handle-based creation,
-lookup, and release while the concrete responsibilities are split behind it.
+`RenderResources` is the owner aggregate for render resources. External callers reach
+render-resource operations through:
 
-`RenderResourceManager` remains only as source compatibility: legacy includes, aliases,
-and compatibility accessors may still expose that name. New documentation, comments, and
-usage examples should prefer `RenderResourceRegistry` unless referring to an existing
-compatibility surface or a concrete field name such as `ViewRenderContext::ResourceManager`.
+```cpp
+auto &renderResources = GEngine->GetRenderResources();
+```
+
+`RenderWorld` owns the aggregate and exposes `RenderWorld::GetRenderResources()` as an
+owner/internal accessor. Code outside the owner path should prefer
+`GEngine->GetRenderResources()` so render-resource access does not depend on `RenderWorld`
+layout details.
+
+Operational APIs are grouped by domain facade:
+
+- `Gpu()`: low-level GPU buffers, textures, shaders, samplers, and vertex layouts.
+- `Textures()`: texture asset resolve, load, prepared payload, cache, async load, and
+  fallback handling.
+- `Materials()`: material and neural material registration, update, lookup, release,
+  and resource lifetime.
+- `Meshes()`: mesh GPU registration, lookup, release, and descriptor access.
+- `MegaGeometry()`: MegaMesh/MegaGeometry registration, lookup, release, and related
+  GPU data.
+
+Private stores behind the `RenderResources` pimpl are implementation details. New code
+should depend on the narrow domain facade that owns the operation, not on a private store
+class or a broad compatibility name.
 
 ## Why Rename-Only Was Insufficient
 
-Historically, `RenderResourceManager` accumulated GPU resource factory behavior, handle
+Historically, render-resource code accumulated GPU resource factory behavior, handle
 registry behavior, texture asset resolution, sync and async texture loading, material
 registration, neural material ownership, mesh/MegaMesh/model registration, and lifetime
 cleanup. A rename alone would have preserved that broad responsibility and kept inviting
 unrelated behavior into the same type.
 
 The refactor goal is to make each responsibility hard to misplace. Names should describe
-what the type owns or decides, and broad access should be replaced by explicit dependencies.
+what the type owns or decides, and broad access should be replaced by explicit domain
+facades.
 
-## Target Split
+## Responsibility Split
 
 - `GpuResourceTypes`: low-level GPU resource create info and statistics types such as
   `BufferCreateInfo`, `TextureCreateInfo`, `ShaderCreateInfo`, and `ResourceStats`.
-- `GpuResourceStore`: creation, ownership, release, and handle lookup for buffers,
-  textures, shaders, samplers, and vertex layouts.
+- `Gpu()` facade: creation, ownership, release, and handle lookup for buffers, textures,
+  shaders, samplers, and vertex layouts.
 - `TextureAssetTypes`: texture asset fallback mode, source, prepared status, prepared
   payload, and prepared split result types.
-- `TextureAssetResolver`: asset root, manifest state, fallback mode, generation,
-  path normalization, variant lookup, and cooked reference resolution.
-- `TextureAssetLoader`: texture I/O flow, `stb_image` loose decode, cooked texture
-  package read/parse/upload, prepared finalize, prepared split, texture cache,
-  async queue, flush, and callbacks.
-- `RenderMaterialStore`: material and neural material registration, update, lookup,
+- `Textures()` facade: asset root, manifest state, fallback mode, generation, path
+  normalization, variant lookup, cooked reference resolution, texture I/O flow,
+  cooked/loose upload, prepared finalize/split, texture cache, async queue, flush, and
+  callbacks.
+- `Materials()` facade: material and neural material registration, update, lookup,
   release, and neural material resource lifetime.
-- `RenderGeometryStore`: mesh GPU data, MegaMesh GPU data, model registry, and related
-  lookup/release paths.
-- `RenderResourceSet`: owning aggregate used by `RenderWorld`; it may initialize,
-  shut down, and expose accessors only.
-- `RenderResourceAccess`: non-owning dependency injection bundle passed to frame,
-  pass, loader, and analyzer code where narrow dependencies are needed.
+- `Meshes()` facade: mesh GPU data registration, lookup, release, and descriptor access.
+- `MegaGeometry()` facade: MegaMesh GPU data registration, lookup, release, and related
+  descriptor access.
+- `RenderResources`: owning aggregate used by `RenderWorld`; it initializes, shuts down,
+  and exposes domain facade accessors.
+- `RenderResourceAccess`: non-owning dependency injection bundle passed to frame, pass,
+  loader, and analyzer code where narrow dependencies are needed.
 
-`RenderResourceRegistry` should stay a compatibility-oriented facade over these
-components. New behavior should be added to the specific store, loader, resolver, or
-runtime that owns the data and lifetime rules, not to the registry facade.
+New behavior should be added to the specific domain facade and hidden implementation that
+own the data and lifetime rules, not to the aggregate.
 
 ## Resolver Boundary
 
-`TextureAssetResolver` must not own package read, `Package` parse, cooked entry hash
-checking, or `ParseCookedTexture`. Those operations are I/O and payload preparation
-work and belong in `TextureAssetLoader` or a narrowly named preparer used by the loader.
+Texture resolution must not own package read, `Package` parse, cooked entry hash
+checking, or `ParseCookedTexture`. Those operations are I/O and payload preparation work
+and belong to texture loading/preparation code behind `Textures()`.
 
 The resolver should answer only: what logical asset is being requested, what generation
 and fallback policy apply, and what cooked or loose reference should the loader attempt.
 
-## Registry And RenderResourceSet Boundaries
+## RenderResources Boundary
 
-`RenderResourceRegistry` is the public facade and compatibility boundary. It may route
-existing API calls to the split implementation, but it should not become the owner of new
-domain behavior.
-
-`RenderResourceSet` is not a second facade. It owns the split components and exposes
-initialize, shutdown, and accessors. New behavior should be added to a specific store,
-loader, resolver, or runtime, not to the aggregate.
+`RenderResources` owns the split implementation and exposes initialize, shutdown, and
+domain facade accessors. It is the aggregate boundary, not a place to add unrelated domain
+behavior.
 
 Shutdown order should be:
 
 1. cancel or flush async texture work
-2. destroy the texture loader
-3. destroy material and geometry stores
-4. destroy the GPU resource store
-5. destroy the texture asset resolver
+2. destroy texture loading/runtime state
+3. destroy material, mesh, and MegaGeometry state
+4. destroy low-level GPU resource state
+5. destroy texture asset resolver state
 
 ## Stable AssetLoadProfile Stages
 

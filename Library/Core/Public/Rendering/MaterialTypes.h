@@ -277,7 +277,7 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief マテリアル作成情報
      *
-     * RenderResourceRegistry経由でマテリアルを作成するための情報。
+     * MaterialResources経由でマテリアルを作成するための情報。
      */
     struct MaterialCreateInfo
     {

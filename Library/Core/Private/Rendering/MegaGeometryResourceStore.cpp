@@ -44,7 +44,7 @@ namespace NorvesLib::Core::Rendering
 
         if (createInfo.VertexDataSize == 0 || createInfo.IndexCount == 0 || createInfo.Clusters.empty())
         {
-            NORVES_LOG_ERROR("RenderResourceManager", "Invalid MegaMesh create info: %s",
+            NORVES_LOG_ERROR("MegaGeometryResources", "Invalid MegaMesh create info: %s",
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
@@ -85,7 +85,7 @@ namespace NorvesLib::Core::Rendering
                 uploadClusters = &lodHierarchy.AllClusters;
                 uploadTotalBounds = lodHierarchy.TotalBounds;
 
-                NORVES_LOG_INFO("RenderResourceManager",
+                NORVES_LOG_INFO("MegaGeometryResources",
                                 "LOD hierarchy build succeeded: %s (%u levels, %u clusters)",
                                 createInfo.DebugName.c_str(),
                                 lodHierarchy.LODLevelCount,
@@ -113,7 +113,7 @@ namespace NorvesLib::Core::Rendering
                             createInfo.DebugName.c_str(),
                             uploadVertexDataSize,
                             vertexUploadMs);
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create MegaMesh vertex buffer: %s",
+            NORVES_LOG_ERROR("MegaGeometryResources", "Failed to create MegaMesh vertex buffer: %s",
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
@@ -140,7 +140,7 @@ namespace NorvesLib::Core::Rendering
                             ibSize,
                             vertexUploadMs,
                             indexUploadMs);
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create MegaMesh index buffer: %s",
+            NORVES_LOG_ERROR("MegaGeometryResources", "Failed to create MegaMesh index buffer: %s",
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
@@ -194,7 +194,7 @@ namespace NorvesLib::Core::Rendering
                             vertexUploadMs,
                             indexUploadMs,
                             clusterUploadMs);
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create MegaMesh cluster buffer: %s",
+            NORVES_LOG_ERROR("MegaGeometryResources", "Failed to create MegaMesh cluster buffer: %s",
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
@@ -220,7 +220,7 @@ namespace NorvesLib::Core::Rendering
             m_MegaMeshes[handle.Id] = std::move(gpuData);
         }
 
-        NORVES_LOG_INFO("RenderResourceManager",
+        NORVES_LOG_INFO("MegaGeometryResources",
                         "MegaMesh created: %s (vertices: %u, indices: %u, clusters: %u)",
                         createInfo.DebugName.c_str(),
                         createInfo.VertexCount,
