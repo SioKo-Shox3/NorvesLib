@@ -5,10 +5,6 @@
 #include "Container/PointerTypes.h"
 #include "BootConfig.h"
 
-#ifdef _WIN32
-#include <Windows.h>
-#endif
-
 namespace NorvesLib
 {
 
@@ -48,64 +44,23 @@ namespace NorvesLib
             TUniquePtr<IApplication> CreateDefaultApplication();
 
             /**
-             * @brief アプリケーションを実行する統一エントリーポイント（新API）
+             * @brief アプリケーションを実行する統一エントリーポイント
              * @param config 起動設定
              * @return アプリケーションの終了コード
              */
             int RunApplication(const BootConfig &config);
 
-#ifdef _WIN32
             /**
-             * @brief プラットフォーム初期化を行う（Windows用レガシーAPI）
-             * @param hInstance インスタンスハンドル
-             * @param commandLine コマンドライン引数
-             * @return 成功した場合true
-             */
-            bool InitializePlatform(HINSTANCE hInstance, const String &commandLine);
-
-            /**
-             * @brief アプリケーションを実行する統一エントリーポイント（Windows用レガシーAPI）
-             * @param hInstance アプリケーションインスタンスハンドル
-             * @param hPrevInstance 前のインスタンスハンドル（現在は常にNULL）
-             * @param lpCmdLine コマンドライン引数
-             * @param nCmdShow ウィンドウの表示状態
+             * @brief アプリケーションを起動する統合エントリポイント
+             *
+             * コンソール割当・ロガー初期化・アプリケーション実行・終了処理を
+             * 一括で行います。プラットフォーム固有のエントリポイント
+             * （WindowsEntryPoint の WinMain 等）から呼び出されます。
+             *
+             * @param config 起動設定（Arguments フィールドには呼び出し前に引数を設定すること）
              * @return アプリケーションの終了コード
              */
-            int RunApplication(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow);
-
-            /**
-             * @brief アプリケーションを実行する統一エントリーポイント（Windows用新API）
-             * @param hInstance アプリケーションインスタンスハンドル
-             * @param config 起動設定
-             * @return アプリケーションの終了コード
-             */
-            int RunApplication(HINSTANCE hInstance, const BootConfig &config);
-
-            /**
-             * @brief アプリケーションを起動する最もシンプルなAPI
-             *
-             * ロガー初期化、デバッグコンソール割り当て、アプリケーション実行、
-             * 終了処理までを全て行います。
-             *
-             * @param config 起動設定
-             * @return アプリケーションの終了コード
-             */
-            int Boot(const BootConfig &config);
-
-            /**
-             * @brief WinMain引数を受け取るオーバーロード
-             *
-             * WinMain引数をBootConfigに設定してからBootを呼び出します。
-             *
-             * @param hInstance アプリケーションインスタンスハンドル
-             * @param hPrevInstance 前のインスタンスハンドル
-             * @param lpCmdLine コマンドライン引数
-             * @param nCmdShow ウィンドウ表示状態
-             * @param config 起動設定（コピーされ、WinMain引数が設定されます）
-             * @return アプリケーションの終了コード
-             */
-            int Boot(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow, BootConfig config);
-#endif
+            int LaunchApplication(const BootConfig &config);
 
         } // namespace Boot
     } // namespace Core

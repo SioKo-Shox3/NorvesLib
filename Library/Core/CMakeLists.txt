@@ -37,6 +37,7 @@ set(PRIVATE_SOURCES
     Private/Platform/Windows/WindowsApplication.cpp
     Private/Platform/Windows/WindowsApplicationFactory.cpp
     Private/Platform/Windows/WindowsWindow.cpp
+    Private/Platform/Windows/WindowsEntryPoint.cpp
     Private/Boot/PlatformBoot.cpp
     Private/Application/ApplicationFactory.cpp
     Private/Engine/Engine.cpp
@@ -191,6 +192,7 @@ set(PUBLIC_HEADERS
     Public/Platform/Windows/WindowsWindow.h
     Public/Boot/PlatformBoot.h
     Public/Boot/BootConfig.h
+    Public/Boot/EntryPoint.h
     Public/Boot/IPlatformBoot.h
     Public/Application/ApplicationFactory.h
     Public/Application/IApplicationHandler.h

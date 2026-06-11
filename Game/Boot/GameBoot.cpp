@@ -1,5 +1,6 @@
 ﻿#include "GameBoot.h"
 #include "GameApplicationHandler.h"
+#include "Core/Public/Boot/EntryPoint.h"
 #include "Core/Public/Container/PointerTypes.h"
 
 using namespace NorvesLib::Core::Container;
@@ -37,3 +38,19 @@ namespace Game::Boot
     }
 
 } // namespace Game::Boot
+
+namespace NorvesLib::Core::Boot
+{
+    /**
+     * @brief ゲーム固有の BootConfig を構築する（エンジン EntryPoint から呼ばれる）
+     *
+     * Arguments フィールドはエンジン側エントリポイントが設定するため、
+     * ここでは設定しません。
+     *
+     * @return ゲーム固有の起動設定
+     */
+    BootConfig CreateApplicationBootConfig()
+    {
+        return Game::Boot::GetBootConfig();
+    }
+} // namespace NorvesLib::Core::Boot

@@ -1,11 +1,8 @@
 ﻿#pragma once
 
 #include "Container/String.h"
+#include "Container/VariableArray.h"
 #include "Container/PointerTypes.h"
-
-#ifdef _WIN32
-#include <Windows.h>
-#endif
 
 namespace NorvesLib::Core::Application
 {
@@ -75,29 +72,15 @@ namespace NorvesLib::Core::Boot
          */
         Container::String LogFileName = TEXT("Game.log");
 
-        // ========== プラットフォーム固有パラメータ ==========
-
-#ifdef _WIN32
-        /**
-         * @brief アプリケーションインスタンスハンドル（Windows用）
-         */
-        HINSTANCE hInstance = nullptr;
+        // ========== コマンドライン引数 ==========
 
         /**
-         * @brief 前のインスタンスハンドル（Windows用、常にnullptr）
+         * @brief コマンドライン引数リスト
+         *
+         * エンジン側エントリポイント（WindowsEntryPoint 等）が設定します。
+         * ゲーム側の CreateApplicationBootConfig では設定不要です。
          */
-        HINSTANCE hPrevInstance = nullptr;
-
-        /**
-         * @brief コマンドライン引数（Windows用）
-         */
-        LPSTR lpCmdLine = nullptr;
-
-        /**
-         * @brief ウィンドウ表示状態（Windows用）
-         */
-        int nCmdShow = SW_SHOW;
-#endif
+        Container::VariableArray<Container::String> Arguments;
 
         // ========== ハンドラ作成 ==========
 
