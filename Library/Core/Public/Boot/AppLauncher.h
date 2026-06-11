@@ -23,15 +23,6 @@ namespace NorvesLib::Core::Boot
      */
 
     /**
-     * @brief デフォルトアプリケーションを作成する
-     *
-     * ApplicationFactory を使用してプラットフォーム固有の実装を返す。
-     *
-     * @return 作成されたアプリケーションのインスタンス
-     */
-    Container::TUniquePtr<IApplication> CreateDefaultApplication();
-
-    /**
      * @brief プラットフォーム初期化後にアプリケーションを実行する
      *
      * プラットフォーム初期化（作業ディレクトリ設定等）を行い、

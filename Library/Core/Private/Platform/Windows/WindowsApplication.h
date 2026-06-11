@@ -34,7 +34,6 @@ namespace NorvesLib
 
                 // IApplicationインターフェースの実装
                 virtual bool Initialize(const Core::Container::VariableArray<Core::Container::String> &args) override;
-                virtual int Run() override;
                 virtual void Shutdown() override;
                 virtual NorvesLib::IWindow *GetMainWindow() override;
                 virtual void RegisterWindow(Core::Container::TSharedPtr<NorvesLib::IWindow> window) override;

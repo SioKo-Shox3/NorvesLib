@@ -275,7 +275,7 @@ UnorderedMap<String, int> stringMap;  // コンパイルエラーまたは非効
 
 ### ファクトリーパターン
 - プラットフォーム固有の実装を抽象化
-- `ApplicationFactory`, `WindowsApplicationFactory`
+- 宣言は共通ヘッダー（`Platform::CreatePlatformApplication()` / `CreatePlatformWindow()`）、実装はプラットフォーム別翻訳単位に分離する方式を採用
 
 ### シングルトンパターンの禁止
 - **クラス内でstaticインスタンスを持つシングルトンパターンは禁止**
