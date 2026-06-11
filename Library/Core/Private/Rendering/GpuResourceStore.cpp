@@ -218,7 +218,7 @@ namespace NorvesLib::Core::Rendering
         auto rhiTexture = m_Device->CreateTexture(desc);
         if (!rhiTexture)
         {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create texture");
+            NORVES_LOG_ERROR("RenderResources", "Failed to create texture");
             return TextureHandle::Invalid();
         }
 
@@ -288,7 +288,7 @@ namespace NorvesLib::Core::Rendering
             if (!commandList)
             {
                 result.bMipgenSuccess = false;
-                NORVES_LOG_ERROR("RenderResourceManager", "Failed to create command list for mip generation");
+                NORVES_LOG_ERROR("RenderResources", "Failed to create command list for mip generation");
             }
             else
             {
@@ -349,7 +349,7 @@ namespace NorvesLib::Core::Rendering
         Thread::ScopedLock lock(m_Mutex);
         m_Textures[handle.Id] = std::move(data);
 
-        NORVES_LOG_DEBUG("RenderResourceManager", "External texture registered: %s (handle=%llu)",
+        NORVES_LOG_DEBUG("RenderResources", "External texture registered: %s (handle=%llu)",
                          debugName.c_str(), handle.Id);
 
         return handle;
@@ -391,7 +391,7 @@ namespace NorvesLib::Core::Rendering
         auto rhiSampler = m_Device->CreateSampler(desc);
         if (!rhiSampler)
         {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create default sampler");
+            NORVES_LOG_ERROR("RenderResources", "Failed to create default sampler");
             return SamplerHandle::Invalid();
         }
 
@@ -431,7 +431,7 @@ namespace NorvesLib::Core::Rendering
         auto rhiSampler = m_Device->CreateSampler(desc);
         if (!rhiSampler)
         {
-            NORVES_LOG_ERROR("RenderResourceManager", "Failed to create point sampler");
+            NORVES_LOG_ERROR("RenderResources", "Failed to create point sampler");
             return SamplerHandle::Invalid();
         }
 

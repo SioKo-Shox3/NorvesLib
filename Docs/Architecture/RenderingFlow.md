@@ -51,7 +51,7 @@ Single-threaded path では `Ready -> Reading -> Empty` を GameThread 内で完
 ## Resize と Shutdown
 
 - Resize は `RenderWorld::Resize()` で保留し、次の `BeginFrame()` で `WaitForRender()` 後に適用する。
-- Shutdown は RenderThread を先に停止し、その後 ResourceManager、RenderingCoordinator、RHI 参照を解放する。
+- Shutdown は RenderThread を先に停止し、その後 RenderResources、RenderingCoordinator、RHI 参照を解放する。
 - SwapChain 依存リソースは Resize/dirty presentation のタイミングで再作成する。
 
 ## 今後の拡張方針

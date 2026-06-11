@@ -209,7 +209,7 @@ namespace NorvesLib::Core::Rendering
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
         if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
         {
-            NORVES_LOG_WARNING("RenderResourceManager",
+            NORVES_LOG_WARNING("TextureResources",
                                "SetTextureAssetRoot rejected while async texture loads are pending");
             return false;
         }
@@ -230,7 +230,7 @@ namespace NorvesLib::Core::Rendering
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
         if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
         {
-            NORVES_LOG_WARNING("RenderResourceManager",
+            NORVES_LOG_WARNING("TextureResources",
                                "LoadTextureAssetManifestFromJsonText rejected while async texture loads are pending");
             return false;
         }
@@ -249,7 +249,7 @@ namespace NorvesLib::Core::Rendering
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
         if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
         {
-            NORVES_LOG_WARNING("RenderResourceManager",
+            NORVES_LOG_WARNING("TextureResources",
                                "ResetTextureAssetManifest rejected while async texture loads are pending");
             return false;
         }
@@ -268,7 +268,7 @@ namespace NorvesLib::Core::Rendering
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
         if (m_TextureAsyncLoads && m_TextureAsyncLoads->HasPendingOrActiveFlush())
         {
-            NORVES_LOG_WARNING("RenderResourceManager",
+            NORVES_LOG_WARNING("TextureResources",
                                "SetTextureAssetFallbackMode rejected while async texture loads are pending");
             return false;
         }
@@ -496,7 +496,7 @@ namespace NorvesLib::Core::Rendering
             if (handle.IsValid())
             {
                 cacheTextureIfCurrent(loadPlan, handle);
-                NORVES_LOG_INFO("RenderResourceManager", "Texture loaded successfully");
+                NORVES_LOG_INFO("TextureResources", "Texture loaded successfully");
             }
 
             return handle;
@@ -626,7 +626,7 @@ namespace NorvesLib::Core::Rendering
             m_TextureAsyncLoads->EnqueueOrAppendDuplicateAndSubmit(request);
         if (enqueueResult.bSubmitted)
         {
-            NORVES_LOG_INFO("RenderResourceManager", "Async texture load started: %s (RequestId=%u)",
+            NORVES_LOG_INFO("TextureResources", "Async texture load started: %s (RequestId=%u)",
                             path.c_str(), static_cast<unsigned int>(request->RequestId));
         }
 
@@ -791,13 +791,13 @@ namespace NorvesLib::Core::Rendering
                     ++successCount;
                     bCached = cacheTextureIfCurrent(result, handle);
 
-                    NORVES_LOG_INFO("RenderResourceManager", "Async texture loaded: %s",
+                    NORVES_LOG_INFO("TextureResources", "Async texture loaded: %s",
                                     result.Path.c_str());
                 }
                 else
                 {
                     ++failedCount;
-                    NORVES_LOG_ERROR("RenderResourceManager", "Async texture GPU upload failed: %s",
+                    NORVES_LOG_ERROR("TextureResources", "Async texture GPU upload failed: %s",
                                      result.Path.c_str());
                 }
 
@@ -821,7 +821,7 @@ namespace NorvesLib::Core::Rendering
             else
             {
                 ++failedCount;
-                NORVES_LOG_ERROR("RenderResourceManager", "Async texture load failed: %s",
+                NORVES_LOG_ERROR("TextureResources", "Async texture load failed: %s",
                                  result.ResolvedPath.c_str());
 
                 auto callbacks = takeCallbacksAndReleasePendingMap(request);
