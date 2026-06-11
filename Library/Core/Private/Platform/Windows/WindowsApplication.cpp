@@ -37,13 +37,6 @@ namespace NorvesLib
                 return true;
             }
 
-            int WindowsApplication::Run()
-            {
-                // メッセージループは ApplicationProcessor のメインループ内で
-                // PumpMessages() 経由で処理される
-                return 0;
-            }
-
             void WindowsApplication::Shutdown()
             {
                 if (m_isRunning)

@@ -32,12 +32,6 @@ namespace NorvesLib
         virtual bool Initialize(const Core::Container::VariableArray<Core::Container::String> &args) = 0;
 
         /**
-         * @brief アプリケーションの実行
-         * @return 終了コード
-         */
-        virtual int Run() = 0;
-
-        /**
          * @brief アプリケーションの終了
          */
         virtual void Shutdown() = 0;

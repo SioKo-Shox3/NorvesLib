@@ -4,7 +4,6 @@
 #include "Application/IApplicationHandler.h"
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
-#include "Application/ApplicationFactory.h"
 #include "Platform/PlatformApplicationFactory.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"

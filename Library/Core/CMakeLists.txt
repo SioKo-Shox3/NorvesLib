@@ -35,14 +35,12 @@ set(PRIVATE_SOURCES
     Private/Debug/Stats.cpp
     Private/EngineGlobals/MemoryOverrides.cpp
     Private/Platform/Windows/WindowsApplication.cpp
-    Private/Platform/Windows/WindowsApplicationFactory.cpp
     Private/Platform/Windows/WindowsPlatformApplicationFactory.cpp
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp
     Private/Platform/Windows/WindowsPlatformProcess.cpp
     Private/Platform/Windows/WindowsPlatformConsole.cpp
     Private/Boot/AppLauncher.cpp
-    Private/Application/ApplicationFactory.cpp
     Private/Engine/Engine.cpp
     Private/Engine/NorvesEngine.cpp
     Private/Engine/ApplicationProcessor.cpp
@@ -193,13 +191,9 @@ set(PUBLIC_HEADERS
     Public/Platform/PlatformApplicationFactory.h
     Public/Platform/PlatformProcess.h
     Public/Platform/PlatformConsole.h
-    Public/Platform/Windows/WindowsApplication.h
-    Public/Platform/Windows/WindowsApplicationFactory.h
-    Public/Platform/Windows/WindowsWindow.h
     Public/Boot/AppLauncher.h
     Public/Boot/BootConfig.h
     Public/Boot/EntryPoint.h
-    Public/Application/ApplicationFactory.h
     Public/Application/IApplicationHandler.h
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
@@ -368,7 +362,6 @@ set(PUBLIC_HEADERS
     Public/Input/IInputDevice.h
     Public/Input/MayaCameraController.h
     Public/Input/LightController.h
-    Public/Platform/Windows/WindowsKeyMap.h
 )
 
 # ライブラリの作成

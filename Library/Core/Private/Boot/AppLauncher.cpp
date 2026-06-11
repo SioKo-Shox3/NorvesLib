@@ -1,6 +1,5 @@
 ﻿#include "Boot/AppLauncher.h"
 #include "Boot/BootConfig.h"
-#include "Application/ApplicationFactory.h"
 #include "Engine/ApplicationProcessor.h"
 #include "Debug/DebugConfig.h"
 #include "Debug/Stats.h"
@@ -118,12 +117,6 @@ namespace
 
 namespace NorvesLib::Core::Boot
 {
-
-    Container::TUniquePtr<IApplication> CreateDefaultApplication()
-    {
-        // ApplicationFactory を使用してプラットフォーム固有の実装を取得
-        return ApplicationFactory::CreateDefaultApplication();
-    }
 
     int RunApplication(const BootConfig& config)
     {
