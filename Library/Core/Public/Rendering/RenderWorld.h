@@ -5,6 +5,7 @@
 #include "RenderThread.h"
 #include "RenderResources.h"
 #include "RHI/RHITypes.h"
+#include "Platform/NativeWindowHandle.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Atomic.h"
@@ -32,7 +33,7 @@ namespace NorvesLib::Core::Rendering
         RHI::DevicePtr Device;
 
         // ウィンドウハンドル
-        void *WindowHandle = nullptr;
+        Platform::NativeWindowHandle WindowHandle;
 
         // 解像度
         uint32_t Width = 1280;

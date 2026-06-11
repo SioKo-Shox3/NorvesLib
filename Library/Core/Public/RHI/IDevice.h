@@ -6,6 +6,7 @@
 #include "IDescriptorSet.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
+#include "Platform/NativeWindowHandle.h"
 
 namespace NorvesLib::RHI
 {
@@ -45,7 +46,7 @@ namespace NorvesLib::RHI
      */
     struct SwapChainDesc
     {
-        void *windowHandle = nullptr;
+        Core::Platform::NativeWindowHandle windowHandle;
         uint32_t width = 0;
         uint32_t height = 0;
         Format format = Format::R8G8B8A8_UNORM;

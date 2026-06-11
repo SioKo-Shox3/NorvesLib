@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Application/IWindow.h"
+#include "Platform/NativeWindowHandle.h"
 #include "Container/String.h"
 #include "Container/PointerTypes.h"
 
@@ -43,7 +44,7 @@ namespace NorvesLib
                 virtual void SetTitle(const Container::String &title) override;
                 virtual void Resize(int width, int height) override;
                 virtual bool IsActive() const override;
-                virtual void *GetNativeHandle() const override;
+                virtual NativeWindowHandle GetNativeHandle() const override;
 
                 /**
                  * @brief HWNDを取得

@@ -2,6 +2,7 @@
 
 #include "RenderTypes.h"
 #include "SharedResourceRegistry.h"
+#include "Platform/NativeWindowHandle.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
@@ -26,7 +27,7 @@ namespace NorvesLib::Core::Rendering
      */
     struct ScreenSettings
     {
-        void *WindowHandle = nullptr; // ウィンドウハンドル
+        Platform::NativeWindowHandle WindowHandle; // ウィンドウハンドル
         uint32_t Width = 1280;        // 幅
         uint32_t Height = 720;        // 高さ
         bool bVSync = true;           // 垂直同期

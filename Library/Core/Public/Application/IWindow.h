@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/String.h"
+#include "Platform/NativeWindowHandle.h"
 
 namespace NorvesLib {
 
@@ -65,7 +66,7 @@ public:
      * @brief ウィンドウハンドルの取得
      * @return プラットフォーム固有のウィンドウハンドル
      */
-    virtual void* GetNativeHandle() const = 0;
+    virtual Core::Platform::NativeWindowHandle GetNativeHandle() const = 0;
 };
 
 } // namespace NorvesLib
