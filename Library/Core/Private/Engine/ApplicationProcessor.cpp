@@ -15,40 +15,37 @@
 #include "Logging/LogMacros.h"
 #include "Thread/JobSystem.h"
 #include <chrono>
-#include <cwchar>
 #include <limits>
 
 #ifdef _WIN32
 #include <Windows.h>
-#include <shellapi.h>
 #endif
 
 using namespace NorvesLib::Core::Container;
 
 namespace
 {
-#ifdef _WIN32
-    constexpr wchar_t kExitAfterFramesOption[] = L"--exit-after-frames=";
-    constexpr size_t kExitAfterFramesOptionLength = (sizeof(kExitAfterFramesOption) / sizeof(wchar_t)) - 1;
+    constexpr TCHAR kExitAfterFramesOption[] = TEXT("--exit-after-frames=");
+    constexpr size_t kExitAfterFramesOptionLength = (sizeof(kExitAfterFramesOption) / sizeof(TCHAR)) - 1;
 
-    uint64_t ParsePositiveFrameCount(const wchar_t *pValueText, bool &bValid)
+    uint64_t ParsePositiveFrameCount(const TCHAR *pValueText, bool &bValid)
     {
         bValid = false;
 
-        if (!pValueText || pValueText[0] == L'\0')
+        if (!pValueText || pValueText[0] == TEXT('\0'))
         {
             return 0;
         }
 
         uint64_t value = 0;
-        for (const wchar_t *pChar = pValueText; *pChar != L'\0'; ++pChar)
+        for (const TCHAR *pChar = pValueText; *pChar != TEXT('\0'); ++pChar)
         {
-            if (*pChar < L'0' || *pChar > L'9')
+            if (*pChar < TEXT('0') || *pChar > TEXT('9'))
             {
                 return 0;
             }
 
-            const uint64_t digit = static_cast<uint64_t>(*pChar - L'0');
+            const uint64_t digit = static_cast<uint64_t>(*pChar - TEXT('0'));
             if (value > (std::numeric_limits<uint64_t>::max() - digit) / 10)
             {
                 return 0;
@@ -66,14 +63,23 @@ namespace
         return value;
     }
 
-    bool TryParseExitAfterFramesOption(const wchar_t *pText, uint64_t &outFrameCount, bool &bMatched)
+    bool TryParseExitAfterFramesOption(const TCHAR *pText, uint64_t &outFrameCount, bool &bMatched)
     {
         outFrameCount = 0;
         bMatched = false;
 
-        if (!pText || std::wcsncmp(pText, kExitAfterFramesOption, kExitAfterFramesOptionLength) != 0)
+        if (!pText)
         {
             return false;
+        }
+
+        // プレフィックスが一致するか確認
+        for (size_t i = 0; i < kExitAfterFramesOptionLength; ++i)
+        {
+            if (pText[i] == TEXT('\0') || pText[i] != kExitAfterFramesOption[i])
+            {
+                return false;
+            }
         }
 
         bMatched = true;
@@ -89,7 +95,6 @@ namespace
         outFrameCount = parsedFrameCount;
         return true;
     }
-#endif
 } // namespace
 
 namespace NorvesLib::Core::Engine
@@ -146,34 +151,24 @@ namespace NorvesLib::Core::Engine
             return false;
         }
 
-        // コマンドライン引数を取得（現時点では空）
+        // コマンドライン引数を config.Arguments から取得してパース
         m_ExitAfterFrames = 0;
-        VariableArray<String> args;
-#ifdef _WIN32
-        int argc = 0;
-        LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        if (argv)
+        const VariableArray<String> &args = config.Arguments;
+        for (size_t i = 0; i < args.size(); ++i)
         {
-            for (int i = 0; i < argc; ++i)
+            uint64_t parsedFrameCount = 0;
+            bool bMatchedExitAfterFrames = false;
+            if (TryParseExitAfterFramesOption(args[i].c_str(), parsedFrameCount, bMatchedExitAfterFrames))
             {
-                uint64_t parsedFrameCount = 0;
-                bool bMatchedExitAfterFrames = false;
-                if (TryParseExitAfterFramesOption(argv[i], parsedFrameCount, bMatchedExitAfterFrames))
-                {
-                    m_ExitAfterFrames = parsedFrameCount;
-                    LOG_INFO_F("ApplicationProcessor runtime option exit_after_frames=%llu",
-                               static_cast<unsigned long long>(m_ExitAfterFrames));
-                }
-                else if (bMatchedExitAfterFrames)
-                {
-                    LOG_WARNING("ApplicationProcessor runtime option --exit-after-frames ignored: value must be a positive integer");
-                }
-
-                args.emplace_back(reinterpret_cast<const TCHAR *>(argv[i]));
+                m_ExitAfterFrames = parsedFrameCount;
+                LOG_INFO_F("ApplicationProcessor runtime option exit_after_frames=%llu",
+                           static_cast<unsigned long long>(m_ExitAfterFrames));
             }
-            LocalFree(argv);
+            else if (bMatchedExitAfterFrames)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --exit-after-frames ignored: value must be a positive integer");
+            }
         }
-#endif
 
         // OnPreInitialize呼び出し
         auto *handler = GEngine->GetApplicationHandler();
@@ -523,8 +518,6 @@ namespace NorvesLib::Core::Engine
 
     bool ApplicationProcessor::CreatePlatformApplication(const Boot::BootConfig &config)
     {
-        (void)config; // 現時点では未使用
-
 #ifdef _WIN32
         auto platformApp = Platform::WindowsApplicationFactory::CreateWindowsApplication();
         if (!platformApp)
@@ -533,20 +526,7 @@ namespace NorvesLib::Core::Engine
             return false;
         }
 
-        // 引数を取得
-        VariableArray<String> args;
-        int argc = 0;
-        LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        if (argv)
-        {
-            for (int i = 0; i < argc; ++i)
-            {
-                args.emplace_back(reinterpret_cast<const TCHAR *>(argv[i]));
-            }
-            LocalFree(argv);
-        }
-
-        if (!platformApp->Initialize(args))
+        if (!platformApp->Initialize(config.Arguments))
         {
             LOG_ERROR("Failed to initialize platform application");
             return false;

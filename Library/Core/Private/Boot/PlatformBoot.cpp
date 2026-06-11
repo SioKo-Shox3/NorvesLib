@@ -8,14 +8,9 @@
 #include "Logging/LogMacros.h"
 #include "Container/Containers.h"
 #include <iostream>
-#include <sstream>
-#include <string>
-#include <vector>
 
 #ifdef _WIN32
 #include <Windows.h>
-#include <Shellapi.h>
-#pragma comment(lib, "Shell32.lib")
 #endif
 
 namespace NorvesLib
@@ -32,51 +27,44 @@ namespace NorvesLib
             struct TraceLaunchOptions
             {
                 bool bEnableTrace = false;
-                std::string TraceFilePath = "NorvesLib.trace.csv";
+                Container::String TraceFilePath = TEXT("NorvesLib.trace.csv");
             };
 
-            bool StartsWith(const std::string &value, const std::string &prefix)
+            bool StartsWithStr(const Container::String &value, const TCHAR *prefix)
             {
-                return value.rfind(prefix, 0) == 0;
+                const Container::String prefixStr(prefix);
+                if (value.size() < prefixStr.size())
+                {
+                    return false;
+                }
+                return value.substr(0, prefixStr.size()).compare(prefixStr) == 0;
             }
 
             TraceLaunchOptions ParseTraceLaunchOptions(const BootConfig &config)
             {
                 TraceLaunchOptions options;
 
-#ifdef _WIN32
-                std::string commandLine = config.lpCmdLine ? std::string(config.lpCmdLine) : std::string{};
-#else
-                std::string commandLine;
-                (void)config;
-#endif
-
-                std::istringstream stream(commandLine);
-                std::vector<std::string> args;
-                std::string token;
-                while (stream >> token)
-                {
-                    args.push_back(token);
-                }
-
+                const auto &args = config.Arguments;
                 for (size_t i = 0; i < args.size(); ++i)
                 {
-                    const std::string &arg = args[i];
-                    if (arg == "--trace" || arg == "-trace" || arg == "/trace")
+                    const Container::String &arg = args[i];
+                    if (arg == TEXT("--trace") || arg == TEXT("-trace") || arg == TEXT("/trace"))
                     {
                         options.bEnableTrace = true;
                     }
-                    else if (StartsWith(arg, "--trace-file="))
+                    else if (StartsWithStr(arg, TEXT("--trace-file=")))
                     {
                         options.bEnableTrace = true;
-                        options.TraceFilePath = arg.substr(std::string("--trace-file=").size());
+                        const size_t prefixLen = Container::String(TEXT("--trace-file=")).size();
+                        options.TraceFilePath = Container::String(arg.c_str() + prefixLen);
                     }
-                    else if (StartsWith(arg, "-traceFile="))
+                    else if (StartsWithStr(arg, TEXT("-traceFile=")))
                     {
                         options.bEnableTrace = true;
-                        options.TraceFilePath = arg.substr(std::string("-traceFile=").size());
+                        const size_t prefixLen = Container::String(TEXT("-traceFile=")).size();
+                        options.TraceFilePath = Container::String(arg.c_str() + prefixLen);
                     }
-                    else if ((arg == "--trace-file" || arg == "-traceFile") && i + 1 < args.size())
+                    else if ((arg == TEXT("--trace-file") || arg == TEXT("-traceFile")) && i + 1 < args.size())
                     {
                         options.bEnableTrace = true;
                         options.TraceFilePath = args[++i];
@@ -85,7 +73,7 @@ namespace NorvesLib
 
                 if (options.TraceFilePath.empty())
                 {
-                    options.TraceFilePath = "NorvesLib.trace.csv";
+                    options.TraceFilePath = TEXT("NorvesLib.trace.csv");
                 }
 
                 return options;
@@ -124,41 +112,6 @@ namespace NorvesLib
                 return true;
             }
 
-#ifdef _WIN32
-            bool PlatformInitialize(const Container::String &commandLine)
-            {
-                (void)commandLine;
-
-                // コンソールの割り当て（デバッグビルドのみ）
-#if NORVES_ENABLE_DEBUG_OUTPUT
-                if (!AttachConsole(ATTACH_PARENT_PROCESS))
-                {
-                    AllocConsole();
-                    FILE *fp;
-                    freopen_s(&fp, "CONOUT$", "w", stdout);
-                    freopen_s(&fp, "CONOUT$", "w", stderr);
-                    freopen_s(&fp, "CONIN$", "r", stdin);
-                }
-#endif
-
-                // 実行ファイルのディレクトリを作業ディレクトリに設定
-                Container::String execPath = GetExecutablePath();
-                Container::String execDir = execPath.Substring(0, execPath.FindLast(TEXT("\\")));
-                if (!SetWorkingDirectory(execDir))
-                {
-                    std::wcerr << L"Failed to set working directory to: " << execDir.c_str() << std::endl;
-                    return false;
-                }
-
-                return true;
-            }
-
-            bool InitializePlatform(HINSTANCE hInstance, const Container::String &commandLine)
-            {
-                (void)hInstance;
-                return PlatformInitialize(commandLine);
-            }
-#endif
 
             void ShutdownPlatform()
             {
@@ -225,73 +178,7 @@ namespace NorvesLib
                 return exitCode;
             }
 
-#ifdef _WIN32
-            int RunApplication(HINSTANCE hInstance, const BootConfig &config)
-            {
-                (void)hInstance;
-                return RunApplication(config);
-            }
-
-            // レガシーAPI（後方互換性のため維持）
-            int RunApplication(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
-            {
-                // 未使用パラメータの警告を抑制
-                (void)hInstance;
-                (void)hPrevInstance;
-                (void)lpCmdLine;
-                (void)nCmdShow;
-
-                // レガシーAPIでは旧来の実装を使用
-                // 新しいBootConfigベースのAPIへの移行を推奨
-
-                Container::String commandLine;
-                if (!PlatformInitialize(commandLine))
-                {
-                    return -1;
-                }
-
-                // コマンドライン引数をContainer::String型の配列に変換
-                Container::VariableArray<Container::String> args;
-                int argc = 0;
-                LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-
-                if (argv != nullptr)
-                {
-                    for (int i = 0; i < argc; ++i)
-                    {
-                        args.emplace_back(reinterpret_cast<const TCHAR *>(argv[i]));
-                    }
-                    LocalFree(argv);
-                }
-
-                // アプリケーション作成と実行
-                auto app = CreateDefaultApplication();
-                if (!app)
-                {
-                    ShutdownPlatform();
-                    return -1;
-                }
-
-                // 初期化
-                if (!app->Initialize(args))
-                {
-                    ShutdownPlatform();
-                    return -1;
-                }
-
-                // 実行
-                int exitCode = app->Run();
-
-                // 終了
-                app->Shutdown();
-
-                // プラットフォーム終了処理
-                ShutdownPlatform();
-
-                return exitCode;
-            }
-
-            int Boot(const BootConfig &config)
+            int LaunchApplication(const BootConfig &config)
             {
                 // デバッグコンソールの割り当て
                 if (config.bEnableDebugConsole)
@@ -329,13 +216,13 @@ namespace NorvesLib
 #if NORVES_ENABLE_STATS
                 TraceLaunchOptions traceOptions = ParseTraceLaunchOptions(config);
                 if (traceOptions.bEnableTrace &&
-                    !Debug::StatsManager::Get().StartTrace(Container::String(traceOptions.TraceFilePath.c_str())))
+                    !Debug::StatsManager::Get().StartTrace(traceOptions.TraceFilePath))
                 {
                     NORVES_LOG_WARNING("Trace", "Failed to open trace file: %s", traceOptions.TraceFilePath.c_str());
                 }
 #endif
 
-                LOG_INFO("PlatformBoot::Boot() - Starting application...");
+                LOG_INFO("PlatformBoot::LaunchApplication() - Starting application...");
 
                 // アプリケーション実行
                 int result = RunApplication(config);
@@ -344,7 +231,7 @@ namespace NorvesLib
                 Debug::StatsManager::Get().StopTrace();
 #endif
 
-                LOG_INFO("PlatformBoot::Boot() - Application finished");
+                LOG_INFO("PlatformBoot::LaunchApplication() - Application finished");
 
                 // ロガー終了
                 Logging::ShutdownLogging();
@@ -360,19 +247,6 @@ namespace NorvesLib
 
                 return result;
             }
-
-            int Boot(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow, BootConfig config)
-            {
-                // WinMain引数をBootConfigに設定
-                config.hInstance = hInstance;
-                config.hPrevInstance = hPrevInstance;
-                config.lpCmdLine = lpCmdLine;
-                config.nCmdShow = nCmdShow;
-
-                // 通常のBootを呼び出し
-                return Boot(config);
-            }
-#endif
 
         } // namespace Boot
     } // namespace Core

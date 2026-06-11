@@ -11,7 +11,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <Shellapi.h>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -157,59 +156,6 @@ namespace Game
             return String(converted);
         }
 
-        String MakeStringFromWideText(const wchar_t *pText)
-        {
-            if (!pText || pText[0] == L'\0')
-            {
-                return {};
-            }
-
-            const int requiredLength = WideCharToMultiByte(
-                CP_UTF8,
-                0,
-                pText,
-                -1,
-                nullptr,
-                0,
-                nullptr,
-                nullptr);
-            if (requiredLength <= 1)
-            {
-                return {};
-            }
-
-            std::string converted(static_cast<size_t>(requiredLength - 1), '\0');
-            WideCharToMultiByte(
-                CP_UTF8,
-                0,
-                pText,
-                -1,
-                converted.data(),
-                requiredLength,
-                nullptr,
-                nullptr);
-            return String(converted);
-        }
-
-        VariableArray<String> GetProcessCommandLineArguments()
-        {
-            VariableArray<String> result;
-
-            int argumentCount = 0;
-            LPWSTR *ppArguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
-            if (!ppArguments)
-            {
-                return result;
-            }
-
-            for (int argumentIndex = 0; argumentIndex < argumentCount; ++argumentIndex)
-            {
-                result.emplace_back(MakeStringFromWideText(ppArguments[argumentIndex]));
-            }
-
-            LocalFree(ppArguments);
-            return result;
-        }
     }
 
     bool GameApplicationHandler::OnPreInitialize(const VariableArray<String> &args)
@@ -221,20 +167,17 @@ namespace Game
         m_TextureAssetManifestPath = {};
         m_Rendering3DTestModelPath = {};
 
-        VariableArray<String> processArgs = GetProcessCommandLineArguments();
-        const VariableArray<String> &parseArgs = processArgs.empty() ? args : processArgs;
-
         // コマンドライン引数の処理
-        for (size_t i = 0; i < parseArgs.size(); ++i)
+        for (size_t i = 0; i < args.size(); ++i)
         {
             // コマンドライン引数のログ出力
-            LOG_INFO_F("Arg[%zu]=%s", i, parseArgs[i].c_str());
+            LOG_INFO_F("Arg[%zu]=%s", i, args[i].c_str());
 
             bool bMatchedRoot = false;
             bool bRootHasInlineValue = false;
             String rootInlineValue;
             String parseError;
-            if (!TryMatchTextureAssetOption(parseArgs[i],
+            if (!TryMatchTextureAssetOption(args[i],
                                             kTextureAssetRootOption,
                                             bMatchedRoot,
                                             bRootHasInlineValue,
@@ -253,7 +196,7 @@ namespace Game
                     return false;
                 }
 
-                if (!ReadTextureAssetOptionValue(parseArgs,
+                if (!ReadTextureAssetOptionValue(args,
                                                  i,
                                                  kTextureAssetRootOption,
                                                  bRootHasInlineValue,
@@ -270,7 +213,7 @@ namespace Game
             bool bMatchedManifest = false;
             bool bManifestHasInlineValue = false;
             String manifestInlineValue;
-            if (!TryMatchTextureAssetOption(parseArgs[i],
+            if (!TryMatchTextureAssetOption(args[i],
                                             kTextureAssetManifestOption,
                                             bMatchedManifest,
                                             bManifestHasInlineValue,
@@ -289,7 +232,7 @@ namespace Game
                     return false;
                 }
 
-                if (!ReadTextureAssetOptionValue(parseArgs,
+                if (!ReadTextureAssetOptionValue(args,
                                                  i,
                                                  kTextureAssetManifestOption,
                                                  bManifestHasInlineValue,
@@ -306,7 +249,7 @@ namespace Game
             bool bMatchedModel = false;
             bool bModelHasInlineValue = false;
             String modelInlineValue;
-            if (!TryMatchTextureAssetOption(parseArgs[i],
+            if (!TryMatchTextureAssetOption(args[i],
                                             kRendering3DTestModelOption,
                                             bMatchedModel,
                                             bModelHasInlineValue,
@@ -325,7 +268,7 @@ namespace Game
                     return false;
                 }
 
-                if (!ReadTextureAssetOptionValue(parseArgs,
+                if (!ReadTextureAssetOptionValue(args,
                                                  i,
                                                  kRendering3DTestModelOption,
                                                  bModelHasInlineValue,
