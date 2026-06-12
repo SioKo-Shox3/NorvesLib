@@ -80,6 +80,7 @@ namespace NorvesLib::Core::Component
         m_LightColor[0] = r;
         m_LightColor[1] = g;
         m_LightColor[2] = b;
+        MarkRenderStateDirty();
     }
 
     void LightComponent::GetLightColor(float &outR, float &outG, float &outB) const
@@ -92,6 +93,7 @@ namespace NorvesLib::Core::Component
     void LightComponent::SetIntensity(float intensity)
     {
         Intensity = intensity;
+        MarkRenderStateDirty();
     }
 
     void LightComponent::SetLightDirection(float x, float y, float z)
@@ -99,6 +101,7 @@ namespace NorvesLib::Core::Component
         m_LightDirection[0] = x;
         m_LightDirection[1] = y;
         m_LightDirection[2] = z;
+        MarkRenderStateDirty();
     }
 
     void LightComponent::GetLightDirection(float &outX, float &outY, float &outZ) const

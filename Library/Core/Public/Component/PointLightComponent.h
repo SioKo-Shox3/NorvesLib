@@ -70,7 +70,11 @@ namespace NorvesLib::Core::Component
          * @brief 影響範囲を設定
          * @param range ライトの影響半径
          */
-        void SetRange(float range) { Range = range; }
+        void SetRange(float range)
+        {
+            Range = range;
+            MarkRenderStateDirty();
+        }
 
         /**
          * @brief 影響範囲を取得
@@ -80,19 +84,31 @@ namespace NorvesLib::Core::Component
         /**
          * @brief 定数減衰を設定
          */
-        void SetAttenuationConstant(float value) { AttenuationConstant = value; }
+        void SetAttenuationConstant(float value)
+        {
+            AttenuationConstant = value;
+            MarkRenderStateDirty();
+        }
         float GetAttenuationConstant() const { return AttenuationConstant; }
 
         /**
          * @brief 線形減衰を設定
          */
-        void SetAttenuationLinear(float value) { AttenuationLinear = value; }
+        void SetAttenuationLinear(float value)
+        {
+            AttenuationLinear = value;
+            MarkRenderStateDirty();
+        }
         float GetAttenuationLinear() const { return AttenuationLinear; }
 
         /**
          * @brief 二次減衰を設定
          */
-        void SetAttenuationQuadratic(float value) { AttenuationQuadratic = value; }
+        void SetAttenuationQuadratic(float value)
+        {
+            AttenuationQuadratic = value;
+            MarkRenderStateDirty();
+        }
         float GetAttenuationQuadratic() const { return AttenuationQuadratic; }
 
         // ========================================

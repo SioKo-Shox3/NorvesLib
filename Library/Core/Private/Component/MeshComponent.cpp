@@ -88,6 +88,7 @@ namespace NorvesLib::Core::Component
     void MeshComponent::SetMeshHandle(Rendering::MeshDataHandle handle)
     {
         MeshHandle = handle;
+        MarkRenderStateDirty();
     }
 
     // ========================================
@@ -101,6 +102,7 @@ namespace NorvesLib::Core::Component
             m_Materials.resize(index + 1);
         }
         m_Materials[index] = material;
+        MarkRenderStateDirty();
     }
 
     Rendering::MaterialHandle MeshComponent::GetMaterial(uint32_t index) const
@@ -115,6 +117,7 @@ namespace NorvesLib::Core::Component
     void MeshComponent::ClearMaterials()
     {
         m_Materials.clear();
+        MarkRenderStateDirty();
     }
 
     // ========================================
@@ -126,6 +129,7 @@ namespace NorvesLib::Core::Component
         if (index < 4)
         {
             m_CustomData[index] = value;
+            MarkRenderStateDirty();
         }
     }
 
@@ -146,6 +150,11 @@ namespace NorvesLib::Core::Component
     {
         static Rendering::BoundingBox defaultBounds = {-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f};
         return defaultBounds;
+    }
+
+    void MeshComponent::RefreshRenderTransformCache()
+    {
+        UpdateWorldTransform();
     }
 
     // ========================================

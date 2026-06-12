@@ -26,6 +26,7 @@ namespace NorvesLib::Core::Component
     void MegaGeometryComponent::SetMegaMeshHandle(Rendering::MegaGeometry::MegaMeshHandle handle)
     {
         MegaMeshHandleValue = handle;
+        MarkRenderStateDirty();
     }
 
     bool MegaGeometryComponent::BuildMegaGeometryProxy(Rendering::MegaGeometryProxy &outProxy) const

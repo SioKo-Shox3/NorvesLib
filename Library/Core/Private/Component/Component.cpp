@@ -99,12 +99,24 @@ namespace NorvesLib::Core::Component
 
     void Component::Enable()
     {
+        if (bEnabled)
+        {
+            return;
+        }
+
         bEnabled = true;
+        MarkRenderStateDirty();
     }
 
     void Component::Disable()
     {
+        if (!bEnabled)
+        {
+            return;
+        }
+
         bEnabled = false;
+        MarkRenderStateDirty();
     }
 
 } // namespace NorvesLib::Core::Component

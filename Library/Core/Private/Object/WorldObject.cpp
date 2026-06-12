@@ -104,9 +104,17 @@ namespace NorvesLib::Core
 
     void WorldObject::SetActive(bool bNewActive)
     {
-        if (bActive != bNewActive)
+        if (bActive == bNewActive)
         {
-            bActive = bNewActive;
+            return;
+        }
+
+        bActive = bNewActive;
+
+        auto components = GetComponents();
+        for (auto *component : components)
+        {
+            component->MarkRenderStateDirty();
         }
     }
 
