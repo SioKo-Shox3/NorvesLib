@@ -102,31 +102,51 @@ namespace NorvesLib::Core::Component
         /**
          * @brief シャドウキャスト設定
          */
-        void SetCastShadows(bool bCast) { bCastShadows = bCast; }
+        void SetCastShadows(bool bCast)
+        {
+            bCastShadows = bCast;
+            MarkRenderStateDirty();
+        }
         bool GetCastShadows() const { return bCastShadows; }
 
         /**
          * @brief ライト可視性設定
          */
-        void SetLightVisible(bool bNewVisible) { bLightVisible = bNewVisible; }
+        void SetLightVisible(bool bNewVisible)
+        {
+            bLightVisible = bNewVisible;
+            MarkRenderStateDirty();
+        }
         bool IsLightVisible() const { return bLightVisible; }
 
         /**
          * @brief シャドウバイアス設定
          */
-        void SetShadowBias(float bias) { ShadowBias = bias; }
+        void SetShadowBias(float bias)
+        {
+            ShadowBias = bias;
+            MarkRenderStateDirty();
+        }
         float GetShadowBias() const { return ShadowBias; }
 
         /**
          * @brief シャドウマップ解像度設定
          */
-        void SetShadowMapResolution(uint32_t resolution) { ShadowMapResolution = resolution; }
+        void SetShadowMapResolution(uint32_t resolution)
+        {
+            ShadowMapResolution = resolution;
+            MarkRenderStateDirty();
+        }
         uint32_t GetShadowMapResolution() const { return ShadowMapResolution; }
 
         /**
          * @brief 影響レイヤー設定
          */
-        void SetAffectedLayers(Rendering::RenderLayer layers) { AffectedLayers = layers; }
+        void SetAffectedLayers(Rendering::RenderLayer layers)
+        {
+            AffectedLayers = layers;
+            MarkRenderStateDirty();
+        }
         Rendering::RenderLayer GetAffectedLayers() const { return AffectedLayers; }
 
         /**

@@ -6,6 +6,7 @@
 #include "Container/PointerTypes.h"
 #include "Math/Vector3.h"
 #include "Math/Quaternion.h"
+#include <cstdint>
 
 namespace NorvesLib::Core
 {
@@ -145,8 +146,16 @@ namespace NorvesLib::Core
         /**
          * @brief ワールド位置を設定
          */
-        void SetPosition(const Math::Vector3 &pos) { Position = pos; }
-        void SetPosition(float x, float y, float z) { Position = Math::Vector3(x, y, z); }
+        void SetPosition(const Math::Vector3 &pos)
+        {
+            Position = pos;
+            ++m_TransformVersion;
+        }
+        void SetPosition(float x, float y, float z)
+        {
+            Position = Math::Vector3(x, y, z);
+            ++m_TransformVersion;
+        }
 
         /**
          * @brief ワールド位置を取得
@@ -156,8 +165,16 @@ namespace NorvesLib::Core
         /**
          * @brief ワールド回転を設定（クォータニオン）
          */
-        void SetRotation(const Math::Quaternion &rot) { Rotation = rot; }
-        void SetRotation(float x, float y, float z, float w) { Rotation = Math::Quaternion(x, y, z, w); }
+        void SetRotation(const Math::Quaternion &rot)
+        {
+            Rotation = rot;
+            ++m_TransformVersion;
+        }
+        void SetRotation(float x, float y, float z, float w)
+        {
+            Rotation = Math::Quaternion(x, y, z, w);
+            ++m_TransformVersion;
+        }
 
         /**
          * @brief ワールド回転を取得（クォータニオン）
@@ -167,13 +184,26 @@ namespace NorvesLib::Core
         /**
          * @brief スケールを設定
          */
-        void SetScale(const Math::Vector3 &scale) { Scale = scale; }
-        void SetScale(float x, float y, float z) { Scale = Math::Vector3(x, y, z); }
+        void SetScale(const Math::Vector3 &scale)
+        {
+            Scale = scale;
+            ++m_TransformVersion;
+        }
+        void SetScale(float x, float y, float z)
+        {
+            Scale = Math::Vector3(x, y, z);
+            ++m_TransformVersion;
+        }
 
         /**
          * @brief スケールを取得
          */
         const Math::Vector3 &GetScale() const { return Scale; }
+
+        /**
+         * @brief トランスフォーム更新バージョンを取得
+         */
+        uint64_t GetTransformVersion() const { return m_TransformVersion; }
 
         // ========================================
         // ライフサイクル
@@ -255,6 +285,8 @@ namespace NorvesLib::Core
 
         // オブジェクトID（World内でユニーク）
         PROPERTY(uint64_t, ObjectId)
+
+        uint64_t m_TransformVersion = 1;
     };
 
 } // namespace NorvesLib::Core

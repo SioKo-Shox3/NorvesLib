@@ -120,25 +120,41 @@ namespace NorvesLib::Core::Component
         /**
          * @brief 可視性を設定
          */
-        void SetVisible(bool bNewVisible) { bVisible = bNewVisible; }
+        void SetVisible(bool bNewVisible)
+        {
+            bVisible = bNewVisible;
+            MarkRenderStateDirty();
+        }
         bool IsVisible() const { return bVisible && IsActive(); }
 
         /**
          * @brief シャドウキャスト設定
          */
-        void SetCastShadow(bool bCast) { bCastShadow = bCast; }
+        void SetCastShadow(bool bCast)
+        {
+            bCastShadow = bCast;
+            MarkRenderStateDirty();
+        }
         bool GetCastShadow() const { return bCastShadow; }
 
         /**
          * @brief シャドウレシーブ設定
          */
-        void SetReceiveShadow(bool bReceive) { bReceiveShadow = bReceive; }
+        void SetReceiveShadow(bool bReceive)
+        {
+            bReceiveShadow = bReceive;
+            MarkRenderStateDirty();
+        }
         bool GetReceiveShadow() const { return bReceiveShadow; }
 
         /**
          * @brief レンダーレイヤー設定
          */
-        void SetRenderLayer(Rendering::RenderLayer layer) { RenderLayerProp = layer; }
+        void SetRenderLayer(Rendering::RenderLayer layer)
+        {
+            RenderLayerProp = layer;
+            MarkRenderStateDirty();
+        }
         Rendering::RenderLayer GetRenderLayer() const { return RenderLayerProp; }
 
         // ========================================
@@ -148,7 +164,11 @@ namespace NorvesLib::Core::Component
         /**
          * @brief 強制LODレベルを設定（-1で自動）
          */
-        void SetForcedLODLevel(int32_t level) { ForcedLODLevel = level; }
+        void SetForcedLODLevel(int32_t level)
+        {
+            ForcedLODLevel = level;
+            MarkRenderStateDirty();
+        }
         int32_t GetForcedLODLevel() const { return ForcedLODLevel; }
 
         /**
@@ -187,6 +207,11 @@ namespace NorvesLib::Core::Component
          * @brief ワールドバウンディングスフィアを取得
          */
         const Rendering::BoundingSphere &GetWorldBounds() const { return m_WorldBounds; }
+
+        /**
+         * @brief SceneView同期前にワールドトランスフォームとBoundsキャッシュを更新
+         */
+        void RefreshRenderTransformCache();
 
         // ========================================
         // SceneProxy生成

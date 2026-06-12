@@ -80,6 +80,26 @@ target_include_directories(SceneViewProxyLookupTest PRIVATE
 set_target_properties(SceneViewProxyLookupTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SceneViewProxyLookupTest COMMAND SceneViewProxyLookupTest)
 
+add_executable(ComponentDirtyTrackingTest
+    ComponentDirtyTrackingTest.cpp
+)
+target_link_libraries(ComponentDirtyTrackingTest PRIVATE Core)
+target_include_directories(ComponentDirtyTrackingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ComponentDirtyTrackingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ComponentDirtyTrackingTest COMMAND ComponentDirtyTrackingTest)
+
+add_executable(WorldSyncDifferentialTest
+    WorldSyncDifferentialTest.cpp
+)
+target_link_libraries(WorldSyncDifferentialTest PRIVATE Core)
+target_include_directories(WorldSyncDifferentialTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(WorldSyncDifferentialTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME WorldSyncDifferentialTest COMMAND WorldSyncDifferentialTest)
+
 add_executable(RenderFrameExecutorPlanTest
     RenderFrameExecutorPlanTest.cpp
 )

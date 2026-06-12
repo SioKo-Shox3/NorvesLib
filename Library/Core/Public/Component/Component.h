@@ -133,6 +133,35 @@ namespace NorvesLib::Core::Component
         virtual bool IsActive() const { return bEnabled && GetOuter() != nullptr; }
 
         // ========================================
+        // Render state dirty tracking
+        // ========================================
+
+        /**
+         * @brief RenderThread同期が必要な状態にする
+         */
+        void MarkRenderStateDirty() { m_bRenderStateDirty = true; }
+
+        /**
+         * @brief RenderThread同期が必要かどうか
+         */
+        bool IsRenderStateDirty() const { return m_bRenderStateDirty; }
+
+        /**
+         * @brief RenderThread同期済みとしてdirty状態を解除する
+         */
+        void ClearRenderStateDirty() { m_bRenderStateDirty = false; }
+
+        /**
+         * @brief 最後にSceneViewへ同期したオーナートランスフォームバージョンを取得
+         */
+        uint64_t GetLastSyncedTransformVersion() const { return m_LastSyncedTransformVersion; }
+
+        /**
+         * @brief 最後にSceneViewへ同期したオーナートランスフォームバージョンを設定
+         */
+        void SetLastSyncedTransformVersion(uint64_t version) { m_LastSyncedTransformVersion = version; }
+
+        // ========================================
         // Tick設定
         // ========================================
 
@@ -150,6 +179,9 @@ namespace NorvesLib::Core::Component
         PROPERTY(bool, bEnabled)        // 有効状態
         PROPERTY(bool, bTickEnabled)    // Tick有効
         PROPERTY(bool, bBegunPlay)      // BeginPlay済みフラグ
+
+        bool m_bRenderStateDirty = true;
+        uint64_t m_LastSyncedTransformVersion = 0;
 
     private:
         // ID生成用静的カウンター

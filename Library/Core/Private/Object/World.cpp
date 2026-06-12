@@ -84,6 +84,7 @@ namespace NorvesLib::Core
 
         NextObjectId = 1;
         m_SceneView = nullptr;
+        m_bForceFullProxySync = false;
 
         Object::Initialize();
     }
@@ -112,6 +113,7 @@ namespace NorvesLib::Core
         }
 
         m_SceneView = nullptr;
+        m_bForceFullProxySync = false;
         NextObjectId = 1;
 
         Object::Finalize();
@@ -262,6 +264,7 @@ namespace NorvesLib::Core
     void World::SetSceneView(Rendering::SceneView *sceneView)
     {
         m_SceneView = sceneView;
+        m_bForceFullProxySync = true;
     }
 
     void World::SyncToSceneView()
@@ -277,6 +280,8 @@ namespace NorvesLib::Core
         liveMeshObjectIds.reserve(m_Inners.size());
         liveMegaGeometryObjectIds.reserve(m_Inners.size());
 
+        const bool bForceFullProxySync = m_bForceFullProxySync;
+
         // 全WorldObjectのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
         for (auto *inner : m_Inners)
         {
@@ -286,55 +291,101 @@ namespace NorvesLib::Core
                 continue;
             }
 
+            const uint64_t ownerVersion = obj->GetTransformVersion();
+
             // オブジェクトのInner（Component）をチェック
             auto components = obj->GetComponents();
             for (auto *comp : components)
             {
+                auto *megaComp = CastTo<Component::MegaGeometryComponent>(comp);
+
                 // MeshComponentの同期
                 auto *meshComp = CastTo<Component::MeshComponent>(comp);
-                if (meshComp && meshComp->IsEnabled())
+                if (meshComp && !megaComp)
                 {
-                    // MeshProxyを構築
-                    Rendering::MeshProxy meshProxy;
-                    if (meshComp->BuildMeshProxy(meshProxy))
+                    const bool bNeedsSync = bForceFullProxySync ||
+                                            meshComp->IsRenderStateDirty() ||
+                                            meshComp->GetLastSyncedTransformVersion() != ownerVersion;
+                    if (!bNeedsSync)
                     {
-                        // ObjectIdとComponentIdを設定
-                        meshProxy.ObjectId = obj->GetObjectId();
-                        meshProxy.ComponentId = meshComp->GetComponentId();
+                        liveMeshObjectIds.insert(obj->GetObjectId());
+                    }
+                    else
+                    {
+                        meshComp->RefreshRenderTransformCache();
 
-                        // SceneViewに追加/更新
-                        m_SceneView->UpdateMeshProxy(meshProxy);
-                        liveMeshObjectIds.insert(meshProxy.ObjectId);
+                        // MeshProxyを構築
+                        Rendering::MeshProxy meshProxy;
+                        if (meshComp->BuildMeshProxy(meshProxy))
+                        {
+                            // ObjectIdとComponentIdを設定
+                            meshProxy.ObjectId = obj->GetObjectId();
+                            meshProxy.ComponentId = meshComp->GetComponentId();
+
+                            // SceneViewに追加/更新
+                            m_SceneView->UpdateMeshProxy(meshProxy);
+                            liveMeshObjectIds.insert(meshProxy.ObjectId);
+                        }
+
+                        meshComp->ClearRenderStateDirty();
+                        meshComp->SetLastSyncedTransformVersion(ownerVersion);
                     }
                 }
 
                 // MegaGeometryComponentの同期
-                auto *megaComp = CastTo<Component::MegaGeometryComponent>(comp);
-                if (megaComp && megaComp->IsEnabled())
+                if (megaComp)
                 {
-                    Rendering::MegaGeometryProxy megaProxy;
-                    if (megaComp->BuildMegaGeometryProxy(megaProxy))
+                    const bool bNeedsSync = bForceFullProxySync ||
+                                            megaComp->IsRenderStateDirty() ||
+                                            megaComp->GetLastSyncedTransformVersion() != ownerVersion;
+                    if (!bNeedsSync)
                     {
-                        megaProxy.ObjectId = obj->GetObjectId();
-                        megaProxy.ComponentId = megaComp->GetComponentId();
-                        m_SceneView->UpdateMegaGeometryProxy(megaProxy);
-                        liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
+                        liveMegaGeometryObjectIds.insert(obj->GetObjectId());
+                    }
+                    else
+                    {
+                        megaComp->RefreshRenderTransformCache();
+
+                        Rendering::MegaGeometryProxy megaProxy;
+                        if (megaComp->BuildMegaGeometryProxy(megaProxy))
+                        {
+                            megaProxy.ObjectId = obj->GetObjectId();
+                            megaProxy.ComponentId = megaComp->GetComponentId();
+                            m_SceneView->UpdateMegaGeometryProxy(megaProxy);
+                            liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
+                        }
+
+                        megaComp->ClearRenderStateDirty();
+                        megaComp->SetLastSyncedTransformVersion(ownerVersion);
                     }
                 }
 
                 // LightComponentの同期
                 auto *lightComp = CastTo<Component::LightComponent>(comp);
-                if (lightComp && lightComp->IsEnabled())
+                if (lightComp)
                 {
-                    // LightProxyを構築
-                    Rendering::LightProxy lightProxy;
-                    if (lightComp->BuildLightProxy(lightProxy))
+                    const bool bNeedsSync = bForceFullProxySync ||
+                                            lightComp->IsRenderStateDirty() ||
+                                            lightComp->GetLastSyncedTransformVersion() != ownerVersion;
+                    if (!bNeedsSync)
                     {
-                        lightProxy.LightId = lightComp->GetComponentId();
+                        liveLightIds.insert(lightComp->GetComponentId());
+                    }
+                    else
+                    {
+                        // LightProxyを構築
+                        Rendering::LightProxy lightProxy;
+                        if (lightComp->BuildLightProxy(lightProxy))
+                        {
+                            lightProxy.LightId = lightComp->GetComponentId();
 
-                        // SceneViewに追加/更新
-                        m_SceneView->UpdateLightProxy(lightProxy);
-                        liveLightIds.insert(lightProxy.LightId);
+                            // SceneViewに追加/更新
+                            m_SceneView->UpdateLightProxy(lightProxy);
+                            liveLightIds.insert(lightProxy.LightId);
+                        }
+
+                        lightComp->ClearRenderStateDirty();
+                        lightComp->SetLastSyncedTransformVersion(ownerVersion);
                     }
                 }
             }
@@ -343,6 +394,7 @@ namespace NorvesLib::Core
         m_SceneView->RemoveStaleMeshProxies(liveMeshObjectIds);
         m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
         m_SceneView->RemoveStaleLightProxies(liveLightIds);
+        m_bForceFullProxySync = false;
     }
 
     void World::CleanupDestroyedObjects()
