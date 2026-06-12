@@ -123,6 +123,7 @@ set(PRIVATE_SOURCES
     Private/RHI/Vulkan/VulkanDescriptorSet.cpp
     Private/RHI/Vulkan/VulkanDevice.cpp
     Private/RHI/Vulkan/VulkanFramebuffer.cpp
+    Private/RHI/Vulkan/VulkanGPUResourceAllocator.cpp
     Private/RHI/Vulkan/VulkanPipeline.cpp
     Private/RHI/Vulkan/VulkanRenderPass.cpp
     Private/RHI/Vulkan/VulkanSampler.cpp
@@ -462,6 +463,7 @@ source_group("RHI/Private" FILES
     Private/RHI/Vulkan/VulkanDescriptorSet.cpp
     Private/RHI/Vulkan/VulkanDevice.cpp
     Private/RHI/Vulkan/VulkanFramebuffer.cpp
+    Private/RHI/Vulkan/VulkanGPUResourceAllocator.cpp
     Private/RHI/Vulkan/VulkanPipeline.cpp
     Private/RHI/Vulkan/VulkanRenderPass.cpp
     Private/RHI/Vulkan/VulkanSampler.cpp

@@ -94,7 +94,7 @@ namespace NorvesLib::Core::Rendering
         m_ColorTexture = context.TransientPool->AcquireRenderTarget(
             width, height, RHI::Format::R16G16B16A16_FLOAT, "ForwardColor");
 
-        m_DepthTexture = context.TransientPool->AcquireRenderTarget(
+        m_DepthTexture = context.TransientPool->AcquireDepthStencil(
             width, height, RHI::Format::D32_FLOAT, "ForwardDepth");
 
         // サイズ変更があればレンダーパス・フレームバッファを再作成

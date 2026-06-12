@@ -106,6 +106,7 @@ namespace
             return {};
         }
         NorvesLib::RHI::ShaderCompilerPtr CreateShaderCompiler() override { return {}; }
+        NorvesLib::RHI::IGPUResourceAllocator* GetResourceAllocator() override { return nullptr; }
         void WaitIdle() override {}
         NorvesLib::RHI::API GetAPI() const override { return NorvesLib::RHI::API::None; }
         const NorvesLib::RHI::DeviceCapabilities &GetCapabilities() const override { return Capabilities; }

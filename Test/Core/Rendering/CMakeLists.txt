@@ -110,6 +110,16 @@ target_include_directories(RenderFrameExecutorPlanTest PRIVATE
 set_target_properties(RenderFrameExecutorPlanTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderFrameExecutorPlanTest COMMAND RenderFrameExecutorPlanTest)
 
+add_executable(TransientResourcePoolTest
+    TransientResourcePoolTest.cpp
+)
+target_link_libraries(TransientResourcePoolTest PRIVATE Core)
+target_include_directories(TransientResourcePoolTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(TransientResourcePoolTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME TransientResourcePoolTest COMMAND TransientResourcePoolTest)
+
 add_executable(CookedTextureUploadTest
     CookedTextureUploadTest.cpp
 )

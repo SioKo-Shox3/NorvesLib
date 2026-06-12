@@ -123,6 +123,7 @@ namespace
         NorvesLib::RHI::PipelinePtr CreateComputePipeline(const NorvesLib::RHI::ComputePipelineDesc &) override { return {}; }
         NorvesLib::RHI::DescriptorSetPtr CreateDescriptorSet(const NorvesLib::RHI::DescriptorSetDesc &) override { return {}; }
         NorvesLib::RHI::ShaderCompilerPtr CreateShaderCompiler() override { return {}; }
+        NorvesLib::RHI::IGPUResourceAllocator* GetResourceAllocator() override { return nullptr; }
         void WaitIdle() override {}
         NorvesLib::RHI::API GetAPI() const override { return NorvesLib::RHI::API::None; }
         const NorvesLib::RHI::DeviceCapabilities &GetCapabilities() const override { return Capabilities; }

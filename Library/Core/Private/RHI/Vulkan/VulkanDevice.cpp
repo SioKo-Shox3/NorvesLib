@@ -11,6 +11,7 @@
 #include "VulkanDescriptorSet.h"
 #include "VulkanCommandList.h"
 #include "VulkanSwapChain.h"
+#include "VulkanGPUResourceAllocator.h"
 #include "Logging/LogMacros.h"
 #include <iostream>
 #include <algorithm>
@@ -23,6 +24,7 @@ namespace NorvesLib::RHI::Vulkan
 {
     // 明示的なusing宣言（グローバル名前空間から参照）
     using ::NorvesLib::Core::Container::DynamicPointerCast;
+    using ::NorvesLib::Core::Container::MakeUnique;
     using ::NorvesLib::Core::Container::MakeShared;
     using ::NorvesLib::Core::Container::StaticPointerCast;
     using ::NorvesLib::Core::Container::TSharedPtr;
@@ -60,6 +62,7 @@ namespace NorvesLib::RHI::Vulkan
 
         PickPhysicalDevice();
         CreateLogicalDevice();
+        m_ResourceAllocator = MakeUnique<VulkanGPUResourceAllocator>(this);
         CreateCommandPool();
         InitFormatMaps();
         DetectCapabilities();
@@ -68,6 +71,13 @@ namespace NorvesLib::RHI::Vulkan
     // デストラクタ
     VulkanDevice::~VulkanDevice()
     {
+        if (m_device)
+        {
+            static_cast<void>(m_device.waitIdle());
+        }
+
+        m_ResourceAllocator.reset();
+
         // コマンドプールを破棄
         if (m_commandPool)
         {
@@ -821,7 +831,12 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanDevice::WaitIdle()
     {
-        m_device.waitIdle();
+        static_cast<void>(m_device.waitIdle());
+    }
+
+    IGPUResourceAllocator* VulkanDevice::GetResourceAllocator()
+    {
+        return m_ResourceAllocator.get();
     }
 
     ShaderCompilerPtr VulkanDevice::CreateShaderCompiler()

@@ -76,19 +76,10 @@ namespace NorvesLib::Core::Rendering
             m_ResourceCache->BeginFrame(m_CurrentFrame);
         }
 
-        if (m_TransientPool)
-        {
-            m_TransientPool->BeginFrame(m_CurrentFrame);
-        }
     }
 
     void SceneRenderer::EndFrame()
     {
-        if (m_TransientPool)
-        {
-            m_TransientPool->EndFrame();
-        }
-
         // 定期的に未使用リソースを解放（例: 300フレームごと）
         if (m_CurrentFrame % 300 == 0 && m_ResourceCache)
         {
