@@ -142,13 +142,15 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief LightProxyを更新
-         * @param proxy 更新するProxy（ObjectIdで照合）
+         * @param proxy 更新するProxy（LightIdで照合）
          */
         void UpdateLightProxy(const LightProxy &proxy);
 
         /**
          * @brief MegaGeometryProxyを更新
-         * @param proxy 更新するProxy（ComponentIdで照合）
+         * @param proxy 更新するProxy（ObjectIdで照合）
+         *
+         * 同一ObjectIdに複数Componentがある場合は最後に追加・更新されたProxyを使用します。
          */
         void UpdateMegaGeometryProxy(const MegaGeometryProxy &proxy);
 
@@ -352,9 +354,13 @@ namespace NorvesLib::Core::Rendering
 
     private:
         // MeshProxy（WorldからSceneViewに直接渡される）
+        // 同一ObjectIdに複数MeshComponentがある場合は最後に追加・更新されたProxyを使用します。
         Container::VariableArray<MeshProxy> m_MeshProxies;
         Container::VariableArray<MegaGeometryProxy> m_MegaGeometryProxies;
         Container::VariableArray<LightProxy> m_LightProxies;
+        Container::UnorderedMap<uint64_t, uint32_t> m_MeshProxyIndex;
+        Container::UnorderedMap<uint64_t, uint32_t> m_LightProxyIndex;
+        Container::UnorderedMap<uint64_t, uint32_t> m_MegaGeometryProxyIndex;
 
         // 可視Proxy（カリング後）
         Container::VariableArray<MeshProxy *> m_VisibleMeshProxies;

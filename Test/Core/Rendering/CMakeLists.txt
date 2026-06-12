@@ -70,6 +70,16 @@ target_include_directories(SceneViewProxyReconcileTest PRIVATE
 set_target_properties(SceneViewProxyReconcileTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SceneViewProxyReconcileTest COMMAND SceneViewProxyReconcileTest)
 
+add_executable(SceneViewProxyLookupTest
+    SceneViewProxyLookupTest.cpp
+)
+target_link_libraries(SceneViewProxyLookupTest PRIVATE Core)
+target_include_directories(SceneViewProxyLookupTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneViewProxyLookupTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SceneViewProxyLookupTest COMMAND SceneViewProxyLookupTest)
+
 add_executable(RenderFrameExecutorPlanTest
     RenderFrameExecutorPlanTest.cpp
 )

@@ -75,122 +75,231 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::AddMeshProxy(const MeshProxy &proxy)
     {
-        if (proxy.IsValid())
+        if (!proxy.IsValid())
         {
-            m_MeshProxies.push_back(proxy);
+            return;
         }
+
+        auto indexIt = m_MeshProxyIndex.find(proxy.ObjectId);
+        if (indexIt != m_MeshProxyIndex.end())
+        {
+            m_MeshProxies[indexIt->second] = proxy;
+            return;
+        }
+
+        const uint32_t index = static_cast<uint32_t>(m_MeshProxies.size());
+        m_MeshProxies.push_back(proxy);
+        m_MeshProxyIndex[proxy.ObjectId] = index;
+        m_VisibleMeshProxies.clear();
     }
 
     void SceneView::RemoveMeshProxy(uint64_t objectId)
     {
-        auto it = std::remove_if(m_MeshProxies.begin(), m_MeshProxies.end(),
-                                 [objectId](const MeshProxy &proxy)
-                                 { return proxy.ObjectId == objectId; });
-        if (it != m_MeshProxies.end())
+        auto indexIt = m_MeshProxyIndex.find(objectId);
+        if (indexIt == m_MeshProxyIndex.end())
         {
-            m_VisibleMeshProxies.clear();
+            return;
         }
-        m_MeshProxies.erase(it, m_MeshProxies.end());
+
+        const uint32_t removeIndex = indexIt->second;
+        const uint32_t lastIndex = static_cast<uint32_t>(m_MeshProxies.size() - 1);
+        m_MeshProxyIndex.erase(indexIt);
+
+        if (removeIndex != lastIndex)
+        {
+            m_MeshProxies[removeIndex] = m_MeshProxies[lastIndex];
+            m_MeshProxyIndex[m_MeshProxies[removeIndex].ObjectId] = removeIndex;
+        }
+
+        m_MeshProxies.pop_back();
+        m_VisibleMeshProxies.clear();
     }
 
     void SceneView::RemoveStaleMeshProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds)
     {
-        auto it = std::remove_if(m_MeshProxies.begin(), m_MeshProxies.end(),
-                                 [&liveObjectIds](const MeshProxy &proxy)
-                                 { return liveObjectIds.find(proxy.ObjectId) == liveObjectIds.end(); });
-        if (it != m_MeshProxies.end())
+        uint32_t index = 0;
+        while (index < m_MeshProxies.size())
         {
+            const uint64_t objectId = m_MeshProxies[index].ObjectId;
+            if (liveObjectIds.find(objectId) != liveObjectIds.end())
+            {
+                ++index;
+                continue;
+            }
+
+            const uint32_t lastIndex = static_cast<uint32_t>(m_MeshProxies.size() - 1);
+            m_MeshProxyIndex.erase(objectId);
+            if (index != lastIndex)
+            {
+                m_MeshProxies[index] = m_MeshProxies[lastIndex];
+                m_MeshProxyIndex[m_MeshProxies[index].ObjectId] = index;
+            }
+            m_MeshProxies.pop_back();
             m_VisibleMeshProxies.clear();
         }
-        m_MeshProxies.erase(it, m_MeshProxies.end());
     }
 
     void SceneView::AddLightProxy(const LightProxy &proxy)
     {
-        if (proxy.IsValid())
+        if (!proxy.IsValid())
         {
-            m_LightProxies.push_back(proxy);
+            return;
         }
+
+        auto indexIt = m_LightProxyIndex.find(proxy.LightId);
+        if (indexIt != m_LightProxyIndex.end())
+        {
+            m_LightProxies[indexIt->second] = proxy;
+            return;
+        }
+
+        const uint32_t index = static_cast<uint32_t>(m_LightProxies.size());
+        m_LightProxies.push_back(proxy);
+        m_LightProxyIndex[proxy.LightId] = index;
     }
 
     void SceneView::AddMegaGeometryProxy(const MegaGeometryProxy &proxy)
     {
-        if (proxy.IsValid())
+        if (!proxy.IsValid())
         {
-            m_MegaGeometryProxies.push_back(proxy);
+            return;
         }
+
+        auto indexIt = m_MegaGeometryProxyIndex.find(proxy.ObjectId);
+        if (indexIt != m_MegaGeometryProxyIndex.end())
+        {
+            m_MegaGeometryProxies[indexIt->second] = proxy;
+            return;
+        }
+
+        const uint32_t index = static_cast<uint32_t>(m_MegaGeometryProxies.size());
+        m_MegaGeometryProxies.push_back(proxy);
+        m_MegaGeometryProxyIndex[proxy.ObjectId] = index;
     }
 
     void SceneView::RemoveLightProxy(uint64_t objectId)
     {
-        auto it = std::remove_if(m_LightProxies.begin(), m_LightProxies.end(),
-                                 [objectId](const LightProxy &proxy)
-                                 { return proxy.LightId == objectId; });
-        m_LightProxies.erase(it, m_LightProxies.end());
+        auto indexIt = m_LightProxyIndex.find(objectId);
+        if (indexIt == m_LightProxyIndex.end())
+        {
+            return;
+        }
+
+        const uint32_t removeIndex = indexIt->second;
+        const uint32_t lastIndex = static_cast<uint32_t>(m_LightProxies.size() - 1);
+        m_LightProxyIndex.erase(indexIt);
+
+        if (removeIndex != lastIndex)
+        {
+            m_LightProxies[removeIndex] = m_LightProxies[lastIndex];
+            m_LightProxyIndex[m_LightProxies[removeIndex].LightId] = removeIndex;
+        }
+
+        m_LightProxies.pop_back();
     }
 
     void SceneView::RemoveStaleLightProxies(const Container::UnorderedSet<uint64_t> &liveLightIds)
     {
-        auto it = std::remove_if(m_LightProxies.begin(), m_LightProxies.end(),
-                                 [&liveLightIds](const LightProxy &proxy)
-                                 { return liveLightIds.find(proxy.LightId) == liveLightIds.end(); });
-        m_LightProxies.erase(it, m_LightProxies.end());
+        uint32_t index = 0;
+        while (index < m_LightProxies.size())
+        {
+            const uint64_t lightId = m_LightProxies[index].LightId;
+            if (liveLightIds.find(lightId) != liveLightIds.end())
+            {
+                ++index;
+                continue;
+            }
+
+            const uint32_t lastIndex = static_cast<uint32_t>(m_LightProxies.size() - 1);
+            m_LightProxyIndex.erase(lightId);
+            if (index != lastIndex)
+            {
+                m_LightProxies[index] = m_LightProxies[lastIndex];
+                m_LightProxyIndex[m_LightProxies[index].LightId] = index;
+            }
+            m_LightProxies.pop_back();
+        }
     }
 
     void SceneView::RemoveMegaGeometryProxy(uint64_t objectId)
     {
-        auto it = std::remove_if(m_MegaGeometryProxies.begin(), m_MegaGeometryProxies.end(),
-                                 [objectId](const MegaGeometryProxy &proxy)
-                                 { return proxy.ObjectId == objectId; });
-        m_MegaGeometryProxies.erase(it, m_MegaGeometryProxies.end());
+        auto indexIt = m_MegaGeometryProxyIndex.find(objectId);
+        if (indexIt == m_MegaGeometryProxyIndex.end())
+        {
+            return;
+        }
+
+        const uint32_t removeIndex = indexIt->second;
+        const uint32_t lastIndex = static_cast<uint32_t>(m_MegaGeometryProxies.size() - 1);
+        m_MegaGeometryProxyIndex.erase(indexIt);
+
+        if (removeIndex != lastIndex)
+        {
+            m_MegaGeometryProxies[removeIndex] = m_MegaGeometryProxies[lastIndex];
+            m_MegaGeometryProxyIndex[m_MegaGeometryProxies[removeIndex].ObjectId] = removeIndex;
+        }
+
+        m_MegaGeometryProxies.pop_back();
     }
 
     void SceneView::RemoveStaleMegaGeometryProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds)
     {
-        auto it = std::remove_if(m_MegaGeometryProxies.begin(), m_MegaGeometryProxies.end(),
-                                 [&liveObjectIds](const MegaGeometryProxy &proxy)
-                                 { return liveObjectIds.find(proxy.ObjectId) == liveObjectIds.end(); });
-        m_MegaGeometryProxies.erase(it, m_MegaGeometryProxies.end());
+        uint32_t index = 0;
+        while (index < m_MegaGeometryProxies.size())
+        {
+            const uint64_t objectId = m_MegaGeometryProxies[index].ObjectId;
+            if (liveObjectIds.find(objectId) != liveObjectIds.end())
+            {
+                ++index;
+                continue;
+            }
+
+            const uint32_t lastIndex = static_cast<uint32_t>(m_MegaGeometryProxies.size() - 1);
+            m_MegaGeometryProxyIndex.erase(objectId);
+            if (index != lastIndex)
+            {
+                m_MegaGeometryProxies[index] = m_MegaGeometryProxies[lastIndex];
+                m_MegaGeometryProxyIndex[m_MegaGeometryProxies[index].ObjectId] = index;
+            }
+            m_MegaGeometryProxies.pop_back();
+        }
     }
 
     void SceneView::UpdateMeshProxy(const MeshProxy &proxy)
     {
-        for (auto &existingProxy : m_MeshProxies)
+        auto indexIt = m_MeshProxyIndex.find(proxy.ObjectId);
+        if (indexIt != m_MeshProxyIndex.end())
         {
-            if (existingProxy.ObjectId == proxy.ObjectId)
-            {
-                existingProxy = proxy;
-                return;
-            }
+            m_MeshProxies[indexIt->second] = proxy;
+            return;
         }
+
         // 見つからなければ追加
         AddMeshProxy(proxy);
     }
 
     void SceneView::UpdateLightProxy(const LightProxy &proxy)
     {
-        for (auto &existingProxy : m_LightProxies)
+        auto indexIt = m_LightProxyIndex.find(proxy.LightId);
+        if (indexIt != m_LightProxyIndex.end())
         {
-            if (existingProxy.LightId == proxy.LightId)
-            {
-                existingProxy = proxy;
-                return;
-            }
+            m_LightProxies[indexIt->second] = proxy;
+            return;
         }
+
         // 見つからなければ追加
         AddLightProxy(proxy);
     }
 
     void SceneView::UpdateMegaGeometryProxy(const MegaGeometryProxy &proxy)
     {
-        for (auto &existingProxy : m_MegaGeometryProxies)
+        auto indexIt = m_MegaGeometryProxyIndex.find(proxy.ObjectId);
+        if (indexIt != m_MegaGeometryProxyIndex.end())
         {
-            if (existingProxy.ComponentId == proxy.ComponentId)
-            {
-                existingProxy = proxy;
-                return;
-            }
+            m_MegaGeometryProxies[indexIt->second] = proxy;
+            return;
         }
+
         AddMegaGeometryProxy(proxy);
     }
 
@@ -199,12 +308,16 @@ namespace NorvesLib::Core::Rendering
         m_MeshProxies.clear();
         m_MegaGeometryProxies.clear();
         m_LightProxies.clear();
+        m_MeshProxyIndex.clear();
+        m_MegaGeometryProxyIndex.clear();
+        m_LightProxyIndex.clear();
         m_VisibleMeshProxies.clear();
     }
 
     void SceneView::ClearMegaGeometryProxies()
     {
         m_MegaGeometryProxies.clear();
+        m_MegaGeometryProxyIndex.clear();
     }
 
     // ========================================
