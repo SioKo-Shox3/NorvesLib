@@ -62,6 +62,7 @@ namespace NorvesLib::Core::Rendering
         m_DrawCommands.clear();
         m_OpaqueCommands.clear();
         m_TransparentCommands.clear();
+        m_InstanceData.clear();
 
         // Batcherをクリア
         m_Batcher.Clear();
@@ -662,9 +663,10 @@ namespace NorvesLib::Core::Rendering
         m_DrawCommands.clear();
         m_OpaqueCommands.clear();
         m_TransparentCommands.clear();
+        m_InstanceData.clear();
 
         // バッチャーからDrawCommandを生成
-        m_Batcher.GenerateDrawCommands(m_DrawCommands);
+        m_Batcher.GenerateDrawCommands(m_DrawCommands, m_InstanceData);
 
         // 不透明と透明を分離してソート
         DrawCommandSorter::SortAndSeparate(m_DrawCommands, m_OpaqueCommands, m_TransparentCommands);

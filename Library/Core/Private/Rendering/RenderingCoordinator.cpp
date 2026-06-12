@@ -110,6 +110,32 @@ namespace NorvesLib::Core::Rendering
             return plan;
         }
 
+        uint32_t AppendInstanceDataToPacket(FramePacket *packet,
+                                            const Container::VariableArray<GPUSceneInstanceData> &instanceData)
+        {
+            if (!packet)
+            {
+                return 0;
+            }
+
+            const uint32_t baseInstance = static_cast<uint32_t>(packet->InstanceData.size());
+            if (!instanceData.empty())
+            {
+                packet->InstanceData.insert(packet->InstanceData.end(),
+                                            instanceData.begin(),
+                                            instanceData.end());
+            }
+            return baseInstance;
+        }
+
+        void CopyRebasedDrawCommands(const Container::VariableArray<DrawCommand> &source,
+                                     uint32_t baseInstance,
+                                     Container::VariableArray<DrawCommand> &destination)
+        {
+            destination = source;
+            RebaseDrawCommandInstanceRange(destination, baseInstance);
+        }
+
     } // namespace
 
     // ========================================
@@ -645,6 +671,7 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->DrawCommands.clear();
             m_CurrentPacket->OpaqueCommands.clear();
             m_CurrentPacket->TransparentCommands.clear();
+            m_CurrentPacket->InstanceData.clear();
             m_CurrentPacket->Views.clear();
         }
 
@@ -673,18 +700,27 @@ namespace NorvesLib::Core::Rendering
                 // Viewport未作成時の互換フォールバック。
                 sceneView->PrepareDrawCommands();
 
-                const auto &viewCommands = sceneView->GetDrawCommands();
-                if (!viewCommands.empty())
+                const uint32_t instanceBase =
+                    AppendInstanceDataToPacket(m_CurrentPacket, sceneView->GetInstanceData());
+
+                Container::VariableArray<DrawCommand> drawCommands;
+                Container::VariableArray<DrawCommand> opaqueCommands;
+                Container::VariableArray<DrawCommand> transparentCommands;
+                CopyRebasedDrawCommands(sceneView->GetDrawCommands(), instanceBase, drawCommands);
+                CopyRebasedDrawCommands(sceneView->GetOpaqueCommands(), instanceBase, opaqueCommands);
+                CopyRebasedDrawCommands(sceneView->GetTransparentCommands(), instanceBase, transparentCommands);
+
+                if (!drawCommands.empty())
                 {
                     m_FrameDrawCommands.insert(m_FrameDrawCommands.end(),
-                                               viewCommands.begin(), viewCommands.end());
+                                               drawCommands.begin(), drawCommands.end());
                 }
 
                 if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
                 {
-                    m_CurrentPacket->DrawCommands = sceneView->GetDrawCommands();
-                    m_CurrentPacket->OpaqueCommands = sceneView->GetOpaqueCommands();
-                    m_CurrentPacket->TransparentCommands = sceneView->GetTransparentCommands();
+                    m_CurrentPacket->DrawCommands = drawCommands;
+                    m_CurrentPacket->OpaqueCommands = opaqueCommands;
+                    m_CurrentPacket->TransparentCommands = transparentCommands;
                     bLegacyCommandsSet = true;
                 }
             }
@@ -709,22 +745,31 @@ namespace NorvesLib::Core::Rendering
                 if (sceneView && view->IsEnabled() && viewportPlan.HasDrawableExtent())
                 {
                     sceneView->PrepareDrawCommandsForViewport(viewportPlan);
-                    viewportPlan.DrawCommands = sceneView->GetDrawCommands();
-                    viewportPlan.OpaqueCommands = sceneView->GetOpaqueCommands();
-                    viewportPlan.TransparentCommands = sceneView->GetTransparentCommands();
 
-                    const auto &viewCommands = sceneView->GetDrawCommands();
-                    if (!viewCommands.empty())
+                    const uint32_t instanceBase =
+                        AppendInstanceDataToPacket(m_CurrentPacket, sceneView->GetInstanceData());
+                    CopyRebasedDrawCommands(sceneView->GetDrawCommands(),
+                                            instanceBase,
+                                            viewportPlan.DrawCommands);
+                    CopyRebasedDrawCommands(sceneView->GetOpaqueCommands(),
+                                            instanceBase,
+                                            viewportPlan.OpaqueCommands);
+                    CopyRebasedDrawCommands(sceneView->GetTransparentCommands(),
+                                            instanceBase,
+                                            viewportPlan.TransparentCommands);
+
+                    if (!viewportPlan.DrawCommands.empty())
                     {
                         m_FrameDrawCommands.insert(m_FrameDrawCommands.end(),
-                                                   viewCommands.begin(), viewCommands.end());
+                                                   viewportPlan.DrawCommands.begin(),
+                                                   viewportPlan.DrawCommands.end());
                     }
 
                     if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
                     {
-                        m_CurrentPacket->DrawCommands = sceneView->GetDrawCommands();
-                        m_CurrentPacket->OpaqueCommands = sceneView->GetOpaqueCommands();
-                        m_CurrentPacket->TransparentCommands = sceneView->GetTransparentCommands();
+                        m_CurrentPacket->DrawCommands = viewportPlan.DrawCommands;
+                        m_CurrentPacket->OpaqueCommands = viewportPlan.OpaqueCommands;
+                        m_CurrentPacket->TransparentCommands = viewportPlan.TransparentCommands;
                         bLegacyCommandsSet = true;
                     }
                 }

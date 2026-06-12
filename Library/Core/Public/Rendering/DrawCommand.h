@@ -189,6 +189,14 @@ namespace NorvesLib::Core::Rendering
         void CalculateSortKey(float depth, BlendMode blendMode);
     };
 
+    /**
+     * @brief DrawCommandのインスタンス範囲をpacket内の絶対indexへ付け替えます。
+     * @param commands 対象DrawCommand配列
+     * @param baseInstance 加算するInstanceData先頭index
+     */
+    void RebaseDrawCommandInstanceRange(Container::VariableArray<DrawCommand> &commands,
+                                        uint32_t baseInstance);
+
     // ========================================
     // MeshBatch
     // ========================================
@@ -335,8 +343,10 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief DrawCommandを生成
          * @param outCommands 出力先のDrawCommandリスト
+         * @param outInstanceData 出力先のGPUインスタンスデータリスト
          */
-        void GenerateDrawCommands(Container::VariableArray<DrawCommand> &outCommands);
+        void GenerateDrawCommands(Container::VariableArray<DrawCommand> &outCommands,
+                                  Container::VariableArray<GPUSceneInstanceData> &outInstanceData);
 
         /**
          * @brief バッチをクリア

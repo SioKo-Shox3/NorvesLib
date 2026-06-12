@@ -1,10 +1,100 @@
 ﻿#include "Rendering/DrawCommand.h"
 #include "Rendering/SceneProxy.h"
+#include "Math/MatrixUtils.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        Math::Matrix4x4 CalculateNormalMatrix(const Math::Matrix4x4 &world)
+        {
+            const float a00 = world.m00;
+            const float a01 = world.m01;
+            const float a02 = world.m02;
+            const float a10 = world.m10;
+            const float a11 = world.m11;
+            const float a12 = world.m12;
+            const float a20 = world.m20;
+            const float a21 = world.m21;
+            const float a22 = world.m22;
+
+            const float determinant =
+                a00 * (a11 * a22 - a12 * a21) -
+                a01 * (a10 * a22 - a12 * a20) +
+                a02 * (a10 * a21 - a11 * a20);
+
+            Math::Matrix4x4 normalMatrix = Math::Matrix4x4::Identity;
+            if (std::abs(determinant) < Math::Constants::EPSILON)
+            {
+                return normalMatrix;
+            }
+
+            const float invDeterminant = 1.0f / determinant;
+
+            const float inv00 = (a11 * a22 - a12 * a21) * invDeterminant;
+            const float inv01 = (a02 * a21 - a01 * a22) * invDeterminant;
+            const float inv02 = (a01 * a12 - a02 * a11) * invDeterminant;
+            const float inv10 = (a12 * a20 - a10 * a22) * invDeterminant;
+            const float inv11 = (a00 * a22 - a02 * a20) * invDeterminant;
+            const float inv12 = (a02 * a10 - a00 * a12) * invDeterminant;
+            const float inv20 = (a10 * a21 - a11 * a20) * invDeterminant;
+            const float inv21 = (a01 * a20 - a00 * a21) * invDeterminant;
+            const float inv22 = (a00 * a11 - a01 * a10) * invDeterminant;
+
+            normalMatrix.m00 = inv00;
+            normalMatrix.m01 = inv10;
+            normalMatrix.m02 = inv20;
+            normalMatrix.m10 = inv01;
+            normalMatrix.m11 = inv11;
+            normalMatrix.m12 = inv21;
+            normalMatrix.m20 = inv02;
+            normalMatrix.m21 = inv12;
+            normalMatrix.m22 = inv22;
+
+            return normalMatrix;
+        }
+
+        void FillGPUSceneInstanceData(const Math::Matrix4x4 &world,
+                                      const Math::Matrix4x4 &normalMatrix,
+                                      const float *customData,
+                                      GPUSceneInstanceData &outData)
+        {
+            Math::MatrixUtils::CopyToShaderData(world, outData.World);
+
+            outData.NormalMatrix[0] = normalMatrix.m00;
+            outData.NormalMatrix[1] = normalMatrix.m01;
+            outData.NormalMatrix[2] = normalMatrix.m02;
+            outData.NormalMatrix[3] = 0.0f;
+            outData.NormalMatrix[4] = normalMatrix.m10;
+            outData.NormalMatrix[5] = normalMatrix.m11;
+            outData.NormalMatrix[6] = normalMatrix.m12;
+            outData.NormalMatrix[7] = 0.0f;
+            outData.NormalMatrix[8] = normalMatrix.m20;
+            outData.NormalMatrix[9] = normalMatrix.m21;
+            outData.NormalMatrix[10] = normalMatrix.m22;
+            outData.NormalMatrix[11] = 0.0f;
+
+            outData.ObjectColor[0] = 1.0f;
+            outData.ObjectColor[1] = 1.0f;
+            outData.ObjectColor[2] = 1.0f;
+            outData.ObjectColor[3] = 1.0f;
+
+            if (customData)
+            {
+                std::memcpy(outData.CustomData, customData, sizeof(outData.CustomData));
+            }
+            else
+            {
+                outData.CustomData[0] = 0.0f;
+                outData.CustomData[1] = 0.0f;
+                outData.CustomData[2] = 0.0f;
+                outData.CustomData[3] = 0.0f;
+            }
+        }
+    } // namespace
 
     // ========================================
     // DrawCommand
@@ -37,6 +127,26 @@ namespace NorvesLib::Core::Rendering
         }
 
         SortKey = blendPart | materialPart | depthInt;
+    }
+
+    void RebaseDrawCommandInstanceRange(Container::VariableArray<DrawCommand> &commands,
+                                        uint32_t baseInstance)
+    {
+        if (baseInstance == 0)
+        {
+            return;
+        }
+
+        for (DrawCommand &cmd : commands)
+        {
+            if (!cmd.IsGraphicsCommand())
+            {
+                continue;
+            }
+
+            cmd.Draw.FirstInstance += baseInstance;
+            cmd.Draw.InstanceDataOffset += baseInstance;
+        }
     }
 
     // ========================================
@@ -94,9 +204,11 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void MeshBatcher::GenerateDrawCommands(Container::VariableArray<DrawCommand> &outCommands)
+    void MeshBatcher::GenerateDrawCommands(Container::VariableArray<DrawCommand> &outCommands,
+                                           Container::VariableArray<GPUSceneInstanceData> &outInstanceData)
     {
         outCommands.clear();
+        outInstanceData.clear();
 
         for (const MeshBatch &batch : m_Batches)
         {
@@ -112,7 +224,8 @@ namespace NorvesLib::Core::Rendering
                 cmd.Type = DrawCommandType::DrawIndexedInstanced;
                 cmd.Draw.bInstanced = true;
                 cmd.Draw.InstanceCount = batch.GetInstanceCount();
-                cmd.Draw.FirstInstance = 0;
+                cmd.Draw.FirstInstance = static_cast<uint32_t>(outInstanceData.size());
+                cmd.Draw.InstanceDataOffset = cmd.Draw.FirstInstance;
                 // カスタムデータとフラグをコピー（最初のインスタンスの値を使用）
                 if (!batch.InstanceExtraData.empty())
                 {
@@ -120,7 +233,31 @@ namespace NorvesLib::Core::Rendering
                     std::memcpy(cmd.Draw.CustomData, extra.CustomData, sizeof(cmd.Draw.CustomData));
                     cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
-                // TODO: インスタンスデータバッファへのオフセット設定
+
+                for (uint32_t instanceIndex = 0; instanceIndex < batch.GetInstanceCount(); ++instanceIndex)
+                {
+                    const float *customData = nullptr;
+                    if (instanceIndex < batch.InstanceExtraData.size())
+                    {
+                        customData = batch.InstanceExtraData[instanceIndex].CustomData;
+                    }
+
+                    const Math::Matrix4x4 normalMatrix =
+                        CalculateNormalMatrix(batch.InstanceTransforms[instanceIndex]);
+                    GPUSceneInstanceData instanceData;
+                    FillGPUSceneInstanceData(batch.InstanceTransforms[instanceIndex],
+                                             normalMatrix,
+                                             customData,
+                                             instanceData);
+                    outInstanceData.push_back(instanceData);
+
+                    if (instanceIndex == 0)
+                    {
+                        cmd.Draw.WorldMatrix = batch.InstanceTransforms[instanceIndex];
+                        cmd.Draw.NormalMatrix = normalMatrix;
+                    }
+                }
+
                 outCommands.push_back(cmd);
                 continue;
             }
@@ -135,6 +272,8 @@ namespace NorvesLib::Core::Rendering
                 cmd.Draw.bInstanced = false;
                 cmd.Draw.InstanceCount = 1;
                 cmd.Draw.WorldMatrix = batch.InstanceTransforms[instanceIndex];
+                cmd.Draw.FirstInstance = static_cast<uint32_t>(outInstanceData.size());
+                cmd.Draw.InstanceDataOffset = cmd.Draw.FirstInstance;
                 // カスタムデータとフラグをコピー
                 if (instanceIndex < batch.InstanceExtraData.size())
                 {
@@ -142,7 +281,15 @@ namespace NorvesLib::Core::Rendering
                     std::memcpy(cmd.Draw.CustomData, extra.CustomData, sizeof(cmd.Draw.CustomData));
                     cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
-                // TODO: 法線行列の計算
+                cmd.Draw.NormalMatrix = CalculateNormalMatrix(cmd.Draw.WorldMatrix);
+
+                GPUSceneInstanceData instanceData;
+                FillGPUSceneInstanceData(cmd.Draw.WorldMatrix,
+                                         cmd.Draw.NormalMatrix,
+                                         cmd.Draw.CustomData,
+                                         instanceData);
+                outInstanceData.push_back(instanceData);
+
                 outCommands.push_back(cmd);
             }
         }

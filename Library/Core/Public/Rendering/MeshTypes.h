@@ -3,6 +3,7 @@
 #include "RenderTypes.h"
 #include "VertexLayout.h"
 #include "Container/Containers.h"
+#include <cstddef>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -249,5 +250,26 @@ namespace NorvesLib::Core::Rendering
             return layout;
         }
     };
+
+    /**
+     * @brief GPUへ送るシーンインスタンスデータ
+     *
+     * std430のvec4単位で扱えるよう16バイト境界に揃えます。
+     */
+    struct alignas(16) GPUSceneInstanceData
+    {
+        float World[16];
+        float NormalMatrix[12];
+        float ObjectColor[4];
+        float CustomData[4];
+    };
+
+    static_assert(alignof(GPUSceneInstanceData) == 16);
+    static_assert(sizeof(GPUSceneInstanceData) == sizeof(float) * 36);
+    static_assert(sizeof(GPUSceneInstanceData) % 16 == 0);
+    static_assert(offsetof(GPUSceneInstanceData, World) == 0);
+    static_assert(offsetof(GPUSceneInstanceData, NormalMatrix) == 64);
+    static_assert(offsetof(GPUSceneInstanceData, ObjectColor) == 112);
+    static_assert(offsetof(GPUSceneInstanceData, CustomData) == 128);
 
 } // namespace NorvesLib::Core::Rendering

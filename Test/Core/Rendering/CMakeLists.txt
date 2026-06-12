@@ -20,6 +20,16 @@ target_include_directories(MeshBatcherTest PRIVATE
 set_target_properties(MeshBatcherTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME MeshBatcherTest COMMAND MeshBatcherTest)
 
+add_executable(InstanceDataFlattenTest
+    InstanceDataFlattenTest.cpp
+)
+target_link_libraries(InstanceDataFlattenTest PRIVATE Core)
+target_include_directories(InstanceDataFlattenTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(InstanceDataFlattenTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME InstanceDataFlattenTest COMMAND InstanceDataFlattenTest)
+
 add_executable(ViewScreenTopologyTest
     ViewScreenTopologyTest.cpp
 )
