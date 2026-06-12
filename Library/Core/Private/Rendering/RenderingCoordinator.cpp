@@ -417,7 +417,13 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // 12. SceneRendererの初期化
         // ========================================
-        if (!m_SceneRenderer.Initialize(m_Device.get(), nullptr))
+        if (!m_TransientPool.Initialize(m_Device->GetResourceAllocator(), swapChain->GetMaxFramesInFlight()))
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize TransientResourcePool");
+            return false;
+        }
+
+        if (!m_SceneRenderer.Initialize(m_Device.get(), nullptr, &m_TransientPool))
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize SceneRenderer");
             return false;
@@ -484,6 +490,9 @@ namespace NorvesLib::Core::Rendering
 
         // SceneRendererの終了
         m_SceneRenderer.Shutdown();
+
+        // 一時リソースプールの終了
+        m_TransientPool.Shutdown();
 
         // シェーダーマネージャーの終了
         m_ShaderManager.Shutdown();
@@ -816,11 +825,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        m_TransientPool.BeginFrame(swapChain->GetCurrentFrameIndex());
+
         uint32_t imageIndex = swapChain->GetCurrentBackBufferIndex();
 
         if (!m_bSwapChainFramebuffersReady && !RecreateSwapChainPresentationResources())
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Swapchain presentation resources are not ready");
+            m_TransientPool.EndFrame();
             return;
         }
 
@@ -832,6 +844,7 @@ namespace NorvesLib::Core::Rendering
                              imageIndex,
                              m_SwapChainFramebuffers.size(),
                              m_PresentationLoadFramebuffers.size());
+            m_TransientPool.EndFrame();
             return;
         }
 
@@ -871,7 +884,7 @@ namespace NorvesLib::Core::Rendering
         ViewRenderContext viewContext;
         viewContext.CommandList = m_CommandList.get();
         viewContext.Device = m_Device.get();
-        viewContext.TransientPool = nullptr; // TODO: TransientResourcePool統合時に設定
+        viewContext.TransientPool = &m_TransientPool;
         viewContext.SharedResources = &m_Screen.GetSharedResourceRegistry();
         viewContext.CurrentRenderPass = m_RenderPass.get();
         viewContext.CurrentFramebuffer = m_SwapChainFramebuffers[imageIndex].get();
@@ -943,6 +956,7 @@ namespace NorvesLib::Core::Rendering
 
         // SceneRendererフレーム終了
         m_SceneRenderer.EndFrame();
+        m_TransientPool.EndFrame();
 
         // 統計更新
         const auto &rendererStats = m_SceneRenderer.GetStats();

@@ -10,6 +10,7 @@
 #include "ShaderManager.h"
 #include "Rendering/RenderResourcesFwd.h"
 #include "Platform/NativeWindowHandle.h"
+#include "RHI/TransientResourcePool.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Thread/Mutex.h"
@@ -343,6 +344,9 @@ namespace NorvesLib::Core::Rendering
 
         // SceneRenderer（実際のRHI描画コマンド発行）
         SceneRenderer m_SceneRenderer;
+
+        // フレーム内一時リソースプール
+        RHI::TransientResourcePool m_TransientPool;
 
         // シェーダーマネージャー（ランタイムコンパイル管理）
         ShaderManager m_ShaderManager;

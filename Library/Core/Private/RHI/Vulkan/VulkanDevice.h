@@ -19,6 +19,7 @@ namespace NorvesLib::RHI::Vulkan
     // 明示的なusing宣言（グローバル名前空間から参照）
     using ::NorvesLib::Core::Container::MakeShared;
     using ::NorvesLib::Core::Container::TSharedPtr;
+    using ::NorvesLib::Core::Container::TUniquePtr;
     using ::NorvesLib::Core::Container::TWeakPtr;
     using ::NorvesLib::Core::Container::UnorderedMap;
     using ::NorvesLib::Core::Container::VariableArray;
@@ -37,6 +38,7 @@ namespace NorvesLib::RHI::Vulkan
     class VulkanDescriptorSet;
     class VulkanDescriptorSetLayout;
     class VulkanDescriptorPool;
+    class VulkanGPUResourceAllocator;
 
     /**
      * @brief Vulkan初期化パラメータ
@@ -87,6 +89,7 @@ namespace NorvesLib::RHI::Vulkan
         DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc &desc) override;
         ShaderCompilerPtr CreateShaderCompiler() override;
         ShaderCompilerPtr CreateSlangShaderCompiler() override;
+        IGPUResourceAllocator* GetResourceAllocator() override;
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
         const DeviceCapabilities &GetCapabilities() const override { return m_Capabilities; }
@@ -160,6 +163,9 @@ namespace NorvesLib::RHI::Vulkan
 
         // コマンドプール
         vk::CommandPool m_commandPool;
+
+        // GPUリソースアロケーター
+        TUniquePtr<VulkanGPUResourceAllocator> m_ResourceAllocator;
 
         // デバッグ・バリデーション用
         vk::DebugUtilsMessengerEXT m_debugMessenger;

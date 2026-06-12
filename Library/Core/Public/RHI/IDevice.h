@@ -252,6 +252,12 @@ namespace NorvesLib::RHI
         virtual ShaderCompilerPtr CreateSlangShaderCompiler() { return nullptr; }
 
         /**
+         * @brief GPUリソースアロケーターを取得
+         * @return GPUリソースアロケーター。未対応の場合はnullptr
+         */
+        virtual IGPUResourceAllocator* GetResourceAllocator() = 0;
+
+        /**
          * @brief コマンドキューを待機
          */
         virtual void WaitIdle() = 0;

@@ -15,17 +15,46 @@ namespace NorvesLib::RHI
         uint32_t Width = 0;
         uint32_t Height = 0;
         Format Format = Format::UNKNOWN;
+        ResourceUsage Usage = ResourceUsage::None;
 
         bool operator==(const RenderTargetKey& other) const
         {
-            return Width == other.Width && Height == other.Height && Format == other.Format;
+            return Width == other.Width &&
+                   Height == other.Height &&
+                   Format == other.Format &&
+                   Usage == other.Usage;
         }
 
         bool operator<(const RenderTargetKey& other) const
         {
             if (Width != other.Width) return Width < other.Width;
             if (Height != other.Height) return Height < other.Height;
-            return static_cast<int>(Format) < static_cast<int>(other.Format);
+            if (Format != other.Format) return static_cast<int>(Format) < static_cast<int>(other.Format);
+            return static_cast<uint32_t>(Usage) < static_cast<uint32_t>(other.Usage);
+        }
+    };
+
+    /**
+     * @brief バッファキー（プール検索用）
+     */
+    struct BufferKey
+    {
+        uint64_t Size = 0;
+        ResourceUsage Usage = ResourceUsage::None;
+        bool CPUAccessible = false;
+
+        bool operator==(const BufferKey& other) const
+        {
+            return Size == other.Size &&
+                   Usage == other.Usage &&
+                   CPUAccessible == other.CPUAccessible;
+        }
+
+        bool operator<(const BufferKey& other) const
+        {
+            if (Size != other.Size) return Size < other.Size;
+            if (Usage != other.Usage) return static_cast<uint32_t>(Usage) < static_cast<uint32_t>(other.Usage);
+            return CPUAccessible < other.CPUAccessible;
         }
     };
 
@@ -69,7 +98,7 @@ namespace NorvesLib::RHI
          * @param allocator GPUリソースアロケーター
          * @return 初期化成功時true
          */
-        bool Initialize(IGPUResourceAllocator* allocator);
+        bool Initialize(IGPUResourceAllocator* allocator, uint32_t framesInFlight = 2);
 
         /**
          * @brief 終了処理を行います
@@ -180,23 +209,30 @@ namespace NorvesLib::RHI
         struct PooledResource
         {
             T* Resource = nullptr;
-            uint64_t LastUsedFrame = 0;
+            TextureAllocation Texture;
+            BufferAllocation Buffer;
+            RenderTargetKey TextureKey;
+            BufferKey BufferKeyValue;
             size_t Size = 0;
+            uint32_t LastUsedFrameSlot = 0;
+            uint64_t LastUsedSerial = 0;
         };
 
         IGPUResourceAllocator* m_Allocator = nullptr;
-        uint64_t m_CurrentFrame = 0;
+        uint32_t m_FramesInFlight = 2;
+        uint32_t m_CurrentFrameSlot = 0;
+        uint64_t m_CurrentSerial = 0;
         size_t m_MaxPoolMemory = 256 * 1024 * 1024;  // 256MB
 
         // レンダーターゲットプール
         Core::Container::Map<RenderTargetKey, Core::Container::VariableArray<PooledResource<ITexture>>> m_RTPool;
 
         // バッファプール（サイズ別）
-        Core::Container::Map<uint64_t, Core::Container::VariableArray<PooledResource<IBuffer>>> m_BufferPool;
+        Core::Container::Map<BufferKey, Core::Container::VariableArray<PooledResource<IBuffer>>> m_BufferPool;
 
         // 現在のフレームで使用中のリソース
-        Core::Container::VariableArray<TextureAllocation> m_UsedRenderTargets;
-        Core::Container::VariableArray<BufferAllocation> m_UsedBuffers;
+        Core::Container::VariableArray<PooledResource<ITexture>> m_UsedRenderTargets;
+        Core::Container::VariableArray<PooledResource<IBuffer>> m_UsedBuffers;
 
         // 初期化フラグ
         bool m_bInitialized = false;
