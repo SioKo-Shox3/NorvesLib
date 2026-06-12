@@ -297,6 +297,11 @@ namespace NorvesLib::Core::Rendering
          */
         const Container::VariableArray<DrawCommand> &GetTransparentCommands() const { return m_TransparentCommands; }
 
+        /**
+         * @brief GPUシーンインスタンスデータを取得
+         */
+        const Container::VariableArray<GPUSceneInstanceData> &GetInstanceData() const { return m_InstanceData; }
+
         // ========================================
         // 設定
         // ========================================
@@ -372,6 +377,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<DrawCommand> m_DrawCommands;
         Container::VariableArray<DrawCommand> m_OpaqueCommands;
         Container::VariableArray<DrawCommand> m_TransparentCommands;
+        Container::VariableArray<GPUSceneInstanceData> m_InstanceData;
 
         // 設定
         bool m_bEnableFrustumCulling = true;

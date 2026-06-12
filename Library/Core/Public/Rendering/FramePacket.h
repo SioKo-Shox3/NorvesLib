@@ -65,6 +65,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 半透明DrawCommandのスナップショット */
         Container::VariableArray<DrawCommand> TransparentCommands;
 
+        /** @brief DrawCommandから参照するGPUシーンインスタンスデータ */
+        Container::VariableArray<GPUSceneInstanceData> InstanceData;
+
         // ========================================
         // View/Viewport render plan（新描画フロー用）
         // ========================================
@@ -95,6 +98,7 @@ namespace NorvesLib::Core::Rendering
             DrawCommands.clear();
             OpaqueCommands.clear();
             TransparentCommands.clear();
+            InstanceData.clear();
             Views.clear();
         }
 
