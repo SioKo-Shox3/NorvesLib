@@ -473,7 +473,10 @@ namespace NorvesLib::Core::Rendering
         ssrSettings.MaxSteps = 64.0f;
         ssrSettings.Intensity = 0.8f;
         ssrSettings.RoughnessCutoff = 0.5f;
-        postProcessStack->AddPass(MakeUnique<SSRPass>(ssrSettings));
+        auto ssrPass = MakeUnique<SSRPass>(ssrSettings);
+        ssrPass->SetGBufferPass(gbufferPassRaw);
+        ssrPass->SetLightingPass(lightingPassRaw);
+        postProcessStack->AddPass(std::move(ssrPass));
 
         // Bloom（ToneMappingの前にHDR空間でブルーム適用）
         BloomSettings bloomSettings;

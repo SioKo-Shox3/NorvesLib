@@ -219,7 +219,7 @@ namespace NorvesLib::Core::Rendering
                 context.Graph->Reset();
 
                 Container::VariableArray<LegacyViewPassAdapter> adapters;
-                adapters.reserve(m_Passes.size() + (m_PostProcessStack ? 1u : 0u));
+                adapters.reserve(m_Passes.size() + (m_PostProcessStack ? m_PostProcessStack->GetPassCount() : 0u));
                 bool bGraphBuildSucceeded = true;
 
                 for (auto &pass : m_Passes)
@@ -254,8 +254,54 @@ namespace NorvesLib::Core::Rendering
 
                 if (bGraphBuildSucceeded && m_PostProcessStack && m_PostProcessStack->GetPassCount() > 0)
                 {
-                    adapters.emplace_back(m_PostProcessStack.get());
-                    context.Graph->AddPass(&adapters.back());
+                    bool bHasNativePostProcessPass = false;
+                    for (const auto &postPass : m_PostProcessStack->GetPasses())
+                    {
+                        if (postPass && postPass->IsEnabled() && dynamic_cast<IRenderGraphPass*>(postPass.get()))
+                        {
+                            bHasNativePostProcessPass = true;
+                            break;
+                        }
+                    }
+
+                    if (!bHasNativePostProcessPass)
+                    {
+                        adapters.emplace_back(m_PostProcessStack.get());
+                        context.Graph->AddPass(&adapters.back());
+                    }
+                    else
+                    {
+                        if (!m_PostProcessStack->IsInitialized())
+                        {
+                            if (!m_PostProcessStack->Initialize(context))
+                            {
+                                NORVES_LOG_ERROR("View",
+                                                 "Failed to initialize PostProcessStack; falling back to direct pass chain");
+                                bGraphBuildSucceeded = false;
+                            }
+                        }
+
+                        if (bGraphBuildSucceeded)
+                        {
+                            for (const auto &postPass : m_PostProcessStack->GetPasses())
+                            {
+                                if (!postPass || !postPass->IsEnabled())
+                                {
+                                    continue;
+                                }
+
+                                IRenderGraphPass* graphPass = dynamic_cast<IRenderGraphPass*>(postPass.get());
+                                if (graphPass)
+                                {
+                                    context.Graph->AddPass(graphPass);
+                                    continue;
+                                }
+
+                                adapters.emplace_back(postPass.get());
+                                context.Graph->AddPass(&adapters.back());
+                            }
+                        }
+                    }
                 }
 
                 if (bGraphBuildSucceeded && context.Graph->GetPassCount() > 0)
