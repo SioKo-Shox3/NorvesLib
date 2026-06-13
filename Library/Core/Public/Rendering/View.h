@@ -254,16 +254,6 @@ namespace NorvesLib::Core::Rendering
         bool IsEnabled() const { return m_bEnabled; }
 
     protected:
-        // ========================================
-        // パスチェーン実行
-        // ========================================
-
-        /**
-         * @brief 登録パスのSetup→Executeを順次実行
-         * @param context 描画コンテキスト
-         */
-        void ExecutePassChain(ViewRenderContext &context);
-
         // Viewport管理
         Container::VariableArray<Container::TSharedPtr<Viewport>> m_Viewports;
 

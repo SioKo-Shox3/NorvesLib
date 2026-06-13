@@ -177,7 +177,6 @@ namespace NorvesLib::Core
 
         // システムポインタ（リフレクション対象外）
         Rendering::SceneView *m_SceneView = nullptr;
-        bool m_bForceFullProxySync = false;
 
         // リフレクションプロパティ
         PROPERTY(uint64_t, NextObjectId)

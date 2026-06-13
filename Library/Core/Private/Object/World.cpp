@@ -84,7 +84,6 @@ namespace NorvesLib::Core
 
         NextObjectId = 1;
         m_SceneView = nullptr;
-        m_bForceFullProxySync = false;
 
         Object::Initialize();
     }
@@ -113,7 +112,6 @@ namespace NorvesLib::Core
         }
 
         m_SceneView = nullptr;
-        m_bForceFullProxySync = false;
         NextObjectId = 1;
 
         Object::Finalize();
@@ -264,7 +262,26 @@ namespace NorvesLib::Core
     void World::SetSceneView(Rendering::SceneView *sceneView)
     {
         m_SceneView = sceneView;
-        m_bForceFullProxySync = true;
+
+        for (auto *inner : m_Inners)
+        {
+            auto *obj = CastTo<WorldObject>(inner);
+            if (!obj)
+            {
+                continue;
+            }
+
+            auto components = obj->GetComponents();
+            for (auto *comp : components)
+            {
+                if (CastTo<Component::MeshComponent>(comp) ||
+                    CastTo<Component::MegaGeometryComponent>(comp) ||
+                    CastTo<Component::LightComponent>(comp))
+                {
+                    comp->MarkRenderStateDirty();
+                }
+            }
+        }
     }
 
     void World::SyncToSceneView(const Rendering::MaterialResources *materials)
@@ -279,8 +296,6 @@ namespace NorvesLib::Core
         Container::UnorderedSet<uint64_t> liveLightIds;
         liveMeshObjectIds.reserve(m_Inners.size());
         liveMegaGeometryObjectIds.reserve(m_Inners.size());
-
-        const bool bForceFullProxySync = m_bForceFullProxySync;
 
         // 全WorldObjectのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
         for (auto *inner : m_Inners)
@@ -303,8 +318,7 @@ namespace NorvesLib::Core
                 auto *meshComp = CastTo<Component::MeshComponent>(comp);
                 if (meshComp && !megaComp)
                 {
-                    const bool bNeedsSync = bForceFullProxySync ||
-                                            meshComp->IsRenderStateDirty() ||
+                    const bool bNeedsSync = meshComp->IsRenderStateDirty() ||
                                             meshComp->GetLastSyncedTransformVersion() != ownerVersion;
                     if (!bNeedsSync)
                     {
@@ -335,8 +349,7 @@ namespace NorvesLib::Core
                 // MegaGeometryComponentの同期
                 if (megaComp)
                 {
-                    const bool bNeedsSync = bForceFullProxySync ||
-                                            megaComp->IsRenderStateDirty() ||
+                    const bool bNeedsSync = megaComp->IsRenderStateDirty() ||
                                             megaComp->GetLastSyncedTransformVersion() != ownerVersion;
                     if (!bNeedsSync)
                     {
@@ -364,8 +377,7 @@ namespace NorvesLib::Core
                 auto *lightComp = CastTo<Component::LightComponent>(comp);
                 if (lightComp)
                 {
-                    const bool bNeedsSync = bForceFullProxySync ||
-                                            lightComp->IsRenderStateDirty() ||
+                    const bool bNeedsSync = lightComp->IsRenderStateDirty() ||
                                             lightComp->GetLastSyncedTransformVersion() != ownerVersion;
                     if (!bNeedsSync)
                     {
@@ -394,7 +406,6 @@ namespace NorvesLib::Core
         m_SceneView->RemoveStaleMeshProxies(liveMeshObjectIds);
         m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
         m_SceneView->RemoveStaleLightProxies(liveLightIds);
-        m_bForceFullProxySync = false;
     }
 
     void World::CleanupDestroyedObjects()
