@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "IViewPass.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -10,6 +11,7 @@ using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core::Rendering
 {
+    class ToneMappingPass;
 
     /**
      * @brief FXAAパス設定
@@ -38,7 +40,7 @@ namespace NorvesLib::Core::Rendering
      * ToneMappingPassの後に配置し、LDR画像に対してアンチエイリアシングを適用する。
      * "ToneMappedColor"を入力としSharedResourceRegistryに結果を再登録する。
      */
-    class FXAAPass : public IViewPass
+    class FXAAPass : public IViewPass, public IRenderGraphPass
     {
     public:
         /**
@@ -63,9 +65,15 @@ namespace NorvesLib::Core::Rendering
         void Setup(ViewRenderContext &context) override;
         void Execute(ViewRenderContext &context) override;
 
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+
         // ========================================
         // パラメータ調整
         // ========================================
+
+        void SetInputPass(const ToneMappingPass* inputPass) { m_InputPass = inputPass; }
+        RGResourceHandle GetToneMappedColorHandle() const { return m_OutputHandle; }
 
         /**
          * @brief FXAA有効/無効を切り替え
@@ -78,11 +86,19 @@ namespace NorvesLib::Core::Rendering
         const FXAASettings &GetSettings() const { return m_Settings; }
 
     private:
+        bool PrepareResources(uint32_t width,
+                              uint32_t height,
+                              const RHI::TexturePtr& outputTexture,
+                              bool bUseRenderGraphInitialState);
+        void ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& inputTexture);
+        bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
+
         // 設定
         FXAASettings m_Settings;
 
         // 出力テクスチャ
         RHI::TexturePtr m_OutputTexture;
+        RGResourceHandle m_OutputHandle;
 
         // パイプラインリソース
         RHI::RenderPassPtr m_RenderPass;
@@ -96,10 +112,13 @@ namespace NorvesLib::Core::Rendering
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
+        const ToneMappingPass* m_InputPass = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bRenderPassUsesRenderGraphInitialState = false;
+        RHI::ITexture* m_FramebufferOutputTexture = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering

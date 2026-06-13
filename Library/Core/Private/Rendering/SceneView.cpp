@@ -495,13 +495,16 @@ namespace NorvesLib::Core::Rendering
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
         auto toneMappingPass = MakeUnique<ToneMappingPass>(toneMappingSettings);
         toneMappingPass->SetInputPass(bloomPassRaw);
+        ToneMappingPass *toneMappingPassRaw = toneMappingPass.get();
         postProcessStack->AddPass(std::move(toneMappingPass));
 
         // FXAA（アンチエイリアシング、最終パス）
         FXAASettings fxaaSettings;
         fxaaSettings.EdgeThreshold = 0.0312f;
         fxaaSettings.SubpixelQuality = 0.75f;
-        postProcessStack->AddPass(MakeUnique<FXAAPass>(fxaaSettings));
+        auto fxaaPass = MakeUnique<FXAAPass>(fxaaSettings);
+        fxaaPass->SetInputPass(toneMappingPassRaw);
+        postProcessStack->AddPass(std::move(fxaaPass));
 
         // Upscale（内部解像度描画時のみ最終画像をスクリーン解像度へ拡大）
         postProcessStack->AddPass(MakeUnique<UpscalePass>());
