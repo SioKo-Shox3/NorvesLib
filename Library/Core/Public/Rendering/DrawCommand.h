@@ -216,6 +216,7 @@ namespace NorvesLib::Core::Rendering
         MeshDataHandle MeshHandle;     // メッシュハンドル
         MaterialHandle MaterialHandle; // マテリアルハンドル
         uint32_t SubMeshIndex = 0;     // サブメッシュインデックス
+        bool bCastShadow = true;       // シャドウを落とすか
 
         // ========================================
         // バッチキー
@@ -228,10 +229,11 @@ namespace NorvesLib::Core::Rendering
          */
         uint64_t GetBatchKey() const
         {
-            // メッシュID + マテリアルID + サブメッシュをキーにする
+            // メッシュID + マテリアルID + サブメッシュ + シャドウ有無をキーにする
             return (static_cast<uint64_t>(MeshHandle.Id) << 32) |
                    (static_cast<uint64_t>(MaterialHandle.Id) << 8) |
-                   SubMeshIndex;
+                   (static_cast<uint64_t>(SubMeshIndex) << 1) |
+                   (bCastShadow ? 1ull : 0ull);
         }
 
         // ========================================
@@ -298,12 +300,12 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief インスタンシング描画が有効か
          *
-         * GPU instance data path is not wired yet, so grouped instances are
-         * expanded to individual DrawCommand entries for correctness.
+         * @param minInstanceCount インスタンシング描画へ切り替える最小インスタンス数
+         * @param bAllowInstancing インスタンシング描画を許可するか
          */
-        bool IsInstanced() const
+        bool IsInstanced(uint32_t minInstanceCount, bool bAllowInstancing) const
         {
-            return false;
+            return bAllowInstancing && GetInstanceCount() >= minInstanceCount;
         }
     };
 
@@ -346,7 +348,9 @@ namespace NorvesLib::Core::Rendering
          * @param outInstanceData 出力先のGPUインスタンスデータリスト
          */
         void GenerateDrawCommands(Container::VariableArray<DrawCommand> &outCommands,
-                                  Container::VariableArray<GPUSceneInstanceData> &outInstanceData);
+                                  Container::VariableArray<GPUSceneInstanceData> &outInstanceData,
+                                  bool bAllowInstancing,
+                                  uint32_t minInstanceCount);
 
         /**
          * @brief バッチをクリア

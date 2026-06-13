@@ -8,6 +8,7 @@
 #include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
+#include "RHI/IBuffer.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/TransientResourcePool.h"
 #include "Math/MatrixUtils.h"
@@ -122,8 +123,8 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBO: world(64) + lightView(64) + lightProjection(64) = 192 bytes
-            constexpr uint32_t UBO_SIZE = 192;
+            // UBO: lightView(64) + lightProjection(64) = 128 bytes
+            constexpr uint32_t UBO_SIZE = 128;
             constexpr uint32_t MAX_OBJECTS = 256;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
@@ -132,6 +133,12 @@ namespace NorvesLib::Core::Rendering
             uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
             uboBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(uboBinding);
+
+            RHI::DescriptorBinding instanceBinding;
+            instanceBinding.binding = 7;
+            instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            instanceBinding.stages = RHI::ShaderStage::Vertex;
+            uboDescSetDesc.bindings.push_back(instanceBinding);
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
@@ -193,6 +200,12 @@ namespace NorvesLib::Core::Rendering
         dsUboBinding.type = RHI::ResourceBindType::ConstantBuffer;
         dsUboBinding.stages = RHI::ShaderStage::Vertex;
         dsDesc.bindings.push_back(dsUboBinding);
+
+        RHI::DescriptorBinding instanceBinding;
+        instanceBinding.binding = 7;
+        instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        instanceBinding.stages = RHI::ShaderStage::Vertex;
+        dsDesc.bindings.push_back(instanceBinding);
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         m_ShadowPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
@@ -307,10 +320,32 @@ namespace NorvesLib::Core::Rendering
         auto *meshes = context.Resources.Meshes;
         if (m_SceneRenderer && meshes && activeDrawCommands)
         {
+            const auto &drawCommands = *activeDrawCommands;
+            if (drawCommands.empty())
+            {
+                return;
+            }
+
+            if (!context.InstanceDataBuffer)
+            {
+                NORVES_LOG_WARNING("ShadowMapPass", "Instance data buffer is null, skipping shadow geometry");
+                return;
+            }
+
+            const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
+            if (instanceDataSize64 == 0)
+            {
+                NORVES_LOG_WARNING("ShadowMapPass", "Instance data buffer is empty, skipping shadow geometry");
+                return;
+            }
+
+            const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
+                                                  ? 0xFFFFFFFFu
+                                                  : static_cast<uint32_t>(instanceDataSize64);
+
             // UBOデータ構造体（shadow.vertのShadowMVPに対応）
             struct ShadowPerObjectUBO
             {
-                float world[16];
                 float lightView[16];
                 float lightProjection[16];
             };
@@ -321,7 +356,6 @@ namespace NorvesLib::Core::Rendering
             auto shadowCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
             // DrawCommand配列を取得し、影を落とすコマンドのみ描画
-            const auto &drawCommands = *activeDrawCommands;
             for (const auto &cmd : drawCommands)
             {
                 if (!cmd.Draw.bCastShadow)
@@ -339,12 +373,16 @@ namespace NorvesLib::Core::Rendering
 
                 // UBOデータ構築
                 ShadowPerObjectUBO uboData;
-                MatrixUtils::CopyToShaderData(cmd.Draw.WorldMatrix, uboData.world);
                 std::memcpy(uboData.lightView, lightViewData, sizeof(lightViewData));
                 std::memcpy(uboData.lightProjection, lightProjData, sizeof(lightProjData));
 
                 // UBO更新
                 allocation.UniformBuffer->Update(&uboData, sizeof(ShadowPerObjectUBO));
+                allocation.DescriptorSet->BindStorageBuffer(7,
+                                                            context.InstanceDataBuffer,
+                                                            0,
+                                                            instanceDataSize);
+                allocation.DescriptorSet->Update();
 
                 DrawCommand drawCommand = cmd;
                 drawCommand.Pipeline = m_ShadowPipeline;

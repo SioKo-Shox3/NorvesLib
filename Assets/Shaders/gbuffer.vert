@@ -6,14 +6,25 @@ layout(location = 2) in vec2 inTexCoord;
 
 layout(set = 0, binding = 0) uniform MVPData
 {
-    mat4 world;
     mat4 view;
     mat4 projection;
     vec4 cameraPosition;
-    vec4 objectColor;
     vec4 emissiveColor;  // rgb=エミッシブカラー, a=エミッシブ強度
     vec4 pomParams;      // x=heightScale, y=hasHeightMap, z=unused, w=unused
 } mvp;
+
+struct InstanceData
+{
+    mat4 world;
+    vec4 normalRows[3];
+    vec4 objectColor;
+    vec4 customData;
+};
+
+layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
+{
+    InstanceData instances[];
+};
 
 layout(location = 0) out vec3 fragWorldPos;
 layout(location = 1) out vec3 fragNormal;
@@ -24,13 +35,15 @@ layout(location = 5) out vec3 fragViewDir;  // ワールド空間でのカメラ
 
 void main()
 {
-    vec4 worldPos = mvp.world * vec4(inPosition, 1.0);
+    vec4 worldPos = instances[gl_InstanceIndex].world * vec4(inPosition, 1.0);
     fragWorldPos = worldPos.xyz;
 
-    mat3 normalMatrix = mat3(mvp.world);
-    fragNormal = normalize(normalMatrix * inNormal);
+    vec3 normal = instances[gl_InstanceIndex].normalRows[0].xyz * inNormal.x +
+                  instances[gl_InstanceIndex].normalRows[1].xyz * inNormal.y +
+                  instances[gl_InstanceIndex].normalRows[2].xyz * inNormal.z;
+    fragNormal = normalize(normal);
 
-    fragObjectColor = mvp.objectColor.rgb;
+    fragObjectColor = instances[gl_InstanceIndex].objectColor.rgb;
     fragEmissiveColor = mvp.emissiveColor;
     fragTexCoord = inTexCoord;
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);

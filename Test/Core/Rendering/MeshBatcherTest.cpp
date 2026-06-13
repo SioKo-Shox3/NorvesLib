@@ -41,7 +41,7 @@ int main()
         batcher.AddMeshProxy(MakeProxy(1, 100, 200, worldA));
         batcher.AddMeshProxy(MakeProxy(2, 100, 200, worldB));
         batcher.EndBatching();
-        batcher.GenerateDrawCommands(commands, instanceData);
+        batcher.GenerateDrawCommands(commands, instanceData, false, 2);
 
         assert(commands.size() == 2);
         assert(instanceData.size() == 2);
@@ -83,7 +83,7 @@ int main()
         batcher.AddMeshProxy(MakeProxy(3, 100, 200, worldA));
         batcher.AddMeshProxy(MakeProxy(4, 100, 201, worldB));
         batcher.EndBatching();
-        batcher.GenerateDrawCommands(commands, instanceData);
+        batcher.GenerateDrawCommands(commands, instanceData, false, 2);
 
         assert(commands.size() == 2);
         assert(instanceData.size() == 2);

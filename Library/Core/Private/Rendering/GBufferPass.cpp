@@ -10,6 +10,7 @@
 #include "Rendering/ShaderManager.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
+#include "RHI/IBuffer.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/ITexture.h"
 #include "RHI/ISampler.h"
@@ -75,15 +76,15 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBOレイアウト: world(64) + view(64) + projection(64) + cameraPos(16) + objectColor(16) + emissiveColor(16) + pomParams(16) = 256 bytes
-            constexpr uint32_t UBO_SIZE = 256;
+            // UBOレイアウト: view(64) + projection(64) + cameraPos(16) + emissiveColor(16) + pomParams(16) = 176 bytes
+            constexpr uint32_t UBO_SIZE = 176;
             constexpr uint32_t MAX_OBJECTS = 256; // 1フレームあたりの最大オブジェクト数
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
             uboBinding.binding = 0;
             uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
-            uboBinding.stages = RHI::ShaderStage::Vertex;
+            uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
             uboDescSetDesc.bindings.push_back(uboBinding);
 
             // PBRテクスチャサンプラー（binding 1-6: albedo, normal, metallic, roughness, ao, height）
@@ -95,6 +96,12 @@ namespace NorvesLib::Core::Rendering
                 texBinding.stages = RHI::ShaderStage::Pixel;
                 uboDescSetDesc.bindings.push_back(texBinding);
             }
+
+            RHI::DescriptorBinding instanceBinding;
+            instanceBinding.binding = 7;
+            instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            instanceBinding.stages = RHI::ShaderStage::Vertex;
+            uboDescSetDesc.bindings.push_back(instanceBinding);
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
@@ -263,6 +270,30 @@ namespace NorvesLib::Core::Rendering
         auto *meshes = context.Resources.Meshes;
         if (m_SceneRenderer && materials && textures && meshes && activeOpaqueCommands)
         {
+            // DrawCommand配列を取得（GameThreadでスナップショット済み）
+            const auto &opaqueCommands = *activeOpaqueCommands;
+            if (opaqueCommands.empty())
+            {
+                return;
+            }
+
+            if (!context.InstanceDataBuffer)
+            {
+                NORVES_LOG_WARNING("GBufferPass", "Instance data buffer is null, skipping GBuffer geometry");
+                return;
+            }
+
+            const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
+            if (instanceDataSize64 == 0)
+            {
+                NORVES_LOG_WARNING("GBufferPass", "Instance data buffer is empty, skipping GBuffer geometry");
+                return;
+            }
+
+            const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
+                                                  ? 0xFFFFFFFFu
+                                                  : static_cast<uint32_t>(instanceDataSize64);
+
             // カメラ行列の構築
             using namespace NorvesLib::Math;
 
@@ -280,11 +311,9 @@ namespace NorvesLib::Core::Rendering
             // UBOデータ構造体（std140レイアウト）
             struct PerObjectUBO
             {
-                float world[16];
                 float view[16];
                 float projection[16];
                 float cameraPosition[4];
-                float objectColor[4];
                 float emissiveColor[4]; // rgb=エミッシブカラー, a=エミッシブ強度
                 float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=unused, w=unused
             };
@@ -300,8 +329,6 @@ namespace NorvesLib::Core::Rendering
 
             auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
-            // DrawCommand配列を取得（GameThreadでスナップショット済み）
-            const auto &opaqueCommands = *activeOpaqueCommands;
             for (const auto &cmd : opaqueCommands)
             {
                 // UBOスロット確保
@@ -314,16 +341,9 @@ namespace NorvesLib::Core::Rendering
 
                 // UBOデータ構築
                 PerObjectUBO uboData;
-                MatrixUtils::CopyToShaderData(cmd.Draw.WorldMatrix, uboData.world);
                 std::memcpy(uboData.view, viewData, sizeof(viewData));
                 std::memcpy(uboData.projection, projData, sizeof(projData));
                 std::memcpy(uboData.cameraPosition, cameraPos, sizeof(cameraPos));
-
-                // オブジェクトカラー（CustomDataから取得、未設定時はデフォルト白）
-                uboData.objectColor[0] = cmd.Draw.CustomData[0] != 0.0f ? cmd.Draw.CustomData[0] : 1.0f;
-                uboData.objectColor[1] = cmd.Draw.CustomData[1] != 0.0f ? cmd.Draw.CustomData[1] : 1.0f;
-                uboData.objectColor[2] = cmd.Draw.CustomData[2] != 0.0f ? cmd.Draw.CustomData[2] : 1.0f;
-                uboData.objectColor[3] = cmd.Draw.CustomData[3] != 0.0f ? cmd.Draw.CustomData[3] : 1.0f;
 
                 // マテリアルからテクスチャとエミッシブを取得
                 TextureHandle matAlbedo;
@@ -403,6 +423,10 @@ namespace NorvesLib::Core::Rendering
                 allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
                 allocation.DescriptorSet->BindTexture(6, heightTex);
                 allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindStorageBuffer(7,
+                                                            context.InstanceDataBuffer,
+                                                            0,
+                                                            instanceDataSize);
                 allocation.DescriptorSet->Update();
 
                 DrawCommand drawCommand = cmd;
@@ -621,7 +645,7 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorBinding uboBinding;
         uboBinding.binding = 0;
         uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        uboBinding.stages = RHI::ShaderStage::Vertex;
+        uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(uboBinding);
 
         // binding 1-6: albedo, normal, metallic, roughness, ao, height
@@ -633,6 +657,12 @@ namespace NorvesLib::Core::Rendering
             texBinding.stages = RHI::ShaderStage::Pixel;
             dsDesc.bindings.push_back(texBinding);
         }
+
+        RHI::DescriptorBinding instanceBinding;
+        instanceBinding.binding = 7;
+        instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        instanceBinding.stages = RHI::ShaderStage::Vertex;
+        dsDesc.bindings.push_back(instanceBinding);
 
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
