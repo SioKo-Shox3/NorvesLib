@@ -504,10 +504,13 @@ namespace NorvesLib::Core::Rendering
         fxaaSettings.SubpixelQuality = 0.75f;
         auto fxaaPass = MakeUnique<FXAAPass>(fxaaSettings);
         fxaaPass->SetInputPass(toneMappingPassRaw);
+        FXAAPass* fxaaPassRaw = fxaaPass.get();
         postProcessStack->AddPass(std::move(fxaaPass));
 
         // Upscale（内部解像度描画時のみ最終画像をスクリーン解像度へ拡大）
-        postProcessStack->AddPass(MakeUnique<UpscalePass>());
+        auto upscalePass = MakeUnique<UpscalePass>();
+        upscalePass->SetInputPass(fxaaPassRaw);
+        postProcessStack->AddPass(std::move(upscalePass));
 
         SetPostProcessStack(std::move(postProcessStack));
 
