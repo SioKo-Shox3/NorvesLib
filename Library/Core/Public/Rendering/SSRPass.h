@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "IViewPass.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -10,6 +11,8 @@ using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core::Rendering
 {
+    class GBufferPass;
+    class LightingPass;
 
     /**
      * @brief SSRパス設定
@@ -52,7 +55,7 @@ namespace NorvesLib::Core::Rendering
      * 入力: "SceneColor", "GBuffer_Normal", "GBuffer_Material", "GBuffer_Depth"
      * 出力: "SceneColor"を上書き
      */
-    class SSRPass : public IViewPass
+    class SSRPass : public IViewPass, public IRenderGraphPass
     {
     public:
         explicit SSRPass(const SSRSettings &settings = SSRSettings{});
@@ -65,14 +68,32 @@ namespace NorvesLib::Core::Rendering
         void Setup(ViewRenderContext &context) override;
         void Execute(ViewRenderContext &context) override;
 
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+
+        void SetGBufferPass(const GBufferPass *gbufferPass) { m_GBufferPass = gbufferPass; }
+        void SetLightingPass(const LightingPass *lightingPass) { m_LightingPass = lightingPass; }
         void SetEnabled(bool bEnabled) { m_Settings.bEnabled = bEnabled; }
         const SSRSettings &GetSettings() const { return m_Settings; }
+        RGResourceHandle GetSceneColorHandle() const { return m_OutputHandle; }
 
     private:
+        bool PrepareResources(uint32_t width,
+                              uint32_t height,
+                              const RHI::TexturePtr &outputTexture,
+                              bool bUseRenderGraphInitialState);
+        void ExecuteWithInputs(ViewRenderContext &context,
+                               const RHI::TexturePtr &normalTex,
+                               const RHI::TexturePtr &materialTex,
+                               const RHI::TexturePtr &depthTex,
+                               const RHI::TexturePtr &sceneColorTex);
+        bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
+
         SSRSettings m_Settings;
 
         // 出力テクスチャ
         RHI::TexturePtr m_OutputTexture;
+        RGResourceHandle m_OutputHandle;
 
         // パイプラインリソース
         RHI::RenderPassPtr m_RenderPass;
@@ -87,10 +108,14 @@ namespace NorvesLib::Core::Rendering
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
+        const GBufferPass *m_GBufferPass = nullptr;
+        const LightingPass *m_LightingPass = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bRenderPassUsesRenderGraphInitialState = false;
+        RHI::ITexture *m_FramebufferOutputTexture = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering
