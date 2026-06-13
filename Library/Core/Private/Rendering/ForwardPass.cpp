@@ -1,15 +1,35 @@
 ﻿#include "Rendering/ForwardPass.h"
-#include "Rendering/ViewRenderContext.h"
-#include "Rendering/SharedResourceRegistry.h"
-#include "Rendering/SceneView.h"
+#include "Rendering/CameraViewConstants.h"
+#include "Rendering/ProceduralMeshGenerator.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SceneRenderer.h"
+#include "Rendering/SceneView.h"
+#include "Rendering/ShaderManager.h"
+#include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/ViewRenderContext.h"
+#include "RHI/IBuffer.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
+#include "RHI/ISampler.h"
+#include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        struct TransparentForwardUBO
+        {
+            float view[16];
+            float projection[16];
+            float cameraPosition[4];
+            float emissiveColor[4];
+            float pomParams[4];
+        };
+    } // namespace
 
     ForwardPass::ForwardPass(SceneView *sceneView, SceneRenderer *sceneRenderer)
         : m_SceneView(sceneView), m_SceneRenderer(sceneRenderer)
@@ -40,9 +60,116 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // フォワードパスではSceneRendererが保持するDefaultPipelineを使用するため、
-        // ここでの追加パイプライン作成は不要
-        // 将来的にマテリアルシステム完成後、マテリアル固有パイプラインを解決する
+        m_Device = context.Device;
+
+        if (m_bTransparentOnly)
+        {
+            if (!context.ShaderMgr)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "ShaderManager is null");
+                return false;
+            }
+
+            m_TransparentVertexShader = context.ShaderMgr->LoadShader("forward_transparent.vert",
+                                                                      RHI::ShaderStage::Vertex);
+            if (!m_TransparentVertexShader)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to load transparent forward vertex shader");
+                return false;
+            }
+
+            m_TransparentFragmentShader = context.ShaderMgr->LoadShader("forward_transparent.frag",
+                                                                        RHI::ShaderStage::Pixel);
+            if (!m_TransparentFragmentShader)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to load transparent forward fragment shader");
+                return false;
+            }
+
+            RHI::DescriptorSetDesc descriptorSetDesc;
+
+            RHI::DescriptorBinding uboBinding;
+            uboBinding.binding = 0;
+            uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(uboBinding);
+
+            for (uint32_t binding = 1; binding <= 6; ++binding)
+            {
+                RHI::DescriptorBinding textureBinding;
+                textureBinding.binding = binding;
+                textureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+                textureBinding.stages = RHI::ShaderStage::Pixel;
+                descriptorSetDesc.bindings.push_back(textureBinding);
+            }
+
+            RHI::DescriptorBinding instanceBinding;
+            instanceBinding.binding = 7;
+            instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            instanceBinding.stages = RHI::ShaderStage::Vertex;
+            descriptorSetDesc.bindings.push_back(instanceBinding);
+
+            constexpr uint32_t UBO_SIZE = sizeof(TransparentForwardUBO);
+            constexpr uint32_t MAX_OBJECTS = 256;
+            if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, descriptorSetDesc))
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to initialize transparent uniform allocator");
+                return false;
+            }
+
+            auto createDefault1x1Texture = [this](const char *debugName,
+                                                  uint8_t r,
+                                                  uint8_t g,
+                                                  uint8_t b,
+                                                  uint8_t a) -> RHI::TexturePtr
+            {
+                RHI::TextureDesc textureDesc;
+                textureDesc.Width = 1;
+                textureDesc.Height = 1;
+                textureDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+                textureDesc.Usage = RHI::ResourceUsage::ShaderRead;
+                textureDesc.DebugName = debugName;
+
+                RHI::TexturePtr texture = m_Device->CreateTexture(textureDesc);
+                if (texture)
+                {
+                    uint8_t pixel[4] = {r, g, b, a};
+                    texture->Update(pixel, 4, 4);
+                }
+
+                return texture;
+            };
+
+            m_DefaultWhiteTexture = createDefault1x1Texture("ForwardDefaultWhite1x1", 255, 255, 255, 255);
+            m_DefaultFlatNormalTexture = createDefault1x1Texture("ForwardDefaultFlatNormal1x1", 128, 128, 255, 255);
+            m_DefaultBlackTexture = createDefault1x1Texture("ForwardDefaultBlack1x1", 0, 0, 0, 255);
+            m_DefaultMidGrayTexture = createDefault1x1Texture("ForwardDefaultMidGray1x1", 128, 128, 128, 255);
+
+            if (!m_DefaultWhiteTexture ||
+                !m_DefaultFlatNormalTexture ||
+                !m_DefaultBlackTexture ||
+                !m_DefaultMidGrayTexture)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to create transparent forward fallback textures");
+                return false;
+            }
+
+            RHI::SamplerDesc samplerDesc;
+            samplerDesc.filterMin = RHI::FilterMode::Anisotropic;
+            samplerDesc.filterMag = RHI::FilterMode::Anisotropic;
+            samplerDesc.filterMip = RHI::FilterMode::Anisotropic;
+            samplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressV = RHI::TextureAddressMode::Wrap;
+            samplerDesc.addressW = RHI::TextureAddressMode::Wrap;
+            samplerDesc.maxAnisotropy = 4;
+
+            m_DefaultLinearSampler = m_Device->CreateSampler(samplerDesc);
+            if (!m_DefaultLinearSampler)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to create transparent forward sampler");
+                return false;
+            }
+        }
 
         m_bInitialized = true;
         NORVES_LOG_INFO("ForwardPass", "ForwardPass initialized");
@@ -58,8 +185,20 @@ namespace NorvesLib::Core::Rendering
 
         m_ColorTexture = nullptr;
         m_DepthTexture = nullptr;
+        m_SceneColorTexture.reset();
+        m_GBufferDepthTexture.reset();
         m_ForwardRenderPass.reset();
         m_ForwardFramebuffer.reset();
+        m_TransparentPipeline.reset();
+        m_TransparentVertexShader.reset();
+        m_TransparentFragmentShader.reset();
+        m_DefaultWhiteTexture.reset();
+        m_DefaultFlatNormalTexture.reset();
+        m_DefaultBlackTexture.reset();
+        m_DefaultMidGrayTexture.reset();
+        m_DefaultLinearSampler.reset();
+        m_UniformAllocator.Shutdown();
+        m_Device = nullptr;
 
         m_bInitialized = false;
         NORVES_LOG_INFO("ForwardPass", "ForwardPass shutdown");
@@ -67,16 +206,55 @@ namespace NorvesLib::Core::Rendering
 
     void ForwardPass::Setup(ViewRenderContext &context)
     {
-        uint32_t width = context.GetActiveRenderWidth();
-        uint32_t height = context.GetActiveRenderHeight();
+        const uint32_t width = context.GetActiveRenderWidth();
+        const uint32_t height = context.GetActiveRenderHeight();
 
         if (width == 0 || height == 0)
         {
             return;
         }
 
-        // レンダーパスが外部管理の場合（SwapChainに直接描画）、
-        // TransientPoolからの独自レンダーターゲット取得は不要
+        if (m_bTransparentOnly)
+        {
+            if (!context.SharedResources)
+            {
+                return;
+            }
+
+            RHI::TexturePtr sceneColorTexture = context.SharedResources->GetTexturePtr("SceneColor");
+            RHI::TexturePtr gbufferDepthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+            if (!sceneColorTexture || !gbufferDepthTexture)
+            {
+                return;
+            }
+
+            const bool bResourcesChanged =
+                width != m_CurrentWidth ||
+                height != m_CurrentHeight ||
+                sceneColorTexture.get() != m_SceneColorTexture.get() ||
+                gbufferDepthTexture.get() != m_GBufferDepthTexture.get();
+
+            if (!bResourcesChanged)
+            {
+                return;
+            }
+
+            m_CurrentWidth = width;
+            m_CurrentHeight = height;
+            m_SceneColorTexture = sceneColorTexture;
+            m_GBufferDepthTexture = gbufferDepthTexture;
+
+            if (CreateTransparentResources(width, height))
+            {
+                NORVES_LOG_INFO("ForwardPass",
+                                "Transparent forward resources updated (%ux%u)",
+                                width,
+                                height);
+            }
+
+            return;
+        }
+
         if (context.bRenderPassActive)
         {
             m_CurrentWidth = width;
@@ -84,42 +262,21 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 独自レンダーパスモード: TransientPoolが必要
         if (!context.TransientPool)
         {
             return;
         }
 
-        // フォワード描画のカラー・深度バッファをTransientResourcePoolから取得
         m_ColorTexture = context.TransientPool->AcquireRenderTarget(
             width, height, RHI::Format::R16G16B16A16_FLOAT, "ForwardColor");
 
         m_DepthTexture = context.TransientPool->AcquireDepthStencil(
             width, height, RHI::Format::D32_FLOAT, "ForwardDepth");
 
-        // サイズ変更があればレンダーパス・フレームバッファを再作成
         if (width != m_CurrentWidth || height != m_CurrentHeight)
         {
             m_CurrentWidth = width;
             m_CurrentHeight = height;
-
-            // TODO: 独自レンダーパスモード用のリソース作成（TransientPool使用時）
-            //
-            // RenderPassDesc desc;
-            // desc.colorAttachments = { Format::R16G16B16A16_FLOAT };
-            // desc.depthAttachment = Format::D32_FLOAT;
-            // desc.colorLoadOp = LoadOp::Clear;
-            // desc.depthLoadOp = LoadOp::Clear;
-            // m_ForwardRenderPass = context.Device->CreateRenderPass(desc);
-            //
-            // FramebufferDesc fbDesc;
-            // fbDesc.renderPass = m_ForwardRenderPass;
-            // fbDesc.colorAttachments = { m_ColorTexture };
-            // fbDesc.depthAttachment = m_DepthTexture;
-            // fbDesc.width = width;
-            // fbDesc.height = height;
-            // m_ForwardFramebuffer = context.Device->CreateFramebuffer(fbDesc);
-
             NORVES_LOG_INFO("ForwardPass", "Forward resources resized (%ux%u)", width, height);
         }
     }
@@ -131,21 +288,173 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // スナップショットからDrawCommandを参照（GameThreadで生成済み）
+        if (m_bTransparentOnly)
+        {
+            const auto *activeTransparentCommands = context.GetActiveTransparentCommands();
+            if (!activeTransparentCommands || activeTransparentCommands->empty())
+            {
+                return;
+            }
+
+            if (!m_ForwardRenderPass ||
+                !m_ForwardFramebuffer ||
+                !m_TransparentPipeline ||
+                !context.InstanceDataBuffer)
+            {
+                return;
+            }
+
+            const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
+            if (instanceDataSize64 == 0)
+            {
+                return;
+            }
+
+            auto *materials = context.Resources.Materials;
+            auto *textures = context.Resources.Textures;
+            auto *meshes = context.Resources.Meshes;
+            if (!materials || !textures || !meshes)
+            {
+                return;
+            }
+
+            CameraViewConstants cameraConstants;
+            float cameraPosition[4] = {0.0f, 1.5f, 4.0f, 1.0f};
+
+            const CameraProxy *activeCamera = context.GetActiveCamera();
+            if (activeCamera)
+            {
+                cameraConstants =
+                    CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
+                cameraConstants.CopyCameraPosition(cameraPosition);
+            }
+
+            float viewData[16];
+            float projectionData[16];
+            cameraConstants.CopyShaderView(viewData);
+            cameraConstants.CopyShaderProjection(projectionData);
+
+            const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
+                                                  ? 0xFFFFFFFFu
+                                                  : static_cast<uint32_t>(instanceDataSize64);
+
+            m_UniformAllocator.Reset();
+
+            auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+            transparentCommands->reserve(activeTransparentCommands->size());
+
+            for (const DrawCommand &cmd : *activeTransparentCommands)
+            {
+                auto allocation = m_UniformAllocator.Allocate();
+                if (!allocation.UniformBuffer)
+                {
+                    NORVES_LOG_WARNING("ForwardPass",
+                                       "Transparent UBO allocation failed, skipping remaining objects");
+                    break;
+                }
+
+                TransparentForwardUBO uboData{};
+                std::memcpy(uboData.view, viewData, sizeof(viewData));
+                std::memcpy(uboData.projection, projectionData, sizeof(projectionData));
+                std::memcpy(uboData.cameraPosition, cameraPosition, sizeof(cameraPosition));
+
+                TextureHandle matAlbedo;
+                TextureHandle matNormal;
+                TextureHandle matMetallic;
+                TextureHandle matRoughness;
+                TextureHandle matAO;
+                TextureHandle matHeight;
+
+                if (cmd.Draw.MaterialHandle.IsValid())
+                {
+                    const auto *materialData = materials->GetData(cmd.Draw.MaterialHandle);
+                    if (materialData)
+                    {
+                        matAlbedo = materialData->AlbedoTexture;
+                        matNormal = materialData->NormalTexture;
+                        matMetallic = materialData->MetallicTexture;
+                        matRoughness = materialData->RoughnessTexture;
+                        matAO = materialData->AOTexture;
+                        matHeight = materialData->HeightTexture;
+                    }
+                }
+
+                allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
+
+                auto resolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTexture) -> RHI::TexturePtr
+                {
+                    if (handle.IsValid())
+                    {
+                        RHI::TexturePtr texture = textures->GetRHITexturePtr(handle);
+                        if (texture)
+                        {
+                            return texture;
+                        }
+                    }
+
+                    return defaultTexture;
+                };
+
+                allocation.DescriptorSet->BindTexture(1, resolveTexture(matAlbedo, m_DefaultWhiteTexture));
+                allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(2, resolveTexture(matNormal, m_DefaultFlatNormalTexture));
+                allocation.DescriptorSet->BindSampler(2, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(3, resolveTexture(matMetallic, m_DefaultBlackTexture));
+                allocation.DescriptorSet->BindSampler(3, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(4, resolveTexture(matRoughness, m_DefaultMidGrayTexture));
+                allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(5, resolveTexture(matAO, m_DefaultWhiteTexture));
+                allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindTexture(6, resolveTexture(matHeight, m_DefaultBlackTexture));
+                allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindStorageBuffer(7,
+                                                            context.InstanceDataBuffer,
+                                                            0,
+                                                            instanceDataSize);
+                allocation.DescriptorSet->Update();
+
+                DrawCommand drawCommand = cmd;
+                drawCommand.Pipeline = m_TransparentPipeline;
+                drawCommand.DescriptorSet = allocation.DescriptorSet;
+                drawCommand.DescriptorSetSlot = 0;
+                transparentCommands->push_back(drawCommand);
+            }
+
+            if (transparentCommands->empty())
+            {
+                return;
+            }
+
+            context.EnqueueTextureBarrier(m_GBufferDepthTexture,
+                                          RHI::ResourceState::ShaderResource,
+                                          RHI::ResourceState::DepthRead);
+            context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_ForwardRenderPass,
+                                                                         m_ForwardFramebuffer,
+                                                                         transparentCommands,
+                                                                         context.GetActiveLocalViewport(),
+                                                                         context.GetActiveLocalScissor(),
+                                                                         meshes));
+            context.EnqueueTextureBarrier(m_GBufferDepthTexture,
+                                          RHI::ResourceState::DepthRead,
+                                          RHI::ResourceState::ShaderResource);
+            return;
+        }
+
         const auto *activeDrawCommands = context.GetActiveDrawCommands();
         if (!activeDrawCommands)
         {
             return;
         }
+
         const auto &drawCommands = *activeDrawCommands;
 
-        // SharedResourceRegistryに出力を登録（非nullテクスチャのみ）
         if (m_bRegisterOutputs && context.SharedResources)
         {
             if (m_ColorTexture)
             {
                 context.SharedResources->RegisterTexture("SceneColor", m_ColorTexture);
             }
+
             if (m_DepthTexture)
             {
                 context.SharedResources->RegisterTexture("SceneDepth", m_DepthTexture);
@@ -157,33 +466,159 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // フォワード描画の実行
         if (context.bRenderPassActive)
         {
-            // レンダーパスが外部管理の場合（SwapChainに直接描画）
-            // BeginRenderPass/EndRenderPassは呼ばない
-            // ビューポート・シザーも外部で設定済み
-            if (m_bTransparentOnly)
-            {
-                // 半透明のみ（ディファードレンダリングと併用時）
-                const auto *activeTransparentCommands = context.GetActiveTransparentCommands();
-                if (activeTransparentCommands && !activeTransparentCommands->empty())
-                {
-                    m_SceneRenderer->ExecuteDrawCommands(*activeTransparentCommands, context.CommandList);
-                }
-            }
-            else
-            {
-                // 全DrawCommandを実行
-                m_SceneRenderer->ExecuteDrawCommands(drawCommands, context.CommandList);
-            }
+            m_SceneRenderer->ExecuteDrawCommands(drawCommands, context.CommandList);
+            return;
         }
-        else
+
+        // 単独フォワードパイプラインのFrameCommand化は未移行。
+    }
+
+    bool ForwardPass::CreateTransparentResources(uint32_t width, uint32_t height)
+    {
+        if (!m_Device ||
+            !m_SceneColorTexture ||
+            !m_GBufferDepthTexture ||
+            !m_TransparentVertexShader ||
+            !m_TransparentFragmentShader)
         {
-            // 独自レンダーパスモード: 独自レンダーターゲットへの描画
-            // TransientPool経由で取得したカラー/深度バッファに描画
-            // TODO: TransientResourcePool統合後に FrameCommand ベースで実装
+            return false;
         }
+
+        m_ForwardFramebuffer.reset();
+        m_TransparentPipeline.reset();
+        m_ForwardRenderPass.reset();
+
+        RHI::RenderPassDesc renderPassDesc;
+
+        RHI::AttachmentDesc colorAttachment;
+        colorAttachment.format = m_SceneColorTexture->GetFormat();
+        colorAttachment.isDepthStencil = false;
+        colorAttachment.clear = false;
+        colorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        colorAttachment.initialState = RHI::ResourceState::ShaderResource;
+        colorAttachment.finalState = RHI::ResourceState::ShaderResource;
+        renderPassDesc.colorAttachments.push_back(colorAttachment);
+
+        renderPassDesc.hasDepthStencil = true;
+        renderPassDesc.depthStencilAttachment.format = m_GBufferDepthTexture->GetFormat();
+        renderPassDesc.depthStencilAttachment.isDepthStencil = true;
+        renderPassDesc.depthStencilAttachment.clear = false;
+        renderPassDesc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        renderPassDesc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
+        renderPassDesc.depthStencilAttachment.initialState = RHI::ResourceState::DepthRead;
+        renderPassDesc.depthStencilAttachment.finalState = RHI::ResourceState::DepthRead;
+
+        m_ForwardRenderPass = m_Device->CreateRenderPass(renderPassDesc);
+        if (!m_ForwardRenderPass)
+        {
+            NORVES_LOG_ERROR("ForwardPass", "Failed to create transparent forward render pass");
+            return false;
+        }
+
+        RHI::FramebufferDesc framebufferDesc;
+        framebufferDesc.renderPass = m_ForwardRenderPass;
+        framebufferDesc.colorTargets.push_back(m_SceneColorTexture);
+        framebufferDesc.depthStencilTarget = m_GBufferDepthTexture;
+        framebufferDesc.width = width;
+        framebufferDesc.height = height;
+
+        m_ForwardFramebuffer = m_Device->CreateFramebuffer(framebufferDesc);
+        if (!m_ForwardFramebuffer)
+        {
+            NORVES_LOG_ERROR("ForwardPass", "Failed to create transparent forward framebuffer");
+            return false;
+        }
+
+        RHI::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = m_TransparentVertexShader;
+        pipelineDesc.pixelShader = m_TransparentFragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+
+        RHI::VertexBindingDesc vertexBinding;
+        vertexBinding.binding = 0;
+        vertexBinding.stride = sizeof(Mesh3DVertex);
+        vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
+        pipelineDesc.vertexBindings.push_back(vertexBinding);
+
+        RHI::VertexAttributeDesc positionAttribute;
+        positionAttribute.location = 0;
+        positionAttribute.binding = 0;
+        positionAttribute.format = RHI::Format::R32G32B32_FLOAT;
+        positionAttribute.offset = 0;
+        pipelineDesc.vertexAttributes.push_back(positionAttribute);
+
+        RHI::VertexAttributeDesc normalAttribute;
+        normalAttribute.location = 1;
+        normalAttribute.binding = 0;
+        normalAttribute.format = RHI::Format::R32G32B32_FLOAT;
+        normalAttribute.offset = sizeof(float) * 3;
+        pipelineDesc.vertexAttributes.push_back(normalAttribute);
+
+        RHI::VertexAttributeDesc texCoordAttribute;
+        texCoordAttribute.location = 2;
+        texCoordAttribute.binding = 0;
+        texCoordAttribute.format = RHI::Format::R32G32_FLOAT;
+        texCoordAttribute.offset = sizeof(float) * 6;
+        pipelineDesc.vertexAttributes.push_back(texCoordAttribute);
+
+        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
+        pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+
+        pipelineDesc.depthStencilState.depthTestEnable = true;
+        pipelineDesc.depthStencilState.depthWriteEnable = false;
+        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+
+        RHI::BlendAttachmentDesc blendAttachment;
+        blendAttachment.blendEnable = true;
+        blendAttachment.srcColorBlendFactor = RHI::BlendFactor::SrcAlpha;
+        blendAttachment.dstColorBlendFactor = RHI::BlendFactor::InvSrcAlpha;
+        blendAttachment.colorBlendOp = RHI::BlendOp::Add;
+        blendAttachment.srcAlphaBlendFactor = RHI::BlendFactor::One;
+        blendAttachment.dstAlphaBlendFactor = RHI::BlendFactor::InvSrcAlpha;
+        blendAttachment.alphaBlendOp = RHI::BlendOp::Add;
+        blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
+
+        pipelineDesc.renderPass = m_ForwardRenderPass;
+
+        RHI::DescriptorSetDesc descriptorSetDesc;
+
+        RHI::DescriptorBinding uboBinding;
+        uboBinding.binding = 0;
+        uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+        descriptorSetDesc.bindings.push_back(uboBinding);
+
+        for (uint32_t binding = 1; binding <= 6; ++binding)
+        {
+            RHI::DescriptorBinding textureBinding;
+            textureBinding.binding = binding;
+            textureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            textureBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(textureBinding);
+        }
+
+        RHI::DescriptorBinding instanceBinding;
+        instanceBinding.binding = 7;
+        instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        instanceBinding.stages = RHI::ShaderStage::Vertex;
+        descriptorSetDesc.bindings.push_back(instanceBinding);
+
+        pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
+
+        m_TransparentPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!m_TransparentPipeline)
+        {
+            NORVES_LOG_ERROR("ForwardPass", "Failed to create transparent forward pipeline");
+            return false;
+        }
+
+        return true;
     }
 
 } // namespace NorvesLib::Core::Rendering

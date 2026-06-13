@@ -58,6 +58,9 @@ namespace NorvesLib::RHI::Vulkan
         if (bHasDepthStencil)
         {
             const auto &depthAttachment = m_desc.depthStencilAttachment;
+            const bool bDepthAttachmentReadOnly =
+                depthAttachment.initialState == ResourceState::DepthRead &&
+                depthAttachment.finalState == ResourceState::DepthRead;
 
             vk::AttachmentDescription depthAttachmentDesc{};
             depthAttachmentDesc.format = GetVulkanFormat(depthAttachment.format);
@@ -72,7 +75,14 @@ namespace NorvesLib::RHI::Vulkan
             m_attachmentDescs.push_back(depthAttachmentDesc);
 
             m_depthAttachmentRef.attachment = static_cast<uint32_t>(m_attachmentDescs.size() - 1);
-            m_depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+            if (bDepthAttachmentReadOnly)
+            {
+                m_depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilReadOnlyOptimal;
+            }
+            else
+            {
+                m_depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+            }
         }
 
         // サブパス記述子
@@ -227,6 +237,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::ImageLayout::eColorAttachmentOptimal;
         case ResourceState::DepthWrite:
             return vk::ImageLayout::eDepthStencilAttachmentOptimal;
+        case ResourceState::DepthRead:
+            return vk::ImageLayout::eDepthStencilReadOnlyOptimal;
         case ResourceState::ShaderResource:
             return vk::ImageLayout::eShaderReadOnlyOptimal;
         case ResourceState::Present:
@@ -247,6 +259,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::ImageLayout::eColorAttachmentOptimal;
         case ResourceState::DepthWrite:
             return vk::ImageLayout::eDepthStencilAttachmentOptimal;
+        case ResourceState::DepthRead:
+            return vk::ImageLayout::eDepthStencilReadOnlyOptimal;
         case ResourceState::ShaderResource:
             return vk::ImageLayout::eShaderReadOnlyOptimal;
         case ResourceState::Present:
