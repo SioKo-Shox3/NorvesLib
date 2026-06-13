@@ -423,6 +423,7 @@ namespace NorvesLib::Core::Rendering
         auto gbufferPass = MakeUnique<GBufferPass>(gbufferSettings);
         gbufferPass->SetSceneView(this);
         gbufferPass->SetSceneRenderer(sceneRenderer);
+        GBufferPass *gbufferPassRaw = gbufferPass.get();
         AddPass(std::move(gbufferPass));
 
         // MegaGeometryPass: GPU駆動クラスターカリング + GBufferへのIndirectDraw
@@ -438,6 +439,7 @@ namespace NorvesLib::Core::Rendering
         ssaoSettings.Bias = 0.025f;
         ssaoSettings.Intensity = 2.0f;
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
+        ssaoPass->SetGBufferPass(gbufferPassRaw);
         AddPass(std::move(ssaoPass));
 
         // LightingPass: GBuffer→HDRシーンカラー

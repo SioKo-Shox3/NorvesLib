@@ -52,6 +52,14 @@ namespace NorvesLib::Core::Rendering
             return m_CompiledBarriers;
         }
 
+        uint32_t GetDeclaredPassAccessCount(uint32_t passIndex) const;
+        bool TryGetDeclaredPassAccess(uint32_t passIndex,
+                                      uint32_t accessIndex,
+                                      RGResourceHandle& outResource,
+                                      RGAccessMode& outMode,
+                                      RHI::ResourceState& outState,
+                                      RHI::ResourceState& outFinalState) const;
+
         uint32_t GetPassCount() const
         {
             return static_cast<uint32_t>(m_Passes.size());

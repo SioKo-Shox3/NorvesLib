@@ -1,4 +1,5 @@
 ﻿#include "Rendering/SSAOPass.h"
+#include "Rendering/GBufferPass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
@@ -38,6 +39,68 @@ namespace NorvesLib::Core::Rendering
     static constexpr uint32_t SSAO_PARAMS_SIZE = sizeof(GPUSSAOParams);
     static constexpr uint32_t KERNEL_BUFFER_SIZE = 64 * 4 * sizeof(float); // vec4 * 64
     static constexpr uint32_t BLUR_PARAMS_SIZE = sizeof(GPUBlurParams);
+
+    static RHI::DescriptorSetDesc CreateSSAODescriptorSetDesc()
+    {
+        RHI::DescriptorSetDesc desc;
+
+        RHI::DescriptorBinding depthBinding;
+        depthBinding.binding = 0;
+        depthBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        depthBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(depthBinding);
+
+        RHI::DescriptorBinding normalBinding;
+        normalBinding.binding = 1;
+        normalBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        normalBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(normalBinding);
+
+        RHI::DescriptorBinding paramsBinding;
+        paramsBinding.binding = 2;
+        paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        paramsBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(paramsBinding);
+
+        RHI::DescriptorBinding kernelBinding;
+        kernelBinding.binding = 3;
+        kernelBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        kernelBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(kernelBinding);
+
+        RHI::DescriptorBinding noiseBinding;
+        noiseBinding.binding = 4;
+        noiseBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        noiseBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(noiseBinding);
+
+        return desc;
+    }
+
+    static RHI::DescriptorSetDesc CreateSSAOBlurDescriptorSetDesc()
+    {
+        RHI::DescriptorSetDesc desc;
+
+        RHI::DescriptorBinding ssaoBinding;
+        ssaoBinding.binding = 0;
+        ssaoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        ssaoBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(ssaoBinding);
+
+        RHI::DescriptorBinding depthBinding;
+        depthBinding.binding = 1;
+        depthBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        depthBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(depthBinding);
+
+        RHI::DescriptorBinding paramsBinding;
+        paramsBinding.binding = 2;
+        paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        paramsBinding.stages = RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(paramsBinding);
+
+        return desc;
+    }
 
     // ========================================
     // 簡易乱数生成（std::randベース）
@@ -282,9 +345,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        m_GBufferPass = nullptr;
         m_SSAORawTexture.reset();
         m_SSAOBlurredTexture.reset();
         m_NoiseTexture.reset();
+        m_SSAORawHandle = {};
+        m_SSAOBlurredHandle = {};
         m_SSAORenderPass.reset();
         m_SSAOFramebuffer.reset();
         m_SSAOPipeline.reset();
@@ -302,6 +368,17 @@ namespace NorvesLib::Core::Rendering
         m_LinearClampSampler.reset();
         m_NearestRepeatSampler.reset();
         m_Device = nullptr;
+        m_CurrentWidth = 0;
+        m_CurrentHeight = 0;
+        m_bUsingRenderGraphResources = false;
+        m_bSSAOInitialStateFromRenderGraph = false;
+        m_bBlurInitialStateFromRenderGraph = false;
+        m_SSAOFramebufferTexture = nullptr;
+        m_BlurFramebufferTexture = nullptr;
+        m_SSAOFramebufferWidth = 0;
+        m_SSAOFramebufferHeight = 0;
+        m_BlurFramebufferWidth = 0;
+        m_BlurFramebufferHeight = 0;
 
         m_bInitialized = false;
         NORVES_LOG_INFO("SSAOPass", "SSAOPass shutdown");
@@ -313,261 +390,538 @@ namespace NorvesLib::Core::Rendering
 
     void SSAOPass::Setup(ViewRenderContext &context)
     {
-        uint32_t width = context.GetActiveRenderWidth();
-        uint32_t height = context.GetActiveRenderHeight();
+        uint32_t width = ResolveSSAOWidth(context);
+        uint32_t height = ResolveSSAOHeight(context);
 
         if (width == 0 || height == 0)
         {
             return;
         }
 
-        if (width == m_CurrentWidth && height == m_CurrentHeight)
+        if (width == m_CurrentWidth &&
+            height == m_CurrentHeight &&
+            !m_bUsingRenderGraphResources &&
+            m_SSAORawTexture &&
+            m_SSAOBlurredTexture &&
+            m_SSAORenderPass &&
+            m_SSAOFramebuffer &&
+            m_SSAOPipeline &&
+            m_BlurRenderPass &&
+            m_BlurFramebuffer &&
+            m_BlurPipeline)
         {
             return;
         }
 
-        m_CurrentWidth = width;
-        m_CurrentHeight = height;
+        CreateSSAOResources(width, height, context);
+    }
 
-        // ========================================
-        // SSAOパス用リソース
-        // ========================================
+    void SSAOPass::Declare(RenderGraphBuilder &builder)
+    {
+        const ViewRenderContext *context = builder.GetContext();
 
-        // 生AOテクスチャ
-        m_SSAORawTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAORaw"));
-
-        // ブラー済みAOテクスチャ
-        m_SSAOBlurredTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAOBlurred"));
-
-        if (!m_SSAORawTexture || !m_SSAOBlurredTexture)
+        uint32_t width = 0;
+        uint32_t height = 0;
+        if (context)
         {
-            NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO textures");
-            return;
+            width = ResolveSSAOWidth(*context);
+            height = ResolveSSAOHeight(*context);
         }
 
-        // ---- SSAOレンダーパス ----
+        if (width == 0)
         {
-            RHI::RenderPassDesc rpDesc;
-            RHI::AttachmentDesc colorAttach;
-            colorAttach.format = m_Settings.OutputFormat;
-            colorAttach.isDepthStencil = false;
-            colorAttach.clear = false;
-            colorAttach.loadOp = RHI::AttachmentLoadOp::DontCare;
-            colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
-            colorAttach.initialState = RHI::ResourceState::Undefined;
-            colorAttach.finalState = RHI::ResourceState::ShaderResource;
-            rpDesc.colorAttachments.push_back(colorAttach);
-            rpDesc.hasDepthStencil = false;
-
-            m_SSAORenderPass = m_Device->CreateRenderPass(rpDesc);
-
-            RHI::FramebufferDesc fbDesc;
-            fbDesc.renderPass = m_SSAORenderPass;
-            fbDesc.colorTargets.push_back(m_SSAORawTexture);
-            fbDesc.width = width;
-            fbDesc.height = height;
-            m_SSAOFramebuffer = m_Device->CreateFramebuffer(fbDesc);
+            width = m_CurrentWidth > 0 ? m_CurrentWidth : 1;
         }
 
-        // ---- SSAOディスクリプタセット ----
-        RHI::DescriptorSetDesc ssaoDsDesc;
+        if (height == 0)
         {
-            // binding 0: gbufferDepth (combined image sampler)
-            RHI::DescriptorBinding depthBinding;
-            depthBinding.binding = 0;
-            depthBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            depthBinding.stages = RHI::ShaderStage::Pixel;
-            ssaoDsDesc.bindings.push_back(depthBinding);
+            height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
+        }
 
-            // binding 1: gbufferNormal (combined image sampler)
-            RHI::DescriptorBinding normalBinding;
-            normalBinding.binding = 1;
-            normalBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            normalBinding.stages = RHI::ShaderStage::Pixel;
-            ssaoDsDesc.bindings.push_back(normalBinding);
-
-            // binding 2: SSAOParams UBO
-            RHI::DescriptorBinding paramsBinding;
-            paramsBinding.binding = 2;
-            paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
-            paramsBinding.stages = RHI::ShaderStage::Pixel;
-            ssaoDsDesc.bindings.push_back(paramsBinding);
-
-            // binding 3: SampleKernel UBO
-            RHI::DescriptorBinding kernelBinding;
-            kernelBinding.binding = 3;
-            kernelBinding.type = RHI::ResourceBindType::ConstantBuffer;
-            kernelBinding.stages = RHI::ShaderStage::Pixel;
-            ssaoDsDesc.bindings.push_back(kernelBinding);
-
-            // binding 4: noiseTexture (combined image sampler)
-            RHI::DescriptorBinding noiseBinding;
-            noiseBinding.binding = 4;
-            noiseBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            noiseBinding.stages = RHI::ShaderStage::Pixel;
-            ssaoDsDesc.bindings.push_back(noiseBinding);
-
-            m_SSAODescriptorSet = m_Device->CreateDescriptorSet(ssaoDsDesc);
-
-            if (m_SSAODescriptorSet)
+        if (m_GBufferPass)
+        {
+            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
+            if (depthHandle.IsValid())
             {
-                m_SSAODescriptorSet->BindConstantBuffer(2, m_SSAOParamsBuffer, 0, SSAO_PARAMS_SIZE);
-                m_SSAODescriptorSet->BindConstantBuffer(3, m_KernelBuffer, 0, KERNEL_BUFFER_SIZE);
-                // ノイズテクスチャはここでバインド（変わらないため）
-                if (m_NoiseTexture)
-                {
-                    m_SSAODescriptorSet->BindTexture(4, m_NoiseTexture);
-                    m_SSAODescriptorSet->BindSampler(4, m_NearestRepeatSampler);
-                }
+                builder.Read(depthHandle, RHI::ResourceState::ShaderResource);
+            }
+
+            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
+            if (normalHandle.IsValid())
+            {
+                builder.Read(normalHandle, RHI::ResourceState::ShaderResource);
             }
         }
 
-        // ---- SSAOパイプライン ----
-        {
-            RHI::GraphicsPipelineDesc pipelineDesc;
-            pipelineDesc.vertexShader = m_SSAOVertexShader;
-            pipelineDesc.pixelShader = m_SSAOFragmentShader;
-            pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
-            pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-            pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
-            pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
-            pipelineDesc.rasterState.lineWidth = 1.0f;
-            pipelineDesc.depthStencilState.depthTestEnable = false;
-            pipelineDesc.depthStencilState.depthWriteEnable = false;
+        m_SSAORawHandle = builder.CreateTexture(
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAORaw"));
+        builder.Write(m_SSAORawHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
 
-            RHI::BlendAttachmentDesc blendState;
-            blendState.blendEnable = false;
-            blendState.colorWriteMask = RHI::ColorWriteMask::All;
-            pipelineDesc.blendState.attachments.push_back(blendState);
+        m_SSAOBlurredHandle = builder.CreateTexture(
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAOBlurred"));
+        builder.Write(m_SSAOBlurredHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
 
-            pipelineDesc.renderPass = m_SSAORenderPass;
-            pipelineDesc.descriptorSetLayouts.push_back(ssaoDsDesc);
-
-            m_SSAOPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-        }
-
-        // ========================================
-        // ブラーパス用リソース
-        // ========================================
-        {
-            RHI::RenderPassDesc rpDesc;
-            RHI::AttachmentDesc colorAttach;
-            colorAttach.format = m_Settings.OutputFormat;
-            colorAttach.isDepthStencil = false;
-            colorAttach.clear = false;
-            colorAttach.loadOp = RHI::AttachmentLoadOp::DontCare;
-            colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
-            colorAttach.initialState = RHI::ResourceState::Undefined;
-            colorAttach.finalState = RHI::ResourceState::ShaderResource;
-            rpDesc.colorAttachments.push_back(colorAttach);
-            rpDesc.hasDepthStencil = false;
-
-            m_BlurRenderPass = m_Device->CreateRenderPass(rpDesc);
-
-            RHI::FramebufferDesc fbDesc;
-            fbDesc.renderPass = m_BlurRenderPass;
-            fbDesc.colorTargets.push_back(m_SSAOBlurredTexture);
-            fbDesc.width = width;
-            fbDesc.height = height;
-            m_BlurFramebuffer = m_Device->CreateFramebuffer(fbDesc);
-        }
-
-        // ---- ブラーディスクリプタセット ----
-        // ---- ブラーディスクリプタセット ----
-        RHI::DescriptorSetDesc blurDsDesc;
-        {
-            // binding 0: ssaoInput (combined image sampler)
-            RHI::DescriptorBinding ssaoBinding;
-            ssaoBinding.binding = 0;
-            ssaoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            ssaoBinding.stages = RHI::ShaderStage::Pixel;
-            blurDsDesc.bindings.push_back(ssaoBinding);
-
-            // binding 1: gbufferDepth (combined image sampler)
-            RHI::DescriptorBinding depthBinding;
-            depthBinding.binding = 1;
-            depthBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            depthBinding.stages = RHI::ShaderStage::Pixel;
-            blurDsDesc.bindings.push_back(depthBinding);
-
-            // binding 2: BlurParams UBO
-            RHI::DescriptorBinding paramsBinding;
-            paramsBinding.binding = 2;
-            paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
-            paramsBinding.stages = RHI::ShaderStage::Pixel;
-            blurDsDesc.bindings.push_back(paramsBinding);
-
-            m_BlurDescriptorSet = m_Device->CreateDescriptorSet(blurDsDesc);
-
-            if (m_BlurDescriptorSet)
-            {
-                m_BlurDescriptorSet->BindConstantBuffer(2, m_BlurParamsBuffer, 0, BLUR_PARAMS_SIZE);
-            }
-        }
-
-        // ---- ブラーパイプライン ----
-        {
-            RHI::GraphicsPipelineDesc pipelineDesc;
-            pipelineDesc.vertexShader = m_SSAOVertexShader;
-            pipelineDesc.pixelShader = m_BlurFragmentShader;
-            pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
-            pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-            pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
-            pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
-            pipelineDesc.rasterState.lineWidth = 1.0f;
-            pipelineDesc.depthStencilState.depthTestEnable = false;
-            pipelineDesc.depthStencilState.depthWriteEnable = false;
-
-            RHI::BlendAttachmentDesc blendState;
-            blendState.blendEnable = false;
-            blendState.colorWriteMask = RHI::ColorWriteMask::All;
-            pipelineDesc.blendState.attachments.push_back(blendState);
-
-            pipelineDesc.renderPass = m_BlurRenderPass;
-            pipelineDesc.descriptorSetLayouts.push_back(blurDsDesc);
-
-            m_BlurPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-        }
-
-        NORVES_LOG_INFO("SSAOPass", "Resources created");
+        builder.PreserveInsertionOrder();
     }
 
     // ========================================
     // Execute
     // ========================================
 
+    void SSAOPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        if (!m_bInitialized)
+        {
+            if (!Initialize(context))
+            {
+                NORVES_LOG_ERROR("SSAOPass", "Failed to initialize native RenderGraph execution");
+                return;
+            }
+        }
+
+        RHI::TexturePtr rawTexture = resources.GetTexture(m_SSAORawHandle);
+        RHI::TexturePtr blurredTexture = resources.GetTexture(m_SSAOBlurredHandle);
+        if (!rawTexture || !blurredTexture)
+        {
+            NORVES_LOG_ERROR("SSAOPass", "Failed to resolve native SSAO textures");
+            return;
+        }
+
+        RHI::TexturePtr depthTexture;
+        RHI::TexturePtr normalTexture;
+        if (m_GBufferPass)
+        {
+            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
+            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
+            if (depthHandle.IsValid())
+            {
+                depthTexture = resources.GetTexture(depthHandle);
+            }
+            if (normalHandle.IsValid())
+            {
+                normalTexture = resources.GetTexture(normalHandle);
+            }
+        }
+
+        if ((!depthTexture || !normalTexture) && context.SharedResources)
+        {
+            depthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+            normalTexture = context.SharedResources->GetTexturePtr("GBuffer_Normal");
+        }
+
+        if (!PrepareSSAOAttachments(rawTexture->GetWidth(),
+                                    rawTexture->GetHeight(),
+                                    rawTexture,
+                                    blurredTexture,
+                                    true))
+        {
+            return;
+        }
+
+        ExecuteWithGBufferTextures(context, depthTexture, normalTexture);
+    }
+
     void SSAOPass::Execute(ViewRenderContext &context)
     {
-        if (!context.CommandList || !m_SSAOPipeline || !m_BlurPipeline)
-        {
-            return;
-        }
-
-        // GBufferテクスチャ取得
-        RHI::TexturePtr depthPtr;
-        RHI::TexturePtr normalPtr;
+        RHI::TexturePtr depthTexture;
+        RHI::TexturePtr normalTexture;
         if (context.SharedResources)
         {
-            depthPtr = context.SharedResources->GetTexturePtr("GBuffer_Depth");
-            normalPtr = context.SharedResources->GetTexturePtr("GBuffer_Normal");
+            depthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+            normalTexture = context.SharedResources->GetTexturePtr("GBuffer_Normal");
         }
 
-        if (!depthPtr || !normalPtr)
+        ExecuteWithGBufferTextures(context, depthTexture, normalTexture);
+    }
+
+    bool SSAOPass::CreateSSAOResources(uint32_t width, uint32_t height, ViewRenderContext &context)
+    {
+        (void)context;
+
+        if (!m_Device)
         {
-            NORVES_LOG_WARNING("SSAOPass", "GBuffer textures not available, skipping SSAO");
+            return false;
+        }
+
+        RHI::TexturePtr rawTexture = m_Device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAORaw"));
+        RHI::TexturePtr blurredTexture = m_Device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAOBlurred"));
+
+        if (!rawTexture || !blurredTexture)
+        {
+            NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO textures");
+            return false;
+        }
+
+        return PrepareSSAOAttachments(width, height, rawTexture, blurredTexture, false);
+    }
+
+    uint32_t SSAOPass::ResolveSSAOWidth(const ViewRenderContext &context) const
+    {
+        return context.GetActiveRenderWidth();
+    }
+
+    uint32_t SSAOPass::ResolveSSAOHeight(const ViewRenderContext &context) const
+    {
+        return context.GetActiveRenderHeight();
+    }
+
+    bool SSAOPass::PrepareSSAOAttachments(uint32_t width,
+                                          uint32_t height,
+                                          const RHI::TexturePtr &rawTexture,
+                                          const RHI::TexturePtr &blurredTexture,
+                                          bool bUseRenderGraphInitialStates)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        if (!rawTexture || !blurredTexture)
+        {
+            NORVES_LOG_ERROR("SSAOPass", "SSAO attachment textures are incomplete");
+            return false;
+        }
+
+        m_SSAORawTexture = rawTexture;
+        m_SSAOBlurredTexture = blurredTexture;
+        m_CurrentWidth = width;
+        m_CurrentHeight = height;
+        m_bUsingRenderGraphResources = bUseRenderGraphInitialStates;
+
+        if (!EnsureSSAORenderPass(bUseRenderGraphInitialStates))
+        {
+            return false;
+        }
+
+        if (!EnsureSSAOFramebuffer(width, height, rawTexture))
+        {
+            return false;
+        }
+
+        if (!EnsureSSAOPipeline())
+        {
+            return false;
+        }
+
+        if (!EnsureBlurRenderPass(bUseRenderGraphInitialStates))
+        {
+            return false;
+        }
+
+        if (!EnsureBlurFramebuffer(width, height, blurredTexture))
+        {
+            return false;
+        }
+
+        return EnsureBlurPipeline();
+    }
+
+    bool SSAOPass::EnsureSSAORenderPass(bool bUseRenderGraphInitialStates)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        if (m_SSAORenderPass &&
+            m_bSSAOInitialStateFromRenderGraph == bUseRenderGraphInitialStates)
+        {
+            return true;
+        }
+
+        m_SSAORenderPass.reset();
+        m_SSAOFramebuffer.reset();
+        m_SSAOPipeline.reset();
+        m_SSAOFramebufferTexture = nullptr;
+        m_SSAOFramebufferWidth = 0;
+        m_SSAOFramebufferHeight = 0;
+
+        RHI::RenderPassDesc rpDesc;
+        RHI::AttachmentDesc colorAttach;
+        colorAttach.format = m_Settings.OutputFormat;
+        colorAttach.isDepthStencil = false;
+        colorAttach.clear = false;
+        colorAttach.loadOp = RHI::AttachmentLoadOp::DontCare;
+        colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
+        colorAttach.initialState = bUseRenderGraphInitialStates
+                                       ? RHI::ResourceState::RenderTarget
+                                       : RHI::ResourceState::Undefined;
+        colorAttach.finalState = RHI::ResourceState::ShaderResource;
+        rpDesc.colorAttachments.push_back(colorAttach);
+        rpDesc.hasDepthStencil = false;
+
+        m_SSAORenderPass = m_Device->CreateRenderPass(rpDesc);
+        if (!m_SSAORenderPass)
+        {
+            NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO render pass");
+            return false;
+        }
+
+        m_bSSAOInitialStateFromRenderGraph = bUseRenderGraphInitialStates;
+        return true;
+    }
+
+    bool SSAOPass::EnsureSSAOFramebuffer(uint32_t width,
+                                         uint32_t height,
+                                         const RHI::TexturePtr &rawTexture)
+    {
+        if (m_SSAOFramebuffer &&
+            m_SSAOFramebufferTexture == rawTexture.get() &&
+            m_SSAOFramebufferWidth == width &&
+            m_SSAOFramebufferHeight == height)
+        {
+            return true;
+        }
+
+        if (!m_Device || !m_SSAORenderPass || !rawTexture)
+        {
+            return false;
+        }
+
+        RHI::FramebufferDesc fbDesc;
+        fbDesc.renderPass = m_SSAORenderPass;
+        fbDesc.colorTargets.push_back(rawTexture);
+        fbDesc.width = width;
+        fbDesc.height = height;
+
+        m_SSAOFramebuffer = m_Device->CreateFramebuffer(fbDesc);
+        if (!m_SSAOFramebuffer)
+        {
+            NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO framebuffer");
+            return false;
+        }
+
+        m_SSAOFramebufferTexture = rawTexture.get();
+        m_SSAOFramebufferWidth = width;
+        m_SSAOFramebufferHeight = height;
+        return true;
+    }
+
+    bool SSAOPass::EnsureSSAOPipeline()
+    {
+        if (!m_Device || !m_SSAORenderPass || !m_SSAOVertexShader || !m_SSAOFragmentShader)
+        {
+            return false;
+        }
+
+        RHI::DescriptorSetDesc ssaoDsDesc = CreateSSAODescriptorSetDesc();
+        if (!m_SSAODescriptorSet)
+        {
+            m_SSAODescriptorSet = m_Device->CreateDescriptorSet(ssaoDsDesc);
+            if (!m_SSAODescriptorSet)
+            {
+                NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO descriptor set");
+                return false;
+            }
+
+            m_SSAODescriptorSet->BindConstantBuffer(2, m_SSAOParamsBuffer, 0, SSAO_PARAMS_SIZE);
+            m_SSAODescriptorSet->BindConstantBuffer(3, m_KernelBuffer, 0, KERNEL_BUFFER_SIZE);
+            if (m_NoiseTexture)
+            {
+                m_SSAODescriptorSet->BindTexture(4, m_NoiseTexture);
+                m_SSAODescriptorSet->BindSampler(4, m_NearestRepeatSampler);
+            }
+        }
+
+        if (m_SSAOPipeline)
+        {
+            return true;
+        }
+
+        RHI::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = m_SSAOVertexShader;
+        pipelineDesc.pixelShader = m_SSAOFragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+        pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+        pipelineDesc.depthStencilState.depthTestEnable = false;
+        pipelineDesc.depthStencilState.depthWriteEnable = false;
+
+        RHI::BlendAttachmentDesc blendState;
+        blendState.blendEnable = false;
+        blendState.colorWriteMask = RHI::ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendState);
+
+        pipelineDesc.renderPass = m_SSAORenderPass;
+        pipelineDesc.descriptorSetLayouts.push_back(ssaoDsDesc);
+
+        m_SSAOPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!m_SSAOPipeline)
+        {
+            NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO pipeline");
+            return false;
+        }
+
+        return true;
+    }
+
+    bool SSAOPass::EnsureBlurRenderPass(bool bUseRenderGraphInitialStates)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        if (m_BlurRenderPass &&
+            m_bBlurInitialStateFromRenderGraph == bUseRenderGraphInitialStates)
+        {
+            return true;
+        }
+
+        m_BlurRenderPass.reset();
+        m_BlurFramebuffer.reset();
+        m_BlurPipeline.reset();
+        m_BlurFramebufferTexture = nullptr;
+        m_BlurFramebufferWidth = 0;
+        m_BlurFramebufferHeight = 0;
+
+        RHI::RenderPassDesc rpDesc;
+        RHI::AttachmentDesc colorAttach;
+        colorAttach.format = m_Settings.OutputFormat;
+        colorAttach.isDepthStencil = false;
+        colorAttach.clear = false;
+        colorAttach.loadOp = RHI::AttachmentLoadOp::DontCare;
+        colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
+        colorAttach.initialState = bUseRenderGraphInitialStates
+                                       ? RHI::ResourceState::RenderTarget
+                                       : RHI::ResourceState::Undefined;
+        colorAttach.finalState = RHI::ResourceState::ShaderResource;
+        rpDesc.colorAttachments.push_back(colorAttach);
+        rpDesc.hasDepthStencil = false;
+
+        m_BlurRenderPass = m_Device->CreateRenderPass(rpDesc);
+        if (!m_BlurRenderPass)
+        {
+            NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO blur render pass");
+            return false;
+        }
+
+        m_bBlurInitialStateFromRenderGraph = bUseRenderGraphInitialStates;
+        return true;
+    }
+
+    bool SSAOPass::EnsureBlurFramebuffer(uint32_t width,
+                                         uint32_t height,
+                                         const RHI::TexturePtr &blurredTexture)
+    {
+        if (m_BlurFramebuffer &&
+            m_BlurFramebufferTexture == blurredTexture.get() &&
+            m_BlurFramebufferWidth == width &&
+            m_BlurFramebufferHeight == height)
+        {
+            return true;
+        }
+
+        if (!m_Device || !m_BlurRenderPass || !blurredTexture)
+        {
+            return false;
+        }
+
+        RHI::FramebufferDesc fbDesc;
+        fbDesc.renderPass = m_BlurRenderPass;
+        fbDesc.colorTargets.push_back(blurredTexture);
+        fbDesc.width = width;
+        fbDesc.height = height;
+
+        m_BlurFramebuffer = m_Device->CreateFramebuffer(fbDesc);
+        if (!m_BlurFramebuffer)
+        {
+            NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO blur framebuffer");
+            return false;
+        }
+
+        m_BlurFramebufferTexture = blurredTexture.get();
+        m_BlurFramebufferWidth = width;
+        m_BlurFramebufferHeight = height;
+        return true;
+    }
+
+    bool SSAOPass::EnsureBlurPipeline()
+    {
+        if (!m_Device || !m_BlurRenderPass || !m_SSAOVertexShader || !m_BlurFragmentShader)
+        {
+            return false;
+        }
+
+        RHI::DescriptorSetDesc blurDsDesc = CreateSSAOBlurDescriptorSetDesc();
+        if (!m_BlurDescriptorSet)
+        {
+            m_BlurDescriptorSet = m_Device->CreateDescriptorSet(blurDsDesc);
+            if (!m_BlurDescriptorSet)
+            {
+                NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO blur descriptor set");
+                return false;
+            }
+
+            m_BlurDescriptorSet->BindConstantBuffer(2, m_BlurParamsBuffer, 0, BLUR_PARAMS_SIZE);
+        }
+
+        if (m_BlurPipeline)
+        {
+            return true;
+        }
+
+        RHI::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = m_SSAOVertexShader;
+        pipelineDesc.pixelShader = m_BlurFragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+        pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+        pipelineDesc.depthStencilState.depthTestEnable = false;
+        pipelineDesc.depthStencilState.depthWriteEnable = false;
+
+        RHI::BlendAttachmentDesc blendState;
+        blendState.blendEnable = false;
+        blendState.colorWriteMask = RHI::ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendState);
+
+        pipelineDesc.renderPass = m_BlurRenderPass;
+        pipelineDesc.descriptorSetLayouts.push_back(blurDsDesc);
+
+        m_BlurPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!m_BlurPipeline)
+        {
+            NORVES_LOG_ERROR("SSAOPass", "Failed to create SSAO blur pipeline");
+            return false;
+        }
+
+        NORVES_LOG_INFO("SSAOPass", "Resources created");
+        return true;
+    }
+
+    void SSAOPass::ExecuteWithGBufferTextures(ViewRenderContext &context,
+                                              const RHI::TexturePtr &depthTexture,
+                                              const RHI::TexturePtr &normalTexture)
+    {
+        if (!context.CommandList ||
+            !m_SSAOPipeline ||
+            !m_BlurPipeline ||
+            !m_SSAODescriptorSet ||
+            !m_BlurDescriptorSet ||
+            m_CurrentWidth == 0 ||
+            m_CurrentHeight == 0)
+        {
             return;
         }
 
-        // ========================================
-        // パス1: SSAOサンプリング
-        // ========================================
+        RHI::Viewport viewport = context.GetActiveLocalViewport();
+        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
 
-        // パラメータ更新
+        if (!depthTexture || !normalTexture)
+        {
+            NORVES_LOG_WARNING("SSAOPass", "GBuffer textures not available, skipping SSAO");
+            TryEnqueueNativeTransitionPasses(context);
+            return;
+        }
+
         GPUSSAOParams ssaoParams = {};
 
-        // プロジェクション行列を計算（CameraProxyのパラメータから）
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (activeCamera)
         {
@@ -577,7 +931,6 @@ namespace NorvesLib::Core::Rendering
             cameraConstants.CopyShaderProjection(projData);
             std::memcpy(ssaoParams.projection, projData, sizeof(projData));
 
-            // 逆プロジェクション行列
             float invProjData[16];
             cameraConstants.CopyShaderInverseProjection(invProjData);
             std::memcpy(ssaoParams.invProjection, invProjData, sizeof(invProjData));
@@ -594,25 +947,18 @@ namespace NorvesLib::Core::Rendering
 
         m_SSAOParamsBuffer->Update(&ssaoParams, SSAO_PARAMS_SIZE);
 
-        // GBufferテクスチャをバインド
-        m_SSAODescriptorSet->BindTexture(0, depthPtr);
+        m_SSAODescriptorSet->BindTexture(0, depthTexture);
         m_SSAODescriptorSet->BindSampler(0, m_LinearClampSampler);
-        m_SSAODescriptorSet->BindTexture(1, normalPtr);
+        m_SSAODescriptorSet->BindTexture(1, normalTexture);
         m_SSAODescriptorSet->BindSampler(1, m_LinearClampSampler);
         m_SSAODescriptorSet->Update();
 
-        RHI::Viewport viewport = context.GetActiveLocalViewport();
-        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
         context.EnqueueFullscreenPass(m_SSAORenderPass,
                                       m_SSAOFramebuffer,
                                       viewport,
                                       scissor,
                                       m_SSAOPipeline,
                                       m_SSAODescriptorSet);
-
-        // ========================================
-        // パス2: ブラー
-        // ========================================
 
         GPUBlurParams blurParams = {};
         blurParams.texelSize[0] = 1.0f / static_cast<float>(m_CurrentWidth);
@@ -621,10 +967,9 @@ namespace NorvesLib::Core::Rendering
         blurParams.texelSize[3] = 0.0f;
         m_BlurParamsBuffer->Update(&blurParams, BLUR_PARAMS_SIZE);
 
-        // 生AOをバインド
         m_BlurDescriptorSet->BindTexture(0, m_SSAORawTexture);
         m_BlurDescriptorSet->BindSampler(0, m_LinearClampSampler);
-        m_BlurDescriptorSet->BindTexture(1, depthPtr);
+        m_BlurDescriptorSet->BindTexture(1, depthTexture);
         m_BlurDescriptorSet->BindSampler(1, m_LinearClampSampler);
         m_BlurDescriptorSet->Update();
 
@@ -635,11 +980,50 @@ namespace NorvesLib::Core::Rendering
                                       m_BlurPipeline,
                                       m_BlurDescriptorSet);
 
-        // 結果をSharedResourceRegistryに登録
         if (context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("SSAO", m_SSAOBlurredTexture);
         }
+    }
+
+    bool SSAOPass::TryEnqueueNativeTransitionPasses(ViewRenderContext &context) const
+    {
+        if (!m_bUsingRenderGraphResources)
+        {
+            return false;
+        }
+
+        RHI::Viewport viewport = context.GetActiveLocalViewport();
+        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
+
+        bool bEnqueued = false;
+        if (m_SSAORenderPass && m_SSAOFramebuffer)
+        {
+            context.EnqueueFullscreenPass(m_SSAORenderPass,
+                                          m_SSAOFramebuffer,
+                                          viewport,
+                                          scissor,
+                                          RHI::PipelinePtr{},
+                                          RHI::DescriptorSetPtr{},
+                                          0,
+                                          0);
+            bEnqueued = true;
+        }
+
+        if (m_BlurRenderPass && m_BlurFramebuffer)
+        {
+            context.EnqueueFullscreenPass(m_BlurRenderPass,
+                                          m_BlurFramebuffer,
+                                          viewport,
+                                          scissor,
+                                          RHI::PipelinePtr{},
+                                          RHI::DescriptorSetPtr{},
+                                          0,
+                                          0);
+            bEnqueued = true;
+        }
+
+        return bEnqueued;
     }
 
 } // namespace NorvesLib::Core::Rendering
