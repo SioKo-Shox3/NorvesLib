@@ -51,6 +51,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/Viewport.cpp
     Private/Rendering/CameraViewConstants.cpp
     Private/Rendering/SceneView.cpp
+    Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderThread.cpp
@@ -234,6 +235,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
+    Public/Rendering/InstanceBufferRing.h
     Public/Rendering/DrawCommand.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderFrameExecutor.h

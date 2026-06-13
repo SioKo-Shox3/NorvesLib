@@ -7,6 +7,7 @@
 #include "DrawCommand.h"
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
+#include "Rendering/InstanceBufferRing.h"
 #include "ShaderManager.h"
 #include "Rendering/RenderResourcesFwd.h"
 #include "Platform/NativeWindowHandle.h"
@@ -308,6 +309,13 @@ namespace NorvesLib::Core::Rendering
          */
         bool RecreateSwapChainPresentationResources();
 
+        /**
+         * @brief 初期化済みリソースを解放
+         *
+         * m_bInitialized に依存せず、初期化途中の巻き戻しからも呼び出せる。
+         */
+        void ReleaseInitializedResources();
+
         // RHIリソース
         Container::TSharedPtr<RHI::IDevice> m_Device;
         Container::TSharedPtr<RHI::ICommandList> m_CommandList;
@@ -347,6 +355,9 @@ namespace NorvesLib::Core::Rendering
 
         // フレーム内一時リソースプール
         RHI::TransientResourcePool m_TransientPool;
+
+        // フレーム別インスタンスデータSSBOリング
+        InstanceBufferRing m_InstanceBufferRing;
 
         // シェーダーマネージャー（ランタイムコンパイル管理）
         ShaderManager m_ShaderManager;

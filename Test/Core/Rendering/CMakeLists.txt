@@ -129,6 +129,16 @@ target_include_directories(TransientResourcePoolTest PRIVATE
 )
 set_target_properties(TransientResourcePoolTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME TransientResourcePoolTest COMMAND TransientResourcePoolTest)
+add_executable(InstanceBufferRingTest
+    InstanceBufferRingTest.cpp
+)
+target_link_libraries(InstanceBufferRingTest PRIVATE Core)
+target_include_directories(InstanceBufferRingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(InstanceBufferRingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME InstanceBufferRingTest COMMAND InstanceBufferRingTest)
+
 
 add_executable(CookedTextureUploadTest
     CookedTextureUploadTest.cpp

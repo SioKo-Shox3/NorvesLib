@@ -56,6 +56,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief フレーム内一時リソースプール（レンダーターゲット等） */
         RHI::TransientResourcePool *TransientPool = nullptr;
 
+        /** @brief FramePacket::InstanceDataをアップロードしたSSBO（P6以降で消費） */
+        RHI::BufferPtr InstanceDataBuffer;
+
         // ========================================
         // 共有リソース
         // ========================================
