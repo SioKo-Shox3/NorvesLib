@@ -2,6 +2,7 @@
 
 #include "IViewPass.h"
 #include "DynamicUniformAllocator.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -13,6 +14,8 @@ namespace NorvesLib::Core::Rendering
 {
     class SceneView;
     class SceneRenderer;
+    class GBufferPass;
+    class LightingPass;
 
     /**
      * @brief フォワードレンダリングパス
@@ -37,7 +40,7 @@ namespace NorvesLib::Core::Rendering
      * - "SceneColor"  : フォワード描画結果
      * - "SceneDepth"  : 深度バッファ
      */
-    class ForwardPass : public IViewPass
+    class ForwardPass : public IViewPass, public IRenderGraphPass
     {
     public:
         /**
@@ -64,6 +67,13 @@ namespace NorvesLib::Core::Rendering
         void Execute(ViewRenderContext &context) override;
 
         // ========================================
+        // IRenderGraphPass実装
+        // ========================================
+
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+
+        // ========================================
         // モード設定
         // ========================================
 
@@ -84,12 +94,29 @@ namespace NorvesLib::Core::Rendering
          */
         void SetRegisterOutputs(bool bRegister) { m_bRegisterOutputs = bRegister; }
 
+        void SetLightingPass(const LightingPass *lightingPass) { m_LightingPass = lightingPass; }
+        void SetGBufferPass(const GBufferPass *gbufferPass) { m_GBufferPass = gbufferPass; }
+
     private:
-        bool CreateTransparentResources(uint32_t width, uint32_t height);
+        bool CreateTransparentResources(uint32_t width,
+                                        uint32_t height,
+                                        bool bUseRenderGraphInitialStates = false);
+        bool PrepareTransparentResources(uint32_t width,
+                                         uint32_t height,
+                                         const RHI::TexturePtr &sceneColorTexture,
+                                         const RHI::TexturePtr &gbufferDepthTexture,
+                                         bool bUseRenderGraphInitialStates);
+        void ExecuteTransparentCommands(ViewRenderContext &context, bool bUseRenderGraphManagedStates);
+        void EnqueueEmptyTransparentPass(ViewRenderContext &context) const;
+        void RegisterTransparentBridge(ViewRenderContext &context,
+                                       const RHI::TexturePtr &sceneColorTexture,
+                                       const RHI::TexturePtr &gbufferDepthTexture) const;
 
         // 参照（所有しない）
         SceneView *m_SceneView = nullptr;
         SceneRenderer *m_SceneRenderer = nullptr;
+        const LightingPass *m_LightingPass = nullptr;
+        const GBufferPass *m_GBufferPass = nullptr;
         RHI::IDevice *m_Device = nullptr;
 
         // 出力テクスチャ（フォワード単独パイプライン用、TransientResourcePoolから取得、非所有）
@@ -124,6 +151,9 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bTransparentRenderPassUsesRenderGraphInitialStates = false;
+        RHI::ITexture *m_FramebufferSceneColorTexture = nullptr;
+        RHI::ITexture *m_FramebufferGBufferDepthTexture = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering

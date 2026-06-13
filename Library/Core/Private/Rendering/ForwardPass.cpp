@@ -1,7 +1,11 @@
 ﻿#include "Rendering/ForwardPass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/GBufferPass.h"
+#include "Rendering/LightingPass.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
+#include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/ShaderManager.h"
@@ -199,6 +203,9 @@ namespace NorvesLib::Core::Rendering
         m_DefaultLinearSampler.reset();
         m_UniformAllocator.Shutdown();
         m_Device = nullptr;
+        m_bTransparentRenderPassUsesRenderGraphInitialStates = false;
+        m_FramebufferSceneColorTexture = nullptr;
+        m_FramebufferGBufferDepthTexture = nullptr;
 
         m_bInitialized = false;
         NORVES_LOG_INFO("ForwardPass", "ForwardPass shutdown");
@@ -228,23 +235,7 @@ namespace NorvesLib::Core::Rendering
                 return;
             }
 
-            const bool bResourcesChanged =
-                width != m_CurrentWidth ||
-                height != m_CurrentHeight ||
-                sceneColorTexture.get() != m_SceneColorTexture.get() ||
-                gbufferDepthTexture.get() != m_GBufferDepthTexture.get();
-
-            if (!bResourcesChanged)
-            {
-                return;
-            }
-
-            m_CurrentWidth = width;
-            m_CurrentHeight = height;
-            m_SceneColorTexture = sceneColorTexture;
-            m_GBufferDepthTexture = gbufferDepthTexture;
-
-            if (CreateTransparentResources(width, height))
+            if (PrepareTransparentResources(width, height, sceneColorTexture, gbufferDepthTexture, false))
             {
                 NORVES_LOG_INFO("ForwardPass",
                                 "Transparent forward resources updated (%ux%u)",
@@ -281,6 +272,108 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void ForwardPass::Declare(RenderGraphBuilder &builder)
+    {
+        if (m_bTransparentOnly)
+        {
+            if (m_LightingPass)
+            {
+                const RGResourceHandle sceneColorHandle = m_LightingPass->GetSceneColorHandle();
+                if (sceneColorHandle.IsValid())
+                {
+                    builder.Read(sceneColorHandle, RHI::ResourceState::ShaderResource);
+                    builder.Write(sceneColorHandle,
+                                  RHI::ResourceState::RenderTarget,
+                                  RHI::ResourceState::ShaderResource);
+                }
+            }
+
+            if (m_GBufferPass)
+            {
+                const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
+                if (depthHandle.IsValid())
+                {
+                    builder.Read(depthHandle, RHI::ResourceState::DepthRead);
+                }
+            }
+
+            builder.PreserveInsertionOrder();
+            return;
+        }
+
+        builder.PreserveInsertionOrder();
+    }
+
+    void ForwardPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        if (!m_bTransparentOnly)
+        {
+            Setup(context);
+            Execute(context);
+            return;
+        }
+
+        if (!m_bInitialized)
+        {
+            if (!Initialize(context))
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to initialize native RenderGraph execution");
+                return;
+            }
+        }
+
+        RHI::TexturePtr sceneColorTexture;
+        RHI::TexturePtr gbufferDepthTexture;
+
+        if (m_LightingPass)
+        {
+            const RGResourceHandle sceneColorHandle = m_LightingPass->GetSceneColorHandle();
+            if (sceneColorHandle.IsValid())
+            {
+                sceneColorTexture = resources.GetTexture(sceneColorHandle);
+            }
+        }
+
+        if (m_GBufferPass)
+        {
+            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
+            if (depthHandle.IsValid())
+            {
+                gbufferDepthTexture = resources.GetTexture(depthHandle);
+            }
+        }
+
+        if ((!sceneColorTexture || !gbufferDepthTexture) && context.SharedResources)
+        {
+            if (!sceneColorTexture)
+            {
+                sceneColorTexture = context.SharedResources->GetTexturePtr("SceneColor");
+            }
+
+            if (!gbufferDepthTexture)
+            {
+                gbufferDepthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+            }
+        }
+
+        if (!sceneColorTexture || !gbufferDepthTexture)
+        {
+            return;
+        }
+
+        if (!PrepareTransparentResources(sceneColorTexture->GetWidth(),
+                                         sceneColorTexture->GetHeight(),
+                                         sceneColorTexture,
+                                         gbufferDepthTexture,
+                                         true))
+        {
+            return;
+        }
+
+        RegisterTransparentBridge(context, sceneColorTexture, gbufferDepthTexture);
+        ExecuteTransparentCommands(context, true);
+    }
+
     void ForwardPass::Execute(ViewRenderContext &context)
     {
         if (!context.CommandList || !m_SceneRenderer)
@@ -290,153 +383,8 @@ namespace NorvesLib::Core::Rendering
 
         if (m_bTransparentOnly)
         {
-            const auto *activeTransparentCommands = context.GetActiveTransparentCommands();
-            if (!activeTransparentCommands || activeTransparentCommands->empty())
-            {
-                return;
-            }
-
-            if (!m_ForwardRenderPass ||
-                !m_ForwardFramebuffer ||
-                !m_TransparentPipeline ||
-                !context.InstanceDataBuffer)
-            {
-                return;
-            }
-
-            const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
-            if (instanceDataSize64 == 0)
-            {
-                return;
-            }
-
-            auto *materials = context.Resources.Materials;
-            auto *textures = context.Resources.Textures;
-            auto *meshes = context.Resources.Meshes;
-            if (!materials || !textures || !meshes)
-            {
-                return;
-            }
-
-            CameraViewConstants cameraConstants;
-            float cameraPosition[4] = {0.0f, 1.5f, 4.0f, 1.0f};
-
-            const CameraProxy *activeCamera = context.GetActiveCamera();
-            if (activeCamera)
-            {
-                cameraConstants =
-                    CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
-                cameraConstants.CopyCameraPosition(cameraPosition);
-            }
-
-            float viewData[16];
-            float projectionData[16];
-            cameraConstants.CopyShaderView(viewData);
-            cameraConstants.CopyShaderProjection(projectionData);
-
-            const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
-                                                  ? 0xFFFFFFFFu
-                                                  : static_cast<uint32_t>(instanceDataSize64);
-
-            m_UniformAllocator.Reset();
-
-            auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
-            transparentCommands->reserve(activeTransparentCommands->size());
-
-            for (const DrawCommand &cmd : *activeTransparentCommands)
-            {
-                auto allocation = m_UniformAllocator.Allocate();
-                if (!allocation.UniformBuffer)
-                {
-                    NORVES_LOG_WARNING("ForwardPass",
-                                       "Transparent UBO allocation failed, skipping remaining objects");
-                    break;
-                }
-
-                TransparentForwardUBO uboData{};
-                std::memcpy(uboData.view, viewData, sizeof(viewData));
-                std::memcpy(uboData.projection, projectionData, sizeof(projectionData));
-                std::memcpy(uboData.cameraPosition, cameraPosition, sizeof(cameraPosition));
-
-                TextureHandle matAlbedo;
-                TextureHandle matNormal;
-                TextureHandle matMetallic;
-                TextureHandle matRoughness;
-                TextureHandle matAO;
-                TextureHandle matHeight;
-
-                if (cmd.Draw.MaterialHandle.IsValid())
-                {
-                    const auto *materialData = materials->GetData(cmd.Draw.MaterialHandle);
-                    if (materialData)
-                    {
-                        matAlbedo = materialData->AlbedoTexture;
-                        matNormal = materialData->NormalTexture;
-                        matMetallic = materialData->MetallicTexture;
-                        matRoughness = materialData->RoughnessTexture;
-                        matAO = materialData->AOTexture;
-                        matHeight = materialData->HeightTexture;
-                    }
-                }
-
-                allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
-
-                auto resolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTexture) -> RHI::TexturePtr
-                {
-                    if (handle.IsValid())
-                    {
-                        RHI::TexturePtr texture = textures->GetRHITexturePtr(handle);
-                        if (texture)
-                        {
-                            return texture;
-                        }
-                    }
-
-                    return defaultTexture;
-                };
-
-                allocation.DescriptorSet->BindTexture(1, resolveTexture(matAlbedo, m_DefaultWhiteTexture));
-                allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(2, resolveTexture(matNormal, m_DefaultFlatNormalTexture));
-                allocation.DescriptorSet->BindSampler(2, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(3, resolveTexture(matMetallic, m_DefaultBlackTexture));
-                allocation.DescriptorSet->BindSampler(3, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(4, resolveTexture(matRoughness, m_DefaultMidGrayTexture));
-                allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(5, resolveTexture(matAO, m_DefaultWhiteTexture));
-                allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(6, resolveTexture(matHeight, m_DefaultBlackTexture));
-                allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindStorageBuffer(7,
-                                                            context.InstanceDataBuffer,
-                                                            0,
-                                                            instanceDataSize);
-                allocation.DescriptorSet->Update();
-
-                DrawCommand drawCommand = cmd;
-                drawCommand.Pipeline = m_TransparentPipeline;
-                drawCommand.DescriptorSet = allocation.DescriptorSet;
-                drawCommand.DescriptorSetSlot = 0;
-                transparentCommands->push_back(drawCommand);
-            }
-
-            if (transparentCommands->empty())
-            {
-                return;
-            }
-
-            context.EnqueueTextureBarrier(m_GBufferDepthTexture,
-                                          RHI::ResourceState::ShaderResource,
-                                          RHI::ResourceState::DepthRead);
-            context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_ForwardRenderPass,
-                                                                         m_ForwardFramebuffer,
-                                                                         transparentCommands,
-                                                                         context.GetActiveLocalViewport(),
-                                                                         context.GetActiveLocalScissor(),
-                                                                         meshes));
-            context.EnqueueTextureBarrier(m_GBufferDepthTexture,
-                                          RHI::ResourceState::DepthRead,
-                                          RHI::ResourceState::ShaderResource);
+            RegisterTransparentBridge(context, m_SceneColorTexture, m_GBufferDepthTexture);
+            ExecuteTransparentCommands(context, false);
             return;
         }
 
@@ -475,7 +423,9 @@ namespace NorvesLib::Core::Rendering
         // 単独フォワードパイプラインのFrameCommand化は未移行。
     }
 
-    bool ForwardPass::CreateTransparentResources(uint32_t width, uint32_t height)
+    bool ForwardPass::CreateTransparentResources(uint32_t width,
+                                                 uint32_t height,
+                                                 bool bUseRenderGraphInitialStates)
     {
         if (!m_Device ||
             !m_SceneColorTexture ||
@@ -498,7 +448,9 @@ namespace NorvesLib::Core::Rendering
         colorAttachment.clear = false;
         colorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
         colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-        colorAttachment.initialState = RHI::ResourceState::ShaderResource;
+        colorAttachment.initialState = bUseRenderGraphInitialStates
+                                           ? RHI::ResourceState::RenderTarget
+                                           : RHI::ResourceState::ShaderResource;
         colorAttachment.finalState = RHI::ResourceState::ShaderResource;
         renderPassDesc.colorAttachments.push_back(colorAttachment);
 
@@ -619,6 +571,265 @@ namespace NorvesLib::Core::Rendering
         }
 
         return true;
+    }
+
+    bool ForwardPass::PrepareTransparentResources(uint32_t width,
+                                                  uint32_t height,
+                                                  const RHI::TexturePtr &sceneColorTexture,
+                                                  const RHI::TexturePtr &gbufferDepthTexture,
+                                                  bool bUseRenderGraphInitialStates)
+    {
+        if (!sceneColorTexture || !gbufferDepthTexture)
+        {
+            return false;
+        }
+
+        const bool bResourcesChanged =
+            width != m_CurrentWidth ||
+            height != m_CurrentHeight ||
+            m_FramebufferSceneColorTexture != sceneColorTexture.get() ||
+            m_FramebufferGBufferDepthTexture != gbufferDepthTexture.get() ||
+            m_bTransparentRenderPassUsesRenderGraphInitialStates != bUseRenderGraphInitialStates ||
+            !m_ForwardRenderPass ||
+            !m_ForwardFramebuffer ||
+            !m_TransparentPipeline;
+
+        m_SceneColorTexture = sceneColorTexture;
+        m_GBufferDepthTexture = gbufferDepthTexture;
+
+        if (!bResourcesChanged)
+        {
+            return true;
+        }
+
+        if (!CreateTransparentResources(width, height, bUseRenderGraphInitialStates))
+        {
+            return false;
+        }
+
+        m_CurrentWidth = width;
+        m_CurrentHeight = height;
+        m_bTransparentRenderPassUsesRenderGraphInitialStates = bUseRenderGraphInitialStates;
+        m_FramebufferSceneColorTexture = sceneColorTexture.get();
+        m_FramebufferGBufferDepthTexture = gbufferDepthTexture.get();
+        return true;
+    }
+
+    void ForwardPass::ExecuteTransparentCommands(ViewRenderContext &context,
+                                                 bool bUseRenderGraphManagedStates)
+    {
+        const auto *activeTransparentCommands = context.GetActiveTransparentCommands();
+        if (!activeTransparentCommands || activeTransparentCommands->empty())
+        {
+            if (bUseRenderGraphManagedStates)
+            {
+                EnqueueEmptyTransparentPass(context);
+            }
+            return;
+        }
+
+        if (!m_ForwardRenderPass ||
+            !m_ForwardFramebuffer ||
+            !m_TransparentPipeline ||
+            !context.InstanceDataBuffer)
+        {
+            if (bUseRenderGraphManagedStates)
+            {
+                EnqueueEmptyTransparentPass(context);
+            }
+            return;
+        }
+
+        const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
+        if (instanceDataSize64 == 0)
+        {
+            if (bUseRenderGraphManagedStates)
+            {
+                EnqueueEmptyTransparentPass(context);
+            }
+            return;
+        }
+
+        auto *materials = context.Resources.Materials;
+        auto *textures = context.Resources.Textures;
+        auto *meshes = context.Resources.Meshes;
+        if (!materials || !textures || !meshes)
+        {
+            if (bUseRenderGraphManagedStates)
+            {
+                EnqueueEmptyTransparentPass(context);
+            }
+            return;
+        }
+
+        CameraViewConstants cameraConstants;
+        float cameraPosition[4] = {0.0f, 1.5f, 4.0f, 1.0f};
+
+        const CameraProxy *activeCamera = context.GetActiveCamera();
+        if (activeCamera)
+        {
+            cameraConstants =
+                CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
+            cameraConstants.CopyCameraPosition(cameraPosition);
+        }
+
+        float viewData[16];
+        float projectionData[16];
+        cameraConstants.CopyShaderView(viewData);
+        cameraConstants.CopyShaderProjection(projectionData);
+
+        const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
+                                              ? 0xFFFFFFFFu
+                                              : static_cast<uint32_t>(instanceDataSize64);
+
+        m_UniformAllocator.Reset();
+
+        auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+        transparentCommands->reserve(activeTransparentCommands->size());
+
+        for (const DrawCommand &cmd : *activeTransparentCommands)
+        {
+            auto allocation = m_UniformAllocator.Allocate();
+            if (!allocation.UniformBuffer)
+            {
+                NORVES_LOG_WARNING("ForwardPass",
+                                   "Transparent UBO allocation failed, skipping remaining objects");
+                break;
+            }
+
+            TransparentForwardUBO uboData{};
+            std::memcpy(uboData.view, viewData, sizeof(viewData));
+            std::memcpy(uboData.projection, projectionData, sizeof(projectionData));
+            std::memcpy(uboData.cameraPosition, cameraPosition, sizeof(cameraPosition));
+
+            TextureHandle matAlbedo;
+            TextureHandle matNormal;
+            TextureHandle matMetallic;
+            TextureHandle matRoughness;
+            TextureHandle matAO;
+            TextureHandle matHeight;
+
+            if (cmd.Draw.MaterialHandle.IsValid())
+            {
+                const auto *materialData = materials->GetData(cmd.Draw.MaterialHandle);
+                if (materialData)
+                {
+                    matAlbedo = materialData->AlbedoTexture;
+                    matNormal = materialData->NormalTexture;
+                    matMetallic = materialData->MetallicTexture;
+                    matRoughness = materialData->RoughnessTexture;
+                    matAO = materialData->AOTexture;
+                    matHeight = materialData->HeightTexture;
+                }
+            }
+
+            allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
+
+            auto resolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTexture) -> RHI::TexturePtr
+            {
+                if (handle.IsValid())
+                {
+                    RHI::TexturePtr texture = textures->GetRHITexturePtr(handle);
+                    if (texture)
+                    {
+                        return texture;
+                    }
+                }
+
+                return defaultTexture;
+            };
+
+            allocation.DescriptorSet->BindTexture(1, resolveTexture(matAlbedo, m_DefaultWhiteTexture));
+            allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(2, resolveTexture(matNormal, m_DefaultFlatNormalTexture));
+            allocation.DescriptorSet->BindSampler(2, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(3, resolveTexture(matMetallic, m_DefaultBlackTexture));
+            allocation.DescriptorSet->BindSampler(3, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(4, resolveTexture(matRoughness, m_DefaultMidGrayTexture));
+            allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(5, resolveTexture(matAO, m_DefaultWhiteTexture));
+            allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(6, resolveTexture(matHeight, m_DefaultBlackTexture));
+            allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindStorageBuffer(7,
+                                                        context.InstanceDataBuffer,
+                                                        0,
+                                                        instanceDataSize);
+            allocation.DescriptorSet->Update();
+
+            DrawCommand drawCommand = cmd;
+            drawCommand.Pipeline = m_TransparentPipeline;
+            drawCommand.DescriptorSet = allocation.DescriptorSet;
+            drawCommand.DescriptorSetSlot = 0;
+            transparentCommands->push_back(drawCommand);
+        }
+
+        if (transparentCommands->empty())
+        {
+            if (bUseRenderGraphManagedStates)
+            {
+                EnqueueEmptyTransparentPass(context);
+            }
+            return;
+        }
+
+        if (!bUseRenderGraphManagedStates)
+        {
+            context.EnqueueTextureBarrier(m_GBufferDepthTexture,
+                                          RHI::ResourceState::ShaderResource,
+                                          RHI::ResourceState::DepthRead);
+        }
+
+        context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_ForwardRenderPass,
+                                                                     m_ForwardFramebuffer,
+                                                                     transparentCommands,
+                                                                     context.GetActiveLocalViewport(),
+                                                                     context.GetActiveLocalScissor(),
+                                                                     meshes));
+
+        if (!bUseRenderGraphManagedStates)
+        {
+            context.EnqueueTextureBarrier(m_GBufferDepthTexture,
+                                          RHI::ResourceState::DepthRead,
+                                          RHI::ResourceState::ShaderResource);
+        }
+    }
+
+    void ForwardPass::EnqueueEmptyTransparentPass(ViewRenderContext &context) const
+    {
+        if (!m_ForwardRenderPass || !m_ForwardFramebuffer)
+        {
+            return;
+        }
+
+        context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(
+            m_ForwardRenderPass,
+            m_ForwardFramebuffer,
+            MakeShared<Container::VariableArray<DrawCommand>>(),
+            context.GetActiveLocalViewport(),
+            context.GetActiveLocalScissor(),
+            context.Resources.Meshes));
+    }
+
+    void ForwardPass::RegisterTransparentBridge(ViewRenderContext &context,
+                                                const RHI::TexturePtr &sceneColorTexture,
+                                                const RHI::TexturePtr &gbufferDepthTexture) const
+    {
+        if (!context.SharedResources)
+        {
+            return;
+        }
+
+        if (sceneColorTexture)
+        {
+            context.SharedResources->RegisterTexturePtr("SceneColor", sceneColorTexture);
+        }
+
+        if (gbufferDepthTexture)
+        {
+            context.SharedResources->RegisterTexturePtr("GBuffer_Depth", gbufferDepthTexture);
+            context.SharedResources->RegisterTexturePtr("SceneDepth", gbufferDepthTexture);
+        }
     }
 
 } // namespace NorvesLib::Core::Rendering
