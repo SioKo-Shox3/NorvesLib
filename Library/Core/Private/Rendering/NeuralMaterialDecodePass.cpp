@@ -5,6 +5,8 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/DeviceCapabilities.h"
@@ -72,10 +74,13 @@ namespace NorvesLib::Core::Rendering
     {
         m_Decoder.Shutdown();
         m_FrameDecodeTargets.clear();
+        m_DecodeCompleteHandle = {};
 
         m_Device = nullptr;
         m_SceneRenderer = nullptr;
         m_SceneView = nullptr;
+        m_bCooperativeVectorSupported = false;
+        m_bInitialized = false;
     }
 
     void NeuralMaterialDecodePass::Setup(ViewRenderContext &context)
@@ -97,6 +102,22 @@ namespace NorvesLib::Core::Rendering
         {
             m_Decoder.RegisterResource(resource);
         }
+    }
+
+    void NeuralMaterialDecodePass::Declare(RenderGraphBuilder &builder)
+    {
+        m_DecodeCompleteHandle = builder.CreateLogical("NeuralMaterialDecodeComplete");
+        builder.Write(m_DecodeCompleteHandle,
+                      RHI::ResourceState::Common,
+                      RHI::ResourceState::Common);
+        builder.PreserveInsertionOrder();
+    }
+
+    void NeuralMaterialDecodePass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        (void)resources;
+        Setup(context);
+        Execute(context);
     }
 
     void NeuralMaterialDecodePass::Execute(ViewRenderContext &context)
