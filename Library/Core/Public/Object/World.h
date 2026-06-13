@@ -10,6 +10,7 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    class MaterialResources;
     class SceneView;
 }
 
@@ -169,7 +170,7 @@ namespace NorvesLib::Core
         /**
          * @brief MeshComponent/LightComponentからSceneViewへProxy同期
          */
-        void SyncToSceneView();
+        void SyncToSceneView(const Rendering::MaterialResources *materials = nullptr);
 
     private:
         void CleanupDestroyedObjects();

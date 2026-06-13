@@ -63,8 +63,12 @@ namespace NorvesLib::Core::Rendering
         // マテリアル
         // ========================================
 
-        Container::FixedArray<MaterialHandle, MAX_MATERIAL_SLOTS> Materials;
+        Container::FixedArray<MaterialHandle, MAX_MATERIAL_SLOTS> Materials =
+            Container::FixedArray<MaterialHandle, MAX_MATERIAL_SLOTS>(MaterialHandle::Invalid());
+        Container::FixedArray<BlendMode, MAX_MATERIAL_SLOTS> MaterialBlendModes =
+            Container::FixedArray<BlendMode, MAX_MATERIAL_SLOTS>(BlendMode::Opaque);
         uint32_t MaterialCount = 0;
+        float SortDepth = 0.0f;
 
         // マテリアルインスタンスオーバーライド（オプション）
         // パフォーマンスのため、オーバーライドがある場合のみ使用
@@ -151,8 +155,8 @@ namespace NorvesLib::Core::Rendering
          */
         void CalculateSortKey(float cameraX, float cameraY, float cameraZ, BlendMode blendMode)
         {
-            // ブレンドモードを最上位ビットに
-            uint32_t blendBits = static_cast<uint32_t>(blendMode) << 28;
+            const uint32_t blendBits =
+                (blendMode == BlendMode::Opaque || blendMode == BlendMode::Masked) ? 0u : (1u << 31);
 
             // 距離を16ビットに圧縮
             float dx = WorldBounds.CenterX - cameraX;
@@ -160,17 +164,7 @@ namespace NorvesLib::Core::Rendering
             float dz = WorldBounds.CenterZ - cameraZ;
             float distSq = dx * dx + dy * dy + dz * dz;
 
-            // 透明オブジェクトは後ろから前へ（距離大→小）
-            // 不透明オブジェクトは前から後ろへ（距離小→大）
-            uint32_t distBits;
-            if (blendMode == BlendMode::Opaque || blendMode == BlendMode::Masked)
-            {
-                distBits = static_cast<uint32_t>(distSq) & 0x0FFFFFFF;
-            }
-            else
-            {
-                distBits = (0x0FFFFFFF - (static_cast<uint32_t>(distSq) & 0x0FFFFFFF));
-            }
+            uint32_t distBits = static_cast<uint32_t>(distSq) & 0x7FFFFFFF;
 
             SortKey = blendBits | distBits;
         }

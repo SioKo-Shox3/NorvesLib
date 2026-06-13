@@ -2,6 +2,7 @@
 #include "Component/MeshComponent.h"
 #include "Component/PointLightComponent.h"
 #include "Object/World.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
 #include <cassert>
 #include <iostream>
@@ -24,6 +25,13 @@ namespace
         MegaGeometry::MegaMeshHandle handle;
         handle.Id = id;
         return handle;
+    }
+
+    MaterialHandle MakeMaterialHandle(RenderResources& renderResources, BlendMode blendMode)
+    {
+        MaterialCreateData createInfo;
+        createInfo.Blend = blendMode;
+        return renderResources.Materials().Create(createInfo);
     }
 
     MeshProxy* FindMeshProxy(SceneView& view, uint64_t objectId)
@@ -215,6 +223,54 @@ namespace
 
         world.Finalize();
     }
+
+    void TestMeshMaterialBlendSync()
+    {
+        World world;
+        world.Initialize();
+
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+
+        RenderResources renderResources;
+
+        WorldObject* object = world.SpawnObject<WorldObject>();
+        assert(object);
+
+        MeshComponent* mesh = world.CreateComponent<MeshComponent>(object);
+        assert(mesh);
+        mesh->SetMeshHandle(MakeMeshHandle(300));
+
+        const MaterialHandle translucent = MakeMaterialHandle(renderResources, BlendMode::Translucent);
+        const MaterialHandle additive = MakeMaterialHandle(renderResources, BlendMode::Additive);
+
+        mesh->SetMaterial(0, translucent);
+        world.SyncToSceneView(&renderResources.Materials());
+
+        MeshProxy* meshProxy = FindMeshProxy(view, object->GetObjectId());
+        assert(meshProxy);
+        assert(meshProxy->MaterialBlendModes[0] == BlendMode::Translucent);
+
+        mesh->SetMaterial(0, additive);
+        world.SyncToSceneView(&renderResources.Materials());
+
+        meshProxy = FindMeshProxy(view, object->GetObjectId());
+        assert(meshProxy);
+        assert(meshProxy->MaterialBlendModes[0] == BlendMode::Additive);
+
+        MaterialHandle missingHandle;
+        missingHandle.Id = 99999;
+        mesh->SetMaterial(0, missingHandle);
+        world.SyncToSceneView(&renderResources.Materials());
+
+        meshProxy = FindMeshProxy(view, object->GetObjectId());
+        assert(meshProxy);
+        assert(meshProxy->MaterialBlendModes[0] == BlendMode::Opaque);
+
+        world.Finalize();
+    }
 }
 
 int main()
@@ -223,6 +279,7 @@ int main()
 
     TestMeshAndLightDifferentialSync();
     TestMegaGeometryDifferentialSync();
+    TestMeshMaterialBlendSync();
 
     std::cout << "WorldSyncDifferentialTest passed\n";
     return 0;

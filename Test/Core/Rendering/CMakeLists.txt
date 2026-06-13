@@ -40,6 +40,16 @@ target_include_directories(InstanceDataFlattenTest PRIVATE
 set_target_properties(InstanceDataFlattenTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME InstanceDataFlattenTest COMMAND InstanceDataFlattenTest)
 
+add_executable(DrawCommandSorterTest
+    DrawCommandSorterTest.cpp
+)
+target_link_libraries(DrawCommandSorterTest PRIVATE Core)
+target_include_directories(DrawCommandSorterTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(DrawCommandSorterTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
+
 add_executable(ViewScreenTopologyTest
     ViewScreenTopologyTest.cpp
 )

@@ -19,6 +19,7 @@
 #include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
+#include <cmath>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -557,6 +558,10 @@ namespace NorvesLib::Core::Rendering
 
             if (bVisible)
             {
+                float dx = proxy.WorldBounds.CenterX - cameraPosition.x;
+                float dy = proxy.WorldBounds.CenterY - cameraPosition.y;
+                float dz = proxy.WorldBounds.CenterZ - cameraPosition.z;
+                proxy.SortDepth = std::sqrt(dx * dx + dy * dy + dz * dz);
                 m_VisibleMeshProxies.push_back(&proxy);
             }
         }
@@ -625,6 +630,10 @@ namespace NorvesLib::Core::Rendering
 
             if (bVisible)
             {
+                float dx = proxy.WorldBounds.CenterX - cameraPosition.x;
+                float dy = proxy.WorldBounds.CenterY - cameraPosition.y;
+                float dz = proxy.WorldBounds.CenterZ - cameraPosition.z;
+                proxy.SortDepth = std::sqrt(dx * dx + dy * dy + dz * dz);
                 m_VisibleMeshProxies.push_back(&proxy);
             }
         }
@@ -671,6 +680,11 @@ namespace NorvesLib::Core::Rendering
                                        m_bEnableInstancing,
                                        m_MinInstanceCount);
 
+        for (DrawCommand &cmd : m_DrawCommands)
+        {
+            cmd.CalculateSortKey(cmd.Draw.SortDepth, cmd.Draw.MaterialBlendMode);
+        }
+
         // 不透明と透明を分離してソート
         DrawCommandSorter::SortAndSeparate(m_DrawCommands, m_OpaqueCommands, m_TransparentCommands);
 
@@ -713,6 +727,7 @@ namespace NorvesLib::Core::Rendering
         {
             if (proxy.bVisible)
             {
+                proxy.SortDepth = 0.0f;
                 m_VisibleMeshProxies.push_back(&proxy);
             }
         }
@@ -748,6 +763,7 @@ namespace NorvesLib::Core::Rendering
             {
                 if (proxy.bVisible)
                 {
+                    proxy.SortDepth = 0.0f;
                     m_VisibleMeshProxies.push_back(&proxy);
                 }
             }

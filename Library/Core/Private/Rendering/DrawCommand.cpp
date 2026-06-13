@@ -9,6 +9,34 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        constexpr float SORT_DEPTH_SCALE = 1024.0f;
+
+        bool IsTransparentBlendMode(BlendMode blendMode)
+        {
+            return blendMode != BlendMode::Opaque && blendMode != BlendMode::Masked;
+        }
+
+        uint32_t QuantizeSortDepth(float depth)
+        {
+            if (depth <= 0.0f)
+            {
+                return 0;
+            }
+
+            const float scaledDepth = depth * SORT_DEPTH_SCALE;
+            if (scaledDepth >= 4294967295.0f)
+            {
+                return 0xFFFFFFFFu;
+            }
+
+            return static_cast<uint32_t>(scaledDepth);
+        }
+
+        bool AreSortDepthsEquivalent(float lhs, float rhs)
+        {
+            return std::fabs(lhs - rhs) <= 0.0001f;
+        }
+
         Math::Matrix4x4 CalculateNormalMatrix(const Math::Matrix4x4 &world)
         {
             const float a00 = world.m00;
@@ -112,24 +140,15 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // ソートキーの構成:
-        // [63-56] ブレンドモード（不透明=0が先）
-        // [55-32] マテリアルID（状態変更最小化）
-        // [31-0]  深度（不透明は手前から、透明は奥から）
+        Draw.SortDepth = depth;
+        Draw.MaterialBlendMode = blendMode;
 
-        uint64_t blendPart = static_cast<uint64_t>(blendMode) << 56;
-        uint64_t materialPart = static_cast<uint64_t>(Draw.MaterialHandle.Id) << 32;
+        const uint64_t blendPart = static_cast<uint64_t>(IsTransparentBlendMode(blendMode) ? 1ull : 0ull) << 63;
+        const uint64_t depthPart = static_cast<uint64_t>(QuantizeSortDepth(depth)) << 31;
+        const uint64_t materialPart = (Draw.MaterialHandle.Id & 0x7FFFu) << 16;
+        const uint64_t objectPart = Draw.ObjectId & 0xFFFFu;
 
-        // 深度を正規化（0.0〜1.0を32bit整数に）
-        uint32_t depthInt = static_cast<uint32_t>(depth * 4294967295.0f);
-
-        // 透明オブジェクトは深度を反転（奥から手前）
-        if (blendMode != BlendMode::Opaque)
-        {
-            depthInt = 0xFFFFFFFF - depthInt;
-        }
-
-        SortKey = blendPart | materialPart | depthInt;
+        SortKey = blendPart | depthPart | materialPart | objectPart;
     }
 
     void RebaseDrawCommandInstanceRange(Container::VariableArray<DrawCommand> &commands,
@@ -171,13 +190,16 @@ namespace NorvesLib::Core::Rendering
         m_Stats.TotalProxies++;
 
         // 各マテリアルスロットごとにバッチを作成
-        for (uint32_t i = 0; i < proxy.MaterialCount; ++i)
+        const uint32_t materialCount = std::min(proxy.MaterialCount, MAX_MATERIAL_SLOTS);
+        for (uint32_t i = 0; i < materialCount; ++i)
         {
             // バッチキーを計算
             MeshBatch tempBatch;
             tempBatch.MeshHandle = proxy.MeshHandle;
             tempBatch.MaterialHandle = proxy.Materials[i];
             tempBatch.SubMeshIndex = i;
+            tempBatch.MaterialBlendMode = proxy.MaterialBlendModes[i];
+            tempBatch.SortDepth = proxy.SortDepth;
             tempBatch.bCastShadow = proxy.bCastShadow;
 
             uint64_t key = tempBatch.GetBatchKey();
@@ -187,10 +209,15 @@ namespace NorvesLib::Core::Rendering
             batch.MeshHandle = proxy.MeshHandle;
             batch.MaterialHandle = proxy.Materials[i];
             batch.SubMeshIndex = i;
+            batch.MaterialBlendMode = proxy.MaterialBlendModes[i];
             batch.bCastShadow = proxy.bCastShadow;
 
             // インスタンスを追加（カスタムデータとシャドウフラグも含む）
-            batch.AddInstance(proxy.WorldTransform, proxy.ObjectId, proxy.CustomData, proxy.bCastShadow);
+            batch.AddInstance(proxy.WorldTransform,
+                              proxy.ObjectId,
+                              proxy.CustomData,
+                              proxy.bCastShadow,
+                              proxy.SortDepth);
         }
     }
 
@@ -221,6 +248,9 @@ namespace NorvesLib::Core::Rendering
                 cmd.Draw.MeshHandle = batch.MeshHandle;
                 cmd.Draw.MaterialHandle = batch.MaterialHandle;
                 cmd.Draw.SubMeshIndex = batch.SubMeshIndex;
+                cmd.Draw.MaterialBlendMode = batch.MaterialBlendMode;
+                cmd.Draw.SortDepth = batch.SortDepth;
+                cmd.Draw.ObjectId = batch.InstanceObjectIds.empty() ? 0 : batch.InstanceObjectIds[0];
 
                 // インスタンシング描画
                 cmd.Type = DrawCommandType::DrawIndexedInstanced;
@@ -273,9 +303,13 @@ namespace NorvesLib::Core::Rendering
                 cmd.Draw.MeshHandle = batch.MeshHandle;
                 cmd.Draw.MaterialHandle = batch.MaterialHandle;
                 cmd.Draw.SubMeshIndex = batch.SubMeshIndex;
+                cmd.Draw.MaterialBlendMode = batch.MaterialBlendMode;
                 cmd.Draw.bInstanced = false;
                 cmd.Draw.InstanceCount = 1;
                 cmd.Draw.WorldMatrix = batch.InstanceTransforms[instanceIndex];
+                cmd.Draw.ObjectId = instanceIndex < batch.InstanceObjectIds.size()
+                                        ? batch.InstanceObjectIds[instanceIndex]
+                                        : 0;
                 cmd.Draw.FirstInstance = static_cast<uint32_t>(outInstanceData.size());
                 cmd.Draw.InstanceDataOffset = cmd.Draw.FirstInstance;
                 // カスタムデータとフラグをコピー
@@ -283,6 +317,7 @@ namespace NorvesLib::Core::Rendering
                 {
                     const auto &extra = batch.InstanceExtraData[instanceIndex];
                     std::memcpy(cmd.Draw.CustomData, extra.CustomData, sizeof(cmd.Draw.CustomData));
+                    cmd.Draw.SortDepth = extra.SortDepth;
                     cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
                 cmd.Draw.NormalMatrix = CalculateNormalMatrix(cmd.Draw.WorldMatrix);
@@ -339,6 +374,21 @@ namespace NorvesLib::Core::Rendering
             std::sort(commands.begin(), commands.end(),
                       [](const DrawCommand &a, const DrawCommand &b)
                       {
+                          if (!AreSortDepthsEquivalent(a.Draw.SortDepth, b.Draw.SortDepth))
+                          {
+                              return a.Draw.SortDepth < b.Draw.SortDepth;
+                          }
+
+                          if (a.Draw.MaterialHandle.Id != b.Draw.MaterialHandle.Id)
+                          {
+                              return a.Draw.MaterialHandle.Id < b.Draw.MaterialHandle.Id;
+                          }
+
+                          if (a.Draw.ObjectId != b.Draw.ObjectId)
+                          {
+                              return a.Draw.ObjectId < b.Draw.ObjectId;
+                          }
+
                           return a.SortKey < b.SortKey;
                       });
             break;
@@ -347,6 +397,21 @@ namespace NorvesLib::Core::Rendering
             std::sort(commands.begin(), commands.end(),
                       [](const DrawCommand &a, const DrawCommand &b)
                       {
+                          if (!AreSortDepthsEquivalent(a.Draw.SortDepth, b.Draw.SortDepth))
+                          {
+                              return a.Draw.SortDepth > b.Draw.SortDepth;
+                          }
+
+                          if (a.Draw.MaterialHandle.Id != b.Draw.MaterialHandle.Id)
+                          {
+                              return a.Draw.MaterialHandle.Id < b.Draw.MaterialHandle.Id;
+                          }
+
+                          if (a.Draw.ObjectId != b.Draw.ObjectId)
+                          {
+                              return a.Draw.ObjectId < b.Draw.ObjectId;
+                          }
+
                           return a.SortKey > b.SortKey;
                       });
             break;
@@ -373,9 +438,7 @@ namespace NorvesLib::Core::Rendering
 
         for (const DrawCommand &cmd : commands)
         {
-            // TODO: マテリアルからブレンドモードを取得
-            // 現在は単純にすべて不透明として扱う
-            bool bIsTransparent = false; // MaterialManager::IsTransparent(cmd.Draw.MaterialHandle);
+            const bool bIsTransparent = IsTransparentBlendMode(cmd.Draw.MaterialBlendMode);
 
             if (bIsTransparent)
             {
