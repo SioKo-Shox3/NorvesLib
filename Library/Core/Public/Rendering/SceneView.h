@@ -191,8 +191,8 @@ namespace NorvesLib::Core::Rendering
          * @brief ディファードレンダリングパイプラインをセットアップ
          * @param sceneRenderer SceneRenderer参照
          *
-         * GBufferPass → LightingPass → PostProcessStack(ToneMapping)
-         * の順にパスチェーンを構築します。
+         * Shadow/GBuffer/Lightingの後に半透明ForwardPassを差し込み、
+         * SSRを含むPostProcessStackの前でSceneColorへ合成します。
          */
         void SetupDeferredPipeline(SceneRenderer *sceneRenderer);
 

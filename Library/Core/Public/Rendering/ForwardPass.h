@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "IViewPass.h"
+#include "DynamicUniformAllocator.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -25,6 +26,9 @@ namespace NorvesLib::Core::Rendering
      * 使用パターン:
      * - ディファードと併用: 半透明オブジェクトのみForwardPassで描画
      * - 単体使用: ディファード非対応シーンで従来通りの描画
+     *
+     * 半透明専用モードではLightingPassの後、SSRより前に実行され、
+     * "SceneColor" へLoad合成した結果がSSR入力にも反映されます。
      *
      * 入力:
      * - SceneViewのDrawCommand（Opaque/Transparent）
@@ -64,7 +68,7 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         /**
-         * @brief 不透明オブジェクトのみ描画するか
+         * @brief 半透明オブジェクトのみ描画するか
          *
          * ディファードレンダリングと組み合わせる場合、
          * 半透明オブジェクトのみをForwardPassで処理するケースがあります。
@@ -81,17 +85,37 @@ namespace NorvesLib::Core::Rendering
         void SetRegisterOutputs(bool bRegister) { m_bRegisterOutputs = bRegister; }
 
     private:
+        bool CreateTransparentResources(uint32_t width, uint32_t height);
+
         // 参照（所有しない）
         SceneView *m_SceneView = nullptr;
         SceneRenderer *m_SceneRenderer = nullptr;
+        RHI::IDevice *m_Device = nullptr;
 
-        // 出力テクスチャ（TransientResourcePoolから取得、非所有）
+        // 出力テクスチャ（フォワード単独パイプライン用、TransientResourcePoolから取得、非所有）
         RHI::ITexture *m_ColorTexture = nullptr;
         RHI::ITexture *m_DepthTexture = nullptr;
+
+        // 半透明ディファード合成用出力（SharedResourceRegistryから取得、所有参照を保持）
+        RHI::TexturePtr m_SceneColorTexture;
+        RHI::TexturePtr m_GBufferDepthTexture;
 
         // フォワード用リソース
         RHI::RenderPassPtr m_ForwardRenderPass;
         RHI::FramebufferPtr m_ForwardFramebuffer;
+        RHI::PipelinePtr m_TransparentPipeline;
+        RHI::ShaderPtr m_TransparentVertexShader;
+        RHI::ShaderPtr m_TransparentFragmentShader;
+
+        // 透明フォワード用PerObject UBOアロケータ
+        DynamicUniformAllocator m_UniformAllocator;
+
+        // マテリアル未設定時のフォールバック
+        RHI::TexturePtr m_DefaultWhiteTexture;
+        RHI::TexturePtr m_DefaultFlatNormalTexture;
+        RHI::TexturePtr m_DefaultBlackTexture;
+        RHI::TexturePtr m_DefaultMidGrayTexture;
+        RHI::SamplerPtr m_DefaultLinearSampler;
 
         // 設定
         bool m_bTransparentOnly = false;

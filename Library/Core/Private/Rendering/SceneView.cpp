@@ -449,6 +449,12 @@ namespace NorvesLib::Core::Rendering
         lightingPass->SetSceneView(this);
         AddPass(std::move(lightingPass));
 
+        // ForwardPass(TransparentOnly): Lighting後のSceneColorへ半透明をLoad合成
+        auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
+        transparentForwardPass->SetTransparentOnly(true);
+        transparentForwardPass->SetRegisterOutputs(false);
+        AddPass(std::move(transparentForwardPass));
+
         // PostProcessStack: SSR -> Bloom -> ToneMapping -> FXAA
         auto postProcessStack = MakeUnique<PostProcessStack>();
 
@@ -485,7 +491,8 @@ namespace NorvesLib::Core::Rendering
 
         SetPostProcessStack(std::move(postProcessStack));
 
-        NORVES_LOG_INFO("SceneView", "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> SSR -> Bloom -> ToneMapping -> FXAA -> Upscale");
+        NORVES_LOG_INFO("SceneView",
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> FXAA -> Upscale");
     }
 
     void SceneView::SetupForwardPipeline(SceneRenderer *sceneRenderer)

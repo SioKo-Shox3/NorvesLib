@@ -50,6 +50,16 @@ target_include_directories(DrawCommandSorterTest PRIVATE
 set_target_properties(DrawCommandSorterTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 
+add_executable(ForwardPassPipelinePlacementTest
+    ForwardPassPipelinePlacementTest.cpp
+)
+target_link_libraries(ForwardPassPipelinePlacementTest PRIVATE Core)
+target_include_directories(ForwardPassPipelinePlacementTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ForwardPassPipelinePlacementTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ForwardPassPipelinePlacementTest COMMAND ForwardPassPipelinePlacementTest)
+
 add_executable(ViewScreenTopologyTest
     ViewScreenTopologyTest.cpp
 )
