@@ -452,12 +452,15 @@ namespace NorvesLib::Core::Rendering
         lightingPass->SetSceneView(this);
         lightingPass->SetGBufferPass(gbufferPassRaw);
         lightingPass->SetSSAOPass(ssaoPassRaw);
+        LightingPass *lightingPassRaw = lightingPass.get();
         AddPass(std::move(lightingPass));
 
         // ForwardPass(TransparentOnly): Lighting後のSceneColorへ半透明をLoad合成
         auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
         transparentForwardPass->SetTransparentOnly(true);
         transparentForwardPass->SetRegisterOutputs(false);
+        transparentForwardPass->SetLightingPass(lightingPassRaw);
+        transparentForwardPass->SetGBufferPass(gbufferPassRaw);
         AddPass(std::move(transparentForwardPass));
 
         // PostProcessStack: SSR -> Bloom -> ToneMapping -> FXAA
