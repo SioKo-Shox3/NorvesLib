@@ -4,6 +4,7 @@
 #include "Rendering/FXAAPass.h"
 #include "Rendering/ForwardPass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/NeuralMaterialDecodePass.h"
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/SSAOPass.h"
 #include "Rendering/SSRPass.h"
@@ -1455,6 +1456,61 @@ namespace
 
         pass.Shutdown();
         shaderManager.Shutdown();
+    }
+
+    void TestNeuralDecodeNativeDeclareWritesLogicalCompletion()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        NeuralMaterialDecodePass pass;
+        const uint32_t passIndex = graph.AddPass(&pass);
+
+        ViewRenderContext context;
+        assert(graph.Compile(context));
+        assert(pass.GetDecodeCompleteHandle().IsValid());
+        assert(graph.GetDeclaredPassAccessCount(passIndex) == 1);
+
+        RGResourceHandle resource;
+        RGAccessMode mode = RGAccessMode::Read;
+        RHI::ResourceState state = RHI::ResourceState::Undefined;
+        RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+        assert(graph.TryGetDeclaredPassAccess(passIndex, 0, resource, mode, state, finalState));
+        assert(resource == pass.GetDecodeCompleteHandle());
+        assert(mode == RGAccessMode::Write);
+        assert(state == RHI::ResourceState::Common);
+        assert(finalState == RHI::ResourceState::Common);
+        assert(graph.GetCompiledBarriers().empty());
+    }
+
+    void TestNeuralDecodeNativeExecuteSkipsUnsupportedPath()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        RHI::DeviceCapabilities capabilities;
+        capabilities.NeuralShaders.bSupported = false;
+
+        FakeCommandList commandList;
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.CommandList = &commandList;
+        context.Capabilities = &capabilities;
+
+        NeuralMaterialDecodePass pass;
+        assert(pass.Initialize(context));
+        assert(!pass.IsCooperativeVectorSupported());
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        graph.AddPass(&pass);
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(commandList.BeginRenderPassCount == 0);
+        assert(commandList.DrawCallCount == 0);
+
+        pass.Shutdown();
     }
 
     void TestGBufferNativeDeclareCreatesTransientOutputs()
@@ -3300,6 +3356,7 @@ int main()
     TestCompileContextPassedToDeclare();
     TestWriteFinalStateSuppressesFollowupReadBarrier();
     TestShadowMapNativeDeclareImportsDepthOutput();
+    TestNeuralDecodeNativeDeclareWritesLogicalCompletion();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();
@@ -3310,6 +3367,7 @@ int main()
     TestFXAANativeDeclareDependencies();
     TestUpscaleNativeDeclareDependencies();
     TestShadowMapNativeExecuteRegistersBridge();
+    TestNeuralDecodeNativeExecuteSkipsUnsupportedPath();
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
     TestGBufferSSAONativeExecuteRegistersBridge();
     TestGBufferSSAOLightingNativeExecuteRegistersBridge();

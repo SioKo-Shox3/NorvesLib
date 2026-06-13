@@ -2,6 +2,7 @@
 
 #include "Rendering/IViewPass.h"
 #include "Rendering/NeuralMaterialDecoder.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 
@@ -24,7 +25,7 @@ namespace NorvesLib::Core::Rendering
      *
      * Cooperative Vector非対応環境ではパスが自動的にスキップされます。
      */
-    class NeuralMaterialDecodePass : public IViewPass
+    class NeuralMaterialDecodePass : public IViewPass, public IRenderGraphPass
     {
     public:
         NeuralMaterialDecodePass() = default;
@@ -40,6 +41,8 @@ namespace NorvesLib::Core::Rendering
         void Shutdown() override;
         void Setup(ViewRenderContext &context) override;
         void Execute(ViewRenderContext &context) override;
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
 
         // ========================================
         // リソース管理
@@ -59,6 +62,7 @@ namespace NorvesLib::Core::Rendering
          * @brief Cooperative Vectorがサポートされているか
          */
         bool IsCooperativeVectorSupported() const { return m_bCooperativeVectorSupported; }
+        RGResourceHandle GetDecodeCompleteHandle() const { return m_DecodeCompleteHandle; }
 
     private:
         RHI::IDevice *m_Device = nullptr;
@@ -70,6 +74,7 @@ namespace NorvesLib::Core::Rendering
 
         // Setup()でViewRenderContext::Resources.Materialsから取得したデコード対象（フレーム単位の一時キャッシュ）
         Container::VariableArray<NeuralMaterialResource *> m_FrameDecodeTargets;
+        RGResourceHandle m_DecodeCompleteHandle;
 
         // Cooperative Vectorサポート状況
         bool m_bCooperativeVectorSupported = false;
