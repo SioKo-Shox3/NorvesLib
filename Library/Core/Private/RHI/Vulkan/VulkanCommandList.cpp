@@ -17,6 +17,24 @@ namespace NorvesLib::RHI::Vulkan
 
     using namespace NorvesLib::Core::Container;
 
+    namespace
+    {
+        vk::ImageAspectFlags GetBarrierAspectMask(const VulkanTexture& texture)
+        {
+            if ((texture.GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None)
+            {
+                vk::ImageAspectFlags aspectMask = vk::ImageAspectFlagBits::eDepth;
+                if (texture.GetFormat() == Format::D24_UNORM_S8_UINT)
+                {
+                    aspectMask |= vk::ImageAspectFlagBits::eStencil;
+                }
+                return aspectMask;
+            }
+
+            return vk::ImageAspectFlagBits::eColor;
+        }
+    } // namespace
+
     //===========================================================================================
     // ResourceBarrierTrackerの実装
     //===========================================================================================
@@ -990,7 +1008,7 @@ namespace NorvesLib::RHI::Vulkan
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = vkTexture->GetVkImage();
-        barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        barrier.subresourceRange.aspectMask = GetBarrierAspectMask(*vkTexture);
         barrier.subresourceRange.baseMipLevel = mipLevel;
         barrier.subresourceRange.levelCount = mipCount == 0 ? VK_REMAINING_MIP_LEVELS : mipCount;
         barrier.subresourceRange.baseArrayLayer = arrayIndex;

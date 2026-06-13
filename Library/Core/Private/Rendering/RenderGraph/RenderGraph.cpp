@@ -66,8 +66,10 @@ namespace NorvesLib::Core::Rendering
         return RHI::BufferDesc(Size, Usage, bCPUAccessible, DebugName);
     }
 
-    RenderGraphBuilder::RenderGraphBuilder(RenderGraph* graph, uint32_t passIndex)
-        : m_Graph(graph), m_PassIndex(passIndex)
+    RenderGraphBuilder::RenderGraphBuilder(RenderGraph* graph,
+                                           uint32_t passIndex,
+                                           const ViewRenderContext* context)
+        : m_Graph(graph), m_PassIndex(passIndex), m_Context(context)
     {
     }
 
@@ -104,7 +106,7 @@ namespace NorvesLib::Core::Rendering
     {
         if (m_Graph)
         {
-            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Read, state);
+            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Read, state, state);
         }
     }
 
@@ -112,7 +114,17 @@ namespace NorvesLib::Core::Rendering
     {
         if (m_Graph)
         {
-            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Write, state);
+            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Write, state, state);
+        }
+    }
+
+    void RenderGraphBuilder::Write(RGResourceHandle handle,
+                                   RHI::ResourceState state,
+                                   RHI::ResourceState finalState)
+    {
+        if (m_Graph)
+        {
+            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Write, state, finalState);
         }
     }
 
@@ -231,6 +243,16 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderGraph::Compile()
     {
+        return CompileInternal(nullptr);
+    }
+
+    bool RenderGraph::Compile(const ViewRenderContext& context)
+    {
+        return CompileInternal(&context);
+    }
+
+    bool RenderGraph::CompileInternal(const ViewRenderContext* context)
+    {
         ClearCompileData();
         m_PassDeclarations.resize(m_Passes.size());
 
@@ -243,7 +265,7 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            RenderGraphBuilder builder(this, passIndex);
+            RenderGraphBuilder builder(this, passIndex, context);
             pass->Declare(builder);
         }
 
@@ -410,7 +432,8 @@ namespace NorvesLib::Core::Rendering
     void RenderGraph::AddAccess(uint32_t passIndex,
                                 RGResourceHandle handle,
                                 RGAccessMode mode,
-                                RHI::ResourceState state)
+                                RHI::ResourceState state,
+                                RHI::ResourceState finalState)
     {
         if (!ValidatePassIndex(passIndex))
         {
@@ -421,6 +444,7 @@ namespace NorvesLib::Core::Rendering
         access.Resource = handle;
         access.Mode = mode;
         access.State = state;
+        access.FinalState = finalState;
         m_PassDeclarations[passIndex].Accesses.push_back(access);
     }
 
@@ -636,24 +660,22 @@ namespace NorvesLib::Core::Rendering
                     continue;
                 }
 
-                if (currentStates[access.Resource.Index] == access.State)
+                if (currentStates[access.Resource.Index] != access.State)
                 {
-                    continue;
+                    RGCompiledBarrier barrier;
+                    barrier.Kind = resource.Kind == RGResourceKind::Texture ? RGBarrierKind::Texture : RGBarrierKind::Buffer;
+                    barrier.Resource = access.Resource;
+                    barrier.BeforeState = currentStates[access.Resource.Index];
+                    barrier.AfterState = access.State;
+                    barrier.PassIndex = passIndex;
+                    barrier.CompiledOrderIndex = orderIndex;
+                    if (resource.Kind == RGResourceKind::Buffer)
+                    {
+                        barrier.BufferSize = resource.BufferDesc.Size;
+                    }
+                    m_CompiledBarriers.push_back(barrier);
                 }
-
-                RGCompiledBarrier barrier;
-                barrier.Kind = resource.Kind == RGResourceKind::Texture ? RGBarrierKind::Texture : RGBarrierKind::Buffer;
-                barrier.Resource = access.Resource;
-                barrier.BeforeState = currentStates[access.Resource.Index];
-                barrier.AfterState = access.State;
-                barrier.PassIndex = passIndex;
-                barrier.CompiledOrderIndex = orderIndex;
-                if (resource.Kind == RGResourceKind::Buffer)
-                {
-                    barrier.BufferSize = resource.BufferDesc.Size;
-                }
-                m_CompiledBarriers.push_back(barrier);
-                currentStates[access.Resource.Index] = access.State;
+                currentStates[access.Resource.Index] = access.FinalState;
             }
         }
     }

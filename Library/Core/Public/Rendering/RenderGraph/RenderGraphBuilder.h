@@ -6,11 +6,14 @@
 namespace NorvesLib::Core::Rendering
 {
     class RenderGraph;
+    struct ViewRenderContext;
 
     class RenderGraphBuilder
     {
     public:
-        RenderGraphBuilder(RenderGraph* graph, uint32_t passIndex);
+        RenderGraphBuilder(RenderGraph* graph,
+                           uint32_t passIndex,
+                           const ViewRenderContext* context = nullptr);
 
         RGResourceHandle CreateTexture(const RGTextureDesc& desc);
         RGResourceHandle CreateBuffer(const RGBufferDesc& desc);
@@ -27,6 +30,9 @@ namespace NorvesLib::Core::Rendering
                   RHI::ResourceState state = RHI::ResourceState::ShaderResource);
         void Write(RGResourceHandle handle,
                    RHI::ResourceState state = RHI::ResourceState::RenderTarget);
+        void Write(RGResourceHandle handle,
+                   RHI::ResourceState state,
+                   RHI::ResourceState finalState);
         void PreserveInsertionOrder();
         bool AddDependency(uint32_t beforePassIndex, uint32_t afterPassIndex);
 
@@ -35,9 +41,15 @@ namespace NorvesLib::Core::Rendering
             return m_PassIndex;
         }
 
+        const ViewRenderContext* GetContext() const
+        {
+            return m_Context;
+        }
+
     private:
         RenderGraph* m_Graph = nullptr;
         uint32_t m_PassIndex = RGInvalidPassIndex;
+        const ViewRenderContext* m_Context = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering

@@ -198,6 +198,11 @@ namespace NorvesLib::Core::Rendering
         m_MaterialTexture.reset();
         m_EmissiveTexture.reset();
         m_DepthTexture.reset();
+        m_AlbedoHandle = {};
+        m_NormalHandle = {};
+        m_MaterialHandle = {};
+        m_EmissiveHandle = {};
+        m_DepthHandle = {};
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
         m_GBufferPipeline.reset();
@@ -212,6 +217,17 @@ namespace NorvesLib::Core::Rendering
         m_SceneView = nullptr;
         m_SceneRenderer = nullptr;
         m_Device = nullptr;
+        m_CurrentWidth = 0;
+        m_CurrentHeight = 0;
+        m_bUsingRenderGraphResources = false;
+        m_bRenderPassUsesRenderGraphInitialStates = false;
+        m_FramebufferAlbedoTexture = nullptr;
+        m_FramebufferNormalTexture = nullptr;
+        m_FramebufferMaterialTexture = nullptr;
+        m_FramebufferEmissiveTexture = nullptr;
+        m_FramebufferDepthTexture = nullptr;
+        m_FramebufferWidth = 0;
+        m_FramebufferHeight = 0;
 
         m_bInitialized = false;
         NORVES_LOG_INFO("GBufferPass", "GBufferPass shutdown");
@@ -220,8 +236,8 @@ namespace NorvesLib::Core::Rendering
     void GBufferPass::Setup(ViewRenderContext &context)
     {
         // GBufferサイズを決定
-        uint32_t width = m_Settings.Width > 0 ? m_Settings.Width : context.GetActiveRenderWidth();
-        uint32_t height = m_Settings.Height > 0 ? m_Settings.Height : context.GetActiveRenderHeight();
+        uint32_t width = ResolveGBufferWidth(context);
+        uint32_t height = ResolveGBufferHeight(context);
 
         if (width == 0 || height == 0)
         {
@@ -229,10 +245,103 @@ namespace NorvesLib::Core::Rendering
         }
 
         // サイズ変更があればGBufferリソースを再作成
-        if (width != m_CurrentWidth || height != m_CurrentHeight)
+        if (width != m_CurrentWidth ||
+            height != m_CurrentHeight ||
+            m_bUsingRenderGraphResources ||
+            !m_AlbedoTexture ||
+            !m_NormalTexture ||
+            !m_MaterialTexture ||
+            !m_EmissiveTexture ||
+            !m_DepthTexture ||
+            !m_GBufferRenderPass ||
+            !m_GBufferFramebuffer ||
+            !m_GBufferPipeline)
         {
             CreateGBufferResources(width, height, context);
         }
+    }
+
+    void GBufferPass::Declare(RenderGraphBuilder &builder)
+    {
+        const ViewRenderContext *context = builder.GetContext();
+
+        uint32_t width = m_Settings.Width;
+        uint32_t height = m_Settings.Height;
+        if (context)
+        {
+            width = ResolveGBufferWidth(*context);
+            height = ResolveGBufferHeight(*context);
+        }
+
+        if (width == 0)
+        {
+            width = m_CurrentWidth > 0 ? m_CurrentWidth : 1;
+        }
+
+        if (height == 0)
+        {
+            height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
+        }
+
+        m_AlbedoHandle = builder.CreateTexture(
+            RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo"));
+        builder.Write(m_AlbedoHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+
+        m_NormalHandle = builder.CreateTexture(
+            RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"));
+        builder.Write(m_NormalHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+
+        m_MaterialHandle = builder.CreateTexture(
+            RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"));
+        builder.Write(m_MaterialHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+
+        m_EmissiveHandle = builder.CreateTexture(
+            RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"));
+        builder.Write(m_EmissiveHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+
+        m_DepthHandle = builder.CreateTexture(
+            RGTextureDesc::DepthStencil(width, height, m_Settings.DepthFormat, "GBuffer_Depth"));
+        builder.Write(m_DepthHandle, RHI::ResourceState::DepthWrite, RHI::ResourceState::ShaderResource);
+
+        builder.PreserveInsertionOrder();
+    }
+
+    void GBufferPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        if (!m_bInitialized)
+        {
+            if (!Initialize(context))
+            {
+                NORVES_LOG_ERROR("GBufferPass", "Failed to initialize native RenderGraph execution");
+                return;
+            }
+        }
+
+        RHI::TexturePtr albedo = resources.GetTexture(m_AlbedoHandle);
+        RHI::TexturePtr normal = resources.GetTexture(m_NormalHandle);
+        RHI::TexturePtr material = resources.GetTexture(m_MaterialHandle);
+        RHI::TexturePtr emissive = resources.GetTexture(m_EmissiveHandle);
+        RHI::TexturePtr depth = resources.GetTexture(m_DepthHandle);
+
+        if (!albedo || !normal || !material || !emissive || !depth)
+        {
+            NORVES_LOG_ERROR("GBufferPass", "Failed to resolve native GBuffer textures");
+            return;
+        }
+
+        if (!PrepareGBufferAttachments(albedo->GetWidth(),
+                                       albedo->GetHeight(),
+                                       albedo,
+                                       normal,
+                                       material,
+                                       emissive,
+                                       depth,
+                                       true))
+        {
+            return;
+        }
+
+        Execute(context);
     }
 
     void GBufferPass::Execute(ViewRenderContext &context)
@@ -268,185 +377,226 @@ namespace NorvesLib::Core::Rendering
         auto *materials = context.Resources.Materials;
         auto *textures = context.Resources.Textures;
         auto *meshes = context.Resources.Meshes;
-        if (m_SceneRenderer && materials && textures && meshes && activeOpaqueCommands)
+        if (!m_SceneRenderer || !materials || !textures || !meshes || !activeOpaqueCommands)
         {
-            // DrawCommand配列を取得（GameThreadでスナップショット済み）
-            const auto &opaqueCommands = *activeOpaqueCommands;
-            if (opaqueCommands.empty())
+            TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
+            return;
+        }
+
+        // DrawCommand配列を取得（GameThreadでスナップショット済み）
+        const auto &opaqueCommands = *activeOpaqueCommands;
+        if (opaqueCommands.empty())
+        {
+            TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
+            return;
+        }
+
+        if (!context.InstanceDataBuffer)
+        {
+            NORVES_LOG_WARNING("GBufferPass", "Instance data buffer is null, skipping GBuffer geometry");
+            TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
+            return;
+        }
+
+        const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
+        if (instanceDataSize64 == 0)
+        {
+            NORVES_LOG_WARNING("GBufferPass", "Instance data buffer is empty, skipping GBuffer geometry");
+            TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
+            return;
+        }
+
+        const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
+                                              ? 0xFFFFFFFFu
+                                              : static_cast<uint32_t>(instanceDataSize64);
+
+        // カメラ行列の構築
+        using namespace NorvesLib::Math;
+
+        CameraViewConstants cameraConstants;
+        float cameraPos[4] = {0.0f, 1.5f, 4.0f, 1.0f};
+
+        const CameraProxy *activeCamera = context.GetActiveCamera();
+        if (activeCamera)
+        {
+            cameraConstants =
+                CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
+            cameraConstants.CopyCameraPosition(cameraPos);
+        }
+
+        // UBOデータ構造体（std140レイアウト）
+        struct PerObjectUBO
+        {
+            float view[16];
+            float projection[16];
+            float cameraPosition[4];
+            float emissiveColor[4]; // rgb=エミッシブカラー, a=エミッシブ強度
+            float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=unused, w=unused
+        };
+
+        // ビュー・プロジェクション行列を事前変換
+        float viewData[16];
+        float projData[16];
+        cameraConstants.CopyShaderView(viewData);
+        cameraConstants.CopyShaderProjection(projData);
+
+        // フレーム開始時にアロケータリセット
+        m_UniformAllocator.Reset();
+
+        auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+
+        for (const auto &cmd : opaqueCommands)
+        {
+            // UBOスロット確保
+            auto allocation = m_UniformAllocator.Allocate();
+            if (!allocation.UniformBuffer)
             {
-                return;
+                NORVES_LOG_WARNING("GBufferPass", "UBO allocation failed, skipping remaining objects");
+                break;
             }
 
-            if (!context.InstanceDataBuffer)
+            // UBOデータ構築
+            PerObjectUBO uboData;
+            std::memcpy(uboData.view, viewData, sizeof(viewData));
+            std::memcpy(uboData.projection, projData, sizeof(projData));
+            std::memcpy(uboData.cameraPosition, cameraPos, sizeof(cameraPos));
+
+            // マテリアルからテクスチャとエミッシブを取得
+            TextureHandle matAlbedo;
+            TextureHandle matNormal;
+            TextureHandle matMetallic;
+            TextureHandle matRoughness;
+            TextureHandle matAO;
+            TextureHandle matHeight;
+            float matHeightScale = 0.05f;
+            float matEmissiveR = 0.0f, matEmissiveG = 0.0f, matEmissiveB = 0.0f;
+            float matEmissiveStrength = 0.0f;
+
+            if (cmd.Draw.MaterialHandle.IsValid() && materials)
             {
-                NORVES_LOG_WARNING("GBufferPass", "Instance data buffer is null, skipping GBuffer geometry");
-                return;
+                const auto *matData = materials->GetData(cmd.Draw.MaterialHandle);
+                if (matData)
+                {
+                    matAlbedo = matData->AlbedoTexture;
+                    matNormal = matData->NormalTexture;
+                    matMetallic = matData->MetallicTexture;
+                    matRoughness = matData->RoughnessTexture;
+                    matAO = matData->AOTexture;
+                    matHeight = matData->HeightTexture;
+                    matHeightScale = matData->HeightScale;
+                    matEmissiveR = matData->EmissiveColor[0];
+                    matEmissiveG = matData->EmissiveColor[1];
+                    matEmissiveB = matData->EmissiveColor[2];
+                    matEmissiveStrength = matData->EmissiveStrength;
+                }
             }
 
-            const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
-            if (instanceDataSize64 == 0)
+            // エミッシブカラー（rgb=色, a=強度）
+            uboData.emissiveColor[0] = matEmissiveR;
+            uboData.emissiveColor[1] = matEmissiveG;
+            uboData.emissiveColor[2] = matEmissiveB;
+            uboData.emissiveColor[3] = matEmissiveStrength;
+
+            // POMパラメータ
+            uboData.pomParams[0] = matHeightScale;
+            uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
+            uboData.pomParams[2] = 0.0f;
+            uboData.pomParams[3] = 0.0f;
+
+            // UBO更新
+            allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
+
+            // PBRテクスチャバインド（マテリアル経由、未設定ならデフォルトテクスチャ）
+            auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTex) -> RHI::TexturePtr
             {
-                NORVES_LOG_WARNING("GBufferPass", "Instance data buffer is empty, skipping GBuffer geometry");
-                return;
-            }
-
-            const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
-                                                  ? 0xFFFFFFFFu
-                                                  : static_cast<uint32_t>(instanceDataSize64);
-
-            // カメラ行列の構築
-            using namespace NorvesLib::Math;
-
-            CameraViewConstants cameraConstants;
-            float cameraPos[4] = {0.0f, 1.5f, 4.0f, 1.0f};
-
-            const CameraProxy *activeCamera = context.GetActiveCamera();
-            if (activeCamera)
-            {
-                cameraConstants =
-                    CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
-                cameraConstants.CopyCameraPosition(cameraPos);
-            }
-
-            // UBOデータ構造体（std140レイアウト）
-            struct PerObjectUBO
-            {
-                float view[16];
-                float projection[16];
-                float cameraPosition[4];
-                float emissiveColor[4]; // rgb=エミッシブカラー, a=エミッシブ強度
-                float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=unused, w=unused
+                if (handle.IsValid() && textures)
+                {
+                    auto tex = textures->GetRHITexturePtr(handle);
+                    if (tex)
+                    {
+                        return tex;
+                    }
+                }
+                return defaultTex;
             };
 
-            // ビュー・プロジェクション行列を事前変換
-            float viewData[16];
-            float projData[16];
-            cameraConstants.CopyShaderView(viewData);
-            cameraConstants.CopyShaderProjection(projData);
+            RHI::TexturePtr albedoTex = ResolveTexture(matAlbedo, m_DefaultWhiteTexture);
+            RHI::TexturePtr normalTex = ResolveTexture(matNormal, m_DefaultFlatNormalTexture);
+            RHI::TexturePtr metallicTex = ResolveTexture(matMetallic, m_DefaultBlackTexture);
+            RHI::TexturePtr roughnessTex = ResolveTexture(matRoughness, m_DefaultMidGrayTexture);
+            RHI::TexturePtr aoTex = ResolveTexture(matAO, m_DefaultWhiteTexture);
+            RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
 
-            // フレーム開始時にアロケータリセット
-            m_UniformAllocator.Reset();
+            allocation.DescriptorSet->BindTexture(1, albedoTex);
+            allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(2, normalTex);
+            allocation.DescriptorSet->BindSampler(2, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(3, metallicTex);
+            allocation.DescriptorSet->BindSampler(3, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(4, roughnessTex);
+            allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(5, aoTex);
+            allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindTexture(6, heightTex);
+            allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            allocation.DescriptorSet->BindStorageBuffer(7,
+                                                        context.InstanceDataBuffer,
+                                                        0,
+                                                        instanceDataSize);
+            allocation.DescriptorSet->Update();
 
-            auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
-
-            for (const auto &cmd : opaqueCommands)
-            {
-                // UBOスロット確保
-                auto allocation = m_UniformAllocator.Allocate();
-                if (!allocation.UniformBuffer)
-                {
-                    NORVES_LOG_WARNING("GBufferPass", "UBO allocation failed, skipping remaining objects");
-                    break;
-                }
-
-                // UBOデータ構築
-                PerObjectUBO uboData;
-                std::memcpy(uboData.view, viewData, sizeof(viewData));
-                std::memcpy(uboData.projection, projData, sizeof(projData));
-                std::memcpy(uboData.cameraPosition, cameraPos, sizeof(cameraPos));
-
-                // マテリアルからテクスチャとエミッシブを取得
-                TextureHandle matAlbedo;
-                TextureHandle matNormal;
-                TextureHandle matMetallic;
-                TextureHandle matRoughness;
-                TextureHandle matAO;
-                TextureHandle matHeight;
-                float matHeightScale = 0.05f;
-                float matEmissiveR = 0.0f, matEmissiveG = 0.0f, matEmissiveB = 0.0f;
-                float matEmissiveStrength = 0.0f;
-
-                if (cmd.Draw.MaterialHandle.IsValid() && materials)
-                {
-                    const auto *matData = materials->GetData(cmd.Draw.MaterialHandle);
-                    if (matData)
-                    {
-                        matAlbedo = matData->AlbedoTexture;
-                        matNormal = matData->NormalTexture;
-                        matMetallic = matData->MetallicTexture;
-                        matRoughness = matData->RoughnessTexture;
-                        matAO = matData->AOTexture;
-                        matHeight = matData->HeightTexture;
-                        matHeightScale = matData->HeightScale;
-                        matEmissiveR = matData->EmissiveColor[0];
-                        matEmissiveG = matData->EmissiveColor[1];
-                        matEmissiveB = matData->EmissiveColor[2];
-                        matEmissiveStrength = matData->EmissiveStrength;
-                    }
-                }
-
-                // エミッシブカラー（rgb=色, a=強度）
-                uboData.emissiveColor[0] = matEmissiveR;
-                uboData.emissiveColor[1] = matEmissiveG;
-                uboData.emissiveColor[2] = matEmissiveB;
-                uboData.emissiveColor[3] = matEmissiveStrength;
-
-                // POMパラメータ
-                uboData.pomParams[0] = matHeightScale;
-                uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
-                uboData.pomParams[2] = 0.0f;
-                uboData.pomParams[3] = 0.0f;
-
-                // UBO更新
-                allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
-
-                // PBRテクスチャバインド（マテリアル経由、未設定ならデフォルトテクスチャ）
-                auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTex) -> RHI::TexturePtr
-                {
-                    if (handle.IsValid() && textures)
-                    {
-                        auto tex = textures->GetRHITexturePtr(handle);
-                        if (tex)
-                        {
-                            return tex;
-                        }
-                    }
-                    return defaultTex;
-                };
-
-                RHI::TexturePtr albedoTex = ResolveTexture(matAlbedo, m_DefaultWhiteTexture);
-                RHI::TexturePtr normalTex = ResolveTexture(matNormal, m_DefaultFlatNormalTexture);
-                RHI::TexturePtr metallicTex = ResolveTexture(matMetallic, m_DefaultBlackTexture);
-                RHI::TexturePtr roughnessTex = ResolveTexture(matRoughness, m_DefaultMidGrayTexture);
-                RHI::TexturePtr aoTex = ResolveTexture(matAO, m_DefaultWhiteTexture);
-                RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
-
-                allocation.DescriptorSet->BindTexture(1, albedoTex);
-                allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(2, normalTex);
-                allocation.DescriptorSet->BindSampler(2, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(3, metallicTex);
-                allocation.DescriptorSet->BindSampler(3, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(4, roughnessTex);
-                allocation.DescriptorSet->BindSampler(4, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(5, aoTex);
-                allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindTexture(6, heightTex);
-                allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
-                allocation.DescriptorSet->BindStorageBuffer(7,
-                                                            context.InstanceDataBuffer,
-                                                            0,
-                                                            instanceDataSize);
-                allocation.DescriptorSet->Update();
-
-                DrawCommand drawCommand = cmd;
-                drawCommand.Pipeline = m_GBufferPipeline;
-                drawCommand.DescriptorSet = allocation.DescriptorSet;
-                drawCommand.DescriptorSetSlot = 0;
-                gBufferCommands->push_back(drawCommand);
-            }
-
-            context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_GBufferRenderPass,
-                                                                         m_GBufferFramebuffer,
-                                                                         gBufferCommands,
-                                                                         viewport,
-                                                                         scissor,
-                                                                         meshes));
+            DrawCommand drawCommand = cmd;
+            drawCommand.Pipeline = m_GBufferPipeline;
+            drawCommand.DescriptorSet = allocation.DescriptorSet;
+            drawCommand.DescriptorSetSlot = 0;
+            gBufferCommands->push_back(drawCommand);
         }
+
+        EnqueueGBufferGeometryPass(context, gBufferCommands, viewport, scissor, meshes);
+    }
+
+    void GBufferPass::EnqueueGBufferGeometryPass(
+        ViewRenderContext &context,
+        Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
+        const RHI::Viewport &viewport,
+        const RHI::ScissorRect &scissor,
+        MeshResources *meshes) const
+    {
+        if (!drawCommands)
+        {
+            drawCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+        }
+
+        context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_GBufferRenderPass,
+                                                                     m_GBufferFramebuffer,
+                                                                     drawCommands,
+                                                                     viewport,
+                                                                     scissor,
+                                                                     meshes));
+    }
+
+    bool GBufferPass::TryEnqueueNativeClearPass(ViewRenderContext &context,
+                                                const RHI::Viewport &viewport,
+                                                const RHI::ScissorRect &scissor,
+                                                MeshResources *meshes) const
+    {
+        if (!m_bUsingRenderGraphResources)
+        {
+            return false;
+        }
+
+        EnqueueGBufferGeometryPass(context,
+                                   MakeShared<Container::VariableArray<DrawCommand>>(),
+                                   viewport,
+                                   scissor,
+                                   meshes);
+        return true;
     }
 
     bool GBufferPass::CreateGBufferResources(uint32_t width, uint32_t height, ViewRenderContext &context)
     {
+        (void)context;
+
         if (!m_Device)
         {
             return false;
@@ -475,10 +625,102 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        return PrepareGBufferAttachments(width,
+                                         height,
+                                         m_AlbedoTexture,
+                                         m_NormalTexture,
+                                         m_MaterialTexture,
+                                         m_EmissiveTexture,
+                                         m_DepthTexture,
+                                         false);
+    }
+
+    uint32_t GBufferPass::ResolveGBufferWidth(const ViewRenderContext &context) const
+    {
+        return m_Settings.Width > 0 ? m_Settings.Width : context.GetActiveRenderWidth();
+    }
+
+    uint32_t GBufferPass::ResolveGBufferHeight(const ViewRenderContext &context) const
+    {
+        return m_Settings.Height > 0 ? m_Settings.Height : context.GetActiveRenderHeight();
+    }
+
+    bool GBufferPass::PrepareGBufferAttachments(uint32_t width,
+                                                uint32_t height,
+                                                const RHI::TexturePtr &albedo,
+                                                const RHI::TexturePtr &normal,
+                                                const RHI::TexturePtr &material,
+                                                const RHI::TexturePtr &emissive,
+                                                const RHI::TexturePtr &depth,
+                                                bool bUseRenderGraphInitialStates)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        if (!albedo || !normal || !material || !emissive || !depth)
+        {
+            NORVES_LOG_ERROR("GBufferPass", "GBuffer attachment textures are incomplete");
+            return false;
+        }
+
+        m_AlbedoTexture = albedo;
+        m_NormalTexture = normal;
+        m_MaterialTexture = material;
+        m_EmissiveTexture = emissive;
+        m_DepthTexture = depth;
+        m_CurrentWidth = width;
+        m_CurrentHeight = height;
+        m_bUsingRenderGraphResources = bUseRenderGraphInitialStates;
+
+        if (!EnsureGBufferRenderPass(bUseRenderGraphInitialStates))
+        {
+            return false;
+        }
+
+        if (!EnsureGBufferFramebuffer(width, height, albedo, normal, material, emissive, depth))
+        {
+            return false;
+        }
+
+        return EnsureGBufferPipeline();
+    }
+
+    bool GBufferPass::EnsureGBufferRenderPass(bool bUseRenderGraphInitialStates)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        if (m_GBufferRenderPass &&
+            m_bRenderPassUsesRenderGraphInitialStates == bUseRenderGraphInitialStates)
+        {
+            return true;
+        }
+
+        m_GBufferRenderPass.reset();
+        m_GBufferFramebuffer.reset();
+        m_GBufferPipeline.reset();
+        m_FramebufferAlbedoTexture = nullptr;
+        m_FramebufferNormalTexture = nullptr;
+        m_FramebufferMaterialTexture = nullptr;
+        m_FramebufferEmissiveTexture = nullptr;
+        m_FramebufferDepthTexture = nullptr;
+        m_FramebufferWidth = 0;
+        m_FramebufferHeight = 0;
+
         // ========================================
         // MRT対応レンダーパス作成（4カラー + 1デプス）
         // ========================================
         RHI::RenderPassDesc rpDesc;
+        const RHI::ResourceState colorInitialState = bUseRenderGraphInitialStates
+                                                         ? RHI::ResourceState::RenderTarget
+                                                         : RHI::ResourceState::Undefined;
+        const RHI::ResourceState depthInitialState = bUseRenderGraphInitialStates
+                                                         ? RHI::ResourceState::DepthWrite
+                                                         : RHI::ResourceState::Undefined;
 
         // Albedo アタッチメント
         RHI::AttachmentDesc albedoAttach;
@@ -491,7 +733,7 @@ namespace NorvesLib::Core::Rendering
         albedoAttach.clearColor[3] = 0.0f;
         albedoAttach.loadOp = RHI::AttachmentLoadOp::Clear;
         albedoAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        albedoAttach.initialState = RHI::ResourceState::Undefined;
+        albedoAttach.initialState = colorInitialState;
         albedoAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(albedoAttach);
 
@@ -506,7 +748,7 @@ namespace NorvesLib::Core::Rendering
         normalAttach.clearColor[3] = 0.0f;
         normalAttach.loadOp = RHI::AttachmentLoadOp::Clear;
         normalAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        normalAttach.initialState = RHI::ResourceState::Undefined;
+        normalAttach.initialState = colorInitialState;
         normalAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(normalAttach);
 
@@ -521,7 +763,7 @@ namespace NorvesLib::Core::Rendering
         materialAttach.clearColor[3] = 0.0f;
         materialAttach.loadOp = RHI::AttachmentLoadOp::Clear;
         materialAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        materialAttach.initialState = RHI::ResourceState::Undefined;
+        materialAttach.initialState = colorInitialState;
         materialAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(materialAttach);
 
@@ -536,7 +778,7 @@ namespace NorvesLib::Core::Rendering
         emissiveAttach.clearColor[3] = 0.0f;
         emissiveAttach.loadOp = RHI::AttachmentLoadOp::Clear;
         emissiveAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        emissiveAttach.initialState = RHI::ResourceState::Undefined;
+        emissiveAttach.initialState = colorInitialState;
         emissiveAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(emissiveAttach);
 
@@ -549,7 +791,7 @@ namespace NorvesLib::Core::Rendering
         rpDesc.depthStencilAttachment.clearStencil = 0;
         rpDesc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
         rpDesc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-        rpDesc.depthStencilAttachment.initialState = RHI::ResourceState::Undefined;
+        rpDesc.depthStencilAttachment.initialState = depthInitialState;
         rpDesc.depthStencilAttachment.finalState = RHI::ResourceState::ShaderResource;
 
         m_GBufferRenderPass = m_Device->CreateRenderPass(rpDesc);
@@ -557,6 +799,30 @@ namespace NorvesLib::Core::Rendering
         {
             NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer render pass");
             return false;
+        }
+
+        m_bRenderPassUsesRenderGraphInitialStates = bUseRenderGraphInitialStates;
+        return true;
+    }
+
+    bool GBufferPass::EnsureGBufferFramebuffer(uint32_t width,
+                                               uint32_t height,
+                                               const RHI::TexturePtr &albedo,
+                                               const RHI::TexturePtr &normal,
+                                               const RHI::TexturePtr &material,
+                                               const RHI::TexturePtr &emissive,
+                                               const RHI::TexturePtr &depth)
+    {
+        if (m_GBufferFramebuffer &&
+            m_FramebufferWidth == width &&
+            m_FramebufferHeight == height &&
+            m_FramebufferAlbedoTexture == albedo.get() &&
+            m_FramebufferNormalTexture == normal.get() &&
+            m_FramebufferMaterialTexture == material.get() &&
+            m_FramebufferEmissiveTexture == emissive.get() &&
+            m_FramebufferDepthTexture == depth.get())
+        {
+            return true;
         }
 
         // ========================================
@@ -576,6 +842,28 @@ namespace NorvesLib::Core::Rendering
         if (!m_GBufferFramebuffer)
         {
             NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer framebuffer");
+            return false;
+        }
+
+        m_FramebufferAlbedoTexture = albedo.get();
+        m_FramebufferNormalTexture = normal.get();
+        m_FramebufferMaterialTexture = material.get();
+        m_FramebufferEmissiveTexture = emissive.get();
+        m_FramebufferDepthTexture = depth.get();
+        m_FramebufferWidth = width;
+        m_FramebufferHeight = height;
+        return true;
+    }
+
+    bool GBufferPass::EnsureGBufferPipeline()
+    {
+        if (m_GBufferPipeline)
+        {
+            return true;
+        }
+
+        if (!m_Device || !m_GBufferRenderPass || !m_GBufferVertexShader || !m_GBufferFragmentShader)
+        {
             return false;
         }
 
@@ -673,7 +961,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        NORVES_LOG_INFO("GBufferPass", "GBuffer resources created (%ux%u)", width, height);
+        NORVES_LOG_INFO("GBufferPass", "GBuffer resources created (%ux%u)", m_CurrentWidth, m_CurrentHeight);
         return true;
     }
 

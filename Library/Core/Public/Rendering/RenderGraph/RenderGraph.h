@@ -39,6 +39,7 @@ namespace NorvesLib::Core::Rendering
         bool AddDependency(uint32_t beforePassIndex, uint32_t afterPassIndex);
 
         bool Compile();
+        bool Compile(const ViewRenderContext& context);
         bool Execute(ViewRenderContext& context);
 
         const Container::VariableArray<uint32_t>& GetCompiledPassOrder() const
@@ -85,6 +86,7 @@ namespace NorvesLib::Core::Rendering
             RGResourceHandle Resource;
             RGAccessMode Mode = RGAccessMode::Read;
             RHI::ResourceState State = RHI::ResourceState::ShaderResource;
+            RHI::ResourceState FinalState = RHI::ResourceState::ShaderResource;
         };
 
         struct RGPassDeclaration
@@ -112,9 +114,11 @@ namespace NorvesLib::Core::Rendering
         void AddAccess(uint32_t passIndex,
                        RGResourceHandle handle,
                        RGAccessMode mode,
-                       RHI::ResourceState state);
+                       RHI::ResourceState state,
+                       RHI::ResourceState finalState);
         void AddPreserveInsertionOrder(uint32_t passIndex);
 
+        bool CompileInternal(const ViewRenderContext* context);
         bool ValidatePassIndex(uint32_t passIndex) const;
         bool ValidateHandle(RGResourceHandle handle) const;
         bool AddEdge(uint32_t beforePassIndex,

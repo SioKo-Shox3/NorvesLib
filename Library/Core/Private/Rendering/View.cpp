@@ -2,6 +2,7 @@
 #include "Rendering/Viewport.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/PostProcessStack.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/LegacyViewPassAdapter.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
@@ -219,6 +220,7 @@ namespace NorvesLib::Core::Rendering
 
                 Container::VariableArray<LegacyViewPassAdapter> adapters;
                 adapters.reserve(m_Passes.size() + (m_PostProcessStack ? 1u : 0u));
+                bool bGraphBuildSucceeded = true;
 
                 for (auto &pass : m_Passes)
                 {
@@ -227,19 +229,38 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
 
+                    IRenderGraphPass* graphPass = dynamic_cast<IRenderGraphPass*>(pass.get());
+                    if (graphPass)
+                    {
+                        if (!pass->IsInitialized())
+                        {
+                            if (!pass->Initialize(context))
+                            {
+                                NORVES_LOG_ERROR("View",
+                                                 "Failed to initialize native RenderGraph pass: %s; falling back to direct pass chain",
+                                                 pass->GetName());
+                                bGraphBuildSucceeded = false;
+                                break;
+                            }
+                        }
+
+                        context.Graph->AddPass(graphPass);
+                        continue;
+                    }
+
                     adapters.emplace_back(pass.get());
                     context.Graph->AddPass(&adapters.back());
                 }
 
-                if (m_PostProcessStack && m_PostProcessStack->GetPassCount() > 0)
+                if (bGraphBuildSucceeded && m_PostProcessStack && m_PostProcessStack->GetPassCount() > 0)
                 {
                     adapters.emplace_back(m_PostProcessStack.get());
                     context.Graph->AddPass(&adapters.back());
                 }
 
-                if (context.Graph->GetPassCount() > 0)
+                if (bGraphBuildSucceeded && context.Graph->GetPassCount() > 0)
                 {
-                    if (context.Graph->Compile())
+                    if (context.Graph->Compile(context))
                     {
                         if (!context.Graph->Execute(context))
                         {
