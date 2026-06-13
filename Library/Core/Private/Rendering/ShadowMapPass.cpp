@@ -6,6 +6,8 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IBuffer.h"
@@ -228,6 +230,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_ShadowMapTexture.reset();
+        m_ShadowMapHandle = {};
         m_ShadowRenderPass.reset();
         m_ShadowFramebuffer.reset();
         m_ShadowPipeline.reset();
@@ -245,6 +248,31 @@ namespace NorvesLib::Core::Rendering
     void ShadowMapPass::Setup(ViewRenderContext &context)
     {
         // シャドウマップは固定解像度のため、リサイズ処理は不要
+    }
+
+    void ShadowMapPass::Declare(RenderGraphBuilder &builder)
+    {
+        m_ShadowMapHandle = {};
+        if (m_ShadowMapTexture)
+        {
+            m_ShadowMapHandle = builder.ImportTexture(m_ShadowMapTexture,
+                                                      RHI::ResourceState::DepthWrite,
+                                                      "ShadowMap");
+            if (m_ShadowMapHandle.IsValid())
+            {
+                builder.Write(m_ShadowMapHandle,
+                              RHI::ResourceState::DepthWrite,
+                              RHI::ResourceState::ShaderResource);
+            }
+        }
+
+        builder.PreserveInsertionOrder();
+    }
+
+    void ShadowMapPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        (void)resources;
+        Execute(context);
     }
 
     void ShadowMapPass::Execute(ViewRenderContext &context)

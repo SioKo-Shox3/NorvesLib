@@ -4,6 +4,7 @@
 #include "Rendering/FXAAPass.h"
 #include "Rendering/ForwardPass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/ShadowMapPass.h"
 #include "Rendering/SSAOPass.h"
 #include "Rendering/SSRPass.h"
 #include "Rendering/ToneMappingPass.h"
@@ -1373,6 +1374,87 @@ namespace
         assert(order.size() == 2);
         assert(order[0] == 0);
         assert(order[1] == 1);
+    }
+
+    void TestShadowMapNativeDeclareImportsDepthOutput()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        FakeCommandList commandList;
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.CommandList = &commandList;
+        context.ShaderMgr = &shaderManager;
+
+        ShadowMapPass pass;
+        assert(pass.Initialize(context));
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        const uint32_t passIndex = graph.AddPass(&pass);
+
+        assert(graph.Compile(context));
+        assert(pass.GetShadowMapHandle().IsValid());
+        assert(graph.GetDeclaredPassAccessCount(passIndex) == 1);
+
+        RGResourceHandle resource;
+        RGAccessMode mode = RGAccessMode::Read;
+        RHI::ResourceState state = RHI::ResourceState::Undefined;
+        RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+        assert(graph.TryGetDeclaredPassAccess(passIndex, 0, resource, mode, state, finalState));
+        assert(resource == pass.GetShadowMapHandle());
+        assert(mode == RGAccessMode::Write);
+        assert(state == RHI::ResourceState::DepthWrite);
+        assert(finalState == RHI::ResourceState::ShaderResource);
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr shadowMap = graphResources.GetTexture(pass.GetShadowMapHandle());
+        assert(shadowMap.get() == pass.GetShadowMapTexture());
+        assert(graph.GetCompiledBarriers().empty());
+
+        pass.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestShadowMapNativeExecuteRegistersBridge()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.CommandList = &commandList;
+        context.ShaderMgr = &shaderManager;
+        context.SharedResources = &sharedResources;
+
+        ShadowMapPass pass;
+        assert(pass.Initialize(context));
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        graph.AddPass(&pass);
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr shadowMap = graphResources.GetTexture(pass.GetShadowMapHandle());
+        assert(shadowMap.get() == pass.GetShadowMapTexture());
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(sharedResources.HasTexture("ShadowMap"));
+        assert(sharedResources.GetTexturePtr("ShadowMap").get() == pass.GetShadowMapTexture());
+        assert(commandList.BeginRenderPassCount == 0);
+        assert(commandList.DrawCallCount == 0);
+
+        pass.Shutdown();
+        shaderManager.Shutdown();
     }
 
     void TestGBufferNativeDeclareCreatesTransientOutputs()
@@ -3217,6 +3299,7 @@ int main()
     TestInvalidHandleRejected();
     TestCompileContextPassedToDeclare();
     TestWriteFinalStateSuppressesFollowupReadBarrier();
+    TestShadowMapNativeDeclareImportsDepthOutput();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();
@@ -3226,6 +3309,7 @@ int main()
     TestToneMappingNativeDeclareDependencies();
     TestFXAANativeDeclareDependencies();
     TestUpscaleNativeDeclareDependencies();
+    TestShadowMapNativeExecuteRegistersBridge();
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
     TestGBufferSSAONativeExecuteRegistersBridge();
     TestGBufferSSAOLightingNativeExecuteRegistersBridge();
