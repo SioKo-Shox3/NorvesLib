@@ -3,6 +3,7 @@
 #include "IViewPass.h"
 #include "SceneRenderer.h"
 #include "DynamicUniformAllocator.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -47,7 +48,7 @@ namespace NorvesLib::Core::Rendering
      * 出力（SharedResourceRegistryに登録）:
      * - "ShadowMap" : 深度テクスチャ (D32_FLOAT)
      */
-    class ShadowMapPass : public IViewPass
+    class ShadowMapPass : public IViewPass, public IRenderGraphPass
     {
     public:
         /**
@@ -71,6 +72,8 @@ namespace NorvesLib::Core::Rendering
         void Shutdown() override;
         void Setup(ViewRenderContext &context) override;
         void Execute(ViewRenderContext &context) override;
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
 
         // ========================================
         // SceneView連携
@@ -92,7 +95,8 @@ namespace NorvesLib::Core::Rendering
         // シャドウマップアクセス
         // ========================================
 
-        RHI::ITexture *GetShadowMapTexture() const { return m_ShadowMapTexture.get(); }
+        RHI::ITexture* GetShadowMapTexture() const { return m_ShadowMapTexture.get(); }
+        RGResourceHandle GetShadowMapHandle() const { return m_ShadowMapHandle; }
 
     private:
         // 設定
@@ -104,6 +108,7 @@ namespace NorvesLib::Core::Rendering
 
         // シャドウマップ深度テクスチャ
         RHI::TexturePtr m_ShadowMapTexture;
+        RGResourceHandle m_ShadowMapHandle;
 
         // レンダーパス・フレームバッファ
         RHI::RenderPassPtr m_ShadowRenderPass;
