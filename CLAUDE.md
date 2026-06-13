@@ -1,8 +1,8 @@
-# AGENTS.md
+# CLAUDE.md
 
-This file provides guidance to Codex (and other coding agents) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **この文書は `CLAUDE.md` と完全に同一内容で運用する。** Claude Code は `CLAUDE.md`、Codex は `AGENTS.md` を読むが、中身は常に揃える。一方を編集したら必ずもう一方へ同じ変更を反映すること。外部ファイル（旧 `.github/copilot-instructions.md` 等）は参照しない。この文書が唯一の一次情報。
+> **この文書は `AGENTS.md` と完全に同一内容で運用する。** Claude Code は `CLAUDE.md`、Codex は `AGENTS.md` を読むが、中身は常に揃える。一方を編集したら必ずもう一方へ同じ変更を反映すること。外部ファイル（旧 `.github/copilot-instructions.md` 等）は参照しない。この文書が唯一の一次情報。
 
 ---
 
