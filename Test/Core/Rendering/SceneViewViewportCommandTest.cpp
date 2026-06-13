@@ -14,7 +14,7 @@ namespace
                         float centerZ = 0.0f,
                         float radius = 1.0f)
     {
-        MeshProxy proxy;
+        MeshProxy proxy{};
         proxy.ObjectId = objectId;
         proxy.MeshHandle.Id = meshId;
         proxy.MaterialCount = 1;

@@ -9,6 +9,11 @@
 #include "Container/Containers.h"
 #include <cstdint>
 
+namespace NorvesLib::Core::Rendering
+{
+    class MaterialResources;
+}
+
 namespace NorvesLib::Core::Component
 {
 
@@ -222,7 +227,8 @@ namespace NorvesLib::Core::Component
          * @param outProxy 出力先
          * @return 有効なProxyが生成できた場合true
          */
-        bool BuildMeshProxy(Rendering::MeshProxy &outProxy) const;
+        bool BuildMeshProxy(Rendering::MeshProxy &outProxy,
+                            const Rendering::MaterialResources *materials = nullptr) const;
 
     protected:
         // ========================================

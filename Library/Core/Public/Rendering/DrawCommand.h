@@ -47,6 +47,9 @@ namespace NorvesLib::Core::Rendering
         // マテリアル
         MaterialHandle MaterialHandle; // マテリアルハンドル
         uint32_t MaterialIndex = 0;    // マテリアルインデックス
+        BlendMode MaterialBlendMode = BlendMode::Opaque;
+        float SortDepth = 0.0f;
+        uint64_t ObjectId = 0;
 
         // インスタンシング
         uint32_t InstanceCount = 1;      // インスタンス数
@@ -216,6 +219,8 @@ namespace NorvesLib::Core::Rendering
         MeshDataHandle MeshHandle;     // メッシュハンドル
         MaterialHandle MaterialHandle; // マテリアルハンドル
         uint32_t SubMeshIndex = 0;     // サブメッシュインデックス
+        BlendMode MaterialBlendMode = BlendMode::Opaque;
+        float SortDepth = 0.0f;
         bool bCastShadow = true;       // シャドウを落とすか
 
         // ========================================
@@ -249,6 +254,7 @@ namespace NorvesLib::Core::Rendering
         struct PerInstanceExtraData
         {
             float CustomData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            float SortDepth = 0.0f;
             bool bCastShadow = true;
         };
         Container::VariableArray<PerInstanceExtraData> InstanceExtraData;
@@ -263,7 +269,8 @@ namespace NorvesLib::Core::Rendering
          * @param objectId オブジェクトID
          */
         void AddInstance(const Math::Matrix4x4 &worldTransform, uint64_t objectId = 0,
-                         const float *customData = nullptr, bool bCastShadow = true)
+                         const float *customData = nullptr, bool bCastShadow = true,
+                         float sortDepth = 0.0f)
         {
             InstanceTransforms.push_back(worldTransform);
             InstanceObjectIds.push_back(objectId);
@@ -275,8 +282,14 @@ namespace NorvesLib::Core::Rendering
                 extra.CustomData[2] = customData[2];
                 extra.CustomData[3] = customData[3];
             }
+            extra.SortDepth = sortDepth;
             extra.bCastShadow = bCastShadow;
             InstanceExtraData.push_back(extra);
+
+            if (InstanceTransforms.size() == 1 || sortDepth < SortDepth)
+            {
+                SortDepth = sortDepth;
+            }
         }
 
         /**
@@ -305,7 +318,9 @@ namespace NorvesLib::Core::Rendering
          */
         bool IsInstanced(uint32_t minInstanceCount, bool bAllowInstancing) const
         {
-            return bAllowInstancing && GetInstanceCount() >= minInstanceCount;
+            return bAllowInstancing &&
+                   GetInstanceCount() >= minInstanceCount &&
+                   (MaterialBlendMode == BlendMode::Opaque || MaterialBlendMode == BlendMode::Masked);
         }
     };
 

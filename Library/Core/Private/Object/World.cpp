@@ -267,7 +267,7 @@ namespace NorvesLib::Core
         m_bForceFullProxySync = true;
     }
 
-    void World::SyncToSceneView()
+    void World::SyncToSceneView(const Rendering::MaterialResources *materials)
     {
         if (!m_SceneView || !HasFlag(OF_Initialized))
         {
@@ -316,7 +316,7 @@ namespace NorvesLib::Core
 
                         // MeshProxyを構築
                         Rendering::MeshProxy meshProxy;
-                        if (meshComp->BuildMeshProxy(meshProxy))
+                        if (meshComp->BuildMeshProxy(meshProxy, materials))
                         {
                             // ObjectIdとComponentIdを設定
                             meshProxy.ObjectId = obj->GetObjectId();

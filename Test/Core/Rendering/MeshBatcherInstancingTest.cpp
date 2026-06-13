@@ -12,7 +12,7 @@ namespace
                         uint64_t materialId,
                         const NorvesLib::Math::Matrix4x4 &world)
     {
-        MeshProxy proxy;
+        MeshProxy proxy{};
         proxy.ObjectId = objectId;
         proxy.MeshHandle.Id = meshId;
         proxy.MaterialCount = 1;
@@ -24,11 +24,14 @@ namespace
 
     MeshProxy MakeProxy(uint64_t objectId,
                         uint64_t meshId,
-                        uint64_t materialId)
+                        uint64_t materialId,
+                        BlendMode blendMode = BlendMode::Opaque)
     {
         NorvesLib::Math::Matrix4x4 world;
         world.m30 = static_cast<float>(objectId);
-        return MakeProxy(objectId, meshId, materialId, world);
+        MeshProxy proxy = MakeProxy(objectId, meshId, materialId, world);
+        proxy.MaterialBlendModes[0] = blendMode;
+        return proxy;
     }
 
     void Generate(MeshBatcher &batcher,
@@ -224,6 +227,30 @@ namespace
         assert(instanceData[0].CustomData[2] == 0.0f);
         assert(instanceData[0].CustomData[3] == 0.5f);
     }
+
+    void TestTransparentBatchNeverInstances()
+    {
+        MeshBatcher batcher;
+        NorvesLib::Core::Container::VariableArray<DrawCommand> commands;
+        NorvesLib::Core::Container::VariableArray<GPUSceneInstanceData> instanceData;
+
+        batcher.BeginBatching();
+        batcher.AddMeshProxy(MakeProxy(1, 100, 200, BlendMode::Translucent));
+        batcher.AddMeshProxy(MakeProxy(2, 100, 200, BlendMode::Translucent));
+        batcher.AddMeshProxy(MakeProxy(3, 100, 200, BlendMode::Translucent));
+        Generate(batcher, commands, instanceData, true, 2);
+
+        assert(commands.size() == 3);
+        assert(instanceData.size() == 3);
+        for (const DrawCommand &command : commands)
+        {
+            assert(!command.Draw.bInstanced);
+            assert(command.Draw.InstanceCount == 1);
+            assert(command.Draw.MaterialBlendMode == BlendMode::Translucent);
+        }
+        assert(batcher.GetStats().InstancedDrawCalls == 0);
+        assert(batcher.GetStats().SavedDrawCalls == 0);
+    }
 }
 
 int main()
@@ -237,6 +264,7 @@ int main()
     TestSubMeshSeparation();
     TestCastShadowSeparation();
     TestObjectColorFlatten();
+    TestTransparentBatchNeverInstances();
 
     std::cout << "MeshBatcherInstancingTest passed\n";
     return 0;

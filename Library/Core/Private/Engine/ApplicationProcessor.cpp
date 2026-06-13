@@ -410,7 +410,7 @@ namespace NorvesLib::Core::Engine
         GEngine->GetWorld().Tick(deltaTime);
 
         // ワールドからSceneViewへProxy同期
-        GEngine->GetWorld().SyncToSceneView();
+        GEngine->GetWorld().SyncToSceneView(&GEngine->GetRenderResources().Materials());
 
         // OnPreRender呼び出し
         if (handler)

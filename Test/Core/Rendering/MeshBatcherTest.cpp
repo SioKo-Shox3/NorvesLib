@@ -12,7 +12,7 @@ namespace
                         uint64_t materialId,
                         const NorvesLib::Math::Matrix4x4 &world)
     {
-        MeshProxy proxy;
+        MeshProxy proxy{};
         proxy.ObjectId = objectId;
         proxy.MeshHandle.Id = meshId;
         proxy.MaterialCount = 1;

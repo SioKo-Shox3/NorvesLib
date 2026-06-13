@@ -1,11 +1,33 @@
 ﻿#include "Component/MeshComponent.h"
 #include "Object/WorldObject.h"
+#include "Rendering/RenderResources.h"
 #include "Logging/LogMacros.h"
 #include <cmath>
 
 namespace NorvesLib::Core::Component
 {
     IMPLEMENT_CLASS(MeshComponent, Component)
+
+    namespace
+    {
+        Rendering::BlendMode ResolveMaterialBlendMode(
+            Rendering::MaterialHandle handle,
+            const Rendering::MaterialResources *materials)
+        {
+            if (!handle.IsValid() || materials == nullptr)
+            {
+                return Rendering::BlendMode::Opaque;
+            }
+
+            const Rendering::MaterialResourceData *materialData = materials->GetData(handle);
+            if (materialData == nullptr)
+            {
+                return Rendering::BlendMode::Opaque;
+            }
+
+            return materialData->Blend;
+        }
+    } // namespace
 
     MeshComponent::MeshComponent()
         : Component()
@@ -161,7 +183,8 @@ namespace NorvesLib::Core::Component
     // SceneProxy生成
     // ========================================
 
-    bool MeshComponent::BuildMeshProxy(Rendering::MeshProxy &outProxy) const
+    bool MeshComponent::BuildMeshProxy(Rendering::MeshProxy &outProxy,
+                                       const Rendering::MaterialResources *materials) const
     {
         // メッシュが無効なら生成しない
         if (!MeshHandle->IsValid())
@@ -174,6 +197,8 @@ namespace NorvesLib::Core::Component
         {
             return false;
         }
+
+        outProxy = Rendering::MeshProxy{};
 
         // Proxyを構築
         outProxy.ObjectId = GetOwnerId();
@@ -189,16 +214,21 @@ namespace NorvesLib::Core::Component
         outProxy.WorldBounds = m_WorldBounds;
 
         // マテリアル
-        outProxy.MaterialCount = static_cast<uint32_t>(m_Materials.size());
-        for (uint32_t i = 0; i < m_Materials.size() && i < Rendering::MAX_MATERIAL_SLOTS; ++i)
+        const uint32_t materialCount = static_cast<uint32_t>(m_Materials.size());
+        outProxy.MaterialCount = materialCount < Rendering::MAX_MATERIAL_SLOTS
+                                     ? materialCount
+                                     : Rendering::MAX_MATERIAL_SLOTS;
+        for (uint32_t i = 0; i < outProxy.MaterialCount; ++i)
         {
             outProxy.Materials[i] = m_Materials[i];
+            outProxy.MaterialBlendModes[i] = ResolveMaterialBlendMode(m_Materials[i], materials);
         }
         // マテリアル数が0の場合はデフォルトマテリアルを1つ入れる
         if (outProxy.MaterialCount == 0)
         {
             outProxy.MaterialCount = 1;
             outProxy.Materials[0] = Rendering::MaterialHandle::Invalid();
+            outProxy.MaterialBlendModes[0] = Rendering::BlendMode::Opaque;
         }
 
         // 描画フラグ
