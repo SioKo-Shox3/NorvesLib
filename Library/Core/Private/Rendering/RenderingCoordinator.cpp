@@ -26,6 +26,7 @@
 #include "RHI/IGPUResourceAllocator.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
+#include <cassert>
 #include <chrono>
 #include <algorithm>
 #include <cmath>
@@ -129,12 +130,64 @@ namespace NorvesLib::Core::Rendering
             return baseInstance;
         }
 
-        void CopyRebasedDrawCommands(const Container::VariableArray<DrawCommand> &source,
-                                     uint32_t baseInstance,
-                                     Container::VariableArray<DrawCommand> &destination)
+        CommandRange AppendRebasedDrawCommands(const Container::VariableArray<DrawCommand> &source,
+                                               uint32_t baseInstance,
+                                               Container::VariableArray<DrawCommand> &destination)
         {
-            destination = source;
-            RebaseDrawCommandInstanceRange(destination, baseInstance);
+            CommandRange range;
+            if (source.empty())
+            {
+                return range;
+            }
+
+            range.First = static_cast<uint32_t>(destination.size());
+            range.Count = static_cast<uint32_t>(source.size());
+            destination.insert(destination.end(), source.begin(), source.end());
+
+            if (baseInstance == 0)
+            {
+                return range;
+            }
+
+            const uint32_t rangeEnd = range.End();
+            for (uint32_t index = range.First; index < rangeEnd; ++index)
+            {
+                DrawCommand &command = destination[index];
+                if (!command.IsGraphicsCommand())
+                {
+                    continue;
+                }
+
+                command.Draw.FirstInstance += baseInstance;
+                command.Draw.InstanceDataOffset += baseInstance;
+            }
+
+            return range;
+        }
+
+        CommandRange CombineCommandRanges(const CommandRange &opaqueRange,
+                                          const CommandRange &transparentRange)
+        {
+            if (opaqueRange.IsEmpty())
+            {
+                return transparentRange;
+            }
+
+            if (transparentRange.IsEmpty())
+            {
+                return opaqueRange;
+            }
+
+            return {opaqueRange.First, opaqueRange.Count + transparentRange.Count};
+        }
+
+        uint32_t ResolveFrameIndex(const RHI::ISwapChain &swapChain)
+        {
+            const uint32_t frameIndex = swapChain.GetCurrentFrameIndex();
+            [[maybe_unused]] const uint32_t maxFramesInFlight = swapChain.GetMaxFramesInFlight();
+            assert(maxFramesInFlight > 0);
+            assert(frameIndex < maxFramesInFlight);
+            return frameIndex;
         }
 
     } // namespace
@@ -492,9 +545,6 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         m_PacketManager.Initialize();
 
-        // DrawCommand用バッファを確保
-        m_FrameDrawCommands.reserve(m_MaxDrawCallsPerFrame);
-
         m_bInitialized = true;
         LOG_INFO("RenderingCoordinator::Initialize() - Initialization completed successfully");
         return true;
@@ -670,8 +720,6 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        m_FrameDrawCommands.clear();
-
         NORVES_STAT_TIME_START(cmdGen);
 
         if (m_CurrentPacket)
@@ -698,8 +746,10 @@ namespace NorvesLib::Core::Rendering
             }
 
             m_CurrentPacket->DrawCommands.clear();
-            m_CurrentPacket->OpaqueCommands.clear();
-            m_CurrentPacket->TransparentCommands.clear();
+            m_CurrentPacket->DrawCommands.reserve(m_MaxDrawCallsPerFrame);
+            m_CurrentPacket->DrawCommandRange = CommandRange{};
+            m_CurrentPacket->OpaqueCommandRange = CommandRange{};
+            m_CurrentPacket->TransparentCommandRange = CommandRange{};
             m_CurrentPacket->InstanceData.clear();
             m_CurrentPacket->Views.clear();
         }
@@ -732,24 +782,27 @@ namespace NorvesLib::Core::Rendering
                 const uint32_t instanceBase =
                     AppendInstanceDataToPacket(m_CurrentPacket, sceneView->GetInstanceData());
 
-                Container::VariableArray<DrawCommand> drawCommands;
-                Container::VariableArray<DrawCommand> opaqueCommands;
-                Container::VariableArray<DrawCommand> transparentCommands;
-                CopyRebasedDrawCommands(sceneView->GetDrawCommands(), instanceBase, drawCommands);
-                CopyRebasedDrawCommands(sceneView->GetOpaqueCommands(), instanceBase, opaqueCommands);
-                CopyRebasedDrawCommands(sceneView->GetTransparentCommands(), instanceBase, transparentCommands);
-
-                if (!drawCommands.empty())
+                CommandRange opaqueCommandRange;
+                CommandRange transparentCommandRange;
+                CommandRange drawCommandRange;
+                if (m_CurrentPacket)
                 {
-                    m_FrameDrawCommands.insert(m_FrameDrawCommands.end(),
-                                               drawCommands.begin(), drawCommands.end());
+                    opaqueCommandRange =
+                        AppendRebasedDrawCommands(sceneView->GetOpaqueCommands(),
+                                                  instanceBase,
+                                                  m_CurrentPacket->DrawCommands);
+                    transparentCommandRange =
+                        AppendRebasedDrawCommands(sceneView->GetTransparentCommands(),
+                                                  instanceBase,
+                                                  m_CurrentPacket->DrawCommands);
+                    drawCommandRange = CombineCommandRanges(opaqueCommandRange, transparentCommandRange);
                 }
 
                 if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
                 {
-                    m_CurrentPacket->DrawCommands = drawCommands;
-                    m_CurrentPacket->OpaqueCommands = opaqueCommands;
-                    m_CurrentPacket->TransparentCommands = transparentCommands;
+                    m_CurrentPacket->DrawCommandRange = drawCommandRange;
+                    m_CurrentPacket->OpaqueCommandRange = opaqueCommandRange;
+                    m_CurrentPacket->TransparentCommandRange = transparentCommandRange;
                     bLegacyCommandsSet = true;
                 }
             }
@@ -777,28 +830,26 @@ namespace NorvesLib::Core::Rendering
 
                     const uint32_t instanceBase =
                         AppendInstanceDataToPacket(m_CurrentPacket, sceneView->GetInstanceData());
-                    CopyRebasedDrawCommands(sceneView->GetDrawCommands(),
-                                            instanceBase,
-                                            viewportPlan.DrawCommands);
-                    CopyRebasedDrawCommands(sceneView->GetOpaqueCommands(),
-                                            instanceBase,
-                                            viewportPlan.OpaqueCommands);
-                    CopyRebasedDrawCommands(sceneView->GetTransparentCommands(),
-                                            instanceBase,
-                                            viewportPlan.TransparentCommands);
-
-                    if (!viewportPlan.DrawCommands.empty())
+                    if (m_CurrentPacket)
                     {
-                        m_FrameDrawCommands.insert(m_FrameDrawCommands.end(),
-                                                   viewportPlan.DrawCommands.begin(),
-                                                   viewportPlan.DrawCommands.end());
+                        viewportPlan.OpaqueCommandRange =
+                            AppendRebasedDrawCommands(sceneView->GetOpaqueCommands(),
+                                                      instanceBase,
+                                                      m_CurrentPacket->DrawCommands);
+                        viewportPlan.TransparentCommandRange =
+                            AppendRebasedDrawCommands(sceneView->GetTransparentCommands(),
+                                                      instanceBase,
+                                                      m_CurrentPacket->DrawCommands);
+                        viewportPlan.DrawCommandRange =
+                            CombineCommandRanges(viewportPlan.OpaqueCommandRange,
+                                                 viewportPlan.TransparentCommandRange);
                     }
 
                     if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
                     {
-                        m_CurrentPacket->DrawCommands = viewportPlan.DrawCommands;
-                        m_CurrentPacket->OpaqueCommands = viewportPlan.OpaqueCommands;
-                        m_CurrentPacket->TransparentCommands = viewportPlan.TransparentCommands;
+                        m_CurrentPacket->DrawCommandRange = viewportPlan.DrawCommandRange;
+                        m_CurrentPacket->OpaqueCommandRange = viewportPlan.OpaqueCommandRange;
+                        m_CurrentPacket->TransparentCommandRange = viewportPlan.TransparentCommandRange;
                         bLegacyCommandsSet = true;
                     }
                 }
@@ -814,7 +865,8 @@ namespace NorvesLib::Core::Rendering
 
         NORVES_STAT_TIME_END(cmdGen, m_Stats.CommandGenerationTimeMs);
 
-        NORVES_STAT_ADD(m_Stats.DrawCalls, static_cast<uint32_t>(m_FrameDrawCommands.size()));
+        NORVES_STAT_ADD(m_Stats.DrawCalls,
+                        m_CurrentPacket ? static_cast<uint32_t>(m_CurrentPacket->DrawCommands.size()) : 0u);
     }
 
     FramePacket* RenderingCoordinator::EndFrame()
@@ -899,7 +951,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        const uint32_t frameIndex = swapChain->GetCurrentFrameIndex();
+        const uint32_t frameIndex = ResolveFrameIndex(*swapChain);
         m_TransientPool.BeginFrame(frameIndex);
         m_RenderGraph.BeginFrame(frameIndex);
         RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
@@ -990,9 +1042,13 @@ namespace NorvesLib::Core::Rendering
 
         // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
         viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;
-        viewContext.SnapshotDrawCommands = &packet->DrawCommands;
-        viewContext.SnapshotOpaqueCommands = &packet->OpaqueCommands;
-        viewContext.SnapshotTransparentCommands = &packet->TransparentCommands;
+        viewContext.SnapshotDrawCommandSource = &packet->DrawCommands;
+        viewContext.SnapshotDrawCommands = DrawCommandView::FromRange(packet->DrawCommands,
+                                                                      packet->DrawCommandRange);
+        viewContext.SnapshotOpaqueCommands = DrawCommandView::FromRange(packet->DrawCommands,
+                                                                        packet->OpaqueCommandRange);
+        viewContext.SnapshotTransparentCommands = DrawCommandView::FromRange(packet->DrawCommands,
+                                                                             packet->TransparentCommandRange);
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 

@@ -192,6 +192,76 @@ namespace NorvesLib::Core::Rendering
         void CalculateSortKey(float depth, BlendMode blendMode);
     };
 
+    struct CommandRange
+    {
+        uint32_t First = 0;
+        uint32_t Count = 0;
+
+        bool IsEmpty() const
+        {
+            return Count == 0;
+        }
+
+        uint32_t End() const
+        {
+            return First + Count;
+        }
+    };
+
+    struct DrawCommandView
+    {
+        const DrawCommand *Data = nullptr;
+        uint32_t Count = 0;
+
+        static DrawCommandView FromArray(const Container::VariableArray<DrawCommand> &commands)
+        {
+            if (commands.empty())
+            {
+                return {};
+            }
+
+            return {commands.data(), static_cast<uint32_t>(commands.size())};
+        }
+
+        static DrawCommandView FromRange(const Container::VariableArray<DrawCommand> &commands,
+                                         const CommandRange &range)
+        {
+            if (range.Count == 0 || range.First >= commands.size())
+            {
+                return {};
+            }
+
+            const uint32_t availableCount = static_cast<uint32_t>(commands.size()) - range.First;
+            const uint32_t count = range.Count < availableCount ? range.Count : availableCount;
+            return {commands.data() + range.First, count};
+        }
+
+        bool empty() const
+        {
+            return !Data || Count == 0;
+        }
+
+        uint32_t size() const
+        {
+            return empty() ? 0u : Count;
+        }
+
+        const DrawCommand *begin() const
+        {
+            return empty() ? nullptr : Data;
+        }
+
+        const DrawCommand *end() const
+        {
+            return empty() ? nullptr : Data + Count;
+        }
+
+        const DrawCommand &operator[](uint32_t index) const
+        {
+            return Data[index];
+        }
+    };
+
     /**
      * @brief DrawCommandのインスタンス範囲をpacket内の絶対indexへ付け替えます。
      * @param commands 対象DrawCommand配列

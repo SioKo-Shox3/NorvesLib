@@ -344,11 +344,10 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // DrawCommand駆動の描画（影を落とすメッシュのみ）
         // ========================================
-        const auto *activeDrawCommands = context.GetActiveDrawCommands();
+        const DrawCommandView drawCommands = context.GetActiveDrawCommands();
         auto *meshes = context.Resources.Meshes;
-        if (m_SceneRenderer && meshes && activeDrawCommands)
+        if (m_SceneRenderer && meshes)
         {
-            const auto &drawCommands = *activeDrawCommands;
             if (drawCommands.empty())
             {
                 return;

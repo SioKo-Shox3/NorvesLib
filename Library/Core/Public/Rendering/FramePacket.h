@@ -56,14 +56,17 @@ namespace NorvesLib::Core::Rendering
         // DrawCommandスナップショット（GameThreadで生成、RenderThreadで読み取り専用）
         // ========================================
 
-        /** @brief 全DrawCommandのスナップショット */
+        /** @brief 全DrawCommandのスナップショット（Opaque→Transparent順の単一実体配列） */
         Container::VariableArray<DrawCommand> DrawCommands;
 
-        /** @brief 不透明DrawCommandのスナップショット */
-        Container::VariableArray<DrawCommand> OpaqueCommands;
+        /** @brief DrawCommands全体の範囲 */
+        CommandRange DrawCommandRange;
 
-        /** @brief 半透明DrawCommandのスナップショット */
-        Container::VariableArray<DrawCommand> TransparentCommands;
+        /** @brief DrawCommands内の不透明DrawCommand範囲 */
+        CommandRange OpaqueCommandRange;
+
+        /** @brief DrawCommands内の半透明DrawCommand範囲 */
+        CommandRange TransparentCommandRange;
 
         /** @brief DrawCommandから参照するGPUシーンインスタンスデータ */
         Container::VariableArray<GPUSceneInstanceData> InstanceData;
@@ -96,8 +99,9 @@ namespace NorvesLib::Core::Rendering
             bHasMainCamera = false;
             Scene.Clear();
             DrawCommands.clear();
-            OpaqueCommands.clear();
-            TransparentCommands.clear();
+            DrawCommandRange = CommandRange{};
+            OpaqueCommandRange = CommandRange{};
+            TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             Views.clear();
         }
@@ -138,6 +142,9 @@ namespace NorvesLib::Core::Rendering
 
     /**
      * @brief フレームパケットバッファ数
+     *
+     * GameThread/RenderThread間のproducer/consumerキューのスロット数です。
+     * SwapChainやRHIのframes-in-flight数とは独立して管理します。
      */
     constexpr uint32_t FRAME_PACKET_BUFFER_COUNT = 3;
 

@@ -6,6 +6,7 @@
 #include <iostream>
 
 using namespace NorvesLib::Core::Rendering;
+namespace Container = NorvesLib::Core::Container;
 
 namespace
 {
@@ -39,23 +40,35 @@ int main()
 
     {
         ViewRenderContext context;
+        Container::VariableArray<DrawCommand> frameCommands;
+        frameCommands.push_back(DrawCommand::CreateDraw());
+        frameCommands.push_back(DrawCommand::CreateDrawIndexed());
+        frameCommands.push_back(DrawCommand::CreateDraw());
+        context.SnapshotDrawCommandSource = &frameCommands;
+
         ViewportRenderPlan viewport = MakeViewportPlan(2, 3);
         viewport.bHasCamera = true;
         viewport.Camera.CameraId = 42;
+        viewport.OpaqueCommandRange = {1, 1};
+        viewport.TransparentCommandRange = {2, 1};
+        viewport.DrawCommandRange = {1, 2};
 
         RenderFrameExecutor::ApplyViewportRenderPlan(context, &viewport);
         assert(context.CurrentViewport == &viewport);
         assert(context.CurrentCamera == &viewport.Camera);
-        assert(context.CurrentDrawCommands == &viewport.DrawCommands);
-        assert(context.CurrentOpaqueCommands == &viewport.OpaqueCommands);
-        assert(context.CurrentTransparentCommands == &viewport.TransparentCommands);
+        assert(context.CurrentDrawCommands.Data == frameCommands.data() + 1);
+        assert(context.CurrentDrawCommands.Count == 2);
+        assert(context.CurrentOpaqueCommands.Data == frameCommands.data() + 1);
+        assert(context.CurrentOpaqueCommands.Count == 1);
+        assert(context.CurrentTransparentCommands.Data == frameCommands.data() + 2);
+        assert(context.CurrentTransparentCommands.Count == 1);
 
         RenderFrameExecutor::ApplyViewportRenderPlan(context, nullptr);
         assert(context.CurrentViewport == nullptr);
         assert(context.CurrentCamera == nullptr);
-        assert(context.CurrentDrawCommands == nullptr);
-        assert(context.CurrentOpaqueCommands == nullptr);
-        assert(context.CurrentTransparentCommands == nullptr);
+        assert(context.CurrentDrawCommands.empty());
+        assert(context.CurrentOpaqueCommands.empty());
+        assert(context.CurrentTransparentCommands.empty());
     }
 
     {

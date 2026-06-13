@@ -80,17 +80,28 @@ namespace NorvesLib::Core::Rendering
         {
             context.CurrentViewport = nullptr;
             context.CurrentCamera = nullptr;
-            context.CurrentDrawCommands = nullptr;
-            context.CurrentOpaqueCommands = nullptr;
-            context.CurrentTransparentCommands = nullptr;
+            context.CurrentDrawCommands = DrawCommandView{};
+            context.CurrentOpaqueCommands = DrawCommandView{};
+            context.CurrentTransparentCommands = DrawCommandView{};
             return;
         }
 
         context.CurrentViewport = viewportPlan;
         context.CurrentCamera = viewportPlan->bHasCamera ? &viewportPlan->Camera : nullptr;
-        context.CurrentDrawCommands = &viewportPlan->DrawCommands;
-        context.CurrentOpaqueCommands = &viewportPlan->OpaqueCommands;
-        context.CurrentTransparentCommands = &viewportPlan->TransparentCommands;
+        if (!context.SnapshotDrawCommandSource)
+        {
+            context.CurrentDrawCommands = DrawCommandView{};
+            context.CurrentOpaqueCommands = DrawCommandView{};
+            context.CurrentTransparentCommands = DrawCommandView{};
+            return;
+        }
+
+        context.CurrentDrawCommands = DrawCommandView::FromRange(*context.SnapshotDrawCommandSource,
+                                                                 viewportPlan->DrawCommandRange);
+        context.CurrentOpaqueCommands = DrawCommandView::FromRange(*context.SnapshotDrawCommandSource,
+                                                                   viewportPlan->OpaqueCommandRange);
+        context.CurrentTransparentCommands = DrawCommandView::FromRange(*context.SnapshotDrawCommandSource,
+                                                                        viewportPlan->TransparentCommandRange);
     }
 
     const ViewportRenderPlan *RenderFrameExecutor::FindPrimaryViewportRenderPlan(const FramePacket &packet)
@@ -150,10 +161,10 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        const auto *activeDrawCommands = request.Context->GetActiveDrawCommands();
-        if (activeDrawCommands && !activeDrawCommands->empty())
+        const DrawCommandView activeDrawCommands = request.Context->GetActiveDrawCommands();
+        if (!activeDrawCommands.empty())
         {
-            request.Renderer->ExecuteDrawCommands(*activeDrawCommands, request.CommandList);
+            request.Renderer->ExecuteDrawCommands(activeDrawCommands, request.CommandList);
             return true;
         }
 
