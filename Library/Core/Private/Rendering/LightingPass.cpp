@@ -1,5 +1,7 @@
 ﻿#include "Rendering/LightingPass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/GBufferPass.h"
+#include "Rendering/SSAOPass.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/SceneView.h"
@@ -91,6 +93,88 @@ namespace NorvesLib::Core::Rendering
     static constexpr uint32_t MAX_LIGHTS = 16;
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
     static constexpr uint32_t LIGHT_BUFFER_SIZE = sizeof(GPULightData) * MAX_LIGHTS;
+
+    static RHI::DescriptorSetDesc CreateLightingDescriptorSetDesc(bool bNeuralBRDFAvailable)
+    {
+        RHI::DescriptorSetDesc dsDesc;
+
+        RHI::DescriptorBinding albedoBinding;
+        albedoBinding.binding = 0;
+        albedoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        albedoBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(albedoBinding);
+
+        RHI::DescriptorBinding normalBinding;
+        normalBinding.binding = 1;
+        normalBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        normalBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(normalBinding);
+
+        RHI::DescriptorBinding materialBinding;
+        materialBinding.binding = 2;
+        materialBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        materialBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(materialBinding);
+
+        RHI::DescriptorBinding depthBinding;
+        depthBinding.binding = 3;
+        depthBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        depthBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(depthBinding);
+
+        RHI::DescriptorBinding paramsBinding;
+        paramsBinding.binding = 4;
+        paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        paramsBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(paramsBinding);
+
+        RHI::DescriptorBinding lightBinding;
+        lightBinding.binding = 5;
+        lightBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        lightBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(lightBinding);
+
+        RHI::DescriptorBinding shadowBinding;
+        shadowBinding.binding = 6;
+        shadowBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        shadowBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(shadowBinding);
+
+        RHI::DescriptorBinding emissiveBinding;
+        emissiveBinding.binding = 7;
+        emissiveBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        emissiveBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(emissiveBinding);
+
+        RHI::DescriptorBinding envMapBinding;
+        envMapBinding.binding = 8;
+        envMapBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        envMapBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(envMapBinding);
+
+        RHI::DescriptorBinding brdfLutBinding;
+        brdfLutBinding.binding = 9;
+        brdfLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        brdfLutBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(brdfLutBinding);
+
+        RHI::DescriptorBinding ssaoBinding;
+        ssaoBinding.binding = 10;
+        ssaoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        ssaoBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(ssaoBinding);
+
+        if (bNeuralBRDFAvailable)
+        {
+            RHI::DescriptorBinding neuralWeightBinding;
+            neuralWeightBinding.binding = 11;
+            neuralWeightBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            neuralWeightBinding.stages = RHI::ShaderStage::Pixel;
+            dsDesc.bindings.push_back(neuralWeightBinding);
+        }
+
+        return dsDesc;
+    }
 
     LightingPass::LightingPass(const LightingPassSettings &settings)
         : m_Settings(settings)
@@ -306,6 +390,14 @@ namespace NorvesLib::Core::Rendering
 
         m_Device = nullptr;
         m_SceneView = nullptr;
+        m_GBufferPass = nullptr;
+        m_SSAOPass = nullptr;
+        m_SceneColorHandle = {};
+        m_bUsingRenderGraphResources = false;
+        m_bRenderPassUsesRenderGraphInitialState = false;
+        m_FramebufferSceneColorTexture = nullptr;
+        m_FramebufferWidth = 0;
+        m_FramebufferHeight = 0;
 
         m_bInitialized = false;
         NORVES_LOG_INFO("LightingPass", "LightingPass shutdown");
@@ -321,21 +413,42 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // サイズ変更があればレンダーパス・フレームバッファを再作成
-        if (width != m_CurrentWidth || height != m_CurrentHeight)
+        m_bUsingRenderGraphResources = false;
+
+        // サイズ・実体テクスチャ・RenderGraph初期状態が変われば再作成
+        const bool bUseRenderGraphInitialState = m_bUsingRenderGraphResources;
+        const bool bResourcesChanged =
+            width != m_CurrentWidth ||
+            height != m_CurrentHeight ||
+            !m_SceneColorTexture ||
+            m_FramebufferSceneColorTexture != m_SceneColorTexture.get() ||
+            m_bRenderPassUsesRenderGraphInitialState != bUseRenderGraphInitialState ||
+            !m_LightingRenderPass ||
+            !m_LightingFramebuffer ||
+            !m_LightingPipeline ||
+            !m_LightingDescriptorSet;
+
+        if (bResourcesChanged)
         {
             m_CurrentWidth = width;
             m_CurrentHeight = height;
 
-            // HDRシーンカラーテクスチャ作成
-            m_SceneColorTexture = m_Device->CreateTexture(
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
+            if (!m_bUsingRenderGraphResources)
+            {
+                // HDRシーンカラーテクスチャ作成
+                m_SceneColorTexture = m_Device->CreateTexture(
+                    RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
+            }
 
             if (!m_SceneColorTexture)
             {
                 NORVES_LOG_ERROR("LightingPass", "Failed to create SceneColor texture");
                 return;
             }
+            m_bRenderPassUsesRenderGraphInitialState = bUseRenderGraphInitialState;
+            m_FramebufferSceneColorTexture = m_SceneColorTexture.get();
+            m_FramebufferWidth = width;
+            m_FramebufferHeight = height;
 
             // ========================================
             // ライティング用レンダーパス作成（1カラー、デプス無し）
@@ -352,7 +465,9 @@ namespace NorvesLib::Core::Rendering
             colorAttach.clearColor[3] = 1.0f;
             colorAttach.loadOp = RHI::AttachmentLoadOp::Clear;
             colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
-            colorAttach.initialState = RHI::ResourceState::Undefined;
+            colorAttach.initialState = bUseRenderGraphInitialState
+                                           ? RHI::ResourceState::RenderTarget
+                                           : RHI::ResourceState::Undefined;
             colorAttach.finalState = RHI::ResourceState::ShaderResource;
             rpDesc.colorAttachments.push_back(colorAttach);
 
@@ -527,6 +642,187 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void LightingPass::Declare(RenderGraphBuilder &builder)
+    {
+        const ViewRenderContext *context = builder.GetContext();
+
+        uint32_t width = 0;
+        uint32_t height = 0;
+        if (context)
+        {
+            width = ResolveLightingWidth(*context);
+            height = ResolveLightingHeight(*context);
+        }
+
+        if (width == 0)
+        {
+            width = m_CurrentWidth > 0 ? m_CurrentWidth : 1;
+        }
+
+        if (height == 0)
+        {
+            height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
+        }
+
+        if (m_GBufferPass)
+        {
+            const RGResourceHandle albedoHandle = m_GBufferPass->GetAlbedoHandle();
+            if (albedoHandle.IsValid())
+            {
+                builder.Read(albedoHandle, RHI::ResourceState::ShaderResource);
+            }
+
+            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
+            if (normalHandle.IsValid())
+            {
+                builder.Read(normalHandle, RHI::ResourceState::ShaderResource);
+            }
+
+            const RGResourceHandle materialHandle = m_GBufferPass->GetMaterialHandle();
+            if (materialHandle.IsValid())
+            {
+                builder.Read(materialHandle, RHI::ResourceState::ShaderResource);
+            }
+
+            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
+            if (depthHandle.IsValid())
+            {
+                builder.Read(depthHandle, RHI::ResourceState::ShaderResource);
+            }
+
+            const RGResourceHandle emissiveHandle = m_GBufferPass->GetEmissiveHandle();
+            if (emissiveHandle.IsValid())
+            {
+                builder.Read(emissiveHandle, RHI::ResourceState::ShaderResource);
+            }
+        }
+
+        if (m_SSAOPass)
+        {
+            const RGResourceHandle ssaoHandle = m_SSAOPass->GetSSAOBlurredHandle();
+            if (ssaoHandle.IsValid())
+            {
+                builder.Read(ssaoHandle, RHI::ResourceState::ShaderResource);
+            }
+        }
+
+        m_SceneColorHandle = builder.CreateTexture(
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
+        builder.Write(m_SceneColorHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+
+        builder.PreserveInsertionOrder();
+    }
+
+    void LightingPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        if (!m_bInitialized)
+        {
+            if (!Initialize(context))
+            {
+                NORVES_LOG_ERROR("LightingPass", "Failed to initialize native RenderGraph execution");
+                return;
+            }
+        }
+
+        RHI::TexturePtr sceneColorTexture = resources.GetTexture(m_SceneColorHandle);
+        if (!sceneColorTexture)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to resolve native SceneColor texture");
+            return;
+        }
+
+        RHI::TexturePtr albedoTexture;
+        RHI::TexturePtr normalTexture;
+        RHI::TexturePtr materialTexture;
+        RHI::TexturePtr depthTexture;
+        RHI::TexturePtr emissiveTexture;
+        if (m_GBufferPass)
+        {
+            const RGResourceHandle albedoHandle = m_GBufferPass->GetAlbedoHandle();
+            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
+            const RGResourceHandle materialHandle = m_GBufferPass->GetMaterialHandle();
+            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
+            const RGResourceHandle emissiveHandle = m_GBufferPass->GetEmissiveHandle();
+
+            if (albedoHandle.IsValid())
+            {
+                albedoTexture = resources.GetTexture(albedoHandle);
+            }
+            if (normalHandle.IsValid())
+            {
+                normalTexture = resources.GetTexture(normalHandle);
+            }
+            if (materialHandle.IsValid())
+            {
+                materialTexture = resources.GetTexture(materialHandle);
+            }
+            if (depthHandle.IsValid())
+            {
+                depthTexture = resources.GetTexture(depthHandle);
+            }
+            if (emissiveHandle.IsValid())
+            {
+                emissiveTexture = resources.GetTexture(emissiveHandle);
+            }
+        }
+
+        RHI::TexturePtr ssaoTexture;
+        if (m_SSAOPass)
+        {
+            const RGResourceHandle ssaoHandle = m_SSAOPass->GetSSAOBlurredHandle();
+            if (ssaoHandle.IsValid())
+            {
+                ssaoTexture = resources.GetTexture(ssaoHandle);
+            }
+        }
+
+        if (context.SharedResources)
+        {
+            if (!albedoTexture)
+            {
+                albedoTexture = context.SharedResources->GetTexturePtr("GBuffer_Albedo");
+            }
+            if (!normalTexture)
+            {
+                normalTexture = context.SharedResources->GetTexturePtr("GBuffer_Normal");
+            }
+            if (!materialTexture)
+            {
+                materialTexture = context.SharedResources->GetTexturePtr("GBuffer_Material");
+            }
+            if (!depthTexture)
+            {
+                depthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+            }
+            if (!emissiveTexture)
+            {
+                emissiveTexture = context.SharedResources->GetTexturePtr("GBuffer_Emissive");
+            }
+            if (!ssaoTexture)
+            {
+                ssaoTexture = context.SharedResources->GetTexturePtr("SSAO");
+            }
+        }
+
+        if (!PrepareLightingOutput(sceneColorTexture->GetWidth(),
+                                   sceneColorTexture->GetHeight(),
+                                   sceneColorTexture,
+                                   true,
+                                   context))
+        {
+            TryEnqueueNativeTransitionPass(context);
+            return;
+        }
+
+        ExecuteWithInputs(context,
+                          albedoTexture,
+                          normalTexture,
+                          materialTexture,
+                          depthTexture,
+                          emissiveTexture,
+                          ssaoTexture);
+    }
+
     void LightingPass::Execute(ViewRenderContext &context)
     {
         if (!context.CommandList)
@@ -577,8 +873,14 @@ namespace NorvesLib::Core::Rendering
             bShadowAvailable = (shadowMapPtr != nullptr);
         }
 
+        bool bSSAOAvailable = false;
+        if (context.SharedResources)
+        {
+            bSSAOAvailable = (context.SharedResources->GetTexturePtr("SSAO") != nullptr);
+        }
+
         // ライト情報をGPUバッファに転送
-        UpdateLightBuffer(context, bShadowAvailable);
+        UpdateLightBuffer(context, bShadowAvailable, bSSAOAvailable);
 
         // HDRシーンカラーをSharedResourceRegistryに登録
         if (context.SharedResources)
@@ -606,7 +908,13 @@ namespace NorvesLib::Core::Rendering
         if (!albedoPtr || !normalPtr || !materialPtr || !depthPtr)
         {
             NORVES_LOG_WARNING("LightingPass", "GBuffer TexturePtr not available, skipping");
+            TryEnqueueNativeTransitionPass(context);
             return;
+        }
+
+        if (context.SharedResources)
+        {
+            context.SharedResources->RegisterTexturePtr("SceneDepth", depthPtr);
         }
 
         m_LightingDescriptorSet->BindTexture(0, albedoPtr);
@@ -696,7 +1004,313 @@ namespace NorvesLib::Core::Rendering
                                       m_LightingDescriptorSet);
     }
 
-    void LightingPass::UpdateLightBuffer(ViewRenderContext &context, bool bShadowAvailable)
+    uint32_t LightingPass::ResolveLightingWidth(const ViewRenderContext &context) const
+    {
+        return context.GetActiveRenderWidth();
+    }
+
+    uint32_t LightingPass::ResolveLightingHeight(const ViewRenderContext &context) const
+    {
+        return context.GetActiveRenderHeight();
+    }
+
+    bool LightingPass::CreateLightingResources(uint32_t width, uint32_t height, ViewRenderContext &context)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        RHI::TexturePtr sceneColorTexture = m_Device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
+        if (!sceneColorTexture)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create SceneColor texture");
+            return false;
+        }
+
+        return PrepareLightingOutput(width, height, sceneColorTexture, false, context);
+    }
+
+    bool LightingPass::PrepareLightingOutput(uint32_t width,
+                                             uint32_t height,
+                                             const RHI::TexturePtr &sceneColorTexture,
+                                             bool bUseRenderGraphInitialState,
+                                             ViewRenderContext &context)
+    {
+        (void)context;
+
+        if (!m_Device || !sceneColorTexture || width == 0 || height == 0)
+        {
+            return false;
+        }
+
+        m_CurrentWidth = width;
+        m_CurrentHeight = height;
+        m_SceneColorTexture = sceneColorTexture;
+        m_bUsingRenderGraphResources = bUseRenderGraphInitialState;
+
+        if (!EnsureLightingRenderPass(bUseRenderGraphInitialState))
+        {
+            return false;
+        }
+
+        if (!EnsureLightingFramebuffer(width, height, sceneColorTexture))
+        {
+            return false;
+        }
+
+        if (!EnsureLightingDescriptorSet())
+        {
+            return false;
+        }
+
+        if (!EnsureLightingPipeline())
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool LightingPass::EnsureLightingRenderPass(bool bUseRenderGraphInitialState)
+    {
+        if (m_LightingRenderPass &&
+            m_bRenderPassUsesRenderGraphInitialState == bUseRenderGraphInitialState)
+        {
+            return true;
+        }
+
+        m_LightingRenderPass.reset();
+        m_LightingFramebuffer.reset();
+        m_LightingPipeline.reset();
+        m_LightingDescriptorSet.reset();
+        m_FramebufferSceneColorTexture = nullptr;
+        m_FramebufferWidth = 0;
+        m_FramebufferHeight = 0;
+
+        RHI::RenderPassDesc rpDesc;
+
+        RHI::AttachmentDesc colorAttach;
+        colorAttach.format = m_SceneColorTexture ? m_SceneColorTexture->GetFormat() : m_Settings.OutputFormat;
+        colorAttach.isDepthStencil = false;
+        colorAttach.clear = true;
+        colorAttach.clearColor[0] = 0.0f;
+        colorAttach.clearColor[1] = 0.0f;
+        colorAttach.clearColor[2] = 0.0f;
+        colorAttach.clearColor[3] = 1.0f;
+        colorAttach.loadOp = RHI::AttachmentLoadOp::Clear;
+        colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
+        colorAttach.initialState = bUseRenderGraphInitialState
+                                       ? RHI::ResourceState::RenderTarget
+                                       : RHI::ResourceState::Undefined;
+        colorAttach.finalState = RHI::ResourceState::ShaderResource;
+        rpDesc.colorAttachments.push_back(colorAttach);
+        rpDesc.hasDepthStencil = false;
+
+        m_LightingRenderPass = m_Device->CreateRenderPass(rpDesc);
+        if (!m_LightingRenderPass)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting render pass");
+            return false;
+        }
+
+        m_bRenderPassUsesRenderGraphInitialState = bUseRenderGraphInitialState;
+        return true;
+    }
+
+    bool LightingPass::EnsureLightingFramebuffer(uint32_t width,
+                                                 uint32_t height,
+                                                 const RHI::TexturePtr &sceneColorTexture)
+    {
+        if (m_LightingFramebuffer &&
+            m_FramebufferSceneColorTexture == sceneColorTexture.get() &&
+            m_FramebufferWidth == width &&
+            m_FramebufferHeight == height)
+        {
+            return true;
+        }
+
+        if (!m_LightingRenderPass || !sceneColorTexture)
+        {
+            return false;
+        }
+
+        RHI::FramebufferDesc fbDesc;
+        fbDesc.renderPass = m_LightingRenderPass;
+        fbDesc.colorTargets.push_back(sceneColorTexture);
+        fbDesc.width = width;
+        fbDesc.height = height;
+
+        m_LightingFramebuffer = m_Device->CreateFramebuffer(fbDesc);
+        if (!m_LightingFramebuffer)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting framebuffer");
+            return false;
+        }
+
+        m_FramebufferSceneColorTexture = sceneColorTexture.get();
+        m_FramebufferWidth = width;
+        m_FramebufferHeight = height;
+        return true;
+    }
+
+    bool LightingPass::EnsureLightingDescriptorSet()
+    {
+        if (m_LightingDescriptorSet)
+        {
+            return true;
+        }
+
+        RHI::DescriptorSetDesc dsDesc = CreateLightingDescriptorSetDesc(m_bNeuralBRDFAvailable);
+        m_LightingDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
+        if (!m_LightingDescriptorSet)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting descriptor set");
+            return false;
+        }
+
+        m_LightingDescriptorSet->BindConstantBuffer(4, m_LightDataBuffer, 0, LIGHTING_PARAMS_SIZE);
+        m_LightingDescriptorSet->BindConstantBuffer(5, m_LightArrayBuffer, 0, LIGHT_BUFFER_SIZE);
+        return true;
+    }
+
+    bool LightingPass::EnsureLightingPipeline()
+    {
+        if (m_LightingPipeline)
+        {
+            return true;
+        }
+
+        if (!m_LightingRenderPass || !m_LightingVertexShader || !m_LightingFragmentShader)
+        {
+            return false;
+        }
+
+        RHI::DescriptorSetDesc dsDesc = CreateLightingDescriptorSetDesc(m_bNeuralBRDFAvailable);
+
+        RHI::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = m_LightingVertexShader;
+        pipelineDesc.pixelShader = m_LightingFragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+        pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+        pipelineDesc.depthStencilState.depthTestEnable = false;
+        pipelineDesc.depthStencilState.depthWriteEnable = false;
+
+        RHI::BlendAttachmentDesc blendAttachment;
+        blendAttachment.blendEnable = false;
+        blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
+
+        pipelineDesc.renderPass = m_LightingRenderPass;
+        pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
+
+        m_LightingPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!m_LightingPipeline)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting pipeline");
+            return false;
+        }
+
+        return true;
+    }
+
+    void LightingPass::ExecuteWithInputs(ViewRenderContext &context,
+                                         const RHI::TexturePtr &albedoTexture,
+                                         const RHI::TexturePtr &normalTexture,
+                                         const RHI::TexturePtr &materialTexture,
+                                         const RHI::TexturePtr &depthTexture,
+                                         const RHI::TexturePtr &emissiveTexture,
+                                         const RHI::TexturePtr &ssaoTexture)
+    {
+        if (!context.CommandList)
+        {
+            return;
+        }
+
+        RegisterOutputs(context, m_SceneColorTexture, depthTexture);
+
+        if (!m_LightingRenderPass || !m_LightingFramebuffer || !m_LightingPipeline || !m_LightingDescriptorSet)
+        {
+            NORVES_LOG_WARNING("LightingPass", "Lighting resources not ready, skipping");
+            TryEnqueueNativeTransitionPass(context);
+            return;
+        }
+
+        if (!albedoTexture || !normalTexture || !materialTexture || !depthTexture)
+        {
+            NORVES_LOG_WARNING("LightingPass", "GBuffer textures not available, skipping lighting");
+            TryEnqueueNativeTransitionPass(context);
+            return;
+        }
+
+        if (!context.SharedResources)
+        {
+            TryEnqueueNativeTransitionPass(context);
+            return;
+        }
+
+        context.SharedResources->RegisterTexturePtr("GBuffer_Albedo", albedoTexture);
+        context.SharedResources->RegisterTexturePtr("GBuffer_Normal", normalTexture);
+        context.SharedResources->RegisterTexturePtr("GBuffer_Material", materialTexture);
+        context.SharedResources->RegisterTexturePtr("GBuffer_Depth", depthTexture);
+        if (emissiveTexture)
+        {
+            context.SharedResources->RegisterTexturePtr("GBuffer_Emissive", emissiveTexture);
+        }
+        if (ssaoTexture)
+        {
+            context.SharedResources->RegisterTexturePtr("SSAO", ssaoTexture);
+        }
+
+        Execute(context);
+        RegisterOutputs(context, m_SceneColorTexture, depthTexture);
+    }
+
+    void LightingPass::RegisterOutputs(ViewRenderContext &context,
+                                       const RHI::TexturePtr &sceneColorTexture,
+                                       const RHI::TexturePtr &depthTexture) const
+    {
+        if (!context.SharedResources)
+        {
+            return;
+        }
+
+        if (sceneColorTexture)
+        {
+            context.SharedResources->RegisterTexturePtr("SceneColor", sceneColorTexture);
+        }
+
+        if (depthTexture)
+        {
+            context.SharedResources->RegisterTexturePtr("SceneDepth", depthTexture);
+        }
+    }
+
+    bool LightingPass::TryEnqueueNativeTransitionPass(ViewRenderContext &context) const
+    {
+        if (!m_bUsingRenderGraphResources || !m_LightingRenderPass || !m_LightingFramebuffer)
+        {
+            return false;
+        }
+
+        context.EnqueueFullscreenPass(m_LightingRenderPass,
+                                      m_LightingFramebuffer,
+                                      context.GetActiveLocalViewport(),
+                                      context.GetActiveLocalScissor(),
+                                      RHI::PipelinePtr{},
+                                      RHI::DescriptorSetPtr{},
+                                      0,
+                                      0);
+        return true;
+    }
+
+    void LightingPass::UpdateLightBuffer(ViewRenderContext &context,
+                                         bool bShadowAvailable,
+                                         bool bSSAOAvailable)
     {
         // ライティングパラメータを構築
         GPULightingParams params = {};
@@ -838,11 +1452,6 @@ namespace NorvesLib::Core::Rendering
         params.bIBLEnabled = m_bIBLAvailable ? 1 : 0;
 
         // SSAOパラメータ設定
-        bool bSSAOAvailable = false;
-        if (context.SharedResources)
-        {
-            bSSAOAvailable = (context.SharedResources->GetTexturePtr("SSAO") != nullptr);
-        }
         params.bSSAOEnabled = bSSAOAvailable ? 1 : 0;
         params.bNeuralBRDFEnabled = m_bNeuralBRDFAvailable ? 1 : 0;
 

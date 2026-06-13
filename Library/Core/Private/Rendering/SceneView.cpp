@@ -440,6 +440,7 @@ namespace NorvesLib::Core::Rendering
         ssaoSettings.Intensity = 2.0f;
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
         ssaoPass->SetGBufferPass(gbufferPassRaw);
+        SSAOPass *ssaoPassRaw = ssaoPass.get();
         AddPass(std::move(ssaoPass));
 
         // LightingPass: GBuffer→HDRシーンカラー
@@ -449,6 +450,8 @@ namespace NorvesLib::Core::Rendering
         lightingSettings.NeuralBRDFWeightPath = "Data/disney.ns.bin";
         auto lightingPass = MakeUnique<LightingPass>(lightingSettings);
         lightingPass->SetSceneView(this);
+        lightingPass->SetGBufferPass(gbufferPassRaw);
+        lightingPass->SetSSAOPass(ssaoPassRaw);
         AddPass(std::move(lightingPass));
 
         // ForwardPass(TransparentOnly): Lighting後のSceneColorへ半透明をLoad合成

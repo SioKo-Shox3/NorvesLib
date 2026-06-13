@@ -1,5 +1,6 @@
 ﻿#include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/LightingPass.h"
 #include "Rendering/SSAOPass.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneRenderer.h"
@@ -1492,6 +1493,259 @@ namespace
         assert(barriers[6].CompiledOrderIndex == 1);
     }
 
+    void TestGBufferSSAOLightingNativeDeclareDependencies()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        GBufferPass gbufferPass;
+        SSAOPass ssaoPass;
+        ssaoPass.SetGBufferPass(&gbufferPass);
+        LightingPass lightingPass;
+        lightingPass.SetGBufferPass(&gbufferPass);
+        lightingPass.SetSSAOPass(&ssaoPass);
+
+        const uint32_t gbufferPassIndex = graph.AddPass(&gbufferPass);
+        const uint32_t ssaoPassIndex = graph.AddPass(&ssaoPass);
+        const uint32_t lightingPassIndex = graph.AddPass(&lightingPass);
+
+        ViewRenderContext context;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        assert(lightingPass.GetSceneColorHandle().IsValid());
+        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 7);
+
+        bool bHasAlbedoRead = false;
+        bool bHasNormalRead = false;
+        bool bHasMaterialRead = false;
+        bool bHasDepthRead = false;
+        bool bHasEmissiveRead = false;
+        bool bHasSSAORead = false;
+        bool bHasSceneColorWrite = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(lightingPassIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(lightingPassIndex,
+                                                  accessIndex,
+                                                  resource,
+                                                  mode,
+                                                  state,
+                                                  finalState));
+
+            if (resource == gbufferPass.GetAlbedoHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasAlbedoRead = true;
+            }
+            if (resource == gbufferPass.GetNormalHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasNormalRead = true;
+            }
+            if (resource == gbufferPass.GetMaterialHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasMaterialRead = true;
+            }
+            if (resource == gbufferPass.GetDepthHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasDepthRead = true;
+            }
+            if (resource == gbufferPass.GetEmissiveHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasEmissiveRead = true;
+            }
+            if (resource == ssaoPass.GetSSAOBlurredHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasSSAORead = true;
+            }
+            if (resource == lightingPass.GetSceneColorHandle())
+            {
+                assert(mode == RGAccessMode::Write);
+                assert(state == RHI::ResourceState::RenderTarget);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasSceneColorWrite = true;
+            }
+        }
+
+        assert(bHasAlbedoRead);
+        assert(bHasNormalRead);
+        assert(bHasMaterialRead);
+        assert(bHasDepthRead);
+        assert(bHasEmissiveRead);
+        assert(bHasSSAORead);
+        assert(bHasSceneColorWrite);
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 3);
+        assert(order[0] == gbufferPassIndex);
+        assert(order[1] == ssaoPassIndex);
+        assert(order[2] == lightingPassIndex);
+
+        const auto& barriers = graph.GetCompiledBarriers();
+        assert(barriers.size() == 8);
+        assert(barriers[7].Kind == RGBarrierKind::Texture);
+        assert(barriers[7].BeforeState == RHI::ResourceState::Undefined);
+        assert(barriers[7].AfterState == RHI::ResourceState::RenderTarget);
+        assert(barriers[7].PassIndex == lightingPassIndex);
+        assert(barriers[7].CompiledOrderIndex == 2);
+    }
+
+    void TestGBufferSSAOLightingNativeExecuteRegistersBridge()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        SSAOPass ssaoPass;
+        ssaoPass.SetGBufferPass(&gbufferPass);
+        LightingPass lightingPass;
+        lightingPass.SetGBufferPass(&gbufferPass);
+        lightingPass.SetSSAOPass(&ssaoPass);
+        graph.AddPass(&gbufferPass);
+        graph.AddPass(&ssaoPass);
+        graph.AddPass(&lightingPass);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.SnapshotOpaqueCommands = &opaqueCommands;
+        context.Resources.Textures = &renderResources.Textures();
+        context.Resources.Materials = &renderResources.Materials();
+        context.Resources.Meshes = &renderResources.Meshes();
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+
+        assert(graph.GetLastExecutedPassCount() == 3);
+        assert(commandList.Barriers.size() == 8);
+        assert(commandList.BeginRenderPassCount == 4);
+        assert(commandList.EndRenderPassCount == 4);
+        assert(commandList.DrawCallCount == 3);
+        assert(pendingFrameCommands.empty());
+        assert(sharedResources.HasTexture("SceneColor"));
+        assert(sharedResources.HasTexture("SceneDepth"));
+        assert(sharedResources.GetTexturePtr("SceneColor") != nullptr);
+        assert(sharedResources.GetTexturePtr("SceneDepth") != nullptr);
+
+        lightingPass.Shutdown();
+        ssaoPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestLightingNativeExecuteClearsWhenInputsMissing()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        LightingPass lightingPass;
+        graph.AddPass(&lightingPass);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(commandList.Barriers.size() == 1);
+        assert(commandList.BeginRenderPassCount == 1);
+        assert(commandList.EndRenderPassCount == 1);
+        assert(commandList.DrawCallCount == 0);
+        assert(pendingFrameCommands.empty());
+        assert(sharedResources.HasTexture("SceneColor"));
+        assert(!sharedResources.HasTexture("SceneDepth"));
+
+        lightingPass.Shutdown();
+        renderer.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
     void TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty()
     {
         auto device = RHI::MakeShared<FakeDevice>();
@@ -1651,8 +1905,11 @@ int main()
     TestWriteFinalStateSuppressesFollowupReadBarrier();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
+    TestGBufferSSAOLightingNativeDeclareDependencies();
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
     TestGBufferSSAONativeExecuteRegistersBridge();
+    TestGBufferSSAOLightingNativeExecuteRegistersBridge();
+    TestLightingNativeExecuteClearsWhenInputsMissing();
 
     std::cout << "RenderGraphCompileTest passed\n";
     return 0;
