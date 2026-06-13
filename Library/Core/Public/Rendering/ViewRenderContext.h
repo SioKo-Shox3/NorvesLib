@@ -27,6 +27,7 @@ namespace NorvesLib::Core::Rendering
     class SharedResourceRegistry;
     class ShaderManager;
     class MegaGeometryPass;
+    class RenderGraph;
 
     /**
      * @brief View描画コンテキスト
@@ -121,6 +122,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief pass が enqueue した FrameCommand の一時キュー */
         Container::VariableArray<FrameCommand>* PendingFrameCommands = nullptr;
+
+        /** @brief 有効な場合、ViewはRenderGraph経由でパスチェーンを実行する */
+        RenderGraph* Graph = nullptr;
 
         const CameraProxy *GetActiveCamera() const
         {

@@ -2,6 +2,8 @@
 #include "Rendering/Viewport.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/PostProcessStack.h"
+#include "Rendering/RenderGraph/LegacyViewPassAdapter.h"
+#include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Logging/LogMacros.h"
@@ -25,6 +27,22 @@ namespace NorvesLib::Core::Rendering
 
             context.Renderer->ExecuteFrameCommands(*context.PendingFrameCommands, context.CommandList);
             context.PendingFrameCommands->clear();
+        }
+
+        void ExecutePostProcessStack(PostProcessStack *postProcessStack, ViewRenderContext &context)
+        {
+            if (!postProcessStack || postProcessStack->GetPassCount() == 0)
+            {
+                return;
+            }
+
+            if (!postProcessStack->IsInitialized())
+            {
+                postProcessStack->Initialize(context);
+            }
+
+            postProcessStack->Setup(context);
+            postProcessStack->Execute(context);
         }
     } // namespace
 
@@ -195,20 +213,65 @@ namespace NorvesLib::Core::Rendering
         // パスチェーンが登録されていればパスベースの描画
         if (!m_Passes.empty())
         {
+            if (context.Graph)
+            {
+                context.Graph->Reset();
+
+                Container::VariableArray<LegacyViewPassAdapter> adapters;
+                adapters.reserve(m_Passes.size() + (m_PostProcessStack ? 1u : 0u));
+
+                for (auto &pass : m_Passes)
+                {
+                    if (!pass || !pass->IsEnabled())
+                    {
+                        continue;
+                    }
+
+                    adapters.emplace_back(pass.get());
+                    context.Graph->AddPass(&adapters.back());
+                }
+
+                if (m_PostProcessStack && m_PostProcessStack->GetPassCount() > 0)
+                {
+                    adapters.emplace_back(m_PostProcessStack.get());
+                    context.Graph->AddPass(&adapters.back());
+                }
+
+                if (context.Graph->GetPassCount() > 0)
+                {
+                    if (context.Graph->Compile())
+                    {
+                        if (!context.Graph->Execute(context))
+                        {
+                            if (context.Graph->GetLastExecutedPassCount() == 0)
+                            {
+                                NORVES_LOG_ERROR("View",
+                                                 "RenderGraph execution failed before any pass; falling back to direct pass chain");
+                            }
+                            else
+                            {
+                                NORVES_LOG_ERROR("View",
+                                                 "RenderGraph execution failed after %u pass(es); direct fallback skipped to avoid duplicate rendering",
+                                                 context.Graph->GetLastExecutedPassCount());
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        NORVES_LOG_ERROR("View", "RenderGraph compile failed; falling back to direct pass chain");
+                    }
+                }
+            }
+
             ExecutePassChain(context);
 
             // ポストプロセス実行
-            if (m_PostProcessStack && m_PostProcessStack->GetPassCount() > 0)
-            {
-                // 未初期化のPostProcessStackを初期化
-                if (!m_PostProcessStack->IsInitialized())
-                {
-                    m_PostProcessStack->Initialize(context);
-                }
-
-                m_PostProcessStack->Setup(context);
-                m_PostProcessStack->Execute(context);
-            }
+            ExecutePostProcessStack(m_PostProcessStack.get(), context);
         }
         else
         {
