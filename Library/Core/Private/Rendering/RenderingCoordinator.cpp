@@ -211,7 +211,6 @@ namespace NorvesLib::Core::Rendering
         UpdateRenderResolution(m_Width, m_Height);
         m_bVSyncEnabled = settings.bVSync;
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
-        m_bUseRenderGraph = settings.bUseRenderGraph;
         m_MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
 
         // ========================================
@@ -1038,7 +1037,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.Capabilities = &m_Device->GetCapabilities();
         viewContext.Renderer = &m_SceneRenderer;
         viewContext.PendingFrameCommands = &pendingFrameCommands;
-        viewContext.Graph = m_bUseRenderGraph ? &m_RenderGraph : nullptr;
+        viewContext.Graph = &m_RenderGraph;
 
         // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
         viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;

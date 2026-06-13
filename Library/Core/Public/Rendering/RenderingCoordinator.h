@@ -56,7 +56,6 @@ namespace NorvesLib::Core::Rendering
         bool bEnableMultiThreadedRendering = true;
         uint32_t MaxDrawCallsPerFrame = 10000;
         bool bEnableValidation = false;
-        bool bUseRenderGraph = true;
     };
 
     /**
@@ -247,12 +246,6 @@ namespace NorvesLib::Core::Rendering
          */
         void SetRenderResources(RenderResources *resources) { m_RenderResources = resources; }
 
-        /**
-         * @brief RenderGraph経由のViewパス実行を有効化/無効化
-         */
-        void SetUseRenderGraph(bool bUseRenderGraph) { m_bUseRenderGraph = bUseRenderGraph; }
-        bool IsUseRenderGraphEnabled() const { return m_bUseRenderGraph; }
-
         // ========================================
         // RHIアクセス
         // ========================================
@@ -396,7 +389,6 @@ namespace NorvesLib::Core::Rendering
         bool m_bVSyncEnabled = true;
         bool m_bMultiThreadedRendering = true;
         bool m_bMegaGeometryPassEnabled = false;
-        bool m_bUseRenderGraph = true;
         uint32_t m_MaxDrawCallsPerFrame = 10000;
 
         // 統計（Debug::RenderingStats使用）
