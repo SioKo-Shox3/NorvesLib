@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "IViewPass.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -10,6 +11,7 @@ using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core::Rendering
 {
+    class SSRPass;
 
     /**
      * @brief ブルームパス設定
@@ -48,7 +50,7 @@ namespace NorvesLib::Core::Rendering
      * - "SceneColor" : ブルーム適用済みHDRカラー (R16G16B16A16_FLOAT)
      *   ※ 入力と同じキーで上書き登録し、後続のToneMappingPassが読む
      */
-    class BloomPass : public IViewPass
+    class BloomPass : public IViewPass, public IRenderGraphPass
     {
     public:
         /**
@@ -73,9 +75,15 @@ namespace NorvesLib::Core::Rendering
         void Setup(ViewRenderContext &context) override;
         void Execute(ViewRenderContext &context) override;
 
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+
         // ========================================
         // パラメータ調整
         // ========================================
+
+        void SetInputPass(const SSRPass* inputPass) { m_InputPass = inputPass; }
+        RGResourceHandle GetSceneColorHandle() const { return m_OutputHandle; }
 
         /**
          * @brief 輝度閾値を設定
@@ -108,11 +116,19 @@ namespace NorvesLib::Core::Rendering
         const BloomSettings &GetSettings() const { return m_Settings; }
 
     private:
+        bool PrepareResources(uint32_t width,
+                              uint32_t height,
+                              const RHI::TexturePtr& outputTexture,
+                              bool bUseRenderGraphInitialState);
+        void ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr);
+        bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
+
         // 設定
         BloomSettings m_Settings;
 
         // 出力テクスチャ（Device::CreateTextureで作成、自己所有）
         RHI::TexturePtr m_OutputTexture;
+        RGResourceHandle m_OutputHandle;
 
         // パイプラインリソース
         RHI::RenderPassPtr m_BloomRenderPass;
@@ -126,10 +142,13 @@ namespace NorvesLib::Core::Rendering
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
+        const SSRPass* m_InputPass = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bRenderPassUsesRenderGraphInitialState = false;
+        RHI::ITexture* m_FramebufferOutputTexture = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering
