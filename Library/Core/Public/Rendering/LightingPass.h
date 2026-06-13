@@ -2,6 +2,7 @@
 
 #include "IViewPass.h"
 #include "NeuralBRDFData.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -56,8 +57,10 @@ namespace NorvesLib::Core::Rendering
      * ライトデータはSceneViewのLightProxyから収集してUBOにパックします。
      */
     class SceneView;
+    class GBufferPass;
+    class SSAOPass;
 
-    class LightingPass : public IViewPass
+    class LightingPass : public IViewPass, public IRenderGraphPass
     {
     public:
         /**
@@ -71,6 +74,8 @@ namespace NorvesLib::Core::Rendering
          * @param sceneView SceneView参照（LightProxy取得用）
          */
         void SetSceneView(SceneView *sceneView) { m_SceneView = sceneView; }
+        void SetGBufferPass(const GBufferPass *gbufferPass) { m_GBufferPass = gbufferPass; }
+        void SetSSAOPass(const SSAOPass *ssaoPass) { m_SSAOPass = ssaoPass; }
 
         /**
          * @brief デストラクタ
@@ -89,6 +94,13 @@ namespace NorvesLib::Core::Rendering
         void Execute(ViewRenderContext &context) override;
 
         // ========================================
+        // IRenderGraphPass実装
+        // ========================================
+
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+
+        // ========================================
         // 出力アクセス
         // ========================================
 
@@ -96,14 +108,42 @@ namespace NorvesLib::Core::Rendering
          * @brief HDRシーンカラーテクスチャを取得
          */
         RHI::ITexture *GetSceneColorTexture() const { return m_SceneColorTexture.get(); }
+        RGResourceHandle GetSceneColorHandle() const { return m_SceneColorHandle; }
 
     private:
         /**
          * @brief ライト情報をGPUバッファにパック
          * @param context 描画コンテキスト
          * @param bShadowAvailable シャドウマップが利用可能か
+         * @param bSSAOAvailable SSAOテクスチャが利用可能か
          */
-        void UpdateLightBuffer(ViewRenderContext &context, bool bShadowAvailable);
+        void UpdateLightBuffer(ViewRenderContext &context, bool bShadowAvailable, bool bSSAOAvailable);
+
+        uint32_t ResolveLightingWidth(const ViewRenderContext &context) const;
+        uint32_t ResolveLightingHeight(const ViewRenderContext &context) const;
+        bool CreateLightingResources(uint32_t width, uint32_t height, ViewRenderContext &context);
+        bool PrepareLightingOutput(uint32_t width,
+                                   uint32_t height,
+                                   const RHI::TexturePtr &sceneColorTexture,
+                                   bool bUseRenderGraphInitialState,
+                                   ViewRenderContext &context);
+        bool EnsureLightingRenderPass(bool bUseRenderGraphInitialState);
+        bool EnsureLightingFramebuffer(uint32_t width,
+                                       uint32_t height,
+                                       const RHI::TexturePtr &sceneColorTexture);
+        bool EnsureLightingDescriptorSet();
+        bool EnsureLightingPipeline();
+        void ExecuteWithInputs(ViewRenderContext &context,
+                               const RHI::TexturePtr &albedoTexture,
+                               const RHI::TexturePtr &normalTexture,
+                               const RHI::TexturePtr &materialTexture,
+                               const RHI::TexturePtr &depthTexture,
+                               const RHI::TexturePtr &emissiveTexture,
+                               const RHI::TexturePtr &ssaoTexture);
+        void RegisterOutputs(ViewRenderContext &context,
+                             const RHI::TexturePtr &sceneColorTexture,
+                             const RHI::TexturePtr &depthTexture) const;
+        bool TryEnqueueNativeTransitionPass(ViewRenderContext &context) const;
 
         /**
          * @brief HDR環境マップをロード（ミップマップ付きRGBA16_FLOAT）
@@ -123,6 +163,7 @@ namespace NorvesLib::Core::Rendering
 
         // 出力テクスチャ（Device::CreateTextureで作成、自己所有）
         RHI::TexturePtr m_SceneColorTexture;
+        RGResourceHandle m_SceneColorHandle;
 
         // ライティング用リソース
         RHI::RenderPassPtr m_LightingRenderPass;
@@ -152,10 +193,17 @@ namespace NorvesLib::Core::Rendering
 
         // SceneView参照（LightProxy取得用）
         SceneView *m_SceneView = nullptr;
+        const GBufferPass *m_GBufferPass = nullptr;
+        const SSAOPass *m_SSAOPass = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bUsingRenderGraphResources = false;
+        bool m_bRenderPassUsesRenderGraphInitialState = false;
+        RHI::ITexture *m_FramebufferSceneColorTexture = nullptr;
+        uint32_t m_FramebufferWidth = 0;
+        uint32_t m_FramebufferHeight = 0;
     };
 
 } // namespace NorvesLib::Core::Rendering
