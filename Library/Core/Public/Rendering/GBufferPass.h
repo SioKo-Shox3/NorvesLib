@@ -3,6 +3,7 @@
 #include "IViewPass.h"
 #include "SceneRenderer.h"
 #include "DynamicUniformAllocator.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -64,7 +65,7 @@ namespace NorvesLib::Core::Rendering
      * - "GBuffer_Emissive"
      * - "GBuffer_Depth"
      */
-    class GBufferPass : public IViewPass
+    class GBufferPass : public IViewPass, public IRenderGraphPass
     {
     public:
         /**
@@ -88,6 +89,13 @@ namespace NorvesLib::Core::Rendering
         void Shutdown() override;
         void Setup(ViewRenderContext &context) override;
         void Execute(ViewRenderContext &context) override;
+
+        // ========================================
+        // IRenderGraphPass実装
+        // ========================================
+
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
 
         // ========================================
         // SceneView連携
@@ -115,6 +123,12 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture *GetEmissiveTexture() const { return m_EmissiveTexture.get(); }
         RHI::ITexture *GetDepthTexture() const { return m_DepthTexture.get(); }
 
+        RGResourceHandle GetAlbedoHandle() const { return m_AlbedoHandle; }
+        RGResourceHandle GetNormalHandle() const { return m_NormalHandle; }
+        RGResourceHandle GetMaterialHandle() const { return m_MaterialHandle; }
+        RGResourceHandle GetEmissiveHandle() const { return m_EmissiveHandle; }
+        RGResourceHandle GetDepthHandle() const { return m_DepthHandle; }
+
     private:
         /**
          * @brief GBufferリソースを作成または更新します
@@ -124,6 +138,34 @@ namespace NorvesLib::Core::Rendering
          * @return 成功時true
          */
         bool CreateGBufferResources(uint32_t width, uint32_t height, ViewRenderContext &context);
+        uint32_t ResolveGBufferWidth(const ViewRenderContext &context) const;
+        uint32_t ResolveGBufferHeight(const ViewRenderContext &context) const;
+        bool PrepareGBufferAttachments(uint32_t width,
+                                       uint32_t height,
+                                       const RHI::TexturePtr &albedo,
+                                       const RHI::TexturePtr &normal,
+                                       const RHI::TexturePtr &material,
+                                       const RHI::TexturePtr &emissive,
+                                       const RHI::TexturePtr &depth,
+                                       bool bUseRenderGraphInitialStates);
+        bool EnsureGBufferRenderPass(bool bUseRenderGraphInitialStates);
+        bool EnsureGBufferFramebuffer(uint32_t width,
+                                      uint32_t height,
+                                      const RHI::TexturePtr &albedo,
+                                      const RHI::TexturePtr &normal,
+                                      const RHI::TexturePtr &material,
+                                      const RHI::TexturePtr &emissive,
+                                      const RHI::TexturePtr &depth);
+        bool EnsureGBufferPipeline();
+        void EnqueueGBufferGeometryPass(ViewRenderContext &context,
+                                        Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
+                                        const RHI::Viewport &viewport,
+                                        const RHI::ScissorRect &scissor,
+                                        MeshResources *meshes) const;
+        bool TryEnqueueNativeClearPass(ViewRenderContext &context,
+                                       const RHI::Viewport &viewport,
+                                       const RHI::ScissorRect &scissor,
+                                       MeshResources *meshes) const;
 
         // 設定
         GBufferPassSettings m_Settings;
@@ -138,6 +180,12 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_MaterialTexture;
         RHI::TexturePtr m_EmissiveTexture;
         RHI::TexturePtr m_DepthTexture;
+
+        RGResourceHandle m_AlbedoHandle;
+        RGResourceHandle m_NormalHandle;
+        RGResourceHandle m_MaterialHandle;
+        RGResourceHandle m_EmissiveHandle;
+        RGResourceHandle m_DepthHandle;
 
         // GBuffer用レンダーパス・フレームバッファ
         RHI::RenderPassPtr m_GBufferRenderPass;
@@ -154,6 +202,15 @@ namespace NorvesLib::Core::Rendering
         // 現在のGBufferサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bUsingRenderGraphResources = false;
+        bool m_bRenderPassUsesRenderGraphInitialStates = false;
+        RHI::ITexture *m_FramebufferAlbedoTexture = nullptr;
+        RHI::ITexture *m_FramebufferNormalTexture = nullptr;
+        RHI::ITexture *m_FramebufferMaterialTexture = nullptr;
+        RHI::ITexture *m_FramebufferEmissiveTexture = nullptr;
+        RHI::ITexture *m_FramebufferDepthTexture = nullptr;
+        uint32_t m_FramebufferWidth = 0;
+        uint32_t m_FramebufferHeight = 0;
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;

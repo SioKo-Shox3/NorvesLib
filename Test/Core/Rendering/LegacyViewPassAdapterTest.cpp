@@ -1,5 +1,8 @@
 ﻿#include "Rendering/RenderGraph/LegacyViewPassAdapter.h"
 #include "Rendering/PostProcessStack.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Rendering/RenderGraph/RenderGraph.h"
+#include "Rendering/View.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Container/PointerTypes.h"
 #include <cassert>
@@ -59,6 +62,75 @@ namespace
             (void)context;
             assert(m_bInitialized);
             Record(PhaseExecute);
+        }
+
+    private:
+        void Record(const char* phase)
+        {
+            if (!m_Events)
+            {
+                return;
+            }
+
+            PassEvent event;
+            event.Name = m_Name;
+            event.Phase = phase;
+            m_Events->push_back(event);
+        }
+
+        const char* m_Name = nullptr;
+        Container::VariableArray<PassEvent>* m_Events = nullptr;
+    };
+
+    class NativeFakeViewPass final : public IViewPass, public IRenderGraphPass
+    {
+    public:
+        NativeFakeViewPass(const char* name, Container::VariableArray<PassEvent>* events)
+            : m_Name(name), m_Events(events)
+        {
+        }
+
+        const char* GetName() const override
+        {
+            return m_Name;
+        }
+
+        bool Initialize(ViewRenderContext& context) override
+        {
+            (void)context;
+            Record(PhaseInitialize);
+            m_bInitialized = true;
+            return true;
+        }
+
+        void Shutdown() override
+        {
+            m_bInitialized = false;
+        }
+
+        void Setup(ViewRenderContext& context) override
+        {
+            (void)context;
+            assert(m_bInitialized);
+            Record(PhaseSetup);
+        }
+
+        void Execute(ViewRenderContext& context) override
+        {
+            (void)context;
+            assert(m_bInitialized);
+            Record(PhaseExecute);
+        }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            builder.PreserveInsertionOrder();
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            Execute(context);
         }
 
     private:
@@ -194,6 +266,34 @@ namespace
         AssertEvent(events, 10, "After", PhaseSetup);
         AssertEvent(events, 11, "After", PhaseExecute);
     }
+
+    void TestViewGraphPathInitializesNativePassBeforeExecution()
+    {
+        Container::VariableArray<PassEvent> events;
+
+        View view;
+        ViewSettings settings;
+        assert(view.Initialize(settings));
+        view.AddPass(Container::MakeUnique<NativeFakeViewPass>("Native", &events));
+        view.AddPass(Container::MakeUnique<FakeViewPass>("Legacy", &events));
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        ViewRenderContext context;
+        context.Graph = &graph;
+        view.Render(context);
+
+        assert(events.size() == 5);
+        AssertEvent(events, 0, "Native", PhaseInitialize);
+        AssertEvent(events, 1, "Native", PhaseExecute);
+        AssertEvent(events, 2, "Legacy", PhaseInitialize);
+        AssertEvent(events, 3, "Legacy", PhaseSetup);
+        AssertEvent(events, 4, "Legacy", PhaseExecute);
+
+        view.Shutdown();
+        graph.Shutdown();
+    }
 } // namespace
 
 int main()
@@ -206,6 +306,8 @@ int main()
     std::cout << "  insertion order/logical declarations passed" << std::endl;
     TestPostProcessStackExecutesAsOneGraphBlock();
     std::cout << "  post process stack block passed" << std::endl;
+    TestViewGraphPathInitializesNativePassBeforeExecution();
+    std::cout << "  native view graph initialization passed" << std::endl;
 
     std::cout << "LegacyViewPassAdapterTest passed" << std::endl;
     return 0;
