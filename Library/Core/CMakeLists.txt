@@ -54,6 +54,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
     Private/Rendering/RenderingCoordinator.cpp
+    Private/Rendering/RenderGraph/RenderGraph.cpp
+    Private/Rendering/RenderGraph/RenderGraphBuilder.cpp
+    Private/Rendering/RenderGraph/LegacyViewPassAdapter.cpp
     Private/Rendering/RenderThread.cpp
     Private/Rendering/RenderFrameExecutor.cpp
     Private/Rendering/PresentationComposer.cpp
@@ -238,6 +241,12 @@ set(PUBLIC_HEADERS
     Public/Rendering/InstanceBufferRing.h
     Public/Rendering/DrawCommand.h
     Public/Rendering/RenderingCoordinator.h
+    Public/Rendering/RenderGraph/RenderGraphTypes.h
+    Public/Rendering/RenderGraph/RenderGraphBuilder.h
+    Public/Rendering/RenderGraph/IRenderGraphPass.h
+    Public/Rendering/RenderGraph/RenderGraphResources.h
+    Public/Rendering/RenderGraph/RenderGraph.h
+    Public/Rendering/RenderGraph/LegacyViewPassAdapter.h
     Public/Rendering/RenderFrameExecutor.h
     Public/Rendering/PresentationComposer.h
     Public/Rendering/PersistentResourceCache.h

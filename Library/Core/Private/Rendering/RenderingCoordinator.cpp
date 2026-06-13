@@ -158,6 +158,7 @@ namespace NorvesLib::Core::Rendering
         UpdateRenderResolution(m_Width, m_Height);
         m_bVSyncEnabled = settings.bVSync;
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
+        m_bUseRenderGraph = settings.bUseRenderGraph;
         m_MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
 
         // ========================================
@@ -451,6 +452,13 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        if (!m_RenderGraph.Initialize(&m_TransientPool))
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize RenderGraph");
+            ReleaseInitializedResources();
+            return false;
+        }
+
         if (!m_InstanceBufferRing.Initialize(m_Device.get(), swapChain->GetMaxFramesInFlight(), 1024))
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize InstanceBufferRing");
@@ -537,6 +545,9 @@ namespace NorvesLib::Core::Rendering
 
         // インスタンスデータSSBOリングの終了
         m_InstanceBufferRing.Shutdown();
+
+        // RenderGraphの終了（一時リソースプールより先に破棄）
+        m_RenderGraph.Shutdown();
 
         // 一時リソースプールの終了
         m_TransientPool.Shutdown();
@@ -890,6 +901,7 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t frameIndex = swapChain->GetCurrentFrameIndex();
         m_TransientPool.BeginFrame(frameIndex);
+        m_RenderGraph.BeginFrame(frameIndex);
         RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
 
         uint32_t imageIndex = swapChain->GetCurrentBackBufferIndex();
@@ -974,6 +986,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.Capabilities = &m_Device->GetCapabilities();
         viewContext.Renderer = &m_SceneRenderer;
         viewContext.PendingFrameCommands = &pendingFrameCommands;
+        viewContext.Graph = m_bUseRenderGraph ? &m_RenderGraph : nullptr;
 
         // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
         viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;

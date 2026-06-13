@@ -150,6 +150,26 @@ target_include_directories(RenderFrameExecutorPlanTest PRIVATE
 set_target_properties(RenderFrameExecutorPlanTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderFrameExecutorPlanTest COMMAND RenderFrameExecutorPlanTest)
 
+add_executable(RenderGraphCompileTest
+    RenderGraphCompileTest.cpp
+)
+target_link_libraries(RenderGraphCompileTest PRIVATE Core)
+target_include_directories(RenderGraphCompileTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphCompileTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphCompileTest COMMAND RenderGraphCompileTest)
+
+add_executable(LegacyViewPassAdapterTest
+    LegacyViewPassAdapterTest.cpp
+)
+target_link_libraries(LegacyViewPassAdapterTest PRIVATE Core)
+target_include_directories(LegacyViewPassAdapterTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(LegacyViewPassAdapterTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME LegacyViewPassAdapterTest COMMAND LegacyViewPassAdapterTest)
+
 add_executable(TransientResourcePoolTest
     TransientResourcePoolTest.cpp
 )
