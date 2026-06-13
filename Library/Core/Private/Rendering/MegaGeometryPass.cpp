@@ -121,13 +121,13 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // GBuffer描画用シェーダーの読み込み（通常のGBufferシェーダーを再利用）
+        // GBuffer描画用シェーダーの読み込み（MegaGeometry専用GBuffer互換シェーダー）
         if (context.ShaderMgr)
         {
             m_DrawVertexShader = context.ShaderMgr->LoadShader(
-                "gbuffer.vert", RHI::ShaderStage::Vertex);
+                "megageometry.vert", RHI::ShaderStage::Vertex);
             m_DrawFragmentShader = context.ShaderMgr->LoadShader(
-                "gbuffer.frag", RHI::ShaderStage::Pixel);
+                "megageometry.frag", RHI::ShaderStage::Pixel);
         }
         if (!m_DrawVertexShader || !m_DrawFragmentShader)
         {
