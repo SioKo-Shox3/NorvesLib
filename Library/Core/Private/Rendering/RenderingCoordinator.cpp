@@ -3,6 +3,7 @@
 #include "Rendering/SceneView.h"
 #include "Rendering/View.h"
 #include "Rendering/Viewport.h"
+#include "Rendering/InstanceBufferRing.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/ViewRenderContext.h"
@@ -446,12 +447,21 @@ namespace NorvesLib::Core::Rendering
         if (!m_TransientPool.Initialize(m_Device->GetResourceAllocator(), swapChain->GetMaxFramesInFlight()))
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize TransientResourcePool");
+            ReleaseInitializedResources();
+            return false;
+        }
+
+        if (!m_InstanceBufferRing.Initialize(m_Device.get(), swapChain->GetMaxFramesInFlight(), 1024))
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize InstanceBufferRing");
+            ReleaseInitializedResources();
             return false;
         }
 
         if (!m_SceneRenderer.Initialize(m_Device.get(), nullptr, &m_TransientPool))
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize SceneRenderer");
+            ReleaseInitializedResources();
             return false;
         }
 
@@ -491,6 +501,14 @@ namespace NorvesLib::Core::Rendering
 
         LOG_INFO("RenderingCoordinator::Shutdown() - Starting shutdown");
 
+        ReleaseInitializedResources();
+
+        m_bInitialized = false;
+        LOG_INFO("RenderingCoordinator::Shutdown() - Shutdown completed");
+    }
+
+    void RenderingCoordinator::ReleaseInitializedResources()
+    {
         // GPU処理の完了を待機
         if (m_Device)
         {
@@ -516,6 +534,9 @@ namespace NorvesLib::Core::Rendering
 
         // SceneRendererの終了
         m_SceneRenderer.Shutdown();
+
+        // インスタンスデータSSBOリングの終了
+        m_InstanceBufferRing.Shutdown();
 
         // 一時リソースプールの終了
         m_TransientPool.Shutdown();
@@ -557,9 +578,6 @@ namespace NorvesLib::Core::Rendering
 
         // デバイス参照の解放（Engine層がRHIの終了を管理）
         m_Device.reset();
-
-        m_bInitialized = false;
-        LOG_INFO("RenderingCoordinator::Shutdown() - Shutdown completed");
     }
 
     void RenderingCoordinator::BeginFrame()
@@ -870,7 +888,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        m_TransientPool.BeginFrame(swapChain->GetCurrentFrameIndex());
+        const uint32_t frameIndex = swapChain->GetCurrentFrameIndex();
+        m_TransientPool.BeginFrame(frameIndex);
+        RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
 
         uint32_t imageIndex = swapChain->GetCurrentBackBufferIndex();
 
@@ -894,7 +914,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // フレーム別コマンドバッファを選択（ダブルバッファリングでの同期問題を回避）
-        m_CommandList->SetFrameIndex(swapChain->GetCurrentFrameIndex());
+        m_CommandList->SetFrameIndex(frameIndex);
 
         // SceneRendererフレーム開始
         m_SceneRenderer.BeginFrame();
@@ -928,13 +948,14 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<FrameCommand> pendingFrameCommands;
         ViewRenderContext viewContext;
         viewContext.CommandList = m_CommandList.get();
+        viewContext.InstanceDataBuffer = instanceDataBuffer;
         viewContext.Device = m_Device.get();
         viewContext.TransientPool = &m_TransientPool;
         viewContext.SharedResources = &m_Screen.GetSharedResourceRegistry();
         viewContext.CurrentRenderPass = m_RenderPass.get();
         viewContext.CurrentFramebuffer = m_SwapChainFramebuffers[imageIndex].get();
         viewContext.bRenderPassActive = false; // Deferredパスは独自のレンダーパスを使用
-        viewContext.FrameIndex = swapChain->GetCurrentFrameIndex();
+        viewContext.FrameIndex = frameIndex;
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;
