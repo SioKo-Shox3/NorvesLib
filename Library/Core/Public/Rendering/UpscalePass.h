@@ -1,10 +1,13 @@
 ﻿#pragma once
 
 #include "IViewPass.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 
 namespace NorvesLib::Core::Rendering
 {
+    class FXAAPass;
+
     /**
      * @brief 最終画像アップスケール設定
      */
@@ -21,7 +24,7 @@ namespace NorvesLib::Core::Rendering
      * スクリーン解像度より低い場合に高品質なアップスケールを適用します。
      * 出力は SharedResourceRegistry に "PresentationColor" として登録されます。
      */
-    class UpscalePass : public IViewPass
+    class UpscalePass : public IViewPass, public IRenderGraphPass
     {
     public:
         explicit UpscalePass(const UpscaleSettings &settings = UpscaleSettings{});
@@ -34,10 +37,28 @@ namespace NorvesLib::Core::Rendering
         void Setup(ViewRenderContext &context) override;
         void Execute(ViewRenderContext &context) override;
 
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+
+        void SetInputPass(const FXAAPass* inputPass) { m_InputPass = inputPass; }
+        RGResourceHandle GetPresentationColorHandle() const { return m_OutputHandle; }
+
     private:
+        bool PrepareResources(uint32_t width,
+                              uint32_t height,
+                              const RHI::TexturePtr& outputTexture,
+                              bool bUseRenderGraphInitialState);
+        void ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& inputTexture);
+        bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
+        static bool NeedsUpscale(uint32_t renderWidth,
+                                 uint32_t renderHeight,
+                                 uint32_t screenWidth,
+                                 uint32_t screenHeight);
+
         UpscaleSettings m_Settings;
 
         RHI::TexturePtr m_OutputTexture;
+        RGResourceHandle m_OutputHandle;
         RHI::RenderPassPtr m_RenderPass;
         RHI::FramebufferPtr m_Framebuffer;
         RHI::PipelinePtr m_Pipeline;
@@ -46,8 +67,11 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorSetPtr m_DescriptorSet;
         RHI::SamplerPtr m_LinearSampler;
         RHI::IDevice *m_Device = nullptr;
+        const FXAAPass* m_InputPass = nullptr;
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bRenderPassUsesRenderGraphInitialState = false;
+        RHI::ITexture* m_FramebufferOutputTexture = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering

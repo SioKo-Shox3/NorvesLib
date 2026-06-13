@@ -7,6 +7,7 @@
 #include "Rendering/SSAOPass.h"
 #include "Rendering/SSRPass.h"
 #include "Rendering/ToneMappingPass.h"
+#include "Rendering/UpscalePass.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SceneView.h"
@@ -2149,6 +2150,119 @@ namespace
         assert(bHasFXAAOutputWrite);
     }
 
+    void TestUpscaleNativeDeclareDependencies()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        GBufferPass gbufferPass;
+        SSAOPass ssaoPass;
+        ssaoPass.SetGBufferPass(&gbufferPass);
+        LightingPass lightingPass;
+        lightingPass.SetGBufferPass(&gbufferPass);
+        lightingPass.SetSSAOPass(&ssaoPass);
+        ForwardPass forwardPass(nullptr, nullptr);
+        forwardPass.SetTransparentOnly(true);
+        forwardPass.SetLightingPass(&lightingPass);
+        forwardPass.SetGBufferPass(&gbufferPass);
+        SSRPass ssrPass;
+        ssrPass.SetGBufferPass(&gbufferPass);
+        ssrPass.SetLightingPass(&lightingPass);
+        BloomPass bloomPass;
+        bloomPass.SetInputPass(&ssrPass);
+        ToneMappingPass toneMappingPass;
+        toneMappingPass.SetInputPass(&bloomPass);
+        FXAAPass fxaaPass;
+        fxaaPass.SetInputPass(&toneMappingPass);
+        UpscalePass upscalePass;
+        upscalePass.SetInputPass(&fxaaPass);
+
+        const uint32_t gbufferPassIndex = graph.AddPass(&gbufferPass);
+        const uint32_t ssaoPassIndex = graph.AddPass(&ssaoPass);
+        const uint32_t lightingPassIndex = graph.AddPass(&lightingPass);
+        const uint32_t forwardPassIndex = graph.AddPass(&forwardPass);
+        const uint32_t ssrPassIndex = graph.AddPass(&ssrPass);
+        const uint32_t bloomPassIndex = graph.AddPass(&bloomPass);
+        const uint32_t toneMappingPassIndex = graph.AddPass(&toneMappingPass);
+        const uint32_t fxaaPassIndex = graph.AddPass(&fxaaPass);
+        const uint32_t upscalePassIndex = graph.AddPass(&upscalePass);
+
+        ViewRenderContext context;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.ScreenWidth = 256;
+        context.ScreenHeight = 128;
+
+        assert(graph.Compile(context));
+        assert(upscalePass.GetPresentationColorHandle().IsValid());
+        assert(graph.GetDeclaredPassAccessCount(upscalePassIndex) == 2);
+
+        bool bHasToneMappedRead = false;
+        bool bHasPresentationWrite = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(upscalePassIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(upscalePassIndex,
+                                                  accessIndex,
+                                                  resource,
+                                                  mode,
+                                                  state,
+                                                  finalState));
+
+            if (resource == fxaaPass.GetToneMappedColorHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasToneMappedRead = true;
+            }
+
+            if (resource == upscalePass.GetPresentationColorHandle())
+            {
+                assert(mode == RGAccessMode::Write);
+                assert(state == RHI::ResourceState::RenderTarget);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasPresentationWrite = true;
+            }
+        }
+
+        assert(bHasToneMappedRead);
+        assert(bHasPresentationWrite);
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 9);
+        assert(order[0] == gbufferPassIndex);
+        assert(order[1] == ssaoPassIndex);
+        assert(order[2] == lightingPassIndex);
+        assert(order[3] == forwardPassIndex);
+        assert(order[4] == ssrPassIndex);
+        assert(order[5] == bloomPassIndex);
+        assert(order[6] == toneMappingPassIndex);
+        assert(order[7] == fxaaPassIndex);
+        assert(order[8] == upscalePassIndex);
+
+        bool bHasPresentationOutputWrite = false;
+        for (const RGCompiledBarrier& barrier : graph.GetCompiledBarriers())
+        {
+            if (barrier.PassIndex != upscalePassIndex)
+            {
+                continue;
+            }
+
+            if (barrier.Resource == upscalePass.GetPresentationColorHandle())
+            {
+                assert(barrier.BeforeState == RHI::ResourceState::Undefined);
+                assert(barrier.AfterState == RHI::ResourceState::RenderTarget);
+                bHasPresentationOutputWrite = true;
+            }
+        }
+
+        assert(bHasPresentationOutputWrite);
+    }
+
     void TestGBufferSSAOLightingNativeExecuteRegistersBridge()
     {
         auto device = RHI::MakeShared<FakeDevice>();
@@ -2719,6 +2833,119 @@ namespace
         shaderManager.Shutdown();
     }
 
+    void TestUpscaleNativeExecuteRegistersPresentationBridge()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        SceneView sceneView;
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        SSAOPass ssaoPass;
+        ssaoPass.SetGBufferPass(&gbufferPass);
+        LightingPass lightingPass;
+        lightingPass.SetGBufferPass(&gbufferPass);
+        lightingPass.SetSSAOPass(&ssaoPass);
+        ForwardPass forwardPass(&sceneView, &renderer);
+        forwardPass.SetTransparentOnly(true);
+        forwardPass.SetRegisterOutputs(false);
+        forwardPass.SetLightingPass(&lightingPass);
+        forwardPass.SetGBufferPass(&gbufferPass);
+        SSRPass ssrPass;
+        ssrPass.SetGBufferPass(&gbufferPass);
+        ssrPass.SetLightingPass(&lightingPass);
+        BloomPass bloomPass;
+        bloomPass.SetInputPass(&ssrPass);
+        ToneMappingPass toneMappingPass;
+        toneMappingPass.SetInputPass(&bloomPass);
+        FXAAPass fxaaPass;
+        fxaaPass.SetInputPass(&toneMappingPass);
+        UpscalePass upscalePass;
+        upscalePass.SetInputPass(&fxaaPass);
+
+        graph.AddPass(&gbufferPass);
+        graph.AddPass(&ssaoPass);
+        graph.AddPass(&lightingPass);
+        graph.AddPass(&forwardPass);
+        graph.AddPass(&ssrPass);
+        graph.AddPass(&bloomPass);
+        graph.AddPass(&toneMappingPass);
+        graph.AddPass(&fxaaPass);
+        graph.AddPass(&upscalePass);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<DrawCommand> transparentCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.ScreenWidth = 256;
+        context.ScreenHeight = 128;
+        context.SnapshotOpaqueCommands = &opaqueCommands;
+        context.SnapshotTransparentCommands = &transparentCommands;
+        context.Resources.Textures = &renderResources.Textures();
+        context.Resources.Materials = &renderResources.Materials();
+        context.Resources.Meshes = &renderResources.Meshes();
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr presentationOutput = graphResources.GetTexture(upscalePass.GetPresentationColorHandle());
+        assert(presentationOutput);
+
+        assert(graph.GetLastExecutedPassCount() == 9);
+        assert(commandList.BeginRenderPassCount == commandList.EndRenderPassCount);
+        assert(commandList.BeginRenderPassCount > 0);
+        assert(commandList.DrawCallCount > 0);
+        assert(pendingFrameCommands.empty());
+        assert(sharedResources.HasTexture("PresentationColor"));
+        assert(sharedResources.GetTexturePtr("PresentationColor").get() == presentationOutput.get());
+
+        upscalePass.Shutdown();
+        fxaaPass.Shutdown();
+        toneMappingPass.Shutdown();
+        bloomPass.Shutdown();
+        ssrPass.Shutdown();
+        forwardPass.Shutdown();
+        lightingPass.Shutdown();
+        ssaoPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
     void TestToneMappingNativeExecuteAcceptsRawSceneColorBridge()
     {
         auto device = RHI::MakeShared<FakeDevice>();
@@ -2998,6 +3225,7 @@ int main()
     TestBloomNativeDeclareDependencies();
     TestToneMappingNativeDeclareDependencies();
     TestFXAANativeDeclareDependencies();
+    TestUpscaleNativeDeclareDependencies();
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
     TestGBufferSSAONativeExecuteRegistersBridge();
     TestGBufferSSAOLightingNativeExecuteRegistersBridge();
@@ -3007,6 +3235,7 @@ int main()
     TestBloomNativeExecuteRegistersSceneColorBridge();
     TestToneMappingNativeExecuteRegistersToneMappedBridge();
     TestFXAANativeExecuteRegistersToneMappedBridge();
+    TestUpscaleNativeExecuteRegistersPresentationBridge();
     TestToneMappingNativeExecuteAcceptsRawSceneColorBridge();
 
     std::cout << "RenderGraphCompileTest passed\n";

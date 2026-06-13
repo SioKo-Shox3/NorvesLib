@@ -1,4 +1,7 @@
 #include "Rendering/UpscalePass.h"
+#include "Rendering/FXAAPass.h"
+#include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
@@ -78,6 +81,9 @@ namespace NorvesLib::Core::Rendering
         m_Device = nullptr;
         m_CurrentWidth = 0;
         m_CurrentHeight = 0;
+        m_OutputHandle = {};
+        m_bRenderPassUsesRenderGraphInitialState = false;
+        m_FramebufferOutputTexture = nullptr;
         m_bInitialized = false;
     }
 
@@ -85,35 +91,84 @@ namespace NorvesLib::Core::Rendering
     {
         uint32_t width = context.ScreenWidth;
         uint32_t height = context.ScreenHeight;
-        if (width == 0 || height == 0)
+        if (width == 0 || height == 0 || !m_Device)
         {
             return;
         }
 
-        if (width == m_CurrentWidth && height == m_CurrentHeight)
+        const bool bNeedsOutputTexture =
+            !m_OutputTexture ||
+            width != m_CurrentWidth ||
+            height != m_CurrentHeight ||
+            m_bRenderPassUsesRenderGraphInitialState;
+
+        if (bNeedsOutputTexture)
         {
-            return;
+            m_OutputTexture = m_Device->CreateTexture(
+                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "PresentationColor"));
+            if (!m_OutputTexture)
+            {
+                NORVES_LOG_ERROR("UpscalePass", "Failed to create output texture");
+                return;
+            }
         }
 
-        m_CurrentWidth = width;
-        m_CurrentHeight = height;
+        const bool bNeedsPrepare =
+            bNeedsOutputTexture ||
+            !m_RenderPass ||
+            !m_Framebuffer ||
+            !m_Pipeline ||
+            !m_DescriptorSet ||
+            m_FramebufferOutputTexture != m_OutputTexture.get() ||
+            m_bRenderPassUsesRenderGraphInitialState;
 
-        m_OutputTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "PresentationColor"));
-        if (!m_OutputTexture)
+        if (bNeedsPrepare)
         {
-            NORVES_LOG_ERROR("UpscalePass", "Failed to create output texture");
-            return;
+            PrepareResources(width, height, m_OutputTexture, false);
         }
+    }
+
+    bool UpscalePass::PrepareResources(uint32_t width,
+                                       uint32_t height,
+                                       const RHI::TexturePtr& outputTexture,
+                                       bool bUseRenderGraphInitialState)
+    {
+        if (!m_Device || !outputTexture || !m_VertexShader || !m_FragmentShader)
+        {
+            return false;
+        }
+
+        const bool bResourcesChanged =
+            width != m_CurrentWidth ||
+            height != m_CurrentHeight ||
+            outputTexture.get() != m_FramebufferOutputTexture ||
+            bUseRenderGraphInitialState != m_bRenderPassUsesRenderGraphInitialState ||
+            !m_RenderPass ||
+            !m_Framebuffer ||
+            !m_Pipeline ||
+            !m_DescriptorSet;
+
+        m_OutputTexture = outputTexture;
+        if (!bResourcesChanged)
+        {
+            return true;
+        }
+
+        m_RenderPass.reset();
+        m_Framebuffer.reset();
+        m_Pipeline.reset();
+        m_DescriptorSet.reset();
 
         RHI::RenderPassDesc rpDesc;
         RHI::AttachmentDesc colorAttach;
-        colorAttach.format = m_Settings.OutputFormat;
+        colorAttach.format = outputTexture->GetFormat();
         colorAttach.isDepthStencil = false;
         colorAttach.clear = false;
         colorAttach.loadOp = RHI::AttachmentLoadOp::DontCare;
         colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        colorAttach.initialState = RHI::ResourceState::Undefined;
+        colorAttach.initialState = bUseRenderGraphInitialState
+                                       ? RHI::ResourceState::RenderTarget
+                                       : RHI::ResourceState::Undefined;
         colorAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(colorAttach);
         rpDesc.hasDepthStencil = false;
@@ -122,12 +177,12 @@ namespace NorvesLib::Core::Rendering
         if (!m_RenderPass)
         {
             NORVES_LOG_ERROR("UpscalePass", "Failed to create render pass");
-            return;
+            return false;
         }
 
         RHI::FramebufferDesc fbDesc;
         fbDesc.renderPass = m_RenderPass;
-        fbDesc.colorTargets.push_back(m_OutputTexture);
+        fbDesc.colorTargets.push_back(outputTexture);
         fbDesc.width = width;
         fbDesc.height = height;
 
@@ -135,7 +190,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_Framebuffer)
         {
             NORVES_LOG_ERROR("UpscalePass", "Failed to create framebuffer");
-            return;
+            return false;
         }
 
         RHI::DescriptorSetDesc dsDesc;
@@ -149,7 +204,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_DescriptorSet)
         {
             NORVES_LOG_ERROR("UpscalePass", "Failed to create descriptor set");
-            return;
+            return false;
         }
 
         RHI::GraphicsPipelineDesc pipelineDesc;
@@ -174,7 +229,22 @@ namespace NorvesLib::Core::Rendering
         if (!m_Pipeline)
         {
             NORVES_LOG_ERROR("UpscalePass", "Failed to create pipeline");
+            return false;
         }
+
+        m_CurrentWidth = width;
+        m_CurrentHeight = height;
+        m_FramebufferOutputTexture = outputTexture.get();
+        m_bRenderPassUsesRenderGraphInitialState = bUseRenderGraphInitialState;
+        return true;
+    }
+
+    bool UpscalePass::NeedsUpscale(uint32_t renderWidth,
+                                   uint32_t renderHeight,
+                                   uint32_t screenWidth,
+                                   uint32_t screenHeight)
+    {
+        return renderWidth != screenWidth || renderHeight != screenHeight;
     }
 
     void UpscalePass::Execute(ViewRenderContext &context)
@@ -197,6 +267,106 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        ExecuteWithInput(context, inputTexture);
+    }
+
+    void UpscalePass::Declare(RenderGraphBuilder &builder)
+    {
+        const ViewRenderContext *context = builder.GetContext();
+        const uint32_t renderWidth = context ? context->GetActiveRenderWidth() : 1u;
+        const uint32_t renderHeight = context ? context->GetActiveRenderHeight() : 1u;
+        const uint32_t screenWidth = context && context->ScreenWidth > 0 ? context->ScreenWidth : renderWidth;
+        const uint32_t screenHeight = context && context->ScreenHeight > 0 ? context->ScreenHeight : renderHeight;
+
+        RGResourceHandle inputHandle;
+        if (m_InputPass)
+        {
+            inputHandle = m_InputPass->GetToneMappedColorHandle();
+            if (inputHandle.IsValid())
+            {
+                builder.Read(inputHandle, RHI::ResourceState::ShaderResource);
+            }
+        }
+
+        if (!NeedsUpscale(renderWidth, renderHeight, screenWidth, screenHeight) && inputHandle.IsValid())
+        {
+            m_OutputHandle = inputHandle;
+            builder.PreserveInsertionOrder();
+            return;
+        }
+
+        m_OutputHandle = builder.CreateTexture(
+            RGTextureDesc::RenderTarget(screenWidth, screenHeight, m_Settings.OutputFormat, "PresentationColor"));
+        builder.Write(m_OutputHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        builder.PreserveInsertionOrder();
+    }
+
+    void UpscalePass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        if (!m_bInitialized)
+        {
+            if (!Initialize(context))
+            {
+                NORVES_LOG_ERROR("UpscalePass", "Failed to initialize native RenderGraph execution");
+                return;
+            }
+        }
+
+        RHI::TexturePtr inputTexture;
+        if (m_InputPass)
+        {
+            const RGResourceHandle toneMappedHandle = m_InputPass->GetToneMappedColorHandle();
+            if (toneMappedHandle.IsValid())
+            {
+                inputTexture = resources.GetTexture(toneMappedHandle);
+            }
+        }
+
+        if (!inputTexture && context.SharedResources)
+        {
+            inputTexture = context.SharedResources->GetTexturePtr("ToneMappedColor");
+        }
+
+        if (!inputTexture)
+        {
+            if (m_OutputHandle.IsValid() && resources.GetTexture(m_OutputHandle))
+            {
+                EnqueueEmptyNativePass(context);
+            }
+            return;
+        }
+
+        const uint32_t renderWidth = context.GetActiveRenderWidth();
+        const uint32_t renderHeight = context.GetActiveRenderHeight();
+        const uint32_t screenWidth = context.ScreenWidth > 0 ? context.ScreenWidth : renderWidth;
+        const uint32_t screenHeight = context.ScreenHeight > 0 ? context.ScreenHeight : renderHeight;
+
+        if (!NeedsUpscale(renderWidth, renderHeight, screenWidth, screenHeight))
+        {
+            if (context.SharedResources)
+            {
+                context.SharedResources->RegisterTexturePtr("PresentationColor", inputTexture);
+            }
+            return;
+        }
+
+        RHI::TexturePtr outputTexture = resources.GetTexture(m_OutputHandle);
+        if (!outputTexture)
+        {
+            NORVES_LOG_ERROR("UpscalePass", "Failed to resolve native presentation output texture");
+            return;
+        }
+
+        if (!PrepareResources(outputTexture->GetWidth(), outputTexture->GetHeight(), outputTexture, true))
+        {
+            return;
+        }
+
+        ExecuteWithInput(context, inputTexture);
+    }
+
+    void UpscalePass::ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& inputTexture)
+    {
         if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
         {
             NORVES_LOG_WARNING("UpscalePass", "Upscale resources not ready, skipping");
@@ -228,7 +398,26 @@ namespace NorvesLib::Core::Rendering
                                       m_Pipeline,
                                       m_DescriptorSet);
 
-        context.SharedResources->RegisterTexturePtr("PresentationColor", m_OutputTexture);
+        if (context.SharedResources)
+        {
+            context.SharedResources->RegisterTexturePtr("PresentationColor", m_OutputTexture);
+        }
+    }
+
+    bool UpscalePass::EnqueueEmptyNativePass(ViewRenderContext &context) const
+    {
+        if (!m_RenderPass || !m_Framebuffer)
+        {
+            return false;
+        }
+
+        context.EnqueueFullscreenPass(m_RenderPass,
+                                      m_Framebuffer,
+                                      context.GetActiveLocalViewport(),
+                                      context.GetActiveLocalScissor(),
+                                      nullptr,
+                                      nullptr);
+        return true;
     }
 
 } // namespace NorvesLib::Core::Rendering
