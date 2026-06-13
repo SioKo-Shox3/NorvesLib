@@ -77,17 +77,20 @@ namespace NorvesLib::Core::Rendering
             outData.NormalMatrix[10] = normalMatrix.m22;
             outData.NormalMatrix[11] = 0.0f;
 
-            outData.ObjectColor[0] = 1.0f;
-            outData.ObjectColor[1] = 1.0f;
-            outData.ObjectColor[2] = 1.0f;
-            outData.ObjectColor[3] = 1.0f;
-
             if (customData)
             {
+                outData.ObjectColor[0] = customData[0] != 0.0f ? customData[0] : 1.0f;
+                outData.ObjectColor[1] = customData[1] != 0.0f ? customData[1] : 1.0f;
+                outData.ObjectColor[2] = customData[2] != 0.0f ? customData[2] : 1.0f;
+                outData.ObjectColor[3] = customData[3] != 0.0f ? customData[3] : 1.0f;
                 std::memcpy(outData.CustomData, customData, sizeof(outData.CustomData));
             }
             else
             {
+                outData.ObjectColor[0] = 1.0f;
+                outData.ObjectColor[1] = 1.0f;
+                outData.ObjectColor[2] = 1.0f;
+                outData.ObjectColor[3] = 1.0f;
                 outData.CustomData[0] = 0.0f;
                 outData.CustomData[1] = 0.0f;
                 outData.CustomData[2] = 0.0f;
@@ -175,6 +178,7 @@ namespace NorvesLib::Core::Rendering
             tempBatch.MeshHandle = proxy.MeshHandle;
             tempBatch.MaterialHandle = proxy.Materials[i];
             tempBatch.SubMeshIndex = i;
+            tempBatch.bCastShadow = proxy.bCastShadow;
 
             uint64_t key = tempBatch.GetBatchKey();
 
@@ -183,6 +187,7 @@ namespace NorvesLib::Core::Rendering
             batch.MeshHandle = proxy.MeshHandle;
             batch.MaterialHandle = proxy.Materials[i];
             batch.SubMeshIndex = i;
+            batch.bCastShadow = proxy.bCastShadow;
 
             // インスタンスを追加（カスタムデータとシャドウフラグも含む）
             batch.AddInstance(proxy.WorldTransform, proxy.ObjectId, proxy.CustomData, proxy.bCastShadow);
@@ -193,26 +198,23 @@ namespace NorvesLib::Core::Rendering
     {
         m_Stats.TotalBatches = static_cast<uint32_t>(m_Batches.size());
 
-        // インスタンシング統計を計算
-        for (const MeshBatch &batch : m_Batches)
-        {
-            if (batch.IsInstanced())
-            {
-                m_Stats.InstancedDrawCalls++;
-                m_Stats.SavedDrawCalls += batch.GetInstanceCount() - 1;
-            }
-        }
     }
 
     void MeshBatcher::GenerateDrawCommands(Container::VariableArray<DrawCommand> &outCommands,
-                                           Container::VariableArray<GPUSceneInstanceData> &outInstanceData)
+                                           Container::VariableArray<GPUSceneInstanceData> &outInstanceData,
+                                           bool bAllowInstancing,
+                                           uint32_t minInstanceCount)
     {
         outCommands.clear();
         outInstanceData.clear();
+        m_Stats.TotalBatches = static_cast<uint32_t>(m_Batches.size());
+        m_Stats.TotalDrawCommands = 0;
+        m_Stats.InstancedDrawCalls = 0;
+        m_Stats.SavedDrawCalls = 0;
 
         for (const MeshBatch &batch : m_Batches)
         {
-            if (batch.IsInstanced())
+            if (batch.IsInstanced(minInstanceCount, bAllowInstancing))
             {
                 DrawCommand cmd;
                 cmd.Type = DrawCommandType::DrawIndexed;
@@ -226,12 +228,12 @@ namespace NorvesLib::Core::Rendering
                 cmd.Draw.InstanceCount = batch.GetInstanceCount();
                 cmd.Draw.FirstInstance = static_cast<uint32_t>(outInstanceData.size());
                 cmd.Draw.InstanceDataOffset = cmd.Draw.FirstInstance;
+                cmd.Draw.bCastShadow = batch.bCastShadow;
                 // カスタムデータとフラグをコピー（最初のインスタンスの値を使用）
                 if (!batch.InstanceExtraData.empty())
                 {
                     const auto &extra = batch.InstanceExtraData[0];
                     std::memcpy(cmd.Draw.CustomData, extra.CustomData, sizeof(cmd.Draw.CustomData));
-                    cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
 
                 for (uint32_t instanceIndex = 0; instanceIndex < batch.GetInstanceCount(); ++instanceIndex)
@@ -259,6 +261,8 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 outCommands.push_back(cmd);
+                m_Stats.InstancedDrawCalls++;
+                m_Stats.SavedDrawCalls += batch.GetInstanceCount() - 1;
                 continue;
             }
 

@@ -207,22 +207,12 @@ namespace NorvesLib::Core::Rendering
         // 頂点/インデックスバッファがある場合のインデックス描画
         if (draw.IndexCount > 0 && draw.MeshHandle.IsValid())
         {
-            if (draw.bInstanced && draw.InstanceCount > 1)
-            {
-                commandList->DrawIndexedInstanced(
-                    draw.IndexCount,
-                    draw.InstanceCount,
-                    draw.IndexOffset,
-                    static_cast<int32_t>(draw.VertexOffset),
-                    draw.FirstInstance);
-            }
-            else
-            {
-                commandList->DrawIndexed(
-                    draw.IndexCount,
-                    draw.IndexOffset,
-                    static_cast<int32_t>(draw.VertexOffset));
-            }
+            commandList->DrawIndexedInstanced(
+                draw.IndexCount,
+                std::max(1u, draw.InstanceCount),
+                draw.IndexOffset,
+                static_cast<int32_t>(draw.VertexOffset),
+                draw.FirstInstance);
         }
         else
         {
@@ -409,19 +399,12 @@ namespace NorvesLib::Core::Rendering
         commandList->SetIndexBuffer(gpuData->IndexBuffer, 0);
 
         // 描画
-        if (command.Draw.bInstanced && command.Draw.InstanceCount > 1)
-        {
-            commandList->DrawIndexedInstanced(
-                gpuData->IndexCount,
-                command.Draw.InstanceCount,
-                0,
-                0,
-                command.Draw.FirstInstance);
-        }
-        else
-        {
-            commandList->DrawIndexed(gpuData->IndexCount, 0, 0);
-        }
+        commandList->DrawIndexedInstanced(
+            gpuData->IndexCount,
+            std::max(1u, command.Draw.InstanceCount),
+            0,
+            0,
+            command.Draw.FirstInstance);
 
         // 統計更新
         ++m_Stats.DrawCallCount;

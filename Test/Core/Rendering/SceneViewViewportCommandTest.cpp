@@ -57,6 +57,7 @@ int main()
         SceneViewSettings settings;
         settings.bEnableFrustumCulling = false;
         settings.bEnableDistanceCulling = false;
+        settings.bEnableInstancing = false;
         assert(view.Initialize(settings));
 
         view.AddMeshProxy(MakeProxy(1, 100, 200));
@@ -90,6 +91,7 @@ int main()
         SceneViewSettings settings;
         settings.bEnableFrustumCulling = true;
         settings.bEnableDistanceCulling = false;
+        settings.bEnableInstancing = false;
         assert(view.Initialize(settings));
 
         view.AddMeshProxy(MakeProxy(1, 100, 200, 0.0f, 0.5f, 0.0f, 1.0f));

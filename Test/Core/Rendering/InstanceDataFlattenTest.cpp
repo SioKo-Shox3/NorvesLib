@@ -51,7 +51,7 @@ namespace
         otherWorld.m30 = 10.0f;
         batcher.AddMeshProxy(MakeProxy(6, 101, 200, otherWorld));
         batcher.EndBatching();
-        batcher.GenerateDrawCommands(commands, instanceData);
+        batcher.GenerateDrawCommands(commands, instanceData, false, 2);
 
         assert(instanceData.size() == 6);
         assert(commands.size() == 6);
@@ -78,7 +78,7 @@ namespace
         batcher.BeginBatching();
         batcher.AddMeshProxy(MakeProxy(1, 100, 200, world));
         batcher.EndBatching();
-        batcher.GenerateDrawCommands(commands, instanceData);
+        batcher.GenerateDrawCommands(commands, instanceData, false, 2);
 
         assert(commands.size() == 1);
         assert(instanceData.size() == 1);
