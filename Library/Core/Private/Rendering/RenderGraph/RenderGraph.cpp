@@ -456,6 +456,42 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    uint32_t RenderGraph::GetDeclaredPassAccessCount(uint32_t passIndex) const
+    {
+        if (!ValidatePassIndex(passIndex) || passIndex >= m_PassDeclarations.size())
+        {
+            return 0;
+        }
+
+        return static_cast<uint32_t>(m_PassDeclarations[passIndex].Accesses.size());
+    }
+
+    bool RenderGraph::TryGetDeclaredPassAccess(uint32_t passIndex,
+                                               uint32_t accessIndex,
+                                               RGResourceHandle& outResource,
+                                               RGAccessMode& outMode,
+                                               RHI::ResourceState& outState,
+                                               RHI::ResourceState& outFinalState) const
+    {
+        if (!ValidatePassIndex(passIndex) || passIndex >= m_PassDeclarations.size())
+        {
+            return false;
+        }
+
+        const RGPassDeclaration& declaration = m_PassDeclarations[passIndex];
+        if (accessIndex >= declaration.Accesses.size())
+        {
+            return false;
+        }
+
+        const RGPassAccess& access = declaration.Accesses[accessIndex];
+        outResource = access.Resource;
+        outMode = access.Mode;
+        outState = access.State;
+        outFinalState = access.FinalState;
+        return true;
+    }
+
     bool RenderGraph::ValidatePassIndex(uint32_t passIndex) const
     {
         return !IsInvalidPassIndex(passIndex) && passIndex < m_Passes.size();

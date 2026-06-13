@@ -1,10 +1,12 @@
 ﻿#pragma once
 
 #include "Rendering/IViewPass.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 
 namespace NorvesLib::Core::Rendering
 {
+    class GBufferPass;
 
     /**
      * @brief SSAOパス設定
@@ -39,7 +41,7 @@ namespace NorvesLib::Core::Rendering
      * 出力（SharedResourceRegistryに登録）:
      * - "SSAO" : AO値テクスチャ (R8_UNORM)
      */
-    class SSAOPass : public IViewPass
+    class SSAOPass : public IViewPass, public IRenderGraphPass
     {
     public:
         /**
@@ -65,6 +67,13 @@ namespace NorvesLib::Core::Rendering
         void Execute(ViewRenderContext &context) override;
 
         // ========================================
+        // IRenderGraphPass実装
+        // ========================================
+
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+
+        // ========================================
         // パラメータ調整
         // ========================================
 
@@ -72,6 +81,10 @@ namespace NorvesLib::Core::Rendering
         void SetBias(float bias) { m_Settings.Bias = bias; }
         void SetIntensity(float intensity) { m_Settings.Intensity = intensity; }
         const SSAOSettings &GetSettings() const { return m_Settings; }
+
+        void SetGBufferPass(const GBufferPass *gbufferPass) { m_GBufferPass = gbufferPass; }
+        RGResourceHandle GetSSAORawHandle() const { return m_SSAORawHandle; }
+        RGResourceHandle GetSSAOBlurredHandle() const { return m_SSAOBlurredHandle; }
 
     private:
         /**
@@ -84,13 +97,40 @@ namespace NorvesLib::Core::Rendering
          */
         void GenerateNoiseTexture();
 
+        bool CreateSSAOResources(uint32_t width, uint32_t height, ViewRenderContext &context);
+        uint32_t ResolveSSAOWidth(const ViewRenderContext &context) const;
+        uint32_t ResolveSSAOHeight(const ViewRenderContext &context) const;
+        bool PrepareSSAOAttachments(uint32_t width,
+                                    uint32_t height,
+                                    const RHI::TexturePtr &rawTexture,
+                                    const RHI::TexturePtr &blurredTexture,
+                                    bool bUseRenderGraphInitialStates);
+        bool EnsureSSAORenderPass(bool bUseRenderGraphInitialStates);
+        bool EnsureSSAOFramebuffer(uint32_t width,
+                                   uint32_t height,
+                                   const RHI::TexturePtr &rawTexture);
+        bool EnsureSSAOPipeline();
+        bool EnsureBlurRenderPass(bool bUseRenderGraphInitialStates);
+        bool EnsureBlurFramebuffer(uint32_t width,
+                                   uint32_t height,
+                                   const RHI::TexturePtr &blurredTexture);
+        bool EnsureBlurPipeline();
+        void ExecuteWithGBufferTextures(ViewRenderContext &context,
+                                        const RHI::TexturePtr &depthTexture,
+                                        const RHI::TexturePtr &normalTexture);
+        bool TryEnqueueNativeTransitionPasses(ViewRenderContext &context) const;
+
         // 設定
         SSAOSettings m_Settings;
+        const GBufferPass *m_GBufferPass = nullptr;
 
         // SSAOパス用リソース
         RHI::TexturePtr m_SSAORawTexture;     // ブラー前の生AO
         RHI::TexturePtr m_SSAOBlurredTexture; // ブラー後の最終AO
         RHI::TexturePtr m_NoiseTexture;       // 4x4ランダムノイズ
+
+        RGResourceHandle m_SSAORawHandle;
+        RGResourceHandle m_SSAOBlurredHandle;
 
         // SSAOパス
         RHI::RenderPassPtr m_SSAORenderPass;
@@ -120,6 +160,15 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bUsingRenderGraphResources = false;
+        bool m_bSSAOInitialStateFromRenderGraph = false;
+        bool m_bBlurInitialStateFromRenderGraph = false;
+        RHI::ITexture *m_SSAOFramebufferTexture = nullptr;
+        RHI::ITexture *m_BlurFramebufferTexture = nullptr;
+        uint32_t m_SSAOFramebufferWidth = 0;
+        uint32_t m_SSAOFramebufferHeight = 0;
+        uint32_t m_BlurFramebufferWidth = 0;
+        uint32_t m_BlurFramebufferHeight = 0;
 
         // カーネルデータ（CPU側保持）
         static constexpr int KERNEL_SIZE = 32;
