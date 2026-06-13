@@ -132,6 +132,14 @@ namespace NorvesLib::Core::Rendering
                                  RHI::ICommandList *commandList);
 
         /**
+         * @brief DrawCommandビューを直接実行します
+         * @param commands DrawCommand範囲ビュー
+         * @param commandList コマンドリスト
+         */
+        void ExecuteDrawCommands(DrawCommandView commands,
+                                 RHI::ICommandList *commandList);
+
+        /**
          * @brief FrameCommandを実行します
          * @param commands FrameCommand配列
          * @param commandList コマンドリスト

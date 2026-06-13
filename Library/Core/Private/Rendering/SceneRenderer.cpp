@@ -109,6 +109,12 @@ namespace NorvesLib::Core::Rendering
     void SceneRenderer::ExecuteDrawCommands(const Container::VariableArray<DrawCommand> &commands,
                                             RHI::ICommandList *commandList)
     {
+        ExecuteDrawCommands(DrawCommandView::FromArray(commands), commandList);
+    }
+
+    void SceneRenderer::ExecuteDrawCommands(DrawCommandView commands,
+                                            RHI::ICommandList *commandList)
+    {
         if (commands.empty() || !commandList)
         {
             return;
@@ -116,7 +122,7 @@ namespace NorvesLib::Core::Rendering
 
         // TODO: バッチング最適化
         // 現時点では単純に順次実行
-        for (const auto &command : commands)
+        for (const DrawCommand &command : commands)
         {
             ExecuteDrawCommand(command, commandList);
         }

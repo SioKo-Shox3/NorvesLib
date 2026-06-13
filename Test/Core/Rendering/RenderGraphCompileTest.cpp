@@ -2544,7 +2544,7 @@ namespace
         context.PendingFrameCommands = &pendingFrameCommands;
         context.RenderWidth = 128;
         context.RenderHeight = 64;
-        context.SnapshotOpaqueCommands = &opaqueCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();
@@ -2632,8 +2632,8 @@ namespace
         context.PendingFrameCommands = &pendingFrameCommands;
         context.RenderWidth = 128;
         context.RenderHeight = 64;
-        context.SnapshotOpaqueCommands = &opaqueCommands;
-        context.SnapshotTransparentCommands = &transparentCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotTransparentCommands = DrawCommandView::FromArray(transparentCommands);
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();
@@ -2726,8 +2726,8 @@ namespace
         context.PendingFrameCommands = &pendingFrameCommands;
         context.RenderWidth = 128;
         context.RenderHeight = 64;
-        context.SnapshotOpaqueCommands = &opaqueCommands;
-        context.SnapshotTransparentCommands = &transparentCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotTransparentCommands = DrawCommandView::FromArray(transparentCommands);
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();
@@ -2821,8 +2821,8 @@ namespace
         context.PendingFrameCommands = &pendingFrameCommands;
         context.RenderWidth = 128;
         context.RenderHeight = 64;
-        context.SnapshotOpaqueCommands = &opaqueCommands;
-        context.SnapshotTransparentCommands = &transparentCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotTransparentCommands = DrawCommandView::FromArray(transparentCommands);
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();
@@ -2923,8 +2923,8 @@ namespace
         context.PendingFrameCommands = &pendingFrameCommands;
         context.RenderWidth = 128;
         context.RenderHeight = 64;
-        context.SnapshotOpaqueCommands = &opaqueCommands;
-        context.SnapshotTransparentCommands = &transparentCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotTransparentCommands = DrawCommandView::FromArray(transparentCommands);
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();
@@ -3029,8 +3029,8 @@ namespace
         context.PendingFrameCommands = &pendingFrameCommands;
         context.RenderWidth = 128;
         context.RenderHeight = 64;
-        context.SnapshotOpaqueCommands = &opaqueCommands;
-        context.SnapshotTransparentCommands = &transparentCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotTransparentCommands = DrawCommandView::FromArray(transparentCommands);
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();
@@ -3141,8 +3141,8 @@ namespace
         context.RenderHeight = 64;
         context.ScreenWidth = 256;
         context.ScreenHeight = 128;
-        context.SnapshotOpaqueCommands = &opaqueCommands;
-        context.SnapshotTransparentCommands = &transparentCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotTransparentCommands = DrawCommandView::FromArray(transparentCommands);
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();
@@ -3334,7 +3334,7 @@ namespace
         context.PendingFrameCommands = &pendingFrameCommands;
         context.RenderWidth = 128;
         context.RenderHeight = 64;
-        context.SnapshotOpaqueCommands = &opaqueCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();
@@ -3407,7 +3407,7 @@ namespace
         context.PendingFrameCommands = &pendingFrameCommands;
         context.RenderWidth = 128;
         context.RenderHeight = 64;
-        context.SnapshotOpaqueCommands = &opaqueCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();

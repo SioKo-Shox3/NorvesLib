@@ -373,18 +373,18 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // DrawCommand駆動の描画
         // ========================================
-        const auto *activeOpaqueCommands = context.GetActiveOpaqueCommands();
+        const DrawCommandView activeOpaqueCommands = context.GetActiveOpaqueCommands();
         auto *materials = context.Resources.Materials;
         auto *textures = context.Resources.Textures;
         auto *meshes = context.Resources.Meshes;
-        if (!m_SceneRenderer || !materials || !textures || !meshes || !activeOpaqueCommands)
+        if (!m_SceneRenderer || !materials || !textures || !meshes)
         {
             TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
             return;
         }
 
         // DrawCommand配列を取得（GameThreadでスナップショット済み）
-        const auto &opaqueCommands = *activeOpaqueCommands;
+        const DrawCommandView opaqueCommands = activeOpaqueCommands;
         if (opaqueCommands.empty())
         {
             TryEnqueueNativeClearPass(context, viewport, scissor, meshes);

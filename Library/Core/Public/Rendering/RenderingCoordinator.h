@@ -384,9 +384,6 @@ namespace NorvesLib::Core::Rendering
         FramePacketManager m_PacketManager;
         FramePacket *m_CurrentPacket = nullptr;
 
-        // DrawCommand
-        Container::VariableArray<DrawCommand> m_FrameDrawCommands;
-
         // 同期
         Thread::Mutex m_Mutex;
 

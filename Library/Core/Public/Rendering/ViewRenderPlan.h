@@ -31,9 +31,9 @@ namespace NorvesLib::Core::Rendering
 
         CameraProxy Camera;
 
-        Container::VariableArray<DrawCommand> DrawCommands;
-        Container::VariableArray<DrawCommand> OpaqueCommands;
-        Container::VariableArray<DrawCommand> TransparentCommands;
+        CommandRange DrawCommandRange;
+        CommandRange OpaqueCommandRange;
+        CommandRange TransparentCommandRange;
 
         bool HasDrawableExtent() const
         {
@@ -53,9 +53,9 @@ namespace NorvesLib::Core::Rendering
             RenderWidth = 0;
             RenderHeight = 0;
             Camera = CameraProxy{};
-            DrawCommands.clear();
-            OpaqueCommands.clear();
-            TransparentCommands.clear();
+            DrawCommandRange = CommandRange{};
+            OpaqueCommandRange = CommandRange{};
+            TransparentCommandRange = CommandRange{};
         }
     };
 

@@ -388,13 +388,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        const auto *activeDrawCommands = context.GetActiveDrawCommands();
-        if (!activeDrawCommands)
-        {
-            return;
-        }
-
-        const auto &drawCommands = *activeDrawCommands;
+        const DrawCommandView drawCommands = context.GetActiveDrawCommands();
 
         if (m_bRegisterOutputs && context.SharedResources)
         {
@@ -618,8 +612,8 @@ namespace NorvesLib::Core::Rendering
     void ForwardPass::ExecuteTransparentCommands(ViewRenderContext &context,
                                                  bool bUseRenderGraphManagedStates)
     {
-        const auto *activeTransparentCommands = context.GetActiveTransparentCommands();
-        if (!activeTransparentCommands || activeTransparentCommands->empty())
+        const DrawCommandView activeTransparentCommands = context.GetActiveTransparentCommands();
+        if (activeTransparentCommands.empty())
         {
             if (bUseRenderGraphManagedStates)
             {
@@ -685,9 +679,9 @@ namespace NorvesLib::Core::Rendering
         m_UniformAllocator.Reset();
 
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
-        transparentCommands->reserve(activeTransparentCommands->size());
+        transparentCommands->reserve(activeTransparentCommands.size());
 
-        for (const DrawCommand &cmd : *activeTransparentCommands)
+        for (const DrawCommand &cmd : activeTransparentCommands)
         {
             auto allocation = m_UniformAllocator.Allocate();
             if (!allocation.UniformBuffer)

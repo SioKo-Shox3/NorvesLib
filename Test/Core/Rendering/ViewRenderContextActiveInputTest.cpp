@@ -27,24 +27,37 @@ int main()
     snapshotCommands.push_back(DrawCommand::CreateDraw());
     currentCommands.push_back(DrawCommand::CreateDrawIndexed());
 
-    context.SnapshotDrawCommands = &snapshotCommands;
-    assert(context.GetActiveDrawCommands() == &snapshotCommands);
-    context.CurrentDrawCommands = &currentCommands;
-    assert(context.GetActiveDrawCommands() == &currentCommands);
+    context.SnapshotDrawCommands = DrawCommandView::FromArray(snapshotCommands);
+    assert(context.GetActiveDrawCommands().Data == snapshotCommands.data());
+    assert(context.GetActiveDrawCommands().Count == 1);
+
+    ViewportSnapshot commandViewport;
+    context.CurrentViewport = &commandViewport;
+    context.CurrentDrawCommands = DrawCommandView::FromArray(currentCommands);
+    assert(context.GetActiveDrawCommands().Data == currentCommands.data());
+    assert(context.GetActiveDrawCommands().Count == 1);
 
     Container::VariableArray<DrawCommand> snapshotOpaqueCommands;
     Container::VariableArray<DrawCommand> currentOpaqueCommands;
-    context.SnapshotOpaqueCommands = &snapshotOpaqueCommands;
-    assert(context.GetActiveOpaqueCommands() == &snapshotOpaqueCommands);
-    context.CurrentOpaqueCommands = &currentOpaqueCommands;
-    assert(context.GetActiveOpaqueCommands() == &currentOpaqueCommands);
+    snapshotOpaqueCommands.push_back(DrawCommand::CreateDraw());
+    currentOpaqueCommands.push_back(DrawCommand::CreateDrawIndexed());
+    context.CurrentViewport = nullptr;
+    context.SnapshotOpaqueCommands = DrawCommandView::FromArray(snapshotOpaqueCommands);
+    assert(context.GetActiveOpaqueCommands().Data == snapshotOpaqueCommands.data());
+    context.CurrentViewport = &commandViewport;
+    context.CurrentOpaqueCommands = DrawCommandView::FromArray(currentOpaqueCommands);
+    assert(context.GetActiveOpaqueCommands().Data == currentOpaqueCommands.data());
 
     Container::VariableArray<DrawCommand> snapshotTransparentCommands;
     Container::VariableArray<DrawCommand> currentTransparentCommands;
-    context.SnapshotTransparentCommands = &snapshotTransparentCommands;
-    assert(context.GetActiveTransparentCommands() == &snapshotTransparentCommands);
-    context.CurrentTransparentCommands = &currentTransparentCommands;
-    assert(context.GetActiveTransparentCommands() == &currentTransparentCommands);
+    snapshotTransparentCommands.push_back(DrawCommand::CreateDraw());
+    currentTransparentCommands.push_back(DrawCommand::CreateDrawIndexed());
+    context.CurrentViewport = nullptr;
+    context.SnapshotTransparentCommands = DrawCommandView::FromArray(snapshotTransparentCommands);
+    assert(context.GetActiveTransparentCommands().Data == snapshotTransparentCommands.data());
+    context.CurrentViewport = &commandViewport;
+    context.CurrentTransparentCommands = DrawCommandView::FromArray(currentTransparentCommands);
+    assert(context.GetActiveTransparentCommands().Data == currentTransparentCommands.data());
 
     context.RenderWidth = 1280;
     context.RenderHeight = 720;

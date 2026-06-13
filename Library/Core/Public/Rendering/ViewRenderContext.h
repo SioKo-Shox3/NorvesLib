@@ -89,23 +89,26 @@ namespace NorvesLib::Core::Rendering
         // DrawCommand / Proxyスナップショット（FramePacketから指す、RenderThread読み取り専用）
         // ========================================
 
+        /** @brief FramePacket::DrawCommands実体配列（範囲ビューの基準） */
+        const Container::VariableArray<DrawCommand> *SnapshotDrawCommandSource = nullptr;
+
         /** @brief 全DrawCommandスナップショット（GameThreadが生成、パスが読み取る） */
-        const Container::VariableArray<DrawCommand> *SnapshotDrawCommands = nullptr;
+        DrawCommandView SnapshotDrawCommands;
 
         /** @brief 不透明DrawCommandスナップショット */
-        const Container::VariableArray<DrawCommand> *SnapshotOpaqueCommands = nullptr;
+        DrawCommandView SnapshotOpaqueCommands;
 
         /** @brief 半透明DrawCommandスナップショット */
-        const Container::VariableArray<DrawCommand> *SnapshotTransparentCommands = nullptr;
+        DrawCommandView SnapshotTransparentCommands;
 
         /** @brief 現在描画中のViewportに対応する全DrawCommand */
-        const Container::VariableArray<DrawCommand> *CurrentDrawCommands = nullptr;
+        DrawCommandView CurrentDrawCommands;
 
         /** @brief 現在描画中のViewportに対応する不透明DrawCommand */
-        const Container::VariableArray<DrawCommand> *CurrentOpaqueCommands = nullptr;
+        DrawCommandView CurrentOpaqueCommands;
 
         /** @brief 現在描画中のViewportに対応する半透明DrawCommand */
-        const Container::VariableArray<DrawCommand> *CurrentTransparentCommands = nullptr;
+        DrawCommandView CurrentTransparentCommands;
 
         /** @brief LightProxyスナップショット（FramePacket::Scene.LightProxiesを指す） */
         const Container::VariableArray<LightProxy> *SnapshotLightProxies = nullptr;
@@ -131,19 +134,19 @@ namespace NorvesLib::Core::Rendering
             return CurrentCamera ? CurrentCamera : MainCamera;
         }
 
-        const Container::VariableArray<DrawCommand> *GetActiveDrawCommands() const
+        DrawCommandView GetActiveDrawCommands() const
         {
-            return CurrentDrawCommands ? CurrentDrawCommands : SnapshotDrawCommands;
+            return CurrentViewport ? CurrentDrawCommands : SnapshotDrawCommands;
         }
 
-        const Container::VariableArray<DrawCommand> *GetActiveOpaqueCommands() const
+        DrawCommandView GetActiveOpaqueCommands() const
         {
-            return CurrentOpaqueCommands ? CurrentOpaqueCommands : SnapshotOpaqueCommands;
+            return CurrentViewport ? CurrentOpaqueCommands : SnapshotOpaqueCommands;
         }
 
-        const Container::VariableArray<DrawCommand> *GetActiveTransparentCommands() const
+        DrawCommandView GetActiveTransparentCommands() const
         {
-            return CurrentTransparentCommands ? CurrentTransparentCommands : SnapshotTransparentCommands;
+            return CurrentViewport ? CurrentTransparentCommands : SnapshotTransparentCommands;
         }
 
         uint32_t GetActiveRenderWidth() const
