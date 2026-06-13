@@ -476,6 +476,7 @@ namespace NorvesLib::Core::Rendering
         auto ssrPass = MakeUnique<SSRPass>(ssrSettings);
         ssrPass->SetGBufferPass(gbufferPassRaw);
         ssrPass->SetLightingPass(lightingPassRaw);
+        SSRPass *ssrPassRaw = ssrPass.get();
         postProcessStack->AddPass(std::move(ssrPass));
 
         // Bloom（ToneMappingの前にHDR空間でブルーム適用）
@@ -484,7 +485,9 @@ namespace NorvesLib::Core::Rendering
         bloomSettings.Intensity = 0.85f;
         bloomSettings.Radius = 2.5f;
         bloomSettings.SoftKnee = 0.35f;
-        postProcessStack->AddPass(MakeUnique<BloomPass>(bloomSettings));
+        auto bloomPass = MakeUnique<BloomPass>(bloomSettings);
+        bloomPass->SetInputPass(ssrPassRaw);
+        postProcessStack->AddPass(std::move(bloomPass));
 
         // ToneMapping（HDR→LDR変換 + Vignette + Color Grading）
         ToneMappingSettings toneMappingSettings;
