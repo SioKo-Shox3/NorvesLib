@@ -4,6 +4,7 @@
 #include "Rendering/FXAAPass.h"
 #include "Rendering/ForwardPass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/NeuralMaterialDecodePass.h"
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/SSAOPass.h"
@@ -1511,6 +1512,100 @@ namespace
         assert(commandList.DrawCallCount == 0);
 
         pass.Shutdown();
+    }
+
+    void TestMegaGeometryNativeDeclareImportsPersistentBuffers()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.ShaderMgr = &shaderManager;
+
+        MegaGeometryPass pass;
+        assert(pass.Initialize(context));
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        const uint32_t passIndex = graph.AddPass(&pass);
+
+        assert(graph.Compile(context));
+        assert(pass.GetIndirectDrawBufferHandle().IsValid());
+        assert(pass.GetDrawCountBufferHandle().IsValid());
+        assert(pass.GetMegaGeometryCompleteHandle().IsValid());
+        assert(graph.GetDeclaredPassAccessCount(passIndex) == 3);
+
+        bool bHasIndirectBufferWrite = false;
+        bool bHasDrawCountBufferWrite = false;
+        bool bHasCompleteWrite = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(passIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(passIndex, accessIndex, resource, mode, state, finalState));
+            assert(mode == RGAccessMode::Write);
+            assert(state == RHI::ResourceState::Common);
+            assert(finalState == RHI::ResourceState::Common);
+
+            if (resource == pass.GetIndirectDrawBufferHandle())
+            {
+                bHasIndirectBufferWrite = true;
+            }
+            else if (resource == pass.GetDrawCountBufferHandle())
+            {
+                bHasDrawCountBufferWrite = true;
+            }
+            else if (resource == pass.GetMegaGeometryCompleteHandle())
+            {
+                bHasCompleteWrite = true;
+            }
+        }
+
+        RenderGraphResources graphResources(&graph);
+        assert(graphResources.GetBuffer(pass.GetIndirectDrawBufferHandle()));
+        assert(graphResources.GetBuffer(pass.GetDrawCountBufferHandle()));
+        assert(bHasIndirectBufferWrite);
+        assert(bHasDrawCountBufferWrite);
+        assert(bHasCompleteWrite);
+        assert(graph.GetCompiledBarriers().empty());
+
+        pass.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestMegaGeometryNativeExecuteSkipsWhenNoInstances()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        FakeCommandList commandList;
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.CommandList = &commandList;
+        context.ShaderMgr = &shaderManager;
+
+        MegaGeometryPass pass;
+        assert(pass.Initialize(context));
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        graph.AddPass(&pass);
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(commandList.BeginRenderPassCount == 0);
+        assert(commandList.DrawCallCount == 0);
+
+        pass.Shutdown();
+        shaderManager.Shutdown();
     }
 
     void TestGBufferNativeDeclareCreatesTransientOutputs()
@@ -3357,6 +3452,7 @@ int main()
     TestWriteFinalStateSuppressesFollowupReadBarrier();
     TestShadowMapNativeDeclareImportsDepthOutput();
     TestNeuralDecodeNativeDeclareWritesLogicalCompletion();
+    TestMegaGeometryNativeDeclareImportsPersistentBuffers();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();
@@ -3368,6 +3464,7 @@ int main()
     TestUpscaleNativeDeclareDependencies();
     TestShadowMapNativeExecuteRegistersBridge();
     TestNeuralDecodeNativeExecuteSkipsUnsupportedPath();
+    TestMegaGeometryNativeExecuteSkipsWhenNoInstances();
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
     TestGBufferSSAONativeExecuteRegistersBridge();
     TestGBufferSSAOLightingNativeExecuteRegistersBridge();

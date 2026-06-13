@@ -6,6 +6,8 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
@@ -265,6 +267,9 @@ namespace NorvesLib::Core::Rendering
         m_CullShader.reset();
         m_IndirectDrawBuffer.reset();
         m_DrawCountBuffer.reset();
+        m_IndirectDrawBufferHandle = {};
+        m_DrawCountBufferHandle = {};
+        m_MegaGeometryCompleteHandle = {};
         m_CullUniformBuffers.clear();
         m_CullDescriptorSets.clear();
 
@@ -374,6 +379,51 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
+    }
+
+    void MegaGeometryPass::Declare(RenderGraphBuilder &builder)
+    {
+        m_IndirectDrawBufferHandle = {};
+        m_DrawCountBufferHandle = {};
+
+        if (m_IndirectDrawBuffer)
+        {
+            m_IndirectDrawBufferHandle = builder.ImportBuffer(m_IndirectDrawBuffer,
+                                                              RHI::ResourceState::Common,
+                                                              "MegaGeometry_IndirectDraw");
+            if (m_IndirectDrawBufferHandle.IsValid())
+            {
+                builder.Write(m_IndirectDrawBufferHandle,
+                              RHI::ResourceState::Common,
+                              RHI::ResourceState::Common);
+            }
+        }
+
+        if (m_DrawCountBuffer)
+        {
+            m_DrawCountBufferHandle = builder.ImportBuffer(m_DrawCountBuffer,
+                                                           RHI::ResourceState::Common,
+                                                           "MegaGeometry_DrawCount");
+            if (m_DrawCountBufferHandle.IsValid())
+            {
+                builder.Write(m_DrawCountBufferHandle,
+                              RHI::ResourceState::Common,
+                              RHI::ResourceState::Common);
+            }
+        }
+
+        m_MegaGeometryCompleteHandle = builder.CreateLogical("MegaGeometryComplete");
+        builder.Write(m_MegaGeometryCompleteHandle,
+                      RHI::ResourceState::Common,
+                      RHI::ResourceState::Common);
+        builder.PreserveInsertionOrder();
+    }
+
+    void MegaGeometryPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        (void)resources;
+        Setup(context);
+        Execute(context);
     }
 
     // ========================================

@@ -2,6 +2,7 @@
 
 #include "Rendering/IViewPass.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -41,7 +42,7 @@ namespace NorvesLib::Core::Rendering
      *
      * MegaMeshが未登録の場合はパスが自動的にスキップされます。
      */
-    class MegaGeometryPass : public IViewPass
+    class MegaGeometryPass : public IViewPass, public IRenderGraphPass
     {
     public:
         explicit MegaGeometryPass(const MegaGeometryPassSettings &settings = MegaGeometryPassSettings{});
@@ -57,6 +58,8 @@ namespace NorvesLib::Core::Rendering
         void Shutdown() override;
         void Setup(ViewRenderContext &context) override;
         void Execute(ViewRenderContext &context) override;
+        void Declare(RenderGraphBuilder &builder) override;
+        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
         void RecordFrameCommand(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList);
 
         // ========================================
@@ -81,6 +84,10 @@ namespace NorvesLib::Core::Rendering
          * @brief 描画対象のMegaMeshをクリア
          */
         void ClearMegaMeshInstances();
+
+        RGResourceHandle GetIndirectDrawBufferHandle() const { return m_IndirectDrawBufferHandle; }
+        RGResourceHandle GetDrawCountBufferHandle() const { return m_DrawCountBufferHandle; }
+        RGResourceHandle GetMegaGeometryCompleteHandle() const { return m_MegaGeometryCompleteHandle; }
 
     private:
         /**
@@ -156,6 +163,9 @@ namespace NorvesLib::Core::Rendering
         // カリング用GPUバッファ
         RHI::BufferPtr m_IndirectDrawBuffer; // DrawIndexedIndirectCommand[]
         RHI::BufferPtr m_DrawCountBuffer;    // uint32_t visibleClusterCount
+        RGResourceHandle m_IndirectDrawBufferHandle;
+        RGResourceHandle m_DrawCountBufferHandle;
+        RGResourceHandle m_MegaGeometryCompleteHandle;
         Container::VariableArray<RHI::BufferPtr> m_CullUniformBuffers;
         Container::VariableArray<RHI::DescriptorSetPtr> m_CullDescriptorSets;
 
