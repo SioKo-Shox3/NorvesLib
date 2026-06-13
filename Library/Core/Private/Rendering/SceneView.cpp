@@ -487,12 +487,15 @@ namespace NorvesLib::Core::Rendering
         bloomSettings.SoftKnee = 0.35f;
         auto bloomPass = MakeUnique<BloomPass>(bloomSettings);
         bloomPass->SetInputPass(ssrPassRaw);
+        BloomPass *bloomPassRaw = bloomPass.get();
         postProcessStack->AddPass(std::move(bloomPass));
 
         // ToneMapping（HDR→LDR変換 + Vignette + Color Grading）
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
-        postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
+        auto toneMappingPass = MakeUnique<ToneMappingPass>(toneMappingSettings);
+        toneMappingPass->SetInputPass(bloomPassRaw);
+        postProcessStack->AddPass(std::move(toneMappingPass));
 
         // FXAA（アンチエイリアシング、最終パス）
         FXAASettings fxaaSettings;
