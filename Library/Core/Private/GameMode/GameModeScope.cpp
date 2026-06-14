@@ -29,6 +29,23 @@ namespace NorvesLib::Core::GameMode
         m_TrackedModels.push_back(handle);
     }
 
+    void GameModeScope::Untrack(NorvesLib::Core::WorldObject* object)
+    {
+        if (object == nullptr)
+        {
+            return;
+        }
+
+        for (auto it = m_TrackedObjects.begin(); it != m_TrackedObjects.end(); ++it)
+        {
+            if (*it == object)
+            {
+                m_TrackedObjects.erase(it);
+                return;
+            }
+        }
+    }
+
     void GameModeScope::Cleanup()
     {
         // 1) WorldObject を挿入順に World::RemoveObject で除去

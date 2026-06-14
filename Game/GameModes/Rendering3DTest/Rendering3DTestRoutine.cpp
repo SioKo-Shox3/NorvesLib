@@ -16,6 +16,7 @@
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Rendering/SceneView.h"
 #include "Core/Public/Rendering/RenderingCoordinator.h"
+#include "Core/Public/GameMode/GameModeScope.h"
 #include "Core/Public/Rendering/MegaGeometryPass.h"
 #include "Core/Public/Resource/GLTFAnalyzer.h"
 
@@ -72,6 +73,7 @@ namespace Game::GameModes
 
             if (bSphereOk)
             {
+                ctx.ScopeRef.TrackMesh(data.m_SphereMeshHandle);
                 NORVES_LOG_INFO("Rendering3DTest", "Sphere mesh registered: %zu vertices, %zu indices",
                                 sphereVertices.size(), sphereIndices.size());
             }
@@ -94,6 +96,7 @@ namespace Game::GameModes
 
             if (bGroundOk)
             {
+                ctx.ScopeRef.TrackMesh(data.m_GroundMeshHandle);
                 NORVES_LOG_INFO("Rendering3DTest", "Ground mesh registered: %zu vertices, %zu indices",
                                 groundVertices.size(), groundIndices.size());
             }
@@ -118,6 +121,7 @@ namespace Game::GameModes
 
             if (bLightSphereOk)
             {
+                ctx.ScopeRef.TrackMesh(data.m_LightSphereMeshHandle);
                 NORVES_LOG_INFO("Rendering3DTest", "Light sphere mesh registered: %zu vertices, %zu indices",
                                 lightSphereVertices.size(), lightSphereIndices.size());
             }
@@ -334,6 +338,7 @@ namespace Game::GameModes
 
             // --- 球体オブジェクト ---
             data.m_pSphereObject = world.SpawnObject<WorldObject>();
+            ctx.ScopeRef.TrackObject(data.m_pSphereObject);
 
             // 球体を地面の上に配置（半径1.0 + 地面Y=-1.0 → Y=0.5で浮かせる）
             data.m_pSphereObject->SetPosition(0.0f, 0.5f, 0.0f);
@@ -353,6 +358,7 @@ namespace Game::GameModes
 
             // --- 地面オブジェクト ---
             data.m_pGroundObject = world.SpawnObject<WorldObject>();
+            ctx.ScopeRef.TrackObject(data.m_pGroundObject);
 
             // 地面をY=-1.0に配置
             data.m_pGroundObject->SetPosition(0.0f, -1.0f, 0.0f);
@@ -372,6 +378,7 @@ namespace Game::GameModes
 
             // --- ポイントライト光源球体オブジェクト ---
             data.m_pLightSphereObject = world.SpawnObject<WorldObject>();
+            ctx.ScopeRef.TrackObject(data.m_pLightSphereObject);
 
             // 球体の横に配置（X=4.0, Y=1.0, Z=0.0）――少し遠め
             data.m_pLightSphereObject->SetPosition(4.0f, 1.0f, 0.0f);
@@ -398,6 +405,7 @@ namespace Game::GameModes
 
             // --- ディレクショナルライト（シャドウ方向と一致） ---
             data.m_pDirectionalLightObject = world.SpawnObject<WorldObject>();
+            ctx.ScopeRef.TrackObject(data.m_pDirectionalLightObject);
             data.m_pDirectionalLightObject->SetPosition(0.0f, 0.0f, 0.0f);
 
             data.m_pDirectionalLightComponent = world.CreateComponent<Component::LightComponent>(data.m_pDirectionalLightObject);
@@ -422,6 +430,7 @@ namespace Game::GameModes
 
             // 非同期ロード中に表示する簡易プレースホルダ
             data.m_pBoulderPlaceholderObject = world.SpawnObject<WorldObject>();
+            ctx.ScopeRef.TrackObject(data.m_pBoulderPlaceholderObject);
             data.m_pBoulderPlaceholderObject->SetPosition(3.0f, 0.5f, 0.0f);
             data.m_pBoulderPlaceholderObject->SetScale(0.75f, 0.75f, 0.75f);
 
@@ -444,9 +453,9 @@ namespace Game::GameModes
                 modelLoadContext,
                 [asyncState](ModelHandle handle)
                 {
-                    // TODO(Phase2): per-request の cancel+release API が無いため、cancelled
-                    //   済みで到着した有効ハンドルはここで解放できない（mode 遷移時にリーク
-                    //   の可能性）。現状は use-after-free 防止のみを保証する。
+                    // cancelled 済みで到着した結果は破棄する。Leave 側で
+                    // GLTFAnalyzer::CancelModelLoad と finalize 済みハンドルの
+                    // 明示解放を行うため、ここでの use-after-free・リークは防がれる。
                     asyncState->m_Handle = handle;
                     asyncState->m_bLoaded = handle.IsValid();
                     asyncState->m_bCompleted.Store(true);
@@ -530,6 +539,10 @@ namespace Game::GameModes
                 {
                     if (data.m_pBoulderPlaceholderObject)
                     {
+                        // スコープ追跡から外してから World から除去する。
+                        // これ以降このポインタは解放されるため、Cleanup が
+                        // 解放済みポインタへ RemoveObject しないようにする。
+                        ctx.ScopeRef.Untrack(data.m_pBoulderPlaceholderObject);
                         world.RemoveObject(data.m_pBoulderPlaceholderObject);
                         data.m_pBoulderPlaceholderObject = nullptr;
                         data.m_pBoulderPlaceholderMeshComponent = nullptr;
@@ -538,12 +551,17 @@ namespace Game::GameModes
                     if (!data.m_pBoulderObject)
                     {
                         data.m_pBoulderObject = world.SpawnObject<WorldObject>();
+                        ctx.ScopeRef.TrackObject(data.m_pBoulderObject);
                         data.m_pBoulderObject->SetPosition(3.0f, 0.0f, 0.0f);
 
                         data.m_pBoulderMegaGeometryComponent = world.CreateComponent<Component::MegaGeometryComponent>(data.m_pBoulderObject);
                         data.m_pBoulderMegaGeometryComponent->SetMegaMeshHandle(megaMeshHandle);
                         data.m_pBoulderMegaGeometryComponent->SetCastShadow(true);
                     }
+
+                    // 消費したモデルはスコープに解放を委ねる（成功パスのみ）。
+                    // 失敗パスは即時 ReleaseModel 済みのため追跡してはならない。
+                    ctx.ScopeRef.TrackModel(data.m_BoulderModelHandle);
 
                     NORVES_LOG_INFO("Rendering3DTest", "Boulder model loaded and added to World");
                 }
@@ -569,80 +587,58 @@ namespace Game::GameModes
         LOG_INFO("3Dレンダリングテスト終了");
         LOG_INFO("=================================================");
 
-        auto &world = ctx.WorldRef;
-
-        // 1) 非同期ロードのキャンセル：以降到着する callback の結果を破棄する。
-        //    callback は asyncState を共有所有しているため、ここで reset しても
-        //    callback 完了まで状態は生存し use-after-free にはならない。
+        // 1) 非同期ロードの後始末（World/RenderResources 生存中に行う）。
+        //    GameModeScope::Cleanup は Leave 直後に呼ばれるため、ここでは
+        //    スコープが追跡していない非同期由来のリソースだけを閉じる。
         if (data.m_BoulderAsyncState)
         {
+            // 以降到着する callback の結果を破棄する。callback は asyncState を
+            // 共有所有しているため、ここで reset しても use-after-free にならない。
+            auto state = data.m_BoulderAsyncState;
             data.m_BoulderAsyncState->m_bCancelled.Store(true);
             data.m_BoulderAsyncState.reset();
+
+            // Flush がモデルを finalize し callback を発火したが、Tick がまだ
+            // boulder として消費（＝スコープ追跡）していない隙間。ここで解放
+            // しないとモデルがリークする。
+            if (state->m_bCompleted.Load() && state->m_bLoaded && state->m_Handle.IsValid())
+            {
+                ctx.RenderResourcesRef.MegaGeometry().ReleaseModel(state->m_Handle);
+            }
         }
 
-        // 2) WorldObject を先に削除（SceneView Proxy を同期除去）。
-        //    Proxy が参照する mesh/model ハンドルを解放する前に Proxy を消すことで
-        //    stale ハンドル参照を避ける。placeholder と boulder 本体は排他なので
-        //    各ポインタを独立に null チェックする。
-        if (data.m_pSphereObject)
+        // まだ in-flight なロードはキャンセルする（Flush が finalize をスキップ
+        // するためリークしない）。
+        if (data.m_BoulderLoadRequestId != 0)
         {
-            world.RemoveObject(data.m_pSphereObject);
-            data.m_pSphereObject = nullptr;
-            data.m_pSphereMeshComponent = nullptr;
-        }
-        if (data.m_pGroundObject)
-        {
-            world.RemoveObject(data.m_pGroundObject);
-            data.m_pGroundObject = nullptr;
-            data.m_pGroundMeshComponent = nullptr;
-        }
-        if (data.m_pLightSphereObject)
-        {
-            world.RemoveObject(data.m_pLightSphereObject);
-            data.m_pLightSphereObject = nullptr;
-            data.m_pLightSphereMeshComponent = nullptr;
-            data.m_pPointLightComponent = nullptr;
-        }
-        if (data.m_pBoulderPlaceholderObject)
-        {
-            world.RemoveObject(data.m_pBoulderPlaceholderObject);
-            data.m_pBoulderPlaceholderObject = nullptr;
-            data.m_pBoulderPlaceholderMeshComponent = nullptr;
-        }
-        if (data.m_pBoulderObject)
-        {
-            world.RemoveObject(data.m_pBoulderObject);
-            data.m_pBoulderObject = nullptr;
-            data.m_pBoulderMegaGeometryComponent = nullptr;
-        }
-        if (data.m_pDirectionalLightObject)
-        {
-            world.RemoveObject(data.m_pDirectionalLightObject);
-            data.m_pDirectionalLightObject = nullptr;
-            data.m_pDirectionalLightComponent = nullptr;
+            Resource::GLTFAnalyzer::CancelModelLoad(data.m_BoulderLoadRequestId);
+            data.m_BoulderLoadRequestId = 0;
         }
 
-        // 3) メッシュの登録解除（Proxy 除去後）
-        if (data.m_bMeshesRegistered)
-        {
-            auto &meshes = ctx.RenderResourcesRef.Meshes();
-            meshes.Unregister(data.m_SphereMeshHandle);
-            meshes.Unregister(data.m_GroundMeshHandle);
-            meshes.Unregister(data.m_LightSphereMeshHandle);
-            data.m_bMeshesRegistered = false;
-        }
+        // 2) 追跡済みリソース（球体/地面/光源球体/ディレクショナル/placeholder/
+        //    boulder の各オブジェクト・3 メッシュ・boulder モデル）の解放は
+        //    GameModeScope::Cleanup（Leave 直後に StateMachine が呼ぶ）が
+        //    正しい順序で行う。ここでは手動解放しない。
 
-        // 4) glTF モデルの解放（boulder object 削除後）
-        if (data.m_bBoulderModelLoaded)
-        {
-            auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
-            megaGeometry.ReleaseModel(data.m_BoulderModelHandle);
-            data.m_BoulderModelHandle = ModelHandle::Invalid();
-            data.m_bBoulderModelLoaded = false;
-        }
+        // 3) 再 Enter（Change 往復）に備えてキャッシュをクリアする。
+        //    スコープは独自の追跡リストを使うため、ここでの null 化は安全。
+        data.m_pSphereObject = nullptr;
+        data.m_pSphereMeshComponent = nullptr;
+        data.m_pGroundObject = nullptr;
+        data.m_pGroundMeshComponent = nullptr;
+        data.m_pLightSphereObject = nullptr;
+        data.m_pLightSphereMeshComponent = nullptr;
+        data.m_pPointLightComponent = nullptr;
+        data.m_pBoulderPlaceholderObject = nullptr;
+        data.m_pBoulderPlaceholderMeshComponent = nullptr;
+        data.m_pBoulderObject = nullptr;
+        data.m_pBoulderMegaGeometryComponent = nullptr;
+        data.m_pDirectionalLightObject = nullptr;
+        data.m_pDirectionalLightComponent = nullptr;
 
-        // 5) 残りの状態クリア
-        data.m_BoulderLoadRequestId = 0;
+        data.m_bMeshesRegistered = false;
+        data.m_bBoulderModelLoaded = false;
+        data.m_BoulderModelHandle = ModelHandle::Invalid();
         data.m_bBoulderModelLoadPending = false;
 
         // 非同期マテリアル更新のクリア
