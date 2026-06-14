@@ -9,20 +9,21 @@
 // GameModeId 定数を定義する。GameModeRegistry への Register キーおよび
 // Start/Change/Push の引数として使用する。
 //
-// Identity はランタイム構築のため constexpr にはできない。
-// inline const（動的初期化）を使用する。IdentityPool は Meyers singleton で
-// あるため静的初期化順序は安全。
+// `"Name"_id` ユーザー定義リテラルにより Identity をコンパイル時に構築できる
+// ため inline constexpr を使用する。コンパイル時パスはハッシュをコンパイル時に
+// 計算し IdentityPool には登録しないが、ランタイム構築と同一ハッシュ値になるため
+// レジストリのキーとして相互運用できる。
 // ---------------------------------------------------------------------------
 
 namespace Game::GameModes
 {
 
+    using namespace NorvesLib::Core::literals; // for ""_id
+
     /// 3Dレンダリングテストモードの GameModeId
-    inline const NorvesLib::Core::GameMode::GameModeId Rendering3DTest =
-        NorvesLib::Core::Identity("Rendering3DTest");
+    inline constexpr NorvesLib::Core::GameMode::GameModeId Rendering3DTest = "Rendering3DTest"_id;
 
     /// メモリ寿命テストモードの GameModeId
-    inline const NorvesLib::Core::GameMode::GameModeId MemoryAgingTest =
-        NorvesLib::Core::Identity("MemoryAgingTest");
+    inline constexpr NorvesLib::Core::GameMode::GameModeId MemoryAgingTest = "MemoryAgingTest"_id;
 
 } // namespace Game::GameModes
