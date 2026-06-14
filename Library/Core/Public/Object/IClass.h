@@ -1008,6 +1008,16 @@ namespace NorvesLib::Core
          */
         virtual uint64_t GetClassId() const = 0;
 
+        /**
+         * @brief 継承階層における深さを取得します
+         *
+         * ルートクラス（Object）を0とし、派生するごとに1ずつ増えます。
+         * IsChildOfが祖先テーブル（Cohenの定数時間判定）を用いて
+         * O(1)で継承判定を行うために使用します。
+         * @return 継承の深さ（ルート=0）
+         */
+        virtual uint32_t GetDepth() const = 0;
+
     };
 
     inline ClassInfo BuildClassInfoSnapshot(const IClass &cls, const char *moduleName = "NorvesLib")
