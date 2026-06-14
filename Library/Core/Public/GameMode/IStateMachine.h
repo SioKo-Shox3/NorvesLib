@@ -4,8 +4,6 @@
 
 namespace NorvesLib::Core::GameMode
 {
-    // 前方宣言
-    class IFactory;
 
     /**
      * @brief ステートマシンインターフェース
@@ -34,27 +32,10 @@ namespace NorvesLib::Core::GameMode
         virtual void Update(float deltaTime) = 0;
 
         /**
-         * @brief ファクトリを取得（内部実装用）
-         * @return ファクトリへのvoid*ポインタ
-         */
-        virtual void *GetFactoryImpl() const = 0;
-
-        /**
          * @brief 最新のデルタタイムを取得
          * @return デルタタイム（秒）
          */
         virtual float GetDeltaTime() const = 0;
-
-        /**
-         * @brief ファクトリを型安全に取得するためのテンプレートメソッド
-         * @tparam FactoryType ファクトリの型
-         * @return ファクトリへの参照
-         */
-        template <typename FactoryType>
-        FactoryType &GetFactory() const
-        {
-            return *static_cast<FactoryType *>(GetFactoryImpl());
-        }
     };
 
 } // namespace NorvesLib::Core::GameMode
