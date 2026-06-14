@@ -23,6 +23,11 @@ namespace
     using namespace NorvesLib::Core::GameMode;
     namespace Container = NorvesLib::Core::Container;
 
+    // テスト用 GameModeId 定数（Identity ベース）
+    // GameModeId は Identity のエイリアス。コア列挙は廃止されたためここで定義する。
+    const GameModeId kModeA = NorvesLib::Core::Identity("Rendering3DTest");
+    const GameModeId kModeB = NorvesLib::Core::Identity("MemoryAgingTest");
+
     // 退場理由を文字列へ変換する。
     const char* ReasonName(GameModeExitReason reason)
     {
@@ -109,11 +114,11 @@ namespace
     // bFailB=true のとき B の Enter は Failed を返す。
     void RegisterAB(GameModeStateMachine& sm, CallLog* log, bool bFailB)
     {
-        sm.Registry().Register(GameModeId::Rendering3DTest, [log](const GameModeParams&)
+        sm.Registry().Register(kModeA, [log](const GameModeParams&)
         {
             return Container::MakeUnique<DummyMode>(log, "A");
         });
-        sm.Registry().Register(GameModeId::MemoryAgingTest, [log, bFailB](const GameModeParams&)
+        sm.Registry().Register(kModeB, [log, bFailB](const GameModeParams&)
         {
             auto mode = Container::MakeUnique<DummyMode>(log, "B");
             if (bFailB)
@@ -191,7 +196,7 @@ int main()
         RegisterAB(sm, &log, false);
 
         std::size_t mark = log.Mark();
-        sm.Start(GameModeId::Rendering3DTest);
+        sm.Start(kModeA);
         sm.Update(0.016f);
 
         const char* expected[] = { "Enter A", "Tick A" };
@@ -207,11 +212,11 @@ int main()
         GameModeStateMachine sm;
         RegisterAB(sm, &log, false);
 
-        sm.Start(GameModeId::Rendering3DTest);
+        sm.Start(kModeA);
         sm.Update(0.016f);
 
         std::size_t mark = log.Mark();
-        sm.RequestPush(GameModeId::MemoryAgingTest);
+        sm.RequestPush(kModeB);
         sm.Update(0.016f);
 
         const char* expected[] = { "Suspend A", "Enter B", "Tick B" };
@@ -228,9 +233,9 @@ int main()
         GameModeStateMachine sm;
         RegisterAB(sm, &log, false);
 
-        sm.Start(GameModeId::Rendering3DTest);
+        sm.Start(kModeA);
         sm.Update(0.016f);
-        sm.RequestPush(GameModeId::MemoryAgingTest);
+        sm.RequestPush(kModeB);
         sm.Update(0.016f);
 
         std::size_t mark = log.Mark();
@@ -250,11 +255,11 @@ int main()
         GameModeStateMachine sm;
         RegisterAB(sm, &log, false);
 
-        sm.Start(GameModeId::Rendering3DTest);
+        sm.Start(kModeA);
         sm.Update(0.016f);
 
         std::size_t mark = log.Mark();
-        sm.RequestChange(GameModeId::MemoryAgingTest);
+        sm.RequestChange(kModeB);
         sm.Update(0.016f);
 
         const char* expected[] = { "Leave A:Change", "Enter B", "Tick B" };
@@ -271,13 +276,13 @@ int main()
         GameModeStateMachine sm;
         RegisterAB(sm, &log, false);
 
-        sm.Start(GameModeId::Rendering3DTest);
+        sm.Start(kModeA);
         sm.Update(0.016f);
-        sm.RequestPush(GameModeId::MemoryAgingTest);
+        sm.RequestPush(kModeB);
         sm.Update(0.016f);
 
         std::size_t mark = log.Mark();
-        sm.RequestReset(GameModeId::Rendering3DTest);
+        sm.RequestReset(kModeA);
         sm.Update(0.016f);
 
         const char* expected[] = { "Leave B:Reset", "Leave A:Reset", "Enter A", "Tick A" };
@@ -293,7 +298,7 @@ int main()
         GameModeStateMachine sm;
         RegisterAB(sm, &log, false);
 
-        sm.Start(GameModeId::Rendering3DTest);
+        sm.Start(kModeA);
         sm.Update(0.016f);
 
         // 唯一のモードを Pop して空にする。
@@ -309,7 +314,7 @@ int main()
 
         // マシンはまだ使える: Change(A) で再び A に入る。
         mark = log.Mark();
-        sm.RequestChange(GameModeId::Rendering3DTest);
+        sm.RequestChange(kModeA);
         sm.Update(0.016f);
         const char* expected[] = { "Enter A", "Tick A" };
         AssertAppended(log, mark, expected, 2, "6b. Change(A) after empty (machine reusable)");
@@ -324,9 +329,9 @@ int main()
         GameModeStateMachine sm;
         RegisterAB(sm, &log, false);
 
-        sm.Start(GameModeId::Rendering3DTest);
+        sm.Start(kModeA);
         sm.Update(0.016f);
-        sm.RequestPush(GameModeId::MemoryAgingTest);
+        sm.RequestPush(kModeB);
         sm.Update(0.016f);
 
         std::size_t mark = log.Mark();
@@ -350,11 +355,11 @@ int main()
         GameModeStateMachine sm;
         RegisterAB(sm, &log, false);
 
-        sm.Start(GameModeId::Rendering3DTest);
+        sm.Start(kModeA);
         sm.Update(0.016f);
 
         std::size_t mark = log.Mark();
-        sm.RequestPush(GameModeId::MemoryAgingTest);
+        sm.RequestPush(kModeB);
         sm.RequestPop();
         sm.Update(0.016f); // 1 回の Update で両要求を FIFO ドレイン
 
@@ -372,11 +377,11 @@ int main()
         GameModeStateMachine sm;
         RegisterAB(sm, &log, true); // B の Enter は Failed
 
-        sm.Start(GameModeId::Rendering3DTest);
+        sm.Start(kModeA);
         sm.Update(0.016f);
 
         std::size_t mark = log.Mark();
-        sm.RequestPush(GameModeId::MemoryAgingTest);
+        sm.RequestPush(kModeB);
         sm.Update(0.016f);
 
         // ロールバックは Suspend A -> Enter B(Failed) -> Resume A。Update は同一フレームで

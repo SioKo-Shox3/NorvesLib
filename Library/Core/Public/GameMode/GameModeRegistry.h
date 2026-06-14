@@ -82,8 +82,8 @@ namespace NorvesLib::Core::GameMode
         }
 
     private:
-        /// GameModeId → Creator のマッピング。std::hash はenumを標準特殊化するため追加Hasherは不要。
-        Container::UnorderedMap<GameModeId, Creator> m_Creators;
+        /// GameModeId（= Identity）→ Creator のマッピング。Identity::Hasher でハッシュする。
+        Container::UnorderedMap<GameModeId, Creator, GameModeId::Hasher> m_Creators;
     };
 
 } // namespace NorvesLib::Core::GameMode

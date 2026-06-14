@@ -15,6 +15,11 @@
 // ---------------------------------------------------------------------------
 namespace
 {
+    // テスト用 GameModeId 定数（Identity ベース）
+    // GameModeId は Identity のエイリアス。コア列挙は廃止されたためここで定義する。
+    const NorvesLib::Core::GameMode::GameModeId kModeA       = NorvesLib::Core::Identity("Rendering3DTest");
+    const NorvesLib::Core::GameMode::GameModeId kModeB       = NorvesLib::Core::Identity("MemoryAgingTest");
+    const NorvesLib::Core::GameMode::GameModeId kModeUnregistered = NorvesLib::Core::Identity("Unregistered");
 
     struct DummyGameMode : public NorvesLib::Core::GameMode::IGameMode
     {
@@ -70,8 +75,8 @@ int main()
     // -----------------------------------------------------------------------
     {
         GameModeRegistry registry;
-        assert(!registry.Contains(GameModeId::Rendering3DTest));
-        assert(!registry.Contains(GameModeId::MemoryAgingTest));
+        assert(!registry.Contains(kModeA));
+        assert(!registry.Contains(kModeB));
         std::cout << "[PASS] Contains returns false before Register" << std::endl;
     }
 
@@ -81,14 +86,14 @@ int main()
     {
         GameModeRegistry registry;
 
-        registry.Register(GameModeId::Rendering3DTest, [](const GameModeParams&)
+        registry.Register(kModeA, [](const GameModeParams&)
         {
             bool dummy = false;
             return MakeUnique<DummyGameMode>(&dummy);
         });
 
-        assert(registry.Contains(GameModeId::Rendering3DTest));
-        assert(!registry.Contains(GameModeId::MemoryAgingTest));
+        assert(registry.Contains(kModeA));
+        assert(!registry.Contains(kModeB));
         std::cout << "[PASS] Contains returns true after Register" << std::endl;
     }
 
@@ -99,7 +104,7 @@ int main()
         GameModeRegistry registry;
         bool bCreated = false;
 
-        registry.Register(GameModeId::Rendering3DTest, [&bCreated](const GameModeParams&)
+        registry.Register(kModeA, [&bCreated](const GameModeParams&)
         {
             bCreated = true;
             bool dummy = false;
@@ -107,7 +112,7 @@ int main()
         });
 
         GameModeParams params;
-        auto mode = registry.Create(GameModeId::Rendering3DTest, params);
+        auto mode = registry.Create(kModeA, params);
 
         assert(mode != nullptr);
         assert(bCreated);
@@ -121,7 +126,7 @@ int main()
         GameModeRegistry registry;
 
         GameModeParams params;
-        auto mode = registry.Create(GameModeId::MemoryAgingTest, params);
+        auto mode = registry.Create(kModeUnregistered, params);
 
         assert(mode == nullptr);
         std::cout << "[PASS] Create returns null for unregistered id" << std::endl;
@@ -135,7 +140,7 @@ int main()
         int callCount = 0;
 
         // 1 回目の登録
-        registry.Register(GameModeId::Rendering3DTest, [&callCount](const GameModeParams&)
+        registry.Register(kModeA, [&callCount](const GameModeParams&)
         {
             callCount = 1;
             bool dummy = false;
@@ -143,7 +148,7 @@ int main()
         });
 
         // 2 回目の登録（上書き）
-        registry.Register(GameModeId::Rendering3DTest, [&callCount](const GameModeParams&)
+        registry.Register(kModeA, [&callCount](const GameModeParams&)
         {
             callCount = 2;
             bool dummy = false;
@@ -151,7 +156,7 @@ int main()
         });
 
         GameModeParams params;
-        auto mode = registry.Create(GameModeId::Rendering3DTest, params);
+        auto mode = registry.Create(kModeA, params);
 
         assert(mode != nullptr);
         assert(callCount == 2);
