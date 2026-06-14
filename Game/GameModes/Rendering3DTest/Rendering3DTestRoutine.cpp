@@ -10,6 +10,8 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/RenderResourceContexts.h"
 #include "Core/Public/Rendering/RenderResources.h"
+#include "Core/Public/Input/InputSystem.h"
+#include "Core/Public/Input/InputState.h"
 #include "Core/Public/Rendering/ProceduralMeshGenerator.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Rendering/SceneView.h"
@@ -38,6 +40,17 @@ namespace Game::GameModes
         LOG_INFO("=================================================");
         LOG_INFO("3Dレンダリングテスト開始");
         LOG_INFO("=================================================");
+
+        // ========================================
+        // カメラコントローラーの初期化（シーン所有）
+        // ========================================
+        // 原点を注視点とし、距離5.0、Yaw=0°、Pitch=30°で初期化
+        data.m_CameraController.Initialize(
+            NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), // target
+            5.0f,                                       // distance
+            0.0f,                                       // yaw
+            30.0f);                                     // pitch
+        LOG_INFO("MayaCameraController initialized");
 
         // ========================================
         // 1. プロシージャルメッシュの生成とGPU登録
@@ -457,6 +470,33 @@ namespace Game::GameModes
 
     void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
+        // ========================================
+        // 入力に基づくカメラ更新（シーン所有）
+        // ========================================
+        const auto &inputState = ctx.InputRef.GetState();
+
+        // カメラコントローラー更新
+        data.m_CameraController.Update(inputState, deltaTime);
+
+        // デバッグ: スクロール値とカメラ距離を出力
+        {
+            float scroll = inputState.GetMouseState().ScrollDelta;
+            if (std::abs(scroll) > 0.0f)
+            {
+                float dist = data.m_CameraController.GetDistance();
+                auto pos = data.m_CameraController.GetPosition();
+                NORVES_LOG_DEBUG("Input", "ScrollDelta={:.3f}, CamDist={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
+                                 scroll, dist, pos.x, pos.y, pos.z);
+            }
+        }
+
+        // カメラ状態をRenderWorldに反映
+        {
+            NorvesLib::Core::Rendering::CameraProxy cameraProxy;
+            data.m_CameraController.ApplyTo(cameraProxy);
+            ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
+        }
+
         data.m_ElapsedTime += deltaTime;
 
         if (data.m_BoulderAsyncState &&

@@ -2,6 +2,7 @@
 
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Container/PointerTypes.h"
+#include "Core/Public/Input/MayaCameraController.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Core/Public/Rendering/RenderTypes.h"
@@ -101,6 +102,9 @@ namespace Game::GameModes
 
         // 球体回転速度（rad/s）
         float m_RotationSpeed = 0.5f;
+
+        // Maya準拠カメラコントローラー（シーン所有）
+        NorvesLib::Core::Input::MayaCameraController m_CameraController;
 
         // メッシュ登録済みフラグ
         bool m_bMeshesRegistered = false;

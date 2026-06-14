@@ -4,7 +4,6 @@
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/WorldObject.h"
 #include "Core/Public/Component/MeshComponent.h"
-#include "Core/Public/Input/InputSystem.h"
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include <cmath>
@@ -313,21 +312,6 @@ namespace Game
         LOG_INFO("GameApplicationHandler::OnInitialize()");
 
         // ========================================
-        // カメラコントローラーの初期化
-        // ========================================
-        {
-            // 原点を注視点とし、距離5.0、Yaw=0°、Pitch=30°で初期化
-            m_CameraController.Initialize(
-                NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), // target
-                5.0f,                                       // distance
-                0.0f,                                       // yaw
-                30.0f                                       // pitch
-            );
-
-            LOG_INFO("MayaCameraController initialized");
-        }
-
-        // ========================================
         // ライトコントローラーの初期化
         // ========================================
         // メインディレクショナルライトはRendering3DTestModeのEnterで
@@ -442,46 +426,10 @@ namespace Game
 
     void GameApplicationHandler::OnUpdate(float deltaTime)
     {
-        // ポーズ中は更新をスキップ
-        if (m_bIsPaused)
-        {
-            return;
-        }
-
-        // ========================================
-        // 入力に基づくカメラ・ライト更新
-        // ========================================
-
-        auto &inputSystem = GEngine->GetInputSystem();
-        const auto &inputState = inputSystem.GetState();
-
-        // カメラコントローラー更新
-        m_CameraController.Update(inputState, deltaTime);
-
-        // デバッグ: スクロール値とカメラ距離を出力
-        {
-            float scroll = inputState.GetMouseState().ScrollDelta;
-            if (std::abs(scroll) > 0.0f)
-            {
-                float dist = m_CameraController.GetDistance();
-                auto pos = m_CameraController.GetPosition();
-                NORVES_LOG_DEBUG("Input", "ScrollDelta={:.3f}, CamDist={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
-                                 scroll, dist, pos.x, pos.y, pos.z);
-            }
-        }
-
-        // カメラ状態をRenderWorldに反映
-        {
-            NorvesLib::Core::Rendering::CameraProxy cameraProxy;
-            m_CameraController.ApplyTo(cameraProxy);
-            GEngine->GetRenderWorld().SetMainCamera(cameraProxy);
-        }
-
-        // ライトコントローラー更新（現在はGameMode管理のため無効化）
-        // m_LightController.Update(inputState, deltaTime);
-
-        // ライト状態のSceneView反映はWorld::SyncToSceneViewで
-        // LightComponent経由で自動的に行われる
+        // シーンの更新（カメラ・入力・ライト）はGameMode（Rendering3DTest）へ移動した。
+        // ApplicationHandlerはアプリ全体の責務（boot/コマンドライン/テクスチャ設定/
+        // レジストリ・初期モード選択/フォーカス）に集中する。
+        (void)deltaTime;
     }
 
     void GameApplicationHandler::OnPreShutdown()
