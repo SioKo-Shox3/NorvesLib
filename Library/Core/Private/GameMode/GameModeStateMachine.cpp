@@ -11,13 +11,29 @@ namespace NorvesLib::Core::GameMode
 {
     using NorvesLib::Core::Engine::GEngine;
 
+    GameModeContext GameModeStateMachine::MakeContext(GameModeScope& scope, float dt)
+    {
+        // メンバ順は GameModeContext.h と厳密に一致:
+        // EngineRef, WorldRef, RenderResourcesRef, InputRef, ControllerRef, ScopeRef, DeltaTime。
+        // 参照メンバを持つため値返しだが、C++17 の保証されたコピー省略で安全。
+        return GameModeContext{
+            *GEngine,
+            GEngine->GetWorld(),
+            GEngine->GetRenderResources(),
+            GEngine->GetInputSystem(),
+            *this,
+            scope,
+            dt};
+    }
+
     void GameModeStateMachine::Start(GameModeId initialMode, GameModeParams params)
     {
-        m_Pending.Type = GameModeTransitionType::Change;
-        m_Pending.Target = initialMode;
-        m_Pending.Params = std::move(params);
-        m_Pending.ExitCode = 0;
-        m_bHasPending = true;
+        GameModeTransitionRequest req;
+        req.Type = GameModeTransitionType::Change;
+        req.Target = initialMode;
+        req.Params = std::move(params);
+        req.ExitCode = 0;
+        m_PendingQueue.push_back(std::move(req));
     }
 
     void GameModeStateMachine::Update(float deltaTime)
@@ -27,97 +43,187 @@ namespace NorvesLib::Core::GameMode
             return;
         }
 
-        m_DeltaTime = deltaTime;
+        m_DeltaTime = deltaTime; // ドレイン前に設定し、Enter/Leave が現在の delta を見る（従来挙動）
 
-        if (m_bHasPending)
-        {
-            ApplyPendingTransition();
-        }
+        DrainPendingQueue();
 
-        if (m_CurrentMode)
+        if (!m_Stack.empty())
         {
-            GameModeContext ctx{
-                *GEngine,
-                GEngine->GetWorld(),
-                GEngine->GetRenderResources(),
-                GEngine->GetInputSystem(),
-                *this,
-                *m_Scope,
-                deltaTime};
-            m_CurrentMode->Tick(ctx, deltaTime);
+            StackEntry& top = m_Stack.back();
+            GameModeContext ctx = MakeContext(*top.Scope, deltaTime);
+            top.Mode->Tick(ctx, deltaTime);
         }
     }
 
-    void GameModeStateMachine::ApplyPendingTransition()
+    void GameModeStateMachine::DrainPendingQueue()
     {
-        // 1) 保留フラグをクリアし、要求をコピーアウトしてからリセット。
-        m_bHasPending = false;
-        GameModeTransitionRequest req = m_Pending;
-        m_Pending = GameModeTransitionRequest{};
-
-        // 2) Phase 3/4 では Change のみサポート。
-        if (req.Type != GameModeTransitionType::Change)
+        // FIFO ドレイン。コールバック（Enter/Leave/Suspend/Resume）は
+        // ctx.ControllerRef.Request* 経由で更なる要求を積めるが、それらは
+        // m_PendingQueue へ push_back するだけで m_Stack を同期的に変更しない。
+        // よってこのループは連鎖要求を同一フレームで解決し、コールバック内で
+        // StackEntry 参照が無効化されることはない。
+        while (!m_PendingQueue.empty())
         {
-            NORVES_LOG_WARNING("GameMode", "Unsupported pending transition type ignored");
+            GameModeTransitionRequest req = m_PendingQueue.front(); // erase の前にコピーアウト
+            m_PendingQueue.erase(m_PendingQueue.begin());
+            ApplyTransition(req);
+        }
+    }
+
+    void GameModeStateMachine::ApplyTransition(const GameModeTransitionRequest& req)
+    {
+        switch (req.Type)
+        {
+        case GameModeTransitionType::Change:
+        {
+            if (!m_Stack.empty())
+            {
+                StackEntry& top = m_Stack.back();
+                GameModeContext ctx = MakeContext(*top.Scope, m_DeltaTime);
+                top.Mode->Leave(ctx, GameModeExitReason::Change);
+                top.Scope->Cleanup();
+                m_Stack.pop_back();
+            }
+
+            Container::TUniquePtr<IGameMode> next = m_Registry.Create(req.Target, req.Params);
+            if (!next)
+            {
+                NORVES_LOG_WARNING("GameMode", "GameModeRegistry has no creator for requested id (Change)");
+                return;
+            }
+
+            auto scope = Container::MakeUnique<GameModeScope>(
+                &GEngine->GetWorld(),
+                &GEngine->GetRenderResources());
+            m_Stack.push_back(StackEntry{ std::move(next), std::move(scope) });
+
+            StackEntry& entry = m_Stack.back();
+            GameModeContext enterCtx = MakeContext(*entry.Scope, m_DeltaTime);
+            if (entry.Mode->Enter(enterCtx) == GameModeEnterResult::Failed)
+            {
+                entry.Scope->Cleanup();
+                m_Stack.pop_back();
+            }
             return;
         }
 
-        // 3) 既存モードがあれば Leave → Scope クリーンアップ → 解放。
-        if (m_CurrentMode)
+        case GameModeTransitionType::Push:
         {
+            const bool bSuspended = !m_Stack.empty();
+            if (bSuspended)
             {
-                GameModeContext ctx{
-                    *GEngine,
-                    GEngine->GetWorld(),
-                    GEngine->GetRenderResources(),
-                    GEngine->GetInputSystem(),
-                    *this,
-                    *m_Scope,
-                    m_DeltaTime};
-                m_CurrentMode->Leave(ctx, GameModeExitReason::Change);
+                StackEntry& top = m_Stack.back();
+                GameModeContext ctx = MakeContext(*top.Scope, m_DeltaTime);
+                top.Mode->Suspend(ctx); // Leave ではない・Cleanup なし・スタックに残る
             }
-            if (m_Scope)
+
+            Container::TUniquePtr<IGameMode> next = m_Registry.Create(req.Target, req.Params);
+            if (!next)
             {
-                m_Scope->Cleanup();
-            }
-            m_CurrentMode.reset();
-            m_Scope.reset();
-        }
-
-        // 4) 新しいモードを生成。未登録なら何もしない。
-        Container::TUniquePtr<IGameMode> next = m_Registry.Create(req.Target, req.Params);
-        if (!next)
-        {
-            NORVES_LOG_WARNING("GameMode", "GameModeRegistry has no creator for requested id");
-            return;
-        }
-
-        // 5) 新しいモード用の Scope を確立する。
-        m_Scope = Container::MakeUnique<GameModeScope>(
-            &GEngine->GetWorld(),
-            &GEngine->GetRenderResources());
-
-        // 6) モードを設定し Enter を呼ぶ。Failed なら Scope を巻き戻す。
-        m_CurrentMode = std::move(next);
-        {
-            GameModeContext ctx{
-                *GEngine,
-                GEngine->GetWorld(),
-                GEngine->GetRenderResources(),
-                GEngine->GetInputSystem(),
-                *this,
-                *m_Scope,
-                m_DeltaTime};
-            GameModeEnterResult r = m_CurrentMode->Enter(ctx);
-            if (r == GameModeEnterResult::Failed)
-            {
-                if (m_Scope)
+                NORVES_LOG_WARNING("GameMode", "GameModeRegistry has no creator for requested id (Push)");
+                if (bSuspended)
                 {
-                    m_Scope->Cleanup();
+                    StackEntry& prev = m_Stack.back();
+                    GameModeContext ctx = MakeContext(*prev.Scope, m_DeltaTime);
+                    prev.Mode->Resume(ctx);
                 }
-                m_CurrentMode.reset();
-                m_Scope.reset();
+                return;
             }
+
+            auto scope = Container::MakeUnique<GameModeScope>(
+                &GEngine->GetWorld(),
+                &GEngine->GetRenderResources());
+            m_Stack.push_back(StackEntry{ std::move(next), std::move(scope) });
+
+            StackEntry& entry = m_Stack.back();
+            GameModeContext enterCtx = MakeContext(*entry.Scope, m_DeltaTime);
+            if (entry.Mode->Enter(enterCtx) == GameModeEnterResult::Failed)
+            {
+                // Enter 失敗の新モードには Leave を呼ばない（Cleanup + pop のみ。既存挙動と一致）。
+                entry.Scope->Cleanup();
+                m_Stack.pop_back();
+                if (bSuspended)
+                {
+                    StackEntry& prev = m_Stack.back();
+                    GameModeContext resumeCtx = MakeContext(*prev.Scope, m_DeltaTime);
+                    prev.Mode->Resume(resumeCtx);
+                }
+            }
+            return;
+        }
+
+        case GameModeTransitionType::Pop:
+        {
+            if (m_Stack.empty())
+            {
+                NORVES_LOG_WARNING("GameMode", "RequestPop on empty stack; ignored");
+                return;
+            }
+
+            StackEntry& top = m_Stack.back();
+            GameModeContext leaveCtx = MakeContext(*top.Scope, m_DeltaTime);
+            top.Mode->Leave(leaveCtx, GameModeExitReason::Pop);
+            top.Scope->Cleanup();
+            m_Stack.pop_back();
+
+            if (!m_Stack.empty())
+            {
+                StackEntry& nt = m_Stack.back();
+                GameModeContext resumeCtx = MakeContext(*nt.Scope, m_DeltaTime);
+                nt.Mode->Resume(resumeCtx);
+            }
+            // 空スタックは許容する。アプリは自動終了しない。
+            return;
+        }
+
+        case GameModeTransitionType::ResetStack:
+        {
+            while (!m_Stack.empty())
+            {
+                StackEntry& e = m_Stack.back();
+                GameModeContext ctx = MakeContext(*e.Scope, m_DeltaTime);
+                e.Mode->Leave(ctx, GameModeExitReason::Reset);
+                e.Scope->Cleanup();
+                m_Stack.pop_back();
+            }
+
+            Container::TUniquePtr<IGameMode> next = m_Registry.Create(req.Target, req.Params);
+            if (!next)
+            {
+                NORVES_LOG_WARNING("GameMode", "GameModeRegistry has no creator for requested id (Reset)");
+                return;
+            }
+
+            auto scope = Container::MakeUnique<GameModeScope>(
+                &GEngine->GetWorld(),
+                &GEngine->GetRenderResources());
+            m_Stack.push_back(StackEntry{ std::move(next), std::move(scope) });
+
+            StackEntry& entry = m_Stack.back();
+            GameModeContext enterCtx = MakeContext(*entry.Scope, m_DeltaTime);
+            if (entry.Mode->Enter(enterCtx) == GameModeEnterResult::Failed)
+            {
+                entry.Scope->Cleanup();
+                m_Stack.pop_back();
+            }
+            return;
+        }
+
+        case GameModeTransitionType::Quit:
+        {
+            if (GEngine)
+            {
+                GEngine->RequestExit(req.ExitCode); // スタックには触れない
+            }
+            return;
+        }
+
+        case GameModeTransitionType::None:
+        default:
+        {
+            NORVES_LOG_WARNING("GameMode", "Unknown/None transition type ignored");
+            return;
+        }
         }
     }
 
@@ -129,57 +235,56 @@ namespace NorvesLib::Core::GameMode
         }
         m_bShutdown = true;
 
-        if (m_CurrentMode)
+        while (!m_Stack.empty())
         {
-            {
-                GameModeContext ctx{
-                    *GEngine,
-                    GEngine->GetWorld(),
-                    GEngine->GetRenderResources(),
-                    GEngine->GetInputSystem(),
-                    *this,
-                    *m_Scope,
-                    m_DeltaTime};
-                m_CurrentMode->Leave(ctx, GameModeExitReason::Shutdown);
-            }
-            if (m_Scope)
-            {
-                m_Scope->Cleanup();
-            }
-            m_CurrentMode.reset();
-            m_Scope.reset();
+            StackEntry& e = m_Stack.back();
+            GameModeContext ctx = MakeContext(*e.Scope, m_DeltaTime);
+            e.Mode->Leave(ctx, GameModeExitReason::Shutdown);
+            e.Scope->Cleanup();
+            m_Stack.pop_back();
         }
 
-        m_bHasPending = false;
-        m_Pending = GameModeTransitionRequest{};
+        m_PendingQueue.clear();
     }
 
+    // 再入不変条件: 各 Request* は m_PendingQueue へ push_back するのみで、m_Stack を
+    // 変更しない。よってコールバック内で m_Stack がリサイズされることはなく、push_back
+    // 後に取得した StackEntry 参照は Enter/Suspend/Resume をまたいで有効なまま保たれる。
     void GameModeStateMachine::RequestChange(GameModeId id, GameModeParams params)
     {
-        m_Pending.Type = GameModeTransitionType::Change;
-        m_Pending.Target = id;
-        m_Pending.Params = std::move(params);
-        m_Pending.ExitCode = 0;
-        m_bHasPending = true;
+        GameModeTransitionRequest r;
+        r.Type = GameModeTransitionType::Change;
+        r.Target = id;
+        r.Params = std::move(params);
+        r.ExitCode = 0;
+        m_PendingQueue.push_back(std::move(r));
     }
 
     void GameModeStateMachine::RequestPush(GameModeId id, GameModeParams params)
     {
-        (void)id;
-        (void)params;
-        NORVES_LOG_WARNING("GameMode", "RequestPush is not implemented yet (Phase 5); request ignored");
+        GameModeTransitionRequest r;
+        r.Type = GameModeTransitionType::Push;
+        r.Target = id;
+        r.Params = std::move(params);
+        r.ExitCode = 0;
+        m_PendingQueue.push_back(std::move(r));
     }
 
     void GameModeStateMachine::RequestPop()
     {
-        NORVES_LOG_WARNING("GameMode", "RequestPop is not implemented yet (Phase 5); request ignored");
+        GameModeTransitionRequest r;
+        r.Type = GameModeTransitionType::Pop;
+        m_PendingQueue.push_back(std::move(r));
     }
 
     void GameModeStateMachine::RequestReset(GameModeId id, GameModeParams params)
     {
-        (void)id;
-        (void)params;
-        NORVES_LOG_WARNING("GameMode", "RequestReset is not implemented yet (Phase 5); request ignored");
+        GameModeTransitionRequest r;
+        r.Type = GameModeTransitionType::ResetStack;
+        r.Target = id;
+        r.Params = std::move(params);
+        r.ExitCode = 0;
+        m_PendingQueue.push_back(std::move(r));
     }
 
     void GameModeStateMachine::RequestExitApplication(int exitCode)
