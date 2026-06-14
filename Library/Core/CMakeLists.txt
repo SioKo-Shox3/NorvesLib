@@ -47,6 +47,7 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
+    Private/GameMode/GameModeStateMachine.cpp
     # Rendering
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
@@ -223,6 +224,7 @@ set(PUBLIC_HEADERS
     Public/GameMode/GameModeScope.h
     Public/GameMode/GameModeContext.h
     Public/GameMode/GameModeRegistry.h
+    Public/GameMode/GameModeStateMachine.h
     # Rendering
     Public/Rendering/RenderTypes.h
     Public/Rendering/GpuResourceTypes.h

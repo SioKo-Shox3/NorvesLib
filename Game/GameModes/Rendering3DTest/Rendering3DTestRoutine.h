@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "Core/Public/GameMode/IStateMachine.h"
+#include "Core/Public/GameMode/IGameMode.h"
 #include "Rendering3DTestData.h"
 
 namespace Game::GameModes
@@ -17,31 +17,37 @@ namespace Game::GameModes
     public:
         /**
          * @brief ステート開始時の処理
-         * @param proc ステートマシン
+         * @param ctx  実行コンテキスト
          * @param data ゲームモードデータ
+         * @return 入場結果
          *
          * ProceduralMeshGeneratorで球とPlaneを生成、
          * RenderResourcesに登録、
          * WorldにObjectとMeshComponentを追加。
          */
-        void Enter(NorvesLib::Core::GameMode::IStateMachine *proc, Rendering3DTestData &data);
+        NorvesLib::Core::GameMode::GameModeEnterResult
+        Enter(NorvesLib::Core::GameMode::GameModeContext& ctx, Rendering3DTestData& data);
 
         /**
          * @brief ステート実行中の処理
-         * @param proc ステートマシン
+         * @param ctx  実行コンテキスト
          * @param data ゲームモードデータ
          * @param deltaTime フレーム間隔（秒）
          *
          * 球体を回転させてWorldTransformを更新。
          */
-        void Do(NorvesLib::Core::GameMode::IStateMachine *proc, Rendering3DTestData &data, float deltaTime);
+        void Tick(NorvesLib::Core::GameMode::GameModeContext& ctx, Rendering3DTestData& data, float deltaTime);
 
         /**
          * @brief ステート終了時の処理
-         * @param proc ステートマシン
-         * @param data ゲームモードデータ
+         * @param ctx    実行コンテキスト
+         * @param data   ゲームモードデータ
+         * @param reason 退場理由
          */
-        void Leave(NorvesLib::Core::GameMode::IStateMachine *proc, Rendering3DTestData &data);
+        void Leave(NorvesLib::Core::GameMode::GameModeContext& ctx, Rendering3DTestData& data,
+                   NorvesLib::Core::GameMode::GameModeExitReason reason);
+
+        static constexpr const char* DebugName = "Rendering3DTest";
     };
 
 } // namespace Game::GameModes

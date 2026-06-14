@@ -9,9 +9,9 @@ using namespace NorvesLib::Random;
 namespace Game::GameModes
 {
 
-    void MemoryAgingTestRoutine::Enter(IStateMachine *proc, MemoryAgingTestData &data)
+    GameModeEnterResult MemoryAgingTestRoutine::Enter(GameModeContext &ctx, MemoryAgingTestData &data)
     {
-        (void)proc; // 未使用警告の抑制
+        (void)ctx; // 未使用警告の抑制
 
         LOG_INFO("=================================================");
         LOG_INFO("メモリエージングテスト開始");
@@ -35,11 +35,13 @@ namespace Game::GameModes
 
         // メモリブロック用の領域を予約
         data.m_MemoryBlocks.reserve(data.m_AllocationCount * 10);
+
+        return GameModeEnterResult::Succeeded;
     }
 
-    void MemoryAgingTestRoutine::Do(IStateMachine *proc, MemoryAgingTestData &data, float deltaTime)
+    void MemoryAgingTestRoutine::Tick(GameModeContext &ctx, MemoryAgingTestData &data, float deltaTime)
     {
-        (void)proc; // 未使用警告の抑制
+        (void)ctx; // 未使用警告の抑制
 
         // テスト完了済みの場合はスキップ
         if (data.m_bIsCompleted)
@@ -129,9 +131,10 @@ namespace Game::GameModes
         }
     }
 
-    void MemoryAgingTestRoutine::Leave(IStateMachine *proc, MemoryAgingTestData &data)
+    void MemoryAgingTestRoutine::Leave(GameModeContext &ctx, MemoryAgingTestData &data, GameModeExitReason reason)
     {
-        (void)proc; // 未使用警告の抑制
+        (void)ctx;    // 未使用警告の抑制
+        (void)reason; // 未使用警告の抑制
 
         LOG_INFO("メモリエージングテスト: 全メモリブロックを解放中...");
 

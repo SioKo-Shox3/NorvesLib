@@ -33,10 +33,8 @@ using namespace NorvesLib::Core;
 namespace Game::GameModes
 {
 
-    void Rendering3DTestRoutine::Enter(IStateMachine *proc, Rendering3DTestData &data)
+    GameModeEnterResult Rendering3DTestRoutine::Enter(GameModeContext &ctx, Rendering3DTestData &data)
     {
-        (void)proc;
-
         LOG_INFO("=================================================");
         LOG_INFO("3Dレンダリングテスト開始");
         LOG_INFO("=================================================");
@@ -45,7 +43,7 @@ namespace Game::GameModes
         // 1. プロシージャルメッシュの生成とGPU登録
         // ========================================
         {
-            auto &meshes = GEngine->GetRenderResources().Meshes();
+            auto &meshes = ctx.RenderResourcesRef.Meshes();
 
             // 球体メッシュの生成
             VariableArray<Mesh3DVertex> sphereVertices;
@@ -118,7 +116,7 @@ namespace Game::GameModes
         // 1.5 プロシージャルチェッカーボードテクスチャ生成
         // ========================================
         {
-            auto &textures = GEngine->GetRenderResources().Textures();
+            auto &textures = ctx.RenderResourcesRef.Textures();
 
             constexpr uint32_t TEX_SIZE = 256;
             constexpr uint32_t CHECKER_SIZE = 32; // 32ピクセルごとに色が切り替わる
@@ -161,7 +159,7 @@ namespace Game::GameModes
         // 1.6 マテリアルの作成（テクスチャは非同期読み込み）
         // ========================================
         {
-            auto &renderResources = GEngine->GetRenderResources();
+            auto &renderResources = ctx.RenderResourcesRef;
             auto &textures = renderResources.Textures();
             auto &materials = renderResources.Materials();
 
@@ -319,7 +317,7 @@ namespace Game::GameModes
         // 2. WorldObjectの作成とメッシュコンポーネントの追加
         // ========================================
         {
-            auto &world = GEngine->GetWorld();
+            auto &world = ctx.WorldRef;
 
             // --- 球体オブジェクト ---
             data.m_pSphereObject = world.SpawnObject<WorldObject>();
@@ -403,8 +401,8 @@ namespace Game::GameModes
         // 3. glTFモデルのロード
         // ========================================
         {
-            auto& world = GEngine->GetWorld();
-            auto &renderResources = GEngine->GetRenderResources();
+            auto& world = ctx.WorldRef;
+            auto &renderResources = ctx.RenderResourcesRef;
             ModelLoadResourceContext modelLoadContext{
                 renderResources.Textures(),
                 renderResources.MegaGeometry()};
@@ -453,12 +451,12 @@ namespace Game::GameModes
                 NORVES_LOG_INFO("Rendering3DTest", "Boulder model async load started: %s", modelPath.c_str());
             }
         }
+
+        return GameModeEnterResult::Succeeded;
     }
 
-    void Rendering3DTestRoutine::Do(IStateMachine *proc, Rendering3DTestData &data, float deltaTime)
+    void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
-        (void)proc;
-
         data.m_ElapsedTime += deltaTime;
 
         if (data.m_BoulderAsyncState &&
@@ -478,8 +476,8 @@ namespace Game::GameModes
             }
             else
             {
-                auto &world = GEngine->GetWorld();
-                auto &megaGeometry = GEngine->GetRenderResources().MegaGeometry();
+                auto &world = ctx.WorldRef;
+                auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
                 auto megaMeshHandle = megaGeometry.GetModelMegaMeshHandle(data.m_BoulderModelHandle);
                 if (!megaMeshHandle.IsValid())
                 {
@@ -523,15 +521,15 @@ namespace Game::GameModes
 
     }
 
-    void Rendering3DTestRoutine::Leave(IStateMachine *proc, Rendering3DTestData &data)
+    void Rendering3DTestRoutine::Leave(GameModeContext &ctx, Rendering3DTestData &data, GameModeExitReason reason)
     {
-        (void)proc;
+        (void)reason;
 
         LOG_INFO("=================================================");
         LOG_INFO("3Dレンダリングテスト終了");
         LOG_INFO("=================================================");
 
-        auto &world = GEngine->GetWorld();
+        auto &world = ctx.WorldRef;
 
         // 1) 非同期ロードのキャンセル：以降到着する callback の結果を破棄する。
         //    callback は asyncState を共有所有しているため、ここで reset しても
@@ -587,7 +585,7 @@ namespace Game::GameModes
         // 3) メッシュの登録解除（Proxy 除去後）
         if (data.m_bMeshesRegistered)
         {
-            auto &meshes = GEngine->GetRenderResources().Meshes();
+            auto &meshes = ctx.RenderResourcesRef.Meshes();
             meshes.Unregister(data.m_SphereMeshHandle);
             meshes.Unregister(data.m_GroundMeshHandle);
             meshes.Unregister(data.m_LightSphereMeshHandle);
@@ -597,7 +595,7 @@ namespace Game::GameModes
         // 4) glTF モデルの解放（boulder object 削除後）
         if (data.m_bBoulderModelLoaded)
         {
-            auto &megaGeometry = GEngine->GetRenderResources().MegaGeometry();
+            auto &megaGeometry = ctx.RenderResourcesRef.MegaGeometry();
             megaGeometry.ReleaseModel(data.m_BoulderModelHandle);
             data.m_BoulderModelHandle = ModelHandle::Invalid();
             data.m_bBoulderModelLoaded = false;
