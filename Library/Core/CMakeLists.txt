@@ -45,6 +45,8 @@ set(PRIVATE_SOURCES
     Private/Engine/Engine.cpp
     Private/Engine/NorvesEngine.cpp
     Private/Engine/ApplicationProcessor.cpp
+    # GameMode
+    Private/GameMode/GameModeScope.cpp
     # Rendering
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
@@ -214,6 +216,13 @@ set(PUBLIC_HEADERS
     Public/GameMode/TGameMode.h
     Public/GameMode/GameModeFactory.h
     Public/GameMode/GameModeTypes.h
+    Public/GameMode/GameModeId.h
+    Public/GameMode/GameModeParams.h
+    Public/GameMode/GameModeTransition.h
+    Public/GameMode/IGameModeController.h
+    Public/GameMode/GameModeScope.h
+    Public/GameMode/GameModeContext.h
+    Public/GameMode/GameModeRegistry.h
     # Rendering
     Public/Rendering/RenderTypes.h
     Public/Rendering/GpuResourceTypes.h
