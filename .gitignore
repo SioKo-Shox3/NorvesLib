@@ -128,3 +128,6 @@ desktop.ini
 *.log
 build_output*.txt
 /refactoring_issue.md
+
+# 作業メモ・計画ノート（追跡対象外のスクラッチ文書）
+Docs/Plans/
