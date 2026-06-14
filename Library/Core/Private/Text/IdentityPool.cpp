@@ -57,12 +57,9 @@ namespace NorvesLib::Core
             return Identity();
         }
 
+        // 空→0、素ハッシュ0→1 の予約は IdentityHash 内で一元化済み。
+        // 上の view.empty() ガードにより n != 0 が保証されるため hash は非0。
         uint64_t hash = CalculateHash(view);
-        if (hash == 0)
-        {
-            // 0はInvalidとして予約されているため、ハッシュ値が0になる場合は1を加算
-            hash = 1;
-        }
 
         Container::StringView storedView;
         {
@@ -133,16 +130,9 @@ namespace NorvesLib::Core
 
     uint64_t IdentityPool::CalculateHash(Container::StringView view) const
     {
-        // FNV-1a ハッシュアルゴリズムを使用
-        constexpr uint64_t FNV_PRIME = 1099511628211ULL;
-        constexpr uint64_t FNV_OFFSET_BASIS = 14695981039346656037ULL;
-
-        uint64_t hash = FNV_OFFSET_BASIS;
-        for (char c : view)
-        {
-            hash ^= static_cast<uint64_t>(c);
-            hash *= FNV_PRIME;
-        }
-        return hash;
+        // コンパイル時パスと完全に同一のFNV-1a実装を共有し、ハッシュ値の
+        // バイト一致（レジストリキーの不変）を保証する。空→0／素ハッシュ0→1
+        // の予約も IdentityHash 内で一元化されている。
+        return IdentityHash(view.data(), view.size());
     }
 } // namespace NorvesLib::Core
