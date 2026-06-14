@@ -43,6 +43,16 @@ namespace NorvesLib::Core::Resource
                                                  uint32_t maxLoadsPerFrame = 1);
 
         /**
+         * @brief Cancels a single in-flight asynchronous glTF model load.
+         * @param requestId The id returned from LoadModelAsync. 0 is a no-op.
+         *
+         * After cancellation the completion callback will NOT fire. If the load
+         * already produced a model by the time it is flushed, the loader releases
+         * it itself, so no resource leaks. Safe to call from the game thread.
+         */
+        static void CancelModelLoad(uint32_t requestId);
+
+        /**
          * @brief Detaches and waits for pending asynchronous glTF model loads without invoking callbacks.
          */
         static void CancelPendingModelLoadsAndWait();
