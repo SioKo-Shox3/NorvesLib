@@ -184,6 +184,9 @@ namespace NorvesLib::Core::Resource
             Thread::TaskPtr Task;
             AsyncModelLoadResult Result;
             VariableArray<NorvesLib::Core::Delegate<void, Rendering::ModelHandle>> Callbacks;
+            // Set on the game thread by CancelModelLoad, read on the main/flush thread.
+            // Atomic because flush reads it outside g_AsyncModelLoadMutex during finalization.
+            Thread::Atomic<bool> Cancelled{false};
         };
 
         Thread::Mutex g_AsyncModelLoadMutex;
@@ -1944,6 +1947,19 @@ namespace NorvesLib::Core::Resource
         for (const auto& request : completedRequests)
         {
             Rendering::ModelHandle modelHandle = Rendering::ModelHandle::Invalid();
+            if (request->Cancelled.Load(std::memory_order_acquire))
+            {
+                // The load was cancelled after submission. Skip GPU finalization
+                // entirely (avoids allocate-then-free) and do not invoke callbacks.
+                // The worker only produced CPU-side staging, which is freed when the
+                // request shared pointer drops here, so nothing leaks on the GPU.
+                ++processedCount;
+                NORVES_LOG_INFO("GLTFAnalyzer",
+                                "Skipped cancelled async glTF model load: %s (RequestId=%u)",
+                                request->ResolvedPath.c_str(),
+                                static_cast<unsigned int>(request->RequestId));
+                continue;
+            }
             if (request->Result.bSuccess)
             {
                 modelHandle = FinalizeModelStaging(
@@ -2019,6 +2035,46 @@ namespace NorvesLib::Core::Resource
                             "Cancelled pending async glTF model loads: %zu",
                             pendingRequests.size());
         }
+    }
+
+    void GLTFAnalyzer::CancelModelLoad(uint32_t requestId)
+    {
+        if (requestId == 0)
+        {
+            return;
+        }
+
+        Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+        for (const auto& request : g_PendingModelLoads)
+        {
+            if (request && request->RequestId == requestId)
+            {
+                // Mark cancelled and drop callbacks so completion never fires.
+                // Keep the request in g_PendingModelLoads so FlushCompletedModelLoads still
+                // reaches it and skips/releases any produced model. Removing it here would
+                // orphan an in-flight worker task and leak whatever it eventually produces,
+                // so we intentionally leave it in g_PendingModelLoads.
+                request->Cancelled.Store(true, std::memory_order_release);
+                request->Callbacks.clear();
+
+                // Remove this request from the by-path coalescing map so a subsequent
+                // same-path LoadModelAsync starts a FRESH request instead of coalescing onto
+                // this cancelled one (which Flush would skip, silently dropping the reload).
+                // Guard the erase: only evict the entry if it still maps to THIS request, so
+                // we never evict a different, newer request that already replaced it.
+                auto byPathIt = g_PendingModelLoadsByPath.find(request->ResolvedPath);
+                if (byPathIt != g_PendingModelLoadsByPath.end() && byPathIt->second == request)
+                {
+                    g_PendingModelLoadsByPath.erase(byPathIt);
+                }
+                NORVES_LOG_INFO("GLTFAnalyzer",
+                                "Cancelled async glTF model load: %s (RequestId=%u)",
+                                request->ResolvedPath.c_str(),
+                                static_cast<unsigned int>(requestId));
+                return;
+            }
+        }
+        // Not found: already flushed or unknown id. No-op.
     }
 
     uint32_t GLTFAnalyzer::GetPendingAsyncModelLoadCount()
