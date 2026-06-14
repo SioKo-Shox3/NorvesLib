@@ -9,7 +9,9 @@
 
 // ---------------------------------------------------------------------------
 // テスト用ダミー IGameMode 実装
-// Phase 2 では IGameMode は旧シグネチャ（IStateMachine*）をそのまま使う。
+// Phase 3 以降の IGameMode は GameModeContext を受け取る新シグネチャを使う。
+// 本テストは Register/Contains/Create のみを検証するため、Enter/Tick/Leave は
+// 呼ばれず、GameModeContext を構築することはない。
 // ---------------------------------------------------------------------------
 namespace
 {
@@ -20,23 +22,35 @@ namespace
 
         explicit DummyGameMode(bool* entered) : bEntered(entered) {}
 
-        void Enter(NorvesLib::Core::GameMode::IStateMachine* proc) override
+        NorvesLib::Core::GameMode::GameModeEnterResult
+        Enter(NorvesLib::Core::GameMode::GameModeContext& ctx) override
         {
+            (void)ctx;
             if (bEntered)
             {
                 *bEntered = true;
             }
+            return NorvesLib::Core::GameMode::GameModeEnterResult::Succeeded;
         }
 
-        void Do(NorvesLib::Core::GameMode::IStateMachine* proc, float deltaTime) override {}
-
-        void Leave(NorvesLib::Core::GameMode::IStateMachine* proc) override
+        void Tick(NorvesLib::Core::GameMode::GameModeContext& ctx, float deltaTime) override
         {
+            (void)ctx;
+            (void)deltaTime;
+        }
+
+        void Leave(NorvesLib::Core::GameMode::GameModeContext& ctx,
+                   NorvesLib::Core::GameMode::GameModeExitReason reason) override
+        {
+            (void)ctx;
+            (void)reason;
             if (bEntered)
             {
                 *bEntered = false;
             }
         }
+
+        const char* GetDebugName() const override { return "Dummy"; }
     };
 
 } // anonymous namespace

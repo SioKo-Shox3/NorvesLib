@@ -16,9 +16,11 @@
 #include <utility>
 
 // GameMode関連
-#include "Core/Public/GameMode/TStateMachine.h"
-#include "Core/Public/GameMode/GameModeFactory.h"
+#include "Core/Public/GameMode/GameModeStateMachine.h"
+#include "Core/Public/GameMode/GameModeId.h"
+#include "Core/Public/GameMode/GameModeParams.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestMode.h"
+#include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
 
 using namespace NorvesLib::Core::Container;
 using namespace NorvesLib::Core::Engine;
@@ -522,15 +524,27 @@ namespace Game
         // 3Dレンダリングテスト用のステートマシンを作成
         using namespace Game::GameModes;
 
-        auto stateMachine = MakeUnique<TStateMachine<IGameMode, GameModeFactory>>();
+        auto stateMachine = MakeUnique<GameModeStateMachine>();
+        stateMachine->Registry().Register(
+            GameModeId::Rendering3DTest,
+            [](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<Rendering3DTestMode>();
+                mode->GetData().m_ModelPath = params.ModelPath;
+                return mode;
+            });
+        stateMachine->Registry().Register(
+            GameModeId::MemoryAgingTest,
+            [](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                return MakeUnique<MemoryAgingTestMode>();
+            });
 
-        // 3Dレンダリングテストモードを初期ステートとして設定
-        auto rendering3DTestMode = MakeUnique<Rendering3DTestMode>();
-        rendering3DTestMode->GetData().m_ModelPath =
-            m_Rendering3DTestModelPath.empty()
-                ? String(kDefaultRendering3DTestModelPath)
-                : m_Rendering3DTestModelPath;
-        stateMachine->ReserveState(std::move(rendering3DTestMode));
+        GameModeParams params;
+        params.ModelPath = m_Rendering3DTestModelPath.empty()
+                               ? String(kDefaultRendering3DTestModelPath)
+                               : m_Rendering3DTestModelPath;
+        stateMachine->Start(GameModeId::Rendering3DTest, params);
 
         LOG_INFO("3Dレンダリングテストモードを開始します");
 

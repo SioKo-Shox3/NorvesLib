@@ -1,7 +1,6 @@
 ﻿#pragma once
 
 #include "IGameMode.h"
-#include "IStateMachine.h"
 
 namespace NorvesLib::Core::GameMode
 {
@@ -11,8 +10,9 @@ namespace NorvesLib::Core::GameMode
      *
      * ロジック（Routine）とデータ（Data）を分離したゲームモードの実装。
      *
-     * @tparam Routine ゲームモードのロジッククラス（Enter, Do, Leaveメソッドを持つ）
-     * @tparam Data ゲームモードのデータクラス
+     * @tparam Routine ゲームモードのロジッククラス（Enter, Tick, Leave メソッドと
+     *                 静的メンバ DebugName を持つ）
+     * @tparam Data    ゲームモードのデータクラス
      */
     template <typename Routine, typename Data>
     class TGameMode : public IGameMode
@@ -23,19 +23,24 @@ namespace NorvesLib::Core::GameMode
         virtual ~TGameMode() override = default;
 
         // IGameModeインターフェースの実装
-        virtual void Enter(IStateMachine *proc) override
+        GameModeEnterResult Enter(GameModeContext& ctx) override
         {
-            m_Routine.Enter(proc, m_Data);
+            return m_Routine.Enter(ctx, m_Data);
         }
 
-        virtual void Do(IStateMachine *proc, float deltaTime) override
+        void Tick(GameModeContext& ctx, float deltaTime) override
         {
-            m_Routine.Do(proc, m_Data, deltaTime);
+            m_Routine.Tick(ctx, m_Data, deltaTime);
         }
 
-        virtual void Leave(IStateMachine *proc) override
+        void Leave(GameModeContext& ctx, GameModeExitReason reason) override
         {
-            m_Routine.Leave(proc, m_Data);
+            m_Routine.Leave(ctx, m_Data, reason);
+        }
+
+        const char* GetDebugName() const override
+        {
+            return Routine::DebugName;
         }
 
         /**
