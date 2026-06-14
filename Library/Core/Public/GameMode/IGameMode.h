@@ -18,7 +18,6 @@ namespace NorvesLib::Core::GameMode
     {
         Succeeded, ///< 入場成功。以後 Tick が回る。
         Failed,    ///< 入場失敗。ステートマシンが Scope を片付ける。
-        Deferred,  ///< 入場を保留（将来拡張用）。
     };
 
     /**
@@ -38,7 +37,7 @@ namespace NorvesLib::Core::GameMode
         /**
          * @brief ステートに入ったときに呼ばれる
          * @param ctx 実行コンテキスト
-         * @return 入場結果（Succeeded / Failed / Deferred）
+         * @return 入場結果（Succeeded / Failed）
          */
         virtual GameModeEnterResult Enter(GameModeContext& ctx) = 0;
 

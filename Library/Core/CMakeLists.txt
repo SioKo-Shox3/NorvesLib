@@ -212,11 +212,8 @@ set(PUBLIC_HEADERS
     Public/Engine/ApplicationProcessor.h
     # GameMode
     Public/GameMode/IStateMachine.h
-    Public/GameMode/TStateMachine.h
     Public/GameMode/IGameMode.h
     Public/GameMode/TGameMode.h
-    Public/GameMode/GameModeFactory.h
-    Public/GameMode/GameModeTypes.h
     Public/GameMode/GameModeId.h
     Public/GameMode/GameModeParams.h
     Public/GameMode/GameModeTransition.h

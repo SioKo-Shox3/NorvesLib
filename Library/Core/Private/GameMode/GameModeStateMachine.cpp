@@ -17,13 +17,13 @@ namespace NorvesLib::Core::GameMode
         // EngineRef, WorldRef, RenderResourcesRef, InputRef, ControllerRef, ScopeRef, DeltaTime。
         // 参照メンバを持つため値返しだが、C++17 の保証されたコピー省略で安全。
         return GameModeContext{
-            *GEngine,
-            GEngine->GetWorld(),
-            GEngine->GetRenderResources(),
-            GEngine->GetInputSystem(),
-            *this,
-            scope,
-            dt};
+            .EngineRef          = *GEngine,
+            .WorldRef           = GEngine->GetWorld(),
+            .RenderResourcesRef = GEngine->GetRenderResources(),
+            .InputRef           = GEngine->GetInputSystem(),
+            .ControllerRef      = *this,
+            .ScopeRef           = scope,
+            .DeltaTime          = dt};
     }
 
     void GameModeStateMachine::Start(GameModeId initialMode, GameModeParams params)
@@ -64,8 +64,8 @@ namespace NorvesLib::Core::GameMode
         // StackEntry 参照が無効化されることはない。
         while (!m_PendingQueue.empty())
         {
-            GameModeTransitionRequest req = m_PendingQueue.front(); // erase の前にコピーアウト
-            m_PendingQueue.erase(m_PendingQueue.begin());
+            GameModeTransitionRequest req = m_PendingQueue.front(); // pop_front の前にコピーアウト
+            m_PendingQueue.pop_front();
             ApplyTransition(req);
         }
     }
@@ -289,10 +289,10 @@ namespace NorvesLib::Core::GameMode
 
     void GameModeStateMachine::RequestExitApplication(int exitCode)
     {
-        if (GEngine)
-        {
-            GEngine->RequestExit(exitCode);
-        }
+        GameModeTransitionRequest r;
+        r.Type     = GameModeTransitionType::Quit;
+        r.ExitCode = exitCode;
+        m_PendingQueue.push_back(std::move(r));
     }
 
 } // namespace NorvesLib::Core::GameMode

@@ -6,6 +6,7 @@
 #include "GameModeTransition.h"
 #include "GameModeScope.h"
 #include "IGameMode.h"
+#include "Container/Deque.h"
 #include "Container/PointerTypes.h"
 #include "Container/VariableArray.h"
 
@@ -68,7 +69,6 @@ namespace NorvesLib::Core::GameMode
         // ========== IStateMachine ==========
         void Update(float deltaTime) override;
         void Shutdown() override;
-        void* GetFactoryImpl() const override { return nullptr; }
         float GetDeltaTime() const override { return m_DeltaTime; }
 
         // ========== IGameModeController ==========
@@ -93,9 +93,9 @@ namespace NorvesLib::Core::GameMode
         /// 呼び出しサイト用の GameModeContext を構築する（値返し・コピー省略）。
         GameModeContext MakeContext(GameModeScope& scope, float dt);
 
-        GameModeRegistry                                    m_Registry;
-        Container::VariableArray<StackEntry>                m_Stack;        // top = back()
-        Container::VariableArray<GameModeTransitionRequest> m_PendingQueue; // FIFO; front = [0]
+        GameModeRegistry                               m_Registry;
+        Container::VariableArray<StackEntry>           m_Stack;        // top = back()
+        Container::Deque<GameModeTransitionRequest>    m_PendingQueue; // FIFO; front = front()
         float                                               m_DeltaTime = 0.0f;
         bool                                                m_bShutdown = false;
     };
