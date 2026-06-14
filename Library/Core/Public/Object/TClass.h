@@ -34,6 +34,11 @@ namespace NorvesLib::Core
                 m_ParentClass = Parent::StaticClass();
             }
 
+            // 祖先テーブル（Cohenの定数時間判定）を構築する。
+            // m_ParentClassが確定した後に行う必要がある。
+            // 構築はstatic初期化の一度きりなので、親チェーンを線形に辿っても問題ない。
+            BuildAncestorTable();
+
             // 親クラスからプロパティと関数を継承
             if (m_ParentClass)
             {
@@ -58,11 +63,13 @@ namespace NorvesLib::Core
 
         virtual bool IsChildOf(const IClass *cls) const override
         {
-            if (this == cls)
-                return true;
-            if (m_ParentClass)
-                return m_ParentClass->IsChildOf(cls);
-            return false;
+            if (!cls)
+            {
+                return false;
+            }
+            const uint32_t d = cls->GetDepth();
+            // 配列1アクセス・再帰なしの定数時間判定
+            return d <= m_Depth && m_Ancestors[d] == cls;
         }
 
         virtual const PropertyField *GetPropertyField() const override
@@ -98,6 +105,11 @@ namespace NorvesLib::Core
         virtual uint64_t GetClassId() const override
         {
             return m_ClassId;
+        }
+
+        virtual uint32_t GetDepth() const override
+        {
+            return m_Depth;
         }
 
         // シングルトンインスタンス取得（Parent指定版とそうでない版を統一）
@@ -193,12 +205,47 @@ namespace NorvesLib::Core
             return ClassRegistry::Get().AllocateClassId();
         }
 
+        // 祖先テーブル（深さindex→祖先IClass*）を構築する。
+        // m_Ancestors[d]はこのクラスの深さdの祖先を指し、
+        // m_Ancestors[m_Depth] == this となる。
+        // classIdではなくIClass*のポインタ同値で比較するため、
+        // static初期化順やシリアライズに非依存。
+        void BuildAncestorTable()
+        {
+            if (m_ParentClass)
+            {
+                // 親があれば深さは親+1
+                m_Depth = m_ParentClass->GetDepth() + 1;
+                m_Ancestors.resize(m_Depth + 1);
+
+                // 自分自身を末尾（深さm_Depth）に格納
+                m_Ancestors[m_Depth] = this;
+
+                // 親チェーンを根まで辿り、各祖先を対応する深さindexへ格納する。
+                // 各祖先のGetDepth()がその祖先の正しい深さを返すため、
+                // IClassに祖先列アクセサを追加せずに全indexを埋められる。
+                for (const IClass *ancestor = m_ParentClass; ancestor != nullptr; ancestor = ancestor->GetParentClass())
+                {
+                    m_Ancestors[ancestor->GetDepth()] = ancestor;
+                }
+            }
+            else
+            {
+                // 親が無ければルート（深さ0・自分自身のみ）
+                m_Depth = 0;
+                m_Ancestors.resize(1);
+                m_Ancestors[0] = this;
+            }
+        }
+
     private:
         Identity m_ClassName;                           // クラス名
         const IClass *m_ParentClass;                    // 親クラス
         std::unique_ptr<PropertyField> m_PropertyField; // プロパティフィールド
         std::unique_ptr<FunctionField> m_FunctionField; // 関数フィールド
         uint64_t m_ClassId;                             // クラスID
+        uint32_t m_Depth = 0;                           // 継承の深さ（ルート=0）
+        Container::VariableArray<const IClass *> m_Ancestors; // 祖先テーブル（index=深さ、末尾=this）
     };
 
 } // namespace NorvesLib::Core

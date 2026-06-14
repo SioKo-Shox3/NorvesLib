@@ -16,6 +16,10 @@ namespace NorvesLib::Core
                   ,
                   m_PropertyField(new PropertyField()), m_FunctionField(new FunctionField())
             {
+                // 祖先テーブル（Cohenの定数時間判定）を初期化する。
+                // Objectはルートクラスなので深さ0・自分自身のみ。
+                m_Ancestors = {this};
+
                 // クラスレジストリに登録
                 ClassRegistry::Get().RegisterClass(this);
             }
@@ -54,15 +58,8 @@ namespace NorvesLib::Core
                 {
                     return false;
                 }
-
-                // 自分自身との比較
-                if (cls == this)
-                {
-                    return true;
-                }
-
-                // Objectはルートクラスなのでどのクラスのサブクラスでもない
-                return false;
+                const uint32_t d = cls->GetDepth();
+                return d <= m_Depth && m_Ancestors[d] == cls;
             }
 
             virtual IUnknown *NewInstance(IUnknown *outer = nullptr) const override
@@ -122,15 +119,21 @@ namespace NorvesLib::Core
                 return m_ClassId;
             }
 
+            virtual uint32_t GetDepth() const override
+            {
+                // Objectはルートクラスなので深さ0
+                return 0;
+            }
+
         private:
             Identity m_ClassName;
             uint64_t m_ClassId;
             PropertyField *m_PropertyField;
             FunctionField *m_FunctionField;
+            uint32_t m_Depth = 0;                                  // 継承の深さ（ルート=0）
+            Container::VariableArray<const IClass *> m_Ancestors;  // 祖先テーブル（深さ0・自分自身のみ）
         };
 
-        // 静的クラスインスタンス
-        static ObjectClass g_ObjectClass;
     }
 
     Object::Object()
@@ -209,7 +212,13 @@ namespace NorvesLib::Core
 
     const IClass *Object::StaticClass()
     {
-        return &g_ObjectClass;
+        // ルートクラスのIClassは関数ローカルstatic（Meyersシングルトン）として保持する。
+        // これにより初回アクセス時に必ず構築され、TClass群（同じくMeyersシングルトン）と
+        // 同様にstatic初期化順の依存（static initialization order fiasco）を排除する。
+        // 旧実装はnamespaceスコープのグローバルだったため、別TUのstatic初期化子が
+        // 構築前のルートクラスへキャスト経路でアクセスし得た。
+        static ObjectClass s_ObjectClass;
+        return &s_ObjectClass;
     }
 
 } // namespace NorvesLib::Core
