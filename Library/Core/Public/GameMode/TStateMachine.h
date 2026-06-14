@@ -25,10 +25,29 @@ namespace NorvesLib::Core::GameMode
         TStateMachine() = default;
         virtual ~TStateMachine() override
         {
+            Shutdown();
+        }
+
+        /**
+         * @brief ステートマシンを明示的にシャットダウン（冪等）
+         *
+         * 現在のステートに Leave を呼んでから解放し、予約済みステートも破棄する。
+         * 2回目以降の呼び出しおよびデストラクタからの呼び出しでは何もしない。
+         */
+        virtual void Shutdown() override
+        {
+            if (m_bShutdown)
+            {
+                return;
+            }
+            m_bShutdown = true;
+
             if (m_CurrentState)
             {
                 m_CurrentState->Leave(this);
+                m_CurrentState.reset();
             }
+            m_NextState.reset();
         }
 
         /**
@@ -113,6 +132,7 @@ namespace NorvesLib::Core::GameMode
         StatePtr m_NextState = nullptr;    // 次に遷移する予定のステート
         FactoryType m_Factory;             // ステートを生成するファクトリ
         float m_DeltaTime = 0.0f;          // 最新のデルタタイム
+        bool m_bShutdown = false;          // Shutdown済みフラグ（二重Leave防止）
     };
 
 } // namespace NorvesLib::Core::GameMode

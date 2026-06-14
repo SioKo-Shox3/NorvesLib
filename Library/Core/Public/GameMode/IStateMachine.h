@@ -19,6 +19,15 @@ namespace NorvesLib::Core::GameMode
         virtual ~IStateMachine() = default;
 
         /**
+         * @brief ステートマシンを明示的にシャットダウン
+         *
+         * 現在のステートに対して Leave を呼び、保持しているステートを解放する。
+         * 冪等であり複数回呼ばれても安全。エンジンの破棄順序を制御するため、
+         * デストラクタより前に外部から明示的に呼び出されることを想定する。
+         */
+        virtual void Shutdown() = 0;
+
+        /**
          * @brief ステートマシンを更新
          * @param deltaTime フレーム間隔（秒）
          */
