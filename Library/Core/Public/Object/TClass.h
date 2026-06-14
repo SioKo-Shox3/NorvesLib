@@ -139,7 +139,7 @@ namespace NorvesLib::Core
             else
             {
                 // 登録されたすべてのプロパティをフィールドに追加
-                for (const auto &prop : T::s_PropertyRegistry.GetProperties())
+                for (const auto &prop : T::s_PropertyRegistry().GetProperties())
                 {
                     m_PropertyField->AddProperty(prop);
                 }
@@ -156,7 +156,7 @@ namespace NorvesLib::Core
             else
             {
                 // 登録されたすべての関数をフィールドに追加
-                for (const auto &func : T::s_FunctionRegistry.GetFunctions())
+                for (const auto &func : T::s_FunctionRegistry().GetFunctions())
                 {
                     m_FunctionField->AddFunction(func);
                 }

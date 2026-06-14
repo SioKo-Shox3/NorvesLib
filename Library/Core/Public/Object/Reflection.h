@@ -21,8 +21,21 @@ public:                                                                         
 private:                                                                         \
     using __ThisClass = Class; /* リフレクション用にクラス名を定義 */            \
     using Super = ParentClass;                                                   \
-    static inline NorvesLib::Core::PropertyRegistry<Class> s_PropertyRegistry;   \
-    static inline NorvesLib::Core::FunctionRegistry<Class> s_FunctionRegistry;   \
+    /* レジストリは関数ローカルstatic（Meyers）で遅延構築する。                  \
+       static inline メンバだと自動登録lambda(s_PropertyRegistered_*)との        \
+       初期化順が不定で、未構築のvectorへpush_backして_Orphan_range_unlockedで   \
+       アクセス違反する（static initialization order fiasco）。アクセサ経由なら  \
+       初回呼び出し時に必ず構築済みになる。 */                                    \
+    static NorvesLib::Core::PropertyRegistry<Class> &s_PropertyRegistry()         \
+    {                                                                            \
+        static NorvesLib::Core::PropertyRegistry<Class> registry;                \
+        return registry;                                                         \
+    }                                                                            \
+    static NorvesLib::Core::FunctionRegistry<Class> &s_FunctionRegistry()         \
+    {                                                                            \
+        static NorvesLib::Core::FunctionRegistry<Class> registry;                \
+        return registry;                                                         \
+    }                                                                            \
     friend class NorvesLib::Core::TClass<Class, ParentClass>;
 
 // クラス実装時に使用するマクロ
@@ -41,7 +54,7 @@ private:                                                                        
     static inline void RegisterProperty_##Name()                                                                     \
     {                                                                                                                \
         s_PropertyPtr_##Name = static_cast<const NorvesLib::Core::TClassProperty<Type> *>(                           \
-            s_PropertyRegistry.Register<Type>(NorvesLib::Core::Container::String(#Name), 0, sizeof(Type), 0,         \
+            s_PropertyRegistry().Register<Type>(NorvesLib::Core::Container::String(#Name), 0, sizeof(Type), 0,       \
                 [](NorvesLib::Core::IUnknown *obj) -> Type &                                                        \
                 {                                                                                                    \
                     return static_cast<__ThisClass *>(obj)->Name.Get();                                              \
@@ -87,7 +100,7 @@ protected:                                                                      
 private:                                                                                       \
     static inline void RegisterFunction_##Name()                                               \
     {                                                                                          \
-        s_FunctionRegistry.Register<ReturnType>(NorvesLib::Core::Container::String(#Name), &__ThisClass::Name); \
+        s_FunctionRegistry().Register<ReturnType>(NorvesLib::Core::Container::String(#Name), &__ThisClass::Name); \
     }                                                                                          \
     /* 自動登録を行うための静的変数 */                                                         \
     static inline bool s_FunctionRegistered_##Name = []() { \
