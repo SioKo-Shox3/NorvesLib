@@ -1,9 +1,6 @@
 ﻿#pragma once
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
-#include "Core/Public/Input/MayaCameraController.h"
-#include "Core/Public/Input/LightController.h"
-#include "Core/Public/Rendering/SceneProxy.h"
 
 namespace Game
 {
@@ -45,19 +42,6 @@ namespace Game
         NorvesLib::Core::Container::String m_TextureAssetRoot;
         NorvesLib::Core::Container::String m_TextureAssetManifestPath;
         NorvesLib::Core::Container::String m_Rendering3DTestModelPath;
-
-        // ========================================
-        // 入力コントローラー
-        // ========================================
-
-        /// Maya準拠カメラコントローラー
-        NorvesLib::Core::Input::MayaCameraController m_CameraController;
-
-        /// ライトコントローラー
-        NorvesLib::Core::Input::LightController m_LightController;
-
-        /// メインディレクショナルライト
-        NorvesLib::Core::Rendering::LightProxy m_MainLight;
     };
 
 } // namespace Game
