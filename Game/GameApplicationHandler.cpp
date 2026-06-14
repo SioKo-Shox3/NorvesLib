@@ -18,6 +18,7 @@
 #include "Core/Public/GameMode/GameModeStateMachine.h"
 #include "Core/Public/GameMode/GameModeId.h"
 #include "Core/Public/GameMode/GameModeParams.h"
+#include "GameModes/GameModeIds.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestMode.h"
 #include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
 
@@ -474,7 +475,7 @@ namespace Game
 
         auto stateMachine = MakeUnique<GameModeStateMachine>();
         stateMachine->Registry().Register(
-            GameModeId::Rendering3DTest,
+            Rendering3DTest,
             [](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
@@ -482,7 +483,7 @@ namespace Game
                 return mode;
             });
         stateMachine->Registry().Register(
-            GameModeId::MemoryAgingTest,
+            MemoryAgingTest,
             [](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 return MakeUnique<MemoryAgingTestMode>();
@@ -492,7 +493,7 @@ namespace Game
         params.ModelPath = m_Rendering3DTestModelPath.empty()
                                ? String(kDefaultRendering3DTestModelPath)
                                : m_Rendering3DTestModelPath;
-        stateMachine->Start(GameModeId::Rendering3DTest, params);
+        stateMachine->Start(Rendering3DTest, params);
 
         LOG_INFO("3Dレンダリングテストモードを開始します");
 

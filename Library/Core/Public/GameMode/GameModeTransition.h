@@ -47,8 +47,8 @@ namespace NorvesLib::Core::GameMode
      */
     struct GameModeTransitionRequest
     {
-        GameModeTransitionType Type   = GameModeTransitionType::None;
-        GameModeId             Target = GameModeId::Rendering3DTest;
+        GameModeTransitionType Type     = GameModeTransitionType::None;
+        GameModeId             Target;   // デフォルト構築 = 無効ID。Quit 遷移は Target を参照しない。
         GameModeParams         Params;
         int                    ExitCode = 0;
     };
