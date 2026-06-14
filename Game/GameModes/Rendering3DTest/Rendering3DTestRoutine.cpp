@@ -421,25 +421,31 @@ namespace Game::GameModes
 
             data.m_bBoulderModelLoaded = false;
             data.m_bBoulderModelLoadPending = true;
-            data.m_bBoulderModelLoadCompleted = false;
+
+            auto asyncState = MakeShared<BoulderAsyncState>();
+            data.m_BoulderAsyncState = asyncState;
+
             const String modelPath = data.m_ModelPath.empty()
                                          ? String("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf")
                                          : data.m_ModelPath;
             data.m_BoulderLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
                 modelPath,
                 modelLoadContext,
-                [&data](ModelHandle handle)
+                [asyncState](ModelHandle handle)
                 {
-                    data.m_BoulderModelHandle = handle;
-                    data.m_bBoulderModelLoaded = handle.IsValid();
-                    data.m_bBoulderModelLoadPending = false;
-                    data.m_bBoulderModelLoadCompleted = true;
+                    // TODO(Phase2): per-request の cancel+release API が無いため、cancelled
+                    //   済みで到着した有効ハンドルはここで解放できない（mode 遷移時にリーク
+                    //   の可能性）。現状は use-after-free 防止のみを保証する。
+                    asyncState->m_Handle = handle;
+                    asyncState->m_bLoaded = handle.IsValid();
+                    asyncState->m_bCompleted.Store(true);
                 });
 
             if (data.m_BoulderLoadRequestId == 0)
             {
                 data.m_bBoulderModelLoadPending = false;
-                data.m_bBoulderModelLoadCompleted = true;
+                asyncState->m_bLoaded = false;
+                asyncState->m_bCompleted.Store(true);
                 NORVES_LOG_ERROR("Rendering3DTest", "Boulderモデルの非同期ロード開始に失敗しました");
             }
             else
@@ -455,9 +461,16 @@ namespace Game::GameModes
 
         data.m_ElapsedTime += deltaTime;
 
-        if (data.m_bBoulderModelLoadCompleted)
+        if (data.m_BoulderAsyncState &&
+            data.m_BoulderAsyncState->m_bCompleted.Load() &&
+            !data.m_BoulderAsyncState->m_bCancelled.Load())
         {
-            data.m_bBoulderModelLoadCompleted = false;
+            auto state = data.m_BoulderAsyncState;
+            data.m_BoulderAsyncState.reset(); // 一度だけ消費
+
+            data.m_BoulderModelHandle = state->m_Handle;
+            data.m_bBoulderModelLoaded = state->m_bLoaded;
+            data.m_bBoulderModelLoadPending = false;
 
             if (!data.m_bBoulderModelLoaded)
             {
@@ -518,7 +531,60 @@ namespace Game::GameModes
         LOG_INFO("3Dレンダリングテスト終了");
         LOG_INFO("=================================================");
 
-        // メッシュの登録解除
+        auto &world = GEngine->GetWorld();
+
+        // 1) 非同期ロードのキャンセル：以降到着する callback の結果を破棄する。
+        //    callback は asyncState を共有所有しているため、ここで reset しても
+        //    callback 完了まで状態は生存し use-after-free にはならない。
+        if (data.m_BoulderAsyncState)
+        {
+            data.m_BoulderAsyncState->m_bCancelled.Store(true);
+            data.m_BoulderAsyncState.reset();
+        }
+
+        // 2) WorldObject を先に削除（SceneView Proxy を同期除去）。
+        //    Proxy が参照する mesh/model ハンドルを解放する前に Proxy を消すことで
+        //    stale ハンドル参照を避ける。placeholder と boulder 本体は排他なので
+        //    各ポインタを独立に null チェックする。
+        if (data.m_pSphereObject)
+        {
+            world.RemoveObject(data.m_pSphereObject);
+            data.m_pSphereObject = nullptr;
+            data.m_pSphereMeshComponent = nullptr;
+        }
+        if (data.m_pGroundObject)
+        {
+            world.RemoveObject(data.m_pGroundObject);
+            data.m_pGroundObject = nullptr;
+            data.m_pGroundMeshComponent = nullptr;
+        }
+        if (data.m_pLightSphereObject)
+        {
+            world.RemoveObject(data.m_pLightSphereObject);
+            data.m_pLightSphereObject = nullptr;
+            data.m_pLightSphereMeshComponent = nullptr;
+            data.m_pPointLightComponent = nullptr;
+        }
+        if (data.m_pBoulderPlaceholderObject)
+        {
+            world.RemoveObject(data.m_pBoulderPlaceholderObject);
+            data.m_pBoulderPlaceholderObject = nullptr;
+            data.m_pBoulderPlaceholderMeshComponent = nullptr;
+        }
+        if (data.m_pBoulderObject)
+        {
+            world.RemoveObject(data.m_pBoulderObject);
+            data.m_pBoulderObject = nullptr;
+            data.m_pBoulderMegaGeometryComponent = nullptr;
+        }
+        if (data.m_pDirectionalLightObject)
+        {
+            world.RemoveObject(data.m_pDirectionalLightObject);
+            data.m_pDirectionalLightObject = nullptr;
+            data.m_pDirectionalLightComponent = nullptr;
+        }
+
+        // 3) メッシュの登録解除（Proxy 除去後）
         if (data.m_bMeshesRegistered)
         {
             auto &meshes = GEngine->GetRenderResources().Meshes();
@@ -528,7 +594,7 @@ namespace Game::GameModes
             data.m_bMeshesRegistered = false;
         }
 
-        // モデルの解放
+        // 4) glTF モデルの解放（boulder object 削除後）
         if (data.m_bBoulderModelLoaded)
         {
             auto &megaGeometry = GEngine->GetRenderResources().MegaGeometry();
@@ -537,24 +603,9 @@ namespace Game::GameModes
             data.m_bBoulderModelLoaded = false;
         }
 
-        // WorldObjectはWorld破棄時にInner/Outerで自動解放されるため
-        // ここでは参照のクリアのみ
-        data.m_pSphereObject = nullptr;
-        data.m_pGroundObject = nullptr;
-        data.m_pLightSphereObject = nullptr;
-        data.m_pBoulderObject = nullptr;
-        data.m_pBoulderPlaceholderObject = nullptr;
-        data.m_pDirectionalLightObject = nullptr;
-        data.m_pSphereMeshComponent = nullptr;
-        data.m_pGroundMeshComponent = nullptr;
-        data.m_pLightSphereMeshComponent = nullptr;
-        data.m_pBoulderPlaceholderMeshComponent = nullptr;
-        data.m_pBoulderMegaGeometryComponent = nullptr;
-        data.m_pDirectionalLightComponent = nullptr;
-        data.m_pPointLightComponent = nullptr;
+        // 5) 残りの状態クリア
         data.m_BoulderLoadRequestId = 0;
         data.m_bBoulderModelLoadPending = false;
-        data.m_bBoulderModelLoadCompleted = false;
 
         // 非同期マテリアル更新のクリア
         data.m_PendingMaterialUpdates.clear();

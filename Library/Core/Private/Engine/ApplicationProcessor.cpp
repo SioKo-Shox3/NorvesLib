@@ -319,6 +319,13 @@ namespace NorvesLib::Core::Engine
             {
                 handler->OnPreShutdown();
             }
+            // GameModeステートマシンを明示シャットダウン（World/RenderWorld/RHI破棄より前）
+            // Routine の Leave() が World/RenderResources へアクセスするため、それらが
+            // 生存している間に Leave を実行させる必要がある。
+            if (auto *stateMachine = GEngine->GetGameModeStateMachine())
+            {
+                stateMachine->Shutdown();
+            }
 
             // ゲームワールドをFinalize
             GEngine->GetWorld().Finalize();

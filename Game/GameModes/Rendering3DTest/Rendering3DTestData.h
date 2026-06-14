@@ -5,6 +5,7 @@
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Core/Public/Rendering/RenderTypes.h"
+#include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
 
 namespace NorvesLib::Core
@@ -35,6 +36,20 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::MaterialHandle TargetMaterial;
         NorvesLib::Core::Rendering::MaterialCreateData CreateData;
         uint32_t PendingTextureCount = 0; ///< 残り読み込み中テクスチャ数
+    };
+
+    /**
+     * @brief Boulder の非同期ロード共有状態
+     *
+     * コールバックが Data 本体ではなくこの共有状態を値キャプチャすることで、
+     * Routine の Leave 後にコールバックが到着しても use-after-free を起こさない。
+     */
+    struct BoulderAsyncState
+    {
+        NorvesLib::Thread::Atomic<bool> m_bCancelled{false}; ///< Leave で立てる。到着結果を破棄する
+        NorvesLib::Thread::Atomic<bool> m_bCompleted{false}; ///< コールバック到着フラグ（Do が消費）
+        NorvesLib::Core::Rendering::ModelHandle m_Handle;    ///< 結果ハンドル
+        bool m_bLoaded = false;                              ///< 有効ハンドルが得られたか
     };
 
     /**
@@ -98,7 +113,7 @@ namespace Game::GameModes
         uint32_t m_BoulderLoadRequestId = 0;
         bool m_bBoulderModelLoaded = false;
         bool m_bBoulderModelLoadPending = false;
-        bool m_bBoulderModelLoadCompleted = false;
+        TSharedPtr<BoulderAsyncState> m_BoulderAsyncState; ///< 非同期ロード共有状態
     };
 
 } // namespace Game::GameModes
