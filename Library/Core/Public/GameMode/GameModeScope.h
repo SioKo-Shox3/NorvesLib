@@ -73,6 +73,16 @@ namespace NorvesLib::Core::GameMode
         void TrackModel(NorvesLib::Core::Rendering::ModelHandle handle);
 
         /**
+         * @brief 既に呼び出し側が World から除去済みの WorldObject を追跡対象から外す
+         *
+         * 呼び出し側が自前で World::RemoveObject 済みのオブジェクトを追跡から外す。
+         * このメソッド自身は World::RemoveObject を呼ばない（解放済みポインタへの
+         * 二重 RemoveObject を防ぐ）。追跡していない、または null の場合は何もしない。
+         * @param object 追跡を止める WorldObject
+         */
+        void Untrack(NorvesLib::Core::WorldObject* object);
+
+        /**
          * @brief 追跡リソースを確立された順序で解放する
          *
          * 1) 全 WorldObject を World::RemoveObject で除去
