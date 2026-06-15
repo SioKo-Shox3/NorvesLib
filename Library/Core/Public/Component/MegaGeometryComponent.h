@@ -42,3 +42,6 @@ namespace NorvesLib::Core::Component
     using MegaGeometryComponentWeakPtr = Container::TWeakPtr<MegaGeometryComponent>;
 
 } // namespace NorvesLib::Core::Component
+
+// Phase2: cast flag bit for this hot type (CastTo flag fast-path)
+DECLARE_CLASS_CAST_FLAG(NorvesLib::Core::Component::MegaGeometryComponent, NorvesLib::Core::EClassCastFlags::MegaGeometryComponent)

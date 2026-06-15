@@ -138,3 +138,6 @@ namespace NorvesLib::Core::Component
     using PointLightComponentWeakPtr = Container::TWeakPtr<PointLightComponent>;
 
 } // namespace NorvesLib::Core::Component
+
+// Phase2: cast flag bit for this hot type (CastTo flag fast-path)
+DECLARE_CLASS_CAST_FLAG(NorvesLib::Core::Component::PointLightComponent, NorvesLib::Core::EClassCastFlags::PointLightComponent)

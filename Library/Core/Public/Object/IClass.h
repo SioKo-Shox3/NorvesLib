@@ -8,6 +8,7 @@
 #include <utility>
 #include "IUnknown.h"
 #include "RuntimeSchema.h"
+#include "Object/ClassCastFlags.h"
 #include "Object/PropertyBag.h"
 #include "Container/Containers.h" // Core::Containerのすべてのコンテナ
 #include "Text/IdentityPool.h"
@@ -1017,6 +1018,17 @@ namespace NorvesLib::Core
          * @return 継承の深さ（ルート=0）
          */
         virtual uint32_t GetDepth() const = 0;
+
+        /**
+         * @brief キャストフラグ（自分＋全祖先のビットのOR）を取得します
+         *
+         * ホットな基底型へのキャスト（CastTo）を単一ビットANDで判定する
+         * 第1層（Unreal風キャストフラグ）に使用します。フラグ未割当の型は
+         * EClassCastFlags::Noneを含み、CastToは祖先テーブル（O(1)）へ
+         * フォールバックします。
+         * @return このクラスのキャストフラグ
+         */
+        virtual EClassCastFlags GetCastFlags() const = 0;
 
     };
 
