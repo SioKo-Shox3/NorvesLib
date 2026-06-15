@@ -39,6 +39,11 @@ namespace NorvesLib::Core
             // 構築はstatic初期化の一度きりなので、親チェーンを線形に辿っても問題ない。
             BuildAncestorTable();
 
+            // キャストフラグ（第1層）を蓄積する。親のフラグは既に全祖先を含むため
+            // 「自分のフラグ | 親のフラグ」で全祖先ぶんのビットが揃う。
+            m_CastFlags = ClassCastFlagTraits<T>::Value
+                          | (m_ParentClass ? m_ParentClass->GetCastFlags() : EClassCastFlags::None);
+
             // 親クラスからプロパティと関数を継承
             if (m_ParentClass)
             {
@@ -110,6 +115,11 @@ namespace NorvesLib::Core
         virtual uint32_t GetDepth() const override
         {
             return m_Depth;
+        }
+
+        virtual EClassCastFlags GetCastFlags() const override
+        {
+            return m_CastFlags;
         }
 
         // シングルトンインスタンス取得（Parent指定版とそうでない版を統一）
@@ -246,6 +256,7 @@ namespace NorvesLib::Core
         uint64_t m_ClassId;                             // クラスID
         uint32_t m_Depth = 0;                           // 継承の深さ（ルート=0）
         Container::VariableArray<const IClass *> m_Ancestors; // 祖先テーブル（index=深さ、末尾=this）
+        EClassCastFlags m_CastFlags = EClassCastFlags::None;  // キャストフラグ（自分＋全祖先のOR）
     };
 
 } // namespace NorvesLib::Core

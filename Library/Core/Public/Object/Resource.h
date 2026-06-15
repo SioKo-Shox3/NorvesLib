@@ -201,3 +201,6 @@ namespace NorvesLib::Core
     };
 
 } // namespace NorvesLib::Core
+
+// Phase2: cast flag bit for this hot type (CastTo flag fast-path)
+DECLARE_CLASS_CAST_FLAG(NorvesLib::Core::Resource, NorvesLib::Core::EClassCastFlags::Resource)

@@ -125,6 +125,12 @@ namespace NorvesLib::Core
                 return 0;
             }
 
+            virtual EClassCastFlags GetCastFlags() const override
+            {
+                // ルートObjectは自分のビットのみ（親なし）。トレイトと一貫させる。
+                return ClassCastFlagTraits<Object>::Value;
+            }
+
         private:
             Identity m_ClassName;
             uint64_t m_ClassId;

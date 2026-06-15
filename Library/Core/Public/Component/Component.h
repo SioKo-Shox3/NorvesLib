@@ -193,3 +193,6 @@ namespace NorvesLib::Core::Component
     using ComponentWeakPtr = Container::TWeakPtr<Component>;
 
 } // namespace NorvesLib::Core::Component
+
+// Phase2: cast flag bit for this hot type (CastTo flag fast-path)
+DECLARE_CLASS_CAST_FLAG(NorvesLib::Core::Component::Component, NorvesLib::Core::EClassCastFlags::Component)
