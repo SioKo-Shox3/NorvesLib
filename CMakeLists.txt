@@ -18,6 +18,17 @@ add_subdirectory(Library)
 # ツール
 add_subdirectory(Tools)
 
+# NorvesEditor Bridge engine SDK (Workstream L-P1, opt-in via cache var).
+# Empty by default => a normal NorvesLib build is byte-for-byte unaffected.
+set(NORVES_BRIDGE_SDK_DIR "" CACHE PATH "Path to the NorvesEditor bridge/cpp tree to embed the Bridge engine SDK (empty = disabled)")
+if(NORVES_BRIDGE_SDK_DIR)
+    # Embed the SDK without its examples/tests (L-P0 options). Set as normal
+    # vars BEFORE add_subdirectory so the SDK option() picks them up (CMP0077 NEW).
+    set(NORVES_BRIDGE_BUILD_EXAMPLES OFF)
+    set(NORVES_BRIDGE_BUILD_TESTS OFF)
+    add_subdirectory(${NORVES_BRIDGE_SDK_DIR} ${CMAKE_BINARY_DIR}/bridge_sdk)
+endif()
+
 # Gameアプリケーション
 add_subdirectory(Game)
 
