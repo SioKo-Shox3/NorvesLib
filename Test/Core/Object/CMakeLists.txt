@@ -71,6 +71,17 @@ target_include_directories(ResourceMetadataTest PRIVATE
 )
 set_target_properties(ResourceMetadataTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(ObjectCastTest
+    ObjectCastTest.cpp
+    Animal.cpp
+)
+target_link_libraries(ObjectCastTest PRIVATE Core)
+target_include_directories(ObjectCastTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_target_properties(ObjectCastTest PROPERTIES FOLDER "Test/Core/Object")
+
 add_executable(ObjectGCTest
     ObjectGCTest.cpp
 )
@@ -118,6 +129,7 @@ add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
 add_test(NAME RuntimeSchemaSnapshotTest COMMAND RuntimeSchemaSnapshotTest)
 add_test(NAME ObjectHeapTest COMMAND ObjectHeapTest)
+add_test(NAME ObjectCastTest COMMAND ObjectCastTest)
 add_test(NAME PropertyBagTest COMMAND PropertyBagTest)
 add_test(NAME InvocationQueueTest COMMAND InvocationQueueTest)
 add_test(NAME ResourceMetadataTest COMMAND ResourceMetadataTest)
