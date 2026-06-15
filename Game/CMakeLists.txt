@@ -29,3 +29,9 @@ target_link_libraries(${MODULE_NAME}
         # Thread # Core に統合されました
         # RHI # TODO: RHIモジュールはリファクタリング中のため一時的に無効化
 )
+
+# NorvesEditor Bridge engine SDK link (Workstream L-P1). Only when the parent
+# build opts in via -DNORVES_BRIDGE_SDK_DIR; a plain NorvesLib build skips it.
+if(NORVES_BRIDGE_SDK_DIR)
+    target_link_libraries(${MODULE_NAME} PRIVATE norves_bridge_engine_sdk)
+endif()
