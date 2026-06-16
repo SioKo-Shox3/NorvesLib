@@ -32,6 +32,13 @@ target_link_libraries(${MODULE_NAME}
 
 # NorvesEditor Bridge engine SDK link (Workstream L-P1). Only when the parent
 # build opts in via -DNORVES_BRIDGE_SDK_DIR; a plain NorvesLib build skips it.
+#
+# Game/Bridge/*.cpp は上の GLOB_RECURSE で常に収集されコンパイルされるが、SDK ヘッダは
+# NORVES_BRIDGE_SDK_DIR 設定時のみ利用可能なので、Bridge ソースの SDK 依存部はすべて
+# NORVES_BRIDGE_ENABLED でガードしている（L-P2a）。この compile define は SDK 設定時
+# のみ付与し、未設定の素の NorvesLib ビルドでは Bridge ソースが空コンパイルされて
+# SDK ヘッダを一切要求しないようにする。
 if(NORVES_BRIDGE_SDK_DIR)
     target_link_libraries(${MODULE_NAME} PRIVATE norves_bridge_engine_sdk)
+    target_compile_definitions(${MODULE_NAME} PRIVATE NORVES_BRIDGE_ENABLED)
 endif()
