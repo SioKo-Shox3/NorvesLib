@@ -33,6 +33,13 @@ namespace Game
     class GameApplicationHandler;
 } // namespace Game
 
+// BridgeServerHost も同様に .cpp でのみ完全型を使う（EmitEvent / Start・StopLogForwarding
+// の呼び出し）。ヘッダでは前方宣言に留める。
+namespace Game::Bridge
+{
+    class BridgeServerHost;
+} // namespace Game::Bridge
+
 namespace Game::Bridge
 {
 
@@ -49,6 +56,11 @@ namespace Game::Bridge
         // GameApplicationHandler::OnInitialize から設定される。adapter は host より
         // 長生きするため借用ポインタで十分（所有しない）。
         void SetHandler(Game::GameApplicationHandler &handler) { m_Handler = &handler; }
+
+        // サーバー発イベント（runtime.stateChanged / log.message）を発火するための host を
+        // 注入する。host.Start の前に GameApplicationHandler::OnInitialize から設定される。
+        // すべてのコールバックはゲームスレッド上で逐次実行されるため借用ポインタで十分。
+        void SetHost(Game::Bridge::BridgeServerHost &host) { m_Host = &host; }
 
         // --- Handshake ---
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
@@ -96,6 +108,10 @@ namespace Game::Bridge
         // 実エンジン状態アクセス用の借用ポインタ（非所有）。SetHandler で注入され、
         // すべてのコールバックはゲームスレッド上で逐次実行される。
         Game::GameApplicationHandler *m_Handler = nullptr;
+
+        // サーバー発イベント発火用の host への借用ポインタ（非所有）。SetHost で注入され、
+        // EmitEvent / Start・StopLogForwarding はゲームスレッド上から呼ばれる。
+        Game::Bridge::BridgeServerHost *m_Host = nullptr;
     };
 
 } // namespace Game::Bridge

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <cstdint>
+#include <string_view>
 
 // Workstream L-P2a: Bridge サーバーホスト（Game 層）。
 //
@@ -39,10 +40,14 @@
 #include <memory>
 #include <string>
 
+#include "norves/bridge/json_value.hpp"
 #include "norves/bridge/server.hpp"
 #include "norves/bridge/transport.hpp"
 
+#include "BridgeLogSink.h"
+
 #include "Core/Public/Container/Containers.h"
+#include "Core/Public/Logging/LogTypes.h"
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
 #include "Core/Public/Thread/Thread.h"
@@ -106,6 +111,38 @@ namespace Game::Bridge
             return m_bActive.GetValue();
         }
 
+        /**
+         * @brief サーバー発イベント（kind=event）をクライアントへ送る
+         *
+         * eventName / params からイベントエンベロープをエンコードして transport で送る。
+         * 起動前 / サーバー or transport 未設定なら無視する。emitEvent が空フレームを
+         * 返した場合（エンコード失敗）は送らない。送信失敗（peer 不在 / キュー満杯）でも
+         * 無言で破棄する（ログを出すと log.message 経路で増幅ループになり得るため）。
+         *
+         * 呼び出しスレッド: ゲームスレッド（DrainInbound 経由）からのみ呼ぶこと。
+         *
+         * @param eventName イベント名（例 "log.message" / "runtime.stateChanged"）
+         * @param params イベント params（コピーされる）
+         */
+        void EmitEvent(std::string_view eventName, const norves::bridge::JsonValue &params);
+
+        /**
+         * @brief Logger -> Bridge のログ転送を開始する（log.subscribe 時）
+         *
+         * 転送最小レベルを設定して中継 sink を空にし、未開始なら Logger へ sink を登録する。
+         * 既に開始済みなら minLevel の更新のみ行う（再登録しない）。
+         *
+         * 呼び出しスレッド: ゲームスレッド（DrainInbound 経由）からのみ呼ぶこと。
+         */
+        void StartLogForwarding(NorvesLib::Core::Logging::LogLevel minLevel);
+
+        /**
+         * @brief Logger -> Bridge のログ転送を停止する（log.unsubscribe / Stop 時、冪等）
+         *
+         * 登録済みなら Logger から sink を解除する。未開始なら何もしない。
+         */
+        void StopLogForwarding();
+
     private:
         // 受信スレッド本体。transport->recv() をブロッキングで回し、得たフレームを
         // キューへ push するだけ。GEngine/エンジン状態には触れない。
@@ -129,6 +166,14 @@ namespace Game::Bridge
 
         // 起動済みフラグ。Start 成功で true、Stop で false。
         NorvesLib::Thread::Atomic<bool> m_bActive{false};
+
+        // Logger -> Bridge ログ転送の中継 sink（host が所有）。Logger ワーカーが push、
+        // ゲームスレッドの DrainInbound が pop して log.message へ emit する。
+        BridgeLogSink m_LogSink;
+
+        // sink が Logger へ登録中かどうか。StartLogForwarding で true、
+        // StopLogForwarding で false（冪等）。Stop / デストラクタで必ず解除する。
+        bool m_bLogForwarding = false;
     };
 
 } // namespace Game::Bridge
@@ -138,6 +183,7 @@ namespace Game::Bridge
 namespace norves::bridge
 {
     class IBridgeEngineAdapter;
+    class JsonValue;
 } // namespace norves::bridge
 
 namespace Game::Bridge
@@ -173,6 +219,12 @@ namespace Game::Bridge
         bool IsActive() const
         {
             return false;
+        }
+
+        // SDK 非設定ビルドでは Bridge engine SDK が無いため何もしない。public API を
+        // 活性版と揃えるためだけのスタブ（このビルドでは誰も呼ばない）。
+        void EmitEvent(std::string_view /*eventName*/, const norves::bridge::JsonValue & /*params*/)
+        {
         }
     };
 
