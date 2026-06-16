@@ -405,16 +405,28 @@ namespace NorvesLib::Core::Engine
         auto *handler = GEngine->GetApplicationHandler();
 
         // OnUpdate呼び出し
+        // 注: OnUpdate はシミュレーション進行ゲートの影響を受けない。Bridge ポーズ中も
+        // 受信フレーム処理（DrainInbound）を回し続ける必要があるため、ここはガードしない。
         if (handler)
         {
             handler->OnUpdate(deltaTime);
         }
 
+        // シミュレーション進行ゲート。false の間は GameMode 更新と World Tick を止める
+        // （ポーズ）。SyncToSceneView と描画は止めず、最後の画面を描き続ける。
+        const bool bAdvanceSim = (handler != nullptr) ? handler->ShouldAdvanceSimulation() : true;
+
         // GameModeの更新
-        GEngine->UpdateGameModeStateMachine(deltaTime);
+        if (bAdvanceSim)
+        {
+            GEngine->UpdateGameModeStateMachine(deltaTime);
+        }
 
         // ゲームワールドのTick更新
-        GEngine->GetWorld().Tick(deltaTime);
+        if (bAdvanceSim)
+        {
+            GEngine->GetWorld().Tick(deltaTime);
+        }
 
         // ワールドからSceneViewへProxy同期
         GEngine->GetWorld().SyncToSceneView(&GEngine->GetRenderResources().Materials());

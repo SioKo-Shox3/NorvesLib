@@ -2,6 +2,8 @@
 #include <thread>
 #include <filesystem>
 #include <format>
+#include <algorithm>
+#include <cassert>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -14,6 +16,19 @@
 
 namespace NorvesLib::Core::Logging
 {
+
+#if NORVES_ENABLE_LOGGING
+    // sink 配送中フラグ（Debug の再入検出用、スレッドローカル）
+    static thread_local bool t_bInSinkDispatch = false;
+
+    // sink 配送中フラグの RAII ガード。例外でスコープを抜けても確実に false へ戻す
+    // （ILogSink::OnLog からの Logger 再入を Debug assert で検出するための状態）。
+    struct SinkDispatchGuard
+    {
+        SinkDispatchGuard() { t_bInSinkDispatch = true; }
+        ~SinkDispatchGuard() { t_bInSinkDispatch = false; }
+    };
+#endif
 
     Logger &Logger::GetInstance()
     {
@@ -193,6 +208,45 @@ namespace NorvesLib::Core::Logging
         m_formatter = formatter ? formatter : MakeShared<StandardLogFormatter>();
     }
 
+    void Logger::AddSink(ILogSink *sink)
+    {
+#if !NORVES_ENABLE_LOGGING
+        (void)sink;
+#else
+        // 配送中（OnLog 内）からの再入は禁止（m_sinkMutex は非再帰）
+        assert(!t_bInSinkDispatch && "ILogSink::OnLog must not re-enter the logger");
+
+        if (sink == nullptr)
+        {
+            return;
+        }
+
+        NorvesLib::Thread::ScopedLock lock(m_sinkMutex);
+        if (std::find(m_sinks.begin(), m_sinks.end(), sink) != m_sinks.end())
+        {
+            return; // 重複登録を無視
+        }
+        m_sinks.push_back(sink);
+#endif
+    }
+
+    void Logger::RemoveSink(ILogSink *sink)
+    {
+#if !NORVES_ENABLE_LOGGING
+        (void)sink;
+#else
+        // 配送中（OnLog 内）からの再入は禁止（m_sinkMutex は非再帰）
+        assert(!t_bInSinkDispatch && "ILogSink::OnLog must not re-enter the logger");
+
+        NorvesLib::Thread::ScopedLock lock(m_sinkMutex);
+        auto it = std::find(m_sinks.begin(), m_sinks.end(), sink);
+        if (it != m_sinks.end())
+        {
+            m_sinks.erase(it);
+        }
+#endif
+    }
+
     bool Logger::IsLevelActive(LogLevel level) const
     {
 #if !NORVES_ENABLE_LOGGING
@@ -285,6 +339,21 @@ namespace NorvesLib::Core::Logging
         {
             Flush();
         }
+
+#if NORVES_ENABLE_LOGGING
+        // 登録済み sink へ配送（m_sinkMutex 下で直列化、m_mutex は取らない）
+        {
+            NorvesLib::Thread::ScopedLock sinkLock(m_sinkMutex);
+            SinkDispatchGuard dispatchGuard;
+            for (ILogSink *sink : m_sinks)
+            {
+                if (sink != nullptr)
+                {
+                    sink->OnLog(entry);
+                }
+            }
+        }
+#endif
     }
 
     void Logger::AsyncLogWorker()

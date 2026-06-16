@@ -46,6 +46,16 @@ namespace NorvesLib::Core::Application
         virtual void OnUpdate(float deltaTime) = 0;
 
         /**
+         * @brief シミュレーション更新を進めてよいか
+         *
+         * false の間は当該フレームでシミュレーション更新（GameMode 更新・World Tick）を
+         * 進めない（OnUpdate・描画は継続）。既定実装は ApplicationHandlerBase が true を
+         * 返す。
+         * @return シミュレーションを進める場合 true
+         */
+        virtual bool ShouldAdvanceSimulation() const = 0;
+
+        /**
          * @brief 描画前に呼ばれる
          */
         virtual void OnPreRender() = 0;

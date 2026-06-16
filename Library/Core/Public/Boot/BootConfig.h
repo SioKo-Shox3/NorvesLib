@@ -92,6 +92,16 @@ namespace NorvesLib::Core::Boot
          */
         Container::String LogFileName = TEXT("Game.log");
 
+        /**
+         * @brief ログを標準出力にも出すか（Windowsのみ意味を持つ）
+         *
+         * NorvesEditor 連携（--bridge-port）では Game の stdout は READY ハンドシェイク
+         * 専用の継承パイプであり、ログが混じるとエディタの READY 検出を壊す。エディタ
+         * モードではこれを false にして Logger を file 出力のみにする（WindowsEntryPoint
+         * が設定）。通常起動では true。
+         */
+        bool bLogToStdout = true;
+
         // ========== コマンドライン引数 ==========
 
         /**
