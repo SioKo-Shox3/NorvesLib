@@ -1,6 +1,11 @@
 ﻿#pragma once
 
+#include <cstdint>
+
 #include "Core/Public/Application/ApplicationHandlerBase.h"
+
+#include "Bridge/BridgeServerHost.h"
+#include "Bridge/NorvesLibBridgeAdapter.h"
 
 namespace Game
 {
@@ -36,12 +41,25 @@ namespace Game
     private:
         bool ApplyTextureAssetRuntimeConfig();
 
+        // --bridge-port を解析する（OnPreInitialize から呼ぶ）。無効値は
+        // m_bBridgeEnabled=false のまま（Bridge 無効）にして警告ログを出すのみで、
+        // クラッシュさせない。
+        void ParseBridgePortOption(
+            const NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::String> &args);
+
         // ゲーム固有のメンバー変数
         bool m_bIsPaused = false;
         bool m_bHasTextureAssetRuntimeConfig = false;
         NorvesLib::Core::Container::String m_TextureAssetRoot;
         NorvesLib::Core::Container::String m_TextureAssetManifestPath;
         NorvesLib::Core::Container::String m_Rendering3DTestModelPath;
+
+        // Bridge（NorvesEditor 連携）。adapter は host より長生きする必要があるため、
+        // 宣言順を adapter → host にしてデストラクト順（host → adapter）を保証する。
+        bool m_bBridgeEnabled = false;
+        std::uint16_t m_BridgePort = 0;
+        Game::Bridge::NorvesLibBridgeAdapter m_BridgeAdapter;
+        Game::Bridge::BridgeServerHost m_BridgeHost;
     };
 
 } // namespace Game
