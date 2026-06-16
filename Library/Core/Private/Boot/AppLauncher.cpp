@@ -159,7 +159,7 @@ namespace NorvesLib::Core::Boot
 
         Logging::LogConfig logConfig = Logging::CreateLogConfig(
             Logging::LogLevel::Trace,
-            Logging::LogOutput::Both,
+            config.bLogToStdout ? Logging::LogOutput::Both : Logging::LogOutput::File,
             logFileName,
             false);
 

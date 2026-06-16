@@ -80,6 +80,45 @@ namespace NorvesLib::Core::Logging
     };
 
     /**
+     * @brief ログシンク（受け側）抽象クラス
+     *
+     * @c Logger に @c AddSink で登録すると、各 @c LogEntry が
+     * @c ProcessLogEntry の配送経路から @c OnLog へ届きます。
+     *
+     * @par スレッドモデル
+     * @c OnLog は async ワーカースレッド / 同期 @c Log の呼び出し元スレッド /
+     * @c Logger::Shutdown のドレイン処理など、任意のスレッドから呼ばれ得ます。
+     * ただし配送は @c Logger 内部の @c m_sinkMutex 保持下で行われるため、
+     * 同一 sink の @c OnLog が同時並行で起きることはありません（直列化）。
+     *
+     * @par 再入禁止
+     * @c OnLog の内部から @c Logger を再入してはいけません
+     * （@c Log / @c LogFormat / @c LOG_* マクロ / @c AddSink / @c RemoveSink）。
+     * @c m_sinkMutex は非再帰のため、即座にデッドロックします。
+     *
+     * @par 高速返却の要求
+     * 配送ロックを保持したまま @c OnLog を呼ぶため、処理が遅いとすべての
+     * @c Log() および @c AddSink / @c RemoveSink がブロックされます。
+     * 重い処理は sink 側のキューへ push し、別スレッドで処理してください。
+     * @c OnLog は例外を投げないこと（throw すると Logger を通じて呼び出し元へ伝播する。重い処理同様、例外は sink 内部で処理する）。
+     *
+     * @par 所有権
+     * @c Logger は sink を所有せず、@c delete しません。呼び出し側は
+     * sink を破棄する前、かつ @c Logger::Shutdown の前に必ず @c RemoveSink を
+     * 呼んでください（@c Shutdown 自身がドレイン配送を行うため、
+     * @c RemoveSink 完了までは sink が生存している必要があります）。
+     */
+    class ILogSink
+    {
+    public:
+        virtual ~ILogSink() = default;
+        virtual void OnLog(const LogEntry &entry) = 0;
+
+    protected:
+        ILogSink() = default;
+    };
+
+    /**
      * @brief 標準ログフォーマッター
      */
     class StandardLogFormatter : public ILogFormatter

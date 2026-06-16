@@ -7,6 +7,7 @@
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -34,7 +35,42 @@ namespace Game
         constexpr const TCHAR *kTextureAssetRootOption = TEXT("--texture-asset-root");
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
+        constexpr const TCHAR *kBridgePortOption = TEXT("--bridge-port");
         constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
+
+        // 文字列を符号なし 16bit ポートとして解析する。先頭末尾に空白がない 10 進数のみ
+        // を受理し、0 / 範囲外 / 非数字は失敗（bValid=false）として返す。
+        bool TryParseBridgePort(const String &text, std::uint16_t &outPort)
+        {
+            outPort = 0;
+            if (text.empty())
+            {
+                return false;
+            }
+
+            std::uint32_t value = 0;
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const TCHAR ch = text[i];
+                if (ch < TEXT('0') || ch > TEXT('9'))
+                {
+                    return false;
+                }
+                value = value * 10 + static_cast<std::uint32_t>(ch - TEXT('0'));
+                if (value > 65535u)
+                {
+                    return false;
+                }
+            }
+
+            if (value == 0)
+            {
+                return false;
+            }
+
+            outPort = static_cast<std::uint16_t>(value);
+            return true;
+        }
 
         std::basic_string<TCHAR> ToStdString(const String &value)
         {
@@ -168,6 +204,10 @@ namespace Game
         m_TextureAssetRoot = {};
         m_TextureAssetManifestPath = {};
         m_Rendering3DTestModelPath = {};
+
+        // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
+        // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
+        ParseBridgePortOption(args);
 
         // コマンドライン引数の処理
         for (size_t i = 0; i < args.size(); ++i)
@@ -322,6 +362,30 @@ namespace Game
 
         // テストオブジェクトの作成はRendering3DTestModeのEnterで行われる
 
+        // Bridge サーバーを起動する（GEngine 有効後のここで bind し READY を出す）。
+        // 失敗しても通常起動は継続する（Bridge は無効化するのみ）。
+        if (m_bBridgeEnabled)
+        {
+#if defined(NORVES_BRIDGE_ENABLED)
+            // adapter に実エンジン状態へのアクセスと、サーバー発イベント発火用の host を
+            // 与えてから host を起動する。SetHost は Start の前に行う（イベント経路の配線）。
+            m_BridgeAdapter.SetHandler(*this);
+            m_BridgeAdapter.SetHost(m_BridgeHost);
+            if (!m_BridgeHost.Start(m_BridgePort, m_BridgeAdapter))
+            {
+                LOG_WARNING_F("Bridge server failed to start on port %u; continuing without Bridge",
+                              static_cast<unsigned>(m_BridgePort));
+                m_bBridgeEnabled = false;
+            }
+#else
+            // 非 SDK ビルドでは Bridge engine SDK が無く、m_BridgeAdapter / m_BridgeHost は
+            // 不活性スタブ。--bridge-port は解析されるがサーバーは起動しないため、
+            // m_bBridgeEnabled を false に倒して以降の経路（OnUpdate の DrainInbound、
+            // ShouldAdvanceSimulation など）を従来挙動に保つ。
+            m_bBridgeEnabled = false;
+#endif
+        }
+
         return true;
     }
 
@@ -425,17 +489,98 @@ namespace Game
         return true;
     }
 
+    void GameApplicationHandler::ParseBridgePortOption(const VariableArray<String> &args)
+    {
+        m_bBridgeEnabled = false;
+        m_BridgePort = 0;
+
+        // 既存の --opt=val / --opt val 解析ヘルパを流用する（args[0]=exe、未知はスキップ）。
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            bool bMatched = false;
+            bool bHasInlineValue = false;
+            String inlineValue;
+            String parseError;
+            if (!TryMatchTextureAssetOption(args[i],
+                                            kBridgePortOption,
+                                            bMatched,
+                                            bHasInlineValue,
+                                            inlineValue,
+                                            parseError))
+            {
+                // 形式不正（--bridge-portXXX 等）。Bridge は無効のまま警告して継続。
+                LOG_WARNING_F("Bridge command line parse warning: %s", parseError.c_str());
+                continue;
+            }
+
+            if (!bMatched)
+            {
+                continue;
+            }
+
+            String portText;
+            if (!ReadTextureAssetOptionValue(args,
+                                             i,
+                                             kBridgePortOption,
+                                             bHasInlineValue,
+                                             inlineValue,
+                                             portText,
+                                             parseError))
+            {
+                LOG_WARNING_F("Bridge disabled: %s", parseError.c_str());
+                return;
+            }
+
+            std::uint16_t parsedPort = 0;
+            if (!TryParseBridgePort(portText, parsedPort))
+            {
+                LOG_WARNING_F("Bridge disabled: invalid --bridge-port value \"%s\" (expected 1-65535)",
+                              portText.c_str());
+                return;
+            }
+
+            m_BridgePort = parsedPort;
+            m_bBridgeEnabled = true;
+            LOG_INFO_F("Bridge enabled on port %u", static_cast<unsigned>(m_BridgePort));
+            return;
+        }
+    }
+
     void GameApplicationHandler::OnUpdate(float deltaTime)
     {
         // シーンの更新（カメラ・入力・ライト）はGameMode（Rendering3DTest）へ移動した。
         // ApplicationHandlerはアプリ全体の責務（boot/コマンドライン/テクスチャ設定/
         // レジストリ・初期モード選択/フォーカス）に集中する。
         (void)deltaTime;
+
+        // Bridge が有効なら受信フレームをこのゲームスレッドで処理して応答する。
+        // ポーズゲーティングは ShouldAdvanceSimulation で行う（OnUpdate 自体は常に回す）。
+        if (m_bBridgeEnabled)
+        {
+            m_BridgeHost.DrainInbound();
+        }
+    }
+
+    bool GameApplicationHandler::ShouldAdvanceSimulation() const
+    {
+        // Bridge 無効なら従来挙動（常に進行）。
+        if (!m_bBridgeEnabled)
+        {
+            return true;
+        }
+
+        // Edit/Playing は進行、Paused/Stopped は停止。
+        return m_BridgeRuntimeState == Game::Bridge::BridgeRuntimeState::Edit ||
+               m_BridgeRuntimeState == Game::Bridge::BridgeRuntimeState::Playing;
     }
 
     void GameApplicationHandler::OnPreShutdown()
     {
         LOG_INFO("GameApplicationHandler::OnPreShutdown()");
+
+        // Bridge を World/RenderWorld 破棄より前に停止する（close→join、冪等）。
+        // 受信スレッドは GEngine に触れないが、確実に join してから先の解体へ進む。
+        m_BridgeHost.Stop();
 
         // 終了前の保存処理など
         // - セーブデータの保存
