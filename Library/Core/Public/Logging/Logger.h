@@ -298,6 +298,26 @@ namespace NorvesLib::Core::Logging
         void SetFormatter(LogFormatterPtr formatter);
 
         /**
+         * @brief ログシンクを登録する
+         *
+         * 登録後、各 @c LogEntry が配送経路から sink の @c OnLog へ届きます。
+         * @c nullptr と重複登録は無視されます。@c Logger は sink を所有せず、
+         * 破棄もしません。スレッドモデル・再入禁止・高速返却・所有権の契約は
+         * @c ILogSink を参照してください。
+         * @param sink 登録する sink（非所有。@c RemoveSink まで生存必須）
+         */
+        void AddSink(ILogSink *sink);
+
+        /**
+         * @brief ログシンクの登録を解除する
+         *
+         * sink を破棄する前、かつ @c Shutdown の前に必ず呼んでください。
+         * 登録されていない sink を渡した場合は何もしません。
+         * @param sink 解除する sink
+         */
+        void RemoveSink(ILogSink *sink);
+
+        /**
          * @brief ログレベルがアクティブかどうか確認
          */
         bool IsLevelActive(LogLevel level) const;
@@ -374,6 +394,10 @@ namespace NorvesLib::Core::Logging
         // 統計情報
         NorvesLib::Thread::Atomic<uint64_t> m_totalLogsWritten{0};
         NorvesLib::Thread::Atomic<uint64_t> m_droppedLogs{0};
+
+        // sink（受け側）の登録リストと専用ロック
+        VariableArray<ILogSink *> m_sinks;
+        mutable NorvesLib::Thread::Mutex m_sinkMutex;
     };
 
     /**
