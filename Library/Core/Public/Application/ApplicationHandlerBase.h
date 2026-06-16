@@ -38,6 +38,11 @@ namespace NorvesLib::Core::Application
             (void)deltaTime;
         }
 
+        bool ShouldAdvanceSimulation() const override
+        {
+            return true;
+        }
+
         virtual void OnPreRender() override
         {
         }

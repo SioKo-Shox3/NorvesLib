@@ -25,6 +25,14 @@
 #include "norves/bridge/json_value.hpp"
 #include "norves/bridge/result.hpp"
 
+// GameApplicationHandler を adapter.h で include すると循環になる
+// （GameApplicationHandler.h が adapter.h を include する）。adapter は実体を
+// .cpp でのみ使うため、ここでは前方宣言に留める。
+namespace Game
+{
+    class GameApplicationHandler;
+} // namespace Game
+
 namespace Game::Bridge
 {
 
@@ -36,6 +44,11 @@ namespace Game::Bridge
     public:
         NorvesLibBridgeAdapter() = default;
         ~NorvesLibBridgeAdapter() override = default;
+
+        // 実エンジン状態へアクセスするための handler を注入する。host.Start の前に
+        // GameApplicationHandler::OnInitialize から設定される。adapter は host より
+        // 長生きするため借用ポインタで十分（所有しない）。
+        void SetHandler(Game::GameApplicationHandler &handler) { m_Handler = &handler; }
 
         // --- Handshake ---
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
@@ -79,6 +92,10 @@ namespace Game::Bridge
         // ゲームスレッド上で逐次実行されるため、単純なカウンタで十分（同時呼び出しなし）。
         std::uint64_t m_NextSessionSeq = 0;
         std::uint64_t m_NextSubscriptionSeq = 0;
+
+        // 実エンジン状態アクセス用の借用ポインタ（非所有）。SetHandler で注入され、
+        // すべてのコールバックはゲームスレッド上で逐次実行される。
+        Game::GameApplicationHandler *m_Handler = nullptr;
     };
 
 } // namespace Game::Bridge
