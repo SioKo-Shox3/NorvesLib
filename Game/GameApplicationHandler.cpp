@@ -366,12 +366,22 @@ namespace Game
         // 失敗しても通常起動は継続する（Bridge は無効化するのみ）。
         if (m_bBridgeEnabled)
         {
+#if defined(NORVES_BRIDGE_ENABLED)
+            // adapter に実エンジン状態へのアクセスを与えてから host を起動する。
+            m_BridgeAdapter.SetHandler(*this);
             if (!m_BridgeHost.Start(m_BridgePort, m_BridgeAdapter))
             {
                 LOG_WARNING_F("Bridge server failed to start on port %u; continuing without Bridge",
                               static_cast<unsigned>(m_BridgePort));
                 m_bBridgeEnabled = false;
             }
+#else
+            // 非 SDK ビルドでは Bridge engine SDK が無く、m_BridgeAdapter / m_BridgeHost は
+            // 不活性スタブ。--bridge-port は解析されるがサーバーは起動しないため、
+            // m_bBridgeEnabled を false に倒して以降の経路（OnUpdate の DrainInbound、
+            // ShouldAdvanceSimulation など）を従来挙動に保つ。
+            m_bBridgeEnabled = false;
+#endif
         }
 
         return true;
@@ -542,11 +552,24 @@ namespace Game
         (void)deltaTime;
 
         // Bridge が有効なら受信フレームをこのゲームスレッドで処理して応答する。
-        // ポーズゲーティングは L-P2b（ここでは未実装）。
+        // ポーズゲーティングは ShouldAdvanceSimulation で行う（OnUpdate 自体は常に回す）。
         if (m_bBridgeEnabled)
         {
             m_BridgeHost.DrainInbound();
         }
+    }
+
+    bool GameApplicationHandler::ShouldAdvanceSimulation() const
+    {
+        // Bridge 無効なら従来挙動（常に進行）。
+        if (!m_bBridgeEnabled)
+        {
+            return true;
+        }
+
+        // Edit/Playing は進行、Paused/Stopped は停止。
+        return m_BridgeRuntimeState == Game::Bridge::BridgeRuntimeState::Edit ||
+               m_BridgeRuntimeState == Game::Bridge::BridgeRuntimeState::Playing;
     }
 
     void GameApplicationHandler::OnPreShutdown()

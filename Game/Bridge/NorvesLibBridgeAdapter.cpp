@@ -2,6 +2,13 @@
 
 #if defined(NORVES_BRIDGE_ENABLED)
 
+#include "Bridge/BridgeRuntimeState.h"
+#include "GameApplicationHandler.h"
+
+#include "Core/Public/Application/IWindow.h"
+#include "Core/Public/Engine/Engine.h"
+#include "Core/Public/Platform/NativeWindowHandle.h"
+
 #include <optional>
 #include <string>
 
@@ -32,6 +39,24 @@ namespace Game::Bridge
                 return AdapterResult::ok(JsonValue{});
             }
             return AdapterResult::ok(std::move(parsed).value());
+        }
+
+        // NorvesLib の Bridge runtime 状態を SDK の DTO enum へ変換する。
+        norves::bridge::dto::RuntimeState ToDtoRuntimeState(Game::Bridge::BridgeRuntimeState s)
+        {
+            using DtoState = norves::bridge::dto::RuntimeState;
+            switch (s)
+            {
+                case Game::Bridge::BridgeRuntimeState::Edit:
+                    return DtoState::Edit;
+                case Game::Bridge::BridgeRuntimeState::Playing:
+                    return DtoState::Playing;
+                case Game::Bridge::BridgeRuntimeState::Paused:
+                    return DtoState::Paused;
+                case Game::Bridge::BridgeRuntimeState::Stopped:
+                    return DtoState::Stopped;
+            }
+            return DtoState::Unknown;
         }
     } // namespace
 
@@ -71,10 +96,17 @@ namespace Game::Bridge
     AdapterResult
     NorvesLibBridgeAdapter::getStatus(const JsonValue & /*params*/)
     {
-        // P2a 最小スキーマ準拠。Engine::GEngine 連動の本マッピングは L-P2b。
+        // 実エンジン状態を DTO スナップショットへ変換して返す。GEngine が走行中
+        // （かつ終了要求なし）なら Running、そうでなければ Initializing として扱う。
         norves::bridge::dto::StatusSnapshot snap;
-        snap.engineState = norves::bridge::dto::EngineState::Running;
-        snap.runtimeState = norves::bridge::dto::RuntimeState::Edit;
+        const bool bRunning = (NorvesLib::Core::Engine::GEngine != nullptr) &&
+                              NorvesLib::Core::Engine::GEngine->IsRunning() &&
+                              !NorvesLib::Core::Engine::GEngine->IsExitRequested();
+        snap.engineState = bRunning ? norves::bridge::dto::EngineState::Running
+                                    : norves::bridge::dto::EngineState::Initializing;
+        snap.runtimeState = (m_Handler != nullptr)
+                                ? ToDtoRuntimeState(m_Handler->GetBridgeRuntimeState())
+                                : norves::bridge::dto::RuntimeState::Unknown;
         snap.engineName = "NorvesLib";
         snap.engineVersion = "1.0";
         return AdapterResult::ok(snap.to_json());
@@ -93,33 +125,70 @@ namespace Game::Bridge
     AdapterResult
     NorvesLibBridgeAdapter::runtimePlay(const JsonValue & /*params*/)
     {
-        // 実挙動は L-P2b。P2a は受理応答のみ。
+        // runtime 状態を Playing へ遷移させる（Tick ゲートが進行を再開する）。
+        if (m_Handler != nullptr)
+        {
+            m_Handler->SetBridgeRuntimeState(Game::Bridge::BridgeRuntimeState::Playing);
+        }
         norves::bridge::dto::PlayAck ack;
         ack.accepted = true;
+        ack.requestedState = norves::bridge::dto::RuntimeState::Playing;
         return AdapterResult::ok(ack.to_json());
     }
 
     AdapterResult
     NorvesLibBridgeAdapter::runtimePause(const JsonValue & /*params*/)
     {
+        // runtime 状態を Paused へ遷移させる（Tick ゲートが進行を止める）。
+        if (m_Handler != nullptr)
+        {
+            m_Handler->SetBridgeRuntimeState(Game::Bridge::BridgeRuntimeState::Paused);
+        }
         norves::bridge::dto::PlayAck ack;
         ack.accepted = true;
+        ack.requestedState = norves::bridge::dto::RuntimeState::Paused;
         return AdapterResult::ok(ack.to_json());
     }
 
     AdapterResult
     NorvesLibBridgeAdapter::runtimeStop(const JsonValue & /*params*/)
     {
+        // runtime 状態を Stopped へ遷移させる（Tick ゲートが進行を止める）。
+        if (m_Handler != nullptr)
+        {
+            m_Handler->SetBridgeRuntimeState(Game::Bridge::BridgeRuntimeState::Stopped);
+        }
         norves::bridge::dto::PlayAck ack;
         ack.accepted = true;
+        ack.requestedState = norves::bridge::dto::RuntimeState::Stopped;
         return AdapterResult::ok(ack.to_json());
     }
 
     AdapterResult
     NorvesLibBridgeAdapter::runtimeFocusViewport(const JsonValue & /*params*/)
     {
-        // P2a は正直な no-op：{focused:false}。best-effort raise は L-P2b。
-        return OkLiteral(R"({"focused":false})");
+        // best-effort でエンジンのメインウィンドウを前面化する。Win32 ハンドルが
+        // 有効に取得できたときだけ操作し、それ以外は {focused:false} を返す。
+        bool bFocused = false;
+        auto *engine = NorvesLib::Core::Engine::GEngine;
+        if (engine != nullptr)
+        {
+            auto *window = engine->GetMainWindow();
+            if (window != nullptr)
+            {
+                const NorvesLib::Core::Platform::NativeWindowHandle handle = window->GetNativeHandle();
+                if (handle.IsValid() &&
+                    handle.WindowType == NorvesLib::Core::Platform::NativeWindowHandle::Type::Win32 &&
+                    handle.Handle1 != nullptr)
+                {
+                    HWND hwnd = reinterpret_cast<HWND>(handle.Handle1);
+                    ::ShowWindow(hwnd, SW_RESTORE);
+                    ::BringWindowToTop(hwnd);
+                    bFocused = (::SetForegroundWindow(hwnd) != 0);
+                }
+            }
+        }
+        return OkLiteral(bFocused ? R"({"focused":true})" : R"({"focused":false})");
     }
 
     AdapterResult
