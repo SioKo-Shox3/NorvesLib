@@ -367,8 +367,10 @@ namespace Game
         if (m_bBridgeEnabled)
         {
 #if defined(NORVES_BRIDGE_ENABLED)
-            // adapter に実エンジン状態へのアクセスを与えてから host を起動する。
+            // adapter に実エンジン状態へのアクセスと、サーバー発イベント発火用の host を
+            // 与えてから host を起動する。SetHost は Start の前に行う（イベント経路の配線）。
             m_BridgeAdapter.SetHandler(*this);
+            m_BridgeAdapter.SetHost(m_BridgeHost);
             if (!m_BridgeHost.Start(m_BridgePort, m_BridgeAdapter))
             {
                 LOG_WARNING_F("Bridge server failed to start on port %u; continuing without Bridge",

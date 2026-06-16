@@ -3,10 +3,12 @@
 #if defined(NORVES_BRIDGE_ENABLED)
 
 #include "Bridge/BridgeRuntimeState.h"
+#include "Bridge/BridgeServerHost.h"
 #include "GameApplicationHandler.h"
 
 #include "Core/Public/Application/IWindow.h"
 #include "Core/Public/Engine/Engine.h"
+#include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Platform/NativeWindowHandle.h"
 
 #include <optional>
@@ -57,6 +59,68 @@ namespace Game::Bridge
                     return DtoState::Stopped;
             }
             return DtoState::Unknown;
+        }
+
+        // BridgeRuntimeState を人間可読な名前へ（状態遷移ログ用）。
+        const char *RuntimeStateName(Game::Bridge::BridgeRuntimeState s)
+        {
+            switch (s)
+            {
+                case Game::Bridge::BridgeRuntimeState::Edit:
+                    return "edit";
+                case Game::Bridge::BridgeRuntimeState::Playing:
+                    return "playing";
+                case Game::Bridge::BridgeRuntimeState::Paused:
+                    return "paused";
+                case Game::Bridge::BridgeRuntimeState::Stopped:
+                    return "stopped";
+            }
+            return "unknown";
+        }
+
+        // BridgeRuntimeState を runtime.stateChanged の wire 文字列へ。SDK の to_wire の
+        // 可視性に依存せず、ここで wire 値（edit/playing/paused/stopped）を直接綴る。
+        const char *RuntimeStateWire(Game::Bridge::BridgeRuntimeState s)
+        {
+            switch (s)
+            {
+                case Game::Bridge::BridgeRuntimeState::Edit:
+                    return "edit";
+                case Game::Bridge::BridgeRuntimeState::Playing:
+                    return "playing";
+                case Game::Bridge::BridgeRuntimeState::Paused:
+                    return "paused";
+                case Game::Bridge::BridgeRuntimeState::Stopped:
+                    return "stopped";
+            }
+            return "edit";
+        }
+
+        // runtime.stateChanged の params リテラル {"state":...,"previous":...} を組んで
+        // host から emit する。state を新状態へ遷移させた直後、PlayAck 返却の前に呼ぶ。
+        // params は OkLiteral と同様 JsonValue::parse で作る（リテラルなので妥当）。
+        void EmitRuntimeStateChanged(Game::Bridge::BridgeServerHost *host,
+                                     Game::Bridge::BridgeRuntimeState previous,
+                                     Game::Bridge::BridgeRuntimeState next)
+        {
+            if (previous == next || host == nullptr)
+            {
+                return;
+            }
+
+            std::string text = R"({"state":")";
+            text += RuntimeStateWire(next);
+            text += R"(","previous":")";
+            text += RuntimeStateWire(previous);
+            text += R"("})";
+
+            auto parsed = JsonValue::parse(text);
+            if (parsed.is_err())
+            {
+                // 到達しないはず（リテラルは常に妥当）。発火を諦める（無言）。
+                return;
+            }
+            host->EmitEvent("runtime.stateChanged", std::move(parsed).value());
         }
     } // namespace
 
@@ -126,10 +190,23 @@ namespace Game::Bridge
     NorvesLibBridgeAdapter::runtimePlay(const JsonValue & /*params*/)
     {
         // runtime 状態を Playing へ遷移させる（Tick ゲートが進行を再開する）。
+        // previous は Set の前に読む。
+        const auto previous = (m_Handler != nullptr) ? m_Handler->GetBridgeRuntimeState()
+                                                      : Game::Bridge::BridgeRuntimeState::Edit;
+        const auto next = Game::Bridge::BridgeRuntimeState::Playing;
         if (m_Handler != nullptr)
         {
-            m_Handler->SetBridgeRuntimeState(Game::Bridge::BridgeRuntimeState::Playing);
+            m_Handler->SetBridgeRuntimeState(next);
         }
+
+        // 状態遷移を INFO ログへ（Logger 経由で sink -> log.message に流れる）。
+        // drain の send 失敗は無言なので、この INFO ログが増幅ループになることはない。
+        NORVES_LOG_INFO("Bridge", "runtime state changed: %s -> %s",
+                        RuntimeStateName(previous), RuntimeStateName(next));
+
+        // イベント先・response 後の順で runtime.stateChanged を発火する（PlayAck の前）。
+        EmitRuntimeStateChanged(m_Host, previous, next);
+
         norves::bridge::dto::PlayAck ack;
         ack.accepted = true;
         ack.requestedState = norves::bridge::dto::RuntimeState::Playing;
@@ -140,10 +217,20 @@ namespace Game::Bridge
     NorvesLibBridgeAdapter::runtimePause(const JsonValue & /*params*/)
     {
         // runtime 状態を Paused へ遷移させる（Tick ゲートが進行を止める）。
+        // previous は Set の前に読む。
+        const auto previous = (m_Handler != nullptr) ? m_Handler->GetBridgeRuntimeState()
+                                                      : Game::Bridge::BridgeRuntimeState::Edit;
+        const auto next = Game::Bridge::BridgeRuntimeState::Paused;
         if (m_Handler != nullptr)
         {
-            m_Handler->SetBridgeRuntimeState(Game::Bridge::BridgeRuntimeState::Paused);
+            m_Handler->SetBridgeRuntimeState(next);
         }
+
+        NORVES_LOG_INFO("Bridge", "runtime state changed: %s -> %s",
+                        RuntimeStateName(previous), RuntimeStateName(next));
+
+        EmitRuntimeStateChanged(m_Host, previous, next);
+
         norves::bridge::dto::PlayAck ack;
         ack.accepted = true;
         ack.requestedState = norves::bridge::dto::RuntimeState::Paused;
@@ -154,10 +241,20 @@ namespace Game::Bridge
     NorvesLibBridgeAdapter::runtimeStop(const JsonValue & /*params*/)
     {
         // runtime 状態を Stopped へ遷移させる（Tick ゲートが進行を止める）。
+        // previous は Set の前に読む。
+        const auto previous = (m_Handler != nullptr) ? m_Handler->GetBridgeRuntimeState()
+                                                      : Game::Bridge::BridgeRuntimeState::Edit;
+        const auto next = Game::Bridge::BridgeRuntimeState::Stopped;
         if (m_Handler != nullptr)
         {
-            m_Handler->SetBridgeRuntimeState(Game::Bridge::BridgeRuntimeState::Stopped);
+            m_Handler->SetBridgeRuntimeState(next);
         }
+
+        NORVES_LOG_INFO("Bridge", "runtime state changed: %s -> %s",
+                        RuntimeStateName(previous), RuntimeStateName(next));
+
+        EmitRuntimeStateChanged(m_Host, previous, next);
+
         norves::bridge::dto::PlayAck ack;
         ack.accepted = true;
         ack.requestedState = norves::bridge::dto::RuntimeState::Stopped;
@@ -194,8 +291,17 @@ namespace Game::Bridge
     AdapterResult
     NorvesLibBridgeAdapter::logSubscribe(const JsonValue & /*params*/)
     {
+        // Logger -> Bridge のログ転送を開始する（host が中継 sink を Logger へ登録）。
+        // 単一購読前提（複数同時購読は非対応）。filter.minLevel は honor しない：
+        // SDK の JsonValue には構造的な読み取りアクセス API が無い（parse/dump/is_null
+        // のみ）ため、サーバー側レベルフィルタは既定 Trace（全転送）で進め、レベル
+        // 絞り込みは editor 側 client フィルタへ委ねる。
+        if (m_Host != nullptr)
+        {
+            m_Host->StartLogForwarding(NorvesLib::Core::Logging::LogLevel::Trace);
+        }
+
         // スキーマ準拠 {subscriptionId}。{subscribed:true} は返さない（mock の非準拠点）。
-        // 実際の log.message ストリーミングは L-P3b。
         ++m_NextSubscriptionSeq;
         std::string payload = R"({"subscriptionId":"norveslib-sub-)";
         payload += std::to_string(static_cast<unsigned long long>(m_NextSubscriptionSeq));
@@ -206,6 +312,12 @@ namespace Game::Bridge
     AdapterResult
     NorvesLibBridgeAdapter::logUnsubscribe(const JsonValue & /*params*/)
     {
+        // ログ転送を停止する（冪等）。subscriptionId 照合はしない（単一購読前提）。
+        if (m_Host != nullptr)
+        {
+            m_Host->StopLogForwarding();
+        }
+
         // log.unsubscribe.result スキーマの必須フィールドは ok(boolean)。
         return OkLiteral(R"({"ok":true})");
     }

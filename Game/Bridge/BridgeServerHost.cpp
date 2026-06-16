@@ -3,16 +3,21 @@
 #if defined(NORVES_BRIDGE_ENABLED)
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
+#include <string>
 #include <thread>
 #include <utility>
 
 #include "ReadyHandshake.h"
 
 #include "norves/bridge/adapter.hpp"
+#include "norves/bridge/dto/common.hpp"
+#include "norves/bridge/dto/events.hpp"
 #include "norves/bridge/ws_server_transport.hpp"
 
 #include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Logging/Logger.h"
 
 namespace Game::Bridge
 {
@@ -43,6 +48,35 @@ namespace Game::Bridge
                 std::this_thread::sleep_for(kBindRetryDelay);
             }
             return nullptr;
+        }
+
+        // ゲームスレッドの DrainInbound でログ転送する 1 フレームあたりの上限。1 フレーム
+        // で延々と drain して描画を止めないための上限（残りは次フレームへ持ち越す）。
+        constexpr int kMaxDrainPerFrame = 64;
+
+        // NorvesLib の LogLevel を Bridge wire の dto::LogLevel へ畳み込む。
+        // dto には Fatal / Warning が無いため、Fatal -> Error・Warning -> Warn と畳む
+        // （editor は "fatal" を拒否する。スキーマ準拠のため必須）。
+        norves::bridge::dto::LogLevel FoldLevel(NorvesLib::Core::Logging::LogLevel level)
+        {
+            using SrcLevel = NorvesLib::Core::Logging::LogLevel;
+            using DtoLevel = norves::bridge::dto::LogLevel;
+            switch (level)
+            {
+                case SrcLevel::Trace:
+                    return DtoLevel::Trace;
+                case SrcLevel::Debug:
+                    return DtoLevel::Debug;
+                case SrcLevel::Info:
+                    return DtoLevel::Info;
+                case SrcLevel::Warning:
+                    return DtoLevel::Warn;
+                case SrcLevel::Error:
+                    return DtoLevel::Error;
+                case SrcLevel::Fatal:
+                    return DtoLevel::Error;
+            }
+            return DtoLevel::Info;
         }
     } // namespace
 
@@ -145,10 +179,35 @@ namespace Game::Bridge
                 }
             }
         }
+
+        // 中継 sink に溜まったログを log.message イベントとして送る（ゲームスレッド）。
+        // 1 フレームあたり kMaxDrainPerFrame 件までに制限し、残りは次フレームへ持ち越す。
+        // EmitEvent は冒頭ガード（m_bActive / m_Server / m_Transport）を再確認するが、
+        // ここに来た時点で全て有効。
+        BridgeLogSink::ForwardEntry fe;
+        for (int drained = 0; drained < kMaxDrainPerFrame && m_LogSink.TryPopForward(fe); ++drained)
+        {
+            norves::bridge::dto::LogMessageEvent evt;
+            evt.level = FoldLevel(fe.level);
+            // String は UTF-8 バイト列（TCHAR=char）。data()/size() でそのまま運ぶ。
+            evt.message = std::string(fe.message.data(), fe.message.size());
+            // category は schema 上 minLength:1。空なら未設定（optional を立てない）。
+            if (!fe.category.empty())
+            {
+                evt.category = std::string(fe.category.data(), fe.category.size());
+            }
+            // timestamp は alpha では省略（未設定）。
+            EmitEvent("log.message", evt.to_json());
+        }
     }
 
     void BridgeServerHost::Stop()
     {
+        // ログ転送を先に止める（RemoveSink → close → join の順。L-P3a 契約）。
+        // これで以降 Logger ワーカーが中継 sink を触らなくなり、sink の解体が安全になる。
+        // 冪等なので Stop が複数回呼ばれても問題ない。
+        StopLogForwarding();
+
         // 冪等。close→join 順を厳守する：先に close() で recv() を解除し、
         // その後で受信スレッドを Join する（逆順だと recv() がブロックしたまま
         // join がデッドロックする）。
@@ -167,6 +226,49 @@ namespace Game::Bridge
         // server は transport より先に破棄してよい（互いに直接参照しない）。
         m_Server.reset();
         m_Transport.reset();
+    }
+
+    void BridgeServerHost::EmitEvent(std::string_view eventName, const norves::bridge::JsonValue &params)
+    {
+        if (!m_bActive.GetValue() || !m_Server || !m_Transport)
+        {
+            return;
+        }
+
+        std::string frame = m_Server->emitEvent(eventName, params);
+        if (frame.empty())
+        {
+            // emitEvent がエンコード失敗を空フレームで通知（不正なエンベロープは送らない）。
+            return;
+        }
+
+        // 送信失敗（peer 不在 / キュー満杯）でも無言で破棄する。ここでログを出すと
+        // log.message 経路に乗って再び EmitEvent され、増幅ループになり得るため。
+        m_Transport->send(std::move(frame));
+    }
+
+    void BridgeServerHost::StartLogForwarding(NorvesLib::Core::Logging::LogLevel minLevel)
+    {
+        // 転送レベルを設定し、開始時の積み残しを捨ててから登録する。
+        m_LogSink.SetMinLevel(minLevel);
+        m_LogSink.Clear();
+
+        if (!m_bLogForwarding)
+        {
+            NorvesLib::Core::Logging::Logger::GetInstance().AddSink(&m_LogSink);
+            m_bLogForwarding = true;
+        }
+        // 既に開始済みなら minLevel の更新のみ（再登録しない）。
+    }
+
+    void BridgeServerHost::StopLogForwarding()
+    {
+        // 冪等。登録済みのときだけ Logger から外す。
+        if (m_bLogForwarding)
+        {
+            NorvesLib::Core::Logging::Logger::GetInstance().RemoveSink(&m_LogSink);
+            m_bLogForwarding = false;
+        }
     }
 
 } // namespace Game::Bridge
