@@ -5,6 +5,7 @@
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Text/IdentityPool.h"
 #include <cstdint>
 
 namespace NorvesLib::RHI
@@ -15,6 +16,38 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     struct ViewRenderContext;
+
+    struct RGTextureOutput
+    {
+        Identity Name;
+        RGTextureHandle Handle;
+        RHI::TexturePtr Texture;
+    };
+
+    struct RenderGraphExecutionResult
+    {
+        bool bSuccess = false;
+        uint32_t ExecutedPassCount = 0;
+        Container::UnorderedMap<Identity, RGTextureOutput, Identity::Hasher> TextureOutputs;
+
+        bool TryGetTexture(Identity name, RHI::TexturePtr& outTexture) const
+        {
+            outTexture = nullptr;
+            if (!name.IsValid())
+            {
+                return false;
+            }
+
+            auto it = TextureOutputs.find(name);
+            if (it == TextureOutputs.end() || !it->second.Texture)
+            {
+                return false;
+            }
+
+            outTexture = it->second.Texture;
+            return true;
+        }
+    };
 
     class RenderGraph
     {
@@ -41,6 +74,17 @@ namespace NorvesLib::Core::Rendering
         bool Compile();
         bool Compile(const ViewRenderContext& context);
         bool Execute(ViewRenderContext& context);
+        RenderGraphExecutionResult ExecuteWithResult(ViewRenderContext& context);
+
+        const RenderGraphExecutionResult& GetLastExecutionResult() const
+        {
+            return m_LastExecutionResult;
+        }
+
+        bool TryGetLastOutputTexture(Identity name, RHI::TexturePtr& outTexture) const
+        {
+            return m_LastExecutionResult.TryGetTexture(name, outTexture);
+        }
 
         const Container::VariableArray<uint32_t>& GetCompiledPassOrder() const
         {
@@ -109,6 +153,13 @@ namespace NorvesLib::Core::Rendering
             uint32_t AfterPassIndex = RGInvalidPassIndex;
         };
 
+        struct RGNamedResource
+        {
+            RGResourceKind Kind = RGResourceKind::Invalid;
+            RGResourceHandle CurrentHead;
+            uint32_t Version = 0;
+        };
+
         RGResourceHandle CreateTextureResource(const RGTextureDesc& desc);
         RGResourceHandle CreateBufferResource(const RGBufferDesc& desc);
         RGResourceHandle CreateLogicalResource(const char* debugName);
@@ -118,6 +169,30 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle ImportBufferResource(RHI::BufferPtr buffer,
                                               RHI::ResourceState initialState,
                                               const char* debugName);
+
+        RGTextureHandle CreateTextureResourceHandle(const RGTextureDesc& desc);
+        RGBufferHandle CreateBufferResourceHandle(const RGBufferDesc& desc);
+        bool PublishTextureResource(Identity name, RGTextureHandle handle);
+        bool PublishBufferResource(Identity name, RGBufferHandle handle);
+        RGTextureHandle ReadTextureResource(uint32_t passIndex,
+                                            Identity name,
+                                            RHI::ResourceState state);
+        RGBufferHandle ReadBufferResource(uint32_t passIndex,
+                                          Identity name,
+                                          RHI::ResourceState state);
+        RGTextureHandle WriteTextureResource(uint32_t passIndex,
+                                             Identity name,
+                                             const RGTextureDesc& desc,
+                                             RHI::ResourceState state,
+                                             RHI::ResourceState finalState);
+        RGBufferHandle WriteBufferResource(uint32_t passIndex,
+                                           Identity name,
+                                           const RGBufferDesc& desc,
+                                           RHI::ResourceState state,
+                                           RHI::ResourceState finalState);
+        bool TryGetTextureResource(Identity name, RGTextureHandle& outHandle);
+        bool TryGetBufferResource(Identity name, RGBufferHandle& outHandle);
+        bool ExportTextureResource(Identity name, RGTextureHandle handle);
 
         void AddAccess(uint32_t passIndex,
                        RGResourceHandle handle,
@@ -129,6 +204,10 @@ namespace NorvesLib::Core::Rendering
         bool CompileInternal(const ViewRenderContext* context);
         bool ValidatePassIndex(uint32_t passIndex) const;
         bool ValidateHandle(RGResourceHandle handle) const;
+        bool ValidateTextureHandle(RGTextureHandle handle) const;
+        bool ValidateBufferHandle(RGBufferHandle handle) const;
+        bool ValidateNamedResource(Identity name, RGResourceKind expectedKind, const RGNamedResource*& outResource) const;
+        void MarkGraphError();
         bool AddEdge(uint32_t beforePassIndex,
                      uint32_t afterPassIndex,
                      Container::VariableArray<Container::VariableArray<uint32_t>>& adjacency,
@@ -146,6 +225,10 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr ResolveBuffer(RGResourceHandle handle);
         RHI::ITexture* ResolveTextureRaw(RGResourceHandle handle);
         RHI::IBuffer* ResolveBufferRaw(RGResourceHandle handle);
+        RHI::TexturePtr ResolveTexture(RGTextureHandle handle);
+        RHI::BufferPtr ResolveBuffer(RGBufferHandle handle);
+        RHI::ITexture* ResolveTextureRaw(RGTextureHandle handle);
+        RHI::IBuffer* ResolveBufferRaw(RGBufferHandle handle);
 
         void ClearCompileData();
         bool HasResourceUsage(RHI::ResourceUsage usage, RHI::ResourceUsage flag) const;
@@ -157,11 +240,15 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<RGPassDependency> m_ExplicitDependencies;
         Container::VariableArray<uint32_t> m_CompiledPassOrder;
         Container::VariableArray<RGCompiledBarrier> m_CompiledBarriers;
+        Container::UnorderedMap<Identity, RGNamedResource, Identity::Hasher> m_NamedResources;
+        Container::UnorderedMap<Identity, RGTextureHandle, Identity::Hasher> m_TextureExports;
+        RenderGraphExecutionResult m_LastExecutionResult;
         uint32_t m_HandleGeneration = 1;
         uint32_t m_LastExecutedPassCount = 0;
         uint64_t m_FrameIndex = 0;
         bool m_bInitialized = false;
         bool m_bCompiled = false;
+        bool m_bHasGraphError = false;
     };
 
 } // namespace NorvesLib::Core::Rendering
