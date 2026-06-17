@@ -89,7 +89,10 @@ vec2 ParallaxOcclusionMapping(vec2 texCoord, vec3 viewDirTS, float heightScale)
     float currentLayerDepth = 0.0;
 
     // 接線空間のビュー方向からUVオフセット方向を算出
-    vec2 P = viewDirTS.xy / viewDirTS.z * heightScale;
+    // offset limiting: /viewDirTS.z を行わない。grazing angle（円周/シルエット付近）で
+    // viewDirTS.z→0 のとき従来は P が発散しUVマーチが暴走していた。z で割らないことで
+    // P を有界（最大 |viewDirTS.xy|*heightScale ≈ heightScale）に保ち、輪郭の歪みを防ぐ。
+    vec2 P = viewDirTS.xy * heightScale;
     vec2 deltaTexCoords = P / numLayers;
 
     vec2 currentTexCoords = texCoord;
@@ -127,7 +130,19 @@ void main()
         mat3 TBN = CalculateTBN(fragNormal, fragWorldPos, fragTexCoord);
         mat3 TBN_inv = transpose(TBN);  // 正規直交基底なので転置=逆行列
         vec3 viewDirTS = normalize(TBN_inv * fragViewDir);
-        texCoord = ParallaxOcclusionMapping(fragTexCoord, viewDirTS, heightScale);
+
+        // grazing angle フェード: 円周/シルエット付近では N・V（=viewDirTS.z）→0 となり、
+        // POM のレイマーチが不安定化して輪郭が歪む（回転でテクセルが流れ「引っ張られて」見える）。
+        // viewDirTS.z で素のUVへフェードし、輪郭での歪み・スイムを抑える。
+        // 背面寄り（z<0）は clamp で 0 に落ちフェード 0（=POM無効）になる。
+        float nDotV = clamp(viewDirTS.z, 0.0, 1.0);
+        float pomFade = smoothstep(0.1, 0.3, nDotV);
+        if (pomFade > 0.0)
+        {
+            // フェードが効く領域のみレイマーチを実行（輪郭では暴走前にスキップ）
+            vec2 pomTexCoord = ParallaxOcclusionMapping(fragTexCoord, viewDirTS, heightScale);
+            texCoord = mix(fragTexCoord, pomTexCoord, pomFade);
+        }
 
         // UV範囲外チェック（タイリングテクスチャなら不要だが念のため）
         // if (texCoord.x > 1.0 || texCoord.y > 1.0 || texCoord.x < 0.0 || texCoord.y < 0.0)
