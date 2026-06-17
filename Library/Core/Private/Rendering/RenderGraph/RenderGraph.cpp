@@ -83,6 +83,16 @@ namespace NorvesLib::Core::Rendering
         return m_Graph ? m_Graph->CreateBufferResource(desc) : RGResourceHandle{};
     }
 
+    RGTextureHandle RenderGraphBuilder::CreateTextureHandle(const RGTextureDesc& desc)
+    {
+        return m_Graph ? m_Graph->CreateTextureResourceHandle(desc) : RGTextureHandle{};
+    }
+
+    RGBufferHandle RenderGraphBuilder::CreateBufferHandle(const RGBufferDesc& desc)
+    {
+        return m_Graph ? m_Graph->CreateBufferResourceHandle(desc) : RGBufferHandle{};
+    }
+
     RGResourceHandle RenderGraphBuilder::CreateLogical(const char* debugName)
     {
         return m_Graph ? m_Graph->CreateLogicalResource(debugName) : RGResourceHandle{};
@@ -128,6 +138,69 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    bool RenderGraphBuilder::PublishTexture(Identity name, RGTextureHandle handle)
+    {
+        return m_Graph ? m_Graph->PublishTextureResource(name, handle) : false;
+    }
+
+    bool RenderGraphBuilder::PublishBuffer(Identity name, RGBufferHandle handle)
+    {
+        return m_Graph ? m_Graph->PublishBufferResource(name, handle) : false;
+    }
+
+    RGTextureHandle RenderGraphBuilder::ReadTexture(Identity name, RHI::ResourceState state)
+    {
+        return m_Graph ? m_Graph->ReadTextureResource(m_PassIndex, name, state) : RGTextureHandle{};
+    }
+
+    RGBufferHandle RenderGraphBuilder::ReadBuffer(Identity name, RHI::ResourceState state)
+    {
+        return m_Graph ? m_Graph->ReadBufferResource(m_PassIndex, name, state) : RGBufferHandle{};
+    }
+
+    RGTextureHandle RenderGraphBuilder::WriteTexture(Identity name,
+                                                     const RGTextureDesc& desc,
+                                                     RHI::ResourceState state,
+                                                     RHI::ResourceState finalState)
+    {
+        return m_Graph ? m_Graph->WriteTextureResource(m_PassIndex, name, desc, state, finalState) : RGTextureHandle{};
+    }
+
+    RGBufferHandle RenderGraphBuilder::WriteBuffer(Identity name,
+                                                   const RGBufferDesc& desc,
+                                                   RHI::ResourceState state,
+                                                   RHI::ResourceState finalState)
+    {
+        return m_Graph ? m_Graph->WriteBufferResource(m_PassIndex, name, desc, state, finalState) : RGBufferHandle{};
+    }
+
+    bool RenderGraphBuilder::TryGetTexture(Identity name, RGTextureHandle& outHandle) const
+    {
+        if (!m_Graph)
+        {
+            outHandle = RGTextureHandle{};
+            return false;
+        }
+
+        return m_Graph->TryGetTextureResource(name, outHandle);
+    }
+
+    bool RenderGraphBuilder::TryGetBuffer(Identity name, RGBufferHandle& outHandle) const
+    {
+        if (!m_Graph)
+        {
+            outHandle = RGBufferHandle{};
+            return false;
+        }
+
+        return m_Graph->TryGetBufferResource(name, outHandle);
+    }
+
+    bool RenderGraphBuilder::ExportTexture(Identity name, RGTextureHandle handle)
+    {
+        return m_Graph ? m_Graph->ExportTextureResource(name, handle) : false;
+    }
+
     void RenderGraphBuilder::PreserveInsertionOrder()
     {
         if (m_Graph)
@@ -162,6 +235,26 @@ namespace NorvesLib::Core::Rendering
     }
 
     RHI::IBuffer* RenderGraphResources::GetBufferRaw(RGResourceHandle handle)
+    {
+        return m_Graph ? m_Graph->ResolveBufferRaw(handle) : nullptr;
+    }
+
+    RHI::TexturePtr RenderGraphResources::GetTexture(RGTextureHandle handle)
+    {
+        return m_Graph ? m_Graph->ResolveTexture(handle) : nullptr;
+    }
+
+    RHI::BufferPtr RenderGraphResources::GetBuffer(RGBufferHandle handle)
+    {
+        return m_Graph ? m_Graph->ResolveBuffer(handle) : nullptr;
+    }
+
+    RHI::ITexture* RenderGraphResources::GetTextureRaw(RGTextureHandle handle)
+    {
+        return m_Graph ? m_Graph->ResolveTextureRaw(handle) : nullptr;
+    }
+
+    RHI::IBuffer* RenderGraphResources::GetBufferRaw(RGBufferHandle handle)
     {
         return m_Graph ? m_Graph->ResolveBufferRaw(handle) : nullptr;
     }
@@ -269,6 +362,13 @@ namespace NorvesLib::Core::Rendering
             pass->Declare(builder);
         }
 
+        if (m_bHasGraphError)
+        {
+            m_CompiledPassOrder.clear();
+            m_CompiledBarriers.clear();
+            return false;
+        }
+
         Container::VariableArray<Container::VariableArray<uint32_t>> adjacency;
         Container::VariableArray<uint32_t> indegree;
         if (!BuildDependencyGraph(adjacency, indegree))
@@ -288,11 +388,18 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderGraph::Execute(ViewRenderContext& context)
     {
+        return ExecuteWithResult(context).bSuccess;
+    }
+
+    RenderGraphExecutionResult RenderGraph::ExecuteWithResult(ViewRenderContext& context)
+    {
         m_LastExecutedPassCount = 0;
+        RenderGraphExecutionResult result;
         if (!m_bCompiled)
         {
             NORVES_LOG_ERROR("RenderGraph", "Execute called before successful Compile");
-            return false;
+            m_LastExecutionResult = result;
+            return result;
         }
 
         RenderGraphResources resources(this);
@@ -302,13 +409,17 @@ namespace NorvesLib::Core::Rendering
             const uint32_t passIndex = m_CompiledPassOrder[orderIndex];
             if (!ValidatePassIndex(passIndex))
             {
-                return false;
+                result.ExecutedPassCount = m_LastExecutedPassCount;
+                m_LastExecutionResult = result;
+                return result;
             }
 
             IRenderGraphPass* pass = m_Passes[passIndex];
             if (!pass)
             {
-                return false;
+                result.ExecutedPassCount = m_LastExecutedPassCount;
+                m_LastExecutionResult = result;
+                return result;
             }
 
             FlushPendingFrameCommands(context);
@@ -317,7 +428,9 @@ namespace NorvesLib::Core::Rendering
             {
                 if (!ExecuteBarrier(m_CompiledBarriers[nextBarrierIndex], context))
                 {
-                    return false;
+                    result.ExecutedPassCount = m_LastExecutedPassCount;
+                    m_LastExecutionResult = result;
+                    return result;
                 }
                 ++nextBarrierIndex;
             }
@@ -328,7 +441,29 @@ namespace NorvesLib::Core::Rendering
             FlushPendingFrameCommands(context);
         }
 
-        return true;
+        for (const auto& exportEntry : m_TextureExports)
+        {
+            RHI::TexturePtr texture = ResolveTexture(exportEntry.second);
+            if (!texture)
+            {
+                NORVES_LOG_ERROR("RenderGraph", "Failed to resolve exported texture");
+                result.ExecutedPassCount = m_LastExecutedPassCount;
+                result.TextureOutputs.clear();
+                m_LastExecutionResult = result;
+                return result;
+            }
+
+            RGTextureOutput output;
+            output.Name = exportEntry.first;
+            output.Handle = exportEntry.second;
+            output.Texture = texture;
+            result.TextureOutputs[exportEntry.first] = output;
+        }
+
+        result.bSuccess = true;
+        result.ExecutedPassCount = m_LastExecutedPassCount;
+        m_LastExecutionResult = result;
+        return result;
     }
 
     RGResourceHandle RenderGraph::CreateTextureResource(const RGTextureDesc& desc)
@@ -429,6 +564,234 @@ namespace NorvesLib::Core::Rendering
         return record.Handle;
     }
 
+    RGTextureHandle RenderGraph::CreateTextureResourceHandle(const RGTextureDesc& desc)
+    {
+        return RGTextureHandle(CreateTextureResource(desc));
+    }
+
+    RGBufferHandle RenderGraph::CreateBufferResourceHandle(const RGBufferDesc& desc)
+    {
+        return RGBufferHandle(CreateBufferResource(desc));
+    }
+
+    bool RenderGraph::PublishTextureResource(Identity name, RGTextureHandle handle)
+    {
+        if (!name.IsValid())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Cannot publish texture with invalid name");
+            MarkGraphError();
+            return false;
+        }
+
+        if (!ValidateTextureHandle(handle))
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Cannot publish invalid texture handle");
+            MarkGraphError();
+            return false;
+        }
+
+        auto existing = m_NamedResources.find(name);
+        if (existing != m_NamedResources.end())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Duplicate named texture publish");
+            MarkGraphError();
+            return false;
+        }
+
+        RGNamedResource resource;
+        resource.Kind = RGResourceKind::Texture;
+        resource.CurrentHead = handle.ToResourceHandle();
+        resource.Version = 0;
+        m_NamedResources[name] = resource;
+        return true;
+    }
+
+    bool RenderGraph::PublishBufferResource(Identity name, RGBufferHandle handle)
+    {
+        if (!name.IsValid())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Cannot publish buffer with invalid name");
+            MarkGraphError();
+            return false;
+        }
+
+        if (!ValidateBufferHandle(handle))
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Cannot publish invalid buffer handle");
+            MarkGraphError();
+            return false;
+        }
+
+        auto existing = m_NamedResources.find(name);
+        if (existing != m_NamedResources.end())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Duplicate named buffer publish");
+            MarkGraphError();
+            return false;
+        }
+
+        RGNamedResource resource;
+        resource.Kind = RGResourceKind::Buffer;
+        resource.CurrentHead = handle.ToResourceHandle();
+        resource.Version = 0;
+        m_NamedResources[name] = resource;
+        return true;
+    }
+
+    RGTextureHandle RenderGraph::ReadTextureResource(uint32_t passIndex,
+                                                     Identity name,
+                                                     RHI::ResourceState state)
+    {
+        const RGNamedResource* resource = nullptr;
+        if (!ValidateNamedResource(name, RGResourceKind::Texture, resource))
+        {
+            MarkGraphError();
+            return RGTextureHandle{};
+        }
+
+        RGTextureHandle handle(resource->CurrentHead);
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state);
+        return handle;
+    }
+
+    RGBufferHandle RenderGraph::ReadBufferResource(uint32_t passIndex,
+                                                   Identity name,
+                                                   RHI::ResourceState state)
+    {
+        const RGNamedResource* resource = nullptr;
+        if (!ValidateNamedResource(name, RGResourceKind::Buffer, resource))
+        {
+            MarkGraphError();
+            return RGBufferHandle{};
+        }
+
+        RGBufferHandle handle(resource->CurrentHead);
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state);
+        return handle;
+    }
+
+    RGTextureHandle RenderGraph::WriteTextureResource(uint32_t passIndex,
+                                                      Identity name,
+                                                      const RGTextureDesc& desc,
+                                                      RHI::ResourceState state,
+                                                      RHI::ResourceState finalState)
+    {
+        if (!name.IsValid())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Cannot write texture with invalid name");
+            MarkGraphError();
+            return RGTextureHandle{};
+        }
+
+        auto existing = m_NamedResources.find(name);
+        uint32_t version = 0;
+        if (existing != m_NamedResources.end())
+        {
+            if (existing->second.Kind != RGResourceKind::Texture)
+            {
+                NORVES_LOG_ERROR("RenderGraph", "Named resource texture write type mismatch");
+                MarkGraphError();
+                return RGTextureHandle{};
+            }
+            version = existing->second.Version + 1;
+        }
+
+        RGTextureHandle handle = CreateTextureResourceHandle(desc);
+        RGNamedResource resource;
+        resource.Kind = RGResourceKind::Texture;
+        resource.CurrentHead = handle.ToResourceHandle();
+        resource.Version = version;
+        m_NamedResources[name] = resource;
+
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Write, state, finalState);
+        return handle;
+    }
+
+    RGBufferHandle RenderGraph::WriteBufferResource(uint32_t passIndex,
+                                                    Identity name,
+                                                    const RGBufferDesc& desc,
+                                                    RHI::ResourceState state,
+                                                    RHI::ResourceState finalState)
+    {
+        if (!name.IsValid())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Cannot write buffer with invalid name");
+            MarkGraphError();
+            return RGBufferHandle{};
+        }
+
+        auto existing = m_NamedResources.find(name);
+        uint32_t version = 0;
+        if (existing != m_NamedResources.end())
+        {
+            if (existing->second.Kind != RGResourceKind::Buffer)
+            {
+                NORVES_LOG_ERROR("RenderGraph", "Named resource buffer write type mismatch");
+                MarkGraphError();
+                return RGBufferHandle{};
+            }
+            version = existing->second.Version + 1;
+        }
+
+        RGBufferHandle handle = CreateBufferResourceHandle(desc);
+        RGNamedResource resource;
+        resource.Kind = RGResourceKind::Buffer;
+        resource.CurrentHead = handle.ToResourceHandle();
+        resource.Version = version;
+        m_NamedResources[name] = resource;
+
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Write, state, finalState);
+        return handle;
+    }
+
+    bool RenderGraph::TryGetTextureResource(Identity name, RGTextureHandle& outHandle)
+    {
+        outHandle = RGTextureHandle{};
+        const RGNamedResource* resource = nullptr;
+        if (!ValidateNamedResource(name, RGResourceKind::Texture, resource))
+        {
+            MarkGraphError();
+            return false;
+        }
+
+        outHandle = RGTextureHandle(resource->CurrentHead);
+        return true;
+    }
+
+    bool RenderGraph::TryGetBufferResource(Identity name, RGBufferHandle& outHandle)
+    {
+        outHandle = RGBufferHandle{};
+        const RGNamedResource* resource = nullptr;
+        if (!ValidateNamedResource(name, RGResourceKind::Buffer, resource))
+        {
+            MarkGraphError();
+            return false;
+        }
+
+        outHandle = RGBufferHandle(resource->CurrentHead);
+        return true;
+    }
+
+    bool RenderGraph::ExportTextureResource(Identity name, RGTextureHandle handle)
+    {
+        if (!name.IsValid())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Cannot export texture with invalid name");
+            MarkGraphError();
+            return false;
+        }
+
+        if (!ValidateTextureHandle(handle))
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Cannot export invalid texture handle");
+            MarkGraphError();
+            return false;
+        }
+
+        m_TextureExports[name] = handle;
+        return true;
+    }
+
     void RenderGraph::AddAccess(uint32_t passIndex,
                                 RGResourceHandle handle,
                                 RGAccessMode mode,
@@ -507,6 +870,58 @@ namespace NorvesLib::Core::Rendering
         }
 
         return m_Resources[handle.Index].Kind != RGResourceKind::Invalid;
+    }
+
+    bool RenderGraph::ValidateTextureHandle(RGTextureHandle handle) const
+    {
+        const RGResourceHandle resource = handle.ToResourceHandle();
+        return ValidateHandle(resource) && m_Resources[resource.Index].Kind == RGResourceKind::Texture;
+    }
+
+    bool RenderGraph::ValidateBufferHandle(RGBufferHandle handle) const
+    {
+        const RGResourceHandle resource = handle.ToResourceHandle();
+        return ValidateHandle(resource) && m_Resources[resource.Index].Kind == RGResourceKind::Buffer;
+    }
+
+    bool RenderGraph::ValidateNamedResource(Identity name,
+                                            RGResourceKind expectedKind,
+                                            const RGNamedResource*& outResource) const
+    {
+        outResource = nullptr;
+        if (!name.IsValid())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Invalid named resource identity");
+            return false;
+        }
+
+        auto existing = m_NamedResources.find(name);
+        if (existing == m_NamedResources.end())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Named resource read failed because the name is not registered");
+            return false;
+        }
+
+        if (existing->second.Kind != expectedKind)
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Named resource type mismatch");
+            return false;
+        }
+
+        if (!ValidateHandle(existing->second.CurrentHead))
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Named resource current head is invalid");
+            return false;
+        }
+
+        outResource = &existing->second;
+        return true;
+    }
+
+    void RenderGraph::MarkGraphError()
+    {
+        m_bHasGraphError = true;
+        m_bCompiled = false;
     }
 
     bool RenderGraph::AddEdge(uint32_t beforePassIndex,
@@ -887,14 +1302,50 @@ namespace NorvesLib::Core::Rendering
         return buffer ? buffer.get() : nullptr;
     }
 
+    RHI::TexturePtr RenderGraph::ResolveTexture(RGTextureHandle handle)
+    {
+        if (!ValidateTextureHandle(handle))
+        {
+            return nullptr;
+        }
+
+        return ResolveTexture(handle.ToResourceHandle());
+    }
+
+    RHI::BufferPtr RenderGraph::ResolveBuffer(RGBufferHandle handle)
+    {
+        if (!ValidateBufferHandle(handle))
+        {
+            return nullptr;
+        }
+
+        return ResolveBuffer(handle.ToResourceHandle());
+    }
+
+    RHI::ITexture* RenderGraph::ResolveTextureRaw(RGTextureHandle handle)
+    {
+        RHI::TexturePtr texture = ResolveTexture(handle);
+        return texture ? texture.get() : nullptr;
+    }
+
+    RHI::IBuffer* RenderGraph::ResolveBufferRaw(RGBufferHandle handle)
+    {
+        RHI::BufferPtr buffer = ResolveBuffer(handle);
+        return buffer ? buffer.get() : nullptr;
+    }
+
     void RenderGraph::ClearCompileData()
     {
         m_Resources.clear();
         m_PassDeclarations.clear();
         m_CompiledPassOrder.clear();
         m_CompiledBarriers.clear();
+        m_NamedResources.clear();
+        m_TextureExports.clear();
+        m_LastExecutionResult = RenderGraphExecutionResult{};
         m_LastExecutedPassCount = 0;
         m_bCompiled = false;
+        m_bHasGraphError = false;
 
         ++m_HandleGeneration;
         if (m_HandleGeneration == 0)

@@ -160,6 +160,16 @@ target_include_directories(RenderGraphCompileTest PRIVATE
 set_target_properties(RenderGraphCompileTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderGraphCompileTest COMMAND RenderGraphCompileTest)
 
+add_executable(RenderGraphNamedResourceTest
+    RenderGraphNamedResourceTest.cpp
+)
+target_link_libraries(RenderGraphNamedResourceTest PRIVATE Core)
+target_include_directories(RenderGraphNamedResourceTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphNamedResourceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphNamedResourceTest COMMAND RenderGraphNamedResourceTest)
+
 add_executable(LegacyViewPassAdapterTest
     LegacyViewPassAdapterTest.cpp
 )

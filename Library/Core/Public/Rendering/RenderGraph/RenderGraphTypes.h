@@ -6,6 +6,9 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    class RenderGraph;
+    class RenderGraphBuilder;
+
     static constexpr uint32_t RGInvalidPassIndex = 0xFFFFFFFFu;
 
     enum class RGResourceKind : uint8_t
@@ -55,6 +58,80 @@ namespace NorvesLib::Core::Rendering
         {
             return !(*this == other);
         }
+    };
+
+    class RGTextureHandle
+    {
+    public:
+        RGTextureHandle() = default;
+
+        bool IsValid() const
+        {
+            return m_Resource.IsValid();
+        }
+
+        RGResourceHandle ToResourceHandle() const
+        {
+            return m_Resource;
+        }
+
+        bool operator==(const RGTextureHandle& other) const
+        {
+            return m_Resource == other.m_Resource;
+        }
+
+        bool operator!=(const RGTextureHandle& other) const
+        {
+            return !(*this == other);
+        }
+
+    private:
+        explicit RGTextureHandle(RGResourceHandle resource)
+            : m_Resource(resource)
+        {
+        }
+
+        RGResourceHandle m_Resource;
+
+        friend class RenderGraph;
+        friend class RenderGraphBuilder;
+    };
+
+    class RGBufferHandle
+    {
+    public:
+        RGBufferHandle() = default;
+
+        bool IsValid() const
+        {
+            return m_Resource.IsValid();
+        }
+
+        RGResourceHandle ToResourceHandle() const
+        {
+            return m_Resource;
+        }
+
+        bool operator==(const RGBufferHandle& other) const
+        {
+            return m_Resource == other.m_Resource;
+        }
+
+        bool operator!=(const RGBufferHandle& other) const
+        {
+            return !(*this == other);
+        }
+
+    private:
+        explicit RGBufferHandle(RGResourceHandle resource)
+            : m_Resource(resource)
+        {
+        }
+
+        RGResourceHandle m_Resource;
+
+        friend class RenderGraph;
+        friend class RenderGraphBuilder;
     };
 
     struct RGTextureDesc
