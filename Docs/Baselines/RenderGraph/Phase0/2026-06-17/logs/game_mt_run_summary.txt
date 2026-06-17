@@ -1,0 +1,11 @@
+
+PostReady        : True
+DrawReady        : True
+LastDrawCalls    : 21
+LastTriangles    : 2184
+ClosedGracefully : True
+ExitCode         : 0
+Screenshot       : True
+Trace            : True
+Log              : True
+
