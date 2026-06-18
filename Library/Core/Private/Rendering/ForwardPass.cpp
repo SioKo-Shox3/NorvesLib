@@ -5,6 +5,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SceneView.h"
@@ -274,27 +275,34 @@ namespace NorvesLib::Core::Rendering
 
     void ForwardPass::Declare(RenderGraphBuilder &builder)
     {
+        m_RenderGraphSceneColorHandle = {};
+        m_RenderGraphDepthHandle = {};
+
         if (m_bTransparentOnly)
         {
-            if (m_LightingPass)
+            RGTextureHandle sceneColorHandle;
+            if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SceneColor,
+                                                    sceneColorHandle,
+                                                    RHI::AttachmentLoadOp::Load,
+                                                    RHI::AttachmentStoreOp::Store,
+                                                    RHI::ResourceState::RenderTarget,
+                                                    RHI::ResourceState::ShaderResource))
             {
-                const RGResourceHandle sceneColorHandle = m_LightingPass->GetSceneColorHandle();
-                if (sceneColorHandle.IsValid())
-                {
-                    builder.Read(sceneColorHandle, RHI::ResourceState::ShaderResource);
-                    builder.Write(sceneColorHandle,
-                                  RHI::ResourceState::RenderTarget,
-                                  RHI::ResourceState::ShaderResource);
-                }
+                m_RenderGraphSceneColorHandle = sceneColorHandle.ToResourceHandle();
             }
 
-            if (m_GBufferPass)
+            RGTextureHandle depthHandle;
+            if (builder.TryReadTexture(RenderGraphResourceNames::SceneDepth,
+                                       depthHandle,
+                                       RHI::ResourceState::DepthRead))
             {
-                const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
-                if (depthHandle.IsValid())
-                {
-                    builder.Read(depthHandle, RHI::ResourceState::DepthRead);
-                }
+                m_RenderGraphDepthHandle = depthHandle.ToResourceHandle();
+            }
+            else if (builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth,
+                                            depthHandle,
+                                            RHI::ResourceState::DepthRead))
+            {
+                m_RenderGraphDepthHandle = depthHandle.ToResourceHandle();
             }
 
             builder.PreserveInsertionOrder();
@@ -325,10 +333,20 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr sceneColorTexture;
         RHI::TexturePtr gbufferDepthTexture;
 
+        if (m_RenderGraphSceneColorHandle.IsValid())
+        {
+            sceneColorTexture = resources.GetTexture(m_RenderGraphSceneColorHandle);
+        }
+
+        if (m_RenderGraphDepthHandle.IsValid())
+        {
+            gbufferDepthTexture = resources.GetTexture(m_RenderGraphDepthHandle);
+        }
+
         if (m_LightingPass)
         {
             const RGResourceHandle sceneColorHandle = m_LightingPass->GetSceneColorHandle();
-            if (sceneColorHandle.IsValid())
+            if (!sceneColorTexture && sceneColorHandle.IsValid())
             {
                 sceneColorTexture = resources.GetTexture(sceneColorHandle);
             }
@@ -337,7 +355,7 @@ namespace NorvesLib::Core::Rendering
         if (m_GBufferPass)
         {
             const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
-            if (depthHandle.IsValid())
+            if (!gbufferDepthTexture && depthHandle.IsValid())
             {
                 gbufferDepthTexture = resources.GetTexture(depthHandle);
             }

@@ -126,6 +126,8 @@ namespace NorvesLib::Core::Rendering
         // 半透明ディファード合成用出力（SharedResourceRegistryから取得、所有参照を保持）
         RHI::TexturePtr m_SceneColorTexture;
         RHI::TexturePtr m_GBufferDepthTexture;
+        RGResourceHandle m_RenderGraphSceneColorHandle;
+        RGResourceHandle m_RenderGraphDepthHandle;
 
         // フォワード用リソース
         RHI::RenderPassPtr m_ForwardRenderPass;

@@ -44,6 +44,12 @@ namespace NorvesLib::Core::Rendering
         bool TryReadTexture(Identity name,
                             RGTextureHandle& outHandle,
                             RHI::ResourceState state = RHI::ResourceState::ShaderResource);
+        bool TryLoadStoreColorAttachment(Identity name,
+                                         RGTextureHandle& outHandle,
+                                         RHI::AttachmentLoadOp loadOp,
+                                         RHI::AttachmentStoreOp storeOp,
+                                         RHI::ResourceState state,
+                                         RHI::ResourceState finalState);
         RGBufferHandle ReadBuffer(Identity name,
                                   RHI::ResourceState state = RHI::ResourceState::ShaderResource);
         RGTextureHandle WriteTexture(Identity name,

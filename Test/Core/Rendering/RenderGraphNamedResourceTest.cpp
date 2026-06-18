@@ -620,6 +620,125 @@ namespace
         RGTextureHandle* m_Written = nullptr;
     };
 
+    class SamePassReadWriteTexturePass final : public IRenderGraphPass
+    {
+    public:
+        SamePassReadWriteTexturePass(Identity name, RGTextureHandle* written)
+            : m_Name(name), m_Written(written)
+        {
+        }
+
+        const char* GetName() const override
+        {
+            return "SamePassReadWriteTexturePass";
+        }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            RGTextureHandle written = builder.WriteTexture(m_Name,
+                                                           MakeTextureDesc("SamePassReadWrite"),
+                                                           RHI::ResourceState::RenderTarget,
+                                                           RHI::ResourceState::ShaderResource);
+            assert(written.IsValid());
+            builder.Read(written.ToResourceHandle(), RHI::ResourceState::ShaderResource);
+            if (m_Written)
+            {
+                *m_Written = written;
+            }
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+            assert(false);
+        }
+
+    private:
+        Identity m_Name;
+        RGTextureHandle* m_Written = nullptr;
+    };
+
+    class LoadStoreColorAttachmentPass final : public IRenderGraphPass
+    {
+    public:
+        LoadStoreColorAttachmentPass(Identity name,
+                                     RGTextureHandle* loadStored,
+                                     bool bExpectFound)
+            : m_Name(name), m_LoadStored(loadStored), m_bExpectFound(bExpectFound)
+        {
+        }
+
+        const char* GetName() const override
+        {
+            return "LoadStoreColorAttachmentPass";
+        }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            RGTextureHandle loadStored;
+            const bool bFound = builder.TryLoadStoreColorAttachment(m_Name,
+                                                                    loadStored,
+                                                                    RHI::AttachmentLoadOp::Load,
+                                                                    RHI::AttachmentStoreOp::Store,
+                                                                    RHI::ResourceState::RenderTarget,
+                                                                    RHI::ResourceState::ShaderResource);
+            assert(bFound == m_bExpectFound);
+            assert(loadStored.IsValid() == m_bExpectFound);
+            if (m_LoadStored)
+            {
+                *m_LoadStored = loadStored;
+            }
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+    private:
+        Identity m_Name;
+        RGTextureHandle* m_LoadStored = nullptr;
+        bool m_bExpectFound = false;
+    };
+
+    class LoadStoreThenReadColorAttachmentPass final : public IRenderGraphPass
+    {
+    public:
+        explicit LoadStoreThenReadColorAttachmentPass(Identity name)
+            : m_Name(name)
+        {
+        }
+
+        const char* GetName() const override
+        {
+            return "LoadStoreThenReadColorAttachmentPass";
+        }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            RGTextureHandle loadStored;
+            assert(builder.TryLoadStoreColorAttachment(m_Name,
+                                                       loadStored,
+                                                       RHI::AttachmentLoadOp::Load,
+                                                       RHI::AttachmentStoreOp::Store,
+                                                       RHI::ResourceState::RenderTarget,
+                                                       RHI::ResourceState::ShaderResource));
+            builder.Read(loadStored.ToResourceHandle(), RHI::ResourceState::ShaderResource);
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+            assert(false);
+        }
+
+    private:
+        Identity m_Name;
+    };
+
     class ReadTexturePass final : public IRenderGraphPass
     {
     public:
@@ -1010,6 +1129,87 @@ namespace
         std::cout << "TestWriteAdvancesCurrentHead passed\n";
     }
 
+    void TestSamePassReadWriteFailsCompile()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        RGTextureHandle written;
+        SamePassReadWriteTexturePass pass(Identity("Named.SamePassReadWrite"), &written);
+        graph.AddPass(&pass);
+
+        assert(!graph.Compile());
+        assert(written.IsValid());
+
+        std::cout << "TestSamePassReadWriteFailsCompile passed\n";
+    }
+
+    void TestLoadStoreColorAttachmentKeepsCurrentHead()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        const Identity name("Named.LoadStoreSceneColor");
+        RGTextureHandle first;
+        RGTextureHandle loadStored;
+        RGTextureHandle read;
+        WriteTexturePass writePass(name, "LoadStoreSceneColor", &first);
+        LoadStoreColorAttachmentPass loadStorePass(name, &loadStored, true);
+        TryReadTexturePass readPass(name, &read, true);
+        graph.AddPass(&writePass);
+        const uint32_t loadStorePassIndex = graph.AddPass(&loadStorePass);
+        graph.AddPass(&readPass);
+
+        assert(graph.Compile());
+        assert(first.IsValid());
+        assert(loadStored == first);
+        assert(read == first);
+        assert(graph.GetDeclaredPassAccessCount(loadStorePassIndex) == 1);
+
+        uint32_t version = 0;
+        assert(graph.TryGetNamedResourceVersion(name, version));
+        assert(version == 1);
+
+        std::cout << "TestLoadStoreColorAttachmentKeepsCurrentHead passed\n";
+    }
+
+    void TestLoadStoreWithReadFailsCompile()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        const Identity name("Named.LoadStoreMixedRead");
+        RGTextureHandle first;
+        WriteTexturePass writePass(name, "LoadStoreMixedRead", &first);
+        LoadStoreThenReadColorAttachmentPass mixedPass(name);
+        graph.AddPass(&writePass);
+        graph.AddPass(&mixedPass);
+
+        assert(!graph.Compile());
+        assert(first.IsValid());
+
+        std::cout << "TestLoadStoreWithReadFailsCompile passed\n";
+    }
+
+    void TestTryLoadStoreMissingDoesNotFailCompile()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        RGTextureHandle loadStored;
+        LoadStoreColorAttachmentPass pass(Identity("Named.LoadStoreMissing"), &loadStored, false);
+        const uint32_t passIndex = graph.AddPass(&pass);
+
+        assert(graph.Compile());
+        assert(!loadStored.IsValid());
+        assert(graph.GetDeclaredPassAccessCount(passIndex) == 0);
+
+        uint32_t version = 0;
+        assert(!graph.TryGetNamedResourceVersion(Identity("Named.LoadStoreMissing"), version));
+
+        std::cout << "TestTryLoadStoreMissingDoesNotFailCompile passed\n";
+    }
+
     void TestWriteBufferAdvancesCurrentHead()
     {
         RenderGraph graph;
@@ -1286,6 +1486,10 @@ int main()
     TestPublishReadTexture();
     TestDuplicatePublishFails();
     TestWriteAdvancesCurrentHead();
+    TestSamePassReadWriteFailsCompile();
+    TestLoadStoreColorAttachmentKeepsCurrentHead();
+    TestLoadStoreWithReadFailsCompile();
+    TestTryLoadStoreMissingDoesNotFailCompile();
     TestWriteBufferAdvancesCurrentHead();
     TestTryReadTextureAdvancesCurrentHead();
     TestTryReadTextureMissingDoesNotFailCompile();

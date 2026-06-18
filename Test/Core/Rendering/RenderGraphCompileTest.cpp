@@ -1217,20 +1217,19 @@ namespace
         RGResourceHandle resource;
         Container::VariableArray<uint32_t> executed;
 
-        LogicalPass firstRead(0, &executed);
-        firstRead.m_CreateTarget = &resource;
-        firstRead.m_ReadA = &resource;
-        LogicalPass laterWrite(1, &executed);
+        LogicalPass producer(0, &executed);
+        producer.m_CreateTarget = &resource;
+        LogicalPass reader(1, &executed);
+        reader.m_ReadA = &resource;
+        LogicalPass laterWrite(2, &executed);
         laterWrite.m_WriteExisting = &resource;
 
-        graph.AddPass(&firstRead);
+        graph.AddPass(&producer);
+        graph.AddPass(&reader);
         graph.AddPass(&laterWrite);
 
         assert(graph.Compile());
-        const auto& order = graph.GetCompiledPassOrder();
-        assert(order.size() == 2);
-        assert(order[0] == 0);
-        assert(order[1] == 1);
+        AssertOrder(graph.GetCompiledPassOrder(), 0, 1, 2);
     }
 
     void TestImportedResourceBarriers()
@@ -1996,10 +1995,9 @@ namespace
         context.RenderHeight = 64;
 
         assert(graph.Compile(context));
-        assert(graph.GetDeclaredPassAccessCount(forwardPassIndex) == 3);
+        assert(graph.GetDeclaredPassAccessCount(forwardPassIndex) == 2);
 
-        bool bHasSceneColorRead = false;
-        bool bHasSceneColorWrite = false;
+        bool bHasSceneColorLoadStore = false;
         bool bHasDepthRead = false;
         for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(forwardPassIndex); ++accessIndex)
         {
@@ -2007,25 +2005,28 @@ namespace
             RGAccessMode mode = RGAccessMode::Read;
             RHI::ResourceState state = RHI::ResourceState::Undefined;
             RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            bool bColorAttachmentLoadStore = false;
+            RHI::AttachmentLoadOp loadOp = RHI::AttachmentLoadOp::DontCare;
+            RHI::AttachmentStoreOp storeOp = RHI::AttachmentStoreOp::DontCare;
             assert(graph.TryGetDeclaredPassAccess(forwardPassIndex,
                                                   accessIndex,
                                                   resource,
                                                   mode,
                                                   state,
-                                                  finalState));
+                                                  finalState,
+                                                  &bColorAttachmentLoadStore,
+                                                  &loadOp,
+                                                  &storeOp));
 
-            if (resource == lightingPass.GetSceneColorHandle() && mode == RGAccessMode::Read)
+            if (resource == lightingPass.GetSceneColorHandle())
             {
-                assert(state == RHI::ResourceState::ShaderResource);
-                assert(finalState == RHI::ResourceState::ShaderResource);
-                bHasSceneColorRead = true;
-            }
-
-            if (resource == lightingPass.GetSceneColorHandle() && mode == RGAccessMode::Write)
-            {
+                assert(mode == RGAccessMode::Write);
                 assert(state == RHI::ResourceState::RenderTarget);
                 assert(finalState == RHI::ResourceState::ShaderResource);
-                bHasSceneColorWrite = true;
+                assert(bColorAttachmentLoadStore);
+                assert(loadOp == RHI::AttachmentLoadOp::Load);
+                assert(storeOp == RHI::AttachmentStoreOp::Store);
+                bHasSceneColorLoadStore = true;
             }
 
             if (resource == gbufferPass.GetDepthHandle())
@@ -2033,12 +2034,12 @@ namespace
                 assert(mode == RGAccessMode::Read);
                 assert(state == RHI::ResourceState::DepthRead);
                 assert(finalState == RHI::ResourceState::DepthRead);
+                assert(!bColorAttachmentLoadStore);
                 bHasDepthRead = true;
             }
         }
 
-        assert(bHasSceneColorRead);
-        assert(bHasSceneColorWrite);
+        assert(bHasSceneColorLoadStore);
         assert(bHasDepthRead);
 
         const auto& order = graph.GetCompiledPassOrder();
@@ -2393,6 +2394,154 @@ namespace
         }
 
         assert(bHasToneMappedOutputWrite);
+    }
+
+    void TestPostProcessNativeDeclareUsesNamedResourcesWithoutPassPointers()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        GBufferPass gbufferPass;
+        SSAOPass ssaoPass;
+        LightingPass lightingPass;
+        ForwardPass forwardPass(nullptr, nullptr);
+        forwardPass.SetTransparentOnly(true);
+        SSRPass ssrPass;
+        BloomPass bloomPass;
+        ToneMappingPass toneMappingPass;
+
+        const uint32_t gbufferPassIndex = graph.AddPass(&gbufferPass);
+        const uint32_t ssaoPassIndex = graph.AddPass(&ssaoPass);
+        const uint32_t lightingPassIndex = graph.AddPass(&lightingPass);
+        const uint32_t forwardPassIndex = graph.AddPass(&forwardPass);
+        const uint32_t ssrPassIndex = graph.AddPass(&ssrPass);
+        const uint32_t bloomPassIndex = graph.AddPass(&bloomPass);
+        const uint32_t toneMappingPassIndex = graph.AddPass(&toneMappingPass);
+
+        ViewRenderContext context;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        assert(graph.GetDeclaredPassAccessCount(forwardPassIndex) == 2);
+        assert(graph.GetDeclaredPassAccessCount(ssrPassIndex) == 5);
+        assert(graph.GetDeclaredPassAccessCount(bloomPassIndex) == 2);
+        assert(graph.GetDeclaredPassAccessCount(toneMappingPassIndex) == 2);
+
+        auto hasAccess = [&graph](uint32_t passIndex,
+                                  RGResourceHandle expected,
+                                  RGAccessMode expectedMode,
+                                  RHI::ResourceState expectedState,
+                                  RHI::ResourceState expectedFinalState) -> bool
+        {
+            for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(passIndex); ++accessIndex)
+            {
+                RGResourceHandle resource;
+                RGAccessMode mode = RGAccessMode::Read;
+                RHI::ResourceState state = RHI::ResourceState::Undefined;
+                RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+                assert(graph.TryGetDeclaredPassAccess(passIndex,
+                                                      accessIndex,
+                                                      resource,
+                                                      mode,
+                                                      state,
+                                                      finalState));
+                if (resource == expected)
+                {
+                    return mode == expectedMode &&
+                           state == expectedState &&
+                           finalState == expectedFinalState;
+                }
+            }
+
+            return false;
+        };
+
+        assert(hasAccess(forwardPassIndex,
+                         lightingPass.GetSceneColorHandle(),
+                         RGAccessMode::Write,
+                         RHI::ResourceState::RenderTarget,
+                         RHI::ResourceState::ShaderResource));
+        assert(hasAccess(ssrPassIndex,
+                         lightingPass.GetSceneColorHandle(),
+                         RGAccessMode::Read,
+                         RHI::ResourceState::ShaderResource,
+                         RHI::ResourceState::ShaderResource));
+        assert(hasAccess(bloomPassIndex,
+                         ssrPass.GetSceneColorHandle(),
+                         RGAccessMode::Read,
+                         RHI::ResourceState::ShaderResource,
+                         RHI::ResourceState::ShaderResource));
+        assert(hasAccess(toneMappingPassIndex,
+                         bloomPass.GetSceneColorHandle(),
+                         RGAccessMode::Read,
+                         RHI::ResourceState::ShaderResource,
+                         RHI::ResourceState::ShaderResource));
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 7);
+        assert(order[0] == gbufferPassIndex);
+        assert(order[1] == ssaoPassIndex);
+        assert(order[2] == lightingPassIndex);
+        assert(order[3] == forwardPassIndex);
+        assert(order[4] == ssrPassIndex);
+        assert(order[5] == bloomPassIndex);
+        assert(order[6] == toneMappingPassIndex);
+    }
+
+    void TestPostProcessMissingNamedInputsCompileWithoutErrors()
+    {
+        ViewRenderContext context;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        {
+            RenderGraph graph;
+            assert(graph.Initialize(nullptr));
+
+            ForwardPass forwardPass(nullptr, nullptr);
+            forwardPass.SetTransparentOnly(true);
+            const uint32_t passIndex = graph.AddPass(&forwardPass);
+
+            assert(graph.Compile(context));
+            assert(graph.GetDeclaredPassAccessCount(passIndex) == 0);
+        }
+
+        {
+            RenderGraph graph;
+            assert(graph.Initialize(nullptr));
+
+            SSRPass ssrPass;
+            const uint32_t passIndex = graph.AddPass(&ssrPass);
+
+            assert(graph.Compile(context));
+            assert(graph.GetDeclaredPassAccessCount(passIndex) == 1);
+            assert(ssrPass.GetSceneColorHandle().IsValid());
+        }
+
+        {
+            RenderGraph graph;
+            assert(graph.Initialize(nullptr));
+
+            BloomPass bloomPass;
+            const uint32_t passIndex = graph.AddPass(&bloomPass);
+
+            assert(graph.Compile(context));
+            assert(graph.GetDeclaredPassAccessCount(passIndex) == 1);
+            assert(bloomPass.GetSceneColorHandle().IsValid());
+        }
+
+        {
+            RenderGraph graph;
+            assert(graph.Initialize(nullptr));
+
+            ToneMappingPass toneMappingPass;
+            const uint32_t passIndex = graph.AddPass(&toneMappingPass);
+
+            assert(graph.Compile(context));
+            assert(graph.GetDeclaredPassAccessCount(passIndex) == 1);
+            assert(toneMappingPass.GetToneMappedColorHandle().IsValid());
+        }
     }
 
     void TestFXAANativeDeclareDependencies()
@@ -3053,7 +3202,12 @@ namespace
         context.Resources.Meshes = &renderResources.Meshes();
 
         assert(graph.Compile(context));
-        assert(graph.Execute(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+        assert(result.TextureOutputs.empty());
+        RHI::TexturePtr exportedTexture;
+        assert(!result.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, exportedTexture));
+        assert(exportedTexture == nullptr);
 
         RenderGraphResources graphResources(&graph);
         RHI::TexturePtr toneMappedOutput = graphResources.GetTexture(toneMappingPass.GetToneMappedColorHandle());
@@ -3585,6 +3739,8 @@ int main()
     TestSSRNativeDeclareDependencies();
     TestBloomNativeDeclareDependencies();
     TestToneMappingNativeDeclareDependencies();
+    TestPostProcessNativeDeclareUsesNamedResourcesWithoutPassPointers();
+    TestPostProcessMissingNamedInputsCompileWithoutErrors();
     TestFXAANativeDeclareDependencies();
     TestUpscaleNativeDeclareDependencies();
     TestShadowMapNativeExecuteRegistersBridge();
