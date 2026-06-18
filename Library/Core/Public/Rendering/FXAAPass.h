@@ -74,6 +74,7 @@ namespace NorvesLib::Core::Rendering
 
         void SetInputPass(const ToneMappingPass* inputPass) { m_InputPass = inputPass; }
         RGResourceHandle GetToneMappedColorHandle() const { return m_OutputHandle; }
+        RGTextureHandle GetToneMappedColorTextureHandle() const { return m_OutputTextureHandle; }
 
         /**
          * @brief FXAA有効/無効を切り替え
@@ -93,11 +94,14 @@ namespace NorvesLib::Core::Rendering
         void ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& inputTexture);
         bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
 
+    protected:
         // 設定
         FXAASettings m_Settings;
 
         // 出力テクスチャ
         RHI::TexturePtr m_OutputTexture;
+        RGResourceHandle m_InputToneMappedHandle;
+        RGTextureHandle m_OutputTextureHandle;
         RGResourceHandle m_OutputHandle;
 
         // パイプラインリソース

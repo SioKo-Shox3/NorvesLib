@@ -1119,6 +1119,31 @@ namespace
         RGResourceHandle* m_TextureHandle = nullptr;
     };
 
+    class LegacyFXAAProducerPass final : public FXAAPass
+    {
+    public:
+        const char* GetName() const override { return "LegacyFXAAProducerPass"; }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            const ViewRenderContext* context = builder.GetContext();
+            const uint32_t width = context ? context->GetActiveRenderWidth() : 1u;
+            const uint32_t height = context ? context->GetActiveRenderHeight() : 1u;
+
+            m_OutputTextureHandle = builder.CreateTextureHandle(
+                RGTextureDesc::RenderTarget(width, height, RHI::Format::R8G8B8A8_UNORM, "LegacyFXAAOutput"));
+            m_OutputHandle = m_OutputTextureHandle.ToResourceHandle();
+            builder.Write(m_OutputHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+            builder.PreserveInsertionOrder();
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+    };
+
     void AssertOrder(const Container::VariableArray<uint32_t>& order,
                      uint32_t a,
                      uint32_t b,
@@ -3204,14 +3229,13 @@ namespace
         assert(graph.Compile(context));
         RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
         assert(result.bSuccess);
-        assert(result.TextureOutputs.empty());
-        RHI::TexturePtr exportedTexture;
-        assert(!result.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, exportedTexture));
-        assert(exportedTexture == nullptr);
 
         RenderGraphResources graphResources(&graph);
         RHI::TexturePtr toneMappedOutput = graphResources.GetTexture(toneMappingPass.GetToneMappedColorHandle());
         assert(toneMappedOutput);
+        RHI::TexturePtr exportedTexture;
+        assert(result.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, exportedTexture));
+        assert(exportedTexture.get() == toneMappedOutput.get());
 
         assert(graph.GetLastExecutedPassCount() == 7);
         assert(commandList.BeginRenderPassCount == commandList.EndRenderPassCount);
@@ -3313,11 +3337,15 @@ namespace
         context.Resources.Meshes = &renderResources.Meshes();
 
         assert(graph.Compile(context));
-        assert(graph.Execute(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
 
         RenderGraphResources graphResources(&graph);
         RHI::TexturePtr fxaaOutput = graphResources.GetTexture(fxaaPass.GetToneMappedColorHandle());
         assert(fxaaOutput);
+        RHI::TexturePtr exportedTexture;
+        assert(result.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, exportedTexture));
+        assert(exportedTexture.get() == fxaaOutput.get());
 
         assert(graph.GetLastExecutedPassCount() == 8);
         assert(commandList.BeginRenderPassCount == commandList.EndRenderPassCount);
@@ -3425,11 +3453,15 @@ namespace
         context.Resources.Meshes = &renderResources.Meshes();
 
         assert(graph.Compile(context));
-        assert(graph.Execute(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
 
         RenderGraphResources graphResources(&graph);
         RHI::TexturePtr presentationOutput = graphResources.GetTexture(upscalePass.GetPresentationColorHandle());
         assert(presentationOutput);
+        RHI::TexturePtr exportedTexture;
+        assert(result.TryGetTexture(RenderGraphResourceNames::PresentationColor, exportedTexture));
+        assert(exportedTexture.get() == presentationOutput.get());
 
         assert(graph.GetLastExecutedPassCount() == 9);
         assert(commandList.BeginRenderPassCount == commandList.EndRenderPassCount);
@@ -3450,6 +3482,192 @@ namespace
         gbufferPass.Shutdown();
         renderer.Shutdown();
         renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestUpscaleNativeExecuteExportsPresentationAliasWhenNoUpscale()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        SceneView sceneView;
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        SSAOPass ssaoPass;
+        ssaoPass.SetGBufferPass(&gbufferPass);
+        LightingPass lightingPass;
+        lightingPass.SetGBufferPass(&gbufferPass);
+        lightingPass.SetSSAOPass(&ssaoPass);
+        ForwardPass forwardPass(&sceneView, &renderer);
+        forwardPass.SetTransparentOnly(true);
+        forwardPass.SetRegisterOutputs(false);
+        forwardPass.SetLightingPass(&lightingPass);
+        forwardPass.SetGBufferPass(&gbufferPass);
+        SSRPass ssrPass;
+        ssrPass.SetGBufferPass(&gbufferPass);
+        ssrPass.SetLightingPass(&lightingPass);
+        BloomPass bloomPass;
+        bloomPass.SetInputPass(&ssrPass);
+        ToneMappingPass toneMappingPass;
+        toneMappingPass.SetInputPass(&bloomPass);
+        FXAAPass fxaaPass;
+        fxaaPass.SetInputPass(&toneMappingPass);
+        UpscalePass upscalePass;
+        upscalePass.SetInputPass(&fxaaPass);
+
+        graph.AddPass(&gbufferPass);
+        graph.AddPass(&ssaoPass);
+        graph.AddPass(&lightingPass);
+        graph.AddPass(&forwardPass);
+        graph.AddPass(&ssrPass);
+        graph.AddPass(&bloomPass);
+        graph.AddPass(&toneMappingPass);
+        graph.AddPass(&fxaaPass);
+        graph.AddPass(&upscalePass);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<DrawCommand> transparentCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.ScreenWidth = 128;
+        context.ScreenHeight = 64;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotTransparentCommands = DrawCommandView::FromArray(transparentCommands);
+        context.Resources.Textures = &renderResources.Textures();
+        context.Resources.Materials = &renderResources.Materials();
+        context.Resources.Meshes = &renderResources.Meshes();
+
+        assert(graph.Compile(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr fxaaOutput = graphResources.GetTexture(fxaaPass.GetToneMappedColorHandle());
+        assert(fxaaOutput);
+        RHI::TexturePtr presentationOutput = graphResources.GetTexture(upscalePass.GetPresentationColorHandle());
+        assert(presentationOutput.get() == fxaaOutput.get());
+        RHI::TexturePtr exportedTexture;
+        assert(result.TryGetTexture(RenderGraphResourceNames::PresentationColor, exportedTexture));
+        assert(exportedTexture.get() == fxaaOutput.get());
+
+        assert(graph.GetLastExecutedPassCount() == 9);
+        assert(commandList.BeginRenderPassCount == commandList.EndRenderPassCount);
+        assert(commandList.BeginRenderPassCount > 0);
+        assert(commandList.DrawCallCount > 0);
+        assert(pendingFrameCommands.empty());
+        assert(sharedResources.HasTexture("PresentationColor"));
+        assert(sharedResources.GetTexturePtr("PresentationColor").get() == fxaaOutput.get());
+
+        upscalePass.Shutdown();
+        fxaaPass.Shutdown();
+        toneMappingPass.Shutdown();
+        bloomPass.Shutdown();
+        ssrPass.Shutdown();
+        forwardPass.Shutdown();
+        lightingPass.Shutdown();
+        ssaoPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestUpscaleNativeExecuteExportsPresentationAliasFromInputPassFallback()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        LegacyFXAAProducerPass legacyFXAAPass;
+        UpscalePass upscalePass;
+        upscalePass.SetInputPass(&legacyFXAAPass);
+
+        graph.AddPass(&legacyFXAAPass);
+        graph.AddPass(&upscalePass);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.ScreenWidth = 128;
+        context.ScreenHeight = 64;
+
+        assert(graph.Compile(context));
+        uint32_t toneMappedVersion = 0;
+        assert(!graph.TryGetNamedResourceVersion(RenderGraphResourceNames::ToneMappedColor, toneMappedVersion));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr inputTexture = graphResources.GetTexture(legacyFXAAPass.GetToneMappedColorHandle());
+        assert(inputTexture);
+        RHI::TexturePtr presentationTexture = graphResources.GetTexture(upscalePass.GetPresentationColorHandle());
+        assert(presentationTexture.get() == inputTexture.get());
+        RHI::TexturePtr exportedTexture;
+        assert(result.TryGetTexture(RenderGraphResourceNames::PresentationColor, exportedTexture));
+        assert(exportedTexture.get() == inputTexture.get());
+
+        assert(graph.GetLastExecutedPassCount() == 2);
+        assert(pendingFrameCommands.empty());
+        assert(sharedResources.HasTexture("PresentationColor"));
+        assert(sharedResources.GetTexturePtr("PresentationColor").get() == inputTexture.get());
+
+        upscalePass.Shutdown();
+        legacyFXAAPass.Shutdown();
         graph.Shutdown();
         pool.EndFrame();
         pool.Shutdown();
@@ -3756,9 +3974,10 @@ int main()
     TestToneMappingNativeExecuteRegistersToneMappedBridge();
     TestFXAANativeExecuteRegistersToneMappedBridge();
     TestUpscaleNativeExecuteRegistersPresentationBridge();
+    TestUpscaleNativeExecuteExportsPresentationAliasWhenNoUpscale();
+    TestUpscaleNativeExecuteExportsPresentationAliasFromInputPassFallback();
     TestToneMappingNativeExecuteAcceptsRawSceneColorBridge();
 
     std::cout << "RenderGraphCompileTest passed\n";
     return 0;
 }
-

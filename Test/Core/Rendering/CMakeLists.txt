@@ -150,6 +150,16 @@ target_include_directories(RenderFrameExecutorPlanTest PRIVATE
 set_target_properties(RenderFrameExecutorPlanTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderFrameExecutorPlanTest COMMAND RenderFrameExecutorPlanTest)
 
+add_executable(PresentationComposerTest
+    PresentationComposerTest.cpp
+)
+target_link_libraries(PresentationComposerTest PRIVATE Core)
+target_include_directories(PresentationComposerTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(PresentationComposerTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME PresentationComposerTest COMMAND PresentationComposerTest)
+
 add_executable(RenderGraphCompileTest
     RenderGraphCompileTest.cpp
 )
