@@ -524,9 +524,6 @@ namespace
             assert(builder.TryGetTexture(m_Name, found));
             assert(found == texture);
 
-            RGTextureHandle read = builder.ReadTexture(m_Name);
-            assert(read == texture);
-
             if (m_Published)
             {
                 *m_Published = texture;
@@ -534,7 +531,7 @@ namespace
 
             if (m_Read)
             {
-                *m_Read = read;
+                *m_Read = found;
             }
         }
 
@@ -1087,7 +1084,7 @@ namespace
         assert(graph.Compile());
         assert(published.IsValid());
         assert(read == published);
-        assert(graph.GetDeclaredPassAccessCount(0) == 1);
+        assert(graph.GetDeclaredPassAccessCount(0) == 0);
 
         std::cout << "TestPublishReadTexture passed\n";
     }
@@ -1403,6 +1400,13 @@ namespace
         graph.AddPass(&pass);
 
         assert(graph.Compile());
+        RGCompiledResourceLifetime lifetime;
+        assert(graph.TryGetCompiledResourceLifetime(exported.ToResourceHandle(), lifetime));
+        assert(!lifetime.bHasUse);
+        assert(lifetime.bExported);
+        assert(lifetime.bPinnedUntilGraphEnd);
+        assert(lifetime.LifetimeEndOrderIndex == graph.GetCompiledPassOrder().size());
+        assert(graph.GetTransientAllocationPlan().empty());
 
         ViewRenderContext context;
         RenderGraphExecutionResult result = graph.ExecuteWithResult(context);

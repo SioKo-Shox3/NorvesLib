@@ -186,6 +186,33 @@ namespace NorvesLib::Core::Rendering
                                                             finalState);
     }
 
+    bool RenderGraphBuilder::LoadStoreColorAttachment(RGResourceHandle handle,
+                                                      RHI::AttachmentLoadOp loadOp,
+                                                      RHI::AttachmentStoreOp storeOp,
+                                                      RHI::ResourceState state,
+                                                      RHI::ResourceState finalState)
+    {
+        if (!m_Graph)
+        {
+            return false;
+        }
+
+        if (!m_Graph->ValidateHandle(handle) ||
+            m_Graph->m_Resources[handle.Index].Kind != RGResourceKind::Texture)
+        {
+            m_Graph->MarkGraphError();
+            return false;
+        }
+
+        m_Graph->AddColorAttachmentLoadStoreAccess(m_PassIndex,
+                                                   handle,
+                                                   loadOp,
+                                                   storeOp,
+                                                   state,
+                                                   finalState);
+        return true;
+    }
+
     RGBufferHandle RenderGraphBuilder::ReadBuffer(Identity name, RHI::ResourceState state)
     {
         return m_Graph ? m_Graph->ReadBufferResource(m_PassIndex, name, state) : RGBufferHandle{};
@@ -388,6 +415,7 @@ namespace NorvesLib::Core::Rendering
             if (!pass)
             {
                 NORVES_LOG_ERROR("RenderGraph", "Null pass at index %u", passIndex);
+                ClearCompiledProducts();
                 return false;
             }
 
@@ -397,15 +425,13 @@ namespace NorvesLib::Core::Rendering
 
         if (m_bHasGraphError)
         {
-            m_CompiledPassOrder.clear();
-            m_CompiledBarriers.clear();
+            ClearCompiledProducts();
             return false;
         }
 
         if (!ValidatePassAccesses())
         {
-            m_CompiledPassOrder.clear();
-            m_CompiledBarriers.clear();
+            ClearCompiledProducts();
             return false;
         }
 
@@ -413,14 +439,24 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<uint32_t> indegree;
         if (!BuildDependencyGraph(adjacency, indegree))
         {
+            ClearCompiledProducts();
             return false;
         }
 
         if (!TopologicalSort(adjacency, indegree))
         {
+            ClearCompiledProducts();
             return false;
         }
 
+        BuildResourceLifetimes();
+        if (!ValidateResourceLifetimes())
+        {
+            ClearCompiledProducts();
+            return false;
+        }
+
+        BuildTransientAllocationPlan();
         BuildBarriers();
         m_bCompiled = true;
         return true;
@@ -463,6 +499,13 @@ namespace NorvesLib::Core::Rendering
             }
 
             FlushPendingFrameCommands(context);
+            if (!AcquireTransientResourcesForOrderIndex(orderIndex))
+            {
+                result.ExecutedPassCount = m_LastExecutedPassCount;
+                m_LastExecutionResult = result;
+                return result;
+            }
+
             while (nextBarrierIndex < m_CompiledBarriers.size() &&
                    m_CompiledBarriers[nextBarrierIndex].CompiledOrderIndex == orderIndex)
             {
@@ -997,6 +1040,27 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool RenderGraph::TryGetCompiledResourceLifetime(RGResourceHandle handle,
+                                                     RGCompiledResourceLifetime& outLifetime) const
+    {
+        outLifetime = RGCompiledResourceLifetime{};
+        if (!ValidateHandle(handle))
+        {
+            return false;
+        }
+
+        for (const RGCompiledResourceLifetime& lifetime : m_CompiledResourceLifetimes)
+        {
+            if (lifetime.Resource == handle)
+            {
+                outLifetime = lifetime;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     bool RenderGraph::TryGetDeclaredPassAccess(uint32_t passIndex,
                                                uint32_t accessIndex,
                                                RGResourceHandle& outResource,
@@ -1308,6 +1372,169 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    void RenderGraph::BuildResourceLifetimes()
+    {
+        m_CompiledResourceLifetimes.clear();
+        m_CompiledResourceLifetimes.reserve(m_Resources.size());
+
+        for (const RGResourceRecord& resource : m_Resources)
+        {
+            RGCompiledResourceLifetime lifetime;
+            lifetime.Resource = resource.Handle;
+            lifetime.Kind = resource.Kind;
+            lifetime.Lifetime = resource.Lifetime;
+            lifetime.DebugName = resource.DebugName;
+            m_CompiledResourceLifetimes.push_back(lifetime);
+        }
+
+        for (uint32_t orderIndex = 0; orderIndex < m_CompiledPassOrder.size(); ++orderIndex)
+        {
+            const uint32_t passIndex = m_CompiledPassOrder[orderIndex];
+            if (passIndex >= m_PassDeclarations.size())
+            {
+                continue;
+            }
+
+            const RGPassDeclaration& declaration = m_PassDeclarations[passIndex];
+            for (const RGPassAccess& access : declaration.Accesses)
+            {
+                if (!ValidateHandle(access.Resource) ||
+                    access.Resource.Index >= m_CompiledResourceLifetimes.size())
+                {
+                    continue;
+                }
+
+                RGCompiledResourceLifetime& lifetime = m_CompiledResourceLifetimes[access.Resource.Index];
+                if (!lifetime.bHasUse)
+                {
+                    lifetime.FirstUsePassIndex = passIndex;
+                    lifetime.FirstUseOrderIndex = orderIndex;
+                    lifetime.bHasUse = true;
+                }
+
+                lifetime.LastUsePassIndex = passIndex;
+                lifetime.LastUseOrderIndex = orderIndex;
+            }
+        }
+
+        for (const auto& exportEntry : m_TextureExports)
+        {
+            const RGResourceHandle resource = exportEntry.second.ToResourceHandle();
+            if (!ValidateHandle(resource) ||
+                resource.Index >= m_CompiledResourceLifetimes.size())
+            {
+                continue;
+            }
+
+            RGCompiledResourceLifetime& lifetime = m_CompiledResourceLifetimes[resource.Index];
+            lifetime.bExported = true;
+            lifetime.bPinnedUntilGraphEnd = true;
+        }
+
+        const uint32_t graphEndOrderIndex = static_cast<uint32_t>(m_CompiledPassOrder.size());
+        for (RGCompiledResourceLifetime& lifetime : m_CompiledResourceLifetimes)
+        {
+            if (lifetime.bPinnedUntilGraphEnd)
+            {
+                lifetime.LifetimeEndOrderIndex = graphEndOrderIndex;
+                continue;
+            }
+
+            if (lifetime.bHasUse)
+            {
+                lifetime.LifetimeEndOrderIndex = lifetime.LastUseOrderIndex;
+                continue;
+            }
+
+            NORVES_LOG_WARNING("RenderGraph",
+                               "Resource '%s' was declared but not used or exported",
+                               lifetime.DebugName ? lifetime.DebugName : "<unnamed>");
+        }
+    }
+
+    bool RenderGraph::ValidateResourceLifetimes() const
+    {
+        Container::VariableArray<bool> bHasReadableContents;
+        bHasReadableContents.reserve(m_Resources.size());
+        for (const RGResourceRecord& resource : m_Resources)
+        {
+            bHasReadableContents.push_back(resource.Lifetime == RGResourceLifetime::Imported ||
+                                           resource.Lifetime == RGResourceLifetime::Logical);
+        }
+
+        for (uint32_t orderIndex = 0; orderIndex < m_CompiledPassOrder.size(); ++orderIndex)
+        {
+            const uint32_t passIndex = m_CompiledPassOrder[orderIndex];
+            if (passIndex >= m_PassDeclarations.size())
+            {
+                NORVES_LOG_ERROR("RenderGraph", "Invalid compiled pass order entry %u", passIndex);
+                return false;
+            }
+
+            const RGPassDeclaration& declaration = m_PassDeclarations[passIndex];
+            for (const RGPassAccess& access : declaration.Accesses)
+            {
+                if (!ValidateHandle(access.Resource))
+                {
+                    NORVES_LOG_ERROR("RenderGraph", "Invalid resource handle in compiled lifetime validation");
+                    return false;
+                }
+
+                const RGResourceRecord& resource = m_Resources[access.Resource.Index];
+                if (resource.Lifetime == RGResourceLifetime::Logical)
+                {
+                    continue;
+                }
+
+                const bool bRequiresReadableContents =
+                    access.Mode == RGAccessMode::Read ||
+                    (access.bColorAttachmentLoadStore && access.LoadOp == RHI::AttachmentLoadOp::Load);
+                if (resource.Lifetime == RGResourceLifetime::Transient &&
+                    bRequiresReadableContents &&
+                    !bHasReadableContents[access.Resource.Index])
+                {
+                    NORVES_LOG_ERROR("RenderGraph",
+                                     "Transient resource '%s' is read before it has been written",
+                                     resource.DebugName ? resource.DebugName : "<unnamed>");
+                    return false;
+                }
+
+                if (access.Mode == RGAccessMode::Write)
+                {
+                    bHasReadableContents[access.Resource.Index] = true;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    void RenderGraph::BuildTransientAllocationPlan()
+    {
+        m_TransientAllocationPlan.clear();
+
+        for (const RGCompiledResourceLifetime& lifetime : m_CompiledResourceLifetimes)
+        {
+            if (!lifetime.bHasUse ||
+                lifetime.Lifetime != RGResourceLifetime::Transient ||
+                (lifetime.Kind != RGResourceKind::Texture && lifetime.Kind != RGResourceKind::Buffer))
+            {
+                continue;
+            }
+
+            RGTransientAllocationStep step;
+            step.Resource = lifetime.Resource;
+            step.Kind = lifetime.Kind;
+            step.AcquireBeforePassIndex = lifetime.FirstUsePassIndex;
+            step.AcquireBeforeOrderIndex = lifetime.FirstUseOrderIndex;
+            step.ReleaseAfterPassIndex = lifetime.bPinnedUntilGraphEnd ? RGInvalidPassIndex : lifetime.LastUsePassIndex;
+            step.ReleaseAfterOrderIndex = lifetime.LifetimeEndOrderIndex;
+            step.bPinnedUntilGraphEnd = lifetime.bPinnedUntilGraphEnd;
+            step.DebugName = lifetime.DebugName;
+            m_TransientAllocationPlan.push_back(step);
+        }
+    }
+
     void RenderGraph::BuildBarriers()
     {
         m_CompiledBarriers.clear();
@@ -1354,6 +1581,55 @@ namespace NorvesLib::Core::Rendering
                 currentStates[access.Resource.Index] = access.FinalState;
             }
         }
+    }
+
+    bool RenderGraph::AcquireTransientResourcesForOrderIndex(uint32_t orderIndex)
+    {
+        for (const RGTransientAllocationStep& step : m_TransientAllocationPlan)
+        {
+            if (step.AcquireBeforeOrderIndex != orderIndex)
+            {
+                continue;
+            }
+
+            if (!ValidateHandle(step.Resource))
+            {
+                NORVES_LOG_ERROR("RenderGraph", "Invalid transient allocation step resource");
+                return false;
+            }
+
+            RGResourceRecord& resource = m_Resources[step.Resource.Index];
+            if (!AcquireTransientResource(resource))
+            {
+                NORVES_LOG_ERROR("RenderGraph",
+                                 "Failed to acquire transient resource '%s' before pass %u",
+                                 step.DebugName ? step.DebugName : "<unnamed>",
+                                 step.AcquireBeforePassIndex);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool RenderGraph::AcquireTransientResource(RGResourceRecord& resource)
+    {
+        if (resource.Lifetime != RGResourceLifetime::Transient)
+        {
+            return true;
+        }
+
+        if (resource.Kind == RGResourceKind::Texture)
+        {
+            return ResolveTexture(resource.Handle) != nullptr;
+        }
+
+        if (resource.Kind == RGResourceKind::Buffer)
+        {
+            return ResolveBuffer(resource.Handle) != nullptr;
+        }
+
+        return true;
     }
 
     bool RenderGraph::ExecuteBarrier(const RGCompiledBarrier& barrier, ViewRenderContext& context)
@@ -1563,8 +1839,7 @@ namespace NorvesLib::Core::Rendering
     {
         m_Resources.clear();
         m_PassDeclarations.clear();
-        m_CompiledPassOrder.clear();
-        m_CompiledBarriers.clear();
+        ClearCompiledProducts();
         m_NamedResources.clear();
         m_TextureExports.clear();
         m_LastExecutionResult = RenderGraphExecutionResult{};
@@ -1577,6 +1852,15 @@ namespace NorvesLib::Core::Rendering
         {
             m_HandleGeneration = 1;
         }
+    }
+
+    void RenderGraph::ClearCompiledProducts()
+    {
+        m_CompiledPassOrder.clear();
+        m_CompiledBarriers.clear();
+        m_CompiledResourceLifetimes.clear();
+        m_TransientAllocationPlan.clear();
+        m_bCompiled = false;
     }
 
     bool RenderGraph::HasResourceUsage(RHI::ResourceUsage usage, RHI::ResourceUsage flag) const

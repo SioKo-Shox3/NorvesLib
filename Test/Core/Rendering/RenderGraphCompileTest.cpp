@@ -2770,6 +2770,13 @@ namespace
         assert(order[7] == fxaaPassIndex);
         assert(order[8] == upscalePassIndex);
 
+        RGCompiledResourceLifetime presentationLifetime;
+        assert(graph.TryGetCompiledResourceLifetime(upscalePass.GetPresentationColorHandle(),
+                                                    presentationLifetime));
+        assert(presentationLifetime.bExported);
+        assert(presentationLifetime.bPinnedUntilGraphEnd);
+        assert(presentationLifetime.LifetimeEndOrderIndex == graph.GetCompiledPassOrder().size());
+
         bool bHasPresentationOutputWrite = false;
         for (const RGCompiledBarrier& barrier : graph.GetCompiledBarriers())
         {
