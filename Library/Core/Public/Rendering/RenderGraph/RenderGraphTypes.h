@@ -2,6 +2,7 @@
 
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/RHITypes.h"
+#include "Text/IdentityPool.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -37,6 +38,18 @@ namespace NorvesLib::Core::Rendering
     {
         Texture,
         Buffer,
+    };
+
+    enum class RGAttachmentKind : uint8_t
+    {
+        Color,
+        DepthStencil,
+    };
+
+    enum class RGAttachmentMutability : uint8_t
+    {
+        ReadOnly,
+        Write,
     };
 
     struct RGResourceHandle
@@ -176,6 +189,9 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle Resource;
         RHI::ResourceState BeforeState = RHI::ResourceState::Undefined;
         RHI::ResourceState AfterState = RHI::ResourceState::Undefined;
+        const char* PassName = nullptr;
+        const char* ResourceDebugName = nullptr;
+        Identity NamedResourceIdentity;
         uint32_t PassIndex = RGInvalidPassIndex;
         uint32_t CompiledOrderIndex = RGInvalidPassIndex;
         uint32_t MipLevel = 0;

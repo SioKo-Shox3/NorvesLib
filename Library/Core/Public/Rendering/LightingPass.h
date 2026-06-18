@@ -67,15 +67,15 @@ namespace NorvesLib::Core::Rendering
          * @brief コンストラクタ
          * @param settings ライティングパス設定
          */
-        explicit LightingPass(const LightingPassSettings &settings = LightingPassSettings{});
+        explicit LightingPass(const LightingPassSettings& settings = LightingPassSettings{});
 
         /**
          * @brief SceneViewを設定
          * @param sceneView SceneView参照（LightProxy取得用）
          */
-        void SetSceneView(SceneView *sceneView) { m_SceneView = sceneView; }
-        void SetGBufferPass(const GBufferPass *gbufferPass) { m_GBufferPass = gbufferPass; }
-        void SetSSAOPass(const SSAOPass *ssaoPass) { m_SSAOPass = ssaoPass; }
+        void SetSceneView(SceneView* sceneView) { m_SceneView = sceneView; }
+        void SetGBufferPass(const GBufferPass* gbufferPass) { m_GBufferPass = gbufferPass; }
+        void SetSSAOPass(const SSAOPass* ssaoPass) { m_SSAOPass = ssaoPass; }
 
         /**
          * @brief デストラクタ
@@ -86,19 +86,19 @@ namespace NorvesLib::Core::Rendering
         // IViewPass実装
         // ========================================
 
-        const char *GetName() const override { return "LightingPass"; }
+        const char* GetName() const override { return "LightingPass"; }
 
-        bool Initialize(ViewRenderContext &context) override;
+        bool Initialize(ViewRenderContext& context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext &context) override;
-        void Execute(ViewRenderContext &context) override;
+        void Setup(ViewRenderContext& context) override;
+        void Execute(ViewRenderContext& context) override;
 
         // ========================================
         // IRenderGraphPass実装
         // ========================================
 
         void Declare(RenderGraphBuilder &builder) override;
-        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
 
         // ========================================
         // 出力アクセス
@@ -107,7 +107,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief HDRシーンカラーテクスチャを取得
          */
-        RHI::ITexture *GetSceneColorTexture() const { return m_SceneColorTexture.get(); }
+        RHI::ITexture* GetSceneColorTexture() const { return m_SceneColorTexture.get(); }
         RGResourceHandle GetSceneColorHandle() const { return m_SceneColorHandle.ToResourceHandle(); }
 
     private:
@@ -117,40 +117,68 @@ namespace NorvesLib::Core::Rendering
          * @param bShadowAvailable シャドウマップが利用可能か
          * @param bSSAOAvailable SSAOテクスチャが利用可能か
          */
-        void UpdateLightBuffer(ViewRenderContext &context, bool bShadowAvailable, bool bSSAOAvailable);
+        void UpdateLightBuffer(ViewRenderContext& context, bool bShadowAvailable, bool bSSAOAvailable);
 
-        uint32_t ResolveLightingWidth(const ViewRenderContext &context) const;
-        uint32_t ResolveLightingHeight(const ViewRenderContext &context) const;
-        bool CreateLightingResources(uint32_t width, uint32_t height, ViewRenderContext &context);
+        uint32_t ResolveLightingWidth(const ViewRenderContext& context) const;
+        uint32_t ResolveLightingHeight(const ViewRenderContext& context) const;
+        bool CreateLightingResources(uint32_t width, uint32_t height, ViewRenderContext& context);
         bool PrepareLightingOutput(uint32_t width,
                                    uint32_t height,
-                                   const RHI::TexturePtr &sceneColorTexture,
+                                   const RHI::TexturePtr& sceneColorTexture,
                                    bool bUseRenderGraphInitialState,
-                                   ViewRenderContext &context);
-        bool EnsureLightingRenderPass(bool bUseRenderGraphInitialState);
+                                   ViewRenderContext& context);
+        struct AttachmentSignature
+        {
+            RGAttachmentKind Kind = RGAttachmentKind::Color;
+            RHI::Format Format = RHI::Format::UNKNOWN;
+            RHI::AttachmentLoadOp LoadOp = RHI::AttachmentLoadOp::DontCare;
+            RHI::AttachmentStoreOp StoreOp = RHI::AttachmentStoreOp::Store;
+            RHI::ResourceState InitialState = RHI::ResourceState::Undefined;
+            RHI::ResourceState FinalState = RHI::ResourceState::Undefined;
+            RHI::ITexture* Target = nullptr;
+            uint32_t Width = 0;
+            uint32_t Height = 0;
+            bool bDepthReadOnly = false;
+        };
+
+        struct RenderPassSignature
+        {
+            AttachmentSignature SceneColor;
+            bool bValid = false;
+        };
+
+        bool AttachmentSignatureEquals(const AttachmentSignature& lhs,
+                                       const AttachmentSignature& rhs) const;
+        bool RenderPassSignatureEquals(const RenderPassSignature& lhs,
+                                       const RenderPassSignature& rhs) const;
+        RenderPassSignature CreateLightingRenderPassSignature(uint32_t width,
+                                                              uint32_t height,
+                                                              const RHI::TexturePtr& sceneColorTexture,
+                                                              bool bUseRenderGraphInitialState) const;
+        bool EnsureLightingRenderPass(const RenderPassSignature& signature);
         bool EnsureLightingFramebuffer(uint32_t width,
                                        uint32_t height,
-                                       const RHI::TexturePtr &sceneColorTexture);
+                                       const RHI::TexturePtr& sceneColorTexture);
         bool EnsureLightingDescriptorSet();
         bool EnsureLightingPipeline();
-        void ExecuteWithInputs(ViewRenderContext &context,
-                               const RHI::TexturePtr &albedoTexture,
-                               const RHI::TexturePtr &normalTexture,
-                               const RHI::TexturePtr &materialTexture,
-                               const RHI::TexturePtr &depthTexture,
-                               const RHI::TexturePtr &emissiveTexture,
-                               const RHI::TexturePtr &ssaoTexture);
-        void RegisterOutputs(ViewRenderContext &context,
-                             const RHI::TexturePtr &sceneColorTexture,
-                             const RHI::TexturePtr &depthTexture) const;
-        bool TryEnqueueNativeTransitionPass(ViewRenderContext &context) const;
+        void ExecuteWithInputs(ViewRenderContext& context,
+                               const RHI::TexturePtr& albedoTexture,
+                               const RHI::TexturePtr& normalTexture,
+                               const RHI::TexturePtr& materialTexture,
+                               const RHI::TexturePtr& depthTexture,
+                               const RHI::TexturePtr& emissiveTexture,
+                               const RHI::TexturePtr& ssaoTexture);
+        void RegisterOutputs(ViewRenderContext& context,
+                             const RHI::TexturePtr& sceneColorTexture,
+                             const RHI::TexturePtr& depthTexture) const;
+        bool TryEnqueueNativeTransitionPass(ViewRenderContext& context) const;
 
         /**
          * @brief HDR環境マップをロード（ミップマップ付きRGBA16_FLOAT）
          * @param path 環境マップファイルパス
          * @return ロード成功時true
          */
-        bool LoadEnvironmentMap(const Container::String &path);
+        bool LoadEnvironmentMap(const Container::String& path);
 
         /**
          * @brief BRDF LUTをCPUで生成（split-sum近似）
@@ -195,21 +223,22 @@ namespace NorvesLib::Core::Rendering
         bool m_bNeuralBRDFAvailable = false;     ///< Neural BRDFが利用可能か
 
         // デバイス参照
-        RHI::IDevice *m_Device = nullptr;
+        RHI::IDevice* m_Device = nullptr;
 
         // SceneView参照（LightProxy取得用）
-        SceneView *m_SceneView = nullptr;
-        const GBufferPass *m_GBufferPass = nullptr;
-        const SSAOPass *m_SSAOPass = nullptr;
+        SceneView* m_SceneView = nullptr;
+        const GBufferPass* m_GBufferPass = nullptr;
+        const SSAOPass* m_SSAOPass = nullptr;
 
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
         bool m_bUsingRenderGraphResources = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
-        RHI::ITexture *m_FramebufferSceneColorTexture = nullptr;
+        RHI::ITexture* m_FramebufferSceneColorTexture = nullptr;
         uint32_t m_FramebufferWidth = 0;
         uint32_t m_FramebufferHeight = 0;
+        RenderPassSignature m_RenderPassSignature;
     };
 
 } // namespace NorvesLib::Core::Rendering

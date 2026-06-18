@@ -23,7 +23,7 @@
 namespace NorvesLib::Core::Rendering
 {
 
-    GBufferPass::GBufferPass(const GBufferPassSettings &settings)
+    GBufferPass::GBufferPass(const GBufferPassSettings& settings)
         : m_Settings(settings)
     {
     }
@@ -116,7 +116,7 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         {
             // ヘルパー: 1x1テクスチャ作成
-            auto CreateDefault1x1 = [this](const char *debugName, uint8_t r, uint8_t g, uint8_t b, uint8_t a) -> RHI::TexturePtr
+            auto CreateDefault1x1 = [this](const char* debugName, uint8_t r, uint8_t g, uint8_t b, uint8_t a) -> RHI::TexturePtr
             {
                 RHI::TextureDesc texDesc;
                 texDesc.Width = 1;
@@ -284,33 +284,48 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
-        m_AlbedoHandle = builder.WriteTexture(
+        m_AlbedoHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferAlbedo,
             RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
-        m_NormalHandle = builder.WriteTexture(
+        m_NormalHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferNormal,
             RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
-        m_MaterialHandle = builder.WriteTexture(
+        m_MaterialHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferMaterial,
             RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
-        m_EmissiveHandle = builder.WriteTexture(
+        m_EmissiveHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferEmissive,
             RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
-        m_DepthHandle = builder.WriteTexture(
+        m_DepthHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferDepth,
             RGTextureDesc::DepthStencil(width, height, m_Settings.DepthFormat, "GBuffer_Depth"),
+            RGAttachmentKind::DepthStencil,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::DepthWrite,
             RHI::ResourceState::ShaderResource);
 
@@ -456,7 +471,7 @@ namespace NorvesLib::Core::Rendering
 
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
-        for (const auto &cmd : opaqueCommands)
+        for (const auto& cmd : opaqueCommands)
         {
             // UBOスロット確保
             auto allocation = m_UniformAllocator.Allocate();
@@ -518,7 +533,7 @@ namespace NorvesLib::Core::Rendering
             allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
             // PBRテクスチャバインド（マテリアル経由、未設定ならデフォルトテクスチャ）
-            auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTex) -> RHI::TexturePtr
+            auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr& defaultTex) -> RHI::TexturePtr
             {
                 if (handle.IsValid() && textures)
                 {
@@ -658,11 +673,11 @@ namespace NorvesLib::Core::Rendering
 
     bool GBufferPass::PrepareGBufferAttachments(uint32_t width,
                                                 uint32_t height,
-                                                const RHI::TexturePtr &albedo,
-                                                const RHI::TexturePtr &normal,
-                                                const RHI::TexturePtr &material,
-                                                const RHI::TexturePtr &emissive,
-                                                const RHI::TexturePtr &depth,
+                                                const RHI::TexturePtr& albedo,
+                                                const RHI::TexturePtr& normal,
+                                                const RHI::TexturePtr& material,
+                                                const RHI::TexturePtr& emissive,
+                                                const RHI::TexturePtr& depth,
                                                 bool bUseRenderGraphInitialStates)
     {
         if (!m_Device)
@@ -685,7 +700,16 @@ namespace NorvesLib::Core::Rendering
         m_CurrentHeight = height;
         m_bUsingRenderGraphResources = bUseRenderGraphInitialStates;
 
-        if (!EnsureGBufferRenderPass(bUseRenderGraphInitialStates))
+        const RenderPassSignature signature = CreateGBufferRenderPassSignature(width,
+                                                                               height,
+                                                                               albedo,
+                                                                               normal,
+                                                                               material,
+                                                                               emissive,
+                                                                               depth,
+                                                                               bUseRenderGraphInitialStates);
+
+        if (!EnsureGBufferRenderPass(signature))
         {
             return false;
         }
@@ -698,7 +722,105 @@ namespace NorvesLib::Core::Rendering
         return EnsureGBufferPipeline();
     }
 
-    bool GBufferPass::EnsureGBufferRenderPass(bool bUseRenderGraphInitialStates)
+    bool GBufferPass::AttachmentSignatureEquals(const AttachmentSignature& lhs,
+                                                const AttachmentSignature& rhs) const
+    {
+        return lhs.Kind == rhs.Kind &&
+               lhs.Format == rhs.Format &&
+               lhs.LoadOp == rhs.LoadOp &&
+               lhs.StoreOp == rhs.StoreOp &&
+               lhs.InitialState == rhs.InitialState &&
+               lhs.FinalState == rhs.FinalState &&
+               lhs.Target == rhs.Target &&
+               lhs.Width == rhs.Width &&
+               lhs.Height == rhs.Height &&
+               lhs.bDepthReadOnly == rhs.bDepthReadOnly;
+    }
+
+    bool GBufferPass::RenderPassSignatureEquals(const RenderPassSignature& lhs,
+                                                const RenderPassSignature& rhs) const
+    {
+        return lhs.bValid == rhs.bValid &&
+               AttachmentSignatureEquals(lhs.Albedo, rhs.Albedo) &&
+               AttachmentSignatureEquals(lhs.Normal, rhs.Normal) &&
+               AttachmentSignatureEquals(lhs.Material, rhs.Material) &&
+               AttachmentSignatureEquals(lhs.Emissive, rhs.Emissive) &&
+               AttachmentSignatureEquals(lhs.Depth, rhs.Depth);
+    }
+
+    GBufferPass::RenderPassSignature GBufferPass::CreateGBufferRenderPassSignature(
+        uint32_t width,
+        uint32_t height,
+        const RHI::TexturePtr& albedo,
+        const RHI::TexturePtr& normal,
+        const RHI::TexturePtr& material,
+        const RHI::TexturePtr& emissive,
+        const RHI::TexturePtr& depth,
+        bool bUseRenderGraphInitialStates) const
+    {
+        const RHI::ResourceState colorInitialState = bUseRenderGraphInitialStates
+                                                         ? RHI::ResourceState::RenderTarget
+                                                         : RHI::ResourceState::Undefined;
+        const RHI::ResourceState depthInitialState = bUseRenderGraphInitialStates
+                                                         ? RHI::ResourceState::DepthWrite
+                                                         : RHI::ResourceState::Undefined;
+
+        RenderPassSignature signature;
+        signature.bValid = true;
+        signature.Albedo = {RGAttachmentKind::Color,
+                            albedo ? albedo->GetFormat() : m_Settings.AlbedoFormat,
+                            RHI::AttachmentLoadOp::Clear,
+                            RHI::AttachmentStoreOp::Store,
+                            colorInitialState,
+                            RHI::ResourceState::ShaderResource,
+                            albedo.get(),
+                            width,
+                            height,
+                            false};
+        signature.Normal = {RGAttachmentKind::Color,
+                            normal ? normal->GetFormat() : m_Settings.NormalFormat,
+                            RHI::AttachmentLoadOp::Clear,
+                            RHI::AttachmentStoreOp::Store,
+                            colorInitialState,
+                            RHI::ResourceState::ShaderResource,
+                            normal.get(),
+                            width,
+                            height,
+                            false};
+        signature.Material = {RGAttachmentKind::Color,
+                              material ? material->GetFormat() : m_Settings.MaterialFormat,
+                              RHI::AttachmentLoadOp::Clear,
+                              RHI::AttachmentStoreOp::Store,
+                              colorInitialState,
+                              RHI::ResourceState::ShaderResource,
+                              material.get(),
+                              width,
+                              height,
+                              false};
+        signature.Emissive = {RGAttachmentKind::Color,
+                              emissive ? emissive->GetFormat() : m_Settings.EmissiveFormat,
+                              RHI::AttachmentLoadOp::Clear,
+                              RHI::AttachmentStoreOp::Store,
+                              colorInitialState,
+                              RHI::ResourceState::ShaderResource,
+                              emissive.get(),
+                              width,
+                              height,
+                              false};
+        signature.Depth = {RGAttachmentKind::DepthStencil,
+                           depth ? depth->GetFormat() : m_Settings.DepthFormat,
+                           RHI::AttachmentLoadOp::Clear,
+                           RHI::AttachmentStoreOp::Store,
+                           depthInitialState,
+                           RHI::ResourceState::ShaderResource,
+                           depth.get(),
+                           width,
+                           height,
+                           false};
+        return signature;
+    }
+
+    bool GBufferPass::EnsureGBufferRenderPass(const RenderPassSignature &signature)
     {
         if (!m_Device)
         {
@@ -706,7 +828,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         if (m_GBufferRenderPass &&
-            m_bRenderPassUsesRenderGraphInitialStates == bUseRenderGraphInitialStates)
+            RenderPassSignatureEquals(m_RenderPassSignature, signature))
         {
             return true;
         }
@@ -721,89 +843,84 @@ namespace NorvesLib::Core::Rendering
         m_FramebufferDepthTexture = nullptr;
         m_FramebufferWidth = 0;
         m_FramebufferHeight = 0;
+        m_RenderPassSignature = {};
 
         // ========================================
         // MRT対応レンダーパス作成（4カラー + 1デプス）
         // ========================================
         RHI::RenderPassDesc rpDesc;
-        const RHI::ResourceState colorInitialState = bUseRenderGraphInitialStates
-                                                         ? RHI::ResourceState::RenderTarget
-                                                         : RHI::ResourceState::Undefined;
-        const RHI::ResourceState depthInitialState = bUseRenderGraphInitialStates
-                                                         ? RHI::ResourceState::DepthWrite
-                                                         : RHI::ResourceState::Undefined;
 
         // Albedo アタッチメント
         RHI::AttachmentDesc albedoAttach;
-        albedoAttach.format = m_Settings.AlbedoFormat;
+        albedoAttach.format = signature.Albedo.Format;
         albedoAttach.isDepthStencil = false;
         albedoAttach.clear = true;
         albedoAttach.clearColor[0] = 0.0f;
         albedoAttach.clearColor[1] = 0.0f;
         albedoAttach.clearColor[2] = 0.0f;
         albedoAttach.clearColor[3] = 0.0f;
-        albedoAttach.loadOp = RHI::AttachmentLoadOp::Clear;
-        albedoAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        albedoAttach.initialState = colorInitialState;
-        albedoAttach.finalState = RHI::ResourceState::ShaderResource;
+        albedoAttach.loadOp = signature.Albedo.LoadOp;
+        albedoAttach.storeOp = signature.Albedo.StoreOp;
+        albedoAttach.initialState = signature.Albedo.InitialState;
+        albedoAttach.finalState = signature.Albedo.FinalState;
         rpDesc.colorAttachments.push_back(albedoAttach);
 
         // Normal アタッチメント
         RHI::AttachmentDesc normalAttach;
-        normalAttach.format = m_Settings.NormalFormat;
+        normalAttach.format = signature.Normal.Format;
         normalAttach.isDepthStencil = false;
         normalAttach.clear = true;
         normalAttach.clearColor[0] = 0.0f;
         normalAttach.clearColor[1] = 0.0f;
         normalAttach.clearColor[2] = 0.0f;
         normalAttach.clearColor[3] = 0.0f;
-        normalAttach.loadOp = RHI::AttachmentLoadOp::Clear;
-        normalAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        normalAttach.initialState = colorInitialState;
-        normalAttach.finalState = RHI::ResourceState::ShaderResource;
+        normalAttach.loadOp = signature.Normal.LoadOp;
+        normalAttach.storeOp = signature.Normal.StoreOp;
+        normalAttach.initialState = signature.Normal.InitialState;
+        normalAttach.finalState = signature.Normal.FinalState;
         rpDesc.colorAttachments.push_back(normalAttach);
 
         // Material アタッチメント
         RHI::AttachmentDesc materialAttach;
-        materialAttach.format = m_Settings.MaterialFormat;
+        materialAttach.format = signature.Material.Format;
         materialAttach.isDepthStencil = false;
         materialAttach.clear = true;
         materialAttach.clearColor[0] = 0.0f;
         materialAttach.clearColor[1] = 0.0f;
         materialAttach.clearColor[2] = 0.0f;
         materialAttach.clearColor[3] = 0.0f;
-        materialAttach.loadOp = RHI::AttachmentLoadOp::Clear;
-        materialAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        materialAttach.initialState = colorInitialState;
-        materialAttach.finalState = RHI::ResourceState::ShaderResource;
+        materialAttach.loadOp = signature.Material.LoadOp;
+        materialAttach.storeOp = signature.Material.StoreOp;
+        materialAttach.initialState = signature.Material.InitialState;
+        materialAttach.finalState = signature.Material.FinalState;
         rpDesc.colorAttachments.push_back(materialAttach);
 
         // Emissive アタッチメント（HDR自発光カラー）
         RHI::AttachmentDesc emissiveAttach;
-        emissiveAttach.format = m_Settings.EmissiveFormat;
+        emissiveAttach.format = signature.Emissive.Format;
         emissiveAttach.isDepthStencil = false;
         emissiveAttach.clear = true;
         emissiveAttach.clearColor[0] = 0.0f;
         emissiveAttach.clearColor[1] = 0.0f;
         emissiveAttach.clearColor[2] = 0.0f;
         emissiveAttach.clearColor[3] = 0.0f;
-        emissiveAttach.loadOp = RHI::AttachmentLoadOp::Clear;
-        emissiveAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        emissiveAttach.initialState = colorInitialState;
-        emissiveAttach.finalState = RHI::ResourceState::ShaderResource;
+        emissiveAttach.loadOp = signature.Emissive.LoadOp;
+        emissiveAttach.storeOp = signature.Emissive.StoreOp;
+        emissiveAttach.initialState = signature.Emissive.InitialState;
+        emissiveAttach.finalState = signature.Emissive.FinalState;
         rpDesc.colorAttachments.push_back(emissiveAttach);
 
         // Depth アタッチメント
         rpDesc.hasDepthStencil = true;
-        rpDesc.depthStencilAttachment.format = m_Settings.DepthFormat;
+        rpDesc.depthStencilAttachment.format = signature.Depth.Format;
         rpDesc.depthStencilAttachment.isDepthStencil = true;
         rpDesc.depthStencilAttachment.clear = true;
         rpDesc.depthStencilAttachment.clearDepth = 1.0f;
         rpDesc.depthStencilAttachment.clearStencil = 0;
-        rpDesc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Clear;
-        rpDesc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-        rpDesc.depthStencilAttachment.initialState = depthInitialState;
-        rpDesc.depthStencilAttachment.finalState = RHI::ResourceState::ShaderResource;
+        rpDesc.depthStencilAttachment.loadOp = signature.Depth.LoadOp;
+        rpDesc.depthStencilAttachment.storeOp = signature.Depth.StoreOp;
+        rpDesc.depthStencilAttachment.initialState = signature.Depth.InitialState;
+        rpDesc.depthStencilAttachment.finalState = signature.Depth.FinalState;
 
         m_GBufferRenderPass = m_Device->CreateRenderPass(rpDesc);
         if (!m_GBufferRenderPass)
@@ -812,17 +929,20 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        m_bRenderPassUsesRenderGraphInitialStates = bUseRenderGraphInitialStates;
+        m_bRenderPassUsesRenderGraphInitialStates =
+            signature.Albedo.InitialState == RHI::ResourceState::RenderTarget &&
+            signature.Depth.InitialState == RHI::ResourceState::DepthWrite;
+        m_RenderPassSignature = signature;
         return true;
     }
 
     bool GBufferPass::EnsureGBufferFramebuffer(uint32_t width,
                                                uint32_t height,
-                                               const RHI::TexturePtr &albedo,
-                                               const RHI::TexturePtr &normal,
-                                               const RHI::TexturePtr &material,
-                                               const RHI::TexturePtr &emissive,
-                                               const RHI::TexturePtr &depth)
+                                               const RHI::TexturePtr& albedo,
+                                               const RHI::TexturePtr& normal,
+                                               const RHI::TexturePtr& material,
+                                               const RHI::TexturePtr& emissive,
+                                               const RHI::TexturePtr& depth)
     {
         if (m_GBufferFramebuffer &&
             m_FramebufferWidth == width &&

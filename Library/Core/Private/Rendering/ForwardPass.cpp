@@ -36,7 +36,7 @@ namespace NorvesLib::Core::Rendering
         };
     } // namespace
 
-    ForwardPass::ForwardPass(SceneView *sceneView, SceneRenderer *sceneRenderer)
+    ForwardPass::ForwardPass(SceneView* sceneView, SceneRenderer* sceneRenderer)
         : m_SceneView(sceneView), m_SceneRenderer(sceneRenderer)
     {
     }
@@ -46,7 +46,7 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
-    bool ForwardPass::Initialize(ViewRenderContext &context)
+    bool ForwardPass::Initialize(ViewRenderContext& context)
     {
         if (m_bInitialized)
         {
@@ -122,7 +122,7 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            auto createDefault1x1Texture = [this](const char *debugName,
+            auto createDefault1x1Texture = [this](const char* debugName,
                                                   uint8_t r,
                                                   uint8_t g,
                                                   uint8_t b,
@@ -207,12 +207,13 @@ namespace NorvesLib::Core::Rendering
         m_bTransparentRenderPassUsesRenderGraphInitialStates = false;
         m_FramebufferSceneColorTexture = nullptr;
         m_FramebufferGBufferDepthTexture = nullptr;
+        m_TransparentRenderPassSignature = {};
 
         m_bInitialized = false;
         NORVES_LOG_INFO("ForwardPass", "ForwardPass shutdown");
     }
 
-    void ForwardPass::Setup(ViewRenderContext &context)
+    void ForwardPass::Setup(ViewRenderContext& context)
     {
         const uint32_t width = context.GetActiveRenderWidth();
         const uint32_t height = context.GetActiveRenderHeight();
@@ -292,15 +293,25 @@ namespace NorvesLib::Core::Rendering
             }
 
             RGTextureHandle depthHandle;
-            if (builder.TryReadTexture(RenderGraphResourceNames::SceneDepth,
-                                       depthHandle,
-                                       RHI::ResourceState::DepthRead))
+            if (builder.TryUseAttachment(RenderGraphResourceNames::SceneDepth,
+                                         depthHandle,
+                                         RGAttachmentKind::DepthStencil,
+                                         RGAttachmentMutability::ReadOnly,
+                                         RHI::AttachmentLoadOp::Load,
+                                         RHI::AttachmentStoreOp::Store,
+                                         RHI::ResourceState::DepthRead,
+                                         RHI::ResourceState::DepthRead))
             {
                 m_RenderGraphDepthHandle = depthHandle.ToResourceHandle();
             }
-            else if (builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth,
-                                            depthHandle,
-                                            RHI::ResourceState::DepthRead))
+            else if (builder.TryUseAttachment(RenderGraphResourceNames::GBufferDepth,
+                                              depthHandle,
+                                              RGAttachmentKind::DepthStencil,
+                                              RGAttachmentMutability::ReadOnly,
+                                              RHI::AttachmentLoadOp::Load,
+                                              RHI::AttachmentStoreOp::Store,
+                                              RHI::ResourceState::DepthRead,
+                                              RHI::ResourceState::DepthRead))
             {
                 m_RenderGraphDepthHandle = depthHandle.ToResourceHandle();
             }
@@ -312,7 +323,7 @@ namespace NorvesLib::Core::Rendering
         builder.PreserveInsertionOrder();
     }
 
-    void ForwardPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    void ForwardPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         if (!m_bTransparentOnly)
         {
@@ -392,7 +403,7 @@ namespace NorvesLib::Core::Rendering
         ExecuteTransparentCommands(context, true);
     }
 
-    void ForwardPass::Execute(ViewRenderContext &context)
+    void ForwardPass::Execute(ViewRenderContext& context)
     {
         if (!context.CommandList || !m_SceneRenderer)
         {
@@ -448,32 +459,35 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        const RenderPassSignature signature = CreateTransparentRenderPassSignature(width,
+                                                                                   height,
+                                                                                   bUseRenderGraphInitialStates);
+
         m_ForwardFramebuffer.reset();
         m_TransparentPipeline.reset();
         m_ForwardRenderPass.reset();
+        m_TransparentRenderPassSignature = {};
 
         RHI::RenderPassDesc renderPassDesc;
 
         RHI::AttachmentDesc colorAttachment;
-        colorAttachment.format = m_SceneColorTexture->GetFormat();
+        colorAttachment.format = signature.SceneColor.Format;
         colorAttachment.isDepthStencil = false;
         colorAttachment.clear = false;
-        colorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
-        colorAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-        colorAttachment.initialState = bUseRenderGraphInitialStates
-                                           ? RHI::ResourceState::RenderTarget
-                                           : RHI::ResourceState::ShaderResource;
-        colorAttachment.finalState = RHI::ResourceState::ShaderResource;
+        colorAttachment.loadOp = signature.SceneColor.LoadOp;
+        colorAttachment.storeOp = signature.SceneColor.StoreOp;
+        colorAttachment.initialState = signature.SceneColor.InitialState;
+        colorAttachment.finalState = signature.SceneColor.FinalState;
         renderPassDesc.colorAttachments.push_back(colorAttachment);
 
         renderPassDesc.hasDepthStencil = true;
-        renderPassDesc.depthStencilAttachment.format = m_GBufferDepthTexture->GetFormat();
+        renderPassDesc.depthStencilAttachment.format = signature.Depth.Format;
         renderPassDesc.depthStencilAttachment.isDepthStencil = true;
         renderPassDesc.depthStencilAttachment.clear = false;
-        renderPassDesc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Load;
-        renderPassDesc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-        renderPassDesc.depthStencilAttachment.initialState = RHI::ResourceState::DepthRead;
-        renderPassDesc.depthStencilAttachment.finalState = RHI::ResourceState::DepthRead;
+        renderPassDesc.depthStencilAttachment.loadOp = signature.Depth.LoadOp;
+        renderPassDesc.depthStencilAttachment.storeOp = signature.Depth.StoreOp;
+        renderPassDesc.depthStencilAttachment.initialState = signature.Depth.InitialState;
+        renderPassDesc.depthStencilAttachment.finalState = signature.Depth.FinalState;
 
         m_ForwardRenderPass = m_Device->CreateRenderPass(renderPassDesc);
         if (!m_ForwardRenderPass)
@@ -582,13 +596,67 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_TransparentRenderPassSignature = signature;
         return true;
+    }
+
+    bool ForwardPass::AttachmentSignatureEquals(const AttachmentSignature& lhs,
+                                                const AttachmentSignature& rhs) const
+    {
+        return lhs.Kind == rhs.Kind &&
+               lhs.Format == rhs.Format &&
+               lhs.LoadOp == rhs.LoadOp &&
+               lhs.StoreOp == rhs.StoreOp &&
+               lhs.InitialState == rhs.InitialState &&
+               lhs.FinalState == rhs.FinalState &&
+               lhs.Target == rhs.Target &&
+               lhs.Width == rhs.Width &&
+               lhs.Height == rhs.Height &&
+               lhs.bDepthReadOnly == rhs.bDepthReadOnly;
+    }
+
+    bool ForwardPass::RenderPassSignatureEquals(const RenderPassSignature& lhs,
+                                                const RenderPassSignature& rhs) const
+    {
+        return lhs.bValid == rhs.bValid &&
+               AttachmentSignatureEquals(lhs.SceneColor, rhs.SceneColor) &&
+               AttachmentSignatureEquals(lhs.Depth, rhs.Depth);
+    }
+
+    ForwardPass::RenderPassSignature ForwardPass::CreateTransparentRenderPassSignature(
+        uint32_t width,
+        uint32_t height,
+        bool bUseRenderGraphInitialStates) const
+    {
+        RenderPassSignature signature;
+        signature.bValid = true;
+        signature.SceneColor = {RGAttachmentKind::Color,
+                                m_SceneColorTexture ? m_SceneColorTexture->GetFormat() : RHI::Format::UNKNOWN,
+                                RHI::AttachmentLoadOp::Load,
+                                RHI::AttachmentStoreOp::Store,
+                                bUseRenderGraphInitialStates ? RHI::ResourceState::RenderTarget : RHI::ResourceState::ShaderResource,
+                                RHI::ResourceState::ShaderResource,
+                                m_SceneColorTexture.get(),
+                                width,
+                                height,
+                                false};
+        signature.Depth = {RGAttachmentKind::DepthStencil,
+                           m_GBufferDepthTexture ? m_GBufferDepthTexture->GetFormat() : RHI::Format::UNKNOWN,
+                           RHI::AttachmentLoadOp::Load,
+                           RHI::AttachmentStoreOp::Store,
+                           RHI::ResourceState::DepthRead,
+                           RHI::ResourceState::DepthRead,
+                           m_GBufferDepthTexture.get(),
+                           width,
+                           height,
+                           true};
+        return signature;
     }
 
     bool ForwardPass::PrepareTransparentResources(uint32_t width,
                                                   uint32_t height,
-                                                  const RHI::TexturePtr &sceneColorTexture,
-                                                  const RHI::TexturePtr &gbufferDepthTexture,
+                                                  const RHI::TexturePtr& sceneColorTexture,
+                                                  const RHI::TexturePtr& gbufferDepthTexture,
                                                   bool bUseRenderGraphInitialStates)
     {
         if (!sceneColorTexture || !gbufferDepthTexture)
@@ -596,18 +664,17 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_SceneColorTexture = sceneColorTexture;
+        m_GBufferDepthTexture = gbufferDepthTexture;
+
+        const RenderPassSignature signature = CreateTransparentRenderPassSignature(width,
+                                                                                   height,
+                                                                                   bUseRenderGraphInitialStates);
         const bool bResourcesChanged =
-            width != m_CurrentWidth ||
-            height != m_CurrentHeight ||
-            m_FramebufferSceneColorTexture != sceneColorTexture.get() ||
-            m_FramebufferGBufferDepthTexture != gbufferDepthTexture.get() ||
-            m_bTransparentRenderPassUsesRenderGraphInitialStates != bUseRenderGraphInitialStates ||
+            !RenderPassSignatureEquals(m_TransparentRenderPassSignature, signature) ||
             !m_ForwardRenderPass ||
             !m_ForwardFramebuffer ||
             !m_TransparentPipeline;
-
-        m_SceneColorTexture = sceneColorTexture;
-        m_GBufferDepthTexture = gbufferDepthTexture;
 
         if (!bResourcesChanged)
         {
@@ -627,7 +694,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void ForwardPass::ExecuteTransparentCommands(ViewRenderContext &context,
+    void ForwardPass::ExecuteTransparentCommands(ViewRenderContext& context,
                                                  bool bUseRenderGraphManagedStates)
     {
         const DrawCommandView activeTransparentCommands = context.GetActiveTransparentCommands();
@@ -662,9 +729,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        auto *materials = context.Resources.Materials;
-        auto *textures = context.Resources.Textures;
-        auto *meshes = context.Resources.Meshes;
+        auto* materials = context.Resources.Materials;
+        auto* textures = context.Resources.Textures;
+        auto* meshes = context.Resources.Meshes;
         if (!materials || !textures || !meshes)
         {
             if (bUseRenderGraphManagedStates)
@@ -699,7 +766,7 @@ namespace NorvesLib::Core::Rendering
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());
 
-        for (const DrawCommand &cmd : activeTransparentCommands)
+        for (const DrawCommand& cmd : activeTransparentCommands)
         {
             auto allocation = m_UniformAllocator.Allocate();
             if (!allocation.UniformBuffer)
@@ -723,7 +790,7 @@ namespace NorvesLib::Core::Rendering
 
             if (cmd.Draw.MaterialHandle.IsValid())
             {
-                const auto *materialData = materials->GetData(cmd.Draw.MaterialHandle);
+                const auto* materialData = materials->GetData(cmd.Draw.MaterialHandle);
                 if (materialData)
                 {
                     matAlbedo = materialData->AlbedoTexture;
@@ -737,7 +804,7 @@ namespace NorvesLib::Core::Rendering
 
             allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
 
-            auto resolveTexture = [&](TextureHandle handle, const RHI::TexturePtr &defaultTexture) -> RHI::TexturePtr
+            auto resolveTexture = [&](TextureHandle handle, const RHI::TexturePtr& defaultTexture) -> RHI::TexturePtr
             {
                 if (handle.IsValid())
                 {
@@ -807,7 +874,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void ForwardPass::EnqueueEmptyTransparentPass(ViewRenderContext &context) const
+    void ForwardPass::EnqueueEmptyTransparentPass(ViewRenderContext& context) const
     {
         if (!m_ForwardRenderPass || !m_ForwardFramebuffer)
         {
@@ -823,9 +890,9 @@ namespace NorvesLib::Core::Rendering
             context.Resources.Meshes));
     }
 
-    void ForwardPass::RegisterTransparentBridge(ViewRenderContext &context,
-                                                const RHI::TexturePtr &sceneColorTexture,
-                                                const RHI::TexturePtr &gbufferDepthTexture) const
+    void ForwardPass::RegisterTransparentBridge(ViewRenderContext& context,
+                                                const RHI::TexturePtr& sceneColorTexture,
+                                                const RHI::TexturePtr& gbufferDepthTexture) const
     {
         if (!context.SharedResources)
         {
