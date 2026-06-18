@@ -170,6 +170,8 @@ namespace NorvesLib::Core::Rendering
 
     void View::Render(ViewRenderContext &context)
     {
+        context.CurrentGraphExecutionResult = nullptr;
+
         if (!m_bEnabled || !m_bInitialized)
         {
             return;
@@ -281,12 +283,16 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!context.Graph->Execute(context))
+        RenderGraphExecutionResult executionResult = context.Graph->ExecuteWithResult(context);
+        if (!executionResult.bSuccess)
         {
             NORVES_LOG_ERROR("View",
                              "RenderGraph execution failed after %u pass(es)",
                              context.Graph->GetLastExecutedPassCount());
+            return;
         }
+
+        context.CurrentGraphExecutionResult = &context.Graph->GetLastExecutionResult();
     }
 
     // ========================================

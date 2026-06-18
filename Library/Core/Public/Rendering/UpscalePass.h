@@ -58,6 +58,7 @@ namespace NorvesLib::Core::Rendering
         UpscaleSettings m_Settings;
 
         RHI::TexturePtr m_OutputTexture;
+        RGResourceHandle m_InputToneMappedHandle;
         RGResourceHandle m_OutputHandle;
         RHI::RenderPassPtr m_RenderPass;
         RHI::FramebufferPtr m_Framebuffer;

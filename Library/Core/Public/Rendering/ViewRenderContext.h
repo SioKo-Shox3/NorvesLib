@@ -28,6 +28,7 @@ namespace NorvesLib::Core::Rendering
     class ShaderManager;
     class MegaGeometryPass;
     class RenderGraph;
+    struct RenderGraphExecutionResult;
 
     /**
      * @brief View描画コンテキスト
@@ -128,6 +129,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 有効な場合、ViewはRenderGraph経由でパスチェーンを実行する */
         RenderGraph* Graph = nullptr;
+
+        /** @brief 現在のView/Viewportで成功したRenderGraph実行結果 */
+        const RenderGraphExecutionResult* CurrentGraphExecutionResult = nullptr;
 
         const CameraProxy *GetActiveCamera() const
         {

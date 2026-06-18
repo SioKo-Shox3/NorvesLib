@@ -1,5 +1,6 @@
 #include "Rendering/RenderFrameExecutor.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/View.h"
 #include "Rendering/ViewRenderContext.h"
 #include <cassert>
@@ -45,6 +46,8 @@ int main()
         frameCommands.push_back(DrawCommand::CreateDrawIndexed());
         frameCommands.push_back(DrawCommand::CreateDraw());
         context.SnapshotDrawCommandSource = &frameCommands;
+        RenderGraphExecutionResult previousResult;
+        context.CurrentGraphExecutionResult = &previousResult;
 
         ViewportRenderPlan viewport = MakeViewportPlan(2, 3);
         viewport.bHasCamera = true;
@@ -54,6 +57,7 @@ int main()
         viewport.DrawCommandRange = {1, 2};
 
         RenderFrameExecutor::ApplyViewportRenderPlan(context, &viewport);
+        assert(context.CurrentGraphExecutionResult == nullptr);
         assert(context.CurrentViewport == &viewport);
         assert(context.CurrentCamera == &viewport.Camera);
         assert(context.CurrentDrawCommands.Data == frameCommands.data() + 1);
@@ -63,7 +67,9 @@ int main()
         assert(context.CurrentTransparentCommands.Data == frameCommands.data() + 2);
         assert(context.CurrentTransparentCommands.Count == 1);
 
+        context.CurrentGraphExecutionResult = &previousResult;
         RenderFrameExecutor::ApplyViewportRenderPlan(context, nullptr);
+        assert(context.CurrentGraphExecutionResult == nullptr);
         assert(context.CurrentViewport == nullptr);
         assert(context.CurrentCamera == nullptr);
         assert(context.CurrentDrawCommands.empty());

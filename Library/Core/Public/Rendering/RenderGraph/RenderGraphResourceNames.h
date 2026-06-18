@@ -16,4 +16,5 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity SSRSceneColor = Identity::Literal("SSR.SceneColor", sizeof("SSR.SceneColor") - 1);
     inline constexpr Identity BloomSceneColor = Identity::Literal("Bloom.SceneColor", sizeof("Bloom.SceneColor") - 1);
     inline constexpr Identity ToneMappedColor = Identity::Literal("ToneMappedColor", sizeof("ToneMappedColor") - 1);
+    inline constexpr Identity PresentationColor = Identity::Literal("PresentationColor", sizeof("PresentationColor") - 1);
 } // namespace NorvesLib::Core::Rendering::RenderGraphResourceNames

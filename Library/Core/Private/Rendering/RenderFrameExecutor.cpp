@@ -76,6 +76,8 @@ namespace NorvesLib::Core::Rendering
 
     void RenderFrameExecutor::ApplyViewportRenderPlan(ViewRenderContext &context, const ViewportRenderPlan *viewportPlan)
     {
+        context.CurrentGraphExecutionResult = nullptr;
+
         if (!viewportPlan)
         {
             context.CurrentViewport = nullptr;

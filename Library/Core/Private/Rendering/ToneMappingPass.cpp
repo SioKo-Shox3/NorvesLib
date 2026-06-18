@@ -443,6 +443,7 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
         m_OutputHandle = outputHandle.ToResourceHandle();
+        builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor, outputHandle);
         builder.PreserveInsertionOrder();
     }
 

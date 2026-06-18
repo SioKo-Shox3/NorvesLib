@@ -1,6 +1,7 @@
 #include "Rendering/UpscalePass.h"
 #include "Rendering/FXAAPass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
@@ -81,6 +82,7 @@ namespace NorvesLib::Core::Rendering
         m_Device = nullptr;
         m_CurrentWidth = 0;
         m_CurrentHeight = 0;
+        m_InputToneMappedHandle = {};
         m_OutputHandle = {};
         m_bRenderPassUsesRenderGraphInitialState = false;
         m_FramebufferOutputTexture = nullptr;
@@ -278,26 +280,51 @@ namespace NorvesLib::Core::Rendering
         const uint32_t screenWidth = context && context->ScreenWidth > 0 ? context->ScreenWidth : renderWidth;
         const uint32_t screenHeight = context && context->ScreenHeight > 0 ? context->ScreenHeight : renderHeight;
 
-        RGResourceHandle inputHandle;
-        if (m_InputPass)
+        m_InputToneMappedHandle = {};
+        m_OutputHandle = {};
+
+        RGTextureHandle inputTextureHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::ToneMappedColor,
+                                   inputTextureHandle,
+                                   RHI::ResourceState::ShaderResource))
         {
-            inputHandle = m_InputPass->GetToneMappedColorHandle();
+            m_InputToneMappedHandle = inputTextureHandle.ToResourceHandle();
+        }
+        else if (m_InputPass)
+        {
+            const RGResourceHandle inputHandle = m_InputPass->GetToneMappedColorHandle();
             if (inputHandle.IsValid())
             {
                 builder.Read(inputHandle, RHI::ResourceState::ShaderResource);
+                m_InputToneMappedHandle = inputHandle;
+                inputTextureHandle = m_InputPass->GetToneMappedColorTextureHandle();
             }
         }
 
-        if (!NeedsUpscale(renderWidth, renderHeight, screenWidth, screenHeight) && inputHandle.IsValid())
+        if (!NeedsUpscale(renderWidth, renderHeight, screenWidth, screenHeight) &&
+            m_InputToneMappedHandle.IsValid())
         {
-            m_OutputHandle = inputHandle;
+            m_OutputHandle = m_InputToneMappedHandle;
+            if (inputTextureHandle.IsValid())
+            {
+                builder.PublishTexture(RenderGraphResourceNames::PresentationColor, inputTextureHandle);
+                builder.ExportTexture(RenderGraphResourceNames::PresentationColor, inputTextureHandle);
+            }
+            else
+            {
+                NORVES_LOG_WARNING("UpscalePass", "PresentationColor export skipped because input texture handle is invalid");
+            }
             builder.PreserveInsertionOrder();
             return;
         }
 
-        m_OutputHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(screenWidth, screenHeight, m_Settings.OutputFormat, "PresentationColor"));
-        builder.Write(m_OutputHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        RGTextureHandle outputHandle = builder.WriteTexture(
+            RenderGraphResourceNames::PresentationColor,
+            RGTextureDesc::RenderTarget(screenWidth, screenHeight, m_Settings.OutputFormat, "PresentationColor"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
+        m_OutputHandle = outputHandle.ToResourceHandle();
+        builder.ExportTexture(RenderGraphResourceNames::PresentationColor, outputHandle);
         builder.PreserveInsertionOrder();
     }
 
@@ -313,7 +340,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::TexturePtr inputTexture;
-        if (m_InputPass)
+        if (m_InputToneMappedHandle.IsValid())
+        {
+            inputTexture = resources.GetTexture(m_InputToneMappedHandle);
+        }
+
+        if (!inputTexture && m_InputPass)
         {
             const RGResourceHandle toneMappedHandle = m_InputPass->GetToneMappedColorHandle();
             if (toneMappedHandle.IsValid())
