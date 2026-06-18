@@ -7,6 +7,7 @@
 #include "Rendering/SceneView.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -393,6 +394,12 @@ namespace NorvesLib::Core::Rendering
         m_GBufferPass = nullptr;
         m_SSAOPass = nullptr;
         m_SceneColorHandle = {};
+        m_GBufferAlbedoHandle = {};
+        m_GBufferNormalHandle = {};
+        m_GBufferMaterialHandle = {};
+        m_GBufferDepthHandle = {};
+        m_GBufferEmissiveHandle = {};
+        m_SSAOBlurredHandle = {};
         m_bUsingRenderGraphResources = false;
         m_bRenderPassUsesRenderGraphInitialState = false;
         m_FramebufferSceneColorTexture = nullptr;
@@ -664,51 +671,121 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
-        if (m_GBufferPass)
+        m_GBufferAlbedoHandle = {};
+        m_GBufferNormalHandle = {};
+        m_GBufferMaterialHandle = {};
+        m_GBufferDepthHandle = {};
+        m_GBufferEmissiveHandle = {};
+        m_SSAOBlurredHandle = {};
+
+        RGTextureHandle albedoHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferAlbedo,
+                                   albedoHandle,
+                                   RHI::ResourceState::ShaderResource))
         {
-            const RGResourceHandle albedoHandle = m_GBufferPass->GetAlbedoHandle();
-            if (albedoHandle.IsValid())
+            m_GBufferAlbedoHandle = albedoHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackAlbedoHandle = m_GBufferPass->GetAlbedoHandle();
+            if (fallbackAlbedoHandle.IsValid())
             {
-                builder.Read(albedoHandle, RHI::ResourceState::ShaderResource);
-            }
-
-            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
-            if (normalHandle.IsValid())
-            {
-                builder.Read(normalHandle, RHI::ResourceState::ShaderResource);
-            }
-
-            const RGResourceHandle materialHandle = m_GBufferPass->GetMaterialHandle();
-            if (materialHandle.IsValid())
-            {
-                builder.Read(materialHandle, RHI::ResourceState::ShaderResource);
-            }
-
-            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
-            if (depthHandle.IsValid())
-            {
-                builder.Read(depthHandle, RHI::ResourceState::ShaderResource);
-            }
-
-            const RGResourceHandle emissiveHandle = m_GBufferPass->GetEmissiveHandle();
-            if (emissiveHandle.IsValid())
-            {
-                builder.Read(emissiveHandle, RHI::ResourceState::ShaderResource);
+                builder.Read(fallbackAlbedoHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferAlbedoHandle = fallbackAlbedoHandle;
             }
         }
 
-        if (m_SSAOPass)
+        RGTextureHandle normalHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferNormal,
+                                   normalHandle,
+                                   RHI::ResourceState::ShaderResource))
         {
-            const RGResourceHandle ssaoHandle = m_SSAOPass->GetSSAOBlurredHandle();
-            if (ssaoHandle.IsValid())
+            m_GBufferNormalHandle = normalHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackNormalHandle = m_GBufferPass->GetNormalHandle();
+            if (fallbackNormalHandle.IsValid())
             {
-                builder.Read(ssaoHandle, RHI::ResourceState::ShaderResource);
+                builder.Read(fallbackNormalHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferNormalHandle = fallbackNormalHandle;
             }
         }
 
-        m_SceneColorHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
-        builder.Write(m_SceneColorHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        RGTextureHandle materialHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferMaterial,
+                                   materialHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_GBufferMaterialHandle = materialHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackMaterialHandle = m_GBufferPass->GetMaterialHandle();
+            if (fallbackMaterialHandle.IsValid())
+            {
+                builder.Read(fallbackMaterialHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferMaterialHandle = fallbackMaterialHandle;
+            }
+        }
+
+        RGTextureHandle depthHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth,
+                                   depthHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_GBufferDepthHandle = depthHandle.ToResourceHandle();
+            builder.PublishTexture(RenderGraphResourceNames::SceneDepth, depthHandle);
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackDepthHandle = m_GBufferPass->GetDepthHandle();
+            if (fallbackDepthHandle.IsValid())
+            {
+                builder.Read(fallbackDepthHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferDepthHandle = fallbackDepthHandle;
+            }
+        }
+
+        RGTextureHandle emissiveHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferEmissive,
+                                   emissiveHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_GBufferEmissiveHandle = emissiveHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackEmissiveHandle = m_GBufferPass->GetEmissiveHandle();
+            if (fallbackEmissiveHandle.IsValid())
+            {
+                builder.Read(fallbackEmissiveHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferEmissiveHandle = fallbackEmissiveHandle;
+            }
+        }
+
+        RGTextureHandle ssaoHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::SSAOBlurred,
+                                   ssaoHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_SSAOBlurredHandle = ssaoHandle.ToResourceHandle();
+        }
+        else if (m_SSAOPass)
+        {
+            const RGResourceHandle fallbackSSAOHandle = m_SSAOPass->GetSSAOBlurredHandle();
+            if (fallbackSSAOHandle.IsValid())
+            {
+                builder.Read(fallbackSSAOHandle, RHI::ResourceState::ShaderResource);
+                m_SSAOBlurredHandle = fallbackSSAOHandle;
+            }
+        }
+
+        m_SceneColorHandle = builder.WriteTexture(
+            RenderGraphResourceNames::SceneColor,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
 
         builder.PreserveInsertionOrder();
     }
@@ -736,44 +813,46 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr materialTexture;
         RHI::TexturePtr depthTexture;
         RHI::TexturePtr emissiveTexture;
-        if (m_GBufferPass)
+        if (m_GBufferAlbedoHandle.IsValid())
         {
-            const RGResourceHandle albedoHandle = m_GBufferPass->GetAlbedoHandle();
-            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
-            const RGResourceHandle materialHandle = m_GBufferPass->GetMaterialHandle();
-            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
-            const RGResourceHandle emissiveHandle = m_GBufferPass->GetEmissiveHandle();
-
-            if (albedoHandle.IsValid())
-            {
-                albedoTexture = resources.GetTexture(albedoHandle);
-            }
-            if (normalHandle.IsValid())
-            {
-                normalTexture = resources.GetTexture(normalHandle);
-            }
-            if (materialHandle.IsValid())
-            {
-                materialTexture = resources.GetTexture(materialHandle);
-            }
-            if (depthHandle.IsValid())
-            {
-                depthTexture = resources.GetTexture(depthHandle);
-            }
-            if (emissiveHandle.IsValid())
-            {
-                emissiveTexture = resources.GetTexture(emissiveHandle);
-            }
+            albedoTexture = resources.GetTexture(m_GBufferAlbedoHandle);
+        }
+        if (m_GBufferNormalHandle.IsValid())
+        {
+            normalTexture = resources.GetTexture(m_GBufferNormalHandle);
+        }
+        if (m_GBufferMaterialHandle.IsValid())
+        {
+            materialTexture = resources.GetTexture(m_GBufferMaterialHandle);
+        }
+        if (m_GBufferDepthHandle.IsValid())
+        {
+            depthTexture = resources.GetTexture(m_GBufferDepthHandle);
+        }
+        if (m_GBufferEmissiveHandle.IsValid())
+        {
+            emissiveTexture = resources.GetTexture(m_GBufferEmissiveHandle);
         }
 
         RHI::TexturePtr ssaoTexture;
-        if (m_SSAOPass)
+        if (m_SSAOBlurredHandle.IsValid())
         {
-            const RGResourceHandle ssaoHandle = m_SSAOPass->GetSSAOBlurredHandle();
-            if (ssaoHandle.IsValid())
-            {
-                ssaoTexture = resources.GetTexture(ssaoHandle);
-            }
+            ssaoTexture = resources.GetTexture(m_SSAOBlurredHandle);
+        }
+
+        if ((!albedoTexture || !normalTexture || !materialTexture || !depthTexture || !emissiveTexture) &&
+            m_GBufferPass)
+        {
+            albedoTexture = albedoTexture ? albedoTexture : resources.GetTexture(m_GBufferPass->GetAlbedoHandle());
+            normalTexture = normalTexture ? normalTexture : resources.GetTexture(m_GBufferPass->GetNormalHandle());
+            materialTexture = materialTexture ? materialTexture : resources.GetTexture(m_GBufferPass->GetMaterialHandle());
+            depthTexture = depthTexture ? depthTexture : resources.GetTexture(m_GBufferPass->GetDepthHandle());
+            emissiveTexture = emissiveTexture ? emissiveTexture : resources.GetTexture(m_GBufferPass->GetEmissiveHandle());
+        }
+
+        if (!ssaoTexture && m_SSAOPass)
+        {
+            ssaoTexture = resources.GetTexture(m_SSAOPass->GetSSAOBlurredHandle());
         }
 
         if (context.SharedResources)

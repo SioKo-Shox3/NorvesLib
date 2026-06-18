@@ -250,6 +250,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/DrawCommand.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
+    Public/Rendering/RenderGraph/RenderGraphResourceNames.h
     Public/Rendering/RenderGraph/RenderGraphBuilder.h
     Public/Rendering/RenderGraph/IRenderGraphPass.h
     Public/Rendering/RenderGraph/RenderGraphResources.h

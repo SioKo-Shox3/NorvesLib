@@ -41,6 +41,9 @@ namespace NorvesLib::Core::Rendering
         bool PublishBuffer(Identity name, RGBufferHandle handle);
         RGTextureHandle ReadTexture(Identity name,
                                     RHI::ResourceState state = RHI::ResourceState::ShaderResource);
+        bool TryReadTexture(Identity name,
+                            RGTextureHandle& outHandle,
+                            RHI::ResourceState state = RHI::ResourceState::ShaderResource);
         RGBufferHandle ReadBuffer(Identity name,
                                   RHI::ResourceState state = RHI::ResourceState::ShaderResource);
         RGTextureHandle WriteTexture(Identity name,

@@ -83,8 +83,8 @@ namespace NorvesLib::Core::Rendering
         const SSAOSettings &GetSettings() const { return m_Settings; }
 
         void SetGBufferPass(const GBufferPass *gbufferPass) { m_GBufferPass = gbufferPass; }
-        RGResourceHandle GetSSAORawHandle() const { return m_SSAORawHandle; }
-        RGResourceHandle GetSSAOBlurredHandle() const { return m_SSAOBlurredHandle; }
+        RGResourceHandle GetSSAORawHandle() const { return m_SSAORawHandle.ToResourceHandle(); }
+        RGResourceHandle GetSSAOBlurredHandle() const { return m_SSAOBlurredHandle.ToResourceHandle(); }
 
     private:
         /**
@@ -129,8 +129,10 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_SSAOBlurredTexture; // ブラー後の最終AO
         RHI::TexturePtr m_NoiseTexture;       // 4x4ランダムノイズ
 
-        RGResourceHandle m_SSAORawHandle;
-        RGResourceHandle m_SSAOBlurredHandle;
+        RGTextureHandle m_SSAORawHandle;
+        RGTextureHandle m_SSAOBlurredHandle;
+        RGResourceHandle m_GBufferDepthHandle;
+        RGResourceHandle m_GBufferNormalHandle;
 
         // SSAOパス
         RHI::RenderPassPtr m_SSAORenderPass;

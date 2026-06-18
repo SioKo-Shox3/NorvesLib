@@ -655,6 +655,43 @@ namespace
         bool m_bExpectValid = false;
     };
 
+    class TryReadTexturePass final : public IRenderGraphPass
+    {
+    public:
+        TryReadTexturePass(Identity name, RGTextureHandle* read, bool bExpectFound)
+            : m_Name(name), m_Read(read), m_bExpectFound(bExpectFound)
+        {
+        }
+
+        const char* GetName() const override
+        {
+            return "TryReadTexturePass";
+        }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            RGTextureHandle read;
+            const bool bFound = builder.TryReadTexture(m_Name, read);
+            assert(bFound == m_bExpectFound);
+            assert(read.IsValid() == m_bExpectFound);
+            if (m_Read)
+            {
+                *m_Read = read;
+            }
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+    private:
+        Identity m_Name;
+        RGTextureHandle* m_Read = nullptr;
+        bool m_bExpectFound = false;
+    };
+
     class WriteBufferPass final : public IRenderGraphPass
     {
     public:
@@ -997,6 +1034,47 @@ namespace
         std::cout << "TestWriteBufferAdvancesCurrentHead passed\n";
     }
 
+    void TestTryReadTextureAdvancesCurrentHead()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        RGTextureHandle first;
+        RGTextureHandle second;
+        RGTextureHandle read;
+        WriteTexturePass writeA(Identity("Named.TryReadHistory"), "TryReadHistoryA", &first);
+        WriteTexturePass writeB(Identity("Named.TryReadHistory"), "TryReadHistoryB", &second);
+        TryReadTexturePass readPass(Identity("Named.TryReadHistory"), &read, true);
+        graph.AddPass(&writeA);
+        graph.AddPass(&writeB);
+        const uint32_t readPassIndex = graph.AddPass(&readPass);
+
+        assert(graph.Compile());
+        assert(first.IsValid());
+        assert(second.IsValid());
+        assert(first != second);
+        assert(read == second);
+        assert(graph.GetDeclaredPassAccessCount(readPassIndex) == 1);
+
+        std::cout << "TestTryReadTextureAdvancesCurrentHead passed\n";
+    }
+
+    void TestTryReadTextureMissingDoesNotFailCompile()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        RGTextureHandle read;
+        TryReadTexturePass pass(Identity("Named.TryReadMissing"), &read, false);
+        const uint32_t passIndex = graph.AddPass(&pass);
+
+        assert(graph.Compile());
+        assert(!read.IsValid());
+        assert(graph.GetDeclaredPassAccessCount(passIndex) == 0);
+
+        std::cout << "TestTryReadTextureMissingDoesNotFailCompile passed\n";
+    }
+
     void TestUnregisteredReadFailsCompile()
     {
         RenderGraph graph;
@@ -1039,6 +1117,25 @@ namespace
         std::cout << "TestTypedHandleValidationRejectsWrongKind passed\n";
     }
 
+    void TestTryReadTextureTypeMismatchFails()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        RGBufferHandle buffer;
+        RGTextureHandle read;
+        WriteBufferPass writeBuffer(Identity("Named.TryReadWrongType"), "TryReadWrongType", &buffer);
+        TryReadTexturePass readPass(Identity("Named.TryReadWrongType"), &read, false);
+        graph.AddPass(&writeBuffer);
+        graph.AddPass(&readPass);
+
+        assert(!graph.Compile());
+        assert(buffer.IsValid());
+        assert(!read.IsValid());
+
+        std::cout << "TestTryReadTextureTypeMismatchFails passed\n";
+    }
+
     void TestInvalidIdentityFailsCompile()
     {
         RenderGraph graph;
@@ -1052,6 +1149,21 @@ namespace
         assert(!read.IsValid());
 
         std::cout << "TestInvalidIdentityFailsCompile passed\n";
+    }
+
+    void TestTryReadTextureInvalidIdentityFailsCompile()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        RGTextureHandle read;
+        TryReadTexturePass pass(Identity{}, &read, false);
+        graph.AddPass(&pass);
+
+        assert(!graph.Compile());
+        assert(!read.IsValid());
+
+        std::cout << "TestTryReadTextureInvalidIdentityFailsCompile passed\n";
     }
 
     void TestResetInvalidatesTypedHandles()
@@ -1175,10 +1287,14 @@ int main()
     TestDuplicatePublishFails();
     TestWriteAdvancesCurrentHead();
     TestWriteBufferAdvancesCurrentHead();
+    TestTryReadTextureAdvancesCurrentHead();
+    TestTryReadTextureMissingDoesNotFailCompile();
     TestUnregisteredReadFailsCompile();
     TestTypeMismatchFails();
     TestTypedHandleValidationRejectsWrongKind();
+    TestTryReadTextureTypeMismatchFails();
     TestInvalidIdentityFailsCompile();
+    TestTryReadTextureInvalidIdentityFailsCompile();
     TestResetInvalidatesTypedHandles();
     TestExportPopulatesExecutionResult();
     TestExecuteWithResultFailureClearsOutputs();

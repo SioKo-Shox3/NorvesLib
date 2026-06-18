@@ -123,11 +123,11 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture *GetEmissiveTexture() const { return m_EmissiveTexture.get(); }
         RHI::ITexture *GetDepthTexture() const { return m_DepthTexture.get(); }
 
-        RGResourceHandle GetAlbedoHandle() const { return m_AlbedoHandle; }
-        RGResourceHandle GetNormalHandle() const { return m_NormalHandle; }
-        RGResourceHandle GetMaterialHandle() const { return m_MaterialHandle; }
-        RGResourceHandle GetEmissiveHandle() const { return m_EmissiveHandle; }
-        RGResourceHandle GetDepthHandle() const { return m_DepthHandle; }
+        RGResourceHandle GetAlbedoHandle() const { return m_AlbedoHandle.ToResourceHandle(); }
+        RGResourceHandle GetNormalHandle() const { return m_NormalHandle.ToResourceHandle(); }
+        RGResourceHandle GetMaterialHandle() const { return m_MaterialHandle.ToResourceHandle(); }
+        RGResourceHandle GetEmissiveHandle() const { return m_EmissiveHandle.ToResourceHandle(); }
+        RGResourceHandle GetDepthHandle() const { return m_DepthHandle.ToResourceHandle(); }
 
     private:
         /**
@@ -181,11 +181,11 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_EmissiveTexture;
         RHI::TexturePtr m_DepthTexture;
 
-        RGResourceHandle m_AlbedoHandle;
-        RGResourceHandle m_NormalHandle;
-        RGResourceHandle m_MaterialHandle;
-        RGResourceHandle m_EmissiveHandle;
-        RGResourceHandle m_DepthHandle;
+        RGTextureHandle m_AlbedoHandle;
+        RGTextureHandle m_NormalHandle;
+        RGTextureHandle m_MaterialHandle;
+        RGTextureHandle m_EmissiveHandle;
+        RGTextureHandle m_DepthHandle;
 
         // GBuffer用レンダーパス・フレームバッファ
         RHI::RenderPassPtr m_GBufferRenderPass;
