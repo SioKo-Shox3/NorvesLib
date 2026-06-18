@@ -5,6 +5,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "Logging/LogMacros.h"
@@ -351,6 +352,8 @@ namespace NorvesLib::Core::Rendering
         m_NoiseTexture.reset();
         m_SSAORawHandle = {};
         m_SSAOBlurredHandle = {};
+        m_GBufferDepthHandle = {};
+        m_GBufferNormalHandle = {};
         m_SSAORenderPass.reset();
         m_SSAOFramebuffer.reset();
         m_SSAOPipeline.reset();
@@ -438,28 +441,54 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
-        if (m_GBufferPass)
-        {
-            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
-            if (depthHandle.IsValid())
-            {
-                builder.Read(depthHandle, RHI::ResourceState::ShaderResource);
-            }
+        m_GBufferDepthHandle = {};
+        m_GBufferNormalHandle = {};
 
-            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
-            if (normalHandle.IsValid())
+        RGTextureHandle depthHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth,
+                                   depthHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_GBufferDepthHandle = depthHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackDepthHandle = m_GBufferPass->GetDepthHandle();
+            if (fallbackDepthHandle.IsValid())
             {
-                builder.Read(normalHandle, RHI::ResourceState::ShaderResource);
+                builder.Read(fallbackDepthHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferDepthHandle = fallbackDepthHandle;
             }
         }
 
-        m_SSAORawHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAORaw"));
-        builder.Write(m_SSAORawHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        RGTextureHandle normalHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferNormal,
+                                   normalHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_GBufferNormalHandle = normalHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackNormalHandle = m_GBufferPass->GetNormalHandle();
+            if (fallbackNormalHandle.IsValid())
+            {
+                builder.Read(fallbackNormalHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferNormalHandle = fallbackNormalHandle;
+            }
+        }
 
-        m_SSAOBlurredHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAOBlurred"));
-        builder.Write(m_SSAOBlurredHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        m_SSAORawHandle = builder.WriteTexture(
+            RenderGraphResourceNames::SSAORaw,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAORaw"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
+
+        m_SSAOBlurredHandle = builder.WriteTexture(
+            RenderGraphResourceNames::SSAOBlurred,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SSAOBlurred"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
 
         builder.PreserveInsertionOrder();
     }
@@ -489,18 +518,21 @@ namespace NorvesLib::Core::Rendering
 
         RHI::TexturePtr depthTexture;
         RHI::TexturePtr normalTexture;
-        if (m_GBufferPass)
+        if (m_GBufferDepthHandle.IsValid())
         {
-            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
-            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
-            if (depthHandle.IsValid())
-            {
-                depthTexture = resources.GetTexture(depthHandle);
-            }
-            if (normalHandle.IsValid())
-            {
-                normalTexture = resources.GetTexture(normalHandle);
-            }
+            depthTexture = resources.GetTexture(m_GBufferDepthHandle);
+        }
+        if (m_GBufferNormalHandle.IsValid())
+        {
+            normalTexture = resources.GetTexture(m_GBufferNormalHandle);
+        }
+
+        if ((!depthTexture || !normalTexture) && m_GBufferPass)
+        {
+            const RGResourceHandle fallbackDepthHandle = m_GBufferPass->GetDepthHandle();
+            const RGResourceHandle fallbackNormalHandle = m_GBufferPass->GetNormalHandle();
+            depthTexture = depthTexture ? depthTexture : resources.GetTexture(fallbackDepthHandle);
+            normalTexture = normalTexture ? normalTexture : resources.GetTexture(fallbackNormalHandle);
         }
 
         if ((!depthTexture || !normalTexture) && context.SharedResources)

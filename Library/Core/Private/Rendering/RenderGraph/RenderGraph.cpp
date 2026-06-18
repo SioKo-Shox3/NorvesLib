@@ -153,6 +153,17 @@ namespace NorvesLib::Core::Rendering
         return m_Graph ? m_Graph->ReadTextureResource(m_PassIndex, name, state) : RGTextureHandle{};
     }
 
+    bool RenderGraphBuilder::TryReadTexture(Identity name, RGTextureHandle& outHandle, RHI::ResourceState state)
+    {
+        if (!m_Graph)
+        {
+            outHandle = RGTextureHandle{};
+            return false;
+        }
+
+        return m_Graph->TryReadTextureResource(m_PassIndex, name, outHandle, state);
+    }
+
     RGBufferHandle RenderGraphBuilder::ReadBuffer(Identity name, RHI::ResourceState state)
     {
         return m_Graph ? m_Graph->ReadBufferResource(m_PassIndex, name, state) : RGBufferHandle{};
@@ -652,6 +663,45 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle handle(resource->CurrentHead);
         AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state);
         return handle;
+    }
+
+    bool RenderGraph::TryReadTextureResource(uint32_t passIndex,
+                                             Identity name,
+                                             RGTextureHandle& outHandle,
+                                             RHI::ResourceState state)
+    {
+        outHandle = RGTextureHandle{};
+        if (!name.IsValid())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Invalid named resource identity");
+            MarkGraphError();
+            return false;
+        }
+
+        auto existing = m_NamedResources.find(name);
+        if (existing == m_NamedResources.end())
+        {
+            return false;
+        }
+
+        if (existing->second.Kind != RGResourceKind::Texture)
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Named resource type mismatch");
+            MarkGraphError();
+            return false;
+        }
+
+        RGTextureHandle handle(existing->second.CurrentHead);
+        if (!ValidateTextureHandle(handle))
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Named resource current head is invalid");
+            MarkGraphError();
+            return false;
+        }
+
+        outHandle = handle;
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state);
+        return true;
     }
 
     RGBufferHandle RenderGraph::ReadBufferResource(uint32_t passIndex,

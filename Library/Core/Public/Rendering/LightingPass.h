@@ -108,7 +108,7 @@ namespace NorvesLib::Core::Rendering
          * @brief HDRシーンカラーテクスチャを取得
          */
         RHI::ITexture *GetSceneColorTexture() const { return m_SceneColorTexture.get(); }
-        RGResourceHandle GetSceneColorHandle() const { return m_SceneColorHandle; }
+        RGResourceHandle GetSceneColorHandle() const { return m_SceneColorHandle.ToResourceHandle(); }
 
     private:
         /**
@@ -163,7 +163,13 @@ namespace NorvesLib::Core::Rendering
 
         // 出力テクスチャ（Device::CreateTextureで作成、自己所有）
         RHI::TexturePtr m_SceneColorTexture;
-        RGResourceHandle m_SceneColorHandle;
+        RGTextureHandle m_SceneColorHandle;
+        RGResourceHandle m_GBufferAlbedoHandle;
+        RGResourceHandle m_GBufferNormalHandle;
+        RGResourceHandle m_GBufferMaterialHandle;
+        RGResourceHandle m_GBufferDepthHandle;
+        RGResourceHandle m_GBufferEmissiveHandle;
+        RGResourceHandle m_SSAOBlurredHandle;
 
         // ライティング用リソース
         RHI::RenderPassPtr m_LightingRenderPass;

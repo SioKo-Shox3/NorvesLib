@@ -1,5 +1,6 @@
 ﻿#include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/FXAAPass.h"
 #include "Rendering/ForwardPass.h"
@@ -1038,6 +1039,36 @@ namespace
         uint32_t m_Height = 0;
     };
 
+    class PublishSceneDepthAliasPass final : public IRenderGraphPass
+    {
+    public:
+        explicit PublishSceneDepthAliasPass(RGResourceHandle* publishedHandle)
+            : m_PublishedHandle(publishedHandle)
+        {
+        }
+
+        const char* GetName() const override { return "PublishSceneDepthAliasPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            RGTextureHandle sceneDepth = builder.CreateTextureHandle(
+                RGTextureDesc::DepthStencil(32, 16, RHI::Format::D32_FLOAT, "PrepublishedSceneDepth"));
+            assert(sceneDepth.IsValid());
+            assert(builder.PublishTexture(RenderGraphResourceNames::SceneDepth, sceneDepth));
+            if (m_PublishedHandle)
+            {
+                *m_PublishedHandle = sceneDepth.ToResourceHandle();
+            }
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+    private:
+        RGResourceHandle* m_PublishedHandle = nullptr;
+    };
+
     class FinalStateProducerPass final : public IRenderGraphPass
     {
     public:
@@ -1851,6 +1882,94 @@ namespace
         assert(barriers[7].CompiledOrderIndex == 2);
     }
 
+    void TestGBufferSSAOLightingNativeDeclareUsesNamedResourcesWithoutPassPointers()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        GBufferPass gbufferPass;
+        SSAOPass ssaoPass;
+        LightingPass lightingPass;
+
+        const uint32_t gbufferPassIndex = graph.AddPass(&gbufferPass);
+        const uint32_t ssaoPassIndex = graph.AddPass(&ssaoPass);
+        const uint32_t lightingPassIndex = graph.AddPass(&lightingPass);
+
+        ViewRenderContext context;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        assert(gbufferPass.GetDepthHandle().IsValid());
+        assert(gbufferPass.GetNormalHandle().IsValid());
+        assert(ssaoPass.GetSSAOBlurredHandle().IsValid());
+        assert(lightingPass.GetSceneColorHandle().IsValid());
+        assert(graph.GetDeclaredPassAccessCount(ssaoPassIndex) == 4);
+        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 7);
+
+        auto hasShaderReadAccess = [&graph](uint32_t passIndex, RGResourceHandle expected) -> bool
+        {
+            for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(passIndex); ++accessIndex)
+            {
+                RGResourceHandle resource;
+                RGAccessMode mode = RGAccessMode::Write;
+                RHI::ResourceState state = RHI::ResourceState::Undefined;
+                RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+                assert(graph.TryGetDeclaredPassAccess(passIndex,
+                                                      accessIndex,
+                                                      resource,
+                                                      mode,
+                                                      state,
+                                                      finalState));
+                if (resource == expected)
+                {
+                    return mode == RGAccessMode::Read &&
+                           state == RHI::ResourceState::ShaderResource &&
+                           finalState == RHI::ResourceState::ShaderResource;
+                }
+            }
+
+            return false;
+        };
+
+        assert(hasShaderReadAccess(ssaoPassIndex, gbufferPass.GetDepthHandle()));
+        assert(hasShaderReadAccess(ssaoPassIndex, gbufferPass.GetNormalHandle()));
+        assert(hasShaderReadAccess(lightingPassIndex, gbufferPass.GetAlbedoHandle()));
+        assert(hasShaderReadAccess(lightingPassIndex, gbufferPass.GetNormalHandle()));
+        assert(hasShaderReadAccess(lightingPassIndex, gbufferPass.GetMaterialHandle()));
+        assert(hasShaderReadAccess(lightingPassIndex, gbufferPass.GetDepthHandle()));
+        assert(hasShaderReadAccess(lightingPassIndex, gbufferPass.GetEmissiveHandle()));
+        assert(hasShaderReadAccess(lightingPassIndex, ssaoPass.GetSSAOBlurredHandle()));
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 3);
+        assert(order[0] == gbufferPassIndex);
+        assert(order[1] == ssaoPassIndex);
+        assert(order[2] == lightingPassIndex);
+    }
+
+    void TestLightingSceneDepthAliasDuplicateFailsCompile()
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        GBufferPass gbufferPass;
+        RGResourceHandle prepublishedSceneDepth;
+        PublishSceneDepthAliasPass prepublishPass(&prepublishedSceneDepth);
+        LightingPass lightingPass;
+
+        graph.AddPass(&gbufferPass);
+        graph.AddPass(&prepublishPass);
+        graph.AddPass(&lightingPass);
+
+        ViewRenderContext context;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(!graph.Compile(context));
+        assert(prepublishedSceneDepth.IsValid());
+    }
+
     void TestForwardTransparentNativeDeclareDependencies()
     {
         RenderGraph graph;
@@ -2521,10 +2640,7 @@ namespace
         GBufferPass gbufferPass;
         gbufferPass.SetSceneRenderer(&renderer);
         SSAOPass ssaoPass;
-        ssaoPass.SetGBufferPass(&gbufferPass);
         LightingPass lightingPass;
-        lightingPass.SetGBufferPass(&gbufferPass);
-        lightingPass.SetSSAOPass(&ssaoPass);
         graph.AddPass(&gbufferPass);
         graph.AddPass(&ssaoPass);
         graph.AddPass(&lightingPass);
@@ -2550,9 +2666,16 @@ namespace
         context.Resources.Meshes = &renderResources.Meshes();
 
         assert(graph.Compile(context));
-        assert(graph.Execute(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
 
         assert(graph.GetLastExecutedPassCount() == 3);
+        assert(result.TextureOutputs.empty());
+        RHI::TexturePtr exportedTexture;
+        assert(!result.TryGetTexture(RenderGraphResourceNames::SceneColor, exportedTexture));
+        assert(exportedTexture == nullptr);
+        assert(!result.TryGetTexture(RenderGraphResourceNames::SceneDepth, exportedTexture));
+        assert(exportedTexture == nullptr);
         assert(commandList.Barriers.size() == 8);
         assert(commandList.BeginRenderPassCount == 4);
         assert(commandList.EndRenderPassCount == 4);
@@ -3456,6 +3579,8 @@ int main()
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();
+    TestGBufferSSAOLightingNativeDeclareUsesNamedResourcesWithoutPassPointers();
+    TestLightingSceneDepthAliasDuplicateFailsCompile();
     TestForwardTransparentNativeDeclareDependencies();
     TestSSRNativeDeclareDependencies();
     TestBloomNativeDeclareDependencies();

@@ -177,6 +177,10 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle ReadTextureResource(uint32_t passIndex,
                                             Identity name,
                                             RHI::ResourceState state);
+        bool TryReadTextureResource(uint32_t passIndex,
+                                    Identity name,
+                                    RGTextureHandle& outHandle,
+                                    RHI::ResourceState state);
         RGBufferHandle ReadBufferResource(uint32_t passIndex,
                                           Identity name,
                                           RHI::ResourceState state);

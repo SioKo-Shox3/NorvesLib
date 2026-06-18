@@ -8,6 +8,7 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IBuffer.h"
@@ -283,25 +284,35 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
-        m_AlbedoHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo"));
-        builder.Write(m_AlbedoHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        m_AlbedoHandle = builder.WriteTexture(
+            RenderGraphResourceNames::GBufferAlbedo,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
 
-        m_NormalHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"));
-        builder.Write(m_NormalHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        m_NormalHandle = builder.WriteTexture(
+            RenderGraphResourceNames::GBufferNormal,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
 
-        m_MaterialHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"));
-        builder.Write(m_MaterialHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        m_MaterialHandle = builder.WriteTexture(
+            RenderGraphResourceNames::GBufferMaterial,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
 
-        m_EmissiveHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"));
-        builder.Write(m_EmissiveHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        m_EmissiveHandle = builder.WriteTexture(
+            RenderGraphResourceNames::GBufferEmissive,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
 
-        m_DepthHandle = builder.CreateTexture(
-            RGTextureDesc::DepthStencil(width, height, m_Settings.DepthFormat, "GBuffer_Depth"));
-        builder.Write(m_DepthHandle, RHI::ResourceState::DepthWrite, RHI::ResourceState::ShaderResource);
+        m_DepthHandle = builder.WriteTexture(
+            RenderGraphResourceNames::GBufferDepth,
+            RGTextureDesc::DepthStencil(width, height, m_Settings.DepthFormat, "GBuffer_Depth"),
+            RHI::ResourceState::DepthWrite,
+            RHI::ResourceState::ShaderResource);
 
         builder.PreserveInsertionOrder();
     }
