@@ -96,6 +96,18 @@ namespace NorvesLib::Core::Rendering
             return m_CompiledBarriers;
         }
 
+        const Container::VariableArray<RGCompiledResourceLifetime>& GetCompiledResourceLifetimes() const
+        {
+            return m_CompiledResourceLifetimes;
+        }
+
+        const Container::VariableArray<RGTransientAllocationStep>& GetTransientAllocationPlan() const
+        {
+            return m_TransientAllocationPlan;
+        }
+
+        bool TryGetCompiledResourceLifetime(RGResourceHandle handle, RGCompiledResourceLifetime& outLifetime) const;
+
         uint32_t GetDeclaredPassAccessCount(uint32_t passIndex) const;
         bool TryGetNamedResourceVersion(Identity name, uint32_t& outVersion) const;
         bool TryGetDeclaredPassAccess(uint32_t passIndex,
@@ -241,8 +253,13 @@ namespace NorvesLib::Core::Rendering
                                   Container::VariableArray<uint32_t>& indegree) const;
         bool TopologicalSort(const Container::VariableArray<Container::VariableArray<uint32_t>>& adjacency,
                              Container::VariableArray<uint32_t> indegree);
+        void BuildResourceLifetimes();
+        bool ValidateResourceLifetimes() const;
+        void BuildTransientAllocationPlan();
         void BuildBarriers();
 
+        bool AcquireTransientResourcesForOrderIndex(uint32_t orderIndex);
+        bool AcquireTransientResource(RGResourceRecord& resource);
         bool ExecuteBarrier(const RGCompiledBarrier& barrier, ViewRenderContext& context);
         void FlushPendingFrameCommands(ViewRenderContext& context) const;
 
@@ -256,6 +273,7 @@ namespace NorvesLib::Core::Rendering
         RHI::IBuffer* ResolveBufferRaw(RGBufferHandle handle);
 
         void ClearCompileData();
+        void ClearCompiledProducts();
         bool HasResourceUsage(RHI::ResourceUsage usage, RHI::ResourceUsage flag) const;
 
         RHI::TransientResourcePool* m_TransientPool = nullptr;
@@ -265,6 +283,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<RGPassDependency> m_ExplicitDependencies;
         Container::VariableArray<uint32_t> m_CompiledPassOrder;
         Container::VariableArray<RGCompiledBarrier> m_CompiledBarriers;
+        Container::VariableArray<RGCompiledResourceLifetime> m_CompiledResourceLifetimes;
+        Container::VariableArray<RGTransientAllocationStep> m_TransientAllocationPlan;
         Container::UnorderedMap<Identity, RGNamedResource, Identity::Hasher> m_NamedResources;
         Container::UnorderedMap<Identity, RGTextureHandle, Identity::Hasher> m_TextureExports;
         RenderGraphExecutionResult m_LastExecutionResult;

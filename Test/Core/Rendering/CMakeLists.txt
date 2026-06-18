@@ -170,6 +170,16 @@ target_include_directories(RenderGraphCompileTest PRIVATE
 set_target_properties(RenderGraphCompileTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderGraphCompileTest COMMAND RenderGraphCompileTest)
 
+add_executable(RenderGraphLifetimeTest
+    RenderGraphLifetimeTest.cpp
+)
+target_link_libraries(RenderGraphLifetimeTest PRIVATE Core)
+target_include_directories(RenderGraphLifetimeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphLifetimeTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphLifetimeTest COMMAND RenderGraphLifetimeTest)
+
 add_executable(RenderGraphNamedResourceTest
     RenderGraphNamedResourceTest.cpp
 )

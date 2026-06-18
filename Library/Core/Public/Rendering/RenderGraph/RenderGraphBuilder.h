@@ -50,6 +50,11 @@ namespace NorvesLib::Core::Rendering
                                          RHI::AttachmentStoreOp storeOp,
                                          RHI::ResourceState state,
                                          RHI::ResourceState finalState);
+        bool LoadStoreColorAttachment(RGResourceHandle handle,
+                                      RHI::AttachmentLoadOp loadOp,
+                                      RHI::AttachmentStoreOp storeOp,
+                                      RHI::ResourceState state,
+                                      RHI::ResourceState finalState);
         RGBufferHandle ReadBuffer(Identity name,
                                   RHI::ResourceState state = RHI::ResourceState::ShaderResource);
         RGTextureHandle WriteTexture(Identity name,

@@ -186,4 +186,32 @@ namespace NorvesLib::Core::Rendering
         uint64_t BufferSize = 0;
     };
 
+    struct RGCompiledResourceLifetime
+    {
+        RGResourceHandle Resource;
+        RGResourceKind Kind = RGResourceKind::Invalid;
+        RGResourceLifetime Lifetime = RGResourceLifetime::Invalid;
+        uint32_t FirstUsePassIndex = RGInvalidPassIndex;
+        uint32_t LastUsePassIndex = RGInvalidPassIndex;
+        uint32_t FirstUseOrderIndex = RGInvalidPassIndex;
+        uint32_t LastUseOrderIndex = RGInvalidPassIndex;
+        uint32_t LifetimeEndOrderIndex = RGInvalidPassIndex;
+        bool bHasUse = false;
+        bool bExported = false;
+        bool bPinnedUntilGraphEnd = false;
+        const char* DebugName = nullptr;
+    };
+
+    struct RGTransientAllocationStep
+    {
+        RGResourceHandle Resource;
+        RGResourceKind Kind = RGResourceKind::Invalid;
+        uint32_t AcquireBeforePassIndex = RGInvalidPassIndex;
+        uint32_t AcquireBeforeOrderIndex = RGInvalidPassIndex;
+        uint32_t ReleaseAfterPassIndex = RGInvalidPassIndex;
+        uint32_t ReleaseAfterOrderIndex = RGInvalidPassIndex;
+        bool bPinnedUntilGraphEnd = false;
+        const char* DebugName = nullptr;
+    };
+
 } // namespace NorvesLib::Core::Rendering
