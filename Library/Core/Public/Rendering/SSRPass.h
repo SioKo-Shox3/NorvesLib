@@ -94,6 +94,10 @@ namespace NorvesLib::Core::Rendering
         // 出力テクスチャ
         RHI::TexturePtr m_OutputTexture;
         RGResourceHandle m_OutputHandle;
+        RGResourceHandle m_GBufferNormalHandle;
+        RGResourceHandle m_GBufferMaterialHandle;
+        RGResourceHandle m_GBufferDepthHandle;
+        RGResourceHandle m_SceneColorInputHandle;
 
         // パイプラインリソース
         RHI::RenderPassPtr m_RenderPass;

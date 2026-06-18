@@ -2,6 +2,7 @@
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SSRPass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
@@ -371,18 +372,37 @@ namespace NorvesLib::Core::Rendering
         const uint32_t width = context ? context->GetActiveRenderWidth() : 1u;
         const uint32_t height = context ? context->GetActiveRenderHeight() : 1u;
 
-        if (m_InputPass)
+        m_InputSceneColorHandle = {};
+
+        RGTextureHandle sceneColorHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::SSRSceneColor,
+                                   sceneColorHandle,
+                                   RHI::ResourceState::ShaderResource))
         {
-            const RGResourceHandle sceneColorHandle = m_InputPass->GetSceneColorHandle();
-            if (sceneColorHandle.IsValid())
+            m_InputSceneColorHandle = sceneColorHandle.ToResourceHandle();
+        }
+        else if (builder.TryReadTexture(RenderGraphResourceNames::SceneColor,
+                                        sceneColorHandle,
+                                        RHI::ResourceState::ShaderResource))
+        {
+            m_InputSceneColorHandle = sceneColorHandle.ToResourceHandle();
+        }
+        else if (m_InputPass)
+        {
+            const RGResourceHandle fallbackSceneColorHandle = m_InputPass->GetSceneColorHandle();
+            if (fallbackSceneColorHandle.IsValid())
             {
-                builder.Read(sceneColorHandle, RHI::ResourceState::ShaderResource);
+                builder.Read(fallbackSceneColorHandle, RHI::ResourceState::ShaderResource);
+                m_InputSceneColorHandle = fallbackSceneColorHandle;
             }
         }
 
-        m_OutputHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "BloomOutput"));
-        builder.Write(m_OutputHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        RGTextureHandle outputHandle = builder.WriteTexture(
+            RenderGraphResourceNames::BloomSceneColor,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "BloomOutput"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
+        m_OutputHandle = outputHandle.ToResourceHandle();
         builder.PreserveInsertionOrder();
     }
 
@@ -410,10 +430,14 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::TexturePtr sceneColorPtr;
+        if (m_InputSceneColorHandle.IsValid())
+        {
+            sceneColorPtr = resources.GetTexture(m_InputSceneColorHandle);
+        }
         if (m_InputPass)
         {
             const RGResourceHandle sceneColorHandle = m_InputPass->GetSceneColorHandle();
-            if (sceneColorHandle.IsValid())
+            if (!sceneColorPtr && sceneColorHandle.IsValid())
             {
                 sceneColorPtr = resources.GetTexture(sceneColorHandle);
             }

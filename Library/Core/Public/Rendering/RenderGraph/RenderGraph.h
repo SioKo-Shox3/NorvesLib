@@ -97,12 +97,16 @@ namespace NorvesLib::Core::Rendering
         }
 
         uint32_t GetDeclaredPassAccessCount(uint32_t passIndex) const;
+        bool TryGetNamedResourceVersion(Identity name, uint32_t& outVersion) const;
         bool TryGetDeclaredPassAccess(uint32_t passIndex,
                                       uint32_t accessIndex,
                                       RGResourceHandle& outResource,
                                       RGAccessMode& outMode,
                                       RHI::ResourceState& outState,
-                                      RHI::ResourceState& outFinalState) const;
+                                      RHI::ResourceState& outFinalState,
+                                      bool* outColorAttachmentLoadStore = nullptr,
+                                      RHI::AttachmentLoadOp* outLoadOp = nullptr,
+                                      RHI::AttachmentStoreOp* outStoreOp = nullptr) const;
 
         uint32_t GetPassCount() const
         {
@@ -139,6 +143,9 @@ namespace NorvesLib::Core::Rendering
             RGAccessMode Mode = RGAccessMode::Read;
             RHI::ResourceState State = RHI::ResourceState::ShaderResource;
             RHI::ResourceState FinalState = RHI::ResourceState::ShaderResource;
+            bool bColorAttachmentLoadStore = false;
+            RHI::AttachmentLoadOp LoadOp = RHI::AttachmentLoadOp::DontCare;
+            RHI::AttachmentStoreOp StoreOp = RHI::AttachmentStoreOp::Store;
         };
 
         struct RGPassDeclaration
@@ -181,6 +188,13 @@ namespace NorvesLib::Core::Rendering
                                     Identity name,
                                     RGTextureHandle& outHandle,
                                     RHI::ResourceState state);
+        bool TryLoadStoreColorAttachmentResource(uint32_t passIndex,
+                                                 Identity name,
+                                                 RGTextureHandle& outHandle,
+                                                 RHI::AttachmentLoadOp loadOp,
+                                                 RHI::AttachmentStoreOp storeOp,
+                                                 RHI::ResourceState state,
+                                                 RHI::ResourceState finalState);
         RGBufferHandle ReadBufferResource(uint32_t passIndex,
                                           Identity name,
                                           RHI::ResourceState state);
@@ -203,9 +217,16 @@ namespace NorvesLib::Core::Rendering
                        RGAccessMode mode,
                        RHI::ResourceState state,
                        RHI::ResourceState finalState);
+        void AddColorAttachmentLoadStoreAccess(uint32_t passIndex,
+                                               RGResourceHandle handle,
+                                               RHI::AttachmentLoadOp loadOp,
+                                               RHI::AttachmentStoreOp storeOp,
+                                               RHI::ResourceState state,
+                                               RHI::ResourceState finalState);
         void AddPreserveInsertionOrder(uint32_t passIndex);
 
         bool CompileInternal(const ViewRenderContext* context);
+        bool ValidatePassAccesses() const;
         bool ValidatePassIndex(uint32_t passIndex) const;
         bool ValidateHandle(RGResourceHandle handle) const;
         bool ValidateTextureHandle(RGTextureHandle handle) const;

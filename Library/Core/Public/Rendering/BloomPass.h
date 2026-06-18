@@ -129,6 +129,7 @@ namespace NorvesLib::Core::Rendering
         // 出力テクスチャ（Device::CreateTextureで作成、自己所有）
         RHI::TexturePtr m_OutputTexture;
         RGResourceHandle m_OutputHandle;
+        RGResourceHandle m_InputSceneColorHandle;
 
         // パイプラインリソース
         RHI::RenderPassPtr m_BloomRenderPass;

@@ -164,6 +164,28 @@ namespace NorvesLib::Core::Rendering
         return m_Graph->TryReadTextureResource(m_PassIndex, name, outHandle, state);
     }
 
+    bool RenderGraphBuilder::TryLoadStoreColorAttachment(Identity name,
+                                                         RGTextureHandle& outHandle,
+                                                         RHI::AttachmentLoadOp loadOp,
+                                                         RHI::AttachmentStoreOp storeOp,
+                                                         RHI::ResourceState state,
+                                                         RHI::ResourceState finalState)
+    {
+        if (!m_Graph)
+        {
+            outHandle = RGTextureHandle{};
+            return false;
+        }
+
+        return m_Graph->TryLoadStoreColorAttachmentResource(m_PassIndex,
+                                                            name,
+                                                            outHandle,
+                                                            loadOp,
+                                                            storeOp,
+                                                            state,
+                                                            finalState);
+    }
+
     RGBufferHandle RenderGraphBuilder::ReadBuffer(Identity name, RHI::ResourceState state)
     {
         return m_Graph ? m_Graph->ReadBufferResource(m_PassIndex, name, state) : RGBufferHandle{};
@@ -374,6 +396,13 @@ namespace NorvesLib::Core::Rendering
         }
 
         if (m_bHasGraphError)
+        {
+            m_CompiledPassOrder.clear();
+            m_CompiledBarriers.clear();
+            return false;
+        }
+
+        if (!ValidatePassAccesses())
         {
             m_CompiledPassOrder.clear();
             m_CompiledBarriers.clear();
@@ -704,6 +733,54 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool RenderGraph::TryLoadStoreColorAttachmentResource(uint32_t passIndex,
+                                                          Identity name,
+                                                          RGTextureHandle& outHandle,
+                                                          RHI::AttachmentLoadOp loadOp,
+                                                          RHI::AttachmentStoreOp storeOp,
+                                                          RHI::ResourceState state,
+                                                          RHI::ResourceState finalState)
+    {
+        outHandle = RGTextureHandle{};
+        if (!name.IsValid())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Invalid named resource identity");
+            MarkGraphError();
+            return false;
+        }
+
+        auto existing = m_NamedResources.find(name);
+        if (existing == m_NamedResources.end())
+        {
+            return false;
+        }
+
+        if (existing->second.Kind != RGResourceKind::Texture)
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Named color attachment type mismatch");
+            MarkGraphError();
+            return false;
+        }
+
+        RGTextureHandle handle(existing->second.CurrentHead);
+        if (!ValidateTextureHandle(handle))
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Named color attachment current head is invalid");
+            MarkGraphError();
+            return false;
+        }
+
+        ++existing->second.Version;
+        outHandle = handle;
+        AddColorAttachmentLoadStoreAccess(passIndex,
+                                          handle.ToResourceHandle(),
+                                          loadOp,
+                                          storeOp,
+                                          state,
+                                          finalState);
+        return true;
+    }
+
     RGBufferHandle RenderGraph::ReadBufferResource(uint32_t passIndex,
                                                    Identity name,
                                                    RHI::ResourceState state)
@@ -861,6 +938,29 @@ namespace NorvesLib::Core::Rendering
         m_PassDeclarations[passIndex].Accesses.push_back(access);
     }
 
+    void RenderGraph::AddColorAttachmentLoadStoreAccess(uint32_t passIndex,
+                                                        RGResourceHandle handle,
+                                                        RHI::AttachmentLoadOp loadOp,
+                                                        RHI::AttachmentStoreOp storeOp,
+                                                        RHI::ResourceState state,
+                                                        RHI::ResourceState finalState)
+    {
+        if (!ValidatePassIndex(passIndex))
+        {
+            return;
+        }
+
+        RGPassAccess access;
+        access.Resource = handle;
+        access.Mode = RGAccessMode::Write;
+        access.State = state;
+        access.FinalState = finalState;
+        access.bColorAttachmentLoadStore = true;
+        access.LoadOp = loadOp;
+        access.StoreOp = storeOp;
+        m_PassDeclarations[passIndex].Accesses.push_back(access);
+    }
+
     void RenderGraph::AddPreserveInsertionOrder(uint32_t passIndex)
     {
         if (ValidatePassIndex(passIndex))
@@ -879,12 +979,33 @@ namespace NorvesLib::Core::Rendering
         return static_cast<uint32_t>(m_PassDeclarations[passIndex].Accesses.size());
     }
 
+    bool RenderGraph::TryGetNamedResourceVersion(Identity name, uint32_t& outVersion) const
+    {
+        outVersion = 0;
+        if (!name.IsValid())
+        {
+            return false;
+        }
+
+        auto existing = m_NamedResources.find(name);
+        if (existing == m_NamedResources.end())
+        {
+            return false;
+        }
+
+        outVersion = existing->second.Version;
+        return true;
+    }
+
     bool RenderGraph::TryGetDeclaredPassAccess(uint32_t passIndex,
                                                uint32_t accessIndex,
                                                RGResourceHandle& outResource,
                                                RGAccessMode& outMode,
                                                RHI::ResourceState& outState,
-                                               RHI::ResourceState& outFinalState) const
+                                               RHI::ResourceState& outFinalState,
+                                               bool* outColorAttachmentLoadStore,
+                                               RHI::AttachmentLoadOp* outLoadOp,
+                                               RHI::AttachmentStoreOp* outStoreOp) const
     {
         if (!ValidatePassIndex(passIndex) || passIndex >= m_PassDeclarations.size())
         {
@@ -902,6 +1023,60 @@ namespace NorvesLib::Core::Rendering
         outMode = access.Mode;
         outState = access.State;
         outFinalState = access.FinalState;
+        if (outColorAttachmentLoadStore)
+        {
+            *outColorAttachmentLoadStore = access.bColorAttachmentLoadStore;
+        }
+        if (outLoadOp)
+        {
+            *outLoadOp = access.LoadOp;
+        }
+        if (outStoreOp)
+        {
+            *outStoreOp = access.StoreOp;
+        }
+        return true;
+    }
+
+    bool RenderGraph::ValidatePassAccesses() const
+    {
+        for (uint32_t passIndex = 0; passIndex < m_PassDeclarations.size(); ++passIndex)
+        {
+            const RGPassDeclaration& declaration = m_PassDeclarations[passIndex];
+            for (uint32_t accessIndex = 0; accessIndex < declaration.Accesses.size(); ++accessIndex)
+            {
+                const RGPassAccess& access = declaration.Accesses[accessIndex];
+                for (uint32_t otherIndex = accessIndex + 1;
+                     otherIndex < declaration.Accesses.size();
+                     ++otherIndex)
+                {
+                    const RGPassAccess& otherAccess = declaration.Accesses[otherIndex];
+                    if (access.Resource != otherAccess.Resource)
+                    {
+                        continue;
+                    }
+
+                    if (access.bColorAttachmentLoadStore || otherAccess.bColorAttachmentLoadStore)
+                    {
+                        NORVES_LOG_ERROR("RenderGraph",
+                                         "Color attachment load/store access must be the only same-pass access for resource %u in pass %u",
+                                         access.Resource.Index,
+                                         passIndex);
+                        return false;
+                    }
+
+                    if (access.Mode != otherAccess.Mode)
+                    {
+                        NORVES_LOG_ERROR("RenderGraph",
+                                         "Same-pass read/write access is invalid for resource %u in pass %u",
+                                         access.Resource.Index,
+                                         passIndex);
+                        return false;
+                    }
+                }
+            }
+        }
+
         return true;
     }
 
