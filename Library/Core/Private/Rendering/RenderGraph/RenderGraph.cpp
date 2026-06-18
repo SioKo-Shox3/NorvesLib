@@ -114,27 +114,49 @@ namespace NorvesLib::Core::Rendering
 
     void RenderGraphBuilder::Read(RGResourceHandle handle, RHI::ResourceState state)
     {
+        Read(handle, state, 0, 0);
+    }
+
+    void RenderGraphBuilder::Read(RGResourceHandle handle,
+                                  RHI::ResourceState state,
+                                  uint64_t offset,
+                                  uint64_t size)
+    {
         if (m_Graph)
         {
-            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Read, state, state);
+            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Read, state, state, Identity{}, offset, size);
         }
     }
 
     void RenderGraphBuilder::Write(RGResourceHandle handle, RHI::ResourceState state)
     {
-        if (m_Graph)
-        {
-            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Write, state, state);
-        }
+        Write(handle, state, state, 0, 0);
+    }
+
+    void RenderGraphBuilder::Write(RGResourceHandle handle,
+                                   RHI::ResourceState state,
+                                   uint64_t offset,
+                                   uint64_t size)
+    {
+        Write(handle, state, state, offset, size);
     }
 
     void RenderGraphBuilder::Write(RGResourceHandle handle,
                                    RHI::ResourceState state,
                                    RHI::ResourceState finalState)
     {
+        Write(handle, state, finalState, 0, 0);
+    }
+
+    void RenderGraphBuilder::Write(RGResourceHandle handle,
+                                   RHI::ResourceState state,
+                                   RHI::ResourceState finalState,
+                                   uint64_t offset,
+                                   uint64_t size)
+    {
         if (m_Graph)
         {
-            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Write, state, finalState);
+            m_Graph->AddAccess(m_PassIndex, handle, RGAccessMode::Write, state, finalState, Identity{}, offset, size);
         }
     }
 
@@ -186,6 +208,32 @@ namespace NorvesLib::Core::Rendering
                                                             finalState);
     }
 
+    bool RenderGraphBuilder::TryUseAttachment(Identity name,
+                                              RGTextureHandle& outHandle,
+                                              RGAttachmentKind kind,
+                                              RGAttachmentMutability mutability,
+                                              RHI::AttachmentLoadOp loadOp,
+                                              RHI::AttachmentStoreOp storeOp,
+                                              RHI::ResourceState state,
+                                              RHI::ResourceState finalState)
+    {
+        if (!m_Graph)
+        {
+            outHandle = RGTextureHandle{};
+            return false;
+        }
+
+        return m_Graph->TryUseAttachmentResource(m_PassIndex,
+                                                 name,
+                                                 outHandle,
+                                                 kind,
+                                                 mutability,
+                                                 loadOp,
+                                                 storeOp,
+                                                 state,
+                                                 finalState);
+    }
+
     bool RenderGraphBuilder::LoadStoreColorAttachment(RGResourceHandle handle,
                                                       RHI::AttachmentLoadOp loadOp,
                                                       RHI::AttachmentStoreOp storeOp,
@@ -204,18 +252,59 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        m_Graph->AddColorAttachmentLoadStoreAccess(m_PassIndex,
-                                                   handle,
-                                                   loadOp,
-                                                   storeOp,
-                                                   state,
-                                                   finalState);
+        m_Graph->AddAttachmentAccess(m_PassIndex,
+                                     handle,
+                                     RGAttachmentKind::Color,
+                                     RGAttachmentMutability::Write,
+                                     loadOp,
+                                     storeOp,
+                                     state,
+                                     finalState);
         return true;
     }
 
     RGBufferHandle RenderGraphBuilder::ReadBuffer(Identity name, RHI::ResourceState state)
     {
-        return m_Graph ? m_Graph->ReadBufferResource(m_PassIndex, name, state) : RGBufferHandle{};
+        return ReadBuffer(name, state, 0, 0);
+    }
+
+    bool RenderGraphBuilder::UseAttachment(RGResourceHandle handle,
+                                           RGAttachmentKind kind,
+                                           RGAttachmentMutability mutability,
+                                           RHI::AttachmentLoadOp loadOp,
+                                           RHI::AttachmentStoreOp storeOp,
+                                           RHI::ResourceState state,
+                                           RHI::ResourceState finalState)
+    {
+        if (!m_Graph)
+        {
+            return false;
+        }
+
+        if (!m_Graph->ValidateHandle(handle) ||
+            m_Graph->m_Resources[handle.Index].Kind != RGResourceKind::Texture)
+        {
+            m_Graph->MarkGraphError();
+            return false;
+        }
+
+        m_Graph->AddAttachmentAccess(m_PassIndex,
+                                     handle,
+                                     kind,
+                                     mutability,
+                                     loadOp,
+                                     storeOp,
+                                     state,
+                                     finalState);
+        return true;
+    }
+
+    RGBufferHandle RenderGraphBuilder::ReadBuffer(Identity name,
+                                                  RHI::ResourceState state,
+                                                  uint64_t offset,
+                                                  uint64_t size)
+    {
+        return m_Graph ? m_Graph->ReadBufferResource(m_PassIndex, name, state, offset, size) : RGBufferHandle{};
     }
 
     RGTextureHandle RenderGraphBuilder::WriteTexture(Identity name,
@@ -231,7 +320,37 @@ namespace NorvesLib::Core::Rendering
                                                    RHI::ResourceState state,
                                                    RHI::ResourceState finalState)
     {
-        return m_Graph ? m_Graph->WriteBufferResource(m_PassIndex, name, desc, state, finalState) : RGBufferHandle{};
+        return WriteBuffer(name, desc, state, finalState, 0, 0);
+    }
+
+    RGTextureHandle RenderGraphBuilder::WriteTextureAttachment(Identity name,
+                                                               const RGTextureDesc& desc,
+                                                               RGAttachmentKind kind,
+                                                               RHI::AttachmentLoadOp loadOp,
+                                                               RHI::AttachmentStoreOp storeOp,
+                                                               RHI::ResourceState state,
+                                                               RHI::ResourceState finalState)
+    {
+        return m_Graph ? m_Graph->WriteTextureAttachmentResource(m_PassIndex,
+                                                                 name,
+                                                                 desc,
+                                                                 kind,
+                                                                 loadOp,
+                                                                 storeOp,
+                                                                 state,
+                                                                 finalState)
+                       : RGTextureHandle{};
+    }
+
+    RGBufferHandle RenderGraphBuilder::WriteBuffer(Identity name,
+                                                   const RGBufferDesc& desc,
+                                                   RHI::ResourceState state,
+                                                   RHI::ResourceState finalState,
+                                                   uint64_t offset,
+                                                   uint64_t size)
+    {
+        return m_Graph ? m_Graph->WriteBufferResource(m_PassIndex, name, desc, state, finalState, offset, size)
+                       : RGBufferHandle{};
     }
 
     bool RenderGraphBuilder::TryGetTexture(Identity name, RGTextureHandle& outHandle) const
@@ -733,7 +852,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         RGTextureHandle handle(resource->CurrentHead);
-        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state);
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state, name);
         return handle;
     }
 
@@ -772,7 +891,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         outHandle = handle;
-        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state);
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state, name);
         return true;
     }
 
@@ -783,6 +902,27 @@ namespace NorvesLib::Core::Rendering
                                                           RHI::AttachmentStoreOp storeOp,
                                                           RHI::ResourceState state,
                                                           RHI::ResourceState finalState)
+    {
+        return TryUseAttachmentResource(passIndex,
+                                        name,
+                                        outHandle,
+                                        RGAttachmentKind::Color,
+                                        RGAttachmentMutability::Write,
+                                        loadOp,
+                                        storeOp,
+                                        state,
+                                        finalState);
+    }
+
+    bool RenderGraph::TryUseAttachmentResource(uint32_t passIndex,
+                                               Identity name,
+                                               RGTextureHandle& outHandle,
+                                               RGAttachmentKind kind,
+                                               RGAttachmentMutability mutability,
+                                               RHI::AttachmentLoadOp loadOp,
+                                               RHI::AttachmentStoreOp storeOp,
+                                               RHI::ResourceState state,
+                                               RHI::ResourceState finalState)
     {
         outHandle = RGTextureHandle{};
         if (!name.IsValid())
@@ -800,7 +940,7 @@ namespace NorvesLib::Core::Rendering
 
         if (existing->second.Kind != RGResourceKind::Texture)
         {
-            NORVES_LOG_ERROR("RenderGraph", "Named color attachment type mismatch");
+            NORVES_LOG_ERROR("RenderGraph", "Named attachment type mismatch");
             MarkGraphError();
             return false;
         }
@@ -813,20 +953,28 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        ++existing->second.Version;
+        if (mutability == RGAttachmentMutability::Write)
+        {
+            ++existing->second.Version;
+        }
         outHandle = handle;
-        AddColorAttachmentLoadStoreAccess(passIndex,
-                                          handle.ToResourceHandle(),
-                                          loadOp,
-                                          storeOp,
-                                          state,
-                                          finalState);
+        AddAttachmentAccess(passIndex,
+                            handle.ToResourceHandle(),
+                            kind,
+                            mutability,
+                            loadOp,
+                            storeOp,
+                            state,
+                            finalState,
+                            name);
         return true;
     }
 
     RGBufferHandle RenderGraph::ReadBufferResource(uint32_t passIndex,
                                                    Identity name,
-                                                   RHI::ResourceState state)
+                                                   RHI::ResourceState state,
+                                                   uint64_t offset,
+                                                   uint64_t size)
     {
         const RGNamedResource* resource = nullptr;
         if (!ValidateNamedResource(name, RGResourceKind::Buffer, resource))
@@ -836,7 +984,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         RGBufferHandle handle(resource->CurrentHead);
-        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state);
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state, name, offset, size);
         return handle;
     }
 
@@ -873,7 +1021,55 @@ namespace NorvesLib::Core::Rendering
         resource.Version = version;
         m_NamedResources[name] = resource;
 
-        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Write, state, finalState);
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Write, state, finalState, name);
+        return handle;
+    }
+
+    RGTextureHandle RenderGraph::WriteTextureAttachmentResource(uint32_t passIndex,
+                                                                Identity name,
+                                                                const RGTextureDesc& desc,
+                                                                RGAttachmentKind kind,
+                                                                RHI::AttachmentLoadOp loadOp,
+                                                                RHI::AttachmentStoreOp storeOp,
+                                                                RHI::ResourceState state,
+                                                                RHI::ResourceState finalState)
+    {
+        if (!name.IsValid())
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Cannot write texture attachment with invalid name");
+            MarkGraphError();
+            return RGTextureHandle{};
+        }
+
+        auto existing = m_NamedResources.find(name);
+        uint32_t version = 0;
+        if (existing != m_NamedResources.end())
+        {
+            if (existing->second.Kind != RGResourceKind::Texture)
+            {
+                NORVES_LOG_ERROR("RenderGraph", "Named resource texture attachment write type mismatch");
+                MarkGraphError();
+                return RGTextureHandle{};
+            }
+            version = existing->second.Version + 1;
+        }
+
+        RGTextureHandle handle = CreateTextureResourceHandle(desc);
+        RGNamedResource resource;
+        resource.Kind = RGResourceKind::Texture;
+        resource.CurrentHead = handle.ToResourceHandle();
+        resource.Version = version;
+        m_NamedResources[name] = resource;
+
+        AddAttachmentAccess(passIndex,
+                            handle.ToResourceHandle(),
+                            kind,
+                            RGAttachmentMutability::Write,
+                            loadOp,
+                            storeOp,
+                            state,
+                            finalState,
+                            name);
         return handle;
     }
 
@@ -881,7 +1077,9 @@ namespace NorvesLib::Core::Rendering
                                                     Identity name,
                                                     const RGBufferDesc& desc,
                                                     RHI::ResourceState state,
-                                                    RHI::ResourceState finalState)
+                                                    RHI::ResourceState finalState,
+                                                    uint64_t offset,
+                                                    uint64_t size)
     {
         if (!name.IsValid())
         {
@@ -910,7 +1108,7 @@ namespace NorvesLib::Core::Rendering
         resource.Version = version;
         m_NamedResources[name] = resource;
 
-        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Write, state, finalState);
+        AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Write, state, finalState, name, offset, size);
         return handle;
     }
 
@@ -966,10 +1164,21 @@ namespace NorvesLib::Core::Rendering
                                 RGResourceHandle handle,
                                 RGAccessMode mode,
                                 RHI::ResourceState state,
-                                RHI::ResourceState finalState)
+                                RHI::ResourceState finalState,
+                                Identity namedResourceIdentity,
+                                uint64_t bufferOffset,
+                                uint64_t bufferSize)
     {
         if (!ValidatePassIndex(passIndex))
         {
+            return;
+        }
+
+        uint64_t normalizedOffset = 0;
+        uint64_t normalizedSize = 0;
+        if (!NormalizeBufferRange(handle, bufferOffset, bufferSize, normalizedOffset, normalizedSize))
+        {
+            MarkGraphError();
             return;
         }
 
@@ -978,15 +1187,21 @@ namespace NorvesLib::Core::Rendering
         access.Mode = mode;
         access.State = state;
         access.FinalState = finalState;
+        access.BufferOffset = normalizedOffset;
+        access.BufferSize = normalizedSize;
+        access.NamedResourceIdentity = namedResourceIdentity;
         m_PassDeclarations[passIndex].Accesses.push_back(access);
     }
 
-    void RenderGraph::AddColorAttachmentLoadStoreAccess(uint32_t passIndex,
-                                                        RGResourceHandle handle,
-                                                        RHI::AttachmentLoadOp loadOp,
-                                                        RHI::AttachmentStoreOp storeOp,
-                                                        RHI::ResourceState state,
-                                                        RHI::ResourceState finalState)
+    void RenderGraph::AddAttachmentAccess(uint32_t passIndex,
+                                          RGResourceHandle handle,
+                                          RGAttachmentKind kind,
+                                          RGAttachmentMutability mutability,
+                                          RHI::AttachmentLoadOp loadOp,
+                                          RHI::AttachmentStoreOp storeOp,
+                                          RHI::ResourceState state,
+                                          RHI::ResourceState finalState,
+                                          Identity namedResourceIdentity)
     {
         if (!ValidatePassIndex(passIndex))
         {
@@ -995,13 +1210,76 @@ namespace NorvesLib::Core::Rendering
 
         RGPassAccess access;
         access.Resource = handle;
-        access.Mode = RGAccessMode::Write;
+        access.Mode = mutability == RGAttachmentMutability::ReadOnly ? RGAccessMode::Read : RGAccessMode::Write;
         access.State = state;
         access.FinalState = finalState;
-        access.bColorAttachmentLoadStore = true;
+        access.bAttachment = true;
+        access.AttachmentKind = kind;
+        access.AttachmentMutability = mutability;
         access.LoadOp = loadOp;
         access.StoreOp = storeOp;
+        access.NamedResourceIdentity = namedResourceIdentity;
         m_PassDeclarations[passIndex].Accesses.push_back(access);
+    }
+
+    bool RenderGraph::NormalizeBufferRange(RGResourceHandle handle,
+                                           uint64_t offset,
+                                           uint64_t size,
+                                           uint64_t& outOffset,
+                                           uint64_t& outSize) const
+    {
+        outOffset = 0;
+        outSize = 0;
+
+        if (!ValidateHandle(handle))
+        {
+            return true;
+        }
+
+        const RGResourceRecord& resource = m_Resources[handle.Index];
+        if (resource.Kind != RGResourceKind::Buffer)
+        {
+            if (offset != 0 || size != 0)
+            {
+                NORVES_LOG_ERROR("RenderGraph",
+                                 "Buffer range was provided for non-buffer resource '%s'",
+                                 resource.DebugName ? resource.DebugName : "<unnamed>");
+                return false;
+            }
+            return true;
+        }
+
+        const uint64_t resourceSize = resource.Lifetime == RGResourceLifetime::Imported && resource.ImportedBuffer
+                                          ? resource.ImportedBuffer->GetSize()
+                                          : resource.BufferDesc.Size;
+        if (offset > resourceSize)
+        {
+            NORVES_LOG_ERROR("RenderGraph",
+                             "Buffer range offset exceeds resource size for '%s'",
+                             resource.DebugName ? resource.DebugName : "<unnamed>");
+            return false;
+        }
+
+        const uint64_t normalizedSize = size == 0 ? resourceSize - offset : size;
+        if (normalizedSize > UINT64_MAX - offset)
+        {
+            NORVES_LOG_ERROR("RenderGraph",
+                             "Buffer range overflow for '%s'",
+                             resource.DebugName ? resource.DebugName : "<unnamed>");
+            return false;
+        }
+
+        if (offset + normalizedSize > resourceSize)
+        {
+            NORVES_LOG_ERROR("RenderGraph",
+                             "Buffer range exceeds resource size for '%s'",
+                             resource.DebugName ? resource.DebugName : "<unnamed>");
+            return false;
+        }
+
+        outOffset = offset;
+        outSize = normalizedSize;
+        return true;
     }
 
     void RenderGraph::AddPreserveInsertionOrder(uint32_t passIndex)
@@ -1069,7 +1347,9 @@ namespace NorvesLib::Core::Rendering
                                                RHI::ResourceState& outFinalState,
                                                bool* outColorAttachmentLoadStore,
                                                RHI::AttachmentLoadOp* outLoadOp,
-                                               RHI::AttachmentStoreOp* outStoreOp) const
+                                               RHI::AttachmentStoreOp* outStoreOp,
+                                               RGAttachmentKind* outAttachmentKind,
+                                               RGAttachmentMutability* outAttachmentMutability) const
     {
         if (!ValidatePassIndex(passIndex) || passIndex >= m_PassDeclarations.size())
         {
@@ -1089,7 +1369,9 @@ namespace NorvesLib::Core::Rendering
         outFinalState = access.FinalState;
         if (outColorAttachmentLoadStore)
         {
-            *outColorAttachmentLoadStore = access.bColorAttachmentLoadStore;
+            *outColorAttachmentLoadStore = access.bAttachment &&
+                                           access.AttachmentKind == RGAttachmentKind::Color &&
+                                           access.AttachmentMutability == RGAttachmentMutability::Write;
         }
         if (outLoadOp)
         {
@@ -1098,6 +1380,14 @@ namespace NorvesLib::Core::Rendering
         if (outStoreOp)
         {
             *outStoreOp = access.StoreOp;
+        }
+        if (outAttachmentKind)
+        {
+            *outAttachmentKind = access.AttachmentKind;
+        }
+        if (outAttachmentMutability)
+        {
+            *outAttachmentMutability = access.AttachmentMutability;
         }
         return true;
     }
@@ -1120,10 +1410,10 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
 
-                    if (access.bColorAttachmentLoadStore || otherAccess.bColorAttachmentLoadStore)
+                    if (access.bAttachment || otherAccess.bAttachment)
                     {
                         NORVES_LOG_ERROR("RenderGraph",
-                                         "Color attachment load/store access must be the only same-pass access for resource %u in pass %u",
+                                         "Attachment access must be the only same-pass access for resource %u in pass %u",
                                          access.Resource.Index,
                                          passIndex);
                         return false;
@@ -1488,7 +1778,7 @@ namespace NorvesLib::Core::Rendering
 
                 const bool bRequiresReadableContents =
                     access.Mode == RGAccessMode::Read ||
-                    (access.bColorAttachmentLoadStore && access.LoadOp == RHI::AttachmentLoadOp::Load);
+                    (access.bAttachment && access.LoadOp == RHI::AttachmentLoadOp::Load);
                 if (resource.Lifetime == RGResourceLifetime::Transient &&
                     bRequiresReadableContents &&
                     !bHasReadableContents[access.Resource.Index])
@@ -1570,11 +1860,17 @@ namespace NorvesLib::Core::Rendering
                     barrier.Resource = access.Resource;
                     barrier.BeforeState = currentStates[access.Resource.Index];
                     barrier.AfterState = access.State;
+                    barrier.PassName = passIndex < m_Passes.size() && m_Passes[passIndex]
+                                           ? m_Passes[passIndex]->GetName()
+                                           : nullptr;
+                    barrier.ResourceDebugName = resource.DebugName;
+                    barrier.NamedResourceIdentity = access.NamedResourceIdentity;
                     barrier.PassIndex = passIndex;
                     barrier.CompiledOrderIndex = orderIndex;
                     if (resource.Kind == RGResourceKind::Buffer)
                     {
-                        barrier.BufferSize = resource.BufferDesc.Size;
+                        barrier.BufferOffset = access.BufferOffset;
+                        barrier.BufferSize = access.BufferSize;
                     }
                     m_CompiledBarriers.push_back(barrier);
                 }

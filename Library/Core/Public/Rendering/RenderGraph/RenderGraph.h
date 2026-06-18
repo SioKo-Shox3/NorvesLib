@@ -118,7 +118,9 @@ namespace NorvesLib::Core::Rendering
                                       RHI::ResourceState& outFinalState,
                                       bool* outColorAttachmentLoadStore = nullptr,
                                       RHI::AttachmentLoadOp* outLoadOp = nullptr,
-                                      RHI::AttachmentStoreOp* outStoreOp = nullptr) const;
+                                      RHI::AttachmentStoreOp* outStoreOp = nullptr,
+                                      RGAttachmentKind* outAttachmentKind = nullptr,
+                                      RGAttachmentMutability* outAttachmentMutability = nullptr) const;
 
         uint32_t GetPassCount() const
         {
@@ -155,9 +157,14 @@ namespace NorvesLib::Core::Rendering
             RGAccessMode Mode = RGAccessMode::Read;
             RHI::ResourceState State = RHI::ResourceState::ShaderResource;
             RHI::ResourceState FinalState = RHI::ResourceState::ShaderResource;
-            bool bColorAttachmentLoadStore = false;
+            bool bAttachment = false;
+            RGAttachmentKind AttachmentKind = RGAttachmentKind::Color;
+            RGAttachmentMutability AttachmentMutability = RGAttachmentMutability::Write;
             RHI::AttachmentLoadOp LoadOp = RHI::AttachmentLoadOp::DontCare;
             RHI::AttachmentStoreOp StoreOp = RHI::AttachmentStoreOp::Store;
+            uint64_t BufferOffset = 0;
+            uint64_t BufferSize = 0;
+            Identity NamedResourceIdentity;
         };
 
         struct RGPassDeclaration
@@ -207,19 +214,40 @@ namespace NorvesLib::Core::Rendering
                                                  RHI::AttachmentStoreOp storeOp,
                                                  RHI::ResourceState state,
                                                  RHI::ResourceState finalState);
+        bool TryUseAttachmentResource(uint32_t passIndex,
+                                      Identity name,
+                                      RGTextureHandle& outHandle,
+                                      RGAttachmentKind kind,
+                                      RGAttachmentMutability mutability,
+                                      RHI::AttachmentLoadOp loadOp,
+                                      RHI::AttachmentStoreOp storeOp,
+                                      RHI::ResourceState state,
+                                      RHI::ResourceState finalState);
         RGBufferHandle ReadBufferResource(uint32_t passIndex,
                                           Identity name,
-                                          RHI::ResourceState state);
+                                          RHI::ResourceState state,
+                                          uint64_t offset = 0,
+                                          uint64_t size = 0);
         RGTextureHandle WriteTextureResource(uint32_t passIndex,
                                              Identity name,
                                              const RGTextureDesc& desc,
                                              RHI::ResourceState state,
                                              RHI::ResourceState finalState);
+        RGTextureHandle WriteTextureAttachmentResource(uint32_t passIndex,
+                                                       Identity name,
+                                                       const RGTextureDesc& desc,
+                                                       RGAttachmentKind kind,
+                                                       RHI::AttachmentLoadOp loadOp,
+                                                       RHI::AttachmentStoreOp storeOp,
+                                                       RHI::ResourceState state,
+                                                       RHI::ResourceState finalState);
         RGBufferHandle WriteBufferResource(uint32_t passIndex,
                                            Identity name,
                                            const RGBufferDesc& desc,
                                            RHI::ResourceState state,
-                                           RHI::ResourceState finalState);
+                                           RHI::ResourceState finalState,
+                                           uint64_t offset = 0,
+                                           uint64_t size = 0);
         bool TryGetTextureResource(Identity name, RGTextureHandle& outHandle);
         bool TryGetBufferResource(Identity name, RGBufferHandle& outHandle);
         bool ExportTextureResource(Identity name, RGTextureHandle handle);
@@ -228,14 +256,25 @@ namespace NorvesLib::Core::Rendering
                        RGResourceHandle handle,
                        RGAccessMode mode,
                        RHI::ResourceState state,
-                       RHI::ResourceState finalState);
-        void AddColorAttachmentLoadStoreAccess(uint32_t passIndex,
-                                               RGResourceHandle handle,
-                                               RHI::AttachmentLoadOp loadOp,
-                                               RHI::AttachmentStoreOp storeOp,
-                                               RHI::ResourceState state,
-                                               RHI::ResourceState finalState);
+                       RHI::ResourceState finalState,
+                       Identity namedResourceIdentity = Identity{},
+                       uint64_t bufferOffset = 0,
+                       uint64_t bufferSize = 0);
+        void AddAttachmentAccess(uint32_t passIndex,
+                                 RGResourceHandle handle,
+                                 RGAttachmentKind kind,
+                                 RGAttachmentMutability mutability,
+                                 RHI::AttachmentLoadOp loadOp,
+                                 RHI::AttachmentStoreOp storeOp,
+                                 RHI::ResourceState state,
+                                 RHI::ResourceState finalState,
+                                 Identity namedResourceIdentity = Identity{});
         void AddPreserveInsertionOrder(uint32_t passIndex);
+        bool NormalizeBufferRange(RGResourceHandle handle,
+                                  uint64_t offset,
+                                  uint64_t size,
+                                  uint64_t& outOffset,
+                                  uint64_t& outSize) const;
 
         bool CompileInternal(const ViewRenderContext* context);
         bool ValidatePassAccesses() const;

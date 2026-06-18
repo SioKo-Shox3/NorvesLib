@@ -17,7 +17,7 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        RHI::TexturePtr ResolveSharedTexturePtr(ViewRenderContext &context, const char* name)
+        RHI::TexturePtr ResolveSharedTexturePtr(ViewRenderContext& context, const char* name)
         {
             if (!context.SharedResources)
             {
@@ -66,7 +66,7 @@ namespace NorvesLib::Core::Rendering
 
     static constexpr uint32_t TONEMAPPING_PARAMS_SIZE = sizeof(GPUToneMappingParams);
 
-    ToneMappingPass::ToneMappingPass(const ToneMappingSettings &settings)
+    ToneMappingPass::ToneMappingPass(const ToneMappingSettings& settings)
         : m_Settings(settings)
     {
     }
@@ -173,6 +173,7 @@ namespace NorvesLib::Core::Rendering
         m_OutputHandle = {};
         m_bRenderPassUsesRenderGraphInitialState = false;
         m_FramebufferOutputTexture = nullptr;
+        m_RenderPassSignature = {};
 
         m_bInitialized = false;
         NORVES_LOG_INFO("ToneMappingPass", "ToneMappingPass shutdown");
@@ -239,11 +240,12 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        const RenderPassSignature signature = CreateToneMappingRenderPassSignature(width,
+                                                                                   height,
+                                                                                   outputTexture,
+                                                                                   bUseRenderGraphInitialState);
         const bool bResourcesChanged =
-            width != m_CurrentWidth ||
-            height != m_CurrentHeight ||
-            outputTexture.get() != m_FramebufferOutputTexture ||
-            bUseRenderGraphInitialState != m_bRenderPassUsesRenderGraphInitialState ||
+            !RenderPassSignatureEquals(m_RenderPassSignature, signature) ||
             !m_ToneMappingRenderPass ||
             !m_ToneMappingFramebuffer ||
             !m_ToneMappingPipeline ||
@@ -259,6 +261,7 @@ namespace NorvesLib::Core::Rendering
         m_ToneMappingFramebuffer.reset();
         m_ToneMappingPipeline.reset();
         m_ToneMappingDescriptorSet.reset();
+        m_RenderPassSignature = {};
 
         // ========================================
         // レンダーパス作成（1カラー、デプスなし）
@@ -266,15 +269,13 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassDesc rpDesc;
 
         RHI::AttachmentDesc colorAttach;
-        colorAttach.format = outputTexture->GetFormat();
+        colorAttach.format = signature.Output.Format;
         colorAttach.isDepthStencil = false;
         colorAttach.clear = false;
-        colorAttach.loadOp = RHI::AttachmentLoadOp::DontCare;
-        colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        colorAttach.initialState = bUseRenderGraphInitialState
-                                       ? RHI::ResourceState::RenderTarget
-                                       : RHI::ResourceState::Undefined;
-        colorAttach.finalState = RHI::ResourceState::ShaderResource;
+        colorAttach.loadOp = signature.Output.LoadOp;
+        colorAttach.storeOp = signature.Output.StoreOp;
+        colorAttach.initialState = signature.Output.InitialState;
+        colorAttach.finalState = signature.Output.FinalState;
         rpDesc.colorAttachments.push_back(colorAttach);
 
         rpDesc.hasDepthStencil = false;
@@ -370,11 +371,56 @@ namespace NorvesLib::Core::Rendering
         m_CurrentWidth = width;
         m_CurrentHeight = height;
         m_FramebufferOutputTexture = outputTexture.get();
-        m_bRenderPassUsesRenderGraphInitialState = bUseRenderGraphInitialState;
+        m_bRenderPassUsesRenderGraphInitialState =
+            signature.Output.InitialState == RHI::ResourceState::RenderTarget;
+        m_RenderPassSignature = signature;
         return true;
     }
 
-    void ToneMappingPass::Execute(ViewRenderContext &context)
+    bool ToneMappingPass::AttachmentSignatureEquals(const AttachmentSignature& lhs,
+                                                    const AttachmentSignature& rhs) const
+    {
+        return lhs.Kind == rhs.Kind &&
+               lhs.Format == rhs.Format &&
+               lhs.LoadOp == rhs.LoadOp &&
+               lhs.StoreOp == rhs.StoreOp &&
+               lhs.InitialState == rhs.InitialState &&
+               lhs.FinalState == rhs.FinalState &&
+               lhs.Target == rhs.Target &&
+               lhs.Width == rhs.Width &&
+               lhs.Height == rhs.Height &&
+               lhs.bDepthReadOnly == rhs.bDepthReadOnly;
+    }
+
+    bool ToneMappingPass::RenderPassSignatureEquals(const RenderPassSignature& lhs,
+                                                    const RenderPassSignature& rhs) const
+    {
+        return lhs.bValid == rhs.bValid &&
+               AttachmentSignatureEquals(lhs.Output, rhs.Output);
+    }
+
+    ToneMappingPass::RenderPassSignature ToneMappingPass::CreateToneMappingRenderPassSignature(
+        uint32_t width,
+        uint32_t height,
+        const RHI::TexturePtr& outputTexture,
+        bool bUseRenderGraphInitialState) const
+    {
+        RenderPassSignature signature;
+        signature.bValid = true;
+        signature.Output = {RGAttachmentKind::Color,
+                            outputTexture ? outputTexture->GetFormat() : m_Settings.OutputFormat,
+                            RHI::AttachmentLoadOp::DontCare,
+                            RHI::AttachmentStoreOp::Store,
+                            bUseRenderGraphInitialState ? RHI::ResourceState::RenderTarget : RHI::ResourceState::Undefined,
+                            RHI::ResourceState::ShaderResource,
+                            outputTexture.get(),
+                            width,
+                            height,
+                            false};
+        return signature;
+    }
+
+    void ToneMappingPass::Execute(ViewRenderContext& context)
     {
         if (!context.CommandList)
         {
@@ -437,9 +483,12 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        RGTextureHandle outputHandle = builder.WriteTexture(
+        RGTextureHandle outputHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::ToneMappedColor,
             RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "ToneMappedColor"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::DontCare,
+            RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
         m_OutputHandle = outputHandle.ToResourceHandle();
@@ -498,7 +547,7 @@ namespace NorvesLib::Core::Rendering
         ExecuteWithInput(context, sceneColorPtr);
     }
 
-    void ToneMappingPass::ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr)
+    void ToneMappingPass::ExecuteWithInput(ViewRenderContext& context, const RHI::TexturePtr& sceneColorPtr)
     {
         if (!m_ToneMappingRenderPass ||
             !m_ToneMappingFramebuffer ||
