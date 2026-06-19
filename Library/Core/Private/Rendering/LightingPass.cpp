@@ -400,6 +400,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferDepthHandle = {};
         m_GBufferEmissiveHandle = {};
         m_SSAOBlurredHandle = {};
+        m_ShadowMapHandle = {};
         m_bLegacyInputFallbackActive = false;
         m_bUsingRenderGraphResources = false;
         m_bRenderPassUsesRenderGraphInitialState = false;
@@ -488,6 +489,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferDepthHandle = {};
         m_GBufferEmissiveHandle = {};
         m_SSAOBlurredHandle = {};
+        m_ShadowMapHandle = {};
 
         RGTextureHandle albedoHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::GBufferAlbedo,
@@ -596,6 +598,14 @@ namespace NorvesLib::Core::Rendering
                 m_SSAOBlurredHandle = fallbackSSAOHandle;
                 m_bLegacyInputFallbackActive = true;
             }
+        }
+
+        RGTextureHandle shadowMapHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::ShadowMap,
+                                   shadowMapHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_ShadowMapHandle = shadowMapHandle.ToResourceHandle();
         }
 
         m_SceneColorHandle = builder.WriteTextureAttachment(
@@ -711,9 +721,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::TexturePtr shadowMapTexture;
-        if (context.SharedResources)
+        if (m_ShadowMapHandle.IsValid())
         {
-            // Phase8 では ShadowMap だけ registry fallback を維持する。
+            shadowMapTexture = resources.GetTexture(m_ShadowMapHandle);
+        }
+        if (!shadowMapTexture && context.SharedResources)
+        {
             shadowMapTexture = context.SharedResources->GetTexturePtr("ShadowMap");
         }
 

@@ -166,6 +166,11 @@ namespace NorvesLib::Core::Rendering
         return m_Graph ? m_Graph->PublishTextureResource(name, handle) : false;
     }
 
+    bool RenderGraphBuilder::PublishTexture(Identity name, RGResourceHandle handle)
+    {
+        return m_Graph ? m_Graph->PublishTextureResource(name, handle) : false;
+    }
+
     bool RenderGraphBuilder::PublishBuffer(Identity name, RGBufferHandle handle)
     {
         return m_Graph ? m_Graph->PublishBufferResource(name, handle) : false;
@@ -377,6 +382,11 @@ namespace NorvesLib::Core::Rendering
     }
 
     bool RenderGraphBuilder::ExportTexture(Identity name, RGTextureHandle handle)
+    {
+        return m_Graph ? m_Graph->ExportTextureResource(name, handle) : false;
+    }
+
+    bool RenderGraphBuilder::ExportTexture(Identity name, RGResourceHandle handle)
     {
         return m_Graph ? m_Graph->ExportTextureResource(name, handle) : false;
     }
@@ -808,6 +818,11 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderGraph::PublishTextureResource(Identity name, RGTextureHandle handle)
     {
+        return PublishTextureResource(name, handle.ToResourceHandle());
+    }
+
+    bool RenderGraph::PublishTextureResource(Identity name, RGResourceHandle handle)
+    {
         if (!name.IsValid())
         {
             NORVES_LOG_ERROR("RenderGraph", "Cannot publish texture with invalid name");
@@ -815,7 +830,8 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!ValidateTextureHandle(handle))
+        if (!ValidateHandle(handle) ||
+            m_Resources[handle.Index].Kind != RGResourceKind::Texture)
         {
             NORVES_LOG_ERROR("RenderGraph", "Cannot publish invalid texture handle");
             MarkGraphError();
@@ -832,7 +848,7 @@ namespace NorvesLib::Core::Rendering
 
         RGNamedResource resource;
         resource.Kind = RGResourceKind::Texture;
-        resource.CurrentHead = handle.ToResourceHandle();
+        resource.CurrentHead = handle;
         resource.Version = 0;
         m_NamedResources[name] = resource;
         return true;
@@ -1210,14 +1226,35 @@ namespace NorvesLib::Core::Rendering
     bool RenderGraph::TryGetTextureResource(Identity name, RGTextureHandle& outHandle)
     {
         outHandle = RGTextureHandle{};
-        const RGNamedResource* resource = nullptr;
-        if (!ValidateNamedResource(name, RGResourceKind::Texture, resource))
+        if (!name.IsValid())
         {
+            NORVES_LOG_ERROR("RenderGraph", "Invalid named resource identity");
             MarkGraphError();
             return false;
         }
 
-        outHandle = RGTextureHandle(resource->CurrentHead);
+        auto existing = m_NamedResources.find(name);
+        if (existing == m_NamedResources.end())
+        {
+            return false;
+        }
+
+        if (existing->second.Kind != RGResourceKind::Texture)
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Named resource type mismatch");
+            MarkGraphError();
+            return false;
+        }
+
+        RGTextureHandle handle(existing->second.CurrentHead);
+        if (!ValidateTextureHandle(handle))
+        {
+            NORVES_LOG_ERROR("RenderGraph", "Named resource current head is invalid");
+            MarkGraphError();
+            return false;
+        }
+
+        outHandle = handle;
         return true;
     }
 
@@ -1237,6 +1274,11 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderGraph::ExportTextureResource(Identity name, RGTextureHandle handle)
     {
+        return ExportTextureResource(name, handle.ToResourceHandle());
+    }
+
+    bool RenderGraph::ExportTextureResource(Identity name, RGResourceHandle handle)
+    {
         if (!name.IsValid())
         {
             NORVES_LOG_ERROR("RenderGraph", "Cannot export texture with invalid name");
@@ -1244,14 +1286,15 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!ValidateTextureHandle(handle))
+        if (!ValidateHandle(handle) ||
+            m_Resources[handle.Index].Kind != RGResourceKind::Texture)
         {
             NORVES_LOG_ERROR("RenderGraph", "Cannot export invalid texture handle");
             MarkGraphError();
             return false;
         }
 
-        m_TextureExports[name] = handle;
+        m_TextureExports[name] = RGTextureHandle(handle);
         return true;
     }
 

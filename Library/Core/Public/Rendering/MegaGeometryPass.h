@@ -129,7 +129,9 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief GBuffer互換のグラフィックスパイプラインを作成
          */
-        bool CreateDrawPipeline(ViewRenderContext &context);
+        bool CreateDrawPipeline(ViewRenderContext &context,
+                                bool bRequireDrawPipeline = true,
+                                bool bUseRenderGraphAttachmentStates = false);
 
         /**
          * @brief インスタンスごとに安定した UBO / DescriptorSet を確保
@@ -166,6 +168,8 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_IndirectDrawBufferHandle;
         RGResourceHandle m_DrawCountBufferHandle;
         RGResourceHandle m_MegaGeometryCompleteHandle;
+        Container::VariableArray<RHI::BufferPtr> m_InstanceIndirectDrawBuffers;
+        Container::VariableArray<RHI::BufferPtr> m_InstanceDrawCountBuffers;
         Container::VariableArray<RHI::BufferPtr> m_CullUniformBuffers;
         Container::VariableArray<RHI::DescriptorSetPtr> m_CullDescriptorSets;
 
@@ -184,6 +188,11 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_MaterialTexture;
         RHI::TexturePtr m_EmissiveTexture;
         RHI::TexturePtr m_DepthTexture;
+        RGResourceHandle m_GBufferAlbedoHandle;
+        RGResourceHandle m_GBufferNormalHandle;
+        RGResourceHandle m_GBufferMaterialHandle;
+        RGResourceHandle m_GBufferEmissiveHandle;
+        RGResourceHandle m_GBufferDepthHandle;
 
         // PerObject UBO用ディスクリプタセット
         Container::VariableArray<RHI::BufferPtr> m_DrawUniformBuffers;
@@ -210,6 +219,8 @@ namespace NorvesLib::Core::Rendering
         // 現在のGBufferサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bPreferRenderGraphGBufferResources = false;
+        bool m_bGBufferRenderPassUsesRenderGraphAttachmentStates = false;
     };
 
 } // namespace NorvesLib::Core::Rendering

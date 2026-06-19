@@ -481,6 +481,8 @@ namespace
         uint32_t m_BindPointCount = 0;
     };
 
+    RHI::ITexture* GLastDescriptorBinding6Texture = nullptr;
+
     class FakeDescriptorSet final : public RHI::IDescriptorSet
     {
     public:
@@ -497,8 +499,10 @@ namespace
 
         void BindTexture(uint32_t binding, RHI::TexturePtr texture) override
         {
-            (void)binding;
-            (void)texture;
+            if (binding == 6)
+            {
+                GLastDescriptorBinding6Texture = texture.get();
+            }
         }
 
         void BindSampler(uint32_t binding, RHI::SamplerPtr sampler) override
@@ -608,6 +612,7 @@ namespace
 
         RHI::RenderPassPtr CreateRenderPass(const RHI::RenderPassDesc& desc) override
         {
+            CreatedRenderPassDescs.push_back(desc);
             return RHI::MakeShared<FakeRenderPass>(desc);
         }
 
@@ -658,6 +663,8 @@ namespace
             (void)bApplyYFlip;
             return projection;
         }
+
+        Container::VariableArray<RHI::RenderPassDesc> CreatedRenderPassDescs;
 
     private:
         RHI::DeviceCapabilities m_Capabilities;
@@ -1069,6 +1076,69 @@ namespace
         RGResourceHandle* m_PublishedHandle = nullptr;
     };
 
+    class NamedShadowMapProducerPass final : public IRenderGraphPass
+    {
+    public:
+        NamedShadowMapProducerPass(RHI::TexturePtr texture, RGResourceHandle* publishedHandle)
+            : m_Texture(texture), m_PublishedHandle(publishedHandle)
+        {
+        }
+
+        const char* GetName() const override { return "NamedShadowMapProducerPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            RGResourceHandle shadowMap = builder.ImportTexture(m_Texture,
+                                                               RHI::ResourceState::ShaderResource,
+                                                               "NamedShadowMap");
+            assert(shadowMap.IsValid());
+            builder.Read(shadowMap, RHI::ResourceState::ShaderResource);
+            assert(builder.PublishTexture(RenderGraphResourceNames::ShadowMap, shadowMap));
+            if (m_PublishedHandle)
+            {
+                *m_PublishedHandle = shadowMap;
+            }
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+    private:
+        RHI::TexturePtr m_Texture;
+        RGResourceHandle* m_PublishedHandle = nullptr;
+    };
+
+    class NamedGBufferAlbedoProducerPass final : public IRenderGraphPass
+    {
+    public:
+        explicit NamedGBufferAlbedoProducerPass(RHI::TexturePtr texture)
+            : m_Texture(texture)
+        {
+        }
+
+        const char* GetName() const override { return "NamedGBufferAlbedoProducerPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            RGResourceHandle albedo = builder.ImportTexture(m_Texture,
+                                                            RHI::ResourceState::ShaderResource,
+                                                            "PartialGBufferAlbedo");
+            assert(albedo.IsValid());
+            builder.Read(albedo, RHI::ResourceState::ShaderResource);
+            assert(builder.PublishTexture(RenderGraphResourceNames::GBufferAlbedo, albedo));
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+    private:
+        RHI::TexturePtr m_Texture;
+    };
+
     class FinalStateProducerPass final : public IRenderGraphPass
     {
     public:
@@ -1456,6 +1526,9 @@ namespace
         assert(graph.Compile(context));
         assert(pass.GetShadowMapHandle().IsValid());
         assert(graph.GetDeclaredPassAccessCount(passIndex) == 1);
+        uint32_t shadowMapVersion = 0;
+        assert(graph.TryGetNamedResourceVersion(RenderGraphResourceNames::ShadowMap, shadowMapVersion));
+        assert(shadowMapVersion == 0);
 
         RGResourceHandle resource;
         RGAccessMode mode = RGAccessMode::Read;
@@ -1499,11 +1572,15 @@ namespace
         graph.AddPass(&pass);
 
         assert(graph.Compile(context));
-        assert(graph.Execute(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
 
         RenderGraphResources graphResources(&graph);
         RHI::TexturePtr shadowMap = graphResources.GetTexture(pass.GetShadowMapHandle());
         assert(shadowMap.get() == pass.GetShadowMapTexture());
+        RHI::TexturePtr exportedShadowMap;
+        assert(result.TryGetTexture(RenderGraphResourceNames::ShadowMap, exportedShadowMap));
+        assert(exportedShadowMap.get() == pass.GetShadowMapTexture());
         assert(graph.GetLastExecutedPassCount() == 1);
         assert(sharedResources.HasTexture("ShadowMap"));
         assert(sharedResources.GetTexturePtr("ShadowMap").get() == pass.GetShadowMapTexture());
@@ -1630,6 +1707,697 @@ namespace
         assert(graph.GetCompiledBarriers().empty());
 
         pass.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestMegaGeometryNativeDeclareUsesNamedGBufferAttachments()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        GBufferPass gbufferPass;
+        MegaGeometryPass megaGeometryPass;
+        assert(megaGeometryPass.Initialize(context));
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        const uint32_t gbufferPassIndex = graph.AddPass(&gbufferPass);
+        const uint32_t megaGeometryPassIndex = graph.AddPass(&megaGeometryPass);
+
+        assert(graph.Compile(context));
+        assert(graph.GetDeclaredPassAccessCount(megaGeometryPassIndex) == 8);
+
+        auto hasAttachmentAccess = [&graph](uint32_t passIndex,
+                                            RGResourceHandle expected,
+                                            RGAttachmentKind expectedKind,
+                                            RHI::ResourceState expectedState) -> bool
+        {
+            for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(passIndex); ++accessIndex)
+            {
+                RGResourceHandle resource;
+                RGAccessMode mode = RGAccessMode::Read;
+                RHI::ResourceState state = RHI::ResourceState::Undefined;
+                RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+                bool bColorAttachmentLoadStore = false;
+                RHI::AttachmentLoadOp loadOp = RHI::AttachmentLoadOp::DontCare;
+                RHI::AttachmentStoreOp storeOp = RHI::AttachmentStoreOp::DontCare;
+                RGAttachmentKind kind = RGAttachmentKind::Color;
+                RGAttachmentMutability mutability = RGAttachmentMutability::ReadOnly;
+                assert(graph.TryGetDeclaredPassAccess(passIndex,
+                                                      accessIndex,
+                                                      resource,
+                                                      mode,
+                                                      state,
+                                                      finalState,
+                                                      &bColorAttachmentLoadStore,
+                                                      &loadOp,
+                                                      &storeOp,
+                                                      &kind,
+                                                      &mutability));
+
+                if (resource == expected)
+                {
+                    const bool bExpectedColorLoadStore = expectedKind == RGAttachmentKind::Color;
+                    return mode == RGAccessMode::Write &&
+                           state == expectedState &&
+                           finalState == RHI::ResourceState::ShaderResource &&
+                           bColorAttachmentLoadStore == bExpectedColorLoadStore &&
+                           loadOp == RHI::AttachmentLoadOp::Load &&
+                           storeOp == RHI::AttachmentStoreOp::Store &&
+                           kind == expectedKind &&
+                           mutability == RGAttachmentMutability::Write;
+                }
+            }
+
+            return false;
+        };
+
+        assert(hasAttachmentAccess(megaGeometryPassIndex,
+                                   gbufferPass.GetAlbedoHandle(),
+                                   RGAttachmentKind::Color,
+                                   RHI::ResourceState::RenderTarget));
+        assert(hasAttachmentAccess(megaGeometryPassIndex,
+                                   gbufferPass.GetNormalHandle(),
+                                   RGAttachmentKind::Color,
+                                   RHI::ResourceState::RenderTarget));
+        assert(hasAttachmentAccess(megaGeometryPassIndex,
+                                   gbufferPass.GetMaterialHandle(),
+                                   RGAttachmentKind::Color,
+                                   RHI::ResourceState::RenderTarget));
+        assert(hasAttachmentAccess(megaGeometryPassIndex,
+                                   gbufferPass.GetEmissiveHandle(),
+                                   RGAttachmentKind::Color,
+                                   RHI::ResourceState::RenderTarget));
+        assert(hasAttachmentAccess(megaGeometryPassIndex,
+                                   gbufferPass.GetDepthHandle(),
+                                   RGAttachmentKind::DepthStencil,
+                                   RHI::ResourceState::DepthWrite));
+
+        uint32_t gbufferVersion = 0;
+        assert(graph.TryGetNamedResourceVersion(RenderGraphResourceNames::GBufferAlbedo, gbufferVersion));
+        assert(gbufferVersion == 1);
+        assert(graph.TryGetNamedResourceVersion(RenderGraphResourceNames::GBufferDepth, gbufferVersion));
+        assert(gbufferVersion == 1);
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 2);
+        assert(order[0] == gbufferPassIndex);
+        assert(order[1] == megaGeometryPassIndex);
+
+        megaGeometryPass.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestMegaGeometryNativeExecuteEnqueuesEmptyAttachmentPass()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        MegaGeometryPass megaGeometryPass;
+
+        FakeCommandList commandList;
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = nullptr;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.Resources.Textures = &renderResources.Textures();
+        context.Resources.Materials = &renderResources.Materials();
+        context.Resources.Meshes = &renderResources.Meshes();
+
+        assert(megaGeometryPass.Initialize(context));
+
+        graph.AddPass(&gbufferPass);
+        const uint32_t megaGeometryPassIndex = graph.AddPass(&megaGeometryPass);
+
+        assert(graph.Compile(context));
+        assert(graph.GetDeclaredPassAccessCount(megaGeometryPassIndex) == 8);
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+
+        assert(graph.GetLastExecutedPassCount() == 2);
+        assert(commandList.BeginRenderPassCount == 2);
+        assert(commandList.EndRenderPassCount == 2);
+        assert(commandList.DrawCallCount == 0);
+        assert(pendingFrameCommands.empty());
+
+        bool bFoundMegaGeometryRenderPassDesc = false;
+        for (const RHI::RenderPassDesc& desc : device->CreatedRenderPassDescs)
+        {
+            if (desc.colorAttachments.size() != 4 || !desc.hasDepthStencil)
+            {
+                continue;
+            }
+
+            bool bColorAttachmentStatesMatch = true;
+            for (const RHI::AttachmentDesc& attachment : desc.colorAttachments)
+            {
+                bColorAttachmentStatesMatch =
+                    bColorAttachmentStatesMatch &&
+                    attachment.loadOp == RHI::AttachmentLoadOp::Load &&
+                    attachment.storeOp == RHI::AttachmentStoreOp::Store &&
+                    attachment.initialState == RHI::ResourceState::RenderTarget &&
+                    attachment.finalState == RHI::ResourceState::ShaderResource;
+            }
+
+            if (!bColorAttachmentStatesMatch)
+            {
+                continue;
+            }
+
+            assert(desc.depthStencilAttachment.loadOp == RHI::AttachmentLoadOp::Load);
+            assert(desc.depthStencilAttachment.storeOp == RHI::AttachmentStoreOp::Store);
+            assert(desc.depthStencilAttachment.initialState == RHI::ResourceState::DepthWrite);
+            assert(desc.depthStencilAttachment.finalState == RHI::ResourceState::ShaderResource);
+            bFoundMegaGeometryRenderPassDesc = true;
+        }
+        assert(bFoundMegaGeometryRenderPassDesc);
+
+        megaGeometryPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestMegaGeometryNativeExecuteRecreatesRenderPassWhenAttachmentStateModeChanges()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        SharedResourceRegistry sharedResources;
+        auto legacyAlbedoTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "LegacyCacheAlbedo"));
+        auto legacyNormalTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "LegacyCacheNormal"));
+        auto legacyMaterialTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "LegacyCacheMaterial"));
+        auto legacyEmissiveTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "LegacyCacheEmissive"));
+        auto legacyDepthTexture = device->CreateTexture(
+            RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "LegacyCacheDepth"));
+        sharedResources.RegisterTexturePtr("GBuffer_Albedo", legacyAlbedoTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Normal", legacyNormalTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Material", legacyMaterialTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Emissive", legacyEmissiveTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Depth", legacyDepthTexture);
+
+        float vertices[12] = {
+            0.0f, 0.0f, 0.0f, 1.0f,
+            1.0f, 0.0f, 0.0f, 1.0f,
+            0.0f, 1.0f, 0.0f, 1.0f};
+        uint32_t indices[3] = {0, 1, 2};
+
+        MegaGeometry::MeshCluster cluster;
+        cluster.IndexOffset = 0;
+        cluster.IndexCount = 3;
+        cluster.VertexOffset = 0;
+        cluster.VertexCount = 3;
+        cluster.Bounds.CenterX = 0.5f;
+        cluster.Bounds.CenterY = 0.5f;
+        cluster.Bounds.CenterZ = 0.0f;
+        cluster.Bounds.Radius = 0.75f;
+        cluster.ConeAxisZ = 1.0f;
+        cluster.ConeCutoff = 0.25f;
+
+        MegaGeometry::MegaMeshCreateInfo createInfo;
+        createInfo.VertexData = vertices;
+        createInfo.VertexDataSize = sizeof(vertices);
+        createInfo.VertexCount = 3;
+        createInfo.VertexStride = 4 * sizeof(float);
+        createInfo.IndexData = indices;
+        createInfo.IndexCount = 3;
+        createInfo.Clusters.push_back(cluster);
+        createInfo.TotalBounds.CenterX = 0.5f;
+        createInfo.TotalBounds.CenterY = 0.5f;
+        createInfo.TotalBounds.CenterZ = 0.0f;
+        createInfo.TotalBounds.Radius = 1.25f;
+        createInfo.bBuildLODHierarchy = false;
+        createInfo.DebugName = "CacheModeMega";
+        const auto megaMesh = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
+        assert(megaMesh.IsValid());
+
+        Container::VariableArray<MegaGeometryProxy> proxies;
+        MegaGeometryProxy proxy;
+        proxy.MegaMeshHandle = megaMesh;
+        proxy.WorldTransform = NorvesLib::Math::Matrix4x4::Identity;
+        proxy.WorldBounds = createInfo.TotalBounds;
+        proxies.push_back(proxy);
+
+        MegaGeometryPass megaGeometryPass;
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.SnapshotMegaGeometryProxies = &proxies;
+        context.Resources.MegaGeometry = &renderResources.MegaGeometry();
+        assert(megaGeometryPass.Initialize(context));
+
+        megaGeometryPass.Setup(context);
+        assert(!device->CreatedRenderPassDescs.empty());
+
+        bool bFoundLegacyMegaGeometryRenderPassDesc = false;
+        for (const RHI::RenderPassDesc& desc : device->CreatedRenderPassDescs)
+        {
+            if (desc.colorAttachments.size() != 4 || !desc.hasDepthStencil)
+            {
+                continue;
+            }
+
+            bool bLegacyStates = desc.depthStencilAttachment.initialState == RHI::ResourceState::ShaderResource;
+            for (const RHI::AttachmentDesc& attachment : desc.colorAttachments)
+            {
+                bLegacyStates =
+                    bLegacyStates &&
+                    attachment.loadOp == RHI::AttachmentLoadOp::Load &&
+                    attachment.initialState == RHI::ResourceState::ShaderResource;
+            }
+            bFoundLegacyMegaGeometryRenderPassDesc = bFoundLegacyMegaGeometryRenderPassDesc || bLegacyStates;
+        }
+        assert(bFoundLegacyMegaGeometryRenderPassDesc);
+
+        const size_t legacyRenderPassDescCount = device->CreatedRenderPassDescs.size();
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        graph.AddPass(&gbufferPass);
+        graph.AddPass(&megaGeometryPass);
+
+        FakeCommandList commandList;
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+        context.CommandList = &commandList;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.Resources.Textures = &renderResources.Textures();
+        context.Resources.Materials = &renderResources.Materials();
+        context.Resources.Meshes = &renderResources.Meshes();
+
+        assert(graph.Compile(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+        assert(device->CreatedRenderPassDescs.size() > legacyRenderPassDescCount);
+
+        bool bFoundRecreatedRenderGraphRenderPassDesc = false;
+        for (size_t descIndex = legacyRenderPassDescCount;
+             descIndex < device->CreatedRenderPassDescs.size();
+             ++descIndex)
+        {
+            const RHI::RenderPassDesc& desc = device->CreatedRenderPassDescs[descIndex];
+            if (desc.colorAttachments.size() != 4 || !desc.hasDepthStencil)
+            {
+                continue;
+            }
+
+            bool bRenderGraphStates = desc.depthStencilAttachment.initialState == RHI::ResourceState::DepthWrite;
+            for (const RHI::AttachmentDesc& attachment : desc.colorAttachments)
+            {
+                bRenderGraphStates =
+                    bRenderGraphStates &&
+                    attachment.loadOp == RHI::AttachmentLoadOp::Load &&
+                    attachment.initialState == RHI::ResourceState::RenderTarget &&
+                    attachment.finalState == RHI::ResourceState::ShaderResource;
+            }
+            bFoundRecreatedRenderGraphRenderPassDesc =
+                bFoundRecreatedRenderGraphRenderPassDesc || bRenderGraphStates;
+        }
+        assert(bFoundRecreatedRenderGraphRenderPassDesc);
+
+        megaGeometryPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestMegaGeometryPartialNamedGBufferFallsBackToLegacyAttachmentStates()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SharedResourceRegistry sharedResources;
+        auto namedAlbedoTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "PartialNamedAlbedo"));
+        auto fallbackAlbedoTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "PartialFallbackAlbedo"));
+        auto fallbackNormalTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "PartialFallbackNormal"));
+        auto fallbackMaterialTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "PartialFallbackMaterial"));
+        auto fallbackEmissiveTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "PartialFallbackEmissive"));
+        auto fallbackDepthTexture = device->CreateTexture(
+            RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "PartialFallbackDepth"));
+        sharedResources.RegisterTexturePtr("GBuffer_Albedo", fallbackAlbedoTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Normal", fallbackNormalTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Material", fallbackMaterialTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Emissive", fallbackEmissiveTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Depth", fallbackDepthTexture);
+
+        float vertices[12] = {
+            0.0f, 0.0f, 0.0f, 1.0f,
+            1.0f, 0.0f, 0.0f, 1.0f,
+            0.0f, 1.0f, 0.0f, 1.0f};
+        uint32_t indices[3] = {0, 1, 2};
+
+        MegaGeometry::MeshCluster cluster;
+        cluster.IndexOffset = 0;
+        cluster.IndexCount = 3;
+        cluster.VertexOffset = 0;
+        cluster.VertexCount = 3;
+        cluster.Bounds.CenterX = 0.5f;
+        cluster.Bounds.CenterY = 0.5f;
+        cluster.Bounds.CenterZ = 0.0f;
+        cluster.Bounds.Radius = 0.75f;
+        cluster.ConeAxisZ = 1.0f;
+        cluster.ConeCutoff = 0.25f;
+
+        MegaGeometry::MegaMeshCreateInfo createInfo;
+        createInfo.VertexData = vertices;
+        createInfo.VertexDataSize = sizeof(vertices);
+        createInfo.VertexCount = 3;
+        createInfo.VertexStride = 4 * sizeof(float);
+        createInfo.IndexData = indices;
+        createInfo.IndexCount = 3;
+        createInfo.Clusters.push_back(cluster);
+        createInfo.TotalBounds.CenterX = 0.5f;
+        createInfo.TotalBounds.CenterY = 0.5f;
+        createInfo.TotalBounds.CenterZ = 0.0f;
+        createInfo.TotalBounds.Radius = 1.25f;
+        createInfo.bBuildLODHierarchy = false;
+        createInfo.DebugName = "PartialFallbackMega";
+        const auto megaMesh = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
+        assert(megaMesh.IsValid());
+
+        Container::VariableArray<MegaGeometryProxy> proxies;
+        MegaGeometryProxy proxy;
+        proxy.MegaMeshHandle = megaMesh;
+        proxy.WorldTransform = NorvesLib::Math::Matrix4x4::Identity;
+        proxy.WorldBounds = createInfo.TotalBounds;
+        proxies.push_back(proxy);
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        NamedGBufferAlbedoProducerPass albedoProducer(namedAlbedoTexture);
+        MegaGeometryPass megaGeometryPass;
+        graph.AddPass(&albedoProducer);
+        const uint32_t megaGeometryPassIndex = graph.AddPass(&megaGeometryPass);
+
+        FakeCommandList commandList;
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.SnapshotMegaGeometryProxies = &proxies;
+        context.Resources.MegaGeometry = &renderResources.MegaGeometry();
+        assert(megaGeometryPass.Initialize(context));
+
+        assert(graph.Compile(context));
+        uint32_t gbufferAlbedoVersion = 99;
+        assert(graph.TryGetNamedResourceVersion(RenderGraphResourceNames::GBufferAlbedo,
+                                                gbufferAlbedoVersion));
+        assert(gbufferAlbedoVersion == 0);
+
+        bool bHasGBufferAttachmentAccess = false;
+        for (uint32_t accessIndex = 0;
+             accessIndex < graph.GetDeclaredPassAccessCount(megaGeometryPassIndex);
+             ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            bool bAttachment = false;
+            RHI::AttachmentLoadOp loadOp = RHI::AttachmentLoadOp::DontCare;
+            RHI::AttachmentStoreOp storeOp = RHI::AttachmentStoreOp::DontCare;
+            RGAttachmentKind kind = RGAttachmentKind::Color;
+            RGAttachmentMutability mutability = RGAttachmentMutability::ReadOnly;
+            assert(graph.TryGetDeclaredPassAccess(megaGeometryPassIndex,
+                                                  accessIndex,
+                                                  resource,
+                                                  mode,
+                                                  state,
+                                                  finalState,
+                                                  &bAttachment,
+                                                  &loadOp,
+                                                  &storeOp,
+                                                  &kind,
+                                                  &mutability));
+            bHasGBufferAttachmentAccess = bHasGBufferAttachmentAccess || bAttachment;
+        }
+        assert(!bHasGBufferAttachmentAccess);
+
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+
+        bool bSawNamedAlbedoBarrier = false;
+        for (const BarrierEvent& barrier : commandList.Barriers)
+        {
+            if (barrier.Texture != namedAlbedoTexture.get())
+            {
+                continue;
+            }
+
+            bSawNamedAlbedoBarrier = true;
+        }
+        assert(!bSawNamedAlbedoBarrier);
+
+        bool bFoundLegacyAttachmentStateDesc = false;
+        bool bFoundRenderGraphAttachmentStateDesc = false;
+        for (const RHI::RenderPassDesc& desc : device->CreatedRenderPassDescs)
+        {
+            if (desc.colorAttachments.size() != 4 || !desc.hasDepthStencil)
+            {
+                continue;
+            }
+
+            bool bLegacyStates = desc.depthStencilAttachment.initialState == RHI::ResourceState::ShaderResource;
+            bool bRenderGraphStates = desc.depthStencilAttachment.initialState == RHI::ResourceState::DepthWrite;
+            for (const RHI::AttachmentDesc& attachment : desc.colorAttachments)
+            {
+                if (attachment.loadOp != RHI::AttachmentLoadOp::Load)
+                {
+                    bLegacyStates = false;
+                    bRenderGraphStates = false;
+                    continue;
+                }
+
+                bLegacyStates =
+                    bLegacyStates &&
+                    attachment.initialState == RHI::ResourceState::ShaderResource;
+                bRenderGraphStates =
+                    bRenderGraphStates &&
+                    attachment.initialState == RHI::ResourceState::RenderTarget;
+            }
+
+            bFoundLegacyAttachmentStateDesc = bFoundLegacyAttachmentStateDesc || bLegacyStates;
+            bFoundRenderGraphAttachmentStateDesc =
+                bFoundRenderGraphAttachmentStateDesc || bRenderGraphStates;
+        }
+        assert(bFoundLegacyAttachmentStateDesc);
+        assert(!bFoundRenderGraphAttachmentStateDesc);
+
+        megaGeometryPass.Shutdown();
+        renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SharedResourceRegistry sharedResources;
+        auto albedoTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "RecordAlbedo"));
+        auto normalTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "RecordNormal"));
+        auto materialTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "RecordMaterial"));
+        auto emissiveTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "RecordEmissive"));
+        auto depthTexture = device->CreateTexture(
+            RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "RecordDepth"));
+        sharedResources.RegisterTexturePtr("GBuffer_Albedo", albedoTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Normal", normalTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Material", materialTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Emissive", emissiveTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Depth", depthTexture);
+
+        float vertices[12] = {
+            0.0f, 0.0f, 0.0f, 1.0f,
+            1.0f, 0.0f, 0.0f, 1.0f,
+            0.0f, 1.0f, 0.0f, 1.0f};
+        uint32_t indices[3] = {0, 1, 2};
+
+        MegaGeometry::MeshCluster cluster;
+        cluster.IndexOffset = 0;
+        cluster.IndexCount = 3;
+        cluster.VertexOffset = 0;
+        cluster.VertexCount = 3;
+        cluster.Bounds.CenterX = 0.5f;
+        cluster.Bounds.CenterY = 0.5f;
+        cluster.Bounds.CenterZ = 0.0f;
+        cluster.Bounds.Radius = 0.75f;
+        cluster.ConeAxisZ = 1.0f;
+        cluster.ConeCutoff = 0.25f;
+
+        MegaGeometry::MegaMeshCreateInfo createInfo;
+        createInfo.VertexData = vertices;
+        createInfo.VertexDataSize = sizeof(vertices);
+        createInfo.VertexCount = 3;
+        createInfo.VertexStride = 4 * sizeof(float);
+        createInfo.IndexData = indices;
+        createInfo.IndexCount = 3;
+        createInfo.Clusters.push_back(cluster);
+        createInfo.TotalBounds.CenterX = 0.5f;
+        createInfo.TotalBounds.CenterY = 0.5f;
+        createInfo.TotalBounds.CenterZ = 0.0f;
+        createInfo.TotalBounds.Radius = 1.25f;
+        createInfo.bBuildLODHierarchy = false;
+        createInfo.DebugName = "RecordMegaA";
+        const auto megaMeshA = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
+        assert(megaMeshA.IsValid());
+
+        createInfo.DebugName = "RecordMegaB";
+        const auto megaMeshB = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
+        assert(megaMeshB.IsValid());
+
+        Container::VariableArray<MegaGeometryProxy> proxies;
+        MegaGeometryProxy proxyA;
+        proxyA.MegaMeshHandle = megaMeshA;
+        proxyA.WorldTransform = NorvesLib::Math::Matrix4x4::Identity;
+        proxyA.WorldBounds = createInfo.TotalBounds;
+        proxies.push_back(proxyA);
+
+        MegaGeometryProxy proxyB = proxyA;
+        proxyB.MegaMeshHandle = megaMeshB;
+        proxies.push_back(proxyB);
+
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.SnapshotMegaGeometryProxies = &proxies;
+
+        MegaGeometryPass megaGeometryPass;
+        assert(megaGeometryPass.Initialize(context));
+        megaGeometryPass.Setup(context);
+
+        CameraProxy camera;
+        camera.Viewport.Width = 128.0f;
+        camera.Viewport.Height = 64.0f;
+        RHI::Viewport viewport;
+        viewport.width = 128.0f;
+        viewport.height = 64.0f;
+        RHI::ScissorRect scissor;
+        scissor.right = 128;
+        scissor.bottom = 64;
+
+        FrameCommand frameCommand = FrameCommand::CreateMegaGeometryPass(&megaGeometryPass,
+                                                                         &renderResources.MegaGeometry(),
+                                                                         camera,
+                                                                         true,
+                                                                         viewport,
+                                                                         scissor);
+        FakeCommandList commandList;
+        megaGeometryPass.RecordFrameCommand(frameCommand.MegaGeometry, &commandList);
+
+        assert(commandList.BeginRenderPassCount == 1);
+        assert(commandList.EndRenderPassCount == 1);
+        assert(commandList.DrawCallCount == 2);
+
+        megaGeometryPass.Shutdown();
+        renderResources.Shutdown();
         shaderManager.Shutdown();
     }
 
@@ -1970,6 +2738,82 @@ namespace
         assert(order[0] == gbufferPassIndex);
         assert(order[1] == ssaoPassIndex);
         assert(order[2] == lightingPassIndex);
+    }
+
+    void TestLightingNativeDeclareReadsNamedShadowMap()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        ShadowMapPass shadowMapPass;
+        assert(shadowMapPass.Initialize(context));
+        GBufferPass gbufferPass;
+        SSAOPass ssaoPass;
+        LightingPass lightingPass;
+
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+        const uint32_t shadowMapPassIndex = graph.AddPass(&shadowMapPass);
+        graph.AddPass(&gbufferPass);
+        graph.AddPass(&ssaoPass);
+        const uint32_t lightingPassIndex = graph.AddPass(&lightingPass);
+
+        assert(graph.Compile(context));
+        assert(graph.GetDeclaredPassAccessCount(lightingPassIndex) == 8);
+
+        bool bHasShadowMapRead = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(lightingPassIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Write;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(lightingPassIndex,
+                                                  accessIndex,
+                                                  resource,
+                                                  mode,
+                                                  state,
+                                                  finalState));
+            if (resource == shadowMapPass.GetShadowMapHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasShadowMapRead = true;
+            }
+        }
+
+        assert(bHasShadowMapRead);
+
+        const auto& order = graph.GetCompiledPassOrder();
+        uint32_t shadowMapOrder = RGInvalidPassIndex;
+        uint32_t lightingOrder = RGInvalidPassIndex;
+        for (uint32_t orderIndex = 0; orderIndex < order.size(); ++orderIndex)
+        {
+            if (order[orderIndex] == shadowMapPassIndex)
+            {
+                shadowMapOrder = orderIndex;
+            }
+            if (order[orderIndex] == lightingPassIndex)
+            {
+                lightingOrder = orderIndex;
+            }
+        }
+
+        assert(shadowMapOrder != RGInvalidPassIndex);
+        assert(lightingOrder != RGInvalidPassIndex);
+        assert(shadowMapOrder < lightingOrder);
+
+        shadowMapPass.Shutdown();
+        shaderManager.Shutdown();
     }
 
     void TestLightingSceneDepthAliasDuplicateFailsCompile()
@@ -3973,6 +4817,93 @@ namespace
         shaderManager.Shutdown();
     }
 
+    void TestLightingNativeExecutePrefersNamedShadowMapOverRegistry()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        RHI::TextureDesc namedShadowDesc =
+            RHI::TextureDesc::DepthStencil(128, 128, RHI::Format::D32_FLOAT, "NamedShadowMap");
+        RHI::TextureDesc legacyShadowDesc =
+            RHI::TextureDesc::DepthStencil(128, 128, RHI::Format::D32_FLOAT, "LegacyShadowMap");
+        RHI::TexturePtr namedShadowMap = device->CreateTexture(namedShadowDesc);
+        RHI::TexturePtr legacyShadowMap = device->CreateTexture(legacyShadowDesc);
+        assert(namedShadowMap);
+        assert(legacyShadowMap);
+
+        SharedResourceRegistry sharedResources;
+        sharedResources.RegisterTexturePtr("ShadowMap", legacyShadowMap);
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        RGResourceHandle namedShadowHandle;
+        NamedShadowMapProducerPass shadowProducer(namedShadowMap, &namedShadowHandle);
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        LightingPass lightingPass;
+
+        const uint32_t shadowPassIndex = graph.AddPass(&shadowProducer);
+        graph.AddPass(&gbufferPass);
+        const uint32_t lightingPassIndex = graph.AddPass(&lightingPass);
+        assert(graph.AddDependency(shadowPassIndex, lightingPassIndex));
+
+        FakeCommandList commandList;
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.Resources.Textures = &renderResources.Textures();
+        context.Resources.Materials = &renderResources.Materials();
+        context.Resources.Meshes = &renderResources.Meshes();
+
+        GLastDescriptorBinding6Texture = nullptr;
+        assert(graph.Compile(context));
+        assert(namedShadowHandle.IsValid());
+        assert(graph.Execute(context));
+
+        assert(GLastDescriptorBinding6Texture == namedShadowMap.get());
+        assert(GLastDescriptorBinding6Texture != legacyShadowMap.get());
+        assert(sharedResources.GetTexturePtr("ShadowMap").get() == legacyShadowMap.get());
+        assert(commandList.BeginRenderPassCount == 2);
+        assert(commandList.EndRenderPassCount == 2);
+        assert(commandList.DrawCallCount == 1);
+        assert(pendingFrameCommands.empty());
+
+        lightingPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
     void TestLightingNativeExecuteDoesNotPublishBridgeWhenFallbackInputsMissing()
     {
         auto device = RHI::MakeShared<FakeDevice>();
@@ -4198,10 +5129,16 @@ int main()
     TestShadowMapNativeDeclareImportsDepthOutput();
     TestNeuralDecodeNativeDeclareWritesLogicalCompletion();
     TestMegaGeometryNativeDeclareImportsPersistentBuffers();
+    TestMegaGeometryNativeDeclareUsesNamedGBufferAttachments();
+    TestMegaGeometryNativeExecuteEnqueuesEmptyAttachmentPass();
+    TestMegaGeometryNativeExecuteRecreatesRenderPassWhenAttachmentStateModeChanges();
+    TestMegaGeometryPartialNamedGBufferFallsBackToLegacyAttachmentStates();
+    TestMegaGeometryRecordFrameCommandBatchesInstancesInSingleRenderPass();
     TestGBufferNativeDeclareCreatesTransientOutputs();
     TestGBufferSSAONativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareDependencies();
     TestGBufferSSAOLightingNativeDeclareUsesNamedResourcesWithoutPassPointers();
+    TestLightingNativeDeclareReadsNamedShadowMap();
     TestLightingSceneDepthAliasDuplicateFailsCompile();
     TestForwardTransparentNativeDeclareDependencies();
     TestSSRNativeDeclareDependencies();
@@ -4218,6 +5155,7 @@ int main()
     TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestGBufferSSAOLightingNativeExecuteWithoutSharedResources();
     TestLightingNativeExecuteClearsWhenInputsMissingWithoutBridge();
+    TestLightingNativeExecutePrefersNamedShadowMapOverRegistry();
     TestLightingNativeExecuteDoesNotPublishBridgeWhenFallbackInputsMissing();
     TestForwardTransparentNativeExecuteKeepsBridgeWhenDrawInputsMissing();
     TestSSRNativeExecuteUsesGraphSceneColorWithoutBridge();

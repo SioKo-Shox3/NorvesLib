@@ -215,6 +215,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_GBufferDepthHandle;
         RGResourceHandle m_GBufferEmissiveHandle;
         RGResourceHandle m_SSAOBlurredHandle;
+        RGResourceHandle m_ShadowMapHandle;
 
         // ライティング用リソース
         RHI::RenderPassPtr m_LightingRenderPass;

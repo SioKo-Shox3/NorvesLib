@@ -7,6 +7,7 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
@@ -263,6 +264,8 @@ namespace NorvesLib::Core::Rendering
                 builder.Write(m_ShadowMapHandle,
                               RHI::ResourceState::DepthWrite,
                               RHI::ResourceState::ShaderResource);
+                builder.PublishTexture(RenderGraphResourceNames::ShadowMap, m_ShadowMapHandle);
+                builder.ExportTexture(RenderGraphResourceNames::ShadowMap, m_ShadowMapHandle);
             }
         }
 
