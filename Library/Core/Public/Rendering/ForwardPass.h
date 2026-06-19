@@ -94,7 +94,18 @@ namespace NorvesLib::Core::Rendering
          */
         void SetRegisterOutputs(bool bRegister) { m_bRegisterOutputs = bRegister; }
 
+        /**
+         * @brief Legacy bridge fallback 用のLighting参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetLightingPass(const LightingPass* lightingPass) { m_LightingPass = lightingPass; }
+
+        /**
+         * @brief Legacy bridge fallback 用のGBuffer参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetGBufferPass(const GBufferPass* gbufferPass) { m_GBufferPass = gbufferPass; }
 
     private:

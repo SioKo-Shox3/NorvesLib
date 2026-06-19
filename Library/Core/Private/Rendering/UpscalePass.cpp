@@ -269,11 +269,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, inputTexture);
+        ExecuteWithInput(context, inputTexture, true);
     }
 
     void UpscalePass::Declare(RenderGraphBuilder &builder)
     {
+        m_bLegacyInputFallbackActive = false;
         const ViewRenderContext *context = builder.GetContext();
         const uint32_t renderWidth = context ? context->GetActiveRenderWidth() : 1u;
         const uint32_t renderHeight = context ? context->GetActiveRenderHeight() : 1u;
@@ -298,6 +299,7 @@ namespace NorvesLib::Core::Rendering
                 builder.Read(inputHandle, RHI::ResourceState::ShaderResource);
                 m_InputToneMappedHandle = inputHandle;
                 inputTextureHandle = m_InputPass->GetToneMappedColorTextureHandle();
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -340,6 +342,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::TexturePtr inputTexture;
+        bool bUsedSharedResourceFallback = false;
         if (m_InputToneMappedHandle.IsValid())
         {
             inputTexture = resources.GetTexture(m_InputToneMappedHandle);
@@ -357,6 +360,7 @@ namespace NorvesLib::Core::Rendering
         if (!inputTexture && context.SharedResources)
         {
             inputTexture = context.SharedResources->GetTexturePtr("ToneMappedColor");
+            bUsedSharedResourceFallback = inputTexture != nullptr;
         }
 
         if (!inputTexture)
@@ -373,9 +377,12 @@ namespace NorvesLib::Core::Rendering
         const uint32_t screenWidth = context.ScreenWidth > 0 ? context.ScreenWidth : renderWidth;
         const uint32_t screenHeight = context.ScreenHeight > 0 ? context.ScreenHeight : renderHeight;
 
+        const bool bRegisterLegacyBridge =
+            m_bLegacyInputFallbackActive || bUsedSharedResourceFallback;
+
         if (!NeedsUpscale(renderWidth, renderHeight, screenWidth, screenHeight))
         {
-            if (context.SharedResources)
+            if (bRegisterLegacyBridge && context.SharedResources)
             {
                 context.SharedResources->RegisterTexturePtr("PresentationColor", inputTexture);
             }
@@ -394,10 +401,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, inputTexture);
+        ExecuteWithInput(context, inputTexture, bRegisterLegacyBridge);
     }
 
-    void UpscalePass::ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& inputTexture)
+    void UpscalePass::ExecuteWithInput(ViewRenderContext &context,
+                                       const RHI::TexturePtr& inputTexture,
+                                       bool bRegisterLegacyBridge)
     {
         if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
         {
@@ -430,7 +439,7 @@ namespace NorvesLib::Core::Rendering
                                       m_Pipeline,
                                       m_DescriptorSet);
 
-        if (context.SharedResources)
+        if (bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("PresentationColor", m_OutputTexture);
         }

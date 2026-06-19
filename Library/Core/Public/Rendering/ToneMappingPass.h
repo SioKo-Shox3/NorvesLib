@@ -90,10 +90,14 @@ namespace NorvesLib::Core::Rendering
      * HDRシーンカラーをLDRに変換し、ガンマ補正を適用します。
      * PostProcessStackに追加して使用するポストプロセスパスです。
      *
-     * 入力（SharedResourceRegistryから取得）:
+     * 標準経路では RenderGraph named resource から入力を読み取り、
+     * "ToneMappedColor" graph output として後段へ渡します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
+     *
+     * 入力:
      * - "SceneColor" : HDRライティング結果 (R16G16B16A16_FLOAT)
      *
-     * 出力（SharedResourceRegistryに登録）:
+     * 出力:
      * - "ToneMappedColor" : LDR変換後のカラー (R8G8B8A8_UNORM)
      *
      * サポートするトーンマッピングアルゴリズム:
@@ -134,6 +138,11 @@ namespace NorvesLib::Core::Rendering
         // パラメータ調整
         // ========================================
 
+        /**
+         * @brief Legacy bridge fallback 用の入力パス参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetInputPass(const BloomPass* inputPass) { m_InputPass = inputPass; }
         RGResourceHandle GetToneMappedColorHandle() const { return m_OutputHandle; }
 
@@ -194,7 +203,9 @@ namespace NorvesLib::Core::Rendering
                               uint32_t height,
                               const RHI::TexturePtr& outputTexture,
                               bool bUseRenderGraphInitialState);
-        void ExecuteWithInput(ViewRenderContext& context, const RHI::TexturePtr& sceneColorPtr);
+        void ExecuteWithInput(ViewRenderContext& context,
+                              const RHI::TexturePtr& sceneColorPtr,
+                              bool bRegisterLegacyBridge);
         bool EnqueueEmptyNativePass(ViewRenderContext& context) const;
 
         // 設定
@@ -222,6 +233,7 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bLegacyInputFallbackActive = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
         RHI::ITexture* m_FramebufferOutputTexture = nullptr;
         RenderPassSignature m_RenderPassSignature;

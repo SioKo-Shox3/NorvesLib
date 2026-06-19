@@ -371,11 +371,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInputs(context, normalTex, materialTex, depthTex, sceneColorTex);
+        ExecuteWithInputs(context, normalTex, materialTex, depthTex, sceneColorTex, true);
     }
 
     void SSRPass::Declare(RenderGraphBuilder &builder)
     {
+        m_bLegacyInputFallbackActive = false;
         const ViewRenderContext *context = builder.GetContext();
         const uint32_t width = context ? context->GetActiveRenderWidth() : 1u;
         const uint32_t height = context ? context->GetActiveRenderHeight() : 1u;
@@ -399,6 +400,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackNormalHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferNormalHandle = fallbackNormalHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -416,6 +418,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackMaterialHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferMaterialHandle = fallbackMaterialHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -433,6 +436,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackDepthHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferDepthHandle = fallbackDepthHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -450,6 +454,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackSceneColorHandle, RHI::ResourceState::ShaderResource);
                 m_SceneColorInputHandle = fallbackSceneColorHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -488,6 +493,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr normalTex;
         RHI::TexturePtr materialTex;
         RHI::TexturePtr depthTex;
+        bool bUsedSharedResourceFallback = false;
         if (m_GBufferNormalHandle.IsValid())
         {
             normalTex = resources.GetTexture(m_GBufferNormalHandle);
@@ -540,18 +546,22 @@ namespace NorvesLib::Core::Rendering
             if (!normalTex)
             {
                 normalTex = context.SharedResources->GetTexturePtr("GBuffer_Normal");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || normalTex != nullptr;
             }
             if (!materialTex)
             {
                 materialTex = context.SharedResources->GetTexturePtr("GBuffer_Material");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || materialTex != nullptr;
             }
             if (!depthTex)
             {
                 depthTex = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || depthTex != nullptr;
             }
             if (!sceneColorTex)
             {
                 sceneColorTex = context.SharedResources->GetTexturePtr("SceneColor");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || sceneColorTex != nullptr;
             }
         }
 
@@ -561,14 +571,20 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInputs(context, normalTex, materialTex, depthTex, sceneColorTex);
+        ExecuteWithInputs(context,
+                          normalTex,
+                          materialTex,
+                          depthTex,
+                          sceneColorTex,
+                          m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
     void SSRPass::ExecuteWithInputs(ViewRenderContext &context,
                                     const RHI::TexturePtr &normalTex,
                                     const RHI::TexturePtr &materialTex,
                                     const RHI::TexturePtr &depthTex,
-                                    const RHI::TexturePtr &sceneColorTex)
+                                    const RHI::TexturePtr &sceneColorTex,
+                                    bool bRegisterLegacyBridge)
     {
         if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
         {
@@ -608,7 +624,7 @@ namespace NorvesLib::Core::Rendering
         m_ParamsBuffer->Update(&params, sizeof(GPUSSRParams));
 
         // 出力テクスチャ登録（SceneColorを上書き）
-        if (context.SharedResources)
+        if (bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("SceneColor", m_OutputTexture);
         }

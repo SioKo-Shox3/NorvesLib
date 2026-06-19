@@ -2796,7 +2796,7 @@ namespace
         assert(bHasPresentationOutputWrite);
     }
 
-    void TestGBufferSSAOLightingNativeExecuteRegistersBridge()
+    void TestGBufferSSAOLightingNativeExecuteWithoutSharedResources()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -2827,7 +2827,6 @@ namespace
         graph.AddPass(&lightingPass);
 
         FakeCommandList commandList;
-        SharedResourceRegistry sharedResources;
         Container::VariableArray<DrawCommand> opaqueCommands;
         Container::VariableArray<FrameCommand> pendingFrameCommands;
 
@@ -2835,7 +2834,7 @@ namespace
         context.CommandList = &commandList;
         context.Device = device.get();
         context.TransientPool = &pool;
-        context.SharedResources = &sharedResources;
+        context.SharedResources = nullptr;
         context.ShaderMgr = &shaderManager;
         context.Renderer = &renderer;
         context.PendingFrameCommands = &pendingFrameCommands;
@@ -2850,6 +2849,9 @@ namespace
         RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
         assert(result.bSuccess);
 
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr sceneColorTexture = graphResources.GetTexture(lightingPass.GetSceneColorHandle());
+        assert(sceneColorTexture);
         assert(graph.GetLastExecutedPassCount() == 3);
         assert(result.TextureOutputs.empty());
         RHI::TexturePtr exportedTexture;
@@ -2862,10 +2864,6 @@ namespace
         assert(commandList.EndRenderPassCount == 4);
         assert(commandList.DrawCallCount == 3);
         assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("SceneColor"));
-        assert(sharedResources.HasTexture("SceneDepth"));
-        assert(sharedResources.GetTexturePtr("SceneColor") != nullptr);
-        assert(sharedResources.GetTexturePtr("SceneDepth") != nullptr);
 
         lightingPass.Shutdown();
         ssaoPass.Shutdown();
@@ -2969,7 +2967,7 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestSSRNativeExecuteRegistersSceneColorBridge()
+    void TestSSRNativeExecuteUsesGraphSceneColorWithoutBridge()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -3046,7 +3044,10 @@ namespace
         assert(commandList.DrawCallCount == 4);
         assert(pendingFrameCommands.empty());
         assert(sharedResources.HasTexture("SceneColor"));
-        assert(sharedResources.GetTexturePtr("SceneColor") != nullptr);
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr ssrOutput = graphResources.GetTexture(ssrPass.GetSceneColorHandle());
+        assert(ssrOutput);
+        assert(sharedResources.GetTexturePtr("SceneColor").get() != ssrOutput.get());
 
         ssrPass.Shutdown();
         forwardPass.Shutdown();
@@ -3061,7 +3062,7 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestBloomNativeExecuteRegistersSceneColorBridge()
+    void TestBloomNativeExecuteUsesGraphSceneColorWithoutBridge()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -3144,7 +3145,7 @@ namespace
         assert(commandList.DrawCallCount > 0);
         assert(pendingFrameCommands.empty());
         assert(sharedResources.HasTexture("SceneColor"));
-        assert(sharedResources.GetTexturePtr("SceneColor").get() == bloomOutput.get());
+        assert(sharedResources.GetTexturePtr("SceneColor").get() != bloomOutput.get());
 
         bloomPass.Shutdown();
         ssrPass.Shutdown();
@@ -3160,7 +3161,7 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestToneMappingNativeExecuteRegistersToneMappedBridge()
+    void TestToneMappingNativeExecuteExportsToneMappedColorWithoutBridge()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -3249,8 +3250,7 @@ namespace
         assert(commandList.BeginRenderPassCount > 0);
         assert(commandList.DrawCallCount > 0);
         assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("ToneMappedColor"));
-        assert(sharedResources.GetTexturePtr("ToneMappedColor").get() == toneMappedOutput.get());
+        assert(!sharedResources.HasTexture("ToneMappedColor"));
 
         toneMappingPass.Shutdown();
         bloomPass.Shutdown();
@@ -3267,7 +3267,7 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestFXAANativeExecuteRegistersToneMappedBridge()
+    void TestFXAANativeExecuteExportsToneMappedColorWithoutBridge()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -3359,8 +3359,7 @@ namespace
         assert(commandList.BeginRenderPassCount > 0);
         assert(commandList.DrawCallCount > 0);
         assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("ToneMappedColor"));
-        assert(sharedResources.GetTexturePtr("ToneMappedColor").get() == fxaaOutput.get());
+        assert(!sharedResources.HasTexture("ToneMappedColor"));
 
         fxaaPass.Shutdown();
         toneMappingPass.Shutdown();
@@ -3378,7 +3377,7 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestUpscaleNativeExecuteRegistersPresentationBridge()
+    void TestUpscaleNativeExecuteExportsPresentationColorWithoutBridge()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -3475,8 +3474,7 @@ namespace
         assert(commandList.BeginRenderPassCount > 0);
         assert(commandList.DrawCallCount > 0);
         assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("PresentationColor"));
-        assert(sharedResources.GetTexturePtr("PresentationColor").get() == presentationOutput.get());
+        assert(!sharedResources.HasTexture("PresentationColor"));
 
         upscalePass.Shutdown();
         fxaaPass.Shutdown();
@@ -3489,6 +3487,190 @@ namespace
         gbufferPass.Shutdown();
         renderer.Shutdown();
         renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestSSRNativeExecuteRegistersBridgeWhenUsingSharedResourceFallback()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        SSRPass ssrPass;
+        graph.AddPass(&ssrPass);
+
+        RHI::TexturePtr normalTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "FallbackNormal"));
+        RHI::TexturePtr materialTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "FallbackMaterial"));
+        RHI::TexturePtr depthTexture = device->CreateTexture(
+            RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "FallbackDepth"));
+        RHI::TexturePtr sceneColorTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "FallbackSceneColor"));
+        assert(normalTexture);
+        assert(materialTexture);
+        assert(depthTexture);
+        assert(sceneColorTexture);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        sharedResources.RegisterTexturePtr("GBuffer_Normal", normalTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Material", materialTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Depth", depthTexture);
+        sharedResources.RegisterTexturePtr("SceneColor", sceneColorTexture);
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr ssrOutput = graphResources.GetTexture(ssrPass.GetSceneColorHandle());
+        assert(ssrOutput);
+
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(sharedResources.HasTexture("SceneColor"));
+        assert(sharedResources.GetTexturePtr("SceneColor").get() == ssrOutput.get());
+
+        ssrPass.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestBloomNativeExecuteRegistersBridgeWhenUsingSharedResourceFallback()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        BloomPass bloomPass;
+        graph.AddPass(&bloomPass);
+
+        RHI::TexturePtr sceneColorTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "FallbackSceneColor"));
+        assert(sceneColorTexture);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        sharedResources.RegisterTexturePtr("SceneColor", sceneColorTexture);
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr bloomOutput = graphResources.GetTexture(bloomPass.GetSceneColorHandle());
+        assert(bloomOutput);
+
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(sharedResources.HasTexture("SceneColor"));
+        assert(sharedResources.GetTexturePtr("SceneColor").get() == bloomOutput.get());
+
+        bloomPass.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestFXAANativeExecuteRegistersBridgeWhenUsingSharedResourceFallback()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        FXAAPass fxaaPass;
+        graph.AddPass(&fxaaPass);
+
+        RHI::TexturePtr toneMappedTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "FallbackToneMappedColor"));
+        assert(toneMappedTexture);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        sharedResources.RegisterTexturePtr("ToneMappedColor", toneMappedTexture);
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr fxaaOutput = graphResources.GetTexture(fxaaPass.GetToneMappedColorHandle());
+        assert(fxaaOutput);
+        RHI::TexturePtr exportedTexture;
+        assert(result.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, exportedTexture));
+        assert(exportedTexture.get() == fxaaOutput.get());
+
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(sharedResources.HasTexture("ToneMappedColor"));
+        assert(sharedResources.GetTexturePtr("ToneMappedColor").get() == fxaaOutput.get());
+
+        fxaaPass.Shutdown();
         graph.Shutdown();
         pool.EndFrame();
         pool.Shutdown();
@@ -3562,7 +3744,7 @@ namespace
         context.CommandList = &commandList;
         context.Device = device.get();
         context.TransientPool = &pool;
-        context.SharedResources = &sharedResources;
+        context.SharedResources = nullptr;
         context.ShaderMgr = &shaderManager;
         context.Renderer = &renderer;
         context.PendingFrameCommands = &pendingFrameCommands;
@@ -3594,8 +3776,7 @@ namespace
         assert(commandList.BeginRenderPassCount > 0);
         assert(commandList.DrawCallCount > 0);
         assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("PresentationColor"));
-        assert(sharedResources.GetTexturePtr("PresentationColor").get() == fxaaOutput.get());
+        assert(!sharedResources.HasTexture("PresentationColor"));
 
         upscalePass.Shutdown();
         fxaaPass.Shutdown();
@@ -3738,7 +3919,61 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestLightingNativeExecuteClearsWhenInputsMissing()
+    void TestLightingNativeExecuteClearsWhenInputsMissingWithoutBridge()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        LightingPass lightingPass;
+        graph.AddPass(&lightingPass);
+
+        FakeCommandList commandList;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = nullptr;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(commandList.Barriers.size() == 1);
+        assert(commandList.BeginRenderPassCount == 1);
+        assert(commandList.EndRenderPassCount == 1);
+        assert(commandList.DrawCallCount == 0);
+        assert(pendingFrameCommands.empty());
+
+        lightingPass.Shutdown();
+        renderer.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestLightingNativeExecuteDoesNotPublishBridgeWhenFallbackInputsMissing()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -3764,6 +3999,23 @@ namespace
         SharedResourceRegistry sharedResources;
         Container::VariableArray<FrameCommand> pendingFrameCommands;
 
+        RHI::TextureDesc albedoDesc =
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "FallbackAlbedo");
+        RHI::TextureDesc normalDesc =
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "FallbackNormal");
+        RHI::TextureDesc depthDesc =
+            RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "FallbackDepth");
+        RHI::TexturePtr albedoTexture = device->CreateTexture(albedoDesc);
+        RHI::TexturePtr normalTexture = device->CreateTexture(normalDesc);
+        RHI::TexturePtr depthTexture = device->CreateTexture(depthDesc);
+        assert(albedoTexture);
+        assert(normalTexture);
+        assert(depthTexture);
+
+        sharedResources.RegisterTexturePtr("GBuffer_Albedo", albedoTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Normal", normalTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Depth", depthTexture);
+
         ViewRenderContext context;
         context.CommandList = &commandList;
         context.Device = device.get();
@@ -3784,7 +4036,7 @@ namespace
         assert(commandList.EndRenderPassCount == 1);
         assert(commandList.DrawCallCount == 0);
         assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("SceneColor"));
+        assert(!sharedResources.HasTexture("SceneColor"));
         assert(!sharedResources.HasTexture("SceneDepth"));
 
         lightingPass.Shutdown();
@@ -3865,7 +4117,7 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestGBufferSSAONativeExecuteRegistersBridge()
+    void TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -3877,27 +4129,27 @@ namespace
         assert(pool.Initialize(&allocator, 1));
         pool.BeginFrame(0);
 
-        RenderResources renderResources;
-        assert(renderResources.Initialize(device));
-
-        SceneRenderer renderer;
-        assert(renderer.Initialize(device.get(), nullptr, &pool));
-
         RenderGraph graph;
         assert(graph.Initialize(&pool));
         graph.BeginFrame(0);
 
-        GBufferPass gbufferPass;
-        gbufferPass.SetSceneRenderer(&renderer);
         SSAOPass ssaoPass;
-        ssaoPass.SetGBufferPass(&gbufferPass);
-        graph.AddPass(&gbufferPass);
         graph.AddPass(&ssaoPass);
 
         FakeCommandList commandList;
         SharedResourceRegistry sharedResources;
-        Container::VariableArray<DrawCommand> opaqueCommands;
         Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        RHI::TextureDesc depthDesc =
+            RHI::TextureDesc::DepthStencil(128, 64, RHI::Format::D32_FLOAT, "FallbackDepth");
+        RHI::TextureDesc normalDesc =
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "FallbackNormal");
+        RHI::TexturePtr depthTexture = device->CreateTexture(depthDesc);
+        RHI::TexturePtr normalTexture = device->CreateTexture(normalDesc);
+        assert(depthTexture);
+        assert(normalTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Depth", depthTexture);
+        sharedResources.RegisterTexturePtr("GBuffer_Normal", normalTexture);
 
         ViewRenderContext context;
         context.CommandList = &commandList;
@@ -3905,32 +4157,23 @@ namespace
         context.TransientPool = &pool;
         context.SharedResources = &sharedResources;
         context.ShaderMgr = &shaderManager;
-        context.Renderer = &renderer;
         context.PendingFrameCommands = &pendingFrameCommands;
         context.RenderWidth = 128;
         context.RenderHeight = 64;
-        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
-        context.Resources.Textures = &renderResources.Textures();
-        context.Resources.Materials = &renderResources.Materials();
-        context.Resources.Meshes = &renderResources.Meshes();
 
         assert(graph.Compile(context));
         assert(graph.Execute(context));
 
-        assert(graph.GetLastExecutedPassCount() == 2);
-        assert(commandList.Barriers.size() == 7);
-        assert(commandList.BeginRenderPassCount == 3);
-        assert(commandList.EndRenderPassCount == 3);
-        assert(commandList.DrawCallCount == 2);
-        assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("GBuffer_Depth"));
-        assert(sharedResources.HasTexture("GBuffer_Normal"));
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr blurredOutput = graphResources.GetTexture(ssaoPass.GetSSAOBlurredHandle());
+        assert(blurredOutput);
+
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(commandList.Barriers.size() == 2);
         assert(sharedResources.HasTexture("SSAO"));
+        assert(sharedResources.GetTexturePtr("SSAO").get() == blurredOutput.get());
 
         ssaoPass.Shutdown();
-        gbufferPass.Shutdown();
-        renderer.Shutdown();
-        renderResources.Shutdown();
         graph.Shutdown();
         pool.EndFrame();
         pool.Shutdown();
@@ -3972,15 +4215,19 @@ int main()
     TestNeuralDecodeNativeExecuteSkipsUnsupportedPath();
     TestMegaGeometryNativeExecuteSkipsWhenNoInstances();
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
-    TestGBufferSSAONativeExecuteRegistersBridge();
-    TestGBufferSSAOLightingNativeExecuteRegistersBridge();
-    TestLightingNativeExecuteClearsWhenInputsMissing();
+    TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
+    TestGBufferSSAOLightingNativeExecuteWithoutSharedResources();
+    TestLightingNativeExecuteClearsWhenInputsMissingWithoutBridge();
+    TestLightingNativeExecuteDoesNotPublishBridgeWhenFallbackInputsMissing();
     TestForwardTransparentNativeExecuteKeepsBridgeWhenDrawInputsMissing();
-    TestSSRNativeExecuteRegistersSceneColorBridge();
-    TestBloomNativeExecuteRegistersSceneColorBridge();
-    TestToneMappingNativeExecuteRegistersToneMappedBridge();
-    TestFXAANativeExecuteRegistersToneMappedBridge();
-    TestUpscaleNativeExecuteRegistersPresentationBridge();
+    TestSSRNativeExecuteUsesGraphSceneColorWithoutBridge();
+    TestBloomNativeExecuteUsesGraphSceneColorWithoutBridge();
+    TestToneMappingNativeExecuteExportsToneMappedColorWithoutBridge();
+    TestFXAANativeExecuteExportsToneMappedColorWithoutBridge();
+    TestUpscaleNativeExecuteExportsPresentationColorWithoutBridge();
+    TestSSRNativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
+    TestBloomNativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
+    TestFXAANativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestUpscaleNativeExecuteExportsPresentationAliasWhenNoUpscale();
     TestUpscaleNativeExecuteExportsPresentationAliasFromInputPassFallback();
     TestToneMappingNativeExecuteAcceptsRawSceneColorBridge();

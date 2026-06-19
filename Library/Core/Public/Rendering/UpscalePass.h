@@ -22,7 +22,8 @@ namespace NorvesLib::Core::Rendering
      *
      * ToneMappedColor を入力として受け取り、内部描画解像度が
      * スクリーン解像度より低い場合に高品質なアップスケールを適用します。
-     * 出力は SharedResourceRegistry に "PresentationColor" として登録されます。
+     * 標準経路では "PresentationColor" graph output として出力します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
      */
     class UpscalePass : public IViewPass, public IRenderGraphPass
     {
@@ -40,6 +41,11 @@ namespace NorvesLib::Core::Rendering
         void Declare(RenderGraphBuilder &builder) override;
         void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
 
+        /**
+         * @brief Legacy bridge fallback 用の入力パス参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetInputPass(const FXAAPass* inputPass) { m_InputPass = inputPass; }
         RGResourceHandle GetPresentationColorHandle() const { return m_OutputHandle; }
 
@@ -48,7 +54,9 @@ namespace NorvesLib::Core::Rendering
                               uint32_t height,
                               const RHI::TexturePtr& outputTexture,
                               bool bUseRenderGraphInitialState);
-        void ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& inputTexture);
+        void ExecuteWithInput(ViewRenderContext &context,
+                              const RHI::TexturePtr& inputTexture,
+                              bool bRegisterLegacyBridge);
         bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
         static bool NeedsUpscale(uint32_t renderWidth,
                                  uint32_t renderHeight,
@@ -71,6 +79,7 @@ namespace NorvesLib::Core::Rendering
         const FXAAPass* m_InputPass = nullptr;
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bLegacyInputFallbackActive = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
         RHI::ITexture* m_FramebufferOutputTexture = nullptr;
     };

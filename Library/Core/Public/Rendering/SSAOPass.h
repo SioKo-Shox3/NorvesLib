@@ -82,6 +82,11 @@ namespace NorvesLib::Core::Rendering
         void SetIntensity(float intensity) { m_Settings.Intensity = intensity; }
         const SSAOSettings &GetSettings() const { return m_Settings; }
 
+        /**
+         * @brief Legacy bridge fallback 用のGBuffer参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetGBufferPass(const GBufferPass *gbufferPass) { m_GBufferPass = gbufferPass; }
         RGResourceHandle GetSSAORawHandle() const { return m_SSAORawHandle.ToResourceHandle(); }
         RGResourceHandle GetSSAOBlurredHandle() const { return m_SSAOBlurredHandle.ToResourceHandle(); }
@@ -117,7 +122,8 @@ namespace NorvesLib::Core::Rendering
         bool EnsureBlurPipeline();
         void ExecuteWithGBufferTextures(ViewRenderContext &context,
                                         const RHI::TexturePtr &depthTexture,
-                                        const RHI::TexturePtr &normalTexture);
+                                        const RHI::TexturePtr &normalTexture,
+                                        bool bRegisterLegacyBridge);
         bool TryEnqueueNativeTransitionPasses(ViewRenderContext &context) const;
 
         // 設定
@@ -162,6 +168,7 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bLegacyInputFallbackActive = false;
         bool m_bUsingRenderGraphResources = false;
         bool m_bSSAOInitialStateFromRenderGraph = false;
         bool m_bBlurInitialStateFromRenderGraph = false;
