@@ -37,13 +37,6 @@
 
 #if defined(NORVES_BRIDGE_ENABLED)
 
-#include <memory>
-#include <string>
-
-#include "norves/bridge/json_value.hpp"
-#include "norves/bridge/server.hpp"
-#include "norves/bridge/transport.hpp"
-
 #include "BridgeLogSink.h"
 
 #include "Core/Public/Container/Containers.h"
@@ -51,6 +44,13 @@
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
 #include "Core/Public/Thread/Thread.h"
+
+#include <memory>
+#include <string>
+
+#include "norves/bridge/json_value.hpp"
+#include "norves/bridge/server.hpp"
+#include "norves/bridge/transport.hpp"
 
 namespace norves::bridge
 {
@@ -69,10 +69,10 @@ namespace Game::Bridge
         BridgeServerHost() = default;
         ~BridgeServerHost();
 
-        BridgeServerHost(const BridgeServerHost &) = delete;
-        BridgeServerHost &operator=(const BridgeServerHost &) = delete;
-        BridgeServerHost(BridgeServerHost &&) = delete;
-        BridgeServerHost &operator=(BridgeServerHost &&) = delete;
+        BridgeServerHost(const BridgeServerHost&) = delete;
+        BridgeServerHost& operator=(const BridgeServerHost&) = delete;
+        BridgeServerHost(BridgeServerHost&&) = delete;
+        BridgeServerHost& operator=(BridgeServerHost&&) = delete;
 
         /**
          * @brief WebSocket サーバーを bind し、READY を出力し、受信スレッドを起動する
@@ -85,7 +85,7 @@ namespace Game::Bridge
          * @param adapter ハンドラ群。本ホストより長く生存しなければならない（参照保持）
          * @return bind と起動に成功したら true、失敗したら false
          */
-        bool Start(uint16_t port, norves::bridge::IBridgeEngineAdapter &adapter);
+        bool Start(uint16_t port, norves::bridge::IBridgeEngineAdapter& adapter);
 
         /**
          * @brief ゲームスレッドから呼び、キュー済みの受信フレームを処理して応答を送る
@@ -119,12 +119,11 @@ namespace Game::Bridge
          * 返した場合（エンコード失敗）は送らない。送信失敗（peer 不在 / キュー満杯）でも
          * 無言で破棄する（ログを出すと log.message 経路で増幅ループになり得るため）。
          *
-         * 呼び出しスレッド: ゲームスレッド（DrainInbound 経由）からのみ呼ぶこと。
-         *
          * @param eventName イベント名（例 "log.message" / "runtime.stateChanged"）
          * @param params イベント params（コピーされる）
+         * @note 呼び出しスレッド: ゲームスレッド（DrainInbound 経由）からのみ呼ぶこと。
          */
-        void EmitEvent(std::string_view eventName, const norves::bridge::JsonValue &params);
+        void EmitEvent(std::string_view eventName, const norves::bridge::JsonValue& params);
 
         /**
          * @brief Logger -> Bridge のログ転送を開始する（log.subscribe 時）
@@ -132,7 +131,8 @@ namespace Game::Bridge
          * 転送最小レベルを設定して中継 sink を空にし、未開始なら Logger へ sink を登録する。
          * 既に開始済みなら minLevel の更新のみ行う（再登録しない）。
          *
-         * 呼び出しスレッド: ゲームスレッド（DrainInbound 経由）からのみ呼ぶこと。
+         * @param minLevel 転送する最小ログレベル（これ未満は中継 sink で捨てる）
+         * @note 呼び出しスレッド: ゲームスレッド（DrainInbound 経由）からのみ呼ぶこと。
          */
         void StartLogForwarding(NorvesLib::Core::Logging::LogLevel minLevel);
 
@@ -144,8 +144,14 @@ namespace Game::Bridge
         void StopLogForwarding();
 
     private:
-        // 受信スレッド本体。transport->recv() をブロッキングで回し、得たフレームを
-        // キューへ push するだけ。GEngine/エンジン状態には触れない。
+        /**
+         * @brief 受信スレッド本体
+         *
+         * transport->recv() をブロッキングで回し、得たフレームをキューへ push する
+         * だけ。GEngine/エンジン状態には触れない。
+         *
+         * @note 受信スレッド（NorvesLib::Thread::Thread）上でのみ実行される。
+         */
         void RecvLoop();
 
         // SDK が返す形のまま保持する unique_ptr（SDK 境界の例外的 std 利用）。
@@ -198,12 +204,12 @@ namespace Game::Bridge
         BridgeServerHost() = default;
         ~BridgeServerHost() = default;
 
-        BridgeServerHost(const BridgeServerHost &) = delete;
-        BridgeServerHost &operator=(const BridgeServerHost &) = delete;
-        BridgeServerHost(BridgeServerHost &&) = delete;
-        BridgeServerHost &operator=(BridgeServerHost &&) = delete;
+        BridgeServerHost(const BridgeServerHost&) = delete;
+        BridgeServerHost& operator=(const BridgeServerHost&) = delete;
+        BridgeServerHost(BridgeServerHost&&) = delete;
+        BridgeServerHost& operator=(BridgeServerHost&&) = delete;
 
-        bool Start(uint16_t /*port*/, norves::bridge::IBridgeEngineAdapter & /*adapter*/)
+        bool Start(uint16_t /*port*/, norves::bridge::IBridgeEngineAdapter& /*adapter*/)
         {
             return false;
         }
@@ -223,7 +229,7 @@ namespace Game::Bridge
 
         // SDK 非設定ビルドでは Bridge engine SDK が無いため何もしない。public API を
         // 活性版と揃えるためだけのスタブ（このビルドでは誰も呼ばない）。
-        void EmitEvent(std::string_view /*eventName*/, const norves::bridge::JsonValue & /*params*/)
+        void EmitEvent(std::string_view /*eventName*/, const norves::bridge::JsonValue& /*params*/)
         {
         }
     };

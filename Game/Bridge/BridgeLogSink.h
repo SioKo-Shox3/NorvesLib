@@ -28,14 +28,14 @@
 
 #if defined(NORVES_BRIDGE_ENABLED)
 
-#include <cstddef>
-#include <cstdint>
-#include <utility>
-
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Logging/LogTypes.h"
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <utility>
 
 namespace Game::Bridge
 {
@@ -63,10 +63,10 @@ namespace Game::Bridge
         BridgeLogSink() = default;
         ~BridgeLogSink() override = default;
 
-        BridgeLogSink(const BridgeLogSink &) = delete;
-        BridgeLogSink &operator=(const BridgeLogSink &) = delete;
-        BridgeLogSink(BridgeLogSink &&) = delete;
-        BridgeLogSink &operator=(BridgeLogSink &&) = delete;
+        BridgeLogSink(const BridgeLogSink&) = delete;
+        BridgeLogSink& operator=(const BridgeLogSink&) = delete;
+        BridgeLogSink(BridgeLogSink&&) = delete;
+        BridgeLogSink& operator=(BridgeLogSink&&) = delete;
 
         /**
          * @brief Logger からのログ配送を受ける（Logger ワーカースレッドで呼ばれる）
@@ -75,16 +75,18 @@ namespace Game::Bridge
          * キューへ push する。満杯時は最古を 1 件捨てて m_Dropped を加算する。
          * transport / Logger には一切触れず、例外も投げない（ILogSink 契約）。
          */
-        void OnLog(const NorvesLib::Core::Logging::LogEntry &entry) override;
+        void OnLog(const NorvesLib::Core::Logging::LogEntry& entry) override;
 
         /**
          * @brief キュー先頭の 1 件を取り出す（ゲームスレッドが DrainInbound から呼ぶ）
+         * @param out 取り出した 1 件を書き込む先（成功時のみ上書きされる）
          * @return 取り出せたら true、空なら false
          */
-        bool TryPopForward(ForwardEntry &out);
+        bool TryPopForward(ForwardEntry& out);
 
         /**
          * @brief 転送する最小ログレベルを設定する（log.subscribe 時に更新）
+         * @param level これ以降に転送する最小ログレベル
          */
         void SetMinLevel(NorvesLib::Core::Logging::LogLevel level);
 
@@ -95,7 +97,7 @@ namespace Game::Bridge
 
     private:
         // キュー容量の上限。溢れたら最古から捨てる（残留メモリの暴走を防ぐ）。
-        static constexpr std::size_t kMaxQueued = 4096;
+        static constexpr size_t kMaxQueued = 4096;
 
         // 転送キュー本体と保護ロック。OnLog（push）/ TryPopForward（pop）/ Clear が
         // この m_Mutex だけを取る。Logger へは触れない（ロック順序 m-2 を参照）。
@@ -104,11 +106,11 @@ namespace Game::Bridge
 
         // 転送最小レベル。既定は Trace=0（全通し）。alpha は server 側フィルタを
         // 最小限に留め、レベル絞り込みは editor 側 client フィルタへ委ねる。
-        NorvesLib::Thread::Atomic<std::uint8_t> m_MinLevel{
-            static_cast<std::uint8_t>(NorvesLib::Core::Logging::LogLevel::Trace)};
+        NorvesLib::Thread::Atomic<uint8_t> m_MinLevel{
+            static_cast<uint8_t>(NorvesLib::Core::Logging::LogLevel::Trace)};
 
         // 溢れて捨てた件数（観測用。alpha では emit しない）。
-        NorvesLib::Thread::Atomic<std::uint64_t> m_Dropped{0};
+        NorvesLib::Thread::Atomic<uint64_t> m_Dropped{0};
     };
 
 } // namespace Game::Bridge

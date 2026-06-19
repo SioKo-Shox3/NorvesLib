@@ -13,7 +13,7 @@ namespace Game::Bridge
      * SetBridgeRuntimeState で更新し、ApplicationProcessor の Tick ゲートが
      * ShouldAdvanceSimulation 経由で参照する。
      */
-    enum class BridgeRuntimeState : std::uint8_t
+    enum class BridgeRuntimeState : uint8_t
     {
         Edit,
         Playing,

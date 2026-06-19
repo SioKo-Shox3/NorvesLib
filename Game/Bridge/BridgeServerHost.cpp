@@ -2,6 +2,11 @@
 
 #if defined(NORVES_BRIDGE_ENABLED)
 
+#include "ReadyHandshake.h"
+
+#include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Logging/Logger.h"
+
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -9,15 +14,10 @@
 #include <thread>
 #include <utility>
 
-#include "ReadyHandshake.h"
-
 #include "norves/bridge/adapter.hpp"
 #include "norves/bridge/dto/common.hpp"
 #include "norves/bridge/dto/events.hpp"
 #include "norves/bridge/ws_server_transport.hpp"
-
-#include "Core/Public/Logging/LogMacros.h"
-#include "Core/Public/Logging/Logger.h"
 
 namespace Game::Bridge
 {
@@ -32,6 +32,15 @@ namespace Game::Bridge
         constexpr int kMaxBindAttempts = 20;
         constexpr auto kBindRetryDelay = std::chrono::milliseconds(100);
 
+        /**
+         * @brief WebSocket サーバー transport を bind する（リトライ込み）
+         *
+         * kMaxBindAttempts 回まで make_websocket_server_transport を試み、失敗のたびに
+         * kBindRetryDelay だけ待つ（kill→同ポート再起動時の OS リスナー解放待ちを吸収）。
+         *
+         * @param port 待ち受けポート（127.0.0.1 ループバックのみ）
+         * @return bind 成功した transport。全試行が失敗したら nullptr
+         */
         std::unique_ptr<norves::bridge::ITransport> BindWithRetry(uint16_t port)
         {
             for (int attempt = 0; attempt < kMaxBindAttempts; ++attempt)
@@ -54,9 +63,15 @@ namespace Game::Bridge
         // で延々と drain して描画を止めないための上限（残りは次フレームへ持ち越す）。
         constexpr int kMaxDrainPerFrame = 64;
 
-        // NorvesLib の LogLevel を Bridge wire の dto::LogLevel へ畳み込む。
-        // dto には Fatal / Warning が無いため、Fatal -> Error・Warning -> Warn と畳む
-        // （editor は "fatal" を拒否する。スキーマ準拠のため必須）。
+        /**
+         * @brief NorvesLib の LogLevel を Bridge wire の dto::LogLevel へ畳み込む
+         *
+         * dto には Fatal / Warning が無いため、Fatal -> Error・Warning -> Warn と畳む
+         * （editor は "fatal" を拒否する。スキーマ準拠のため必須）。
+         *
+         * @param level NorvesLib のログレベル
+         * @return 対応する Bridge wire の dto::LogLevel
+         */
         norves::bridge::dto::LogLevel FoldLevel(NorvesLib::Core::Logging::LogLevel level)
         {
             using SrcLevel = NorvesLib::Core::Logging::LogLevel;
@@ -80,13 +95,21 @@ namespace Game::Bridge
         }
     } // namespace
 
+    /**
+     * @brief デストラクタ
+     *
+     * @note 念のための後始末。通常は OnPreShutdown の Stop() で停止済み。
+     */
     BridgeServerHost::~BridgeServerHost()
     {
         // 念のための後始末。通常は OnPreShutdown の Stop() で停止済み。
         Stop();
     }
 
-    bool BridgeServerHost::Start(uint16_t port, norves::bridge::IBridgeEngineAdapter &adapter)
+    /**
+     * @brief WebSocket サーバーを bind し、READY を出力し、受信スレッドを起動する
+     */
+    bool BridgeServerHost::Start(uint16_t port, norves::bridge::IBridgeEngineAdapter& adapter)
     {
         if (m_bActive.GetValue())
         {
@@ -127,6 +150,11 @@ namespace Game::Bridge
         return true;
     }
 
+    /**
+     * @brief 受信スレッド本体
+     *
+     * @note 受信スレッド上でのみ実行され、GEngine/エンジン状態には触れない。
+     */
     void BridgeServerHost::RecvLoop()
     {
         // 受信スレッド：transport->recv() をブロッキングで回し、得たフレームを
@@ -145,6 +173,11 @@ namespace Game::Bridge
         }
     }
 
+    /**
+     * @brief キュー済みの受信フレームを処理し、応答送信とログ転送を行う
+     *
+     * @note ゲームスレッド（OnUpdate）上でのみ実行される。
+     */
     void BridgeServerHost::DrainInbound()
     {
         if (!m_bActive.GetValue() || !m_Server || !m_Transport)
@@ -201,6 +234,12 @@ namespace Game::Bridge
         }
     }
 
+    /**
+     * @brief サーバーを停止する（close→join、冪等）
+     *
+     * @note StopLogForwarding → close → join の順を厳守する（逆順だと recv() が
+     *       ブロックしたまま join がデッドロックする）。
+     */
     void BridgeServerHost::Stop()
     {
         // ログ転送を先に止める（RemoveSink → close → join の順。L-P3a 契約）。
@@ -228,7 +267,12 @@ namespace Game::Bridge
         m_Transport.reset();
     }
 
-    void BridgeServerHost::EmitEvent(std::string_view eventName, const norves::bridge::JsonValue &params)
+    /**
+     * @brief サーバー発イベント（kind=event）をクライアントへ送る
+     *
+     * @note ゲームスレッド（DrainInbound 経由）上でのみ実行される。
+     */
+    void BridgeServerHost::EmitEvent(std::string_view eventName, const norves::bridge::JsonValue& params)
     {
         if (!m_bActive.GetValue() || !m_Server || !m_Transport)
         {
@@ -247,6 +291,11 @@ namespace Game::Bridge
         m_Transport->send(std::move(frame));
     }
 
+    /**
+     * @brief Logger -> Bridge のログ転送を開始する（log.subscribe 時）
+     *
+     * @note ゲームスレッド（DrainInbound 経由）上でのみ実行される。
+     */
     void BridgeServerHost::StartLogForwarding(NorvesLib::Core::Logging::LogLevel minLevel)
     {
         // 転送レベルを設定し、開始時の積み残しを捨ててから登録する。
@@ -261,6 +310,9 @@ namespace Game::Bridge
         // 既に開始済みなら minLevel の更新のみ（再登録しない）。
     }
 
+    /**
+     * @brief Logger -> Bridge のログ転送を停止する（log.unsubscribe / Stop 時、冪等）
+     */
     void BridgeServerHost::StopLogForwarding()
     {
         // 冪等。登録済みのときだけ Logger から外す。
