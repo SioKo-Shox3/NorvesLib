@@ -211,6 +211,8 @@ namespace NorvesLib::RHI::Vulkan
         void BeginGPUTimestamp(const char* markerName = nullptr) override;
         void EndGPUTimestamp() override;
         float GetLastGPUTimestampDurationMs() const override;
+        void BeginDebugMarker(const char* name) override;
+        void EndDebugMarker() override;
         void Submit(bool bWaitForCompletion = false) override;
 
         void BeginRenderPass(RenderPassPtr renderPass, FramebufferPtr framebuffer) override;
@@ -390,6 +392,9 @@ namespace NorvesLib::RHI::Vulkan
         vk::PipelineStageFlags ToVkPipelineStage(ShaderStage stage) const;
         // シェーダーステージをVkシェーダーステージに変換
         vk::ShaderStageFlags ToVkShaderStageFlags(ShaderStage stage) const;
+
+        PFN_vkCmdBeginDebugUtilsLabelEXT m_pfnBeginDebugUtilsLabel = nullptr;
+        PFN_vkCmdEndDebugUtilsLabelEXT m_pfnEndDebugUtilsLabel = nullptr;
 
 #if NORVES_ENABLE_STATS
         vk::QueryPool m_timestampQueryPool;

@@ -8,6 +8,7 @@
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
 #include "Rendering/InstanceBufferRing.h"
+#include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "ShaderManager.h"
 #include "Rendering/RenderResourcesFwd.h"
@@ -56,6 +57,7 @@ namespace NorvesLib::Core::Rendering
         bool bEnableMultiThreadedRendering = true;
         uint32_t MaxDrawCallsPerFrame = 10000;
         bool bEnableValidation = false;
+        RGDumpOptions RenderGraphDumpOptions;
     };
 
     /**
@@ -324,8 +326,12 @@ namespace NorvesLib::Core::Rendering
         // レンダーパス・フレームバッファ（Screen SwapChain用）
         Container::TSharedPtr<RHI::IRenderPass> m_RenderPass;
         Container::TSharedPtr<RHI::IRenderPass> m_PresentationLoadRenderPass;
+        Container::TSharedPtr<RHI::IRenderPass> m_GraphPresentationClearRenderPass;
+        Container::TSharedPtr<RHI::IRenderPass> m_GraphPresentationLoadRenderPass;
         Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_SwapChainFramebuffers;
         Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_PresentationLoadFramebuffers;
+        Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_GraphPresentationClearFramebuffers;
+        Container::VariableArray<Container::TSharedPtr<RHI::IFramebuffer>> m_GraphPresentationLoadFramebuffers;
         bool m_bSwapChainFramebuffersReady = false;
         RHI::Format m_SwapChainFormat = RHI::Format::UNKNOWN;
 
@@ -359,6 +365,9 @@ namespace NorvesLib::Core::Rendering
 
         // Viewパスチェーン用RenderGraph
         RenderGraph m_RenderGraph;
+
+        // RenderGraph最終swapchain合成パス
+        PresentationPass m_PresentationPass;
 
         // フレーム別インスタンスデータSSBOリング
         InstanceBufferRing m_InstanceBufferRing;

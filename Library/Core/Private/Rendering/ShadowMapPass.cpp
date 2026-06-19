@@ -7,6 +7,7 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
@@ -263,6 +264,8 @@ namespace NorvesLib::Core::Rendering
                 builder.Write(m_ShadowMapHandle,
                               RHI::ResourceState::DepthWrite,
                               RHI::ResourceState::ShaderResource);
+                builder.PublishTexture(RenderGraphResourceNames::ShadowMap, m_ShadowMapHandle);
+                builder.ExportTexture(RenderGraphResourceNames::ShadowMap, m_ShadowMapHandle);
             }
         }
 
@@ -321,8 +324,8 @@ namespace NorvesLib::Core::Rendering
         MatrixUtils::TransposeToShaderData(lightViewMat, lightViewData);
         MatrixUtils::TransposeToShaderData(lightProjMat, lightProjData);
 
-        // シャドウマップテクスチャをSharedResourceRegistryに登録
-        if (context.SharedResources)
+        // SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ公開する。
+        if (m_bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("ShadowMap", m_ShadowMapTexture);
         }

@@ -11,6 +11,7 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/PresentationComposer.h"
+#include "Rendering/PresentationPass.h"
 #include "Rendering/RenderFrameExecutor.h"
 #include "RHI/ISampler.h"
 #include "RHI/IDevice.h"
@@ -212,6 +213,7 @@ namespace NorvesLib::Core::Rendering
         m_bVSyncEnabled = settings.bVSync;
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
         m_MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
+        m_RenderGraph.SetDebugDumpOptions(settings.RenderGraphDumpOptions);
 
         // ========================================
         // 1. RHIデバイス（RenderWorldから渡される）
@@ -318,6 +320,45 @@ namespace NorvesLib::Core::Rendering
         if (!m_PresentationLoadRenderPass)
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create presentation load render pass");
+            return false;
+        }
+
+        RHI::AttachmentDesc graphClearColorAttachment = colorAttachment;
+        graphClearColorAttachment.initialState = RHI::ResourceState::RenderTarget;
+
+        RHI::AttachmentDesc graphLoadColorAttachment = graphClearColorAttachment;
+        graphLoadColorAttachment.clear = false;
+        graphLoadColorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+
+        RHI::AttachmentDesc graphClearDepthAttachment = depthAttachment;
+        graphClearDepthAttachment.initialState = RHI::ResourceState::Undefined;
+
+        RHI::AttachmentDesc graphLoadDepthAttachment = depthAttachment;
+        graphLoadDepthAttachment.clear = false;
+        graphLoadDepthAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        graphLoadDepthAttachment.initialState = RHI::ResourceState::DepthWrite;
+
+        RHI::RenderPassDesc graphClearRenderPassDesc;
+        graphClearRenderPassDesc.colorAttachments.push_back(graphClearColorAttachment);
+        graphClearRenderPassDesc.depthStencilAttachment = graphClearDepthAttachment;
+        graphClearRenderPassDesc.hasDepthStencil = true;
+
+        m_GraphPresentationClearRenderPass = m_Device->CreateRenderPass(graphClearRenderPassDesc);
+        if (!m_GraphPresentationClearRenderPass)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create graph presentation clear render pass");
+            return false;
+        }
+
+        RHI::RenderPassDesc graphLoadRenderPassDesc;
+        graphLoadRenderPassDesc.colorAttachments.push_back(graphLoadColorAttachment);
+        graphLoadRenderPassDesc.depthStencilAttachment = graphLoadDepthAttachment;
+        graphLoadRenderPassDesc.hasDepthStencil = true;
+
+        m_GraphPresentationLoadRenderPass = m_Device->CreateRenderPass(graphLoadRenderPassDesc);
+        if (!m_GraphPresentationLoadRenderPass)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create graph presentation load render pass");
             return false;
         }
         m_SwapChainFormat = swapChain->GetFormat();
@@ -620,9 +661,13 @@ namespace NorvesLib::Core::Rendering
         // フレームバッファ・レンダーパスの解放
         m_SwapChainFramebuffers.clear();
         m_PresentationLoadFramebuffers.clear();
+        m_GraphPresentationClearFramebuffers.clear();
+        m_GraphPresentationLoadFramebuffers.clear();
         m_bSwapChainFramebuffersReady = false;
         m_RenderPass.reset();
         m_PresentationLoadRenderPass.reset();
+        m_GraphPresentationClearRenderPass.reset();
+        m_GraphPresentationLoadRenderPass.reset();
 
         // コマンドリストの解放
         m_CommandList.reset();
@@ -965,13 +1010,17 @@ namespace NorvesLib::Core::Rendering
         }
 
         if (imageIndex >= m_SwapChainFramebuffers.size() ||
-            imageIndex >= m_PresentationLoadFramebuffers.size())
+            imageIndex >= m_PresentationLoadFramebuffers.size() ||
+            imageIndex >= m_GraphPresentationClearFramebuffers.size() ||
+            imageIndex >= m_GraphPresentationLoadFramebuffers.size())
         {
             NORVES_LOG_ERROR("RenderingCoordinator",
-                             "Swapchain framebuffer index out of range: image=%u framebufferCount=%zu loadFramebufferCount=%zu",
+                             "Swapchain framebuffer index out of range: image=%u framebufferCount=%zu loadFramebufferCount=%zu graphClearFramebufferCount=%zu graphLoadFramebufferCount=%zu",
                              imageIndex,
                              m_SwapChainFramebuffers.size(),
-                             m_PresentationLoadFramebuffers.size());
+                             m_PresentationLoadFramebuffers.size(),
+                             m_GraphPresentationClearFramebuffers.size(),
+                             m_GraphPresentationLoadFramebuffers.size());
             m_TransientPool.EndFrame();
             return;
         }
@@ -1065,6 +1114,16 @@ namespace NorvesLib::Core::Rendering
         presentationRequest.BlitDescriptorSet = m_BlitDescriptorSet;
         presentationRequest.BlitSampler = m_BlitSampler;
 
+        PresentationPassRequest graphPresentationRequest;
+        graphPresentationRequest.BackBufferTexture = swapChain->GetBackBuffer(imageIndex);
+        graphPresentationRequest.ClearRenderPass = m_GraphPresentationClearRenderPass;
+        graphPresentationRequest.LoadRenderPass = m_GraphPresentationLoadRenderPass;
+        graphPresentationRequest.ClearFramebuffer = m_GraphPresentationClearFramebuffers[imageIndex];
+        graphPresentationRequest.LoadFramebuffer = m_GraphPresentationLoadFramebuffers[imageIndex];
+        graphPresentationRequest.BlitPipeline = m_BlitPipeline;
+        graphPresentationRequest.BlitDescriptorSet = m_BlitDescriptorSet;
+        graphPresentationRequest.BlitSampler = m_BlitSampler;
+
         RenderFrameExecutionRequest executionRequest;
         executionRequest.Packet = packet;
         executionRequest.Views = &screenViews;
@@ -1075,9 +1134,13 @@ namespace NorvesLib::Core::Rendering
         executionRequest.PendingFrameCommands = &pendingFrameCommands;
         executionRequest.Presentation = &presentationComposer;
         executionRequest.PresentationRequest = presentationRequest;
+        executionRequest.PresentationGraphPass = &m_PresentationPass;
+        executionRequest.GraphPresentationRequest = graphPresentationRequest;
 
         RenderFrameExecutor frameExecutor;
         frameExecutor.Execute(executionRequest);
+        m_Stats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
+        m_Stats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
 
         // コマンド録画終了
 #if NORVES_ENABLE_STATS
@@ -1130,6 +1193,8 @@ namespace NorvesLib::Core::Rendering
             m_bSwapChainFramebuffersReady = false;
             m_SwapChainFramebuffers.clear();
             m_PresentationLoadFramebuffers.clear();
+            m_GraphPresentationClearFramebuffers.clear();
+            m_GraphPresentationLoadFramebuffers.clear();
             m_DepthTexture.reset();
 
             UpdateRenderResolution(presentWidth, presentHeight);
@@ -1309,10 +1374,16 @@ namespace NorvesLib::Core::Rendering
         m_bSwapChainFramebuffersReady = false;
         m_SwapChainFramebuffers.clear();
         m_PresentationLoadFramebuffers.clear();
+        m_GraphPresentationClearFramebuffers.clear();
+        m_GraphPresentationLoadFramebuffers.clear();
         m_DepthTexture.reset();
 
         auto swapChain = m_Screen.GetSwapChain();
-        if (!swapChain || !m_RenderPass || !m_PresentationLoadRenderPass)
+        if (!swapChain ||
+            !m_RenderPass ||
+            !m_PresentationLoadRenderPass ||
+            !m_GraphPresentationClearRenderPass ||
+            !m_GraphPresentationLoadRenderPass)
         {
             return false;
         }
@@ -1331,6 +1402,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t imageCount = swapChain->GetBufferCount();
         m_SwapChainFramebuffers.reserve(imageCount);
         m_PresentationLoadFramebuffers.reserve(imageCount);
+        m_GraphPresentationClearFramebuffers.reserve(imageCount);
+        m_GraphPresentationLoadFramebuffers.reserve(imageCount);
 
         for (uint32_t i = 0; i < imageCount; ++i)
         {
@@ -1359,6 +1432,26 @@ namespace NorvesLib::Core::Rendering
             }
 
             m_PresentationLoadFramebuffers.push_back(loadFramebuffer);
+
+            fbDesc.renderPass = m_GraphPresentationClearRenderPass;
+            auto graphClearFramebuffer = m_Device->CreateFramebuffer(fbDesc);
+            if (!graphClearFramebuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create graph presentation clear framebuffer for swapchain image %u", i);
+                return false;
+            }
+
+            m_GraphPresentationClearFramebuffers.push_back(graphClearFramebuffer);
+
+            fbDesc.renderPass = m_GraphPresentationLoadRenderPass;
+            auto graphLoadFramebuffer = m_Device->CreateFramebuffer(fbDesc);
+            if (!graphLoadFramebuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create graph presentation load framebuffer for swapchain image %u", i);
+                return false;
+            }
+
+            m_GraphPresentationLoadFramebuffers.push_back(graphLoadFramebuffer);
         }
 
         LOG_INFO("Created %u swapchain framebuffers with depth buffer", imageCount);
@@ -1429,6 +1522,45 @@ namespace NorvesLib::Core::Rendering
         if (!m_PresentationLoadRenderPass)
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate presentation load render pass");
+            return false;
+        }
+
+        RHI::AttachmentDesc graphClearColorAttachment = colorAttachment;
+        graphClearColorAttachment.initialState = RHI::ResourceState::RenderTarget;
+
+        RHI::AttachmentDesc graphLoadColorAttachment = graphClearColorAttachment;
+        graphLoadColorAttachment.clear = false;
+        graphLoadColorAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+
+        RHI::AttachmentDesc graphClearDepthAttachment = depthAttachment;
+        graphClearDepthAttachment.initialState = RHI::ResourceState::Undefined;
+
+        RHI::AttachmentDesc graphLoadDepthAttachment = depthAttachment;
+        graphLoadDepthAttachment.clear = false;
+        graphLoadDepthAttachment.loadOp = RHI::AttachmentLoadOp::Load;
+        graphLoadDepthAttachment.initialState = RHI::ResourceState::DepthWrite;
+
+        RHI::RenderPassDesc graphClearRenderPassDesc;
+        graphClearRenderPassDesc.colorAttachments.push_back(graphClearColorAttachment);
+        graphClearRenderPassDesc.depthStencilAttachment = graphClearDepthAttachment;
+        graphClearRenderPassDesc.hasDepthStencil = true;
+
+        m_GraphPresentationClearRenderPass = m_Device->CreateRenderPass(graphClearRenderPassDesc);
+        if (!m_GraphPresentationClearRenderPass)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate graph presentation clear render pass");
+            return false;
+        }
+
+        RHI::RenderPassDesc graphLoadRenderPassDesc;
+        graphLoadRenderPassDesc.colorAttachments.push_back(graphLoadColorAttachment);
+        graphLoadRenderPassDesc.depthStencilAttachment = graphLoadDepthAttachment;
+        graphLoadRenderPassDesc.hasDepthStencil = true;
+
+        m_GraphPresentationLoadRenderPass = m_Device->CreateRenderPass(graphLoadRenderPassDesc);
+        if (!m_GraphPresentationLoadRenderPass)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate graph presentation load render pass");
             return false;
         }
         m_SwapChainFormat = swapChain->GetFormat();

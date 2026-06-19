@@ -43,12 +43,16 @@ namespace NorvesLib::Core::Rendering
      * PostProcessStackに追加して使用するポストプロセスパスです。
      * ToneMappingPassの前に配置してください。
      *
-     * 入力（SharedResourceRegistryから取得）:
+     * 標準経路では RenderGraph named resource から入力を読み取り、
+     * "BloomSceneColor" graph output として後段へ渡します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
+     *
+     * 入力:
      * - "SceneColor" : HDRライティング結果 (R16G16B16A16_FLOAT)
      *
-     * 出力（SharedResourceRegistryに登録）:
-     * - "SceneColor" : ブルーム適用済みHDRカラー (R16G16B16A16_FLOAT)
-     *   ※ 入力と同じキーで上書き登録し、後続のToneMappingPassが読む
+     * 出力:
+     * - "BloomSceneColor" : ブルーム適用済みHDRカラー (R16G16B16A16_FLOAT)
+     *   ※ legacy/fallback bridge では "SceneColor" を上書き登録する
      */
     class BloomPass : public IViewPass, public IRenderGraphPass
     {
@@ -82,6 +86,11 @@ namespace NorvesLib::Core::Rendering
         // パラメータ調整
         // ========================================
 
+        /**
+         * @brief Legacy bridge fallback 用の入力パス参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetInputPass(const SSRPass* inputPass) { m_InputPass = inputPass; }
         RGResourceHandle GetSceneColorHandle() const { return m_OutputHandle; }
 
@@ -120,7 +129,9 @@ namespace NorvesLib::Core::Rendering
                               uint32_t height,
                               const RHI::TexturePtr& outputTexture,
                               bool bUseRenderGraphInitialState);
-        void ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr);
+        void ExecuteWithInput(ViewRenderContext &context,
+                              const RHI::TexturePtr& sceneColorPtr,
+                              bool bRegisterLegacyBridge);
         bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
 
         // 設定
@@ -129,6 +140,7 @@ namespace NorvesLib::Core::Rendering
         // 出力テクスチャ（Device::CreateTextureで作成、自己所有）
         RHI::TexturePtr m_OutputTexture;
         RGResourceHandle m_OutputHandle;
+        RGResourceHandle m_InputSceneColorHandle;
 
         // パイプラインリソース
         RHI::RenderPassPtr m_BloomRenderPass;
@@ -147,6 +159,7 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bLegacyInputFallbackActive = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
         RHI::ITexture* m_FramebufferOutputTexture = nullptr;
     };

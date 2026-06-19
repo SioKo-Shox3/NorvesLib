@@ -7,6 +7,7 @@
 #include "Rendering/SceneView.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -176,7 +177,7 @@ namespace NorvesLib::Core::Rendering
         return dsDesc;
     }
 
-    LightingPass::LightingPass(const LightingPassSettings &settings)
+    LightingPass::LightingPass(const LightingPassSettings& settings)
         : m_Settings(settings)
     {
     }
@@ -186,7 +187,7 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
-    bool LightingPass::Initialize(ViewRenderContext &context)
+    bool LightingPass::Initialize(ViewRenderContext& context)
     {
         if (m_bInitialized)
         {
@@ -293,7 +294,7 @@ namespace NorvesLib::Core::Rendering
 
             if (m_NeuralBRDFData.LoadFromFile(resolvedPath))
             {
-                const auto &weightData = m_NeuralBRDFData.GetWeightDataFP32();
+                const auto& weightData = m_NeuralBRDFData.GetWeightDataFP32();
                 size_t bufferSize = m_NeuralBRDFData.GetWeightDataSizeFP32();
 
                 RHI::BufferDesc weightBufDesc(
@@ -393,6 +394,14 @@ namespace NorvesLib::Core::Rendering
         m_GBufferPass = nullptr;
         m_SSAOPass = nullptr;
         m_SceneColorHandle = {};
+        m_GBufferAlbedoHandle = {};
+        m_GBufferNormalHandle = {};
+        m_GBufferMaterialHandle = {};
+        m_GBufferDepthHandle = {};
+        m_GBufferEmissiveHandle = {};
+        m_SSAOBlurredHandle = {};
+        m_ShadowMapHandle = {};
+        m_bLegacyInputFallbackActive = false;
         m_bUsingRenderGraphResources = false;
         m_bRenderPassUsesRenderGraphInitialState = false;
         m_FramebufferSceneColorTexture = nullptr;
@@ -403,7 +412,7 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("LightingPass", "LightingPass shutdown");
     }
 
-    void LightingPass::Setup(ViewRenderContext &context)
+    void LightingPass::Setup(ViewRenderContext& context)
     {
         uint32_t width = context.GetActiveRenderWidth();
         uint32_t height = context.GetActiveRenderHeight();
@@ -415,7 +424,6 @@ namespace NorvesLib::Core::Rendering
 
         m_bUsingRenderGraphResources = false;
 
-        // サイズ・実体テクスチャ・RenderGraph初期状態が変われば再作成
         const bool bUseRenderGraphInitialState = m_bUsingRenderGraphResources;
         const bool bResourcesChanged =
             width != m_CurrentWidth ||
@@ -430,211 +438,20 @@ namespace NorvesLib::Core::Rendering
 
         if (bResourcesChanged)
         {
-            m_CurrentWidth = width;
-            m_CurrentHeight = height;
-
-            if (!m_bUsingRenderGraphResources)
-            {
-                // HDRシーンカラーテクスチャ作成
-                m_SceneColorTexture = m_Device->CreateTexture(
-                    RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
-            }
-
-            if (!m_SceneColorTexture)
+            RHI::TexturePtr sceneColorTexture = m_Device->CreateTexture(
+                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
+            if (!sceneColorTexture)
             {
                 NORVES_LOG_ERROR("LightingPass", "Failed to create SceneColor texture");
                 return;
             }
-            m_bRenderPassUsesRenderGraphInitialState = bUseRenderGraphInitialState;
-            m_FramebufferSceneColorTexture = m_SceneColorTexture.get();
-            m_FramebufferWidth = width;
-            m_FramebufferHeight = height;
 
-            // ========================================
-            // ライティング用レンダーパス作成（1カラー、デプス無し）
-            // ========================================
-            RHI::RenderPassDesc rpDesc;
-
-            RHI::AttachmentDesc colorAttach;
-            colorAttach.format = m_Settings.OutputFormat;
-            colorAttach.isDepthStencil = false;
-            colorAttach.clear = true;
-            colorAttach.clearColor[0] = 0.0f;
-            colorAttach.clearColor[1] = 0.0f;
-            colorAttach.clearColor[2] = 0.0f;
-            colorAttach.clearColor[3] = 1.0f;
-            colorAttach.loadOp = RHI::AttachmentLoadOp::Clear;
-            colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
-            colorAttach.initialState = bUseRenderGraphInitialState
-                                           ? RHI::ResourceState::RenderTarget
-                                           : RHI::ResourceState::Undefined;
-            colorAttach.finalState = RHI::ResourceState::ShaderResource;
-            rpDesc.colorAttachments.push_back(colorAttach);
-
-            rpDesc.hasDepthStencil = false;
-
-            m_LightingRenderPass = m_Device->CreateRenderPass(rpDesc);
-            if (!m_LightingRenderPass)
+            if (!PrepareLightingOutput(width,
+                                       height,
+                                       sceneColorTexture,
+                                       bUseRenderGraphInitialState,
+                                       context))
             {
-                NORVES_LOG_ERROR("LightingPass", "Failed to create lighting render pass");
-                return;
-            }
-
-            // ========================================
-            // フレームバッファ作成
-            // ========================================
-            RHI::FramebufferDesc fbDesc;
-            fbDesc.renderPass = m_LightingRenderPass;
-            fbDesc.colorTargets.push_back(m_SceneColorTexture);
-            fbDesc.width = width;
-            fbDesc.height = height;
-
-            m_LightingFramebuffer = m_Device->CreateFramebuffer(fbDesc);
-            if (!m_LightingFramebuffer)
-            {
-                NORVES_LOG_ERROR("LightingPass", "Failed to create lighting framebuffer");
-                return;
-            }
-
-            // ========================================
-            // ディスクリプタセット作成
-            // ========================================
-            // binding 0-3: GBufferテクスチャ（combined image sampler）
-            // binding 4: ライティングパラメータUBO
-            // binding 5: ライトバッファUBO
-            RHI::DescriptorSetDesc dsDesc;
-
-            // GBuffer Albedo (binding=0, combined image sampler)
-            RHI::DescriptorBinding albedoBinding;
-            albedoBinding.binding = 0;
-            albedoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            albedoBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(albedoBinding);
-
-            // GBuffer Normal (binding=1)
-            RHI::DescriptorBinding normalBinding;
-            normalBinding.binding = 1;
-            normalBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            normalBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(normalBinding);
-
-            // GBuffer Material (binding=2)
-            RHI::DescriptorBinding materialBinding;
-            materialBinding.binding = 2;
-            materialBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            materialBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(materialBinding);
-
-            // GBuffer Depth (binding=3)
-            RHI::DescriptorBinding depthBinding;
-            depthBinding.binding = 3;
-            depthBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            depthBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(depthBinding);
-
-            // Lighting params UBO (binding=4)
-            RHI::DescriptorBinding paramsBinding;
-            paramsBinding.binding = 4;
-            paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
-            paramsBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(paramsBinding);
-
-            // Light buffer UBO (binding=5)
-            RHI::DescriptorBinding lightBinding;
-            lightBinding.binding = 5;
-            lightBinding.type = RHI::ResourceBindType::ConstantBuffer;
-            lightBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(lightBinding);
-
-            // Shadow map (binding=6, combined image sampler)
-            RHI::DescriptorBinding shadowBinding;
-            shadowBinding.binding = 6;
-            shadowBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            shadowBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(shadowBinding);
-
-            // GBuffer Emissive (binding=7, combined image sampler)
-            RHI::DescriptorBinding emissiveBinding;
-            emissiveBinding.binding = 7;
-            emissiveBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            emissiveBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(emissiveBinding);
-
-            // IBL Environment Map (binding=8, combined image sampler)
-            RHI::DescriptorBinding envMapBinding;
-            envMapBinding.binding = 8;
-            envMapBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            envMapBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(envMapBinding);
-
-            // IBL BRDF LUT (binding=9, combined image sampler)
-            RHI::DescriptorBinding brdfLutBinding;
-            brdfLutBinding.binding = 9;
-            brdfLutBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            brdfLutBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(brdfLutBinding);
-
-            // SSAO texture (binding=10, combined image sampler)
-            RHI::DescriptorBinding ssaoBinding;
-            ssaoBinding.binding = 10;
-            ssaoBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            ssaoBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(ssaoBinding);
-
-            // Neural BRDF weight buffer (binding=11, storage buffer)
-            if (m_bNeuralBRDFAvailable)
-            {
-                RHI::DescriptorBinding neuralWeightBinding;
-                neuralWeightBinding.binding = 11;
-                neuralWeightBinding.type = RHI::ResourceBindType::StructuredBuffer;
-                neuralWeightBinding.stages = RHI::ShaderStage::Pixel;
-                dsDesc.bindings.push_back(neuralWeightBinding);
-            }
-
-            m_LightingDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-            if (!m_LightingDescriptorSet)
-            {
-                NORVES_LOG_ERROR("LightingPass", "Failed to create lighting descriptor set");
-                return;
-            }
-
-            // UBOバインド（テクスチャバインドはExecute時にGBufferが確定してから行う）
-            m_LightingDescriptorSet->BindConstantBuffer(4, m_LightDataBuffer, 0, LIGHTING_PARAMS_SIZE);
-            m_LightingDescriptorSet->BindConstantBuffer(5, m_LightArrayBuffer, 0, LIGHT_BUFFER_SIZE);
-
-            // ========================================
-            // パイプライン作成（フルスクリーンの頂点バッファなし描画）
-            // ========================================
-            RHI::GraphicsPipelineDesc pipelineDesc;
-            pipelineDesc.vertexShader = m_LightingVertexShader;
-            pipelineDesc.pixelShader = m_LightingFragmentShader;
-            pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
-
-            // 頂点入力なし（フルスクリーントライアングルはシェーダー内で生成）
-
-            // ラスタライザ
-            pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-            pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
-            pipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
-            pipelineDesc.rasterState.lineWidth = 1.0f;
-
-            // デプステスト無効（フルスクリーン描画）
-            pipelineDesc.depthStencilState.depthTestEnable = false;
-            pipelineDesc.depthStencilState.depthWriteEnable = false;
-
-            // ブレンド無効
-            RHI::BlendAttachmentDesc blendAttachment;
-            blendAttachment.blendEnable = false;
-            blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
-            pipelineDesc.blendState.attachments.push_back(blendAttachment);
-
-            pipelineDesc.renderPass = m_LightingRenderPass;
-            pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
-
-            m_LightingPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-            if (!m_LightingPipeline)
-            {
-                NORVES_LOG_ERROR("LightingPass", "Failed to create lighting pipeline");
                 return;
             }
 
@@ -644,6 +461,8 @@ namespace NorvesLib::Core::Rendering
 
     void LightingPass::Declare(RenderGraphBuilder &builder)
     {
+        m_bLegacyInputFallbackActive = false;
+
         const ViewRenderContext *context = builder.GetContext();
 
         uint32_t width = 0;
@@ -664,56 +483,144 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
-        if (m_GBufferPass)
+        m_GBufferAlbedoHandle = {};
+        m_GBufferNormalHandle = {};
+        m_GBufferMaterialHandle = {};
+        m_GBufferDepthHandle = {};
+        m_GBufferEmissiveHandle = {};
+        m_SSAOBlurredHandle = {};
+        m_ShadowMapHandle = {};
+
+        RGTextureHandle albedoHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferAlbedo,
+                                   albedoHandle,
+                                   RHI::ResourceState::ShaderResource))
         {
-            const RGResourceHandle albedoHandle = m_GBufferPass->GetAlbedoHandle();
-            if (albedoHandle.IsValid())
+            m_GBufferAlbedoHandle = albedoHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackAlbedoHandle = m_GBufferPass->GetAlbedoHandle();
+            if (fallbackAlbedoHandle.IsValid())
             {
-                builder.Read(albedoHandle, RHI::ResourceState::ShaderResource);
-            }
-
-            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
-            if (normalHandle.IsValid())
-            {
-                builder.Read(normalHandle, RHI::ResourceState::ShaderResource);
-            }
-
-            const RGResourceHandle materialHandle = m_GBufferPass->GetMaterialHandle();
-            if (materialHandle.IsValid())
-            {
-                builder.Read(materialHandle, RHI::ResourceState::ShaderResource);
-            }
-
-            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
-            if (depthHandle.IsValid())
-            {
-                builder.Read(depthHandle, RHI::ResourceState::ShaderResource);
-            }
-
-            const RGResourceHandle emissiveHandle = m_GBufferPass->GetEmissiveHandle();
-            if (emissiveHandle.IsValid())
-            {
-                builder.Read(emissiveHandle, RHI::ResourceState::ShaderResource);
+                builder.Read(fallbackAlbedoHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferAlbedoHandle = fallbackAlbedoHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
-        if (m_SSAOPass)
+        RGTextureHandle normalHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferNormal,
+                                   normalHandle,
+                                   RHI::ResourceState::ShaderResource))
         {
-            const RGResourceHandle ssaoHandle = m_SSAOPass->GetSSAOBlurredHandle();
-            if (ssaoHandle.IsValid())
+            m_GBufferNormalHandle = normalHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackNormalHandle = m_GBufferPass->GetNormalHandle();
+            if (fallbackNormalHandle.IsValid())
             {
-                builder.Read(ssaoHandle, RHI::ResourceState::ShaderResource);
+                builder.Read(fallbackNormalHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferNormalHandle = fallbackNormalHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
-        m_SceneColorHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
-        builder.Write(m_SceneColorHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        RGTextureHandle materialHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferMaterial,
+                                   materialHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_GBufferMaterialHandle = materialHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackMaterialHandle = m_GBufferPass->GetMaterialHandle();
+            if (fallbackMaterialHandle.IsValid())
+            {
+                builder.Read(fallbackMaterialHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferMaterialHandle = fallbackMaterialHandle;
+                m_bLegacyInputFallbackActive = true;
+            }
+        }
+
+        RGTextureHandle depthHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth,
+                                   depthHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_GBufferDepthHandle = depthHandle.ToResourceHandle();
+            builder.PublishTexture(RenderGraphResourceNames::SceneDepth, depthHandle);
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackDepthHandle = m_GBufferPass->GetDepthHandle();
+            if (fallbackDepthHandle.IsValid())
+            {
+                builder.Read(fallbackDepthHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferDepthHandle = fallbackDepthHandle;
+                m_bLegacyInputFallbackActive = true;
+            }
+        }
+
+        RGTextureHandle emissiveHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferEmissive,
+                                   emissiveHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_GBufferEmissiveHandle = emissiveHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackEmissiveHandle = m_GBufferPass->GetEmissiveHandle();
+            if (fallbackEmissiveHandle.IsValid())
+            {
+                builder.Read(fallbackEmissiveHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferEmissiveHandle = fallbackEmissiveHandle;
+                m_bLegacyInputFallbackActive = true;
+            }
+        }
+
+        RGTextureHandle ssaoHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::SSAOBlurred,
+                                   ssaoHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_SSAOBlurredHandle = ssaoHandle.ToResourceHandle();
+        }
+        else if (m_SSAOPass)
+        {
+            const RGResourceHandle fallbackSSAOHandle = m_SSAOPass->GetSSAOBlurredHandle();
+            if (fallbackSSAOHandle.IsValid())
+            {
+                builder.Read(fallbackSSAOHandle, RHI::ResourceState::ShaderResource);
+                m_SSAOBlurredHandle = fallbackSSAOHandle;
+                m_bLegacyInputFallbackActive = true;
+            }
+        }
+
+        RGTextureHandle shadowMapHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::ShadowMap,
+                                   shadowMapHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_ShadowMapHandle = shadowMapHandle.ToResourceHandle();
+        }
+
+        m_SceneColorHandle = builder.WriteTextureAttachment(
+            RenderGraphResourceNames::SceneColor,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
 
         builder.PreserveInsertionOrder();
     }
 
-    void LightingPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
+    void LightingPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         if (!m_bInitialized)
         {
@@ -736,44 +643,47 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr materialTexture;
         RHI::TexturePtr depthTexture;
         RHI::TexturePtr emissiveTexture;
-        if (m_GBufferPass)
+        bool bUsedSharedResourceFallback = false;
+        if (m_GBufferAlbedoHandle.IsValid())
         {
-            const RGResourceHandle albedoHandle = m_GBufferPass->GetAlbedoHandle();
-            const RGResourceHandle normalHandle = m_GBufferPass->GetNormalHandle();
-            const RGResourceHandle materialHandle = m_GBufferPass->GetMaterialHandle();
-            const RGResourceHandle depthHandle = m_GBufferPass->GetDepthHandle();
-            const RGResourceHandle emissiveHandle = m_GBufferPass->GetEmissiveHandle();
-
-            if (albedoHandle.IsValid())
-            {
-                albedoTexture = resources.GetTexture(albedoHandle);
-            }
-            if (normalHandle.IsValid())
-            {
-                normalTexture = resources.GetTexture(normalHandle);
-            }
-            if (materialHandle.IsValid())
-            {
-                materialTexture = resources.GetTexture(materialHandle);
-            }
-            if (depthHandle.IsValid())
-            {
-                depthTexture = resources.GetTexture(depthHandle);
-            }
-            if (emissiveHandle.IsValid())
-            {
-                emissiveTexture = resources.GetTexture(emissiveHandle);
-            }
+            albedoTexture = resources.GetTexture(m_GBufferAlbedoHandle);
+        }
+        if (m_GBufferNormalHandle.IsValid())
+        {
+            normalTexture = resources.GetTexture(m_GBufferNormalHandle);
+        }
+        if (m_GBufferMaterialHandle.IsValid())
+        {
+            materialTexture = resources.GetTexture(m_GBufferMaterialHandle);
+        }
+        if (m_GBufferDepthHandle.IsValid())
+        {
+            depthTexture = resources.GetTexture(m_GBufferDepthHandle);
+        }
+        if (m_GBufferEmissiveHandle.IsValid())
+        {
+            emissiveTexture = resources.GetTexture(m_GBufferEmissiveHandle);
         }
 
         RHI::TexturePtr ssaoTexture;
-        if (m_SSAOPass)
+        if (m_SSAOBlurredHandle.IsValid())
         {
-            const RGResourceHandle ssaoHandle = m_SSAOPass->GetSSAOBlurredHandle();
-            if (ssaoHandle.IsValid())
-            {
-                ssaoTexture = resources.GetTexture(ssaoHandle);
-            }
+            ssaoTexture = resources.GetTexture(m_SSAOBlurredHandle);
+        }
+
+        if ((!albedoTexture || !normalTexture || !materialTexture || !depthTexture || !emissiveTexture) &&
+            m_GBufferPass)
+        {
+            albedoTexture = albedoTexture ? albedoTexture : resources.GetTexture(m_GBufferPass->GetAlbedoHandle());
+            normalTexture = normalTexture ? normalTexture : resources.GetTexture(m_GBufferPass->GetNormalHandle());
+            materialTexture = materialTexture ? materialTexture : resources.GetTexture(m_GBufferPass->GetMaterialHandle());
+            depthTexture = depthTexture ? depthTexture : resources.GetTexture(m_GBufferPass->GetDepthHandle());
+            emissiveTexture = emissiveTexture ? emissiveTexture : resources.GetTexture(m_GBufferPass->GetEmissiveHandle());
+        }
+
+        if (!ssaoTexture && m_SSAOPass)
+        {
+            ssaoTexture = resources.GetTexture(m_SSAOPass->GetSSAOBlurredHandle());
         }
 
         if (context.SharedResources)
@@ -781,27 +691,43 @@ namespace NorvesLib::Core::Rendering
             if (!albedoTexture)
             {
                 albedoTexture = context.SharedResources->GetTexturePtr("GBuffer_Albedo");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || albedoTexture != nullptr;
             }
             if (!normalTexture)
             {
                 normalTexture = context.SharedResources->GetTexturePtr("GBuffer_Normal");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || normalTexture != nullptr;
             }
             if (!materialTexture)
             {
                 materialTexture = context.SharedResources->GetTexturePtr("GBuffer_Material");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || materialTexture != nullptr;
             }
             if (!depthTexture)
             {
                 depthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || depthTexture != nullptr;
             }
             if (!emissiveTexture)
             {
                 emissiveTexture = context.SharedResources->GetTexturePtr("GBuffer_Emissive");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || emissiveTexture != nullptr;
             }
             if (!ssaoTexture)
             {
                 ssaoTexture = context.SharedResources->GetTexturePtr("SSAO");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || ssaoTexture != nullptr;
             }
+        }
+
+        RHI::TexturePtr shadowMapTexture;
+        if (m_ShadowMapHandle.IsValid())
+        {
+            shadowMapTexture = resources.GetTexture(m_ShadowMapHandle);
+        }
+        if (!shadowMapTexture && context.SharedResources)
+        {
+            shadowMapTexture = context.SharedResources->GetTexturePtr("ShadowMap");
         }
 
         if (!PrepareLightingOutput(sceneColorTexture->GetWidth(),
@@ -820,10 +746,12 @@ namespace NorvesLib::Core::Rendering
                           materialTexture,
                           depthTexture,
                           emissiveTexture,
-                          ssaoTexture);
+                          ssaoTexture,
+                          shadowMapTexture,
+                          m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
-    void LightingPass::Execute(ViewRenderContext &context)
+    void LightingPass::Execute(ViewRenderContext& context)
     {
         if (!context.CommandList)
         {
@@ -836,65 +764,13 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // GBufferテクスチャをSharedResourceRegistryから取得
-        RHI::ITexture *gbufferAlbedo = nullptr;
-        RHI::ITexture *gbufferNormal = nullptr;
-        RHI::ITexture *gbufferMaterial = nullptr;
-        RHI::ITexture *gbufferDepth = nullptr;
-
-        if (context.SharedResources)
-        {
-            gbufferAlbedo = context.SharedResources->GetTexture("GBuffer_Albedo");
-            gbufferNormal = context.SharedResources->GetTexture("GBuffer_Normal");
-            gbufferMaterial = context.SharedResources->GetTexture("GBuffer_Material");
-            gbufferDepth = context.SharedResources->GetTexture("GBuffer_Depth");
-        }
-
-        // GBufferが無い場合はスキップ
-        if (!gbufferAlbedo || !gbufferNormal || !gbufferMaterial || !gbufferDepth)
-        {
-            NORVES_LOG_WARNING("LightingPass", "GBuffer textures not available, skipping lighting");
-            return;
-        }
-
-        // GBufferエミッシブ取得
-        RHI::ITexture *gbufferEmissive = nullptr;
-        if (context.SharedResources)
-        {
-            gbufferEmissive = context.SharedResources->GetTexture("GBuffer_Emissive");
-        }
-
-        // シャドウマップをSharedResourceRegistryから取得
-        RHI::TexturePtr shadowMapPtr;
-        bool bShadowAvailable = false;
-        if (context.SharedResources)
-        {
-            shadowMapPtr = context.SharedResources->GetTexturePtr("ShadowMap");
-            bShadowAvailable = (shadowMapPtr != nullptr);
-        }
-
-        bool bSSAOAvailable = false;
-        if (context.SharedResources)
-        {
-            bSSAOAvailable = (context.SharedResources->GetTexturePtr("SSAO") != nullptr);
-        }
-
-        // ライト情報をGPUバッファに転送
-        UpdateLightBuffer(context, bShadowAvailable, bSSAOAvailable);
-
-        // HDRシーンカラーをSharedResourceRegistryに登録
-        if (context.SharedResources)
-        {
-            context.SharedResources->RegisterTexturePtr("SceneColor", m_SceneColorTexture);
-            context.SharedResources->RegisterTexture("SceneDepth", gbufferDepth);
-        }
-
-        // GBufferテクスチャ（TexturePtr版）をディスクリプタセットにバインド
         RHI::TexturePtr albedoPtr;
         RHI::TexturePtr normalPtr;
         RHI::TexturePtr materialPtr;
         RHI::TexturePtr depthPtr;
         RHI::TexturePtr emissivePtr;
+        RHI::TexturePtr ssaoPtr;
+        RHI::TexturePtr shadowMapPtr;
 
         if (context.SharedResources)
         {
@@ -903,118 +779,38 @@ namespace NorvesLib::Core::Rendering
             materialPtr = context.SharedResources->GetTexturePtr("GBuffer_Material");
             depthPtr = context.SharedResources->GetTexturePtr("GBuffer_Depth");
             emissivePtr = context.SharedResources->GetTexturePtr("GBuffer_Emissive");
+            ssaoPtr = context.SharedResources->GetTexturePtr("SSAO");
+            shadowMapPtr = context.SharedResources->GetTexturePtr("ShadowMap");
         }
 
         if (!albedoPtr || !normalPtr || !materialPtr || !depthPtr)
         {
-            NORVES_LOG_WARNING("LightingPass", "GBuffer TexturePtr not available, skipping");
-            TryEnqueueNativeTransitionPass(context);
+            NORVES_LOG_WARNING("LightingPass", "GBuffer textures not available, skipping lighting");
             return;
         }
 
-        if (context.SharedResources)
-        {
-            context.SharedResources->RegisterTexturePtr("SceneDepth", depthPtr);
-        }
-
-        m_LightingDescriptorSet->BindTexture(0, albedoPtr);
-        m_LightingDescriptorSet->BindTexture(1, normalPtr);
-        m_LightingDescriptorSet->BindTexture(2, materialPtr);
-        m_LightingDescriptorSet->BindTexture(3, depthPtr);
-        m_LightingDescriptorSet->BindSampler(0, m_GBufferSampler);
-        m_LightingDescriptorSet->BindSampler(1, m_GBufferSampler);
-        m_LightingDescriptorSet->BindSampler(2, m_GBufferSampler);
-        m_LightingDescriptorSet->BindSampler(3, m_GBufferSampler);
-
-        // シャドウマップバインド（利用不可の場合はGBuffer深度をフォールバック）
-        if (bShadowAvailable)
-        {
-            m_LightingDescriptorSet->BindTexture(6, shadowMapPtr);
-        }
-        else
-        {
-            m_LightingDescriptorSet->BindTexture(6, depthPtr);
-        }
-        m_LightingDescriptorSet->BindSampler(6, m_GBufferSampler);
-
-        // GBufferエミッシブバインド
-        if (emissivePtr)
-        {
-            m_LightingDescriptorSet->BindTexture(7, emissivePtr);
-        }
-        else
-        {
-            // フォールバック（エミッシブ無し）: アルベドをダミーとしてバインド（値は無視される）
-            m_LightingDescriptorSet->BindTexture(7, albedoPtr);
-        }
-        m_LightingDescriptorSet->BindSampler(7, m_GBufferSampler);
-
-        // IBL環境マップ・BRDF LUTバインド
-        if (m_bIBLAvailable)
-        {
-            m_LightingDescriptorSet->BindTexture(8, m_EnvironmentTexture);
-            m_LightingDescriptorSet->BindSampler(8, m_IBLSampler);
-            m_LightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
-            m_LightingDescriptorSet->BindSampler(9, m_IBLSampler);
-        }
-        else
-        {
-            // IBL無効時: フォールバック（ダミーテクスチャバインド）
-            m_LightingDescriptorSet->BindTexture(8, albedoPtr);
-            m_LightingDescriptorSet->BindSampler(8, m_GBufferSampler);
-            m_LightingDescriptorSet->BindTexture(9, albedoPtr);
-            m_LightingDescriptorSet->BindSampler(9, m_GBufferSampler);
-        }
-
-        // SSAOテクスチャバインド（binding=10）
-        RHI::TexturePtr ssaoPtr;
-        if (context.SharedResources)
-        {
-            ssaoPtr = context.SharedResources->GetTexturePtr("SSAO");
-        }
-        if (ssaoPtr)
-        {
-            m_LightingDescriptorSet->BindTexture(10, ssaoPtr);
-        }
-        else
-        {
-            // SSAO利用不可時: ダミーバインド（albedoを流用、シェーダー側でfallback）
-            m_LightingDescriptorSet->BindTexture(10, albedoPtr);
-        }
-        m_LightingDescriptorSet->BindSampler(10, m_GBufferSampler);
-
-        // Neural BRDFウェイトバッファバインド（binding=11）
-        if (m_bNeuralBRDFAvailable && m_NeuralBRDFWeightBuffer)
-        {
-            m_LightingDescriptorSet->BindStorageBuffer(
-                11, m_NeuralBRDFWeightBuffer, 0,
-                static_cast<uint32_t>(m_NeuralBRDFData.GetWeightDataSizeFP32()));
-        }
-
-        m_LightingDescriptorSet->Update();
-
-        RHI::Viewport viewport = context.GetActiveLocalViewport();
-        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
-
-        context.EnqueueFullscreenPass(m_LightingRenderPass,
-                                      m_LightingFramebuffer,
-                                      viewport,
-                                      scissor,
-                                      m_LightingPipeline,
-                                      m_LightingDescriptorSet);
+        ExecuteWithInputs(context,
+                          albedoPtr,
+                          normalPtr,
+                          materialPtr,
+                          depthPtr,
+                          emissivePtr,
+                          ssaoPtr,
+                          shadowMapPtr,
+                          true);
     }
 
-    uint32_t LightingPass::ResolveLightingWidth(const ViewRenderContext &context) const
+    uint32_t LightingPass::ResolveLightingWidth(const ViewRenderContext& context) const
     {
         return context.GetActiveRenderWidth();
     }
 
-    uint32_t LightingPass::ResolveLightingHeight(const ViewRenderContext &context) const
+    uint32_t LightingPass::ResolveLightingHeight(const ViewRenderContext& context) const
     {
         return context.GetActiveRenderHeight();
     }
 
-    bool LightingPass::CreateLightingResources(uint32_t width, uint32_t height, ViewRenderContext &context)
+    bool LightingPass::CreateLightingResources(uint32_t width, uint32_t height, ViewRenderContext& context)
     {
         if (!m_Device)
         {
@@ -1034,9 +830,9 @@ namespace NorvesLib::Core::Rendering
 
     bool LightingPass::PrepareLightingOutput(uint32_t width,
                                              uint32_t height,
-                                             const RHI::TexturePtr &sceneColorTexture,
+                                             const RHI::TexturePtr& sceneColorTexture,
                                              bool bUseRenderGraphInitialState,
-                                             ViewRenderContext &context)
+                                             ViewRenderContext& context)
     {
         (void)context;
 
@@ -1050,7 +846,12 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorTexture = sceneColorTexture;
         m_bUsingRenderGraphResources = bUseRenderGraphInitialState;
 
-        if (!EnsureLightingRenderPass(bUseRenderGraphInitialState))
+        const RenderPassSignature signature = CreateLightingRenderPassSignature(width,
+                                                                                height,
+                                                                                sceneColorTexture,
+                                                                                bUseRenderGraphInitialState);
+
+        if (!EnsureLightingRenderPass(signature))
         {
             return false;
         }
@@ -1073,10 +874,53 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool LightingPass::EnsureLightingRenderPass(bool bUseRenderGraphInitialState)
+    bool LightingPass::AttachmentSignatureEquals(const AttachmentSignature& lhs,
+                                                 const AttachmentSignature& rhs) const
+    {
+        return lhs.Kind == rhs.Kind &&
+               lhs.Format == rhs.Format &&
+               lhs.LoadOp == rhs.LoadOp &&
+               lhs.StoreOp == rhs.StoreOp &&
+               lhs.InitialState == rhs.InitialState &&
+               lhs.FinalState == rhs.FinalState &&
+               lhs.Target == rhs.Target &&
+               lhs.Width == rhs.Width &&
+               lhs.Height == rhs.Height &&
+               lhs.bDepthReadOnly == rhs.bDepthReadOnly;
+    }
+
+    bool LightingPass::RenderPassSignatureEquals(const RenderPassSignature& lhs,
+                                                 const RenderPassSignature& rhs) const
+    {
+        return lhs.bValid == rhs.bValid &&
+               AttachmentSignatureEquals(lhs.SceneColor, rhs.SceneColor);
+    }
+
+    LightingPass::RenderPassSignature LightingPass::CreateLightingRenderPassSignature(
+        uint32_t width,
+        uint32_t height,
+        const RHI::TexturePtr& sceneColorTexture,
+        bool bUseRenderGraphInitialState) const
+    {
+        RenderPassSignature signature;
+        signature.bValid = true;
+        signature.SceneColor = {RGAttachmentKind::Color,
+                                sceneColorTexture ? sceneColorTexture->GetFormat() : m_Settings.OutputFormat,
+                                RHI::AttachmentLoadOp::Clear,
+                                RHI::AttachmentStoreOp::Store,
+                                bUseRenderGraphInitialState ? RHI::ResourceState::RenderTarget : RHI::ResourceState::Undefined,
+                                RHI::ResourceState::ShaderResource,
+                                sceneColorTexture.get(),
+                                width,
+                                height,
+                                false};
+        return signature;
+    }
+
+    bool LightingPass::EnsureLightingRenderPass(const RenderPassSignature& signature)
     {
         if (m_LightingRenderPass &&
-            m_bRenderPassUsesRenderGraphInitialState == bUseRenderGraphInitialState)
+            RenderPassSignatureEquals(m_RenderPassSignature, signature))
         {
             return true;
         }
@@ -1088,23 +932,22 @@ namespace NorvesLib::Core::Rendering
         m_FramebufferSceneColorTexture = nullptr;
         m_FramebufferWidth = 0;
         m_FramebufferHeight = 0;
+        m_RenderPassSignature = {};
 
         RHI::RenderPassDesc rpDesc;
 
         RHI::AttachmentDesc colorAttach;
-        colorAttach.format = m_SceneColorTexture ? m_SceneColorTexture->GetFormat() : m_Settings.OutputFormat;
+        colorAttach.format = signature.SceneColor.Format;
         colorAttach.isDepthStencil = false;
         colorAttach.clear = true;
         colorAttach.clearColor[0] = 0.0f;
         colorAttach.clearColor[1] = 0.0f;
         colorAttach.clearColor[2] = 0.0f;
         colorAttach.clearColor[3] = 1.0f;
-        colorAttach.loadOp = RHI::AttachmentLoadOp::Clear;
-        colorAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        colorAttach.initialState = bUseRenderGraphInitialState
-                                       ? RHI::ResourceState::RenderTarget
-                                       : RHI::ResourceState::Undefined;
-        colorAttach.finalState = RHI::ResourceState::ShaderResource;
+        colorAttach.loadOp = signature.SceneColor.LoadOp;
+        colorAttach.storeOp = signature.SceneColor.StoreOp;
+        colorAttach.initialState = signature.SceneColor.InitialState;
+        colorAttach.finalState = signature.SceneColor.FinalState;
         rpDesc.colorAttachments.push_back(colorAttach);
         rpDesc.hasDepthStencil = false;
 
@@ -1115,13 +958,15 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        m_bRenderPassUsesRenderGraphInitialState = bUseRenderGraphInitialState;
+        m_bRenderPassUsesRenderGraphInitialState =
+            signature.SceneColor.InitialState == RHI::ResourceState::RenderTarget;
+        m_RenderPassSignature = signature;
         return true;
     }
 
     bool LightingPass::EnsureLightingFramebuffer(uint32_t width,
                                                  uint32_t height,
-                                                 const RHI::TexturePtr &sceneColorTexture)
+                                                 const RHI::TexturePtr& sceneColorTexture)
     {
         if (m_LightingFramebuffer &&
             m_FramebufferSceneColorTexture == sceneColorTexture.get() &&
@@ -1218,20 +1063,20 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void LightingPass::ExecuteWithInputs(ViewRenderContext &context,
-                                         const RHI::TexturePtr &albedoTexture,
-                                         const RHI::TexturePtr &normalTexture,
-                                         const RHI::TexturePtr &materialTexture,
-                                         const RHI::TexturePtr &depthTexture,
-                                         const RHI::TexturePtr &emissiveTexture,
-                                         const RHI::TexturePtr &ssaoTexture)
+    void LightingPass::ExecuteWithInputs(ViewRenderContext& context,
+                                         const RHI::TexturePtr& albedoTexture,
+                                         const RHI::TexturePtr& normalTexture,
+                                         const RHI::TexturePtr& materialTexture,
+                                         const RHI::TexturePtr& depthTexture,
+                                         const RHI::TexturePtr& emissiveTexture,
+                                         const RHI::TexturePtr& ssaoTexture,
+                                         const RHI::TexturePtr& shadowMapTexture,
+                                         bool bRegisterLegacyOutputs)
     {
         if (!context.CommandList)
         {
             return;
         }
-
-        RegisterOutputs(context, m_SceneColorTexture, depthTexture);
 
         if (!m_LightingRenderPass || !m_LightingFramebuffer || !m_LightingPipeline || !m_LightingDescriptorSet)
         {
@@ -1247,32 +1092,90 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!context.SharedResources)
+        if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {
-            TryEnqueueNativeTransitionPass(context);
-            return;
+            RegisterOutputs(context, m_SceneColorTexture, depthTexture);
         }
 
-        context.SharedResources->RegisterTexturePtr("GBuffer_Albedo", albedoTexture);
-        context.SharedResources->RegisterTexturePtr("GBuffer_Normal", normalTexture);
-        context.SharedResources->RegisterTexturePtr("GBuffer_Material", materialTexture);
-        context.SharedResources->RegisterTexturePtr("GBuffer_Depth", depthTexture);
+        UpdateLightBuffer(context, shadowMapTexture != nullptr, ssaoTexture != nullptr);
+
+        m_LightingDescriptorSet->BindTexture(0, albedoTexture);
+        m_LightingDescriptorSet->BindTexture(1, normalTexture);
+        m_LightingDescriptorSet->BindTexture(2, materialTexture);
+        m_LightingDescriptorSet->BindTexture(3, depthTexture);
+        m_LightingDescriptorSet->BindSampler(0, m_GBufferSampler);
+        m_LightingDescriptorSet->BindSampler(1, m_GBufferSampler);
+        m_LightingDescriptorSet->BindSampler(2, m_GBufferSampler);
+        m_LightingDescriptorSet->BindSampler(3, m_GBufferSampler);
+
+        if (shadowMapTexture)
+        {
+            m_LightingDescriptorSet->BindTexture(6, shadowMapTexture);
+        }
+        else
+        {
+            m_LightingDescriptorSet->BindTexture(6, depthTexture);
+        }
+        m_LightingDescriptorSet->BindSampler(6, m_GBufferSampler);
+
         if (emissiveTexture)
         {
-            context.SharedResources->RegisterTexturePtr("GBuffer_Emissive", emissiveTexture);
+            m_LightingDescriptorSet->BindTexture(7, emissiveTexture);
         }
+        else
+        {
+            m_LightingDescriptorSet->BindTexture(7, albedoTexture);
+        }
+        m_LightingDescriptorSet->BindSampler(7, m_GBufferSampler);
+
+        if (m_bIBLAvailable)
+        {
+            m_LightingDescriptorSet->BindTexture(8, m_EnvironmentTexture);
+            m_LightingDescriptorSet->BindSampler(8, m_IBLSampler);
+            m_LightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
+            m_LightingDescriptorSet->BindSampler(9, m_IBLSampler);
+        }
+        else
+        {
+            m_LightingDescriptorSet->BindTexture(8, albedoTexture);
+            m_LightingDescriptorSet->BindSampler(8, m_GBufferSampler);
+            m_LightingDescriptorSet->BindTexture(9, albedoTexture);
+            m_LightingDescriptorSet->BindSampler(9, m_GBufferSampler);
+        }
+
         if (ssaoTexture)
         {
-            context.SharedResources->RegisterTexturePtr("SSAO", ssaoTexture);
+            m_LightingDescriptorSet->BindTexture(10, ssaoTexture);
+        }
+        else
+        {
+            m_LightingDescriptorSet->BindTexture(10, albedoTexture);
+        }
+        m_LightingDescriptorSet->BindSampler(10, m_GBufferSampler);
+
+        if (m_bNeuralBRDFAvailable && m_NeuralBRDFWeightBuffer)
+        {
+            m_LightingDescriptorSet->BindStorageBuffer(
+                11, m_NeuralBRDFWeightBuffer, 0,
+                static_cast<uint32_t>(m_NeuralBRDFData.GetWeightDataSizeFP32()));
         }
 
-        Execute(context);
-        RegisterOutputs(context, m_SceneColorTexture, depthTexture);
+        m_LightingDescriptorSet->Update();
+
+        RHI::Viewport viewport = context.GetActiveLocalViewport();
+        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
+
+        context.EnqueueFullscreenPass(m_LightingRenderPass,
+                                      m_LightingFramebuffer,
+                                      viewport,
+                                      scissor,
+                                      m_LightingPipeline,
+                                      m_LightingDescriptorSet);
     }
 
-    void LightingPass::RegisterOutputs(ViewRenderContext &context,
-                                       const RHI::TexturePtr &sceneColorTexture,
-                                       const RHI::TexturePtr &depthTexture) const
+    void LightingPass::RegisterOutputs(ViewRenderContext& context,
+                                       const RHI::TexturePtr& sceneColorTexture,
+                                       const RHI::TexturePtr& depthTexture) const
     {
         if (!context.SharedResources)
         {
@@ -1290,7 +1193,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    bool LightingPass::TryEnqueueNativeTransitionPass(ViewRenderContext &context) const
+    bool LightingPass::TryEnqueueNativeTransitionPass(ViewRenderContext& context) const
     {
         if (!m_bUsingRenderGraphResources || !m_LightingRenderPass || !m_LightingFramebuffer)
         {
@@ -1308,7 +1211,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void LightingPass::UpdateLightBuffer(ViewRenderContext &context,
+    void LightingPass::UpdateLightBuffer(ViewRenderContext& context,
                                          bool bShadowAvailable,
                                          bool bSSAOAvailable)
     {

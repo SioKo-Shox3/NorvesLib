@@ -15,6 +15,10 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr GetBuffer(RGResourceHandle handle);
         RHI::ITexture* GetTextureRaw(RGResourceHandle handle);
         RHI::IBuffer* GetBufferRaw(RGResourceHandle handle);
+        RHI::TexturePtr GetTexture(RGTextureHandle handle);
+        RHI::BufferPtr GetBuffer(RGBufferHandle handle);
+        RHI::ITexture* GetTextureRaw(RGTextureHandle handle);
+        RHI::IBuffer* GetBufferRaw(RGBufferHandle handle);
 
     private:
         RenderGraph* m_Graph = nullptr;

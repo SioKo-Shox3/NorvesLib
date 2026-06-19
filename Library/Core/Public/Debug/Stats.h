@@ -164,6 +164,8 @@ namespace NorvesLib::Debug
         uint32_t VisibleObjects = 0;
         uint32_t BatchCount = 0;
         uint32_t InstancedDrawCalls = 0;
+        uint32_t RenderGraphBarrierCount = 0;
+        uint32_t RenderGraphTransientAcquireCount = 0;
 
         // タイミング（ミリ秒）
         float CollectionTimeMs = 0.0f;
@@ -186,6 +188,8 @@ namespace NorvesLib::Debug
             VisibleObjects = 0;
             BatchCount = 0;
             InstancedDrawCalls = 0;
+            RenderGraphBarrierCount = 0;
+            RenderGraphTransientAcquireCount = 0;
             CollectionTimeMs = 0.0f;
             CullingTimeMs = 0.0f;
             BatchingTimeMs = 0.0f;

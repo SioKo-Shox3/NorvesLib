@@ -150,6 +150,26 @@ target_include_directories(RenderFrameExecutorPlanTest PRIVATE
 set_target_properties(RenderFrameExecutorPlanTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderFrameExecutorPlanTest COMMAND RenderFrameExecutorPlanTest)
 
+add_executable(PresentationComposerTest
+    PresentationComposerTest.cpp
+)
+target_link_libraries(PresentationComposerTest PRIVATE Core)
+target_include_directories(PresentationComposerTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(PresentationComposerTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME PresentationComposerTest COMMAND PresentationComposerTest)
+
+add_executable(RenderGraphPresentationPassTest
+    RenderGraphPresentationPassTest.cpp
+)
+target_link_libraries(RenderGraphPresentationPassTest PRIVATE Core)
+target_include_directories(RenderGraphPresentationPassTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphPresentationPassTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphPresentationPassTest COMMAND RenderGraphPresentationPassTest)
+
 add_executable(RenderGraphCompileTest
     RenderGraphCompileTest.cpp
 )
@@ -159,6 +179,46 @@ target_include_directories(RenderGraphCompileTest PRIVATE
 )
 set_target_properties(RenderGraphCompileTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderGraphCompileTest COMMAND RenderGraphCompileTest)
+
+add_executable(RenderGraphLifetimeTest
+    RenderGraphLifetimeTest.cpp
+)
+target_link_libraries(RenderGraphLifetimeTest PRIVATE Core)
+target_include_directories(RenderGraphLifetimeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphLifetimeTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphLifetimeTest COMMAND RenderGraphLifetimeTest)
+
+add_executable(RenderGraphNamedResourceTest
+    RenderGraphNamedResourceTest.cpp
+)
+target_link_libraries(RenderGraphNamedResourceTest PRIVATE Core)
+target_include_directories(RenderGraphNamedResourceTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphNamedResourceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphNamedResourceTest COMMAND RenderGraphNamedResourceTest)
+
+add_executable(RenderGraphAttachmentStateTest
+    RenderGraphAttachmentStateTest.cpp
+)
+target_link_libraries(RenderGraphAttachmentStateTest PRIVATE Core)
+target_include_directories(RenderGraphAttachmentStateTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphAttachmentStateTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphAttachmentStateTest COMMAND RenderGraphAttachmentStateTest)
+
+add_executable(RenderGraphDumpTest
+    RenderGraphDumpTest.cpp
+)
+target_link_libraries(RenderGraphDumpTest PRIVATE Core)
+target_include_directories(RenderGraphDumpTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphDumpTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphDumpTest COMMAND RenderGraphDumpTest)
 
 add_executable(LegacyViewPassAdapterTest
     LegacyViewPassAdapterTest.cpp
