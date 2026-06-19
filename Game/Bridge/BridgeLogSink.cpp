@@ -7,10 +7,15 @@
 namespace Game::Bridge
 {
 
-    void BridgeLogSink::OnLog(const NorvesLib::Core::Logging::LogEntry &entry)
+    /**
+     * @brief Logger からのログ配送を受ける（宣言は BridgeLogSink.h を参照）
+     *
+     * @note m_Mutex だけを取り Logger へは触れない（ロック順序 m-2）。例外は投げない。
+     */
+    void BridgeLogSink::OnLog(const NorvesLib::Core::Logging::LogEntry& entry)
     {
         // m_MinLevel 未満は捨てる（LogLevel は uint8_t で単調増加なので数値比較で足りる）。
-        if (static_cast<std::uint8_t>(entry.level) < m_MinLevel.GetValue())
+        if (static_cast<uint8_t>(entry.level) < m_MinLevel.GetValue())
         {
             return;
         }
@@ -30,7 +35,12 @@ namespace Game::Bridge
         m_Queue.push(std::move(fe));
     }
 
-    bool BridgeLogSink::TryPopForward(ForwardEntry &out)
+    /**
+     * @brief キュー先頭の 1 件を取り出す（宣言は BridgeLogSink.h を参照）
+     *
+     * @note ゲームスレッド（DrainInbound 経由）から m_Mutex だけを取って呼ばれる。
+     */
+    bool BridgeLogSink::TryPopForward(ForwardEntry& out)
     {
         // ゲームスレッド（DrainInbound 経由）から呼ばれる。m_Mutex だけを取る。
         NorvesLib::Thread::ScopedLock lock(m_Mutex);
@@ -43,11 +53,19 @@ namespace Game::Bridge
         return true;
     }
 
+    /**
+     * @brief 転送する最小ログレベルを設定する（宣言は BridgeLogSink.h を参照）
+     */
     void BridgeLogSink::SetMinLevel(NorvesLib::Core::Logging::LogLevel level)
     {
-        m_MinLevel.SetValue(static_cast<std::uint8_t>(level));
+        m_MinLevel.SetValue(static_cast<uint8_t>(level));
     }
 
+    /**
+     * @brief キューを空にする（宣言は BridgeLogSink.h を参照）
+     *
+     * @note m_Mutex 下で残留分を全て pop する。
+     */
     void BridgeLogSink::Clear()
     {
         NorvesLib::Thread::ScopedLock lock(m_Mutex);
