@@ -722,7 +722,9 @@ int main()
         fixture.Views.push_back(view);
 
         RenderFrameExecutor executor;
-        RenderFrameExecutionResult result = executor.Execute(fixture.MakeExecutionRequest());
+        RenderFrameExecutionRequest request = fixture.MakeExecutionRequest();
+        request.Presentation = nullptr;
+        RenderFrameExecutionResult result = executor.Execute(request);
 
         assert(result.bRenderedAnyViewport);
         assert(result.RenderedViewportCount == 1);
@@ -734,7 +736,7 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
-        std::cout << "TestGraphPresentationHandledSkipsFallbackCompose passed\n";
+        std::cout << "TestGraphPresentationHandledWithoutComposerSkipsFallbackCompose passed\n";
     }
 
     {
@@ -786,6 +788,65 @@ int main()
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
         std::cout << "TestMissingGraphPresentationResourceFallsBackToComposer passed\n";
+    }
+
+    {
+        ExecutorPresentationFixture fixture;
+        auto view = Container::MakeShared<View>();
+        ViewSettings settings;
+        assert(view->Initialize(settings));
+        view->AddPass(Container::MakeUnique<EmptyGraphViewPass>());
+        fixture.Views.push_back(view);
+
+        RenderFrameExecutionRequest request = fixture.MakeExecutionRequest();
+        request.Presentation = nullptr;
+
+        RenderFrameExecutor executor;
+        RenderFrameExecutionResult result = executor.Execute(request);
+
+        assert(result.bRenderedAnyViewport);
+        assert(result.RenderedViewportCount == 1);
+        assert(result.PresentationBlitCount == 0);
+        assert(!fixture.GraphPresentationPass.WasPresented());
+        assert(!fixture.Context.bPresentationGraphPassHandled);
+        assert(fixture.PendingFrameCommands.empty());
+        assert(!fixture.CommandList.HasRenderPass(fixture.GraphClearRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        std::cout << "TestMissingGraphPresentationInputWithoutComposerSkipsFallback passed\n";
+    }
+
+    {
+        ExecutorPresentationFixture fixture;
+        auto missingInputView = Container::MakeShared<View>();
+        auto publishedInputView = Container::MakeShared<View>();
+        ViewSettings settings;
+        assert(missingInputView->Initialize(settings));
+        assert(publishedInputView->Initialize(settings));
+        missingInputView->AddPass(Container::MakeUnique<EmptyGraphViewPass>());
+        publishedInputView->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
+        fixture.Views.push_back(missingInputView);
+        fixture.Views.push_back(publishedInputView);
+        fixture.Packet.Views.push_back(MakeViewPlan(1, ViewType::Scene));
+
+        RenderFrameExecutionRequest request = fixture.MakeExecutionRequest();
+        request.Presentation = nullptr;
+
+        RenderFrameExecutor executor;
+        RenderFrameExecutionResult result = executor.Execute(request);
+
+        assert(result.bRenderedAnyViewport);
+        assert(result.RenderedViewportCount == 2);
+        assert(result.PresentationBlitCount == 1);
+        assert(fixture.GraphPresentationPass.WasPresented());
+        assert(fixture.Context.bPresentationGraphPassHandled);
+        assert(fixture.PendingFrameCommands.empty());
+        assert(fixture.CommandList.HasRenderPass(fixture.GraphClearRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        std::cout << "TestUnpresentedViewportDoesNotConsumeClearPresentation passed\n";
     }
 
     std::cout << "RenderFrameExecutorPlanTest passed\n";
