@@ -237,6 +237,7 @@ namespace NorvesLib::Core::Rendering
         RGTextureHandle CreateTextureResourceHandle(const RGTextureDesc& desc);
         RGBufferHandle CreateBufferResourceHandle(const RGBufferDesc& desc);
         bool PublishTextureResource(Identity name, RGTextureHandle handle);
+        bool PublishTextureResource(Identity name, RGResourceHandle handle);
         bool PublishBufferResource(Identity name, RGBufferHandle handle);
         RGTextureHandle ReadTextureResource(uint32_t passIndex,
                                             Identity name,
@@ -289,6 +290,7 @@ namespace NorvesLib::Core::Rendering
         bool TryGetTextureResource(Identity name, RGTextureHandle& outHandle);
         bool TryGetBufferResource(Identity name, RGBufferHandle& outHandle);
         bool ExportTextureResource(Identity name, RGTextureHandle handle);
+        bool ExportTextureResource(Identity name, RGResourceHandle handle);
 
         void AddAccess(uint32_t passIndex,
                        RGResourceHandle handle,

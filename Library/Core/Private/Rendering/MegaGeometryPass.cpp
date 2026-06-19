@@ -7,6 +7,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
@@ -15,6 +16,7 @@
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IBuffer.h"
+#include "RHI/IFramebuffer.h"
 #include "RHI/ITexture.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/ISampler.h"
@@ -270,6 +272,8 @@ namespace NorvesLib::Core::Rendering
         m_IndirectDrawBufferHandle = {};
         m_DrawCountBufferHandle = {};
         m_MegaGeometryCompleteHandle = {};
+        m_InstanceIndirectDrawBuffers.clear();
+        m_InstanceDrawCountBuffers.clear();
         m_CullUniformBuffers.clear();
         m_CullDescriptorSets.clear();
 
@@ -286,6 +290,11 @@ namespace NorvesLib::Core::Rendering
         m_MaterialTexture.reset();
         m_EmissiveTexture.reset();
         m_DepthTexture.reset();
+        m_GBufferAlbedoHandle = {};
+        m_GBufferNormalHandle = {};
+        m_GBufferMaterialHandle = {};
+        m_GBufferEmissiveHandle = {};
+        m_GBufferDepthHandle = {};
 
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
@@ -301,6 +310,8 @@ namespace NorvesLib::Core::Rendering
         m_HiZMipCount = 0;
 
         m_Instances.clear();
+        m_bPreferRenderGraphGBufferResources = false;
+        m_bGBufferRenderPassUsesRenderGraphAttachmentStates = false;
 
         m_bInitialized = false;
     }
@@ -332,24 +343,53 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // MegaMeshインスタンスが登録されていなければスキップ
-        if (m_Instances.empty() || !m_CullPipeline)
+        const bool bNeedsDrawPipeline = !m_Instances.empty() && m_CullPipeline;
+        const bool bNeedsAttachmentTransitionPass = m_bPreferRenderGraphGBufferResources;
+        if (!bNeedsDrawPipeline && !bNeedsAttachmentTransitionPass)
         {
             return;
         }
 
-        // GBufferテクスチャをSharedResourcesから取得
+        if (!m_bPreferRenderGraphGBufferResources)
+        {
+            m_AlbedoTexture.reset();
+            m_NormalTexture.reset();
+            m_MaterialTexture.reset();
+            m_EmissiveTexture.reset();
+            m_DepthTexture.reset();
+        }
+
+        // Legacy bridge fallback: named resource が不足している場合だけSharedResourcesから補完する。
         if (context.SharedResources)
         {
-            m_AlbedoTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Albedo"));
-            m_NormalTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Normal"));
-            m_MaterialTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Material"));
-            m_EmissiveTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Emissive"));
-            m_DepthTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Depth"));
+            if (!m_AlbedoTexture)
+            {
+                m_AlbedoTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Albedo"));
+            }
+            if (!m_NormalTexture)
+            {
+                m_NormalTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Normal"));
+            }
+            if (!m_MaterialTexture)
+            {
+                m_MaterialTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Material"));
+            }
+            if (!m_EmissiveTexture)
+            {
+                m_EmissiveTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Emissive"));
+            }
+            if (!m_DepthTexture)
+            {
+                m_DepthTexture = context.SharedResources->GetTexturePtr(Identity("GBuffer_Depth"));
+            }
         }
 
         // GBufferテクスチャが利用可能か確認
-        if (!m_AlbedoTexture || !m_DepthTexture)
+        if (!m_AlbedoTexture ||
+            !m_NormalTexture ||
+            !m_MaterialTexture ||
+            !m_EmissiveTexture ||
+            !m_DepthTexture)
         {
             return;
         }
@@ -357,14 +397,34 @@ namespace NorvesLib::Core::Rendering
         // 画面サイズ変更に対応
         uint32_t width = context.GetActiveRenderWidth();
         uint32_t height = context.GetActiveRenderHeight();
+        const bool bUseRenderGraphAttachmentStates = m_bPreferRenderGraphGBufferResources;
 
-        if (width != m_CurrentWidth || height != m_CurrentHeight || !m_GBufferRenderPass)
+        bool bFramebufferTargetsChanged = true;
+        if (m_GBufferFramebuffer)
+        {
+            bFramebufferTargetsChanged =
+                m_GBufferFramebuffer->GetColorAttachment(0).get() != m_AlbedoTexture.get() ||
+                m_GBufferFramebuffer->GetColorAttachment(1).get() != m_NormalTexture.get() ||
+                m_GBufferFramebuffer->GetColorAttachment(2).get() != m_MaterialTexture.get() ||
+                m_GBufferFramebuffer->GetColorAttachment(3).get() != m_EmissiveTexture.get() ||
+                m_GBufferFramebuffer->GetDepthStencilAttachment().get() != m_DepthTexture.get();
+        }
+
+        if (width != m_CurrentWidth ||
+            height != m_CurrentHeight ||
+            bFramebufferTargetsChanged ||
+            m_bGBufferRenderPassUsesRenderGraphAttachmentStates != bUseRenderGraphAttachmentStates ||
+            !m_GBufferRenderPass ||
+            !m_GBufferFramebuffer ||
+            (bNeedsDrawPipeline && !m_DrawPipeline))
         {
             m_CurrentWidth = width;
             m_CurrentHeight = height;
 
             // GBuffer互換レンダーパス作成（Load既存内容）
-            if (!CreateDrawPipeline(context))
+            if (!CreateDrawPipeline(context,
+                                    bNeedsDrawPipeline,
+                                    bUseRenderGraphAttachmentStates))
             {
                 NORVES_LOG_ERROR("MegaGeometryPass", "描画パイプラインの作成に失敗");
                 return;
@@ -385,6 +445,11 @@ namespace NorvesLib::Core::Rendering
     {
         m_IndirectDrawBufferHandle = {};
         m_DrawCountBufferHandle = {};
+        m_GBufferAlbedoHandle = {};
+        m_GBufferNormalHandle = {};
+        m_GBufferMaterialHandle = {};
+        m_GBufferEmissiveHandle = {};
+        m_GBufferDepthHandle = {};
 
         if (m_IndirectDrawBuffer)
         {
@@ -412,6 +477,78 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        RGTextureHandle albedoProbe;
+        RGTextureHandle normalProbe;
+        RGTextureHandle materialProbe;
+        RGTextureHandle emissiveProbe;
+        RGTextureHandle depthProbe;
+        const bool bHasAllNamedGBufferAttachments =
+            builder.TryGetTexture(RenderGraphResourceNames::GBufferAlbedo, albedoProbe) &&
+            builder.TryGetTexture(RenderGraphResourceNames::GBufferNormal, normalProbe) &&
+            builder.TryGetTexture(RenderGraphResourceNames::GBufferMaterial, materialProbe) &&
+            builder.TryGetTexture(RenderGraphResourceNames::GBufferEmissive, emissiveProbe) &&
+            builder.TryGetTexture(RenderGraphResourceNames::GBufferDepth, depthProbe);
+
+        if (bHasAllNamedGBufferAttachments)
+        {
+            RGTextureHandle albedoHandle;
+            if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::GBufferAlbedo,
+                                                    albedoHandle,
+                                                    RHI::AttachmentLoadOp::Load,
+                                                    RHI::AttachmentStoreOp::Store,
+                                                    RHI::ResourceState::RenderTarget,
+                                                    RHI::ResourceState::ShaderResource))
+            {
+                m_GBufferAlbedoHandle = albedoHandle.ToResourceHandle();
+            }
+
+            RGTextureHandle normalHandle;
+            if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::GBufferNormal,
+                                                    normalHandle,
+                                                    RHI::AttachmentLoadOp::Load,
+                                                    RHI::AttachmentStoreOp::Store,
+                                                    RHI::ResourceState::RenderTarget,
+                                                    RHI::ResourceState::ShaderResource))
+            {
+                m_GBufferNormalHandle = normalHandle.ToResourceHandle();
+            }
+
+            RGTextureHandle materialHandle;
+            if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::GBufferMaterial,
+                                                    materialHandle,
+                                                    RHI::AttachmentLoadOp::Load,
+                                                    RHI::AttachmentStoreOp::Store,
+                                                    RHI::ResourceState::RenderTarget,
+                                                    RHI::ResourceState::ShaderResource))
+            {
+                m_GBufferMaterialHandle = materialHandle.ToResourceHandle();
+            }
+
+            RGTextureHandle emissiveHandle;
+            if (builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::GBufferEmissive,
+                                                    emissiveHandle,
+                                                    RHI::AttachmentLoadOp::Load,
+                                                    RHI::AttachmentStoreOp::Store,
+                                                    RHI::ResourceState::RenderTarget,
+                                                    RHI::ResourceState::ShaderResource))
+            {
+                m_GBufferEmissiveHandle = emissiveHandle.ToResourceHandle();
+            }
+
+            RGTextureHandle depthHandle;
+            if (builder.TryUseAttachment(RenderGraphResourceNames::GBufferDepth,
+                                         depthHandle,
+                                         RGAttachmentKind::DepthStencil,
+                                         RGAttachmentMutability::Write,
+                                         RHI::AttachmentLoadOp::Load,
+                                         RHI::AttachmentStoreOp::Store,
+                                         RHI::ResourceState::DepthWrite,
+                                         RHI::ResourceState::ShaderResource))
+            {
+                m_GBufferDepthHandle = depthHandle.ToResourceHandle();
+            }
+        }
+
         m_MegaGeometryCompleteHandle = builder.CreateLogical("MegaGeometryComplete");
         builder.Write(m_MegaGeometryCompleteHandle,
                       RHI::ResourceState::Common,
@@ -421,9 +558,50 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
     {
-        (void)resources;
+        RHI::TexturePtr graphAlbedoTexture = m_GBufferAlbedoHandle.IsValid()
+                                                 ? resources.GetTexture(m_GBufferAlbedoHandle)
+                                                 : nullptr;
+        RHI::TexturePtr graphNormalTexture = m_GBufferNormalHandle.IsValid()
+                                                 ? resources.GetTexture(m_GBufferNormalHandle)
+                                                 : nullptr;
+        RHI::TexturePtr graphMaterialTexture = m_GBufferMaterialHandle.IsValid()
+                                                   ? resources.GetTexture(m_GBufferMaterialHandle)
+                                                   : nullptr;
+        RHI::TexturePtr graphEmissiveTexture = m_GBufferEmissiveHandle.IsValid()
+                                                   ? resources.GetTexture(m_GBufferEmissiveHandle)
+                                                   : nullptr;
+        RHI::TexturePtr graphDepthTexture = m_GBufferDepthHandle.IsValid()
+                                                ? resources.GetTexture(m_GBufferDepthHandle)
+                                                : nullptr;
+
+        const bool bHasAllRenderGraphGBufferResources =
+            graphAlbedoTexture &&
+            graphNormalTexture &&
+            graphMaterialTexture &&
+            graphEmissiveTexture &&
+            graphDepthTexture;
+
+        m_bPreferRenderGraphGBufferResources = bHasAllRenderGraphGBufferResources;
+        if (m_bPreferRenderGraphGBufferResources)
+        {
+            m_AlbedoTexture = graphAlbedoTexture;
+            m_NormalTexture = graphNormalTexture;
+            m_MaterialTexture = graphMaterialTexture;
+            m_EmissiveTexture = graphEmissiveTexture;
+            m_DepthTexture = graphDepthTexture;
+        }
+        else
+        {
+            m_AlbedoTexture.reset();
+            m_NormalTexture.reset();
+            m_MaterialTexture.reset();
+            m_EmissiveTexture.reset();
+            m_DepthTexture.reset();
+        }
+
         Setup(context);
         Execute(context);
+        m_bPreferRenderGraphGBufferResources = false;
     }
 
     // ========================================
@@ -432,18 +610,42 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Execute(ViewRenderContext &context)
     {
+        const bool bCanEnqueueEmptyTransitionPass =
+            m_bPreferRenderGraphGBufferResources &&
+            m_GBufferRenderPass &&
+            m_GBufferFramebuffer;
+        auto enqueueEmptyTransitionPass = [this, &context, bCanEnqueueEmptyTransitionPass]() -> void
+        {
+            if (!bCanEnqueueEmptyTransitionPass)
+            {
+                return;
+            }
+
+            context.EnqueueFullscreenPass(m_GBufferRenderPass,
+                                          m_GBufferFramebuffer,
+                                          context.GetActiveLocalViewport(),
+                                          context.GetActiveLocalScissor(),
+                                          RHI::PipelinePtr{},
+                                          RHI::DescriptorSetPtr{},
+                                          0,
+                                          0);
+        };
+
         if (m_Instances.empty() || !m_CullPipeline || !context.Resources.MegaGeometry)
         {
+            enqueueEmptyTransitionPass();
             return;
         }
 
         if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !m_DrawPipeline)
         {
+            enqueueEmptyTransitionPass();
             return;
         }
 
         if (!context.GetActiveCamera())
         {
+            enqueueEmptyTransitionPass();
             return;
         }
 
@@ -470,6 +672,39 @@ namespace NorvesLib::Core::Rendering
 
         auto *cmdList = commandList;
 
+        auto recordEmptyRenderPass = [this, &command, cmdList]() -> void
+        {
+            cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
+            cmdList->SetViewport(command.Viewport);
+            cmdList->SetScissor(command.Scissor);
+            cmdList->EndRenderPass();
+        };
+
+        using namespace NorvesLib::Math;
+
+        const auto &cam = command.MainCamera;
+        const float aspectRatio = m_CurrentHeight > 0
+                                      ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
+                                      : 1.0f;
+        const CameraViewConstants cameraConstants =
+            CameraViewConstants::BuildForDevice(cam, aspectRatio, m_Device);
+
+        const ClipSpaceFrustumPlanes frustumPlanes =
+            MatrixUtils::ExtractClipSpaceFrustumPlanes(cameraConstants.ViewProjectionMatrix,
+                                                       ClipSpaceDepthRange::ZeroToOne);
+
+        struct DrawableInstance
+        {
+            size_t InstanceIndex = 0;
+            const MegaGeometry::MegaMeshGPUData *GpuData = nullptr;
+            RHI::BufferPtr IndirectDrawBuffer;
+            RHI::BufferPtr DrawCountBuffer;
+            RHI::DescriptorSetPtr DrawDescriptorSet;
+        };
+
+        VariableArray<DrawableInstance> drawableInstances;
+        drawableInstances.reserve(m_Instances.size());
+
         // ========================================
         // Hi-Z 深度ピラミッド生成（オクルージョンカリング用）
         // ========================================
@@ -478,7 +713,7 @@ namespace NorvesLib::Core::Rendering
         // 専用の深度プレパスや、より保守的な遮蔽判定が整うまではFrustum/Backfaceのみで描画安定性を優先する。
 
         // ========================================
-        // 各MegaMeshインスタンスに対してカリング + IndirectDraw
+        // 各MegaMeshインスタンスに対してカリングを実行し、描画入力を準備
         // ========================================
         for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
         {
@@ -493,8 +728,15 @@ namespace NorvesLib::Core::Rendering
             auto cullDescriptorSet = m_CullDescriptorSets[instanceIndex];
             auto drawUniformBuffer = m_DrawUniformBuffers[instanceIndex];
             auto drawDescriptorSet = m_DrawDescriptorSets[instanceIndex];
+            auto indirectDrawBuffer = m_InstanceIndirectDrawBuffers[instanceIndex];
+            auto drawCountBuffer = m_InstanceDrawCountBuffers[instanceIndex];
 
-            if (!cullUniformBuffer || !cullDescriptorSet || !drawUniformBuffer || !drawDescriptorSet)
+            if (!cullUniformBuffer ||
+                !cullDescriptorSet ||
+                !drawUniformBuffer ||
+                !drawDescriptorSet ||
+                !indirectDrawBuffer ||
+                !drawCountBuffer)
             {
                 NORVES_LOG_ERROR("MegaGeometryPass", "Invalid per-instance MegaGeometry binding at slot %zu", instanceIndex);
                 return;
@@ -503,24 +745,24 @@ namespace NorvesLib::Core::Rendering
             // ----------------------------------------
             // 1. DrawCountバッファをゼロクリア
             // ----------------------------------------
-            cmdList->BufferBarrier(m_DrawCountBuffer,
+            cmdList->BufferBarrier(drawCountBuffer,
                                    RHI::ResourceState::Common,
                                    RHI::ResourceState::CopyDest);
-            cmdList->FillBuffer(m_DrawCountBuffer, 0, sizeof(uint32_t), 0);
-            cmdList->BufferBarrier(m_DrawCountBuffer,
+            cmdList->FillBuffer(drawCountBuffer, 0, sizeof(uint32_t), 0);
+            cmdList->BufferBarrier(drawCountBuffer,
                                    RHI::ResourceState::CopyDest,
                                    RHI::ResourceState::UnorderedAccess);
 
             // IndirectDrawバッファもゼロクリアしてからUAV状態にする
-            cmdList->BufferBarrier(m_IndirectDrawBuffer,
-                                   RHI::ResourceState::IndirectArgument,
+            cmdList->BufferBarrier(indirectDrawBuffer,
+                                   RHI::ResourceState::Common,
                                    RHI::ResourceState::CopyDest);
-            cmdList->FillBuffer(m_IndirectDrawBuffer,
+            cmdList->FillBuffer(indirectDrawBuffer,
                                 0,
                                 static_cast<uint64_t>(m_Settings.MaxDrawCount) *
                                     sizeof(MegaGeometry::DrawIndexedIndirectCommand),
                                 0);
-            cmdList->BufferBarrier(m_IndirectDrawBuffer,
+            cmdList->BufferBarrier(indirectDrawBuffer,
                                    RHI::ResourceState::CopyDest,
                                    RHI::ResourceState::UnorderedAccess);
 
@@ -529,24 +771,11 @@ namespace NorvesLib::Core::Rendering
             // ----------------------------------------
             CullUniformData uniformData{};
 
-            // CameraProxyからView/Projection行列を構築
-            using namespace NorvesLib::Math;
-
-            const auto &cam = command.MainCamera;
-            const float aspectRatio = m_CurrentHeight > 0
-                                          ? static_cast<float>(m_CurrentWidth) / static_cast<float>(m_CurrentHeight)
-                                          : 1.0f;
-            const CameraViewConstants cameraConstants =
-                CameraViewConstants::BuildForDevice(cam, aspectRatio, m_Device);
-
             cameraConstants.CopyShaderView(uniformData.ViewMatrix);
             cameraConstants.CopyShaderProjection(uniformData.ProjectionMatrix);
             cameraConstants.CopyCameraPosition(uniformData.CameraPosition);
             uniformData.CameraPosition[3] = 0.0f;
 
-            const ClipSpaceFrustumPlanes frustumPlanes =
-                MatrixUtils::ExtractClipSpaceFrustumPlanes(cameraConstants.ViewProjectionMatrix,
-                                                           ClipSpaceDepthRange::ZeroToOne);
             frustumPlanes.CopyToShaderData(uniformData.FrustumPlanes);
 
             uniformData.TotalClusterCount = gpuData->ClusterCount;
@@ -576,9 +805,9 @@ namespace NorvesLib::Core::Rendering
                                                   static_cast<uint32_t>(sizeof(CullUniformData)));
             cullDescriptorSet->BindStorageBuffer(1, gpuData->ClusterBuffer, 0,
                                                  static_cast<uint32_t>(gpuData->ClusterCount * sizeof(MegaGeometry::GPUClusterData)));
-            cullDescriptorSet->BindStorageBuffer(2, m_IndirectDrawBuffer, 0,
+            cullDescriptorSet->BindStorageBuffer(2, indirectDrawBuffer, 0,
                                                  static_cast<uint32_t>(m_Settings.MaxDrawCount * sizeof(MegaGeometry::DrawIndexedIndirectCommand)));
-            cullDescriptorSet->BindStorageBuffer(3, m_DrawCountBuffer, 0,
+            cullDescriptorSet->BindStorageBuffer(3, drawCountBuffer, 0,
                                                  sizeof(uint32_t));
 
             // Hi-Zテクスチャバインド（無い場合はデフォルトテクスチャでフォールバック）
@@ -607,15 +836,15 @@ namespace NorvesLib::Core::Rendering
             // ----------------------------------------
             // 5. バリア: Compute UAV → IndirectArgument
             // ----------------------------------------
-            cmdList->BufferBarrier(m_IndirectDrawBuffer,
+            cmdList->BufferBarrier(indirectDrawBuffer,
                                    RHI::ResourceState::UnorderedAccess,
                                    RHI::ResourceState::IndirectArgument);
-            cmdList->BufferBarrier(m_DrawCountBuffer,
+            cmdList->BufferBarrier(drawCountBuffer,
                                    RHI::ResourceState::UnorderedAccess,
                                    RHI::ResourceState::IndirectArgument);
 
             // ----------------------------------------
-            // 6. GBuffer描画（IndirectDraw）
+            // 6. GBuffer描画用ディスクリプタ更新
             // ----------------------------------------
 
             // PerObject UBO更新（ワールド変換行列）
@@ -653,16 +882,6 @@ namespace NorvesLib::Core::Rendering
 
             drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
 
-            // GBufferレンダーパス開始
-            cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
-
-            // ビューポート・シザー設定
-            cmdList->SetViewport(command.Viewport);
-            cmdList->SetScissor(command.Scissor);
-
-            // パイプラインとデスクリプタ設定
-            cmdList->SetPipeline(m_DrawPipeline);
-
             drawDescriptorSet->BindConstantBuffer(0, drawUniformBuffer, 0,
                                                   static_cast<uint32_t>(sizeof(PerObjectUBO)));
 
@@ -688,7 +907,39 @@ namespace NorvesLib::Core::Rendering
             drawDescriptorSet->BindSampler(6, m_DefaultLinearSampler);
 
             drawDescriptorSet->Update();
-            cmdList->SetDescriptorSet(drawDescriptorSet, 0);
+            DrawableInstance drawableInstance;
+            drawableInstance.InstanceIndex = instanceIndex;
+            drawableInstance.GpuData = gpuData;
+            drawableInstance.IndirectDrawBuffer = indirectDrawBuffer;
+            drawableInstance.DrawCountBuffer = drawCountBuffer;
+            drawableInstance.DrawDescriptorSet = drawDescriptorSet;
+            drawableInstances.push_back(drawableInstance);
+        }
+
+        if (drawableInstances.empty())
+        {
+            recordEmptyRenderPass();
+            return;
+        }
+
+        // ========================================
+        // GBuffer render pass は frame command ごとに1回だけ開く
+        // ========================================
+        cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
+        cmdList->SetViewport(command.Viewport);
+        cmdList->SetScissor(command.Scissor);
+        cmdList->SetPipeline(m_DrawPipeline);
+
+        const auto &caps = m_Device->GetCapabilities();
+        for (const DrawableInstance &drawableInstance : drawableInstances)
+        {
+            const auto *gpuData = drawableInstance.GpuData;
+            if (!gpuData)
+            {
+                continue;
+            }
+
+            cmdList->SetDescriptorSet(drawableInstance.DrawDescriptorSet, 0);
 
             // 頂点/インデックスバッファ設定
             cmdList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
@@ -698,30 +949,32 @@ namespace NorvesLib::Core::Rendering
             // DrawIndirectCount対応の場合はGPU側カウントを参照し、
             // 実際に可視なクラスタ数だけドローコールを発行する。
             // 非対応の場合はMaxDrawCountをそのまま使用（instanceCount=0で空振り）。
-            const auto &caps = m_Device->GetCapabilities();
             if (caps.bDrawIndirectCount)
             {
                 cmdList->DrawIndexedIndirectCount(
-                    m_IndirectDrawBuffer, 0,
-                    m_DrawCountBuffer, 0,
+                    drawableInstance.IndirectDrawBuffer, 0,
+                    drawableInstance.DrawCountBuffer, 0,
                     m_Settings.MaxDrawCount,
                     sizeof(MegaGeometry::DrawIndexedIndirectCommand));
             }
             else
             {
                 cmdList->DrawIndexedIndirect(
-                    m_IndirectDrawBuffer, 0,
+                    drawableInstance.IndirectDrawBuffer, 0,
                     m_Settings.MaxDrawCount,
                     sizeof(MegaGeometry::DrawIndexedIndirectCommand));
             }
+        }
 
-            cmdList->EndRenderPass();
+        cmdList->EndRenderPass();
 
-            // IndirectDrawバッファを次のフレーム用に戻す
-            cmdList->BufferBarrier(m_IndirectDrawBuffer,
+        // IndirectDrawバッファを次のフレーム用に戻す
+        for (const DrawableInstance &drawableInstance : drawableInstances)
+        {
+            cmdList->BufferBarrier(drawableInstance.IndirectDrawBuffer,
                                    RHI::ResourceState::IndirectArgument,
                                    RHI::ResourceState::Common);
-            cmdList->BufferBarrier(m_DrawCountBuffer,
+            cmdList->BufferBarrier(drawableInstance.DrawCountBuffer,
                                    RHI::ResourceState::IndirectArgument,
                                    RHI::ResourceState::Common);
         }
@@ -787,6 +1040,8 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_InstanceIndirectDrawBuffers.clear();
+        m_InstanceDrawCountBuffers.clear();
         return true;
     }
 
@@ -794,15 +1049,23 @@ namespace NorvesLib::Core::Rendering
     // GBuffer互換グラフィックスパイプライン作成
     // ========================================
 
-    bool MegaGeometryPass::CreateDrawPipeline(ViewRenderContext &context)
+    bool MegaGeometryPass::CreateDrawPipeline(ViewRenderContext &context,
+                                              bool bRequireDrawPipeline,
+                                              bool bUseRenderGraphAttachmentStates)
     {
-        if (!m_Device || !m_DrawVertexShader || !m_DrawFragmentShader)
+        if (!m_Device)
         {
             return false;
         }
 
         // GBuffer互換レンダーパス作成（Load既存内容）
         RHI::RenderPassDesc rpDesc;
+        const RHI::ResourceState colorInitialState = bUseRenderGraphAttachmentStates
+                                                         ? RHI::ResourceState::RenderTarget
+                                                         : RHI::ResourceState::ShaderResource;
+        const RHI::ResourceState depthInitialState = bUseRenderGraphAttachmentStates
+                                                         ? RHI::ResourceState::DepthWrite
+                                                         : RHI::ResourceState::ShaderResource;
 
         // Albedo: Load（GBufferPassで書いた内容を保持）
         RHI::AttachmentDesc albedoAttach;
@@ -811,7 +1074,7 @@ namespace NorvesLib::Core::Rendering
         albedoAttach.clear = false;
         albedoAttach.loadOp = RHI::AttachmentLoadOp::Load;
         albedoAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        albedoAttach.initialState = RHI::ResourceState::ShaderResource;
+        albedoAttach.initialState = colorInitialState;
         albedoAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(albedoAttach);
 
@@ -822,7 +1085,7 @@ namespace NorvesLib::Core::Rendering
         normalAttach.clear = false;
         normalAttach.loadOp = RHI::AttachmentLoadOp::Load;
         normalAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        normalAttach.initialState = RHI::ResourceState::ShaderResource;
+        normalAttach.initialState = colorInitialState;
         normalAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(normalAttach);
 
@@ -833,7 +1096,7 @@ namespace NorvesLib::Core::Rendering
         materialAttach.clear = false;
         materialAttach.loadOp = RHI::AttachmentLoadOp::Load;
         materialAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        materialAttach.initialState = RHI::ResourceState::ShaderResource;
+        materialAttach.initialState = colorInitialState;
         materialAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(materialAttach);
 
@@ -844,7 +1107,7 @@ namespace NorvesLib::Core::Rendering
         emissiveAttach.clear = false;
         emissiveAttach.loadOp = RHI::AttachmentLoadOp::Load;
         emissiveAttach.storeOp = RHI::AttachmentStoreOp::Store;
-        emissiveAttach.initialState = RHI::ResourceState::ShaderResource;
+        emissiveAttach.initialState = colorInitialState;
         emissiveAttach.finalState = RHI::ResourceState::ShaderResource;
         rpDesc.colorAttachments.push_back(emissiveAttach);
 
@@ -855,7 +1118,7 @@ namespace NorvesLib::Core::Rendering
         rpDesc.depthStencilAttachment.clear = false;
         rpDesc.depthStencilAttachment.loadOp = RHI::AttachmentLoadOp::Load;
         rpDesc.depthStencilAttachment.storeOp = RHI::AttachmentStoreOp::Store;
-        rpDesc.depthStencilAttachment.initialState = RHI::ResourceState::ShaderResource;
+        rpDesc.depthStencilAttachment.initialState = depthInitialState;
         rpDesc.depthStencilAttachment.finalState = RHI::ResourceState::ShaderResource;
 
         m_GBufferRenderPass = m_Device->CreateRenderPass(rpDesc);
@@ -880,6 +1143,20 @@ namespace NorvesLib::Core::Rendering
         if (!m_GBufferFramebuffer)
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "フレームバッファの作成に失敗");
+            return false;
+        }
+
+        m_bGBufferRenderPassUsesRenderGraphAttachmentStates = bUseRenderGraphAttachmentStates;
+
+        if (!bRequireDrawPipeline)
+        {
+            m_DrawPipeline.reset();
+            return true;
+        }
+
+        if (!m_DrawVertexShader || !m_DrawFragmentShader)
+        {
+            m_DrawPipeline.reset();
             return false;
         }
 
@@ -976,6 +1253,45 @@ namespace NorvesLib::Core::Rendering
         if (!m_Device)
         {
             return false;
+        }
+
+        if (!m_IndirectDrawBuffer || !m_DrawCountBuffer)
+        {
+            return false;
+        }
+
+        if (m_InstanceIndirectDrawBuffers.empty())
+        {
+            m_InstanceIndirectDrawBuffers.push_back(m_IndirectDrawBuffer);
+            m_InstanceDrawCountBuffers.push_back(m_DrawCountBuffer);
+        }
+
+        while (m_InstanceIndirectDrawBuffers.size() < requiredCount)
+        {
+            const uint64_t indirectSize =
+                static_cast<uint64_t>(m_Settings.MaxDrawCount) *
+                sizeof(MegaGeometry::DrawIndexedIndirectCommand);
+            RHI::BufferDesc indirectDesc(
+                indirectSize,
+                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
+                false,
+                "MegaGeometry_IndirectDraw_Instance");
+            auto indirectDrawBuffer = m_Device->CreateBuffer(indirectDesc);
+
+            RHI::BufferDesc countDesc(
+                sizeof(uint32_t),
+                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
+                false,
+                "MegaGeometry_DrawCount_Instance");
+            auto drawCountBuffer = m_Device->CreateBuffer(countDesc);
+
+            if (!indirectDrawBuffer || !drawCountBuffer)
+            {
+                return false;
+            }
+
+            m_InstanceIndirectDrawBuffers.push_back(indirectDrawBuffer);
+            m_InstanceDrawCountBuffers.push_back(drawCountBuffer);
         }
 
         RHI::DescriptorSetDesc cullDsDesc;

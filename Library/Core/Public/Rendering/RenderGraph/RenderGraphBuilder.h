@@ -51,6 +51,7 @@ namespace NorvesLib::Core::Rendering
                    uint64_t offset,
                    uint64_t size);
         bool PublishTexture(Identity name, RGTextureHandle handle);
+        bool PublishTexture(Identity name, RGResourceHandle handle);
         bool PublishBuffer(Identity name, RGBufferHandle handle);
         RGTextureHandle ReadTexture(Identity name,
                                     RHI::ResourceState state = RHI::ResourceState::ShaderResource);
@@ -113,6 +114,7 @@ namespace NorvesLib::Core::Rendering
         bool TryGetTexture(Identity name, RGTextureHandle& outHandle) const;
         bool TryGetBuffer(Identity name, RGBufferHandle& outHandle) const;
         bool ExportTexture(Identity name, RGTextureHandle handle);
+        bool ExportTexture(Identity name, RGResourceHandle handle);
         void PreserveInsertionOrder();
         bool AddDependency(uint32_t beforePassIndex, uint32_t afterPassIndex);
 
