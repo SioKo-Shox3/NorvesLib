@@ -1092,7 +1092,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (bRegisterLegacyOutputs)
+        if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {
             RegisterOutputs(context, m_SceneColorTexture, depthTexture);
         }

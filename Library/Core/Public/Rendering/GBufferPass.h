@@ -56,7 +56,8 @@ namespace NorvesLib::Core::Rendering
      * - RT3: Emissive (R16G16B16A16_FLOAT)
      * - DS:  Depth (D32_FLOAT)
      *
-     * 出力はSharedResourceRegistryに登録され、後続のLightingPassが参照します。
+     * 標準経路では RenderGraph named resource として公開され、後続のLightingPassが参照します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
      *
      * SharedResource登録名:
      * - "GBuffer_Albedo"
@@ -112,6 +113,17 @@ namespace NorvesLib::Core::Rendering
          * @param renderer SceneRenderer
          */
         void SetSceneRenderer(SceneRenderer* renderer) { m_SceneRenderer = renderer; }
+
+        /**
+         * @brief legacy/fallback bridge としてSharedResourceRegistryへ登録するか
+         *
+         * 既定は互換のためtrue。production deferred pipelineでは RenderGraph named resource
+         * を主経路にするためfalseにします。
+         */
+        void SetRegisterLegacyBridge(bool bRegister)
+        {
+            m_bRegisterLegacyBridge = bRegister;
+        }
 
         // ========================================
         // GBufferアクセス
@@ -239,6 +251,7 @@ namespace NorvesLib::Core::Rendering
         // 現在のGBufferサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bRegisterLegacyBridge = true;
         bool m_bUsingRenderGraphResources = false;
         bool m_bRenderPassUsesRenderGraphInitialStates = false;
         RHI::ITexture* m_FramebufferAlbedoTexture = nullptr;

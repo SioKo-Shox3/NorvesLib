@@ -894,7 +894,7 @@ namespace NorvesLib::Core::Rendering
                                                 const RHI::TexturePtr& sceneColorTexture,
                                                 const RHI::TexturePtr& gbufferDepthTexture) const
     {
-        if (!context.SharedResources)
+        if (!m_bRegisterOutputs || !context.SharedResources)
         {
             return;
         }

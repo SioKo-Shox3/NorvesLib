@@ -410,6 +410,7 @@ namespace NorvesLib::Core::Rendering
         auto shadowMapPass = MakeUnique<ShadowMapPass>(shadowSettings);
         shadowMapPass->SetSceneView(this);
         shadowMapPass->SetSceneRenderer(sceneRenderer);
+        shadowMapPass->SetRegisterLegacyBridge(false);
         AddPass(std::move(shadowMapPass));
 
         // NeuralMaterialDecodePass: ニューラルマテリアルの事前デコード（Compute）
@@ -423,7 +424,7 @@ namespace NorvesLib::Core::Rendering
         auto gbufferPass = MakeUnique<GBufferPass>(gbufferSettings);
         gbufferPass->SetSceneView(this);
         gbufferPass->SetSceneRenderer(sceneRenderer);
-        GBufferPass *gbufferPassRaw = gbufferPass.get();
+        gbufferPass->SetRegisterLegacyBridge(false);
         AddPass(std::move(gbufferPass));
 
         // MegaGeometryPass: GPU駆動クラスターカリング + GBufferへのIndirectDraw
@@ -439,8 +440,6 @@ namespace NorvesLib::Core::Rendering
         ssaoSettings.Bias = 0.025f;
         ssaoSettings.Intensity = 2.0f;
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
-        ssaoPass->SetGBufferPass(gbufferPassRaw);
-        SSAOPass *ssaoPassRaw = ssaoPass.get();
         AddPass(std::move(ssaoPass));
 
         // LightingPass: GBuffer→HDRシーンカラー
@@ -450,17 +449,13 @@ namespace NorvesLib::Core::Rendering
         lightingSettings.NeuralBRDFWeightPath = "Data/disney.ns.bin";
         auto lightingPass = MakeUnique<LightingPass>(lightingSettings);
         lightingPass->SetSceneView(this);
-        lightingPass->SetGBufferPass(gbufferPassRaw);
-        lightingPass->SetSSAOPass(ssaoPassRaw);
-        LightingPass *lightingPassRaw = lightingPass.get();
+        lightingPass->SetRegisterLegacyBridge(false);
         AddPass(std::move(lightingPass));
 
         // ForwardPass(TransparentOnly): Lighting後のSceneColorへ半透明をLoad合成
         auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
         transparentForwardPass->SetTransparentOnly(true);
         transparentForwardPass->SetRegisterOutputs(false);
-        transparentForwardPass->SetLightingPass(lightingPassRaw);
-        transparentForwardPass->SetGBufferPass(gbufferPassRaw);
         AddPass(std::move(transparentForwardPass));
 
         // PostProcessStack: SSR -> Bloom -> ToneMapping -> FXAA
@@ -474,9 +469,6 @@ namespace NorvesLib::Core::Rendering
         ssrSettings.Intensity = 0.8f;
         ssrSettings.RoughnessCutoff = 0.5f;
         auto ssrPass = MakeUnique<SSRPass>(ssrSettings);
-        ssrPass->SetGBufferPass(gbufferPassRaw);
-        ssrPass->SetLightingPass(lightingPassRaw);
-        SSRPass *ssrPassRaw = ssrPass.get();
         postProcessStack->AddPass(std::move(ssrPass));
 
         // Bloom（ToneMappingの前にHDR空間でブルーム適用）
@@ -486,16 +478,12 @@ namespace NorvesLib::Core::Rendering
         bloomSettings.Radius = 2.5f;
         bloomSettings.SoftKnee = 0.35f;
         auto bloomPass = MakeUnique<BloomPass>(bloomSettings);
-        bloomPass->SetInputPass(ssrPassRaw);
-        BloomPass *bloomPassRaw = bloomPass.get();
         postProcessStack->AddPass(std::move(bloomPass));
 
         // ToneMapping（HDR→LDR変換 + Vignette + Color Grading）
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
         auto toneMappingPass = MakeUnique<ToneMappingPass>(toneMappingSettings);
-        toneMappingPass->SetInputPass(bloomPassRaw);
-        ToneMappingPass *toneMappingPassRaw = toneMappingPass.get();
         postProcessStack->AddPass(std::move(toneMappingPass));
 
         // FXAA（アンチエイリアシング、最終パス）
@@ -503,13 +491,10 @@ namespace NorvesLib::Core::Rendering
         fxaaSettings.EdgeThreshold = 0.0312f;
         fxaaSettings.SubpixelQuality = 0.75f;
         auto fxaaPass = MakeUnique<FXAAPass>(fxaaSettings);
-        fxaaPass->SetInputPass(toneMappingPassRaw);
-        FXAAPass* fxaaPassRaw = fxaaPass.get();
         postProcessStack->AddPass(std::move(fxaaPass));
 
         // Upscale（内部解像度描画時のみ最終画像をスクリーン解像度へ拡大）
         auto upscalePass = MakeUnique<UpscalePass>();
-        upscalePass->SetInputPass(fxaaPassRaw);
         postProcessStack->AddPass(std::move(upscalePass));
 
         SetPostProcessStack(std::move(postProcessStack));

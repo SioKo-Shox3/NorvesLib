@@ -383,9 +383,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // Phase8: MegaGeometry がまだ named attachment へ未移行のため、
-        // GBuffer の native 実行でも bridge 公開は限定的に維持する。
-        if (context.SharedResources)
+        // SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ公開する。
+        if (m_bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("GBuffer_Albedo", m_AlbedoTexture);
             context.SharedResources->RegisterTexturePtr("GBuffer_Normal", m_NormalTexture);

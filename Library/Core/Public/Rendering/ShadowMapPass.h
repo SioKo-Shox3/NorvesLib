@@ -42,10 +42,11 @@ namespace NorvesLib::Core::Rendering
      * ディレクショナルライトの視点からシーンの深度のみを描画し、
      * シャドウマップテクスチャとして出力します。
      *
-     * GBufferPassの前に実行され、SharedResourceRegistryに登録した
+     * GBufferPassの前に実行され、標準経路では RenderGraph named resource として公開した
      * シャドウマップをLightingPassが参照して影を計算します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
      *
-     * 出力（SharedResourceRegistryに登録）:
+     * legacy bridge出力:
      * - "ShadowMap" : 深度テクスチャ (D32_FLOAT)
      */
     class ShadowMapPass : public IViewPass, public IRenderGraphPass
@@ -91,6 +92,17 @@ namespace NorvesLib::Core::Rendering
          */
         void SetSceneRenderer(SceneRenderer *renderer) { m_SceneRenderer = renderer; }
 
+        /**
+         * @brief legacy/fallback bridge としてSharedResourceRegistryへ登録するか
+         *
+         * 既定は互換のためtrue。production deferred pipelineでは RenderGraph named resource
+         * を主経路にするためfalseにします。
+         */
+        void SetRegisterLegacyBridge(bool bRegister)
+        {
+            m_bRegisterLegacyBridge = bRegister;
+        }
+
         // ========================================
         // シャドウマップアクセス
         // ========================================
@@ -121,6 +133,8 @@ namespace NorvesLib::Core::Rendering
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;
+
+        bool m_bRegisterLegacyBridge = true;
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;

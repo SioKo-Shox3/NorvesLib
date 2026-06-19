@@ -36,7 +36,10 @@ namespace NorvesLib::Core::Rendering
      * 入力:
      * - SceneViewのDrawCommand（Opaque/Transparent）
      *
-     * 出力（SharedResourceRegistryに登録）:
+     * 標準経路では RenderGraph named resource の "SceneColor" / "SceneDepth" を更新します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
+     *
+     * legacy bridge出力:
      * - "SceneColor"  : フォワード描画結果
      * - "SceneDepth"  : 深度バッファ
      */
@@ -87,12 +90,15 @@ namespace NorvesLib::Core::Rendering
         bool IsTransparentOnly() const { return m_bTransparentOnly; }
 
         /**
-         * @brief SharedResourceRegistryへの登録を行うか
+         * @brief legacy/fallback bridge としてSharedResourceRegistryへ登録するか
          *
-         * ディファードパイプライン後に半透明を描画する場合、
-         * SceneColorはLightingPassが既に登録しているので再登録は不要。
+         * 既定は互換のためtrue。production deferred pipelineでは RenderGraph named resource
+         * を主経路にするためfalseにします。
          */
-        void SetRegisterOutputs(bool bRegister) { m_bRegisterOutputs = bRegister; }
+        void SetRegisterOutputs(bool bRegister)
+        {
+            m_bRegisterOutputs = bRegister;
+        }
 
         /**
          * @brief Legacy bridge fallback 用のLighting参照を設定
@@ -134,7 +140,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture* m_ColorTexture = nullptr;
         RHI::ITexture* m_DepthTexture = nullptr;
 
-        // 半透明ディファード合成用出力（SharedResourceRegistryから取得、所有参照を保持）
+        // 半透明ディファード合成用出力（RenderGraph named resource / fallback bridge から所有参照を保持）
         RHI::TexturePtr m_SceneColorTexture;
         RHI::TexturePtr m_GBufferDepthTexture;
         RGResourceHandle m_RenderGraphSceneColorHandle;

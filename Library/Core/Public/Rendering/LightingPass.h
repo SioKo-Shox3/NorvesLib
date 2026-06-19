@@ -93,6 +93,17 @@ namespace NorvesLib::Core::Rendering
         void SetSSAOPass(const SSAOPass* ssaoPass) { m_SSAOPass = ssaoPass; }
 
         /**
+         * @brief legacy/fallback bridge としてSharedResourceRegistryへ登録するか
+         *
+         * 既定は互換のためtrue。production deferred pipelineでは RenderGraph named resource
+         * を主経路にするためfalseにします。
+         */
+        void SetRegisterLegacyBridge(bool bRegister)
+        {
+            m_bRegisterLegacyBridge = bRegister;
+        }
+
+        /**
          * @brief デストラクタ
          */
         ~LightingPass() override;
@@ -251,6 +262,7 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bRegisterLegacyBridge = true;
         bool m_bLegacyInputFallbackActive = false;
         bool m_bUsingRenderGraphResources = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
