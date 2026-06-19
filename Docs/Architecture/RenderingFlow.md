@@ -40,6 +40,35 @@ Single-threaded path では `Ready -> Reading -> Empty` を GameThread 内で完
 - Component が disabled または owner が inactive の場合、その frame の proxy には残らない。
 - DrawCommand は `GenerateDrawCommands()` で `SceneView` から生成され、`FramePacket` にコピーされる。
 
+## RenderGraph 主経路
+
+`SceneView::Render(ViewRenderContext&)` は登録済み `IViewPass` / `IRenderGraphPass` から 1 viewport 分の `RenderGraph` を組み立て、compile 後に実行する。
+RenderThread は live view/pass object を実行するが、カメラ、viewport、draw command、proxy などのフレーム描画データは `FramePacket` snapshot と `ViewRenderContext` の active viewport から読む。
+
+Deferred pipeline の production 経路は pass pointer や `SharedResourceRegistry` ではなく、RenderGraph named resource で pass 間接続を行う。
+
+- `ShadowMapPass` は `ShadowMap` を publish/export し、`LightingPass` は named `ShadowMap` を優先して読む。
+- `GBufferPass` は `GBuffer.Albedo` / `GBuffer.Normal` / `GBuffer.Material` / `GBuffer.Emissive` / `GBuffer.Depth` を publish する。
+- `MegaGeometryPass` は 5 本の GBuffer named attachment がすべて存在する場合だけ load/store attachment として扱う。partial named resource の場合は graph 上では GBuffer を mutate せず、legacy fallback に落とす。
+- `SSAO` / `Lighting` / `Forward` / `SSR` / `Bloom` / `ToneMapping` / `FXAA` / `Upscale` は named input/output を優先する。
+- `PresentationPass` は通常の swapchain 合成経路であり、`PresentationColor`、次に `ToneMappedColor` を入力として backbuffer へ blit する。
+
+`SceneView::SetupDeferredPipeline()` では production pass pointer 接続を行わない。
+`SetGBufferPass()` / `SetInputPass()` などの setter は legacy/fallback bridge 用の互換 API として残す。
+
+## Legacy fallback 境界
+
+`SharedResourceRegistry` は主経路ではなく legacy/fallback bridge である。
+production deferred pipeline では GBuffer / ShadowMap / Lighting / Forward transparent の registry 登録を無効化し、named resource を正とする。
+ただし単体利用や未移行 fallback のため、各 pass の既定値は互換寄りに保つ。
+
+`PresentationComposer` は `PresentationPass` が graph input や blit resource 不足で handle できない場合の legacy fallback helper である。
+`RenderFrameExecutor` は graph presentation が handled したときだけ fallback compose をスキップする。
+graph presentation も fallback compose も成功しない viewport は presentation 済みとして数えず、次の presentation は clear 判定を維持する。
+
+旧 direct draw fallback は、pass が未登録で draw command だけがある view の互換経路として残す。
+RenderGraph 対応済み view では pass chain を登録して graph 経路を使う。
+
 ## RHI 境界
 
 - Rendering 層は `RHI::IDevice`、`ICommandList`、`ISwapChain` などの抽象 API だけを見る。
@@ -47,6 +76,31 @@ Single-threaded path では `Ready -> Reading -> Empty` を GameThread 内で完
 - shaderc/GLSL compiler は `IDevice::CreateShaderCompiler()` で作成する。
 - Slang compiler は `IDevice::CreateSlangShaderCompiler()` で作成する。未対応 backend は `nullptr` を返す。
 - Rendering 層から `RHI/Vulkan/*` を include しない。
+
+## RenderGraph debug dump
+
+`RenderGraph` は `RGDumpOptions` で text / dot / json の debug dump と debug marker を制御できる。
+`RenderingCoordinatorSettings::RenderGraphDumpOptions` または `RenderWorldSettings::RenderGraphDumpOptions` から設定し、`RenderingCoordinator` が内部 `RenderGraph` へ渡す。
+
+主要オプション:
+
+- `bEnabled`: dump 構築を有効化する。
+- `bWriteFiles`: `OutputDirectory` へファイルを書き出す。
+- `bText` / `bDot` / `bJson`: 生成形式を選ぶ。
+- `bDebugMarkers`: command list の debug marker を pass 単位で出す。
+- `MaxFrameCount`: file write 対象フレーム数を制限する。
+- `FilePrefix`: 出力ファイル名の prefix。
+
+`NORVES_ENABLE_RENDERGRAPH_DUMP` が無効な build では dump 文字列と file write は無効化されるが、`RenderGraphDebugStats` は compile / execute / barrier / transient acquire の確認に使える。
+
+CI / regression 確認では以下を使う。
+
+```powershell
+cmake --build build --config Debug --target RenderGraphDumpTest
+ctest --test-dir build -C Debug -R RenderGraphDumpTest --output-on-failure
+```
+
+描画経路を変更した場合は、必要に応じて `RenderGraphCompileTest` / `RenderFrameExecutorPlanTest` / `RenderGraphPresentationPassTest` も併走し、named resource の version、barrier、presentation handled/fallback の期待を確認する。
 
 ## Resize と Shutdown
 
@@ -56,6 +110,6 @@ Single-threaded path では `Ready -> Reading -> Empty` を GameThread 内で完
 
 ## 今後の拡張方針
 
-- pass 間の texture state と lifetime は render graph または frame resource manager に集約する。
+- pass 間の texture state と lifetime は RenderGraph を正とし、`SharedResourceRegistry` へ戻さない。
 - frames-in-flight を増やす場合は、command buffer、descriptor、uniform allocation、resource retirement を frame index 単位で分離する。
 - RHI コメントや型名には backend 固有語を出さず、backend 実装ファイル内でだけ Vulkan/DX へ変換する。
