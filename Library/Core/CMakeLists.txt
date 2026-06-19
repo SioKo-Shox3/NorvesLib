@@ -63,6 +63,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/RenderGraph/LegacyViewPassAdapter.cpp
     Private/Rendering/RenderThread.cpp
     Private/Rendering/RenderFrameExecutor.cpp
+    Private/Rendering/PresentationPass.cpp
     Private/Rendering/PresentationComposer.cpp
     Private/Rendering/PersistentResourceCache.cpp
     Private/Rendering/SceneRenderer.cpp
@@ -259,6 +260,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/RenderGraph/RenderGraph.h
     Public/Rendering/RenderGraph/LegacyViewPassAdapter.h
     Public/Rendering/RenderFrameExecutor.h
+    Public/Rendering/PresentationPass.h
     Public/Rendering/PresentationComposer.h
     Public/Rendering/PersistentResourceCache.h
     Public/Rendering/SceneRenderer.h

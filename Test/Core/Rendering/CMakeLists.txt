@@ -160,6 +160,16 @@ target_include_directories(PresentationComposerTest PRIVATE
 set_target_properties(PresentationComposerTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME PresentationComposerTest COMMAND PresentationComposerTest)
 
+add_executable(RenderGraphPresentationPassTest
+    RenderGraphPresentationPassTest.cpp
+)
+target_link_libraries(RenderGraphPresentationPassTest PRIVATE Core)
+target_include_directories(RenderGraphPresentationPassTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphPresentationPassTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphPresentationPassTest COMMAND RenderGraphPresentationPassTest)
+
 add_executable(RenderGraphCompileTest
     RenderGraphCompileTest.cpp
 )
