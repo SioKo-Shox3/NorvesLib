@@ -2,10 +2,14 @@
 
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/RHITypes.h"
+#include "Text/IdentityPool.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
 {
+    class RenderGraph;
+    class RenderGraphBuilder;
+
     static constexpr uint32_t RGInvalidPassIndex = 0xFFFFFFFFu;
 
     enum class RGResourceKind : uint8_t
@@ -36,6 +40,18 @@ namespace NorvesLib::Core::Rendering
         Buffer,
     };
 
+    enum class RGAttachmentKind : uint8_t
+    {
+        Color,
+        DepthStencil,
+    };
+
+    enum class RGAttachmentMutability : uint8_t
+    {
+        ReadOnly,
+        Write,
+    };
+
     struct RGResourceHandle
     {
         uint32_t Index = 0xFFFFFFFFu;
@@ -55,6 +71,80 @@ namespace NorvesLib::Core::Rendering
         {
             return !(*this == other);
         }
+    };
+
+    class RGTextureHandle
+    {
+    public:
+        RGTextureHandle() = default;
+
+        bool IsValid() const
+        {
+            return m_Resource.IsValid();
+        }
+
+        RGResourceHandle ToResourceHandle() const
+        {
+            return m_Resource;
+        }
+
+        bool operator==(const RGTextureHandle& other) const
+        {
+            return m_Resource == other.m_Resource;
+        }
+
+        bool operator!=(const RGTextureHandle& other) const
+        {
+            return !(*this == other);
+        }
+
+    private:
+        explicit RGTextureHandle(RGResourceHandle resource)
+            : m_Resource(resource)
+        {
+        }
+
+        RGResourceHandle m_Resource;
+
+        friend class RenderGraph;
+        friend class RenderGraphBuilder;
+    };
+
+    class RGBufferHandle
+    {
+    public:
+        RGBufferHandle() = default;
+
+        bool IsValid() const
+        {
+            return m_Resource.IsValid();
+        }
+
+        RGResourceHandle ToResourceHandle() const
+        {
+            return m_Resource;
+        }
+
+        bool operator==(const RGBufferHandle& other) const
+        {
+            return m_Resource == other.m_Resource;
+        }
+
+        bool operator!=(const RGBufferHandle& other) const
+        {
+            return !(*this == other);
+        }
+
+    private:
+        explicit RGBufferHandle(RGResourceHandle resource)
+            : m_Resource(resource)
+        {
+        }
+
+        RGResourceHandle m_Resource;
+
+        friend class RenderGraph;
+        friend class RenderGraphBuilder;
     };
 
     struct RGTextureDesc
@@ -99,6 +189,9 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle Resource;
         RHI::ResourceState BeforeState = RHI::ResourceState::Undefined;
         RHI::ResourceState AfterState = RHI::ResourceState::Undefined;
+        const char* PassName = nullptr;
+        const char* ResourceDebugName = nullptr;
+        Identity NamedResourceIdentity;
         uint32_t PassIndex = RGInvalidPassIndex;
         uint32_t CompiledOrderIndex = RGInvalidPassIndex;
         uint32_t MipLevel = 0;
@@ -107,6 +200,34 @@ namespace NorvesLib::Core::Rendering
         uint32_t ArrayCount = 0;
         uint64_t BufferOffset = 0;
         uint64_t BufferSize = 0;
+    };
+
+    struct RGCompiledResourceLifetime
+    {
+        RGResourceHandle Resource;
+        RGResourceKind Kind = RGResourceKind::Invalid;
+        RGResourceLifetime Lifetime = RGResourceLifetime::Invalid;
+        uint32_t FirstUsePassIndex = RGInvalidPassIndex;
+        uint32_t LastUsePassIndex = RGInvalidPassIndex;
+        uint32_t FirstUseOrderIndex = RGInvalidPassIndex;
+        uint32_t LastUseOrderIndex = RGInvalidPassIndex;
+        uint32_t LifetimeEndOrderIndex = RGInvalidPassIndex;
+        bool bHasUse = false;
+        bool bExported = false;
+        bool bPinnedUntilGraphEnd = false;
+        const char* DebugName = nullptr;
+    };
+
+    struct RGTransientAllocationStep
+    {
+        RGResourceHandle Resource;
+        RGResourceKind Kind = RGResourceKind::Invalid;
+        uint32_t AcquireBeforePassIndex = RGInvalidPassIndex;
+        uint32_t AcquireBeforeOrderIndex = RGInvalidPassIndex;
+        uint32_t ReleaseAfterPassIndex = RGInvalidPassIndex;
+        uint32_t ReleaseAfterOrderIndex = RGInvalidPassIndex;
+        bool bPinnedUntilGraphEnd = false;
+        const char* DebugName = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering

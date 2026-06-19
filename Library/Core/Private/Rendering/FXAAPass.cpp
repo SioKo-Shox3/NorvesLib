@@ -2,6 +2,7 @@
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/ToneMappingPass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ShaderManager.h"
@@ -132,6 +133,8 @@ namespace NorvesLib::Core::Rendering
         m_DescriptorSet.reset();
         m_LinearSampler.reset();
         m_Device = nullptr;
+        m_InputToneMappedHandle = {};
+        m_OutputTextureHandle = {};
         m_OutputHandle = {};
         m_bRenderPassUsesRenderGraphInitialState = false;
         m_FramebufferOutputTexture = nullptr;
@@ -356,27 +359,44 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, inputTexture);
+        ExecuteWithInput(context, inputTexture, true);
     }
 
     void FXAAPass::Declare(RenderGraphBuilder &builder)
     {
+        m_bLegacyInputFallbackActive = false;
         const ViewRenderContext *context = builder.GetContext();
         const uint32_t width = context ? context->GetActiveRenderWidth() : 1u;
         const uint32_t height = context ? context->GetActiveRenderHeight() : 1u;
 
-        if (m_InputPass)
+        m_InputToneMappedHandle = {};
+
+        RGTextureHandle inputHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::ToneMappedColor,
+                                   inputHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_InputToneMappedHandle = inputHandle.ToResourceHandle();
+        }
+        else if (m_InputPass)
         {
             const RGResourceHandle toneMappedHandle = m_InputPass->GetToneMappedColorHandle();
             if (toneMappedHandle.IsValid())
             {
                 builder.Read(toneMappedHandle, RHI::ResourceState::ShaderResource);
+                m_InputToneMappedHandle = toneMappedHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
-        m_OutputHandle = builder.CreateTexture(
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "FXAAOutput"));
-        builder.Write(m_OutputHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource);
+        RGTextureHandle outputHandle = builder.WriteTexture(
+            RenderGraphResourceNames::ToneMappedColor,
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "FXAAOutput"),
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
+        m_OutputTextureHandle = outputHandle;
+        m_OutputHandle = outputHandle.ToResourceHandle();
+        builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor, outputHandle);
         builder.PreserveInsertionOrder();
     }
 
@@ -404,7 +424,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::TexturePtr inputTexture;
-        if (m_InputPass)
+        if (m_InputToneMappedHandle.IsValid())
+        {
+            inputTexture = resources.GetTexture(m_InputToneMappedHandle);
+        }
+
+        if (!inputTexture && m_InputPass)
         {
             const RGResourceHandle toneMappedHandle = m_InputPass->GetToneMappedColorHandle();
             if (toneMappedHandle.IsValid())
@@ -413,9 +438,11 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        bool bUsedSharedResourceFallback = false;
         if (!inputTexture && context.SharedResources)
         {
             inputTexture = context.SharedResources->GetTexturePtr("ToneMappedColor");
+            bUsedSharedResourceFallback = inputTexture != nullptr;
         }
 
         if (!inputTexture)
@@ -424,10 +451,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, inputTexture);
+        ExecuteWithInput(context,
+                         inputTexture,
+                         m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
-    void FXAAPass::ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& inputTexture)
+    void FXAAPass::ExecuteWithInput(ViewRenderContext &context,
+                                    const RHI::TexturePtr& inputTexture,
+                                    bool bRegisterLegacyBridge)
     {
         if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
         {
@@ -448,7 +479,7 @@ namespace NorvesLib::Core::Rendering
         m_ParamsBuffer->Update(&params, sizeof(GPUFXAAParams));
 
         // FXAA結果をSharedResourceRegistryに登録（ToneMappedColorを上書き）
-        if (context.SharedResources)
+        if (bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("ToneMappedColor", m_OutputTexture);
         }

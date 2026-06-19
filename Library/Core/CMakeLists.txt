@@ -59,9 +59,11 @@ set(PRIVATE_SOURCES
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderGraph/RenderGraph.cpp
     Private/Rendering/RenderGraph/RenderGraphBuilder.cpp
+    Private/Rendering/RenderGraph/RenderGraphDump.cpp
     Private/Rendering/RenderGraph/LegacyViewPassAdapter.cpp
     Private/Rendering/RenderThread.cpp
     Private/Rendering/RenderFrameExecutor.cpp
+    Private/Rendering/PresentationPass.cpp
     Private/Rendering/PresentationComposer.cpp
     Private/Rendering/PersistentResourceCache.cpp
     Private/Rendering/SceneRenderer.cpp
@@ -250,12 +252,15 @@ set(PUBLIC_HEADERS
     Public/Rendering/DrawCommand.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
+    Public/Rendering/RenderGraph/RenderGraphResourceNames.h
     Public/Rendering/RenderGraph/RenderGraphBuilder.h
+    Public/Rendering/RenderGraph/RenderGraphDump.h
     Public/Rendering/RenderGraph/IRenderGraphPass.h
     Public/Rendering/RenderGraph/RenderGraphResources.h
     Public/Rendering/RenderGraph/RenderGraph.h
     Public/Rendering/RenderGraph/LegacyViewPassAdapter.h
     Public/Rendering/RenderFrameExecutor.h
+    Public/Rendering/PresentationPass.h
     Public/Rendering/PresentationComposer.h
     Public/Rendering/PersistentResourceCache.h
     Public/Rendering/SceneRenderer.h
@@ -409,6 +414,7 @@ target_compile_definitions(${MODULE_NAME}
         NORVES_ENABLE_LOGGING=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
         NORVES_ENABLE_DEBUG_OUTPUT=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
         NORVES_ENABLE_STATS=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
+        NORVES_ENABLE_RENDERGRAPH_DUMP=$<IF:$<CONFIG:Debug>,1,0>
         NORVES_ENABLE_PROFILING=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
 )
 

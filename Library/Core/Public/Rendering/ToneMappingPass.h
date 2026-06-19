@@ -90,10 +90,14 @@ namespace NorvesLib::Core::Rendering
      * HDRシーンカラーをLDRに変換し、ガンマ補正を適用します。
      * PostProcessStackに追加して使用するポストプロセスパスです。
      *
-     * 入力（SharedResourceRegistryから取得）:
+     * 標準経路では RenderGraph named resource から入力を読み取り、
+     * "ToneMappedColor" graph output として後段へ渡します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
+     *
+     * 入力:
      * - "SceneColor" : HDRライティング結果 (R16G16B16A16_FLOAT)
      *
-     * 出力（SharedResourceRegistryに登録）:
+     * 出力:
      * - "ToneMappedColor" : LDR変換後のカラー (R8G8B8A8_UNORM)
      *
      * サポートするトーンマッピングアルゴリズム:
@@ -109,7 +113,7 @@ namespace NorvesLib::Core::Rendering
          * @brief コンストラクタ
          * @param settings トーンマッピング設定
          */
-        explicit ToneMappingPass(const ToneMappingSettings &settings = ToneMappingSettings{});
+        explicit ToneMappingPass(const ToneMappingSettings& settings = ToneMappingSettings{});
 
         /**
          * @brief デストラクタ
@@ -120,20 +124,25 @@ namespace NorvesLib::Core::Rendering
         // IViewPass実装
         // ========================================
 
-        const char *GetName() const override { return "ToneMappingPass"; }
+        const char* GetName() const override { return "ToneMappingPass"; }
 
-        bool Initialize(ViewRenderContext &context) override;
+        bool Initialize(ViewRenderContext& context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext &context) override;
-        void Execute(ViewRenderContext &context) override;
+        void Setup(ViewRenderContext& context) override;
+        void Execute(ViewRenderContext& context) override;
 
         void Declare(RenderGraphBuilder &builder) override;
-        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
 
         // ========================================
         // パラメータ調整
         // ========================================
 
+        /**
+         * @brief Legacy bridge fallback 用の入力パス参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetInputPass(const BloomPass* inputPass) { m_InputPass = inputPass; }
         RGResourceHandle GetToneMappedColorHandle() const { return m_OutputHandle; }
 
@@ -159,15 +168,45 @@ namespace NorvesLib::Core::Rendering
          * @brief 現在の設定を取得
          * @return トーンマッピング設定の参照
          */
-        const ToneMappingSettings &GetSettings() const { return m_Settings; }
+        const ToneMappingSettings& GetSettings() const { return m_Settings; }
 
     private:
+        struct AttachmentSignature
+        {
+            RGAttachmentKind Kind = RGAttachmentKind::Color;
+            RHI::Format Format = RHI::Format::UNKNOWN;
+            RHI::AttachmentLoadOp LoadOp = RHI::AttachmentLoadOp::DontCare;
+            RHI::AttachmentStoreOp StoreOp = RHI::AttachmentStoreOp::Store;
+            RHI::ResourceState InitialState = RHI::ResourceState::Undefined;
+            RHI::ResourceState FinalState = RHI::ResourceState::Undefined;
+            RHI::ITexture* Target = nullptr;
+            uint32_t Width = 0;
+            uint32_t Height = 0;
+            bool bDepthReadOnly = false;
+        };
+
+        struct RenderPassSignature
+        {
+            AttachmentSignature Output;
+            bool bValid = false;
+        };
+
+        bool AttachmentSignatureEquals(const AttachmentSignature& lhs,
+                                       const AttachmentSignature& rhs) const;
+        bool RenderPassSignatureEquals(const RenderPassSignature& lhs,
+                                       const RenderPassSignature& rhs) const;
+        RenderPassSignature CreateToneMappingRenderPassSignature(uint32_t width,
+                                                                 uint32_t height,
+                                                                 const RHI::TexturePtr& outputTexture,
+                                                                 bool bUseRenderGraphInitialState) const;
         bool PrepareResources(uint32_t width,
                               uint32_t height,
                               const RHI::TexturePtr& outputTexture,
                               bool bUseRenderGraphInitialState);
-        void ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr);
-        bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
+        void ExecuteWithInput(ViewRenderContext& context,
+                              const RHI::TexturePtr& sceneColorPtr,
+                              bool bRegisterLegacyBridge);
+        bool EnqueueEmptyNativePass(ViewRenderContext& context) const;
 
         // 設定
         ToneMappingSettings m_Settings;
@@ -175,6 +214,7 @@ namespace NorvesLib::Core::Rendering
         // 出力テクスチャ（Device::CreateTextureで作成、自己所有）
         RHI::TexturePtr m_OutputTexture;
         RGResourceHandle m_OutputHandle;
+        RGResourceHandle m_InputSceneColorHandle;
 
         // パイプラインリソース
         RHI::RenderPassPtr m_ToneMappingRenderPass;
@@ -193,8 +233,10 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bLegacyInputFallbackActive = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
         RHI::ITexture* m_FramebufferOutputTexture = nullptr;
+        RenderPassSignature m_RenderPassSignature;
     };
 
 } // namespace NorvesLib::Core::Rendering

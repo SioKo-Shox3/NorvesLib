@@ -36,7 +36,10 @@ namespace NorvesLib::Core::Rendering
      * 入力:
      * - SceneViewのDrawCommand（Opaque/Transparent）
      *
-     * 出力（SharedResourceRegistryに登録）:
+     * 標準経路では RenderGraph named resource の "SceneColor" / "SceneDepth" を更新します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
+     *
+     * legacy bridge出力:
      * - "SceneColor"  : フォワード描画結果
      * - "SceneDepth"  : 深度バッファ
      */
@@ -48,7 +51,7 @@ namespace NorvesLib::Core::Rendering
          * @param sceneView  描画対象のSceneView
          * @param sceneRenderer 描画実行器
          */
-        ForwardPass(SceneView *sceneView, SceneRenderer *sceneRenderer);
+        ForwardPass(SceneView* sceneView, SceneRenderer* sceneRenderer);
 
         /**
          * @brief デストラクタ
@@ -59,19 +62,19 @@ namespace NorvesLib::Core::Rendering
         // IViewPass実装
         // ========================================
 
-        const char *GetName() const override { return "ForwardPass"; }
+        const char* GetName() const override { return "ForwardPass"; }
 
-        bool Initialize(ViewRenderContext &context) override;
+        bool Initialize(ViewRenderContext& context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext &context) override;
-        void Execute(ViewRenderContext &context) override;
+        void Setup(ViewRenderContext& context) override;
+        void Execute(ViewRenderContext& context) override;
 
         // ========================================
         // IRenderGraphPass実装
         // ========================================
 
         void Declare(RenderGraphBuilder &builder) override;
-        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
 
         // ========================================
         // モード設定
@@ -87,15 +90,29 @@ namespace NorvesLib::Core::Rendering
         bool IsTransparentOnly() const { return m_bTransparentOnly; }
 
         /**
-         * @brief SharedResourceRegistryへの登録を行うか
+         * @brief legacy/fallback bridge としてSharedResourceRegistryへ登録するか
          *
-         * ディファードパイプライン後に半透明を描画する場合、
-         * SceneColorはLightingPassが既に登録しているので再登録は不要。
+         * 既定は互換のためtrue。production deferred pipelineでは RenderGraph named resource
+         * を主経路にするためfalseにします。
          */
-        void SetRegisterOutputs(bool bRegister) { m_bRegisterOutputs = bRegister; }
+        void SetRegisterOutputs(bool bRegister)
+        {
+            m_bRegisterOutputs = bRegister;
+        }
 
-        void SetLightingPass(const LightingPass *lightingPass) { m_LightingPass = lightingPass; }
-        void SetGBufferPass(const GBufferPass *gbufferPass) { m_GBufferPass = gbufferPass; }
+        /**
+         * @brief Legacy bridge fallback 用のLighting参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
+        void SetLightingPass(const LightingPass* lightingPass) { m_LightingPass = lightingPass; }
+
+        /**
+         * @brief Legacy bridge fallback 用のGBuffer参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
+        void SetGBufferPass(const GBufferPass* gbufferPass) { m_GBufferPass = gbufferPass; }
 
     private:
         bool CreateTransparentResources(uint32_t width,
@@ -103,29 +120,31 @@ namespace NorvesLib::Core::Rendering
                                         bool bUseRenderGraphInitialStates = false);
         bool PrepareTransparentResources(uint32_t width,
                                          uint32_t height,
-                                         const RHI::TexturePtr &sceneColorTexture,
-                                         const RHI::TexturePtr &gbufferDepthTexture,
+                                         const RHI::TexturePtr& sceneColorTexture,
+                                         const RHI::TexturePtr& gbufferDepthTexture,
                                          bool bUseRenderGraphInitialStates);
-        void ExecuteTransparentCommands(ViewRenderContext &context, bool bUseRenderGraphManagedStates);
-        void EnqueueEmptyTransparentPass(ViewRenderContext &context) const;
-        void RegisterTransparentBridge(ViewRenderContext &context,
-                                       const RHI::TexturePtr &sceneColorTexture,
-                                       const RHI::TexturePtr &gbufferDepthTexture) const;
+        void ExecuteTransparentCommands(ViewRenderContext& context, bool bUseRenderGraphManagedStates);
+        void EnqueueEmptyTransparentPass(ViewRenderContext& context) const;
+        void RegisterTransparentBridge(ViewRenderContext& context,
+                                       const RHI::TexturePtr& sceneColorTexture,
+                                       const RHI::TexturePtr& gbufferDepthTexture) const;
 
         // 参照（所有しない）
-        SceneView *m_SceneView = nullptr;
-        SceneRenderer *m_SceneRenderer = nullptr;
-        const LightingPass *m_LightingPass = nullptr;
-        const GBufferPass *m_GBufferPass = nullptr;
-        RHI::IDevice *m_Device = nullptr;
+        SceneView* m_SceneView = nullptr;
+        SceneRenderer* m_SceneRenderer = nullptr;
+        const LightingPass* m_LightingPass = nullptr;
+        const GBufferPass* m_GBufferPass = nullptr;
+        RHI::IDevice* m_Device = nullptr;
 
         // 出力テクスチャ（フォワード単独パイプライン用、TransientResourcePoolから取得、非所有）
-        RHI::ITexture *m_ColorTexture = nullptr;
-        RHI::ITexture *m_DepthTexture = nullptr;
+        RHI::ITexture* m_ColorTexture = nullptr;
+        RHI::ITexture* m_DepthTexture = nullptr;
 
-        // 半透明ディファード合成用出力（SharedResourceRegistryから取得、所有参照を保持）
+        // 半透明ディファード合成用出力（RenderGraph named resource / fallback bridge から所有参照を保持）
         RHI::TexturePtr m_SceneColorTexture;
         RHI::TexturePtr m_GBufferDepthTexture;
+        RGResourceHandle m_RenderGraphSceneColorHandle;
+        RGResourceHandle m_RenderGraphDepthHandle;
 
         // フォワード用リソース
         RHI::RenderPassPtr m_ForwardRenderPass;
@@ -152,8 +171,38 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
         bool m_bTransparentRenderPassUsesRenderGraphInitialStates = false;
-        RHI::ITexture *m_FramebufferSceneColorTexture = nullptr;
-        RHI::ITexture *m_FramebufferGBufferDepthTexture = nullptr;
+        RHI::ITexture* m_FramebufferSceneColorTexture = nullptr;
+        RHI::ITexture* m_FramebufferGBufferDepthTexture = nullptr;
+
+        struct AttachmentSignature
+        {
+            RGAttachmentKind Kind = RGAttachmentKind::Color;
+            RHI::Format Format = RHI::Format::UNKNOWN;
+            RHI::AttachmentLoadOp LoadOp = RHI::AttachmentLoadOp::DontCare;
+            RHI::AttachmentStoreOp StoreOp = RHI::AttachmentStoreOp::Store;
+            RHI::ResourceState InitialState = RHI::ResourceState::Undefined;
+            RHI::ResourceState FinalState = RHI::ResourceState::Undefined;
+            RHI::ITexture* Target = nullptr;
+            uint32_t Width = 0;
+            uint32_t Height = 0;
+            bool bDepthReadOnly = false;
+        };
+
+        struct RenderPassSignature
+        {
+            AttachmentSignature SceneColor;
+            AttachmentSignature Depth;
+            bool bValid = false;
+        };
+
+        bool AttachmentSignatureEquals(const AttachmentSignature& lhs,
+                                       const AttachmentSignature& rhs) const;
+        bool RenderPassSignatureEquals(const RenderPassSignature& lhs,
+                                       const RenderPassSignature& rhs) const;
+        RenderPassSignature CreateTransparentRenderPassSignature(uint32_t width,
+                                                                 uint32_t height,
+                                                                 bool bUseRenderGraphInitialStates) const;
+        RenderPassSignature m_TransparentRenderPassSignature;
     };
 
 } // namespace NorvesLib::Core::Rendering

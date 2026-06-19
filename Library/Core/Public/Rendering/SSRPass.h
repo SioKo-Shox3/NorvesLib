@@ -52,8 +52,8 @@ namespace NorvesLib::Core::Rendering
      *
      * LightingPassの後、Bloomの前に配置。
      * スクリーンスペースでレイマーチングを行い、反射を追加する。
-     * 入力: "SceneColor", "GBuffer_Normal", "GBuffer_Material", "GBuffer_Depth"
-     * 出力: "SceneColor"を上書き
+     * 標準経路では RenderGraph named resource 入力を読み取り、"SSRSceneColor" を graph output として公開する。
+     * legacy/fallback bridge 経路でのみ SharedResourceRegistry の "SceneColor" を上書き/公開する。
      */
     class SSRPass : public IViewPass, public IRenderGraphPass
     {
@@ -71,7 +71,18 @@ namespace NorvesLib::Core::Rendering
         void Declare(RenderGraphBuilder &builder) override;
         void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
 
+        /**
+         * @brief Legacy bridge fallback 用のGBuffer参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetGBufferPass(const GBufferPass *gbufferPass) { m_GBufferPass = gbufferPass; }
+
+        /**
+         * @brief Legacy bridge fallback 用のLighting参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetLightingPass(const LightingPass *lightingPass) { m_LightingPass = lightingPass; }
         void SetEnabled(bool bEnabled) { m_Settings.bEnabled = bEnabled; }
         const SSRSettings &GetSettings() const { return m_Settings; }
@@ -86,7 +97,8 @@ namespace NorvesLib::Core::Rendering
                                const RHI::TexturePtr &normalTex,
                                const RHI::TexturePtr &materialTex,
                                const RHI::TexturePtr &depthTex,
-                               const RHI::TexturePtr &sceneColorTex);
+                               const RHI::TexturePtr &sceneColorTex,
+                               bool bRegisterLegacyBridge);
         bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
 
         SSRSettings m_Settings;
@@ -94,6 +106,10 @@ namespace NorvesLib::Core::Rendering
         // 出力テクスチャ
         RHI::TexturePtr m_OutputTexture;
         RGResourceHandle m_OutputHandle;
+        RGResourceHandle m_GBufferNormalHandle;
+        RGResourceHandle m_GBufferMaterialHandle;
+        RGResourceHandle m_GBufferDepthHandle;
+        RGResourceHandle m_SceneColorInputHandle;
 
         // パイプラインリソース
         RHI::RenderPassPtr m_RenderPass;
@@ -114,6 +130,7 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bLegacyInputFallbackActive = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
         RHI::ITexture *m_FramebufferOutputTexture = nullptr;
     };

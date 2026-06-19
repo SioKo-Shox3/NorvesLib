@@ -1,5 +1,6 @@
 #include "Rendering/RenderFrameExecutor.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/View.h"
 #include "Rendering/ViewRenderContext.h"
@@ -14,7 +15,12 @@ namespace NorvesLib::Core::Rendering
             !request.Views ||
             !request.Context ||
             !request.Renderer ||
-            !request.CommandList ||
+            !request.CommandList)
+        {
+            return result;
+        }
+
+        if (!request.PresentationGraphPass &&
             !request.Presentation)
         {
             return result;
@@ -45,15 +51,24 @@ namespace NorvesLib::Core::Rendering
                     continue;
                 }
 
+                const bool bClearPresentation = result.PresentationBlitCount == 0;
                 ApplyViewportRenderPlan(*request.Context, &viewportPlan);
+                ConfigurePresentationGraphPass(request, bClearPresentation);
                 if (!RenderViewForCurrentViewport(request, view.get()))
                 {
                     continue;
                 }
 
                 FlushPendingFrameCommands(request);
-                ComposePresentation(request, result.PresentationBlitCount == 0);
-                ++result.PresentationBlitCount;
+                bool bPresented = WasPresentationHandledByGraph(request);
+                if (!bPresented)
+                {
+                    bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation);
+                }
+                if (bPresented)
+                {
+                    ++result.PresentationBlitCount;
+                }
                 ++result.RenderedViewportCount;
                 result.bRenderedAnyViewport = true;
             }
@@ -61,14 +76,23 @@ namespace NorvesLib::Core::Rendering
 
         if (!result.bRenderedAnyViewport)
         {
+            const bool bClearPresentation = result.PresentationBlitCount == 0;
             ApplyViewportRenderPlan(*request.Context, FindPrimaryViewportRenderPlan(*request.Packet));
+            ConfigurePresentationGraphPass(request, bClearPresentation);
             if (RenderViewForCurrentViewport(request, request.FallbackView))
             {
                 ++result.RenderedViewportCount;
             }
             FlushPendingFrameCommands(request);
-            ComposePresentation(request, true);
-            ++result.PresentationBlitCount;
+            bool bPresented = WasPresentationHandledByGraph(request);
+            if (!bPresented)
+            {
+                bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation);
+            }
+            if (bPresented)
+            {
+                ++result.PresentationBlitCount;
+            }
         }
 
         return result;
@@ -76,6 +100,9 @@ namespace NorvesLib::Core::Rendering
 
     void RenderFrameExecutor::ApplyViewportRenderPlan(ViewRenderContext &context, const ViewportRenderPlan *viewportPlan)
     {
+        context.CurrentGraphExecutionResult = nullptr;
+        context.bPresentationGraphPassHandled = false;
+
         if (!viewportPlan)
         {
             context.CurrentViewport = nullptr;
@@ -171,8 +198,48 @@ namespace NorvesLib::Core::Rendering
         return false;
     }
 
-    bool RenderFrameExecutor::ComposePresentation(const RenderFrameExecutionRequest &request, bool bClearPresentation)
+    void RenderFrameExecutor::ConfigurePresentationGraphPass(const RenderFrameExecutionRequest &request,
+                                                            bool bClearPresentation)
     {
+        if (!request.Context)
+        {
+            return;
+        }
+
+        request.Context->PresentationGraphPass = request.PresentationGraphPass;
+        request.Context->bPresentationGraphPassHandled = false;
+        if (!request.PresentationGraphPass)
+        {
+            return;
+        }
+
+        PresentationPassRequest passRequest = request.GraphPresentationRequest;
+        passRequest.bClearPresentation = bClearPresentation;
+        request.PresentationGraphPass->SetRequest(passRequest);
+    }
+
+    bool RenderFrameExecutor::WasPresentationHandledByGraph(const RenderFrameExecutionRequest &request)
+    {
+        if (!request.Context ||
+            !request.PresentationGraphPass ||
+            !request.Context->CurrentGraphExecutionResult ||
+            !request.Context->CurrentGraphExecutionResult->bSuccess)
+        {
+            return false;
+        }
+
+        return request.Context->bPresentationGraphPassHandled &&
+               request.PresentationGraphPass->WasHandled();
+    }
+
+    bool RenderFrameExecutor::ComposeLegacyPresentationFallback(const RenderFrameExecutionRequest &request,
+                                                               bool bClearPresentation)
+    {
+        if (!request.Presentation)
+        {
+            return false;
+        }
+
         PresentationComposeRequest composeRequest = request.PresentationRequest;
         composeRequest.Context = request.Context;
         composeRequest.Renderer = request.Renderer;

@@ -38,7 +38,9 @@ namespace NorvesLib::Core::Rendering
      * @brief FXAA 3.11ポストプロセスパス
      *
      * ToneMappingPassの後に配置し、LDR画像に対してアンチエイリアシングを適用する。
-     * "ToneMappedColor"を入力としSharedResourceRegistryに結果を再登録する。
+     * 標準経路では "ToneMappedColor" named resource を読み取り、graph output として
+     * "ToneMappedColor" を更新する。SharedResourceRegistry は legacy/fallback bridge の
+     * 互換経路でのみ使用する。
      */
     class FXAAPass : public IViewPass, public IRenderGraphPass
     {
@@ -72,8 +74,14 @@ namespace NorvesLib::Core::Rendering
         // パラメータ調整
         // ========================================
 
+        /**
+         * @brief Legacy bridge fallback 用の入力パス参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetInputPass(const ToneMappingPass* inputPass) { m_InputPass = inputPass; }
         RGResourceHandle GetToneMappedColorHandle() const { return m_OutputHandle; }
+        RGTextureHandle GetToneMappedColorTextureHandle() const { return m_OutputTextureHandle; }
 
         /**
          * @brief FXAA有効/無効を切り替え
@@ -90,14 +98,19 @@ namespace NorvesLib::Core::Rendering
                               uint32_t height,
                               const RHI::TexturePtr& outputTexture,
                               bool bUseRenderGraphInitialState);
-        void ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& inputTexture);
+        void ExecuteWithInput(ViewRenderContext &context,
+                              const RHI::TexturePtr& inputTexture,
+                              bool bRegisterLegacyBridge);
         bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
 
+    protected:
         // 設定
         FXAASettings m_Settings;
 
         // 出力テクスチャ
         RHI::TexturePtr m_OutputTexture;
+        RGResourceHandle m_InputToneMappedHandle;
+        RGTextureHandle m_OutputTextureHandle;
         RGResourceHandle m_OutputHandle;
 
         // パイプラインリソース
@@ -117,6 +130,7 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bLegacyInputFallbackActive = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
         RHI::ITexture* m_FramebufferOutputTexture = nullptr;
     };

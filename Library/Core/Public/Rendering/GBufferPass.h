@@ -56,7 +56,8 @@ namespace NorvesLib::Core::Rendering
      * - RT3: Emissive (R16G16B16A16_FLOAT)
      * - DS:  Depth (D32_FLOAT)
      *
-     * 出力はSharedResourceRegistryに登録され、後続のLightingPassが参照します。
+     * 標準経路では RenderGraph named resource として公開され、後続のLightingPassが参照します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
      *
      * SharedResource登録名:
      * - "GBuffer_Albedo"
@@ -72,7 +73,7 @@ namespace NorvesLib::Core::Rendering
          * @brief コンストラクタ
          * @param settings GBufferパス設定
          */
-        explicit GBufferPass(const GBufferPassSettings &settings = GBufferPassSettings{});
+        explicit GBufferPass(const GBufferPassSettings& settings = GBufferPassSettings{});
 
         /**
          * @brief デストラクタ
@@ -83,19 +84,19 @@ namespace NorvesLib::Core::Rendering
         // IViewPass実装
         // ========================================
 
-        const char *GetName() const override { return "GBufferPass"; }
+        const char* GetName() const override { return "GBufferPass"; }
 
-        bool Initialize(ViewRenderContext &context) override;
+        bool Initialize(ViewRenderContext& context) override;
         void Shutdown() override;
-        void Setup(ViewRenderContext &context) override;
-        void Execute(ViewRenderContext &context) override;
+        void Setup(ViewRenderContext& context) override;
+        void Execute(ViewRenderContext& context) override;
 
         // ========================================
         // IRenderGraphPass実装
         // ========================================
 
         void Declare(RenderGraphBuilder &builder) override;
-        void Execute(RenderGraphResources &resources, ViewRenderContext &context) override;
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
 
         // ========================================
         // SceneView連携
@@ -105,29 +106,40 @@ namespace NorvesLib::Core::Rendering
          * @brief 描画対象のSceneViewを設定します
          * @param sceneView SceneView
          */
-        void SetSceneView(SceneView *sceneView) { m_SceneView = sceneView; }
+        void SetSceneView(SceneView* sceneView) { m_SceneView = sceneView; }
 
         /**
          * @brief SceneRendererを設定します
          * @param renderer SceneRenderer
          */
-        void SetSceneRenderer(SceneRenderer *renderer) { m_SceneRenderer = renderer; }
+        void SetSceneRenderer(SceneRenderer* renderer) { m_SceneRenderer = renderer; }
+
+        /**
+         * @brief legacy/fallback bridge としてSharedResourceRegistryへ登録するか
+         *
+         * 既定は互換のためtrue。production deferred pipelineでは RenderGraph named resource
+         * を主経路にするためfalseにします。
+         */
+        void SetRegisterLegacyBridge(bool bRegister)
+        {
+            m_bRegisterLegacyBridge = bRegister;
+        }
 
         // ========================================
         // GBufferアクセス
         // ========================================
 
-        RHI::ITexture *GetAlbedoTexture() const { return m_AlbedoTexture.get(); }
-        RHI::ITexture *GetNormalTexture() const { return m_NormalTexture.get(); }
-        RHI::ITexture *GetMaterialTexture() const { return m_MaterialTexture.get(); }
-        RHI::ITexture *GetEmissiveTexture() const { return m_EmissiveTexture.get(); }
-        RHI::ITexture *GetDepthTexture() const { return m_DepthTexture.get(); }
+        RHI::ITexture* GetAlbedoTexture() const { return m_AlbedoTexture.get(); }
+        RHI::ITexture* GetNormalTexture() const { return m_NormalTexture.get(); }
+        RHI::ITexture* GetMaterialTexture() const { return m_MaterialTexture.get(); }
+        RHI::ITexture* GetEmissiveTexture() const { return m_EmissiveTexture.get(); }
+        RHI::ITexture* GetDepthTexture() const { return m_DepthTexture.get(); }
 
-        RGResourceHandle GetAlbedoHandle() const { return m_AlbedoHandle; }
-        RGResourceHandle GetNormalHandle() const { return m_NormalHandle; }
-        RGResourceHandle GetMaterialHandle() const { return m_MaterialHandle; }
-        RGResourceHandle GetEmissiveHandle() const { return m_EmissiveHandle; }
-        RGResourceHandle GetDepthHandle() const { return m_DepthHandle; }
+        RGResourceHandle GetAlbedoHandle() const { return m_AlbedoHandle.ToResourceHandle(); }
+        RGResourceHandle GetNormalHandle() const { return m_NormalHandle.ToResourceHandle(); }
+        RGResourceHandle GetMaterialHandle() const { return m_MaterialHandle.ToResourceHandle(); }
+        RGResourceHandle GetEmissiveHandle() const { return m_EmissiveHandle.ToResourceHandle(); }
+        RGResourceHandle GetDepthHandle() const { return m_DepthHandle.ToResourceHandle(); }
 
     private:
         /**
@@ -137,42 +149,79 @@ namespace NorvesLib::Core::Rendering
          * @param context 描画コンテキスト
          * @return 成功時true
          */
-        bool CreateGBufferResources(uint32_t width, uint32_t height, ViewRenderContext &context);
-        uint32_t ResolveGBufferWidth(const ViewRenderContext &context) const;
-        uint32_t ResolveGBufferHeight(const ViewRenderContext &context) const;
+        bool CreateGBufferResources(uint32_t width, uint32_t height, ViewRenderContext& context);
+        uint32_t ResolveGBufferWidth(const ViewRenderContext& context) const;
+        uint32_t ResolveGBufferHeight(const ViewRenderContext& context) const;
         bool PrepareGBufferAttachments(uint32_t width,
                                        uint32_t height,
-                                       const RHI::TexturePtr &albedo,
-                                       const RHI::TexturePtr &normal,
-                                       const RHI::TexturePtr &material,
-                                       const RHI::TexturePtr &emissive,
-                                       const RHI::TexturePtr &depth,
+                                       const RHI::TexturePtr& albedo,
+                                       const RHI::TexturePtr& normal,
+                                       const RHI::TexturePtr& material,
+                                       const RHI::TexturePtr& emissive,
+                                       const RHI::TexturePtr& depth,
                                        bool bUseRenderGraphInitialStates);
-        bool EnsureGBufferRenderPass(bool bUseRenderGraphInitialStates);
         bool EnsureGBufferFramebuffer(uint32_t width,
                                       uint32_t height,
-                                      const RHI::TexturePtr &albedo,
-                                      const RHI::TexturePtr &normal,
-                                      const RHI::TexturePtr &material,
-                                      const RHI::TexturePtr &emissive,
-                                      const RHI::TexturePtr &depth);
+                                      const RHI::TexturePtr& albedo,
+                                      const RHI::TexturePtr& normal,
+                                      const RHI::TexturePtr& material,
+                                      const RHI::TexturePtr& emissive,
+                                      const RHI::TexturePtr& depth);
         bool EnsureGBufferPipeline();
-        void EnqueueGBufferGeometryPass(ViewRenderContext &context,
+        void EnqueueGBufferGeometryPass(ViewRenderContext& context,
                                         Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
                                         const RHI::Viewport &viewport,
                                         const RHI::ScissorRect &scissor,
                                         MeshResources *meshes) const;
-        bool TryEnqueueNativeClearPass(ViewRenderContext &context,
+        bool TryEnqueueNativeClearPass(ViewRenderContext& context,
                                        const RHI::Viewport &viewport,
                                        const RHI::ScissorRect &scissor,
                                        MeshResources *meshes) const;
+
+        struct AttachmentSignature
+        {
+            RGAttachmentKind Kind = RGAttachmentKind::Color;
+            RHI::Format Format = RHI::Format::UNKNOWN;
+            RHI::AttachmentLoadOp LoadOp = RHI::AttachmentLoadOp::DontCare;
+            RHI::AttachmentStoreOp StoreOp = RHI::AttachmentStoreOp::Store;
+            RHI::ResourceState InitialState = RHI::ResourceState::Undefined;
+            RHI::ResourceState FinalState = RHI::ResourceState::Undefined;
+            RHI::ITexture* Target = nullptr;
+            uint32_t Width = 0;
+            uint32_t Height = 0;
+            bool bDepthReadOnly = false;
+        };
+
+        struct RenderPassSignature
+        {
+            AttachmentSignature Albedo;
+            AttachmentSignature Normal;
+            AttachmentSignature Material;
+            AttachmentSignature Emissive;
+            AttachmentSignature Depth;
+            bool bValid = false;
+        };
+
+        bool AttachmentSignatureEquals(const AttachmentSignature& lhs,
+                                       const AttachmentSignature& rhs) const;
+        bool RenderPassSignatureEquals(const RenderPassSignature& lhs,
+                                       const RenderPassSignature& rhs) const;
+        bool EnsureGBufferRenderPass(const RenderPassSignature& signature);
+        RenderPassSignature CreateGBufferRenderPassSignature(uint32_t width,
+                                                             uint32_t height,
+                                                             const RHI::TexturePtr& albedo,
+                                                             const RHI::TexturePtr& normal,
+                                                             const RHI::TexturePtr& material,
+                                                             const RHI::TexturePtr& emissive,
+                                                             const RHI::TexturePtr& depth,
+                                                             bool bUseRenderGraphInitialStates) const;
 
         // 設定
         GBufferPassSettings m_Settings;
 
         // SceneView参照（外部所有）
-        SceneView *m_SceneView = nullptr;
-        SceneRenderer *m_SceneRenderer = nullptr;
+        SceneView* m_SceneView = nullptr;
+        SceneRenderer* m_SceneRenderer = nullptr;
 
         // GBufferテクスチャ（Device::CreateTextureで作成、自己所有）
         RHI::TexturePtr m_AlbedoTexture;
@@ -181,11 +230,11 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_EmissiveTexture;
         RHI::TexturePtr m_DepthTexture;
 
-        RGResourceHandle m_AlbedoHandle;
-        RGResourceHandle m_NormalHandle;
-        RGResourceHandle m_MaterialHandle;
-        RGResourceHandle m_EmissiveHandle;
-        RGResourceHandle m_DepthHandle;
+        RGTextureHandle m_AlbedoHandle;
+        RGTextureHandle m_NormalHandle;
+        RGTextureHandle m_MaterialHandle;
+        RGTextureHandle m_EmissiveHandle;
+        RGTextureHandle m_DepthHandle;
 
         // GBuffer用レンダーパス・フレームバッファ
         RHI::RenderPassPtr m_GBufferRenderPass;
@@ -197,20 +246,22 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_GBufferFragmentShader;
 
         // デバイス参照
-        RHI::IDevice *m_Device = nullptr;
+        RHI::IDevice* m_Device = nullptr;
 
         // 現在のGBufferサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bRegisterLegacyBridge = true;
         bool m_bUsingRenderGraphResources = false;
         bool m_bRenderPassUsesRenderGraphInitialStates = false;
-        RHI::ITexture *m_FramebufferAlbedoTexture = nullptr;
-        RHI::ITexture *m_FramebufferNormalTexture = nullptr;
-        RHI::ITexture *m_FramebufferMaterialTexture = nullptr;
-        RHI::ITexture *m_FramebufferEmissiveTexture = nullptr;
-        RHI::ITexture *m_FramebufferDepthTexture = nullptr;
+        RHI::ITexture* m_FramebufferAlbedoTexture = nullptr;
+        RHI::ITexture* m_FramebufferNormalTexture = nullptr;
+        RHI::ITexture* m_FramebufferMaterialTexture = nullptr;
+        RHI::ITexture* m_FramebufferEmissiveTexture = nullptr;
+        RHI::ITexture* m_FramebufferDepthTexture = nullptr;
         uint32_t m_FramebufferWidth = 0;
         uint32_t m_FramebufferHeight = 0;
+        RenderPassSignature m_RenderPassSignature;
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;

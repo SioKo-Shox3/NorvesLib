@@ -1,5 +1,7 @@
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/RenderGraph/RenderGraph.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ViewRenderContext.h"
@@ -57,15 +59,32 @@ namespace NorvesLib::Core::Rendering
 
     RHI::TexturePtr PresentationComposer::ResolvePresentationTexture(const ViewRenderContext &context)
     {
+        if (context.CurrentGraphExecutionResult && context.CurrentGraphExecutionResult->bSuccess)
+        {
+            RHI::TexturePtr graphTexture;
+            if (context.CurrentGraphExecutionResult->TryGetTexture(RenderGraphResourceNames::PresentationColor,
+                                                                   graphTexture))
+            {
+                return graphTexture;
+            }
+
+            if (context.CurrentGraphExecutionResult->TryGetTexture(RenderGraphResourceNames::ToneMappedColor,
+                                                                   graphTexture))
+            {
+                return graphTexture;
+            }
+        }
+
         if (!context.SharedResources)
         {
             return nullptr;
         }
 
-        RHI::TexturePtr presentationTexture = context.SharedResources->GetTexturePtr("PresentationColor");
+        RHI::TexturePtr presentationTexture =
+            context.SharedResources->GetTexturePtr(RenderGraphResourceNames::PresentationColor);
         if (!presentationTexture)
         {
-            presentationTexture = context.SharedResources->GetTexturePtr("ToneMappedColor");
+            presentationTexture = context.SharedResources->GetTexturePtr(RenderGraphResourceNames::ToneMappedColor);
         }
         return presentationTexture;
     }

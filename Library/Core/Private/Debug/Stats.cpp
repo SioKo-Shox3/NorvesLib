@@ -109,6 +109,8 @@ namespace NorvesLib::Debug
         oss << "Draw Calls: " << DrawCalls << " (Instanced: " << InstancedDrawCalls << ")\n";
         oss << "Triangles: " << TrianglesRendered << "\n";
         oss << "Visible Objects: " << VisibleObjects << " (Batches: " << BatchCount << ")\n";
+        oss << "RenderGraph: barriers=" << RenderGraphBarrierCount
+            << " transientAcquires=" << RenderGraphTransientAcquireCount << "\n";
         oss << "Timings:\n";
         oss << "  Collection: " << CollectionTimeMs << " ms\n";
         oss << "  Culling: " << CullingTimeMs << " ms\n";
@@ -462,7 +464,8 @@ namespace NorvesLib::Debug
         {
             m_TraceFile << "Type,Frame,TimestampUs,ThreadId,Category,Name,DurationMs,"
                            "GameThreadMs,RenderPrepareMs,RenderThreadMs,RenderFrameMs,"
-                           "CPUFrameMs,GPUFrameMs,TotalFrameMs,DrawCalls,Triangles,VisibleObjects,Batches\n";
+                           "CPUFrameMs,GPUFrameMs,TotalFrameMs,DrawCalls,Triangles,VisibleObjects,Batches,"
+                           "RenderGraphBarriers,RenderGraphTransientAcquires\n";
         }
 #endif
     }
@@ -493,7 +496,9 @@ namespace NorvesLib::Debug
                     << m_FrameProfile.DrawCalls << ','
                     << m_FrameProfile.TrianglesRendered << ','
                     << m_FrameProfile.VisibleObjects << ','
-                    << m_FrameProfile.BatchCount << '\n';
+                    << m_FrameProfile.BatchCount << ','
+                    << m_RenderingStats.RenderGraphBarrierCount << ','
+                    << m_RenderingStats.RenderGraphTransientAcquireCount << '\n';
         m_TraceFile.flush();
 #endif
     }
@@ -515,7 +520,7 @@ namespace NorvesLib::Debug
         WriteCsvString(m_TraceFile, event.Name);
         m_TraceFile << ','
                     << event.DurationMs
-                    << ",,,,,,,,,,,\n";
+                    << ",,,,,,,,,,,,,\n";
 #endif
     }
 
