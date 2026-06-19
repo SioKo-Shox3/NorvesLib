@@ -35,12 +35,17 @@ namespace Game
         constexpr const TCHAR *kTextureAssetRootOption = TEXT("--texture-asset-root");
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
-        constexpr const TCHAR *kBridgePortOption = TEXT("--bridge-port");
+        constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
 
-        // 文字列を符号なし 16bit ポートとして解析する。先頭末尾に空白がない 10 進数のみ
-        // を受理し、0 / 範囲外 / 非数字は失敗（bValid=false）として返す。
-        bool TryParseBridgePort(const String &text, std::uint16_t &outPort)
+        /**
+         * @brief 文字列を符号なし 16bit ポートとして解析する。先頭末尾に空白がない 10 進数のみ
+         *        を受理し、0 / 範囲外 / 非数字は失敗（bValid=false）として返す。
+         * @param text 解析対象の文字列。
+         * @param outPort 解析に成功した場合のポート値。失敗時は 0。
+         * @return 解析に成功したら true、失敗したら false。
+         */
+        bool TryParseBridgePort(const String& text, uint16_t& outPort)
         {
             outPort = 0;
             if (text.empty())
@@ -48,7 +53,7 @@ namespace Game
                 return false;
             }
 
-            std::uint32_t value = 0;
+            uint32_t value = 0;
             for (size_t i = 0; i < text.size(); ++i)
             {
                 const TCHAR ch = text[i];
@@ -56,7 +61,7 @@ namespace Game
                 {
                     return false;
                 }
-                value = value * 10 + static_cast<std::uint32_t>(ch - TEXT('0'));
+                value = value * 10 + static_cast<uint32_t>(ch - TEXT('0'));
                 if (value > 65535u)
                 {
                     return false;
@@ -68,7 +73,7 @@ namespace Game
                 return false;
             }
 
-            outPort = static_cast<std::uint16_t>(value);
+            outPort = static_cast<uint16_t>(value);
             return true;
         }
 
@@ -196,7 +201,7 @@ namespace Game
 
     }
 
-    bool GameApplicationHandler::OnPreInitialize(const VariableArray<String> &args)
+    bool GameApplicationHandler::OnPreInitialize(const VariableArray<String>& args)
     {
         LOG_INFO("GameApplicationHandler::OnPreInitialize()");
 
@@ -489,7 +494,7 @@ namespace Game
         return true;
     }
 
-    void GameApplicationHandler::ParseBridgePortOption(const VariableArray<String> &args)
+    void GameApplicationHandler::ParseBridgePortOption(const VariableArray<String>& args)
     {
         m_bBridgeEnabled = false;
         m_BridgePort = 0;
@@ -531,7 +536,7 @@ namespace Game
                 return;
             }
 
-            std::uint16_t parsedPort = 0;
+            uint16_t parsedPort = 0;
             if (!TryParseBridgePort(portText, parsedPort))
             {
                 LOG_WARNING_F("Bridge disabled: invalid --bridge-port value \"%s\" (expected 1-65535)",
