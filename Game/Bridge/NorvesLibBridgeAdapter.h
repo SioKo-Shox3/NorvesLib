@@ -52,66 +52,165 @@ namespace Game::Bridge
         NorvesLibBridgeAdapter() = default;
         ~NorvesLibBridgeAdapter() override = default;
 
-        // 実エンジン状態へアクセスするための handler を注入する。host.Start の前に
-        // GameApplicationHandler::OnInitialize から設定される。adapter は host より
-        // 長生きするため借用ポインタで十分（所有しない）。
-        void SetHandler(Game::GameApplicationHandler &handler) { m_Handler = &handler; }
+        /**
+         * @brief 実エンジン状態へアクセスするための handler を注入する
+         *
+         * host.Start の前に GameApplicationHandler::OnInitialize から設定される。
+         * adapter は host より長生きするため借用ポインタで十分（所有しない）。
+         *
+         * @param handler 実エンジン状態アクセス用の handler（借用）
+         */
+        void SetHandler(Game::GameApplicationHandler& handler) { m_Handler = &handler; }
 
-        // サーバー発イベント（runtime.stateChanged / log.message）を発火するための host を
-        // 注入する。host.Start の前に GameApplicationHandler::OnInitialize から設定される。
-        // すべてのコールバックはゲームスレッド上で逐次実行されるため借用ポインタで十分。
-        void SetHost(Game::Bridge::BridgeServerHost &host) { m_Host = &host; }
+        /**
+         * @brief サーバー発イベントを発火するための host を注入する
+         *
+         * runtime.stateChanged / log.message の発火に使う。host.Start の前に
+         * GameApplicationHandler::OnInitialize から設定される。すべてのコールバックは
+         * ゲームスレッド上で逐次実行されるため借用ポインタで十分。
+         *
+         * @param host イベント発火用の host（借用）
+         */
+        void SetHost(Game::Bridge::BridgeServerHost& host) { m_Host = &host; }
 
         // --- Handshake ---
+
+        /**
+         * @brief bridge.hello。sessionId を採番し HelloResult を返す
+         *
+         * @param params リクエスト params（借用、呼び出し中のみ有効）
+         * @param selectedProtocolVersion サーバが選んだプロトコルバージョン
+         * @return HelloResult を収めた JsonValue
+         */
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        hello(const norves::bridge::JsonValue &params,
+        hello(const norves::bridge::JsonValue& params,
               std::string_view selectedProtocolVersion) override;
 
+        /**
+         * @brief bridge.getCapabilities。広告する capability 一覧を返す
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return capabilities を収めた JsonValue
+         */
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        getCapabilities(const norves::bridge::JsonValue &params) override;
+        getCapabilities(const norves::bridge::JsonValue& params) override;
 
         // --- Engine status / launch ---
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        getStatus(const norves::bridge::JsonValue &params) override;
 
+        /**
+         * @brief engine.getStatus。実エンジン状態を DTO スナップショットへ変換して返す
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return StatusSnapshot を収めた JsonValue
+         */
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        launchInfo(const norves::bridge::JsonValue &params) override;
+        getStatus(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief engine.launchInfo。pid と title を返す
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return {pid, title} を収めた JsonValue
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        launchInfo(const norves::bridge::JsonValue& params) override;
 
         // --- Runtime control ---
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        runtimePlay(const norves::bridge::JsonValue &params) override;
 
+        /**
+         * @brief runtime.play。runtime 状態を Playing へ遷移させ PlayAck を返す
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return PlayAck を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。runtime.stateChanged を先に emit する。
+         */
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        runtimePause(const norves::bridge::JsonValue &params) override;
+        runtimePlay(const norves::bridge::JsonValue& params) override;
 
+        /**
+         * @brief runtime.pause。runtime 状態を Paused へ遷移させ PlayAck を返す
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return PlayAck を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。runtime.stateChanged を先に emit する。
+         */
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        runtimeStop(const norves::bridge::JsonValue &params) override;
+        runtimePause(const norves::bridge::JsonValue& params) override;
 
+        /**
+         * @brief runtime.stop。runtime 状態を Stopped へ遷移させ PlayAck を返す
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return PlayAck を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。runtime.stateChanged を先に emit する。
+         */
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        runtimeFocusViewport(const norves::bridge::JsonValue &params) override;
+        runtimeStop(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief runtime.focusViewport。best-effort でエンジンウィンドウを前面化する
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return {focused} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。Win32 ハンドル取得時のみ操作する。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        runtimeFocusViewport(const norves::bridge::JsonValue& params) override;
 
         // --- Log streaming ---
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        logSubscribe(const norves::bridge::JsonValue &params) override;
 
+        /**
+         * @brief log.subscribe。Logger -> Bridge のログ転送を開始し subscriptionId を返す
+         *
+         * @param params リクエスト params（借用、filter.minLevel は honor しない）
+         * @return {subscriptionId} を収めた JsonValue
+         * @note 単一購読前提。ゲームスレッド上から逐次呼ばれる。
+         */
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        logUnsubscribe(const norves::bridge::JsonValue &params) override;
+        logSubscribe(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief log.unsubscribe。ログ転送を停止する（冪等）
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return {ok} を収めた JsonValue
+         * @note 単一購読前提で subscriptionId 照合はしない。ゲームスレッド上から逐次呼ばれる。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        logUnsubscribe(const norves::bridge::JsonValue& params) override;
 
         // scene/object/schema は adapter.hpp の既定実装（METHOD_NOT_SUPPORTED）のまま。
 
     private:
-        // セッション/サブスクリプションの一意 id 採番用カウンタ。すべてのコールバックは
-        // ゲームスレッド上で逐次実行されるため、単純なカウンタで十分（同時呼び出しなし）。
-        std::uint64_t m_NextSessionSeq = 0;
-        std::uint64_t m_NextSubscriptionSeq = 0;
+        /**
+         * @brief セッション id 採番用の単調カウンタ
+         *
+         * @note すべてのコールバックはゲームスレッド上で逐次実行されるため、単純な
+         *       カウンタで十分（同時呼び出しなし）。
+         */
+        uint64_t m_NextSessionSeq = 0;
 
-        // 実エンジン状態アクセス用の借用ポインタ（非所有）。SetHandler で注入され、
-        // すべてのコールバックはゲームスレッド上で逐次実行される。
-        Game::GameApplicationHandler *m_Handler = nullptr;
+        /**
+         * @brief サブスクリプション id 採番用の単調カウンタ
+         *
+         * @note すべてのコールバックはゲームスレッド上で逐次実行されるため、単純な
+         *       カウンタで十分（同時呼び出しなし）。
+         */
+        uint64_t m_NextSubscriptionSeq = 0;
 
-        // サーバー発イベント発火用の host への借用ポインタ（非所有）。SetHost で注入され、
-        // EmitEvent / Start・StopLogForwarding はゲームスレッド上から呼ばれる。
-        Game::Bridge::BridgeServerHost *m_Host = nullptr;
+        /**
+         * @brief 実エンジン状態アクセス用の借用ポインタ（非所有）
+         *
+         * @note SetHandler で注入され、すべてのコールバックはゲームスレッド上で逐次実行される。
+         */
+        Game::GameApplicationHandler* m_Handler = nullptr;
+
+        /**
+         * @brief サーバー発イベント発火用の host への借用ポインタ（非所有）
+         *
+         * @note SetHost で注入され、EmitEvent / Start・StopLogForwarding はゲームスレッド上から呼ばれる。
+         */
+        Game::Bridge::BridgeServerHost* m_Host = nullptr;
     };
 
 } // namespace Game::Bridge

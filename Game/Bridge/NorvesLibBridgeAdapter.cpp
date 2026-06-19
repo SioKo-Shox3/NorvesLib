@@ -29,9 +29,16 @@ namespace Game::Bridge
 
         using AdapterResult = Result<JsonValue, BridgeError>;
 
-        // 制御下のリテラル JSON をパースして成功 Result を作る。これらはコードが
-        // 直接書いたリテラルなのでパース失敗は実装バグ。万一失敗したら JSON null を
-        // 返す（呼び出し側はそれでもスキーマ違反として扱える）よりは、不正でない最小値を返す。
+        /**
+         * @brief 制御下のリテラル JSON をパースして成功 Result を作る
+         *
+         * これらはコードが直接書いたリテラルなのでパース失敗は実装バグ。万一失敗したら
+         * JSON null を返す（呼び出し側はそれでもスキーマ違反として扱える）よりは、
+         * 不正でない最小値を返す。
+         *
+         * @param text パース対象のリテラル JSON（境界 std::string_view）
+         * @return パース結果を収めた成功 Result（失敗時は空オブジェクト）
+         */
         AdapterResult OkLiteral(std::string_view text)
         {
             auto parsed = JsonValue::parse(text);
@@ -43,11 +50,16 @@ namespace Game::Bridge
             return AdapterResult::ok(std::move(parsed).value());
         }
 
-        // NorvesLib の Bridge runtime 状態を SDK の DTO enum へ変換する。
-        norves::bridge::dto::RuntimeState ToDtoRuntimeState(Game::Bridge::BridgeRuntimeState s)
+        /**
+         * @brief NorvesLib の Bridge runtime 状態を SDK の DTO enum へ変換する
+         *
+         * @param state NorvesLib の Bridge runtime 状態
+         * @return 対応する SDK DTO の RuntimeState（未知値は Unknown）
+         */
+        norves::bridge::dto::RuntimeState ToDtoRuntimeState(Game::Bridge::BridgeRuntimeState state)
         {
             using DtoState = norves::bridge::dto::RuntimeState;
-            switch (s)
+            switch (state)
             {
                 case Game::Bridge::BridgeRuntimeState::Edit:
                     return DtoState::Edit;
@@ -61,10 +73,15 @@ namespace Game::Bridge
             return DtoState::Unknown;
         }
 
-        // BridgeRuntimeState を人間可読な名前へ（状態遷移ログ用）。
-        const char *RuntimeStateName(Game::Bridge::BridgeRuntimeState s)
+        /**
+         * @brief BridgeRuntimeState を人間可読な名前へ（状態遷移ログ用）
+         *
+         * @param state 名前へ変換する Bridge runtime 状態
+         * @return 状態名の C 文字列（未知値は "unknown"）
+         */
+        const char* RuntimeStateName(Game::Bridge::BridgeRuntimeState state)
         {
-            switch (s)
+            switch (state)
             {
                 case Game::Bridge::BridgeRuntimeState::Edit:
                     return "edit";
@@ -78,11 +95,18 @@ namespace Game::Bridge
             return "unknown";
         }
 
-        // BridgeRuntimeState を runtime.stateChanged の wire 文字列へ。SDK の to_wire の
-        // 可視性に依存せず、ここで wire 値（edit/playing/paused/stopped）を直接綴る。
-        const char *RuntimeStateWire(Game::Bridge::BridgeRuntimeState s)
+        /**
+         * @brief BridgeRuntimeState を runtime.stateChanged の wire 文字列へ
+         *
+         * SDK の to_wire の可視性に依存せず、ここで wire 値（edit/playing/paused/stopped）を
+         * 直接綴る。
+         *
+         * @param state wire 値へ変換する Bridge runtime 状態
+         * @return wire 文字列の C 文字列（未知値は "edit"）
+         */
+        const char* RuntimeStateWire(Game::Bridge::BridgeRuntimeState state)
         {
-            switch (s)
+            switch (state)
             {
                 case Game::Bridge::BridgeRuntimeState::Edit:
                     return "edit";
@@ -96,10 +120,19 @@ namespace Game::Bridge
             return "edit";
         }
 
-        // runtime.stateChanged の params リテラル {"state":...,"previous":...} を組んで
-        // host から emit する。state を新状態へ遷移させた直後、PlayAck 返却の前に呼ぶ。
-        // params は OkLiteral と同様 JsonValue::parse で作る（リテラルなので妥当）。
-        void EmitRuntimeStateChanged(Game::Bridge::BridgeServerHost *host,
+        /**
+         * @brief runtime.stateChanged の params を組んで host から emit する
+         *
+         * params リテラル {"state":...,"previous":...} を組んで emit する。state を新状態へ
+         * 遷移させた直後、PlayAck 返却の前に呼ぶ。params は OkLiteral と同様 JsonValue::parse
+         * で作る（リテラルなので妥当）。
+         *
+         * @param host イベント発火先の host（借用、nullptr なら何もしない）
+         * @param previous 遷移前の状態
+         * @param next 遷移後の状態
+         * @note previous == next のとき、または host が nullptr のときは何もしない。
+         */
+        void EmitRuntimeStateChanged(Game::Bridge::BridgeServerHost* host,
                                      Game::Bridge::BridgeRuntimeState previous,
                                      Game::Bridge::BridgeRuntimeState next)
         {
@@ -125,7 +158,7 @@ namespace Game::Bridge
     } // namespace
 
     AdapterResult
-    NorvesLibBridgeAdapter::hello(const JsonValue & /*params*/,
+    NorvesLibBridgeAdapter::hello(const JsonValue& /*params*/,
                                   std::string_view selectedProtocolVersion)
     {
         // 一意な sessionId を採番する（プロセス id + 単調カウンタ）。
@@ -146,7 +179,7 @@ namespace Game::Bridge
     }
 
     AdapterResult
-    NorvesLibBridgeAdapter::getCapabilities(const JsonValue & /*params*/)
+    NorvesLibBridgeAdapter::getCapabilities(const JsonValue& /*params*/)
     {
         // runtime.control / log.stream / viewport.focus を広告する
         // （mock_adapter と同形だが NorvesLib 用）。スキーマ準拠の result.capabilities。
@@ -158,7 +191,7 @@ namespace Game::Bridge
     }
 
     AdapterResult
-    NorvesLibBridgeAdapter::getStatus(const JsonValue & /*params*/)
+    NorvesLibBridgeAdapter::getStatus(const JsonValue& /*params*/)
     {
         // 実エンジン状態を DTO スナップショットへ変換して返す。GEngine が走行中
         // （かつ終了要求なし）なら Running、そうでなければ Initializing として扱う。
@@ -177,7 +210,7 @@ namespace Game::Bridge
     }
 
     AdapterResult
-    NorvesLibBridgeAdapter::launchInfo(const JsonValue & /*params*/)
+    NorvesLibBridgeAdapter::launchInfo(const JsonValue& /*params*/)
     {
         // スキーマ準拠 {pid, title}。{launched:true} は返さない（mock の非準拠点）。
         std::string payload = R"({"pid":)";
@@ -187,7 +220,7 @@ namespace Game::Bridge
     }
 
     AdapterResult
-    NorvesLibBridgeAdapter::runtimePlay(const JsonValue & /*params*/)
+    NorvesLibBridgeAdapter::runtimePlay(const JsonValue& /*params*/)
     {
         // runtime 状態を Playing へ遷移させる（Tick ゲートが進行を再開する）。
         // previous は Set の前に読む。
@@ -214,7 +247,7 @@ namespace Game::Bridge
     }
 
     AdapterResult
-    NorvesLibBridgeAdapter::runtimePause(const JsonValue & /*params*/)
+    NorvesLibBridgeAdapter::runtimePause(const JsonValue& /*params*/)
     {
         // runtime 状態を Paused へ遷移させる（Tick ゲートが進行を止める）。
         // previous は Set の前に読む。
@@ -238,7 +271,7 @@ namespace Game::Bridge
     }
 
     AdapterResult
-    NorvesLibBridgeAdapter::runtimeStop(const JsonValue & /*params*/)
+    NorvesLibBridgeAdapter::runtimeStop(const JsonValue& /*params*/)
     {
         // runtime 状態を Stopped へ遷移させる（Tick ゲートが進行を止める）。
         // previous は Set の前に読む。
@@ -262,15 +295,15 @@ namespace Game::Bridge
     }
 
     AdapterResult
-    NorvesLibBridgeAdapter::runtimeFocusViewport(const JsonValue & /*params*/)
+    NorvesLibBridgeAdapter::runtimeFocusViewport(const JsonValue& /*params*/)
     {
         // best-effort でエンジンのメインウィンドウを前面化する。Win32 ハンドルが
         // 有効に取得できたときだけ操作し、それ以外は {focused:false} を返す。
         bool bFocused = false;
-        auto *engine = NorvesLib::Core::Engine::GEngine;
+        auto* engine = NorvesLib::Core::Engine::GEngine;
         if (engine != nullptr)
         {
-            auto *window = engine->GetMainWindow();
+            auto* window = engine->GetMainWindow();
             if (window != nullptr)
             {
                 const NorvesLib::Core::Platform::NativeWindowHandle handle = window->GetNativeHandle();
@@ -289,7 +322,7 @@ namespace Game::Bridge
     }
 
     AdapterResult
-    NorvesLibBridgeAdapter::logSubscribe(const JsonValue & /*params*/)
+    NorvesLibBridgeAdapter::logSubscribe(const JsonValue& /*params*/)
     {
         // Logger -> Bridge のログ転送を開始する（host が中継 sink を Logger へ登録）。
         // 単一購読前提（複数同時購読は非対応）。filter.minLevel は honor しない：
@@ -310,7 +343,7 @@ namespace Game::Bridge
     }
 
     AdapterResult
-    NorvesLibBridgeAdapter::logUnsubscribe(const JsonValue & /*params*/)
+    NorvesLibBridgeAdapter::logUnsubscribe(const JsonValue& /*params*/)
     {
         // ログ転送を停止する（冪等）。subscriptionId 照合はしない（単一購読前提）。
         if (m_Host != nullptr)
