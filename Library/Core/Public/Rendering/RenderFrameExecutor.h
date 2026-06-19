@@ -55,7 +55,8 @@ namespace NorvesLib::Core::Rendering
         static bool RenderViewForCurrentViewport(const RenderFrameExecutionRequest &request, View *view);
         static void ConfigurePresentationGraphPass(const RenderFrameExecutionRequest &request, bool bClearPresentation);
         static bool WasPresentationHandledByGraph(const RenderFrameExecutionRequest &request);
-        static bool ComposePresentation(const RenderFrameExecutionRequest &request, bool bClearPresentation);
+        static bool ComposeLegacyPresentationFallback(const RenderFrameExecutionRequest &request,
+                                                      bool bClearPresentation);
     };
 
 } // namespace NorvesLib::Core::Rendering

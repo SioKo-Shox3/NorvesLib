@@ -34,6 +34,9 @@ namespace NorvesLib::Core::Rendering
         RHI::AttachmentLoadOp LoadOp = RHI::AttachmentLoadOp::Clear;
     };
 
+    /**
+     * Primary RenderGraph path for presenting a rendered view to the swapchain.
+     */
     class PresentationPass final : public IRenderGraphPass
     {
     public:
@@ -50,6 +53,9 @@ namespace NorvesLib::Core::Rendering
             return m_Result.bPresented;
         }
 
+        /**
+         * True when graph presentation handled the frame and legacy fallback is unnecessary.
+         */
         bool WasHandled() const
         {
             return WasPresented();

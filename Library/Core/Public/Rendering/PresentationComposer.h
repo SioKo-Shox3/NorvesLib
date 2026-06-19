@@ -29,6 +29,14 @@ namespace NorvesLib::Core::Rendering
         bool bClearPresentation = true;
     };
 
+    /**
+     * Legacy presentation fallback helper.
+     *
+     * The normal swapchain presentation path is PresentationPass inside
+     * RenderGraph. This helper is kept for cases where the graph presentation
+     * pass cannot handle the current frame and the older compositor path must
+     * present a fallback texture safely.
+     */
     class PresentationComposer
     {
     public:
