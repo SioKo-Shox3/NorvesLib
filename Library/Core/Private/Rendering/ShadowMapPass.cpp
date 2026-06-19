@@ -324,8 +324,8 @@ namespace NorvesLib::Core::Rendering
         MatrixUtils::TransposeToShaderData(lightViewMat, lightViewData);
         MatrixUtils::TransposeToShaderData(lightProjMat, lightProjData);
 
-        // シャドウマップテクスチャをSharedResourceRegistryに登録
-        if (context.SharedResources)
+        // SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ公開する。
+        if (m_bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("ShadowMap", m_ShadowMapTexture);
         }

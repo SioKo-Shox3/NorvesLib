@@ -3720,7 +3720,123 @@ namespace
         shaderManager.Shutdown();
     }
 
-    void TestForwardTransparentNativeExecuteKeepsBridgeWhenDrawInputsMissing()
+    void TestProductionDeferredNativeExecuteSkipsLegacyBridge()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        SceneView sceneView;
+        ShadowMapPass shadowMapPass;
+        shadowMapPass.SetSceneView(&sceneView);
+        shadowMapPass.SetSceneRenderer(&renderer);
+        shadowMapPass.SetRegisterLegacyBridge(false);
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneView(&sceneView);
+        gbufferPass.SetSceneRenderer(&renderer);
+        gbufferPass.SetRegisterLegacyBridge(false);
+
+        SSAOPass ssaoPass;
+
+        LightingPass lightingPass;
+        lightingPass.SetSceneView(&sceneView);
+        lightingPass.SetRegisterLegacyBridge(false);
+
+        ForwardPass forwardPass(&sceneView, &renderer);
+        forwardPass.SetTransparentOnly(true);
+        forwardPass.SetRegisterOutputs(false);
+
+        SSRPass ssrPass;
+        BloomPass bloomPass;
+        ToneMappingPass toneMappingPass;
+        FXAAPass fxaaPass;
+        UpscalePass upscalePass;
+
+        graph.AddPass(&shadowMapPass);
+        graph.AddPass(&gbufferPass);
+        graph.AddPass(&ssaoPass);
+        graph.AddPass(&lightingPass);
+        graph.AddPass(&forwardPass);
+        graph.AddPass(&ssrPass);
+        graph.AddPass(&bloomPass);
+        graph.AddPass(&toneMappingPass);
+        graph.AddPass(&fxaaPass);
+        graph.AddPass(&upscalePass);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<DrawCommand> transparentCommands;
+        transparentCommands.push_back(DrawCommand{});
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotTransparentCommands = DrawCommandView::FromArray(transparentCommands);
+        context.Resources.Textures = &renderResources.Textures();
+        context.Resources.Materials = &renderResources.Materials();
+        context.Resources.Meshes = &renderResources.Meshes();
+
+        assert(graph.Compile(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+
+        assert(graph.GetLastExecutedPassCount() == 10);
+        assert(pendingFrameCommands.empty());
+        assert(!sharedResources.HasTexture("ShadowMap"));
+        assert(!sharedResources.HasTexture("GBuffer_Albedo"));
+        assert(!sharedResources.HasTexture("GBuffer_Normal"));
+        assert(!sharedResources.HasTexture("GBuffer_Material"));
+        assert(!sharedResources.HasTexture("GBuffer_Emissive"));
+        assert(!sharedResources.HasTexture("GBuffer_Depth"));
+        assert(!sharedResources.HasTexture("SceneColor"));
+        assert(!sharedResources.HasTexture("SceneDepth"));
+
+        upscalePass.Shutdown();
+        fxaaPass.Shutdown();
+        toneMappingPass.Shutdown();
+        bloomPass.Shutdown();
+        ssrPass.Shutdown();
+        forwardPass.Shutdown();
+        lightingPass.Shutdown();
+        ssaoPass.Shutdown();
+        gbufferPass.Shutdown();
+        shadowMapPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestForwardTransparentNativeExecuteSkipsBridgeWhenRegisterOutputsDisabled()
     {
         auto device = RHI::MakeShared<FakeDevice>();
 
@@ -3745,16 +3861,13 @@ namespace
         SceneView sceneView;
         GBufferPass gbufferPass;
         gbufferPass.SetSceneRenderer(&renderer);
+        gbufferPass.SetRegisterLegacyBridge(false);
         SSAOPass ssaoPass;
-        ssaoPass.SetGBufferPass(&gbufferPass);
         LightingPass lightingPass;
-        lightingPass.SetGBufferPass(&gbufferPass);
-        lightingPass.SetSSAOPass(&ssaoPass);
+        lightingPass.SetRegisterLegacyBridge(false);
         ForwardPass forwardPass(&sceneView, &renderer);
         forwardPass.SetTransparentOnly(true);
         forwardPass.SetRegisterOutputs(false);
-        forwardPass.SetLightingPass(&lightingPass);
-        forwardPass.SetGBufferPass(&gbufferPass);
 
         graph.AddPass(&gbufferPass);
         graph.AddPass(&ssaoPass);
@@ -3793,11 +3906,9 @@ namespace
         assert(commandList.EndRenderPassCount == 5);
         assert(commandList.DrawCallCount == 3);
         assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("SceneColor"));
-        assert(sharedResources.HasTexture("GBuffer_Depth"));
-        assert(sharedResources.HasTexture("SceneDepth"));
-        assert(sharedResources.GetTexturePtr("SceneColor") != nullptr);
-        assert(sharedResources.GetTexturePtr("SceneDepth") != nullptr);
+        assert(!sharedResources.HasTexture("SceneColor"));
+        assert(!sharedResources.HasTexture("GBuffer_Depth"));
+        assert(!sharedResources.HasTexture("SceneDepth"));
 
         forwardPass.Shutdown();
         lightingPass.Shutdown();
@@ -3887,11 +3998,10 @@ namespace
         assert(commandList.EndRenderPassCount == 6);
         assert(commandList.DrawCallCount == 4);
         assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("SceneColor"));
+        assert(!sharedResources.HasTexture("SceneColor"));
         RenderGraphResources graphResources(&graph);
         RHI::TexturePtr ssrOutput = graphResources.GetTexture(ssrPass.GetSceneColorHandle());
         assert(ssrOutput);
-        assert(sharedResources.GetTexturePtr("SceneColor").get() != ssrOutput.get());
 
         ssrPass.Shutdown();
         forwardPass.Shutdown();
@@ -3988,8 +4098,7 @@ namespace
         assert(commandList.BeginRenderPassCount > 0);
         assert(commandList.DrawCallCount > 0);
         assert(pendingFrameCommands.empty());
-        assert(sharedResources.HasTexture("SceneColor"));
-        assert(sharedResources.GetTexturePtr("SceneColor").get() != bloomOutput.get());
+        assert(!sharedResources.HasTexture("SceneColor"));
 
         bloomPass.Shutdown();
         ssrPass.Shutdown();
@@ -4546,16 +4655,13 @@ namespace
         SceneView sceneView;
         GBufferPass gbufferPass;
         gbufferPass.SetSceneRenderer(&renderer);
+        gbufferPass.SetRegisterLegacyBridge(false);
         SSAOPass ssaoPass;
-        ssaoPass.SetGBufferPass(&gbufferPass);
         LightingPass lightingPass;
-        lightingPass.SetGBufferPass(&gbufferPass);
-        lightingPass.SetSSAOPass(&ssaoPass);
+        lightingPass.SetRegisterLegacyBridge(false);
         ForwardPass forwardPass(&sceneView, &renderer);
         forwardPass.SetTransparentOnly(true);
         forwardPass.SetRegisterOutputs(false);
-        forwardPass.SetLightingPass(&lightingPass);
-        forwardPass.SetGBufferPass(&gbufferPass);
         SSRPass ssrPass;
         ssrPass.SetGBufferPass(&gbufferPass);
         ssrPass.SetLightingPass(&lightingPass);
@@ -5154,10 +5260,11 @@ int main()
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
     TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestGBufferSSAOLightingNativeExecuteWithoutSharedResources();
+    TestProductionDeferredNativeExecuteSkipsLegacyBridge();
     TestLightingNativeExecuteClearsWhenInputsMissingWithoutBridge();
     TestLightingNativeExecutePrefersNamedShadowMapOverRegistry();
     TestLightingNativeExecuteDoesNotPublishBridgeWhenFallbackInputsMissing();
-    TestForwardTransparentNativeExecuteKeepsBridgeWhenDrawInputsMissing();
+    TestForwardTransparentNativeExecuteSkipsBridgeWhenRegisterOutputsDisabled();
     TestSSRNativeExecuteUsesGraphSceneColorWithoutBridge();
     TestBloomNativeExecuteUsesGraphSceneColorWithoutBridge();
     TestToneMappingNativeExecuteExportsToneMappedColorWithoutBridge();
