@@ -4,6 +4,7 @@
 #include "Container/PointerTypes.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/PresentationComposer.h"
+#include "Rendering/PresentationPass.h"
 #include <cstdint>
 
 namespace NorvesLib::RHI
@@ -30,6 +31,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<FrameCommand> *PendingFrameCommands = nullptr;
         PresentationComposer *Presentation = nullptr;
         PresentationComposeRequest PresentationRequest;
+        PresentationPass *PresentationGraphPass = nullptr;
+        PresentationPassRequest GraphPresentationRequest;
     };
 
     struct RenderFrameExecutionResult
@@ -50,6 +53,8 @@ namespace NorvesLib::Core::Rendering
     private:
         static void FlushPendingFrameCommands(const RenderFrameExecutionRequest &request);
         static bool RenderViewForCurrentViewport(const RenderFrameExecutionRequest &request, View *view);
+        static void ConfigurePresentationGraphPass(const RenderFrameExecutionRequest &request, bool bClearPresentation);
+        static bool WasPresentationHandledByGraph(const RenderFrameExecutionRequest &request);
         static bool ComposePresentation(const RenderFrameExecutionRequest &request, bool bClearPresentation);
     };
 

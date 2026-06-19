@@ -27,6 +27,7 @@ namespace NorvesLib::Core::Rendering
     class SharedResourceRegistry;
     class ShaderManager;
     class MegaGeometryPass;
+    class PresentationPass;
     class RenderGraph;
     struct RenderGraphExecutionResult;
 
@@ -130,8 +131,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief 有効な場合、ViewはRenderGraph経由でパスチェーンを実行する */
         RenderGraph* Graph = nullptr;
 
+        /** @brief フレーム中だけ借用するGraph最終合成パス */
+        PresentationPass* PresentationGraphPass = nullptr;
+
         /** @brief 現在のView/Viewportで成功したRenderGraph実行結果 */
         const RenderGraphExecutionResult* CurrentGraphExecutionResult = nullptr;
+
+        /** @brief 現在のViewportでPresentationGraphPassがswapchain合成を担当したか */
+        bool bPresentationGraphPassHandled = false;
 
         const CameraProxy *GetActiveCamera() const
         {

@@ -1,6 +1,7 @@
 ﻿#include "Rendering/View.h"
 #include "Rendering/Viewport.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/PresentationPass.h"
 #include "Rendering/PostProcessStack.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/LegacyViewPassAdapter.h"
@@ -275,6 +276,11 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
             }
+        }
+
+        if (context.PresentationGraphPass)
+        {
+            context.Graph->AddPass(context.PresentationGraphPass);
         }
 
         if (context.Graph->GetPassCount() == 0)
