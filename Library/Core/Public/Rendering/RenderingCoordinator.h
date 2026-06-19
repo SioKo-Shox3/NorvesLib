@@ -56,6 +56,7 @@ namespace NorvesLib::Core::Rendering
         bool bEnableMultiThreadedRendering = true;
         uint32_t MaxDrawCallsPerFrame = 10000;
         bool bEnableValidation = false;
+        RGDumpOptions RenderGraphDumpOptions;
     };
 
     /**

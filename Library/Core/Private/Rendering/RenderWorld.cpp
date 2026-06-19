@@ -71,6 +71,7 @@ namespace NorvesLib::Core::Rendering
         coordSettings.bEnableMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
         coordSettings.MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
         coordSettings.bEnableValidation = settings.bEnableValidation;
+        coordSettings.RenderGraphDumpOptions = settings.RenderGraphDumpOptions;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {

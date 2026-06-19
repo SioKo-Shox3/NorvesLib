@@ -7,6 +7,7 @@
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <cstring>
 
@@ -195,79 +196,83 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<LegacyViewPassAdapter> adapters;
         adapters.reserve(m_Passes.size() + (m_PostProcessStack ? m_PostProcessStack->GetPassCount() : 0u));
 
-        for (auto &pass : m_Passes)
         {
-            if (!pass || !pass->IsEnabled())
-            {
-                continue;
-            }
+            NORVES_STAT_SCOPE_CATEGORY("RenderGraph.Build", "RenderGraph");
 
-            IRenderGraphPass* graphPass = dynamic_cast<IRenderGraphPass*>(pass.get());
-            if (graphPass)
+            for (auto &pass : m_Passes)
             {
-                if (!pass->IsInitialized())
+                if (!pass || !pass->IsEnabled())
                 {
-                    if (!pass->Initialize(context))
+                    continue;
+                }
+
+                IRenderGraphPass* graphPass = dynamic_cast<IRenderGraphPass*>(pass.get());
+                if (graphPass)
+                {
+                    if (!pass->IsInitialized())
                     {
-                        NORVES_LOG_ERROR("View",
-                                         "Failed to initialize native RenderGraph pass: %s",
-                                         pass->GetName());
-                        return;
+                        if (!pass->Initialize(context))
+                        {
+                            NORVES_LOG_ERROR("View",
+                                             "Failed to initialize native RenderGraph pass: %s",
+                                             pass->GetName());
+                            return;
+                        }
                     }
+
+                    context.Graph->AddPass(graphPass);
+                    continue;
                 }
 
-                context.Graph->AddPass(graphPass);
-                continue;
-            }
-
-            adapters.emplace_back(pass.get());
-            context.Graph->AddPass(&adapters.back());
-        }
-
-        if (m_PostProcessStack && m_PostProcessStack->GetPassCount() > 0)
-        {
-            bool bHasNativePostProcessPass = false;
-            for (const auto &postPass : m_PostProcessStack->GetPasses())
-            {
-                if (postPass && postPass->IsEnabled() && dynamic_cast<IRenderGraphPass*>(postPass.get()))
-                {
-                    bHasNativePostProcessPass = true;
-                    break;
-                }
-            }
-
-            if (!bHasNativePostProcessPass)
-            {
-                adapters.emplace_back(m_PostProcessStack.get());
+                adapters.emplace_back(pass.get());
                 context.Graph->AddPass(&adapters.back());
             }
-            else
+
+            if (m_PostProcessStack && m_PostProcessStack->GetPassCount() > 0)
             {
-                if (!m_PostProcessStack->IsInitialized())
+                bool bHasNativePostProcessPass = false;
+                for (const auto &postPass : m_PostProcessStack->GetPasses())
                 {
-                    if (!m_PostProcessStack->Initialize(context))
+                    if (postPass && postPass->IsEnabled() && dynamic_cast<IRenderGraphPass*>(postPass.get()))
                     {
-                        NORVES_LOG_ERROR("View", "Failed to initialize PostProcessStack");
-                        return;
+                        bHasNativePostProcessPass = true;
+                        break;
                     }
                 }
 
-                for (const auto &postPass : m_PostProcessStack->GetPasses())
+                if (!bHasNativePostProcessPass)
                 {
-                    if (!postPass || !postPass->IsEnabled())
-                    {
-                        continue;
-                    }
-
-                    IRenderGraphPass* graphPass = dynamic_cast<IRenderGraphPass*>(postPass.get());
-                    if (graphPass)
-                    {
-                        context.Graph->AddPass(graphPass);
-                        continue;
-                    }
-
-                    adapters.emplace_back(postPass.get());
+                    adapters.emplace_back(m_PostProcessStack.get());
                     context.Graph->AddPass(&adapters.back());
+                }
+                else
+                {
+                    if (!m_PostProcessStack->IsInitialized())
+                    {
+                        if (!m_PostProcessStack->Initialize(context))
+                        {
+                            NORVES_LOG_ERROR("View", "Failed to initialize PostProcessStack");
+                            return;
+                        }
+                    }
+
+                    for (const auto &postPass : m_PostProcessStack->GetPasses())
+                    {
+                        if (!postPass || !postPass->IsEnabled())
+                        {
+                            continue;
+                        }
+
+                        IRenderGraphPass* graphPass = dynamic_cast<IRenderGraphPass*>(postPass.get());
+                        if (graphPass)
+                        {
+                            context.Graph->AddPass(graphPass);
+                            continue;
+                        }
+
+                        adapters.emplace_back(postPass.get());
+                        context.Graph->AddPass(&adapters.back());
+                    }
                 }
             }
         }

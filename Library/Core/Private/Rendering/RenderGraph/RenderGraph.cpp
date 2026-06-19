@@ -5,6 +5,7 @@
 #include "RHI/ICommandList.h"
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
+#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Rendering
@@ -525,6 +526,7 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderGraph::CompileInternal(const ViewRenderContext* context)
     {
+        NORVES_STAT_SCOPE_CATEGORY("RenderGraph.Compile", "RenderGraph");
         ClearCompileData();
         m_PassDeclarations.resize(m_Passes.size());
 
@@ -577,6 +579,9 @@ namespace NorvesLib::Core::Rendering
 
         BuildTransientAllocationPlan();
         BuildBarriers();
+        m_LastCompiledBarrierCount = static_cast<uint32_t>(m_CompiledBarriers.size());
+        NORVES_STAT_ADD(NorvesLib::Debug::StatsManager::Get().GetRenderingStats().RenderGraphBarrierCount,
+                        m_LastCompiledBarrierCount);
         m_bCompiled = true;
         return true;
     }
@@ -588,7 +593,9 @@ namespace NorvesLib::Core::Rendering
 
     RenderGraphExecutionResult RenderGraph::ExecuteWithResult(ViewRenderContext& context)
     {
+        NORVES_STAT_SCOPE_CATEGORY("RenderGraph.Execute", "RenderGraph");
         m_LastExecutedPassCount = 0;
+        m_LastTransientAcquireCount = 0;
         RenderGraphExecutionResult result;
         if (!m_bCompiled)
         {
@@ -638,7 +645,20 @@ namespace NorvesLib::Core::Rendering
             }
 
             FlushPendingFrameCommands(context);
+#if NORVES_ENABLE_RENDERGRAPH_DUMP
+            const bool bDebugMarkers = ShouldEmitDebugMarkers() && context.CommandList != nullptr;
+            if (bDebugMarkers)
+            {
+                context.CommandList->BeginDebugMarker(pass->GetName());
+            }
+#endif
             pass->Execute(resources, context);
+#if NORVES_ENABLE_RENDERGRAPH_DUMP
+            if (bDebugMarkers)
+            {
+                context.CommandList->EndDebugMarker();
+            }
+#endif
             ++m_LastExecutedPassCount;
             FlushPendingFrameCommands(context);
         }
@@ -665,7 +685,17 @@ namespace NorvesLib::Core::Rendering
         result.bSuccess = true;
         result.ExecutedPassCount = m_LastExecutedPassCount;
         m_LastExecutionResult = result;
+        if (ShouldWriteDebugDump())
+        {
+            WriteDebugDumpFiles();
+        }
         return result;
+    }
+
+    void RenderGraph::SetDebugDumpOptions(const RGDumpOptions& options)
+    {
+        m_DebugDumpOptions = options;
+        m_DebugDumpFrameCount = 0;
     }
 
     RGResourceHandle RenderGraph::CreateTextureResource(const RGTextureDesc& desc)
@@ -853,6 +883,9 @@ namespace NorvesLib::Core::Rendering
 
         RGTextureHandle handle(resource->CurrentHead);
         AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state, name);
+        RGPassAccess& access = m_PassDeclarations[passIndex].Accesses.back();
+        access.bNamedResourceVersionBeforeValid = true;
+        access.NamedResourceVersionBefore = resource->Version;
         return handle;
     }
 
@@ -892,6 +925,9 @@ namespace NorvesLib::Core::Rendering
 
         outHandle = handle;
         AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state, name);
+        RGPassAccess& access = m_PassDeclarations[passIndex].Accesses.back();
+        access.bNamedResourceVersionBeforeValid = true;
+        access.NamedResourceVersionBefore = existing->second.Version;
         return true;
     }
 
@@ -953,9 +989,12 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        const uint32_t versionBefore = existing->second.Version;
+        uint32_t versionAfter = versionBefore;
         if (mutability == RGAttachmentMutability::Write)
         {
             ++existing->second.Version;
+            versionAfter = existing->second.Version;
         }
         outHandle = handle;
         AddAttachmentAccess(passIndex,
@@ -967,6 +1006,15 @@ namespace NorvesLib::Core::Rendering
                             state,
                             finalState,
                             name);
+        RGPassAccess& access = m_PassDeclarations[passIndex].Accesses.back();
+        access.bNamedResourceVersionBeforeValid = true;
+        access.NamedResourceVersionBefore = versionBefore;
+        if (mutability == RGAttachmentMutability::Write)
+        {
+            access.bNamedResourceVersionAfterValid = true;
+            access.NamedResourceVersionAfter = versionAfter;
+            access.bMutatesCurrentHead = true;
+        }
         return true;
     }
 
@@ -984,7 +1032,17 @@ namespace NorvesLib::Core::Rendering
         }
 
         RGBufferHandle handle(resource->CurrentHead);
+        const uint32_t accessCountBefore = passIndex < m_PassDeclarations.size()
+                                               ? static_cast<uint32_t>(m_PassDeclarations[passIndex].Accesses.size())
+                                               : 0u;
         AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Read, state, state, name, offset, size);
+        if (passIndex < m_PassDeclarations.size() &&
+            m_PassDeclarations[passIndex].Accesses.size() > accessCountBefore)
+        {
+            RGPassAccess& access = m_PassDeclarations[passIndex].Accesses.back();
+            access.bNamedResourceVersionBeforeValid = true;
+            access.NamedResourceVersionBefore = resource->Version;
+        }
         return handle;
     }
 
@@ -1003,6 +1061,8 @@ namespace NorvesLib::Core::Rendering
 
         auto existing = m_NamedResources.find(name);
         uint32_t version = 0;
+        bool bVersionBeforeValid = false;
+        uint32_t versionBefore = 0;
         if (existing != m_NamedResources.end())
         {
             if (existing->second.Kind != RGResourceKind::Texture)
@@ -1011,7 +1071,9 @@ namespace NorvesLib::Core::Rendering
                 MarkGraphError();
                 return RGTextureHandle{};
             }
-            version = existing->second.Version + 1;
+            bVersionBeforeValid = true;
+            versionBefore = existing->second.Version;
+            version = versionBefore + 1;
         }
 
         RGTextureHandle handle = CreateTextureResourceHandle(desc);
@@ -1022,6 +1084,12 @@ namespace NorvesLib::Core::Rendering
         m_NamedResources[name] = resource;
 
         AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Write, state, finalState, name);
+        RGPassAccess& access = m_PassDeclarations[passIndex].Accesses.back();
+        access.bNamedResourceVersionBeforeValid = bVersionBeforeValid;
+        access.NamedResourceVersionBefore = versionBefore;
+        access.bNamedResourceVersionAfterValid = true;
+        access.NamedResourceVersionAfter = version;
+        access.bCreatesNewHead = true;
         return handle;
     }
 
@@ -1043,6 +1111,8 @@ namespace NorvesLib::Core::Rendering
 
         auto existing = m_NamedResources.find(name);
         uint32_t version = 0;
+        bool bVersionBeforeValid = false;
+        uint32_t versionBefore = 0;
         if (existing != m_NamedResources.end())
         {
             if (existing->second.Kind != RGResourceKind::Texture)
@@ -1051,7 +1121,9 @@ namespace NorvesLib::Core::Rendering
                 MarkGraphError();
                 return RGTextureHandle{};
             }
-            version = existing->second.Version + 1;
+            bVersionBeforeValid = true;
+            versionBefore = existing->second.Version;
+            version = versionBefore + 1;
         }
 
         RGTextureHandle handle = CreateTextureResourceHandle(desc);
@@ -1070,6 +1142,12 @@ namespace NorvesLib::Core::Rendering
                             state,
                             finalState,
                             name);
+        RGPassAccess& access = m_PassDeclarations[passIndex].Accesses.back();
+        access.bNamedResourceVersionBeforeValid = bVersionBeforeValid;
+        access.NamedResourceVersionBefore = versionBefore;
+        access.bNamedResourceVersionAfterValid = true;
+        access.NamedResourceVersionAfter = version;
+        access.bCreatesNewHead = true;
         return handle;
     }
 
@@ -1090,6 +1168,8 @@ namespace NorvesLib::Core::Rendering
 
         auto existing = m_NamedResources.find(name);
         uint32_t version = 0;
+        bool bVersionBeforeValid = false;
+        uint32_t versionBefore = 0;
         if (existing != m_NamedResources.end())
         {
             if (existing->second.Kind != RGResourceKind::Buffer)
@@ -1098,7 +1178,9 @@ namespace NorvesLib::Core::Rendering
                 MarkGraphError();
                 return RGBufferHandle{};
             }
-            version = existing->second.Version + 1;
+            bVersionBeforeValid = true;
+            versionBefore = existing->second.Version;
+            version = versionBefore + 1;
         }
 
         RGBufferHandle handle = CreateBufferResourceHandle(desc);
@@ -1108,7 +1190,20 @@ namespace NorvesLib::Core::Rendering
         resource.Version = version;
         m_NamedResources[name] = resource;
 
+        const uint32_t accessCountBefore = passIndex < m_PassDeclarations.size()
+                                               ? static_cast<uint32_t>(m_PassDeclarations[passIndex].Accesses.size())
+                                               : 0u;
         AddAccess(passIndex, handle.ToResourceHandle(), RGAccessMode::Write, state, finalState, name, offset, size);
+        if (passIndex < m_PassDeclarations.size() &&
+            m_PassDeclarations[passIndex].Accesses.size() > accessCountBefore)
+        {
+            RGPassAccess& access = m_PassDeclarations[passIndex].Accesses.back();
+            access.bNamedResourceVersionBeforeValid = bVersionBeforeValid;
+            access.NamedResourceVersionBefore = versionBefore;
+            access.bNamedResourceVersionAfterValid = true;
+            access.NamedResourceVersionAfter = version;
+            access.bCreatesNewHead = true;
+        }
         return handle;
     }
 
@@ -1828,6 +1923,7 @@ namespace NorvesLib::Core::Rendering
     void RenderGraph::BuildBarriers()
     {
         m_CompiledBarriers.clear();
+        m_LastCompiledBarrierCount = 0;
 
         Container::VariableArray<RHI::ResourceState> currentStates;
         currentStates.reserve(m_Resources.size());
@@ -1877,6 +1973,7 @@ namespace NorvesLib::Core::Rendering
                 currentStates[access.Resource.Index] = access.FinalState;
             }
         }
+        m_LastCompiledBarrierCount = static_cast<uint32_t>(m_CompiledBarriers.size());
     }
 
     bool RenderGraph::AcquireTransientResourcesForOrderIndex(uint32_t orderIndex)
@@ -1903,6 +2000,8 @@ namespace NorvesLib::Core::Rendering
                                  step.AcquireBeforePassIndex);
                 return false;
             }
+            ++m_LastTransientAcquireCount;
+            NORVES_STAT_INC(NorvesLib::Debug::StatsManager::Get().GetRenderingStats().RenderGraphTransientAcquireCount);
         }
 
         return true;
@@ -2140,6 +2239,7 @@ namespace NorvesLib::Core::Rendering
         m_TextureExports.clear();
         m_LastExecutionResult = RenderGraphExecutionResult{};
         m_LastExecutedPassCount = 0;
+        m_LastTransientAcquireCount = 0;
         m_bCompiled = false;
         m_bHasGraphError = false;
 
@@ -2156,7 +2256,46 @@ namespace NorvesLib::Core::Rendering
         m_CompiledBarriers.clear();
         m_CompiledResourceLifetimes.clear();
         m_TransientAllocationPlan.clear();
+        m_LastCompiledBarrierCount = 0;
         m_bCompiled = false;
+    }
+
+    bool RenderGraph::ShouldBuildDebugDump() const
+    {
+#if NORVES_ENABLE_RENDERGRAPH_DUMP
+        return m_DebugDumpOptions.bEnabled;
+#else
+        return false;
+#endif
+    }
+
+    bool RenderGraph::ShouldWriteDebugDump() const
+    {
+#if NORVES_ENABLE_RENDERGRAPH_DUMP
+        if (!ShouldBuildDebugDump() ||
+            !m_DebugDumpOptions.bWriteFiles)
+        {
+            return false;
+        }
+
+        if (m_DebugDumpOptions.MaxFrameCount == 0)
+        {
+            return false;
+        }
+
+        return m_DebugDumpFrameCount < m_DebugDumpOptions.MaxFrameCount;
+#else
+        return false;
+#endif
+    }
+
+    bool RenderGraph::ShouldEmitDebugMarkers() const
+    {
+#if NORVES_ENABLE_RENDERGRAPH_DUMP
+        return m_DebugDumpOptions.bEnabled && m_DebugDumpOptions.bDebugMarkers;
+#else
+        return false;
+#endif
     }
 
     bool RenderGraph::HasResourceUsage(RHI::ResourceUsage usage, RHI::ResourceUsage flag) const

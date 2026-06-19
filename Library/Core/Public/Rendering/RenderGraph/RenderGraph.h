@@ -3,6 +3,7 @@
 #include "Container/Containers.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Text/IdentityPool.h"
@@ -76,6 +77,14 @@ namespace NorvesLib::Core::Rendering
         bool Execute(ViewRenderContext& context);
         RenderGraphExecutionResult ExecuteWithResult(ViewRenderContext& context);
 
+        void SetDebugDumpOptions(const RGDumpOptions& options);
+        const RGDumpOptions& GetDebugDumpOptions() const
+        {
+            return m_DebugDumpOptions;
+        }
+        RGDumpStrings BuildDebugDump() const;
+        bool WriteDebugDumpFiles();
+
         const RenderGraphExecutionResult& GetLastExecutionResult() const
         {
             return m_LastExecutionResult;
@@ -107,6 +116,19 @@ namespace NorvesLib::Core::Rendering
         }
 
         bool TryGetCompiledResourceLifetime(RGResourceHandle handle, RGCompiledResourceLifetime& outLifetime) const;
+        bool TryGetDeclaredPassVersionDiagnostic(uint32_t passIndex,
+                                                 uint32_t accessIndex,
+                                                 RGNamedResourceVersionDiagnostic& outDiagnostic) const;
+        RenderGraphDebugStats GetDebugStats() const
+        {
+            RenderGraphDebugStats stats;
+            stats.DeclaredPassCount = static_cast<uint32_t>(m_Passes.size());
+            stats.CompiledPassCount = static_cast<uint32_t>(m_CompiledPassOrder.size());
+            stats.ExecutedPassCount = m_LastExecutedPassCount;
+            stats.TransientAcquireCount = m_LastTransientAcquireCount;
+            stats.BarrierCount = m_LastCompiledBarrierCount;
+            return stats;
+        }
 
         uint32_t GetDeclaredPassAccessCount(uint32_t passIndex) const;
         bool TryGetNamedResourceVersion(Identity name, uint32_t& outVersion) const;
@@ -130,6 +152,16 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetLastExecutedPassCount() const
         {
             return m_LastExecutedPassCount;
+        }
+
+        uint32_t GetLastCompiledBarrierCount() const
+        {
+            return m_LastCompiledBarrierCount;
+        }
+
+        uint32_t GetLastTransientAcquireCount() const
+        {
+            return m_LastTransientAcquireCount;
         }
 
     private:
@@ -165,6 +197,12 @@ namespace NorvesLib::Core::Rendering
             uint64_t BufferOffset = 0;
             uint64_t BufferSize = 0;
             Identity NamedResourceIdentity;
+            bool bNamedResourceVersionBeforeValid = false;
+            uint32_t NamedResourceVersionBefore = 0;
+            bool bNamedResourceVersionAfterValid = false;
+            uint32_t NamedResourceVersionAfter = 0;
+            bool bCreatesNewHead = false;
+            bool bMutatesCurrentHead = false;
         };
 
         struct RGPassDeclaration
@@ -296,6 +334,9 @@ namespace NorvesLib::Core::Rendering
         bool ValidateResourceLifetimes() const;
         void BuildTransientAllocationPlan();
         void BuildBarriers();
+        bool ShouldBuildDebugDump() const;
+        bool ShouldWriteDebugDump() const;
+        bool ShouldEmitDebugMarkers() const;
 
         bool AcquireTransientResourcesForOrderIndex(uint32_t orderIndex);
         bool AcquireTransientResource(RGResourceRecord& resource);
@@ -330,6 +371,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_HandleGeneration = 1;
         uint32_t m_LastExecutedPassCount = 0;
         uint64_t m_FrameIndex = 0;
+        RGDumpOptions m_DebugDumpOptions;
+        uint32_t m_DebugDumpFrameCount = 0;
+        uint32_t m_LastCompiledBarrierCount = 0;
+        uint32_t m_LastTransientAcquireCount = 0;
         bool m_bInitialized = false;
         bool m_bCompiled = false;
         bool m_bHasGraphError = false;

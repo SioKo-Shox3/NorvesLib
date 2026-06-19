@@ -111,6 +111,21 @@ namespace NorvesLib::RHI
         }
 
         /**
+         * @brief GPU debug marker scopeを開始
+         */
+        virtual void BeginDebugMarker(const char* name)
+        {
+            (void)name;
+        }
+
+        /**
+         * @brief GPU debug marker scopeを終了
+         */
+        virtual void EndDebugMarker()
+        {
+        }
+
+        /**
          * @brief コマンドリストの実行
          * コマンドリストをGPUに送信して実行します。
          * @param waitForCompletion 完了を待つかどうか
