@@ -52,6 +52,7 @@ namespace NorvesLib::Core::Rendering
         // デバッグ設定
         bool bEnableValidation = false;
         bool bEnableGPUDebug = false;
+        RGDumpOptions RenderGraphDumpOptions;
     };
 
     // ========================================

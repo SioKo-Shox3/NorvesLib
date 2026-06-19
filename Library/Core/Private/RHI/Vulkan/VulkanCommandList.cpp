@@ -211,6 +211,12 @@ namespace NorvesLib::RHI::Vulkan
         // ディスクリプタプールの作成
         CreateDescriptorPool();
 
+        const VkDevice vkDevice = static_cast<VkDevice>(m_device->GetVkDevice());
+        m_pfnBeginDebugUtilsLabel = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+            vkGetDeviceProcAddr(vkDevice, "vkCmdBeginDebugUtilsLabelEXT"));
+        m_pfnEndDebugUtilsLabel = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+            vkGetDeviceProcAddr(vkDevice, "vkCmdEndDebugUtilsLabelEXT"));
+
 #if NORVES_ENABLE_STATS
         CreateTimestampQueryPool();
 #endif
@@ -376,6 +382,38 @@ namespace NorvesLib::RHI::Vulkan
 #else
         return 0.0f;
 #endif
+    }
+
+    void VulkanCommandList::BeginDebugMarker(const char* name)
+    {
+        if (!m_bIsRecording ||
+            name == nullptr ||
+            name[0] == '\0' ||
+            m_pfnBeginDebugUtilsLabel == nullptr)
+        {
+            return;
+        }
+
+        VkDebugUtilsLabelEXT labelInfo = {};
+        labelInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+        labelInfo.pLabelName = name;
+        labelInfo.color[0] = 0.25f;
+        labelInfo.color[1] = 0.65f;
+        labelInfo.color[2] = 1.0f;
+        labelInfo.color[3] = 1.0f;
+
+        m_pfnBeginDebugUtilsLabel(static_cast<VkCommandBuffer>(m_commandBuffer), &labelInfo);
+    }
+
+    void VulkanCommandList::EndDebugMarker()
+    {
+        if (!m_bIsRecording ||
+            m_pfnEndDebugUtilsLabel == nullptr)
+        {
+            return;
+        }
+
+        m_pfnEndDebugUtilsLabel(static_cast<VkCommandBuffer>(m_commandBuffer));
     }
 
     void VulkanCommandList::Submit(bool bWaitForCompletion)

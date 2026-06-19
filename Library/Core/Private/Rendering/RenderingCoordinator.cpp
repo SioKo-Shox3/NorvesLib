@@ -212,6 +212,7 @@ namespace NorvesLib::Core::Rendering
         m_bVSyncEnabled = settings.bVSync;
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
         m_MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
+        m_RenderGraph.SetDebugDumpOptions(settings.RenderGraphDumpOptions);
 
         // ========================================
         // 1. RHIデバイス（RenderWorldから渡される）
@@ -1078,6 +1079,8 @@ namespace NorvesLib::Core::Rendering
 
         RenderFrameExecutor frameExecutor;
         frameExecutor.Execute(executionRequest);
+        m_Stats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
+        m_Stats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
 
         // コマンド録画終了
 #if NORVES_ENABLE_STATS

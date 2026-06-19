@@ -200,6 +200,16 @@ target_include_directories(RenderGraphAttachmentStateTest PRIVATE
 set_target_properties(RenderGraphAttachmentStateTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderGraphAttachmentStateTest COMMAND RenderGraphAttachmentStateTest)
 
+add_executable(RenderGraphDumpTest
+    RenderGraphDumpTest.cpp
+)
+target_link_libraries(RenderGraphDumpTest PRIVATE Core)
+target_include_directories(RenderGraphDumpTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphDumpTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphDumpTest COMMAND RenderGraphDumpTest)
+
 add_executable(LegacyViewPassAdapterTest
     LegacyViewPassAdapterTest.cpp
 )
