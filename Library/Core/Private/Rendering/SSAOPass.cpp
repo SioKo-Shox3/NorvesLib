@@ -421,6 +421,7 @@ namespace NorvesLib::Core::Rendering
 
     void SSAOPass::Declare(RenderGraphBuilder &builder)
     {
+        m_bLegacyInputFallbackActive = false;
         const ViewRenderContext *context = builder.GetContext();
 
         uint32_t width = 0;
@@ -458,6 +459,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackDepthHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferDepthHandle = fallbackDepthHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -475,6 +477,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackNormalHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferNormalHandle = fallbackNormalHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -518,6 +521,7 @@ namespace NorvesLib::Core::Rendering
 
         RHI::TexturePtr depthTexture;
         RHI::TexturePtr normalTexture;
+        bool bUsedSharedResourceFallback = false;
         if (m_GBufferDepthHandle.IsValid())
         {
             depthTexture = resources.GetTexture(m_GBufferDepthHandle);
@@ -537,8 +541,17 @@ namespace NorvesLib::Core::Rendering
 
         if ((!depthTexture || !normalTexture) && context.SharedResources)
         {
-            depthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
-            normalTexture = context.SharedResources->GetTexturePtr("GBuffer_Normal");
+            if (!depthTexture)
+            {
+                depthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || depthTexture != nullptr;
+            }
+
+            if (!normalTexture)
+            {
+                normalTexture = context.SharedResources->GetTexturePtr("GBuffer_Normal");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || normalTexture != nullptr;
+            }
         }
 
         if (!PrepareSSAOAttachments(rawTexture->GetWidth(),
@@ -550,7 +563,10 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithGBufferTextures(context, depthTexture, normalTexture);
+        ExecuteWithGBufferTextures(context,
+                                   depthTexture,
+                                   normalTexture,
+                                   m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
     void SSAOPass::Execute(ViewRenderContext &context)
@@ -563,7 +579,7 @@ namespace NorvesLib::Core::Rendering
             normalTexture = context.SharedResources->GetTexturePtr("GBuffer_Normal");
         }
 
-        ExecuteWithGBufferTextures(context, depthTexture, normalTexture);
+        ExecuteWithGBufferTextures(context, depthTexture, normalTexture, true);
     }
 
     bool SSAOPass::CreateSSAOResources(uint32_t width, uint32_t height, ViewRenderContext &context)
@@ -929,7 +945,8 @@ namespace NorvesLib::Core::Rendering
 
     void SSAOPass::ExecuteWithGBufferTextures(ViewRenderContext &context,
                                               const RHI::TexturePtr &depthTexture,
-                                              const RHI::TexturePtr &normalTexture)
+                                              const RHI::TexturePtr &normalTexture,
+                                              bool bRegisterLegacyBridge)
     {
         if (!context.CommandList ||
             !m_SSAOPipeline ||
@@ -1012,7 +1029,7 @@ namespace NorvesLib::Core::Rendering
                                       m_BlurPipeline,
                                       m_BlurDescriptorSet);
 
-        if (context.SharedResources)
+        if (bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("SSAO", m_SSAOBlurredTexture);
         }

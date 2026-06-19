@@ -359,11 +359,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, inputTexture);
+        ExecuteWithInput(context, inputTexture, true);
     }
 
     void FXAAPass::Declare(RenderGraphBuilder &builder)
     {
+        m_bLegacyInputFallbackActive = false;
         const ViewRenderContext *context = builder.GetContext();
         const uint32_t width = context ? context->GetActiveRenderWidth() : 1u;
         const uint32_t height = context ? context->GetActiveRenderHeight() : 1u;
@@ -384,6 +385,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(toneMappedHandle, RHI::ResourceState::ShaderResource);
                 m_InputToneMappedHandle = toneMappedHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -436,9 +438,11 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        bool bUsedSharedResourceFallback = false;
         if (!inputTexture && context.SharedResources)
         {
             inputTexture = context.SharedResources->GetTexturePtr("ToneMappedColor");
+            bUsedSharedResourceFallback = inputTexture != nullptr;
         }
 
         if (!inputTexture)
@@ -447,10 +451,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, inputTexture);
+        ExecuteWithInput(context,
+                         inputTexture,
+                         m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
-    void FXAAPass::ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& inputTexture)
+    void FXAAPass::ExecuteWithInput(ViewRenderContext &context,
+                                    const RHI::TexturePtr& inputTexture,
+                                    bool bRegisterLegacyBridge)
     {
         if (!m_RenderPass || !m_Framebuffer || !m_Pipeline || !m_DescriptorSet)
         {
@@ -471,7 +479,7 @@ namespace NorvesLib::Core::Rendering
         m_ParamsBuffer->Update(&params, sizeof(GPUFXAAParams));
 
         // FXAA結果をSharedResourceRegistryに登録（ToneMappedColorを上書き）
-        if (context.SharedResources)
+        if (bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("ToneMappedColor", m_OutputTexture);
         }

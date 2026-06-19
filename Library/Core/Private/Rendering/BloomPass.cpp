@@ -363,11 +363,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, sceneColorPtr);
+        ExecuteWithInput(context, sceneColorPtr, true);
     }
 
     void BloomPass::Declare(RenderGraphBuilder &builder)
     {
+        m_bLegacyInputFallbackActive = false;
         const ViewRenderContext *context = builder.GetContext();
         const uint32_t width = context ? context->GetActiveRenderWidth() : 1u;
         const uint32_t height = context ? context->GetActiveRenderHeight() : 1u;
@@ -394,6 +395,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackSceneColorHandle, RHI::ResourceState::ShaderResource);
                 m_InputSceneColorHandle = fallbackSceneColorHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -443,9 +445,11 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        bool bUsedSharedResourceFallback = false;
         if (!sceneColorPtr && context.SharedResources)
         {
             sceneColorPtr = context.SharedResources->GetTexturePtr("SceneColor");
+            bUsedSharedResourceFallback = sceneColorPtr != nullptr;
         }
 
         if (!sceneColorPtr)
@@ -454,10 +458,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, sceneColorPtr);
+        ExecuteWithInput(context,
+                         sceneColorPtr,
+                         m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
-    void BloomPass::ExecuteWithInput(ViewRenderContext &context, const RHI::TexturePtr& sceneColorPtr)
+    void BloomPass::ExecuteWithInput(ViewRenderContext &context,
+                                     const RHI::TexturePtr& sceneColorPtr,
+                                     bool bRegisterLegacyBridge)
     {
         if (!m_BloomRenderPass || !m_BloomFramebuffer || !m_BloomPipeline || !m_BloomDescriptorSet)
         {
@@ -490,7 +498,7 @@ namespace NorvesLib::Core::Rendering
 
         // ブルーム適用済みSceneColorとしてSharedResourceRegistryに上書き登録
         // → 後段のToneMappingPassが "SceneColor" として読み取る
-        if (context.SharedResources)
+        if (bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("SceneColor", m_OutputTexture);
         }

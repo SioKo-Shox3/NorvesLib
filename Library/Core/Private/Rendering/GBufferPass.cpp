@@ -383,7 +383,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // GBufferテクスチャをSharedResourceRegistryに登録
+        // Phase8: MegaGeometry がまだ named attachment へ未移行のため、
+        // GBuffer の native 実行でも bridge 公開は限定的に維持する。
         if (context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("GBuffer_Albedo", m_AlbedoTexture);

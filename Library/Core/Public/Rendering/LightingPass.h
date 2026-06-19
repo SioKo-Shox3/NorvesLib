@@ -43,14 +43,17 @@ namespace NorvesLib::Core::Rendering
      * GBufferを入力としてフルスクリーン描画でPBRライティングを計算し、
      * HDRカラーバッファに出力するパス。
      *
-     * 入力（SharedResourceRegistryから取得）:
+     * 標準経路では RenderGraph named resource から入力を読み取り、graph output に出力します。
+     * SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ使用します。
+     *
+     * 入力:
      * - "GBuffer_Albedo"   : アルベド
      * - "GBuffer_Normal"   : ワールド法線
      * - "GBuffer_Material" : メタリック/ラフネス/AO
      * - "GBuffer_Emissive" : エミッシブ（HDR自発光）
      * - "GBuffer_Depth"    : 深度
      *
-     * 出力（SharedResourceRegistryに登録）:
+     * 出力:
      * - "SceneColor"       : HDRライティング結果 (R16G16B16A16_FLOAT)
      * - "SceneDepth"       : 深度のコピー（GBuffer_Depthのエイリアス）
      *
@@ -74,7 +77,19 @@ namespace NorvesLib::Core::Rendering
          * @param sceneView SceneView参照（LightProxy取得用）
          */
         void SetSceneView(SceneView* sceneView) { m_SceneView = sceneView; }
+
+        /**
+         * @brief Legacy bridge fallback 用のGBuffer参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetGBufferPass(const GBufferPass* gbufferPass) { m_GBufferPass = gbufferPass; }
+
+        /**
+         * @brief Legacy bridge fallback 用のSSAO参照を設定
+         *
+         * RenderGraph named resource が主経路です。未移行 bridge / fallback でのみ使用します。
+         */
         void SetSSAOPass(const SSAOPass* ssaoPass) { m_SSAOPass = ssaoPass; }
 
         /**
@@ -167,7 +182,9 @@ namespace NorvesLib::Core::Rendering
                                const RHI::TexturePtr& materialTexture,
                                const RHI::TexturePtr& depthTexture,
                                const RHI::TexturePtr& emissiveTexture,
-                               const RHI::TexturePtr& ssaoTexture);
+                               const RHI::TexturePtr& ssaoTexture,
+                               const RHI::TexturePtr& shadowMapTexture,
+                               bool bRegisterLegacyOutputs);
         void RegisterOutputs(ViewRenderContext& context,
                              const RHI::TexturePtr& sceneColorTexture,
                              const RHI::TexturePtr& depthTexture) const;
@@ -233,6 +250,7 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        bool m_bLegacyInputFallbackActive = false;
         bool m_bUsingRenderGraphResources = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
         RHI::ITexture* m_FramebufferSceneColorTexture = nullptr;

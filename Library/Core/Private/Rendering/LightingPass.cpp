@@ -400,6 +400,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferDepthHandle = {};
         m_GBufferEmissiveHandle = {};
         m_SSAOBlurredHandle = {};
+        m_bLegacyInputFallbackActive = false;
         m_bUsingRenderGraphResources = false;
         m_bRenderPassUsesRenderGraphInitialState = false;
         m_FramebufferSceneColorTexture = nullptr;
@@ -459,6 +460,8 @@ namespace NorvesLib::Core::Rendering
 
     void LightingPass::Declare(RenderGraphBuilder &builder)
     {
+        m_bLegacyInputFallbackActive = false;
+
         const ViewRenderContext *context = builder.GetContext();
 
         uint32_t width = 0;
@@ -500,6 +503,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackAlbedoHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferAlbedoHandle = fallbackAlbedoHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -517,6 +521,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackNormalHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferNormalHandle = fallbackNormalHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -534,6 +539,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackMaterialHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferMaterialHandle = fallbackMaterialHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -552,6 +558,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackDepthHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferDepthHandle = fallbackDepthHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -569,6 +576,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackEmissiveHandle, RHI::ResourceState::ShaderResource);
                 m_GBufferEmissiveHandle = fallbackEmissiveHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -586,6 +594,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackSSAOHandle, RHI::ResourceState::ShaderResource);
                 m_SSAOBlurredHandle = fallbackSSAOHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -624,6 +633,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr materialTexture;
         RHI::TexturePtr depthTexture;
         RHI::TexturePtr emissiveTexture;
+        bool bUsedSharedResourceFallback = false;
         if (m_GBufferAlbedoHandle.IsValid())
         {
             albedoTexture = resources.GetTexture(m_GBufferAlbedoHandle);
@@ -671,27 +681,40 @@ namespace NorvesLib::Core::Rendering
             if (!albedoTexture)
             {
                 albedoTexture = context.SharedResources->GetTexturePtr("GBuffer_Albedo");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || albedoTexture != nullptr;
             }
             if (!normalTexture)
             {
                 normalTexture = context.SharedResources->GetTexturePtr("GBuffer_Normal");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || normalTexture != nullptr;
             }
             if (!materialTexture)
             {
                 materialTexture = context.SharedResources->GetTexturePtr("GBuffer_Material");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || materialTexture != nullptr;
             }
             if (!depthTexture)
             {
                 depthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || depthTexture != nullptr;
             }
             if (!emissiveTexture)
             {
                 emissiveTexture = context.SharedResources->GetTexturePtr("GBuffer_Emissive");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || emissiveTexture != nullptr;
             }
             if (!ssaoTexture)
             {
                 ssaoTexture = context.SharedResources->GetTexturePtr("SSAO");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || ssaoTexture != nullptr;
             }
+        }
+
+        RHI::TexturePtr shadowMapTexture;
+        if (context.SharedResources)
+        {
+            // Phase8 では ShadowMap だけ registry fallback を維持する。
+            shadowMapTexture = context.SharedResources->GetTexturePtr("ShadowMap");
         }
 
         if (!PrepareLightingOutput(sceneColorTexture->GetWidth(),
@@ -710,7 +733,9 @@ namespace NorvesLib::Core::Rendering
                           materialTexture,
                           depthTexture,
                           emissiveTexture,
-                          ssaoTexture);
+                          ssaoTexture,
+                          shadowMapTexture,
+                          m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
     void LightingPass::Execute(ViewRenderContext& context)
@@ -726,65 +751,13 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // GBufferテクスチャをSharedResourceRegistryから取得
-        RHI::ITexture* gbufferAlbedo = nullptr;
-        RHI::ITexture* gbufferNormal = nullptr;
-        RHI::ITexture* gbufferMaterial = nullptr;
-        RHI::ITexture* gbufferDepth = nullptr;
-
-        if (context.SharedResources)
-        {
-            gbufferAlbedo = context.SharedResources->GetTexture("GBuffer_Albedo");
-            gbufferNormal = context.SharedResources->GetTexture("GBuffer_Normal");
-            gbufferMaterial = context.SharedResources->GetTexture("GBuffer_Material");
-            gbufferDepth = context.SharedResources->GetTexture("GBuffer_Depth");
-        }
-
-        // GBufferが無い場合はスキップ
-        if (!gbufferAlbedo || !gbufferNormal || !gbufferMaterial || !gbufferDepth)
-        {
-            NORVES_LOG_WARNING("LightingPass", "GBuffer textures not available, skipping lighting");
-            return;
-        }
-
-        // GBufferエミッシブ取得
-        RHI::ITexture* gbufferEmissive = nullptr;
-        if (context.SharedResources)
-        {
-            gbufferEmissive = context.SharedResources->GetTexture("GBuffer_Emissive");
-        }
-
-        // シャドウマップをSharedResourceRegistryから取得
-        RHI::TexturePtr shadowMapPtr;
-        bool bShadowAvailable = false;
-        if (context.SharedResources)
-        {
-            shadowMapPtr = context.SharedResources->GetTexturePtr("ShadowMap");
-            bShadowAvailable = (shadowMapPtr != nullptr);
-        }
-
-        bool bSSAOAvailable = false;
-        if (context.SharedResources)
-        {
-            bSSAOAvailable = (context.SharedResources->GetTexturePtr("SSAO") != nullptr);
-        }
-
-        // ライト情報をGPUバッファに転送
-        UpdateLightBuffer(context, bShadowAvailable, bSSAOAvailable);
-
-        // HDRシーンカラーをSharedResourceRegistryに登録
-        if (context.SharedResources)
-        {
-            context.SharedResources->RegisterTexturePtr("SceneColor", m_SceneColorTexture);
-            context.SharedResources->RegisterTexture("SceneDepth", gbufferDepth);
-        }
-
-        // GBufferテクスチャ（TexturePtr版）をディスクリプタセットにバインド
         RHI::TexturePtr albedoPtr;
         RHI::TexturePtr normalPtr;
         RHI::TexturePtr materialPtr;
         RHI::TexturePtr depthPtr;
         RHI::TexturePtr emissivePtr;
+        RHI::TexturePtr ssaoPtr;
+        RHI::TexturePtr shadowMapPtr;
 
         if (context.SharedResources)
         {
@@ -793,105 +766,25 @@ namespace NorvesLib::Core::Rendering
             materialPtr = context.SharedResources->GetTexturePtr("GBuffer_Material");
             depthPtr = context.SharedResources->GetTexturePtr("GBuffer_Depth");
             emissivePtr = context.SharedResources->GetTexturePtr("GBuffer_Emissive");
+            ssaoPtr = context.SharedResources->GetTexturePtr("SSAO");
+            shadowMapPtr = context.SharedResources->GetTexturePtr("ShadowMap");
         }
 
         if (!albedoPtr || !normalPtr || !materialPtr || !depthPtr)
         {
-            NORVES_LOG_WARNING("LightingPass", "GBuffer TexturePtr not available, skipping");
-            TryEnqueueNativeTransitionPass(context);
+            NORVES_LOG_WARNING("LightingPass", "GBuffer textures not available, skipping lighting");
             return;
         }
 
-        if (context.SharedResources)
-        {
-            context.SharedResources->RegisterTexturePtr("SceneDepth", depthPtr);
-        }
-
-        m_LightingDescriptorSet->BindTexture(0, albedoPtr);
-        m_LightingDescriptorSet->BindTexture(1, normalPtr);
-        m_LightingDescriptorSet->BindTexture(2, materialPtr);
-        m_LightingDescriptorSet->BindTexture(3, depthPtr);
-        m_LightingDescriptorSet->BindSampler(0, m_GBufferSampler);
-        m_LightingDescriptorSet->BindSampler(1, m_GBufferSampler);
-        m_LightingDescriptorSet->BindSampler(2, m_GBufferSampler);
-        m_LightingDescriptorSet->BindSampler(3, m_GBufferSampler);
-
-        // シャドウマップバインド（利用不可の場合はGBuffer深度をフォールバック）
-        if (bShadowAvailable)
-        {
-            m_LightingDescriptorSet->BindTexture(6, shadowMapPtr);
-        }
-        else
-        {
-            m_LightingDescriptorSet->BindTexture(6, depthPtr);
-        }
-        m_LightingDescriptorSet->BindSampler(6, m_GBufferSampler);
-
-        // GBufferエミッシブバインド
-        if (emissivePtr)
-        {
-            m_LightingDescriptorSet->BindTexture(7, emissivePtr);
-        }
-        else
-        {
-            // フォールバック（エミッシブ無し）: アルベドをダミーとしてバインド（値は無視される）
-            m_LightingDescriptorSet->BindTexture(7, albedoPtr);
-        }
-        m_LightingDescriptorSet->BindSampler(7, m_GBufferSampler);
-
-        // IBL環境マップ・BRDF LUTバインド
-        if (m_bIBLAvailable)
-        {
-            m_LightingDescriptorSet->BindTexture(8, m_EnvironmentTexture);
-            m_LightingDescriptorSet->BindSampler(8, m_IBLSampler);
-            m_LightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
-            m_LightingDescriptorSet->BindSampler(9, m_IBLSampler);
-        }
-        else
-        {
-            // IBL無効時: フォールバック（ダミーテクスチャバインド）
-            m_LightingDescriptorSet->BindTexture(8, albedoPtr);
-            m_LightingDescriptorSet->BindSampler(8, m_GBufferSampler);
-            m_LightingDescriptorSet->BindTexture(9, albedoPtr);
-            m_LightingDescriptorSet->BindSampler(9, m_GBufferSampler);
-        }
-
-        // SSAOテクスチャバインド（binding=10）
-        RHI::TexturePtr ssaoPtr;
-        if (context.SharedResources)
-        {
-            ssaoPtr = context.SharedResources->GetTexturePtr("SSAO");
-        }
-        if (ssaoPtr)
-        {
-            m_LightingDescriptorSet->BindTexture(10, ssaoPtr);
-        }
-        else
-        {
-            // SSAO利用不可時: ダミーバインド（albedoを流用、シェーダー側でfallback）
-            m_LightingDescriptorSet->BindTexture(10, albedoPtr);
-        }
-        m_LightingDescriptorSet->BindSampler(10, m_GBufferSampler);
-
-        // Neural BRDFウェイトバッファバインド（binding=11）
-        if (m_bNeuralBRDFAvailable && m_NeuralBRDFWeightBuffer)
-        {
-            m_LightingDescriptorSet->BindStorageBuffer(
-                11, m_NeuralBRDFWeightBuffer, 0,
-                static_cast<uint32_t>(m_NeuralBRDFData.GetWeightDataSizeFP32()));
-        }
-
-        m_LightingDescriptorSet->Update();
-
-        RHI::Viewport viewport = context.GetActiveLocalViewport();
-        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
-
-        context.EnqueueFullscreenPass(m_LightingRenderPass,
-                                      m_LightingFramebuffer,
-                                      viewport,
-                                      scissor,
-                                      m_LightingPipeline,
-                                      m_LightingDescriptorSet);
+        ExecuteWithInputs(context,
+                          albedoPtr,
+                          normalPtr,
+                          materialPtr,
+                          depthPtr,
+                          emissivePtr,
+                          ssaoPtr,
+                          shadowMapPtr,
+                          true);
     }
 
     uint32_t LightingPass::ResolveLightingWidth(const ViewRenderContext& context) const
@@ -1163,14 +1056,14 @@ namespace NorvesLib::Core::Rendering
                                          const RHI::TexturePtr& materialTexture,
                                          const RHI::TexturePtr& depthTexture,
                                          const RHI::TexturePtr& emissiveTexture,
-                                         const RHI::TexturePtr& ssaoTexture)
+                                         const RHI::TexturePtr& ssaoTexture,
+                                         const RHI::TexturePtr& shadowMapTexture,
+                                         bool bRegisterLegacyOutputs)
     {
         if (!context.CommandList)
         {
             return;
         }
-
-        RegisterOutputs(context, m_SceneColorTexture, depthTexture);
 
         if (!m_LightingRenderPass || !m_LightingFramebuffer || !m_LightingPipeline || !m_LightingDescriptorSet)
         {
@@ -1186,27 +1079,85 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!context.SharedResources)
+        if (bRegisterLegacyOutputs)
         {
-            TryEnqueueNativeTransitionPass(context);
-            return;
+            RegisterOutputs(context, m_SceneColorTexture, depthTexture);
         }
 
-        context.SharedResources->RegisterTexturePtr("GBuffer_Albedo", albedoTexture);
-        context.SharedResources->RegisterTexturePtr("GBuffer_Normal", normalTexture);
-        context.SharedResources->RegisterTexturePtr("GBuffer_Material", materialTexture);
-        context.SharedResources->RegisterTexturePtr("GBuffer_Depth", depthTexture);
+        UpdateLightBuffer(context, shadowMapTexture != nullptr, ssaoTexture != nullptr);
+
+        m_LightingDescriptorSet->BindTexture(0, albedoTexture);
+        m_LightingDescriptorSet->BindTexture(1, normalTexture);
+        m_LightingDescriptorSet->BindTexture(2, materialTexture);
+        m_LightingDescriptorSet->BindTexture(3, depthTexture);
+        m_LightingDescriptorSet->BindSampler(0, m_GBufferSampler);
+        m_LightingDescriptorSet->BindSampler(1, m_GBufferSampler);
+        m_LightingDescriptorSet->BindSampler(2, m_GBufferSampler);
+        m_LightingDescriptorSet->BindSampler(3, m_GBufferSampler);
+
+        if (shadowMapTexture)
+        {
+            m_LightingDescriptorSet->BindTexture(6, shadowMapTexture);
+        }
+        else
+        {
+            m_LightingDescriptorSet->BindTexture(6, depthTexture);
+        }
+        m_LightingDescriptorSet->BindSampler(6, m_GBufferSampler);
+
         if (emissiveTexture)
         {
-            context.SharedResources->RegisterTexturePtr("GBuffer_Emissive", emissiveTexture);
+            m_LightingDescriptorSet->BindTexture(7, emissiveTexture);
         }
-        if (ssaoTexture)
+        else
         {
-            context.SharedResources->RegisterTexturePtr("SSAO", ssaoTexture);
+            m_LightingDescriptorSet->BindTexture(7, albedoTexture);
+        }
+        m_LightingDescriptorSet->BindSampler(7, m_GBufferSampler);
+
+        if (m_bIBLAvailable)
+        {
+            m_LightingDescriptorSet->BindTexture(8, m_EnvironmentTexture);
+            m_LightingDescriptorSet->BindSampler(8, m_IBLSampler);
+            m_LightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
+            m_LightingDescriptorSet->BindSampler(9, m_IBLSampler);
+        }
+        else
+        {
+            m_LightingDescriptorSet->BindTexture(8, albedoTexture);
+            m_LightingDescriptorSet->BindSampler(8, m_GBufferSampler);
+            m_LightingDescriptorSet->BindTexture(9, albedoTexture);
+            m_LightingDescriptorSet->BindSampler(9, m_GBufferSampler);
         }
 
-        Execute(context);
-        RegisterOutputs(context, m_SceneColorTexture, depthTexture);
+        if (ssaoTexture)
+        {
+            m_LightingDescriptorSet->BindTexture(10, ssaoTexture);
+        }
+        else
+        {
+            m_LightingDescriptorSet->BindTexture(10, albedoTexture);
+        }
+        m_LightingDescriptorSet->BindSampler(10, m_GBufferSampler);
+
+        if (m_bNeuralBRDFAvailable && m_NeuralBRDFWeightBuffer)
+        {
+            m_LightingDescriptorSet->BindStorageBuffer(
+                11, m_NeuralBRDFWeightBuffer, 0,
+                static_cast<uint32_t>(m_NeuralBRDFData.GetWeightDataSizeFP32()));
+        }
+
+        m_LightingDescriptorSet->Update();
+
+        RHI::Viewport viewport = context.GetActiveLocalViewport();
+        RHI::ScissorRect scissor = context.GetActiveLocalScissor();
+
+        context.EnqueueFullscreenPass(m_LightingRenderPass,
+                                      m_LightingFramebuffer,
+                                      viewport,
+                                      scissor,
+                                      m_LightingPipeline,
+                                      m_LightingDescriptorSet);
     }
 
     void LightingPass::RegisterOutputs(ViewRenderContext& context,

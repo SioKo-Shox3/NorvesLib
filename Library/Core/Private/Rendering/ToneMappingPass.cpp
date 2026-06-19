@@ -443,11 +443,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, sceneColorPtr);
+        ExecuteWithInput(context, sceneColorPtr, true);
     }
 
     void ToneMappingPass::Declare(RenderGraphBuilder &builder)
     {
+        m_bLegacyInputFallbackActive = false;
         const ViewRenderContext *context = builder.GetContext();
         const uint32_t width = context ? context->GetActiveRenderWidth() : 1u;
         const uint32_t height = context ? context->GetActiveRenderHeight() : 1u;
@@ -480,6 +481,7 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(fallbackSceneColorHandle, RHI::ResourceState::ShaderResource);
                 m_InputSceneColorHandle = fallbackSceneColorHandle;
+                m_bLegacyInputFallbackActive = true;
             }
         }
 
@@ -533,9 +535,11 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        bool bUsedSharedResourceFallback = false;
         if (!sceneColorPtr)
         {
             sceneColorPtr = ResolveSharedTexturePtr(context, "SceneColor");
+            bUsedSharedResourceFallback = sceneColorPtr != nullptr;
         }
 
         if (!sceneColorPtr)
@@ -544,10 +548,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, sceneColorPtr);
+        ExecuteWithInput(context,
+                         sceneColorPtr,
+                         m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
-    void ToneMappingPass::ExecuteWithInput(ViewRenderContext& context, const RHI::TexturePtr& sceneColorPtr)
+    void ToneMappingPass::ExecuteWithInput(ViewRenderContext& context,
+                                           const RHI::TexturePtr& sceneColorPtr,
+                                           bool bRegisterLegacyBridge)
     {
         if (!m_ToneMappingRenderPass ||
             !m_ToneMappingFramebuffer ||
@@ -581,7 +589,7 @@ namespace NorvesLib::Core::Rendering
         m_ParamsBuffer->Update(&params, sizeof(GPUToneMappingParams));
 
         // トーンマッピング結果をSharedResourceRegistryに登録
-        if (context.SharedResources)
+        if (bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("ToneMappedColor", m_OutputTexture);
         }
