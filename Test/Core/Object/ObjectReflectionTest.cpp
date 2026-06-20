@@ -2,7 +2,7 @@
 #include "Component/Component.h"
 #include "Object/ObjectPropertyOps.h"
 #include "Object/World.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -24,13 +24,13 @@ int main()
     assert(animalClass->GetClassId() != dogClass->GetClassId());
 
     const IClass *worldClass = World::StaticClass();
-    const IClass *worldObjectClass = WorldObject::StaticClass();
+    const IClass *entityClass = Entity::StaticClass();
     const IClass *componentClass = NorvesLib::Core::Component::Component::StaticClass();
     assert(worldClass != nullptr);
-    assert(worldObjectClass != nullptr);
+    assert(entityClass != nullptr);
     assert(componentClass != nullptr);
     assert(ClassRegistry::Get().FindClass(worldClass->GetClassId()) == worldClass);
-    assert(ClassRegistry::Get().FindClass(worldObjectClass->GetClassId()) == worldObjectClass);
+    assert(ClassRegistry::Get().FindClass(entityClass->GetClassId()) == entityClass);
     assert(ClassRegistry::Get().FindClass(componentClass->GetClassId()) == componentClass);
 
     auto registeredClasses = ClassRegistry::Get().GetAllClasses();
@@ -115,7 +115,7 @@ int main()
 
     World world;
     world.Initialize();
-    WorldObject *object = world.SpawnObject<WorldObject>();
+    Entity *object = world.SpawnObject<Entity>();
     assert(object != nullptr);
     assert(object->GetWorld() == &world);
     assert(world.GetObjectCount() == 1);

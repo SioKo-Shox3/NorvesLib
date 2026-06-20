@@ -304,7 +304,6 @@ set(PUBLIC_HEADERS
     Public/Object/RuntimeSchema.h
     Public/Object/SchemaProjection.h
     Public/Object/Entity.h
-    Public/Object/WorldObject.h
     Public/Object/ResourceRegistry.h
     Public/Object/World.h
     # Engine

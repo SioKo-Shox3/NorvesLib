@@ -2,12 +2,12 @@
 
 ## 目的
 
-この文書は `Object` / `WorldObject` / `Component` の所有権、生成、破棄、Reflection の基本契約を定義します。
+この文書は `Object` / `Entity` / `Component` の所有権、生成、破棄、Reflection の基本契約を定義します。
 
 ## 階層
 
-- `World` は `WorldObject` を Inner として所有する。
-- `WorldObject` は `Component` を Inner として所有する。
+- `World` は `Entity` を Inner として所有する。
+- `Entity` は `Component` を Inner として所有する。
 - `Outer` は所有者を指す非所有ポインタで、`Inner` 配列が所有関係を表す。
 - `GetOuter()` を直接書き換えず、所有関係の変更は `AddInner()` / `RemoveInner()` 経由で行う。
 
@@ -34,9 +34,11 @@
 
 - `World::SpawnObject<T>()` は成功時に World 所有の非所有ポインタを返す。
 - `World::CreateComponent<T>(owner)` は成功時に owner 所有の非所有ポインタを返す。
+- `World::GetRootEntities()` は World 直下の root Entity（World の直接 Inner）だけを返す。
+- `World::GetObjectCount()` は World 直下の root Entity / 直接 Inner の数を返す。
 - 返されたポインタを保持する場合は、Owner の寿命を超えて使わない。
-- 即時破棄は `World::RemoveObject()` / `WorldObject::RemoveComponent()` を使う。
-- 遅延破棄は `WorldObject::MarkForDestroy()` を使い、次回 `World::Tick()` で回収する。
+- 即時破棄は `World::RemoveObject()` / `Entity::RemoveComponent()` を使う。
+- 遅延破棄は `Entity::MarkForDestroy()` を使い、次回 `World::Tick()` で回収する。
 
 ## Reflection
 

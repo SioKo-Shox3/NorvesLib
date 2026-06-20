@@ -83,7 +83,7 @@ namespace
         assert(view.Initialize(settings));
         world.SetSceneView(&view);
 
-        WorldObject* object = world.SpawnObject<WorldObject>();
+        Entity* object = world.SpawnObject<Entity>();
         assert(object);
 
         MeshComponent* mesh = world.CreateComponent<MeshComponent>(object);
@@ -176,7 +176,7 @@ namespace
         assert(view.Initialize(settings));
         world.SetSceneView(&view);
 
-        WorldObject* object = world.SpawnObject<WorldObject>();
+        Entity* object = world.SpawnObject<Entity>();
         assert(object);
 
         MegaGeometryComponent* mega = world.CreateComponent<MegaGeometryComponent>(object);
@@ -236,7 +236,7 @@ namespace
 
         RenderResources renderResources;
 
-        WorldObject* object = world.SpawnObject<WorldObject>();
+        Entity* object = world.SpawnObject<Entity>();
         assert(object);
 
         MeshComponent* mesh = world.CreateComponent<MeshComponent>(object);

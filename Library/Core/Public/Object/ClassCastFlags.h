@@ -14,8 +14,7 @@ namespace NorvesLib::Core
     {
         None                  = 0,
         Object                = 1ull << 0,
-        WorldObject           = 1ull << 1,
-        Entity                = WorldObject,
+        Entity                = 1ull << 1,
         World                 = 1ull << 2,
         Resource              = 1ull << 3,
         Component             = 1ull << 4,

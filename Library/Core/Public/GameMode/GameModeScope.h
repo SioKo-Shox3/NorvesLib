@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include "Rendering/RenderTypes.h"
 
 // 重いサブシステムヘッダのインクルードを避け、前方宣言のみ使用する。
@@ -49,12 +49,12 @@ namespace NorvesLib::Core::GameMode
         GameModeScope& operator=(const GameModeScope&) = delete;
 
         /**
-         * @brief WorldObject を追跡リストへ追加
+         * @brief Entity を追跡リストへ追加
          *
          * Cleanup() が呼ばれると挿入順に World::RemoveObject が呼ばれる。
-         * @param object 追跡対象の WorldObject（非所有、World が所有）
+         * @param object 追跡対象の Entity（非所有、World が所有）
          */
-        void TrackObject(NorvesLib::Core::WorldObject* object);
+        void TrackObject(NorvesLib::Core::Entity* object);
 
         /**
          * @brief MeshDataHandle を追跡リストへ追加
@@ -73,19 +73,19 @@ namespace NorvesLib::Core::GameMode
         void TrackModel(NorvesLib::Core::Rendering::ModelHandle handle);
 
         /**
-         * @brief 既に呼び出し側が World から除去済みの WorldObject を追跡対象から外す
+         * @brief 既に呼び出し側が World から除去済みの Entity を追跡対象から外す
          *
          * 呼び出し側が自前で World::RemoveObject 済みのオブジェクトを追跡から外す。
          * このメソッド自身は World::RemoveObject を呼ばない（解放済みポインタへの
          * 二重 RemoveObject を防ぐ）。追跡していない、または null の場合は何もしない。
-         * @param object 追跡を止める WorldObject
+         * @param object 追跡を止める Entity
          */
-        void Untrack(NorvesLib::Core::WorldObject* object);
+        void Untrack(NorvesLib::Core::Entity* object);
 
         /**
          * @brief 追跡リソースを確立された順序で解放する
          *
-         * 1) 全 WorldObject を World::RemoveObject で除去
+         * 1) 全 Entity を World::RemoveObject で除去
          * 2) 全 MeshDataHandle を MeshResources::Unregister で解放
          * 3) 全 ModelHandle を MegaGeometryResources::ReleaseModel で解放
          *
@@ -106,7 +106,7 @@ namespace NorvesLib::Core::GameMode
         /// 非所有
         NorvesLib::Core::Rendering::RenderResources* m_pRenderResources = nullptr;
 
-        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::WorldObject*>
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Entity*>
             m_TrackedObjects;
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::MeshDataHandle>
             m_TrackedMeshes;

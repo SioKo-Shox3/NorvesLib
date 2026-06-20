@@ -1,5 +1,5 @@
 ﻿#include "Component/PointLightComponent.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Component
@@ -48,7 +48,7 @@ namespace NorvesLib::Core::Component
     void PointLightComponent::Tick(float deltaTime)
     {
         (void)deltaTime;
-        // ポイントライトは位置をオーナーのWorldObjectからSyncToSceneView時に取得するため
+        // ポイントライトは位置をオーナーのEntityからSyncToSceneView時に取得するため
         // Tick内での特別な処理は不要
     }
 
@@ -71,8 +71,8 @@ namespace NorvesLib::Core::Component
         outProxy.AttenuationLinear = AttenuationLinear;
         outProxy.AttenuationQuadratic = AttenuationQuadratic;
 
-        // オーナーのWorldObjectから位置を取得
-        const WorldObject* owner = GetOwner();
+        // オーナーのEntityから位置を取得
+        const Entity* owner = GetOwner();
         if (owner)
         {
             const auto& pos = owner->GetPosition();

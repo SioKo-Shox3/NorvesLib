@@ -1,5 +1,5 @@
 ﻿#include "Component/LightComponent.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Component

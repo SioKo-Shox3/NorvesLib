@@ -3,7 +3,7 @@
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Input/MayaCameraController.h"
-#include "Core/Public/Object/WorldObject.h"
+#include "Core/Public/Object/Entity.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Core/Public/Rendering/RenderTypes.h"
@@ -55,7 +55,7 @@ namespace Game::GameModes
     /**
      * @brief 3Dレンダリングテストのデータクラス
      *
-     * 球体と地面のWorldObjectおよびメッシュハンドルを保持します。
+     * 球体と地面のEntityおよびメッシュハンドルを保持します。
      */
     struct Rendering3DTestData
     {
@@ -75,26 +75,26 @@ namespace Game::GameModes
         // 非同期ロード用：マテリアル更新ペンディングリスト
         VariableArray<TSharedPtr<PendingMaterialUpdate>> m_PendingMaterialUpdates;
 
-        // WorldObject参照（Worldが所有）
-        NorvesLib::Core::WorldObject *m_pSphereObject = nullptr;
-        NorvesLib::Core::WorldObject *m_pGroundObject = nullptr;
-        NorvesLib::Core::WorldObject *m_pLightSphereObject = nullptr;
-        NorvesLib::Core::WorldObject *m_pBoulderObject = nullptr;
-        NorvesLib::Core::WorldObject *m_pBoulderPlaceholderObject = nullptr;
+        // Entity参照（Worldが所有）
+        NorvesLib::Core::Entity *m_pSphereObject = nullptr;
+        NorvesLib::Core::Entity *m_pGroundObject = nullptr;
+        NorvesLib::Core::Entity *m_pLightSphereObject = nullptr;
+        NorvesLib::Core::Entity *m_pBoulderObject = nullptr;
+        NorvesLib::Core::Entity *m_pBoulderPlaceholderObject = nullptr;
 
-        // MeshComponent参照（WorldObjectが所有）
+        // MeshComponent参照（Entityが所有）
         NorvesLib::Core::Component::MeshComponent *m_pSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pGroundMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pLightSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pBoulderPlaceholderMeshComponent = nullptr;
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
 
-        // LightComponent参照（WorldObjectが所有）
+        // LightComponent参照（Entityが所有）
         NorvesLib::Core::Component::LightComponent *m_pDirectionalLightComponent = nullptr;
         NorvesLib::Core::Component::PointLightComponent *m_pPointLightComponent = nullptr;
 
-        // ディレクショナルライト用WorldObject（位置は不要だがComponentホスト用）
-        NorvesLib::Core::WorldObject *m_pDirectionalLightObject = nullptr;
+        // ディレクショナルライト用Entity（位置は不要だがComponentホスト用）
+        NorvesLib::Core::Entity *m_pDirectionalLightObject = nullptr;
 
         // 経過時間
         float m_ElapsedTime = 0.0f;

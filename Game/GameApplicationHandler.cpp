@@ -2,7 +2,7 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Object/World.h"
-#include "Core/Public/Object/WorldObject.h"
+#include "Core/Public/Object/Entity.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/RenderWorld.h"
