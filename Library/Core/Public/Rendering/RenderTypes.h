@@ -117,6 +117,51 @@ namespace NorvesLib::Core::Rendering
     // ========================================
 
     /**
+     * @brief デバッグ描画モード
+     */
+    enum class DebugViewMode : uint8_t
+    {
+        Normal,
+        Unlit,
+        Wireframe,
+        MegaGeometryClusters,
+        GBufferAlbedo,
+        GBufferNormal,
+        GBufferMaterial,
+        GBufferDepth,
+        LODLevel,
+        Count
+    };
+
+    inline constexpr const char* DebugViewModeToString(DebugViewMode mode)
+    {
+        switch (mode)
+        {
+        case DebugViewMode::Normal:
+            return "Normal";
+        case DebugViewMode::Unlit:
+            return "Unlit";
+        case DebugViewMode::Wireframe:
+            return "Wireframe";
+        case DebugViewMode::MegaGeometryClusters:
+            return "MegaGeometryClusters";
+        case DebugViewMode::GBufferAlbedo:
+            return "GBufferAlbedo";
+        case DebugViewMode::GBufferNormal:
+            return "GBufferNormal";
+        case DebugViewMode::GBufferMaterial:
+            return "GBufferMaterial";
+        case DebugViewMode::GBufferDepth:
+            return "GBufferDepth";
+        case DebugViewMode::LODLevel:
+            return "LODLevel";
+        case DebugViewMode::Count:
+        default:
+            return "Invalid";
+        }
+    }
+
+    /**
      * @brief プリミティブトポロジー
      */
     enum class PrimitiveTopology : uint8_t

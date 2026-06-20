@@ -50,6 +50,7 @@ namespace NorvesLib::Core::Rendering
             plan.bEnabled = viewport.IsEnabled();
             plan.RenderWidth = renderWidth;
             plan.RenderHeight = renderHeight;
+            plan.DebugMode = viewport.GetDebugViewMode();
 
             float x = 0.0f;
             float y = 0.0f;

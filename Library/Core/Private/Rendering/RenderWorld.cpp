@@ -1,5 +1,7 @@
 ﻿#include "Rendering/RenderWorld.h"
 #include "Rendering/RenderResourceContexts.h"
+#include "Rendering/SceneView.h"
+#include "Rendering/Viewport.h"
 #include "Resource/GLTFAnalyzer.h"
 #include "RHI/IDevice.h"
 #include "Debug/Stats.h"
@@ -344,6 +346,62 @@ namespace NorvesLib::Core::Rendering
     {
         m_bFullscreen = bEnabled;
         // TODO: フルスクリーンモードの切り替え
+    }
+
+    void RenderWorld::SetDebugViewModeAll(DebugViewMode mode)
+    {
+        auto sceneView = m_RenderingCoordinator.GetMainSceneView();
+        if (!sceneView)
+        {
+            return;
+        }
+
+        auto viewport = sceneView->GetMainViewport();
+        if (!viewport)
+        {
+            return;
+        }
+
+        viewport->SetDebugViewMode(mode);
+    }
+
+    DebugViewMode RenderWorld::GetMainViewportDebugViewMode() const
+    {
+        auto sceneView = m_RenderingCoordinator.GetMainSceneView();
+        if (!sceneView)
+        {
+            return DebugViewMode::Normal;
+        }
+
+        auto viewport = sceneView->GetMainViewport();
+        if (!viewport)
+        {
+            return DebugViewMode::Normal;
+        }
+
+        return viewport->GetDebugViewMode();
+    }
+
+    DebugViewMode RenderWorld::CycleDebugViewMode()
+    {
+        const uint8_t count = static_cast<uint8_t>(DebugViewMode::Count);
+        uint8_t next = static_cast<uint8_t>(GetMainViewportDebugViewMode());
+        if (next >= count)
+        {
+            next = 0;
+        }
+        else
+        {
+            ++next;
+            if (next >= count)
+            {
+                next = 0;
+            }
+        }
+
+        const DebugViewMode mode = static_cast<DebugViewMode>(next);
+        SetDebugViewModeAll(mode);
+        return mode;
     }
 
 } // namespace NorvesLib::Core::Rendering

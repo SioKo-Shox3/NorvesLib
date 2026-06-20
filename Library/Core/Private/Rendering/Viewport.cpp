@@ -1,5 +1,7 @@
 ﻿#include "Rendering/Viewport.h"
 #include "Rendering/SceneProxy.h"
+#include "Debug/DebugConfig.h"
+#include "Logging/LogMacros.h"
 #include "Math/MatrixUtils.h"
 #include "Math/Vector3.h"
 
@@ -71,6 +73,24 @@ namespace NorvesLib::Core::Rendering
     {
         outMinDepth = m_MinDepth;
         outMaxDepth = m_MaxDepth;
+    }
+
+    void Viewport::SetDebugViewMode(DebugViewMode mode)
+    {
+#if !NORVES_BUILD_DEVELOPMENT
+        if (mode != DebugViewMode::Normal)
+        {
+            static bool bWarned = false;
+            if (!bWarned)
+            {
+                NORVES_LOG_WARNING("DebugView", "DebugViewMode is development-only; forcing Normal");
+                bWarned = true;
+            }
+            mode = DebugViewMode::Normal;
+        }
+#endif
+
+        m_DebugViewMode = mode;
     }
 
     void Viewport::GetPixelRect(uint32_t screenWidth, uint32_t screenHeight,

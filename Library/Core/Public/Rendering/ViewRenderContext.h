@@ -160,6 +160,11 @@ namespace NorvesLib::Core::Rendering
             return CurrentViewport ? CurrentTransparentCommands : SnapshotTransparentCommands;
         }
 
+        DebugViewMode GetActiveDebugMode() const
+        {
+            return CurrentViewport ? CurrentViewport->DebugMode : DebugViewMode::Normal;
+        }
+
         uint32_t GetActiveRenderWidth() const
         {
             if (CurrentViewport && CurrentViewport->HasDrawableExtent())

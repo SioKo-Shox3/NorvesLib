@@ -106,6 +106,9 @@ namespace Game::GameModes
         // Maya準拠カメラコントローラー（シーン所有）
         NorvesLib::Core::Input::MayaCameraController m_CameraController;
 
+        // デバッグ描画モード（入力トグル用ミラー）
+        NorvesLib::Core::Rendering::DebugViewMode m_DebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
+
         // メッシュ登録済みフラグ
         bool m_bMeshesRegistered = false;
 

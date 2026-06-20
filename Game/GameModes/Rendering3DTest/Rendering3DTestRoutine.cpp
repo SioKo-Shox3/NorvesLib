@@ -17,6 +17,7 @@
 #include "Core/Public/Rendering/SceneView.h"
 #include "Core/Public/Rendering/RenderingCoordinator.h"
 #include "Core/Public/GameMode/GameModeScope.h"
+#include "Core/Public/Debug/DebugConfig.h"
 #include "Core/Public/Rendering/MegaGeometryPass.h"
 #include "Core/Public/Resource/GLTFAnalyzer.h"
 
@@ -486,6 +487,51 @@ namespace Game::GameModes
 
         // カメラコントローラー更新
         data.m_CameraController.Update(inputState, deltaTime);
+
+#if NORVES_BUILD_DEVELOPMENT
+        if (!inputState.IsAltDown())
+        {
+            DebugViewMode nextDebugViewMode = data.m_DebugViewMode;
+            bool bDebugViewModeRequested = true;
+
+            if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F1))
+            {
+                nextDebugViewMode = DebugViewMode::Normal;
+            }
+            else if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F2))
+            {
+                nextDebugViewMode = DebugViewMode::Unlit;
+            }
+            else if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F3))
+            {
+                nextDebugViewMode = DebugViewMode::Wireframe;
+            }
+            else if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F4))
+            {
+                nextDebugViewMode = DebugViewMode::MegaGeometryClusters;
+            }
+            else if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F5))
+            {
+                uint8_t nextModeIndex = static_cast<uint8_t>(data.m_DebugViewMode) + 1;
+                if (nextModeIndex >= static_cast<uint8_t>(DebugViewMode::Count))
+                {
+                    nextModeIndex = 0;
+                }
+                nextDebugViewMode = static_cast<DebugViewMode>(nextModeIndex);
+            }
+            else
+            {
+                bDebugViewModeRequested = false;
+            }
+
+            if (bDebugViewModeRequested && nextDebugViewMode != data.m_DebugViewMode)
+            {
+                data.m_DebugViewMode = nextDebugViewMode;
+                ctx.EngineRef.GetRenderWorld().SetDebugViewModeAll(nextDebugViewMode);
+                NORVES_LOG_INFO("DebugView", "DebugViewMode -> %s", DebugViewModeToString(nextDebugViewMode));
+            }
+        }
+#endif
 
         // デバッグ: スクロール値とカメラ距離を出力
         {
