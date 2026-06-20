@@ -151,6 +151,9 @@ target_link_libraries(MegaGeometryFrameCommandDebugModeTest PRIVATE Core)
 target_include_directories(MegaGeometryFrameCommandDebugModeTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
+target_compile_definitions(MegaGeometryFrameCommandDebugModeTest PRIVATE
+    NORVES_SHADER_DIR="${CMAKE_SOURCE_DIR}/Assets/Shaders"
+)
 set_target_properties(MegaGeometryFrameCommandDebugModeTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND MegaGeometryFrameCommandDebugModeTest)
 

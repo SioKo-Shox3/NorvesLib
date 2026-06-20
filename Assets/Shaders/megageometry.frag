@@ -6,6 +6,7 @@ layout(location = 2) in vec3 fragObjectColor;
 layout(location = 3) in vec4 fragEmissiveColor;
 layout(location = 4) in vec2 fragTexCoord;
 layout(location = 5) in vec3 fragViewDir;
+layout(location = 6) flat in uint fragClusterId;
 
 // UBOからPOMパラメータを参照
 layout(set = 0, binding = 0) uniform MVPData
@@ -16,7 +17,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 objectColor;
     vec4 emissiveColor;
-    vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=unused, w=unused
+    vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=debugMode, w=clusterDebugSupported
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -32,6 +33,27 @@ layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
 layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + unused
 layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / unused(A)
 layout(location = 3) out vec4 outEmissive;  // RT3: Emissive (RGB, HDR) + unused
+
+const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;
+
+uint HashClusterId(uint value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    value ^= value >> 16;
+    return value;
+}
+
+vec3 ClusterDebugColor(uint clusterId)
+{
+    uint hash = HashClusterId(clusterId);
+    vec3 color = vec3(float(hash & 255u),
+                      float((hash >> 8) & 255u),
+                      float((hash >> 16) & 255u)) / 255.0;
+    return mix(vec3(0.18), color, 0.82);
+}
 
 /**
  * @brief スクリーンスペース微分からTBN行列を計算（Cotangent Frame法）
@@ -117,6 +139,18 @@ vec2 ParallaxOcclusionMapping(vec2 texCoord, vec3 viewDirTS, float heightScale)
 
 void main()
 {
+    float debugMode = mvp.pomParams.z;
+    float clusterDebugSupported = mvp.pomParams.w;
+
+    if (debugMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS && clusterDebugSupported > 0.5)
+    {
+        outAlbedo = vec4(ClusterDebugColor(fragClusterId), 1.0);
+        outNormal = vec4(normalize(fragNormal), 0.0);
+        outMaterial = vec4(0.0, 1.0, 1.0, 0.0);
+        outEmissive = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     // POMパラメータ取得
     float heightScale = mvp.pomParams.x;
     float hasHeightMap = mvp.pomParams.y;

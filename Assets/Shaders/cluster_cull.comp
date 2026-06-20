@@ -50,7 +50,7 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint hiZHeight;          // Hi-Zテクスチャ高さ（mip 0）
     uint hiZMipCount;        // Hi-Zミップレベル数
     uint bHiZEnabled;        // Hi-Z有効フラグ
-    uint padding0;
+    uint bWriteClusterFirstInstance;
     uint padding1;
     uint padding2;
     mat4 worldMatrix;
@@ -360,6 +360,7 @@ void main()
         drawCommands[drawIndex].instanceCount = 1;
         drawCommands[drawIndex].firstIndex = cluster.indexInfo.x;     // IndexOffset
         drawCommands[drawIndex].vertexOffset = int(cluster.indexInfo.z); // VertexOffset
-        drawCommands[drawIndex].firstInstance = 0;
+        drawCommands[drawIndex].firstInstance =
+            cullData.bWriteClusterFirstInstance != 0u ? clusterIndex : 0u;
     }
 }

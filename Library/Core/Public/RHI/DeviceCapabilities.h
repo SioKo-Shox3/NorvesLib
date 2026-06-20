@@ -46,8 +46,9 @@ namespace NorvesLib::RHI
     /**
      * @brief GPUデバイスの能力情報
      *
-     * 物理デバイスがサポートする機能・拡張を集約した構造体。
-     * VulkanDevice初期化時に検出され、実行時に参照されます。
+     * 物理デバイスがサポートする拡張と、論理デバイスで実際に有効化した
+     * コア機能を集約した構造体。VulkanDevice初期化時に検出され、
+     * 実行時に参照されます。
      *
      * 使用例:
      * ```cpp
@@ -90,8 +91,11 @@ namespace NorvesLib::RHI
         /** @brief コンピュートシェーダーのサポート */
         bool bComputeShader = true;
 
-        /** @brief DrawIndexedIndirectCount（Vulkan 1.2コア機能）のサポート */
+        /** @brief DrawIndexedIndirectCount（Vulkan 1.2コア機能）が論理デバイスで有効か */
         bool bDrawIndirectCount = false;
+
+        /** @brief DrawIndirectFirstInstance（Vulkanコア機能）が論理デバイスで有効か */
+        bool bDrawIndirectFirstInstance = false;
     };
 
 } // namespace NorvesLib::RHI
