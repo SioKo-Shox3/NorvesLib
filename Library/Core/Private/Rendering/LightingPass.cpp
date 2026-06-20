@@ -1,4 +1,5 @@
 ﻿#include "Rendering/LightingPass.h"
+#include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SSAOPass.h"
@@ -71,24 +72,6 @@ namespace NorvesLib::Core::Rendering
         float direction[4];   // xyz=direction, w=innerAngle
         float color[4];       // xyz=color, w=intensity
         float attenuation[4]; // x=range, y=outerAngle, z=unused, w=unused
-    };
-
-    /** @brief ライティングパラメータUBO */
-    struct GPULightingParams
-    {
-        float invViewProjection[16]; // mat4
-        float cameraPosition[4];     // vec4
-        float ambientColor[4];       // vec4 (xyz=color, w=intensity)
-        float lightView[16];         // mat4 （シャドウマップ用ライトビュー行列）
-        float lightProjection[16];   // mat4 （シャドウマップ用ライトプロジェクション行列）
-        uint32_t lightCount;         // uint
-        uint32_t bShadowEnabled;     // uint （シャドウマップ有効フラグ）
-        uint32_t envMapMipLevels;    // uint （環境マップミップレベル数）
-        uint32_t bIBLEnabled;        // uint （IBL有効フラグ）
-        uint32_t bSSAOEnabled;       // uint （SSAO有効フラグ）
-        uint32_t bNeuralBRDFEnabled; // uint （Neural BRDF有効フラグ）
-        uint32_t _pad1;              // padding
-        uint32_t _pad2;              // padding
     };
 
     static constexpr uint32_t MAX_LIGHTS = 16;
@@ -1357,6 +1340,7 @@ namespace NorvesLib::Core::Rendering
         // SSAOパラメータ設定
         params.bSSAOEnabled = bSSAOAvailable ? 1 : 0;
         params.bNeuralBRDFEnabled = m_bNeuralBRDFAvailable ? 1 : 0;
+        params.debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
 
         // IBL有効時はambientColor.wにIBL強度を設定
         if (m_bIBLAvailable)
