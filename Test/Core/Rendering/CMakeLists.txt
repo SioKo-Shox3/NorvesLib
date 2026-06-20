@@ -151,6 +151,16 @@ target_include_directories(DebugViewModeStringTest PRIVATE
 set_target_properties(DebugViewModeStringTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME DebugViewModeStringTest COMMAND DebugViewModeStringTest)
 
+add_executable(ViewportDebugViewModeReleaseClampTest
+    ViewportDebugViewModeReleaseClampTest.cpp
+)
+target_link_libraries(ViewportDebugViewModeReleaseClampTest PRIVATE Core)
+target_include_directories(ViewportDebugViewModeReleaseClampTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ViewportDebugViewModeReleaseClampTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ViewportDebugViewModeReleaseClampTest COMMAND ViewportDebugViewModeReleaseClampTest)
+
 add_executable(ViewportRenderPlanDebugModeTest
     ViewportRenderPlanDebugModeTest.cpp
 )

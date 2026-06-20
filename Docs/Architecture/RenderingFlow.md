@@ -40,6 +40,14 @@ Single-threaded path では `Ready -> Reading -> Empty` を GameThread 内で完
 - Component が disabled または owner が inactive の場合、その frame の proxy には残らない。
 - DrawCommand は `GenerateDrawCommands()` で `SceneView` から生成され、`FramePacket` にコピーされる。
 
+## DebugViewMode
+
+- `Rendering3DTest` の入力は `F1=Normal`、`F2=Unlit`、`F3=Wireframe`、`F4=MegaGeometryClusters`、`F5=循環`。
+- オンスクリーン HUD は現状なく、モード名確認は `DebugView` カテゴリのログで行う。ログは `RenderWorld::SetDebugViewModeAll()` 後に `GetMainViewportDebugViewMode()` で読み直した main Viewport の反映後値を出す。
+- canonical な保持先は GameThread の live `Viewport`。`RenderingCoordinator::BuildViewportRenderPlan()` が `Viewport::GetDebugViewMode()` を `ViewportRenderPlan.DebugMode` へコピーし、RenderThread / pass 側は `ViewRenderContext::GetActiveDebugMode()` 経由で snapshot 値だけを見る。
+- `DebugViewMode != Normal` のときは postprocess bypass を有効化し、SSR / Bloom / ToneMapping / FXAA は local GPU params で無効化する。RenderGraph の named resource / export contract は通常経路と同じまま維持する。
+- シェーダーは CMake copy ではなく、`NORVES_SHADER_DIR=${CMAKE_SOURCE_DIR}/Assets/Shaders` を使って `ShaderManager` が実行時コンパイルする。
+
 ## RenderGraph 主経路
 
 `SceneView::Render(ViewRenderContext&)` は登録済み `IViewPass` / `IRenderGraphPass` から 1 viewport 分の `RenderGraph` を組み立て、compile 後に実行する。
