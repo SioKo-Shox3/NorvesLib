@@ -180,6 +180,8 @@ namespace NorvesLib::Thread
         // 新しいスレッドを作成
         void CreateAndStartWorkerThread();
 
+        void MarkQueuedTaskCompleted();
+
         // ワーカースレッドのプール
         Core::Container::VariableArray<std::unique_ptr<Thread>> m_workerThreads;
 
@@ -219,11 +221,16 @@ namespace NorvesLib::Thread
         std::mt19937 m_randomGenerator;
 
         // 同期用オブジェクト
+        mutable Mutex m_shutdownMutex;
+        mutable Mutex m_resizeMutex;
         mutable Mutex m_queueMutex;
         mutable Mutex m_workerThreadMutex;
         ConditionVariable m_conditionVar;
         Atomic<bool> m_shutdownRequested;
         Atomic<bool> m_monitorActive;
+
+        // ワーカーごとの実行継続境界。dynamic shrink 時に上位 index のワーカーを停止する。
+        Atomic<size_t> m_workerThreadLimit;
 
         // スレッド状態追跡
         Atomic<size_t> m_activeThreads;

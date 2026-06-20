@@ -29,6 +29,7 @@ namespace NorvesLib::Thread
           m_totalStolenTasks(0),
           m_shutdownRequested(false),
           m_monitorActive(false),
+          m_workerThreadLimit(0),
           m_activeThreads(0),
           m_queuedTaskCount(0),
           m_lastThreadAdjustment(std::chrono::steady_clock::now()),
@@ -44,6 +45,9 @@ namespace NorvesLib::Thread
 
     void JobSystem::Initialize(uint32_t threadCount, ExecutionMode mode)
     {
+        ScopedLock shutdownLock(m_shutdownMutex);
+        ScopedLock resizeLock(m_resizeMutex);
+
         // シャットダウン状態をリセット
         m_shutdownRequested = false;
 
@@ -57,24 +61,17 @@ namespace NorvesLib::Thread
 
         // 実行モードを保存
         m_executionMode = mode;
+        m_workerThreadLimit = threadCount;
 
-        // タスク統計情報の配列を初期化
-        m_tasksProcessedPerThread.resize(threadCount);
-        for (size_t i = 0; i < threadCount; ++i)
+        // Initializeごとにワーカーと同じ数だけ統計情報とローカルキューを作り直す
         {
-            // std::unique_ptr<Atomic<size_t>>を生成して初期化
-            m_tasksProcessedPerThread[i] = std::make_unique<Atomic<size_t>>(0);
+            ScopedLock statsLock(m_statsMutex);
+            m_tasksProcessedPerThread.clear();
         }
 
-        // ワークスチーリングモードの場合はローカルキューを初期化
-        if (mode == ExecutionMode::EXECUTION_WORK_STEALING)
         {
+            ScopedLock workerLock(m_workerThreadMutex);
             m_localQueues.clear();
-            m_localQueues.resize(threadCount);
-            for (size_t i = 0; i < threadCount; ++i)
-            {
-                m_localQueues[i] = std::make_unique<WorkStealingQueue>();
-            }
         }
 
         // スチールカウンターをリセット
@@ -104,13 +101,21 @@ namespace NorvesLib::Thread
 
     void JobSystem::Shutdown()
     {
-        if (m_shutdownRequested)
+        ScopedLock shutdownLock(m_shutdownMutex);
+
         {
-            return; // 既にシャットダウン処理中
+            ScopedLock workerLock(m_workerThreadMutex);
+            ScopedLock queueLock(m_queueMutex);
+            if (m_shutdownRequested)
+            {
+                return; // 既にシャットダウン処理中
+            }
+
+            // シャットダウン要求を設定
+            m_shutdownRequested = true;
+            m_workerThreadLimit = 0;
         }
 
-        // シャットダウン要求を設定
-        m_shutdownRequested = true;
         m_monitorActive = false;
 
         // モニタースレッドが終了するのを待つ
@@ -119,14 +124,20 @@ namespace NorvesLib::Thread
             m_monitorThread.reset();
         }
 
+        ScopedLock resizeLock(m_resizeMutex);
+        m_workerThreadLimit = 0;
+
         // 全ワーカースレッドに作業終了を通知
         m_conditionVar.NotifyAll();
 
-        // 全てのワーカースレッドが終了するのを待つ
+        // 全てのワーカースレッドが終了するのを待つ。
+        // Threadの破棄はjoinを行うため、m_workerThreadMutexを解放してから実行する。
+        Core::Container::VariableArray<std::unique_ptr<Thread>> workerThreadsToJoin;
         {
             ScopedLock lock(m_workerThreadMutex);
-            m_workerThreads.clear();
+            workerThreadsToJoin.swap(m_workerThreads);
         }
+        workerThreadsToJoin.clear();
 
         // 残りのタスクをクリア
         {
@@ -139,7 +150,10 @@ namespace NorvesLib::Thread
         }
 
         // ローカルキューをクリア
-        m_localQueues.clear();
+        {
+            ScopedLock lock(m_workerThreadMutex);
+            m_localQueues.clear();
+        }
     }
 
     void JobSystem::SubmitTask(TaskPtr task)
@@ -171,12 +185,12 @@ namespace NorvesLib::Thread
         else
         {
             // ワークスチーリングモード - ランダムなワーカーのローカルキューに追加
+            ScopedLock lock(m_workerThreadMutex);
+
             if (m_shutdownRequested)
             {
                 return;
             }
-
-            ScopedLock lock(m_workerThreadMutex);
 
             if (m_localQueues.empty())
             {
@@ -241,21 +255,20 @@ namespace NorvesLib::Thread
             {
                 // シンプルモード - グローバルキューのみチェック
                 ScopedLock lock(m_queueMutex);
-                allDone = m_taskQueue.empty() && m_activeThreads == 0;
+                allDone = m_taskQueue.empty() && m_activeThreads == 0 && m_queuedTaskCount == 0;
             }
             else
             {
                 // ワークスチーリングモード - 全ローカルキューを確認
                 bool anyQueueHasTasks = false;
-                ScopedLock lock(m_queueMutex);
 
-                if (!m_taskQueue.empty())
                 {
-                    anyQueueHasTasks = true;
+                    ScopedLock lock(m_queueMutex);
+                    anyQueueHasTasks = !m_taskQueue.empty();
                 }
-                else
+
+                if (!anyQueueHasTasks)
                 {
-                    // m_queueMutexのロックは自動的に解除されます
                     ScopedLock workerLock(m_workerThreadMutex);
                     for (const auto &queue : m_localQueues)
                     {
@@ -267,7 +280,7 @@ namespace NorvesLib::Thread
                     }
                 }
 
-                allDone = !anyQueueHasTasks && m_activeThreads == 0;
+                allDone = !anyQueueHasTasks && m_activeThreads == 0 && m_queuedTaskCount == 0;
             }
 
             if (allDone)
@@ -289,6 +302,7 @@ namespace NorvesLib::Thread
             if (task)
             {
                 task->Execute();
+                MarkQueuedTaskCompleted();
             }
             else
             {
@@ -316,21 +330,30 @@ namespace NorvesLib::Thread
 
     void JobSystem::AddWorkerThread(std::unique_ptr<Thread> thread)
     {
+        ScopedLock resizeLock(m_resizeMutex);
+
         if (!thread || m_shutdownRequested)
         {
             return;
         }
 
-        ScopedLock workerLock(m_workerThreadMutex);
-        ScopedLock statsLock(m_statsMutex);
-
         // 統計カウンター配列とローカルキューを拡張
-        const size_t newIndex = m_tasksProcessedPerThread.size();
-        m_tasksProcessedPerThread.push_back(0);
+        size_t newIndex = 0;
+        {
+            ScopedLock statsLock(m_statsMutex);
+            newIndex = m_tasksProcessedPerThread.size();
+            m_tasksProcessedPerThread.push_back(std::make_unique<Atomic<size_t>>(0));
+        }
+
+        if (m_workerThreadLimit.Load() < newIndex + 1)
+        {
+            m_workerThreadLimit = newIndex + 1;
+        }
 
         // ワークスチーリングモードの場合はローカルキューも追加
         if (m_executionMode.Load() == ExecutionMode::EXECUTION_WORK_STEALING)
         {
+            ScopedLock workerLock(m_workerThreadMutex);
             if (newIndex >= m_localQueues.size())
             {
                 m_localQueues.resize(newIndex + 1);
@@ -343,7 +366,10 @@ namespace NorvesLib::Thread
                       { WorkerThreadFunction(newIndex); });
 
         // ワーカーリストに追加
-        m_workerThreads.push_back(std::move(thread));
+        {
+            ScopedLock workerLock(m_workerThreadMutex);
+            m_workerThreads.push_back(std::move(thread));
+        }
     }
 
     void JobSystem::SetWorkerThreadsAffinity(bool enableAffinityMasks)
@@ -412,6 +438,8 @@ namespace NorvesLib::Thread
 
     void JobSystem::EnableDynamicSizing(bool enabled, uint32_t minThreads, uint32_t maxThreads)
     {
+        ScopedLock shutdownLock(m_shutdownMutex);
+
         // 現在のモードと同じなら何もしない
         SizingMode newMode = enabled ? SizingMode::SIZING_DYNAMIC : SizingMode::SIZING_FIXED;
         if (newMode == m_sizingMode.Load() &&
@@ -467,15 +495,19 @@ namespace NorvesLib::Thread
 
     size_t JobSystem::AdjustWorkerThreadCount(size_t targetThreadCount)
     {
+        ScopedLock resizeLock(m_resizeMutex);
+
         if (m_shutdownRequested)
         {
             return 0;
         }
 
-        ScopedLock workerLock(m_workerThreadMutex);
-
         // 現在のスレッド数
-        size_t currentThreadCount = m_workerThreads.size();
+        size_t currentThreadCount = 0;
+        {
+            ScopedLock workerLock(m_workerThreadMutex);
+            currentThreadCount = m_workerThreads.size();
+        }
 
         // 範囲制限（最小・最大スレッド数）
         size_t minThreads = m_minThreads.Load();
@@ -491,31 +523,55 @@ namespace NorvesLib::Thread
         // スレッド数を増やす場合
         if (targetThreadCount > currentThreadCount)
         {
+            m_workerThreadLimit = targetThreadCount;
             size_t threadsToAdd = targetThreadCount - currentThreadCount;
             for (size_t i = 0; i < threadsToAdd; ++i)
             {
                 CreateAndStartWorkerThread();
             }
+
+            return GetWorkerThreadCount();
         }
         // スレッド数を減らす場合
         else
         {
-            // 減らすスレッド数
-            size_t threadsToRemove = currentThreadCount - targetThreadCount;
-
-            // 最も最近追加されたスレッドから順に削除
-            // (統計情報やローカルキューの調整が必要ないため)
-            for (size_t i = 0; i < threadsToRemove; ++i)
+            Core::Container::VariableArray<std::unique_ptr<Thread>> workerThreadsToJoin;
             {
-                if (!m_workerThreads.empty())
+                ScopedLock workerLock(m_workerThreadMutex);
+                ScopedLock queueLock(m_queueMutex);
+
+                if (m_queuedTaskCount != 0 || m_activeThreads != 0)
                 {
+                    return currentThreadCount;
+                }
+
+                m_workerThreadLimit = targetThreadCount;
+                m_conditionVar.NotifyAll();
+
+                while (m_workerThreads.size() > targetThreadCount)
+                {
+                    workerThreadsToJoin.push_back(std::move(m_workerThreads.back()));
                     m_workerThreads.pop_back();
                 }
-            }
-        }
 
-        // 更新後のスレッド数を返す
-        return m_workerThreads.size();
+                if (m_localQueues.size() > targetThreadCount)
+                {
+                    m_localQueues.resize(targetThreadCount);
+                }
+            }
+
+            workerThreadsToJoin.clear();
+
+            {
+                ScopedLock statsLock(m_statsMutex);
+                if (m_tasksProcessedPerThread.size() > targetThreadCount)
+                {
+                    m_tasksProcessedPerThread.resize(targetThreadCount);
+                }
+            }
+
+            return GetWorkerThreadCount();
+        }
     }
 
     TaskPtr JobSystem::GetNextTaskSimple()
@@ -597,7 +653,7 @@ namespace NorvesLib::Thread
 
     void JobSystem::WorkerThreadFunction(size_t threadIndex)
     {
-        while (!m_shutdownRequested)
+        while (!m_shutdownRequested && threadIndex < m_workerThreadLimit.Load())
         {
             // 現在の実行モードによって、タスク取得方法を切り替え
             TaskPtr task = nullptr;
@@ -621,7 +677,7 @@ namespace NorvesLib::Thread
             if (noTasks)
             {
                 ScopedLock lock(m_queueMutex);
-                if (!m_shutdownRequested && m_queuedTaskCount == 0)
+                if (!m_shutdownRequested && threadIndex < m_workerThreadLimit.Load() && m_queuedTaskCount == 0)
                 {
                     m_conditionVar.Wait(m_queueMutex);
                 }
@@ -634,16 +690,16 @@ namespace NorvesLib::Thread
             m_activeThreads--;
 
             // 統計情報を更新（unique_ptr経由でアクセス）
-            if (threadIndex < m_tasksProcessedPerThread.size() && m_tasksProcessedPerThread[threadIndex])
             {
-                (*m_tasksProcessedPerThread[threadIndex])++;
+                ScopedLock statsLock(m_statsMutex);
+                if (threadIndex < m_tasksProcessedPerThread.size() && m_tasksProcessedPerThread[threadIndex])
+                {
+                    (*m_tasksProcessedPerThread[threadIndex])++;
+                }
             }
 
             // キュー内のタスク数を減らす
-            if (m_queuedTaskCount > 0)
-            {
-                m_queuedTaskCount--;
-            }
+            MarkQueuedTaskCompleted();
         }
     }
 
@@ -766,6 +822,11 @@ namespace NorvesLib::Thread
             m_tasksProcessedPerThread.push_back(std::make_unique<Atomic<size_t>>(0));
         }
 
+        if (m_workerThreadLimit.Load() < threadIndex + 1)
+        {
+            m_workerThreadLimit = threadIndex + 1;
+        }
+
         // ワークスチーリングモードの場合はローカルキューを作成
         if (m_executionMode.Load() == ExecutionMode::EXECUTION_WORK_STEALING)
         {
@@ -789,6 +850,19 @@ namespace NorvesLib::Thread
         // リストに追加
         ScopedLock workerLock(m_workerThreadMutex);
         m_workerThreads.push_back(std::move(thread));
+    }
+
+    void JobSystem::MarkQueuedTaskCompleted()
+    {
+        size_t currentCount = m_queuedTaskCount.Load();
+        while (currentCount > 0)
+        {
+            const size_t nextCount = currentCount - 1;
+            if (m_queuedTaskCount.CompareExchangeStrong(currentCount, nextCount))
+            {
+                return;
+            }
+        }
     }
 
 } // namespace NorvesLib::Thread
