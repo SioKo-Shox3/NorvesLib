@@ -170,8 +170,14 @@ namespace NorvesLib::Core
          */
         void SyncToSceneView(const Rendering::MaterialResources *materials = nullptr);
 
+        /**
+         * @brief Entity階層のワールドトランスフォームを更新
+         */
+        void UpdateWorldTransforms();
+
     private:
         void CleanupDestroyedObjects();
+        void UpdateEntityTransformRecursive(Entity& entity, const Math::Transform& parentWorld);
 
         // システムポインタ（リフレクション対象外）
         Rendering::SceneView *m_SceneView = nullptr;

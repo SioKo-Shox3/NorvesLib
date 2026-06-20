@@ -291,6 +291,8 @@ namespace NorvesLib::Core
             return;
         }
 
+        UpdateWorldTransforms();
+
         Container::UnorderedSet<uint64_t> liveMeshObjectIds;
         Container::UnorderedSet<uint64_t> liveMegaGeometryObjectIds;
         Container::UnorderedSet<uint64_t> liveLightIds;
@@ -406,6 +408,42 @@ namespace NorvesLib::Core
         m_SceneView->RemoveStaleMeshProxies(liveMeshObjectIds);
         m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
         m_SceneView->RemoveStaleLightProxies(liveLightIds);
+    }
+
+    void World::UpdateWorldTransforms()
+    {
+        if (!HasFlag(OF_Initialized))
+        {
+            return;
+        }
+
+        for (auto *inner : m_Inners)
+        {
+            auto *obj = CastTo<Entity>(inner);
+            if (!obj)
+            {
+                continue;
+            }
+
+            UpdateEntityTransformRecursive(*obj, Math::Transform::Identity);
+        }
+    }
+
+    void World::UpdateEntityTransformRecursive(Entity& entity, const Math::Transform& parentWorld)
+    {
+        entity.RecomputeWorldTransform(parentWorld);
+        const Math::Transform& worldTransform = entity.GetWorldTransform();
+
+        for (auto *inner : entity.GetInners())
+        {
+            auto *child = CastTo<Entity>(inner);
+            if (!child)
+            {
+                continue;
+            }
+
+            UpdateEntityTransformRecursive(*child, worldTransform);
+        }
     }
 
     void World::CleanupDestroyedObjects()

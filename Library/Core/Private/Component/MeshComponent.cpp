@@ -331,42 +331,16 @@ namespace NorvesLib::Core::Component
             return;
         }
 
-        // オーナーのワールドトランスフォームを取得
-        const Math::Vector3 &pos = owner->GetPosition();
-        const Math::Quaternion &rot = owner->GetRotation();
-        const Math::Vector3 &scl = owner->GetScale();
+        const Math::Transform& worldTransform = owner->GetWorldTransform();
+        outMatrix = worldTransform.ToMatrix();
 
-        // クォータニオンからの回転行列計算
-        float xx = rot.x * rot.x;
-        float yy = rot.y * rot.y;
-        float zz = rot.z * rot.z;
-        float xy = rot.x * rot.y;
-        float xz = rot.x * rot.z;
-        float yz = rot.y * rot.z;
-        float wx = rot.w * rot.x;
-        float wy = rot.w * rot.y;
-        float wz = rot.w * rot.z;
-
-        // 回転 * スケール
-        outMatrix.m00 = (1.0f - 2.0f * (yy + zz)) * scl.x;
-        outMatrix.m01 = (2.0f * (xy - wz)) * scl.y;
-        outMatrix.m02 = (2.0f * (xz + wy)) * scl.z;
+        // Rendering currently consumes translation from m30/m31/m32.
+        outMatrix.m30 = worldTransform.position.x;
+        outMatrix.m31 = worldTransform.position.y;
+        outMatrix.m32 = worldTransform.position.z;
         outMatrix.m03 = 0.0f;
-
-        outMatrix.m10 = (2.0f * (xy + wz)) * scl.x;
-        outMatrix.m11 = (1.0f - 2.0f * (xx + zz)) * scl.y;
-        outMatrix.m12 = (2.0f * (yz - wx)) * scl.z;
         outMatrix.m13 = 0.0f;
-
-        outMatrix.m20 = (2.0f * (xz - wy)) * scl.x;
-        outMatrix.m21 = (2.0f * (yz + wx)) * scl.y;
-        outMatrix.m22 = (1.0f - 2.0f * (xx + yy)) * scl.z;
         outMatrix.m23 = 0.0f;
-
-        // 位置
-        outMatrix.m30 = pos.x;
-        outMatrix.m31 = pos.y;
-        outMatrix.m32 = pos.z;
         outMatrix.m33 = 1.0f;
     }
 

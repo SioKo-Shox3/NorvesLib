@@ -4,6 +4,7 @@
 #include "Reflection.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Math/Transform.h"
 #include "Math/Vector3.h"
 #include "Math/Quaternion.h"
 #include <cstdint>
@@ -144,66 +145,90 @@ namespace NorvesLib::Core
         // ========================================
 
         /**
+         * @brief ローカル位置を設定
+         */
+        void SetLocalPosition(const Math::Vector3& pos);
+        void SetLocalPosition(float x, float y, float z);
+
+        /**
+         * @brief ローカル回転を設定（クォータニオン）
+         */
+        void SetLocalRotation(const Math::Quaternion& rot);
+        void SetLocalRotation(float x, float y, float z, float w);
+
+        /**
+         * @brief ローカルスケールを設定
+         */
+        void SetLocalScale(const Math::Vector3& scale);
+        void SetLocalScale(float x, float y, float z);
+
+        /**
+         * @brief ローカルトランスフォームを取得
+         */
+        const Math::Transform& GetLocalTransform() const { return m_LocalTransform; }
+
+        /**
+         * @brief ワールドトランスフォームを設定
+         */
+        void SetWorldTransform(const Math::Transform& worldTransform);
+
+        /**
+         * @brief ワールドトランスフォームを取得
+         */
+        const Math::Transform& GetWorldTransform() const;
+
+        /**
          * @brief ワールド位置を設定
          */
-        void SetPosition(const Math::Vector3 &pos)
-        {
-            Position = pos;
-            ++m_TransformVersion;
-        }
-        void SetPosition(float x, float y, float z)
-        {
-            Position = Math::Vector3(x, y, z);
-            ++m_TransformVersion;
-        }
+        void SetPosition(const Math::Vector3& pos);
+        void SetPosition(float x, float y, float z);
 
         /**
          * @brief ワールド位置を取得
          */
-        const Math::Vector3 &GetPosition() const { return Position; }
+        const Math::Vector3& GetPosition() const;
 
         /**
          * @brief ワールド回転を設定（クォータニオン）
          */
-        void SetRotation(const Math::Quaternion &rot)
-        {
-            Rotation = rot;
-            ++m_TransformVersion;
-        }
-        void SetRotation(float x, float y, float z, float w)
-        {
-            Rotation = Math::Quaternion(x, y, z, w);
-            ++m_TransformVersion;
-        }
+        void SetRotation(const Math::Quaternion& rot);
+        void SetRotation(float x, float y, float z, float w);
 
         /**
          * @brief ワールド回転を取得（クォータニオン）
          */
-        const Math::Quaternion &GetRotation() const { return Rotation; }
+        const Math::Quaternion& GetRotation() const;
 
         /**
-         * @brief スケールを設定
+         * @brief ワールドスケールを設定
          */
-        void SetScale(const Math::Vector3 &scale)
-        {
-            Scale = scale;
-            ++m_TransformVersion;
-        }
-        void SetScale(float x, float y, float z)
-        {
-            Scale = Math::Vector3(x, y, z);
-            ++m_TransformVersion;
-        }
+        void SetScale(const Math::Vector3& scale);
+        void SetScale(float x, float y, float z);
 
         /**
-         * @brief スケールを取得
+         * @brief ワールドスケールを取得
          */
-        const Math::Vector3 &GetScale() const { return Scale; }
+        const Math::Vector3& GetScale() const;
 
         /**
          * @brief トランスフォーム更新バージョンを取得
          */
         uint64_t GetTransformVersion() const { return m_TransformVersion; }
+
+        /**
+         * @brief Outerから親Entityを取得
+         */
+        Entity* GetParentEntity() const;
+
+        /**
+         * @brief ワールドトランスフォームをdirty化
+         */
+        void MarkWorldTransformDirty();
+
+        /**
+         * @brief 親ワールドトランスフォームからワールドキャッシュを再計算
+         */
+        void RecomputeWorldTransform(const Math::Transform& parentWorld);
 
         // ========================================
         // ライフサイクル
@@ -279,14 +304,22 @@ namespace NorvesLib::Core
         PROPERTY(bool, bPendingDestroy) // 破棄予約フラグ
 
         // トランスフォーム
-        PROPERTY(Math::Vector3, Position)    // ワールド位置
-        PROPERTY(Math::Quaternion, Rotation) // ワールド回転（クォータニオン）
-        PROPERTY(Math::Vector3, Scale)       // スケール
+        PROPERTY(Math::Vector3, Position)    // ローカル位置
+        PROPERTY(Math::Quaternion, Rotation) // ローカル回転（クォータニオン）
+        PROPERTY(Math::Vector3, Scale)       // ローカルスケール
 
         // オブジェクトID（World内でユニーク）
         PROPERTY(uint64_t, ObjectId)
 
+        Math::Transform m_LocalTransform;
+        Math::Transform m_CachedWorldTransform;
+        bool m_bWorldTransformDirty = true;
         uint64_t m_TransformVersion = 1;
+
+    private:
+        void SetLocalTransform(const Math::Transform& transform);
+        void SyncLocalTransformFromProperties();
+        Math::Transform EvaluateWorldTransformNonMutating() const;
     };
 
 } // namespace NorvesLib::Core

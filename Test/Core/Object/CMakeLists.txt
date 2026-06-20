@@ -124,6 +124,15 @@ target_include_directories(LegacyCleanupTest PRIVATE
 )
 set_target_properties(LegacyCleanupTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(TransformHierarchyTest
+    TransformHierarchyTest.cpp
+)
+target_link_libraries(TransformHierarchyTest PRIVATE Core)
+target_include_directories(TransformHierarchyTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(TransformHierarchyTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
@@ -137,3 +146,4 @@ add_test(NAME ObjectGCTest COMMAND ObjectGCTest)
 add_test(NAME IncrementalGCTest COMMAND IncrementalGCTest)
 add_test(NAME SchemaProjectionTest COMMAND SchemaProjectionTest)
 add_test(NAME LegacyCleanupTest COMMAND LegacyCleanupTest)
+add_test(NAME TransformHierarchyTest COMMAND TransformHierarchyTest)
