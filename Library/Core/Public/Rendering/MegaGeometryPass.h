@@ -109,7 +109,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t HiZHeight;     // Hi-Zテクスチャ高さ（mip 0）
             uint32_t HiZMipCount;   // ミップレベル数
             uint32_t bHiZEnabled;   // Hi-Z有効フラグ（1=有効, 0=無効）
-            uint32_t bWriteClusterFirstInstance; // firstInstanceへクラスタIDを書き込む
+            uint32_t DebugPayloadMode; // firstInstanceへ書き込むデバッグpayload種別
             uint32_t Padding[2];    // std140でmat4を16バイト境界に揃える
             float WorldMatrix[16];
         };
@@ -226,7 +226,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_CurrentHeight = 0;
         bool m_bPreferRenderGraphGBufferResources = false;
         bool m_bGBufferRenderPassUsesRenderGraphAttachmentStates = false;
-        bool m_bMegaGeometryClusterDebugUnsupportedWarned = false;
+        bool m_bMegaGeometryDebugPayloadUnsupportedWarned = false;
     };
 
 } // namespace NorvesLib::Core::Rendering

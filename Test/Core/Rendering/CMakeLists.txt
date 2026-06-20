@@ -114,6 +114,33 @@ target_compile_definitions(LightingParamsLayoutTest PRIVATE
 set_target_properties(LightingParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME LightingParamsLayoutTest COMMAND LightingParamsLayoutTest)
 
+add_executable(ToneMappingParamsLayoutTest
+    ToneMappingParamsLayoutTest.cpp
+)
+target_link_libraries(ToneMappingParamsLayoutTest PRIVATE Core)
+target_include_directories(ToneMappingParamsLayoutTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(ToneMappingParamsLayoutTest PRIVATE
+    NORVES_SHADER_DIR="${CMAKE_SOURCE_DIR}/Assets/Shaders"
+)
+set_target_properties(ToneMappingParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ToneMappingParamsLayoutTest COMMAND ToneMappingParamsLayoutTest)
+
+add_executable(DebugPostProcessPassThroughContractTest
+    DebugPostProcessPassThroughContractTest.cpp
+)
+target_link_libraries(DebugPostProcessPassThroughContractTest PRIVATE Core)
+target_include_directories(DebugPostProcessPassThroughContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(DebugPostProcessPassThroughContractTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(DebugPostProcessPassThroughContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DebugPostProcessPassThroughContractTest COMMAND DebugPostProcessPassThroughContractTest)
+
 add_executable(DebugViewModeStringTest
     DebugViewModeStringTest.cpp
 )

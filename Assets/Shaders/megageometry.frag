@@ -6,7 +6,7 @@ layout(location = 2) in vec3 fragObjectColor;
 layout(location = 3) in vec4 fragEmissiveColor;
 layout(location = 4) in vec2 fragTexCoord;
 layout(location = 5) in vec3 fragViewDir;
-layout(location = 6) flat in uint fragClusterId;
+layout(location = 6) flat in uint fragDebugPayload;
 
 // UBOからPOMパラメータを参照
 layout(set = 0, binding = 0) uniform MVPData
@@ -17,7 +17,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 objectColor;
     vec4 emissiveColor;
-    vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=debugMode, w=clusterDebugSupported
+    vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=debugMode, w=debugPayloadSupported
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -35,6 +35,7 @@ layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) /
 layout(location = 3) out vec4 outEmissive;  // RT3: Emissive (RGB, HDR) + unused
 
 const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;
+const float DEBUG_VIEW_MODE_LOD_LEVEL = 8.0;
 
 uint HashClusterId(uint value)
 {
@@ -53,6 +54,28 @@ vec3 ClusterDebugColor(uint clusterId)
                       float((hash >> 8) & 255u),
                       float((hash >> 16) & 255u)) / 255.0;
     return mix(vec3(0.18), color, 0.82);
+}
+
+vec3 LODLevelDebugColor(uint lodLevel)
+{
+    const vec3 palette[8] = vec3[8](
+        vec3(0.10, 0.72, 0.28),
+        vec3(0.14, 0.78, 0.70),
+        vec3(0.18, 0.42, 0.90),
+        vec3(0.42, 0.24, 0.86),
+        vec3(0.78, 0.22, 0.78),
+        vec3(0.96, 0.72, 0.18),
+        vec3(0.95, 0.42, 0.16),
+        vec3(0.86, 0.12, 0.12));
+    return palette[min(lodLevel, 7u)];
+}
+
+void WriteDebugGBuffer(vec3 albedo)
+{
+    outAlbedo = vec4(albedo, 1.0);
+    outNormal = vec4(normalize(fragNormal), 0.0);
+    outMaterial = vec4(0.0, 1.0, 1.0, 0.0);
+    outEmissive = vec4(0.0, 0.0, 0.0, 1.0);
 }
 
 /**
@@ -140,15 +163,21 @@ vec2 ParallaxOcclusionMapping(vec2 texCoord, vec3 viewDirTS, float heightScale)
 void main()
 {
     float debugMode = mvp.pomParams.z;
-    float clusterDebugSupported = mvp.pomParams.w;
+    float debugPayloadSupported = mvp.pomParams.w;
 
-    if (debugMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS && clusterDebugSupported > 0.5)
+    if (debugPayloadSupported > 0.5)
     {
-        outAlbedo = vec4(ClusterDebugColor(fragClusterId), 1.0);
-        outNormal = vec4(normalize(fragNormal), 0.0);
-        outMaterial = vec4(0.0, 1.0, 1.0, 0.0);
-        outEmissive = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
+        if (debugMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS)
+        {
+            WriteDebugGBuffer(ClusterDebugColor(fragDebugPayload));
+            return;
+        }
+
+        if (debugMode == DEBUG_VIEW_MODE_LOD_LEVEL)
+        {
+            WriteDebugGBuffer(LODLevelDebugColor(fragDebugPayload));
+            return;
+        }
     }
 
     // POMパラメータ取得

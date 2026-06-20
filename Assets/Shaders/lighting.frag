@@ -155,6 +155,14 @@ vec3 ReconstructWorldPosition(vec2 uv, float depth)
     return worldPos.xyz / worldPos.w;
 }
 
+float ComputeDebugDepth01(vec2 uv, float depth)
+{
+    vec3 worldPos = ReconstructWorldPosition(uv, depth);
+    float cameraDistance = distance(params.cameraPosition.xyz, worldPos);
+    float depth01 = cameraDistance / (cameraDistance + 25.0);
+    return clamp(depth01, 0.0, 1.0);
+}
+
 // ========================================
 // ライト減衰計算
 // ========================================
@@ -374,6 +382,32 @@ void main()
     vec4 materialSample = texture(gbufferMaterial, fragUV);
     float depthSample = texture(gbufferDepth, fragUV).r;
 
+    if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_ALBEDO)
+    {
+        outColor = vec4(albedoSample.rgb, 1.0);
+        return;
+    }
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_NORMAL)
+    {
+        vec3 debugNormal = normalize(normalSample.xyz) * 0.5 + 0.5;
+        outColor = vec4(debugNormal, 1.0);
+        return;
+    }
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_MATERIAL)
+    {
+        outColor = vec4(materialSample.rgb, 1.0);
+        return;
+    }
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_DEPTH)
+    {
+        float depth01 = ComputeDebugDepth01(fragUV, depthSample);
+        outColor = vec4(vec3(depth01), 1.0);
+        return;
+    }
+
     // アルファが0の場合は天球（環境マップ）を描画
     if (albedoSample.a < 0.01)
     {
@@ -400,7 +434,8 @@ void main()
 
     if (params.debugViewMode == DEBUG_VIEW_MODE_UNLIT ||
         params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME ||
-        params.debugViewMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS)
+        params.debugViewMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS ||
+        params.debugViewMode == DEBUG_VIEW_MODE_LOD_LEVEL)
     {
         outColor = vec4(albedoSample.rgb, 1.0);
         return;

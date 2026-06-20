@@ -18,6 +18,22 @@ namespace
         return source.find(expected) != std::string::npos;
     }
 
+    std::size_t FindText(const std::string& source, const std::string& expected)
+    {
+        const std::size_t position = source.find(expected);
+        assert(position != std::string::npos);
+        return position;
+    }
+
+    std::size_t FindTextAfter(const std::string& source,
+                              const std::string& expected,
+                              std::size_t startPosition)
+    {
+        const std::size_t position = source.find(expected, startPosition);
+        assert(position != std::string::npos);
+        return position;
+    }
+
     void AssertShaderDebugModeConstant(const std::string& shaderSource,
                                        const std::string& constantName,
                                        uint32_t expectedValue)
@@ -101,6 +117,61 @@ int main()
     AssertShaderDebugModeConstant(shaderSource,
                                   "DEBUG_VIEW_MODE_COUNT",
                                   static_cast<uint32_t>(DebugViewMode::Count));
+
+    assert(ContainsText(shaderSource, "float ComputeDebugDepth01(vec2 uv, float depth)"));
+    assert(ContainsText(shaderSource, "vec3 worldPos = ReconstructWorldPosition(uv, depth);"));
+    assert(ContainsText(shaderSource, "float cameraDistance = distance(params.cameraPosition.xyz, worldPos);"));
+    assert(ContainsText(shaderSource, "float depth01 = cameraDistance / (cameraDistance + 25.0);"));
+    assert(ContainsText(shaderSource, "return clamp(depth01, 0.0, 1.0);"));
+
+    const std::size_t gbufferSamplePosition =
+        FindText(shaderSource, "float depthSample = texture(gbufferDepth, fragUV).r;");
+    const std::size_t skyBranchPosition =
+        FindText(shaderSource, "if (albedoSample.a < 0.01)");
+    const std::size_t rawAlbedoPosition =
+        FindTextAfter(shaderSource, "params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_ALBEDO", gbufferSamplePosition);
+    const std::size_t rawNormalPosition =
+        FindTextAfter(shaderSource, "params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_NORMAL", gbufferSamplePosition);
+    const std::size_t rawMaterialPosition =
+        FindTextAfter(shaderSource, "params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_MATERIAL", gbufferSamplePosition);
+    const std::size_t rawDepthPosition =
+        FindTextAfter(shaderSource, "params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_DEPTH", gbufferSamplePosition);
+
+    assert(rawAlbedoPosition < skyBranchPosition);
+    assert(rawNormalPosition < skyBranchPosition);
+    assert(rawMaterialPosition < skyBranchPosition);
+    assert(rawDepthPosition < skyBranchPosition);
+
+    assert(ContainsText(shaderSource, "vec3 debugNormal = normalize(normalSample.xyz) * 0.5 + 0.5;"));
+    assert(ContainsText(shaderSource, "float depth01 = ComputeDebugDepth01(fragUV, depthSample);"));
+
+    const std::size_t rawAlbedoOutputPosition =
+        FindTextAfter(shaderSource, "outColor = vec4(albedoSample.rgb, 1.0);", rawAlbedoPosition);
+    const std::size_t rawNormalOutputPosition =
+        FindTextAfter(shaderSource, "outColor = vec4(debugNormal, 1.0);", rawNormalPosition);
+    const std::size_t rawMaterialOutputPosition =
+        FindTextAfter(shaderSource, "outColor = vec4(materialSample.rgb, 1.0);", rawMaterialPosition);
+    const std::size_t rawDepthOutputPosition =
+        FindTextAfter(shaderSource, "outColor = vec4(vec3(depth01), 1.0);", rawDepthPosition);
+
+    assert(rawAlbedoOutputPosition < rawNormalPosition);
+    assert(rawNormalOutputPosition < rawMaterialPosition);
+    assert(rawMaterialOutputPosition < rawDepthPosition);
+    assert(rawDepthOutputPosition < skyBranchPosition);
+
+    const std::size_t albedoPassthroughPosition =
+        FindTextAfter(shaderSource, "params.debugViewMode == DEBUG_VIEW_MODE_UNLIT ||", skyBranchPosition);
+    FindTextAfter(shaderSource, "params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME ||", albedoPassthroughPosition);
+    FindTextAfter(shaderSource,
+                  "params.debugViewMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS ||",
+                  albedoPassthroughPosition);
+    const std::size_t lodPassthroughPosition =
+        FindTextAfter(shaderSource, "params.debugViewMode == DEBUG_VIEW_MODE_LOD_LEVEL", albedoPassthroughPosition);
+    const std::size_t passthroughOutputPosition =
+        FindTextAfter(shaderSource, "outColor = vec4(albedoSample.rgb, 1.0);", albedoPassthroughPosition);
+
+    assert(lodPassthroughPosition < passthroughOutputPosition);
+
     assert(ContainsText(shaderSource,
                         "params.debugViewMode == DEBUG_VIEW_MODE_UNLIT ||"));
     assert(ContainsText(shaderSource,

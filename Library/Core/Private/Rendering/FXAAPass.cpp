@@ -1,5 +1,6 @@
 ﻿#include "Rendering/FXAAPass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/ToneMappingPass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -475,7 +476,9 @@ namespace NorvesLib::Core::Rendering
         params.edgeThreshold = m_Settings.EdgeThreshold;
         params.edgeThresholdMin = m_Settings.EdgeThresholdMin;
         params.subpixelQuality = m_Settings.SubpixelQuality;
-        params.bEnabled = m_Settings.bEnabled ? 1u : 0u;
+        const bool bDebugPostProcessBypass =
+            IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
+        params.bEnabled = bDebugPostProcessBypass ? 0u : (m_Settings.bEnabled ? 1u : 0u);
         m_ParamsBuffer->Update(&params, sizeof(GPUFXAAParams));
 
         // FXAA結果をSharedResourceRegistryに登録（ToneMappedColorを上書き）
