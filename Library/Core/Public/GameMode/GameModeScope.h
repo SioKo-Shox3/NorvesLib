@@ -2,7 +2,9 @@
 
 #include "Container/Containers.h"
 #include "Object/Entity.h"
+#include "Object/World.h"
 #include "Rendering/RenderTypes.h"
+#include <type_traits>
 
 // 重いサブシステムヘッダのインクルードを避け、前方宣言のみ使用する。
 // RenderResources の具体的な API（Meshes()/MegaGeometry()）は
@@ -33,7 +35,6 @@ namespace NorvesLib::Core::GameMode
      *
      * 非コピー設計（二重 Cleanup 防止）。
      *
-     * TODO(Phase4): SpawnObject<T>() の追加（World::SpawnObject のラッパー + TrackObject 自動呼び出し）
      * TODO: TrackAsync(...) の追加（非同期ロードリソースの追跡）
      */
     class GameModeScope
@@ -51,10 +52,34 @@ namespace NorvesLib::Core::GameMode
         /**
          * @brief Entity を追跡リストへ追加
          *
-         * Cleanup() が呼ばれると挿入順に World::RemoveObject が呼ばれる。
+         * Cleanup() が呼ばれると、root は World::RemoveObject、child は World::RemoveEntity で除去される。
          * @param object 追跡対象の Entity（非所有、World が所有）
          */
         void TrackObject(NorvesLib::Core::Entity* object);
+
+        /**
+         * @brief World に Entity を生成し、Cleanup 対象として追跡します
+         * @tparam T Entity派生型
+         * @param parent 親Entity。nullptrならWorld直下root
+         * @return 生成されたEntity。失敗時nullptr
+         */
+        template <typename T = NorvesLib::Core::Entity>
+        T* SpawnObject(NorvesLib::Core::Entity* parent = nullptr)
+        {
+            static_assert(std::is_base_of_v<NorvesLib::Core::Entity, T>, "T must derive from Entity");
+
+            if (m_pWorld == nullptr)
+            {
+                return nullptr;
+            }
+
+            T* object = m_pWorld->SpawnEntity<T>(parent);
+            if (object != nullptr)
+            {
+                TrackObject(object);
+            }
+            return object;
+        }
 
         /**
          * @brief MeshDataHandle を追跡リストへ追加
@@ -85,7 +110,7 @@ namespace NorvesLib::Core::GameMode
         /**
          * @brief 追跡リソースを確立された順序で解放する
          *
-         * 1) 全 Entity を World::RemoveObject で除去
+         * 1) 追跡 Entity を World から除去（root は RemoveObject、child は RemoveEntity）
          * 2) 全 MeshDataHandle を MeshResources::Unregister で解放
          * 3) 全 ModelHandle を MegaGeometryResources::ReleaseModel で解放
          *

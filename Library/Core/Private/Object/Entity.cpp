@@ -155,12 +155,7 @@ namespace NorvesLib::Core
         }
 
         bActive = bNewActive;
-
-        auto components = GetComponents();
-        for (auto *component : components)
-        {
-            component->MarkRenderStateDirty();
-        }
+        MarkRenderStateDirtyRecursive();
     }
 
     // ========================================
@@ -170,12 +165,31 @@ namespace NorvesLib::Core
     World *Entity::GetWorld() const
     {
         // Outer関係はオーナーシップの概念であり、constの制約を受けない
-        return CastTo<World>(const_cast<IUnknown *>(GetOuter()));
+        IUnknown *outer = const_cast<IUnknown *>(GetOuter());
+        while (outer)
+        {
+            if (auto *world = CastTo<World>(outer))
+            {
+                return world;
+            }
+            outer = outer->GetOuter();
+        }
+        return nullptr;
     }
 
     bool Entity::IsInWorld() const
     {
-        return CastTo<World>(GetOuter()) != nullptr;
+        return GetWorld() != nullptr;
+    }
+
+    bool Entity::AddInner(IUnknown* inner)
+    {
+        if (CastTo<Entity>(inner) && IsInWorld())
+        {
+            return false;
+        }
+
+        return UnknownImpl::AddInner(inner);
     }
 
     // ========================================
@@ -438,6 +452,19 @@ namespace NorvesLib::Core
         return result;
     }
 
+    Container::VariableArray<Entity*> Entity::GetChildEntities() const
+    {
+        Container::VariableArray<Entity*> result;
+        for (auto *inner : m_Inners)
+        {
+            if (auto *child = CastTo<Entity>(inner))
+            {
+                result.push_back(child);
+            }
+        }
+        return result;
+    }
+
     void Entity::TickComponents(float deltaTime)
     {
         for (auto *inner : m_Inners)
@@ -447,6 +474,21 @@ namespace NorvesLib::Core
             {
                 comp->Tick(deltaTime);
             }
+        }
+    }
+
+    void Entity::MarkRenderStateDirtyRecursive()
+    {
+        auto components = GetComponents();
+        for (auto *component : components)
+        {
+            component->MarkRenderStateDirty();
+        }
+
+        auto children = GetChildEntities();
+        for (auto *child : children)
+        {
+            child->MarkRenderStateDirtyRecursive();
         }
     }
 

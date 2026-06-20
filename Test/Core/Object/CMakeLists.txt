@@ -133,6 +133,15 @@ target_include_directories(TransformHierarchyTest PRIVATE
 )
 set_target_properties(TransformHierarchyTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(EntityTreeTest
+    EntityTreeTest.cpp
+)
+target_link_libraries(EntityTreeTest PRIVATE Core)
+target_include_directories(EntityTreeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(EntityTreeTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
@@ -147,3 +156,4 @@ add_test(NAME IncrementalGCTest COMMAND IncrementalGCTest)
 add_test(NAME SchemaProjectionTest COMMAND SchemaProjectionTest)
 add_test(NAME LegacyCleanupTest COMMAND LegacyCleanupTest)
 add_test(NAME TransformHierarchyTest COMMAND TransformHierarchyTest)
+add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
