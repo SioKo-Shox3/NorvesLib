@@ -12,6 +12,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Debug/DebugConfig.h"
 #include "Math/MatrixUtils.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
@@ -278,6 +279,7 @@ namespace NorvesLib::Core::Rendering
         m_CullDescriptorSets.clear();
 
         m_DrawPipeline.reset();
+        m_DrawWireframePipeline.reset();
         m_DrawVertexShader.reset();
         m_DrawFragmentShader.reset();
         m_DrawUniformBuffers.clear();
@@ -410,13 +412,18 @@ namespace NorvesLib::Core::Rendering
                 m_GBufferFramebuffer->GetDepthStencilAttachment().get() != m_DepthTexture.get();
         }
 
+        bool bDrawPipelinesReady = m_DrawPipeline != nullptr;
+#if NORVES_BUILD_DEVELOPMENT
+        bDrawPipelinesReady = bDrawPipelinesReady && m_DrawWireframePipeline != nullptr;
+#endif
+
         if (width != m_CurrentWidth ||
             height != m_CurrentHeight ||
             bFramebufferTargetsChanged ||
             m_bGBufferRenderPassUsesRenderGraphAttachmentStates != bUseRenderGraphAttachmentStates ||
             !m_GBufferRenderPass ||
             !m_GBufferFramebuffer ||
-            (bNeedsDrawPipeline && !m_DrawPipeline))
+            (bNeedsDrawPipeline && !bDrawPipelinesReady))
         {
             m_CurrentWidth = width;
             m_CurrentHeight = height;
@@ -637,7 +644,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !m_DrawPipeline)
+        bool bDrawPipelinesReady = m_DrawPipeline != nullptr;
+#if NORVES_BUILD_DEVELOPMENT
+        bDrawPipelinesReady = bDrawPipelinesReady && m_DrawWireframePipeline != nullptr;
+#endif
+
+        if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !bDrawPipelinesReady)
         {
             enqueueEmptyTransitionPass();
             return;
@@ -659,7 +671,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !m_DrawPipeline)
+        bool bDrawPipelinesReady = m_DrawPipeline != nullptr;
+#if NORVES_BUILD_DEVELOPMENT
+        bDrawPipelinesReady = bDrawPipelinesReady && m_DrawWireframePipeline != nullptr;
+#endif
+
+        if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !bDrawPipelinesReady)
         {
             return;
         }
@@ -928,7 +945,7 @@ namespace NorvesLib::Core::Rendering
         cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
         cmdList->SetViewport(command.Viewport);
         cmdList->SetScissor(command.Scissor);
-        cmdList->SetPipeline(m_DrawPipeline);
+        cmdList->SetPipeline(SelectDrawPipeline(command.DebugMode));
 
         const auto &caps = m_Device->GetCapabilities();
         for (const DrawableInstance &drawableInstance : drawableInstances)
@@ -1151,12 +1168,39 @@ namespace NorvesLib::Core::Rendering
         if (!bRequireDrawPipeline)
         {
             m_DrawPipeline.reset();
+            m_DrawWireframePipeline.reset();
             return true;
         }
 
         if (!m_DrawVertexShader || !m_DrawFragmentShader)
         {
             m_DrawPipeline.reset();
+            m_DrawWireframePipeline.reset();
+            return false;
+        }
+
+        m_DrawPipeline.reset();
+        m_DrawWireframePipeline.reset();
+
+        if (!CreateDrawPipelineVariant(RHI::PolygonMode::Fill, m_DrawPipeline))
+        {
+            return false;
+        }
+
+#if NORVES_BUILD_DEVELOPMENT
+        if (!CreateDrawPipelineVariant(RHI::PolygonMode::Line, m_DrawWireframePipeline))
+        {
+            return false;
+        }
+#endif
+
+        return true;
+    }
+
+    bool MegaGeometryPass::CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr &outPipeline)
+    {
+        if (!m_Device || !m_GBufferRenderPass || !m_DrawVertexShader || !m_DrawFragmentShader)
+        {
             return false;
         }
 
@@ -1198,7 +1242,7 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.vertexAttributes.push_back(texCoordAttr);
 
         // ラスタライザ
-        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.polygonMode = polygonMode;
         pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
@@ -1238,14 +1282,26 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
-        m_DrawPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-        if (!m_DrawPipeline)
+        outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!outPipeline)
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "グラフィックスパイプラインの作成に失敗");
             return false;
         }
 
         return true;
+    }
+
+    RHI::PipelinePtr MegaGeometryPass::SelectDrawPipeline(DebugViewMode mode) const
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        if (mode == DebugViewMode::Wireframe && m_DrawWireframePipeline)
+        {
+            return m_DrawWireframePipeline;
+        }
+#endif
+
+        return m_DrawPipeline;
     }
 
     bool MegaGeometryPass::EnsurePerInstanceBindings(uint32_t requiredCount)

@@ -9,6 +9,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Debug/DebugConfig.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IBuffer.h"
@@ -207,6 +208,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
         m_GBufferPipeline.reset();
+        m_GBufferWireframePipeline.reset();
         m_GBufferVertexShader.reset();
         m_GBufferFragmentShader.reset();
         m_DefaultWhiteTexture.reset();
@@ -246,6 +248,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         // サイズ変更があればGBufferリソースを再作成
+        bool bGBufferPipelinesReady = m_GBufferPipeline != nullptr;
+#if NORVES_BUILD_DEVELOPMENT
+        bGBufferPipelinesReady = bGBufferPipelinesReady && m_GBufferWireframePipeline != nullptr;
+#endif
+
         if (width != m_CurrentWidth ||
             height != m_CurrentHeight ||
             m_bUsingRenderGraphResources ||
@@ -256,7 +263,7 @@ namespace NorvesLib::Core::Rendering
             !m_DepthTexture ||
             !m_GBufferRenderPass ||
             !m_GBufferFramebuffer ||
-            !m_GBufferPipeline)
+            !bGBufferPipelinesReady)
         {
             CreateGBufferResources(width, height, context);
         }
@@ -377,7 +384,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !m_GBufferPipeline)
+        bool bGBufferPipelinesReady = m_GBufferPipeline != nullptr;
+#if NORVES_BUILD_DEVELOPMENT
+        bGBufferPipelinesReady = bGBufferPipelinesReady && m_GBufferWireframePipeline != nullptr;
+#endif
+
+        if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !bGBufferPipelinesReady)
         {
             NORVES_LOG_WARNING("GBufferPass", "GBuffer resources not ready, skipping");
             return;
@@ -572,7 +584,7 @@ namespace NorvesLib::Core::Rendering
             allocation.DescriptorSet->Update();
 
             DrawCommand drawCommand = cmd;
-            drawCommand.Pipeline = m_GBufferPipeline;
+            drawCommand.Pipeline = SelectGBufferPipeline(context.GetActiveDebugMode());
             drawCommand.DescriptorSet = allocation.DescriptorSet;
             drawCommand.DescriptorSetSlot = 0;
             gBufferCommands->push_back(drawCommand);
@@ -836,6 +848,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
         m_GBufferPipeline.reset();
+        m_GBufferWireframePipeline.reset();
         m_FramebufferAlbedoTexture = nullptr;
         m_FramebufferNormalTexture = nullptr;
         m_FramebufferMaterialTexture = nullptr;
@@ -990,9 +1003,38 @@ namespace NorvesLib::Core::Rendering
     {
         if (m_GBufferPipeline)
         {
+#if NORVES_BUILD_DEVELOPMENT
+            if (!m_GBufferWireframePipeline)
+            {
+                return CreateGBufferPipelineVariant(RHI::PolygonMode::Line, m_GBufferWireframePipeline);
+            }
+#endif
             return true;
         }
 
+        if (!m_Device || !m_GBufferRenderPass || !m_GBufferVertexShader || !m_GBufferFragmentShader)
+        {
+            return false;
+        }
+
+        if (!CreateGBufferPipelineVariant(RHI::PolygonMode::Fill, m_GBufferPipeline))
+        {
+            return false;
+        }
+
+#if NORVES_BUILD_DEVELOPMENT
+        if (!CreateGBufferPipelineVariant(RHI::PolygonMode::Line, m_GBufferWireframePipeline))
+        {
+            return false;
+        }
+#endif
+
+        NORVES_LOG_INFO("GBufferPass", "GBuffer resources created (%ux%u)", m_CurrentWidth, m_CurrentHeight);
+        return true;
+    }
+
+    bool GBufferPass::CreateGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline)
+    {
         if (!m_Device || !m_GBufferRenderPass || !m_GBufferVertexShader || !m_GBufferFragmentShader)
         {
             return false;
@@ -1038,7 +1080,7 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.vertexAttributes.push_back(texCoordAttr);
 
         // ラスタライザ
-        pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        pipelineDesc.rasterState.polygonMode = polygonMode;
         pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
@@ -1085,15 +1127,26 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
-        m_GBufferPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
-        if (!m_GBufferPipeline)
+        outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        if (!outPipeline)
         {
             NORVES_LOG_ERROR("GBufferPass", "Failed to create GBuffer pipeline");
             return false;
         }
 
-        NORVES_LOG_INFO("GBufferPass", "GBuffer resources created (%ux%u)", m_CurrentWidth, m_CurrentHeight);
         return true;
+    }
+
+    RHI::PipelinePtr GBufferPass::SelectGBufferPipeline(DebugViewMode mode) const
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        if (mode == DebugViewMode::Wireframe && m_GBufferWireframePipeline)
+        {
+            return m_GBufferWireframePipeline;
+        }
+#endif
+
+        return m_GBufferPipeline;
     }
 
 } // namespace NorvesLib::Core::Rendering

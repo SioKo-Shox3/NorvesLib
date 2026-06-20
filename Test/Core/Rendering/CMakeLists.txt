@@ -144,6 +144,16 @@ target_include_directories(ViewportSnapshotDebugWiringTest PRIVATE
 set_target_properties(ViewportSnapshotDebugWiringTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWiringTest)
 
+add_executable(MegaGeometryFrameCommandDebugModeTest
+    MegaGeometryFrameCommandDebugModeTest.cpp
+)
+target_link_libraries(MegaGeometryFrameCommandDebugModeTest PRIVATE Core)
+target_include_directories(MegaGeometryFrameCommandDebugModeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(MegaGeometryFrameCommandDebugModeTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MegaGeometryFrameCommandDebugModeTest COMMAND MegaGeometryFrameCommandDebugModeTest)
+
 add_executable(SceneViewProxyReconcileTest
     SceneViewProxyReconcileTest.cpp
 )

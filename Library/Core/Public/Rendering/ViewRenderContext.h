@@ -306,7 +306,8 @@ namespace NorvesLib::Core::Rendering
                                                                    activeCamera ? *activeCamera : CameraProxy{},
                                                                    activeCamera != nullptr,
                                                                    GetActiveLocalViewport(),
-                                                                   GetActiveLocalScissor()));
+                                                                   GetActiveLocalScissor(),
+                                                                   GetActiveDebugMode()));
         }
 
         // ========================================

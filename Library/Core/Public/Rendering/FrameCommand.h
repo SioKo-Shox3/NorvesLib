@@ -4,6 +4,7 @@
 #include "Container/PointerTypes.h"
 #include "Rendering/DrawCommand.h"
 #include "Rendering/RenderResourcesFwd.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/SceneProxy.h"
 #include "RHI/ICommandList.h"
 #include "RHI/RHITypes.h"
@@ -62,6 +63,7 @@ namespace NorvesLib::Core::Rendering
         bool bHasMainCamera = false;
         RHI::Viewport Viewport;
         RHI::ScissorRect Scissor;
+        DebugViewMode DebugMode = DebugViewMode::Normal;
     };
 
     struct FrameCommand
@@ -137,7 +139,8 @@ namespace NorvesLib::Core::Rendering
                                                    const CameraProxy& mainCamera,
                                                    bool bHasMainCamera,
                                                    const RHI::Viewport& viewport,
-                                                   const RHI::ScissorRect& scissor)
+                                                   const RHI::ScissorRect& scissor,
+                                                   DebugViewMode debugMode)
         {
             FrameCommand command;
             command.Type = FrameCommandType::MegaGeometryPass;
@@ -147,6 +150,7 @@ namespace NorvesLib::Core::Rendering
             command.MegaGeometry.bHasMainCamera = bHasMainCamera;
             command.MegaGeometry.Viewport = viewport;
             command.MegaGeometry.Scissor = scissor;
+            command.MegaGeometry.DebugMode = debugMode;
             return command;
         }
     };

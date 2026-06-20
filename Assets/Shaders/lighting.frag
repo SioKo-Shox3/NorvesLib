@@ -398,7 +398,7 @@ void main()
         return;
     }
 
-    if (params.debugViewMode == DEBUG_VIEW_MODE_UNLIT)
+    if (params.debugViewMode == DEBUG_VIEW_MODE_UNLIT || params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME)
     {
         outColor = vec4(albedoSample.rgb, 1.0);
         return;
