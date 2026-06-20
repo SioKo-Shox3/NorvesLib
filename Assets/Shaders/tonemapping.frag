@@ -6,12 +6,12 @@ layout(location = 0) in vec2 fragUV;
 layout(set = 0, binding = 0) uniform sampler2D sceneColor;
 
 // トーンマッピングパラメータ
-layout(set = 0, binding = 1) uniform ToneMappingParams
+layout(std140, set = 0, binding = 1) uniform ToneMappingParams
 {
     float exposure;
     float gamma;
     uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure
-    float _padding;
+    uint bBypass;
     // Vignette パラメータ
     float vignetteIntensity;  // 0.0 = off, ~0.3 = subtle
     float vignetteRadius;     // 内側半径 ~0.8
@@ -114,6 +114,12 @@ vec3 ApplySaturation(vec3 color, float saturation)
 
 void main()
 {
+    if (params.bBypass != 0u)
+    {
+        outColor = texture(sceneColor, fragUV);
+        return;
+    }
+
     // HDRシーンカラーをサンプリング
     vec3 hdrColor = texture(sceneColor, fragUV).rgb;
 

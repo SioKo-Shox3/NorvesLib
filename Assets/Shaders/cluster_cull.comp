@@ -50,11 +50,15 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint hiZHeight;          // Hi-Zテクスチャ高さ（mip 0）
     uint hiZMipCount;        // Hi-Zミップレベル数
     uint bHiZEnabled;        // Hi-Z有効フラグ
-    uint bWriteClusterFirstInstance;
+    uint debugPayloadMode;     // 0=none, 1=clusterIndex, 2=lodLevel
     uint padding1;
     uint padding2;
     mat4 worldMatrix;
 } cullData;
+
+const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
+const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
+const uint DEBUG_PAYLOAD_MODE_LOD_LEVEL = 2u;
 
 // set 0, binding 1: クラスタデータ入力（読み取り専用）
 layout(std430, set = 0, binding = 1) readonly buffer ClusterBuffer
@@ -305,6 +309,21 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     return false;
 }
 
+uint ComputeDebugPayload(uint clusterIndex, GPUClusterData cluster)
+{
+    if (cullData.debugPayloadMode == DEBUG_PAYLOAD_MODE_CLUSTER_INDEX)
+    {
+        return clusterIndex;
+    }
+
+    if (cullData.debugPayloadMode == DEBUG_PAYLOAD_MODE_LOD_LEVEL)
+    {
+        return cluster.lodInfo.x;
+    }
+
+    return 0u;
+}
+
 // ========================================
 // メインカーネル
 // ========================================
@@ -360,7 +379,6 @@ void main()
         drawCommands[drawIndex].instanceCount = 1;
         drawCommands[drawIndex].firstIndex = cluster.indexInfo.x;     // IndexOffset
         drawCommands[drawIndex].vertexOffset = int(cluster.indexInfo.z); // VertexOffset
-        drawCommands[drawIndex].firstInstance =
-            cullData.bWriteClusterFirstInstance != 0u ? clusterIndex : 0u;
+        drawCommands[drawIndex].firstInstance = ComputeDebugPayload(clusterIndex, cluster);
     }
 }

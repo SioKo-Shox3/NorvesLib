@@ -63,8 +63,18 @@ int main()
     assert(command.Type == FrameCommandType::MegaGeometryPass);
     assert(command.MegaGeometry.DebugMode == DebugViewMode::Wireframe);
 
+    FrameCommand lodCommand = FrameCommand::CreateMegaGeometryPass(nullptr,
+                                                                   nullptr,
+                                                                   camera,
+                                                                   true,
+                                                                   viewport,
+                                                                   scissor,
+                                                                   DebugViewMode::LODLevel);
+    assert(lodCommand.Type == FrameCommandType::MegaGeometryPass);
+    assert(lodCommand.MegaGeometry.DebugMode == DebugViewMode::LODLevel);
+
     ViewportRenderPlan viewportPlan;
-    viewportPlan.DebugMode = DebugViewMode::Wireframe;
+    viewportPlan.DebugMode = DebugViewMode::LODLevel;
     viewportPlan.PixelRect.Width = 320.0f;
     viewportPlan.PixelRect.Height = 180.0f;
     viewportPlan.Scissor.Right = 320;
@@ -79,25 +89,37 @@ int main()
 
     assert(pendingCommands.size() == 1);
     assert(pendingCommands[0].Type == FrameCommandType::MegaGeometryPass);
-    assert(pendingCommands[0].MegaGeometry.DebugMode == DebugViewMode::Wireframe);
+    assert(pendingCommands[0].MegaGeometry.DebugMode == DebugViewMode::LODLevel);
 
     const std::string cullSource = ReadShaderSource("cluster_cull.comp");
-    assert(ContainsText(cullSource, "uint bWriteClusterFirstInstance;"));
+    assert(ContainsText(cullSource, "uint debugPayloadMode;"));
+    assert(ContainsText(cullSource, "const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;"));
+    assert(ContainsText(cullSource, "const uint DEBUG_PAYLOAD_MODE_LOD_LEVEL = 2u;"));
+    assert(ContainsText(cullSource, "uint ComputeDebugPayload(uint clusterIndex, GPUClusterData cluster)"));
+    assert(ContainsText(cullSource, "return cluster.lodInfo.x;"));
+    assert(ContainsText(cullSource, "return 0u;"));
     assert(ContainsText(cullSource,
-                        "cullData.bWriteClusterFirstInstance != 0u ? clusterIndex : 0u"));
+                        "drawCommands[drawIndex].firstInstance = ComputeDebugPayload(clusterIndex, cluster);"));
 
     const std::string vertexSource = ReadShaderSource("megageometry.vert");
-    assert(ContainsText(vertexSource, "layout(location = 6) flat out uint fragClusterId;"));
-    assert(ContainsText(vertexSource, "fragClusterId = gl_InstanceIndex;"));
-    assert(ContainsText(vertexSource, "z=debugMode, w=clusterDebugSupported"));
+    assert(ContainsText(vertexSource, "layout(location = 6) flat out uint fragDebugPayload;"));
+    assert(ContainsText(vertexSource, "fragDebugPayload = gl_InstanceIndex;"));
+    assert(ContainsText(vertexSource, "z=debugMode, w=debugPayloadSupported"));
 
     const std::string fragmentSource = ReadShaderSource("megageometry.frag");
-    assert(ContainsText(fragmentSource, "layout(location = 6) flat in uint fragClusterId;"));
+    assert(ContainsText(fragmentSource, "layout(location = 6) flat in uint fragDebugPayload;"));
     assert(ContainsText(fragmentSource, "const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;"));
+    assert(ContainsText(fragmentSource, "const float DEBUG_VIEW_MODE_LOD_LEVEL = 8.0;"));
     assert(ContainsText(fragmentSource, "HashClusterId"));
-    assert(ContainsText(fragmentSource,
-                        "debugMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS && clusterDebugSupported > 0.5"));
-    assert(ContainsText(fragmentSource, "outAlbedo = vec4(ClusterDebugColor(fragClusterId), 1.0);"));
+    assert(ContainsText(fragmentSource, "LODLevelDebugColor"));
+    assert(ContainsText(fragmentSource, "const vec3 palette[8] = vec3[8]"));
+    assert(ContainsText(fragmentSource, "return palette[min(lodLevel, 7u)];"));
+    assert(ContainsText(fragmentSource, "float debugPayloadSupported = mvp.pomParams.w;"));
+    assert(ContainsText(fragmentSource, "if (debugPayloadSupported > 0.5)"));
+    assert(ContainsText(fragmentSource, "debugMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS"));
+    assert(ContainsText(fragmentSource, "WriteDebugGBuffer(ClusterDebugColor(fragDebugPayload));"));
+    assert(ContainsText(fragmentSource, "debugMode == DEBUG_VIEW_MODE_LOD_LEVEL"));
+    assert(ContainsText(fragmentSource, "WriteDebugGBuffer(LODLevelDebugColor(fragDebugPayload));"));
     assert(ContainsText(fragmentSource, "outMaterial = vec4(0.0, 1.0, 1.0, 0.0);"));
 
     std::cout << "MegaGeometryFrameCommandDebugModeTest passed\n";

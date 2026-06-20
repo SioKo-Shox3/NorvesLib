@@ -1,5 +1,7 @@
 ﻿#include "Rendering/ToneMappingPass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/RenderTypes.h"
+#include "Rendering/ToneMappingPassGpuTypes.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -39,30 +41,6 @@ namespace NorvesLib::Core::Rendering
             return RHI::TexturePtr(rawTexture, [](RHI::ITexture*) {});
         }
     } // namespace
-
-    // ========================================
-    // GPU側パラメータ構造体（シェーダーのUBOレイアウトに対応）
-    // ========================================
-
-    /** @brief トーンマッピングパラメータUBO（std140アライメント） */
-    struct GPUToneMappingParams
-    {
-        float exposure;
-        float gamma;
-        uint32_t operatorType; // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure
-        float _pad0;
-        // Vignette
-        float vignetteIntensity;
-        float vignetteRadius;
-        float vignetteSoftness;
-        float _pad1;
-        // Color Grading
-        float colorFilter[4]; // rgb + intensity(w)
-        float contrast;
-        float saturation;
-        float brightness;
-        float temperature;
-    };
 
     static constexpr uint32_t TONEMAPPING_PARAMS_SIZE = sizeof(GPUToneMappingParams);
 
@@ -571,7 +549,9 @@ namespace NorvesLib::Core::Rendering
         params.exposure = m_Settings.Exposure;
         params.gamma = m_Settings.Gamma;
         params.operatorType = static_cast<uint32_t>(m_Settings.Operator);
-        params._pad0 = 0.0f;
+        const bool bDebugPostProcessBypass =
+            IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
+        params.bBypass = bDebugPostProcessBypass ? 1u : 0u;
         // Vignette
         params.vignetteIntensity = m_Settings.VignetteIntensity;
         params.vignetteRadius = m_Settings.VignetteRadius;

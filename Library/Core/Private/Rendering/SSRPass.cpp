@@ -1,5 +1,6 @@
 ﻿#include "Rendering/SSRPass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -607,7 +608,9 @@ namespace NorvesLib::Core::Rendering
         params.fadeEnd = m_Settings.FadeEnd;
         params.roughnessCutoff = m_Settings.RoughnessCutoff;
         params.intensity = m_Settings.Intensity;
-        params.bEnabled = m_Settings.bEnabled ? 1u : 0u;
+        const bool bDebugPostProcessBypass =
+            IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
+        params.bEnabled = bDebugPostProcessBypass ? 0u : (m_Settings.bEnabled ? 1u : 0u);
 
         // ビューとプロジェクション行列
         const CameraProxy *activeCamera = context.GetActiveCamera();

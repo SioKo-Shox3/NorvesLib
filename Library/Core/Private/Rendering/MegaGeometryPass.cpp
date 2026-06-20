@@ -32,6 +32,39 @@ namespace NorvesLib::Core::Rendering
 {
     using namespace Container;
 
+    namespace
+    {
+        constexpr uint32_t DEBUG_PAYLOAD_MODE_NONE = 0u;
+        constexpr uint32_t DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
+        constexpr uint32_t DEBUG_PAYLOAD_MODE_LOD_LEVEL = 2u;
+
+        bool IsMegaGeometryDebugPayloadMode(DebugViewMode mode)
+        {
+            return mode == DebugViewMode::MegaGeometryClusters ||
+                   mode == DebugViewMode::LODLevel;
+        }
+
+        uint32_t GetMegaGeometryDebugPayloadMode(DebugViewMode mode, bool bSupported)
+        {
+            if (!bSupported)
+            {
+                return DEBUG_PAYLOAD_MODE_NONE;
+            }
+
+            if (mode == DebugViewMode::MegaGeometryClusters)
+            {
+                return DEBUG_PAYLOAD_MODE_CLUSTER_INDEX;
+            }
+
+            if (mode == DebugViewMode::LODLevel)
+            {
+                return DEBUG_PAYLOAD_MODE_LOD_LEVEL;
+            }
+
+            return DEBUG_PAYLOAD_MODE_NONE;
+        }
+    } // namespace
+
     // ========================================
     // コンストラクタ / デストラクタ
     // ========================================
@@ -314,7 +347,7 @@ namespace NorvesLib::Core::Rendering
         m_Instances.clear();
         m_bPreferRenderGraphGBufferResources = false;
         m_bGBufferRenderPassUsesRenderGraphAttachmentStates = false;
-        m_bMegaGeometryClusterDebugUnsupportedWarned = false;
+        m_bMegaGeometryDebugPayloadUnsupportedWarned = false;
 
         m_bInitialized = false;
     }
@@ -707,17 +740,22 @@ namespace NorvesLib::Core::Rendering
         const CameraViewConstants cameraConstants =
             CameraViewConstants::BuildForDevice(cam, aspectRatio, m_Device);
         const auto &caps = m_Device->GetCapabilities();
-        const bool bMegaGeometryClusterDebugSupported =
-            command.DebugMode == DebugViewMode::MegaGeometryClusters &&
+        const bool bMegaGeometryDebugPayloadRequested =
+            IsMegaGeometryDebugPayloadMode(command.DebugMode);
+        const bool bMegaGeometryDebugPayloadSupported =
+            bMegaGeometryDebugPayloadRequested &&
             caps.bDrawIndirectFirstInstance;
+        const uint32_t debugPayloadMode =
+            GetMegaGeometryDebugPayloadMode(command.DebugMode, bMegaGeometryDebugPayloadSupported);
 
-        if (command.DebugMode == DebugViewMode::MegaGeometryClusters &&
+        if (bMegaGeometryDebugPayloadRequested &&
             !caps.bDrawIndirectFirstInstance &&
-            !m_bMegaGeometryClusterDebugUnsupportedWarned)
+            !m_bMegaGeometryDebugPayloadUnsupportedWarned)
         {
             NORVES_LOG_WARNING("MegaGeometryPass",
-                               "MegaGeometryClusters debug view requires DrawIndirectFirstInstance; using normal MegaGeometry shading");
-            m_bMegaGeometryClusterDebugUnsupportedWarned = true;
+                               "%s debug view requires DrawIndirectFirstInstance; using normal MegaGeometry shading",
+                               DebugViewModeToString(command.DebugMode));
+            m_bMegaGeometryDebugPayloadUnsupportedWarned = true;
         }
 
         const ClipSpaceFrustumPlanes frustumPlanes =
@@ -825,7 +863,7 @@ namespace NorvesLib::Core::Rendering
             uniformData.HiZHeight = 0;
             uniformData.HiZMipCount = 0;
             uniformData.bHiZEnabled = 0;
-            uniformData.bWriteClusterFirstInstance = bMegaGeometryClusterDebugSupported ? 1u : 0u;
+            uniformData.DebugPayloadMode = debugPayloadMode;
 
             std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
             cullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
@@ -910,7 +948,7 @@ namespace NorvesLib::Core::Rendering
             perObject.PomParams[0] = mat.HeightScale;
             perObject.PomParams[1] = mat.bHasHeightMap ? 1.0f : 0.0f;
             perObject.PomParams[2] = static_cast<float>(static_cast<uint8_t>(command.DebugMode));
-            perObject.PomParams[3] = bMegaGeometryClusterDebugSupported ? 1.0f : 0.0f;
+            perObject.PomParams[3] = bMegaGeometryDebugPayloadSupported ? 1.0f : 0.0f;
 
             drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
 

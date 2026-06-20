@@ -161,6 +161,11 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    inline constexpr bool IsDebugPostProcessBypassMode(DebugViewMode mode)
+    {
+        return mode != DebugViewMode::Normal;
+    }
+
     /**
      * @brief プリミティブトポロジー
      */

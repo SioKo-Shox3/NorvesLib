@@ -3,6 +3,7 @@
 #include "RHI/IDevice.h"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -148,6 +149,10 @@ namespace
             cluster.ConeAxisZ = 1.0f;
             cluster.ConeCutoff = 0.25f;
             cluster.MaterialIndex = 4;
+            cluster.LODLevel = 2;
+            cluster.LODError = 0.125f;
+            cluster.ParentStart = 7;
+            cluster.ParentCount = 3;
 
             CreateInfo.VertexData = Vertices;
             CreateInfo.VertexDataSize = sizeof(Vertices);
@@ -183,8 +188,22 @@ namespace
         return (static_cast<uint32_t>(value) & static_cast<uint32_t>(flag)) != 0;
     }
 
+    void AssertGPUClusterLayout()
+    {
+        assert(sizeof(MegaGeometry::GPUClusterData) == 64);
+        assert(offsetof(MegaGeometry::GPUClusterData, BoundsCenterX) == 0);
+        assert(offsetof(MegaGeometry::GPUClusterData, ConeAxisX) == 16);
+        assert(offsetof(MegaGeometry::GPUClusterData, IndexOffset) == 32);
+        assert(offsetof(MegaGeometry::GPUClusterData, LODLevel) == 48);
+        assert(offsetof(MegaGeometry::GPUClusterData, LODError) == 52);
+        assert(offsetof(MegaGeometry::GPUClusterData, ParentStart) == 56);
+        assert(offsetof(MegaGeometry::GPUClusterData, ParentCount) == 60);
+    }
+
     void AssertNoLodUploadBuffers(const FakeDevice &device)
     {
+        AssertGPUClusterLayout();
+
         assert(device.CreatedBufferDescs.size() == 3);
         assert(device.CreatedBufferDescs[0].Size == sizeof(MeshFixture::Vertices));
         assert(HasUsage(device.CreatedBufferDescs[0].Usage, NorvesLib::RHI::ResourceUsage::VertexBuffer));
@@ -201,6 +220,15 @@ namespace
         assert(device.CreatedBuffers[0]->LastUpdateSize == sizeof(MeshFixture::Vertices));
         assert(device.CreatedBuffers[1]->LastUpdateSize == 3 * sizeof(uint32_t));
         assert(device.CreatedBuffers[2]->LastUpdateSize == sizeof(MegaGeometry::GPUClusterData));
+
+        MegaGeometry::GPUClusterData uploadedCluster{};
+        std::memcpy(&uploadedCluster,
+                    device.CreatedBuffers[2]->Bytes.data(),
+                    sizeof(MegaGeometry::GPUClusterData));
+        assert(uploadedCluster.LODLevel == 2);
+        assert(uploadedCluster.LODError == 0.125f);
+        assert(uploadedCluster.ParentStart == 7);
+        assert(uploadedCluster.ParentCount == 3);
     }
 
     BufferCreateInfo MakeCounterBufferInfo()

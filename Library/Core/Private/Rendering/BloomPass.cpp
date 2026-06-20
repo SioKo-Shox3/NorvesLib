@@ -1,5 +1,6 @@
 ﻿#include "Rendering/BloomPass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/SSRPass.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -476,7 +477,9 @@ namespace NorvesLib::Core::Rendering
         // パラメータバッファ更新
         GPUBloomParams params = {};
         params.threshold = m_Settings.Threshold;
-        params.intensity = m_Settings.Intensity;
+        const bool bDebugPostProcessBypass =
+            IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
+        params.intensity = bDebugPostProcessBypass ? 0.0f : m_Settings.Intensity;
         params.radius = m_Settings.Radius;
         params.softKnee = m_Settings.SoftKnee;
         m_ParamsBuffer->Update(&params, sizeof(GPUBloomParams));
