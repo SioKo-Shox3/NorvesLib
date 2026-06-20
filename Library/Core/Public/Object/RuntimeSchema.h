@@ -1,11 +1,14 @@
 #pragma once
 
 #include "Container/Containers.h"
+#include "Math/Transform.h"
 #include "Text/IdentityPool.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iomanip>
 #include <limits>
+#include <locale>
 #include <new>
 #include <sstream>
 #include <type_traits>
@@ -219,6 +222,8 @@ namespace NorvesLib::Core
         template <typename T>
         inline Container::String DefaultTypeName()
         {
+            using ValueType = std::remove_cv_t<T>;
+
             if constexpr (std::is_same_v<T, void>)
             {
                 return "void";
@@ -271,11 +276,186 @@ namespace NorvesLib::Core
             {
                 return "String";
             }
+            else if constexpr (std::is_same_v<ValueType, Math::Vector3>)
+            {
+                return "Math::Vector3";
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Quaternion>)
+            {
+                return "Math::Quaternion";
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Transform>)
+            {
+                return "Math::Transform";
+            }
             else
             {
                 return Container::String(typeid(T).name());
             }
         }
+
+        inline std::basic_ostringstream<TCHAR> MakeStructValueOutputStream()
+        {
+            std::basic_ostringstream<TCHAR> stream;
+            stream.imbue(std::locale::classic());
+            stream << std::setprecision(std::numeric_limits<float>::max_digits10);
+            return stream;
+        }
+
+        inline void WriteVector3(std::basic_ostringstream<TCHAR>& stream, const Math::Vector3& value)
+        {
+            stream << "Vector3(" << value.x << "," << value.y << "," << value.z << ")";
+        }
+
+        inline void WriteQuaternion(std::basic_ostringstream<TCHAR>& stream, const Math::Quaternion& value)
+        {
+            stream << "Quaternion(" << value.x << "," << value.y << "," << value.z << "," << value.w << ")";
+        }
+
+        inline void WriteTransform(std::basic_ostringstream<TCHAR>& stream, const Math::Transform& value)
+        {
+            stream << "Transform(";
+            WriteVector3(stream, value.position);
+            stream << ",";
+            WriteQuaternion(stream, value.rotation);
+            stream << ",";
+            WriteVector3(stream, value.scale);
+            stream << ")";
+        }
+
+        class StructValueParser
+        {
+        public:
+            explicit StructValueParser(const Container::String& text)
+                : m_Text(text)
+            {
+            }
+
+            bool ParseVector3(Math::Vector3& outValue)
+            {
+                Math::Vector3 value;
+                if (!ConsumeLiteral("Vector3(") ||
+                    !ParseFloat(value.x) ||
+                    !ConsumeChar(',') ||
+                    !ParseFloat(value.y) ||
+                    !ConsumeChar(',') ||
+                    !ParseFloat(value.z) ||
+                    !ConsumeChar(')'))
+                {
+                    return false;
+                }
+
+                outValue = value;
+                return true;
+            }
+
+            bool ParseQuaternion(Math::Quaternion& outValue)
+            {
+                Math::Quaternion value;
+                if (!ConsumeLiteral("Quaternion(") ||
+                    !ParseFloat(value.x) ||
+                    !ConsumeChar(',') ||
+                    !ParseFloat(value.y) ||
+                    !ConsumeChar(',') ||
+                    !ParseFloat(value.z) ||
+                    !ConsumeChar(',') ||
+                    !ParseFloat(value.w) ||
+                    !ConsumeChar(')'))
+                {
+                    return false;
+                }
+
+                outValue = value;
+                return true;
+            }
+
+            bool ParseTransform(Math::Transform& outValue)
+            {
+                Math::Vector3 position;
+                Math::Quaternion rotation;
+                Math::Vector3 scale;
+                if (!ConsumeLiteral("Transform(") ||
+                    !ParseVector3(position) ||
+                    !ConsumeChar(',') ||
+                    !ParseQuaternion(rotation) ||
+                    !ConsumeChar(',') ||
+                    !ParseVector3(scale) ||
+                    !ConsumeChar(')'))
+                {
+                    return false;
+                }
+
+                outValue = Math::Transform(position, rotation, scale);
+                return true;
+            }
+
+            bool IsAtEnd() const
+            {
+                return m_Position == m_Text.size();
+            }
+
+        private:
+            bool ConsumeLiteral(const char* literal)
+            {
+                const char* cursor = literal;
+                while (*cursor)
+                {
+                    if (!ConsumeChar(static_cast<TCHAR>(*cursor)))
+                    {
+                        return false;
+                    }
+                    ++cursor;
+                }
+                return true;
+            }
+
+            bool ConsumeChar(TCHAR expected)
+            {
+                if (m_Position >= m_Text.size() || m_Text[m_Position] != expected)
+                {
+                    return false;
+                }
+
+                ++m_Position;
+                return true;
+            }
+
+            bool ParseFloat(float& outValue)
+            {
+                if (m_Position >= m_Text.size())
+                {
+                    return false;
+                }
+
+                std::basic_string<TCHAR> remaining(m_Text.data() + m_Position, m_Text.size() - m_Position);
+                std::basic_istringstream<TCHAR> stream(remaining);
+                stream.imbue(std::locale::classic());
+                stream >> std::noskipws;
+
+                float value = 0.0f;
+                stream >> value;
+                if (stream.fail())
+                {
+                    return false;
+                }
+
+                const std::streampos consumed = stream.tellg();
+                const std::streamoff consumedCount = consumed == std::streampos(-1)
+                    ? static_cast<std::streamoff>(remaining.size())
+                    : static_cast<std::streamoff>(consumed);
+                if (consumedCount <= 0)
+                {
+                    return false;
+                }
+
+                m_Position += static_cast<size_t>(consumedCount);
+                outValue = value;
+                return true;
+            }
+
+            const Container::String& m_Text;
+            size_t m_Position = 0;
+        };
 
         template <typename T>
         inline bool SerializeValue(const void *value, Container::String &outValue)
@@ -285,15 +465,38 @@ namespace NorvesLib::Core
                 return false;
             }
 
-            if constexpr (std::is_same_v<T, Container::String>)
+            using ValueType = std::remove_cv_t<T>;
+
+            if constexpr (std::is_same_v<ValueType, Container::String>)
             {
-                outValue = *static_cast<const T *>(value);
+                outValue = *static_cast<const ValueType *>(value);
                 return true;
             }
             else if constexpr (std::is_arithmetic_v<T>)
             {
                 std::basic_ostringstream<TCHAR> stream;
                 stream << *static_cast<const T *>(value);
+                outValue = Container::String(stream.str());
+                return !stream.fail();
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Vector3>)
+            {
+                std::basic_ostringstream<TCHAR> stream = MakeStructValueOutputStream();
+                WriteVector3(stream, *static_cast<const ValueType *>(value));
+                outValue = Container::String(stream.str());
+                return !stream.fail();
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Quaternion>)
+            {
+                std::basic_ostringstream<TCHAR> stream = MakeStructValueOutputStream();
+                WriteQuaternion(stream, *static_cast<const ValueType *>(value));
+                outValue = Container::String(stream.str());
+                return !stream.fail();
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Transform>)
+            {
+                std::basic_ostringstream<TCHAR> stream = MakeStructValueOutputStream();
+                WriteTransform(stream, *static_cast<const ValueType *>(value));
                 outValue = Container::String(stream.str());
                 return !stream.fail();
             }
@@ -311,9 +514,11 @@ namespace NorvesLib::Core
                 return false;
             }
 
-            if constexpr (std::is_same_v<T, Container::String>)
+            using ValueType = std::remove_cv_t<T>;
+
+            if constexpr (std::is_same_v<ValueType, Container::String>)
             {
-                *static_cast<T *>(outValue) = inValue;
+                *static_cast<ValueType *>(outValue) = inValue;
                 return true;
             }
             else if constexpr (std::is_arithmetic_v<T>)
@@ -322,6 +527,42 @@ namespace NorvesLib::Core
                 std::basic_istringstream<TCHAR> stream(text);
                 stream >> *static_cast<T *>(outValue);
                 return !stream.fail();
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Vector3>)
+            {
+                Math::Vector3 value;
+                StructValueParser parser(inValue);
+                if (!parser.ParseVector3(value) || !parser.IsAtEnd())
+                {
+                    return false;
+                }
+
+                *static_cast<ValueType *>(outValue) = value;
+                return true;
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Quaternion>)
+            {
+                Math::Quaternion value;
+                StructValueParser parser(inValue);
+                if (!parser.ParseQuaternion(value) || !parser.IsAtEnd())
+                {
+                    return false;
+                }
+
+                *static_cast<ValueType *>(outValue) = value;
+                return true;
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Transform>)
+            {
+                Math::Transform value;
+                StructValueParser parser(inValue);
+                if (!parser.ParseTransform(value) || !parser.IsAtEnd())
+                {
+                    return false;
+                }
+
+                *static_cast<ValueType *>(outValue) = value;
+                return true;
             }
             else
             {
@@ -526,6 +767,35 @@ namespace NorvesLib::Core
             m_Alignment = typeInfo->Alignment;
             m_Data = ::operator new(m_Size, std::align_val_t(m_Alignment));
             typeInfo->Ops.Copy(m_Data, &value);
+        }
+
+        template <typename T>
+        bool Deserialize(const Container::String& inValue)
+        {
+            using ValueType = std::remove_cv_t<T>;
+            if constexpr (std::is_void_v<ValueType>)
+            {
+                return false;
+            }
+            else
+            {
+                TypeRegistry& registry = TypeRegistry::Get();
+                const TypeId type = registry.GetTypeId<ValueType>();
+                const TypeInfo* typeInfo = registry.Find(type);
+                if (!typeInfo || !typeInfo->Ops.Deserialize)
+                {
+                    return false;
+                }
+
+                ValueType value{};
+                if (!typeInfo->Ops.Deserialize(inValue, &value))
+                {
+                    return false;
+                }
+
+                Set(value);
+                return true;
+            }
         }
 
         template <typename T>
