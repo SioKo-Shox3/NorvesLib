@@ -16,8 +16,6 @@ namespace NorvesLib::Core::Rendering
 
 namespace NorvesLib::Core
 {
-    class WorldObject;
-
     /**
      * @brief ゲームワールド
      *

@@ -24,7 +24,7 @@ set(PRIVATE_SOURCES
     Private/Object/SchemaProjection.cpp
     Private/Object/ClassRegistry.cpp
     Private/Object/Resource.cpp
-    Private/Object/WorldObject.cpp
+    Private/Object/Entity.cpp
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Text/IdentityPool.cpp
@@ -303,6 +303,7 @@ set(PUBLIC_HEADERS
     Public/Object/ResourceRef.h
     Public/Object/RuntimeSchema.h
     Public/Object/SchemaProjection.h
+    Public/Object/Entity.h
     Public/Object/WorldObject.h
     Public/Object/ResourceRegistry.h
     Public/Object/World.h
