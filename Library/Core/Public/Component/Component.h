@@ -1,15 +1,11 @@
 ﻿#pragma once
 
 #include "Object/Object.h"
+#include "Object/WorldObject.h"
 #include "Object/Reflection.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
-
-namespace NorvesLib::Core
-{
-    class WorldObject;
-}
 
 namespace NorvesLib::Core::Component
 {

@@ -3,6 +3,7 @@
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Input/MayaCameraController.h"
+#include "Core/Public/Object/WorldObject.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Core/Public/Rendering/RenderTypes.h"
@@ -11,8 +12,6 @@
 
 namespace NorvesLib::Core
 {
-    class WorldObject;
-
     namespace Component
     {
         class MeshComponent;

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
+#include "Object/WorldObject.h"
 #include "Rendering/RenderTypes.h"
 
 // 重いサブシステムヘッダのインクルードを避け、前方宣言のみ使用する。
@@ -9,7 +10,6 @@
 namespace NorvesLib::Core
 {
     class World;
-    class WorldObject;
 
     namespace Rendering
     {
