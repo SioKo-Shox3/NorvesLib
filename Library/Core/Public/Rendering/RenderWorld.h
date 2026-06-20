@@ -273,10 +273,11 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         /**
-         * @brief ワイヤーフレームモード切り替え
+         * @brief メインViewportのデバッグ描画モードを設定
          */
-        void SetWireframeMode(bool bEnabled) { m_bWireframeMode = bEnabled; }
-        bool IsWireframeMode() const { return m_bWireframeMode; }
+        void SetDebugViewModeAll(DebugViewMode mode);
+        DebugViewMode GetMainViewportDebugViewMode() const;
+        DebugViewMode CycleDebugViewMode();
 
         /**
          * @brief バウンディングボックス表示切り替え
@@ -314,7 +315,6 @@ namespace NorvesLib::Core::Rendering
         bool m_bMultiThreadedRendering = true;
 
         // デバッグ設定
-        bool m_bWireframeMode = false;
         bool m_bShowBoundingBoxes = false;
 
         // 統計

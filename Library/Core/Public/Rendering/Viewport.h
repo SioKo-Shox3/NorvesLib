@@ -180,6 +180,12 @@ namespace NorvesLib::Core::Rendering
         void SetEnabled(bool bEnabled) { m_bEnabled = bEnabled; }
         bool IsEnabled() const { return m_bEnabled; }
 
+        /**
+         * @brief デバッグ描画モードを設定
+         */
+        void SetDebugViewMode(DebugViewMode mode);
+        DebugViewMode GetDebugViewMode() const { return m_DebugViewMode; }
+
     private:
         /**
          * @brief 行列を更新
@@ -208,6 +214,7 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::ITexture2D> m_OutputTexture;
 
         // 設定
+        DebugViewMode m_DebugViewMode = DebugViewMode::Normal;
         bool m_bEnabled = true;
         bool m_bInitialized = false;
     };

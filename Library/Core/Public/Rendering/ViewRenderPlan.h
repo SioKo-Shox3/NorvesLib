@@ -31,6 +31,8 @@ namespace NorvesLib::Core::Rendering
 
         CameraProxy Camera;
 
+        DebugViewMode DebugMode = DebugViewMode::Normal;
+
         CommandRange DrawCommandRange;
         CommandRange OpaqueCommandRange;
         CommandRange TransparentCommandRange;
@@ -53,6 +55,7 @@ namespace NorvesLib::Core::Rendering
             RenderWidth = 0;
             RenderHeight = 0;
             Camera = CameraProxy{};
+            DebugMode = DebugViewMode::Normal;
             DrawCommandRange = CommandRange{};
             OpaqueCommandRange = CommandRange{};
             TransparentCommandRange = CommandRange{};

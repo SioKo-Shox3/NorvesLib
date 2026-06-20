@@ -100,6 +100,36 @@ target_include_directories(ViewRenderContextActiveInputTest PRIVATE
 set_target_properties(ViewRenderContextActiveInputTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ViewRenderContextActiveInputTest COMMAND ViewRenderContextActiveInputTest)
 
+add_executable(DebugViewModeStringTest
+    DebugViewModeStringTest.cpp
+)
+target_link_libraries(DebugViewModeStringTest PRIVATE Core)
+target_include_directories(DebugViewModeStringTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(DebugViewModeStringTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DebugViewModeStringTest COMMAND DebugViewModeStringTest)
+
+add_executable(ViewportRenderPlanDebugModeTest
+    ViewportRenderPlanDebugModeTest.cpp
+)
+target_link_libraries(ViewportRenderPlanDebugModeTest PRIVATE Core)
+target_include_directories(ViewportRenderPlanDebugModeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ViewportRenderPlanDebugModeTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ViewportRenderPlanDebugModeTest COMMAND ViewportRenderPlanDebugModeTest)
+
+add_executable(ViewportSnapshotDebugWiringTest
+    ViewportSnapshotDebugWiringTest.cpp
+)
+target_link_libraries(ViewportSnapshotDebugWiringTest PRIVATE Core)
+target_include_directories(ViewportSnapshotDebugWiringTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ViewportSnapshotDebugWiringTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ViewportSnapshotDebugWiringTest COMMAND ViewportSnapshotDebugWiringTest)
+
 add_executable(SceneViewProxyReconcileTest
     SceneViewProxyReconcileTest.cpp
 )
