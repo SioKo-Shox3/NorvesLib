@@ -12,7 +12,7 @@
 #include "Object/Reflection.h"
 #include "Object/Resource.h"
 #include "Object/World.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 
 #include <cassert>
 #include <iostream>
@@ -97,7 +97,7 @@ int main()
     // 1. エンジンのホット型：フラグ蓄積（自分＋全祖先のOR）の検証
     // -----------------------------------------------------------------------
     const IClass *objectClass = Object::StaticClass();
-    const IClass *worldObjectClass = WorldObject::StaticClass();
+    const IClass *entityClass = Entity::StaticClass();
     const IClass *worldClass = World::StaticClass();
     const IClass *resourceClass = Resource::StaticClass();
     const IClass *componentClass = Component::Component::StaticClass();
@@ -131,13 +131,13 @@ int main()
     // 2. クロスバリデーション：全フラグ持ち型 × 全エンジンクラスで flag経路==木経路
     // -----------------------------------------------------------------------
     const IClass *engineClasses[] = {
-        objectClass, worldObjectClass, worldClass, resourceClass,
+        objectClass, entityClass, worldClass, resourceClass,
         componentClass, meshClass, megaClass, lightClass, pointLightClass,
     };
     for (const IClass *c : engineClasses)
     {
         CheckClassConsistency<Object>(c);
-        CheckClassConsistency<WorldObject>(c);
+        CheckClassConsistency<Entity>(c);
         CheckClassConsistency<World>(c);
         CheckClassConsistency<Resource>(c);
         CheckClassConsistency<Component::Component>(c);

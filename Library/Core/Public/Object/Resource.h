@@ -43,10 +43,10 @@ namespace NorvesLib::Core
      * 責任者: GEngine（ResourceRegistry経由）
      * 寿命管理: ResourceRegistryとResourceRefで管理
      *
-     * WorldObjectとの違い:
-     * - WorldObjectはWorldのInnerとして管理され、Worldと寿命が一致
+     * Entityとの違い:
+     * - EntityはWorldのInnerとして管理され、Worldと寿命が一致
      * - ResourceはGEngineが管理し、ResourceRefで到達可能性と寿命を制御
-     * - WorldやWorldObjectが破棄されてもResourceは生存可能
+     * - WorldやEntityが破棄されてもResourceは生存可能
      */
     class Resource : public Object
     {

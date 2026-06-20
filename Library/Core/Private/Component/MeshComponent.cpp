@@ -1,5 +1,5 @@
 ﻿#include "Component/MeshComponent.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include "Rendering/RenderResources.h"
 #include "Logging/LogMacros.h"
 #include <cmath>

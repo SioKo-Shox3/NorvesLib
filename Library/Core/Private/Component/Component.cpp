@@ -1,5 +1,5 @@
 ﻿#include "Component/Component.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Component
@@ -81,14 +81,14 @@ namespace NorvesLib::Core::Component
     // オーナー管理（Outer経由）
     // ========================================
 
-    WorldObject *Component::GetOwner()
+    Entity *Component::GetOwner()
     {
-        return CastTo<WorldObject>(GetOuter());
+        return CastTo<Entity>(GetOuter());
     }
 
-    const WorldObject *Component::GetOwner() const
+    const Entity *Component::GetOwner() const
     {
-        return CastTo<WorldObject>(GetOuter());
+        return CastTo<Entity>(GetOuter());
     }
 
     uint64_t Component::GetOwnerId() const

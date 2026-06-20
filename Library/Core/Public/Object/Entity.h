@@ -289,8 +289,6 @@ namespace NorvesLib::Core
         uint64_t m_TransformVersion = 1;
     };
 
-    using WorldObject = Entity;
-
 } // namespace NorvesLib::Core
 
 // Phase2: cast flag bit for this hot type (CastTo flag fast-path)

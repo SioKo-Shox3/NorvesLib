@@ -2,7 +2,7 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Object/World.h"
-#include "Core/Public/Object/WorldObject.h"
+#include "Core/Public/Object/Entity.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Component/LightComponent.h"
@@ -332,13 +332,13 @@ namespace Game::GameModes
         }
 
         // ========================================
-        // 2. WorldObjectの作成とメッシュコンポーネントの追加
+        // 2. Entityの作成とメッシュコンポーネントの追加
         // ========================================
         {
             auto &world = ctx.WorldRef;
 
             // --- 球体オブジェクト ---
-            data.m_pSphereObject = world.SpawnObject<WorldObject>();
+            data.m_pSphereObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pSphereObject);
 
             // 球体を地面の上に配置（半径1.0 + 地面Y=-1.0 → Y=0.5で浮かせる）
@@ -355,10 +355,10 @@ namespace Game::GameModes
             // CobbleStoneFloor（石畳）マテリアルを適用
             data.m_pSphereMeshComponent->SetMaterial(0, data.m_CobbleStoneMaterial);
 
-            LOG_INFO("Sphere WorldObject created and added to World");
+            LOG_INFO("Sphere Entity created and added to World");
 
             // --- 地面オブジェクト ---
-            data.m_pGroundObject = world.SpawnObject<WorldObject>();
+            data.m_pGroundObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pGroundObject);
 
             // 地面をY=-1.0に配置
@@ -375,10 +375,10 @@ namespace Game::GameModes
             // 地面マテリアルを適用
             data.m_pGroundMeshComponent->SetMaterial(0, data.m_GroundMaterial);
 
-            LOG_INFO("Ground WorldObject created and added to World");
+            LOG_INFO("Ground Entity created and added to World");
 
             // --- ポイントライト光源球体オブジェクト ---
-            data.m_pLightSphereObject = world.SpawnObject<WorldObject>();
+            data.m_pLightSphereObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pLightSphereObject);
 
             // 球体の横に配置（X=4.0, Y=1.0, Z=0.0）――少し遠め
@@ -402,10 +402,10 @@ namespace Game::GameModes
             data.m_pPointLightComponent->SetRange(10.0f);
             data.m_pPointLightComponent->SetLightVisible(true);
             data.m_pPointLightComponent->SetCastShadows(false);
-            LOG_INFO("Light sphere WorldObject created and added to World");
+            LOG_INFO("Light sphere Entity created and added to World");
 
             // --- ディレクショナルライト（シャドウ方向と一致） ---
-            data.m_pDirectionalLightObject = world.SpawnObject<WorldObject>();
+            data.m_pDirectionalLightObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pDirectionalLightObject);
             data.m_pDirectionalLightObject->SetPosition(0.0f, 0.0f, 0.0f);
 
@@ -430,7 +430,7 @@ namespace Game::GameModes
                 renderResources.MegaGeometry()};
 
             // 非同期ロード中に表示する簡易プレースホルダ
-            data.m_pBoulderPlaceholderObject = world.SpawnObject<WorldObject>();
+            data.m_pBoulderPlaceholderObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pBoulderPlaceholderObject);
             data.m_pBoulderPlaceholderObject->SetPosition(3.0f, 0.5f, 0.0f);
             data.m_pBoulderPlaceholderObject->SetScale(0.75f, 0.75f, 0.75f);
@@ -598,7 +598,7 @@ namespace Game::GameModes
 
                     if (!data.m_pBoulderObject)
                     {
-                        data.m_pBoulderObject = world.SpawnObject<WorldObject>();
+                        data.m_pBoulderObject = world.SpawnObject<Entity>();
                         ctx.ScopeRef.TrackObject(data.m_pBoulderObject);
                         data.m_pBoulderObject->SetPosition(3.0f, 0.0f, 0.0f);
 

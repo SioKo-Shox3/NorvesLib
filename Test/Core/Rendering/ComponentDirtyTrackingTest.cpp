@@ -3,7 +3,7 @@
 #include "Component/MeshComponent.h"
 #include "Component/PointLightComponent.h"
 #include "Object/ObjectCast.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include <cassert>
 #include <iostream>
 
@@ -38,7 +38,7 @@ namespace
 
     void TestTransformVersion()
     {
-        WorldObject object;
+        Entity object;
         assert(object.GetTransformVersion() == 1);
 
         object.SetPosition(1.0f, 2.0f, 3.0f);
@@ -208,7 +208,7 @@ namespace
 
     void TestOwnerActiveDirty()
     {
-        WorldObject owner;
+        Entity owner;
         owner.Initialize();
 
         auto* mesh = new MeshComponent();

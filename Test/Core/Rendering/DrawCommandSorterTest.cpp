@@ -169,7 +169,7 @@ namespace
         World world;
         world.Initialize();
 
-        WorldObject *object = world.SpawnObject<WorldObject>();
+        Entity *object = world.SpawnObject<Entity>();
         assert(object != nullptr);
 
         MeshComponent *mesh = world.CreateComponent<MeshComponent>(object);

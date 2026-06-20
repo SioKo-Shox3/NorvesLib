@@ -2,7 +2,7 @@
 
 #include "Object.h"
 #include "Reflection.h"
-#include "WorldObject.h"
+#include "Entity.h"
 #include "Component/Component.h"
 #include "Container/Containers.h"
 #include <cstdint>
@@ -19,11 +19,11 @@ namespace NorvesLib::Core
     /**
      * @brief ゲームワールド
      *
-     * Objectを継承し、WorldObjectをInner（子オブジェクト）として管理します。
-     * WorldObjectはOuter（親）をたどることでWorldを取得できます。
+     * Objectを継承し、EntityをInner（子オブジェクト）として管理します。
+     * EntityはOuter（親）をたどることでWorldを取得できます。
      *
      * 責務:
-     * - WorldObjectのライフサイクル管理（Inner/Outerで親子付け）
+     * - Entityのライフサイクル管理（Inner/Outerで親子付け）
      * - 毎フレームのTick更新
      * - MeshComponentからSceneViewへのMeshProxy同期
      * - LightComponentからSceneViewへのLightProxy同期
@@ -44,14 +44,14 @@ namespace NorvesLib::Core
         virtual void Finalize() override;
 
         /**
-         * @brief World管理下のWorldObjectを新規生成します
-         * @tparam T WorldObject派生型
-         * @return 生成されたWorldObject。所有権はWorldが持ちます。
+         * @brief World管理下のEntityを新規生成します
+         * @tparam T Entity派生型
+         * @return 生成されたEntity。所有権はWorldが持ちます。
          */
-        template <typename T = WorldObject>
+        template <typename T = Entity>
         T *SpawnObject()
         {
-            static_assert(std::is_base_of_v<WorldObject, T>, "T must derive from WorldObject");
+            static_assert(std::is_base_of_v<Entity, T>, "T must derive from Entity");
 
             if (!HasFlag(OF_Initialized))
             {
@@ -87,13 +87,13 @@ namespace NorvesLib::Core
         }
 
         /**
-         * @brief WorldObjectに紐づくComponentを新規生成します
+         * @brief Entityに紐づくComponentを新規生成します
          * @tparam T Component派生型
-         * @param owner コンポーネントを所有するWorldObject
+         * @param owner コンポーネントを所有するEntity
          * @return 生成されたComponent。所有権はownerが持ちます。
          */
         template <typename T>
-        T *CreateComponent(WorldObject *owner)
+        T *CreateComponent(Entity *owner)
         {
             static_assert(std::is_base_of_v<Component::Component, T>, "T must derive from Component");
 
@@ -127,24 +127,24 @@ namespace NorvesLib::Core
         }
 
         /**
-         * @brief WorldObjectをInnerとして追加
-         * @param object 追加するWorldObject（OuterがこのWorldに設定されます）
+         * @brief EntityをInnerとして追加
+         * @param object 追加するEntity（OuterがこのWorldに設定されます）
          */
-        bool AddObject(WorldObject *object);
+        bool AddObject(Entity *object);
 
         /**
-         * @brief WorldObjectをInnerから除去
-         * @param object 除去するWorldObject
+         * @brief EntityをInnerから除去
+         * @param object 除去するEntity
          */
-        void RemoveObject(WorldObject *object);
+        void RemoveObject(Entity *object);
 
         /**
-         * @brief 管理下の全WorldObjectを取得（Innersからフィルタリング）
+         * @brief 管理下のルートEntityを取得（World直下のInnersからフィルタリング）
          */
-        Container::VariableArray<WorldObject *> GetWorldObjects() const;
+        Container::VariableArray<Entity *> GetRootEntities() const;
 
         /**
-         * @brief WorldObject数を取得
+         * @brief World直下のルートEntity数を取得
          */
         size_t GetObjectCount() const;
 

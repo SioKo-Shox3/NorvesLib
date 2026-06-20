@@ -1,5 +1,5 @@
 ﻿#include "Object/World.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include "Component/MeshComponent.h"
 #include "Component/MegaGeometryComponent.h"
 #include "Component/LightComponent.h"
@@ -101,7 +101,7 @@ namespace NorvesLib::Core
         while (!m_Inners.empty())
         {
             IUnknown *inner = m_Inners.back();
-            if (auto *obj = CastTo<WorldObject>(inner))
+            if (auto *obj = CastTo<Entity>(inner))
             {
                 obj->OnRemovedFromWorld();
             }
@@ -119,7 +119,7 @@ namespace NorvesLib::Core
         LOG_INFO("World::Finalize() - Complete");
     }
 
-    bool World::AddObject(WorldObject *object)
+    bool World::AddObject(Entity *object)
     {
         if (!object || !HasFlag(OF_Initialized))
         {
@@ -165,7 +165,7 @@ namespace NorvesLib::Core
         return true;
     }
 
-    void World::RemoveObject(WorldObject *object)
+    void World::RemoveObject(Entity *object)
     {
         if (!object)
         {
@@ -211,12 +211,12 @@ namespace NorvesLib::Core
         }
     }
 
-    Container::VariableArray<WorldObject *> World::GetWorldObjects() const
+    Container::VariableArray<Entity *> World::GetRootEntities() const
     {
-        Container::VariableArray<WorldObject *> result;
+        Container::VariableArray<Entity *> result;
         for (auto *inner : m_Inners)
         {
-            if (auto *obj = CastTo<WorldObject>(inner))
+            if (auto *obj = CastTo<Entity>(inner))
             {
                 result.push_back(obj);
             }
@@ -229,7 +229,7 @@ namespace NorvesLib::Core
         size_t count = 0;
         for (auto *inner : m_Inners)
         {
-            if (CastTo<WorldObject>(inner))
+            if (CastTo<Entity>(inner))
             {
                 ++count;
             }
@@ -244,10 +244,10 @@ namespace NorvesLib::Core
             return;
         }
 
-        // 全InnerのWorldObjectをTick
+        // 全InnerのEntityをTick
         for (auto *inner : m_Inners)
         {
-            auto *obj = CastTo<WorldObject>(inner);
+            auto *obj = CastTo<Entity>(inner);
             if (obj && obj->IsActive() && obj->IsTickEnabled() && !obj->IsPendingDestroy())
             {
                 obj->Tick(deltaTime);
@@ -265,7 +265,7 @@ namespace NorvesLib::Core
 
         for (auto *inner : m_Inners)
         {
-            auto *obj = CastTo<WorldObject>(inner);
+            auto *obj = CastTo<Entity>(inner);
             if (!obj)
             {
                 continue;
@@ -297,10 +297,10 @@ namespace NorvesLib::Core
         liveMeshObjectIds.reserve(m_Inners.size());
         liveMegaGeometryObjectIds.reserve(m_Inners.size());
 
-        // 全WorldObjectのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
+        // 全EntityのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
         for (auto *inner : m_Inners)
         {
-            auto *obj = CastTo<WorldObject>(inner);
+            auto *obj = CastTo<Entity>(inner);
             if (!obj || !obj->IsActive() || obj->IsPendingDestroy())
             {
                 continue;
@@ -410,11 +410,11 @@ namespace NorvesLib::Core
 
     void World::CleanupDestroyedObjects()
     {
-        // 破棄予約されたWorldObjectを収集
-        Container::VariableArray<WorldObject *> toRemove;
+        // 破棄予約されたEntityを収集
+        Container::VariableArray<Entity *> toRemove;
         for (auto *inner : m_Inners)
         {
-            auto *obj = CastTo<WorldObject>(inner);
+            auto *obj = CastTo<Entity>(inner);
             if (obj && obj->IsPendingDestroy())
             {
                 toRemove.push_back(obj);

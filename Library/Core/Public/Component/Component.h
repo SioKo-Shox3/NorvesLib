@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "Object/Object.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include "Object/Reflection.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -18,11 +18,11 @@ namespace NorvesLib::Core::Component
      * @brief コンポーネント基底クラス
      *
      * すべてのコンポーネントの基底クラス。
-     * WorldObjectのInnerとして管理され、GetOuter()でオーナーのWorldObjectを取得できます。
+     * EntityのInnerとして管理され、GetOuter()でオーナーのEntityを取得できます。
      *
      * Outer/Inner関係:
-     * - WorldObject（Outer）→ Component（Inner）
-     * - WorldObjectが破棄されると、Inner全てが連鎖破棄されます。
+     * - Entity（Outer）→ Component（Inner）
+     * - Entityが破棄されると、Inner全てが連鎖破棄されます。
      */
     class Component : public Object
     {
@@ -84,11 +84,11 @@ namespace NorvesLib::Core::Component
         // ========================================
 
         /**
-         * @brief オーナーのWorldObjectを取得（Outer経由）
-         * @return WorldObjectへのポインタ（所属していない場合はnullptr）
+         * @brief オーナーのEntityを取得（Outer経由）
+         * @return Entityへのポインタ（所属していない場合はnullptr）
          */
-        WorldObject *GetOwner();
-        const WorldObject *GetOwner() const;
+        Entity *GetOwner();
+        const Entity *GetOwner() const;
 
         /**
          * @brief オーナーIDを取得

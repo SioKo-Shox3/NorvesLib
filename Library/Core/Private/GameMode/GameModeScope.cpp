@@ -1,6 +1,6 @@
 ﻿#include "GameMode/GameModeScope.h"
 #include "Object/World.h"
-#include "Object/WorldObject.h"
+#include "Object/Entity.h"
 #include "Rendering/RenderResources.h"
 
 namespace NorvesLib::Core::GameMode
@@ -14,7 +14,7 @@ namespace NorvesLib::Core::GameMode
     {
     }
 
-    void GameModeScope::TrackObject(NorvesLib::Core::WorldObject* object)
+    void GameModeScope::TrackObject(NorvesLib::Core::Entity* object)
     {
         m_TrackedObjects.push_back(object);
     }
@@ -29,7 +29,7 @@ namespace NorvesLib::Core::GameMode
         m_TrackedModels.push_back(handle);
     }
 
-    void GameModeScope::Untrack(NorvesLib::Core::WorldObject* object)
+    void GameModeScope::Untrack(NorvesLib::Core::Entity* object)
     {
         if (object == nullptr)
         {
@@ -48,10 +48,10 @@ namespace NorvesLib::Core::GameMode
 
     void GameModeScope::Cleanup()
     {
-        // 1) WorldObject を挿入順に World::RemoveObject で除去
+        // 1) Entity を挿入順に World::RemoveObject で除去
         if (m_pWorld)
         {
-            for (NorvesLib::Core::WorldObject* obj : m_TrackedObjects)
+            for (NorvesLib::Core::Entity* obj : m_TrackedObjects)
             {
                 m_pWorld->RemoveObject(obj);
             }

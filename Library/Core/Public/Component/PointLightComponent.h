@@ -13,17 +13,17 @@ namespace NorvesLib::Core::Component
      * @brief ポイントライトコンポーネント
      *
      * 点光源として機能するライトコンポーネント。
-     * WorldObjectの位置から全方向に光を放射します。
+     * Entityの位置から全方向に光を放射します。
      *
      * 特徴:
-     * - WorldObjectの位置を自動的にライト位置として使用
+     * - Entityの位置を自動的にライト位置として使用
      * - Range（影響範囲）と減衰パラメータの制御
      * - World::SyncToSceneView()でLightProxyが自動同期
      *
      * 使用例:
      * @code
-     * auto* worldObject = world.SpawnObject<WorldObject>();
-     * auto* pointLight = world.CreateComponent<PointLightComponent>(worldObject);
+     * auto* entity = world.SpawnObject<Entity>();
+     * auto* pointLight = world.CreateComponent<PointLightComponent>(entity);
      * pointLight->SetLightColor(1.0f, 0.9f, 0.3f);
      * pointLight->SetIntensity(3.0f);
      * pointLight->SetRange(8.0f);
