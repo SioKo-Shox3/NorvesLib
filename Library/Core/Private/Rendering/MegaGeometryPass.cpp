@@ -314,6 +314,7 @@ namespace NorvesLib::Core::Rendering
         m_Instances.clear();
         m_bPreferRenderGraphGBufferResources = false;
         m_bGBufferRenderPassUsesRenderGraphAttachmentStates = false;
+        m_bMegaGeometryClusterDebugUnsupportedWarned = false;
 
         m_bInitialized = false;
     }
@@ -705,6 +706,19 @@ namespace NorvesLib::Core::Rendering
                                       : 1.0f;
         const CameraViewConstants cameraConstants =
             CameraViewConstants::BuildForDevice(cam, aspectRatio, m_Device);
+        const auto &caps = m_Device->GetCapabilities();
+        const bool bMegaGeometryClusterDebugSupported =
+            command.DebugMode == DebugViewMode::MegaGeometryClusters &&
+            caps.bDrawIndirectFirstInstance;
+
+        if (command.DebugMode == DebugViewMode::MegaGeometryClusters &&
+            !caps.bDrawIndirectFirstInstance &&
+            !m_bMegaGeometryClusterDebugUnsupportedWarned)
+        {
+            NORVES_LOG_WARNING("MegaGeometryPass",
+                               "MegaGeometryClusters debug view requires DrawIndirectFirstInstance; using normal MegaGeometry shading");
+            m_bMegaGeometryClusterDebugUnsupportedWarned = true;
+        }
 
         const ClipSpaceFrustumPlanes frustumPlanes =
             MatrixUtils::ExtractClipSpaceFrustumPlanes(cameraConstants.ViewProjectionMatrix,
@@ -811,6 +825,7 @@ namespace NorvesLib::Core::Rendering
             uniformData.HiZHeight = 0;
             uniformData.HiZMipCount = 0;
             uniformData.bHiZEnabled = 0;
+            uniformData.bWriteClusterFirstInstance = bMegaGeometryClusterDebugSupported ? 1u : 0u;
 
             std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
             cullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
@@ -894,8 +909,8 @@ namespace NorvesLib::Core::Rendering
             perObject.EmissiveColor[3] = mat.EmissiveColor[3];
             perObject.PomParams[0] = mat.HeightScale;
             perObject.PomParams[1] = mat.bHasHeightMap ? 1.0f : 0.0f;
-            perObject.PomParams[2] = 0.0f;
-            perObject.PomParams[3] = 0.0f;
+            perObject.PomParams[2] = static_cast<float>(static_cast<uint8_t>(command.DebugMode));
+            perObject.PomParams[3] = bMegaGeometryClusterDebugSupported ? 1.0f : 0.0f;
 
             drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
 
@@ -947,7 +962,6 @@ namespace NorvesLib::Core::Rendering
         cmdList->SetScissor(command.Scissor);
         cmdList->SetPipeline(SelectDrawPipeline(command.DebugMode));
 
-        const auto &caps = m_Device->GetCapabilities();
         for (const DrawableInstance &drawableInstance : drawableInstances)
         {
             const auto *gpuData = drawableInstance.GpuData;
@@ -1268,7 +1282,7 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorBinding uboBinding;
         uboBinding.binding = 0;
         uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        uboBinding.stages = RHI::ShaderStage::Vertex;
+        uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(uboBinding);
 
         for (uint32_t i = 1; i <= 6; ++i)
@@ -1385,7 +1399,7 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorBinding drawUboBinding;
         drawUboBinding.binding = 0;
         drawUboBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        drawUboBinding.stages = RHI::ShaderStage::Vertex;
+        drawUboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
         drawDsDesc.bindings.push_back(drawUboBinding);
 
         for (uint32_t i = 1; i <= 6; ++i)

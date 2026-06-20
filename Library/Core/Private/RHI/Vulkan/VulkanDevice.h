@@ -138,6 +138,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::Device m_device;
         vk::PhysicalDeviceProperties m_deviceProperties{};
         vk::PhysicalDeviceFeatures m_deviceFeatures{};
+        vk::PhysicalDeviceFeatures m_enabledDeviceFeatures{};
         vk::PhysicalDeviceMemoryProperties m_memoryProperties{};
 
         // デバイス能力情報

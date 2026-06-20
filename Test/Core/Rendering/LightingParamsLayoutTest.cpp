@@ -102,7 +102,11 @@ int main()
                                   "DEBUG_VIEW_MODE_COUNT",
                                   static_cast<uint32_t>(DebugViewMode::Count));
     assert(ContainsText(shaderSource,
-                        "params.debugViewMode == DEBUG_VIEW_MODE_UNLIT || params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME"));
+                        "params.debugViewMode == DEBUG_VIEW_MODE_UNLIT ||"));
+    assert(ContainsText(shaderSource,
+                        "params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME ||"));
+    assert(ContainsText(shaderSource,
+                        "params.debugViewMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS"));
 
     std::cout << "LightingParamsLayoutTest passed\n";
     return 0;

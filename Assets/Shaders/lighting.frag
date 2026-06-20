@@ -398,7 +398,9 @@ void main()
         return;
     }
 
-    if (params.debugViewMode == DEBUG_VIEW_MODE_UNLIT || params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME)
+    if (params.debugViewMode == DEBUG_VIEW_MODE_UNLIT ||
+        params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME ||
+        params.debugViewMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS)
     {
         outColor = vec4(albedoSample.rgb, 1.0);
         return;

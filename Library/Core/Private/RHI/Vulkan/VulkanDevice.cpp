@@ -254,13 +254,23 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // デバイス機能の設定（Features2チェーンを使用）
+        const vk::PhysicalDeviceFeatures physicalFeatures = m_physicalDevice.getFeatures();
         vk::PhysicalDeviceFeatures2 features2{};
         features2.features.samplerAnisotropy = VK_TRUE;
         features2.features.fillModeNonSolid = VK_TRUE; // ワイヤーフレームなどのサポート
+        features2.features.drawIndirectFirstInstance =
+            physicalFeatures.drawIndirectFirstInstance == VK_TRUE ? VK_TRUE : VK_FALSE;
+        m_enabledDeviceFeatures = features2.features;
 
-        // Vulkan 1.2 機能: drawIndirectCount を有効化
+        // Vulkan 1.2 機能: 対応している場合のみ drawIndirectCount を有効化
+        vk::PhysicalDeviceVulkan12Features vulkan12Query{};
+        vk::PhysicalDeviceFeatures2 features2Query{};
+        features2Query.pNext = &vulkan12Query;
+        m_physicalDevice.getFeatures2(&features2Query);
+
         m_vulkan12Features = vk::PhysicalDeviceVulkan12Features{};
-        m_vulkan12Features.drawIndirectCount = VK_TRUE;
+        m_vulkan12Features.drawIndirectCount =
+            vulkan12Query.drawIndirectCount == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.pNext = &m_vulkan12Features;
 
         // Cooperative Vector 機能を検出してチェーンに追加
@@ -929,30 +939,34 @@ namespace NorvesLib::RHI::Vulkan
             m_Capabilities.MegaGeometry.bAccelerationStructureSupported;
 
         // ========================================
-        // Draw Indirect Count (Vulkan 1.2 コア機能)
+        // Draw Indirect (論理デバイスで有効化済みのコア機能)
         // ========================================
         {
-            vk::PhysicalDeviceVulkan12Features vulkan12Query{};
-            vk::PhysicalDeviceFeatures2 features2Query{};
-            features2Query.pNext = &vulkan12Query;
-            m_physicalDevice.getFeatures2(&features2Query);
-            m_Capabilities.bDrawIndirectCount = (vulkan12Query.drawIndirectCount == VK_TRUE);
+            m_Capabilities.bDrawIndirectCount = (m_vulkan12Features.drawIndirectCount == VK_TRUE);
+            m_Capabilities.bDrawIndirectFirstInstance =
+                (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
 
             if (m_Capabilities.bDrawIndirectCount)
             {
-                NORVES_LOG_INFO("VulkanDevice", "DrawIndirectCount supported (Vulkan 1.2 core)");
+                NORVES_LOG_INFO("VulkanDevice", "DrawIndirectCount enabled (Vulkan 1.2 core)");
+            }
+
+            if (m_Capabilities.bDrawIndirectFirstInstance)
+            {
+                NORVES_LOG_INFO("VulkanDevice", "DrawIndirectFirstInstance enabled (Vulkan core)");
             }
         }
 
         // サマリーログ
         const char *deviceName = m_Capabilities.DeviceName;
         NORVES_LOG_INFO("VulkanDevice", "Device Capabilities: GPU=%s, NVIDIA=%s, "
-                                        "NeuralShaders=%s, MegaGeometry=%s, DrawIndirectCount=%s",
+                                        "NeuralShaders=%s, MegaGeometry=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s",
                         deviceName,
                         m_Capabilities.bIsNvidia ? "Yes" : "No",
                         m_Capabilities.NeuralShaders.bSupported ? "Yes" : "No",
                         m_Capabilities.MegaGeometry.bSupported ? "Yes" : "No",
-                        m_Capabilities.bDrawIndirectCount ? "Yes" : "No");
+                        m_Capabilities.bDrawIndirectCount ? "Yes" : "No",
+                        m_Capabilities.bDrawIndirectFirstInstance ? "Yes" : "No");
     }
 
 } // namespace NorvesLib::RHI::Vulkan
