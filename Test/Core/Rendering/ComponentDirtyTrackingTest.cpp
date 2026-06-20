@@ -4,6 +4,7 @@
 #include "Component/PointLightComponent.h"
 #include "Object/ObjectCast.h"
 #include "Object/Entity.h"
+#include "Object/World.h"
 #include <cassert>
 #include <iostream>
 
@@ -38,26 +39,38 @@ namespace
 
     void TestTransformVersion()
     {
-        Entity object;
-        assert(object.GetTransformVersion() == 1);
+        World world;
+        world.Initialize();
 
-        object.SetPosition(1.0f, 2.0f, 3.0f);
-        assert(object.GetTransformVersion() == 2);
+        Entity* object = world.SpawnObject<Entity>();
+        assert(object);
+        assert(object->GetTransformVersion() == 1);
 
-        object.SetPosition(NorvesLib::Math::Vector3(4.0f, 5.0f, 6.0f));
-        assert(object.GetTransformVersion() == 3);
+        object->SetPosition(1.0f, 2.0f, 3.0f);
+        assert(object->GetTransformVersion() == 1);
 
-        object.SetRotation(0.0f, 0.0f, 0.0f, 1.0f);
-        assert(object.GetTransformVersion() == 4);
+        object->SetPosition(NorvesLib::Math::Vector3(4.0f, 5.0f, 6.0f));
+        assert(object->GetTransformVersion() == 1);
 
-        object.SetRotation(NorvesLib::Math::Quaternion(0.0f, 0.0f, 0.0f, 1.0f));
-        assert(object.GetTransformVersion() == 5);
+        object->SetRotation(0.0f, 0.0f, 0.0f, 1.0f);
+        assert(object->GetTransformVersion() == 1);
 
-        object.SetScale(2.0f, 2.0f, 2.0f);
-        assert(object.GetTransformVersion() == 6);
+        object->SetRotation(NorvesLib::Math::Quaternion(0.0f, 0.0f, 0.0f, 1.0f));
+        assert(object->GetTransformVersion() == 1);
 
-        object.SetScale(NorvesLib::Math::Vector3(1.0f, 1.0f, 1.0f));
-        assert(object.GetTransformVersion() == 7);
+        object->SetScale(2.0f, 2.0f, 2.0f);
+        assert(object->GetTransformVersion() == 1);
+
+        object->SetScale(NorvesLib::Math::Vector3(1.0f, 1.0f, 1.0f));
+        assert(object->GetTransformVersion() == 1);
+
+        world.UpdateWorldTransforms();
+        assert(object->GetTransformVersion() == 2);
+
+        world.UpdateWorldTransforms();
+        assert(object->GetTransformVersion() == 2);
+
+        world.Finalize();
     }
 
     void TestComponentDirty()

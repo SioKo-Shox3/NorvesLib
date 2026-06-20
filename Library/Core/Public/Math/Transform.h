@@ -47,6 +47,14 @@ public:
         , scale(Vector3::One)
     {}
 
+private:
+    static Vector3 ComponentMultiply(const Vector3& lhs, const Vector3& rhs)
+    {
+        return Vector3(lhs.x * rhs.x, lhs.y * rhs.y, lhs.z * rhs.z);
+    }
+
+public:
+
     // 演算子オーバーロード
     bool operator==(const Transform& other) const 
     {
@@ -66,17 +74,13 @@ public:
         Transform result;
         
         // スケールされた子の位置を親の空間に回転させ、親の位置に加算
-        result.position = position + rotation * (scale * other.position);
+        result.position = position + rotation * ComponentMultiply(scale, other.position);
         
         // 回転の合成
         result.rotation = rotation * other.rotation;
         
         // スケールの合成
-        result.scale = Vector3(
-            scale.x * other.scale.x,
-            scale.y * other.scale.y,
-            scale.z * other.scale.z
-        );
+        result.scale = ComponentMultiply(scale, other.scale);
         
         return result;
     }
@@ -130,7 +134,7 @@ public:
     // ローカル空間のベクトルをワールド空間に変換
     Vector3 TransformPoint(const Vector3& point) const 
     {
-        return position + rotation * (scale * point);
+        return position + rotation * ComponentMultiply(scale, point);
     }
 
     // ローカル空間の方向ベクトルをワールド空間に変換（位置の影響を受けない）
@@ -142,7 +146,7 @@ public:
     // ローカル空間のベクトルをワールド空間に変換（スケールの影響を受けるが、位置の影響を受けない）
     Vector3 TransformVector(const Vector3& vector) const 
     {
-        return rotation * (scale * vector);
+        return rotation * ComponentMultiply(scale, vector);
     }
 
     // 逆トランスフォームの取得
