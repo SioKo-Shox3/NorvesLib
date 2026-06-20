@@ -10,6 +10,7 @@ namespace NorvesLib::Core
 {
     class IClass;
     class FieldInitializer;
+    class World;
 
     /**
      * @brief すべてのオブジェクトの基本インターフェース
@@ -105,6 +106,8 @@ namespace NorvesLib::Core
      */
     class UnknownImpl : public IUnknown
     {
+        friend class World;
+
     public:
         /**
          * @brief デフォルトコンストラクタ

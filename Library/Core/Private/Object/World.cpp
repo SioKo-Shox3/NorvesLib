@@ -1,4 +1,4 @@
-﻿#include "Object/World.h"
+#include "Object/World.h"
 #include "Object/Entity.h"
 #include "Component/MeshComponent.h"
 #include "Component/MegaGeometryComponent.h"
@@ -12,57 +12,19 @@ namespace NorvesLib::Core
 {
     IMPLEMENT_CLASS(World, Object)
 
-    namespace
-    {
-        bool DestroyContextOwnedInner(IUnknown &owner, IUnknown *inner)
-        {
-            if (!inner)
-            {
-                return false;
-            }
-
-            IUnknown *outer = inner->GetOuter();
-            if (outer == &owner)
-            {
-                if (!owner.RemoveInner(inner))
-                {
-                    return false;
-                }
-            }
-            else if (outer)
-            {
-                return false;
-            }
-            else
-            {
-                owner.RemoveInner(inner);
-            }
-
-            if (inner->HasFlag(OF_HeapOwned))
-            {
-                inner->SetFlag(OF_PendingDestroy, true);
-                return true;
-            }
-
-            inner->Finalize();
-            delete inner;
-            return true;
-        }
-    }
-
     World::World()
         : Object()
     {
         NextObjectId = 1;
     }
 
-    World::World(const FieldInitializer *initializer)
+    World::World(const FieldInitializer* initializer)
         : Object(initializer)
     {
         NextObjectId = 1;
     }
 
-    World::World(const IUnknown *sourceObject)
+    World::World(const IUnknown* sourceObject)
         : Object(sourceObject)
     {
         NextObjectId = 1;
@@ -100,14 +62,23 @@ namespace NorvesLib::Core
 
         while (!m_Inners.empty())
         {
-            IUnknown *inner = m_Inners.back();
-            if (auto *obj = CastTo<Entity>(inner))
+            IUnknown* inner = m_Inners.back();
+            if (auto* entity = CastTo<Entity>(inner))
             {
-                obj->OnRemovedFromWorld();
+                DestroyEntitySubtree(*entity);
+                continue;
             }
-            if (!DestroyContextOwnedInner(*this, inner))
+
+            EraseInnerReference(*this, *inner);
+            SetOuterReference(*inner, nullptr);
+            if (inner->HasFlag(OF_HeapOwned))
             {
-                RemoveInner(inner);
+                inner->SetFlag(OF_PendingDestroy, true);
+            }
+            else
+            {
+                inner->Finalize();
+                delete inner;
             }
         }
 
@@ -119,45 +90,22 @@ namespace NorvesLib::Core
         LOG_INFO("World::Finalize() - Complete");
     }
 
-    bool World::AddObject(Entity *object)
+    bool World::AddInner(IUnknown* inner)
     {
-        if (!object || !HasFlag(OF_Initialized))
+        if (CastTo<Entity>(inner))
         {
             return false;
         }
 
-        // 重複チェック（既にInnerに存在するか）
-        for (auto *inner : m_Inners)
-        {
-            if (inner == object)
-            {
-                NORVES_LOG_WARNING("World", "Object already in World");
-                return false;
-            }
-        }
+        return UnknownImpl::AddInner(inner);
+    }
 
-        if (object->GetOuter() != nullptr)
-        {
-            NORVES_LOG_WARNING("World", "Object already has an outer");
-            return false;
-        }
-
-        if (!object->HasFlag(OF_Initialized))
-        {
-            object->Initialize();
-        }
-
-        // Innerとして追加（Outerも自動設定される）
-        if (!AddInner(object))
+    bool World::AddObject(Entity* object)
+    {
+        if (!AttachRootEntity(object))
         {
             return false;
         }
-
-        // オブジェクトIDを付与
-        object->SetObjectId(NextObjectId++);
-
-        // ライフサイクル通知
-        object->OnAddedToWorld();
 
         NORVES_LOG_DEBUG("World", "Object added (ID=%llu), total: %llu",
                          object->GetObjectId(),
@@ -165,58 +113,84 @@ namespace NorvesLib::Core
         return true;
     }
 
-    void World::RemoveObject(Entity *object)
+    void World::RemoveObject(Entity* object)
     {
-        if (!object)
+        if (!object || !IsEntityRoot(*object))
         {
             return;
         }
 
-        // Innersに存在するか確認
-        for (auto *inner : m_Inners)
-        {
-            if (inner == object)
-            {
-                // SceneViewからProxy削除
-                if (m_SceneView)
-                {
-                    m_SceneView->RemoveMeshProxy(object->GetObjectId());
-                    m_SceneView->RemoveMegaGeometryProxy(object->GetObjectId());
+        DestroyEntitySubtree(*object);
 
-                    // LightComponentのLightProxyも削除
-                    auto components = object->GetComponents();
-                    for (auto* comp : components)
-                    {
-                        auto* lightComp = CastTo<Component::LightComponent>(comp);
-                        if (lightComp)
-                        {
-                            m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
-                        }
-                    }
-                }
-
-                // ライフサイクル通知
-                object->OnRemovedFromWorld();
-
-                // Innerから除去して破棄する
-                if (!DestroyContextOwnedInner(*this, object))
-                {
-                    RemoveInner(object);
-                }
-
-                NORVES_LOG_DEBUG("World", "Object removed, remaining: %llu",
-                                 static_cast<uint64_t>(GetObjectCount()));
-                return;
-            }
-        }
+        NORVES_LOG_DEBUG("World", "Object removed, remaining: %llu",
+                         static_cast<uint64_t>(GetObjectCount()));
     }
 
-    Container::VariableArray<Entity *> World::GetRootEntities() const
+    bool World::RemoveEntity(Entity* entity)
     {
-        Container::VariableArray<Entity *> result;
-        for (auto *inner : m_Inners)
+        if (!entity || entity->GetWorld() != this || entity->GetOuter() == nullptr)
         {
-            if (auto *obj = CastTo<Entity>(inner))
+            return false;
+        }
+
+        return DestroyEntitySubtree(*entity);
+    }
+
+    bool World::ReparentEntity(Entity* entity, Entity* newParent)
+    {
+        if (!entity || entity->GetWorld() != this || entity->GetOuter() == nullptr)
+        {
+            return false;
+        }
+
+        if (entity->IsPendingDestroy())
+        {
+            return false;
+        }
+
+        if (HasPendingEntityAncestor(*entity))
+        {
+            return false;
+        }
+
+        if (newParent)
+        {
+            if (newParent->GetWorld() != this ||
+                newParent->IsPendingDestroy() ||
+                HasPendingEntityAncestor(*newParent) ||
+                newParent == entity ||
+                IsEntityInSubtree(*entity, *newParent))
+            {
+                return false;
+            }
+        }
+
+        IUnknown* newOwner = newParent ? static_cast<IUnknown*>(newParent) : static_cast<IUnknown*>(this);
+        if (entity->GetOuter() == newOwner)
+        {
+            return true;
+        }
+
+        UpdateWorldTransforms();
+        const Math::Transform savedWorldTransform = entity->GetWorldTransform();
+
+        if (!MoveEntityInnerAtomic(*entity, *newOwner))
+        {
+            return false;
+        }
+
+        entity->SetWorldTransform(savedWorldTransform);
+        MarkEntitySubtreeTransformDirty(*entity);
+        MarkEntitySubtreeRenderStateDirty(*entity);
+        return true;
+    }
+
+    Container::VariableArray<Entity*> World::GetRootEntities() const
+    {
+        Container::VariableArray<Entity*> result;
+        for (auto* inner : m_Inners)
+        {
+            if (auto* obj = CastTo<Entity>(inner))
             {
                 result.push_back(obj);
             }
@@ -227,7 +201,7 @@ namespace NorvesLib::Core
     size_t World::GetObjectCount() const
     {
         size_t count = 0;
-        for (auto *inner : m_Inners)
+        for (auto* inner : m_Inners)
         {
             if (CastTo<Entity>(inner))
             {
@@ -244,47 +218,27 @@ namespace NorvesLib::Core
             return;
         }
 
-        // 全InnerのEntityをTick
-        for (auto *inner : m_Inners)
+        auto roots = GetRootEntities();
+        for (auto* entity : roots)
         {
-            auto *obj = CastTo<Entity>(inner);
-            if (obj && obj->IsActive() && obj->IsTickEnabled() && !obj->IsPendingDestroy())
-            {
-                obj->Tick(deltaTime);
-                obj->TickComponents(deltaTime);
-            }
+            TickEntityRecursive(*entity, deltaTime);
         }
 
-        // 破棄予約されたオブジェクトのクリーンアップ
         CleanupDestroyedObjects();
     }
 
-    void World::SetSceneView(Rendering::SceneView *sceneView)
+    void World::SetSceneView(Rendering::SceneView* sceneView)
     {
         m_SceneView = sceneView;
 
-        for (auto *inner : m_Inners)
+        auto roots = GetRootEntities();
+        for (auto* entity : roots)
         {
-            auto *obj = CastTo<Entity>(inner);
-            if (!obj)
-            {
-                continue;
-            }
-
-            auto components = obj->GetComponents();
-            for (auto *comp : components)
-            {
-                if (CastTo<Component::MeshComponent>(comp) ||
-                    CastTo<Component::MegaGeometryComponent>(comp) ||
-                    CastTo<Component::LightComponent>(comp))
-                {
-                    comp->MarkRenderStateDirty();
-                }
-            }
+            MarkEntitySubtreeRenderStateDirty(*entity);
         }
     }
 
-    void World::SyncToSceneView(const Rendering::MaterialResources *materials)
+    void World::SyncToSceneView(const Rendering::MaterialResources* materials)
     {
         if (!m_SceneView || !HasFlag(OF_Initialized))
         {
@@ -299,110 +253,15 @@ namespace NorvesLib::Core
         liveMeshObjectIds.reserve(m_Inners.size());
         liveMegaGeometryObjectIds.reserve(m_Inners.size());
 
-        // 全EntityのMeshComponent/LightComponentからProxyを構築してSceneViewへ送信
-        for (auto *inner : m_Inners)
+        auto roots = GetRootEntities();
+        for (auto* entity : roots)
         {
-            auto *obj = CastTo<Entity>(inner);
-            if (!obj || !obj->IsActive() || obj->IsPendingDestroy())
-            {
-                continue;
-            }
-
-            const uint64_t ownerVersion = obj->GetTransformVersion();
-
-            // オブジェクトのInner（Component）をチェック
-            auto components = obj->GetComponents();
-            for (auto *comp : components)
-            {
-                auto *megaComp = CastTo<Component::MegaGeometryComponent>(comp);
-
-                // MeshComponentの同期
-                auto *meshComp = CastTo<Component::MeshComponent>(comp);
-                if (meshComp && !megaComp)
-                {
-                    const bool bNeedsSync = meshComp->IsRenderStateDirty() ||
-                                            meshComp->GetLastSyncedTransformVersion() != ownerVersion;
-                    if (!bNeedsSync)
-                    {
-                        liveMeshObjectIds.insert(obj->GetObjectId());
-                    }
-                    else
-                    {
-                        meshComp->RefreshRenderTransformCache();
-
-                        // MeshProxyを構築
-                        Rendering::MeshProxy meshProxy;
-                        if (meshComp->BuildMeshProxy(meshProxy, materials))
-                        {
-                            // ObjectIdとComponentIdを設定
-                            meshProxy.ObjectId = obj->GetObjectId();
-                            meshProxy.ComponentId = meshComp->GetComponentId();
-
-                            // SceneViewに追加/更新
-                            m_SceneView->UpdateMeshProxy(meshProxy);
-                            liveMeshObjectIds.insert(meshProxy.ObjectId);
-                        }
-
-                        meshComp->ClearRenderStateDirty();
-                        meshComp->SetLastSyncedTransformVersion(ownerVersion);
-                    }
-                }
-
-                // MegaGeometryComponentの同期
-                if (megaComp)
-                {
-                    const bool bNeedsSync = megaComp->IsRenderStateDirty() ||
-                                            megaComp->GetLastSyncedTransformVersion() != ownerVersion;
-                    if (!bNeedsSync)
-                    {
-                        liveMegaGeometryObjectIds.insert(obj->GetObjectId());
-                    }
-                    else
-                    {
-                        megaComp->RefreshRenderTransformCache();
-
-                        Rendering::MegaGeometryProxy megaProxy;
-                        if (megaComp->BuildMegaGeometryProxy(megaProxy))
-                        {
-                            megaProxy.ObjectId = obj->GetObjectId();
-                            megaProxy.ComponentId = megaComp->GetComponentId();
-                            m_SceneView->UpdateMegaGeometryProxy(megaProxy);
-                            liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
-                        }
-
-                        megaComp->ClearRenderStateDirty();
-                        megaComp->SetLastSyncedTransformVersion(ownerVersion);
-                    }
-                }
-
-                // LightComponentの同期
-                auto *lightComp = CastTo<Component::LightComponent>(comp);
-                if (lightComp)
-                {
-                    const bool bNeedsSync = lightComp->IsRenderStateDirty() ||
-                                            lightComp->GetLastSyncedTransformVersion() != ownerVersion;
-                    if (!bNeedsSync)
-                    {
-                        liveLightIds.insert(lightComp->GetComponentId());
-                    }
-                    else
-                    {
-                        // LightProxyを構築
-                        Rendering::LightProxy lightProxy;
-                        if (lightComp->BuildLightProxy(lightProxy))
-                        {
-                            lightProxy.LightId = lightComp->GetComponentId();
-
-                            // SceneViewに追加/更新
-                            m_SceneView->UpdateLightProxy(lightProxy);
-                            liveLightIds.insert(lightProxy.LightId);
-                        }
-
-                        lightComp->ClearRenderStateDirty();
-                        lightComp->SetLastSyncedTransformVersion(ownerVersion);
-                    }
-                }
-            }
+            SyncEntityRecursive(
+                *entity,
+                materials,
+                liveMeshObjectIds,
+                liveMegaGeometryObjectIds,
+                liveLightIds);
         }
 
         m_SceneView->RemoveStaleMeshProxies(liveMeshObjectIds);
@@ -417,15 +276,10 @@ namespace NorvesLib::Core
             return;
         }
 
-        for (auto *inner : m_Inners)
+        auto roots = GetRootEntities();
+        for (auto* entity : roots)
         {
-            auto *obj = CastTo<Entity>(inner);
-            if (!obj)
-            {
-                continue;
-            }
-
-            UpdateEntityTransformRecursive(*obj, Math::Transform::Identity);
+            UpdateEntityTransformRecursive(*entity, Math::Transform::Identity);
         }
     }
 
@@ -434,55 +288,155 @@ namespace NorvesLib::Core
         entity.RecomputeWorldTransform(parentWorld);
         const Math::Transform& worldTransform = entity.GetWorldTransform();
 
-        for (auto *inner : entity.GetInners())
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
         {
-            auto *child = CastTo<Entity>(inner);
-            if (!child)
+            UpdateEntityTransformRecursive(*child, worldTransform);
+        }
+    }
+
+    void World::TickEntityRecursive(Entity& entity, float deltaTime)
+    {
+        if (!entity.IsActive() || entity.IsPendingDestroy())
+        {
+            return;
+        }
+
+        if (entity.IsTickEnabled())
+        {
+            entity.Tick(deltaTime);
+            entity.TickComponents(deltaTime);
+        }
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            TickEntityRecursive(*child, deltaTime);
+        }
+    }
+
+    void World::SyncEntityRecursive(
+        Entity& entity,
+        const Rendering::MaterialResources* materials,
+        Container::UnorderedSet<uint64_t>& liveMeshObjectIds,
+        Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
+        Container::UnorderedSet<uint64_t>& liveLightIds)
+    {
+        if (!entity.IsActive() || entity.IsPendingDestroy())
+        {
+            return;
+        }
+
+        const uint64_t ownerVersion = entity.GetTransformVersion();
+        auto components = entity.GetComponents();
+        for (auto* comp : components)
+        {
+            auto* megaComp = CastTo<Component::MegaGeometryComponent>(comp);
+
+            auto* meshComp = CastTo<Component::MeshComponent>(comp);
+            if (meshComp && !megaComp)
             {
-                continue;
+                const bool bNeedsSync = meshComp->IsRenderStateDirty() ||
+                                        meshComp->GetLastSyncedTransformVersion() != ownerVersion;
+                if (!bNeedsSync)
+                {
+                    liveMeshObjectIds.insert(entity.GetObjectId());
+                }
+                else
+                {
+                    meshComp->RefreshRenderTransformCache();
+
+                    Rendering::MeshProxy meshProxy;
+                    if (meshComp->BuildMeshProxy(meshProxy, materials))
+                    {
+                        meshProxy.ObjectId = entity.GetObjectId();
+                        meshProxy.ComponentId = meshComp->GetComponentId();
+                        m_SceneView->UpdateMeshProxy(meshProxy);
+                        liveMeshObjectIds.insert(meshProxy.ObjectId);
+                    }
+
+                    meshComp->ClearRenderStateDirty();
+                    meshComp->SetLastSyncedTransformVersion(ownerVersion);
+                }
             }
 
-            UpdateEntityTransformRecursive(*child, worldTransform);
+            if (megaComp)
+            {
+                const bool bNeedsSync = megaComp->IsRenderStateDirty() ||
+                                        megaComp->GetLastSyncedTransformVersion() != ownerVersion;
+                if (!bNeedsSync)
+                {
+                    liveMegaGeometryObjectIds.insert(entity.GetObjectId());
+                }
+                else
+                {
+                    megaComp->RefreshRenderTransformCache();
+
+                    Rendering::MegaGeometryProxy megaProxy;
+                    if (megaComp->BuildMegaGeometryProxy(megaProxy))
+                    {
+                        megaProxy.ObjectId = entity.GetObjectId();
+                        megaProxy.ComponentId = megaComp->GetComponentId();
+                        m_SceneView->UpdateMegaGeometryProxy(megaProxy);
+                        liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
+                    }
+
+                    megaComp->ClearRenderStateDirty();
+                    megaComp->SetLastSyncedTransformVersion(ownerVersion);
+                }
+            }
+
+            auto* lightComp = CastTo<Component::LightComponent>(comp);
+            if (lightComp)
+            {
+                const bool bNeedsSync = lightComp->IsRenderStateDirty() ||
+                                        lightComp->GetLastSyncedTransformVersion() != ownerVersion;
+                if (!bNeedsSync)
+                {
+                    liveLightIds.insert(lightComp->GetComponentId());
+                }
+                else
+                {
+                    Rendering::LightProxy lightProxy;
+                    if (lightComp->BuildLightProxy(lightProxy))
+                    {
+                        lightProxy.LightId = lightComp->GetComponentId();
+                        m_SceneView->UpdateLightProxy(lightProxy);
+                        liveLightIds.insert(lightProxy.LightId);
+                    }
+
+                    lightComp->ClearRenderStateDirty();
+                    lightComp->SetLastSyncedTransformVersion(ownerVersion);
+                }
+            }
+        }
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            SyncEntityRecursive(
+                *child,
+                materials,
+                liveMeshObjectIds,
+                liveMegaGeometryObjectIds,
+                liveLightIds);
         }
     }
 
     void World::CleanupDestroyedObjects()
     {
-        // 破棄予約されたEntityを収集
-        Container::VariableArray<Entity *> toRemove;
-        for (auto *inner : m_Inners)
+        Container::VariableArray<Entity*> toRemove;
+        auto roots = GetRootEntities();
+        for (auto* entity : roots)
         {
-            auto *obj = CastTo<Entity>(inner);
-            if (obj && obj->IsPendingDestroy())
-            {
-                toRemove.push_back(obj);
-            }
+            CollectPendingDestroyRecursive(*entity, toRemove);
         }
 
-        // 収集したオブジェクトを除去・Finalize
-        for (auto *obj : toRemove)
+        for (auto* entity : toRemove)
         {
-            if (m_SceneView)
+            if (entity && entity->GetWorld() == this && entity->IsPendingDestroy())
             {
-                m_SceneView->RemoveMeshProxy(obj->GetObjectId());
-                m_SceneView->RemoveMegaGeometryProxy(obj->GetObjectId());
-
-                // LightComponentのLightProxyも削除
-                auto components = obj->GetComponents();
-                for (auto* comp : components)
-                {
-                    auto* lightComp = CastTo<Component::LightComponent>(comp);
-                    if (lightComp)
-                    {
-                        m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
-                    }
-                }
-            }
-
-            obj->OnRemovedFromWorld();
-            if (!DestroyContextOwnedInner(*this, obj))
-            {
-                RemoveInner(obj);
+                DestroyEntitySubtree(*entity);
             }
         }
 
@@ -491,6 +445,353 @@ namespace NorvesLib::Core
             NORVES_LOG_DEBUG("World", "Cleaned up %llu destroyed objects",
                              static_cast<uint64_t>(toRemove.size()));
         }
+    }
+
+    void World::CollectPendingDestroyRecursive(Entity& entity, Container::VariableArray<Entity*>& toRemove)
+    {
+        if (entity.IsPendingDestroy())
+        {
+            toRemove.push_back(&entity);
+            return;
+        }
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            CollectPendingDestroyRecursive(*child, toRemove);
+        }
+    }
+
+    bool World::AttachRootEntity(Entity* entity)
+    {
+        if (!entity ||
+            !HasFlag(OF_Initialized) ||
+            entity->GetOuter() != nullptr ||
+            entity->IsPendingDestroy() ||
+            ContainsHeapOwnedEntity(*entity))
+        {
+            return false;
+        }
+
+        if (ContainsInner(*this, *entity))
+        {
+            return false;
+        }
+
+        AppendInnerReference(*this, *entity);
+        SetOuterReference(*entity, this);
+
+        InitializeEntitySubtreeForWorld(*entity);
+        AssignFreshObjectIdsRecursive(*entity);
+        MarkEntitySubtreeTransformDirty(*entity);
+        MarkEntitySubtreeRenderStateDirty(*entity);
+        NotifyEntitySubtreeAdded(*entity);
+        return true;
+    }
+
+    bool World::AttachChildEntity(Entity* parent, Entity* child)
+    {
+        if (!parent || !child || !HasFlag(OF_Initialized))
+        {
+            return false;
+        }
+
+        if (parent->GetWorld() != this ||
+            parent->IsPendingDestroy() ||
+            child->GetOuter() != nullptr ||
+            child->IsPendingDestroy() ||
+            ContainsHeapOwnedEntity(*child) ||
+            parent == child ||
+            IsEntityInSubtree(*child, *parent))
+        {
+            return false;
+        }
+
+        if (ContainsInner(*parent, *child))
+        {
+            return false;
+        }
+
+        AppendInnerReference(*parent, *child);
+        SetOuterReference(*child, parent);
+
+        InitializeEntitySubtreeForWorld(*child);
+        AssignFreshObjectIdsRecursive(*child);
+        MarkEntitySubtreeTransformDirty(*child);
+        MarkEntitySubtreeRenderStateDirty(*child);
+        NotifyEntitySubtreeAdded(*child);
+        return true;
+    }
+
+    bool World::MoveEntityInnerAtomic(Entity& entity, IUnknown& newOwner)
+    {
+        IUnknown* oldOwner = entity.GetOuter();
+        if (!oldOwner || oldOwner == &newOwner)
+        {
+            return oldOwner == &newOwner;
+        }
+
+        if (ContainsInner(newOwner, entity))
+        {
+            return false;
+        }
+
+        AppendInnerReference(newOwner, entity);
+        SetOuterReference(entity, &newOwner);
+
+        if (!EraseInnerReference(*oldOwner, entity))
+        {
+            EraseInnerReference(newOwner, entity);
+            SetOuterReference(entity, oldOwner);
+            return false;
+        }
+
+        return true;
+    }
+
+    bool World::DestroyEntitySubtree(Entity& entity)
+    {
+        if (entity.GetWorld() != this)
+        {
+            return false;
+        }
+
+        IUnknown* owner = entity.GetOuter();
+        if (!owner)
+        {
+            return false;
+        }
+
+        RemoveEntitySubtreeProxies(entity);
+        NotifyEntitySubtreeRemoved(entity);
+
+        EraseInnerReference(*owner, entity);
+        SetOuterReference(entity, nullptr);
+
+        if (entity.HasFlag(OF_HeapOwned))
+        {
+            entity.SetFlag(OF_PendingDestroy, true);
+            return true;
+        }
+
+        entity.Finalize();
+        delete &entity;
+        return true;
+    }
+
+    void World::InitializeEntitySubtreeForWorld(Entity& entity)
+    {
+        if (!entity.HasFlag(OF_Initialized))
+        {
+            entity.Initialize();
+        }
+
+        for (auto* inner : entity.GetInners())
+        {
+            if (auto* child = CastTo<Entity>(inner))
+            {
+                InitializeEntitySubtreeForWorld(*child);
+                continue;
+            }
+
+            if (auto* component = CastTo<Component::Component>(inner))
+            {
+                if (!component->HasFlag(OF_Initialized))
+                {
+                    component->Initialize();
+                }
+                component->BeginPlay();
+            }
+        }
+    }
+
+    void World::AssignFreshObjectIdsRecursive(Entity& entity)
+    {
+        entity.SetObjectId(NextObjectId++);
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            AssignFreshObjectIdsRecursive(*child);
+        }
+    }
+
+    void World::MarkEntitySubtreeRenderStateDirty(Entity& entity)
+    {
+        auto components = entity.GetComponents();
+        for (auto* component : components)
+        {
+            component->MarkRenderStateDirty();
+        }
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            MarkEntitySubtreeRenderStateDirty(*child);
+        }
+    }
+
+    void World::MarkEntitySubtreeTransformDirty(Entity& entity)
+    {
+        entity.MarkWorldTransformDirty();
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            MarkEntitySubtreeTransformDirty(*child);
+        }
+    }
+
+    void World::NotifyEntitySubtreeAdded(Entity& entity)
+    {
+        entity.OnAddedToWorld();
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            NotifyEntitySubtreeAdded(*child);
+        }
+    }
+
+    void World::NotifyEntitySubtreeRemoved(Entity& entity)
+    {
+        entity.OnRemovedFromWorld();
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            NotifyEntitySubtreeRemoved(*child);
+        }
+    }
+
+    void World::RemoveEntitySubtreeProxies(Entity& entity)
+    {
+        if (m_SceneView)
+        {
+            m_SceneView->RemoveMeshProxy(entity.GetObjectId());
+            m_SceneView->RemoveMegaGeometryProxy(entity.GetObjectId());
+
+            auto components = entity.GetComponents();
+            for (auto* comp : components)
+            {
+                if (auto* lightComp = CastTo<Component::LightComponent>(comp))
+                {
+                    m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
+                }
+            }
+        }
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            RemoveEntitySubtreeProxies(*child);
+        }
+    }
+
+    bool World::IsEntityRoot(const Entity& entity) const
+    {
+        return entity.GetOuter() == this && entity.GetWorld() == this;
+    }
+
+    bool World::IsEntityInSubtree(const Entity& root, const Entity& candidate) const
+    {
+        if (&root == &candidate)
+        {
+            return true;
+        }
+
+        auto children = root.GetChildEntities();
+        for (auto* child : children)
+        {
+            if (IsEntityInSubtree(*child, candidate))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool World::ContainsHeapOwnedEntity(const Entity& entity) const
+    {
+        if (entity.HasFlag(OF_HeapOwned))
+        {
+            return true;
+        }
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            if (ContainsHeapOwnedEntity(*child))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool World::HasPendingEntityAncestor(const Entity& entity) const
+    {
+        for (Entity* parent = entity.GetParentEntity(); parent != nullptr; parent = parent->GetParentEntity())
+        {
+            if (parent->IsPendingDestroy())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool World::ContainsInner(const IUnknown& owner, const IUnknown& inner) const
+    {
+        for (auto* existing : owner.GetInners())
+        {
+            if (existing == &inner)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool World::EraseInnerReference(IUnknown& owner, IUnknown& inner)
+    {
+        auto* ownerImpl = dynamic_cast<UnknownImpl*>(&owner);
+        if (!ownerImpl)
+        {
+            return false;
+        }
+
+        for (auto it = ownerImpl->m_Inners.begin(); it != ownerImpl->m_Inners.end(); ++it)
+        {
+            if (*it == &inner)
+            {
+                ownerImpl->m_Inners.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void World::AppendInnerReference(IUnknown& owner, IUnknown& inner)
+    {
+        auto* ownerImpl = dynamic_cast<UnknownImpl*>(&owner);
+        if (!ownerImpl)
+        {
+            return;
+        }
+
+        ownerImpl->m_Inners.push_back(&inner);
+    }
+
+    void World::SetOuterReference(IUnknown& inner, IUnknown* outer)
+    {
+        auto* innerImpl = dynamic_cast<UnknownImpl*>(&inner);
+        if (!innerImpl)
+        {
+            return;
+        }
+
+        innerImpl->m_Outer = outer;
     }
 
 } // namespace NorvesLib::Core

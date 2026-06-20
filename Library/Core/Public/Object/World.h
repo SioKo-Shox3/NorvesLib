@@ -49,7 +49,7 @@ namespace NorvesLib::Core
          * @return 生成されたEntity。所有権はWorldが持ちます。
          */
         template <typename T = Entity>
-        T *SpawnObject()
+        T *SpawnEntity(Entity* parent = nullptr)
         {
             static_assert(std::is_base_of_v<Entity, T>, "T must derive from Entity");
 
@@ -73,7 +73,10 @@ namespace NorvesLib::Core
                 return nullptr;
             }
 
-            if (!AddObject(object))
+            const bool bAttached = parent
+                ? AttachChildEntity(parent, object)
+                : AttachRootEntity(object);
+            if (!bAttached)
             {
                 if (object->HasFlag(OF_Initialized))
                 {
@@ -84,6 +87,17 @@ namespace NorvesLib::Core
             }
 
             return object;
+        }
+
+        /**
+         * @brief World管理下のルートEntityを新規生成します（互換API）
+         * @tparam T Entity派生型
+         * @return 生成されたEntity。所有権はWorldが持ちます。
+         */
+        template <typename T = Entity>
+        T *SpawnObject()
+        {
+            return SpawnEntity<T>(nullptr);
         }
 
         /**
@@ -139,6 +153,26 @@ namespace NorvesLib::Core
         void RemoveObject(Entity *object);
 
         /**
+         * @brief EntityをWorldツリーから除去
+         * @param entity 除去するEntity（root/childどちらも可）
+         * @return 除去できた場合true
+         */
+        bool RemoveEntity(Entity* entity);
+
+        /**
+         * @brief Entityを同一World内の別親へ移動
+         * @param entity 移動するEntity
+         * @param newParent 新しい親。nullptrならWorld直下rootへ移動
+         * @return 移動できた場合true
+         */
+        bool ReparentEntity(Entity* entity, Entity* newParent);
+
+        /**
+         * @brief public AddInnerからのEntity直追加を拒否します
+         */
+        virtual bool AddInner(IUnknown* inner) override;
+
+        /**
          * @brief 管理下のルートEntityを取得（World直下のInnersからフィルタリング）
          */
         Container::VariableArray<Entity *> GetRootEntities() const;
@@ -178,6 +212,32 @@ namespace NorvesLib::Core
     private:
         void CleanupDestroyedObjects();
         void UpdateEntityTransformRecursive(Entity& entity, const Math::Transform& parentWorld);
+        void TickEntityRecursive(Entity& entity, float deltaTime);
+        void SyncEntityRecursive(Entity& entity,
+                                 const Rendering::MaterialResources* materials,
+                                 Container::UnorderedSet<uint64_t>& liveMeshObjectIds,
+                                 Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
+                                 Container::UnorderedSet<uint64_t>& liveLightIds);
+        void CollectPendingDestroyRecursive(Entity& entity, Container::VariableArray<Entity*>& toRemove);
+        bool AttachRootEntity(Entity* entity);
+        bool AttachChildEntity(Entity* parent, Entity* child);
+        bool MoveEntityInnerAtomic(Entity& entity, IUnknown& newOwner);
+        bool DestroyEntitySubtree(Entity& entity);
+        void InitializeEntitySubtreeForWorld(Entity& entity);
+        void AssignFreshObjectIdsRecursive(Entity& entity);
+        void MarkEntitySubtreeRenderStateDirty(Entity& entity);
+        void MarkEntitySubtreeTransformDirty(Entity& entity);
+        void NotifyEntitySubtreeAdded(Entity& entity);
+        void NotifyEntitySubtreeRemoved(Entity& entity);
+        void RemoveEntitySubtreeProxies(Entity& entity);
+        bool IsEntityRoot(const Entity& entity) const;
+        bool IsEntityInSubtree(const Entity& root, const Entity& candidate) const;
+        bool ContainsHeapOwnedEntity(const Entity& entity) const;
+        bool HasPendingEntityAncestor(const Entity& entity) const;
+        bool ContainsInner(const IUnknown& owner, const IUnknown& inner) const;
+        bool EraseInnerReference(IUnknown& owner, IUnknown& inner);
+        void AppendInnerReference(IUnknown& owner, IUnknown& inner);
+        void SetOuterReference(IUnknown& inner, IUnknown* outer);
 
         // システムポインタ（リフレクション対象外）
         Rendering::SceneView *m_SceneView = nullptr;

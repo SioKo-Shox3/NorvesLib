@@ -63,11 +63,10 @@ namespace
             parentWorld.scale);
     }
 
-    Entity* AddChild(Entity& parent)
+    Entity* AddChild(World& world, Entity& parent)
     {
-        Entity* child = new Entity();
-        child->Initialize();
-        assert(parent.AddInner(child));
+        Entity* child = world.SpawnEntity<Entity>(&parent);
+        assert(child);
         return child;
     }
 
@@ -132,7 +131,7 @@ namespace
 
         Entity* parent = world.SpawnObject<Entity>();
         assert(parent);
-        Entity* child = AddChild(*parent);
+        Entity* child = AddChild(world, *parent);
         child->SetLocalPosition(1.0f, 0.0f, 0.0f);
 
         parent->SetPosition(10.0f, 0.0f, 0.0f);
@@ -157,7 +156,7 @@ namespace
 
         Entity* parent = world.SpawnObject<Entity>();
         assert(parent);
-        Entity* child = AddChild(*parent);
+        Entity* child = AddChild(world, *parent);
 
         parent->SetLocalPosition(10.0f, 20.0f, 30.0f);
         parent->SetLocalRotation(NorvesLib::Math::Quaternion(NorvesLib::Math::Vector3::UnitZ, Pi * 0.5f));
@@ -195,7 +194,7 @@ namespace
 
         Entity* parent = world.SpawnObject<Entity>();
         assert(parent);
-        Entity* child = AddChild(*parent);
+        Entity* child = AddChild(world, *parent);
 
         parent->SetLocalPosition(3.0f, 4.0f, 5.0f);
         parent->SetLocalRotation(NorvesLib::Math::Quaternion(NorvesLib::Math::Vector3::UnitZ, Pi * 0.5f));

@@ -5,6 +5,42 @@
 
 namespace NorvesLib::Core::GameMode
 {
+    namespace
+    {
+        bool ContainsEntity(
+            const NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Entity*>& entities,
+            const NorvesLib::Core::Entity* entity)
+        {
+            for (const NorvesLib::Core::Entity* existing : entities)
+            {
+                if (existing == entity)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool HasTrackedAncestor(
+            NorvesLib::Core::Entity* entity,
+            NorvesLib::Core::World* world,
+            const NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Entity*>& trackedObjects)
+        {
+            for (NorvesLib::Core::Entity* parent = entity->GetParentEntity(); parent != nullptr; parent = parent->GetParentEntity())
+            {
+                if (parent->GetWorld() != world)
+                {
+                    continue;
+                }
+
+                if (ContainsEntity(trackedObjects, parent))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
 
     GameModeScope::GameModeScope(
         NorvesLib::Core::World* world,
@@ -16,6 +52,11 @@ namespace NorvesLib::Core::GameMode
 
     void GameModeScope::TrackObject(NorvesLib::Core::Entity* object)
     {
+        if (object == nullptr || ContainsEntity(m_TrackedObjects, object))
+        {
+            return;
+        }
+
         m_TrackedObjects.push_back(object);
     }
 
@@ -48,15 +89,46 @@ namespace NorvesLib::Core::GameMode
 
     void GameModeScope::Cleanup()
     {
-        // 1) Entity を挿入順に World::RemoveObject で除去
+        // 1) Entity を tree-aware に World から除去
         if (m_pWorld)
         {
+            NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Entity*> toDestroy;
             for (NorvesLib::Core::Entity* obj : m_TrackedObjects)
             {
-                m_pWorld->RemoveObject(obj);
+                if (obj == nullptr || obj->GetWorld() != m_pWorld)
+                {
+                    continue;
+                }
+
+                if (HasTrackedAncestor(obj, m_pWorld, m_TrackedObjects))
+                {
+                    continue;
+                }
+
+                if (!ContainsEntity(toDestroy, obj))
+                {
+                    toDestroy.push_back(obj);
+                }
             }
-            m_TrackedObjects.clear();
+
+            for (NorvesLib::Core::Entity* obj : toDestroy)
+            {
+                if (obj == nullptr || obj->GetWorld() != m_pWorld)
+                {
+                    continue;
+                }
+
+                if (obj->GetParentEntity() == nullptr)
+                {
+                    m_pWorld->RemoveObject(obj);
+                }
+                else
+                {
+                    m_pWorld->RemoveEntity(obj);
+                }
+            }
         }
+        m_TrackedObjects.clear();
 
         // 2) MeshDataHandle を MeshResources::Unregister で解放
         // 3) ModelHandle を MegaGeometryResources::ReleaseModel で解放
@@ -72,8 +144,9 @@ namespace NorvesLib::Core::GameMode
             {
                 m_pRenderResources->MegaGeometry().ReleaseModel(handle);
             }
-            m_TrackedModels.clear();
         }
+        m_TrackedMeshes.clear();
+        m_TrackedModels.clear();
     }
 
     bool GameModeScope::IsEmpty() const

@@ -109,6 +109,11 @@ namespace NorvesLib::Core
         Container::VariableArray<Component::Component *> GetComponents() const;
 
         /**
+         * @brief 子Entityを取得（Innersからフィルタリング）
+         */
+        Container::VariableArray<Entity*> GetChildEntities() const;
+
+        /**
          * @brief 全コンポーネントのTickを呼び出す
          * @param deltaTime 前フレームからの経過時間
          */
@@ -129,6 +134,11 @@ namespace NorvesLib::Core
          * @return Worldに属している場合true
          */
         bool IsInWorld() const;
+
+        /**
+         * @brief public AddInnerからのin-world子Entity追加を拒否します
+         */
+        virtual bool AddInner(IUnknown* inner) override;
 
         /**
          * @brief オブジェクトIDを取得
@@ -317,6 +327,7 @@ namespace NorvesLib::Core
         uint64_t m_TransformVersion = 1;
 
     private:
+        void MarkRenderStateDirtyRecursive();
         void SetLocalTransform(const Math::Transform& transform);
         void SyncLocalTransformFromProperties();
         Math::Transform EvaluateWorldTransformNonMutating() const;
