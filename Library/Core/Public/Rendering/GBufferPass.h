@@ -3,6 +3,7 @@
 #include "IViewPass.h"
 #include "SceneRenderer.h"
 #include "DynamicUniformAllocator.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
@@ -168,6 +169,8 @@ namespace NorvesLib::Core::Rendering
                                       const RHI::TexturePtr& emissive,
                                       const RHI::TexturePtr& depth);
         bool EnsureGBufferPipeline();
+        bool CreateGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline);
+        RHI::PipelinePtr SelectGBufferPipeline(DebugViewMode mode) const;
         void EnqueueGBufferGeometryPass(ViewRenderContext& context,
                                         Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
                                         const RHI::Viewport &viewport,
@@ -242,6 +245,7 @@ namespace NorvesLib::Core::Rendering
 
         // GBuffer用パイプライン
         RHI::PipelinePtr m_GBufferPipeline;
+        RHI::PipelinePtr m_GBufferWireframePipeline;
         RHI::ShaderPtr m_GBufferVertexShader;
         RHI::ShaderPtr m_GBufferFragmentShader;
 

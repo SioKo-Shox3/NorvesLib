@@ -2388,7 +2388,8 @@ namespace
                                                                          camera,
                                                                          true,
                                                                          viewport,
-                                                                         scissor);
+                                                                         scissor,
+                                                                         DebugViewMode::Normal);
         FakeCommandList commandList;
         megaGeometryPass.RecordFrameCommand(frameCommand.MegaGeometry, &commandList);
 

@@ -101,6 +101,8 @@ int main()
     AssertShaderDebugModeConstant(shaderSource,
                                   "DEBUG_VIEW_MODE_COUNT",
                                   static_cast<uint32_t>(DebugViewMode::Count));
+    assert(ContainsText(shaderSource,
+                        "params.debugViewMode == DEBUG_VIEW_MODE_UNLIT || params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME"));
 
     std::cout << "LightingParamsLayoutTest passed\n";
     return 0;

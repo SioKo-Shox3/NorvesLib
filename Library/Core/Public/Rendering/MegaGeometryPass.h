@@ -2,6 +2,7 @@
 
 #include "Rendering/IViewPass.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
@@ -132,6 +133,8 @@ namespace NorvesLib::Core::Rendering
         bool CreateDrawPipeline(ViewRenderContext &context,
                                 bool bRequireDrawPipeline = true,
                                 bool bUseRenderGraphAttachmentStates = false);
+        bool CreateDrawPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr &outPipeline);
+        RHI::PipelinePtr SelectDrawPipeline(DebugViewMode mode) const;
 
         /**
          * @brief インスタンスごとに安定した UBO / DescriptorSet を確保
@@ -175,6 +178,7 @@ namespace NorvesLib::Core::Rendering
 
         // GBuffer描画用グラフィックスパイプライン
         RHI::PipelinePtr m_DrawPipeline;
+        RHI::PipelinePtr m_DrawWireframePipeline;
         RHI::ShaderPtr m_DrawVertexShader;
         RHI::ShaderPtr m_DrawFragmentShader;
 
