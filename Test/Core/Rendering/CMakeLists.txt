@@ -100,6 +100,20 @@ target_include_directories(ViewRenderContextActiveInputTest PRIVATE
 set_target_properties(ViewRenderContextActiveInputTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ViewRenderContextActiveInputTest COMMAND ViewRenderContextActiveInputTest)
 
+add_executable(LightingParamsLayoutTest
+    LightingParamsLayoutTest.cpp
+)
+target_link_libraries(LightingParamsLayoutTest PRIVATE Core)
+target_include_directories(LightingParamsLayoutTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(LightingParamsLayoutTest PRIVATE
+    NORVES_SHADER_DIR="${CMAKE_SOURCE_DIR}/Assets/Shaders"
+)
+set_target_properties(LightingParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME LightingParamsLayoutTest COMMAND LightingParamsLayoutTest)
+
 add_executable(DebugViewModeStringTest
     DebugViewModeStringTest.cpp
 )

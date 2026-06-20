@@ -9,7 +9,7 @@ layout(set = 0, binding = 2) uniform sampler2D gbufferMaterial;
 layout(set = 0, binding = 3) uniform sampler2D gbufferDepth;
 
 // ライティングパラメータ
-layout(set = 0, binding = 4) uniform LightingParams
+layout(std140, set = 0, binding = 4) uniform LightingParams
 {
     mat4 invViewProjection;
     vec4 cameraPosition;    // xyz=position, w=unused
@@ -22,7 +22,7 @@ layout(set = 0, binding = 4) uniform LightingParams
     uint bIBLEnabled;       // IBL有効フラグ
     uint bSSAOEnabled;      // SSAO有効フラグ
     uint bNeuralBRDFEnabled; // Neural BRDF有効フラグ
-    uint _pad1;
+    uint debugViewMode;
     uint _pad2;
 } params;
 
@@ -67,6 +67,16 @@ layout(location = 0) out vec4 outColor;
 // ========================================
 
 const float PI = 3.14159265359;
+const uint DEBUG_VIEW_MODE_NORMAL = 0u;
+const uint DEBUG_VIEW_MODE_UNLIT = 1u;
+const uint DEBUG_VIEW_MODE_WIREFRAME = 2u;
+const uint DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3u;
+const uint DEBUG_VIEW_MODE_GBUFFER_ALBEDO = 4u;
+const uint DEBUG_VIEW_MODE_GBUFFER_NORMAL = 5u;
+const uint DEBUG_VIEW_MODE_GBUFFER_MATERIAL = 6u;
+const uint DEBUG_VIEW_MODE_GBUFFER_DEPTH = 7u;
+const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
+const uint DEBUG_VIEW_MODE_COUNT = 9u;
 
 // ========================================
 // Equirectangular UV from direction vector
@@ -385,6 +395,12 @@ void main()
         {
             outColor = vec4(0.0, 0.0, 0.0, 1.0);
         }
+        return;
+    }
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_UNLIT)
+    {
+        outColor = vec4(albedoSample.rgb, 1.0);
         return;
     }
 
