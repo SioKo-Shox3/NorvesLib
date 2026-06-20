@@ -491,7 +491,8 @@ namespace Game::GameModes
 #if NORVES_BUILD_DEVELOPMENT
         if (!inputState.IsAltDown())
         {
-            DebugViewMode nextDebugViewMode = data.m_DebugViewMode;
+            const DebugViewMode currentDebugViewMode = ctx.EngineRef.GetRenderWorld().GetMainViewportDebugViewMode();
+            DebugViewMode nextDebugViewMode = currentDebugViewMode;
             bool bDebugViewModeRequested = true;
 
             if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F1))
@@ -512,7 +513,7 @@ namespace Game::GameModes
             }
             else if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F5))
             {
-                uint8_t nextModeIndex = static_cast<uint8_t>(data.m_DebugViewMode) + 1;
+                uint8_t nextModeIndex = static_cast<uint8_t>(currentDebugViewMode) + 1;
                 if (nextModeIndex >= static_cast<uint8_t>(DebugViewMode::Count))
                 {
                     nextModeIndex = 0;
@@ -524,11 +525,12 @@ namespace Game::GameModes
                 bDebugViewModeRequested = false;
             }
 
-            if (bDebugViewModeRequested && nextDebugViewMode != data.m_DebugViewMode)
+            if (bDebugViewModeRequested && nextDebugViewMode != currentDebugViewMode)
             {
-                data.m_DebugViewMode = nextDebugViewMode;
                 ctx.EngineRef.GetRenderWorld().SetDebugViewModeAll(nextDebugViewMode);
-                NORVES_LOG_INFO("DebugView", "DebugViewMode -> %s", DebugViewModeToString(nextDebugViewMode));
+                const DebugViewMode reflectedDebugViewMode = ctx.EngineRef.GetRenderWorld().GetMainViewportDebugViewMode();
+                data.m_DebugViewMode = reflectedDebugViewMode;
+                NORVES_LOG_INFO("DebugView", "DebugViewMode -> %s", DebugViewModeToString(reflectedDebugViewMode));
             }
         }
 #endif
