@@ -34,6 +34,7 @@ using namespace NorvesLib::Core::Rendering;
 using namespace NorvesLib::Core::Rendering::MegaGeometry;
 using namespace NorvesLib::Core::Engine;
 using namespace NorvesLib::Core;
+namespace Math = NorvesLib::Math;
 
 namespace Game::GameModes
 {
@@ -421,29 +422,36 @@ namespace Game::GameModes
         }
 
         // ========================================
-        // 2.5 F4 ScreenSpace Board smoke overlay
+        // 2.5 F5 ScreenSpace Board showcase
         // ========================================
         {
             auto canvasView = ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().GetCanvasView();
             if (canvasView)
             {
                 auto &world = ctx.WorldRef;
-                struct F4BoardSpec
+                struct F5BoardSpec
                 {
                     float X;
                     float Y;
                     float Width;
                     float Height;
+                    BlendMode BlendModeProp;
+                    Math::Vector4 Tint;
+                    bool bFlipX;
+                    bool bFlipY;
+                    Math::Vector2 Pivot;
+                    Math::Vector2 SizePx;
                     uint32_t LayerPriority;
                     uint32_t OrderInLayer;
                 };
 
-                const F4BoardSpec boardSpecs[] =
+                const F5BoardSpec boardSpecs[] =
                 {
-                    {72.0f, 72.0f, 140.0f, 84.0f, 0u, 2u},
-                    {104.0f, 96.0f, 168.0f, 96.0f, 0u, 0u},
-                    {88.0f, 84.0f, 124.0f, 72.0f, 0u, 1u},
-                    {118.0f, 90.0f, 196.0f, 108.0f, 1u, 0u},
+                    {72.0f, 72.0f, 160.0f, 96.0f, BlendMode::Translucent, Math::Vector4(0.20f, 0.55f, 1.00f, 0.75f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 0u},
+                    {112.0f, 104.0f, 180.0f, 104.0f, BlendMode::Opaque, Math::Vector4(1.00f, 0.35f, 0.25f, 0.20f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 1u},
+                    {176.0f, 132.0f, 132.0f, 72.0f, BlendMode::Additive, Math::Vector4(1.00f, 0.95f, 0.35f, 0.45f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 2u},
+                    {472.0f, 108.0f, 72.0f, 72.0f, BlendMode::Translucent, Math::Vector4(0.30f, 1.00f, 0.75f, 0.65f), true, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(140.0f, 40.0f), 0u, 3u},
+                    {400.0f, 260.0f, 44.0f, 132.0f, BlendMode::Translucent, Math::Vector4(0.90f, 0.30f, 1.00f, 0.70f), false, true, Math::Vector2(0.5f, 1.0f), Math::Vector2(96.0f, 160.0f), 1u, 0u},
                 };
 
                 constexpr uint32_t boardSpecCount = static_cast<uint32_t>(sizeof(boardSpecs) / sizeof(boardSpecs[0]));
@@ -453,7 +461,7 @@ namespace Game::GameModes
                 data.m_F4BoardObjects.reserve(boardSpecCount);
                 data.m_F4BoardComponents.reserve(boardSpecCount);
 
-                for (const F4BoardSpec &boardSpec : boardSpecs)
+                for (const F5BoardSpec &boardSpec : boardSpecs)
                 {
                     Entity *boardObject = world.SpawnObject<Entity>();
                     ctx.ScopeRef.TrackObject(boardObject);
@@ -463,6 +471,12 @@ namespace Game::GameModes
                     auto *boardComponent = world.CreateComponent<Component::BoardComponent>(boardObject);
                     boardComponent->SetBoardSpace(BoardSpace::ScreenSpace);
                     boardComponent->SetRenderLayer(RenderLayer::UI);
+                    boardComponent->SetBlendMode(boardSpec.BlendModeProp);
+                    boardComponent->SetTint(boardSpec.Tint);
+                    boardComponent->SetFlipX(boardSpec.bFlipX);
+                    boardComponent->SetFlipY(boardSpec.bFlipY);
+                    boardComponent->SetPivot(boardSpec.Pivot);
+                    boardComponent->SetSizePx(boardSpec.SizePx);
                     boardComponent->SetLayerPriority(boardSpec.LayerPriority);
                     boardComponent->SetOrderInLayer(boardSpec.OrderInLayer);
                     boardComponent->SetVisible(true);
@@ -471,7 +485,7 @@ namespace Game::GameModes
                     data.m_F4BoardComponents.push_back(boardComponent);
                 }
 
-                LOG_INFO("F4 ScreenSpace Board smoke overlay created with multiple layered boards");
+                LOG_INFO("F5 ScreenSpace Board showcase created with blend, tint, flip, pivot, and size variants");
             }
         }
 

@@ -8,9 +8,16 @@ namespace NorvesLib::Core::Component
     BoardComponent::BoardComponent()
         : Component()
     {
+        TextureHandle = Rendering::TextureHandle::Invalid();
         bVisible = true;
         RenderLayerProp = Rendering::RenderLayer::UI;
         Space = Rendering::BoardSpace::ScreenSpace;
+        BlendModeProp = Rendering::BlendMode::Translucent;
+        Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
+        bFlipX = false;
+        bFlipY = false;
+        Pivot = Math::Vector2(0.0f, 0.0f);
+        SizePx = Math::Vector2(0.0f, 0.0f);
         LayerPriority = 0;
         OrderInLayer = 0;
     }
@@ -18,9 +25,16 @@ namespace NorvesLib::Core::Component
     BoardComponent::BoardComponent(const FieldInitializer *initializer)
         : Component(initializer)
     {
+        TextureHandle = Rendering::TextureHandle::Invalid();
         bVisible = true;
         RenderLayerProp = Rendering::RenderLayer::UI;
         Space = Rendering::BoardSpace::ScreenSpace;
+        BlendModeProp = Rendering::BlendMode::Translucent;
+        Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
+        bFlipX = false;
+        bFlipY = false;
+        Pivot = Math::Vector2(0.0f, 0.0f);
+        SizePx = Math::Vector2(0.0f, 0.0f);
         LayerPriority = 0;
         OrderInLayer = 0;
     }
@@ -28,9 +42,16 @@ namespace NorvesLib::Core::Component
     BoardComponent::BoardComponent(const IUnknown *sourceObject)
         : Component(sourceObject)
     {
+        TextureHandle = Rendering::TextureHandle::Invalid();
         bVisible = true;
         RenderLayerProp = Rendering::RenderLayer::UI;
         Space = Rendering::BoardSpace::ScreenSpace;
+        BlendModeProp = Rendering::BlendMode::Translucent;
+        Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
+        bFlipX = false;
+        bFlipY = false;
+        Pivot = Math::Vector2(0.0f, 0.0f);
+        SizePx = Math::Vector2(0.0f, 0.0f);
         LayerPriority = 0;
         OrderInLayer = 0;
     }
@@ -79,6 +100,42 @@ namespace NorvesLib::Core::Component
         MarkRenderStateDirty();
     }
 
+    void BoardComponent::SetBlendMode(Rendering::BlendMode blendMode)
+    {
+        BlendModeProp = blendMode;
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetTint(const Math::Vector4 &tint)
+    {
+        Tint = tint;
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetFlipX(bool bInFlipX)
+    {
+        bFlipX = bInFlipX;
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetFlipY(bool bInFlipY)
+    {
+        bFlipY = bInFlipY;
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetPivot(const Math::Vector2 &pivot)
+    {
+        Pivot = pivot;
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetSizePx(const Math::Vector2 &sizePx)
+    {
+        SizePx = sizePx;
+        MarkRenderStateDirty();
+    }
+
     void BoardComponent::SetLayerPriority(uint32_t layerPriority)
     {
         LayerPriority = layerPriority;
@@ -114,6 +171,12 @@ namespace NorvesLib::Core::Component
         outProxy.PreviousWorldTransform = m_PreviousWorldTransform;
         outProxy.LayerMask = RenderLayerProp;
         outProxy.Space = Space;
+        outProxy.BlendModeProp = BlendModeProp;
+        outProxy.Tint = Tint;
+        outProxy.bFlipX = bFlipX;
+        outProxy.bFlipY = bFlipY;
+        outProxy.Pivot = Pivot;
+        outProxy.SizePx = SizePx;
         outProxy.LayerPriority = LayerPriority;
         outProxy.OrderInLayer = OrderInLayer;
         outProxy.SortKey = Rendering::BoardProxy::ComputeSortKey(LayerPriority, OrderInLayer);

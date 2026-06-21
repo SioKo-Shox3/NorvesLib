@@ -6,6 +6,8 @@
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
+#include "Math/Vector2.h"
+#include "Math/Vector4.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -218,6 +220,12 @@ namespace NorvesLib::Core::Rendering
 
         RenderLayer LayerMask = RenderLayer::UI;
         BoardSpace Space = BoardSpace::ScreenSpace;
+        BlendMode BlendModeProp = BlendMode::Translucent;
+        Math::Vector4 Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
+        bool bFlipX = false;
+        bool bFlipY = false;
+        Math::Vector2 Pivot = Math::Vector2(0.0f, 0.0f);
+        Math::Vector2 SizePx = Math::Vector2(0.0f, 0.0f);
 
         bool bVisible = true;
 

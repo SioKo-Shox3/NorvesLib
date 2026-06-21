@@ -5,6 +5,8 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/RenderResourcesFwd.h"
 #include "Math/Matrix4x4.h"
+#include "Math/Vector2.h"
+#include "Math/Vector4.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
 
@@ -35,6 +37,24 @@ namespace NorvesLib::Core::Component
         void SetBoardSpace(Rendering::BoardSpace space);
         Rendering::BoardSpace GetBoardSpace() const { return Space; }
 
+        void SetBlendMode(Rendering::BlendMode blendMode);
+        Rendering::BlendMode GetBlendMode() const { return BlendModeProp; }
+
+        void SetTint(const Math::Vector4 &tint);
+        const Math::Vector4 &GetTint() const { return Tint; }
+
+        void SetFlipX(bool bInFlipX);
+        bool GetFlipX() const { return bFlipX; }
+
+        void SetFlipY(bool bInFlipY);
+        bool GetFlipY() const { return bFlipY; }
+
+        void SetPivot(const Math::Vector2 &pivot);
+        const Math::Vector2 &GetPivot() const { return Pivot; }
+
+        void SetSizePx(const Math::Vector2 &sizePx);
+        const Math::Vector2 &GetSizePx() const { return SizePx; }
+
         void SetLayerPriority(uint32_t layerPriority);
         uint32_t GetLayerPriority() const { return LayerPriority; }
 
@@ -56,6 +76,12 @@ namespace NorvesLib::Core::Component
         PROPERTY(bool, bVisible)
         PROPERTY(Rendering::RenderLayer, RenderLayerProp)
         PROPERTY(Rendering::BoardSpace, Space)
+        PROPERTY(Rendering::BlendMode, BlendModeProp)
+        PROPERTY(Math::Vector4, Tint)
+        PROPERTY(bool, bFlipX)
+        PROPERTY(bool, bFlipY)
+        PROPERTY(Math::Vector2, Pivot)
+        PROPERTY(Math::Vector2, SizePx)
         PROPERTY(uint32_t, LayerPriority)
         PROPERTY(uint32_t, OrderInLayer)
 

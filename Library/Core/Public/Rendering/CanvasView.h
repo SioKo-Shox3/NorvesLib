@@ -20,6 +20,9 @@ namespace NorvesLib::Core::Rendering
         CanvasView();
         ~CanvasView() override;
 
+        static BlendMode NormalizeBoardBlendMode(BlendMode blendMode);
+        static RHI::BlendAttachmentDesc CreateBoardBlendAttachmentDesc(BlendMode blendMode);
+
         bool Initialize(const ViewSettings& settings) override;
         void Shutdown() override;
         void Render(ViewRenderContext& context) override;
@@ -46,7 +49,7 @@ namespace NorvesLib::Core::Rendering
             RHI::RenderPassPtr RenderPass;
             RHI::FramebufferPtr Framebuffer;
             RHI::DescriptorSetPtr DescriptorSet;
-            RHI::PipelinePtr Pipeline;
+            Container::VariableArray<RHI::PipelinePtr> Pipelines;
         };
 
         void ClearBoardDrawCommands();

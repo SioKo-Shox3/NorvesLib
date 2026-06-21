@@ -182,6 +182,12 @@ namespace
         assert(!proxy.Texture.IsValid());
         assert(proxy.LayerMask == RenderLayer::UI);
         assert(proxy.Space == BoardSpace::ScreenSpace);
+        assert(proxy.BlendModeProp == BlendMode::Translucent);
+        assert(proxy.Tint == Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f));
+        assert(!proxy.bFlipX);
+        assert(!proxy.bFlipY);
+        assert(proxy.Pivot == Math::Vector2(0.0f, 0.0f));
+        assert(proxy.SizePx == Math::Vector2(0.0f, 0.0f));
         assert(proxy.LayerPriority == 0u);
         assert(proxy.OrderInLayer == 0u);
         assert(proxy.SortKey == BoardProxy::ComputeSortKey(0u, 0u));
@@ -294,7 +300,11 @@ namespace
         assert(command.Draw.FirstInstance == 0);
         assert(command.Draw.InstanceDataOffset == 0);
         assert(command.Draw.bInstanced);
+        assert(command.Draw.MaterialBlendMode == BlendMode::Translucent);
         assert(command.Draw.ObjectId == uiBoard.ObjectId);
+        assert(canvas.GetBoardInstanceData()[0].ObjectColor[0] == 1.0f);
+        assert(canvas.GetBoardInstanceData()[0].ObjectColor[1] == 1.0f);
+        assert(canvas.GetBoardInstanceData()[0].ObjectColor[2] == 1.0f);
         assert(canvas.GetBoardInstanceData()[0].ObjectColor[3] == 0.75f);
         assert(canvas.GetBoardInstanceData()[0].CustomData[0] == 640.0f);
         assert(canvas.GetBoardInstanceData()[0].CustomData[1] == 480.0f);
