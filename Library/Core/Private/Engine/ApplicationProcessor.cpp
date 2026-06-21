@@ -27,6 +27,8 @@ namespace
     constexpr size_t kExitAfterFramesOptionLength = (sizeof(kExitAfterFramesOption) / sizeof(TCHAR)) - 1;
     constexpr TCHAR kRenderThreadOption[] = TEXT("--render-thread=");
     constexpr size_t kRenderThreadOptionLength = (sizeof(kRenderThreadOption) / sizeof(TCHAR)) - 1;
+    constexpr TCHAR kEnableCanvasViewOption[] = TEXT("--enable-canvas-view");
+    constexpr size_t kEnableCanvasViewOptionLength = (sizeof(kEnableCanvasViewOption) / sizeof(TCHAR)) - 1;
 
     uint64_t ParsePositiveFrameCount(const TCHAR *pValueText, bool &bValid)
     {
@@ -133,6 +135,24 @@ namespace
 
         return false;
     }
+
+    bool IsEnableCanvasViewOption(const TCHAR* pText)
+    {
+        if (!pText)
+        {
+            return false;
+        }
+
+        for (size_t i = 0; i < kEnableCanvasViewOptionLength; ++i)
+        {
+            if (pText[i] == TEXT('\0') || pText[i] != kEnableCanvasViewOption[i])
+            {
+                return false;
+            }
+        }
+
+        return pText[kEnableCanvasViewOptionLength] == TEXT('\0');
+    }
 } // namespace
 
 namespace NorvesLib::Core::Engine
@@ -199,6 +219,7 @@ namespace NorvesLib::Core::Engine
         // コマンドライン引数を config.Arguments から取得してパース
         m_ExitAfterFrames = 0;
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
+        bool bEnableCanvasView = false;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -227,6 +248,12 @@ namespace NorvesLib::Core::Engine
             {
                 LOG_WARNING("ApplicationProcessor runtime option --render-thread ignored: value must be 'st' or 'mt'; current setting remains %s",
                             bEnableMultiThreadedRendering ? "mt" : "st");
+            }
+
+            if (IsEnableCanvasViewOption(args[i].c_str()))
+            {
+                bEnableCanvasView = true;
+                LOG_INFO("ApplicationProcessor runtime option enable_canvas_view=true");
             }
         }
 
@@ -285,6 +312,19 @@ namespace NorvesLib::Core::Engine
                 return false;
             }
             LOG_INFO("RenderWorld initialized successfully");
+
+            if (bEnableCanvasView)
+            {
+                auto canvasView = GEngine->GetRenderWorld().GetRenderingCoordinator().CreateCanvasView();
+                if (canvasView)
+                {
+                    LOG_INFO("CanvasView created from runtime option");
+                }
+                else
+                {
+                    LOG_WARNING("CanvasView runtime option was requested but creation failed");
+                }
+            }
         }
 
         // ゲームワールドを初期化

@@ -4,6 +4,7 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Math/Matrix4x4.h"
+#include "RHI/RHITypes.h"
 #include <cstdint>
 
 // 前方宣言
@@ -221,6 +222,22 @@ namespace NorvesLib::Core::Rendering
          */
         Container::TSharedPtr<RHI::ITexture2D> GetOutputTexture() const { return m_OutputTexture; }
 
+        /**
+         * @brief フレーム単位の物理出力テクスチャをリセット
+         */
+        void ResetFrameOutput();
+
+        /**
+         * @brief フレーム単位の物理出力テクスチャを設定
+         * @param texture RenderGraphからexportされた物理テクスチャ
+         */
+        void SetFrameOutputTexture(RHI::TexturePtr texture);
+
+        /**
+         * @brief フレーム単位の物理出力テクスチャを取得
+         */
+        RHI::TexturePtr GetFrameOutputTexture() const { return m_FrameOutputTexture; }
+
         // ========================================
         // 設定
         // ========================================
@@ -266,6 +283,7 @@ namespace NorvesLib::Core::Rendering
         // 出力リソース
         Container::TSharedPtr<RHI::IRenderTarget> m_OutputRenderTarget;
         Container::TSharedPtr<RHI::ITexture2D> m_OutputTexture;
+        RHI::TexturePtr m_FrameOutputTexture;
 
         // 設定
         ViewType m_ViewType = ViewType::Scene;

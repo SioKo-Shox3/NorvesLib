@@ -1,4 +1,6 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
+#include "Rendering/CanvasView.h"
+#include "Rendering/CompositePass.h"
 #include "Rendering/Screen.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/View.h"
@@ -215,6 +217,7 @@ namespace NorvesLib::Core::Rendering
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
         m_MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
         m_RenderGraph.SetDebugDumpOptions(settings.RenderGraphDumpOptions);
+        m_bFrameSubmissionStarted = false;
 
         // ========================================
         // 1. RHIデバイス（RenderWorldから渡される）
@@ -622,6 +625,7 @@ namespace NorvesLib::Core::Rendering
 
         // PresentationPass は直近の backbuffer/renderpass/pipeline 参照を保持するため、
         // RHI shutdown 前に request/result を明示クリアする。
+        m_CompositePass.SetRequest(CompositePassRequest{});
         m_PresentationPass.SetRequest(PresentationPassRequest{});
 
         // Viewの破棄
@@ -634,6 +638,7 @@ namespace NorvesLib::Core::Rendering
         }
         m_Views.clear();
         m_MainSceneView.reset();
+        m_CanvasView.reset();
 
         // SceneRendererの終了
         m_SceneRenderer.Shutdown();
@@ -688,6 +693,7 @@ namespace NorvesLib::Core::Rendering
 
         // デバイス参照の解放（Engine層がRHIの終了を管理）
         m_Device.reset();
+        m_bFrameSubmissionStarted = false;
     }
 
     void RenderingCoordinator::BeginFrame()
@@ -696,6 +702,8 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+
+        m_bFrameSubmissionStarted = true;
 
         // 現在時刻を取得
         auto now = std::chrono::high_resolution_clock::now();
@@ -1141,6 +1149,7 @@ namespace NorvesLib::Core::Rendering
         executionRequest.PresentationRequest = presentationRequest;
         executionRequest.PresentationGraphPass = &m_PresentationPass;
         executionRequest.GraphPresentationRequest = graphPresentationRequest;
+        executionRequest.CompositeGraphPass = &m_CompositePass;
 
         RenderFrameExecutor frameExecutor;
         frameExecutor.Execute(executionRequest);
@@ -1262,6 +1271,50 @@ namespace NorvesLib::Core::Rendering
         return sceneView;
     }
 
+    Container::TSharedPtr<CanvasView> RenderingCoordinator::CreateCanvasView()
+    {
+        if (!m_bInitialized)
+        {
+            return nullptr;
+        }
+
+        if (m_CanvasView)
+        {
+            return m_CanvasView;
+        }
+
+        if (m_bFrameSubmissionStarted ||
+            m_CurrentPacket ||
+            m_PacketManager.HasInflightPackets())
+        {
+            NORVES_LOG_WARNING("RenderingCoordinator",
+                               "CreateCanvasView rejected because frame submission has already started");
+            return nullptr;
+        }
+
+        ViewSettings settings;
+        settings.Type = ViewType::UI;
+        settings.Width = m_RenderWidth;
+        settings.Height = m_RenderHeight;
+        settings.bClearColor = true;
+        settings.ClearColor[0] = 0.0f;
+        settings.ClearColor[1] = 0.0f;
+        settings.ClearColor[2] = 0.0f;
+        settings.ClearColor[3] = 0.0f;
+        settings.bClearDepth = false;
+
+        auto canvasView = Container::MakeShared<CanvasView>();
+        if (!canvasView->Initialize(settings))
+        {
+            return nullptr;
+        }
+
+        m_Screen.AddView(canvasView, 1);
+        m_Views.push_back(canvasView);
+        m_CanvasView = canvasView;
+        return m_CanvasView;
+    }
+
     void RenderingCoordinator::DestroyView(Container::TSharedPtr<View> view)
     {
         if (!m_bInitialized || !view)
@@ -1277,6 +1330,14 @@ namespace NorvesLib::Core::Rendering
         if (it != m_Views.end())
         {
             (*it)->Shutdown();
+            if (*it == m_CanvasView)
+            {
+                m_CanvasView.reset();
+            }
+            if (*it == m_MainSceneView)
+            {
+                m_MainSceneView.reset();
+            }
             m_Views.erase(it);
         }
     }

@@ -6,6 +6,7 @@
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/LegacyViewPassAdapter.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Debug/Stats.h"
@@ -79,6 +80,7 @@ namespace NorvesLib::Core::Rendering
         // 出力リソース解放
         m_OutputRenderTarget = nullptr;
         m_OutputTexture = nullptr;
+        ResetFrameOutput();
 
         m_bInitialized = false;
     }
@@ -172,6 +174,7 @@ namespace NorvesLib::Core::Rendering
 
     void View::Render(ViewRenderContext &context)
     {
+        ResetFrameOutput();
         context.CurrentGraphExecutionResult = nullptr;
 
         if (!m_bEnabled || !m_bInitialized)
@@ -291,6 +294,7 @@ namespace NorvesLib::Core::Rendering
         if (!context.Graph->Compile(context))
         {
             NORVES_LOG_ERROR("View", "RenderGraph compile failed");
+            ResetFrameOutput();
             return;
         }
 
@@ -300,10 +304,30 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("View",
                              "RenderGraph execution failed after %u pass(es)",
                              context.Graph->GetLastExecutedPassCount());
+            ResetFrameOutput();
             return;
         }
 
-        context.CurrentGraphExecutionResult = &context.Graph->GetLastExecutionResult();
+        const RenderGraphExecutionResult& lastResult = context.Graph->GetLastExecutionResult();
+        RHI::TexturePtr outputTexture;
+        if (lastResult.TryGetTexture(RenderGraphResourceNames::PresentationColor, outputTexture) ||
+            lastResult.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, outputTexture) ||
+            lastResult.TryGetTexture(RenderGraphResourceNames::SceneColor, outputTexture))
+        {
+            SetFrameOutputTexture(outputTexture);
+        }
+
+        context.CurrentGraphExecutionResult = &lastResult;
+    }
+
+    void View::ResetFrameOutput()
+    {
+        m_FrameOutputTexture.reset();
+    }
+
+    void View::SetFrameOutputTexture(RHI::TexturePtr texture)
+    {
+        m_FrameOutputTexture = texture;
     }
 
     // ========================================

@@ -717,6 +717,34 @@ namespace
         std::cout << "TestPresentationColorPreferredOverToneMappedColor passed\n";
     }
 
+    void TestCompositeColorPreferredOverPresentationAndToneMappedColor()
+    {
+        PresentationFixture fixture;
+        PublishedTexturePass toneMappedPass(RenderGraphResourceNames::ToneMappedColor);
+        PublishedTexturePass presentationPassProducer(RenderGraphResourceNames::PresentationColor);
+        PublishedTexturePass compositePassProducer(RenderGraphResourceNames::CompositeColor);
+        PresentationPass presentationPass;
+        presentationPass.SetRequest(fixture.MakeRequest());
+
+        fixture.Graph.AddPass(&toneMappedPass);
+        fixture.Graph.AddPass(&presentationPassProducer);
+        fixture.Graph.AddPass(&compositePassProducer);
+        fixture.Graph.AddPass(&presentationPass);
+
+        assert(fixture.Graph.Compile(fixture.Context));
+        assert(fixture.Graph.Execute(fixture.Context));
+
+        RenderGraphResources resources(&fixture.Graph);
+        RHI::TexturePtr expectedTexture = resources.GetTexture(compositePassProducer.GetHandle());
+        assert(expectedTexture);
+        assert(presentationPass.WasPresented());
+        assert(presentationPass.GetLastResult().InputName == RenderGraphResourceNames::CompositeColor);
+        assert(presentationPass.GetLastResult().InputTexture.get() == expectedTexture.get());
+        assert(fixture.GetDescriptorSet()->BoundTexture.get() == expectedTexture.get());
+        assert(fixture.PendingCommands.size() == 1);
+        std::cout << "TestCompositeColorPreferredOverPresentationAndToneMappedColor passed\n";
+    }
+
     void TestToneMappedColorUsedWhenPresentationColorMissing()
     {
         PresentationFixture fixture;
@@ -917,6 +945,7 @@ int main()
     std::cout << "RenderGraphPresentationPassTest start\n";
 
     TestPresentationColorPreferredOverToneMappedColor();
+    TestCompositeColorPreferredOverPresentationAndToneMappedColor();
     TestToneMappedColorUsedWhenPresentationColorMissing();
     TestImportedBackBufferUsesUndefinedToRenderTargetAndFinalPresent();
     TestLoadPresentationUsesPresentInitialStateAndLoadResources();

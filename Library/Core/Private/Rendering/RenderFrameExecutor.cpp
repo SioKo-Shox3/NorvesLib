@@ -1,10 +1,13 @@
 #include "Rendering/RenderFrameExecutor.h"
+#include "Rendering/CanvasView.h"
+#include "Rendering/CompositePass.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/View.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/ViewRenderPlan.h"
+#include <algorithm>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -25,6 +28,19 @@ namespace NorvesLib::Core::Rendering
         {
             return result;
         }
+
+        ResetFrameOutputs(request);
+        if (ShouldCompose(*request.Packet, *request.Views))
+        {
+            return ExecuteCompositePath(request);
+        }
+
+        return ExecuteLegacyPath(request);
+    }
+
+    RenderFrameExecutionResult RenderFrameExecutor::ExecuteLegacyPath(const RenderFrameExecutionRequest &request)
+    {
+        RenderFrameExecutionResult result;
 
         for (const ViewRenderPlan &viewPlan : request.Packet->Views)
         {
@@ -98,6 +114,138 @@ namespace NorvesLib::Core::Rendering
         return result;
     }
 
+    RenderFrameExecutionResult RenderFrameExecutor::ExecuteCompositePath(const RenderFrameExecutionRequest &request)
+    {
+        if (!request.CompositeGraphPass ||
+            !request.PresentationGraphPass ||
+            !request.Context ||
+            !request.Context->Graph)
+        {
+            return ExecuteLegacyPath(request);
+        }
+
+        RenderFrameExecutionResult result;
+        Container::VariableArray<const ViewRenderPlan*> sortedViews;
+        sortedViews.reserve(request.Packet->Views.size());
+        for (const ViewRenderPlan &viewPlan : request.Packet->Views)
+        {
+            sortedViews.push_back(&viewPlan);
+        }
+
+        std::stable_sort(sortedViews.begin(),
+                         sortedViews.end(),
+                         [](const ViewRenderPlan* lhs, const ViewRenderPlan* rhs)
+                         {
+                             return lhs->Priority < rhs->Priority;
+                         });
+
+        for (const ViewRenderPlan* viewPlan : sortedViews)
+        {
+            if (!viewPlan || !viewPlan->bEnabled)
+            {
+                continue;
+            }
+
+            View* view = ResolveView(request, *viewPlan);
+            if (!view)
+            {
+                continue;
+            }
+
+            CanvasView* canvasView = dynamic_cast<CanvasView*>(view);
+            if (canvasView && viewPlan->Viewports.empty())
+            {
+                ApplyViewportRenderPlan(*request.Context, nullptr);
+                ConfigureNoPresentationGraphPass(request);
+                canvasView->Render(*request.Context);
+                FlushPendingFrameCommands(request);
+                if (canvasView->GetFrameOutputTexture())
+                {
+                    ++result.RenderedViewportCount;
+                    result.bRenderedAnyViewport = true;
+                }
+                continue;
+            }
+
+            for (const ViewportRenderPlan &viewportPlan : viewPlan->Viewports)
+            {
+                if (!viewportPlan.HasDrawableExtent())
+                {
+                    continue;
+                }
+
+                ApplyViewportRenderPlan(*request.Context, &viewportPlan);
+                ConfigureNoPresentationGraphPass(request);
+                if (!RenderViewForCurrentViewport(request, view))
+                {
+                    view->ResetFrameOutput();
+                    continue;
+                }
+
+                FlushPendingFrameCommands(request);
+                if (view->GetFrameOutputTexture())
+                {
+                    ++result.RenderedViewportCount;
+                    result.bRenderedAnyViewport = true;
+                }
+            }
+        }
+
+        const ViewportRenderPlan* primarySceneViewport = FindPrimarySceneViewportRenderPlan(*request.Packet);
+        RHI::TexturePtr sceneTexture;
+        if (primarySceneViewport &&
+            primarySceneViewport->ViewId < request.Views->size())
+        {
+            auto sceneView = (*request.Views)[primarySceneViewport->ViewId];
+            if (sceneView)
+            {
+                sceneTexture = sceneView->GetFrameOutputTexture();
+            }
+        }
+
+        if (!sceneTexture)
+        {
+            ClearStage2RequestsAndResults(request);
+            return result;
+        }
+
+        CanvasView* canvasView = ResolveEnabledCanvasView(*request.Packet, *request.Views);
+        const RHI::TexturePtr canvasTexture = canvasView ? canvasView->GetFrameOutputTexture() : nullptr;
+
+        request.Context->Graph->Reset();
+        ApplyViewportRenderPlan(*request.Context, primarySceneViewport);
+
+        CompositePassRequest compositeRequest;
+        compositeRequest.SceneTexture = sceneTexture;
+        compositeRequest.CanvasTexture = canvasTexture;
+        request.CompositeGraphPass->SetRequest(compositeRequest);
+        request.Context->Graph->AddPass(request.CompositeGraphPass);
+
+        PresentationPassRequest presentationRequest = request.GraphPresentationRequest;
+        presentationRequest.bClearPresentation = true;
+        request.PresentationGraphPass->SetRequest(presentationRequest);
+        request.Context->PresentationGraphPass = request.PresentationGraphPass;
+        request.Context->bPresentationGraphPassHandled = false;
+        request.Context->Graph->AddPass(request.PresentationGraphPass);
+
+        if (request.Context->Graph->Compile(*request.Context))
+        {
+            RenderGraphExecutionResult executionResult = request.Context->Graph->ExecuteWithResult(*request.Context);
+            if (executionResult.bSuccess)
+            {
+                request.Context->CurrentGraphExecutionResult = &request.Context->Graph->GetLastExecutionResult();
+                FlushPendingFrameCommands(request);
+                if (WasPresentationHandledByGraph(request))
+                {
+                    ++result.PresentationBlitCount;
+                }
+            }
+        }
+
+        ClearStage2RequestsAndResults(request);
+        return result;
+    }
+
     void RenderFrameExecutor::ApplyViewportRenderPlan(ViewRenderContext &context, const ViewportRenderPlan *viewportPlan)
     {
         context.CurrentGraphExecutionResult = nullptr;
@@ -162,6 +310,126 @@ namespace NorvesLib::Core::Rendering
         }
 
         return fallbackViewport;
+    }
+
+    const ViewportRenderPlan *RenderFrameExecutor::FindPrimarySceneViewportRenderPlan(const FramePacket &packet)
+    {
+        for (const auto &viewPlan : packet.Views)
+        {
+            if (!viewPlan.bEnabled ||
+                static_cast<ViewType>(viewPlan.ViewType) != ViewType::Scene)
+            {
+                continue;
+            }
+
+            for (const auto &viewportPlan : viewPlan.Viewports)
+            {
+                if (viewportPlan.HasDrawableExtent())
+                {
+                    return &viewportPlan;
+                }
+            }
+        }
+
+        return nullptr;
+    }
+
+    bool RenderFrameExecutor::ShouldCompose(
+        const FramePacket &packet,
+        const Container::VariableArray<Container::TSharedPtr<View>> &views)
+    {
+        return ResolveEnabledCanvasView(packet, views) != nullptr;
+    }
+
+    void RenderFrameExecutor::ResetFrameOutputs(const RenderFrameExecutionRequest &request)
+    {
+        if (request.Views)
+        {
+            for (const auto &view : *request.Views)
+            {
+                if (view)
+                {
+                    view->ResetFrameOutput();
+                }
+            }
+        }
+
+        if (request.CompositeGraphPass)
+        {
+            request.CompositeGraphPass->SetRequest(CompositePassRequest{});
+        }
+
+        if (request.PresentationGraphPass)
+        {
+            request.PresentationGraphPass->SetRequest(PresentationPassRequest{});
+        }
+    }
+
+    CanvasView *RenderFrameExecutor::ResolveEnabledCanvasView(
+        const FramePacket &packet,
+        const Container::VariableArray<Container::TSharedPtr<View>> &views)
+    {
+        for (const ViewRenderPlan &viewPlan : packet.Views)
+        {
+            if (!viewPlan.bEnabled || viewPlan.ViewId >= views.size())
+            {
+                continue;
+            }
+
+            auto canvasView = Container::DynamicPointerCast<CanvasView>(views[viewPlan.ViewId]);
+            if (canvasView && canvasView->IsEnabled())
+            {
+                return canvasView.get();
+            }
+        }
+
+        return nullptr;
+    }
+
+    View *RenderFrameExecutor::ResolveView(const RenderFrameExecutionRequest &request,
+                                           const ViewRenderPlan &viewPlan)
+    {
+        if (!request.Views || viewPlan.ViewId >= request.Views->size())
+        {
+            return nullptr;
+        }
+
+        auto view = (*request.Views)[viewPlan.ViewId];
+        return view ? view.get() : nullptr;
+    }
+
+    void RenderFrameExecutor::ConfigureNoPresentationGraphPass(const RenderFrameExecutionRequest &request)
+    {
+        if (!request.Context)
+        {
+            return;
+        }
+
+        request.Context->PresentationGraphPass = nullptr;
+        request.Context->bPresentationGraphPassHandled = false;
+        if (request.PresentationGraphPass)
+        {
+            request.PresentationGraphPass->ResetResult();
+        }
+    }
+
+    void RenderFrameExecutor::ClearStage2RequestsAndResults(const RenderFrameExecutionRequest &request)
+    {
+        if (request.CompositeGraphPass)
+        {
+            request.CompositeGraphPass->SetRequest(CompositePassRequest{});
+        }
+
+        if (request.PresentationGraphPass)
+        {
+            request.PresentationGraphPass->SetRequest(PresentationPassRequest{});
+        }
+
+        if (request.Context)
+        {
+            request.Context->PresentationGraphPass = nullptr;
+            request.Context->bPresentationGraphPassHandled = false;
+        }
     }
 
     void RenderFrameExecutor::FlushPendingFrameCommands(const RenderFrameExecutionRequest &request)
