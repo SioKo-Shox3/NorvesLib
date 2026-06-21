@@ -4,6 +4,10 @@
 #include "Module/IModule.h"
 #include "Module/IRenderModule.h"
 #include "Engine/Engine.h"
+#include "Rendering/RenderWorld.h"
+#include "Rendering/RenderingCoordinator.h"
+#include "RHI/IDevice.h"
+#include "RHI/IRenderPass.h"
 #include "Input/InputSystem.h"
 #include "Input/InputState.h"
 #include "Logging/LogMacros.h"
@@ -56,9 +60,12 @@ namespace NorvesLib::Modules::Gui
 
             bool Initialize() override
             {
-                // ImGui コンテキストを GameThread で生成・所有する。frame context を要する
-                // RHI リソース(フォントアトラス/パイプライン)は作らない(overlay pass が
-                // 録画窓内で遅延生成する)。失敗時は false(InstallAll が逆順ロールバック)。
+                // ImGui コンテキストを GameThread で生成・所有する。2B-i② で MT 安全化のため、
+                // imgui バックエンドの初期化とフォントアトラスの GPU アップロードもこの
+                // GameThread 初期化フェーズ(最初のフレーム投入前=RenderThread アイドルで
+                // グラフィックスキューを GameThread が専有)で完了させる。これで ImTextureData の
+                // Status を GameThread/RenderThread が無ロック共有更新する競合が構造的に消える。
+                // 失敗時は false(InstallAll が逆順ロールバック)。
                 IMGUI_CHECKVERSION();
                 m_Context = ::ImGui::CreateContext();
                 if (m_Context == nullptr)
@@ -83,7 +90,89 @@ namespace NorvesLib::Modules::Gui
                 // per-slot スナップショットは overlay pass が FramePacket スロットごとに所有する
                 // (旧: モジュールが単一スナップショットを保持して借用設定していた経路は廃止)。
 
-                NORVES_LOG_INFO(kLogCategory, "ImGuiModule Initialize: context created");
+                // ---- MT 安全化: バックエンド初期化 + フォントアトラス GPU アップロード(GameThread) ----
+                if (!InitializeBackend())
+                {
+                    // バックエンド初期化失敗。コンテキストを破棄してロールバックする
+                    // (InstallAll が本モジュール Initialize の false を検知し逆順ロールバック)。
+                    NORVES_LOG_ERROR(kLogCategory, "ImGuiModule Initialize failed: InitializeBackend");
+                    ::ImGui::SetCurrentContext(m_Context);
+                    ::ImGui::DestroyContext(m_Context);
+                    m_Context = nullptr;
+                    return false;
+                }
+
+                NORVES_LOG_INFO(kLogCategory, "ImGuiModule Initialize: context + backend ready (fonts uploaded)");
+                return true;
+            }
+
+            /**
+             * @brief imgui バックエンドを GameThread で初期化しフォントアトラスをアップロードする
+             *
+             * GEngine の RenderingCoordinator から device と overlay load render pass を取得し、
+             * overlay pass の InitializeGameThread を駆動する。事前に「捨てフレーム」
+             * (NewFrame→Render)を 1 回回してフォントアトラスのテクスチャ(既定フォントの
+             * 既定グリフ範囲)を materialize し、静的アトラスとして GPU へ一度だけ載せる。
+             * 以後この既定範囲のグリフのみを使う限りアトラスは成長せず、RenderThread が
+             * テクスチャ(ImTextureData::Status)に触れることはない。
+             *
+             * @return 初期化+アップロードに成功した場合 true
+             */
+            bool InitializeBackend()
+            {
+                if (Core::Engine::GEngine == nullptr)
+                {
+                    NORVES_LOG_ERROR(kLogCategory, "InitializeBackend failed: GEngine null");
+                    return false;
+                }
+
+                auto &coordinator = Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator();
+                Core::Container::TSharedPtr<RHI::IDevice> device = coordinator.GetDevice();
+                RHI::IRenderPass *loadRenderPass = coordinator.GetOverlayLoadRenderPass();
+                if (Core::Container::IsNull(device) || loadRenderPass == nullptr)
+                {
+                    NORVES_LOG_WARNING(kLogCategory,
+                                       "InitializeBackend skipped: device/overlay load render pass unavailable");
+                    return false;
+                }
+
+                // 捨てフレームでフォントアトラスのテクスチャを materialize する。imgui 1.92 の
+                // 動的アトラスは NewFrame で既定フォントの既定グリフ範囲を baking し、TexList へ
+                // WantCreate のテクスチャを積む。display size を妥当値にしておく(NewFrame の
+                // サニティチェックが 0 を嫌うため)。ここでは UI は描かず(成果物は本 Tick)、
+                // アトラスを確定させることだけが目的。
+                ::ImGui::SetCurrentContext(m_Context);
+                {
+                    ImGuiIO &io = ::ImGui::GetIO();
+                    uint32_t width = 1280;
+                    uint32_t height = 720;
+                    Core::Engine::GEngine->GetRenderWorld().GetResolution(width, height);
+                    if (width == 0 || height == 0)
+                    {
+                        width = 1280;
+                        height = 720;
+                    }
+                    io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
+                    io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+                    io.DeltaTime = 1.0f / 60.0f;
+
+                    ::ImGui::NewFrame();
+                    // 本 Tick が描く UI(既定デモウィンドウ)と同じグリフ集合を捨てフレームで
+                    // 要求して baking させ、静的アトラスを確定する。これにより本番フレームで
+                    // 新規グリフ(=アトラス成長=テクスチャ更新要求)が発生せず、RenderThread が
+                    // ImTextureData に触れる必要が生じない。2B-ii で全グリフ事前構築に発展する。
+                    ::ImGui::ShowDemoWindow(nullptr);
+                    ::ImGui::Render();
+                }
+
+                // device + load RP を渡して overlay pass の GameThread 初期化を駆動する。
+                // 内部で renderer 生成 → Initialize(パイプライン) → BuildFontAtlas →
+                // UploadFontAtlas(全テクスチャを GPU へ同期アップロードし Status=OK 確定)。
+                if (!m_OverlayPass.InitializeGameThread(device.get(), loadRenderPass))
+                {
+                    NORVES_LOG_WARNING(kLogCategory, "InitializeBackend failed: overlay InitializeGameThread");
+                    return false;
+                }
                 return true;
             }
 

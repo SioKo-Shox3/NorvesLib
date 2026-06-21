@@ -145,15 +145,72 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // imgui 1.92 は ImGuiBackendFlags_RendererHasTextures による動的アトラスを採用し、
-        // 旧 ImGui_ImplVulkan_CreateFontsTexture は撤去された。GPU へのアップロードは
-        // 描画ループ中に ImGui_ImplVulkan_UpdateTexture 経由で自動実行される。
-        // ここではアトラスのピクセルデータ生成（Build）のみを明示的に行う。
+        // 旧 ImGui_ImplVulkan_CreateFontsTexture は撤去された。ここではアトラスの
+        // ピクセルデータ生成（Build）のみを明示的に行い、GPU アップロードは
+        // UploadFontAtlas() が GameThread で同期実行する（MT 安全化）。
         ImGuiIO &io = ImGui::GetIO();
         if (io.Fonts == nullptr)
         {
             return false;
         }
         return io.Fonts->Build();
+    }
+
+    bool VulkanImGuiRenderer::UploadFontAtlas()
+    {
+        // MT 安全化の核。imgui の動的テクスチャは本来 RecordDrawData（RenderThread）内で
+        // ImGui_ImplVulkan_UpdateTexture により遅延アップロードされるが、その経路は
+        // ImTextureData::Status を GameThread（NewFrame）と RenderThread（描画）が無ロックで
+        // 共有書込みする競合を生む。ここで GameThread の初期化時（フレーム未投入＝グラフィックス
+        // キューがアイドルで RenderThread と同時 submit し得ない時点）に全テクスチャを同期
+        // アップロードして Status=OK に確定し、以後 RenderThread がテクスチャに触れないようにする。
+        //
+        // ImGui_ImplVulkan_UpdateTexture は内部専用のコマンドプール（Init で生成済み）に
+        // copy + バリアを記録し自前で submit して vkQueueWaitIdle する自己完結処理であり、
+        // render pass の内外いずれからも（録画窓に依存せず）呼べる。よって GameThread から
+        // 直接呼んでフォントアトラスを GPU へ載せられる。
+        if (!m_bInitialized)
+        {
+            return false;
+        }
+
+        ImGuiIO &io = ImGui::GetIO();
+        if (io.Fonts == nullptr)
+        {
+            return false;
+        }
+
+        // アトラスのピクセルが未生成なら確実に生成しておく（冪等）。
+        if (!io.Fonts->TexIsBuilt)
+        {
+            io.Fonts->Build();
+        }
+
+        // アトラス所有のテクスチャ一覧（TexList）を直接走査する。PlatformIO.Textures は
+        // ImGui::Render（EndFrame）でしか再構築されないため、初期化時点では空のことがある。
+        // TexList はアトラス所有で Build/NewFrame 後に当該テクスチャ（WantCreate）を含む。
+        bool bAllOk = true;
+        for (ImTextureData *tex : io.Fonts->TexList)
+        {
+            if (tex == nullptr)
+            {
+                continue;
+            }
+            if (tex->Status != ImTextureStatus_OK)
+            {
+                // 同期アップロード（内部で submit + WaitIdle し Status=OK に遷移）。
+                ImGui_ImplVulkan_UpdateTexture(tex);
+            }
+            if (tex->Status != ImTextureStatus_OK)
+            {
+                bAllOk = false;
+                NORVES_LOG_ERROR("ImGui",
+                                 "UploadFontAtlas: テクスチャのアップロード後も Status!=OK (UniqueID=%d)",
+                                 tex->UniqueID);
+            }
+        }
+
+        return bAllOk;
     }
 
     void VulkanImGuiRenderer::RecordDrawData(ICommandList *commandList, const void *imguiDrawData)
@@ -172,9 +229,19 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // ImDrawData* は IImGuiRenderer 抽象を imgui 非依存に保つため void* で受ける。
-        ImGui_ImplVulkan_RenderDrawData(
-            const_cast<ImDrawData *>(static_cast<const ImDrawData *>(imguiDrawData)),
-            static_cast<VkCommandBuffer>(vkCmd));
+        ImDrawData *drawData = const_cast<ImDrawData *>(static_cast<const ImDrawData *>(imguiDrawData));
+
+        // MT 安全化（多重防御）: ImGui_ImplVulkan_RenderDrawData は draw_data->Textures が
+        // 非 null だと先頭で各 ImTextureData の Status をチェックし、未確定なら
+        // ImGui_ImplVulkan_UpdateTexture でアップロードしようとする（＝RenderThread が
+        // ImTextureData::Status を書込み、GameThread の NewFrame と競合する）。本構成では
+        // アップロードは GameThread の UploadFontAtlas で完了済み（Status=OK・静的アトラス）の
+        // ため、ここで Textures を null 化して RenderThread のテクスチャ更新ループを構造的に
+        // 完全スキップさせる。これによりスナップショット側の対策と二重に、RenderThread が
+        // ImTextureData へ一切触れないことを保証する。
+        drawData->Textures = nullptr;
+
+        ImGui_ImplVulkan_RenderDrawData(drawData, static_cast<VkCommandBuffer>(vkCmd));
     }
 
     void VulkanImGuiRenderer::NotifySwapChainRecreated(uint32_t minImageCount, uint32_t /*imageCount*/)

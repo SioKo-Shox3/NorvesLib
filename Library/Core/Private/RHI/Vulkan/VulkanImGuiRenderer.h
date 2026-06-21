@@ -35,7 +35,10 @@ namespace NorvesLib::RHI::Vulkan
      * 呼び出し側（第2段 B の ImGuiModule）が事前にコンテキストを生成済みである
      * ことが前提で、本クラスは Vulkan バックエンド側の RHI リソースのみを扱う。
      *
-     * スレッド: 各メソッドは RenderThread から呼ばれる前提。
+     * スレッド: Initialize / BuildFontAtlas / UploadFontAtlas は GameThread の
+     * 初期化フェーズ（フレーム未投入＝グラフィックスキューがアイドルで RenderThread と
+     * 同時 submit し得ない時点）から呼ばれる前提。RecordDrawData / NotifySwapChainRecreated
+     * は RenderThread から呼ばれる。RecordDrawData はテクスチャを更新せず録画のみ行う。
      */
     class VulkanImGuiRenderer final : public IImGuiRenderer
     {
@@ -60,6 +63,7 @@ namespace NorvesLib::RHI::Vulkan
         bool Initialize(IRenderPass *loadRenderPass, uint32_t minImageCount, uint32_t imageCount) override;
         void Shutdown() override;
         bool BuildFontAtlas() override;
+        bool UploadFontAtlas() override;
         void RecordDrawData(ICommandList *commandList, const void *imguiDrawData) override;
         void NotifySwapChainRecreated(uint32_t minImageCount, uint32_t imageCount) override;
 

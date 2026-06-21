@@ -21,9 +21,12 @@ namespace NorvesLib::RHI
      * ファクトリ IDevice::CreateImGuiRenderer() で生成し、IDevice 破棄で
      * 連れ破棄される）。呼び出し側は借用ポインタとして扱い delete しない。
      *
-     * スレッド: 生成・各メソッド呼び出しは RenderThread（描画スレッド）から
-     * 行う前提。GameThread のライブ状態は読まず、スナップショット越しに
-     * 受け取ったドローデータのみを記録する。
+     * スレッド: Initialize / BuildFontAtlas / UploadFontAtlas は GameThread の
+     * 初期化フェーズ（フレーム未投入＝RenderThread アイドル）から呼ぶ前提。
+     * RecordDrawData / NotifySwapChainRecreated は RenderThread（描画スレッド）から
+     * 呼ぶ。RecordDrawData は GameThread のライブ状態を読まず、スナップショット
+     * 越しに受け取ったドローデータのみを記録し、テクスチャは一切更新しない
+     * （アップロードは GameThread の UploadFontAtlas で完了済み）。
      */
     class IImGuiRenderer
     {
@@ -55,14 +58,32 @@ namespace NorvesLib::RHI
         /**
          * @brief フォントアトラスの CPU ピクセルを構築する
          *
-         * フォント設定変更後に呼ぶ。実 GPU アップロードは imgui 1.92 の動的
-         * テクスチャ機構（ImGuiBackendFlags_RendererHasTextures）により描画中
-         * （RecordDrawData 内）に自動実行されるため、本メソッドはアトラスの
-         * CPU ピクセル生成に留まる（冪等）。overlay 側は録画のみ行う。
+         * フォント設定変更後に呼ぶ。本メソッドはアトラスの CPU ピクセル生成に
+         * 留まる（冪等）。GPU アップロードは UploadFontAtlas() が明示的に行う。
          *
          * @return 構築に成功した場合 true
          */
         virtual bool BuildFontAtlas() = 0;
+
+        /**
+         * @brief フォントアトラス（および現存する全テクスチャ）を GPU へ即時アップロードする
+         *
+         * MT 安全化の要。imgui 1.92 の動的テクスチャ機構は本来 RecordDrawData
+         * （RenderThread）内で遅延アップロードするが、その経路は ImTextureData の
+         * Status/TexID を GameThread（NewFrame）と RenderThread（描画）が無ロックで
+         * 共有更新する read-modify-write 競合を生む。本メソッドは GameThread の
+         * 初期化時（フレーム未投入＝グラフィックスキューがアイドルで RenderThread と
+         * 競合し得ない時点）に全テクスチャを同期アップロードし Status=OK に確定する。
+         * 以後 RecordDrawData はテクスチャを一切更新せず（Status=OK スキップ＋
+         * Textures ポインタ無効化）、Status の跨スレッド書込みが構造的に消える。
+         *
+         * 前提: Initialize 済み（内部テクスチャ用コマンドプールが生成済み）であること。
+         * 自身でキューへ submit し WaitIdle するため、呼び出し側スレッドが当該キューを
+         * 専有している（他スレッドが同時 submit しない）時点で呼ぶこと。
+         *
+         * @return 全テクスチャのアップロードに成功した場合 true
+         */
+        virtual bool UploadFontAtlas() = 0;
 
         /**
          * @brief ImGui ドローデータを記録中の CommandList へ発行する
@@ -70,6 +91,8 @@ namespace NorvesLib::RHI
          * 呼び出し時点で BeginRenderPass 済みの録画窓内であること（自身では
          * Begin/End RenderPass も CommandList の Begin/End も行わない）。
          * imguiDrawData は ImDrawData* を imgui 非依存にするため void* で受ける。
+         * テクスチャは一切アップロード/更新しない（UploadFontAtlas で GameThread が
+         * 事前確定済み・Status=OK）。RenderThread からのみ呼ぶ。
          *
          * @param commandList 記録先の CommandList（借用・録画窓内）
          * @param imguiDrawData ImDrawData* を型消去した不透明ポインタ（null 可・null 時は no-op）
