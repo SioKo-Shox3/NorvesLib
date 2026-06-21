@@ -6,11 +6,13 @@
 
 #include "ImGuiModule/ImGuiDrawSnapshot.h"
 
-// IImGuiRenderer は RHITypes.h で前方宣言されないため、ここで明示前方宣言する
-// (本ヘッダはポインタ型しか扱わないため IImGuiRenderer.h の include は不要)。
+// IImGuiRenderer / IDevice / IRenderPass は RHITypes.h で前方宣言されないため、ここで
+// 明示前方宣言する(本ヘッダはポインタ型しか扱わないため各ヘッダの include は不要)。
 namespace NorvesLib::RHI
 {
     class IImGuiRenderer;
+    class IDevice;
+    class IRenderPass;
 } // namespace NorvesLib::RHI
 
 // 前方宣言(本ヘッダは ImDrawData をポインタでしか扱わない)。
@@ -44,10 +46,17 @@ struct ImDrawData;
 //   ことを保証するため、同一スロットへの GT クローン書込みと RT 読取は時間的に重ならず、
 //   ドロップ挙動やスレッド速度に依存せず証明可能に安全。
 //
-// 寿命: Initialize(録画窓内・遅延)で device->CreateImGuiRenderer() 経由の
-// IImGuiRenderer を取得し Initialize + BuildFontAtlas し m_bInitialized を立てる。
+// 寿命/初期化(2B-i② で GameThread 前倒し):
+//   InitializeGameThread(ImGuiModule::Initialize から・GameThread・最初のフレーム投入前)で
+//   device->CreateImGuiRenderer() 経由の IImGuiRenderer を取得し Initialize + BuildFontAtlas +
+//   UploadFontAtlas(全テクスチャを GPU へ同期アップロードし Status=OK 確定)まで完了し
+//   m_bInitialized を立てる。グラフィックスキューがアイドル(RenderThread 未投入)な時点で
+//   アップロードするため、ImTextureData::Status の跨スレッド書込みが構造的に消える。
+//   IViewPass::Initialize(録画窓内・RenderThread)は既に GameThread 初期化済みなら no-op で
+//   true を返すフォールバックに留め、テクスチャアップロードは行わない。
 // Setup は no-op。Execute で seam の load render pass を Begin→RecordDrawData→End する
-// (Begin/EndRecording は呼ばない=録画窓は RenderingCoordinator が管理)。
+// (Begin/EndRecording は呼ばない=録画窓は RenderingCoordinator が管理)。RecordDrawData は
+// テクスチャを更新しない(録画のみ)。
 // Shutdown で IImGuiRenderer を Shutdown する(renderer 実体は device 所有で delete
 // しない)。Shutdown は RenderThread 静止後・device 生存中に ImGuiModule から駆動。
 namespace NorvesLib::Modules::Gui
@@ -69,6 +78,26 @@ namespace NorvesLib::Modules::Gui
         {
             m_PendingDrawData = drawData;
         }
+
+        /**
+         * @brief imgui バックエンドを GameThread で初期化しフォントアトラスをアップロードする
+         *
+         * MT 安全化の核（2B-i②）。従来は overlay seam（RenderThread・録画窓内）で遅延
+         * 初期化し、フォントアトラスの GPU アップロードを RecordDrawData 内で行っていたが、
+         * それは ImTextureData::Status を GameThread（NewFrame）と RenderThread（描画）が
+         * 無ロックで共有書込みする競合を生む。本メソッドは ImGuiModule::Initialize（GameThread・
+         * 最初のフレーム投入前＝RenderThread アイドルでグラフィックスキューを GameThread が
+         * 専有）から呼ばれ、device からバックエンド renderer を生成し、Initialize（パイプライン
+         * 生成）→ BuildFontAtlas → UploadFontAtlas（全テクスチャ同期アップロード・Status=OK 確定）
+         * までを完了する。以後 RenderThread はテクスチャに一切触れない。
+         *
+         * @param device       バックエンド生成元の RHI device（借用・seam と同一実体）
+         * @param loadRenderPass overlay 描画に用いる load render pass（借用・legacy/composite
+         *                       いずれも構成同一のため一方で生成したパイプラインが両経路で有効）
+         * @return 初期化＋アップロードに成功した場合 true。失敗時は overlay は描画されない
+         */
+        bool InitializeGameThread(NorvesLib::RHI::IDevice *device,
+                                  NorvesLib::RHI::IRenderPass *loadRenderPass);
 
         const char *GetName() const override;
 

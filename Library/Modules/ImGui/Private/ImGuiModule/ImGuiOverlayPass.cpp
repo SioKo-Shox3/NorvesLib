@@ -40,48 +40,81 @@ namespace NorvesLib::Modules::Gui
         return kPassName;
     }
 
-    bool ImGuiOverlayPass::Initialize(Core::Rendering::ViewRenderContext &context)
+    bool ImGuiOverlayPass::InitializeGameThread(RHI::IDevice *device, RHI::IRenderPass *loadRenderPass)
     {
-        // 録画窓内の遅延初期化。device 経由で抽象 IImGuiRenderer を取得し、seam の
-        // OverlayLoadRenderPass に対して初期化する。失敗時は false を返し seam が
-        // 当該 overlay を恒久無効化する(描画素通り)。
-        if (context.Device == nullptr || context.OverlayLoadRenderPass == nullptr)
+        // MT 安全化(2B-i②): GameThread・最初のフレーム投入前(=RenderThread アイドルで
+        // グラフィックスキューを GameThread が専有)に呼ばれる。device からバックエンド
+        // renderer を生成し、パイプライン生成 + フォントアトラス CPU 構築 + GPU アップロード
+        // (Status=OK 確定)までを完了する。これで以後 RenderThread はテクスチャに触れず、
+        // ImTextureData::Status の跨スレッド書込みが構造的に消える。
+        if (m_bInitialized)
+        {
+            return true;
+        }
+        if (device == nullptr || loadRenderPass == nullptr)
         {
             NORVES_LOG_WARNING(kLogCategory,
-                               "ImGuiOverlayPass Initialize skipped: Device/OverlayLoadRenderPass null");
+                               "ImGuiOverlayPass InitializeGameThread skipped: Device/loadRenderPass null");
             return false;
         }
 
         // IImGuiRenderer は device 所有の借用ポインタ(未対応バックエンドでは nullptr)。
-        m_Renderer = context.Device->CreateImGuiRenderer();
+        m_Renderer = device->CreateImGuiRenderer();
         if (m_Renderer == nullptr)
         {
             NORVES_LOG_WARNING(kLogCategory,
-                               "ImGuiOverlayPass Initialize failed: CreateImGuiRenderer returned null (backend unsupported)");
+                               "ImGuiOverlayPass InitializeGameThread failed: CreateImGuiRenderer returned null (backend unsupported)");
             return false;
         }
 
-        // フォントアトラス・パイプライン等の RHI リソース生成は renderer(Vulkan 実装)
-        // 側に閉じる。load render pass は最終 blit 後の back buffer 経路依存(legacy /
-        // composite)を seam がセット済み。
-        if (!m_Renderer->Initialize(context.OverlayLoadRenderPass, kImGuiMinImageCount, kImGuiImageCount))
+        // パイプライン等の RHI リソース生成は renderer(Vulkan 実装)側に閉じる。load render pass
+        // は legacy / composite いずれも構成同一(color1 Load + depth1 Load)のため、一方で生成
+        // したパイプラインが両経路で有効。seam は実行時の経路に応じて対応する load RP を Begin する。
+        if (!m_Renderer->Initialize(loadRenderPass, kImGuiMinImageCount, kImGuiImageCount))
         {
-            NORVES_LOG_WARNING(kLogCategory, "ImGuiOverlayPass Initialize failed: IImGuiRenderer::Initialize");
+            NORVES_LOG_WARNING(kLogCategory, "ImGuiOverlayPass InitializeGameThread failed: IImGuiRenderer::Initialize");
             m_Renderer = nullptr; // 実体は device 所有なので解放はしない(借用解除のみ)
             return false;
         }
 
         if (!m_Renderer->BuildFontAtlas())
         {
-            NORVES_LOG_WARNING(kLogCategory, "ImGuiOverlayPass Initialize failed: BuildFontAtlas");
+            NORVES_LOG_WARNING(kLogCategory, "ImGuiOverlayPass InitializeGameThread failed: BuildFontAtlas");
+            m_Renderer->Shutdown();
+            m_Renderer = nullptr;
+            return false;
+        }
+
+        // 全テクスチャを GameThread で GPU へ同期アップロードし Status=OK に確定する。
+        // ここが MT 安全化の本体: RenderThread は以後アップロードを一切行わない。
+        if (!m_Renderer->UploadFontAtlas())
+        {
+            NORVES_LOG_WARNING(kLogCategory, "ImGuiOverlayPass InitializeGameThread failed: UploadFontAtlas");
             m_Renderer->Shutdown();
             m_Renderer = nullptr;
             return false;
         }
 
         m_bInitialized = true;
-        NORVES_LOG_INFO(kLogCategory, "ImGuiOverlayPass Initialize: imgui backend ready");
+        NORVES_LOG_INFO(kLogCategory, "ImGuiOverlayPass InitializeGameThread: imgui backend ready (fonts uploaded on GameThread)");
         return true;
+    }
+
+    bool ImGuiOverlayPass::Initialize(Core::Rendering::ViewRenderContext & /*context*/)
+    {
+        // 2B-i② 以降、バックエンド初期化とフォントアップロードは GameThread の
+        // InitializeGameThread が前倒しで完了する。本 seam 経路(RenderThread・録画窓内)は
+        // 既に初期化済みなら no-op で true を返すフォールバックに留め、テクスチャアップロードを
+        // 伴う初期化を RenderThread では一切行わない(MT 安全化の前提を崩さないため)。
+        // 未初期化のまま到達した場合(GameThread 初期化が失敗/未実行)は false を返し、seam が
+        // 当該 overlay を無効化して描画を素通りさせる(RenderThread でのアップロードはしない)。
+        if (m_bInitialized && m_Renderer != nullptr)
+        {
+            return true;
+        }
+        NORVES_LOG_WARNING(kLogCategory,
+                           "ImGuiOverlayPass Initialize(seam): backend not initialized on GameThread; overlay disabled");
+        return false;
     }
 
     void ImGuiOverlayPass::Shutdown()

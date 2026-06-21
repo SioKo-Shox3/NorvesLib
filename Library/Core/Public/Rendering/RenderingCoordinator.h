@@ -287,6 +287,19 @@ namespace NorvesLib::Core::Rendering
          */
         Container::TSharedPtr<RHI::ICommandList> GetCommandList() const { return m_CommandList; }
 
+        /**
+         * @brief overlay 用の presentation load render pass を取得(借用)
+         *
+         * overlay モジュール(例: ImGuiModule)が GameThread の初期化フェーズで
+         * バックエンドのパイプラインを当該 render pass に対して生成するために使う。
+         * legacy(PresentationLoad)と composite(GraphPresentationLoad)は構成同一
+         * (color1 Load + depth1 Load)で render-pass 互換のため、本アクセサは legacy 側を
+         * 返す(一方で生成したパイプラインが両経路で有効)。実行時の経路選択(どちらを Begin
+         * するか)は seam が ViewRenderContext::OverlayLoadRenderPass で行う。
+         * Initialize 前/解放後は nullptr。借用ポインタのため呼び出し側は delete しない。
+         */
+        RHI::IRenderPass *GetOverlayLoadRenderPass() const { return m_PresentationLoadRenderPass.get(); }
+
         // ========================================
         // 解像度変更
         // ========================================
