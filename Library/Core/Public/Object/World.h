@@ -16,6 +16,9 @@ namespace NorvesLib::Core::Rendering
 
 namespace NorvesLib::Core
 {
+    class PrefabAsset;
+    struct PrefabOverrideSet;
+
     /**
      * @brief ゲームワールド
      *
@@ -99,6 +102,11 @@ namespace NorvesLib::Core
         {
             return SpawnEntity<T>(nullptr);
         }
+
+        Entity* SpawnPrefab(
+            const PrefabAsset& prefab,
+            Entity* parent = nullptr,
+            const PrefabOverrideSet* overrides = nullptr);
 
         /**
          * @brief Entityに紐づくComponentを新規生成します
