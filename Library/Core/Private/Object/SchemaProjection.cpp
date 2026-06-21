@@ -1,7 +1,146 @@
 #include "Object/SchemaProjection.h"
 
+#include "Component/Component.h"
+#include "Object/Entity.h"
+
 namespace NorvesLib::Core
 {
+    namespace
+    {
+        Container::String GetObjectClassName(const Object& object, const char* fallbackName)
+        {
+            const IClass* cls = object.GetClass();
+            if (!cls)
+            {
+                return fallbackName;
+            }
+
+            return cls->GetClassName().ToString();
+        }
+
+        StableObjectRef MakeSnapshotRef(const StableObjectRef& rootRef, const Container::String& path, bool bRoot)
+        {
+            StableObjectRef ref;
+            if (bRoot)
+            {
+                ref = rootRef;
+            }
+            else
+            {
+                ref.SceneId = rootRef.SceneId;
+            }
+
+            ref.Path = path;
+            return ref;
+        }
+
+        size_t ConsumeSiblingIndex(
+            Container::UnorderedMap<Identity, size_t, Identity::Hasher>& siblingCounts,
+            const IClass& cls)
+        {
+            size_t& nextIndex = siblingCounts[cls.GetClassName()];
+            const size_t index = nextIndex;
+            ++nextIndex;
+            return index;
+        }
+
+        Container::String BuildRelationshipPath(
+            const Container::String& parentPath,
+            const char* relationshipName,
+            const IClass& cls,
+            size_t siblingIndex)
+        {
+            Container::StringBuilder builder(parentPath);
+            builder.Append("/");
+            builder.Append(relationshipName);
+            builder.Append("/");
+            builder.Append(cls.GetClassName().ToString());
+            builder.Append("[");
+            builder.AppendFormat("%zu", siblingIndex);
+            builder.Append("]");
+            return builder.ToString();
+        }
+
+        EntitySubtreeSnapshotNode BuildEntitySubtreeSnapshotNode(
+            const Entity& entity,
+            const StableObjectRef& rootRef,
+            const Container::String& path,
+            SubtreeSnapshotAliasId alias,
+            SubtreeSnapshotAliasId parentAlias,
+            SubtreeSnapshotAliasId& nextAlias,
+            const char* moduleName,
+            bool bRoot)
+        {
+            EntitySubtreeSnapshotNode node;
+            node.Alias = alias;
+            node.ParentAlias = parentAlias;
+            node.Object = RuntimeSchemaProjector::BuildObjectSnapshot(
+                entity,
+                MakeSnapshotRef(rootRef, path, bRoot),
+                moduleName);
+
+            Container::VariableArray<Component::Component*> components = entity.GetComponents();
+            node.Components.reserve(components.size());
+            Container::UnorderedMap<Identity, size_t, Identity::Hasher> componentSiblingCounts;
+            for (Component::Component* component : components)
+            {
+                if (!component || !component->GetClass())
+                {
+                    continue;
+                }
+
+                const IClass& componentClass = *component->GetClass();
+                const size_t siblingIndex = ConsumeSiblingIndex(componentSiblingCounts, componentClass);
+                const Container::String componentPath = BuildRelationshipPath(
+                    path,
+                    "Components",
+                    componentClass,
+                    siblingIndex);
+
+                ComponentSubtreeSnapshot componentSnapshot;
+                componentSnapshot.Alias = nextAlias++;
+                componentSnapshot.OwnerAlias = alias;
+                componentSnapshot.Object = RuntimeSchemaProjector::BuildObjectSnapshot(
+                    *component,
+                    MakeSnapshotRef(rootRef, componentPath, false),
+                    moduleName);
+                node.Components.push_back(std::move(componentSnapshot));
+            }
+
+            Container::VariableArray<Entity*> children = entity.GetChildEntities();
+            node.Children.reserve(children.size());
+            Container::UnorderedMap<Identity, size_t, Identity::Hasher> childSiblingCounts;
+            for (Entity* child : children)
+            {
+                if (!child || !child->GetClass())
+                {
+                    continue;
+                }
+
+                const IClass& childClass = *child->GetClass();
+                const size_t siblingIndex = ConsumeSiblingIndex(childSiblingCounts, childClass);
+                const Container::String childPath = BuildRelationshipPath(
+                    path,
+                    "Children",
+                    childClass,
+                    siblingIndex);
+
+                const SubtreeSnapshotAliasId childAlias = nextAlias++;
+                node.Children.push_back(BuildEntitySubtreeSnapshotNode(
+                    *child,
+                    rootRef,
+                    childPath,
+                    childAlias,
+                    alias,
+                    nextAlias,
+                    moduleName,
+                    false));
+            }
+
+            return node;
+        }
+    } // namespace
+
     ClassSchemaSnapshot RuntimeSchemaProjector::BuildClassSchemaSnapshot(const char *moduleName)
     {
         ClassSchemaSnapshot snapshot;
@@ -94,6 +233,33 @@ namespace NorvesLib::Core
                 snapshot.Properties.push_back(std::move(value));
             }
         }
+
+        return snapshot;
+    }
+
+    EntitySubtreeSnapshot RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(
+        const Entity& root,
+        StableObjectRef rootRef,
+        const char* moduleName)
+    {
+        EntitySubtreeSnapshot snapshot;
+        snapshot.RootAlias = 1;
+        snapshot.RootPath = rootRef.HasPath()
+            ? rootRef.Path
+            : GetObjectClassName(root, "Entity");
+
+        rootRef.Path = snapshot.RootPath;
+
+        SubtreeSnapshotAliasId nextAlias = snapshot.RootAlias + 1;
+        snapshot.Root = BuildEntitySubtreeSnapshotNode(
+            root,
+            rootRef,
+            snapshot.RootPath,
+            snapshot.RootAlias,
+            InvalidSubtreeSnapshotAliasId,
+            nextAlias,
+            moduleName,
+            true);
 
         return snapshot;
     }
