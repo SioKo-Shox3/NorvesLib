@@ -5,10 +5,14 @@ set(MODULE_NAME NorvesModule_Dummy)
 
 set(PRIVATE_SOURCES
     Private/DummyModule/DummyModule.cpp
+    Private/DummyModule/DummyRenderModule.cpp
+    Private/DummyModule/DummyOverlayPass.cpp
 )
 
 set(PUBLIC_HEADERS
     Public/DummyModule/DummyModule.h
+    Public/DummyModule/DummyRenderModule.h
+    Public/DummyModule/DummyOverlayPass.h
 )
 
 add_library(${MODULE_NAME} STATIC ${PRIVATE_SOURCES} ${PUBLIC_HEADERS})

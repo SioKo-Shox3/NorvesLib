@@ -23,6 +23,12 @@
 #include "GameModes/Rendering3DTest/Rendering3DTestMode.h"
 #include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
 
+// モジュールシステム第1段1C-ii: --dummy-overlay ゲートで描画ダミーモジュールを登録する。
+// 別 static lib(NorvesModule_Dummy)の自由関数を明示参照し、Core 在駐の ModuleRegistry へ
+// 登録する(リンク引込も兼ねる)。フラグ無しでは一切登録せず seam は完全 no-op。
+#include "Core/Public/Module/ModuleRegistry.h"
+#include "DummyModule/DummyRenderModule.h"
+
 using namespace NorvesLib::Core::Container;
 using namespace NorvesLib::Core::Engine;
 using namespace NorvesLib::Core::GameMode;
@@ -36,6 +42,9 @@ namespace Game
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
+        // 値を取らない bare フラグ(--enable-canvas-view と同類)。指定時のみ描画ダミー
+        // モジュールを登録する不変条件ゲート。
+        constexpr const TCHAR *kDummyOverlayOption = TEXT("--dummy-overlay");
         constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
 
         /**
@@ -348,6 +357,27 @@ namespace Game
         {
             LOG_INFO_F("Rendering3DTest model path parsed path=\"%s\"",
                        m_Rendering3DTestModelPath.c_str());
+        }
+
+        // モジュールシステム第1段1C-ii: --dummy-overlay 不変条件ゲート。
+        // 値を取らない bare フラグの厳密一致を走査し、指定時のみ描画ダミーモジュールを
+        // ModuleRegistry へ登録する。フラグ無しでは一切登録せず、overlay seam は完全
+        // no-op(F1 描画 baseline 不変)を保つ。OnPreInitialize は ApplicationProcessor の
+        // InstallAll より前に走るため、ここで登録すれば InstallAll が寿命を駆動する。
+        bool bDummyOverlay = false;
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            if (ToStdString(args[i]) == std::basic_string<TCHAR>(kDummyOverlayOption))
+            {
+                bDummyOverlay = true;
+                break;
+            }
+        }
+        if (bDummyOverlay)
+        {
+            NorvesLib::Core::Module::RegisterDummyRenderModule(
+                NorvesLib::Core::Module::GetModuleRegistry());
+            LOG_INFO("Module runtime option --dummy-overlay: DummyRenderModule registered");
         }
 
         return true;
