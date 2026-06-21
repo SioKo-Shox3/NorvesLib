@@ -353,6 +353,7 @@ namespace NorvesLib::Core::Rendering
          * m_bInitialized に依存せず、初期化途中の巻き戻しからも呼び出せる。
          */
         void ReleaseInitializedResources();
+        bool EnsureCompositeAlphaOverResources();
 
         // RHIリソース
         Container::TSharedPtr<RHI::IDevice> m_Device;
@@ -381,6 +382,8 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::IShader> m_BlitFragmentShader;
         Container::TSharedPtr<RHI::IDescriptorSet> m_BlitDescriptorSet;
         Container::TSharedPtr<RHI::ISampler> m_BlitSampler;
+        Container::TSharedPtr<RHI::IShader> m_CompositeAlphaOverFragmentShader;
+        Container::TSharedPtr<RHI::IDescriptorSet> m_CompositeAlphaOverDescriptorSet;
 
         // 深度バッファ（スワップチェーン用、将来的にForwardPass等で使用）
         Container::TSharedPtr<RHI::ITexture> m_DepthTexture;

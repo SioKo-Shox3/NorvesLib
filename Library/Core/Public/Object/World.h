@@ -10,6 +10,7 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    class IBoardProxySink;
     class MaterialResources;
     class SceneView;
 }
@@ -209,6 +210,17 @@ namespace NorvesLib::Core
         Rendering::SceneView *GetSceneView() const { return m_SceneView; }
 
         /**
+         * @brief ScreenSpace BoardProxyの送信先を設定
+         * @param sink BoardProxyの借用送信先。所有しない。
+         */
+        void SetScreenSpaceBoardSink(Rendering::IBoardProxySink *sink);
+
+        /**
+         * @brief ScreenSpace BoardProxyの送信先を取得
+         */
+        Rendering::IBoardProxySink *GetScreenSpaceBoardSink() const { return m_ScreenSpaceBoardSink; }
+
+        /**
          * @brief MeshComponent/LightComponentからSceneViewへProxy同期
          */
         void SyncToSceneView(const Rendering::MaterialResources *materials = nullptr);
@@ -227,6 +239,7 @@ namespace NorvesLib::Core
                                  Container::UnorderedSet<uint64_t>& liveMeshObjectIds,
                                  Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
                                  Container::UnorderedSet<uint64_t>& liveLightIds,
+                                 Container::UnorderedSet<uint64_t>& liveBoardComponentIds,
                                  ComponentDataRegistry* componentDataRegistry);
         void CollectPendingDestroyRecursive(Entity& entity, Container::VariableArray<Entity*>& toRemove);
         bool AttachRootEntity(Entity* entity);
@@ -251,6 +264,7 @@ namespace NorvesLib::Core
 
         // システムポインタ（リフレクション対象外）
         Rendering::SceneView *m_SceneView = nullptr;
+        Rendering::IBoardProxySink *m_ScreenSpaceBoardSink = nullptr;
 
         // リフレクションプロパティ
         PROPERTY(uint64_t, NextObjectId)

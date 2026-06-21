@@ -200,6 +200,32 @@ namespace NorvesLib::Core::Rendering
     };
 
     // ========================================
+    // BoardProxy
+    // ========================================
+
+    struct BoardProxy
+    {
+        uint64_t ObjectId = 0;
+        uint64_t ComponentId = 0;
+        uint64_t SortKey = 0;
+
+        TextureHandle Texture = TextureHandle::Invalid();
+
+        Math::Matrix4x4 WorldTransform;
+        Math::Matrix4x4 PreviousWorldTransform;
+
+        RenderLayer LayerMask = RenderLayer::UI;
+        BoardSpace Space = BoardSpace::ScreenSpace;
+
+        bool bVisible = true;
+
+        bool IsValid() const
+        {
+            return ComponentId != 0 && bVisible;
+        }
+    };
+
+    // ========================================
     // LightProxy
     // ========================================
 

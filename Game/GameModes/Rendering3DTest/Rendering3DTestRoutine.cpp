@@ -3,6 +3,7 @@
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/Entity.h"
+#include "Core/Public/Component/BoardComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Component/LightComponent.h"
@@ -420,6 +421,27 @@ namespace Game::GameModes
         }
 
         // ========================================
+        // 2.5 F3 ScreenSpace Board smoke overlay
+        // ========================================
+        {
+            auto canvasView = ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().GetCanvasView();
+            if (canvasView)
+            {
+                auto &world = ctx.WorldRef;
+                data.m_pF3BoardObject = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(data.m_pF3BoardObject);
+                data.m_pF3BoardObject->SetPosition(72.0f, 72.0f, 0.0f);
+                data.m_pF3BoardObject->SetScale(96.0f, 48.0f, 1.0f);
+
+                data.m_pF3BoardComponent = world.CreateComponent<Component::BoardComponent>(data.m_pF3BoardObject);
+                data.m_pF3BoardComponent->SetBoardSpace(BoardSpace::ScreenSpace);
+                data.m_pF3BoardComponent->SetRenderLayer(RenderLayer::UI);
+                data.m_pF3BoardComponent->SetVisible(true);
+                LOG_INFO("F3 ScreenSpace Board smoke overlay created");
+            }
+        }
+
+        // ========================================
         // 3. glTFモデルのロード
         // ========================================
         {
@@ -683,6 +705,8 @@ namespace Game::GameModes
         data.m_pBoulderMegaGeometryComponent = nullptr;
         data.m_pDirectionalLightObject = nullptr;
         data.m_pDirectionalLightComponent = nullptr;
+        data.m_pF3BoardObject = nullptr;
+        data.m_pF3BoardComponent = nullptr;
 
         data.m_bMeshesRegistered = false;
         data.m_bBoulderModelLoaded = false;

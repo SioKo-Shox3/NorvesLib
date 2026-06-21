@@ -224,9 +224,12 @@ namespace NorvesLib::Core::Rendering
         {
             // 頂点バッファなし描画（シェーダー内蔵の頂点データ）
             uint32_t vertexCount = draw.VertexOffset > 0 ? draw.VertexOffset : 3;
-            if (draw.bInstanced && draw.InstanceCount > 1)
+            if (draw.bInstanced && draw.InstanceCount > 0)
             {
-                commandList->DrawInstanced(vertexCount, draw.InstanceCount, 0, draw.FirstInstance);
+                commandList->DrawInstanced(vertexCount,
+                                           std::max(1u, draw.InstanceCount),
+                                           0,
+                                           draw.FirstInstance);
             }
             else
             {

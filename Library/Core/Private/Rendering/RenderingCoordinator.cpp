@@ -15,6 +15,7 @@
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderFrameExecutor.h"
+#include "Engine/Engine.h"
 #include "RHI/ISampler.h"
 #include "RHI/IDevice.h"
 #include "RHI/ISwapChain.h"
@@ -639,6 +640,7 @@ namespace NorvesLib::Core::Rendering
         // PresentationPass は直近の backbuffer/renderpass/pipeline 参照を保持するため、
         // RHI shutdown 前に request/result を明示クリアする。
         m_CompositePass.SetRequest(CompositePassRequest{});
+        m_CompositePass.ReleaseRetainedResources();
         m_PresentationPass.SetRequest(PresentationPassRequest{});
 
         // Viewの破棄
@@ -651,6 +653,10 @@ namespace NorvesLib::Core::Rendering
         }
         m_Views.clear();
         m_MainSceneView.reset();
+        if (m_CanvasView && Engine::GEngine)
+        {
+            Engine::GEngine->GetWorld().SetScreenSpaceBoardSink(nullptr);
+        }
         m_CanvasView.reset();
         m_Cameras.clear();
         m_MainCameraId = 0;
@@ -681,7 +687,9 @@ namespace NorvesLib::Core::Rendering
         // 3Dメッシュリソースの解放 → Blitリソースの解放
         m_BlitPipeline.reset();
         m_BlitDescriptorSet.reset();
+        m_CompositeAlphaOverDescriptorSet.reset();
         m_BlitSampler.reset();
+        m_CompositeAlphaOverFragmentShader.reset();
         m_BlitFragmentShader.reset();
         m_BlitVertexShader.reset();
         m_DepthTexture.reset();
@@ -712,6 +720,64 @@ namespace NorvesLib::Core::Rendering
         // デバイス参照の解放（Engine層がRHIの終了を管理）
         m_Device.reset();
         m_bFrameSubmissionStarted = false;
+    }
+
+    bool RenderingCoordinator::EnsureCompositeAlphaOverResources()
+    {
+        if (m_CompositeAlphaOverFragmentShader && m_CompositeAlphaOverDescriptorSet)
+        {
+            return true;
+        }
+
+        if (!m_Device)
+        {
+            return true;
+        }
+
+        if (!m_BlitSampler)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Cannot create Composite alpha-over resources without sampler");
+            return false;
+        }
+
+        if (!m_CompositeAlphaOverFragmentShader)
+        {
+            m_CompositeAlphaOverFragmentShader =
+                m_ShaderManager.LoadShader("composite_alpha_over.frag", RHI::ShaderStage::Pixel);
+            if (!m_CompositeAlphaOverFragmentShader)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create Composite alpha-over fragment shader");
+                return false;
+            }
+        }
+
+        if (!m_CompositeAlphaOverDescriptorSet)
+        {
+            RHI::DescriptorSetDesc compositeDsDesc;
+            RHI::DescriptorBinding sceneBinding;
+            sceneBinding.binding = 0;
+            sceneBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            sceneBinding.stages = RHI::ShaderStage::Pixel;
+            compositeDsDesc.bindings.push_back(sceneBinding);
+
+            RHI::DescriptorBinding canvasBinding;
+            canvasBinding.binding = 1;
+            canvasBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            canvasBinding.stages = RHI::ShaderStage::Pixel;
+            compositeDsDesc.bindings.push_back(canvasBinding);
+
+            m_CompositeAlphaOverDescriptorSet = m_Device->CreateDescriptorSet(compositeDsDesc);
+            if (!m_CompositeAlphaOverDescriptorSet)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create Composite alpha-over descriptor set");
+                return false;
+            }
+
+            m_CompositeAlphaOverDescriptorSet->BindSampler(0, m_BlitSampler);
+            m_CompositeAlphaOverDescriptorSet->BindSampler(1, m_BlitSampler);
+        }
+
+        return true;
     }
 
     void RenderingCoordinator::BeginFrame()
@@ -847,6 +913,7 @@ namespace NorvesLib::Core::Rendering
             viewPlan.bEnabled = view->IsEnabled();
 
             auto sceneView = Container::DynamicPointerCast<SceneView>(view);
+            auto canvasView = Container::DynamicPointerCast<CanvasView>(view);
             const bool bIsMainSceneView = sceneView && sceneView == m_MainSceneView;
             const uint32_t viewportCount = view->GetViewportCount();
 
@@ -932,6 +999,22 @@ namespace NorvesLib::Core::Rendering
                         m_CurrentPacket->OpaqueCommandRange = viewportPlan.OpaqueCommandRange;
                         m_CurrentPacket->TransparentCommandRange = viewportPlan.TransparentCommandRange;
                         bLegacyCommandsSet = true;
+                    }
+                }
+
+                if (canvasView && view->IsEnabled() && viewportPlan.HasDrawableExtent())
+                {
+                    canvasView->PrepareBoardDrawCommands(viewportPlan);
+
+                    const uint32_t instanceBase =
+                        AppendInstanceDataToPacket(m_CurrentPacket, canvasView->GetBoardInstanceData());
+                    if (m_CurrentPacket)
+                    {
+                        viewportPlan.TransparentCommandRange =
+                            AppendRebasedDrawCommands(canvasView->GetBoardDrawCommands(),
+                                                      instanceBase,
+                                                      m_CurrentPacket->DrawCommands);
+                        viewportPlan.DrawCommandRange = viewportPlan.TransparentCommandRange;
                     }
                 }
 
@@ -1162,6 +1245,12 @@ namespace NorvesLib::Core::Rendering
         graphPresentationRequest.BlitDescriptorSet = m_BlitDescriptorSet;
         graphPresentationRequest.BlitSampler = m_BlitSampler;
 
+        CompositePassRequest graphCompositeRequest;
+        graphCompositeRequest.VertexShader = m_BlitVertexShader;
+        graphCompositeRequest.PixelShader = m_CompositeAlphaOverFragmentShader;
+        graphCompositeRequest.DescriptorSet = m_CompositeAlphaOverDescriptorSet;
+        graphCompositeRequest.Sampler = m_BlitSampler;
+
         RenderFrameExecutionRequest executionRequest;
         executionRequest.Packet = packet;
         executionRequest.Views = &screenViews;
@@ -1175,6 +1264,7 @@ namespace NorvesLib::Core::Rendering
         executionRequest.PresentationGraphPass = &m_PresentationPass;
         executionRequest.GraphPresentationRequest = graphPresentationRequest;
         executionRequest.CompositeGraphPass = &m_CompositePass;
+        executionRequest.GraphCompositeRequest = graphCompositeRequest;
 
         RenderFrameExecutor frameExecutor;
         frameExecutor.Execute(executionRequest);
@@ -1318,6 +1408,11 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
+        if (!EnsureCompositeAlphaOverResources())
+        {
+            return nullptr;
+        }
+
         ViewSettings settings;
         settings.Type = ViewType::UI;
         settings.Width = m_RenderWidth;
@@ -1361,6 +1456,10 @@ namespace NorvesLib::Core::Rendering
         m_Screen.AddView(canvasView, 1);
         m_Views.push_back(canvasView);
         m_CanvasView = canvasView;
+        if (Engine::GEngine)
+        {
+            Engine::GEngine->GetWorld().SetScreenSpaceBoardSink(m_CanvasView.get());
+        }
         return m_CanvasView;
     }
 
@@ -1378,9 +1477,19 @@ namespace NorvesLib::Core::Rendering
         auto it = std::find(m_Views.begin(), m_Views.end(), view);
         if (it != m_Views.end())
         {
-            (*it)->Shutdown();
-            if (*it == m_CanvasView)
+            const bool bDestroyingCanvasView = *it == m_CanvasView;
+            if (bDestroyingCanvasView && m_Device)
             {
+                m_Device->WaitIdle();
+            }
+
+            (*it)->Shutdown();
+            if (bDestroyingCanvasView)
+            {
+                if (Engine::GEngine)
+                {
+                    Engine::GEngine->GetWorld().SetScreenSpaceBoardSink(nullptr);
+                }
                 m_CanvasView.reset();
                 m_CanvasCameraId = 0;
                 m_bCanvasCameraSyncPending.Store(false);

@@ -115,6 +115,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GLTFAnalyzer.cpp
     # Component
     Private/Component/Component.cpp
+    Private/Component/BoardComponent.cpp
     Private/Component/MeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/LightComponent.cpp
@@ -248,6 +249,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/Screen.h
     Public/Rendering/View.h
     Public/Rendering/CanvasView.h
+    Public/Rendering/IBoardProxySink.h
     Public/Rendering/Viewport.h
     Public/Rendering/CameraViewConstants.h
     Public/Rendering/ViewRenderPlan.h
@@ -325,6 +327,7 @@ set(PUBLIC_HEADERS
     Public/Resource/GLTFAnalyzer.h
     # Component
     Public/Component/Component.h
+    Public/Component/BoardComponent.h
     Public/Component/MeshComponent.h
     Public/Component/MegaGeometryComponent.h
     Public/Component/LightComponent.h
