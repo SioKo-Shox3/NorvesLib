@@ -243,6 +243,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         ClearStage2RequestsAndResults(request);
+        // This path leaves the back buffer via the graph(composite) presentation load family.
+        // Primary signal for the overlay seam to select the graph load path.
+        result.bComposite = true;
         return result;
     }
 

@@ -153,6 +153,16 @@ namespace NorvesLib::Core::Rendering
          */
         FramePacket* EndFrame();
 
+        /**
+         * @brief 次フレームの overlay パス集合を書き込み中パケットへ載せる（GameThread）
+         *
+         * BeginFrame で確保した書き込み中パケット(m_CurrentPacket)の OverlayPasses へ
+         * 借用ポインタをコピーする。EndFrame(FinishWrite)より前に呼ぶこと。書き込み中
+         * パケットが無い場合は何もしない。passes が空のときは OverlayPasses も空のままで
+         * 描画シームは完全 no-op になる。非所有(寿命はモジュール側が所有)。
+         */
+        void SetOverlayPassesForNextFrame(Container::Span<IViewPass *> passes);
+
         // ========================================
         // レンダリング実行（RenderThread）
         // ========================================
