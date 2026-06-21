@@ -1,5 +1,14 @@
 ﻿set(MODULE_NAME NorvesLib)
 
+# ImGui デバッグオーバーレイ(既定 OFF・opt-in ゲート)。option は本ファイル 1 箇所のみ。
+# ON のときだけ imgui 本体(第三者)を専用 static lib NorvesThirdParty_ImGui としてビルドし、
+# Core(imgui_impl_vulkan 用)と将来の NorvesModule_ImGui が PRIVATE 依存する。
+# OFF のときは imgui を 1 ファイルもビルドせず Core も非リンク=素ビルド byte-for-byte 不変。
+option(NORVES_ENABLE_IMGUI "Enable ImGui debug overlay" OFF)
+if(NORVES_ENABLE_IMGUI)
+    add_subdirectory(ThirdParty/imgui)
+endif()
+
 # ライブラリモジュールを追加
 add_subdirectory(Core)
 

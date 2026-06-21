@@ -375,6 +375,7 @@ set(PUBLIC_HEADERS
     Public/RHI/IPipeline.h
     Public/RHI/IDescriptorSet.h
     Public/RHI/IDevice.h
+    Public/RHI/IImGuiRenderer.h
     Public/RHI/DeviceCapabilities.h
     Public/RHI/IShaderCompiler.h
     Public/RHI/IGPUResourceAllocator.h
@@ -494,6 +495,34 @@ if(WIN32)
         NOMINMAX
         WIN32_LEAN_AND_MEAN
     )
+endif()
+
+# ImGui デバッグオーバーレイ（既定 OFF・opt-in ゲート）
+# option(NORVES_ENABLE_IMGUI) の定義は Library/CMakeLists.txt に 1 箇所のみ置く。
+# OFF 時は imgui を1ファイルもコンパイルしない＝素ビルドと byte-for-byte 不変。
+# ON 時のみ Vulkan バックエンド実装(imgui_impl_vulkan.cpp)を Core に直追加し、
+# imgui 本体(core 4本)は専用 static lib NorvesThirdParty_ImGui へリンクして解決する。
+if(NORVES_ENABLE_IMGUI)
+    set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/Library/ThirdParty/imgui)
+    # imgui_impl_vulkan.cpp は生 Vulkan と共に Core でコンパイルする(imgui core は lib 側)。
+    target_sources(${MODULE_NAME} PRIVATE
+        ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
+    )
+    # imgui.h は NorvesThirdParty_ImGui の PUBLIC include 経由で来る。
+    # backends は impl_vulkan.h 用に Core 自身へ追加する。
+    target_include_directories(${MODULE_NAME} PRIVATE
+        ${IMGUI_DIR}/backends
+    )
+    # imgui core シンボルを解決する専用 lib への PRIVATE リンク。
+    # PRIVATE のため imgui の include/シンボルは Core 消費者(テスト/ツール)へ漏れず、
+    # かつ Core 自身のコンパイル(imgui_impl_vulkan.cpp)には imgui.h が伝播する。
+    target_link_libraries(${MODULE_NAME} PRIVATE NorvesThirdParty_ImGui)
+    target_compile_definitions(${MODULE_NAME} PRIVATE NORVES_ENABLE_IMGUI)
+    # Core は VULKAN_HPP_DISPATCH_LOADER_DYNAMIC のため Vulkan 関数を動的ロードする。
+    # imgui_impl_vulkan.cpp が自前のプロトタイプ宣言と衝突しないよう、この TU 限定で
+    # IMGUI_IMPL_VULKAN_NO_PROTOTYPES を付与する。
+    set_source_files_properties(${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
+        PROPERTIES COMPILE_DEFINITIONS IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
 endif()
 
 # IDEでのファイル整理（Visual Studio等）
