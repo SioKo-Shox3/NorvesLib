@@ -1,6 +1,7 @@
 add_subdirectory(Object)
 add_subdirectory(Debug)
 add_subdirectory(Rendering)
+add_subdirectory(Module)
 add_subdirectory(Asset)
 add_subdirectory(GameMode)
 add_subdirectory(Text)
