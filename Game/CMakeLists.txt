@@ -19,9 +19,14 @@ target_include_directories(${MODULE_NAME}
 
 # 各ライブラリコンポーネントへの依存関係を設定
 # Memory, FileStream, Random, Math, Thread は Core に統合されたため、Core への依存のみで十分
-target_link_libraries(${MODULE_NAME} 
-    PRIVATE 
+target_link_libraries(${MODULE_NAME}
+    PRIVATE
         Core
+        # モジュールシステム第1段1C-ii: 描画ダミーモジュール lib。--dummy-overlay 時に
+        # GameApplicationHandler が RegisterDummyRenderModule を明示参照するため、
+        # その自由関数を含む別 static lib をリンク引込する(PUBLIC include で
+        # DummyModule/*.h も解決)。フラグ無しでは登録されず seam は no-op。
+        NorvesModule_Dummy
         # Memory # Core に統合されました
         # Random # Core に統合されました
         # FileStream # Core に統合されました
