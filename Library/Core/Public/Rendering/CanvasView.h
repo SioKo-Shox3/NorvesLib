@@ -7,8 +7,8 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief 2D canvas view rendered into a transparent frame texture.
      *
-     * F1 keeps this view viewport-free; later phases add orthographic canvas
-     * viewports and board drawing on top of the same frame-output contract.
+     * Canvas owns exactly one full-rect viewport. RenderingCoordinator assigns
+     * the shared orthographic camera; CanvasView does not access camera tables.
      */
     class CanvasView : public View
     {

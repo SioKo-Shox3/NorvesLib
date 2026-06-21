@@ -44,7 +44,13 @@ namespace NorvesLib::Core::Rendering
     void Viewport::SetCamera(const CameraProxy &camera)
     {
         m_Camera = camera;
+        m_CameraId = camera.CameraId;
         UpdateMatrices();
+    }
+
+    void Viewport::SetCameraId(uint64_t cameraId)
+    {
+        m_CameraId = cameraId;
     }
 
     void Viewport::SetRect(float x, float y, float width, float height)
@@ -121,7 +127,7 @@ namespace NorvesLib::Core::Rendering
             // 正射影
             m_ProjectionMatrix = Math::MatrixUtils::CreateOrthographic(
                 m_Camera.OrthoWidth,
-                m_Camera.OrthoWidth / aspectRatio,
+                m_Camera.OrthoHeight,
                 m_Camera.NearPlane,
                 m_Camera.FarPlane);
         }
