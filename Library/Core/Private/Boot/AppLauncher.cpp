@@ -131,6 +131,7 @@ namespace NorvesLib::Core::Boot
 
         if (!processor.Initialize(config))
         {
+            Engine::ApplicationProcessor::DestroyInstance();
             ShutdownPlatform(config);
             return -1;
         }
@@ -138,6 +139,7 @@ namespace NorvesLib::Core::Boot
         int exitCode = processor.Run();
 
         processor.Shutdown();
+        Engine::ApplicationProcessor::DestroyInstance();
 
         ShutdownPlatform(config);
 

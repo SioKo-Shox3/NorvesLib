@@ -62,6 +62,11 @@ namespace NorvesLib::Core::Engine
          */
         static ApplicationProcessor &GetInstance();
 
+        /**
+         * @brief シングルトンインスタンスを破棄
+         */
+        static void DestroyInstance();
+
     private:
         /**
          * @brief 1フレームの処理を実行

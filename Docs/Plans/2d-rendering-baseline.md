@@ -14,13 +14,13 @@ The baseline build/test gate is green for compile and unit tests:
 | Build | Pass | `cmake --build build --config Debug --target Game` succeeded. Build emitted the known libwebsockets generated-header incremental warning. |
 | CTest | Pass | `ctest --test-dir build -C Debug` passed `79/79`. |
 
-Runtime smoke is not green; see the next section.
+Initial runtime smoke exposed a shutdown crash and missing ST launch switch. The follow-up runtime support patch recovered the F0 launch/shutdown gate; see the runtime section and recovery addendum.
 
 ## Runtime Smoke Status
 
-MT is the only current boot path exposed by Game config. `ApplicationProcessor` exposes `--exit-after-frames`, but no command-line switch for ST rendering was found. `RenderWorldSettings::bEnableMultiThreadedRendering` defaults to `true`, and `ApplicationProcessor` creates `RenderWorldSettings` without overriding it.
+The initial baseline found MT as the only boot path exposed by Game config. `ApplicationProcessor` exposed `--exit-after-frames`, but no command-line switch for ST rendering was found. `RenderWorldSettings::bEnableMultiThreadedRendering` defaulted to `true`, and `ApplicationProcessor` created `RenderWorldSettings` without overriding it.
 
-F0 runtime/visual evidence is incomplete. MT `--exit-after-frames` runs reached their requested frame targets, but the runner/PowerShell process result returned access violation `-1073741819` after shutdown; this exit code is not emitted inside the game log. ST startup could not be exercised because no Game CLI switch was found. No Normal representative screenshot, Vulkan validation summary, DrawCalls summary, or PSO count was captured. The F0 runtime/visual gate is blocked unless this is fixed or explicitly waived.
+The follow-up runtime support patch adds `--render-thread=st|mt` and clears retained presentation resources before RHI shutdown. ST, MT, and invalid-option smoke launches now reach `--exit-after-frames=2` and exit `0`. Normal representative screenshot, Vulkan validation summary, DrawCalls summary, and PSO count are still not captured in this patch.
 
 Runtime commands captured in the logs:
 
@@ -198,9 +198,9 @@ No old 2D plan files were found under `Docs/Plans/`. There is no `Docs/Archive/`
 
 | Item | Status / risk | Follow-up |
 |------|---------------|-----------|
-| Runtime smoke | MT reaches frame targets but exits with access violation `-1073741819` after shutdown. | Treat as blocker/risk; do not call F0 runtime green. |
-| ST smoke path | ST render path exists internally when `bEnableMultiThreadedRendering=false`, but Game config exposes no CLI switch. | Add or document an ST test path before future MT/ST screenshot gates rely on it. |
-| Runtime/visual evidence | No Normal representative screenshot, Vulkan validation summary, DrawCalls summary, or PSO count was captured. | F0 runtime/visual gate remains blocked unless fixed or explicitly waived. |
+| Runtime smoke | Recovered after the follow-up runtime support patch. ST, MT, and invalid `--render-thread` launches now reach `--exit-after-frames=2` and exit `0`. | Use `F0_gate_runtime_st.log`, `F0_gate_runtime_mt.log`, and `F0_gate_runtime_invalid.log` as launch/shutdown evidence. |
+| ST smoke path | Resolved by `--render-thread=st|mt`; invalid values are ignored and keep the current config value. | Use this switch for future MT/ST screenshot gates. |
+| Runtime/visual evidence | Runtime launch/shutdown evidence is now green; Normal representative screenshot, Vulkan validation summary, DrawCalls summary, and PSO count are still not captured in this patch. | Capture visible evidence before relying on F0 as a visual baseline. |
 | Ignored artifacts | `Docs/Plans/` is ignored, including the local F0 logs/traces. | Force-add artifacts if they must be committed, or store accepted evidence elsewhere. |
 | Quad winding | Canonical plan text still mentions CCW in places, but current engine plane and active 3D passes use Clockwise. | F3 should use Clockwise unless culling is intentionally disabled/overridden. |
 | Board keying | Existing mesh/mega stores are ObjectId-keyed only; lights are ComponentId-keyed. | Board storage must explicitly decide ObjectId + ComponentId if same Entity can own multiple Boards. |
@@ -209,6 +209,16 @@ No old 2D plan files were found under `Docs/Plans/`. There is no `Docs/Archive/`
 | Frame flow | `RenderFrameExecutor` and `FramePacket` are flat/single-stage today; draw/instance rebasing assumes one flat packet array. | F1 must preserve legacy fallback and rebase correctness while adding composition. |
 | CanvasView override | Base `View::Render` handles graph reset/pass execution/presentation append over shared View members. | CanvasView must preserve required setup/output state while suppressing presentation. |
 | Shader encoding | Compiler strips BOM, but plan asks new shaders to be BOM-less UTF-8+CRLF. | Follow the plan to avoid shaderc/editor ambiguity. |
+
+## F0 Runtime Gate Recovery (2026-06-21)
+
+- Added `BootConfig::bEnableMultiThreadedRendering` and `--render-thread=st|mt` parsing so the existing ST path can be selected from `Game.exe`.
+- Moved `ApplicationProcessor` singleton destruction out of `Shutdown()` into `DestroyInstance()`, called by `AppLauncher` after shutdown and on initialization failure, so callers do not continue through a self-deleting object.
+- Cleared `PresentationPass` request/result state during `RenderingCoordinator::ReleaseInitializedResources()` before RHI shutdown. The access violation was caused by `PresentationPass` retaining RHI shared references after the coordinator had released its primary copies.
+- Runtime launch matrix after the fix:
+  - ST: `Game.exe --exit-after-frames=2 --render-thread=st --trace` -> exit `0`.
+  - MT: `Game.exe --exit-after-frames=2 --render-thread=mt --trace` -> exit `0`.
+  - Invalid option: `Game.exe --exit-after-frames=2 --render-thread=invalid --trace` warns, keeps MT, exits `0`.
 
 ## Source References
 
