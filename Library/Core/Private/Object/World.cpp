@@ -1082,6 +1082,8 @@ namespace NorvesLib::Core
             auto* boardComp = CastTo<Component::BoardComponent>(comp);
             if (boardComp)
             {
+                boardComp->PrepareFlipbookForRenderSync();
+
                 const bool bNeedsSync = boardComp->IsRenderStateDirty() ||
                                         boardComp->GetLastSyncedTransformVersion() != ownerVersion;
                 if (!bNeedsSync)

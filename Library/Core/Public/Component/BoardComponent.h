@@ -24,6 +24,7 @@ namespace NorvesLib::Core::Component
         virtual ~BoardComponent();
 
         virtual void Initialize() override;
+        virtual void BeginPlay() override;
         virtual void Tick(float deltaTime) override;
 
         void SetTextureHandle(Rendering::TextureHandle texture);
@@ -59,6 +60,25 @@ namespace NorvesLib::Core::Component
         void SetUVRect(const Math::Vector4 &uvRect);
         const Math::Vector4 &GetUVRect() const { return UVRectProp; }
 
+        bool SetFlipbookGrid(uint32_t textureWidth,
+                             uint32_t textureHeight,
+                             uint32_t cellWidth,
+                             uint32_t cellHeight,
+                             uint32_t firstFrameIndex = 0u);
+        void SetFrameCount(uint32_t frameCount);
+        uint32_t GetFrameCount() const { return FrameCount; }
+        void SetFramesPerSecond(float framesPerSecond);
+        float GetFramesPerSecond() const { return FramesPerSecond; }
+        void SetLoop(bool bInLoop);
+        bool IsLooping() const { return bLoop; }
+        void Play();
+        void Pause();
+        void Stop();
+        void SetFrame(uint32_t frameIndex);
+        uint32_t GetCurrentFrame() const { return m_CurrentFrame; }
+        bool IsPlaying() const { return m_bPlaying; }
+        void PrepareFlipbookForRenderSync();
+
         void SetLayerPriority(uint32_t layerPriority);
         uint32_t GetLayerPriority() const { return LayerPriority; }
 
@@ -81,6 +101,18 @@ namespace NorvesLib::Core::Component
     protected:
         void UpdateWorldTransform();
         void CalculateWorldMatrix(Math::Matrix4x4 &outMatrix) const;
+        void InitializeFlipbookDefaults();
+        bool ValidateFlipbookRange(uint32_t firstFrameIndex,
+                                   uint32_t frameCount,
+                                   size_t rectCount) const;
+        bool IsFlipbookAuthoringCacheStale() const;
+        void CaptureFlipbookAuthoringCache();
+        void RebuildFlipbookUVRects();
+        void InvalidateFlipbookCache();
+        void EnsureFlipbookCacheReady();
+        uint32_t ClampFlipbookFrame(uint32_t frameIndex) const;
+        bool ApplyCurrentFlipbookFrameToUV();
+        void AdvanceFlipbook(float deltaTime);
 
         PROPERTY(Rendering::TextureHandle, TextureHandle)
         PROPERTY(bool, bVisible)
@@ -93,12 +125,36 @@ namespace NorvesLib::Core::Component
         PROPERTY(Math::Vector2, Pivot)
         PROPERTY(Math::Vector2, SizePx)
         PROPERTY(Math::Vector4, UVRectProp)
+        PROPERTY(uint32_t, FrameCount)
+        PROPERTY(float, FramesPerSecond)
+        PROPERTY(bool, bLoop)
+        PROPERTY(bool, bPlayOnBeginPlay)
+        PROPERTY(uint32_t, InitialFrame)
+        PROPERTY(uint32_t, AtlasTextureWidth)
+        PROPERTY(uint32_t, AtlasTextureHeight)
+        PROPERTY(uint32_t, AtlasCellWidth)
+        PROPERTY(uint32_t, AtlasCellHeight)
+        PROPERTY(uint32_t, FirstFrameIndex)
         PROPERTY(uint32_t, LayerPriority)
         PROPERTY(uint32_t, OrderInLayer)
 
         Math::Matrix4x4 m_WorldTransform;
         Math::Matrix4x4 m_PreviousWorldTransform;
         bool m_bTransformDirty = true;
+
+        uint32_t m_CurrentFrame = 0;
+        bool m_bPlaying = false;
+        float m_FrameAccumulator = 0.0f;
+        Container::VariableArray<Math::Vector4> m_FlipbookUVRects;
+        bool m_bFlipbookCacheDirty = true;
+        bool m_bFlipbookCacheValid = false;
+        uint32_t m_CachedFrameCount = 0;
+        uint32_t m_CachedInitialFrame = 0;
+        uint32_t m_CachedAtlasTextureWidth = 0;
+        uint32_t m_CachedAtlasTextureHeight = 0;
+        uint32_t m_CachedAtlasCellWidth = 0;
+        uint32_t m_CachedAtlasCellHeight = 0;
+        uint32_t m_CachedFirstFrameIndex = 0;
     };
 
     using BoardComponentPtr = Container::TSharedPtr<BoardComponent>;

@@ -13,6 +13,7 @@
 using namespace NorvesLib::Core;
 namespace Component = NorvesLib::Core::Component;
 namespace Math = NorvesLib::Math;
+namespace Rendering = NorvesLib::Core::Rendering;
 
 namespace
 {
@@ -52,6 +53,14 @@ namespace
         assert(Near(lhs.z, rhs.z));
     }
 
+    void ExpectVector4Near(const Math::Vector4& lhs, const Math::Vector4& rhs)
+    {
+        assert(Near(lhs.x, rhs.x));
+        assert(Near(lhs.y, rhs.y));
+        assert(Near(lhs.z, rhs.z));
+        assert(Near(lhs.w, rhs.w));
+    }
+
     StablePropertyId MakePropertyId(const IClass* cls, const char* propertyName)
     {
         assert(cls != nullptr);
@@ -84,6 +93,20 @@ namespace
         value.Type = MakeTypeId(typeName);
         value.SerializedValue = serializedValue;
         return value;
+    }
+
+    const ProjectedPropertyValue* FindProjectedValue(
+        const ObjectSnapshot& snapshot,
+        StablePropertyId propertyId)
+    {
+        for (const ProjectedPropertyValue& value : snapshot.Properties)
+        {
+            if (value.Property == propertyId)
+            {
+                return &value;
+            }
+        }
+        return nullptr;
     }
 
     PrefabPropertyOverride MakeOverride(
@@ -272,6 +295,113 @@ namespace
         assert(spawnedBoard->GetPivot() == Math::Vector2(0.25f, 0.75f));
         assert(spawnedBoard->GetSizePx() == Math::Vector2(96.0f, 48.0f));
         assert(spawnedBoard->GetUVRect() == Math::Vector4(0.5f, 0.0f, 0.25f, 0.5f));
+
+        world.Finalize();
+        prefab.reset();
+        registry.Shutdown();
+    }
+
+    void TestSpawnPrefabRestoresBoardComponentFlipbookProperties()
+    {
+        RegisterRequiredClasses();
+
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+
+        World world;
+        world.Initialize();
+
+        EntitySubtreeSnapshot snapshot;
+        snapshot.RootAlias = 1;
+        snapshot.Root.Alias = snapshot.RootAlias;
+        snapshot.Root.Object.Class = MakeClassId(Entity::StaticClass());
+
+        ComponentSubtreeSnapshot boardSnapshot;
+        boardSnapshot.Alias = 2;
+        boardSnapshot.OwnerAlias = snapshot.Root.Alias;
+        boardSnapshot.Object.Class = MakeClassId(Component::BoardComponent::StaticClass());
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "UVRectProp",
+            "Math::Vector4",
+            "Vector4(0.75,0.75,0.125,0.125)"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "FrameCount",
+            "uint32",
+            "3"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "FramesPerSecond",
+            "float",
+            "4"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "bLoop",
+            "bool",
+            "1"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "bPlayOnBeginPlay",
+            "bool",
+            "1"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "InitialFrame",
+            "uint32",
+            "2"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "AtlasTextureWidth",
+            "uint32",
+            "128"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "AtlasTextureHeight",
+            "uint32",
+            "64"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "AtlasCellWidth",
+            "uint32",
+            "32"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "AtlasCellHeight",
+            "uint32",
+            "32"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "FirstFrameIndex",
+            "uint32",
+            "1"));
+        snapshot.Root.Components.push_back(boardSnapshot);
+
+        auto prefab = registry.CreateTransient<PrefabAsset>("BoardFlipbookPrefab");
+        assert(prefab != nullptr);
+        prefab->SetTree(snapshot);
+
+        Entity* spawnedRoot = world.SpawnPrefab(*prefab);
+        assert(spawnedRoot != nullptr);
+
+        Component::BoardComponent* spawnedBoard = spawnedRoot->GetComponent<Component::BoardComponent>();
+        assert(spawnedBoard != nullptr);
+        assert(spawnedBoard->GetFrameCount() == 3u);
+        assert(Near(spawnedBoard->GetFramesPerSecond(), 4.0f));
+        assert(spawnedBoard->IsLooping());
+        assert(spawnedBoard->IsPlaying());
+        assert(spawnedBoard->GetCurrentFrame() == 2u);
+        ExpectVector4Near(spawnedBoard->GetUVRect(), Math::Vector4(0.75f, 0.0f, 0.25f, 0.5f));
+
+        Rendering::BoardProxy proxy;
+        assert(spawnedBoard->BuildBoardProxy(proxy));
+        ExpectVector4Near(proxy.UVRect, Math::Vector4(0.75f, 0.0f, 0.25f, 0.5f));
+
+        EntitySubtreeSnapshot roundTripSnapshot = RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*spawnedRoot);
+        assert(roundTripSnapshot.Root.Components.size() == 1);
+        const ComponentSubtreeSnapshot& roundTripBoardSnapshot = roundTripSnapshot.Root.Components[0];
+        assert(FindProjectedValue(roundTripBoardSnapshot.Object, MakePropertyId(Component::BoardComponent::StaticClass(), "CurrentFrame")) == nullptr);
+        assert(FindProjectedValue(roundTripBoardSnapshot.Object, MakePropertyId(Component::BoardComponent::StaticClass(), "bPlaying")) == nullptr);
 
         world.Finalize();
         prefab.reset();
@@ -516,6 +646,7 @@ int main()
 
     TestSpawnPrefabRegistersPropertyTypes();
     TestSpawnPrefabRestoresBoardComponentVisualProperties();
+    TestSpawnPrefabRestoresBoardComponentFlipbookProperties();
     TestPrefabRoundTrip();
 
     std::cout << "PrefabRoundTripTest passed\n";
