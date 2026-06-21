@@ -230,4 +230,16 @@ namespace NorvesLib::Core::Input
         float Delta = 0.0f;
     };
 
+    /**
+     * @brief 文字入力イベント（テキスト入力・IME 確定後の Unicode コードポイント）
+     *
+     * KeyEvent（物理キー）とは別系統。プラットフォーム層（Windows なら WM_CHAR）が
+     * IME 変換・修飾キー合成を済ませた最終的な文字を通知する。テキスト入力（ImGui の
+     * AddInputCharacter 等）はこちらを使う。
+     */
+    struct CharEvent
+    {
+        uint32_t Codepoint = 0; ///< Unicode コードポイント（UTF-32）
+    };
+
 } // namespace NorvesLib::Core::Input
