@@ -6,6 +6,7 @@
 #include "Thread/Atomic.h"
 #include "Object/ResourceRegistry.h"
 #include "Engine/AssetRegistry.h"
+#include "Engine/ComponentDataRegistry.h"
 #include "Rendering/Screen.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/RenderThread.h"
@@ -147,6 +148,18 @@ namespace NorvesLib::Core
          */
         const Rendering::RenderThread &GetRenderThread() const { return m_RenderThread; }
 
+        /**
+         * @brief Component data registryを取得
+         * @return Component data registryへの参照
+         */
+        ComponentDataRegistry &GetComponentDataRegistry() { return m_ComponentDataRegistry; }
+
+        /**
+         * @brief Component data registryを取得（const版）
+         * @return Component data registryへのconst参照
+         */
+        const ComponentDataRegistry &GetComponentDataRegistry() const { return m_ComponentDataRegistry; }
+
     private:
         Thread::Atomic<bool> m_isRunning;             ///< エンジンが実行中かどうか
         NorvesLib::Core::Container::String m_version; ///< エンジンのバージョン
@@ -155,6 +168,7 @@ namespace NorvesLib::Core
         // サブシステム（GEngineと寿命が一致）
         ResourceRegistry m_ResourceRegistry;                    ///< リソース管理
         AssetRegistry m_AssetRegistry;                          ///< アセット（ファイル）管理
+        ComponentDataRegistry m_ComponentDataRegistry;           ///< Component data scratch registry
         Rendering::RenderingCoordinator m_RenderingCoordinator; ///< 描画フロー管理
         Rendering::RenderThread m_RenderThread;                 ///< レンダースレッド
     };

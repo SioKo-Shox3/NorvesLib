@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Object.h"
+#include "Object/EntityHandle.h"
 #include "Reflection.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -149,6 +150,16 @@ namespace NorvesLib::Core
          * @brief オブジェクトIDを設定（World内部用）
          */
         void SetObjectId(uint64_t id) { ObjectId = id; }
+
+        /**
+         * @brief ComponentDataRegistry用Entityハンドルを取得
+         */
+        EntityHandle GetEntityHandle() const { return m_EntityHandle; }
+
+        /**
+         * @brief ComponentDataRegistry用Entityハンドルを設定
+         */
+        void SetEntityHandle(EntityHandle handle) { m_EntityHandle = handle; }
 
         // ========================================
         // トランスフォーム
@@ -325,6 +336,7 @@ namespace NorvesLib::Core
         Math::Transform m_CachedWorldTransform;
         bool m_bWorldTransformDirty = true;
         uint64_t m_TransformVersion = 1;
+        EntityHandle m_EntityHandle;
 
     private:
         void MarkRenderStateDirtyRecursive();

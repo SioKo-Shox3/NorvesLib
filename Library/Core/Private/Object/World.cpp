@@ -4,6 +4,8 @@
 #include "Component/MeshComponent.h"
 #include "Component/MegaGeometryComponent.h"
 #include "Component/LightComponent.h"
+#include "Engine/NorvesEngine.h"
+#include "Engine/ComponentDataRegistry.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneProxy.h"
 #include "Logging/LogMacros.h"
@@ -532,6 +534,28 @@ namespace NorvesLib::Core
 
             return rootGuard.Release();
         }
+
+        void RegisterEntitySubtreeForComponentData(World& world, Entity& entity)
+        {
+            GEngine.GetComponentDataRegistry().RegisterEntity(world, entity);
+
+            auto children = entity.GetChildEntities();
+            for (auto* child : children)
+            {
+                RegisterEntitySubtreeForComponentData(world, *child);
+            }
+        }
+
+        void UnregisterEntitySubtreeForComponentData(Entity& entity)
+        {
+            auto children = entity.GetChildEntities();
+            for (auto* child : children)
+            {
+                UnregisterEntitySubtreeForComponentData(*child);
+            }
+
+            GEngine.GetComponentDataRegistry().UnregisterEntity(entity);
+        }
     } // namespace
 
     IMPLEMENT_CLASS(World, Object)
@@ -605,6 +629,8 @@ namespace NorvesLib::Core
                 delete inner;
             }
         }
+
+        GEngine.GetComponentDataRegistry().UnregisterWorld(*this);
 
         m_SceneView = nullptr;
         NextObjectId = 1;
@@ -812,6 +838,15 @@ namespace NorvesLib::Core
             return;
         }
 
+        ComponentDataRegistry& componentDataRegistry = GEngine.GetComponentDataRegistry();
+        ComponentDataRegistry* enabledComponentDataRegistry = componentDataRegistry.IsEnabled()
+            ? &componentDataRegistry
+            : nullptr;
+        if (enabledComponentDataRegistry)
+        {
+            enabledComponentDataRegistry->BeginFrameCapture();
+        }
+
         UpdateWorldTransforms();
 
         Container::UnorderedSet<uint64_t> liveMeshObjectIds;
@@ -828,7 +863,8 @@ namespace NorvesLib::Core
                 materials,
                 liveMeshObjectIds,
                 liveMegaGeometryObjectIds,
-                liveLightIds);
+                liveLightIds,
+                enabledComponentDataRegistry);
         }
 
         m_SceneView->RemoveStaleMeshProxies(liveMeshObjectIds);
@@ -887,11 +923,17 @@ namespace NorvesLib::Core
         const Rendering::MaterialResources* materials,
         Container::UnorderedSet<uint64_t>& liveMeshObjectIds,
         Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
-        Container::UnorderedSet<uint64_t>& liveLightIds)
+        Container::UnorderedSet<uint64_t>& liveLightIds,
+        ComponentDataRegistry* componentDataRegistry)
     {
         if (!entity.IsActive() || entity.IsPendingDestroy())
         {
             return;
+        }
+
+        if (componentDataRegistry)
+        {
+            componentDataRegistry->PublishTransform(entity);
         }
 
         const uint64_t ownerVersion = entity.GetTransformVersion();
@@ -908,6 +950,16 @@ namespace NorvesLib::Core
                 if (!bNeedsSync)
                 {
                     liveMeshObjectIds.insert(entity.GetObjectId());
+                    if (componentDataRegistry)
+                    {
+                        Rendering::MeshProxy meshProxy;
+                        if (meshComp->BuildMeshProxy(meshProxy, materials))
+                        {
+                            meshProxy.ObjectId = entity.GetObjectId();
+                            meshProxy.ComponentId = meshComp->GetComponentId();
+                            componentDataRegistry->PublishMeshProxy(entity, meshProxy);
+                        }
+                    }
                 }
                 else
                 {
@@ -920,6 +972,10 @@ namespace NorvesLib::Core
                         meshProxy.ComponentId = meshComp->GetComponentId();
                         m_SceneView->UpdateMeshProxy(meshProxy);
                         liveMeshObjectIds.insert(meshProxy.ObjectId);
+                        if (componentDataRegistry)
+                        {
+                            componentDataRegistry->PublishMeshProxy(entity, meshProxy);
+                        }
                     }
 
                     meshComp->ClearRenderStateDirty();
@@ -934,6 +990,16 @@ namespace NorvesLib::Core
                 if (!bNeedsSync)
                 {
                     liveMegaGeometryObjectIds.insert(entity.GetObjectId());
+                    if (componentDataRegistry)
+                    {
+                        Rendering::MegaGeometryProxy megaProxy;
+                        if (megaComp->BuildMegaGeometryProxy(megaProxy))
+                        {
+                            megaProxy.ObjectId = entity.GetObjectId();
+                            megaProxy.ComponentId = megaComp->GetComponentId();
+                            componentDataRegistry->PublishMegaGeometryProxy(entity, megaProxy);
+                        }
+                    }
                 }
                 else
                 {
@@ -946,6 +1012,10 @@ namespace NorvesLib::Core
                         megaProxy.ComponentId = megaComp->GetComponentId();
                         m_SceneView->UpdateMegaGeometryProxy(megaProxy);
                         liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
+                        if (componentDataRegistry)
+                        {
+                            componentDataRegistry->PublishMegaGeometryProxy(entity, megaProxy);
+                        }
                     }
 
                     megaComp->ClearRenderStateDirty();
@@ -986,7 +1056,8 @@ namespace NorvesLib::Core
                 materials,
                 liveMeshObjectIds,
                 liveMegaGeometryObjectIds,
-                liveLightIds);
+                liveLightIds,
+                componentDataRegistry);
         }
     }
 
@@ -1050,6 +1121,7 @@ namespace NorvesLib::Core
 
         InitializeEntitySubtreeForWorld(*entity);
         AssignFreshObjectIdsRecursive(*entity);
+        RegisterEntitySubtreeForComponentData(*this, *entity);
         MarkEntitySubtreeTransformDirty(*entity);
         MarkEntitySubtreeRenderStateDirty(*entity);
         NotifyEntitySubtreeAdded(*entity);
@@ -1084,6 +1156,7 @@ namespace NorvesLib::Core
 
         InitializeEntitySubtreeForWorld(*child);
         AssignFreshObjectIdsRecursive(*child);
+        RegisterEntitySubtreeForComponentData(*this, *child);
         MarkEntitySubtreeTransformDirty(*child);
         MarkEntitySubtreeRenderStateDirty(*child);
         NotifyEntitySubtreeAdded(*child);
@@ -1128,6 +1201,8 @@ namespace NorvesLib::Core
         {
             return false;
         }
+
+        UnregisterEntitySubtreeForComponentData(entity);
 
         RemoveEntitySubtreeProxies(entity);
         NotifyEntitySubtreeRemoved(entity);
