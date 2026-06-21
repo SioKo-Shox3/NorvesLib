@@ -352,8 +352,10 @@ namespace
         canvasSettings.Height = 480;
         auto canvasView = Container::MakeShared<CanvasView>();
         assert(canvasView->Initialize(canvasSettings));
-        BoardProxy board = MakeBoardProxy(300, 30, RenderLayer::UI);
-        canvasView->UpdateBoardProxy(board.ComponentId, board);
+        BoardProxy boardA = MakeBoardProxy(300, 30, RenderLayer::UI, 0u, 0u);
+        BoardProxy boardB = MakeBoardProxy(301, 31, RenderLayer::UI, 0u, 1u);
+        canvasView->UpdateBoardProxy(boardA.ComponentId, boardA);
+        canvasView->UpdateBoardProxy(boardB.ComponentId, boardB);
 
         coordinator.m_MainSceneView = sceneView;
         coordinator.m_CanvasView = canvasView;
@@ -364,15 +366,16 @@ namespace
 
         coordinator.GenerateDrawCommands();
 
-        assert(packet.InstanceData.size() == 3);
+        assert(packet.InstanceData.size() == 4);
         assert(packet.DrawCommands.size() == 3);
         assert(packet.DrawCommands[0].Draw.ObjectId == 1);
         assert(packet.DrawCommands[1].Draw.ObjectId == 2);
-        assert(packet.DrawCommands[2].Draw.ObjectId == board.ObjectId);
+        assert(packet.DrawCommands[2].Draw.ObjectId == boardA.ObjectId);
         assert(packet.DrawCommands[0].Draw.FirstInstance == 0);
         assert(packet.DrawCommands[1].Draw.FirstInstance == 1);
         assert(packet.DrawCommands[2].Draw.FirstInstance == 2);
         assert(packet.DrawCommands[2].Draw.InstanceDataOffset == 2);
+        assert(packet.DrawCommands[2].Draw.InstanceCount == 2);
 
         assert(packet.DrawCommandRange.First == 0);
         assert(packet.DrawCommandRange.Count == 2);
@@ -420,6 +423,11 @@ namespace
         auto firstCanvas = coordinator.CreateCanvasView();
         assert(firstCanvas);
         assert(engine.GetWorld().GetScreenSpaceBoardSink() == firstCanvas.get());
+        assert(coordinator.IsBoardInstanceBatchingEnabled());
+        assert(firstCanvas->IsBoardInstanceBatchingEnabled());
+        coordinator.SetBoardInstanceBatchingEnabled(false);
+        assert(!coordinator.IsBoardInstanceBatchingEnabled());
+        assert(!firstCanvas->IsBoardInstanceBatchingEnabled());
         assert(!coordinator.m_CompositeAlphaOverFragmentShader);
         assert(!coordinator.m_CompositeAlphaOverDescriptorSet);
 
@@ -431,6 +439,7 @@ namespace
         assert(secondCanvas);
         assert(secondCanvas.get() != firstCanvas.get());
         assert(engine.GetWorld().GetScreenSpaceBoardSink() == secondCanvas.get());
+        assert(!secondCanvas->IsBoardInstanceBatchingEnabled());
 
         coordinator.Shutdown();
         assert(engine.GetWorld().GetScreenSpaceBoardSink() == nullptr);

@@ -90,6 +90,7 @@ namespace
         settings.Width = 640;
         settings.Height = 480;
         assert(canvas.Initialize(settings));
+        canvas.SetBoardInstanceBatchingEnabled(false);
 
         const uint32_t layerPriority = 2u;
         const uint32_t orderInLayer = 4u;

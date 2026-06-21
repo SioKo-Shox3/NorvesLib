@@ -152,17 +152,21 @@ namespace
         canvas.UpdateBoardProxy(board4.ComponentId, board4);
         canvas.PrepareBoardDrawCommands(MakeViewportPlan());
 
-        assert(canvas.GetBoardDrawCommands().size() == 5);
+        assert(canvas.GetBoardDrawCommands().size() == 4);
+        assert(canvas.GetBoardInstanceData().size() == 5);
         assert(canvas.GetBoardDrawCommands()[0].Draw.ObjectId == 100u);
         assert(canvas.GetBoardDrawCommands()[1].Draw.ObjectId == 101u);
         assert(canvas.GetBoardDrawCommands()[2].Draw.ObjectId == 102u);
         assert(canvas.GetBoardDrawCommands()[3].Draw.ObjectId == 103u);
-        assert(canvas.GetBoardDrawCommands()[4].Draw.ObjectId == 104u);
         assert(canvas.GetBoardDrawCommands()[0].Draw.MaterialBlendMode == BlendMode::Opaque);
         assert(canvas.GetBoardDrawCommands()[1].Draw.MaterialBlendMode == BlendMode::Translucent);
         assert(canvas.GetBoardDrawCommands()[2].Draw.MaterialBlendMode == BlendMode::Additive);
         assert(canvas.GetBoardDrawCommands()[3].Draw.MaterialBlendMode == BlendMode::Translucent);
-        assert(canvas.GetBoardDrawCommands()[4].Draw.MaterialBlendMode == BlendMode::Translucent);
+        assert(canvas.GetBoardDrawCommands()[0].Draw.InstanceCount == 1u);
+        assert(canvas.GetBoardDrawCommands()[1].Draw.InstanceCount == 1u);
+        assert(canvas.GetBoardDrawCommands()[2].Draw.InstanceCount == 1u);
+        assert(canvas.GetBoardDrawCommands()[3].Draw.InstanceCount == 2u);
+        assert(canvas.GetBoardDrawCommands()[3].Draw.FirstInstance == 3u);
 
         canvas.Shutdown();
         std::cout << "TestInterleavedBlendModesKeepPainterOrder passed\n";

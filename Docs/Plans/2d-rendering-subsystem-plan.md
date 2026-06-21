@@ -874,7 +874,7 @@ F7。
 
 ### 作業
 
-- `CanvasView::PrepareBoardDrawCommands` で安定ソート後、同一 (Texture, BlendMode, PSO) 連続 Board をインスタンスバッチに集約。per-instance データ（transform/UV/Tint）を `FramePacket.InstanceData` の flat array へ append、`DrawIndexedInstanced` で 1 ドロー（`AppendRebasedDrawCommands` の `FirstInstance`/`InstanceDataOffset` rebasing に整合、`RenderingCoordinator.cpp:880-887`）。
+- `CanvasView::PrepareBoardDrawCommands` で安定ソート後、同一 (Texture, BlendMode, PSO) 連続 Board をインスタンスバッチに集約。per-instance データ（transform/UV/Tint）を `FramePacket.InstanceData` の flat array へ append、`DrawInstanced` で 1 ドロー（`AppendRebasedDrawCommands` の `FirstInstance`/`InstanceDataOffset` rebasing に整合、`RenderingCoordinator.cpp:880-887`）。
 - 安定順を破らない範囲でバッチ境界を切る（ソート → グルーピング → インスタンス化）。
 
 ### 成果物
@@ -1028,7 +1028,7 @@ F0(read-only)
 | ブレンド / Tint / フリップ / ピボット / サイズ | 採用 | F5 | `BlendAttachmentDesc` PSO バリアント、`board2d.frag` |
 | スプライトシート分割 / アトラス / UV 矩形 | 採用 | F6 | `BoardProxy.UV`、`Board::ComputeSpriteSheetUVRects`、`TextureResources` |
 | テクスチャアニメ（フリップブック） | 採用 | F7 | `BoardComponent::Tick`、F6 UV 機構 |
-| インスタンス化バッチング | 採用 | F8 | `FramePacket.InstanceData`、`AppendRebasedDrawCommands`(`RenderingCoordinator.cpp:880`)、`DrawIndexedInstanced` |
+| インスタンス化バッチング | 採用 | F8 | `FramePacket.InstanceData`、`AppendRebasedDrawCommands`(`RenderingCoordinator.cpp:880`)、`DrawInstanced` |
 | ビルボード（WorldSpace、3D 深度共有） | 採用 | F9 | `BillboardComponent : BoardComponent`、SceneView Forward + `Scene.Depth`(`RenderGraphResourceNames.h:16`) |
 | 方式 B（レイヤー RT + 不透明度） | 採用 | F10 | `Viewport::m_OutputTexture`、CanvasView per-layer RT |
 | インポスター（ベイク + octahedral + LOD） | 採用 | F11 | `ImpostorComponent : BillboardComponent`、`MeshProxy.LODLevel`(`SceneProxy.h:47`) |
