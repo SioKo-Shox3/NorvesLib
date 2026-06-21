@@ -620,6 +620,10 @@ namespace NorvesLib::Core::Rendering
         // Readyな未消費パケットも全て解放（シャットダウン後は消費されないため）
         m_PacketManager.DrainUnconsumedPackets();
 
+        // PresentationPass は直近の backbuffer/renderpass/pipeline 参照を保持するため、
+        // RHI shutdown 前に request/result を明示クリアする。
+        m_PresentationPass.SetRequest(PresentationPassRequest{});
+
         // Viewの破棄
         for (auto &view : m_Views)
         {

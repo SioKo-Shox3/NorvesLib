@@ -25,6 +25,8 @@ namespace
 {
     constexpr TCHAR kExitAfterFramesOption[] = TEXT("--exit-after-frames=");
     constexpr size_t kExitAfterFramesOptionLength = (sizeof(kExitAfterFramesOption) / sizeof(TCHAR)) - 1;
+    constexpr TCHAR kRenderThreadOption[] = TEXT("--render-thread=");
+    constexpr size_t kRenderThreadOptionLength = (sizeof(kRenderThreadOption) / sizeof(TCHAR)) - 1;
 
     uint64_t ParsePositiveFrameCount(const TCHAR *pValueText, bool &bValid)
     {
@@ -93,6 +95,44 @@ namespace
         outFrameCount = parsedFrameCount;
         return true;
     }
+
+    bool TryParseRenderThreadOption(const TCHAR* pText, bool& bOutEnableMultiThreadedRendering, bool& bMatched)
+    {
+        bMatched = false;
+
+        if (!pText)
+        {
+            return false;
+        }
+
+        for (size_t i = 0; i < kRenderThreadOptionLength; ++i)
+        {
+            if (pText[i] == TEXT('\0') || pText[i] != kRenderThreadOption[i])
+            {
+                return false;
+            }
+        }
+
+        bMatched = true;
+        const TCHAR* pValueText = pText + kRenderThreadOptionLength;
+        if (pValueText[0] == TEXT('s') &&
+            pValueText[1] == TEXT('t') &&
+            pValueText[2] == TEXT('\0'))
+        {
+            bOutEnableMultiThreadedRendering = false;
+            return true;
+        }
+
+        if (pValueText[0] == TEXT('m') &&
+            pValueText[1] == TEXT('t') &&
+            pValueText[2] == TEXT('\0'))
+        {
+            bOutEnableMultiThreadedRendering = true;
+            return true;
+        }
+
+        return false;
+    }
 } // namespace
 
 namespace NorvesLib::Core::Engine
@@ -108,6 +148,13 @@ namespace NorvesLib::Core::Engine
             s_Instance = new ApplicationProcessor();
         }
         return *s_Instance;
+    }
+
+    void ApplicationProcessor::DestroyInstance()
+    {
+        ApplicationProcessor* pInstance = s_Instance;
+        s_Instance = nullptr;
+        delete pInstance;
     }
 
     bool ApplicationProcessor::Initialize(const Boot::BootConfig &config)
@@ -151,11 +198,14 @@ namespace NorvesLib::Core::Engine
 
         // コマンドライン引数を config.Arguments から取得してパース
         m_ExitAfterFrames = 0;
+        bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
             uint64_t parsedFrameCount = 0;
             bool bMatchedExitAfterFrames = false;
+            bool bParsedMultiThreadedRendering = false;
+            bool bMatchedRenderThread = false;
             if (TryParseExitAfterFramesOption(args[i].c_str(), parsedFrameCount, bMatchedExitAfterFrames))
             {
                 m_ExitAfterFrames = parsedFrameCount;
@@ -165,6 +215,18 @@ namespace NorvesLib::Core::Engine
             else if (bMatchedExitAfterFrames)
             {
                 LOG_WARNING("ApplicationProcessor runtime option --exit-after-frames ignored: value must be a positive integer");
+            }
+
+            if (TryParseRenderThreadOption(args[i].c_str(), bParsedMultiThreadedRendering, bMatchedRenderThread))
+            {
+                bEnableMultiThreadedRendering = bParsedMultiThreadedRendering;
+                LOG_INFO("ApplicationProcessor runtime option render_thread=%s",
+                         bEnableMultiThreadedRendering ? "mt" : "st");
+            }
+            else if (bMatchedRenderThread)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --render-thread ignored: value must be 'st' or 'mt'; current setting remains %s",
+                            bEnableMultiThreadedRendering ? "mt" : "st");
             }
         }
 
@@ -214,6 +276,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.Height = config.WindowHeight;
             renderSettings.BackBufferCount = 2;
             renderSettings.bVSync = true;
+            renderSettings.bEnableMultiThreadedRendering = bEnableMultiThreadedRendering;
             renderSettings.bEnableValidation = config.bEnableRHIValidation;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
@@ -366,13 +429,6 @@ namespace NorvesLib::Core::Engine
 
         // JobSystemをシャットダウン
         Thread::JobSystem::Get().Shutdown();
-
-        // シングルトンを解放
-        if (s_Instance)
-        {
-            delete s_Instance;
-            s_Instance = nullptr;
-        }
 
         LOG_INFO("ApplicationProcessor::Shutdown() - Shutdown completed");
     }

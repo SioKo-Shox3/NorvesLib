@@ -57,6 +57,14 @@ namespace NorvesLib::Core::Boot
         bool bVSync = true;
 
         /**
+         * @brief レンダースレッドを有効にするか
+         *
+         * true の場合は既定のマルチスレッドレンダリング、false の場合は
+         * GameThread 上でインライン描画するシングルスレッド経路を使用します。
+         */
+        bool bEnableMultiThreadedRendering = true;
+
+        /**
          * @brief ターゲットフレームレート（FPS）
          * 0以下の場合は無制限
          */
