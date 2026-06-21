@@ -35,6 +35,12 @@ namespace NorvesLib::Core::Component
         void SetBoardSpace(Rendering::BoardSpace space);
         Rendering::BoardSpace GetBoardSpace() const { return Space; }
 
+        void SetLayerPriority(uint32_t layerPriority);
+        uint32_t GetLayerPriority() const { return LayerPriority; }
+
+        void SetOrderInLayer(uint32_t orderInLayer);
+        uint32_t GetOrderInLayer() const { return OrderInLayer; }
+
         const Math::Matrix4x4 &GetWorldTransformCache() const { return m_WorldTransform; }
         const Math::Matrix4x4 &GetPreviousWorldTransformCache() const { return m_PreviousWorldTransform; }
 
@@ -50,6 +56,8 @@ namespace NorvesLib::Core::Component
         PROPERTY(bool, bVisible)
         PROPERTY(Rendering::RenderLayer, RenderLayerProp)
         PROPERTY(Rendering::BoardSpace, Space)
+        PROPERTY(uint32_t, LayerPriority)
+        PROPERTY(uint32_t, OrderInLayer)
 
         Math::Matrix4x4 m_WorldTransform;
         Math::Matrix4x4 m_PreviousWorldTransform;

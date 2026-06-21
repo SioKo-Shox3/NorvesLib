@@ -114,13 +114,20 @@ namespace
         return plan;
     }
 
-    BoardProxy MakeBoardProxy(uint64_t objectId, uint64_t componentId, RenderLayer layer)
+    BoardProxy MakeBoardProxy(uint64_t objectId,
+                              uint64_t componentId,
+                              RenderLayer layer,
+                              uint32_t layerPriority = 0,
+                              uint32_t orderInLayer = 0)
     {
         BoardProxy proxy;
         proxy.ObjectId = objectId;
         proxy.ComponentId = componentId;
         proxy.LayerMask = layer;
         proxy.Space = BoardSpace::ScreenSpace;
+        proxy.LayerPriority = layerPriority;
+        proxy.OrderInLayer = orderInLayer;
+        proxy.SortKey = BoardProxy::ComputeSortKey(layerPriority, orderInLayer);
         proxy.bVisible = true;
         proxy.WorldTransform = Math::Matrix4x4::Identity;
         return proxy;
@@ -175,8 +182,18 @@ namespace
         assert(!proxy.Texture.IsValid());
         assert(proxy.LayerMask == RenderLayer::UI);
         assert(proxy.Space == BoardSpace::ScreenSpace);
+        assert(proxy.LayerPriority == 0u);
+        assert(proxy.OrderInLayer == 0u);
+        assert(proxy.SortKey == BoardProxy::ComputeSortKey(0u, 0u));
         assert(proxy.WorldTransform.m30 == 12.0f);
         assert(proxy.WorldTransform.m31 == 34.0f);
+
+        board->SetLayerPriority(3u);
+        board->SetOrderInLayer(7u);
+        assert(board->BuildBoardProxy(proxy));
+        assert(proxy.LayerPriority == 3u);
+        assert(proxy.OrderInLayer == 7u);
+        assert(proxy.SortKey == BoardProxy::ComputeSortKey(3u, 7u));
 
         world.Finalize();
         std::cout << "TestBoardReflectionAndTextureOptionalProxy passed\n";

@@ -208,6 +208,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t ObjectId = 0;
         uint64_t ComponentId = 0;
         uint64_t SortKey = 0;
+        uint32_t LayerPriority = 0;
+        uint32_t OrderInLayer = 0;
 
         TextureHandle Texture = TextureHandle::Invalid();
 
@@ -218,6 +220,12 @@ namespace NorvesLib::Core::Rendering
         BoardSpace Space = BoardSpace::ScreenSpace;
 
         bool bVisible = true;
+
+        static constexpr uint64_t ComputeSortKey(uint32_t layerPriority, uint32_t orderInLayer)
+        {
+            return (static_cast<uint64_t>(layerPriority) << 32u) |
+                   static_cast<uint64_t>(orderInLayer);
+        }
 
         bool IsValid() const
         {

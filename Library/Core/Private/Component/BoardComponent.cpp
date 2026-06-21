@@ -11,6 +11,8 @@ namespace NorvesLib::Core::Component
         bVisible = true;
         RenderLayerProp = Rendering::RenderLayer::UI;
         Space = Rendering::BoardSpace::ScreenSpace;
+        LayerPriority = 0;
+        OrderInLayer = 0;
     }
 
     BoardComponent::BoardComponent(const FieldInitializer *initializer)
@@ -19,6 +21,8 @@ namespace NorvesLib::Core::Component
         bVisible = true;
         RenderLayerProp = Rendering::RenderLayer::UI;
         Space = Rendering::BoardSpace::ScreenSpace;
+        LayerPriority = 0;
+        OrderInLayer = 0;
     }
 
     BoardComponent::BoardComponent(const IUnknown *sourceObject)
@@ -27,6 +31,8 @@ namespace NorvesLib::Core::Component
         bVisible = true;
         RenderLayerProp = Rendering::RenderLayer::UI;
         Space = Rendering::BoardSpace::ScreenSpace;
+        LayerPriority = 0;
+        OrderInLayer = 0;
     }
 
     BoardComponent::~BoardComponent() = default;
@@ -73,6 +79,18 @@ namespace NorvesLib::Core::Component
         MarkRenderStateDirty();
     }
 
+    void BoardComponent::SetLayerPriority(uint32_t layerPriority)
+    {
+        LayerPriority = layerPriority;
+        MarkRenderStateDirty();
+    }
+
+    void BoardComponent::SetOrderInLayer(uint32_t orderInLayer)
+    {
+        OrderInLayer = orderInLayer;
+        MarkRenderStateDirty();
+    }
+
     void BoardComponent::RefreshRenderTransformCache()
     {
         UpdateWorldTransform();
@@ -96,6 +114,9 @@ namespace NorvesLib::Core::Component
         outProxy.PreviousWorldTransform = m_PreviousWorldTransform;
         outProxy.LayerMask = RenderLayerProp;
         outProxy.Space = Space;
+        outProxy.LayerPriority = LayerPriority;
+        outProxy.OrderInLayer = OrderInLayer;
+        outProxy.SortKey = Rendering::BoardProxy::ComputeSortKey(LayerPriority, OrderInLayer);
         outProxy.bVisible = bVisible;
         return true;
     }
