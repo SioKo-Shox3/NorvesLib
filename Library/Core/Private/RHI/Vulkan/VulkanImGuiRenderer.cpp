@@ -122,6 +122,16 @@ namespace NorvesLib::RHI::Vulkan
         // DescriptorPool は imgui が内部で own/解放するため本クラスでは破棄しない。
         if (m_bInitialized)
         {
+            // imgui バックエンドの Vulkan リソース（内部 DescriptorPool / パイプライン /
+            // フレームバッファ等）を解放する前に GPU を idle まで待つ。ST モードでは
+            // RenderThread が非起動で、最後のインライン RenderFrame が投入した GPU work の
+            // 完了が module 経由 Shutdown 時点で保証されないため、使用中リソースの解放で
+            // AV になる（MT は RenderThread::Stop の Join で暗黙に idle 保証される）。
+            // WaitIdle は MT でも既に idle なら即返るため両モードで安全・冪等。
+            if (m_device != nullptr)
+            {
+                m_device->WaitIdle();
+            }
             ImGui_ImplVulkan_Shutdown();
             m_bInitialized = false;
         }
