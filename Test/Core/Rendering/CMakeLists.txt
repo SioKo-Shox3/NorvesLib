@@ -303,6 +303,16 @@ target_include_directories(CanvasViewRenderTest PRIVATE
 set_target_properties(CanvasViewRenderTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CanvasViewRenderTest COMMAND CanvasViewRenderTest)
 
+add_executable(BoardComponentRoutingTest
+    BoardComponentRoutingTest.cpp
+)
+target_link_libraries(BoardComponentRoutingTest PRIVATE Core)
+target_include_directories(BoardComponentRoutingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardComponentRoutingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardComponentRoutingTest COMMAND BoardComponentRoutingTest)
+
 add_executable(CompositePassTest
     CompositePassTest.cpp
 )

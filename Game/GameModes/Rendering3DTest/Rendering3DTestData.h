@@ -15,6 +15,7 @@ namespace NorvesLib::Core
     namespace Component
     {
         class MeshComponent;
+        class BoardComponent;
         class MegaGeometryComponent;
         class LightComponent;
         class PointLightComponent;
@@ -81,12 +82,14 @@ namespace Game::GameModes
         NorvesLib::Core::Entity *m_pLightSphereObject = nullptr;
         NorvesLib::Core::Entity *m_pBoulderObject = nullptr;
         NorvesLib::Core::Entity *m_pBoulderPlaceholderObject = nullptr;
+        NorvesLib::Core::Entity *m_pF3BoardObject = nullptr;
 
         // MeshComponent参照（Entityが所有）
         NorvesLib::Core::Component::MeshComponent *m_pSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pGroundMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pLightSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pBoulderPlaceholderMeshComponent = nullptr;
+        NorvesLib::Core::Component::BoardComponent *m_pF3BoardComponent = nullptr;
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
 
         // LightComponent参照（Entityが所有）

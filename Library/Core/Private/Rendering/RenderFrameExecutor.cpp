@@ -215,7 +215,7 @@ namespace NorvesLib::Core::Rendering
         request.Context->Graph->Reset();
         ApplyViewportRenderPlan(*request.Context, primarySceneViewport);
 
-        CompositePassRequest compositeRequest;
+        CompositePassRequest compositeRequest = request.GraphCompositeRequest;
         compositeRequest.SceneTexture = sceneTexture;
         compositeRequest.CanvasTexture = canvasTexture;
         request.CompositeGraphPass->SetRequest(compositeRequest);

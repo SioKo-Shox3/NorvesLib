@@ -608,6 +608,10 @@ namespace
         assert(fixture.CommandList.LastViewport.height == 54.0f);
         assert(fixture.CommandList.LastScissor.right == 96);
         assert(fixture.CommandList.LastScissor.bottom == 54);
+
+        assert(canvas.GetRetainedBoardFrameResourceCount() == 1);
+        canvas.Shutdown();
+        assert(canvas.GetRetainedBoardFrameResourceCount() == 0);
         std::cout << "TestCanvasViewClearsTransparentAndExportsFrameOutput passed\n";
     }
 } // namespace
