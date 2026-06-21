@@ -165,6 +165,8 @@ set(PRIVATE_SOURCES
     Private/FileStream/FileStream.cpp
     Private/FileStream/AsyncFileStream.cpp
     Private/FileStream/Package.cpp
+    # Module
+    Private/Module/ModuleRegistry.cpp
     # ThirdParty
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb/stb_image_impl.cpp
 )
@@ -216,6 +218,11 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Engine/ApplicationProcessor.h
+    # Module
+    Public/Module/ModuleExport.h
+    Public/Module/IModule.h
+    Public/Module/IRenderModule.h
+    Public/Module/ModuleRegistry.h
     # GameMode
     Public/GameMode/IStateMachine.h
     Public/GameMode/IGameMode.h
