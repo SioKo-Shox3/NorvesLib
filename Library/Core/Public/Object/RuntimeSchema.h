@@ -177,6 +177,7 @@ namespace NorvesLib::Core
 
     struct TypeOps
     {
+        using ConstructFn = void (*)(void *value);
         using CopyFn = void (*)(void *dst, const void *src);
         using MoveFn = void (*)(void *dst, void *src);
         using DestroyFn = void (*)(void *value);
@@ -184,6 +185,7 @@ namespace NorvesLib::Core
         using DeserializeFn = bool (*)(const Container::String &inValue, void *outValue);
         using AddReferencesFn = void (*)(const void *value, ReferenceCollector &collector);
 
+        ConstructFn Construct = nullptr;
         CopyFn Copy = nullptr;
         MoveFn Move = nullptr;
         DestroyFn Destroy = nullptr;
@@ -600,6 +602,10 @@ namespace NorvesLib::Core
             info.Kind = kind;
             info.Size = sizeof(ValueType);
             info.Alignment = alignof(ValueType);
+            info.Ops.Construct = [](void *value)
+            {
+                new (value) ValueType{};
+            };
             info.Ops.Copy = [](void *dst, const void *src)
             {
                 new (dst) ValueType(*static_cast<const ValueType *>(src));
@@ -614,6 +620,10 @@ namespace NorvesLib::Core
             };
             info.Ops.Serialize = &Detail::SerializeValue<ValueType>;
             info.Ops.Deserialize = &Detail::DeserializeValue<ValueType>;
+            if (overrideOps.Construct)
+            {
+                info.Ops.Construct = overrideOps.Construct;
+            }
             if (overrideOps.Copy)
             {
                 info.Ops.Copy = overrideOps.Copy;
@@ -796,6 +806,36 @@ namespace NorvesLib::Core
                 Set(value);
                 return true;
             }
+        }
+
+        bool DeserializeStable(StableTypeId stableType, const Container::String& inValue)
+        {
+            TypeRegistry& registry = TypeRegistry::Get();
+            const TypeInfo* typeInfo = registry.FindStable(stableType);
+            if (!typeInfo ||
+                !typeInfo->Ops.Construct ||
+                !typeInfo->Ops.Destroy ||
+                !typeInfo->Ops.Deserialize)
+            {
+                return false;
+            }
+
+            void* newData = ::operator new(typeInfo->Size, std::align_val_t(typeInfo->Alignment));
+            typeInfo->Ops.Construct(newData);
+
+            if (!typeInfo->Ops.Deserialize(inValue, newData))
+            {
+                typeInfo->Ops.Destroy(newData);
+                ::operator delete(newData, std::align_val_t(typeInfo->Alignment));
+                return false;
+            }
+
+            Reset();
+            m_Type = typeInfo->Id;
+            m_Data = newData;
+            m_Size = typeInfo->Size;
+            m_Alignment = typeInfo->Alignment;
+            return true;
         }
 
         template <typename T>

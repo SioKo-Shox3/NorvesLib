@@ -1,5 +1,6 @@
 #include "Object/World.h"
 #include "Object/Entity.h"
+#include "Object/PrefabAsset.h"
 #include "Component/MeshComponent.h"
 #include "Component/MegaGeometryComponent.h"
 #include "Component/LightComponent.h"
@@ -10,6 +11,529 @@
 
 namespace NorvesLib::Core
 {
+    namespace
+    {
+        constexpr uint32_t MaxPrefabNestedDepth = 16;
+
+        struct PrefabLiveObject
+        {
+            Object* ObjectPtr = nullptr;
+            Entity* EntityPtr = nullptr;
+            Component::Component* ComponentPtr = nullptr;
+            ObjectHandle Handle;
+        };
+
+        struct PrefabBuiltObject
+        {
+            PrefabTargetPath Target;
+            PrefabLiveObject LiveObject;
+        };
+
+        struct PrefabBuildState
+        {
+            Container::VariableArray<PrefabBuiltObject> Objects;
+        };
+
+        using PrefabAliasMap = Container::UnorderedMap<SubtreeSnapshotAliasId, PrefabLiveObject>;
+
+        template <typename T>
+        class TRawObjectGuard
+        {
+        public:
+            explicit TRawObjectGuard(T* object)
+                : m_Object(object)
+            {
+            }
+
+            ~TRawObjectGuard()
+            {
+                if (m_Object)
+                {
+                    if (m_Object->HasFlag(OF_Initialized))
+                    {
+                        m_Object->Finalize();
+                    }
+                    delete m_Object;
+                }
+            }
+
+            T* Get() const
+            {
+                return m_Object;
+            }
+
+            T* Release()
+            {
+                T* object = m_Object;
+                m_Object = nullptr;
+                return object;
+            }
+
+        private:
+            T* m_Object = nullptr;
+        };
+
+        StableClassId MakePrefabStableClassId(const IClass& cls)
+        {
+            return MakeStableSchemaId("NorvesLib", "Class", cls.GetClassName().GetView());
+        }
+
+        StablePropertyId MakePrefabStablePropertyId(const IClass& cls, const ClassProperty& property)
+        {
+            return MakeStableSchemaId(
+                "NorvesLib",
+                "Property",
+                cls.GetClassName().GetView(),
+                property.GetName().GetView());
+        }
+
+        const IClass* ResolvePrefabClass(StableClassId stableClassId)
+        {
+            Container::VariableArray<const IClass*> classes = ClassRegistry::Get().GetAllClasses();
+            for (const IClass* cls : classes)
+            {
+                if (cls && MakePrefabStableClassId(*cls) == stableClassId)
+                {
+                    return cls;
+                }
+            }
+            return nullptr;
+        }
+
+        const ClassProperty* FindPrefabProperty(const IClass& cls, StablePropertyId propertyId)
+        {
+            Container::VariableArray<const ClassProperty*> properties = cls.GetAllProperties();
+            for (const ClassProperty* property : properties)
+            {
+                if (property && MakePrefabStablePropertyId(cls, *property) == propertyId)
+                {
+                    return property;
+                }
+            }
+            return nullptr;
+        }
+
+        bool ContainsPrefabInStack(
+            const Container::VariableArray<const PrefabAsset*>& stack,
+            const PrefabAsset& prefab)
+        {
+            for (const PrefabAsset* existing : stack)
+            {
+                if (existing == &prefab)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool ContainsEntityAlias(const EntitySubtreeSnapshotNode& node, SubtreeSnapshotAliasId alias)
+        {
+            if (node.Alias == alias)
+            {
+                return true;
+            }
+
+            for (const EntitySubtreeSnapshotNode& child : node.Children)
+            {
+                if (ContainsEntityAlias(child, alias))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool ValidatePrefabGraph(
+            const PrefabAsset& prefab,
+            Container::VariableArray<const PrefabAsset*>& stack,
+            uint32_t depth)
+        {
+            if (!prefab.HasTree() ||
+                depth > MaxPrefabNestedDepth ||
+                ContainsPrefabInStack(stack, prefab))
+            {
+                return false;
+            }
+
+            stack.push_back(&prefab);
+
+            for (const PrefabNestedPrefabInstance& nested : prefab.GetNestedPrefabs())
+            {
+                const PrefabAsset* nestedPrefab = nested.Prefab.Get();
+                if (nested.InstanceId == InvalidPrefabNestedInstanceId ||
+                    nested.ParentAlias == InvalidSubtreeSnapshotAliasId ||
+                    !nestedPrefab ||
+                    !nestedPrefab->HasTree() ||
+                    !ContainsEntityAlias(prefab.GetTree().Root, nested.ParentAlias) ||
+                    !ValidatePrefabGraph(*nestedPrefab, stack, depth + 1))
+                {
+                    stack.pop_back();
+                    return false;
+                }
+            }
+
+            stack.pop_back();
+            return true;
+        }
+
+        bool PathsEqual(
+            const Container::VariableArray<PrefabNestedInstanceId>& lhs,
+            const Container::VariableArray<PrefabNestedInstanceId>& rhs)
+        {
+            if (lhs.size() != rhs.size())
+            {
+                return false;
+            }
+
+            for (size_t index = 0; index < lhs.size(); ++index)
+            {
+                if (lhs[index] != rhs[index])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        PrefabTargetPath MakeAbsoluteTarget(
+            const Container::VariableArray<PrefabNestedInstanceId>& basePath,
+            const PrefabTargetPath& localTarget)
+        {
+            PrefabTargetPath result;
+            result.NestedInstances = basePath;
+            for (PrefabNestedInstanceId nestedInstance : localTarget.NestedInstances)
+            {
+                result.NestedInstances.push_back(nestedInstance);
+            }
+            result.Alias = localTarget.Alias;
+            return result;
+        }
+
+        PrefabLiveObject* FindBuiltObject(PrefabBuildState& state, const PrefabTargetPath& target)
+        {
+            for (PrefabBuiltObject& object : state.Objects)
+            {
+                if (object.Target.Alias == target.Alias &&
+                    PathsEqual(object.Target.NestedInstances, target.NestedInstances))
+                {
+                    return &object.LiveObject;
+                }
+            }
+            return nullptr;
+        }
+
+        bool RegisterLiveObject(
+            SubtreeSnapshotAliasId alias,
+            const Container::VariableArray<PrefabNestedInstanceId>& path,
+            const PrefabLiveObject& liveObject,
+            PrefabAliasMap& aliases,
+            PrefabBuildState& state)
+        {
+            if (alias == InvalidSubtreeSnapshotAliasId ||
+                !liveObject.ObjectPtr ||
+                aliases.find(alias) != aliases.end())
+            {
+                return false;
+            }
+
+            aliases[alias] = liveObject;
+
+            PrefabBuiltObject builtObject;
+            builtObject.Target.NestedInstances = path;
+            builtObject.Target.Alias = alias;
+            builtObject.LiveObject = liveObject;
+            state.Objects.push_back(builtObject);
+            return true;
+        }
+
+        bool ApplyPrefabValue(Object& object, const ProjectedPropertyValue& projectedValue)
+        {
+            const IClass* cls = object.GetClass();
+            if (!cls)
+            {
+                return false;
+            }
+
+            const ClassProperty* property = FindPrefabProperty(*cls, projectedValue.Property);
+            if (!property)
+            {
+                return false;
+            }
+
+            if (ShouldSkipPrefabRestoreProperty(*cls, *property))
+            {
+                return true;
+            }
+
+            const TypeId runtimeType = property->GetRuntimeTypeId();
+            const TypeInfo* runtimeTypeInfo = TypeRegistry::Get().Find(runtimeType);
+            if (!runtimeTypeInfo || runtimeTypeInfo->StableId != projectedValue.Type)
+            {
+                return false;
+            }
+
+            PropertyValue value;
+            if (!value.DeserializeStable(projectedValue.Type, projectedValue.SerializedValue))
+            {
+                return false;
+            }
+
+            if (Entity* entity = CastTo<Entity>(&object))
+            {
+                const Identity& propertyName = property->GetName();
+                if (propertyName == Identity("Position"))
+                {
+                    const Math::Vector3* position = value.Get<Math::Vector3>();
+                    if (!position)
+                    {
+                        return false;
+                    }
+                    entity->SetLocalPosition(*position);
+                    return true;
+                }
+
+                if (propertyName == Identity("Rotation"))
+                {
+                    const Math::Quaternion* rotation = value.Get<Math::Quaternion>();
+                    if (!rotation)
+                    {
+                        return false;
+                    }
+                    entity->SetLocalRotation(*rotation);
+                    return true;
+                }
+
+                if (propertyName == Identity("Scale"))
+                {
+                    const Math::Vector3* scale = value.Get<Math::Vector3>();
+                    if (!scale)
+                    {
+                        return false;
+                    }
+                    entity->SetLocalScale(*scale);
+                    return true;
+                }
+            }
+
+            return property->ApplyValue(&object, value);
+        }
+
+        bool ApplyPrefabSnapshot(Object& object, const ObjectSnapshot& snapshot)
+        {
+            for (const ProjectedPropertyValue& value : snapshot.Properties)
+            {
+                if (!ApplyPrefabValue(object, value))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ApplyPrefabOverrideSet(
+            const PrefabOverrideSet& overrides,
+            const Container::VariableArray<PrefabNestedInstanceId>& basePath,
+            PrefabBuildState& state)
+        {
+            for (const PrefabPropertyOverride& overrideValue : overrides.Properties)
+            {
+                PrefabTargetPath target = MakeAbsoluteTarget(basePath, overrideValue.Target);
+                if (target.Alias == InvalidSubtreeSnapshotAliasId)
+                {
+                    return false;
+                }
+
+                PrefabLiveObject* liveObject = FindBuiltObject(state, target);
+                if (!liveObject || !liveObject->ObjectPtr)
+                {
+                    return false;
+                }
+
+                if (!ApplyPrefabValue(*liveObject->ObjectPtr, overrideValue.Value))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        Entity* BuildPrefabInstance(
+            const PrefabAsset& prefab,
+            const Container::VariableArray<PrefabNestedInstanceId>& path,
+            const PrefabOverrideSet* instanceOverrides,
+            PrefabBuildState& state);
+
+        Component::Component* BuildPrefabComponent(
+            const ComponentSubtreeSnapshot& snapshot,
+            const Container::VariableArray<PrefabNestedInstanceId>& path,
+            PrefabAliasMap& aliases,
+            PrefabBuildState& state)
+        {
+            const IClass* cls = ResolvePrefabClass(snapshot.Object.Class);
+            if (!cls || !cls->IsChildOf(Component::Component::StaticClass()))
+            {
+                return nullptr;
+            }
+
+            IUnknown* instance = cls->NewInstance(nullptr);
+            Component::Component* component = CastTo<Component::Component>(instance);
+            if (!component)
+            {
+                delete instance;
+                return nullptr;
+            }
+
+            TRawObjectGuard<Component::Component> componentGuard(component);
+            if (!ApplyPrefabSnapshot(*component, snapshot.Object))
+            {
+                return nullptr;
+            }
+
+            PrefabLiveObject liveObject;
+            liveObject.ObjectPtr = component;
+            liveObject.ComponentPtr = component;
+            if (!RegisterLiveObject(snapshot.Alias, path, liveObject, aliases, state))
+            {
+                return nullptr;
+            }
+
+            return componentGuard.Release();
+        }
+
+        Entity* BuildPrefabEntityNode(
+            const EntitySubtreeSnapshotNode& node,
+            const Container::VariableArray<PrefabNestedInstanceId>& path,
+            PrefabAliasMap& aliases,
+            PrefabBuildState& state)
+        {
+            const IClass* cls = ResolvePrefabClass(node.Object.Class);
+            if (!cls || !cls->IsChildOf(Entity::StaticClass()))
+            {
+                return nullptr;
+            }
+
+            IUnknown* instance = cls->NewInstance(nullptr);
+            Entity* entity = CastTo<Entity>(instance);
+            if (!entity)
+            {
+                delete instance;
+                return nullptr;
+            }
+
+            TRawObjectGuard<Entity> entityGuard(entity);
+            if (!ApplyPrefabSnapshot(*entity, node.Object))
+            {
+                return nullptr;
+            }
+
+            PrefabLiveObject liveObject;
+            liveObject.ObjectPtr = entity;
+            liveObject.EntityPtr = entity;
+            if (!RegisterLiveObject(node.Alias, path, liveObject, aliases, state))
+            {
+                return nullptr;
+            }
+
+            for (const ComponentSubtreeSnapshot& componentSnapshot : node.Components)
+            {
+                if (componentSnapshot.OwnerAlias != node.Alias)
+                {
+                    return nullptr;
+                }
+
+                Component::Component* component = BuildPrefabComponent(
+                    componentSnapshot,
+                    path,
+                    aliases,
+                    state);
+                TRawObjectGuard<Component::Component> componentGuard(component);
+                if (!component || !entity->AddInner(component))
+                {
+                    return nullptr;
+                }
+                componentGuard.Release();
+            }
+
+            for (const EntitySubtreeSnapshotNode& childNode : node.Children)
+            {
+                if (childNode.ParentAlias != node.Alias)
+                {
+                    return nullptr;
+                }
+
+                Entity* child = BuildPrefabEntityNode(childNode, path, aliases, state);
+                TRawObjectGuard<Entity> childGuard(child);
+                if (!child || !entity->AddInner(child))
+                {
+                    return nullptr;
+                }
+                childGuard.Release();
+            }
+
+            return entityGuard.Release();
+        }
+
+        Entity* BuildPrefabInstance(
+            const PrefabAsset& prefab,
+            const Container::VariableArray<PrefabNestedInstanceId>& path,
+            const PrefabOverrideSet* instanceOverrides,
+            PrefabBuildState& state)
+        {
+            if (!prefab.HasTree() ||
+                prefab.GetTree().RootAlias == InvalidSubtreeSnapshotAliasId ||
+                prefab.GetTree().Root.Alias != prefab.GetTree().RootAlias ||
+                prefab.GetTree().Root.ParentAlias != InvalidSubtreeSnapshotAliasId)
+            {
+                return nullptr;
+            }
+
+            PrefabAliasMap localAliases;
+            Entity* root = BuildPrefabEntityNode(prefab.GetTree().Root, path, localAliases, state);
+            TRawObjectGuard<Entity> rootGuard(root);
+            if (!root)
+            {
+                return nullptr;
+            }
+
+            for (const PrefabNestedPrefabInstance& nested : prefab.GetNestedPrefabs())
+            {
+                auto parentIt = localAliases.find(nested.ParentAlias);
+                const PrefabAsset* nestedPrefab = nested.Prefab.Get();
+                if (parentIt == localAliases.end() ||
+                    !parentIt->second.EntityPtr ||
+                    !nestedPrefab ||
+                    nested.InstanceId == InvalidPrefabNestedInstanceId)
+                {
+                    return nullptr;
+                }
+
+                Container::VariableArray<PrefabNestedInstanceId> nestedPath = path;
+                nestedPath.push_back(nested.InstanceId);
+
+                Entity* nestedRoot = BuildPrefabInstance(
+                    *nestedPrefab,
+                    nestedPath,
+                    &nested.Overrides,
+                    state);
+                TRawObjectGuard<Entity> nestedRootGuard(nestedRoot);
+                if (!nestedRoot || !parentIt->second.EntityPtr->AddInner(nestedRoot))
+                {
+                    return nullptr;
+                }
+                nestedRootGuard.Release();
+            }
+
+            if (instanceOverrides && !ApplyPrefabOverrideSet(*instanceOverrides, path, state))
+            {
+                return nullptr;
+            }
+
+            return rootGuard.Release();
+        }
+    } // namespace
+
     IMPLEMENT_CLASS(World, Object)
 
     World::World()
@@ -111,6 +635,49 @@ namespace NorvesLib::Core
                          object->GetObjectId(),
                          static_cast<uint64_t>(GetObjectCount()));
         return true;
+    }
+
+    Entity* World::SpawnPrefab(const PrefabAsset& prefab, Entity* parent, const PrefabOverrideSet* overrides)
+    {
+        if (!HasFlag(OF_Initialized))
+        {
+            return nullptr;
+        }
+
+        if (parent && parent->GetWorld() != this)
+        {
+            return nullptr;
+        }
+
+        Container::VariableArray<const PrefabAsset*> prefabStack;
+        if (!ValidatePrefabGraph(prefab, prefabStack, 1))
+        {
+            return nullptr;
+        }
+
+        PrefabBuildState buildState;
+        Container::VariableArray<PrefabNestedInstanceId> rootPath;
+        Entity* root = BuildPrefabInstance(prefab, rootPath, nullptr, buildState);
+        TRawObjectGuard<Entity> rootGuard(root);
+        if (!root)
+        {
+            return nullptr;
+        }
+
+        if (overrides && !ApplyPrefabOverrideSet(*overrides, rootPath, buildState))
+        {
+            return nullptr;
+        }
+
+        const bool bAttached = parent
+            ? AttachChildEntity(parent, root)
+            : AttachRootEntity(root);
+        if (!bAttached)
+        {
+            return nullptr;
+        }
+
+        return rootGuard.Release();
     }
 
     void World::RemoveObject(Entity* object)

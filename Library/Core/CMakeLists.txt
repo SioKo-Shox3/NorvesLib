@@ -23,6 +23,7 @@ set(PRIVATE_SOURCES
     Private/Object/Invocation.cpp
     Private/Object/SchemaProjection.cpp
     Private/Object/ClassRegistry.cpp
+    Private/Object/PrefabAsset.cpp
     Private/Object/Resource.cpp
     Private/Object/Entity.cpp
     Private/Object/ResourceRegistry.cpp
@@ -299,6 +300,7 @@ set(PUBLIC_HEADERS
     Public/Object/ObjectResolver.h
     Public/Object/PropertyBag.h
     Public/Object/ReferenceCollector.h
+    Public/Object/PrefabAsset.h
     Public/Object/Resource.h
     Public/Object/ResourceRef.h
     Public/Object/RuntimeSchema.h
