@@ -2,6 +2,7 @@
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/Viewport.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
@@ -131,7 +132,28 @@ namespace NorvesLib::Core::Rendering
         canvasSettings.ClearColor[2] = 0.0f;
         canvasSettings.ClearColor[3] = 0.0f;
         canvasSettings.bClearDepth = false;
-        return View::Initialize(canvasSettings);
+        if (!View::Initialize(canvasSettings))
+        {
+            return false;
+        }
+
+        auto viewport = Container::MakeShared<Viewport>();
+        ViewportSettings viewportSettings;
+        viewportSettings.X = 0.0f;
+        viewportSettings.Y = 0.0f;
+        viewportSettings.Width = 1.0f;
+        viewportSettings.Height = 1.0f;
+        viewportSettings.MinDepth = 0.0f;
+        viewportSettings.MaxDepth = 1.0f;
+        if (!viewport->Initialize(viewportSettings))
+        {
+            View::Shutdown();
+            return false;
+        }
+
+        viewport->SetEnabled(true);
+        AddViewport(viewport);
+        return true;
     }
 
     void CanvasView::Render(ViewRenderContext& context)

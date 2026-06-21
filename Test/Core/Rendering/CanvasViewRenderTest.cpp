@@ -2,6 +2,7 @@
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/Viewport.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -550,7 +551,20 @@ namespace
         settings.Height = 1;
         settings.ClearColor[3] = 1.0f;
         assert(canvas.Initialize(settings));
-        assert(canvas.GetViewportCount() == 0);
+        assert(canvas.GetViewportCount() == 1);
+        auto viewport = canvas.GetMainViewport();
+        assert(viewport);
+        assert(viewport->IsEnabled());
+
+        float x = 1.0f;
+        float y = 1.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        viewport->GetRect(x, y, width, height);
+        assert(x == 0.0f);
+        assert(y == 0.0f);
+        assert(width == 1.0f);
+        assert(height == 1.0f);
 
         canvas.Render(fixture.Context);
 

@@ -39,11 +39,13 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        template<typename CameraResolver>
         ViewportRenderPlan BuildViewportRenderPlan(const Viewport &viewport,
                                                    uint32_t viewId,
                                                    uint32_t viewportId,
                                                    uint32_t renderWidth,
                                                    uint32_t renderHeight,
+                                                   CameraResolver resolveCamera,
                                                    const CameraProxy *fallbackCamera)
         {
             ViewportRenderPlan plan;
@@ -89,7 +91,18 @@ namespace NorvesLib::Core::Rendering
             plan.Scissor.Right = static_cast<int32_t>(pixelX + pixelWidth);
             plan.Scissor.Bottom = static_cast<int32_t>(pixelY + pixelHeight);
 
-            CameraProxy camera = viewport.GetCamera();
+            CameraProxy camera;
+            const uint64_t cameraId = viewport.GetCameraId();
+            const CameraProxy *resolvedCamera = cameraId != 0 ? resolveCamera(cameraId) : nullptr;
+            if (resolvedCamera)
+            {
+                camera = *resolvedCamera;
+            }
+            else
+            {
+                camera = viewport.GetCamera();
+            }
+
             if (!camera.IsValid() && fallbackCamera)
             {
                 camera = *fallbackCamera;
@@ -639,6 +652,11 @@ namespace NorvesLib::Core::Rendering
         m_Views.clear();
         m_MainSceneView.reset();
         m_CanvasView.reset();
+        m_Cameras.clear();
+        m_MainCameraId = 0;
+        m_CanvasCameraId = 0;
+        m_NextCameraId = 1;
+        m_bCanvasCameraSyncPending.Store(false);
 
         // SceneRendererの終了
         m_SceneRenderer.Shutdown();
@@ -703,6 +721,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        ConsumePendingCanvasCameraSync();
         m_bFrameSubmissionStarted = true;
 
         // 現在時刻を取得
@@ -874,11 +893,16 @@ namespace NorvesLib::Core::Rendering
 
                 const CameraProxy *fallbackCamera =
                     (bIsMainSceneView && m_bCameraSet) ? &m_MainCamera : nullptr;
+                auto resolveCamera = [this](uint64_t cameraId) -> const CameraProxy*
+                {
+                    return FindCamera(cameraId);
+                };
                 ViewportRenderPlan viewportPlan = BuildViewportRenderPlan(*viewport,
                                                                           viewIndex,
                                                                           viewportIndex,
                                                                           m_RenderWidth,
                                                                           m_RenderHeight,
+                                                                          resolveCamera,
                                                                           fallbackCamera);
 
                 if (sceneView && view->IsEnabled() && viewportPlan.HasDrawableExtent())
@@ -990,6 +1014,7 @@ namespace NorvesLib::Core::Rendering
             m_Width = swapChainWidth;
             m_Height = swapChainHeight;
             UpdateRenderResolution(swapChainWidth, swapChainHeight);
+            RequestCanvasCameraSync();
 
             if (!RecreateSwapChainPresentationResources())
             {
@@ -1212,6 +1237,7 @@ namespace NorvesLib::Core::Rendering
             m_DepthTexture.reset();
 
             UpdateRenderResolution(presentWidth, presentHeight);
+            RequestCanvasCameraSync();
             for (auto &view : m_Views)
             {
                 if (view)
@@ -1309,6 +1335,29 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
+        CameraProxy canvasCamera;
+        canvasCamera.Projection = ProjectionType::Orthographic;
+        canvasCamera.CullingMask = RenderLayer::UI;
+        canvasCamera.NearPlane = 0.0f;
+        canvasCamera.FarPlane = 1.0f;
+        canvasCamera.OrthoWidth = static_cast<float>(m_RenderWidth);
+        canvasCamera.OrthoHeight = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.X = 0.0f;
+        canvasCamera.Viewport.Y = 0.0f;
+        canvasCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
+        canvasCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.MinDepth = 0.0f;
+        canvasCamera.Viewport.MaxDepth = 1.0f;
+        m_CanvasCameraId = RegisterCamera(canvasCamera);
+        const CameraProxy *registeredCamera = FindCamera(m_CanvasCameraId);
+        auto canvasViewport = canvasView->GetMainViewport();
+        if (canvasViewport && registeredCamera)
+        {
+            canvasViewport->SetCameraId(m_CanvasCameraId);
+            canvasViewport->SetCamera(*registeredCamera);
+        }
+        m_bCanvasCameraSyncPending.Store(false);
+
         m_Screen.AddView(canvasView, 1);
         m_Views.push_back(canvasView);
         m_CanvasView = canvasView;
@@ -1333,6 +1382,8 @@ namespace NorvesLib::Core::Rendering
             if (*it == m_CanvasView)
             {
                 m_CanvasView.reset();
+                m_CanvasCameraId = 0;
+                m_bCanvasCameraSyncPending.Store(false);
             }
             if (*it == m_MainSceneView)
             {
@@ -1355,6 +1406,16 @@ namespace NorvesLib::Core::Rendering
             m_MainCamera.Viewport.MaxDepth = 1.0f;
         }
 
+        if (m_MainCameraId == 0)
+        {
+            m_MainCameraId = RegisterCamera(m_MainCamera);
+        }
+        else
+        {
+            UpdateCamera(m_MainCameraId, m_MainCamera);
+        }
+        m_MainCamera.CameraId = m_MainCameraId;
+
         if (m_MainSceneView)
         {
             auto mainViewport = m_MainSceneView->GetMainViewport();
@@ -1365,6 +1426,50 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_bCameraSet = true;
+    }
+
+    uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)
+    {
+        const uint64_t cameraId = m_NextCameraId++;
+        CameraProxy storedCamera = camera;
+        storedCamera.CameraId = cameraId;
+        m_Cameras[cameraId] = storedCamera;
+        return cameraId;
+    }
+
+    bool RenderingCoordinator::UpdateCamera(uint64_t cameraId, const CameraProxy &camera)
+    {
+        if (cameraId == 0)
+        {
+            return false;
+        }
+
+        auto it = m_Cameras.find(cameraId);
+        if (it == m_Cameras.end())
+        {
+            return false;
+        }
+
+        CameraProxy storedCamera = camera;
+        storedCamera.CameraId = cameraId;
+        it->second = storedCamera;
+        return true;
+    }
+
+    const CameraProxy *RenderingCoordinator::FindCamera(uint64_t cameraId) const
+    {
+        if (cameraId == 0)
+        {
+            return nullptr;
+        }
+
+        auto it = m_Cameras.find(cameraId);
+        if (it == m_Cameras.end())
+        {
+            return nullptr;
+        }
+
+        return &it->second;
     }
 
     void RenderingCoordinator::Resize(uint32_t width, uint32_t height)
@@ -1392,6 +1497,8 @@ namespace NorvesLib::Core::Rendering
         m_Width = width;
         m_Height = height;
         UpdateRenderResolution(width, height);
+        m_bCanvasCameraSyncPending.Store(false);
+        UpdateCanvasCameraForRenderResolution();
 
         // Screenのリサイズ（SwapChainリサイズを含む）
         m_Screen.Resize(width, height);
@@ -1433,6 +1540,61 @@ namespace NorvesLib::Core::Rendering
     {
         m_RenderWidth = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(screenWidth) * static_cast<double>(m_RenderScale))));
         m_RenderHeight = std::max(1u, static_cast<uint32_t>(std::lround(static_cast<double>(screenHeight) * static_cast<double>(m_RenderScale))));
+    }
+
+    void RenderingCoordinator::RequestCanvasCameraSync()
+    {
+        m_bCanvasCameraSyncPending.Store(true);
+    }
+
+    void RenderingCoordinator::ConsumePendingCanvasCameraSync()
+    {
+        if (m_bCanvasCameraSyncPending.Exchange(false))
+        {
+            UpdateCanvasCameraForRenderResolution();
+        }
+    }
+
+    void RenderingCoordinator::UpdateCanvasCameraForRenderResolution()
+    {
+        if (m_CanvasCameraId == 0)
+        {
+            return;
+        }
+
+        CameraProxy canvasCamera;
+        const CameraProxy *existingCamera = FindCamera(m_CanvasCameraId);
+        if (existingCamera)
+        {
+            canvasCamera = *existingCamera;
+        }
+
+        canvasCamera.Projection = ProjectionType::Orthographic;
+        canvasCamera.CullingMask = RenderLayer::UI;
+        canvasCamera.NearPlane = 0.0f;
+        canvasCamera.FarPlane = 1.0f;
+        canvasCamera.OrthoWidth = static_cast<float>(m_RenderWidth);
+        canvasCamera.OrthoHeight = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.X = 0.0f;
+        canvasCamera.Viewport.Y = 0.0f;
+        canvasCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
+        canvasCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.MinDepth = 0.0f;
+        canvasCamera.Viewport.MaxDepth = 1.0f;
+
+        if (UpdateCamera(m_CanvasCameraId, canvasCamera))
+        {
+            const CameraProxy *updatedCamera = FindCamera(m_CanvasCameraId);
+            if (m_CanvasView && updatedCamera)
+            {
+                auto canvasViewport = m_CanvasView->GetMainViewport();
+                if (canvasViewport)
+                {
+                    canvasViewport->SetCameraId(m_CanvasCameraId);
+                    canvasViewport->SetCamera(*updatedCamera);
+                }
+            }
+        }
     }
 
     bool RenderingCoordinator::CreateSwapChainFramebuffers()

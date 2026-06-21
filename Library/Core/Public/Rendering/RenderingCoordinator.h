@@ -18,6 +18,7 @@
 #include "RHI/TransientResourcePool.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Thread/Atomic.h"
 #include "Thread/Mutex.h"
 #include "Debug/Stats.h"
 #include <cstdint>
@@ -233,6 +234,25 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy &GetMainCamera() const { return m_MainCamera; }
 
         /**
+         * @brief GameThread owned camera tableへカメラを登録する
+         * @return 1始まりのCameraId。0はinvalidとして予約。
+         */
+        uint64_t RegisterCamera(const CameraProxy &camera);
+
+        /**
+         * @brief GameThread owned camera tableのカメラを更新する
+         * @return 指定CameraIdが存在して更新できた場合true
+         */
+        bool UpdateCamera(uint64_t cameraId, const CameraProxy &camera);
+
+        /**
+         * @brief GameThread owned camera tableからカメラを取得する
+         *
+         * 返るポインタはGameThread専用で、保持しないこと。FramePacketへは必ず値コピーする。
+         */
+        const CameraProxy *FindCamera(uint64_t cameraId) const;
+
+        /**
          * @brief メインSceneViewを取得
          */
         Container::TSharedPtr<SceneView> GetMainSceneView() const { return m_MainSceneView; }
@@ -367,6 +387,11 @@ namespace NorvesLib::Core::Rendering
 
         // メインカメラ（GameThreadから設定される）
         CameraProxy m_MainCamera;
+        Container::UnorderedMap<uint64_t, CameraProxy> m_Cameras;
+        uint64_t m_NextCameraId = 1;
+        uint64_t m_MainCameraId = 0;
+        uint64_t m_CanvasCameraId = 0;
+        Thread::Atomic<bool> m_bCanvasCameraSyncPending{false};
         bool m_bCameraSet = false;
 
         // Screen（最終出力先 - SwapChain所有）
@@ -429,6 +454,9 @@ namespace NorvesLib::Core::Rendering
         bool m_bFrameSubmissionStarted = false;
 
         void UpdateRenderResolution(uint32_t screenWidth, uint32_t screenHeight);
+        void RequestCanvasCameraSync();
+        void ConsumePendingCanvasCameraSync();
+        void UpdateCanvasCameraForRenderResolution();
     };
 
 } // namespace NorvesLib::Core::Rendering

@@ -977,6 +977,37 @@ int main()
 
     {
         ExecutorPresentationFixture fixture;
+        auto sceneView = Container::MakeShared<View>();
+        auto canvasView = Container::MakeShared<DirectOutputCanvasView>();
+        ViewSettings sceneSettings;
+        ViewSettings canvasSettings;
+        canvasSettings.Type = ViewType::UI;
+        assert(sceneView->Initialize(sceneSettings));
+        assert(canvasView->Initialize(canvasSettings));
+        sceneView->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
+        fixture.Views.push_back(sceneView);
+        fixture.Views.push_back(canvasView);
+
+        ViewRenderPlan canvasPlan = MakeViewPlan(1, ViewType::UI);
+        canvasPlan.Priority = 10;
+        fixture.Packet.Views.push_back(canvasPlan);
+
+        RenderFrameExecutor executor;
+        RenderFrameExecutionResult result = executor.Execute(fixture.MakeExecutionRequest());
+
+        assert(result.bRenderedAnyViewport);
+        assert(result.RenderedViewportCount == 2);
+        assert(result.PresentationBlitCount == 1);
+        assert(canvasView->RenderCount == 1);
+        assert(canvasView->GetFrameOutputTexture().get() == canvasView->OutputTexture.get());
+        assert(fixture.PendingFrameCommands.empty());
+        assert(fixture.CommandList.HasRenderPass(fixture.GraphClearRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
+        std::cout << "TestOneViewportCanvasRendersStage1AndCompositePresentation passed\n";
+    }
+
+    {
+        ExecutorPresentationFixture fixture;
         auto missingInputView = Container::MakeShared<View>();
         auto publishedInputView = Container::MakeShared<View>();
         ViewSettings settings;

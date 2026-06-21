@@ -456,6 +456,12 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        if (dynamic_cast<CanvasView*>(view))
+        {
+            view->Render(*request.Context);
+            return true;
+        }
+
         const DrawCommandView activeDrawCommands = request.Context->GetActiveDrawCommands();
         if (!activeDrawCommands.empty())
         {

@@ -90,6 +90,36 @@ target_include_directories(CameraViewConstantsTest PRIVATE
 set_target_properties(CameraViewConstantsTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CameraViewConstantsTest COMMAND CameraViewConstantsTest)
 
+add_executable(CameraTableTest
+    CameraTableTest.cpp
+)
+target_link_libraries(CameraTableTest PRIVATE Core)
+target_include_directories(CameraTableTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CameraTableTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CameraTableTest COMMAND CameraTableTest)
+
+add_executable(ViewportCameraIdRenderPlanTest
+    ViewportCameraIdRenderPlanTest.cpp
+)
+target_link_libraries(ViewportCameraIdRenderPlanTest PRIVATE Core)
+target_include_directories(ViewportCameraIdRenderPlanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ViewportCameraIdRenderPlanTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ViewportCameraIdRenderPlanTest COMMAND ViewportCameraIdRenderPlanTest)
+
+add_executable(OrthographicViewportMatrixTest
+    OrthographicViewportMatrixTest.cpp
+)
+target_link_libraries(OrthographicViewportMatrixTest PRIVATE Core)
+target_include_directories(OrthographicViewportMatrixTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(OrthographicViewportMatrixTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME OrthographicViewportMatrixTest COMMAND OrthographicViewportMatrixTest)
+
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp
 )
