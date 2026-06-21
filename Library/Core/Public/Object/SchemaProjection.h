@@ -5,9 +5,12 @@
 #include "Object/ResourceRegistry.h"
 #include "Object/RuntimeSchema.h"
 #include "Container/Containers.h"
+#include <cstdint>
 
 namespace NorvesLib::Core
 {
+    class Entity;
+
     struct ProjectedPropertyValue
     {
         StablePropertyId Property = InvalidSchemaId;
@@ -58,6 +61,36 @@ namespace NorvesLib::Core
         Container::VariableArray<ProjectedPropertyValue> Properties;
     };
 
+    using SubtreeSnapshotAliasId = uint64_t;
+    inline constexpr SubtreeSnapshotAliasId InvalidSubtreeSnapshotAliasId = 0;
+
+    // Alias ids are the persisted identity for subtree snapshots. Runtime-only
+    // ObjectId, ComponentId, and lifecycle properties may still appear inside
+    // ObjectSnapshot, but restore code must allocate fresh runtime ids.
+    struct ComponentSubtreeSnapshot
+    {
+        SubtreeSnapshotAliasId Alias = InvalidSubtreeSnapshotAliasId;
+        SubtreeSnapshotAliasId OwnerAlias = InvalidSubtreeSnapshotAliasId;
+        ObjectSnapshot Object;
+    };
+
+    struct EntitySubtreeSnapshotNode
+    {
+        SubtreeSnapshotAliasId Alias = InvalidSubtreeSnapshotAliasId;
+        SubtreeSnapshotAliasId ParentAlias = InvalidSubtreeSnapshotAliasId;
+        ObjectSnapshot Object;
+        Container::VariableArray<ComponentSubtreeSnapshot> Components;
+        Container::VariableArray<EntitySubtreeSnapshotNode> Children;
+    };
+
+    struct EntitySubtreeSnapshot
+    {
+        uint32_t FormatVersion = 1;
+        SubtreeSnapshotAliasId RootAlias = InvalidSubtreeSnapshotAliasId;
+        Container::String RootPath;
+        EntitySubtreeSnapshotNode Root;
+    };
+
     struct PropertyDelta
     {
         StableObjectRef Object;
@@ -102,6 +135,7 @@ namespace NorvesLib::Core
         static ClassSchemaSnapshot BuildClassSchemaSnapshot(const char *moduleName = "NorvesLib");
         static ClassSchemaProjection ProjectClass(const IClass &cls, const char *moduleName = "NorvesLib");
         static ObjectSnapshot BuildObjectSnapshot(const Object &object, StableObjectRef ref, const char *moduleName = "NorvesLib");
+        static EntitySubtreeSnapshot BuildEntitySubtreeSnapshot(const Entity& root, StableObjectRef rootRef = {}, const char* moduleName = "NorvesLib");
         static ResourceSnapshot ProjectResource(const ResourceRecord &record);
         static ResourceList ProjectResources(const Container::VariableArray<ResourceRecord> &records);
 
