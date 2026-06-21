@@ -465,6 +465,31 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
+         * @brief パケットが属するスロット index を返す
+         *
+         * packet は m_Packets（FixedArray）内の要素を指す借用ポインタである前提。
+         * GameThread（書き込み中パケット）と RenderThread（処理中パケット）の双方が、
+         * 同一スロットを安定した index で参照するための写像。プール外/null は
+         * FRAME_PACKET_BUFFER_COUNT（無効値）を返す。
+         *
+         * @param packet m_Packets 内の要素を指すポインタ
+         * @return スロット index（0..FRAME_PACKET_BUFFER_COUNT-1）。無効時は FRAME_PACKET_BUFFER_COUNT
+         */
+        uint32_t GetSlotIndex(const FramePacket *packet) const
+        {
+            if (packet == nullptr)
+            {
+                return FRAME_PACKET_BUFFER_COUNT;
+            }
+            const FramePacket *base = m_Packets.data();
+            if (packet < base || packet >= base + FRAME_PACKET_BUFFER_COUNT)
+            {
+                return FRAME_PACKET_BUFFER_COUNT;
+            }
+            return static_cast<uint32_t>(packet - base);
+        }
+
+        /**
          * @brief Readyなパケット数を取得
          */
         uint32_t GetReadyPacketCount() const

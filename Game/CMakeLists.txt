@@ -47,3 +47,13 @@ if(NORVES_BRIDGE_SDK_DIR)
     target_link_libraries(${MODULE_NAME} PRIVATE norves_bridge_engine_sdk)
     target_compile_definitions(${MODULE_NAME} PRIVATE NORVES_BRIDGE_ENABLED)
 endif()
+
+# ImGui モジュール(第2段 B-i)。NORVES_ENABLE_IMGUI ON 時のみ別 static lib
+# NorvesModule_ImGui を PRIVATE 直リンクし、NORVES_ENABLE_IMGUI を Game TU へ付与する。
+# GameApplicationHandler が --imgui ゲート時に RegisterImGuiModule を明示参照することで
+# 別 lib の TU がリンクへ引き込まれる(dead-strip 本実証)。OFF 時はリンクも明示 Register
+# も行わず、--imgui も未処理=素の NorvesLib ビルドを byte-for-byte 不変に保つ。
+if(NORVES_ENABLE_IMGUI)
+    target_link_libraries(${MODULE_NAME} PRIVATE NorvesModule_ImGui)
+    target_compile_definitions(${MODULE_NAME} PRIVATE NORVES_ENABLE_IMGUI)
+endif()

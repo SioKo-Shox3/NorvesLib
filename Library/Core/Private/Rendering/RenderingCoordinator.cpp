@@ -957,11 +957,20 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 書き込み中パケットが占有する FramePacket スロット index。overlay パスが
+        // per-slot リソースを書き込み中スロットへ束ねるために通知する。RenderThread の
+        // 読取スロットとはプール排他で重ならないため、この index で per-slot 書込みしても
+        // RT の per-slot 読取と競合しない（FramePacket スロット寿命連動の証明根拠）。
+        const uint32_t writeSlotIndex = m_PacketManager.GetSlotIndex(m_CurrentPacket);
+
         m_CurrentPacket->OverlayPasses.clear();
         for (IViewPass *pass : passes)
         {
             if (pass)
             {
+                // 当該パケットが Writing 状態である間（=RT が同スロットを読まない間）に
+                // GameThread 上で発火する per-slot 束ね通知。既定 no-op。
+                pass->OnAssignedToPacket(writeSlotIndex);
                 m_CurrentPacket->OverlayPasses.push_back(pass);
             }
         }
@@ -1188,6 +1197,10 @@ namespace NorvesLib::Core::Rendering
             // executor が一次判定した bComposite を採用し二重判定を避ける。
             const bool bComposite = executionResult.bComposite;
             viewContext.bOverlayComposite = bComposite;
+            // 処理中パケットのスロット index を seam が設定する。overlay パスはこの index で
+            // per-slot スナップショットを読む。GameThread の書込みスロット（OnAssignedToPacket）
+            // と同一スロットへの時間窓はプール排他で重ならないため安全。
+            viewContext.OverlayPacketSlotIndex = m_PacketManager.GetSlotIndex(packet);
             viewContext.OverlayLoadRenderPass = bComposite
                                                     ? m_GraphPresentationLoadRenderPass.get()
                                                     : m_PresentationLoadRenderPass.get();

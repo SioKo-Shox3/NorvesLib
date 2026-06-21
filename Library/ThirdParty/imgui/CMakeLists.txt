@@ -10,6 +10,7 @@ add_library(NorvesThirdParty_ImGui STATIC
     imgui_draw.cpp
     imgui_tables.cpp
     imgui_widgets.cpp
+    imgui_demo.cpp
 )
 
 # 依存者が imgui.h を直接 include 可能にする(Core の imgui_impl_vulkan.cpp、
