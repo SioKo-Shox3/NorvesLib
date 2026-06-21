@@ -313,6 +313,26 @@ target_include_directories(BoardComponentRoutingTest PRIVATE
 set_target_properties(BoardComponentRoutingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME BoardComponentRoutingTest COMMAND BoardComponentRoutingTest)
 
+add_executable(BoardSortKeyStableTest
+    BoardSortKeyStableTest.cpp
+)
+target_link_libraries(BoardSortKeyStableTest PRIVATE Core)
+target_include_directories(BoardSortKeyStableTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardSortKeyStableTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardSortKeyStableTest COMMAND BoardSortKeyStableTest)
+
+add_executable(MultiLayerOrderTest
+    MultiLayerOrderTest.cpp
+)
+target_link_libraries(MultiLayerOrderTest PRIVATE Core)
+target_include_directories(MultiLayerOrderTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(MultiLayerOrderTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MultiLayerOrderTest COMMAND MultiLayerOrderTest)
+
 add_executable(CompositePassTest
     CompositePassTest.cpp
 )

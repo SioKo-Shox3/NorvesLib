@@ -26,6 +26,12 @@ namespace NorvesLib::Core::Rendering
     {
         constexpr uint32_t MaxRetainedBoardFrameResources = 8;
 
+        struct SortedBoardEntry
+        {
+            const BoardProxy* Proxy = nullptr;
+            uint64_t CanvasInsertionSequence = 0;
+        };
+
         void FillBoardInstanceData(const BoardProxy &proxy,
                                    const ViewportRenderPlan &viewportPlan,
                                    GPUSceneInstanceData &outData)
@@ -322,6 +328,8 @@ namespace NorvesLib::Core::Rendering
         ClearBoardDrawCommands();
         m_BoardProxies.clear();
         m_BoardProxyIndex.clear();
+        m_BoardInsertionSequenceByComponentId.clear();
+        m_NextBoardInsertionSequence = 0;
         View::Shutdown();
     }
 
@@ -341,6 +349,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         const uint32_t index = static_cast<uint32_t>(m_BoardProxies.size());
+        auto sequenceIt = m_BoardInsertionSequenceByComponentId.find(componentId);
+        if (sequenceIt == m_BoardInsertionSequenceByComponentId.end())
+        {
+            m_BoardInsertionSequenceByComponentId[componentId] = m_NextBoardInsertionSequence++;
+        }
         m_BoardProxies.push_back(proxy);
         m_BoardProxyIndex[componentId] = index;
     }
@@ -356,6 +369,7 @@ namespace NorvesLib::Core::Rendering
         const uint32_t removeIndex = indexIt->second;
         const uint32_t lastIndex = static_cast<uint32_t>(m_BoardProxies.size() - 1);
         m_BoardProxyIndex.erase(indexIt);
+        m_BoardInsertionSequenceByComponentId.erase(componentId);
 
         if (removeIndex != lastIndex)
         {
@@ -380,6 +394,7 @@ namespace NorvesLib::Core::Rendering
 
             const uint32_t lastIndex = static_cast<uint32_t>(m_BoardProxies.size() - 1);
             m_BoardProxyIndex.erase(componentId);
+            m_BoardInsertionSequenceByComponentId.erase(componentId);
             if (index != lastIndex)
             {
                 m_BoardProxies[index] = m_BoardProxies[lastIndex];
@@ -398,6 +413,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        Container::VariableArray<SortedBoardEntry> sortedBoards;
+        sortedBoards.reserve(m_BoardProxies.size());
         for (const BoardProxy &proxy : m_BoardProxies)
         {
             if (!proxy.IsValid() ||
@@ -407,6 +424,38 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
+            auto sequenceIt = m_BoardInsertionSequenceByComponentId.find(proxy.ComponentId);
+            if (sequenceIt == m_BoardInsertionSequenceByComponentId.end())
+            {
+                continue;
+            }
+
+            SortedBoardEntry entry;
+            entry.Proxy = &proxy;
+            entry.CanvasInsertionSequence = sequenceIt->second;
+            sortedBoards.push_back(entry);
+        }
+
+        std::stable_sort(sortedBoards.begin(),
+                         sortedBoards.end(),
+                         [](const SortedBoardEntry &lhs, const SortedBoardEntry &rhs)
+                         {
+                             if (lhs.Proxy->SortKey != rhs.Proxy->SortKey)
+                             {
+                                 return lhs.Proxy->SortKey < rhs.Proxy->SortKey;
+                             }
+
+                             if (lhs.CanvasInsertionSequence != rhs.CanvasInsertionSequence)
+                             {
+                                 return lhs.CanvasInsertionSequence < rhs.CanvasInsertionSequence;
+                             }
+
+                             return lhs.Proxy->ComponentId < rhs.Proxy->ComponentId;
+                         });
+
+        for (const SortedBoardEntry &entry : sortedBoards)
+        {
+            const BoardProxy &proxy = *entry.Proxy;
             GPUSceneInstanceData instanceData;
             FillBoardInstanceData(proxy, viewportPlan, instanceData);
             const uint32_t instanceIndex = static_cast<uint32_t>(m_BoardInstanceData.size());

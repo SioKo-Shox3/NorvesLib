@@ -421,23 +421,57 @@ namespace Game::GameModes
         }
 
         // ========================================
-        // 2.5 F3 ScreenSpace Board smoke overlay
+        // 2.5 F4 ScreenSpace Board smoke overlay
         // ========================================
         {
             auto canvasView = ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().GetCanvasView();
             if (canvasView)
             {
                 auto &world = ctx.WorldRef;
-                data.m_pF3BoardObject = world.SpawnObject<Entity>();
-                ctx.ScopeRef.TrackObject(data.m_pF3BoardObject);
-                data.m_pF3BoardObject->SetPosition(72.0f, 72.0f, 0.0f);
-                data.m_pF3BoardObject->SetScale(96.0f, 48.0f, 1.0f);
+                struct F4BoardSpec
+                {
+                    float X;
+                    float Y;
+                    float Width;
+                    float Height;
+                    uint32_t LayerPriority;
+                    uint32_t OrderInLayer;
+                };
 
-                data.m_pF3BoardComponent = world.CreateComponent<Component::BoardComponent>(data.m_pF3BoardObject);
-                data.m_pF3BoardComponent->SetBoardSpace(BoardSpace::ScreenSpace);
-                data.m_pF3BoardComponent->SetRenderLayer(RenderLayer::UI);
-                data.m_pF3BoardComponent->SetVisible(true);
-                LOG_INFO("F3 ScreenSpace Board smoke overlay created");
+                const F4BoardSpec boardSpecs[] =
+                {
+                    {72.0f, 72.0f, 140.0f, 84.0f, 0u, 2u},
+                    {104.0f, 96.0f, 168.0f, 96.0f, 0u, 0u},
+                    {88.0f, 84.0f, 124.0f, 72.0f, 0u, 1u},
+                    {118.0f, 90.0f, 196.0f, 108.0f, 1u, 0u},
+                };
+
+                constexpr uint32_t boardSpecCount = static_cast<uint32_t>(sizeof(boardSpecs) / sizeof(boardSpecs[0]));
+
+                data.m_F4BoardObjects.clear();
+                data.m_F4BoardComponents.clear();
+                data.m_F4BoardObjects.reserve(boardSpecCount);
+                data.m_F4BoardComponents.reserve(boardSpecCount);
+
+                for (const F4BoardSpec &boardSpec : boardSpecs)
+                {
+                    Entity *boardObject = world.SpawnObject<Entity>();
+                    ctx.ScopeRef.TrackObject(boardObject);
+                    boardObject->SetPosition(boardSpec.X, boardSpec.Y, 0.0f);
+                    boardObject->SetScale(boardSpec.Width, boardSpec.Height, 1.0f);
+
+                    auto *boardComponent = world.CreateComponent<Component::BoardComponent>(boardObject);
+                    boardComponent->SetBoardSpace(BoardSpace::ScreenSpace);
+                    boardComponent->SetRenderLayer(RenderLayer::UI);
+                    boardComponent->SetLayerPriority(boardSpec.LayerPriority);
+                    boardComponent->SetOrderInLayer(boardSpec.OrderInLayer);
+                    boardComponent->SetVisible(true);
+
+                    data.m_F4BoardObjects.push_back(boardObject);
+                    data.m_F4BoardComponents.push_back(boardComponent);
+                }
+
+                LOG_INFO("F4 ScreenSpace Board smoke overlay created with multiple layered boards");
             }
         }
 
@@ -705,8 +739,8 @@ namespace Game::GameModes
         data.m_pBoulderMegaGeometryComponent = nullptr;
         data.m_pDirectionalLightObject = nullptr;
         data.m_pDirectionalLightComponent = nullptr;
-        data.m_pF3BoardObject = nullptr;
-        data.m_pF3BoardComponent = nullptr;
+        data.m_F4BoardObjects.clear();
+        data.m_F4BoardComponents.clear();
 
         data.m_bMeshesRegistered = false;
         data.m_bBoulderModelLoaded = false;

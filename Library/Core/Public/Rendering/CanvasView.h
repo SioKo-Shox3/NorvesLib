@@ -54,9 +54,11 @@ namespace NorvesLib::Core::Rendering
 
         Container::VariableArray<BoardProxy> m_BoardProxies;
         Container::UnorderedMap<uint64_t, uint32_t> m_BoardProxyIndex;
+        Container::UnorderedMap<uint64_t, uint64_t> m_BoardInsertionSequenceByComponentId;
         Container::VariableArray<DrawCommand> m_BoardDrawCommands;
         Container::VariableArray<GPUSceneInstanceData> m_BoardInstanceData;
         Container::VariableArray<RetainedBoardFrameResources> m_RetainedBoardFrameResources;
+        uint64_t m_NextBoardInsertionSequence = 0;
 
         friend class CanvasBoardPass;
     };

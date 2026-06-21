@@ -82,14 +82,14 @@ namespace Game::GameModes
         NorvesLib::Core::Entity *m_pLightSphereObject = nullptr;
         NorvesLib::Core::Entity *m_pBoulderObject = nullptr;
         NorvesLib::Core::Entity *m_pBoulderPlaceholderObject = nullptr;
-        NorvesLib::Core::Entity *m_pF3BoardObject = nullptr;
+        VariableArray<NorvesLib::Core::Entity *> m_F4BoardObjects;
 
         // MeshComponent参照（Entityが所有）
         NorvesLib::Core::Component::MeshComponent *m_pSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pGroundMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pLightSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pBoulderPlaceholderMeshComponent = nullptr;
-        NorvesLib::Core::Component::BoardComponent *m_pF3BoardComponent = nullptr;
+        VariableArray<NorvesLib::Core::Component::BoardComponent *> m_F4BoardComponents;
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
 
         // LightComponent参照（Entityが所有）
