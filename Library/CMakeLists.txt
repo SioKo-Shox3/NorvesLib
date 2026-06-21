@@ -3,6 +3,9 @@
 # ライブラリモジュールを追加
 add_subdirectory(Core)
 
+# 別 static lib モジュール(Core 依存・明示 Register 駆動)。INTERFACE NorvesLib には足さない。
+add_subdirectory(Modules/Dummy)
+
 # 全てのモジュールをリンクするインターフェースライブラリを作成
 add_library(${MODULE_NAME} INTERFACE)
 

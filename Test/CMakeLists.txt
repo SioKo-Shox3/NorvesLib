@@ -4,6 +4,7 @@
 add_subdirectory(Core)
 add_subdirectory(Reflection)
 add_subdirectory(Thread)
+add_subdirectory(Modules/Dummy)
 
 # 共通のテスト用設定があればここに追加
 enable_testing()
