@@ -40,6 +40,11 @@ namespace NorvesLib::Core::Input
         return m_OnMouseScrollEvent;
     }
 
+    MulticastDelegate<const CharEvent &> &InputSystem::OnCharEvent()
+    {
+        return m_OnCharEvent;
+    }
+
     void InputSystem::InjectKeyEvent(KeyCode code, InputAction action)
     {
         // 状態を更新
@@ -99,6 +104,14 @@ namespace NorvesLib::Core::Input
         MouseScrollEvent event;
         event.Delta = delta;
         m_OnMouseScrollEvent.Broadcast(event);
+    }
+
+    void InputSystem::InjectCharEvent(uint32_t codepoint)
+    {
+        // 文字入力は瞬間イベント（状態を持たない）。OnCharEvent を発火するのみ。
+        CharEvent event;
+        event.Codepoint = codepoint;
+        m_OnCharEvent.Broadcast(event);
     }
 
 } // namespace NorvesLib::Core::Input

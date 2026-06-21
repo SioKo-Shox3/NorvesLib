@@ -92,6 +92,11 @@ namespace NorvesLib::Core::Input
          */
         MulticastDelegate<const MouseScrollEvent &> &OnMouseScrollEvent();
 
+        /**
+         * @brief 文字入力イベントデリゲート（IME 確定後の Unicode 文字）
+         */
+        MulticastDelegate<const CharEvent &> &OnCharEvent();
+
         // ========================================
         // 入力注入API（プラットフォーム層から呼ばれる）
         // ========================================
@@ -125,6 +130,14 @@ namespace NorvesLib::Core::Input
          */
         void InjectMouseScroll(float delta);
 
+        /**
+         * @brief 文字入力イベントを注入（プラットフォームの WM_CHAR 相当から）
+         * @param codepoint Unicode コードポイント（UTF-32）
+         *
+         * 状態は持たず OnCharEvent を Broadcast するのみ（テキスト入力は瞬間イベント）。
+         */
+        void InjectCharEvent(uint32_t codepoint);
+
     private:
         // 入力状態
         InputState m_State;
@@ -134,6 +147,7 @@ namespace NorvesLib::Core::Input
         MulticastDelegate<const MouseButtonEvent &> m_OnMouseButtonEvent;
         MulticastDelegate<const MouseMoveEvent &> m_OnMouseMoveEvent;
         MulticastDelegate<const MouseScrollEvent &> m_OnMouseScrollEvent;
+        MulticastDelegate<const CharEvent &> m_OnCharEvent;
     };
 
 } // namespace NorvesLib::Core::Input

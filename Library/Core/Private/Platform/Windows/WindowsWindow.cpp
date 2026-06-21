@@ -109,6 +109,23 @@ namespace NorvesLib
                     }
                     break;
 
+                // ========== 文字入力（IME 確定後の Unicode 文字） ==========
+                case WM_CHAR:
+                    if (inputSystem)
+                    {
+                        // wParam は UTF-16 コードユニット。BMP 範囲はそのままコードポイント。
+                        // サロゲートペア（U+10000 以上）は 2 メッセージに分割されて届くが、
+                        // ここでは BMP（日本語常用・ASCII を含む）のみ通し、上位/下位
+                        // サロゲート（0xD800..0xDFFF）は捨てる（テキスト入力用途では十分）。
+                        uint32_t codepoint = static_cast<uint32_t>(wParam);
+                        bool bSurrogate = (codepoint >= 0xD800 && codepoint <= 0xDFFF);
+                        if (codepoint != 0 && !bSurrogate)
+                        {
+                            inputSystem->InjectCharEvent(codepoint);
+                        }
+                    }
+                    break;
+
                 // ========== マウスボタン入力 ==========
                 case WM_LBUTTONDOWN:
                     if (inputSystem)
