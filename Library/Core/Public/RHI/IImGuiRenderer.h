@@ -53,10 +53,12 @@ namespace NorvesLib::RHI
         virtual void Shutdown() = 0;
 
         /**
-         * @brief フォントアトラスを構築（GPU へアップロード）する
+         * @brief フォントアトラスの CPU ピクセルを構築する
          *
-         * フォント設定変更後に呼ぶ。RHI リソース生成はこの実装側に閉じ、
-         * overlay 側は録画のみ行う。
+         * フォント設定変更後に呼ぶ。実 GPU アップロードは imgui 1.92 の動的
+         * テクスチャ機構（ImGuiBackendFlags_RendererHasTextures）により描画中
+         * （RecordDrawData 内）に自動実行されるため、本メソッドはアトラスの
+         * CPU ピクセル生成に留まる（冪等）。overlay 側は録画のみ行う。
          *
          * @return 構築に成功した場合 true
          */
