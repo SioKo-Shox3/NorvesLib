@@ -34,6 +34,25 @@ namespace NorvesLib::Core::Rendering
             uint64_t CanvasInsertionSequence = 0;
         };
 
+        struct BoardBatchKey
+        {
+            TextureHandle Texture = TextureHandle::Invalid();
+            BlendMode BlendModeProp = BlendMode::Translucent;
+            uint32_t PipelineIndex = 0;
+
+            bool operator==(const BoardBatchKey &other) const
+            {
+                return Texture == other.Texture &&
+                       BlendModeProp == other.BlendModeProp &&
+                       PipelineIndex == other.PipelineIndex;
+            }
+
+            bool operator!=(const BoardBatchKey &other) const
+            {
+                return !(*this == other);
+            }
+        };
+
         uint32_t GetBoardBlendPipelineIndex(BlendMode blendMode)
         {
             switch (CanvasView::NormalizeBoardBlendMode(blendMode))
@@ -124,6 +143,34 @@ namespace NorvesLib::Core::Rendering
                                         : static_cast<float>(viewportPlan.RenderHeight);
             outData.CustomData[2] = 0.0f;
             outData.CustomData[3] = 0.0f;
+        }
+
+        BoardBatchKey MakeBoardBatchKey(const BoardProxy &proxy)
+        {
+            BoardBatchKey key;
+            key.Texture = proxy.Texture;
+            key.BlendModeProp = CanvasView::NormalizeBoardBlendMode(proxy.BlendModeProp);
+            key.PipelineIndex = GetBoardBlendPipelineIndex(key.BlendModeProp);
+            return key;
+        }
+
+        DrawCommand MakeBoardDrawCommand(const BoardProxy &proxy,
+                                         const BoardBatchKey &key,
+                                         uint32_t firstInstance,
+                                         uint32_t instanceCount)
+        {
+            DrawCommand command = DrawCommand::CreateDraw();
+            command.Type = DrawCommandType::DrawInstanced;
+            command.Draw.VertexOffset = 6;
+            command.Draw.InstanceCount = instanceCount;
+            command.Draw.FirstInstance = firstInstance;
+            command.Draw.InstanceDataOffset = firstInstance;
+            command.Draw.bInstanced = true;
+            command.Draw.MaterialBlendMode = key.BlendModeProp;
+            command.Draw.Texture = key.Texture;
+            command.Draw.ObjectId = proxy.ObjectId;
+            command.SortKey = proxy.SortKey;
+            return command;
         }
     } // namespace
 
@@ -615,6 +662,8 @@ namespace NorvesLib::Core::Rendering
                              return lhs.Proxy->ComponentId < rhs.Proxy->ComponentId;
                          });
 
+        bool bHasActiveBatch = false;
+        BoardBatchKey activeBatchKey;
         for (const SortedBoardEntry &entry : sortedBoards)
         {
             const BoardProxy &proxy = *entry.Proxy;
@@ -622,20 +671,24 @@ namespace NorvesLib::Core::Rendering
             FillBoardInstanceData(proxy, viewportPlan, instanceData);
             const uint32_t instanceIndex = static_cast<uint32_t>(m_BoardInstanceData.size());
             m_BoardInstanceData.push_back(instanceData);
-            const BlendMode normalizedBlendMode = NormalizeBoardBlendMode(proxy.BlendModeProp);
+            const BoardBatchKey batchKey = MakeBoardBatchKey(proxy);
 
-            DrawCommand command = DrawCommand::CreateDraw();
-            command.Type = DrawCommandType::DrawInstanced;
-            command.Draw.VertexOffset = 6;
-            command.Draw.InstanceCount = 1;
-            command.Draw.FirstInstance = instanceIndex;
-            command.Draw.InstanceDataOffset = instanceIndex;
-            command.Draw.bInstanced = true;
-            command.Draw.MaterialBlendMode = normalizedBlendMode;
-            command.Draw.Texture = proxy.Texture;
-            command.Draw.ObjectId = proxy.ObjectId;
-            command.SortKey = proxy.SortKey;
-            m_BoardDrawCommands.push_back(command);
+            if (!m_bBoardInstanceBatchingEnabled)
+            {
+                m_BoardDrawCommands.push_back(MakeBoardDrawCommand(proxy, batchKey, instanceIndex, 1u));
+                continue;
+            }
+
+            if (!bHasActiveBatch || batchKey != activeBatchKey)
+            {
+                activeBatchKey = batchKey;
+                bHasActiveBatch = true;
+                m_BoardDrawCommands.push_back(MakeBoardDrawCommand(proxy, batchKey, instanceIndex, 1u));
+                continue;
+            }
+
+            DrawCommand &activeCommand = m_BoardDrawCommands.back();
+            ++activeCommand.Draw.InstanceCount;
         }
     }
 

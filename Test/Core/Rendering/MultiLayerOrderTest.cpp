@@ -60,6 +60,7 @@ namespace
         settings.Width = 800;
         settings.Height = 600;
         assert(canvas.Initialize(settings));
+        canvas.SetBoardInstanceBatchingEnabled(false);
 
         const BoardProxy layer2Order0 = MakeBoardProxy(501u, 51u, RenderLayer::UI, 2u, 0u);
         const BoardProxy filteredDefaultLayer = MakeBoardProxy(502u, 52u, RenderLayer::Default, 0u, 0u);

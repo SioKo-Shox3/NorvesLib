@@ -918,7 +918,59 @@ namespace
         std::cout << "TestCanvasViewClearsTransparentAndExportsFrameOutput passed\n";
     }
 
-    void TestCanvasViewBindsPerCommandBoardTexturesAndPreservesOrder()
+    void TestCanvasViewBindsOneDescriptorForSameTextureBatch()
+    {
+        CanvasFixture fixture;
+        CanvasView canvas;
+        ViewSettings settings;
+        settings.Width = 1;
+        settings.Height = 1;
+        assert(canvas.Initialize(settings));
+
+        const RHI::TexturePtr textureA = Container::MakeShared<FakeTexture>("BoardTextureA", 32, 32);
+        const TextureHandle handleA = fixture.Resources.Textures().RegisterExternalTexture(textureA, "BoardTextureA");
+        assert(handleA.IsValid());
+
+        canvas.UpdateBoardProxy(1001u, MakeBoardProxy(1001u, handleA, BlendMode::Translucent, 0u, 0u));
+        canvas.UpdateBoardProxy(1002u, MakeBoardProxy(1002u, handleA, BlendMode::Translucent, 0u, 1u));
+        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+
+        fixture.Context.SnapshotDrawCommands = DrawCommandView::FromArray(canvas.GetBoardDrawCommands());
+        canvas.Render(fixture.Context);
+
+        assert(fixture.Device->CreateGraphicsPipelineCount == 3);
+        assert(fixture.Device->LastGraphicsPipelineDescs.size() == 3);
+        for (const RHI::GraphicsPipelineDesc &pipelineDesc : fixture.Device->LastGraphicsPipelineDescs)
+        {
+            assert(pipelineDesc.descriptorSetLayouts.size() == 1);
+            AssertBoardDescriptorLayout(pipelineDesc.descriptorSetLayouts[0]);
+        }
+
+        assert(fixture.Device->LastDescriptorSetDescs.size() == 1);
+        AssertBoardDescriptorLayout(fixture.Device->LastDescriptorSetDescs[0]);
+
+        assert(fixture.CommandList.DescriptorSets.size() == 1);
+        assert(fixture.CommandList.DescriptorSetSlots.size() == 1);
+        assert(fixture.CommandList.DescriptorSetSlots[0] == 0u);
+        assert(fixture.CommandList.DrawInstancedCalls.size() == 1);
+        assert(fixture.CommandList.DrawInstancedCalls[0].InstanceCount == 2u);
+        assert(fixture.CommandList.DrawInstancedCalls[0].StartInstanceLocation == 0u);
+
+        auto *descriptorSet0 = AsFakeDescriptorSet(fixture.CommandList.DescriptorSets[0]);
+        assert(descriptorSet0 != nullptr);
+        assert(descriptorSet0->UpdateCount == 1u);
+        assert(descriptorSet0->Textures[0].get() == textureA.get());
+        assert(descriptorSet0->Samplers[0] != nullptr);
+        assert(descriptorSet0->StorageBuffers[7].get() == fixture.Context.InstanceDataBuffer.get());
+        assert(descriptorSet0->StorageSizes[7] == fixture.Context.InstanceDataBuffer->GetSize());
+
+        fixture.Resources.Textures().ReleaseTexture(handleA);
+
+        canvas.Shutdown();
+        std::cout << "TestCanvasViewBindsOneDescriptorForSameTextureBatch passed\n";
+    }
+
+    void TestCanvasViewSplitsDescriptorsForDifferentTextureOrBlend()
     {
         CanvasFixture fixture;
         CanvasView canvas;
@@ -934,30 +986,20 @@ namespace
         assert(handleA.IsValid());
         assert(handleB.IsValid());
 
-        canvas.UpdateBoardProxy(1001u, MakeBoardProxy(1001u, handleA, BlendMode::Translucent, 0u, 0u));
-        canvas.UpdateBoardProxy(1002u, MakeBoardProxy(1002u, handleB, BlendMode::Additive, 0u, 1u));
+        canvas.UpdateBoardProxy(1101u, MakeBoardProxy(1101u, handleA, BlendMode::Translucent, 0u, 0u));
+        canvas.UpdateBoardProxy(1102u, MakeBoardProxy(1102u, handleB, BlendMode::Additive, 0u, 1u));
         canvas.PrepareBoardDrawCommands(MakeViewportPlan());
 
         fixture.Context.SnapshotDrawCommands = DrawCommandView::FromArray(canvas.GetBoardDrawCommands());
         canvas.Render(fixture.Context);
 
-        assert(fixture.Device->CreateGraphicsPipelineCount == 3);
-        assert(fixture.Device->LastGraphicsPipelineDescs.size() == 3);
-        for (const RHI::GraphicsPipelineDesc &pipelineDesc : fixture.Device->LastGraphicsPipelineDescs)
-        {
-            assert(pipelineDesc.descriptorSetLayouts.size() == 1);
-            AssertBoardDescriptorLayout(pipelineDesc.descriptorSetLayouts[0]);
-        }
-
         assert(fixture.Device->LastDescriptorSetDescs.size() == 2);
         AssertBoardDescriptorLayout(fixture.Device->LastDescriptorSetDescs[0]);
         AssertBoardDescriptorLayout(fixture.Device->LastDescriptorSetDescs[1]);
-
         assert(fixture.CommandList.DescriptorSets.size() == 2);
-        assert(fixture.CommandList.DescriptorSetSlots.size() == 2);
-        assert(fixture.CommandList.DescriptorSetSlots[0] == 0u);
-        assert(fixture.CommandList.DescriptorSetSlots[1] == 0u);
         assert(fixture.CommandList.DrawInstancedCalls.size() == 2);
+        assert(fixture.CommandList.DrawInstancedCalls[0].InstanceCount == 1u);
+        assert(fixture.CommandList.DrawInstancedCalls[1].InstanceCount == 1u);
         assert(fixture.CommandList.DrawInstancedCalls[0].StartInstanceLocation == 0u);
         assert(fixture.CommandList.DrawInstancedCalls[1].StartInstanceLocation == 1u);
 
@@ -965,23 +1007,16 @@ namespace
         auto *descriptorSet1 = AsFakeDescriptorSet(fixture.CommandList.DescriptorSets[1]);
         assert(descriptorSet0 != nullptr);
         assert(descriptorSet1 != nullptr);
-        assert(descriptorSet0->UpdateCount == 1u);
-        assert(descriptorSet1->UpdateCount == 1u);
         assert(descriptorSet0->Textures[0].get() == textureA.get());
         assert(descriptorSet1->Textures[0].get() == textureB.get());
-        assert(descriptorSet0->Samplers[0] != nullptr);
-        assert(descriptorSet1->Samplers[0] != nullptr);
-        assert(descriptorSet0->Samplers[0].get() == descriptorSet1->Samplers[0].get());
         assert(descriptorSet0->StorageBuffers[7].get() == fixture.Context.InstanceDataBuffer.get());
         assert(descriptorSet1->StorageBuffers[7].get() == fixture.Context.InstanceDataBuffer.get());
-        assert(descriptorSet0->StorageSizes[7] == fixture.Context.InstanceDataBuffer->GetSize());
-        assert(descriptorSet1->StorageSizes[7] == fixture.Context.InstanceDataBuffer->GetSize());
 
         fixture.Resources.Textures().ReleaseTexture(handleA);
         fixture.Resources.Textures().ReleaseTexture(handleB);
 
         canvas.Shutdown();
-        std::cout << "TestCanvasViewBindsPerCommandBoardTexturesAndPreservesOrder passed\n";
+        std::cout << "TestCanvasViewSplitsDescriptorsForDifferentTextureOrBlend passed\n";
     }
 
     void TestCanvasViewUsesFallbackWhiteTextureForInvalidBoardTexture()
@@ -1034,7 +1069,8 @@ int main()
     std::cout << "CanvasViewRenderTest start\n";
 
     TestCanvasViewClearsTransparentAndExportsFrameOutput();
-    TestCanvasViewBindsPerCommandBoardTexturesAndPreservesOrder();
+    TestCanvasViewBindsOneDescriptorForSameTextureBatch();
+    TestCanvasViewSplitsDescriptorsForDifferentTextureOrBlend();
     TestCanvasViewUsesFallbackWhiteTextureForInvalidBoardTexture();
 
     std::cout << "CanvasViewRenderTest passed\n";

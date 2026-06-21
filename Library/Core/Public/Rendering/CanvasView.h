@@ -33,6 +33,8 @@ namespace NorvesLib::Core::Rendering
 
         void PrepareBoardDrawCommands(const ViewportRenderPlan &viewportPlan);
         void ReleaseRetainedBoardFrameResources();
+        void SetBoardInstanceBatchingEnabled(bool bEnabled) { m_bBoardInstanceBatchingEnabled = bEnabled; }
+        bool IsBoardInstanceBatchingEnabled() const { return m_bBoardInstanceBatchingEnabled; }
 
         const Container::VariableArray<BoardProxy> &GetBoardProxies() const { return m_BoardProxies; }
         const Container::VariableArray<DrawCommand> &GetBoardDrawCommands() const { return m_BoardDrawCommands; }
@@ -68,6 +70,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_NextBoardInsertionSequence = 0;
         RHI::TexturePtr m_BoardFallbackWhiteTexture;
         RHI::SamplerPtr m_BoardPointClampSampler;
+        bool m_bBoardInstanceBatchingEnabled = true;
 
         friend class CanvasBoardPass;
     };

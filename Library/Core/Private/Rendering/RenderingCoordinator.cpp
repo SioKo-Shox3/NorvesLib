@@ -1429,6 +1429,7 @@ namespace NorvesLib::Core::Rendering
         {
             return nullptr;
         }
+        canvasView->SetBoardInstanceBatchingEnabled(m_bBoardInstanceBatchingEnabled);
 
         CameraProxy canvasCamera;
         canvasCamera.Projection = ProjectionType::Orthographic;
@@ -1461,6 +1462,15 @@ namespace NorvesLib::Core::Rendering
             Engine::GEngine->GetWorld().SetScreenSpaceBoardSink(m_CanvasView.get());
         }
         return m_CanvasView;
+    }
+
+    void RenderingCoordinator::SetBoardInstanceBatchingEnabled(bool bEnabled)
+    {
+        m_bBoardInstanceBatchingEnabled = bEnabled;
+        if (m_CanvasView)
+        {
+            m_CanvasView->SetBoardInstanceBatchingEnabled(bEnabled);
+        }
     }
 
     void RenderingCoordinator::DestroyView(Container::TSharedPtr<View> view)

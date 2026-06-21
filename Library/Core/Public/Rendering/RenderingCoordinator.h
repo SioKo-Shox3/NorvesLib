@@ -262,6 +262,8 @@ namespace NorvesLib::Core::Rendering
          */
         Container::TSharedPtr<CanvasView> GetCanvasView() const { return m_CanvasView; }
         bool IsCanvasViewEnabled() const { return m_CanvasView && m_CanvasView->IsEnabled(); }
+        void SetBoardInstanceBatchingEnabled(bool bEnabled);
+        bool IsBoardInstanceBatchingEnabled() const { return m_bBoardInstanceBatchingEnabled; }
 
         // ========================================
         // リソースマネージャー
@@ -443,6 +445,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bVSyncEnabled = true;
         bool m_bMultiThreadedRendering = true;
         bool m_bMegaGeometryPassEnabled = false;
+        bool m_bBoardInstanceBatchingEnabled = true;
         uint32_t m_MaxDrawCallsPerFrame = 10000;
 
         // 統計（Debug::RenderingStats使用）

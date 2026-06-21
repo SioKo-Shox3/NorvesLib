@@ -303,6 +303,16 @@ target_include_directories(CanvasViewRenderTest PRIVATE
 set_target_properties(CanvasViewRenderTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CanvasViewRenderTest COMMAND CanvasViewRenderTest)
 
+add_executable(BoardInstanceBatchingTest
+    BoardInstanceBatchingTest.cpp
+)
+target_link_libraries(BoardInstanceBatchingTest PRIVATE Core)
+target_include_directories(BoardInstanceBatchingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardInstanceBatchingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardInstanceBatchingTest COMMAND BoardInstanceBatchingTest)
+
 add_executable(BoardComponentRoutingTest
     BoardComponentRoutingTest.cpp
 )

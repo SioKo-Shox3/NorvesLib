@@ -29,6 +29,9 @@ namespace
     constexpr size_t kRenderThreadOptionLength = (sizeof(kRenderThreadOption) / sizeof(TCHAR)) - 1;
     constexpr TCHAR kEnableCanvasViewOption[] = TEXT("--enable-canvas-view");
     constexpr size_t kEnableCanvasViewOptionLength = (sizeof(kEnableCanvasViewOption) / sizeof(TCHAR)) - 1;
+    constexpr TCHAR kDisableBoardInstanceBatchingOption[] = TEXT("--disable-board-instance-batching");
+    constexpr size_t kDisableBoardInstanceBatchingOptionLength =
+        (sizeof(kDisableBoardInstanceBatchingOption) / sizeof(TCHAR)) - 1;
 
     uint64_t ParsePositiveFrameCount(const TCHAR *pValueText, bool &bValid)
     {
@@ -153,6 +156,24 @@ namespace
 
         return pText[kEnableCanvasViewOptionLength] == TEXT('\0');
     }
+
+    bool IsDisableBoardInstanceBatchingOption(const TCHAR* pText)
+    {
+        if (!pText)
+        {
+            return false;
+        }
+
+        for (size_t i = 0; i < kDisableBoardInstanceBatchingOptionLength; ++i)
+        {
+            if (pText[i] == TEXT('\0') || pText[i] != kDisableBoardInstanceBatchingOption[i])
+            {
+                return false;
+            }
+        }
+
+        return pText[kDisableBoardInstanceBatchingOptionLength] == TEXT('\0');
+    }
 } // namespace
 
 namespace NorvesLib::Core::Engine
@@ -220,6 +241,7 @@ namespace NorvesLib::Core::Engine
         m_ExitAfterFrames = 0;
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         bool bEnableCanvasView = false;
+        bool bBoardInstanceBatchingEnabled = true;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -254,6 +276,12 @@ namespace NorvesLib::Core::Engine
             {
                 bEnableCanvasView = true;
                 LOG_INFO("ApplicationProcessor runtime option enable_canvas_view=true");
+            }
+
+            if (IsDisableBoardInstanceBatchingOption(args[i].c_str()))
+            {
+                bBoardInstanceBatchingEnabled = false;
+                LOG_INFO("ApplicationProcessor runtime option board_instance_batching=false");
             }
         }
 
@@ -313,9 +341,12 @@ namespace NorvesLib::Core::Engine
             }
             LOG_INFO("RenderWorld initialized successfully");
 
+            auto &coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
+            coordinator.SetBoardInstanceBatchingEnabled(bBoardInstanceBatchingEnabled);
+
             if (bEnableCanvasView)
             {
-                auto canvasView = GEngine->GetRenderWorld().GetRenderingCoordinator().CreateCanvasView();
+                auto canvasView = coordinator.CreateCanvasView();
                 if (canvasView)
                 {
                     LOG_INFO("CanvasView created from runtime option");

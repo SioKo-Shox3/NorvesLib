@@ -430,6 +430,9 @@ namespace Game::GameModes
             {
                 auto &world = ctx.WorldRef;
                 auto &textures = ctx.RenderResourcesRef.Textures();
+                LOG_INFO("Rendering3DTest board smoke count=%u batching=%s",
+                         data.m_BoardSmokeCount,
+                         canvasView->IsBoardInstanceBatchingEnabled() ? "enabled" : "disabled");
 
                 constexpr uint32_t atlasWidth = 128;
                 constexpr uint32_t atlasHeight = 64;
@@ -523,8 +526,9 @@ namespace Game::GameModes
 
                 data.m_F4BoardObjects.clear();
                 data.m_F4BoardComponents.clear();
-                data.m_F4BoardObjects.reserve(boardSpecCount);
-                data.m_F4BoardComponents.reserve(boardSpecCount);
+                const uint32_t totalBoardReserve = boardSpecCount + data.m_BoardSmokeCount;
+                data.m_F4BoardObjects.reserve(totalBoardReserve);
+                data.m_F4BoardComponents.reserve(totalBoardReserve);
 
                 for (const F5BoardSpec &boardSpec : boardSpecs)
                 {
@@ -570,6 +574,59 @@ namespace Game::GameModes
                 }
 
                 LOG_INFO("F5/F7 ScreenSpace Board showcase created with blend, tint, flip, pivot, size, atlas UV, and flipbook variants");
+
+                if (data.m_BoardSmokeCount > 0u)
+                {
+                    if (!data.m_F6AtlasTextureHandle.IsValid() || atlasRects.empty())
+                    {
+                        LOG_WARNING("Rendering3DTest board smoke skipped because atlas texture creation failed");
+                    }
+                    else
+                    {
+                        constexpr uint32_t smokeColumns = 16u;
+                        constexpr float smokeCellWidth = 28.0f;
+                        constexpr float smokeCellHeight = 22.0f;
+                        constexpr float smokeStartX = 32.0f;
+                        constexpr float smokeStartY = 360.0f;
+                        for (uint32_t smokeIndex = 0; smokeIndex < data.m_BoardSmokeCount; ++smokeIndex)
+                        {
+                            const uint32_t column = smokeIndex % smokeColumns;
+                            const uint32_t row = smokeIndex / smokeColumns;
+
+                            Entity *boardObject = world.SpawnObject<Entity>();
+                            ctx.ScopeRef.TrackObject(boardObject);
+                            boardObject->SetPosition(smokeStartX + static_cast<float>(column) * smokeCellWidth,
+                                                     smokeStartY + static_cast<float>(row) * smokeCellHeight,
+                                                     0.0f);
+                            boardObject->SetScale(20.0f, 16.0f, 1.0f);
+
+                            auto *boardComponent = world.CreateComponent<Component::BoardComponent>(boardObject);
+                            boardComponent->SetBoardSpace(BoardSpace::ScreenSpace);
+                            boardComponent->SetRenderLayer(RenderLayer::UI);
+                            boardComponent->SetBlendMode(BlendMode::Translucent);
+                            boardComponent->SetTint(Math::Vector4(0.55f + 0.05f * static_cast<float>(column % 6u),
+                                                                  0.45f + 0.08f * static_cast<float>(row % 5u),
+                                                                  0.80f,
+                                                                  0.70f));
+                            boardComponent->SetLayerPriority(2u);
+                            boardComponent->SetOrderInLayer(smokeIndex);
+                            boardComponent->SetTextureHandle(data.m_F6AtlasTextureHandle);
+                            boardComponent->SetUVRect(atlasRects[smokeIndex % static_cast<uint32_t>(atlasRects.size())]);
+                            boardComponent->SetVisible(true);
+
+                            data.m_F4BoardObjects.push_back(boardObject);
+                            data.m_F4BoardComponents.push_back(boardComponent);
+                        }
+
+                        LOG_INFO("Rendering3DTest board smoke grid created count=%u batching=%s",
+                                 data.m_BoardSmokeCount,
+                                 canvasView->IsBoardInstanceBatchingEnabled() ? "enabled" : "disabled");
+                    }
+                }
+            }
+            else if (data.m_BoardSmokeCount > 0u)
+            {
+                LOG_WARNING("Rendering3DTest board smoke requested but CanvasView is not available");
             }
         }
 
