@@ -333,6 +333,16 @@ target_include_directories(SpriteSheetUVRectTest PRIVATE
 set_target_properties(SpriteSheetUVRectTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SpriteSheetUVRectTest COMMAND SpriteSheetUVRectTest)
 
+add_executable(FlipbookAdvanceTest
+    FlipbookAdvanceTest.cpp
+)
+target_link_libraries(FlipbookAdvanceTest PRIVATE Core)
+target_include_directories(FlipbookAdvanceTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(FlipbookAdvanceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME FlipbookAdvanceTest COMMAND FlipbookAdvanceTest)
+
 add_executable(BoardBlendModeTest
     BoardBlendModeTest.cpp
 )

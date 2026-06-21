@@ -507,15 +507,16 @@ namespace Game::GameModes
                     uint32_t LayerPriority;
                     uint32_t OrderInLayer;
                     uint32_t AtlasRectIndex;
+                    bool bAnimated;
                 };
 
                 const F5BoardSpec boardSpecs[] =
                 {
-                    {72.0f, 72.0f, 160.0f, 96.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.90f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 0u, 0u},
-                    {112.0f, 104.0f, 180.0f, 104.0f, BlendMode::Opaque, Math::Vector4(1.00f, 1.00f, 1.00f, 1.00f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 1u, 1u},
-                    {176.0f, 132.0f, 132.0f, 72.0f, BlendMode::Additive, Math::Vector4(0.85f, 0.85f, 0.85f, 0.50f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 2u, 2u},
-                    {472.0f, 108.0f, 72.0f, 72.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.80f), true, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(140.0f, 40.0f), 0u, 3u, 4u},
-                    {400.0f, 260.0f, 44.0f, 132.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.85f), false, true, Math::Vector2(0.5f, 1.0f), Math::Vector2(96.0f, 160.0f), 1u, 0u, 5u},
+                    {72.0f, 72.0f, 160.0f, 96.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.90f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 0u, 0u, false},
+                    {112.0f, 104.0f, 180.0f, 104.0f, BlendMode::Opaque, Math::Vector4(1.00f, 1.00f, 1.00f, 1.00f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 1u, 1u, false},
+                    {176.0f, 132.0f, 132.0f, 72.0f, BlendMode::Additive, Math::Vector4(0.85f, 0.85f, 0.85f, 0.50f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 2u, 2u, false},
+                    {472.0f, 108.0f, 72.0f, 72.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.80f), true, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(140.0f, 40.0f), 0u, 3u, 4u, false},
+                    {400.0f, 260.0f, 96.0f, 96.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.95f), false, false, Math::Vector2(0.5f, 0.5f), Math::Vector2(112.0f, 112.0f), 1u, 0u, 0u, true},
                 };
 
                 constexpr uint32_t boardSpecCount = static_cast<uint32_t>(sizeof(boardSpecs) / sizeof(boardSpecs[0]));
@@ -551,13 +552,24 @@ namespace Game::GameModes
                         {
                             boardComponent->SetUVRect(atlasRects[boardSpec.AtlasRectIndex]);
                         }
+
+                        if (boardSpec.bAnimated)
+                        {
+                            boardComponent->SetFrameCount(static_cast<uint32_t>(atlasRects.size()));
+                            if (boardComponent->SetFlipbookGrid(atlasWidth, atlasHeight, atlasCellWidth, atlasCellHeight, 0u))
+                            {
+                                boardComponent->SetFramesPerSecond(4.0f);
+                                boardComponent->SetLoop(true);
+                                boardComponent->Play();
+                            }
+                        }
                     }
 
                     data.m_F4BoardObjects.push_back(boardObject);
                     data.m_F4BoardComponents.push_back(boardComponent);
                 }
 
-                LOG_INFO("F5 ScreenSpace Board showcase created with blend, tint, flip, pivot, size, and atlas UV variants");
+                LOG_INFO("F5/F7 ScreenSpace Board showcase created with blend, tint, flip, pivot, size, atlas UV, and flipbook variants");
             }
         }
 
