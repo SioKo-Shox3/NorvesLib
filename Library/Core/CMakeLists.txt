@@ -53,6 +53,7 @@ set(PRIVATE_SOURCES
     # Rendering
     Private/Rendering/Screen.cpp
     Private/Rendering/View.cpp
+    Private/Rendering/CanvasView.cpp
     Private/Rendering/Viewport.cpp
     Private/Rendering/CameraViewConstants.cpp
     Private/Rendering/SceneView.cpp
@@ -65,6 +66,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/RenderGraph/LegacyViewPassAdapter.cpp
     Private/Rendering/RenderThread.cpp
     Private/Rendering/RenderFrameExecutor.cpp
+    Private/Rendering/CompositePass.cpp
     Private/Rendering/PresentationPass.cpp
     Private/Rendering/PresentationComposer.cpp
     Private/Rendering/PersistentResourceCache.cpp
@@ -245,6 +247,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/RenderWorld.h
     Public/Rendering/Screen.h
     Public/Rendering/View.h
+    Public/Rendering/CanvasView.h
     Public/Rendering/Viewport.h
     Public/Rendering/CameraViewConstants.h
     Public/Rendering/ViewRenderPlan.h
@@ -262,6 +265,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/RenderGraph/RenderGraph.h
     Public/Rendering/RenderGraph/LegacyViewPassAdapter.h
     Public/Rendering/RenderFrameExecutor.h
+    Public/Rendering/CompositePass.h
     Public/Rendering/PresentationPass.h
     Public/Rendering/PresentationComposer.h
     Public/Rendering/PersistentResourceCache.h

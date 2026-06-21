@@ -24,7 +24,14 @@ namespace NorvesLib::Core::Rendering
         ResetResult();
 
         RGTextureHandle inputHandle;
-        if (builder.TryReadTexture(RenderGraphResourceNames::PresentationColor,
+        if (builder.TryReadTexture(RenderGraphResourceNames::CompositeColor,
+                                   inputHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_InputHandle = inputHandle;
+            m_InputName = RenderGraphResourceNames::CompositeColor;
+        }
+        else if (builder.TryReadTexture(RenderGraphResourceNames::PresentationColor,
                                    inputHandle,
                                    RHI::ResourceState::ShaderResource))
         {

@@ -263,6 +263,26 @@ target_include_directories(RenderFrameExecutorPlanTest PRIVATE
 set_target_properties(RenderFrameExecutorPlanTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderFrameExecutorPlanTest COMMAND RenderFrameExecutorPlanTest)
 
+add_executable(CanvasViewRenderTest
+    CanvasViewRenderTest.cpp
+)
+target_link_libraries(CanvasViewRenderTest PRIVATE Core)
+target_include_directories(CanvasViewRenderTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CanvasViewRenderTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CanvasViewRenderTest COMMAND CanvasViewRenderTest)
+
+add_executable(CompositePassTest
+    CompositePassTest.cpp
+)
+target_link_libraries(CompositePassTest PRIVATE Core)
+target_include_directories(CompositePassTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CompositePassTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CompositePassTest COMMAND CompositePassTest)
+
 add_executable(PresentationComposerTest
     PresentationComposerTest.cpp
 )

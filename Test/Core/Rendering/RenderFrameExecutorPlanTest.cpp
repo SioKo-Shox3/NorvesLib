@@ -1,4 +1,6 @@
 #include "Rendering/RenderFrameExecutor.h"
+#include "Rendering/CanvasView.h"
+#include "Rendering/CompositePass.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
@@ -526,6 +528,25 @@ namespace
         }
     };
 
+    class DirectOutputCanvasView final : public CanvasView
+    {
+    public:
+        RHI::TexturePtr OutputTexture = RHI::MakeShared<FakeTexture>("DirectCanvasOutput");
+        uint32_t RenderCount = 0;
+
+        void Render(ViewRenderContext& context) override
+        {
+            ++RenderCount;
+            ResetFrameOutput();
+            context.CurrentGraphExecutionResult = nullptr;
+            context.bPresentationGraphPassHandled = false;
+            if (IsEnabled() && OutputTexture)
+            {
+                SetFrameOutputTexture(OutputTexture);
+            }
+        }
+    };
+
     struct ExecutorPresentationFixture
     {
         RHI::TexturePtr BackBuffer = RHI::MakeShared<FakeTexture>("ExecutorBackBuffer");
@@ -553,6 +574,7 @@ namespace
         Container::VariableArray<Container::TSharedPtr<View>> Views;
         PresentationComposer Composer;
         PresentationPass GraphPresentationPass;
+        CompositePass GraphCompositePass;
 
         ExecutorPresentationFixture()
         {
@@ -623,6 +645,7 @@ namespace
             request.PresentationRequest = MakeComposeRequest();
             request.PresentationGraphPass = &GraphPresentationPass;
             request.GraphPresentationRequest = MakeGraphPresentationRequest();
+            request.CompositeGraphPass = &GraphCompositePass;
             return request;
         }
     };
@@ -653,6 +676,7 @@ namespace
 
 int main()
 {
+    std::cout.setf(std::ios::unitbuf);
     std::cout << "RenderFrameExecutorPlanTest start\n";
 
     {
@@ -711,6 +735,71 @@ int main()
         const ViewportRenderPlan *primary = RenderFrameExecutor::FindPrimaryViewportRenderPlan(packet);
         assert(primary != nullptr);
         assert(primary->ViewId == 0);
+    }
+
+    {
+        auto canvas = Container::MakeShared<DirectOutputCanvasView>();
+        ViewSettings canvasSettings;
+        canvasSettings.Type = ViewType::UI;
+        assert(canvas->Initialize(canvasSettings));
+
+        Container::VariableArray<Container::TSharedPtr<View>> views;
+        views.push_back(canvas);
+
+        FramePacket packet;
+        ViewRenderPlan canvasPlan = MakeViewPlan(0, ViewType::UI);
+        canvasPlan.Viewports.clear();
+        packet.Views.push_back(canvasPlan);
+        assert(RenderFrameExecutor::ShouldCompose(packet, views));
+
+        canvas->SetEnabled(false);
+        assert(!RenderFrameExecutor::ShouldCompose(packet, views));
+
+        canvas->SetEnabled(true);
+        packet.Views[0].bEnabled = false;
+        assert(!RenderFrameExecutor::ShouldCompose(packet, views));
+
+        packet.Views[0].bEnabled = true;
+        auto genericUi = Container::MakeShared<View>();
+        assert(genericUi->Initialize(canvasSettings));
+        views[0] = genericUi;
+        assert(!RenderFrameExecutor::ShouldCompose(packet, views));
+        std::cout << "TestShouldComposeRequiresEnabledCanvasView passed\n";
+    }
+
+    {
+        FramePacket packet;
+        packet.Views.push_back(MakeViewPlan(0, ViewType::Scene));
+        packet.Views.push_back(MakeViewPlan(1, ViewType::Scene));
+
+        const ViewportRenderPlan* primaryScene = RenderFrameExecutor::FindPrimarySceneViewportRenderPlan(packet);
+        assert(primaryScene != nullptr);
+        assert(primaryScene->ViewId == 0);
+
+        packet.Views[0].bEnabled = false;
+        primaryScene = RenderFrameExecutor::FindPrimarySceneViewportRenderPlan(packet);
+        assert(primaryScene != nullptr);
+        assert(primaryScene->ViewId == 1);
+
+        packet.Views[1].Viewports.clear();
+        primaryScene = RenderFrameExecutor::FindPrimarySceneViewportRenderPlan(packet);
+        assert(primaryScene == nullptr);
+        std::cout << "TestFindPrimarySceneViewportIgnoresDisabledOrEmptySceneViews passed\n";
+    }
+
+    {
+        View view;
+        ViewSettings settings;
+        assert(view.Initialize(settings));
+        RHI::TexturePtr output = RHI::MakeShared<FakeTexture>("ViewFrameOutput");
+        view.SetFrameOutputTexture(output);
+        assert(view.GetFrameOutputTexture().get() == output.get());
+        view.ResetFrameOutput();
+        assert(!view.GetFrameOutputTexture());
+        view.SetFrameOutputTexture(output);
+        view.Shutdown();
+        assert(!view.GetFrameOutputTexture());
+        std::cout << "TestViewFrameOutputResetAndShutdownLifetime passed\n";
     }
 
     {
@@ -815,6 +904,75 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
         std::cout << "TestMissingGraphPresentationInputWithoutComposerSkipsFallback passed\n";
+    }
+
+    {
+        ExecutorPresentationFixture fixture;
+        auto firstSceneView = Container::MakeShared<View>();
+        auto secondSceneView = Container::MakeShared<View>();
+        ViewSettings settings;
+        assert(firstSceneView->Initialize(settings));
+        assert(secondSceneView->Initialize(settings));
+        firstSceneView->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
+        secondSceneView->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
+        fixture.Views.push_back(firstSceneView);
+        fixture.Views.push_back(secondSceneView);
+        fixture.Packet.Views.push_back(MakeViewPlan(1, ViewType::Scene));
+
+        assert(!RenderFrameExecutor::ShouldCompose(fixture.Packet, fixture.Views));
+
+        RenderFrameExecutor executor;
+        RenderFrameExecutionResult result = executor.Execute(fixture.MakeExecutionRequest());
+
+        assert(result.bRenderedAnyViewport);
+        assert(result.RenderedViewportCount == 2);
+        assert(result.PresentationBlitCount == 2);
+        assert(fixture.GraphPresentationPass.WasPresented());
+        assert(fixture.PendingFrameCommands.empty());
+        assert(fixture.CommandList.HasRenderPass(fixture.GraphClearRenderPass.get()));
+        assert(fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        assert(!fixture.GraphCompositePass.GetLastResult().bPublishedComposite);
+        std::cout << "TestTwoSceneViewsWithoutCanvasStayOnLegacyExecutorPath passed\n";
+    }
+
+    {
+        ExecutorPresentationFixture fixture;
+        auto sceneView = Container::MakeShared<View>();
+        auto canvasView = Container::MakeShared<DirectOutputCanvasView>();
+        ViewSettings sceneSettings;
+        ViewSettings canvasSettings;
+        canvasSettings.Type = ViewType::UI;
+        assert(sceneView->Initialize(sceneSettings));
+        assert(canvasView->Initialize(canvasSettings));
+        sceneView->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
+        fixture.Views.push_back(sceneView);
+        fixture.Views.push_back(canvasView);
+
+        ViewRenderPlan canvasPlan;
+        canvasPlan.ViewId = 1;
+        canvasPlan.ViewType = static_cast<uint8_t>(ViewType::UI);
+        canvasPlan.Priority = 10;
+        fixture.Packet.Views.push_back(canvasPlan);
+
+        RenderFrameExecutor executor;
+        RenderFrameExecutionResult result = executor.Execute(fixture.MakeExecutionRequest());
+
+        assert(result.bRenderedAnyViewport);
+        assert(result.RenderedViewportCount == 2);
+        assert(result.PresentationBlitCount == 1);
+        assert(canvasView->RenderCount == 1);
+        assert(canvasView->GetFrameOutputTexture().get() == canvasView->OutputTexture.get());
+        assert(fixture.PendingFrameCommands.empty());
+        assert(fixture.CommandList.HasRenderPass(fixture.GraphClearRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
+        assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        assert(!fixture.Context.PresentationGraphPass);
+        assert(!fixture.Context.bPresentationGraphPassHandled);
+        assert(!fixture.GraphCompositePass.GetLastResult().bPublishedComposite);
+        std::cout << "TestZeroViewportCanvasRendersDirectlyAndPresentsOnce passed\n";
     }
 
     {

@@ -2,6 +2,7 @@
 
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Rendering/CompositePass.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
@@ -15,9 +16,11 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     struct FramePacket;
+    struct ViewRenderPlan;
     struct ViewportRenderPlan;
     struct ViewRenderContext;
     class SceneRenderer;
+    class CanvasView;
     class View;
 
     struct RenderFrameExecutionRequest
@@ -33,6 +36,7 @@ namespace NorvesLib::Core::Rendering
         PresentationComposeRequest PresentationRequest;
         PresentationPass *PresentationGraphPass = nullptr;
         PresentationPassRequest GraphPresentationRequest;
+        CompositePass *CompositeGraphPass = nullptr;
     };
 
     struct RenderFrameExecutionResult
@@ -49,8 +53,20 @@ namespace NorvesLib::Core::Rendering
 
         static void ApplyViewportRenderPlan(ViewRenderContext &context, const ViewportRenderPlan *viewportPlan);
         static const ViewportRenderPlan *FindPrimaryViewportRenderPlan(const FramePacket &packet);
+        static const ViewportRenderPlan *FindPrimarySceneViewportRenderPlan(const FramePacket &packet);
+        static bool ShouldCompose(const FramePacket &packet,
+                                  const Container::VariableArray<Container::TSharedPtr<View>> &views);
 
     private:
+        static RenderFrameExecutionResult ExecuteLegacyPath(const RenderFrameExecutionRequest &request);
+        static RenderFrameExecutionResult ExecuteCompositePath(const RenderFrameExecutionRequest &request);
+        static void ResetFrameOutputs(const RenderFrameExecutionRequest &request);
+        static CanvasView *ResolveEnabledCanvasView(
+            const FramePacket &packet,
+            const Container::VariableArray<Container::TSharedPtr<View>> &views);
+        static View *ResolveView(const RenderFrameExecutionRequest &request, const ViewRenderPlan &viewPlan);
+        static void ConfigureNoPresentationGraphPass(const RenderFrameExecutionRequest &request);
+        static void ClearStage2RequestsAndResults(const RenderFrameExecutionRequest &request);
         static void FlushPendingFrameCommands(const RenderFrameExecutionRequest &request);
         static bool RenderViewForCurrentViewport(const RenderFrameExecutionRequest &request, View *view);
         static void ConfigurePresentationGraphPass(const RenderFrameExecutionRequest &request, bool bClearPresentation);

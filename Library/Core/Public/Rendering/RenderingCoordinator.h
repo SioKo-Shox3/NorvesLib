@@ -2,12 +2,14 @@
 
 #include "Screen.h"
 #include "View.h"
+#include "CanvasView.h"
 #include "SceneView.h"
 #include "SceneRenderer.h"
 #include "DrawCommand.h"
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
 #include "Rendering/InstanceBufferRing.h"
+#include "Rendering/CompositePass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "ShaderManager.h"
@@ -207,6 +209,13 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<SceneView> CreateSceneView(const SceneViewSettings &settings);
 
         /**
+         * @brief CanvasViewを作成
+         *
+         * F1ではpre-frame専用。既定では作成されず、明示opt-in時のみ登録します。
+         */
+        Container::TSharedPtr<CanvasView> CreateCanvasView();
+
+        /**
          * @brief Viewを削除
          * @param view 削除するView
          */
@@ -227,6 +236,12 @@ namespace NorvesLib::Core::Rendering
          * @brief メインSceneViewを取得
          */
         Container::TSharedPtr<SceneView> GetMainSceneView() const { return m_MainSceneView; }
+
+        /**
+         * @brief CanvasViewを取得
+         */
+        Container::TSharedPtr<CanvasView> GetCanvasView() const { return m_CanvasView; }
+        bool IsCanvasViewEnabled() const { return m_CanvasView && m_CanvasView->IsEnabled(); }
 
         // ========================================
         // リソースマネージャー
@@ -367,6 +382,7 @@ namespace NorvesLib::Core::Rendering
         RenderGraph m_RenderGraph;
 
         // RenderGraph最終swapchain合成パス
+        CompositePass m_CompositePass;
         PresentationPass m_PresentationPass;
 
         // フレーム別インスタンスデータSSBOリング
@@ -377,6 +393,7 @@ namespace NorvesLib::Core::Rendering
 
         // View管理
         Container::TSharedPtr<SceneView> m_MainSceneView;
+        Container::TSharedPtr<CanvasView> m_CanvasView;
         Container::VariableArray<Container::TSharedPtr<View>> m_Views;
 
         // レンダリングリソース（RenderWorld所有、フレーム実行中のみ参照）
@@ -409,6 +426,7 @@ namespace NorvesLib::Core::Rendering
 
         // 状態
         bool m_bInitialized = false;
+        bool m_bFrameSubmissionStarted = false;
 
         void UpdateRenderResolution(uint32_t screenWidth, uint32_t screenHeight);
     };
