@@ -29,6 +29,14 @@
 #include "Core/Public/Module/ModuleRegistry.h"
 #include "DummyModule/DummyRenderModule.h"
 
+// モジュールシステム第2段 B-i: --imgui ゲートで ImGui モジュールを登録する。
+// 別 static lib(NorvesModule_ImGui)の自由関数を明示参照し、Core 在駐の ModuleRegistry
+// へ登録する(リンク引込も兼ねる)。NORVES_ENABLE_IMGUI OFF ビルドでは本ヘッダも登録も
+// 一切無く、--imgui は未処理=完全 no-op(素ビルド byte-for-byte 不変)。
+#if defined(NORVES_ENABLE_IMGUI)
+#include "ImGuiModule/ImGuiModule.h"
+#endif
+
 using namespace NorvesLib::Core::Container;
 using namespace NorvesLib::Core::Engine;
 using namespace NorvesLib::Core::GameMode;
@@ -45,6 +53,9 @@ namespace Game
         // 値を取らない bare フラグ(--enable-canvas-view と同類)。指定時のみ描画ダミー
         // モジュールを登録する不変条件ゲート。
         constexpr const TCHAR *kDummyOverlayOption = TEXT("--dummy-overlay");
+        // 値を取らない bare フラグ(第2段 B-i)。指定時のみ ImGui モジュールを登録する
+        // 不変条件ゲート。NORVES_ENABLE_IMGUI ビルドでのみ有効に処理される。
+        constexpr const TCHAR *kImGuiOption = TEXT("--imgui");
         constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
 
         /**
@@ -380,6 +391,28 @@ namespace Game
             LOG_INFO("Module runtime option --dummy-overlay: DummyRenderModule registered");
         }
 
+        // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
+        // NORVES_ENABLE_IMGUI ビルドで指定された場合のみ ImGui モジュールを登録する。
+        // フラグ無し or OFF ビルドでは一切登録せず、overlay seam は完全 no-op を保つ。
+        bool bImGui = false;
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            if (ToStdString(args[i]) == std::basic_string<TCHAR>(kImGuiOption))
+            {
+                bImGui = true;
+                break;
+            }
+        }
+        if (bImGui)
+        {
+#if defined(NORVES_ENABLE_IMGUI)
+            NorvesLib::Core::Module::RegisterImGuiModule(
+                NorvesLib::Core::Module::GetModuleRegistry());
+            LOG_INFO("Module runtime option --imgui: ImGuiModule registered");
+#else
+            LOG_WARNING("Module runtime option --imgui ignored: build without NORVES_ENABLE_IMGUI");
+#endif
+        }
         return true;
     }
 

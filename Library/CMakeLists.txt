@@ -15,6 +15,13 @@ add_subdirectory(Core)
 # 別 static lib モジュール(Core 依存・明示 Register 駆動)。INTERFACE NorvesLib には足さない。
 add_subdirectory(Modules/Dummy)
 
+# ImGui モジュール本体(第2段 B-i)。NORVES_ENABLE_IMGUI ON 時のみ構築する
+# (imgui core lib NorvesThirdParty_ImGui に PRIVATE 依存)。OFF 時は構築せず
+# Game も非リンク=素ビルド byte-for-byte 不変。INTERFACE NorvesLib には足さない。
+if(NORVES_ENABLE_IMGUI)
+    add_subdirectory(Modules/ImGui)
+endif()
+
 # 全てのモジュールをリンクするインターフェースライブラリを作成
 add_library(${MODULE_NAME} INTERFACE)
 

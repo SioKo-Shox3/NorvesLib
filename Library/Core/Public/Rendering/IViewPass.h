@@ -86,6 +86,27 @@ namespace NorvesLib::Core::Rendering
         virtual void Execute(ViewRenderContext &context) = 0;
 
         // ========================================
+        // FramePacket スロット連動（overlay パス用・任意）
+        // ========================================
+
+        /**
+         * @brief このパスを載せる書き込み中 FramePacket のスロット index を通知（GameThread）
+         *
+         * RenderingCoordinator::SetOverlayPassesForNextFrame が、書き込み中パケットへ
+         * 本パスを登録する際に「そのパケットが占有する FramePacket プールのスロット
+         * index」を渡す。GameThread 上で呼ばれ、当該パケットが Writing 状態である間
+         * (=RenderThread が同スロットを読まないことをプールが保証する間)に発火する。
+         *
+         * overlay パスが FramePacket スロット寿命へ per-slot スナップショットを束ねる
+         * ための拡張点。既定 no-op のため scene/post パス等は影響を受けない。
+         *
+         * @param slotIndex 書き込み中パケットのスロット index（0..FRAME_PACKET_BUFFER_COUNT-1）
+         */
+        virtual void OnAssignedToPacket(uint32_t /*slotIndex*/)
+        {
+        }
+
+        // ========================================
         // 状態管理
         // ========================================
 
