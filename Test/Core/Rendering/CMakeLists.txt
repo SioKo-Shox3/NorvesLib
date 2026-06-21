@@ -224,6 +224,25 @@ target_include_directories(ComponentDirtyTrackingTest PRIVATE
 set_target_properties(ComponentDirtyTrackingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ComponentDirtyTrackingTest COMMAND ComponentDirtyTrackingTest)
 
+add_executable(ComponentDataRegistryTest
+    ComponentDataRegistryTest.cpp
+)
+target_link_libraries(ComponentDataRegistryTest PRIVATE Core)
+target_include_directories(ComponentDataRegistryTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ComponentDataRegistryTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ComponentDataRegistryTest COMMAND ComponentDataRegistryTest)
+
+add_executable(ComponentDataBenchmark
+    ComponentDataBenchmark.cpp
+)
+target_link_libraries(ComponentDataBenchmark PRIVATE Core)
+target_include_directories(ComponentDataBenchmark PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ComponentDataBenchmark PROPERTIES FOLDER "Test/Core/Rendering")
+
 add_executable(WorldSyncDifferentialTest
     WorldSyncDifferentialTest.cpp
 )

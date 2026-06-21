@@ -16,6 +16,7 @@ namespace NorvesLib::Core::Rendering
 
 namespace NorvesLib::Core
 {
+    class ComponentDataRegistry;
     class PrefabAsset;
     struct PrefabOverrideSet;
 
@@ -225,7 +226,8 @@ namespace NorvesLib::Core
                                  const Rendering::MaterialResources* materials,
                                  Container::UnorderedSet<uint64_t>& liveMeshObjectIds,
                                  Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
-                                 Container::UnorderedSet<uint64_t>& liveLightIds);
+                                 Container::UnorderedSet<uint64_t>& liveLightIds,
+                                 ComponentDataRegistry* componentDataRegistry);
         void CollectPendingDestroyRecursive(Entity& entity, Container::VariableArray<Entity*>& toRemove);
         bool AttachRootEntity(Entity* entity);
         bool AttachChildEntity(Entity* parent, Entity* child);

@@ -45,6 +45,7 @@ set(PRIVATE_SOURCES
     Private/Boot/AppLauncher.cpp
     Private/Engine/Engine.cpp
     Private/Engine/NorvesEngine.cpp
+    Private/Engine/ComponentDataRegistry.cpp
     Private/Engine/ApplicationProcessor.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
@@ -300,6 +301,7 @@ set(PUBLIC_HEADERS
     Public/Object/ObjectResolver.h
     Public/Object/PropertyBag.h
     Public/Object/ReferenceCollector.h
+    Public/Object/EntityHandle.h
     Public/Object/PrefabAsset.h
     Public/Object/Resource.h
     Public/Object/ResourceRef.h
@@ -312,6 +314,7 @@ set(PUBLIC_HEADERS
     Public/Engine/NorvesEngine.h
     Public/Engine/IEngine.h
     Public/Engine/AssetRegistry.h
+    Public/Engine/ComponentDataRegistry.h
     # Resource
     Public/Resource/MeshResource.h
     Public/Resource/MaterialResource.h
@@ -418,6 +421,7 @@ target_compile_definitions(${MODULE_NAME}
         NORVES_ENABLE_STATS=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
         NORVES_ENABLE_RENDERGRAPH_DUMP=$<IF:$<CONFIG:Debug>,1,0>
         NORVES_ENABLE_PROFILING=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
+        NORVES_ENABLE_COMPONENT_DATA_REGISTRY=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
 )
 
 # shaderc（Vulkan SDK同梱のランタイムシェーダーコンパイラ）
