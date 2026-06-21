@@ -25,12 +25,34 @@ namespace NorvesLib::Core::Rendering
     namespace
     {
         constexpr uint32_t MaxRetainedBoardFrameResources = 8;
+        constexpr uint32_t BoardPipelineVariantCount = 3;
 
         struct SortedBoardEntry
         {
             const BoardProxy* Proxy = nullptr;
             uint64_t CanvasInsertionSequence = 0;
         };
+
+        uint32_t GetBoardBlendPipelineIndex(BlendMode blendMode)
+        {
+            switch (CanvasView::NormalizeBoardBlendMode(blendMode))
+            {
+            case BlendMode::Opaque:
+                return 0;
+
+            case BlendMode::Additive:
+                return 2;
+
+            case BlendMode::Translucent:
+            default:
+                return 1;
+            }
+        }
+
+        float NormalizeBoardFlipFlag(bool bFlip)
+        {
+            return bFlip ? 1.0f : 0.0f;
+        }
 
         void FillBoardInstanceData(const BoardProxy &proxy,
                                    const ViewportRenderPlan &viewportPlan,
@@ -43,13 +65,18 @@ namespace NorvesLib::Core::Rendering
                 value = 0.0f;
             }
 
-            outData.NormalMatrix[0] = 1.0f;
-            outData.NormalMatrix[5] = 1.0f;
-            outData.NormalMatrix[10] = 1.0f;
-            outData.ObjectColor[0] = 1.0f;
-            outData.ObjectColor[1] = 1.0f;
-            outData.ObjectColor[2] = 1.0f;
-            outData.ObjectColor[3] = 0.75f;
+            outData.NormalMatrix[0] = proxy.SizePx.x;
+            outData.NormalMatrix[1] = proxy.SizePx.y;
+            outData.NormalMatrix[2] = proxy.Pivot.x;
+            outData.NormalMatrix[3] = proxy.Pivot.y;
+            outData.NormalMatrix[4] = NormalizeBoardFlipFlag(proxy.bFlipX);
+            outData.NormalMatrix[5] = NormalizeBoardFlipFlag(proxy.bFlipY);
+
+            const BlendMode normalizedBlendMode = CanvasView::NormalizeBoardBlendMode(proxy.BlendModeProp);
+            outData.ObjectColor[0] = proxy.Tint.x;
+            outData.ObjectColor[1] = proxy.Tint.y;
+            outData.ObjectColor[2] = proxy.Tint.z;
+            outData.ObjectColor[3] = normalizedBlendMode == BlendMode::Opaque ? 1.0f : proxy.Tint.w;
             outData.CustomData[0] = viewportPlan.PixelRect.Width > 0.0f
                                         ? viewportPlan.PixelRect.Width
                                         : static_cast<float>(viewportPlan.RenderWidth);
@@ -200,18 +227,22 @@ namespace NorvesLib::Core::Rendering
             return descriptorSet;
         }
 
-        RHI::PipelinePtr CreateBoardPipeline(RHI::RenderPassPtr renderPass, ViewRenderContext& context)
+        Container::VariableArray<RHI::PipelinePtr> CreateBoardPipelines(RHI::RenderPassPtr renderPass,
+                                                                        ViewRenderContext& context)
         {
+            Container::VariableArray<RHI::PipelinePtr> pipelines;
+            pipelines.reserve(BoardPipelineVariantCount);
+
             if (!renderPass || !context.Device || !context.ShaderMgr)
             {
-                return nullptr;
+                return pipelines;
             }
 
             RHI::ShaderPtr vertexShader = context.ShaderMgr->LoadShader("board2d.vert", RHI::ShaderStage::Vertex);
             RHI::ShaderPtr pixelShader = context.ShaderMgr->LoadShader("board2d.frag", RHI::ShaderStage::Pixel);
             if (!vertexShader || !pixelShader)
             {
-                return nullptr;
+                return pipelines;
             }
 
             RHI::DescriptorSetDesc descriptorSetDesc;
@@ -231,14 +262,32 @@ namespace NorvesLib::Core::Rendering
             pipelineDesc.rasterState.lineWidth = 1.0f;
             pipelineDesc.depthStencilState.depthTestEnable = false;
             pipelineDesc.depthStencilState.depthWriteEnable = false;
-
-            RHI::BlendAttachmentDesc blend;
-            blend.blendEnable = false;
-            blend.colorWriteMask = RHI::ColorWriteMask::All;
-            pipelineDesc.blendState.attachments.push_back(blend);
             pipelineDesc.renderPass = renderPass;
             pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
-            return context.Device->CreateGraphicsPipeline(pipelineDesc);
+
+            const BlendMode boardBlendModes[BoardPipelineVariantCount] =
+            {
+                BlendMode::Opaque,
+                BlendMode::Translucent,
+                BlendMode::Additive
+            };
+
+            for (uint32_t index = 0; index < BoardPipelineVariantCount; ++index)
+            {
+                RHI::GraphicsPipelineDesc variantDesc = pipelineDesc;
+                variantDesc.blendState.attachments.push_back(
+                    CanvasView::CreateBoardBlendAttachmentDesc(boardBlendModes[index]));
+                RHI::PipelinePtr pipeline = context.Device->CreateGraphicsPipeline(variantDesc);
+                if (!pipeline)
+                {
+                    pipelines.clear();
+                    return pipelines;
+                }
+
+                pipelines.push_back(pipeline);
+            }
+
+            return pipelines;
         }
 
         void RecordBoardDrawCommands(RHI::RenderPassPtr renderPass,
@@ -252,21 +301,22 @@ namespace NorvesLib::Core::Rendering
             }
 
             RHI::DescriptorSetPtr descriptorSet = CreateBoardDescriptorSet(context);
-            RHI::PipelinePtr pipeline = CreateBoardPipeline(renderPass, context);
-            if (!descriptorSet || !pipeline)
+            Container::VariableArray<RHI::PipelinePtr> pipelines = CreateBoardPipelines(renderPass, context);
+            if (!descriptorSet || pipelines.size() != BoardPipelineVariantCount)
             {
                 return;
             }
 
             retainedResources.DescriptorSet = descriptorSet;
-            retainedResources.Pipeline = pipeline;
+            retainedResources.Pipelines = pipelines;
 
             Container::VariableArray<DrawCommand> executableCommands;
             executableCommands.reserve(boardCommands.size());
             for (const DrawCommand &command : boardCommands)
             {
                 DrawCommand executableCommand = command;
-                executableCommand.Pipeline = pipeline;
+                const uint32_t pipelineIndex = GetBoardBlendPipelineIndex(command.Draw.MaterialBlendMode);
+                executableCommand.Pipeline = pipelines[pipelineIndex];
                 executableCommand.DescriptorSet = descriptorSet;
                 executableCommand.DescriptorSetSlot = 0;
                 executableCommands.push_back(executableCommand);
@@ -286,6 +336,58 @@ namespace NorvesLib::Core::Rendering
     CanvasView::~CanvasView()
     {
         ReleaseRetainedBoardFrameResources();
+    }
+
+    BlendMode CanvasView::NormalizeBoardBlendMode(BlendMode blendMode)
+    {
+        switch (blendMode)
+        {
+        case BlendMode::Opaque:
+        case BlendMode::Translucent:
+        case BlendMode::Additive:
+            return blendMode;
+
+        case BlendMode::Masked:
+        case BlendMode::Modulate:
+        default:
+            return BlendMode::Translucent;
+        }
+    }
+
+    RHI::BlendAttachmentDesc CanvasView::CreateBoardBlendAttachmentDesc(BlendMode blendMode)
+    {
+        RHI::BlendAttachmentDesc blendDesc;
+        blendDesc.colorWriteMask = RHI::ColorWriteMask::All;
+
+        switch (NormalizeBoardBlendMode(blendMode))
+        {
+        case BlendMode::Opaque:
+            blendDesc.blendEnable = false;
+            break;
+
+        case BlendMode::Additive:
+            blendDesc.blendEnable = true;
+            blendDesc.srcColorBlendFactor = RHI::BlendFactor::One;
+            blendDesc.dstColorBlendFactor = RHI::BlendFactor::One;
+            blendDesc.colorBlendOp = RHI::BlendOp::Add;
+            blendDesc.srcAlphaBlendFactor = RHI::BlendFactor::Zero;
+            blendDesc.dstAlphaBlendFactor = RHI::BlendFactor::One;
+            blendDesc.alphaBlendOp = RHI::BlendOp::Add;
+            break;
+
+        case BlendMode::Translucent:
+        default:
+            blendDesc.blendEnable = true;
+            blendDesc.srcColorBlendFactor = RHI::BlendFactor::One;
+            blendDesc.dstColorBlendFactor = RHI::BlendFactor::InvSrcAlpha;
+            blendDesc.colorBlendOp = RHI::BlendOp::Add;
+            blendDesc.srcAlphaBlendFactor = RHI::BlendFactor::One;
+            blendDesc.dstAlphaBlendFactor = RHI::BlendFactor::InvSrcAlpha;
+            blendDesc.alphaBlendOp = RHI::BlendOp::Add;
+            break;
+        }
+
+        return blendDesc;
     }
 
     bool CanvasView::Initialize(const ViewSettings& settings)
@@ -460,6 +562,7 @@ namespace NorvesLib::Core::Rendering
             FillBoardInstanceData(proxy, viewportPlan, instanceData);
             const uint32_t instanceIndex = static_cast<uint32_t>(m_BoardInstanceData.size());
             m_BoardInstanceData.push_back(instanceData);
+            const BlendMode normalizedBlendMode = NormalizeBoardBlendMode(proxy.BlendModeProp);
 
             DrawCommand command = DrawCommand::CreateDraw();
             command.Type = DrawCommandType::DrawInstanced;
@@ -468,7 +571,7 @@ namespace NorvesLib::Core::Rendering
             command.Draw.FirstInstance = instanceIndex;
             command.Draw.InstanceDataOffset = instanceIndex;
             command.Draw.bInstanced = true;
-            command.Draw.MaterialBlendMode = BlendMode::Translucent;
+            command.Draw.MaterialBlendMode = normalizedBlendMode;
             command.Draw.ObjectId = proxy.ObjectId;
             command.SortKey = proxy.SortKey;
             m_BoardDrawCommands.push_back(command);

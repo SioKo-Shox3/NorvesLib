@@ -776,7 +776,7 @@ F4。
 
 - `BoardComponent` に `BlendModeProp`/`Tint`/`bFlipX`/`bFlipY`/`Pivot`/`SizePx` PROPERTY 追加（prefab シリアライズ）。`BuildBoardProxy` で BoardProxy へ反映。
 - CanvasView Board 描画パスで `BlendMode` ごとの `BlendAttachmentDesc` PSO バリアント（Translucent=alpha-over、Additive=add、Opaque=opaque）。`board2d.frag` で Tint 乗算。`board2d.vert` でフリップ/ピボット/サイズを transform に反映。
-- ブレンドモードごとに draw をグルーピング（PSO 切替最小化）。安定ソートはブレンドグループ内で維持。
+- painter 順を一次の正準として維持し、各 draw ごとに `MaterialBlendMode` から対応 PSO を選択する。非連続な blend mode では regroup しない。
 
 ### 成果物
 

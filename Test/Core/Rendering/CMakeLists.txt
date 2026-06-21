@@ -313,6 +313,26 @@ target_include_directories(BoardComponentRoutingTest PRIVATE
 set_target_properties(BoardComponentRoutingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME BoardComponentRoutingTest COMMAND BoardComponentRoutingTest)
 
+add_executable(BoardTransformTest
+    BoardTransformTest.cpp
+)
+target_link_libraries(BoardTransformTest PRIVATE Core)
+target_include_directories(BoardTransformTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardTransformTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardTransformTest COMMAND BoardTransformTest)
+
+add_executable(BoardBlendModeTest
+    BoardBlendModeTest.cpp
+)
+target_link_libraries(BoardBlendModeTest PRIVATE Core)
+target_include_directories(BoardBlendModeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardBlendModeTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardBlendModeTest COMMAND BoardBlendModeTest)
+
 add_executable(BoardSortKeyStableTest
     BoardSortKeyStableTest.cpp
 )
