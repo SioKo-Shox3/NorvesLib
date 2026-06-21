@@ -7,6 +7,7 @@
 #include "Math/Matrix4x4.h"
 #include "Math/Vector2.h"
 #include "Math/Vector4.h"
+#include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
 
@@ -55,6 +56,9 @@ namespace NorvesLib::Core::Component
         void SetSizePx(const Math::Vector2 &sizePx);
         const Math::Vector2 &GetSizePx() const { return SizePx; }
 
+        void SetUVRect(const Math::Vector4 &uvRect);
+        const Math::Vector4 &GetUVRect() const { return UVRectProp; }
+
         void SetLayerPriority(uint32_t layerPriority);
         uint32_t GetLayerPriority() const { return LayerPriority; }
 
@@ -63,6 +67,12 @@ namespace NorvesLib::Core::Component
 
         const Math::Matrix4x4 &GetWorldTransformCache() const { return m_WorldTransform; }
         const Math::Matrix4x4 &GetPreviousWorldTransformCache() const { return m_PreviousWorldTransform; }
+
+        static Math::Vector4 GetFullTextureUVRect();
+        static Container::VariableArray<Math::Vector4> ComputeSpriteSheetUVRects(uint32_t texWidth,
+                                                                                 uint32_t texHeight,
+                                                                                 uint32_t cellWidth,
+                                                                                 uint32_t cellHeight);
 
         void RefreshRenderTransformCache();
         virtual bool BuildBoardProxy(Rendering::BoardProxy &outProxy,
@@ -82,6 +92,7 @@ namespace NorvesLib::Core::Component
         PROPERTY(bool, bFlipY)
         PROPERTY(Math::Vector2, Pivot)
         PROPERTY(Math::Vector2, SizePx)
+        PROPERTY(Math::Vector4, UVRectProp)
         PROPERTY(uint32_t, LayerPriority)
         PROPERTY(uint32_t, OrderInLayer)
 

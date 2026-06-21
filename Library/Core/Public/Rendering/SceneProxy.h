@@ -226,6 +226,7 @@ namespace NorvesLib::Core::Rendering
         bool bFlipY = false;
         Math::Vector2 Pivot = Math::Vector2(0.0f, 0.0f);
         Math::Vector2 SizePx = Math::Vector2(0.0f, 0.0f);
+        Math::Vector4 UVRect = Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f);
 
         bool bVisible = true;
 

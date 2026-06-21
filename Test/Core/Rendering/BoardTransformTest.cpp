@@ -111,6 +111,7 @@ namespace
         assert(!proxy.bFlipY);
         assert(proxy.Pivot == Math::Vector2(0.0f, 0.0f));
         assert(proxy.SizePx == Math::Vector2(0.0f, 0.0f));
+        assert(proxy.UVRect == Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f));
         assert(proxy.SortKey == BoardProxy::ComputeSortKey(0u, 0u));
         AssertNear(proxy.WorldTransform.m30, 12.0f);
         AssertNear(proxy.WorldTransform.m31, 34.0f);
@@ -171,6 +172,7 @@ namespace
         board->SetFlipY(true);
         board->SetPivot(Math::Vector2(0.5f, 1.0f));
         board->SetSizePx(Math::Vector2(96.0f, 48.0f));
+        board->SetUVRect(Math::Vector4(0.25f, 0.5f, 0.125f, 0.25f));
 
         world.UpdateWorldTransforms();
         board->RefreshRenderTransformCache();
@@ -183,6 +185,7 @@ namespace
         assert(proxy.bFlipY);
         assert(proxy.Pivot == Math::Vector2(0.5f, 1.0f));
         assert(proxy.SizePx == Math::Vector2(96.0f, 48.0f));
+        assert(proxy.UVRect == Math::Vector4(0.25f, 0.5f, 0.125f, 0.25f));
 
         world.Finalize();
         std::cout << "TestBuildBoardProxyReflectsF5Fields passed\n";
@@ -241,10 +244,12 @@ namespace
         AssertNear(opaqueInstance.NormalMatrix[3], 0.25f);
         AssertNear(opaqueInstance.NormalMatrix[4], 1.0f);
         AssertNear(opaqueInstance.NormalMatrix[5], 0.0f);
-        for (uint32_t index = 6; index < 12; ++index)
-        {
-            AssertNear(opaqueInstance.NormalMatrix[index], 0.0f);
-        }
+        AssertNear(opaqueInstance.NormalMatrix[6], 0.0f);
+        AssertNear(opaqueInstance.NormalMatrix[7], 0.0f);
+        AssertNear(opaqueInstance.NormalMatrix[8], 1.0f);
+        AssertNear(opaqueInstance.NormalMatrix[9], 1.0f);
+        AssertNear(opaqueInstance.NormalMatrix[10], 0.0f);
+        AssertNear(opaqueInstance.NormalMatrix[11], 0.0f);
         AssertNear(opaqueInstance.CustomData[0], 640.0f);
         AssertNear(opaqueInstance.CustomData[1], 480.0f);
         AssertNear(opaqueInstance.CustomData[2], 0.0f);
@@ -263,6 +268,12 @@ namespace
         AssertNear(translucentInstance.NormalMatrix[3], 1.0f);
         AssertNear(translucentInstance.NormalMatrix[4], 0.0f);
         AssertNear(translucentInstance.NormalMatrix[5], 1.0f);
+        AssertNear(translucentInstance.NormalMatrix[6], 0.0f);
+        AssertNear(translucentInstance.NormalMatrix[7], 0.0f);
+        AssertNear(translucentInstance.NormalMatrix[8], 1.0f);
+        AssertNear(translucentInstance.NormalMatrix[9], 1.0f);
+        AssertNear(translucentInstance.NormalMatrix[10], 0.0f);
+        AssertNear(translucentInstance.NormalMatrix[11], 0.0f);
 
         canvas.Shutdown();
         std::cout << "TestPrepareBoardDrawCommandsPacksBoardInstanceData passed\n";

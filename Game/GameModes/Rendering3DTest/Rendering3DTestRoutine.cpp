@@ -429,6 +429,69 @@ namespace Game::GameModes
             if (canvasView)
             {
                 auto &world = ctx.WorldRef;
+                auto &textures = ctx.RenderResourcesRef.Textures();
+
+                constexpr uint32_t atlasWidth = 128;
+                constexpr uint32_t atlasHeight = 64;
+                constexpr uint32_t atlasCellWidth = 32;
+                constexpr uint32_t atlasCellHeight = 32;
+                VariableArray<uint8_t> atlasData(atlasWidth * atlasHeight * 4u);
+                const Math::Vector4 atlasColors[] =
+                {
+                    Math::Vector4(0.95f, 0.20f, 0.25f, 1.0f),
+                    Math::Vector4(0.20f, 0.80f, 0.35f, 1.0f),
+                    Math::Vector4(0.20f, 0.45f, 1.00f, 1.0f),
+                    Math::Vector4(0.95f, 0.75f, 0.20f, 1.0f),
+                    Math::Vector4(0.80f, 0.25f, 0.95f, 1.0f),
+                    Math::Vector4(0.20f, 0.85f, 0.85f, 1.0f),
+                    Math::Vector4(1.00f, 0.50f, 0.20f, 1.0f),
+                    Math::Vector4(0.90f, 0.90f, 0.90f, 1.0f),
+                };
+
+                for (uint32_t y = 0; y < atlasHeight; ++y)
+                {
+                    for (uint32_t x = 0; x < atlasWidth; ++x)
+                    {
+                        const uint32_t cellX = x / atlasCellWidth;
+                        const uint32_t cellY = y / atlasCellHeight;
+                        const uint32_t cellIndex = cellY * (atlasWidth / atlasCellWidth) + cellX;
+                        const uint32_t localX = x % atlasCellWidth;
+                        const uint32_t localY = y % atlasCellHeight;
+                        const float normalizedX = static_cast<float>(localX) / static_cast<float>(atlasCellWidth - 1u);
+                        const float normalizedY = static_cast<float>(localY) / static_cast<float>(atlasCellHeight - 1u);
+                        const bool bDiagonal = localX >= localY / 2u;
+                        const bool bCutout = localX > atlasCellWidth / 3u &&
+                                             localX < (atlasCellWidth * 2u) / 3u &&
+                                             localY > atlasCellHeight / 4u &&
+                                             localY < (atlasCellHeight * 3u) / 4u;
+                        const float alphaScale = bCutout ? 0.35f : 1.0f;
+                        const Math::Vector4 &cellColor = atlasColors[cellIndex % static_cast<uint32_t>(sizeof(atlasColors) / sizeof(atlasColors[0]))];
+                        const float brightness = bDiagonal ? 1.0f : 0.45f;
+                        const uint32_t pixelIndex = (y * atlasWidth + x) * 4u;
+                        atlasData[pixelIndex + 0u] = static_cast<uint8_t>(255.0f * cellColor.x * brightness);
+                        atlasData[pixelIndex + 1u] = static_cast<uint8_t>(255.0f * cellColor.y * (0.7f + 0.3f * normalizedX));
+                        atlasData[pixelIndex + 2u] = static_cast<uint8_t>(255.0f * cellColor.z * (0.7f + 0.3f * normalizedY));
+                        atlasData[pixelIndex + 3u] = static_cast<uint8_t>(255.0f * alphaScale);
+                    }
+                }
+
+                TextureCreateInfo atlasInfo;
+                atlasInfo.Width = atlasWidth;
+                atlasInfo.Height = atlasHeight;
+                atlasInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+                atlasInfo.DebugName = "F6BoardAtlas";
+                data.m_F6AtlasTextureHandle = textures.CreateTexture(
+                    atlasInfo,
+                    atlasData.data(),
+                    static_cast<uint32_t>(atlasData.size()));
+
+                const VariableArray<Math::Vector4> atlasRects =
+                    Component::BoardComponent::ComputeSpriteSheetUVRects(
+                        atlasWidth,
+                        atlasHeight,
+                        atlasCellWidth,
+                        atlasCellHeight);
+
                 struct F5BoardSpec
                 {
                     float X;
@@ -443,15 +506,16 @@ namespace Game::GameModes
                     Math::Vector2 SizePx;
                     uint32_t LayerPriority;
                     uint32_t OrderInLayer;
+                    uint32_t AtlasRectIndex;
                 };
 
                 const F5BoardSpec boardSpecs[] =
                 {
-                    {72.0f, 72.0f, 160.0f, 96.0f, BlendMode::Translucent, Math::Vector4(0.20f, 0.55f, 1.00f, 0.75f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 0u},
-                    {112.0f, 104.0f, 180.0f, 104.0f, BlendMode::Opaque, Math::Vector4(1.00f, 0.35f, 0.25f, 0.20f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 1u},
-                    {176.0f, 132.0f, 132.0f, 72.0f, BlendMode::Additive, Math::Vector4(1.00f, 0.95f, 0.35f, 0.45f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 2u},
-                    {472.0f, 108.0f, 72.0f, 72.0f, BlendMode::Translucent, Math::Vector4(0.30f, 1.00f, 0.75f, 0.65f), true, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(140.0f, 40.0f), 0u, 3u},
-                    {400.0f, 260.0f, 44.0f, 132.0f, BlendMode::Translucent, Math::Vector4(0.90f, 0.30f, 1.00f, 0.70f), false, true, Math::Vector2(0.5f, 1.0f), Math::Vector2(96.0f, 160.0f), 1u, 0u},
+                    {72.0f, 72.0f, 160.0f, 96.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.90f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 0u, 0u},
+                    {112.0f, 104.0f, 180.0f, 104.0f, BlendMode::Opaque, Math::Vector4(1.00f, 1.00f, 1.00f, 1.00f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 1u, 1u},
+                    {176.0f, 132.0f, 132.0f, 72.0f, BlendMode::Additive, Math::Vector4(0.85f, 0.85f, 0.85f, 0.50f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 2u, 2u},
+                    {472.0f, 108.0f, 72.0f, 72.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.80f), true, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(140.0f, 40.0f), 0u, 3u, 4u},
+                    {400.0f, 260.0f, 44.0f, 132.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.85f), false, true, Math::Vector2(0.5f, 1.0f), Math::Vector2(96.0f, 160.0f), 1u, 0u, 5u},
                 };
 
                 constexpr uint32_t boardSpecCount = static_cast<uint32_t>(sizeof(boardSpecs) / sizeof(boardSpecs[0]));
@@ -480,12 +544,20 @@ namespace Game::GameModes
                     boardComponent->SetLayerPriority(boardSpec.LayerPriority);
                     boardComponent->SetOrderInLayer(boardSpec.OrderInLayer);
                     boardComponent->SetVisible(true);
+                    if (data.m_F6AtlasTextureHandle.IsValid())
+                    {
+                        boardComponent->SetTextureHandle(data.m_F6AtlasTextureHandle);
+                        if (boardSpec.AtlasRectIndex < atlasRects.size())
+                        {
+                            boardComponent->SetUVRect(atlasRects[boardSpec.AtlasRectIndex]);
+                        }
+                    }
 
                     data.m_F4BoardObjects.push_back(boardObject);
                     data.m_F4BoardComponents.push_back(boardComponent);
                 }
 
-                LOG_INFO("F5 ScreenSpace Board showcase created with blend, tint, flip, pivot, and size variants");
+                LOG_INFO("F5 ScreenSpace Board showcase created with blend, tint, flip, pivot, size, and atlas UV variants");
             }
         }
 
@@ -737,6 +809,11 @@ namespace Game::GameModes
         //    boulder の各オブジェクト・3 メッシュ・boulder モデル）の解放は
         //    GameModeScope::Cleanup（Leave 直後に StateMachine が呼ぶ）が
         //    正しい順序で行う。ここでは手動解放しない。
+        if (data.m_F6AtlasTextureHandle.IsValid())
+        {
+            ctx.RenderResourcesRef.Textures().ReleaseTexture(data.m_F6AtlasTextureHandle);
+            data.m_F6AtlasTextureHandle = TextureHandle::Invalid();
+        }
 
         // 3) 再 Enter（Change 往復）に備えてキャッシュをクリアする。
         //    スコープは独自の追跡リストを使うため、ここでの null 化は安全。

@@ -188,6 +188,7 @@ namespace
         assert(!proxy.bFlipY);
         assert(proxy.Pivot == Math::Vector2(0.0f, 0.0f));
         assert(proxy.SizePx == Math::Vector2(0.0f, 0.0f));
+        assert(proxy.UVRect == Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f));
         assert(proxy.LayerPriority == 0u);
         assert(proxy.OrderInLayer == 0u);
         assert(proxy.SortKey == BoardProxy::ComputeSortKey(0u, 0u));

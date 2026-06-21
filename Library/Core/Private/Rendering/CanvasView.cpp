@@ -3,6 +3,7 @@
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/Viewport.h"
@@ -54,6 +55,40 @@ namespace NorvesLib::Core::Rendering
             return bFlip ? 1.0f : 0.0f;
         }
 
+        RHI::DescriptorSetDesc CreateBoardDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc descriptorSetDesc;
+
+            RHI::DescriptorBinding textureBinding;
+            textureBinding.binding = 0;
+            textureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            textureBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(textureBinding);
+
+            RHI::DescriptorBinding instanceBinding;
+            instanceBinding.binding = 7;
+            instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            instanceBinding.stages = RHI::ShaderStage::Vertex;
+            descriptorSetDesc.bindings.push_back(instanceBinding);
+            return descriptorSetDesc;
+        }
+
+        RHI::TexturePtr ResolveBoardTexture(const DrawCommand &command,
+                                           ViewRenderContext &context,
+                                           const RHI::TexturePtr &fallbackTexture)
+        {
+            if (command.Draw.Texture.IsValid() && context.Resources.Textures)
+            {
+                RHI::TexturePtr texture = context.Resources.Textures->GetRHITexturePtr(command.Draw.Texture);
+                if (texture)
+                {
+                    return texture;
+                }
+            }
+
+            return fallbackTexture;
+        }
+
         void FillBoardInstanceData(const BoardProxy &proxy,
                                    const ViewportRenderPlan &viewportPlan,
                                    GPUSceneInstanceData &outData)
@@ -71,6 +106,10 @@ namespace NorvesLib::Core::Rendering
             outData.NormalMatrix[3] = proxy.Pivot.y;
             outData.NormalMatrix[4] = NormalizeBoardFlipFlag(proxy.bFlipX);
             outData.NormalMatrix[5] = NormalizeBoardFlipFlag(proxy.bFlipY);
+            outData.NormalMatrix[6] = proxy.UVRect.x;
+            outData.NormalMatrix[7] = proxy.UVRect.y;
+            outData.NormalMatrix[8] = proxy.UVRect.z;
+            outData.NormalMatrix[9] = proxy.UVRect.w;
 
             const BlendMode normalizedBlendMode = CanvasView::NormalizeBoardBlendMode(proxy.BlendModeProp);
             outData.ObjectColor[0] = proxy.Tint.x;
@@ -143,6 +182,11 @@ namespace NorvesLib::Core::Rendering
                 return;
             }
 
+            if (m_Owner && !m_Owner->EnsureBoardSharedResources(context.Device))
+            {
+                return;
+            }
+
             RHI::RenderPassDesc renderPassDesc;
             RHI::AttachmentDesc colorAttachment;
             colorAttachment.format = outputTexture->GetFormat();
@@ -183,6 +227,11 @@ namespace NorvesLib::Core::Rendering
             retainedResources.OutputTexture = outputTexture;
             retainedResources.RenderPass = renderPass;
             retainedResources.Framebuffer = framebuffer;
+            if (m_Owner)
+            {
+                retainedResources.FallbackTexture = m_Owner->m_BoardFallbackWhiteTexture;
+                retainedResources.Sampler = m_Owner->m_BoardPointClampSampler;
+            }
 
             context.CommandList->BeginRenderPass(renderPass, framebuffer);
             context.CommandList->SetViewport(context.GetActiveLocalViewport());
@@ -199,26 +248,27 @@ namespace NorvesLib::Core::Rendering
         }
 
     private:
-        RHI::DescriptorSetPtr CreateBoardDescriptorSet(ViewRenderContext& context)
+        RHI::DescriptorSetPtr CreateBoardDescriptorSet(ViewRenderContext& context,
+                                                       const RHI::TexturePtr &texture,
+                                                       const RHI::SamplerPtr &sampler)
         {
-            if (!context.Device || !context.InstanceDataBuffer)
+            if (!context.Device ||
+                !context.InstanceDataBuffer ||
+                !texture ||
+                !sampler)
             {
                 return nullptr;
             }
 
-            RHI::DescriptorSetDesc descriptorSetDesc;
-            RHI::DescriptorBinding instanceBinding;
-            instanceBinding.binding = 7;
-            instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
-            instanceBinding.stages = RHI::ShaderStage::Vertex;
-            descriptorSetDesc.bindings.push_back(instanceBinding);
-
+            const RHI::DescriptorSetDesc descriptorSetDesc = CreateBoardDescriptorSetDesc();
             RHI::DescriptorSetPtr descriptorSet = context.Device->CreateDescriptorSet(descriptorSetDesc);
             if (!descriptorSet)
             {
                 return nullptr;
             }
 
+            descriptorSet->BindTexture(0, texture);
+            descriptorSet->BindSampler(0, sampler);
             descriptorSet->BindStorageBuffer(7,
                                              context.InstanceDataBuffer,
                                              0,
@@ -245,12 +295,7 @@ namespace NorvesLib::Core::Rendering
                 return pipelines;
             }
 
-            RHI::DescriptorSetDesc descriptorSetDesc;
-            RHI::DescriptorBinding instanceBinding;
-            instanceBinding.binding = 7;
-            instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
-            instanceBinding.stages = RHI::ShaderStage::Vertex;
-            descriptorSetDesc.bindings.push_back(instanceBinding);
+            const RHI::DescriptorSetDesc descriptorSetDesc = CreateBoardDescriptorSetDesc();
 
             RHI::GraphicsPipelineDesc pipelineDesc;
             pipelineDesc.vertexShader = vertexShader;
@@ -295,30 +340,43 @@ namespace NorvesLib::Core::Rendering
                                      CanvasView::RetainedBoardFrameResources &retainedResources)
         {
             const DrawCommandView boardCommands = context.GetActiveDrawCommands();
-            if (boardCommands.empty() || !context.Renderer)
+            if (boardCommands.empty() || !context.Renderer || !m_Owner)
             {
                 return;
             }
 
-            RHI::DescriptorSetPtr descriptorSet = CreateBoardDescriptorSet(context);
             Container::VariableArray<RHI::PipelinePtr> pipelines = CreateBoardPipelines(renderPass, context);
-            if (!descriptorSet || pipelines.size() != BoardPipelineVariantCount)
+            if (pipelines.size() != BoardPipelineVariantCount ||
+                !m_Owner->m_BoardFallbackWhiteTexture ||
+                !m_Owner->m_BoardPointClampSampler)
             {
                 return;
             }
 
-            retainedResources.DescriptorSet = descriptorSet;
             retainedResources.Pipelines = pipelines;
 
             Container::VariableArray<DrawCommand> executableCommands;
             executableCommands.reserve(boardCommands.size());
             for (const DrawCommand &command : boardCommands)
             {
+                const RHI::TexturePtr texture = ResolveBoardTexture(command,
+                                                                    context,
+                                                                    m_Owner->m_BoardFallbackWhiteTexture);
+                RHI::DescriptorSetPtr descriptorSet = CreateBoardDescriptorSet(context,
+                                                                              texture,
+                                                                              m_Owner->m_BoardPointClampSampler);
+                if (!descriptorSet)
+                {
+                    return;
+                }
+
                 DrawCommand executableCommand = command;
                 const uint32_t pipelineIndex = GetBoardBlendPipelineIndex(command.Draw.MaterialBlendMode);
                 executableCommand.Pipeline = pipelines[pipelineIndex];
                 executableCommand.DescriptorSet = descriptorSet;
                 executableCommand.DescriptorSetSlot = 0;
+                retainedResources.BoundTextures.push_back(texture);
+                retainedResources.DescriptorSets.push_back(descriptorSet);
                 executableCommands.push_back(executableCommand);
             }
 
@@ -432,6 +490,8 @@ namespace NorvesLib::Core::Rendering
         m_BoardProxyIndex.clear();
         m_BoardInsertionSequenceByComponentId.clear();
         m_NextBoardInsertionSequence = 0;
+        m_BoardFallbackWhiteTexture.reset();
+        m_BoardPointClampSampler.reset();
         View::Shutdown();
     }
 
@@ -572,6 +632,7 @@ namespace NorvesLib::Core::Rendering
             command.Draw.InstanceDataOffset = instanceIndex;
             command.Draw.bInstanced = true;
             command.Draw.MaterialBlendMode = normalizedBlendMode;
+            command.Draw.Texture = proxy.Texture;
             command.Draw.ObjectId = proxy.ObjectId;
             command.SortKey = proxy.SortKey;
             m_BoardDrawCommands.push_back(command);
@@ -601,6 +662,54 @@ namespace NorvesLib::Core::Rendering
     void CanvasView::ReleaseRetainedBoardFrameResources()
     {
         m_RetainedBoardFrameResources.clear();
+    }
+
+    bool CanvasView::EnsureBoardSharedResources(RHI::IDevice *device)
+    {
+        if (!device)
+        {
+            return false;
+        }
+
+        if (!m_BoardFallbackWhiteTexture)
+        {
+            RHI::TextureDesc textureDesc;
+            textureDesc.Width = 1;
+            textureDesc.Height = 1;
+            textureDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+            textureDesc.Usage = RHI::ResourceUsage::ShaderRead;
+            textureDesc.DebugName = "CanvasBoardFallbackWhite";
+
+            m_BoardFallbackWhiteTexture = device->CreateTexture(textureDesc);
+            if (!m_BoardFallbackWhiteTexture)
+            {
+                NORVES_LOG_ERROR("CanvasView", "Failed to create board fallback texture");
+                return false;
+            }
+
+            const uint8_t whitePixel[4] = {255u, 255u, 255u, 255u};
+            m_BoardFallbackWhiteTexture->Update(whitePixel, 4u, 4u);
+        }
+
+        if (!m_BoardPointClampSampler)
+        {
+            RHI::SamplerDesc samplerDesc;
+            samplerDesc.filterMin = RHI::FilterMode::Point;
+            samplerDesc.filterMag = RHI::FilterMode::Point;
+            samplerDesc.filterMip = RHI::FilterMode::Point;
+            samplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+            samplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+            samplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+
+            m_BoardPointClampSampler = device->CreateSampler(samplerDesc);
+            if (!m_BoardPointClampSampler)
+            {
+                NORVES_LOG_ERROR("CanvasView", "Failed to create board point clamp sampler");
+                return false;
+            }
+        }
+
+        return true;
     }
 
     void CanvasView::Render(ViewRenderContext& context)

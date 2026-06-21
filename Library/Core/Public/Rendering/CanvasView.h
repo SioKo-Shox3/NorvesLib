@@ -48,12 +48,16 @@ namespace NorvesLib::Core::Rendering
             RHI::TexturePtr OutputTexture;
             RHI::RenderPassPtr RenderPass;
             RHI::FramebufferPtr Framebuffer;
-            RHI::DescriptorSetPtr DescriptorSet;
+            RHI::TexturePtr FallbackTexture;
+            RHI::SamplerPtr Sampler;
+            Container::VariableArray<RHI::TexturePtr> BoundTextures;
+            Container::VariableArray<RHI::DescriptorSetPtr> DescriptorSets;
             Container::VariableArray<RHI::PipelinePtr> Pipelines;
         };
 
         void ClearBoardDrawCommands();
         void RetainBoardFrameResources(const RetainedBoardFrameResources &resources);
+        bool EnsureBoardSharedResources(RHI::IDevice *device);
 
         Container::VariableArray<BoardProxy> m_BoardProxies;
         Container::UnorderedMap<uint64_t, uint32_t> m_BoardProxyIndex;
@@ -62,6 +66,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<GPUSceneInstanceData> m_BoardInstanceData;
         Container::VariableArray<RetainedBoardFrameResources> m_RetainedBoardFrameResources;
         uint64_t m_NextBoardInsertionSequence = 0;
+        RHI::TexturePtr m_BoardFallbackWhiteTexture;
+        RHI::SamplerPtr m_BoardPointClampSampler;
 
         friend class CanvasBoardPass;
     };

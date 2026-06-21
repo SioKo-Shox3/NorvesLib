@@ -18,6 +18,7 @@ namespace NorvesLib::Core::Component
         bFlipY = false;
         Pivot = Math::Vector2(0.0f, 0.0f);
         SizePx = Math::Vector2(0.0f, 0.0f);
+        UVRectProp = GetFullTextureUVRect();
         LayerPriority = 0;
         OrderInLayer = 0;
     }
@@ -35,6 +36,7 @@ namespace NorvesLib::Core::Component
         bFlipY = false;
         Pivot = Math::Vector2(0.0f, 0.0f);
         SizePx = Math::Vector2(0.0f, 0.0f);
+        UVRectProp = GetFullTextureUVRect();
         LayerPriority = 0;
         OrderInLayer = 0;
     }
@@ -52,6 +54,7 @@ namespace NorvesLib::Core::Component
         bFlipY = false;
         Pivot = Math::Vector2(0.0f, 0.0f);
         SizePx = Math::Vector2(0.0f, 0.0f);
+        UVRectProp = GetFullTextureUVRect();
         LayerPriority = 0;
         OrderInLayer = 0;
     }
@@ -136,6 +139,12 @@ namespace NorvesLib::Core::Component
         MarkRenderStateDirty();
     }
 
+    void BoardComponent::SetUVRect(const Math::Vector4 &uvRect)
+    {
+        UVRectProp = uvRect;
+        MarkRenderStateDirty();
+    }
+
     void BoardComponent::SetLayerPriority(uint32_t layerPriority)
     {
         LayerPriority = layerPriority;
@@ -151,6 +160,52 @@ namespace NorvesLib::Core::Component
     void BoardComponent::RefreshRenderTransformCache()
     {
         UpdateWorldTransform();
+    }
+
+    Math::Vector4 BoardComponent::GetFullTextureUVRect()
+    {
+        return Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f);
+    }
+
+    Container::VariableArray<Math::Vector4> BoardComponent::ComputeSpriteSheetUVRects(uint32_t texWidth,
+                                                                                       uint32_t texHeight,
+                                                                                       uint32_t cellWidth,
+                                                                                       uint32_t cellHeight)
+    {
+        Container::VariableArray<Math::Vector4> rects;
+        if (texWidth == 0 ||
+            texHeight == 0 ||
+            cellWidth == 0 ||
+            cellHeight == 0)
+        {
+            return rects;
+        }
+
+        const uint32_t columnCount = texWidth / cellWidth;
+        const uint32_t rowCount = texHeight / cellHeight;
+        if (columnCount == 0 || rowCount == 0)
+        {
+            return rects;
+        }
+
+        const float normalizedCellWidth = static_cast<float>(cellWidth) / static_cast<float>(texWidth);
+        const float normalizedCellHeight = static_cast<float>(cellHeight) / static_cast<float>(texHeight);
+        rects.reserve(static_cast<size_t>(columnCount) * static_cast<size_t>(rowCount));
+
+        for (uint32_t row = 0; row < rowCount; ++row)
+        {
+            const float minV = static_cast<float>(row * cellHeight) / static_cast<float>(texHeight);
+            for (uint32_t column = 0; column < columnCount; ++column)
+            {
+                const float minU = static_cast<float>(column * cellWidth) / static_cast<float>(texWidth);
+                rects.push_back(Math::Vector4(minU,
+                                              minV,
+                                              normalizedCellWidth,
+                                              normalizedCellHeight));
+            }
+        }
+
+        return rects;
     }
 
     bool BoardComponent::BuildBoardProxy(Rendering::BoardProxy &outProxy,
@@ -177,6 +232,7 @@ namespace NorvesLib::Core::Component
         outProxy.bFlipY = bFlipY;
         outProxy.Pivot = Pivot;
         outProxy.SizePx = SizePx;
+        outProxy.UVRect = UVRectProp;
         outProxy.LayerPriority = LayerPriority;
         outProxy.OrderInLayer = OrderInLayer;
         outProxy.SortKey = Rendering::BoardProxy::ComputeSortKey(LayerPriority, OrderInLayer);
