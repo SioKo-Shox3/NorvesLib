@@ -8,6 +8,8 @@
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/SceneView.h"
+#include "Rendering/IViewPass.h"
+#include "Module/ModuleRegistry.h"
 #include "RHI/RHIDeviceFactory.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
@@ -152,6 +154,17 @@ namespace
         }
 
         return pText[kEnableCanvasViewOptionLength] == TEXT('\0');
+    }
+
+    // RenderWorld の pre-device-teardown フックから呼ばれる。RenderThread 停止済み・
+    // device 生存中の地点でモジュールを逆順 Shutdown→Uninstall する(MT use-after-free 回避)。
+    // 関数ポインタ署名(void(*)(void*))に合わせた自由関数。context は未使用。
+    void ShutdownModulesPreDeviceTeardown(void * /*context*/)
+    {
+        if (NorvesLib::Core::Engine::GEngine)
+        {
+            NorvesLib::Core::Module::GetModuleRegistry().ShutdownAll(*NorvesLib::Core::Engine::GEngine);
+        }
     }
 } // namespace
 
@@ -365,6 +378,20 @@ namespace NorvesLib::Core::Engine
             }
         }
 
+        // モジュールの寿命を駆動: RenderWorld 初期化成功後(RenderThread 起動済みで RHI 掴み可)・
+        // OnPostInitialize 前に InstallAll。Game が誰も Register しなければ registry は空で no-op。
+        {
+            // 終了時の静止バリアフックを先に登録する(device 解放直前・RenderThread 停止後に
+            // ShutdownAll が走る。MT use-after-free を回避)。
+            GEngine->GetRenderWorld().SetPreDeviceTeardownHook(&ShutdownModulesPreDeviceTeardown, nullptr);
+
+            if (!Module::GetModuleRegistry().InstallAll(*GEngine))
+            {
+                LOG_ERROR("Module InstallAll failed");
+                return false;
+            }
+        }
+
         // OnPostInitialize呼び出し
         if (handler)
         {
@@ -527,6 +554,24 @@ namespace NorvesLib::Core::Engine
         // ワールドからSceneViewへProxy同期
         GEngine->GetWorld().SyncToSceneView(&GEngine->GetRenderResources().Materials());
 
+        // モジュールの毎フレーム Tick(GameThread・SyncToSceneView 後・描画前)。空 registry で no-op。
+        Module::GetModuleRegistry().TickAll(deltaTime);
+
+        // 描画モジュールの overlay パスを収集(借用ポインタ・非 null のみ)。
+        // RenderThread が直接 registry を読まないよう、この集合を書き込み中パケットへ焼く。
+        Container::VariableArray<Rendering::IViewPass *> overlayPasses;
+        for (Module::IRenderModule *renderModule : Module::GetModuleRegistry().GetRenderModules())
+        {
+            if (!renderModule)
+            {
+                continue;
+            }
+            if (Rendering::IViewPass *overlayPass = renderModule->GetOverlayPass())
+            {
+                overlayPasses.push_back(overlayPass);
+            }
+        }
+
         // OnPreRender呼び出し
         if (handler)
         {
@@ -539,6 +584,10 @@ namespace NorvesLib::Core::Engine
             if (renderWorld.IsInitialized())
             {
                 renderWorld.BeginFrame();
+                // BeginFrame で書き込み中パケットが確保された後に overlay 集合を載せる
+                // (同一フレームで RenderFrame が消費・1 フレーム遅延なし)。空なら完全 no-op。
+                renderWorld.GetRenderingCoordinator().SetOverlayPassesForNextFrame(
+                    Container::Span<Rendering::IViewPass *>(overlayPasses.data(), overlayPasses.size()));
                 renderWorld.Render();
                 renderWorld.EndFrame();
             }

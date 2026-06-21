@@ -126,6 +126,14 @@ namespace NorvesLib::Core::Rendering
         m_RenderThread.Shutdown();
         m_bResizePending.Store(false, std::memory_order_release);
 
+        // pre-device-teardown フック: RenderThread 停止済み(in-flight 参照なし)かつ
+        // device 生存中(下記 m_Device.reset() より前)の地点でモジュールの RHI リソースを
+        // 安全に解放させる。登録が無ければ no-op。
+        if (m_PreDeviceTeardownHook)
+        {
+            m_PreDeviceTeardownHook(m_PreDeviceTeardownContext);
+        }
+
         Resource::GLTFAnalyzer::CancelPendingModelLoadsAndWait();
 
         // RenderResourcesの終了（メッシュGPUリソース等の解放）

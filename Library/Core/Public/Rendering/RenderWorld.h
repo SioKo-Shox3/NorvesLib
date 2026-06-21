@@ -156,6 +156,32 @@ namespace NorvesLib::Core::Rendering
         void WaitForRender();
 
         // ========================================
+        // pre-device-teardown フック
+        // ========================================
+
+        /**
+         * @brief device 解放直前フックの型
+         *
+         * std::function は禁止のため NorvesLib 流の関数ポインタ + context で表す。
+         */
+        using PreDeviceTeardownHook = void (*)(void *context);
+
+        /**
+         * @brief device 解放直前に1回呼ばれるフックを登録する（モジュール RHI 解放用）
+         *
+         * Shutdown() 内部、RenderThread 停止直後・RenderResources/Coordinator 解放
+         * および m_Device.reset() より前の地点で呼ばれる。この地点は RenderThread が
+         * 停止済み(in-flight 参照なし)かつ device 生存中で、モジュールの RHI リソース
+         * 解放が安全。RenderWorld→Module/GEngine 直接依存を避けるため、寿命を駆動する
+         * 側(ApplicationProcessor)がコールバックを登録する設計。null 登録で無効化。
+         */
+        void SetPreDeviceTeardownHook(PreDeviceTeardownHook hook, void *context)
+        {
+            m_PreDeviceTeardownHook = hook;
+            m_PreDeviceTeardownContext = context;
+        }
+
+        // ========================================
         // リソースアクセス
         // ========================================
 
@@ -335,6 +361,12 @@ namespace NorvesLib::Core::Rendering
         Thread::Atomic<bool> m_bResizePending{false};
         Thread::Atomic<uint32_t> m_PendingWidth{0};
         Thread::Atomic<uint32_t> m_PendingHeight{0};
+
+        // ========================================
+        // pre-device-teardown フック（device 解放直前・RenderThread 停止後に1回）
+        // ========================================
+        PreDeviceTeardownHook m_PreDeviceTeardownHook = nullptr;
+        void *m_PreDeviceTeardownContext = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering

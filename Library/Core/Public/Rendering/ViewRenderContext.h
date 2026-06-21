@@ -339,6 +339,33 @@ namespace NorvesLib::Core::Rendering
         bool bRenderPassActive = false;
 
         // ========================================
+        // overlay seam 専用 presentation load 経路
+        // ========================================
+
+        /**
+         * @brief overlay seam 用の最終 blit 後 back buffer へ load-blend する load render pass
+         *
+         * 録画窓内の汎用 CurrentRenderPass/CurrentFramebuffer は overlay seam では
+         * clear 系/未 Begin のため流用不可。RenderingCoordinator が seam で経路
+         * (bOverlayComposite)に応じ legacy/graph の presentation load 経路を選んで設定する。
+         * overlay 0 件のときは未設定(nullptr)のままで完全 no-op。
+         */
+        RHI::IRenderPass *OverlayLoadRenderPass = nullptr;
+
+        /**
+         * @brief OverlayLoadRenderPass に対応する back buffer framebuffer[imageIndex]
+         */
+        RHI::IFramebuffer *OverlayLoadFramebuffer = nullptr;
+
+        /**
+         * @brief overlay が composite 経路で描かれたか(=ShouldCompose 結果)
+         *
+         * true なら graph(composite) presentation load 経路、false なら legacy 経路で
+         * back buffer が残されている。OverlayLoadRenderPass/Framebuffer の選択根拠。
+         */
+        bool bOverlayComposite = false;
+
+        // ========================================
         // フレーム情報
         // ========================================
 

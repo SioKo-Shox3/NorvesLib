@@ -15,6 +15,7 @@
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderFrameExecutor.h"
+#include "Rendering/IViewPass.h"
 #include "RHI/ISampler.h"
 #include "RHI/IDevice.h"
 #include "RHI/ISwapChain.h"
@@ -946,6 +947,26 @@ namespace NorvesLib::Core::Rendering
         return finishedPacket;
     }
 
+    void RenderingCoordinator::SetOverlayPassesForNextFrame(Container::Span<IViewPass *> passes)
+    {
+        // 書き込み中パケットへ overlay 借用ポインタをコピーする。BeginFrame で確保した
+        // m_CurrentPacket が無い場合(スロット枯渇等)は何もしない。空 passes のときは
+        // OverlayPasses を空に保ち、描画シームを完全 no-op にする。
+        if (!m_CurrentPacket)
+        {
+            return;
+        }
+
+        m_CurrentPacket->OverlayPasses.clear();
+        for (IViewPass *pass : passes)
+        {
+            if (pass)
+            {
+                m_CurrentPacket->OverlayPasses.push_back(pass);
+            }
+        }
+    }
+
     void RenderingCoordinator::RenderFrame(FramePacket *packet)
     {
         if (!m_bInitialized || !packet)
@@ -1152,9 +1173,51 @@ namespace NorvesLib::Core::Rendering
         executionRequest.CompositeGraphPass = &m_CompositePass;
 
         RenderFrameExecutor frameExecutor;
-        frameExecutor.Execute(executionRequest);
+        const RenderFrameExecutionResult executionResult = frameExecutor.Execute(executionRequest);
         m_Stats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
         m_Stats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
+
+        // ========================================
+        // overlay seam(モジュール描画の最終段。録画窓内・executor 外側)
+        // ========================================
+        // packet->OverlayPasses が空のとき(=モジュール未登録/overlay 0 件)は
+        // ループに入らず完全 no-op になり、F1 描画 baseline が byte-for-byte 不変。
+        if (packet && !packet->OverlayPasses.empty())
+        {
+            // 描画先 presentation load family は経路依存(legacy / composite=graph)。
+            // executor が一次判定した bComposite を採用し二重判定を避ける。
+            const bool bComposite = executionResult.bComposite;
+            viewContext.bOverlayComposite = bComposite;
+            viewContext.OverlayLoadRenderPass = bComposite
+                                                    ? m_GraphPresentationLoadRenderPass.get()
+                                                    : m_PresentationLoadRenderPass.get();
+            viewContext.OverlayLoadFramebuffer = bComposite
+                                                     ? m_GraphPresentationLoadFramebuffers[imageIndex].get()
+                                                     : m_PresentationLoadFramebuffers[imageIndex].get();
+
+            for (IViewPass *overlayPass : packet->OverlayPasses)
+            {
+                if (!overlayPass || !overlayPass->IsEnabled())
+                {
+                    continue;
+                }
+
+                // 録画窓内の遅延初期化(IViewPass::Initialize は bool 返し)。失敗時は
+                // 当該 overlay を恒久無効化して描画素通り。成功時に m_bInitialized を
+                // 立てる責務は派生側にある(IsInitialized 契約)。
+                if (!overlayPass->IsInitialized())
+                {
+                    if (!overlayPass->Initialize(viewContext))
+                    {
+                        overlayPass->SetEnabled(false);
+                        continue;
+                    }
+                }
+
+                overlayPass->Setup(viewContext);
+                overlayPass->Execute(viewContext);
+            }
+        }
 
         // コマンド録画終了
 #if NORVES_ENABLE_STATS

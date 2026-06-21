@@ -10,6 +10,8 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    // 前方宣言(overlay パスは非所有ビューとして借用ポインタのみ保持する)
+    class IViewPass;
 
     /**
      * @brief フレームパケットの状態
@@ -79,6 +81,19 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<ViewRenderPlan> Views;
 
         // ========================================
+        // overlay パス（モジュール所有・非所有ビュー。GameThread が焼き RenderThread が消費）
+        // ========================================
+
+        /**
+         * @brief このフレームで最終段に描く overlay パス集合(借用ポインタ)
+         *
+         * 寿命はモジュール側が所有する。GameThread が TickAll 後に書き込み、
+         * RenderThread が RenderingCoordinator の seam で読む。空のときは描画シームが
+         * 完全 no-op になる(F1 描画 baseline 不変条件の核)。
+         */
+        Container::VariableArray<IViewPass *> OverlayPasses;
+
+        // ========================================
         // 状態管理
         // ========================================
 
@@ -104,6 +119,7 @@ namespace NorvesLib::Core::Rendering
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             Views.clear();
+            OverlayPasses.clear();
         }
 
         /**
