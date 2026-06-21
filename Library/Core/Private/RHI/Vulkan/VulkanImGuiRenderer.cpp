@@ -1,0 +1,182 @@
+﻿#include "VulkanImGuiRenderer.h"
+
+// このファイル全体はゲート ON 時のみ意味を持つ（OFF 時は空 TU）。
+#if defined(NORVES_ENABLE_IMGUI)
+
+#include "VulkanDevice.h"
+#include "VulkanRenderPass.h"
+#include "VulkanCommandList.h"
+#include "Logging/LogMacros.h"
+
+// Core は VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1 で関数を動的ロードするため、
+// imgui_impl_vulkan も生プロトタイプを使わず LoadFunctions 経由で解決させる。
+// IMGUI_IMPL_VULKAN_NO_PROTOTYPES は CMake の ON ブロックで Core PRIVATE に
+// 付与する（impl_vulkan.cpp と本 TU の両方が一貫して見る）。
+#include "imgui.h"
+#include "imgui_impl_vulkan.h"
+
+namespace NorvesLib::RHI::Vulkan
+{
+
+    VulkanImGuiRenderer::VulkanImGuiRenderer(VulkanDevice *device)
+        : m_device(device)
+    {
+    }
+
+    VulkanImGuiRenderer::~VulkanImGuiRenderer()
+    {
+        // 冪等 Shutdown。device は本クラスより長命である前提（連れ破棄順序）。
+        Shutdown();
+    }
+
+    void VulkanImGuiRenderer::CheckVkResult(VkResult result)
+    {
+        // imgui バックエンド内部の Vk 呼び出し失敗を握り潰さずログへ出す。
+        if (result != VK_SUCCESS)
+        {
+            NORVES_LOG_ERROR("ImGui", "imgui バックエンド内部の Vulkan 呼び出しが失敗 (VkResult=%d)",
+                             static_cast<int>(result));
+        }
+    }
+
+    bool VulkanImGuiRenderer::Initialize(IRenderPass *loadRenderPass, uint32_t minImageCount, uint32_t imageCount)
+    {
+        // ImGui コンテキストは呼び出し側（ImGuiModule）が事前生成済みである前提。
+        // 本クラスは ImGui::CreateContext を呼ばない。
+        if (m_bInitialized)
+        {
+            return true;
+        }
+        if (m_device == nullptr || loadRenderPass == nullptr)
+        {
+            NORVES_LOG_ERROR("ImGui", "VulkanImGuiRenderer::Initialize: device/renderPass が null");
+            return false;
+        }
+
+        // load render pass（最終 blit 後の back buffer へ overlay を load-blend する）。
+        auto *vulkanRenderPass = static_cast<VulkanRenderPass *>(loadRenderPass);
+        const vk::RenderPass vkRenderPass = vulkanRenderPass->GetVkRenderPass();
+
+        // imgui 1.92.8 は分割ディスクリプタモデル（SAMPLED_IMAGE + SAMPLER）を採用し、
+        // 旧 eCombinedImageSampler を撤去した。自前プールを構築すると必要型が 0 個になり
+        // vkAllocateDescriptorSets が VK_ERROR_OUT_OF_POOL_MEMORY で実行時クラッシュする。
+        // そのため DescriptorPool=VK_NULL_HANDLE + DescriptorPoolSize>0 とし、imgui に
+        // 正しい型（SAMPLED_IMAGE + SAMPLER）の内部プールを own/解放させる。
+        // DescriptorPoolSize は IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE(=8) 以上。
+        constexpr uint32_t kDescriptorPoolSize = 64;
+
+        // imgui のインスタンス apiVersion は VkApplicationInfo::apiVersion と一致させる必要がある
+        // （VulkanDevice::CreateInstance が設定した値を供給する。ハードコードしない）。
+        const uint32_t apiVersion = m_device->GetInstanceApiVersion();
+
+        // 生 Vk ハンドルへ降格して InitInfo を構成する。
+        ImGui_ImplVulkan_InitInfo initInfo = {};
+        initInfo.ApiVersion = apiVersion;
+        initInfo.Instance = static_cast<VkInstance>(m_device->GetVkInstance());
+        initInfo.PhysicalDevice = static_cast<VkPhysicalDevice>(m_device->GetVkPhysicalDevice());
+        initInfo.Device = static_cast<VkDevice>(m_device->GetVkDevice());
+        initInfo.QueueFamily = m_device->GetGraphicsQueueFamilyIndex();
+        initInfo.Queue = static_cast<VkQueue>(m_device->GetGraphicsQueue());
+        initInfo.DescriptorPool = VK_NULL_HANDLE;             // imgui に内部生成させる
+        initInfo.DescriptorPoolSize = kDescriptorPoolSize;    // >0 で imgui が正しい型のプールを own
+        initInfo.CheckVkResultFn = &VulkanImGuiRenderer::CheckVkResult; // 内部失敗をログ化
+        initInfo.MinImageCount = minImageCount;
+        initInfo.ImageCount = imageCount;
+        initInfo.UseDynamicRendering = false;
+        // imgui 1.92: RenderPass/MSAASamples は PipelineInfoMain に移動済み。
+        initInfo.PipelineInfoMain.RenderPass = static_cast<VkRenderPass>(vkRenderPass);
+        initInfo.PipelineInfoMain.Subpass = 0;
+        initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+
+        // Core は動的ディスパッチャを使うため、Init 前に必ず関数ローダを供給する。
+        // imgui 1.92 の LoadFunctions は (api_version, loader_func, user_data) 形式。
+        // ローダは instance とともに defaultDispatcher の vkGetInstanceProcAddr を呼ぶ。
+        const bool bLoaded = ImGui_ImplVulkan_LoadFunctions(
+            apiVersion,
+            [](const char *functionName, void *userData) -> PFN_vkVoidFunction
+            {
+                auto vkInstance = reinterpret_cast<VkInstance>(userData);
+                return VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr(vkInstance, functionName);
+            },
+            reinterpret_cast<void *>(static_cast<VkInstance>(m_device->GetVkInstance())));
+
+        if (!bLoaded)
+        {
+            NORVES_LOG_ERROR("ImGui", "ImGui_ImplVulkan_LoadFunctions に失敗");
+            return false;
+        }
+
+        if (!ImGui_ImplVulkan_Init(&initInfo))
+        {
+            NORVES_LOG_ERROR("ImGui", "ImGui_ImplVulkan_Init に失敗");
+            return false;
+        }
+
+        m_bInitialized = true;
+        return true;
+    }
+
+    void VulkanImGuiRenderer::Shutdown()
+    {
+        // 二重 Shutdown を冪等にする。device 生存中前提。
+        // DescriptorPool は imgui が内部で own/解放するため本クラスでは破棄しない。
+        if (m_bInitialized)
+        {
+            ImGui_ImplVulkan_Shutdown();
+            m_bInitialized = false;
+        }
+    }
+
+    bool VulkanImGuiRenderer::BuildFontAtlas()
+    {
+        if (!m_bInitialized)
+        {
+            return false;
+        }
+
+        // imgui 1.92 は ImGuiBackendFlags_RendererHasTextures による動的アトラスを採用し、
+        // 旧 ImGui_ImplVulkan_CreateFontsTexture は撤去された。GPU へのアップロードは
+        // 描画ループ中に ImGui_ImplVulkan_UpdateTexture 経由で自動実行される。
+        // ここではアトラスのピクセルデータ生成（Build）のみを明示的に行う。
+        ImGuiIO &io = ImGui::GetIO();
+        if (io.Fonts == nullptr)
+        {
+            return false;
+        }
+        return io.Fonts->Build();
+    }
+
+    void VulkanImGuiRenderer::RecordDrawData(ICommandList *commandList, const void *imguiDrawData)
+    {
+        // BeginRenderPass 済みの録画窓内で呼ばれる前提。自身では Begin/End しない。
+        if (!m_bInitialized || commandList == nullptr || imguiDrawData == nullptr)
+        {
+            return;
+        }
+
+        auto *vulkanCommandList = static_cast<VulkanCommandList *>(commandList);
+        const vk::CommandBuffer vkCmd = vulkanCommandList->GetVkCommandBuffer();
+        if (!vkCmd)
+        {
+            return;
+        }
+
+        // ImDrawData* は IImGuiRenderer 抽象を imgui 非依存に保つため void* で受ける。
+        ImGui_ImplVulkan_RenderDrawData(
+            const_cast<ImDrawData *>(static_cast<const ImDrawData *>(imguiDrawData)),
+            static_cast<VkCommandBuffer>(vkCmd));
+    }
+
+    void VulkanImGuiRenderer::NotifySwapChainRecreated(uint32_t minImageCount, uint32_t /*imageCount*/)
+    {
+        if (!m_bInitialized)
+        {
+            return;
+        }
+        // imgui は最小イメージ数のみ更新 API を公開する。
+        ImGui_ImplVulkan_SetMinImageCount(minImageCount);
+    }
+
+} // namespace NorvesLib::RHI::Vulkan
+
+#endif // defined(NORVES_ENABLE_IMGUI)

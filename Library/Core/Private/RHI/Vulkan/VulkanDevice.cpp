@@ -13,6 +13,9 @@
 #include "VulkanSwapChain.h"
 #include "VulkanGPUResourceAllocator.h"
 #include "Logging/LogMacros.h"
+#if defined(NORVES_ENABLE_IMGUI)
+#include "VulkanImGuiRenderer.h"
+#endif
 #include <iostream>
 #include <algorithm>
 #include "Container/Containers.h"
@@ -76,6 +79,12 @@ namespace NorvesLib::RHI::Vulkan
             static_cast<void>(m_device.waitIdle());
         }
 
+#if defined(NORVES_ENABLE_IMGUI)
+        // ImGui バックエンドを VkDevice 破棄前に閉じる（Shutdown は
+        // VkDevice 生存を前提とするため device.destroy() より前に reset）。
+        m_imguiRenderer.reset();
+#endif
+
         m_ResourceAllocator.reset();
 
         // コマンドプールを破棄
@@ -119,6 +128,10 @@ namespace NorvesLib::RHI::Vulkan
         appInfo.pEngineName = "NorvesLib Engine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.apiVersion = VK_API_VERSION_1_2;
+
+        // imgui バックエンド等へ供給するため、インスタンスの apiVersion を保持する
+        // （appInfo.apiVersion と単一ソースに揃える）。
+        m_instanceApiVersion = appInfo.apiVersion;
 
         // インスタンス作成情報
         auto extensions = GetRequiredExtensions();
@@ -848,6 +861,20 @@ namespace NorvesLib::RHI::Vulkan
     {
         return m_ResourceAllocator.get();
     }
+
+#if defined(NORVES_ENABLE_IMGUI)
+    IImGuiRenderer *VulkanDevice::CreateImGuiRenderer()
+    {
+        // 遅延生成：初回のみ VulkanImGuiRenderer を生成し、
+        // 以後は同一インスタンスの借用ポインタを返す。
+        // 所有は m_imguiRenderer（device 寿命に内包し device 破棄時に連れ破棄）。
+        if (!m_imguiRenderer)
+        {
+            m_imguiRenderer = MakeUnique<VulkanImGuiRenderer>(this);
+        }
+        return m_imguiRenderer.get();
+    }
+#endif
 
     ShaderCompilerPtr VulkanDevice::CreateShaderCompiler()
     {

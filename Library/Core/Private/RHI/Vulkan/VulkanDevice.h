@@ -39,6 +39,9 @@ namespace NorvesLib::RHI::Vulkan
     class VulkanDescriptorSetLayout;
     class VulkanDescriptorPool;
     class VulkanGPUResourceAllocator;
+#if defined(NORVES_ENABLE_IMGUI)
+    class VulkanImGuiRenderer;
+#endif
 
     /**
      * @brief Vulkan初期化パラメータ
@@ -90,6 +93,12 @@ namespace NorvesLib::RHI::Vulkan
         ShaderCompilerPtr CreateShaderCompiler() override;
         ShaderCompilerPtr CreateSlangShaderCompiler() override;
         IGPUResourceAllocator* GetResourceAllocator() override;
+#if defined(NORVES_ENABLE_IMGUI)
+        // ImGui バックエンドの遅延生成ファクトリ（ゲート ON 時のみ override）。
+        // 初回呼び出しで VulkanImGuiRenderer を生成し以後同一インスタンスの
+        // 借用ポインタを返す。所有は m_imguiRenderer（device 寿命に内包）。
+        IImGuiRenderer *CreateImGuiRenderer() override;
+#endif
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
         const DeviceCapabilities &GetCapabilities() const override { return m_Capabilities; }
@@ -100,6 +109,11 @@ namespace NorvesLib::RHI::Vulkan
         vk::Device GetVkDevice() const { return m_device; }
         vk::PhysicalDevice GetVkPhysicalDevice() const { return m_physicalDevice; }
         vk::Instance GetVkInstance() const { return m_instance; }
+
+        // インスタンス生成時に VkApplicationInfo::apiVersion へ渡した値。
+        // imgui バックエンド等、インスタンス apiVersion と一致させる必要がある
+        // 利用側へ供給する（ハードコードを避けるため）。
+        uint32_t GetInstanceApiVersion() const { return m_instanceApiVersion; }
 
         // キュー関連
         vk::Queue GetGraphicsQueue() const { return m_graphicsQueue; }
@@ -134,6 +148,7 @@ namespace NorvesLib::RHI::Vulkan
     private:
         // Vulkanインスタンスとデバイス
         vk::Instance m_instance;
+        uint32_t m_instanceApiVersion = 0; ///< CreateInstance が設定した VkApplicationInfo::apiVersion
         vk::PhysicalDevice m_physicalDevice;
         vk::Device m_device;
         vk::PhysicalDeviceProperties m_deviceProperties{};
@@ -167,6 +182,12 @@ namespace NorvesLib::RHI::Vulkan
 
         // GPUリソースアロケーター
         TUniquePtr<VulkanGPUResourceAllocator> m_ResourceAllocator;
+
+#if defined(NORVES_ENABLE_IMGUI)
+        // ImGui バックエンド（ゲート ON 時のみ）。CreateImGuiRenderer の初回呼び出しで
+        // 生成し device に内包する。VkDevice 破棄前に Shutdown→reset する。
+        TUniquePtr<VulkanImGuiRenderer> m_imguiRenderer;
+#endif
 
         // デバッグ・バリデーション用
         vk::DebugUtilsMessengerEXT m_debugMessenger;
