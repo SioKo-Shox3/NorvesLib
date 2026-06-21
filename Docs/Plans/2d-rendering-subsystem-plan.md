@@ -808,7 +808,7 @@ F5。
 
 ### 作業
 
-- `BoardComponent` に `UVRectProp` PROPERTY、`Board::ComputeSpriteSheetUVRects(texWidth, texHeight, cellWidth, cellHeight)` 静的ヘルパ。`BuildBoardProxy` で `BoardProxy.UV` 反映。`board2d.vert`/`board2d.frag` で UV 矩形を quad UV にマップ。
+- `BoardComponent` に `UVRectProp` PROPERTY、`BoardComponent::ComputeSpriteSheetUVRects(texWidth, texHeight, cellWidth, cellHeight)`（または同等のローカル helper）を追加する。`BuildBoardProxy` で `BoardProxy.UVRect` を反映し、F6 では `CanvasBoardPass` が `BoardProxy.Texture` を sampled texture として binding 0 に束縛する。`board2d.vert`/`board2d.frag` で UV 矩形を quad UV にマップする。
 - 既存 `TextureResources`/`GpuResourceStore` の手動パック済みアトラスを前提（オフラインパッキングは Non-Goal）。
 
 ### 成果物

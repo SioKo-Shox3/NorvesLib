@@ -1,5 +1,6 @@
 ﻿#include "Component/Component.h"
 #include "Component/PointLightComponent.h"
+#include "Component/BoardComponent.h"
 #include "Object/RuntimeSchema.h"
 #include "Object/SchemaProjection.h"
 #include "Object/World.h"
@@ -225,6 +226,37 @@ namespace
 
         world.Finalize();
     }
+
+    void TestBoardComponentSnapshotIncludesVisualProperties()
+    {
+        World world;
+        world.Initialize();
+
+        Entity* root = world.SpawnEntity<Entity>();
+        assert(root != nullptr);
+
+        Component::BoardComponent* board = world.CreateComponent<Component::BoardComponent>(root);
+        assert(board != nullptr);
+        board->SetTint(Math::Vector4(0.2f, 0.4f, 0.6f, 0.8f));
+        board->SetPivot(Math::Vector2(0.5f, 0.25f));
+        board->SetSizePx(Math::Vector2(128.0f, 96.0f));
+        board->SetUVRect(Math::Vector4(0.25f, 0.5f, 0.125f, 0.25f));
+
+        EntitySubtreeSnapshot snapshot = RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*root);
+        assert(snapshot.Root.Components.size() == 1);
+
+        const ComponentSubtreeSnapshot& boardSnapshot = snapshot.Root.Components[0];
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "Tint", "Math::Vector4");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "Pivot", "Math::Vector2");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "SizePx", "Math::Vector2");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "UVRectProp", "Math::Vector4");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "Tint", "Vector4(0.200000003,0.400000006,0.600000024,0.800000012)");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "Pivot", "Vector2(0.5,0.25)");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "SizePx", "Vector2(128,96)");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "UVRectProp", "Vector4(0.25,0.5,0.125,0.25)");
+
+        world.Finalize();
+    }
 }
 
 int main()
@@ -232,6 +264,7 @@ int main()
     std::cout << "EntitySubtreeSnapshotTest start\n";
 
     TestEntitySubtreeSnapshot();
+    TestBoardComponentSnapshotIncludesVisualProperties();
 
     std::cout << "EntitySubtreeSnapshotTest passed\n";
     return 0;

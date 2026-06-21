@@ -323,6 +323,16 @@ target_include_directories(BoardTransformTest PRIVATE
 set_target_properties(BoardTransformTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME BoardTransformTest COMMAND BoardTransformTest)
 
+add_executable(SpriteSheetUVRectTest
+    SpriteSheetUVRectTest.cpp
+)
+target_link_libraries(SpriteSheetUVRectTest PRIVATE Core)
+target_include_directories(SpriteSheetUVRectTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SpriteSheetUVRectTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SpriteSheetUVRectTest COMMAND SpriteSheetUVRectTest)
+
 add_executable(BoardBlendModeTest
     BoardBlendModeTest.cpp
 )

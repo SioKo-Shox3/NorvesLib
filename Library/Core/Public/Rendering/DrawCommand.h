@@ -48,6 +48,7 @@ namespace NorvesLib::Core::Rendering
         MaterialHandle MaterialHandle; // マテリアルハンドル
         uint32_t MaterialIndex = 0;    // マテリアルインデックス
         BlendMode MaterialBlendMode = BlendMode::Opaque;
+        TextureHandle Texture = TextureHandle::Invalid();
         float SortDepth = 0.0f;
         uint64_t ObjectId = 0;
 

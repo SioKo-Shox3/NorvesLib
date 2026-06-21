@@ -67,6 +67,7 @@ namespace Game::GameModes
 
         // テクスチャハンドル
         NorvesLib::Core::Rendering::TextureHandle m_CheckerTextureHandle;
+        NorvesLib::Core::Rendering::TextureHandle m_F6AtlasTextureHandle;
 
         // マテリアルハンドル
         NorvesLib::Core::Rendering::MaterialHandle m_SilverMaterial;      // Silver PBR マテリアル

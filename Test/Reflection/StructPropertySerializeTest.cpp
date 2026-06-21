@@ -85,8 +85,14 @@ namespace
     void TestDetailRoundTrip()
     {
         AssertDetailRoundTrip(
+            Math::Vector2(1.25f, -2.5f),
+            "Vector2(1.25,-2.5)");
+        AssertDetailRoundTrip(
             Math::Vector3(1.25f, -2.5f, 3.75f),
             "Vector3(1.25,-2.5,3.75)");
+        AssertDetailRoundTrip(
+            Math::Vector4(0.25f, -0.5f, 0.75f, 1.0f),
+            "Vector4(0.25,-0.5,0.75,1)");
         AssertDetailRoundTrip(
             Math::Quaternion(0.25f, -0.5f, 0.75f, 1.0f),
             "Quaternion(0.25,-0.5,0.75,1)");
@@ -100,6 +106,18 @@ namespace
 
     void TestPropertyValueRoundTrip()
     {
+        const Math::Vector2 vector2Value(1.25f, -2.5f);
+        PropertyValue vector2Property = PropertyValue::Create(vector2Value);
+        Container::String serializedVector2;
+        assert(vector2Property.Serialize(serializedVector2));
+        assert(serializedVector2 == "Vector2(1.25,-2.5)");
+
+        PropertyValue parsedVector2Property;
+        assert(parsedVector2Property.Deserialize<Math::Vector2>(serializedVector2));
+        const Math::Vector2* parsedVector2 = parsedVector2Property.Get<Math::Vector2>();
+        assert(parsedVector2 != nullptr);
+        assert(*parsedVector2 == vector2Value);
+
         const Math::Vector3 vectorValue(1.25f, -2.5f, 3.75f);
         PropertyValue vectorProperty = PropertyValue::Create(vectorValue);
         Container::String serializedVector;
@@ -124,6 +142,18 @@ namespace
         assert(parsedQuaternion != nullptr);
         assert(*parsedQuaternion == quaternionValue);
 
+        const Math::Vector4 vector4Value(0.25f, -0.5f, 0.75f, 1.0f);
+        PropertyValue vector4Property = PropertyValue::Create(vector4Value);
+        Container::String serializedVector4;
+        assert(vector4Property.Serialize(serializedVector4));
+        assert(serializedVector4 == "Vector4(0.25,-0.5,0.75,1)");
+
+        PropertyValue parsedVector4Property;
+        assert(parsedVector4Property.Deserialize<Math::Vector4>(serializedVector4));
+        const Math::Vector4* parsedVector4 = parsedVector4Property.Get<Math::Vector4>();
+        assert(parsedVector4 != nullptr);
+        assert(*parsedVector4 == vector4Value);
+
         const Math::Transform transformValue(
             Math::Vector3(1.0f, 2.0f, 3.0f),
             Math::Quaternion(0.25f, -0.5f, 0.75f, 1.0f),
@@ -143,9 +173,17 @@ namespace
     void TestTypeInfo()
     {
         AssertTypeInfo(
+            "Math::Vector2",
+            Math::Vector2(1.25f, -2.5f),
+            "Vector2(1.25,-2.5)");
+        AssertTypeInfo(
             "Math::Vector3",
             Math::Vector3(1.25f, -2.5f, 3.75f),
             "Vector3(1.25,-2.5,3.75)");
+        AssertTypeInfo(
+            "Math::Vector4",
+            Math::Vector4(0.25f, -0.5f, 0.75f, 1.0f),
+            "Vector4(0.25,-0.5,0.75,1)");
         AssertTypeInfo(
             "Math::Quaternion",
             Math::Quaternion(0.25f, -0.5f, 0.75f, 1.0f),
@@ -193,10 +231,14 @@ namespace
 
     void TestNegativeParses()
     {
+        assert(!TryDeserialize<Math::Vector2>("Vector2(1)"));
         assert(!TryDeserialize<Math::Vector3>("Vector3(1,2)"));
+        assert(!TryDeserialize<Math::Vector4>("Vector4(1,2,3)"));
         assert(!TryDeserialize<Math::Quaternion>("Quaternion(0,0,0)"));
         assert(!TryDeserialize<Math::Transform>("Transform(Vector3(1,2,3),Quaternion(0,0,0,1),Vector3(1,2))"));
+        assert(!TryDeserialize<Math::Vector2>("Vector2(1,2)junk"));
         assert(!TryDeserialize<Math::Vector3>("Vector3(1,2,3)junk"));
+        assert(!TryDeserialize<Math::Vector4>("Vector4(1,2,3,4)junk"));
         assert(!TryDeserialize<Math::Transform>("Transform(Quaternion(0,0,0,1),Vector3(1,2,3),Vector3(1,1,1))"));
 
         UnsupportedStruct unsupported;

@@ -14,6 +14,7 @@ layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 };
 
 layout(location = 0) out vec4 fragColor;
+layout(location = 1) out vec2 fragUV;
 
 void main()
 {
@@ -32,19 +33,21 @@ void main()
     vec2 sizePx = instanceData.normalRows[0].xy;
     vec2 pivot = instanceData.normalRows[0].zw;
     vec2 flipFlags = instanceData.normalRows[1].xy;
-    vec2 uv = quad[gl_VertexIndex];
+    vec4 uvRect = vec4(instanceData.normalRows[1].zw, instanceData.normalRows[2].xy);
+    vec2 geometryUV = quad[gl_VertexIndex];
+    vec2 sampleUV = quad[gl_VertexIndex];
 
     if (flipFlags.x > 0.5)
     {
-        uv.x = 1.0 - uv.x;
+        geometryUV.x = 1.0 - geometryUV.x;
     }
 
     if (flipFlags.y > 0.5)
     {
-        uv.y = 1.0 - uv.y;
+        geometryUV.y = 1.0 - geometryUV.y;
     }
 
-    vec2 local = uv - pivot;
+    vec2 local = geometryUV - pivot;
 
     if (sizePx.x > 0.0 && sizePx.y > 0.0)
     {
@@ -61,4 +64,5 @@ void main()
 
     gl_Position = vec4(ndc, 0.0, 1.0);
     fragColor = instanceData.objectColor;
+    fragUV = uvRect.xy + sampleUV * uvRect.zw;
 }

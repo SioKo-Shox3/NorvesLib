@@ -1,5 +1,6 @@
 ﻿#include "Component/Component.h"
 #include "Component/PointLightComponent.h"
+#include "Component/BoardComponent.h"
 #include "Object/PrefabAsset.h"
 #include "Object/ResourceRegistry.h"
 #include "Object/RuntimeSchema.h"
@@ -158,6 +159,7 @@ namespace
     {
         (void)Entity::StaticClass();
         (void)Component::Component::StaticClass();
+        (void)Component::BoardComponent::StaticClass();
         (void)Component::PointLightComponent::StaticClass();
         (void)PrefabAsset::StaticClass();
         (void)TrackingBeginComponent::StaticClass();
@@ -210,6 +212,66 @@ namespace
         Component::PointLightComponent* spawnedLight = spawnedRoot->GetComponent<Component::PointLightComponent>();
         assert(spawnedLight != nullptr);
         assert(Near(spawnedLight->GetRange(), 17.0f));
+
+        world.Finalize();
+        prefab.reset();
+        registry.Shutdown();
+    }
+
+    void TestSpawnPrefabRestoresBoardComponentVisualProperties()
+    {
+        RegisterRequiredClasses();
+
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+
+        World world;
+        world.Initialize();
+
+        EntitySubtreeSnapshot snapshot;
+        snapshot.RootAlias = 1;
+        snapshot.Root.Alias = snapshot.RootAlias;
+        snapshot.Root.Object.Class = MakeClassId(Entity::StaticClass());
+
+        ComponentSubtreeSnapshot boardSnapshot;
+        boardSnapshot.Alias = 2;
+        boardSnapshot.OwnerAlias = snapshot.Root.Alias;
+        boardSnapshot.Object.Class = MakeClassId(Component::BoardComponent::StaticClass());
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "Tint",
+            "Math::Vector4",
+            "Vector4(0.1,0.2,0.3,0.4)"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "Pivot",
+            "Math::Vector2",
+            "Vector2(0.25,0.75)"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "SizePx",
+            "Math::Vector2",
+            "Vector2(96,48)"));
+        boardSnapshot.Object.Properties.push_back(MakeProjectedValue(
+            Component::BoardComponent::StaticClass(),
+            "UVRectProp",
+            "Math::Vector4",
+            "Vector4(0.5,0,0.25,0.5)"));
+        snapshot.Root.Components.push_back(boardSnapshot);
+
+        auto prefab = registry.CreateTransient<PrefabAsset>("BoardVisualPrefab");
+        assert(prefab != nullptr);
+        prefab->SetTree(snapshot);
+
+        Entity* spawnedRoot = world.SpawnPrefab(*prefab);
+        assert(spawnedRoot != nullptr);
+
+        Component::BoardComponent* spawnedBoard = spawnedRoot->GetComponent<Component::BoardComponent>();
+        assert(spawnedBoard != nullptr);
+        assert(spawnedBoard->GetTint() == Math::Vector4(0.1f, 0.2f, 0.3f, 0.4f));
+        assert(spawnedBoard->GetPivot() == Math::Vector2(0.25f, 0.75f));
+        assert(spawnedBoard->GetSizePx() == Math::Vector2(96.0f, 48.0f));
+        assert(spawnedBoard->GetUVRect() == Math::Vector4(0.5f, 0.0f, 0.25f, 0.5f));
 
         world.Finalize();
         prefab.reset();
@@ -453,6 +515,7 @@ int main()
     std::cout << "PrefabRoundTripTest start\n";
 
     TestSpawnPrefabRegistersPropertyTypes();
+    TestSpawnPrefabRestoresBoardComponentVisualProperties();
     TestPrefabRoundTrip();
 
     std::cout << "PrefabRoundTripTest passed\n";

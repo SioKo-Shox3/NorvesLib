@@ -1,7 +1,9 @@
-#pragma once
+﻿#pragma once
 
 #include "Container/Containers.h"
 #include "Math/Transform.h"
+#include "Math/Vector2.h"
+#include "Math/Vector4.h"
 #include "Text/IdentityPool.h"
 #include <cstddef>
 #include <cstdint>
@@ -282,6 +284,14 @@ namespace NorvesLib::Core
             {
                 return "Math::Vector3";
             }
+            else if constexpr (std::is_same_v<ValueType, Math::Vector2>)
+            {
+                return "Math::Vector2";
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Vector4>)
+            {
+                return "Math::Vector4";
+            }
             else if constexpr (std::is_same_v<ValueType, Math::Quaternion>)
             {
                 return "Math::Quaternion";
@@ -304,9 +314,19 @@ namespace NorvesLib::Core
             return stream;
         }
 
+        inline void WriteVector2(std::basic_ostringstream<TCHAR>& stream, const Math::Vector2& value)
+        {
+            stream << "Vector2(" << value.x << "," << value.y << ")";
+        }
+
         inline void WriteVector3(std::basic_ostringstream<TCHAR>& stream, const Math::Vector3& value)
         {
             stream << "Vector3(" << value.x << "," << value.y << "," << value.z << ")";
+        }
+
+        inline void WriteVector4(std::basic_ostringstream<TCHAR>& stream, const Math::Vector4& value)
+        {
+            stream << "Vector4(" << value.x << "," << value.y << "," << value.z << "," << value.w << ")";
         }
 
         inline void WriteQuaternion(std::basic_ostringstream<TCHAR>& stream, const Math::Quaternion& value)
@@ -333,6 +353,22 @@ namespace NorvesLib::Core
             {
             }
 
+            bool ParseVector2(Math::Vector2& outValue)
+            {
+                Math::Vector2 value;
+                if (!ConsumeLiteral("Vector2(") ||
+                    !ParseFloat(value.x) ||
+                    !ConsumeChar(',') ||
+                    !ParseFloat(value.y) ||
+                    !ConsumeChar(')'))
+                {
+                    return false;
+                }
+
+                outValue = value;
+                return true;
+            }
+
             bool ParseVector3(Math::Vector3& outValue)
             {
                 Math::Vector3 value;
@@ -342,6 +378,26 @@ namespace NorvesLib::Core
                     !ParseFloat(value.y) ||
                     !ConsumeChar(',') ||
                     !ParseFloat(value.z) ||
+                    !ConsumeChar(')'))
+                {
+                    return false;
+                }
+
+                outValue = value;
+                return true;
+            }
+
+            bool ParseVector4(Math::Vector4& outValue)
+            {
+                Math::Vector4 value;
+                if (!ConsumeLiteral("Vector4(") ||
+                    !ParseFloat(value.x) ||
+                    !ConsumeChar(',') ||
+                    !ParseFloat(value.y) ||
+                    !ConsumeChar(',') ||
+                    !ParseFloat(value.z) ||
+                    !ConsumeChar(',') ||
+                    !ParseFloat(value.w) ||
                     !ConsumeChar(')'))
                 {
                     return false;
@@ -481,10 +537,24 @@ namespace NorvesLib::Core
                 outValue = Container::String(stream.str());
                 return !stream.fail();
             }
+            else if constexpr (std::is_same_v<ValueType, Math::Vector2>)
+            {
+                std::basic_ostringstream<TCHAR> stream = MakeStructValueOutputStream();
+                WriteVector2(stream, *static_cast<const ValueType *>(value));
+                outValue = Container::String(stream.str());
+                return !stream.fail();
+            }
             else if constexpr (std::is_same_v<ValueType, Math::Vector3>)
             {
                 std::basic_ostringstream<TCHAR> stream = MakeStructValueOutputStream();
                 WriteVector3(stream, *static_cast<const ValueType *>(value));
+                outValue = Container::String(stream.str());
+                return !stream.fail();
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Vector4>)
+            {
+                std::basic_ostringstream<TCHAR> stream = MakeStructValueOutputStream();
+                WriteVector4(stream, *static_cast<const ValueType *>(value));
                 outValue = Container::String(stream.str());
                 return !stream.fail();
             }
@@ -530,11 +600,35 @@ namespace NorvesLib::Core
                 stream >> *static_cast<T *>(outValue);
                 return !stream.fail();
             }
+            else if constexpr (std::is_same_v<ValueType, Math::Vector2>)
+            {
+                Math::Vector2 value;
+                StructValueParser parser(inValue);
+                if (!parser.ParseVector2(value) || !parser.IsAtEnd())
+                {
+                    return false;
+                }
+
+                *static_cast<ValueType *>(outValue) = value;
+                return true;
+            }
             else if constexpr (std::is_same_v<ValueType, Math::Vector3>)
             {
                 Math::Vector3 value;
                 StructValueParser parser(inValue);
                 if (!parser.ParseVector3(value) || !parser.IsAtEnd())
+                {
+                    return false;
+                }
+
+                *static_cast<ValueType *>(outValue) = value;
+                return true;
+            }
+            else if constexpr (std::is_same_v<ValueType, Math::Vector4>)
+            {
+                Math::Vector4 value;
+                StructValueParser parser(inValue);
+                if (!parser.ParseVector4(value) || !parser.IsAtEnd())
                 {
                     return false;
                 }
