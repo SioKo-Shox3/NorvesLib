@@ -343,6 +343,16 @@ target_include_directories(BillboardComponentTest PRIVATE
 set_target_properties(BillboardComponentTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME BillboardComponentTest COMMAND BillboardComponentTest)
 
+add_executable(ImpostorBakeServiceTest
+    ImpostorBakeServiceTest.cpp
+)
+target_link_libraries(ImpostorBakeServiceTest PRIVATE Core)
+target_include_directories(ImpostorBakeServiceTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ImpostorBakeServiceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ImpostorBakeServiceTest COMMAND ImpostorBakeServiceTest)
+
 add_executable(SceneViewWorldBoardDrawCommandTest
     SceneViewWorldBoardDrawCommandTest.cpp
 )

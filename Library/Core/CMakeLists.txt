@@ -74,6 +74,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/RenderWorld.cpp
     Private/Rendering/SharedResourceRegistry.cpp
     Private/Rendering/RenderResources.cpp
+    Private/Rendering/ImpostorBake.cpp
     Private/Rendering/TextureAssetRuntime.cpp
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
@@ -117,6 +118,7 @@ set(PRIVATE_SOURCES
     Private/Component/Component.cpp
     Private/Component/BoardComponent.cpp
     Private/Component/BillboardComponent.cpp
+    Private/Component/ImpostorComponent.cpp
     Private/Component/MeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/LightComponent.cpp
@@ -245,6 +247,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/RenderResourcesFwd.h
     Public/Rendering/RenderResourceContexts.h
     Public/Rendering/RenderResources.h
+    Public/Rendering/ImpostorBake.h
     Public/Rendering/RenderThread.h
     Public/Rendering/RenderWorld.h
     Public/Rendering/Screen.h
@@ -330,6 +333,7 @@ set(PUBLIC_HEADERS
     Public/Component/Component.h
     Public/Component/BoardComponent.h
     Public/Component/BillboardComponent.h
+    Public/Component/ImpostorComponent.h
     Public/Component/MeshComponent.h
     Public/Component/MegaGeometryComponent.h
     Public/Component/LightComponent.h

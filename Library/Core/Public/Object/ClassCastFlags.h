@@ -24,6 +24,7 @@ namespace NorvesLib::Core
         PointLightComponent   = 1ull << 8,
         BoardComponent        = 1ull << 9,
         BillboardComponent    = 1ull << 10,
+        ImpostorComponent     = 1ull << 11,
         // 将来のホット基底型はここに追記（最大63bitまで）
     };
 
