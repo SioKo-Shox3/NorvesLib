@@ -10,7 +10,6 @@ add_library(NorvesThirdParty_ImGui STATIC
     imgui_draw.cpp
     imgui_tables.cpp
     imgui_widgets.cpp
-    imgui_demo.cpp
     # FreeType フォントビルダ(2B-ii-b)。IMGUI_ENABLE_FREETYPE 定義時に imgui_draw.cpp の
     # ImFontAtlasBuildMain が GetFontLoader() で FreeType ローダを選ぶ。原本(misc/freetype
     # 配下・LF/非 BOM)は無改変でソースに追加する。
