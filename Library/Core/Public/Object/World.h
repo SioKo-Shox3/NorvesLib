@@ -236,7 +236,7 @@ namespace NorvesLib::Core
         void TickEntityRecursive(Entity& entity, float deltaTime);
         void SyncEntityRecursive(Entity& entity,
                                  const Rendering::MaterialResources* materials,
-                                 Container::UnorderedSet<uint64_t>& liveMeshObjectIds,
+                                 Container::UnorderedSet<uint64_t>& liveMeshComponentIds,
                                  Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
                                  Container::UnorderedSet<uint64_t>& liveLightIds,
                                  Container::UnorderedSet<uint64_t>& liveScreenBoardComponentIds,

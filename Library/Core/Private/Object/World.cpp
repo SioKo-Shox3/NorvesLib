@@ -870,12 +870,12 @@ namespace NorvesLib::Core
 
         UpdateWorldTransforms();
 
-        Container::UnorderedSet<uint64_t> liveMeshObjectIds;
+        Container::UnorderedSet<uint64_t> liveMeshComponentIds;
         Container::UnorderedSet<uint64_t> liveMegaGeometryObjectIds;
         Container::UnorderedSet<uint64_t> liveLightIds;
         Container::UnorderedSet<uint64_t> liveScreenBoardComponentIds;
         Container::UnorderedSet<uint64_t> liveWorldBoardComponentIds;
-        liveMeshObjectIds.reserve(m_Inners.size());
+        liveMeshComponentIds.reserve(m_Inners.size());
         liveMegaGeometryObjectIds.reserve(m_Inners.size());
         liveLightIds.reserve(m_Inners.size());
         liveScreenBoardComponentIds.reserve(m_Inners.size());
@@ -887,7 +887,7 @@ namespace NorvesLib::Core
             SyncEntityRecursive(
                 *entity,
                 materials,
-                liveMeshObjectIds,
+                liveMeshComponentIds,
                 liveMegaGeometryObjectIds,
                 liveLightIds,
                 liveScreenBoardComponentIds,
@@ -897,7 +897,7 @@ namespace NorvesLib::Core
 
         if (m_SceneView)
         {
-            m_SceneView->RemoveStaleMeshProxies(liveMeshObjectIds);
+            m_SceneView->RemoveStaleMeshProxies(liveMeshComponentIds);
             m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
             m_SceneView->RemoveStaleLightProxies(liveLightIds);
             m_SceneView->RemoveStaleBoardProxies(liveWorldBoardComponentIds);
@@ -958,7 +958,7 @@ namespace NorvesLib::Core
     void World::SyncEntityRecursive(
         Entity& entity,
         const Rendering::MaterialResources* materials,
-        Container::UnorderedSet<uint64_t>& liveMeshObjectIds,
+        Container::UnorderedSet<uint64_t>& liveMeshComponentIds,
         Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
         Container::UnorderedSet<uint64_t>& liveLightIds,
         Container::UnorderedSet<uint64_t>& liveScreenBoardComponentIds,
@@ -988,7 +988,7 @@ namespace NorvesLib::Core
                                         meshComp->GetLastSyncedTransformVersion() != ownerVersion;
                 if (!bNeedsSync)
                 {
-                    liveMeshObjectIds.insert(entity.GetObjectId());
+                    liveMeshComponentIds.insert(meshComp->GetComponentId());
                     if (componentDataRegistry)
                     {
                         Rendering::MeshProxy meshProxy;
@@ -1010,7 +1010,7 @@ namespace NorvesLib::Core
                         meshProxy.ObjectId = entity.GetObjectId();
                         meshProxy.ComponentId = meshComp->GetComponentId();
                         m_SceneView->UpdateMeshProxy(meshProxy);
-                        liveMeshObjectIds.insert(meshProxy.ObjectId);
+                        liveMeshComponentIds.insert(meshProxy.ComponentId);
                         if (componentDataRegistry)
                         {
                             componentDataRegistry->PublishMeshProxy(entity, meshProxy);
@@ -1166,7 +1166,7 @@ namespace NorvesLib::Core
             SyncEntityRecursive(
                 *child,
                 materials,
-                liveMeshObjectIds,
+                liveMeshComponentIds,
                 liveMegaGeometryObjectIds,
                 liveLightIds,
                 liveScreenBoardComponentIds,
@@ -1426,11 +1426,17 @@ namespace NorvesLib::Core
 
         if (m_SceneView)
         {
-            m_SceneView->RemoveMeshProxy(entity.GetObjectId());
             m_SceneView->RemoveMegaGeometryProxy(entity.GetObjectId());
 
             for (auto* comp : components)
             {
+                if (auto* meshComp = CastTo<Component::MeshComponent>(comp))
+                {
+                    if (CastTo<Component::MegaGeometryComponent>(meshComp) == nullptr)
+                    {
+                        m_SceneView->RemoveMeshProxy(meshComp->GetComponentId());
+                    }
+                }
                 if (auto* lightComp = CastTo<Component::LightComponent>(comp))
                 {
                     m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
