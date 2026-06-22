@@ -7,7 +7,7 @@
 // StyleColorsDark を起点とし、角丸・余白・配色を NorvesLib の見た目へ寄せる。
 // 色はすべて ImVec4(r,g,b,a)（0..1 線形ではなく sRGB 近似の素直な値）で指定し、
 // アクセント色は 1 系統（シアン/ブルー）に統一してホバー/アクティブ/選択の
-// インタラクション色を揃える。FreeType は本ユニットでは使わない（stb_truetype）。
+// インタラクション色を揃える（色のみ。フォントラスタライザには非依存）。
 namespace NorvesLib::Modules::Gui
 {
     namespace

@@ -1,0 +1,3 @@
+[submodule "Library/ThirdParty/freetype"]
+	path = Library/ThirdParty/freetype
+	url = https://github.com/freetype/freetype.git
