@@ -88,15 +88,15 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief MeshProxyを削除
-         * @param objectId 削除するProxyのObjectId
+         * @param componentId 削除するMeshComponentId
          */
-        void RemoveMeshProxy(uint64_t objectId);
+        void RemoveMeshProxy(uint64_t componentId);
 
         /**
-         * @brief 生存ObjectIdに含まれないMeshProxyを削除
-         * @param liveObjectIds 現在World側で有効なMesh所有ObjectId
+         * @brief 生存ComponentIdに含まれないMeshProxyを削除
+         * @param liveComponentIds 現在World側で有効なMeshComponentId
          */
-        void RemoveStaleMeshProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds);
+        void RemoveStaleMeshProxies(const Container::UnorderedSet<uint64_t> &liveComponentIds);
 
         /**
          * @brief LightProxyを追加
@@ -112,9 +112,9 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief LightProxyを削除
-         * @param objectId 削除するProxyのObjectId
+         * @param lightId 削除するLightId（LightComponentId）
          */
-        void RemoveLightProxy(uint64_t objectId);
+        void RemoveLightProxy(uint64_t lightId);
 
         /**
          * @brief 生存LightIdに含まれないLightProxyを削除
@@ -154,7 +154,7 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief MeshProxyを更新
-         * @param proxy 更新するProxy（ObjectIdで照合）
+         * @param proxy 更新するProxy（ComponentIdで照合）
          */
         void UpdateMeshProxy(const MeshProxy &proxy);
 
@@ -386,7 +386,7 @@ namespace NorvesLib::Core::Rendering
 
     private:
         // MeshProxy（WorldからSceneViewに直接渡される）
-        // 同一ObjectIdに複数MeshComponentがある場合は最後に追加・更新されたProxyを使用します。
+        // MeshProxyの索引はComponentIdで管理し、ObjectIdはソートや所有元の文脈に使います。
         Container::VariableArray<MeshProxy> m_MeshProxies;
         Container::VariableArray<BoardProxy> m_BoardProxies;
         Container::VariableArray<MegaGeometryProxy> m_MegaGeometryProxies;

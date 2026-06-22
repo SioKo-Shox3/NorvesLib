@@ -43,16 +43,29 @@ namespace
         return proxy;
     }
 
-    const MeshProxy* FindMeshProxy(const SceneView& view, uint64_t objectId)
+    const MeshProxy* FindMeshProxy(const SceneView& view, uint64_t componentId)
     {
         for (const MeshProxy& proxy : view.GetMeshProxies())
         {
-            if (proxy.ObjectId == objectId)
+            if (proxy.ComponentId == componentId)
             {
                 return &proxy;
             }
         }
         return nullptr;
+    }
+
+    uint32_t CountMeshProxiesForObjectId(const SceneView& view, uint64_t objectId)
+    {
+        uint32_t count = 0;
+        for (const MeshProxy& proxy : view.GetMeshProxies())
+        {
+            if (proxy.ObjectId == objectId)
+            {
+                ++count;
+            }
+        }
+        return count;
     }
 
     const LightProxy* FindLightProxy(const SceneView& view, uint64_t lightId)
@@ -92,68 +105,116 @@ namespace
         assert(view.GetMeshProxies().size() == ProxyCount);
 
         view.AddMeshProxy(MakeMeshProxy(10, 9000));
-        assert(view.GetMeshProxies().size() == ProxyCount);
-        assert(FindMeshProxy(view, 10)->ComponentId == 9000);
+        assert(view.GetMeshProxies().size() == ProxyCount + 1);
+        assert(FindMeshProxy(view, 9000) != nullptr);
+        assert(FindMeshProxy(view, 9000)->ObjectId == 10);
+        assert(CountMeshProxiesForObjectId(view, 10) == 2);
 
         view.AddMeshProxy(MakeMeshProxy(10, 9001, false));
-        assert(view.GetMeshProxies().size() == ProxyCount);
-        assert(FindMeshProxy(view, 10)->ComponentId == 9000);
+        assert(view.GetMeshProxies().size() == ProxyCount + 1);
+        assert(FindMeshProxy(view, 9001) == nullptr);
 
         view.AddMeshProxy(MakeMeshProxy(ProxyCount + 1, 9002, false));
-        assert(view.GetMeshProxies().size() == ProxyCount);
+        assert(view.GetMeshProxies().size() == ProxyCount + 1);
 
-        view.UpdateMeshProxy(MakeMeshProxy(20, 9100, false));
-        assert(view.GetMeshProxies().size() == ProxyCount);
-        assert(FindMeshProxy(view, 20)->ComponentId == 9100);
-        assert(!FindMeshProxy(view, 20)->IsValid());
+        view.UpdateMeshProxy(MakeMeshProxy(20, 1020, false));
+        assert(view.GetMeshProxies().size() == ProxyCount + 1);
+        assert(FindMeshProxy(view, 1020) != nullptr);
+        assert(!FindMeshProxy(view, 1020)->IsValid());
 
-        view.UpdateMeshProxy(MakeMeshProxy(20, 9101));
-        assert(view.GetMeshProxies().size() == ProxyCount);
-        assert(FindMeshProxy(view, 20)->ComponentId == 9101);
-        assert(FindMeshProxy(view, 20)->IsValid());
+        view.UpdateMeshProxy(MakeMeshProxy(20, 1020));
+        assert(view.GetMeshProxies().size() == ProxyCount + 1);
+        assert(FindMeshProxy(view, 1020)->ObjectId == 20);
+        assert(FindMeshProxy(view, 1020)->IsValid());
 
         view.UpdateMeshProxy(MakeMeshProxy(ProxyCount + 10, 9200, false));
-        assert(view.GetMeshProxies().size() == ProxyCount);
+        assert(view.GetMeshProxies().size() == ProxyCount + 1);
+        assert(FindMeshProxy(view, 9200) == nullptr);
 
         view.UpdateMeshProxy(MakeMeshProxy(ProxyCount + 10, 9201));
+        assert(view.GetMeshProxies().size() == ProxyCount + 2);
+        assert(FindMeshProxy(view, 9201) != nullptr);
+        assert(FindMeshProxy(view, 9201)->ObjectId == ProxyCount + 10);
+
+        view.RemoveMeshProxy(1100);
         assert(view.GetMeshProxies().size() == ProxyCount + 1);
-        assert(FindMeshProxy(view, ProxyCount + 10)->ComponentId == 9201);
+        assert(FindMeshProxy(view, 1100) == nullptr);
 
-        view.RemoveMeshProxy(100);
+        view.UpdateMeshProxy(MakeMeshProxy(ProxyCount + 10, 9201));
+        assert(FindMeshProxy(view, 9201)->ObjectId == ProxyCount + 10);
+        view.RemoveMeshProxy(9201);
         assert(view.GetMeshProxies().size() == ProxyCount);
-        assert(FindMeshProxy(view, 100) == nullptr);
+        assert(FindMeshProxy(view, 9201) == nullptr);
 
-        view.UpdateMeshProxy(MakeMeshProxy(ProxyCount + 10, 9300));
-        assert(FindMeshProxy(view, ProxyCount + 10)->ComponentId == 9300);
-        view.RemoveMeshProxy(ProxyCount + 10);
-        assert(view.GetMeshProxies().size() == ProxyCount - 1);
-        assert(FindMeshProxy(view, ProxyCount + 10) == nullptr);
-
-        Container::UnorderedSet<uint64_t> liveObjectIds;
+        Container::UnorderedSet<uint64_t> liveComponentIds;
         for (uint32_t i = 1; i <= ProxyCount; ++i)
         {
-            if (i != 100 && i % 3 == 0)
+            const uint64_t componentId = i + 1000;
+            if (componentId != 1100 && i % 3 == 0)
             {
-                liveObjectIds.insert(i);
+                liveComponentIds.insert(componentId);
             }
         }
-        view.RemoveStaleMeshProxies(liveObjectIds);
-        assert(view.GetMeshProxies().size() == liveObjectIds.size());
+        view.RemoveStaleMeshProxies(liveComponentIds);
+        assert(view.GetMeshProxies().size() == liveComponentIds.size());
         for (const MeshProxy& proxy : view.GetMeshProxies())
         {
-            assert(liveObjectIds.find(proxy.ObjectId) != liveObjectIds.end());
+            assert(liveComponentIds.find(proxy.ComponentId) != liveComponentIds.end());
         }
 
         view.UpdateMeshProxy(MakeMeshProxy(999, 9400));
-        assert(FindMeshProxy(view, 999)->ComponentId == 9400);
-        view.RemoveMeshProxy(999);
-        assert(FindMeshProxy(view, 999) == nullptr);
+        assert(FindMeshProxy(view, 9400) != nullptr);
+        assert(FindMeshProxy(view, 9400)->ObjectId == 999);
+        view.RemoveMeshProxy(9400);
+        assert(FindMeshProxy(view, 9400) == nullptr);
 
         view.ClearAllProxies();
         assert(view.GetMeshProxies().empty());
         view.AddMeshProxy(MakeMeshProxy(100, 9500));
         assert(view.GetMeshProxies().size() == 1);
-        assert(FindMeshProxy(view, 100)->ComponentId == 9500);
+        assert(FindMeshProxy(view, 9500) != nullptr);
+        assert(FindMeshProxy(view, 9500)->ObjectId == 100);
+
+        view.Shutdown();
+    }
+
+    void TestMeshProxySameEntityMultiComponentCoverage()
+    {
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+
+        constexpr uint64_t SharedObjectId = 77;
+        constexpr uint64_t FirstComponentId = 5001;
+        constexpr uint64_t SecondComponentId = 5002;
+
+        view.AddMeshProxy(MakeMeshProxy(SharedObjectId, FirstComponentId));
+        view.AddMeshProxy(MakeMeshProxy(SharedObjectId, SecondComponentId));
+        assert(view.GetMeshProxies().size() == 2);
+        assert(CountMeshProxiesForObjectId(view, SharedObjectId) == 2);
+        assert(FindMeshProxy(view, FirstComponentId) != nullptr);
+        assert(FindMeshProxy(view, SecondComponentId) != nullptr);
+
+        view.UpdateMeshProxy(MakeMeshProxy(SharedObjectId, SecondComponentId, false));
+        assert(view.GetMeshProxies().size() == 2);
+        assert(FindMeshProxy(view, SecondComponentId) != nullptr);
+        assert(!FindMeshProxy(view, SecondComponentId)->IsValid());
+        assert(FindMeshProxy(view, FirstComponentId)->IsValid());
+
+        view.RemoveMeshProxy(FirstComponentId);
+        assert(view.GetMeshProxies().size() == 1);
+        assert(FindMeshProxy(view, FirstComponentId) == nullptr);
+        assert(FindMeshProxy(view, SecondComponentId) != nullptr);
+
+        Container::UnorderedSet<uint64_t> liveMeshComponentIds;
+        liveMeshComponentIds.insert(SecondComponentId);
+        view.RemoveStaleMeshProxies(liveMeshComponentIds);
+        assert(view.GetMeshProxies().size() == 1);
+        assert(FindMeshProxy(view, SecondComponentId) != nullptr);
+
+        liveMeshComponentIds.clear();
+        view.RemoveStaleMeshProxies(liveMeshComponentIds);
+        assert(view.GetMeshProxies().empty());
 
         view.Shutdown();
     }
@@ -174,14 +235,14 @@ namespace
         view.PrepareDrawCommands();
         assert(view.GetVisibleMeshProxies().size() == 2);
 
-        view.RemoveMeshProxy(1);
+        view.RemoveMeshProxy(101);
         assert(view.GetVisibleMeshProxies().empty());
 
         view.PrepareDrawCommands();
         assert(view.GetVisibleMeshProxies().size() == 1);
 
-        Container::UnorderedSet<uint64_t> liveObjectIds;
-        view.RemoveStaleMeshProxies(liveObjectIds);
+        Container::UnorderedSet<uint64_t> liveComponentIds;
+        view.RemoveStaleMeshProxies(liveComponentIds);
         assert(view.GetVisibleMeshProxies().empty());
 
         view.AddMeshProxy(MakeMeshProxy(3, 103));
@@ -348,6 +409,7 @@ int main()
     std::cout << "SceneViewProxyLookupTest start\n";
 
     TestMeshProxyLookup();
+    TestMeshProxySameEntityMultiComponentCoverage();
     TestMeshVisibleCacheInvalidation();
     TestLightProxyLookup();
     TestMegaGeometryProxyLookup();

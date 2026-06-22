@@ -121,7 +121,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        auto indexIt = m_MeshProxyIndex.find(proxy.ObjectId);
+        auto indexIt = m_MeshProxyIndex.find(proxy.ComponentId);
         if (indexIt != m_MeshProxyIndex.end())
         {
             m_MeshProxies[indexIt->second] = proxy;
@@ -130,13 +130,13 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t index = static_cast<uint32_t>(m_MeshProxies.size());
         m_MeshProxies.push_back(proxy);
-        m_MeshProxyIndex[proxy.ObjectId] = index;
+        m_MeshProxyIndex[proxy.ComponentId] = index;
         m_VisibleMeshProxies.clear();
     }
 
-    void SceneView::RemoveMeshProxy(uint64_t objectId)
+    void SceneView::RemoveMeshProxy(uint64_t componentId)
     {
-        auto indexIt = m_MeshProxyIndex.find(objectId);
+        auto indexIt = m_MeshProxyIndex.find(componentId);
         if (indexIt == m_MeshProxyIndex.end())
         {
             return;
@@ -149,7 +149,7 @@ namespace NorvesLib::Core::Rendering
         if (removeIndex != lastIndex)
         {
             m_MeshProxies[removeIndex] = m_MeshProxies[lastIndex];
-            m_MeshProxyIndex[m_MeshProxies[removeIndex].ObjectId] = removeIndex;
+            m_MeshProxyIndex[m_MeshProxies[removeIndex].ComponentId] = removeIndex;
         }
 
         m_MeshProxies.pop_back();
@@ -157,24 +157,24 @@ namespace NorvesLib::Core::Rendering
         m_VisibleBoardProxies.clear();
     }
 
-    void SceneView::RemoveStaleMeshProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds)
+    void SceneView::RemoveStaleMeshProxies(const Container::UnorderedSet<uint64_t> &liveComponentIds)
     {
         uint32_t index = 0;
         while (index < m_MeshProxies.size())
         {
-            const uint64_t objectId = m_MeshProxies[index].ObjectId;
-            if (liveObjectIds.find(objectId) != liveObjectIds.end())
+            const uint64_t componentId = m_MeshProxies[index].ComponentId;
+            if (liveComponentIds.find(componentId) != liveComponentIds.end())
             {
                 ++index;
                 continue;
             }
 
             const uint32_t lastIndex = static_cast<uint32_t>(m_MeshProxies.size() - 1);
-            m_MeshProxyIndex.erase(objectId);
+            m_MeshProxyIndex.erase(componentId);
             if (index != lastIndex)
             {
                 m_MeshProxies[index] = m_MeshProxies[lastIndex];
-                m_MeshProxyIndex[m_MeshProxies[index].ObjectId] = index;
+                m_MeshProxyIndex[m_MeshProxies[index].ComponentId] = index;
             }
             m_MeshProxies.pop_back();
             m_VisibleMeshProxies.clear();
@@ -377,7 +377,7 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::UpdateMeshProxy(const MeshProxy &proxy)
     {
-        auto indexIt = m_MeshProxyIndex.find(proxy.ObjectId);
+        auto indexIt = m_MeshProxyIndex.find(proxy.ComponentId);
         if (indexIt != m_MeshProxyIndex.end())
         {
             m_MeshProxies[indexIt->second] = proxy;
