@@ -150,7 +150,8 @@ namespace
         canvas.UpdateBoardProxy(board2.ComponentId, board2);
         canvas.UpdateBoardProxy(board3.ComponentId, board3);
         canvas.UpdateBoardProxy(board4.ComponentId, board4);
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        ViewportRenderPlan viewportPlan = MakeViewportPlan();
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
 
         assert(canvas.GetBoardDrawCommands().size() == 4);
         assert(canvas.GetBoardInstanceData().size() == 5);

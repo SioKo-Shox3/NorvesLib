@@ -21,6 +21,7 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
+#include <cstring>
 #include <iostream>
 
 using namespace NorvesLib::Core::Rendering;
@@ -97,12 +98,23 @@ namespace
 
         void Update(const void *data, uint64_t size, uint64_t offset = 0) override
         {
-            (void)data;
-            (void)size;
-            (void)offset;
+            LastUpdateBytes.clear();
+            if (data && size > 0)
+            {
+                const uint8_t *bytes = static_cast<const uint8_t *>(data);
+                LastUpdateBytes.insert(LastUpdateBytes.end(), bytes, bytes + size);
+            }
+            LastUpdateSize = size;
+            LastUpdateOffset = offset;
+            ++UpdateCount;
         }
 
         RHI::ResourceUsage GetUsage() const override { return m_Desc.Usage; }
+
+        Container::VariableArray<uint8_t> LastUpdateBytes;
+        uint64_t LastUpdateSize = 0;
+        uint64_t LastUpdateOffset = 0;
+        uint32_t UpdateCount = 0;
 
     private:
         RHI::BufferDesc m_Desc;
@@ -271,10 +283,9 @@ namespace
     public:
         void BindConstantBuffer(uint32_t binding, RHI::BufferPtr buffer, uint32_t offset, uint32_t size) override
         {
-            (void)binding;
-            (void)buffer;
-            (void)offset;
-            (void)size;
+            ConstantBuffers[binding] = buffer;
+            ConstantOffsets[binding] = offset;
+            ConstantSizes[binding] = size;
         }
 
         void BindTexture(uint32_t binding, RHI::TexturePtr texture) override
@@ -312,6 +323,9 @@ namespace
 
         Container::UnorderedMap<uint32_t, RHI::TexturePtr> Textures;
         Container::UnorderedMap<uint32_t, RHI::SamplerPtr> Samplers;
+        Container::UnorderedMap<uint32_t, RHI::BufferPtr> ConstantBuffers;
+        Container::UnorderedMap<uint32_t, uint32_t> ConstantOffsets;
+        Container::UnorderedMap<uint32_t, uint32_t> ConstantSizes;
         Container::UnorderedMap<uint32_t, RHI::BufferPtr> StorageBuffers;
         Container::UnorderedMap<uint32_t, uint32_t> StorageOffsets;
         Container::UnorderedMap<uint32_t, uint32_t> StorageSizes;
@@ -441,8 +455,7 @@ namespace
 
         void Draw(uint32_t vertexCount, uint32_t startVertexLocation = 0) override
         {
-            (void)vertexCount;
-            (void)startVertexLocation;
+            DrawCalls.push_back(DrawCall{vertexCount, startVertexLocation});
         }
 
         void DrawIndexedInstanced(uint32_t indexCount,
@@ -617,6 +630,12 @@ namespace
             uint32_t StartInstanceLocation = 0;
         };
 
+        struct DrawCall
+        {
+            uint32_t VertexCount = 0;
+            uint32_t StartVertexLocation = 0;
+        };
+
         RHI::RenderPassPtr LastRenderPass;
         RHI::FramebufferPtr LastFramebuffer;
         RHI::Viewport LastViewport;
@@ -624,6 +643,7 @@ namespace
         Container::VariableArray<RHI::PipelinePtr> BoundPipelines;
         Container::VariableArray<RHI::DescriptorSetPtr> DescriptorSets;
         Container::VariableArray<uint32_t> DescriptorSetSlots;
+        Container::VariableArray<DrawCall> DrawCalls;
         Container::VariableArray<DrawInstancedCall> DrawInstancedCalls;
         uint32_t BeginRenderPassCount = 0;
         uint32_t EndRenderPassCount = 0;
@@ -832,6 +852,11 @@ namespace
         return static_cast<FakeDescriptorSet *>(descriptorSet.get());
     }
 
+    FakeBuffer *AsFakeBuffer(const RHI::BufferPtr &buffer)
+    {
+        return static_cast<FakeBuffer *>(buffer.get());
+    }
+
     void AssertBoardDescriptorLayout(const RHI::DescriptorSetDesc &desc)
     {
         assert(desc.bindings.size() == 2);
@@ -841,6 +866,38 @@ namespace
         assert(desc.bindings[1].binding == 7);
         assert(desc.bindings[1].type == RHI::ResourceBindType::StructuredBuffer);
         assert(desc.bindings[1].stages == RHI::ShaderStage::Vertex);
+    }
+
+    void AssertCompositeDescriptorLayout(const RHI::DescriptorSetDesc &desc)
+    {
+        assert(desc.bindings.size() == 2);
+        assert(desc.bindings[0].binding == 0);
+        assert(desc.bindings[0].type == RHI::ResourceBindType::CombinedImageSampler);
+        assert(desc.bindings[0].stages == RHI::ShaderStage::Pixel);
+        assert(desc.bindings[1].binding == 1);
+        assert(desc.bindings[1].type == RHI::ResourceBindType::ConstantBuffer);
+        assert(desc.bindings[1].stages == RHI::ShaderStage::Pixel);
+    }
+
+    void AssertPremultipliedAlphaOverBlend(const RHI::GraphicsPipelineDesc &pipelineDesc)
+    {
+        assert(pipelineDesc.blendState.attachments.size() == 1);
+        const RHI::BlendAttachmentDesc &blend = pipelineDesc.blendState.attachments[0];
+        assert(blend.blendEnable);
+        assert(blend.srcColorBlendFactor == RHI::BlendFactor::One);
+        assert(blend.dstColorBlendFactor == RHI::BlendFactor::InvSrcAlpha);
+        assert(blend.srcAlphaBlendFactor == RHI::BlendFactor::One);
+        assert(blend.dstAlphaBlendFactor == RHI::BlendFactor::InvSrcAlpha);
+        assert(blend.colorBlendOp == RHI::BlendOp::Add);
+        assert(blend.alphaBlendOp == RHI::BlendOp::Add);
+    }
+
+    float ReadFirstFloat(const Container::VariableArray<uint8_t> &bytes)
+    {
+        assert(bytes.size() >= sizeof(float));
+        float value = 0.0f;
+        std::memcpy(&value, bytes.data(), sizeof(float));
+        return value;
     }
 
     void TestCanvasViewClearsTransparentAndExportsFrameOutput()
@@ -933,7 +990,8 @@ namespace
 
         canvas.UpdateBoardProxy(1001u, MakeBoardProxy(1001u, handleA, BlendMode::Translucent, 0u, 0u));
         canvas.UpdateBoardProxy(1002u, MakeBoardProxy(1002u, handleA, BlendMode::Translucent, 0u, 1u));
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        ViewportRenderPlan viewportPlan = MakeViewportPlan();
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
 
         fixture.Context.SnapshotDrawCommands = DrawCommandView::FromArray(canvas.GetBoardDrawCommands());
         canvas.Render(fixture.Context);
@@ -988,7 +1046,8 @@ namespace
 
         canvas.UpdateBoardProxy(1101u, MakeBoardProxy(1101u, handleA, BlendMode::Translucent, 0u, 0u));
         canvas.UpdateBoardProxy(1102u, MakeBoardProxy(1102u, handleB, BlendMode::Additive, 0u, 1u));
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        ViewportRenderPlan viewportPlan = MakeViewportPlan();
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
 
         fixture.Context.SnapshotDrawCommands = DrawCommandView::FromArray(canvas.GetBoardDrawCommands());
         canvas.Render(fixture.Context);
@@ -1029,7 +1088,8 @@ namespace
         assert(canvas.Initialize(settings));
 
         canvas.UpdateBoardProxy(2001u, MakeBoardProxy(2001u, TextureHandle::Invalid(), BlendMode::Opaque, 0u, 0u));
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        ViewportRenderPlan viewportPlan = MakeViewportPlan();
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
 
         fixture.Context.SnapshotDrawCommands = DrawCommandView::FromArray(canvas.GetBoardDrawCommands());
         canvas.Render(fixture.Context);
@@ -1062,6 +1122,137 @@ namespace
         canvas.Shutdown();
         std::cout << "TestCanvasViewUsesFallbackWhiteTextureForInvalidBoardTexture passed\n";
     }
+
+    void TestOwnRTCompositeUsesSnapshotAndDistinctOpacityResources()
+    {
+        CanvasFixture fixture;
+        CanvasView canvas;
+        ViewSettings settings;
+        settings.Width = 1;
+        settings.Height = 1;
+        assert(canvas.Initialize(settings));
+
+        canvas.SetLayerCompositeMode(1u, CanvasLayerCompositeMode::OwnRT);
+        canvas.SetLayerOpacity(1u, 0.25f);
+        canvas.SetLayerCompositeMode(2u, CanvasLayerCompositeMode::OwnRT);
+        canvas.SetLayerOpacity(2u, 0.75f);
+        canvas.UpdateBoardProxy(3001u, MakeBoardProxy(3001u, TextureHandle::Invalid(), BlendMode::Translucent, 1u, 0u));
+        canvas.UpdateBoardProxy(3002u, MakeBoardProxy(3002u, TextureHandle::Invalid(), BlendMode::Translucent, 2u, 0u));
+
+        ViewportRenderPlan viewportPlan = MakeViewportPlan();
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
+        assert(viewportPlan.CanvasLayerComposites.size() == 2);
+        assert(viewportPlan.CanvasLayerComposites[0].Mode == CanvasLayerCompositeMode::OwnRT);
+        assert(viewportPlan.CanvasLayerComposites[1].Mode == CanvasLayerCompositeMode::OwnRT);
+
+        Container::VariableArray<DrawCommand> packetCommands = canvas.GetBoardDrawCommands();
+        fixture.Context.CurrentViewport = &viewportPlan;
+        fixture.Context.SnapshotDrawCommandSource = &packetCommands;
+
+        canvas.SetLayerCompositeMode(1u, CanvasLayerCompositeMode::Inline);
+        canvas.SetLayerOpacity(1u, 1.0f);
+        canvas.SetLayerCompositeMode(2u, CanvasLayerCompositeMode::Inline);
+        canvas.SetLayerOpacity(2u, 1.0f);
+
+        canvas.Render(fixture.Context);
+
+        assert(canvas.GetFrameOutputTexture() != nullptr);
+        assert(fixture.Context.CurrentGraphExecutionResult != nullptr);
+        assert(fixture.Context.CurrentGraphExecutionResult->bSuccess);
+        assert(fixture.CommandList.DrawInstancedCalls.size() == 2);
+        assert(fixture.CommandList.DrawCalls.size() == 2);
+        assert(fixture.CommandList.DrawCalls[0].VertexCount == 3u);
+        assert(fixture.CommandList.DrawCalls[1].VertexCount == 3u);
+
+        Container::VariableArray<FakeDescriptorSet *> compositeDescriptorSets;
+        for (const RHI::DescriptorSetPtr &descriptorSet : fixture.CommandList.DescriptorSets)
+        {
+            FakeDescriptorSet *fakeSet = AsFakeDescriptorSet(descriptorSet);
+            if (fakeSet && fakeSet->ConstantBuffers.find(1u) != fakeSet->ConstantBuffers.end())
+            {
+                compositeDescriptorSets.push_back(fakeSet);
+            }
+        }
+
+        assert(compositeDescriptorSets.size() == 2);
+        assert(compositeDescriptorSets[0] != compositeDescriptorSets[1]);
+        assert(compositeDescriptorSets[0]->Textures[0] != nullptr);
+        assert(compositeDescriptorSets[1]->Textures[0] != nullptr);
+        assert(compositeDescriptorSets[0]->Samplers[0] != nullptr);
+        assert(compositeDescriptorSets[1]->Samplers[0] != nullptr);
+        assert(compositeDescriptorSets[0]->ConstantSizes[1] == 16u);
+        assert(compositeDescriptorSets[1]->ConstantSizes[1] == 16u);
+
+        RHI::BufferPtr opacityBuffer0 = compositeDescriptorSets[0]->ConstantBuffers[1u];
+        RHI::BufferPtr opacityBuffer1 = compositeDescriptorSets[1]->ConstantBuffers[1u];
+        assert(opacityBuffer0 != nullptr);
+        assert(opacityBuffer1 != nullptr);
+        assert(opacityBuffer0.get() != opacityBuffer1.get());
+
+        FakeBuffer *fakeOpacityBuffer0 = AsFakeBuffer(opacityBuffer0);
+        FakeBuffer *fakeOpacityBuffer1 = AsFakeBuffer(opacityBuffer1);
+        assert(fakeOpacityBuffer0->UpdateCount == 1u);
+        assert(fakeOpacityBuffer1->UpdateCount == 1u);
+        assert(fakeOpacityBuffer0->LastUpdateSize == 16u);
+        assert(fakeOpacityBuffer1->LastUpdateSize == 16u);
+        assert(ReadFirstFloat(fakeOpacityBuffer0->LastUpdateBytes) == 0.25f);
+        assert(ReadFirstFloat(fakeOpacityBuffer1->LastUpdateBytes) == 0.75f);
+
+        uint32_t compositeDescriptorLayoutCount = 0;
+        for (const RHI::DescriptorSetDesc &desc : fixture.Device->LastDescriptorSetDescs)
+        {
+            if (desc.bindings.size() == 2 &&
+                desc.bindings[1].binding == 1u &&
+                desc.bindings[1].type == RHI::ResourceBindType::ConstantBuffer)
+            {
+                AssertCompositeDescriptorLayout(desc);
+                ++compositeDescriptorLayoutCount;
+            }
+        }
+        assert(compositeDescriptorLayoutCount == 2u);
+
+        uint32_t compositePipelineCount = 0;
+        for (const RHI::GraphicsPipelineDesc &pipelineDesc : fixture.Device->LastGraphicsPipelineDescs)
+        {
+            if (pipelineDesc.descriptorSetLayouts.size() == 1 &&
+                pipelineDesc.descriptorSetLayouts[0].bindings.size() == 2 &&
+                pipelineDesc.descriptorSetLayouts[0].bindings[1].binding == 1u &&
+                pipelineDesc.descriptorSetLayouts[0].bindings[1].type == RHI::ResourceBindType::ConstantBuffer)
+            {
+                AssertCompositeDescriptorLayout(pipelineDesc.descriptorSetLayouts[0]);
+                AssertPremultipliedAlphaOverBlend(pipelineDesc);
+                ++compositePipelineCount;
+            }
+        }
+        assert(compositePipelineCount == 2u);
+        assert(canvas.GetRetainedBoardFrameResourceCount() == 1u);
+
+        canvas.Shutdown();
+        std::cout << "TestOwnRTCompositeUsesSnapshotAndDistinctOpacityResources passed\n";
+    }
+
+    void TestRetainedBoardFrameResourceCap()
+    {
+        CanvasFixture fixture;
+        CanvasView canvas;
+        ViewSettings settings;
+        settings.Width = 1;
+        settings.Height = 1;
+        assert(canvas.Initialize(settings));
+
+        for (uint32_t frameIndex = 0; frameIndex < 10u; ++frameIndex)
+        {
+            fixture.Graph.BeginFrame(frameIndex);
+            canvas.Render(fixture.Context);
+            const uint32_t expectedCount = frameIndex < 8u ? frameIndex + 1u : 8u;
+            assert(canvas.GetRetainedBoardFrameResourceCount() == expectedCount);
+            fixture.Pool.EndFrame();
+            fixture.Pool.BeginFrame(frameIndex + 1u);
+        }
+
+        canvas.Shutdown();
+        std::cout << "TestRetainedBoardFrameResourceCap passed\n";
+    }
 } // namespace
 
 int main()
@@ -1072,6 +1263,8 @@ int main()
     TestCanvasViewBindsOneDescriptorForSameTextureBatch();
     TestCanvasViewSplitsDescriptorsForDifferentTextureOrBlend();
     TestCanvasViewUsesFallbackWhiteTextureForInvalidBoardTexture();
+    TestOwnRTCompositeUsesSnapshotAndDistinctOpacityResources();
+    TestRetainedBoardFrameResourceCap();
 
     std::cout << "CanvasViewRenderTest passed\n";
     return 0;
