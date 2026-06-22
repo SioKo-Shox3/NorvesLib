@@ -34,6 +34,15 @@ namespace NorvesLib::Core::Rendering
             float emissiveColor[4];
             float pomParams[4];
         };
+
+        struct WorldBoardForwardUBO
+        {
+            float view[16];
+            float projection[16];
+            float cameraPosition[4];
+            float cameraRight[4];
+            float cameraUp[4];
+        };
     } // namespace
 
     ForwardPass::ForwardPass(SceneView* sceneView, SceneRenderer* sceneRenderer)
@@ -91,6 +100,22 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
+            m_WorldBoardVertexShader = context.ShaderMgr->LoadShader("world_board.vert",
+                                                                     RHI::ShaderStage::Vertex);
+            if (!m_WorldBoardVertexShader)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to load world-board vertex shader");
+                return false;
+            }
+
+            m_WorldBoardFragmentShader = context.ShaderMgr->LoadShader("world_board.frag",
+                                                                       RHI::ShaderStage::Pixel);
+            if (!m_WorldBoardFragmentShader)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to load world-board fragment shader");
+                return false;
+            }
+
             RHI::DescriptorSetDesc descriptorSetDesc;
 
             RHI::DescriptorBinding uboBinding;
@@ -119,6 +144,36 @@ namespace NorvesLib::Core::Rendering
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, descriptorSetDesc))
             {
                 NORVES_LOG_ERROR("ForwardPass", "Failed to initialize transparent uniform allocator");
+                return false;
+            }
+
+            RHI::DescriptorSetDesc boardDescriptorSetDesc;
+
+            RHI::DescriptorBinding boardUboBinding;
+            boardUboBinding.binding = 0;
+            boardUboBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            boardUboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+            boardDescriptorSetDesc.bindings.push_back(boardUboBinding);
+
+            RHI::DescriptorBinding boardTextureBinding;
+            boardTextureBinding.binding = 1;
+            boardTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            boardTextureBinding.stages = RHI::ShaderStage::Pixel;
+            boardDescriptorSetDesc.bindings.push_back(boardTextureBinding);
+
+            RHI::DescriptorBinding boardInstanceBinding;
+            boardInstanceBinding.binding = 7;
+            boardInstanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            boardInstanceBinding.stages = RHI::ShaderStage::Vertex;
+            boardDescriptorSetDesc.bindings.push_back(boardInstanceBinding);
+
+            constexpr uint32_t WORLD_BOARD_UBO_SIZE = sizeof(WorldBoardForwardUBO);
+            if (!m_WorldBoardUniformAllocator.Initialize(m_Device,
+                                                         WORLD_BOARD_UBO_SIZE,
+                                                         MAX_OBJECTS,
+                                                         boardDescriptorSetDesc))
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to initialize world-board uniform allocator");
                 return false;
             }
 
@@ -195,14 +250,18 @@ namespace NorvesLib::Core::Rendering
         m_ForwardRenderPass.reset();
         m_ForwardFramebuffer.reset();
         m_TransparentPipeline.reset();
+        m_WorldBoardPipeline.reset();
         m_TransparentVertexShader.reset();
         m_TransparentFragmentShader.reset();
+        m_WorldBoardVertexShader.reset();
+        m_WorldBoardFragmentShader.reset();
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
         m_DefaultMidGrayTexture.reset();
         m_DefaultLinearSampler.reset();
         m_UniformAllocator.Shutdown();
+        m_WorldBoardUniformAllocator.Shutdown();
         m_Device = nullptr;
         m_bTransparentRenderPassUsesRenderGraphInitialStates = false;
         m_FramebufferSceneColorTexture = nullptr;
@@ -454,7 +513,9 @@ namespace NorvesLib::Core::Rendering
             !m_SceneColorTexture ||
             !m_GBufferDepthTexture ||
             !m_TransparentVertexShader ||
-            !m_TransparentFragmentShader)
+            !m_TransparentFragmentShader ||
+            !m_WorldBoardVertexShader ||
+            !m_WorldBoardFragmentShader)
         {
             return false;
         }
@@ -465,6 +526,7 @@ namespace NorvesLib::Core::Rendering
 
         m_ForwardFramebuffer.reset();
         m_TransparentPipeline.reset();
+        m_WorldBoardPipeline.reset();
         m_ForwardRenderPass.reset();
         m_TransparentRenderPassSignature = {};
 
@@ -596,6 +658,60 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        RHI::GraphicsPipelineDesc boardPipelineDesc;
+        boardPipelineDesc.vertexShader = m_WorldBoardVertexShader;
+        boardPipelineDesc.pixelShader = m_WorldBoardFragmentShader;
+        boardPipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+        boardPipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
+        boardPipelineDesc.rasterState.cullMode = RHI::CullMode::None;
+        boardPipelineDesc.rasterState.frontFace = RHI::FrontFace::CounterClockwise;
+        boardPipelineDesc.rasterState.lineWidth = 1.0f;
+
+        boardPipelineDesc.depthStencilState.depthTestEnable = true;
+        boardPipelineDesc.depthStencilState.depthWriteEnable = false;
+        boardPipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+
+        RHI::BlendAttachmentDesc boardBlendAttachment;
+        boardBlendAttachment.blendEnable = true;
+        boardBlendAttachment.srcColorBlendFactor = RHI::BlendFactor::One;
+        boardBlendAttachment.dstColorBlendFactor = RHI::BlendFactor::InvSrcAlpha;
+        boardBlendAttachment.colorBlendOp = RHI::BlendOp::Add;
+        boardBlendAttachment.srcAlphaBlendFactor = RHI::BlendFactor::One;
+        boardBlendAttachment.dstAlphaBlendFactor = RHI::BlendFactor::InvSrcAlpha;
+        boardBlendAttachment.alphaBlendOp = RHI::BlendOp::Add;
+        boardBlendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+        boardPipelineDesc.blendState.attachments.push_back(boardBlendAttachment);
+
+        RHI::DescriptorSetDesc boardDescriptorSetDesc;
+
+        RHI::DescriptorBinding boardUboBinding;
+        boardUboBinding.binding = 0;
+        boardUboBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        boardUboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+        boardDescriptorSetDesc.bindings.push_back(boardUboBinding);
+
+        RHI::DescriptorBinding boardTextureBinding;
+        boardTextureBinding.binding = 1;
+        boardTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        boardTextureBinding.stages = RHI::ShaderStage::Pixel;
+        boardDescriptorSetDesc.bindings.push_back(boardTextureBinding);
+
+        RHI::DescriptorBinding boardInstanceBinding;
+        boardInstanceBinding.binding = 7;
+        boardInstanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        boardInstanceBinding.stages = RHI::ShaderStage::Vertex;
+        boardDescriptorSetDesc.bindings.push_back(boardInstanceBinding);
+
+        boardPipelineDesc.renderPass = m_ForwardRenderPass;
+        boardPipelineDesc.descriptorSetLayouts.push_back(boardDescriptorSetDesc);
+
+        m_WorldBoardPipeline = m_Device->CreateGraphicsPipeline(boardPipelineDesc);
+        if (!m_WorldBoardPipeline)
+        {
+            NORVES_LOG_ERROR("ForwardPass", "Failed to create world-board forward pipeline");
+            return false;
+        }
+
         m_TransparentRenderPassSignature = signature;
         return true;
     }
@@ -674,7 +790,8 @@ namespace NorvesLib::Core::Rendering
             !RenderPassSignatureEquals(m_TransparentRenderPassSignature, signature) ||
             !m_ForwardRenderPass ||
             !m_ForwardFramebuffer ||
-            !m_TransparentPipeline;
+            !m_TransparentPipeline ||
+            !m_WorldBoardPipeline;
 
         if (!bResourcesChanged)
         {
@@ -710,6 +827,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_ForwardRenderPass ||
             !m_ForwardFramebuffer ||
             !m_TransparentPipeline ||
+            !m_WorldBoardPipeline ||
             !context.InstanceDataBuffer)
         {
             if (bUseRenderGraphManagedStates)
@@ -732,17 +850,11 @@ namespace NorvesLib::Core::Rendering
         auto* materials = context.Resources.Materials;
         auto* textures = context.Resources.Textures;
         auto* meshes = context.Resources.Meshes;
-        if (!materials || !textures || !meshes)
-        {
-            if (bUseRenderGraphManagedStates)
-            {
-                EnqueueEmptyTransparentPass(context);
-            }
-            return;
-        }
 
         CameraViewConstants cameraConstants;
         float cameraPosition[4] = {0.0f, 1.5f, 4.0f, 1.0f};
+        float cameraRight[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+        float cameraUp[4] = {0.0f, 1.0f, 0.0f, 0.0f};
 
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (activeCamera)
@@ -750,6 +862,12 @@ namespace NorvesLib::Core::Rendering
             cameraConstants =
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(cameraPosition);
+            cameraRight[0] = activeCamera->RightX;
+            cameraRight[1] = activeCamera->RightY;
+            cameraRight[2] = activeCamera->RightZ;
+            cameraUp[0] = activeCamera->UpX;
+            cameraUp[1] = activeCamera->UpY;
+            cameraUp[2] = activeCamera->UpZ;
         }
 
         float viewData[16];
@@ -762,12 +880,62 @@ namespace NorvesLib::Core::Rendering
                                               : static_cast<uint32_t>(instanceDataSize64);
 
         m_UniformAllocator.Reset();
+        m_WorldBoardUniformAllocator.Reset();
 
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());
 
         for (const DrawCommand& cmd : activeTransparentCommands)
         {
+            if (cmd.Draw.PayloadKind == DrawPayloadKind::Board)
+            {
+                auto allocation = m_WorldBoardUniformAllocator.Allocate();
+                if (!allocation.UniformBuffer)
+                {
+                    NORVES_LOG_WARNING("ForwardPass",
+                                       "World-board UBO allocation failed, skipping remaining objects");
+                    break;
+                }
+
+                WorldBoardForwardUBO uboData{};
+                std::memcpy(uboData.view, viewData, sizeof(viewData));
+                std::memcpy(uboData.projection, projectionData, sizeof(projectionData));
+                std::memcpy(uboData.cameraPosition, cameraPosition, sizeof(cameraPosition));
+                std::memcpy(uboData.cameraRight, cameraRight, sizeof(cameraRight));
+                std::memcpy(uboData.cameraUp, cameraUp, sizeof(cameraUp));
+                allocation.UniformBuffer->Update(&uboData, sizeof(WorldBoardForwardUBO));
+
+                RHI::TexturePtr boardTexture = m_DefaultWhiteTexture;
+                if (textures && cmd.Draw.Texture.IsValid())
+                {
+                    RHI::TexturePtr resolvedTexture = textures->GetRHITexturePtr(cmd.Draw.Texture);
+                    if (resolvedTexture)
+                    {
+                        boardTexture = resolvedTexture;
+                    }
+                }
+
+                allocation.DescriptorSet->BindTexture(1, boardTexture);
+                allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
+                allocation.DescriptorSet->BindStorageBuffer(7,
+                                                            context.InstanceDataBuffer,
+                                                            0,
+                                                            instanceDataSize);
+                allocation.DescriptorSet->Update();
+
+                DrawCommand drawCommand = cmd;
+                drawCommand.Pipeline = m_WorldBoardPipeline;
+                drawCommand.DescriptorSet = allocation.DescriptorSet;
+                drawCommand.DescriptorSetSlot = 0;
+                transparentCommands->push_back(drawCommand);
+                continue;
+            }
+
+            if (!materials || !textures || !meshes)
+            {
+                continue;
+            }
+
             auto allocation = m_UniformAllocator.Allocate();
             if (!allocation.UniformBuffer)
             {

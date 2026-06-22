@@ -4,6 +4,7 @@
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Component/BoardComponent.h"
+#include "Core/Public/Component/BillboardComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Component/LightComponent.h"
@@ -631,6 +632,53 @@ namespace Game::GameModes
         }
 
         // ========================================
+        // 2.6 F9 WorldSpace Billboard smoke
+        // ========================================
+        if (data.m_BillboardSmokeCount > 0u)
+        {
+            auto &world = ctx.WorldRef;
+            data.m_F9BillboardObjects.clear();
+            data.m_F9BillboardComponents.clear();
+            data.m_F9BillboardObjects.reserve(data.m_BillboardSmokeCount);
+            data.m_F9BillboardComponents.reserve(data.m_BillboardSmokeCount);
+
+            for (uint32_t smokeIndex = 0; smokeIndex < data.m_BillboardSmokeCount; ++smokeIndex)
+            {
+                const float column = static_cast<float>(smokeIndex % 5u);
+                const float row = static_cast<float>(smokeIndex / 5u);
+                const float x = -2.0f + column * 1.0f;
+                const float y = 0.45f + row * 0.65f;
+                const float z = (smokeIndex % 3u == 0u) ? -0.65f : ((smokeIndex % 3u == 1u) ? 0.0f : 0.65f);
+
+                Entity *billboardObject = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(billboardObject);
+                billboardObject->SetPosition(x, y, z);
+
+                auto *billboardComponent = world.CreateComponent<Component::BillboardComponent>(billboardObject);
+                billboardComponent->SetRenderLayer(RenderLayer::Default);
+                billboardComponent->SetBlendMode(BlendMode::Translucent);
+                billboardComponent->SetSizeWorld(Math::Vector2(0.55f, 0.55f));
+                billboardComponent->SetPivot(Math::Vector2(0.5f, 0.5f));
+                billboardComponent->SetTint(Math::Vector4(0.85f,
+                                                          0.45f + 0.10f * static_cast<float>(smokeIndex % 4u),
+                                                          0.20f + 0.12f * static_cast<float>(smokeIndex % 5u),
+                                                          0.82f));
+                if (data.m_CheckerTextureHandle.IsValid())
+                {
+                    billboardComponent->SetTextureHandle(data.m_CheckerTextureHandle);
+                }
+                billboardComponent->SetVisible(true);
+
+                data.m_F9BillboardObjects.push_back(billboardObject);
+                data.m_F9BillboardComponents.push_back(billboardComponent);
+            }
+
+            LOG_INFO("Rendering3DTest billboard smoke created count=%u texture=%s",
+                     data.m_BillboardSmokeCount,
+                     data.m_CheckerTextureHandle.IsValid() ? "checker" : "white-fallback");
+        }
+
+        // ========================================
         // 3. glTFモデルのロード
         // ========================================
         {
@@ -901,6 +949,8 @@ namespace Game::GameModes
         data.m_pDirectionalLightComponent = nullptr;
         data.m_F4BoardObjects.clear();
         data.m_F4BoardComponents.clear();
+        data.m_F9BillboardObjects.clear();
+        data.m_F9BillboardComponents.clear();
 
         data.m_bMeshesRegistered = false;
         data.m_bBoulderModelLoaded = false;

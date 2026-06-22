@@ -116,6 +116,7 @@ set(PRIVATE_SOURCES
     # Component
     Private/Component/Component.cpp
     Private/Component/BoardComponent.cpp
+    Private/Component/BillboardComponent.cpp
     Private/Component/MeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/LightComponent.cpp
@@ -328,6 +329,7 @@ set(PUBLIC_HEADERS
     # Component
     Public/Component/Component.h
     Public/Component/BoardComponent.h
+    Public/Component/BillboardComponent.h
     Public/Component/MeshComponent.h
     Public/Component/MegaGeometryComponent.h
     Public/Component/LightComponent.h

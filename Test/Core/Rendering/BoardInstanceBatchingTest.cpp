@@ -61,6 +61,7 @@ namespace
                    uint32_t expectedInstanceCount)
     {
         assert(command.Type == DrawCommandType::DrawInstanced);
+        assert(command.Draw.PayloadKind == DrawPayloadKind::Board);
         assert(command.Draw.bInstanced);
         assert(command.Draw.VertexOffset == 6u);
         assert(command.Draw.ObjectId == expectedObjectId);

@@ -37,9 +37,11 @@ namespace Game
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
         constexpr const TCHAR *kRendering3DTestBoardSmokeCountOption = TEXT("--rendering3dtest-board-smoke-count");
+        constexpr const TCHAR *kRendering3DTestBillboardSmokeCountOption = TEXT("--rendering3dtest-billboard-smoke-count");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
         uint32_t s_Rendering3DTestBoardSmokeCount = 0;
+        uint32_t s_Rendering3DTestBillboardSmokeCount = 0;
 
         /**
          * @brief 文字列を符号なし 16bit ポートとして解析する。先頭末尾に空白がない 10 進数のみ
@@ -241,7 +243,9 @@ namespace Game
         m_TextureAssetManifestPath = {};
         m_Rendering3DTestModelPath = {};
         s_Rendering3DTestBoardSmokeCount = 0;
+        s_Rendering3DTestBillboardSmokeCount = 0;
         bool bHasRendering3DTestBoardSmokeCount = false;
+        bool bHasRendering3DTestBillboardSmokeCount = false;
 
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
@@ -408,6 +412,53 @@ namespace Game
                 s_Rendering3DTestBoardSmokeCount = parsedBoardSmokeCount;
                 bHasRendering3DTestBoardSmokeCount = true;
             }
+
+            bool bMatchedBillboardSmokeCount = false;
+            bool bBillboardSmokeCountHasInlineValue = false;
+            String billboardSmokeCountInlineValue;
+            if (!TryMatchTextureAssetOption(args[i],
+                                            kRendering3DTestBillboardSmokeCountOption,
+                                            bMatchedBillboardSmokeCount,
+                                            bBillboardSmokeCountHasInlineValue,
+                                            billboardSmokeCountInlineValue,
+                                            parseError))
+            {
+                LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                return false;
+            }
+
+            if (bMatchedBillboardSmokeCount)
+            {
+                if (bHasRendering3DTestBillboardSmokeCount)
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: duplicate --rendering3dtest-billboard-smoke-count");
+                    return false;
+                }
+
+                String billboardSmokeCountText;
+                if (!ReadTextureAssetOptionValue(args,
+                                                 i,
+                                                 kRendering3DTestBillboardSmokeCountOption,
+                                                 bBillboardSmokeCountHasInlineValue,
+                                                 billboardSmokeCountInlineValue,
+                                                 billboardSmokeCountText,
+                                                 parseError))
+                {
+                    LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                    return false;
+                }
+
+                uint32_t parsedBillboardSmokeCount = 0;
+                if (!TryParseUInt32(billboardSmokeCountText, parsedBillboardSmokeCount))
+                {
+                    LOG_ERROR_F("Rendering3DTest command line parse failed: invalid --rendering3dtest-billboard-smoke-count value \"%s\"",
+                                billboardSmokeCountText.c_str());
+                    return false;
+                }
+
+                s_Rendering3DTestBillboardSmokeCount = parsedBillboardSmokeCount;
+                bHasRendering3DTestBillboardSmokeCount = true;
+            }
         }
 
         const bool bHasRoot = !m_TextureAssetRoot.empty();
@@ -434,6 +485,11 @@ namespace Game
         {
             LOG_INFO("Rendering3DTest board smoke count parsed count=%u",
                      s_Rendering3DTestBoardSmokeCount);
+        }
+        if (bHasRendering3DTestBillboardSmokeCount)
+        {
+            LOG_INFO("Rendering3DTest billboard smoke count parsed count=%u",
+                     s_Rendering3DTestBillboardSmokeCount);
         }
 
         return true;
@@ -717,6 +773,7 @@ namespace Game
                 auto mode = MakeUnique<Rendering3DTestMode>();
                 mode->GetData().m_ModelPath = params.ModelPath;
                 mode->GetData().m_BoardSmokeCount = s_Rendering3DTestBoardSmokeCount;
+                mode->GetData().m_BillboardSmokeCount = s_Rendering3DTestBillboardSmokeCount;
                 return mode;
             });
         stateMachine->Registry().Register(

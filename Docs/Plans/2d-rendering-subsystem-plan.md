@@ -515,9 +515,9 @@ CanvasView の full-rect Viewport は `CameraProxy{ Projection = Orthographic, C
 
 `BoardComponent` を基底とし、world-space 派生を後段で足す。基底の `virtual BuildBoardProxy` を派生がオーバーライドする（F3 で基底インターフェースを安定させ、F9/F11 で派生追加）:
 
-- **`BillboardComponent : BoardComponent`（F9）:** `Space=WorldSpace`、`REFLECTION_CLASS(BillboardComponent, BoardComponent)`。`BuildBoardProxy` オーバーライドで:
-  - **view-alignment 軸選択:** 完全 view-aligned（カメラに正対、全軸カメラ向き）か axis-aligned（Y 軸固定の水平ビルボード＝木/草向き、カメラ方向へ Y 回転のみ）かを PROPERTY で選択。回転を world transform へ反映。カメラ方向は GameThread の `BuildBoardProxy` 時に主 SceneView カメラの forward から算出（proxy へ確定値を焼く＝RenderThread でカメラ追跡しない）。
-  - `WorldBounds`（`BoundingSphere`）を設定（錐台カリング用、§3.3）。
+- **`BillboardComponent : BoardComponent`（F9）:** `Space=WorldSpace`、`REFLECTION_CLASS(BillboardComponent, BoardComponent)`。F9 は **view-aligned のみ**を扱い、axis/Y-aligned Billboard は将来フェーズに送る。`BuildBoardProxy` オーバーライドで:
+  - `SizeWorld`（world units）と `WorldBounds`（`BoundingSphere`、錐台カリング用、§3.3）を設定し、`Space=WorldSpace` を強制する。
+  - **view facing 解決:** facing は SceneView/Forward の per-viewport draw/shader path で viewport camera の right/up から解決する。`BuildBoardProxy` は camera / SceneView / viewport を読まず、回転を proxy へ焼かない camera-independent proxy construction のままにする。
 - **`ImpostorComponent : BillboardComponent`（F11）:** ベイク + octahedral アトラス + 距離 LOD。`REFLECTION_CLASS(ImpostorComponent, BillboardComponent)`。距離に応じた `LODLevel`（`MeshProxy.LODLevel` `SceneProxy.h:47` の LOD 機構と整合）でメッシュ/インポスター切替。octahedral セル選択・ベイク解像度・球面セルマッピングは F11 で詳細化（octahedral マッピングで view 方向 → アトラスセル → blend サンプリング）。
 
 派生も `REFLECTION_CLASS`/`PROPERTY` で prefab 化。F3 時点で基底 `BuildBoardProxy` の virtual 契約を確定させ、F9/F11 は派生クラス追加のみ（基底インターフェース改変なし）。
@@ -899,7 +899,7 @@ F7。
 
 ### 目的
 
-`Space=WorldSpace` の Board（= Billboard、view/axis-aligned）を SceneView へルーティングし、3D カメラ・深度を共有してオクルージョン/LOD を整合させる。
+`Space=WorldSpace` の Board（= Billboard、F9 は view-aligned のみ）を SceneView へルーティングし、3D カメラ・深度を共有してオクルージョン/LOD を整合させる。axis/Y-aligned Billboard は将来フェーズで扱う。
 
 ### 依存
 
@@ -907,9 +907,13 @@ F8（描画基盤）+ F2（カメラ共有）。
 
 ### 作業
 
-- `BillboardComponent : BoardComponent`（`Space=WorldSpace`、`REFLECTION_CLASS(BillboardComponent, BoardComponent)`）。`BuildBoardProxy` をオーバーライドし `WorldBounds`（錐台カリング用、§3.3）を設定、view/axis-aligned の回転（GameThread で主 SceneView カメラ forward から算出した確定値）を world transform へ反映（§3.10）。
-- **Step1（`SyncEntityRecursive`、カメラ非依存）:** WorldSpace 分岐を追加: `Space==WorldSpace` → **SceneView の別 Board ストア**（`m_BoardProxies`、`MeshProxy` 経路とは分離、§3.5 二重描画防止）へ `UpdateBoardProxy`。ここではマスク交差を見ない。SceneView 側にも `BoardProxy` ストア + 登録 API + `RemoveStaleBoardProxies` を F9 で追加（F3 では CanvasView のみ）。
-- **Step2（`GenerateDrawCommands` の SceneView 分岐）:** SceneView の Viewport の `Camera.CullingMask` と `board.LayerMask` の `HasFlag` 交差で可視判定し、交差した WorldSpace Board のみ SceneView の Forward 透過パスへ相乗りさせる（`SceneView::PrepareDrawCommandsForViewport` 側で Billboard を iterate、CanvasView 経路には関与しない）。`Scene.Depth`（`RenderGraphResourceNames.h:16`）を共有し 3D 深度オクルージョン。
+- `BillboardComponent : BoardComponent`（`REFLECTION_CLASS(BillboardComponent, BoardComponent)`）。`BuildBoardProxy` は継承 `Space` property/deserialization に関係なく `WorldSpace` を強制し、`SizeWorld`（world units）と `WorldBounds`（錐台/距離カリング用、§3.3）を設定する。`SizePx` は ScreenSpace 専用で、WorldSpace Billboard では再解釈しない。
+- Draw payload は明示 discriminator を持つ。Mesh は `DrawPayloadKind::Mesh` 既定、Canvas board と SceneView world-board は `DrawPayloadKind::Board` を設定し、draw mechanics は `DrawCommandType::DrawInstanced` のままにする。Board payload は `BlendMode` が `Opaque`/`Masked` でも Forward 透明 range へ入れる。
+- **Step1（`SyncEntityRecursive`、カメラ非依存）:** ScreenSpace live set と WorldSpace live set を分ける。`ScreenSpace` → Canvas sink、`WorldSpace` → **SceneView の別 Board ストア**（`m_BoardProxies`、`MeshProxy` 経路とは分離、§3.5 二重描画防止）へ `UpdateBoardProxy`。反対側の store は `RemoveBoardProxy(ComponentId)` で stale を消す。ここでは camera / culling mask / view-facing rotation を読まない。
+- **Step2（`PrepareDrawCommandsForViewport` の SceneView 分岐）:** Camera がある viewport だけ WorldSpace Board を処理する。`Camera.CullingMask` と `board.LayerMask` の `HasFlag` 交差、`BoardProxy.WorldBounds` による錐台/距離カリング、camera distance の `SortDepth` を適用する。Board 由来 `GPUSceneInstanceData` と `DrawInstanced` command を mesh transparent command と同じ最終 sort 前に追加し、mesh transparent + world board を back-to-front でまとめて sort する。
+- **Forward 透明 board path:** Mesh transparent の `TransparentForwardUBO` は不変。World board は専用 descriptor layout を使う: binding 0 = `WorldBoardForwardUBO { view[16], projection[16], cameraPosition[4], cameraRight[4], cameraUp[4] }`、binding 1 = `Draw.Texture` の combined image sampler（white fallback）、binding 7 = structured instance buffer。F9 は premultiplied translucent 1 pipeline を採用し、board-only transparent frames は `MaterialResources`/`MeshResources` を要求しない。
+- Shaders は `Assets/Shaders/world_board.vert` / `world_board.frag`。Vertex shader が 6-vertex quad を生成し、`GPUSceneInstanceData` から `SizeWorld`/pivot/flip/UV/tint/origin を読み、camera right/up で view-aligned に展開する。
+- Game smoke flag は `--rendering3dtest-billboard-smoke-count=N`。Game 側 parsing/storage のみで保持し、Core `GameModeParams` には追加しない。
 - 最終前後は 1 段合成で「3D 下地（Billboard 含む）→ ScreenSpace 2D オーバーレイ」（ScreenSpace 2D は常に 3D + WorldSpace Board の上）。F1 の `ShouldCompose`（§3.6.5）は enabled CanvasView 解決時のみ true であり、CanvasView-less の WorldSpace Board だけでは合成を強制しない。F9 で CanvasView 無しでも present 一本化が必要になった場合は、F9 の明示的な将来 API/flag（例: `bForceCompositeForWorldSpaceBoard`）として別途設計し、F1 の既定 predicate へ混ぜない。
 
 ### 成果物

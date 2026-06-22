@@ -16,6 +16,7 @@ namespace NorvesLib::Core
     {
         class MeshComponent;
         class BoardComponent;
+        class BillboardComponent;
         class MegaGeometryComponent;
         class LightComponent;
         class PointLightComponent;
@@ -84,6 +85,7 @@ namespace Game::GameModes
         NorvesLib::Core::Entity *m_pBoulderObject = nullptr;
         NorvesLib::Core::Entity *m_pBoulderPlaceholderObject = nullptr;
         VariableArray<NorvesLib::Core::Entity *> m_F4BoardObjects;
+        VariableArray<NorvesLib::Core::Entity *> m_F9BillboardObjects;
 
         // MeshComponent参照（Entityが所有）
         NorvesLib::Core::Component::MeshComponent *m_pSphereMeshComponent = nullptr;
@@ -91,6 +93,7 @@ namespace Game::GameModes
         NorvesLib::Core::Component::MeshComponent *m_pLightSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pBoulderPlaceholderMeshComponent = nullptr;
         VariableArray<NorvesLib::Core::Component::BoardComponent *> m_F4BoardComponents;
+        VariableArray<NorvesLib::Core::Component::BillboardComponent *> m_F9BillboardComponents;
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
 
         // LightComponent参照（Entityが所有）
@@ -120,6 +123,7 @@ namespace Game::GameModes
         // ========================================
         String m_ModelPath;
         uint32_t m_BoardSmokeCount = 0;
+        uint32_t m_BillboardSmokeCount = 0;
         NorvesLib::Core::Rendering::ModelHandle m_BoulderModelHandle;
         uint32_t m_BoulderLoadRequestId = 0;
         bool m_bBoulderModelLoaded = false;

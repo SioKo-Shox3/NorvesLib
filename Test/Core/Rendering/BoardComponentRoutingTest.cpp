@@ -1,4 +1,5 @@
 ﻿#include "Component/BoardComponent.h"
+#include "Component/BillboardComponent.h"
 #include "Object/World.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/IBoardProxySink.h"
@@ -212,6 +213,12 @@ namespace
         world.Initialize();
         TrackingBoardSink sink;
         world.SetScreenSpaceBoardSink(&sink);
+        SceneView sceneView;
+        SceneViewSettings sceneSettings;
+        sceneSettings.bEnableFrustumCulling = false;
+        sceneSettings.bEnableDistanceCulling = false;
+        assert(sceneView.Initialize(sceneSettings));
+        world.SetSceneView(&sceneView);
 
         Entity *entity = world.SpawnObject<Entity>();
         assert(entity);
@@ -239,6 +246,7 @@ namespace
         assert(replacementSink.Find(first->GetComponentId()));
         assert(replacementSink.Find(second->GetComponentId()));
 
+        sceneView.Shutdown();
         world.Finalize();
         std::cout << "TestWorldRoutesScreenSpaceBoardsByComponentId passed\n";
     }
@@ -249,6 +257,12 @@ namespace
         world.Initialize();
         TrackingBoardSink sink;
         world.SetScreenSpaceBoardSink(&sink);
+        SceneView sceneView;
+        SceneViewSettings sceneSettings;
+        sceneSettings.bEnableFrustumCulling = false;
+        sceneSettings.bEnableDistanceCulling = false;
+        assert(sceneView.Initialize(sceneSettings));
+        world.SetSceneView(&sceneView);
 
         Entity *entity = world.SpawnObject<Entity>();
         assert(entity);
@@ -261,19 +275,60 @@ namespace
         board->SetBoardSpace(BoardSpace::WorldSpace);
         world.SyncToSceneView();
         assert(!sink.Find(board->GetComponentId()));
+        assert(sceneView.GetBoardProxies().size() == 1);
+        assert(sceneView.GetBoardProxies()[0].ComponentId == board->GetComponentId());
+        assert(sceneView.GetBoardProxies()[0].Space == BoardSpace::WorldSpace);
         assert(sink.RemoveId == board->GetComponentId());
         assert(sink.StaleCount == 2);
 
         board->SetBoardSpace(BoardSpace::ScreenSpace);
         world.SyncToSceneView();
         assert(sink.Find(board->GetComponentId()));
+        assert(sceneView.GetBoardProxies().empty());
 
         board->SetVisible(false);
         world.SyncToSceneView();
         assert(!sink.Find(board->GetComponentId()));
+        assert(sceneView.GetBoardProxies().empty());
 
+        sceneView.Shutdown();
         world.Finalize();
         std::cout << "TestWorldSpaceRemovesScreenSpaceProxyAndStaleRemovalRuns passed\n";
+    }
+
+    void TestBillboardEffectiveWorldSpaceSurvivesCleanSync()
+    {
+        World world;
+        world.Initialize();
+        TrackingBoardSink sink;
+        world.SetScreenSpaceBoardSink(&sink);
+        SceneView sceneView;
+        SceneViewSettings sceneSettings;
+        sceneSettings.bEnableFrustumCulling = false;
+        sceneSettings.bEnableDistanceCulling = false;
+        assert(sceneView.Initialize(sceneSettings));
+        world.SetSceneView(&sceneView);
+
+        Entity *entity = world.SpawnObject<Entity>();
+        assert(entity);
+        BillboardComponent *billboard = world.CreateComponent<BillboardComponent>(entity);
+        assert(billboard);
+        billboard->SetBoardSpace(BoardSpace::ScreenSpace);
+
+        world.SyncToSceneView();
+        assert(sink.Proxies.empty());
+        assert(sceneView.GetBoardProxies().size() == 1);
+        assert(sceneView.GetBoardProxies()[0].ComponentId == billboard->GetComponentId());
+        assert(sceneView.GetBoardProxies()[0].Space == BoardSpace::WorldSpace);
+
+        world.SyncToSceneView();
+        assert(sink.Proxies.empty());
+        assert(sceneView.GetBoardProxies().size() == 1);
+        assert(sceneView.GetBoardProxies()[0].ComponentId == billboard->GetComponentId());
+
+        sceneView.Shutdown();
+        world.Finalize();
+        std::cout << "TestBillboardEffectiveWorldSpaceSurvivesCleanSync passed\n";
     }
 
     void TestCanvasViewBoardStoreAndDrawCommandSnapshotShape()
@@ -296,6 +351,7 @@ namespace
         assert(canvas.GetBoardInstanceData().size() == 1);
         const DrawCommand &command = canvas.GetBoardDrawCommands()[0];
         assert(command.Type == DrawCommandType::DrawInstanced);
+        assert(command.Draw.PayloadKind == DrawPayloadKind::Board);
         assert(command.Draw.VertexOffset == 6);
         assert(command.Draw.InstanceCount == 1);
         assert(command.Draw.FirstInstance == 0);
@@ -371,6 +427,7 @@ namespace
         assert(packet.DrawCommands[0].Draw.ObjectId == 1);
         assert(packet.DrawCommands[1].Draw.ObjectId == 2);
         assert(packet.DrawCommands[2].Draw.ObjectId == boardA.ObjectId);
+        assert(packet.DrawCommands[2].Draw.PayloadKind == DrawPayloadKind::Board);
         assert(packet.DrawCommands[0].Draw.FirstInstance == 0);
         assert(packet.DrawCommands[1].Draw.FirstInstance == 1);
         assert(packet.DrawCommands[2].Draw.FirstInstance == 2);
@@ -456,6 +513,7 @@ int main()
     TestBoardReflectionAndTextureOptionalProxy();
     TestWorldRoutesScreenSpaceBoardsByComponentId();
     TestWorldSpaceRemovesScreenSpaceProxyAndStaleRemovalRuns();
+    TestBillboardEffectiveWorldSpaceSurvivesCleanSync();
     TestCanvasViewBoardStoreAndDrawCommandSnapshotShape();
     TestRenderingCoordinatorAppendsCanvasBoardsAfterSceneCommands();
     TestRenderingCoordinatorCanvasSinkLifecycle();
