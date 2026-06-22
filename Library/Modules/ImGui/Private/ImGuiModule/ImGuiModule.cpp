@@ -28,8 +28,16 @@
 //
 // 2B-ii(見た目仕上げ): カスタムフォント(Inter 本文 + FontAwesome アイコン + NotoSansJP
 // 日本語を 1 ハンドルにマージ)を静的アトラスで事前構築し、テーマ(NorvesImGuiStyle)・
-// DPI スケール・キーボード/文字入力ブリッジ・日本語＋アイコンのデモ窓を加える。フォント
-// ラスタライザは imgui 既定の stb_truetype(FreeType は次段 2B-ii-b)。
+// DPI スケール・キーボード/文字入力ブリッジ・日本語＋アイコンのデモ窓を加える。
+//
+// 2B-ii-b(FreeType + 全範囲強制 bake): フォントラスタライザを FreeType に切替える
+// (imgui 既定の stb_truetype より crisp。NorvesThirdParty_ImGui の IMGUI_ENABLE_FREETYPE
+// 定義で imgui_draw.cpp が FreeType ローダを選ぶ。本モジュール側のコード変更は不要)。
+// さらに、imgui 1.92 の RendererHasTextures 下では Build() は明示範囲を事前 bake せず
+// 実描画グリフのみ lazy bake する性質があるため、初期化時に設定済みの全グリフ範囲を
+// 強制的に bake(materialize)して静的アトラスを確定する。これにより実行時にアトラスが
+// 成長せず、RenderThread が ImTextureData(テクスチャ Status)に触れる必要が恒久的に消える
+// (#2/#3/2B-ii-a で残っていた「未描画グリフ不可視」制約の解消)。
 namespace NorvesLib::Modules::Gui
 {
     namespace
@@ -248,9 +256,10 @@ namespace NorvesLib::Modules::Gui
                 // 起点に NorvesImGuiStyle が角丸/余白/配色を上書きする。
                 NorvesImGuiStyle::ApplyNorvesStyle(::ImGui::GetStyle());
 
-                // フォント(Inter + FontAwesome マージ + NotoSansJP マージ)を静的アトラスで
-                // 構築する。明示グリフ範囲で事前構築するため、実行時にアトラスが成長せず
-                // (RenderThread がテクスチャ更新を要求しない=#2/#3 の構造的解消)。
+                // フォント(Inter + FontAwesome マージ + NotoSansJP マージ)を FreeType で構築する。
+                // 全グリフの強制 bake は InitializeBackend の ForceBakeAllGlyphs が GPU アップロード
+                // 前に行い、実行時にアトラスが成長しない(RenderThread がテクスチャ更新を要求しない
+                // =#2/#3 の構造的解消)。
                 if (!SetupFonts(io))
                 {
                     NORVES_LOG_ERROR(kLogCategory, "ImGuiModule Initialize failed: SetupFonts");
@@ -301,11 +310,12 @@ namespace NorvesLib::Modules::Gui
              * @brief imgui バックエンドを GameThread で初期化しフォントアトラスをアップロードする
              *
              * GEngine の RenderingCoordinator から device と overlay load render pass を取得し、
-             * overlay pass の InitializeGameThread を駆動する。事前に「捨てフレーム」で
-             * 日本語＋アイコン混在テキストを描いてフォントアトラスのグリフを materialize し、
-             * 静的アトラスとして GPU へ一度だけ載せる。SetupFonts で明示範囲を構築済みのため、
-             * 以後アトラスは成長せず RenderThread がテクスチャ(ImTextureData::Status)に
-             * 触れることはない。
+             * overlay pass の InitializeGameThread を駆動する。事前に ForceBakeAllGlyphs() で
+             * 設定済み全グリフ範囲(ASCII / 日本語常用 / FontAwesome アイコン)を強制 bake し、
+             * さらに「捨てフレーム」でショーケース窓を描いて残りのグリフ(混在テキスト)も
+             * materialize する。その後 GPU へ一度だけ載せる。imgui 1.92 の lazy bake 下でも
+             * 全 common グリフが初回に bake+アップロードされるため、以後アトラスは成長せず
+             * RenderThread がテクスチャ(ImTextureData::Status)に触れることはない。
              *
              * @return 初期化+アップロードに成功した場合 true
              */
@@ -327,10 +337,13 @@ namespace NorvesLib::Modules::Gui
                     return false;
                 }
 
-                // 捨てフレームでフォントアトラスのグリフを materialize する。本 Tick が描く UI と
-                // 同じグリフ集合(デモ窓の日本語＋アイコン＋ASCII)を要求して baking させ、静的
-                // アトラスを確定する。これにより本番フレームで新規グリフ(=アトラス成長=テクスチャ
-                // 更新要求)が発生せず、RenderThread が ImTextureData に触れる必要が生じない。
+                // 設定済み全グリフ範囲を強制 bake してから捨てフレームを描く。imgui 1.92 の
+                // RendererHasTextures 下では Build() は明示範囲を事前 bake せず実描画グリフのみ
+                // lazy bake するため、ここで全 common グリフ(ASCII / 日本語常用 / FA アイコン)を
+                // materialize して静的アトラスを確定する。これにより本番フレームで新規グリフ
+                // (=アトラス成長=テクスチャ更新要求)が発生せず、RenderThread が ImTextureData に
+                // 触れる必要が生じない。捨てフレーム(ShowDemoWindow + ショーケース窓)は残りの
+                // 混在テキストグリフを materialize しつつ、本 Tick の見た目には影響しない。
                 ::ImGui::SetCurrentContext(m_Context);
                 {
                     ImGuiIO &io = ::ImGui::GetIO();
@@ -345,6 +358,11 @@ namespace NorvesLib::Modules::Gui
                     io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
                     io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
                     io.DeltaTime = 1.0f / 60.0f;
+
+                    // 全範囲強制 bake(NewFrame の外で実行可。FindGlyph がアトラスへ glyph を
+                    // materialize する)。捨てフレームより先に呼び、混在テキストを描く前に
+                    // common グリフを確定させる。
+                    ForceBakeAllGlyphs(io);
 
                     ::ImGui::NewFrame();
                     ::ImGui::ShowDemoWindow(nullptr);
@@ -434,7 +452,8 @@ namespace NorvesLib::Modules::Gui
              *     等幅(GlyphMinAdvanceX)・縦位置微調整(GlyphOffset.y)でマージする。
              * (c) MergeMode で NotoSansJP を GetGlyphRangesJapanese(常用~2999字)でマージする。
              * 全フォントを 1 ハンドル(Inter ベース)へ束ね、混在テキストを単一フォントで描ける。
-             * 明示範囲で構築するため実行時アトラス成長が起きない(静的アトラス=#2/#3 解消)。
+             * ラスタライザは FreeType(IMGUI_ENABLE_FREETYPE)。明示範囲の実 materialize は
+             * ForceBakeAllGlyphs() が担い、合わせて実行時アトラス成長を防ぐ(#2/#3 解消)。
              *
              * @return すべてのフォント追加に成功した場合 true
              */
@@ -495,19 +514,105 @@ namespace NorvesLib::Modules::Gui
                     return false;
                 }
 
-                // 全グリフを事前構築(静的アトラス確定)。明示範囲のみを構築するため、以後
-                // RenderThread でのアトラス成長=テクスチャ更新が発生しない。GPU テクスチャ上限
-                // (maxImageDimension2D)は GetGlyphRangesJapanese 程度なら収まる前提。
+                // アトラス構築(ローダ初期化 + フォントメトリクス確定)。imgui 1.92 の
+                // RendererHasTextures 下では Build() は明示範囲を事前 bake せず、実描画グリフが
+                // lazy bake される。よって全グリフの materialize は別途 ForceBakeAllGlyphs()
+                // (InitializeBackend・GPU アップロード前)で行う。
                 if (!io.Fonts->Build())
                 {
                     NORVES_LOG_ERROR(kLogCategory, "SetupFonts failed: io.Fonts->Build()");
                     return false;
                 }
 
+                // 本文ベースフォント(Inter + FA + JP マージ済み)のハンドルを保持する。
+                // ForceBakeAllGlyphs が Sources/GlyphRanges を走査して全グリフを bake する。
+                m_BaseFont = baseFont;
+                m_BakedFontSize = fontSize;
+
                 NORVES_LOG_INFO(kLogCategory,
-                                "SetupFonts: Inter + FontAwesome + NotoSansJP merged (static atlas, size=%.1fpx)",
+                                "SetupFonts: Inter + FontAwesome + NotoSansJP merged (FreeType, size=%.1fpx)",
                                 fontSize);
                 return true;
+            }
+
+            /**
+             * @brief 設定済み全グリフ範囲を強制 bake する(静的アトラス確定・GameThread)
+             *
+             * imgui 1.92 の RendererHasTextures 下では io.Fonts->Build() は明示範囲を事前 bake
+             * せず、テキスト描画時に必要なグリフのみ lazy bake される。そのままだと実行時に
+             * 未描画グリフが要求された瞬間にアトラスが成長し、RenderThread が ImTextureData の
+             * Status を書込む経路が復活してしまう(MT 安全化が崩れる)。
+             *
+             * 本メソッドはマージ済みベースフォントの全 Source(Inter Default / FontAwesome /
+             * NotoSansJP Japanese)の GlyphRanges を走査し、各コードポイントに対し公開 API の
+             * ImFontBaked::FindGlyph を呼んで glyph をアトラスへ materialize する。これは imgui
+             * 内部の ImFontAtlasBuildLegacyPreloadAllGlyphRanges と同じ全範囲プリベイクを、
+             * imgui_internal.h を持ち込まずに公開 API のみ(ImFont::Sources / GetFontBaked /
+             * ImFontBaked::FindGlyph)で実現する。実グリフを持たないコードポイント(アイコン
+             * フォントの空き番)は fallback に解決され追加コストは発生しない。
+             *
+             * 呼出し後に全 common グリフがアトラスに載るため、続く UploadFontAtlas が一度だけ
+             * GPU へ上げて Status=OK を確定し、以後 RenderThread はテクスチャに触れない。
+             */
+            void ForceBakeAllGlyphs(ImGuiIO &io)
+            {
+                if (m_BaseFont == nullptr)
+                {
+                    return;
+                }
+
+                ImFontBaked *baked = m_BaseFont->GetFontBaked(m_BakedFontSize);
+                if (baked == nullptr)
+                {
+                    NORVES_LOG_WARNING(kLogCategory, "ForceBakeAllGlyphs: GetFontBaked returned null");
+                    return;
+                }
+
+                // fallback / ellipsis を先に確定(描画で必ず参照される)。
+                if (m_BaseFont->FallbackChar != 0)
+                {
+                    baked->FindGlyph(m_BaseFont->FallbackChar);
+                }
+                if (m_BaseFont->EllipsisChar != 0)
+                {
+                    baked->FindGlyph(m_BaseFont->EllipsisChar);
+                }
+
+                // マージ済みフォントの全 Source の GlyphRanges を走査して全コードポイントを bake。
+                // GlyphRanges は [min,max] ペアのゼロ終端配列(LEGACY 仕様)。Source が範囲を
+                // 持たない場合は Default(ASCII/Latin)へフォールバックする。
+                uint32_t bakedCount = 0;
+                for (ImFontConfig *src : m_BaseFont->Sources)
+                {
+                    if (src == nullptr)
+                    {
+                        continue;
+                    }
+                    const ImWchar *ranges = src->GlyphRanges ? src->GlyphRanges : io.Fonts->GetGlyphRangesDefault();
+                    for (; ranges[0] != 0; ranges += 2)
+                    {
+                        for (unsigned int c = ranges[0]; c <= ranges[1] && c <= IM_UNICODE_CODEPOINT_MAX; ++c)
+                        {
+                            baked->FindGlyph(static_cast<ImWchar>(c));
+                            ++bakedCount;
+                        }
+                    }
+                }
+
+                // アトラスを再構築してピクセルを確定(materialize した glyph を反映)。
+                // TexWidth/Height は GPU テクスチャ上限の懸念把握のためログする。
+                io.Fonts->Build();
+                const int texW = io.Fonts->TexData != nullptr ? io.Fonts->TexData->Width : 0;
+                const int texH = io.Fonts->TexData != nullptr ? io.Fonts->TexData->Height : 0;
+                NORVES_LOG_INFO(kLogCategory,
+                                "ForceBakeAllGlyphs: prebaked %u glyph codepoints (atlas %dx%d, max=%d)",
+                                bakedCount, texW, texH, io.Fonts->TexMaxWidth);
+                if (texW > io.Fonts->TexMaxWidth || texH > io.Fonts->TexMaxHeight)
+                {
+                    NORVES_LOG_WARNING(kLogCategory,
+                                       "ForceBakeAllGlyphs: atlas %dx%d exceeds max %dx%d (glyph範囲/サイズ要調整)",
+                                       texW, texH, io.Fonts->TexMaxWidth, io.Fonts->TexMaxHeight);
+                }
             }
 
             /**
@@ -645,7 +750,7 @@ namespace NorvesLib::Modules::Gui
                     ::ImGui::InputText(ICON_FA_KEYBOARD " 入力", m_DemoInput, sizeof(m_DemoInput));
 
                     ::ImGui::Spacing();
-                    ::ImGui::TextDisabled(ICON_FA_CIRCLE_INFO " stb_truetype ラスタライザ(FreeType は次段)");
+                    ::ImGui::TextDisabled(ICON_FA_CIRCLE_INFO " FreeType ラスタライザ(全範囲強制 bake 済み)");
                 }
                 ::ImGui::End();
             }
@@ -662,6 +767,11 @@ namespace NorvesLib::Modules::Gui
             // FontAwesome アイコン範囲(GlyphRanges はフォント生存中ポインタ有効が必須のため
             // モジュールが寿命を持つ静的配列で保持する)。
             ImWchar m_IconRanges[3] = {0, 0, 0};
+
+            // マージ済みベースフォント(Inter + FA + JP)とその bake サイズ。ForceBakeAllGlyphs が
+            // Sources/GlyphRanges を走査して全グリフを materialize するのに使う(SetupFonts で確定)。
+            ImFont *m_BaseFont = nullptr;
+            float m_BakedFontSize = kBaseFontSize;
 
             // 文字入力バッファ(OnCharInput で積み Tick で消費・GameThread 直列でロック不要)。
             Core::Container::VariableArray<uint32_t> m_PendingChars;

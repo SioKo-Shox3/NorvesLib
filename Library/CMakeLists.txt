@@ -6,6 +6,20 @@
 # OFF のときは imgui を 1 ファイルもビルドせず Core も非リンク=素ビルド byte-for-byte 不変。
 option(NORVES_ENABLE_IMGUI "Enable ImGui debug overlay" OFF)
 if(NORVES_ENABLE_IMGUI)
+    # FreeType フォントラスタライザ(2B-ii-b)。imgui の既定 stb_truetype より crisp な
+    # グリフを生成し、imgui_freetype.cpp(IMGUI_ENABLE_FREETYPE 経由)が build 時に選ぶ。
+    # 外部依存(zlib/bzip2/png/harfbuzz/brotli)は全て無効化して素の TTF/OTF ラスタライズ
+    # のみに絞る(余分な探索/リンクを持ち込まない)。freetype ターゲットは PUBLIC で
+    # ft2build.h 等の include ディレクトリを提供するので、これに PRIVATE リンクする
+    # imgui_freetype.cpp がヘッダを解決できる。NORVES_ENABLE_IMGUI OFF 時は本ブロックが
+    # 走らず freetype は 1 ファイルもビルドされない=素ビルド byte-for-byte 不変。
+    set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+    add_subdirectory(ThirdParty/freetype)
+
     add_subdirectory(ThirdParty/imgui)
 endif()
 
