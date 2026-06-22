@@ -112,8 +112,8 @@ namespace
         assert(canvas.GetBoardProxies()[1].ComponentId == boardB.ComponentId);
         assert(canvas.GetBoardProxies()[2].ComponentId == boardD.ComponentId);
 
-        const ViewportRenderPlan viewportPlan = MakeViewportPlan(RenderLayer::UI);
-        canvas.PrepareBoardDrawCommands(viewportPlan);
+        ViewportRenderPlan viewportPlan = MakeViewportPlan(RenderLayer::UI);
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
 
         assert(canvas.GetBoardDrawCommands().size() == 3);
         assert(canvas.GetBoardInstanceData().size() == 3);
@@ -123,7 +123,7 @@ namespace
 
         const Container::VariableArray<CommandSnapshot> firstSnapshot = CaptureCommandSnapshot(canvas);
 
-        canvas.PrepareBoardDrawCommands(viewportPlan);
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
 
         assert(canvas.GetBoardDrawCommands().size() == firstSnapshot.size());
         assert(canvas.GetBoardInstanceData().size() == firstSnapshot.size());

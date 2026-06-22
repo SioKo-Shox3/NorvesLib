@@ -12,6 +12,7 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/RenderResourceContexts.h"
 #include "Core/Public/Rendering/RenderResources.h"
+#include "Core/Public/Rendering/CanvasView.h"
 #include "Core/Public/Input/InputSystem.h"
 #include "Core/Public/Input/InputState.h"
 #include "Core/Public/Rendering/ProceduralMeshGenerator.h"
@@ -434,6 +435,12 @@ namespace Game::GameModes
                 LOG_INFO("Rendering3DTest board smoke count=%u batching=%s",
                          data.m_BoardSmokeCount,
                          canvasView->IsBoardInstanceBatchingEnabled() ? "enabled" : "disabled");
+                if (data.m_bLayerCompositeSmoke)
+                {
+                    canvasView->SetLayerCompositeMode(1u, CanvasLayerCompositeMode::OwnRT);
+                    canvasView->SetLayerOpacity(1u, 0.55f);
+                    LOG_INFO("Rendering3DTest layer composite smoke enabled layer=1 mode=OwnRT opacity=0.55");
+                }
 
                 constexpr uint32_t atlasWidth = 128;
                 constexpr uint32_t atlasHeight = 64;
@@ -625,9 +632,9 @@ namespace Game::GameModes
                     }
                 }
             }
-            else if (data.m_BoardSmokeCount > 0u)
+            else if (data.m_BoardSmokeCount > 0u || data.m_bLayerCompositeSmoke)
             {
-                LOG_WARNING("Rendering3DTest board smoke requested but CanvasView is not available");
+                LOG_WARNING("Rendering3DTest Canvas smoke requested but CanvasView is not available");
             }
         }
 

@@ -8,6 +8,20 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    enum class CanvasLayerCompositeMode : uint8_t
+    {
+        Inline,
+        OwnRT
+    };
+
+    struct CanvasLayerCompositeSnapshot
+    {
+        uint32_t LayerPriority = 0;
+        CanvasLayerCompositeMode Mode = CanvasLayerCompositeMode::Inline;
+        float Opacity = 1.0f;
+        CommandRange DrawCommandRange;
+    };
+
     /**
      * @brief Per-viewport render input plan.
      *
@@ -37,6 +51,8 @@ namespace NorvesLib::Core::Rendering
         CommandRange OpaqueCommandRange;
         CommandRange TransparentCommandRange;
 
+        Container::VariableArray<CanvasLayerCompositeSnapshot> CanvasLayerComposites;
+
         bool HasDrawableExtent() const
         {
             return bEnabled && RenderWidth > 0 && RenderHeight > 0 &&
@@ -59,6 +75,7 @@ namespace NorvesLib::Core::Rendering
             DrawCommandRange = CommandRange{};
             OpaqueCommandRange = CommandRange{};
             TransparentCommandRange = CommandRange{};
+            CanvasLayerComposites.clear();
         }
     };
 

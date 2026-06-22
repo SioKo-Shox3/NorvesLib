@@ -226,7 +226,8 @@ namespace
 
         canvas.UpdateBoardProxy(opaqueBoard.ComponentId, opaqueBoard);
         canvas.UpdateBoardProxy(translucentBoard.ComponentId, translucentBoard);
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        ViewportRenderPlan viewportPlan = MakeViewportPlan();
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
 
         assert(canvas.GetBoardDrawCommands().size() == 2);
         assert(canvas.GetBoardInstanceData().size() == 2);

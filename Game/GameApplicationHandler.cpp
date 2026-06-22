@@ -38,10 +38,12 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
         constexpr const TCHAR *kRendering3DTestBoardSmokeCountOption = TEXT("--rendering3dtest-board-smoke-count");
         constexpr const TCHAR *kRendering3DTestBillboardSmokeCountOption = TEXT("--rendering3dtest-billboard-smoke-count");
+        constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
         uint32_t s_Rendering3DTestBoardSmokeCount = 0;
         uint32_t s_Rendering3DTestBillboardSmokeCount = 0;
+        bool s_bRendering3DTestLayerCompositeSmoke = false;
 
         /**
          * @brief 文字列を符号なし 16bit ポートとして解析する。先頭末尾に空白がない 10 進数のみ
@@ -244,6 +246,7 @@ namespace Game
         m_Rendering3DTestModelPath = {};
         s_Rendering3DTestBoardSmokeCount = 0;
         s_Rendering3DTestBillboardSmokeCount = 0;
+        s_bRendering3DTestLayerCompositeSmoke = false;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
 
@@ -256,6 +259,12 @@ namespace Game
         {
             // コマンドライン引数のログ出力
             LOG_INFO_F("Arg[%zu]=%s", i, args[i].c_str());
+
+            if (ToStdString(args[i]) == std::basic_string<TCHAR>(kRendering3DTestLayerCompositeSmokeOption))
+            {
+                s_bRendering3DTestLayerCompositeSmoke = true;
+                continue;
+            }
 
             bool bMatchedRoot = false;
             bool bRootHasInlineValue = false;
@@ -490,6 +499,10 @@ namespace Game
         {
             LOG_INFO("Rendering3DTest billboard smoke count parsed count=%u",
                      s_Rendering3DTestBillboardSmokeCount);
+        }
+        if (s_bRendering3DTestLayerCompositeSmoke)
+        {
+            LOG_INFO("Rendering3DTest layer composite smoke parsed enabled=true");
         }
 
         return true;
@@ -774,6 +787,7 @@ namespace Game
                 mode->GetData().m_ModelPath = params.ModelPath;
                 mode->GetData().m_BoardSmokeCount = s_Rendering3DTestBoardSmokeCount;
                 mode->GetData().m_BillboardSmokeCount = s_Rendering3DTestBillboardSmokeCount;
+                mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
                 return mode;
             });
         stateMachine->Registry().Register(

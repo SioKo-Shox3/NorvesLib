@@ -346,7 +346,8 @@ namespace
         canvas.UpdateBoardProxy(defaultBoard.ComponentId, defaultBoard);
         assert(canvas.GetBoardProxies().size() == 2);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan(RenderLayer::UI));
+        ViewportRenderPlan viewportPlan = MakeViewportPlan(RenderLayer::UI);
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
         assert(canvas.GetBoardDrawCommands().size() == 1);
         assert(canvas.GetBoardInstanceData().size() == 1);
         const DrawCommand &command = canvas.GetBoardDrawCommands()[0];
@@ -374,7 +375,8 @@ namespace
         assert(packetInstances.size() == 1);
         assert(packetCommands[0].Draw.ObjectId == uiBoard.ObjectId);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan(RenderLayer::UI));
+        viewportPlan = MakeViewportPlan(RenderLayer::UI);
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
         assert(canvas.GetBoardDrawCommands().empty());
         canvas.Shutdown();
         std::cout << "TestCanvasViewBoardStoreAndDrawCommandSnapshotShape passed\n";

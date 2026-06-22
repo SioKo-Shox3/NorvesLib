@@ -31,7 +31,12 @@ namespace NorvesLib::Core::Rendering
         void RemoveBoardProxy(uint64_t componentId) override;
         void RemoveStaleBoardProxies(const Container::UnorderedSet<uint64_t> &liveComponentIds) override;
 
-        void PrepareBoardDrawCommands(const ViewportRenderPlan &viewportPlan);
+        void SetLayerCompositeMode(uint32_t layerPriority, CanvasLayerCompositeMode mode);
+        CanvasLayerCompositeMode GetLayerCompositeMode(uint32_t layerPriority) const;
+        void SetLayerOpacity(uint32_t layerPriority, float opacity);
+        float GetLayerOpacity(uint32_t layerPriority) const;
+
+        void PrepareBoardDrawCommands(ViewportRenderPlan &viewportPlan, uint32_t packetCommandBase);
         void ReleaseRetainedBoardFrameResources();
         void SetBoardInstanceBatchingEnabled(bool bEnabled) { m_bBoardInstanceBatchingEnabled = bEnabled; }
         bool IsBoardInstanceBatchingEnabled() const { return m_bBoardInstanceBatchingEnabled; }
@@ -48,22 +53,36 @@ namespace NorvesLib::Core::Rendering
         struct RetainedBoardFrameResources
         {
             RHI::TexturePtr OutputTexture;
-            RHI::RenderPassPtr RenderPass;
-            RHI::FramebufferPtr Framebuffer;
-            RHI::TexturePtr FallbackTexture;
-            RHI::SamplerPtr Sampler;
+            Container::VariableArray<RHI::TexturePtr> Textures;
+            Container::VariableArray<RHI::RenderPassPtr> RenderPasses;
+            Container::VariableArray<RHI::FramebufferPtr> Framebuffers;
             Container::VariableArray<RHI::TexturePtr> BoundTextures;
             Container::VariableArray<RHI::DescriptorSetPtr> DescriptorSets;
             Container::VariableArray<RHI::PipelinePtr> Pipelines;
+            Container::VariableArray<RHI::BufferPtr> OpacityBuffers;
+            Container::VariableArray<RHI::SamplerPtr> Samplers;
+        };
+
+        struct CanvasLayerCompositeConfig
+        {
+            CanvasLayerCompositeMode Mode = CanvasLayerCompositeMode::Inline;
+            float Opacity = 1.0f;
         };
 
         void ClearBoardDrawCommands();
         void RetainBoardFrameResources(const RetainedBoardFrameResources &resources);
         bool EnsureBoardSharedResources(RHI::IDevice *device);
+        CanvasLayerCompositeConfig GetLayerCompositeConfig(uint32_t layerPriority) const;
+        static void AddRetainedTexture(RetainedBoardFrameResources &resources, RHI::TexturePtr texture);
+        static void AddRetainedRenderPass(RetainedBoardFrameResources &resources, RHI::RenderPassPtr renderPass);
+        static void AddRetainedFramebuffer(RetainedBoardFrameResources &resources, RHI::FramebufferPtr framebuffer);
+        static void AddRetainedSampler(RetainedBoardFrameResources &resources, RHI::SamplerPtr sampler);
+        static void AddRetainedOpacityBuffer(RetainedBoardFrameResources &resources, RHI::BufferPtr buffer);
 
         Container::VariableArray<BoardProxy> m_BoardProxies;
         Container::UnorderedMap<uint64_t, uint32_t> m_BoardProxyIndex;
         Container::UnorderedMap<uint64_t, uint64_t> m_BoardInsertionSequenceByComponentId;
+        Container::UnorderedMap<uint32_t, CanvasLayerCompositeConfig> m_LayerCompositeConfigs;
         Container::VariableArray<DrawCommand> m_BoardDrawCommands;
         Container::VariableArray<GPUSceneInstanceData> m_BoardInstanceData;
         Container::VariableArray<RetainedBoardFrameResources> m_RetainedBoardFrameResources;
@@ -73,6 +92,10 @@ namespace NorvesLib::Core::Rendering
         bool m_bBoardInstanceBatchingEnabled = true;
 
         friend class CanvasBoardPass;
+        friend class CanvasClearPass;
+        friend class CanvasLayerBoardPass;
+        friend class CanvasLayerOwnRTPass;
+        friend class CanvasLayerCompositePass;
     };
 
 } // namespace NorvesLib::Core::Rendering

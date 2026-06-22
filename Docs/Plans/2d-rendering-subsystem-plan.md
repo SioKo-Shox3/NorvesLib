@@ -946,7 +946,7 @@ F4（方式 A 順序担保）。
 
 ### 作業
 
-- `CanvasView::SetLayerCompositeMode(layerPriority, OwnRT)` で指定レイヤーのみ per-layer RT（`Viewport::m_OutputTexture` 再利用）を確保。レイヤー単位不透明度 PROPERTY。RT 同士を `Canvas.Color` へ painter 順ブレンド。
+- `CanvasView::SetLayerCompositeMode(layerPriority, OwnRT)` で指定レイヤーのみ匿名 RenderGraph layer RT を確保。レイヤー単位不透明度 PROPERTY。layer RT を `Canvas.Color` へ painter 順ブレンド。
 - 方式 A（既定）は不変。方式 B は明示 opt-in のレイヤーのみ。
 
 ### 成果物
@@ -955,7 +955,7 @@ F4（方式 A 順序担保）。
 
 ### ゲート
 
-- focused build、CTest 全通過、レイヤー単位不透明度が目視一致（MT/ST）、方式 A レイヤーは不変。
+- focused build、CTest 全通過、`--enable-canvas-view --rendering3dtest-layer-composite-smoke` を含む MT/ST smoke でレイヤー単位不透明度が目視一致、方式 A レイヤーは不変。
 
 ### コミット例
 
@@ -1034,7 +1034,7 @@ F0(read-only)
 | テクスチャアニメ（フリップブック） | 採用 | F7 | `BoardComponent::Tick`、F6 UV 機構 |
 | インスタンス化バッチング | 採用 | F8 | `FramePacket.InstanceData`、`AppendRebasedDrawCommands`(`RenderingCoordinator.cpp:880`)、`DrawInstanced` |
 | ビルボード（WorldSpace、3D 深度共有） | 採用 | F9 | `BillboardComponent : BoardComponent`、SceneView Forward + `Scene.Depth`(`RenderGraphResourceNames.h:16`) |
-| 方式 B（レイヤー RT + 不透明度） | 採用 | F10 | `Viewport::m_OutputTexture`、CanvasView per-layer RT |
+| 方式 B（レイヤー RT + 不透明度） | 採用 | F10 | 匿名 RenderGraph layer RT、CanvasView per-layer RT |
 | インポスター（ベイク + octahedral + LOD） | 採用 | F11 | `ImpostorComponent : BillboardComponent`、`MeshProxy.LODLevel`(`SceneProxy.h:47`) |
 | prefab シリアライズ（全 Board 種） | 採用 | F3+ | `REFLECTION_CLASS`/`PROPERTY`、`FieldInitializer`(MeshComponent.h:50) |
 | SDF テキスト / 9 スライス / タイルマップ / 2D パーティクル / オフラインアトラスパッキング | 不採用 | — | §4 Non-Goals（描画方式が根本的に異なる/別サブシステム） |

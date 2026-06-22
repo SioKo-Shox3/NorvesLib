@@ -116,7 +116,8 @@ namespace
         proxy.SortKey = BoardProxy::ComputeSortKey(0u, 0u);
 
         canvas.UpdateBoardProxy(proxy.ComponentId, proxy);
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        ViewportRenderPlan viewportPlan = MakeViewportPlan();
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
 
         assert(canvas.GetBoardDrawCommands().size() == 1);
         assert(canvas.GetBoardInstanceData().size() == 1);

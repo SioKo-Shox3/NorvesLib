@@ -124,6 +124,7 @@ namespace Game::GameModes
         String m_ModelPath;
         uint32_t m_BoardSmokeCount = 0;
         uint32_t m_BillboardSmokeCount = 0;
+        bool m_bLayerCompositeSmoke = false;
         NorvesLib::Core::Rendering::ModelHandle m_BoulderModelHandle;
         uint32_t m_BoulderLoadRequestId = 0;
         bool m_bBoulderModelLoaded = false;

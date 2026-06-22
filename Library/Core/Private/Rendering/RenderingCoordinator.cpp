@@ -1004,7 +1004,9 @@ namespace NorvesLib::Core::Rendering
 
                 if (canvasView && view->IsEnabled() && viewportPlan.HasDrawableExtent())
                 {
-                    canvasView->PrepareBoardDrawCommands(viewportPlan);
+                    const uint32_t packetCommandBase =
+                        m_CurrentPacket ? static_cast<uint32_t>(m_CurrentPacket->DrawCommands.size()) : 0u;
+                    canvasView->PrepareBoardDrawCommands(viewportPlan, packetCommandBase);
 
                     const uint32_t instanceBase =
                         AppendInstanceDataToPacket(m_CurrentPacket, canvasView->GetBoardInstanceData());

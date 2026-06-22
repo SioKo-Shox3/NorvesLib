@@ -89,6 +89,12 @@ namespace
         canvas.UpdateBoardProxy(proxy.ComponentId, proxy);
     }
 
+    void PrepareCanvas(CanvasView &canvas)
+    {
+        ViewportRenderPlan viewportPlan = MakeViewportPlan();
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
+    }
+
     void TestConsecutiveSameKeyMerges()
     {
         CanvasView canvas;
@@ -98,7 +104,7 @@ namespace
         AddBoard(canvas, 11u, 101u, 1u, texture, BlendMode::Translucent, 0.2f);
         AddBoard(canvas, 12u, 102u, 2u, texture, BlendMode::Translucent, 0.3f);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        PrepareCanvas(canvas);
 
         assert(canvas.GetBoardDrawCommands().size() == 1);
         assert(canvas.GetBoardInstanceData().size() == 3);
@@ -121,7 +127,7 @@ namespace
         AddBoard(canvas, 22u, 202u, 2u, texture, BlendMode::Additive, 0.3f);
         AddBoard(canvas, 23u, 203u, 3u, texture, BlendMode::Translucent, 0.4f);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        PrepareCanvas(canvas);
 
         assert(canvas.GetBoardDrawCommands().size() == 3);
         AssertRun(canvas.GetBoardDrawCommands()[0], 20u, texture, BlendMode::Translucent, 0u, 2u);
@@ -141,7 +147,7 @@ namespace
         AddBoard(canvas, 31u, 301u, 1u, texture, BlendMode::Masked, 0.2f);
         AddBoard(canvas, 32u, 302u, 2u, texture, BlendMode::Modulate, 0.3f);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        PrepareCanvas(canvas);
 
         assert(canvas.GetBoardDrawCommands().size() == 1);
         AssertRun(canvas.GetBoardDrawCommands()[0], 30u, texture, BlendMode::Translucent, 0u, 3u);
@@ -161,7 +167,7 @@ namespace
         AddBoard(canvas, 43u, 403u, 3u, texture, BlendMode::Opaque, 0.4f);
         AddBoard(canvas, 44u, 404u, 4u, texture, BlendMode::Opaque, 0.5f);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        PrepareCanvas(canvas);
 
         assert(canvas.GetBoardDrawCommands().size() == 3);
         AssertRun(canvas.GetBoardDrawCommands()[0], 40u, texture, BlendMode::Translucent, 0u, 1u);
@@ -181,7 +187,7 @@ namespace
         AddBoard(canvas, 50u, 500u, 0u, textureA, BlendMode::Translucent, 0.1f);
         AddBoard(canvas, 51u, 501u, 1u, textureB, BlendMode::Translucent, 0.2f);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        PrepareCanvas(canvas);
 
         assert(canvas.GetBoardDrawCommands().size() == 2);
         AssertRun(canvas.GetBoardDrawCommands()[0], 50u, textureA, BlendMode::Translucent, 0u, 1u);
@@ -199,7 +205,7 @@ namespace
         AddBoard(canvas, 60u, 600u, 0u, invalidTexture, BlendMode::Translucent, 0.1f);
         AddBoard(canvas, 61u, 601u, 1u, invalidTexture, BlendMode::Translucent, 0.2f);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        PrepareCanvas(canvas);
 
         assert(canvas.GetBoardDrawCommands().size() == 1);
         AssertRun(canvas.GetBoardDrawCommands()[0], 60u, invalidTexture, BlendMode::Translucent, 0u, 2u);
@@ -218,7 +224,7 @@ namespace
         AddBoard(canvas, 71u, 701u, 1u, texture, BlendMode::Translucent, 0.2f);
         AddBoard(canvas, 72u, 702u, 2u, texture, BlendMode::Translucent, 0.3f);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan());
+        PrepareCanvas(canvas);
 
         assert(canvas.GetBoardDrawCommands().size() == 3);
         assert(canvas.GetBoardInstanceData().size() == 3);

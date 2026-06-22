@@ -76,7 +76,8 @@ namespace
 
         assert(canvas.GetBoardProxies().size() == 5);
 
-        canvas.PrepareBoardDrawCommands(MakeViewportPlan(RenderLayer::UI));
+        ViewportRenderPlan viewportPlan = MakeViewportPlan(RenderLayer::UI);
+        canvas.PrepareBoardDrawCommands(viewportPlan, 0u);
 
         assert(canvas.GetBoardDrawCommands().size() == 4);
         assert(canvas.GetBoardInstanceData().size() == 4);
