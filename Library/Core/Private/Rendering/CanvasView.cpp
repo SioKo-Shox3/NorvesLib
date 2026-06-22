@@ -161,6 +161,7 @@ namespace NorvesLib::Core::Rendering
         {
             DrawCommand command = DrawCommand::CreateDraw();
             command.Type = DrawCommandType::DrawInstanced;
+            command.Draw.PayloadKind = DrawPayloadKind::Board;
             command.Draw.VertexOffset = 6;
             command.Draw.InstanceCount = instanceCount;
             command.Draw.FirstInstance = firstInstance;

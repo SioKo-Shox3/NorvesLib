@@ -23,6 +23,45 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        float NormalizeBoardFlipFlag(bool bFlip)
+        {
+            return bFlip ? 1.0f : 0.0f;
+        }
+
+        void FillWorldBoardInstanceData(const BoardProxy &proxy,
+                                        GPUSceneInstanceData &outData)
+        {
+            Math::MatrixUtils::CopyToShaderData(proxy.WorldTransform, outData.World);
+
+            for (float &value : outData.NormalMatrix)
+            {
+                value = 0.0f;
+            }
+
+            outData.NormalMatrix[0] = proxy.SizeWorld.x;
+            outData.NormalMatrix[1] = proxy.SizeWorld.y;
+            outData.NormalMatrix[2] = proxy.Pivot.x;
+            outData.NormalMatrix[3] = proxy.Pivot.y;
+            outData.NormalMatrix[4] = NormalizeBoardFlipFlag(proxy.bFlipX);
+            outData.NormalMatrix[5] = NormalizeBoardFlipFlag(proxy.bFlipY);
+            outData.NormalMatrix[6] = proxy.UVRect.x;
+            outData.NormalMatrix[7] = proxy.UVRect.y;
+            outData.NormalMatrix[8] = proxy.UVRect.z;
+            outData.NormalMatrix[9] = proxy.UVRect.w;
+
+            outData.ObjectColor[0] = proxy.Tint.x;
+            outData.ObjectColor[1] = proxy.Tint.y;
+            outData.ObjectColor[2] = proxy.Tint.z;
+            outData.ObjectColor[3] = proxy.BlendModeProp == BlendMode::Opaque ? 1.0f : proxy.Tint.w;
+            outData.CustomData[0] = 0.0f;
+            outData.CustomData[1] = 0.0f;
+            outData.CustomData[2] = 0.0f;
+            outData.CustomData[3] = 0.0f;
+        }
+    } // namespace
+
     bool SceneView::Initialize(const SceneViewSettings &settings)
     {
         // 基底クラスの初期化
@@ -115,6 +154,7 @@ namespace NorvesLib::Core::Rendering
 
         m_MeshProxies.pop_back();
         m_VisibleMeshProxies.clear();
+        m_VisibleBoardProxies.clear();
     }
 
     void SceneView::RemoveStaleMeshProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds)
@@ -138,6 +178,74 @@ namespace NorvesLib::Core::Rendering
             }
             m_MeshProxies.pop_back();
             m_VisibleMeshProxies.clear();
+        }
+    }
+
+    void SceneView::UpdateBoardProxy(const BoardProxy &proxy)
+    {
+        if (!proxy.IsValid() || proxy.Space != BoardSpace::WorldSpace)
+        {
+            RemoveBoardProxy(proxy.ComponentId);
+            return;
+        }
+
+        auto indexIt = m_BoardProxyIndex.find(proxy.ComponentId);
+        if (indexIt != m_BoardProxyIndex.end())
+        {
+            m_BoardProxies[indexIt->second] = proxy;
+            m_VisibleBoardProxies.clear();
+            return;
+        }
+
+        const uint32_t index = static_cast<uint32_t>(m_BoardProxies.size());
+        m_BoardProxies.push_back(proxy);
+        m_BoardProxyIndex[proxy.ComponentId] = index;
+        m_VisibleBoardProxies.clear();
+    }
+
+    void SceneView::RemoveBoardProxy(uint64_t componentId)
+    {
+        auto indexIt = m_BoardProxyIndex.find(componentId);
+        if (indexIt == m_BoardProxyIndex.end())
+        {
+            return;
+        }
+
+        const uint32_t removeIndex = indexIt->second;
+        const uint32_t lastIndex = static_cast<uint32_t>(m_BoardProxies.size() - 1);
+        m_BoardProxyIndex.erase(indexIt);
+
+        if (removeIndex != lastIndex)
+        {
+            m_BoardProxies[removeIndex] = m_BoardProxies[lastIndex];
+            m_BoardProxyIndex[m_BoardProxies[removeIndex].ComponentId] = removeIndex;
+        }
+
+        m_BoardProxies.pop_back();
+        m_VisibleBoardProxies.clear();
+    }
+
+    void SceneView::RemoveStaleBoardProxies(const Container::UnorderedSet<uint64_t> &liveComponentIds)
+    {
+        uint32_t index = 0;
+        while (index < m_BoardProxies.size())
+        {
+            const uint64_t componentId = m_BoardProxies[index].ComponentId;
+            if (liveComponentIds.find(componentId) != liveComponentIds.end())
+            {
+                ++index;
+                continue;
+            }
+
+            const uint32_t lastIndex = static_cast<uint32_t>(m_BoardProxies.size() - 1);
+            m_BoardProxyIndex.erase(componentId);
+            if (index != lastIndex)
+            {
+                m_BoardProxies[index] = m_BoardProxies[lastIndex];
+                m_BoardProxyIndex[m_BoardProxies[index].ComponentId] = index;
+            }
+            m_BoardProxies.pop_back();
+            m_VisibleBoardProxies.clear();
         }
     }
 
@@ -308,12 +416,15 @@ namespace NorvesLib::Core::Rendering
     void SceneView::ClearAllProxies()
     {
         m_MeshProxies.clear();
+        m_BoardProxies.clear();
         m_MegaGeometryProxies.clear();
         m_LightProxies.clear();
         m_MeshProxyIndex.clear();
+        m_BoardProxyIndex.clear();
         m_MegaGeometryProxyIndex.clear();
         m_LightProxyIndex.clear();
         m_VisibleMeshProxies.clear();
+        m_VisibleBoardProxies.clear();
     }
 
     void SceneView::ClearMegaGeometryProxies()
@@ -334,8 +445,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 統計を更新
-        m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
-        m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
+        m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size() + m_BoardProxies.size());
+        m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size() + m_BoardProxies.size());
 
         // 各Viewportに対してカリング・描画
         for (auto &viewport : m_Viewports)
@@ -539,6 +650,7 @@ namespace NorvesLib::Core::Rendering
         auto startTime = std::chrono::high_resolution_clock::now();
 
         m_VisibleMeshProxies.clear();
+        m_VisibleBoardProxies.clear();
 
         if (!viewport)
         {
@@ -549,7 +661,6 @@ namespace NorvesLib::Core::Rendering
         const Math::Matrix4x4 viewProjection =
             CameraViewConstants::BuildCullingViewProjectionMatrix(camera, viewport->GetAspectRatio());
 
-        // カメラ位置を取得（CameraProxyから直接取得）
         Math::Vector3 cameraPosition(
             camera.PositionX,
             camera.PositionY,
@@ -559,13 +670,11 @@ namespace NorvesLib::Core::Rendering
         {
             bool bVisible = true;
 
-            // 視錐台カリング
             if (m_bEnableFrustumCulling && bVisible)
             {
                 bVisible = FrustumCull(proxy, viewProjection);
             }
 
-            // 距離カリング
             if (m_bEnableDistanceCulling && bVisible)
             {
                 bVisible = DistanceCull(proxy, cameraPosition);
@@ -581,7 +690,33 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size());
+        for (BoardProxy &proxy : m_BoardProxies)
+        {
+            bool bVisible = proxy.IsValid() &&
+                            proxy.Space == BoardSpace::WorldSpace &&
+                            HasFlag(camera.CullingMask, proxy.LayerMask);
+
+            if (m_bEnableFrustumCulling && bVisible)
+            {
+                bVisible = FrustumCull(proxy, viewProjection);
+            }
+
+            if (m_bEnableDistanceCulling && bVisible)
+            {
+                bVisible = DistanceCull(proxy, cameraPosition);
+            }
+
+            if (bVisible)
+            {
+                float dx = proxy.WorldBounds.CenterX - cameraPosition.x;
+                float dy = proxy.WorldBounds.CenterY - cameraPosition.y;
+                float dz = proxy.WorldBounds.CenterZ - cameraPosition.z;
+                proxy.SortDepth = std::sqrt(dx * dx + dy * dy + dz * dz);
+                m_VisibleBoardProxies.push_back(&proxy);
+            }
+        }
+
+        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
 
         auto endTime = std::chrono::high_resolution_clock::now();
@@ -593,6 +728,7 @@ namespace NorvesLib::Core::Rendering
         auto startTime = std::chrono::high_resolution_clock::now();
 
         m_VisibleMeshProxies.clear();
+        m_VisibleBoardProxies.clear();
 
         if (!viewport.bHasCamera)
         {
@@ -653,7 +789,33 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size());
+        for (BoardProxy &proxy : m_BoardProxies)
+        {
+            bool bVisible = proxy.IsValid() &&
+                            proxy.Space == BoardSpace::WorldSpace &&
+                            HasFlag(camera.CullingMask, proxy.LayerMask);
+
+            if (m_bEnableFrustumCulling && bVisible)
+            {
+                bVisible = FrustumCull(proxy, viewProjection);
+            }
+
+            if (m_bEnableDistanceCulling && bVisible)
+            {
+                bVisible = DistanceCull(proxy, cameraPosition);
+            }
+
+            if (bVisible)
+            {
+                float dx = proxy.WorldBounds.CenterX - cameraPosition.x;
+                float dy = proxy.WorldBounds.CenterY - cameraPosition.y;
+                float dz = proxy.WorldBounds.CenterZ - cameraPosition.z;
+                proxy.SortDepth = std::sqrt(dx * dx + dy * dy + dz * dz);
+                m_VisibleBoardProxies.push_back(&proxy);
+            }
+        }
+
+        m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
 
         auto endTime = std::chrono::high_resolution_clock::now();
@@ -682,6 +844,37 @@ namespace NorvesLib::Core::Rendering
         m_Stats.BatchingTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
     }
 
+    void SceneView::AppendWorldBoardDrawCommands()
+    {
+        for (const BoardProxy *proxy : m_VisibleBoardProxies)
+        {
+            if (!proxy || !proxy->IsValid() || proxy->Space != BoardSpace::WorldSpace)
+            {
+                continue;
+            }
+
+            GPUSceneInstanceData instanceData;
+            FillWorldBoardInstanceData(*proxy, instanceData);
+            const uint32_t instanceIndex = static_cast<uint32_t>(m_InstanceData.size());
+            m_InstanceData.push_back(instanceData);
+
+            DrawCommand command = DrawCommand::CreateDraw();
+            command.Type = DrawCommandType::DrawInstanced;
+            command.Draw.PayloadKind = DrawPayloadKind::Board;
+            command.Draw.VertexOffset = 6;
+            command.Draw.InstanceCount = 1;
+            command.Draw.FirstInstance = instanceIndex;
+            command.Draw.InstanceDataOffset = instanceIndex;
+            command.Draw.bInstanced = true;
+            command.Draw.MaterialBlendMode = proxy->BlendModeProp;
+            command.Draw.Texture = proxy->Texture;
+            command.Draw.SortDepth = proxy->SortDepth;
+            command.Draw.ObjectId = proxy->ObjectId;
+            command.SortKey = proxy->SortKey;
+            m_DrawCommands.push_back(command);
+        }
+    }
+
     void SceneView::GenerateCommands()
     {
         m_DrawCommands.clear();
@@ -699,6 +892,8 @@ namespace NorvesLib::Core::Rendering
         {
             cmd.CalculateSortKey(cmd.Draw.SortDepth, cmd.Draw.MaterialBlendMode);
         }
+
+        AppendWorldBoardDrawCommands();
 
         // 不透明と透明を分離してソート
         DrawCommandSorter::SortAndSeparate(m_DrawCommands, m_OpaqueCommands, m_TransparentCommands);
@@ -732,12 +927,11 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 統計の更新
         m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
         m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
 
-        // カメラ非依存のカリング: 可視フラグのみでフィルタリング
         m_VisibleMeshProxies.clear();
+        m_VisibleBoardProxies.clear();
         for (MeshProxy &proxy : m_MeshProxies)
         {
             if (proxy.bVisible)
@@ -750,10 +944,7 @@ namespace NorvesLib::Core::Rendering
         m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
 
-        // バッチング
         BatchProxies();
-
-        // DrawCommand生成
         GenerateCommands();
     }
 
@@ -764,8 +955,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
-        m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
+        m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size() + m_BoardProxies.size());
+        m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size() + m_BoardProxies.size());
 
         if (viewport.bHasCamera)
         {
@@ -774,6 +965,7 @@ namespace NorvesLib::Core::Rendering
         else
         {
             m_VisibleMeshProxies.clear();
+            m_VisibleBoardProxies.clear();
             for (MeshProxy &proxy : m_MeshProxies)
             {
                 if (proxy.bVisible)
@@ -804,7 +996,30 @@ namespace NorvesLib::Core::Rendering
         return Math::MatrixUtils::IntersectsClipSpace(clipBounds, Math::ClipSpaceDepthRange::ZeroToOne);
     }
 
+    bool SceneView::FrustumCull(const BoardProxy &proxy, const Math::Matrix4x4 &viewProjection) const
+    {
+        const BoundingSphere &bounds = proxy.WorldBounds;
+
+        const Math::Vector3 center(bounds.CenterX, bounds.CenterY, bounds.CenterZ);
+        const Math::ClipSpaceSphereBounds clipBounds =
+            Math::MatrixUtils::TransformSphereToClipSpace(viewProjection, center, bounds.Radius);
+        return Math::MatrixUtils::IntersectsClipSpace(clipBounds, Math::ClipSpaceDepthRange::ZeroToOne);
+    }
+
     bool SceneView::DistanceCull(const MeshProxy &proxy, const Math::Vector3 &cameraPosition) const
+    {
+        const BoundingSphere &bounds = proxy.WorldBounds;
+
+        float dx = bounds.CenterX - cameraPosition.x;
+        float dy = bounds.CenterY - cameraPosition.y;
+        float dz = bounds.CenterZ - cameraPosition.z;
+        float distanceSq = dx * dx + dy * dy + dz * dz;
+
+        float maxDistance = m_MaxDrawDistance + bounds.Radius;
+        return distanceSq <= (maxDistance * maxDistance);
+    }
+
+    bool SceneView::DistanceCull(const BoardProxy &proxy, const Math::Vector3 &cameraPosition) const
     {
         const BoundingSphere &bounds = proxy.WorldBounds;
 

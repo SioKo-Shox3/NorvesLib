@@ -135,6 +135,24 @@ namespace NorvesLib::Core::Rendering
         void RemoveStaleMegaGeometryProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds);
 
         /**
+         * @brief BoardProxyを更新
+         * @param proxy 更新するProxy（ComponentIdで照合）
+         */
+        void UpdateBoardProxy(const BoardProxy &proxy);
+
+        /**
+         * @brief BoardProxyを削除
+         * @param componentId 削除するBoardComponentId
+         */
+        void RemoveBoardProxy(uint64_t componentId);
+
+        /**
+         * @brief 生存ComponentIdに含まれないBoardProxyを削除
+         * @param liveComponentIds 現在World側で有効なWorldSpace BoardComponentId
+         */
+        void RemoveStaleBoardProxies(const Container::UnorderedSet<uint64_t> &liveComponentIds);
+
+        /**
          * @brief MeshProxyを更新
          * @param proxy 更新するProxy（ObjectIdで照合）
          */
@@ -278,6 +296,11 @@ namespace NorvesLib::Core::Rendering
         const Container::VariableArray<MegaGeometryProxy> &GetMegaGeometryProxies() const { return m_MegaGeometryProxies; }
 
         /**
+         * @brief 収集されたBoardProxyを取得
+         */
+        const Container::VariableArray<BoardProxy> &GetBoardProxies() const { return m_BoardProxies; }
+
+        /**
          * @brief 可視MeshProxyを取得
          */
         const Container::VariableArray<MeshProxy *> &GetVisibleMeshProxies() const { return m_VisibleMeshProxies; }
@@ -348,6 +371,7 @@ namespace NorvesLib::Core::Rendering
          * @return 可視の場合true
          */
         bool FrustumCull(const MeshProxy &proxy, const Math::Matrix4x4 &viewProjection) const;
+        bool FrustumCull(const BoardProxy &proxy, const Math::Matrix4x4 &viewProjection) const;
 
         /**
          * @brief 距離カリングを実行
@@ -356,19 +380,25 @@ namespace NorvesLib::Core::Rendering
          * @return 可視の場合true
          */
         bool DistanceCull(const MeshProxy &proxy, const Math::Vector3 &cameraPosition) const;
+        bool DistanceCull(const BoardProxy &proxy, const Math::Vector3 &cameraPosition) const;
+
+        void AppendWorldBoardDrawCommands();
 
     private:
         // MeshProxy（WorldからSceneViewに直接渡される）
         // 同一ObjectIdに複数MeshComponentがある場合は最後に追加・更新されたProxyを使用します。
         Container::VariableArray<MeshProxy> m_MeshProxies;
+        Container::VariableArray<BoardProxy> m_BoardProxies;
         Container::VariableArray<MegaGeometryProxy> m_MegaGeometryProxies;
         Container::VariableArray<LightProxy> m_LightProxies;
         Container::UnorderedMap<uint64_t, uint32_t> m_MeshProxyIndex;
+        Container::UnorderedMap<uint64_t, uint32_t> m_BoardProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_LightProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_MegaGeometryProxyIndex;
 
         // 可視Proxy（カリング後）
         Container::VariableArray<MeshProxy *> m_VisibleMeshProxies;
+        Container::VariableArray<BoardProxy *> m_VisibleBoardProxies;
 
         // バッチャー
         MeshBatcher m_Batcher;

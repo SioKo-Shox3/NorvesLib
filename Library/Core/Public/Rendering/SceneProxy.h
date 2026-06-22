@@ -217,15 +217,18 @@ namespace NorvesLib::Core::Rendering
 
         Math::Matrix4x4 WorldTransform;
         Math::Matrix4x4 PreviousWorldTransform;
+        BoundingSphere WorldBounds;
 
         RenderLayer LayerMask = RenderLayer::UI;
         BoardSpace Space = BoardSpace::ScreenSpace;
         BlendMode BlendModeProp = BlendMode::Translucent;
+        float SortDepth = 0.0f;
         Math::Vector4 Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
         bool bFlipX = false;
         bool bFlipY = false;
         Math::Vector2 Pivot = Math::Vector2(0.0f, 0.0f);
         Math::Vector2 SizePx = Math::Vector2(0.0f, 0.0f);
+        Math::Vector2 SizeWorld = Math::Vector2(0.0f, 0.0f);
         Math::Vector4 UVRect = Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f);
 
         bool bVisible = true;

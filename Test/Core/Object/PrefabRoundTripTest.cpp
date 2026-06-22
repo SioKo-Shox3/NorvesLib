@@ -1,6 +1,7 @@
 ﻿#include "Component/Component.h"
 #include "Component/PointLightComponent.h"
 #include "Component/BoardComponent.h"
+#include "Component/BillboardComponent.h"
 #include "Object/PrefabAsset.h"
 #include "Object/ResourceRegistry.h"
 #include "Object/RuntimeSchema.h"
@@ -183,6 +184,7 @@ namespace
         (void)Entity::StaticClass();
         (void)Component::Component::StaticClass();
         (void)Component::BoardComponent::StaticClass();
+        (void)Component::BillboardComponent::StaticClass();
         (void)Component::PointLightComponent::StaticClass();
         (void)PrefabAsset::StaticClass();
         (void)TrackingBeginComponent::StaticClass();
@@ -402,6 +404,57 @@ namespace
         const ComponentSubtreeSnapshot& roundTripBoardSnapshot = roundTripSnapshot.Root.Components[0];
         assert(FindProjectedValue(roundTripBoardSnapshot.Object, MakePropertyId(Component::BoardComponent::StaticClass(), "CurrentFrame")) == nullptr);
         assert(FindProjectedValue(roundTripBoardSnapshot.Object, MakePropertyId(Component::BoardComponent::StaticClass(), "bPlaying")) == nullptr);
+
+        world.Finalize();
+        prefab.reset();
+        registry.Shutdown();
+    }
+
+    void TestPrefabRoundTripRestoresBillboardComponentSizeWorld()
+    {
+        RegisterRequiredClasses();
+
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+
+        World world;
+        world.Initialize();
+
+        Entity* sourceRoot = world.SpawnEntity<Entity>();
+        assert(sourceRoot != nullptr);
+
+        Component::BillboardComponent* sourceBillboard = world.CreateComponent<Component::BillboardComponent>(sourceRoot);
+        assert(sourceBillboard != nullptr);
+        sourceBillboard->SetSizeWorld(Math::Vector2(2.5f, 4.75f));
+
+        EntitySubtreeSnapshot sourceSnapshot = RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*sourceRoot);
+        assert(sourceSnapshot.Root.Components.size() == 1);
+        const ComponentSubtreeSnapshot& sourceBillboardSnapshot = sourceSnapshot.Root.Components[0];
+        const ProjectedPropertyValue* sourceSizeWorld = FindProjectedValue(
+            sourceBillboardSnapshot.Object,
+            MakePropertyId(Component::BillboardComponent::StaticClass(), "SizeWorld"));
+        assert(sourceSizeWorld != nullptr);
+        assert(sourceSizeWorld->SerializedValue == "Vector2(2.5,4.75)");
+
+        auto prefab = registry.CreateTransient<PrefabAsset>("BillboardSizeWorldPrefab");
+        assert(prefab != nullptr);
+        prefab->SetTree(sourceSnapshot);
+
+        Entity* spawnedRoot = world.SpawnPrefab(*prefab);
+        assert(spawnedRoot != nullptr);
+
+        Component::BillboardComponent* spawnedBillboard = spawnedRoot->GetComponent<Component::BillboardComponent>();
+        assert(spawnedBillboard != nullptr);
+        assert(spawnedBillboard->GetSizeWorld() == Math::Vector2(2.5f, 4.75f));
+
+        EntitySubtreeSnapshot restoredSnapshot = RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*spawnedRoot);
+        assert(restoredSnapshot.Root.Components.size() == 1);
+        const ComponentSubtreeSnapshot& restoredBillboardSnapshot = restoredSnapshot.Root.Components[0];
+        const ProjectedPropertyValue* restoredSizeWorld = FindProjectedValue(
+            restoredBillboardSnapshot.Object,
+            MakePropertyId(Component::BillboardComponent::StaticClass(), "SizeWorld"));
+        assert(restoredSizeWorld != nullptr);
+        assert(restoredSizeWorld->SerializedValue == "Vector2(2.5,4.75)");
 
         world.Finalize();
         prefab.reset();
@@ -647,6 +700,7 @@ int main()
     TestSpawnPrefabRegistersPropertyTypes();
     TestSpawnPrefabRestoresBoardComponentVisualProperties();
     TestSpawnPrefabRestoresBoardComponentFlipbookProperties();
+    TestPrefabRoundTripRestoresBillboardComponentSizeWorld();
     TestPrefabRoundTrip();
 
     std::cout << "PrefabRoundTripTest passed\n";

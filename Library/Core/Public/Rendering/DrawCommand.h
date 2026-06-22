@@ -26,6 +26,12 @@ namespace NorvesLib::Core::Rendering
         Dispatch,             // コンピュートディスパッチ
     };
 
+    enum class DrawPayloadKind : uint8_t
+    {
+        Mesh,
+        Board
+    };
+
     // ========================================
     // DrawParams
     // ========================================
@@ -38,6 +44,7 @@ namespace NorvesLib::Core::Rendering
     struct DrawParams
     {
         // メッシュデータ
+        DrawPayloadKind PayloadKind = DrawPayloadKind::Mesh;
         MeshDataHandle MeshHandle; // メッシュハンドル
         uint32_t SubMeshIndex = 0; // サブメッシュインデックス
         uint32_t IndexOffset = 0;  // インデックスオフセット

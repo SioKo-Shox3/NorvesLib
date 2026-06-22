@@ -323,6 +323,39 @@ target_include_directories(BoardComponentRoutingTest PRIVATE
 set_target_properties(BoardComponentRoutingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME BoardComponentRoutingTest COMMAND BoardComponentRoutingTest)
 
+add_executable(BillboardComponentTest
+    BillboardComponentTest.cpp
+)
+target_link_libraries(BillboardComponentTest PRIVATE Core)
+target_include_directories(BillboardComponentTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BillboardComponentTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BillboardComponentTest COMMAND BillboardComponentTest)
+
+add_executable(SceneViewWorldBoardDrawCommandTest
+    SceneViewWorldBoardDrawCommandTest.cpp
+)
+target_link_libraries(SceneViewWorldBoardDrawCommandTest PRIVATE Core)
+target_include_directories(SceneViewWorldBoardDrawCommandTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneViewWorldBoardDrawCommandTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SceneViewWorldBoardDrawCommandTest COMMAND SceneViewWorldBoardDrawCommandTest)
+
+add_executable(ForwardPassWorldBoardRoutingTest
+    ForwardPassWorldBoardRoutingTest.cpp
+)
+target_link_libraries(ForwardPassWorldBoardRoutingTest PRIVATE Core)
+target_include_directories(ForwardPassWorldBoardRoutingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(ForwardPassWorldBoardRoutingTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(ForwardPassWorldBoardRoutingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ForwardPassWorldBoardRoutingTest COMMAND ForwardPassWorldBoardRoutingTest)
+
 add_executable(BoardTransformTest
     BoardTransformTest.cpp
 )

@@ -239,7 +239,8 @@ namespace NorvesLib::Core
                                  Container::UnorderedSet<uint64_t>& liveMeshObjectIds,
                                  Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
                                  Container::UnorderedSet<uint64_t>& liveLightIds,
-                                 Container::UnorderedSet<uint64_t>& liveBoardComponentIds,
+                                 Container::UnorderedSet<uint64_t>& liveScreenBoardComponentIds,
+                                 Container::UnorderedSet<uint64_t>& liveWorldBoardComponentIds,
                                  ComponentDataRegistry* componentDataRegistry);
         void CollectPendingDestroyRecursive(Entity& entity, Container::VariableArray<Entity*>& toRemove);
         bool AttachRootEntity(Entity* entity);
