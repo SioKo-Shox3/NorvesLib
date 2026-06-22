@@ -301,7 +301,7 @@ namespace NorvesLib::Modules::Gui
                 }
 
                 NORVES_LOG_INFO(kLogCategory,
-                                "ImGuiModule Initialize: context + backend ready (custom fonts uploaded, dpiScale=%.2f)",
+                                "ImGuiModule Initialize: context + backend ready (custom fonts uploaded, uiScale=%.2f)",
                                 m_DpiScale);
                 return true;
             }
@@ -342,8 +342,8 @@ namespace NorvesLib::Modules::Gui
                 // lazy bake するため、ここで全 common グリフ(ASCII / 日本語常用 / FA アイコン)を
                 // materialize して静的アトラスを確定する。これにより本番フレームで新規グリフ
                 // (=アトラス成長=テクスチャ更新要求)が発生せず、RenderThread が ImTextureData に
-                // 触れる必要が生じない。捨てフレーム(ShowDemoWindow + ショーケース窓)は残りの
-                // 混在テキストグリフを materialize しつつ、本 Tick の見た目には影響しない。
+                // 触れる必要が生じない。捨てフレーム(ショーケース窓)は残りの混在テキスト
+                // グリフを materialize しつつ、本 Tick の見た目には影響しない。
                 ::ImGui::SetCurrentContext(m_Context);
                 {
                     ImGuiIO &io = ::ImGui::GetIO();
@@ -365,7 +365,6 @@ namespace NorvesLib::Modules::Gui
                     ForceBakeAllGlyphs(io);
 
                     ::ImGui::NewFrame();
-                    ::ImGui::ShowDemoWindow(nullptr);
                     BuildNorvesShowcaseWindow();
                     ::ImGui::Render();
                 }
@@ -398,9 +397,8 @@ namespace NorvesLib::Modules::Gui
 
                 ::ImGui::NewFrame();
 
-                // 既定スタイルのデモウィンドウ(機能網羅)+ NorvesLib ショーケース窓
-                // (日本語 + アイコン + テーマ済み UI の可視成果物)。
-                ::ImGui::ShowDemoWindow(nullptr);
+                // NorvesLib ショーケース窓(日本語 + アイコン + テーマ済み UI の可視成果物)。
+                // ※ ImGui 既定のデモウィンドウ(ShowDemoWindow)は表示しない。
                 BuildNorvesShowcaseWindow();
 
                 ::ImGui::Render();
@@ -626,10 +624,32 @@ namespace NorvesLib::Modules::Gui
              */
             float GetDpiScale() const
             {
-                // TODO(2B-ii-b 以降): Screen/Window から content scale を取得して反映する。
-                // 取得元が未整備のため等倍を返す(フォントサイズ・ScaleAllSizes 共に 1.0 で
-                // 等倍だが、OversampleH=2 でサブピクセル品質は確保している)。
-                return 1.0f;
+                // レンダリング解像度に応じた UI スケール。基準 1080p を等倍とし、画面高さに
+                // 比例させる(720p≒0.67=小さく / 1440p≒1.33 / 4K≒2.0=大きく)。極端値を避ける
+                // ため [0.5, 2.5] にクランプ。解像度が取れない場合は等倍。
+                // 注: 初期化時の解像度で確定し、実行時のウィンドウリサイズには追従しない。
+                if (Core::Engine::GEngine == nullptr)
+                {
+                    return 1.0f;
+                }
+                uint32_t width = 0;
+                uint32_t height = 0;
+                Core::Engine::GEngine->GetRenderWorld().GetResolution(width, height);
+                if (height == 0)
+                {
+                    return 1.0f;
+                }
+                constexpr float kReferenceHeight = 1080.0f;
+                float scale = static_cast<float>(height) / kReferenceHeight;
+                if (scale < 0.5f)
+                {
+                    scale = 0.5f;
+                }
+                if (scale > 2.5f)
+                {
+                    scale = 2.5f;
+                }
+                return scale;
             }
 
             /**
