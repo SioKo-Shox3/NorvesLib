@@ -11,9 +11,9 @@
 #include "Rendering/RenderingCoordinator.h"
 #include "RHI/IDevice.h"
 #include "RHI/IRenderPass.h"
-#include "Input/InputSystem.h"
-#include "Input/InputState.h"
 #include "Input/InputTypes.h"
+#include "Input/IInputController.h"
+#include "Input/InputRouter.h"
 #include "Logging/LogMacros.h"
 #include "CoreTypes.h"
 
@@ -199,14 +199,23 @@ namespace NorvesLib::Modules::Gui
         }
 
         /**
-         * @brief ImGui デバッグオーバーレイモジュール(IModule + IRenderModule)
+         * @brief ImGui デバッグオーバーレイモジュール(IModule + IRenderModule + IInputController)
          *
          * GetOverlayPass() で所有する ImGuiOverlayPass を借用返しする。overlay seam が
          * そのパスの Initialize(遅延)/Setup/Execute を駆動する。Shutdown は seam では
          * 駆動されない(IRenderModule 契約=モジュール責務)ため本モジュールの Shutdown で
          * パスの Shutdown を呼ぶ(RenderThread 静止後・device 生存中の前提)。
+         *
+         * C3(入力ルーティング): IInputController を実装し InputRouter へ PriorityOverlay
+         * (=カメラの PriorityGame より上位)で登録する。各 On* は受け取ったイベントを
+         * ライブ ImGui コンテキストの io へ供給し、WantCaptureMouse/WantCaptureKeyboard を
+         * consume 可否として返す。true を返すと Router は下位(カメラ等)へ配送しないため、
+         * 「ImGui 窓上ではカメラが動かない」排他が成立する。入力供給はイベント駆動になり、
+         * 旧来の InputState ポーリング(UpdateDisplayAndInput 内)と OnCharEvent 購読は廃止した。
          */
-        class ImGuiModule final : public Core::Module::IModule, public Core::Module::IRenderModule
+        class ImGuiModule final : public Core::Module::IModule,
+                                  public Core::Module::IRenderModule,
+                                  public Core::Input::IInputController
         {
         public:
             // --- IModule 識別 ---
@@ -221,8 +230,12 @@ namespace NorvesLib::Modules::Gui
             }
 
             // --- IModule 寿命(GameThread 単一スレッド) ---
-            bool Install(Core::Engine::Engine & /*engine*/) override
+            bool Install(Core::Engine::Engine &engine) override
             {
+                // C3: 入力ルーターへ最優先(PriorityOverlay)で登録する。ImGui が consume した
+                // イベントは下位(カメラ=PriorityGame)へ配送されないため、ImGui 窓上の操作は
+                // カメラへ届かない。本モジュールが借用ポインタとして渡り、Uninstall で解除する。
+                engine.GetInputRouter().RegisterController(this, Core::Input::InputRouter::PriorityOverlay);
                 NORVES_LOG_INFO(kLogCategory, "ImGuiModule Install");
                 return true;
             }
@@ -281,25 +294,15 @@ namespace NorvesLib::Modules::Gui
                     ::ImGui::GetStyle().ScaleAllSizes(m_DpiScale);
                 }
 
-                // 文字入力(IME 確定後の Unicode)を購読し、Tick で io.AddInputCharacter へ流す。
-                // WindowProc(GameThread)→InjectCharEvent→OnCharEvent は GameThread 同期実行の
-                // ため、Tick(同 GameThread)とロックレスにバッファ共有できる。
-                if (Core::Engine::GEngine != nullptr)
-                {
-                    Core::Engine::GEngine->GetInputSystem().OnCharEvent().Add(this, &ImGuiModule::OnCharInput);
-                    m_bCharSubscribed = true;
-                }
+                // C3: 文字入力は OnCharEvent 購読ではなく IInputController::OnChar 経由で
+                // 受け取り io.AddInputCharacter へ直接流す(Router が PriorityOverlay で配送)。
+                // 旧来の OnCharEvent 購読 + バッファ(m_PendingChars) + Tick 流し込みは廃止した。
 
                 // ---- MT 安全化: バックエンド初期化 + フォントアトラス GPU アップロード(GameThread) ----
                 if (!InitializeBackend())
                 {
-                    // バックエンド初期化失敗。購読解除 + コンテキスト破棄でロールバックする。
+                    // バックエンド初期化失敗。コンテキスト破棄でロールバックする。
                     NORVES_LOG_ERROR(kLogCategory, "ImGuiModule Initialize failed: InitializeBackend");
-                    if (m_bCharSubscribed && Core::Engine::GEngine != nullptr)
-                    {
-                        Core::Engine::GEngine->GetInputSystem().OnCharEvent().Remove(this, &ImGuiModule::OnCharInput);
-                        m_bCharSubscribed = false;
-                    }
                     ::ImGui::SetCurrentContext(m_Context);
                     ::ImGui::DestroyContext(m_Context);
                     m_Context = nullptr;
@@ -398,7 +401,9 @@ namespace NorvesLib::Modules::Gui
                 ImGuiIO &io = ::ImGui::GetIO();
                 io.DeltaTime = deltaTime > 0.0f ? deltaTime : (1.0f / 60.0f);
 
-                UpdateDisplayAndInput(io);
+                // 表示サイズのみ更新する。入力(マウス/キー/文字)は IInputController 経由で
+                // イベント駆動供給されるため、ここではポーリングしない(C3)。
+                UpdateDisplay(io);
 
                 ::ImGui::NewFrame();
 
@@ -426,11 +431,8 @@ namespace NorvesLib::Modules::Gui
             {
                 // RenderThread 静止後・device 生存中に駆動される前提。overlay pass の RHI
                 // リソースを先に解放し、その後 ImGui コンテキストを破棄する。
-                if (m_bCharSubscribed && Core::Engine::GEngine != nullptr)
-                {
-                    Core::Engine::GEngine->GetInputSystem().OnCharEvent().Remove(this, &ImGuiModule::OnCharInput);
-                    m_bCharSubscribed = false;
-                }
+                // C3: 入力はイベント駆動(IInputController)になり OnCharEvent 購読は持たないため
+                // ここでの購読解除はない(ルーター登録解除は Uninstall が担う)。
 
                 m_OverlayPass.Shutdown();
 
@@ -443,8 +445,10 @@ namespace NorvesLib::Modules::Gui
                 NORVES_LOG_INFO(kLogCategory, "ImGuiModule Shutdown");
             }
 
-            void Uninstall(Core::Engine::Engine & /*engine*/) override
+            void Uninstall(Core::Engine::Engine &engine) override
             {
+                // C3: ルーターから登録解除(冪等)。借用ポインタを破棄前に必ず外す。
+                engine.GetInputRouter().UnregisterController(this);
                 NORVES_LOG_INFO(kLogCategory, "ImGuiModule Uninstall");
             }
 
@@ -453,6 +457,111 @@ namespace NorvesLib::Modules::Gui
             {
                 // 借用ポインタ。寿命はモジュール所有(Shutdown まで有効)。
                 return &m_OverlayPass;
+            }
+
+            // --- IInputController イベント供給 + consume(C3) ---
+            // 各 On* は受け取ったイベントをライブ ImGui コンテキストの io へ供給し、ImGui が
+            // その種別の入力をキャプチャしているか(WantCaptureMouse/WantCaptureKeyboard)を
+            // consume 可否として返す。Router は GameThread 専用・Tick と同一スレッドのため
+            // context current 化はここで明示する(配送が Tick より前=context が他へ向いている
+            // 可能性に備える。m_Context==nullptr なら供給先が無いので consume せず伝播)。
+            //
+            // 1 フレーム遅延について: WantCapture* は前フレームの NewFrame 結果に基づくため、
+            // 本フレームに供給したイベントの可否判定は 1 フレーム古い。ドラッグ所有(掴んだ窓を
+            // 引きずる間のマウス)は WantCaptureMouse に内包され、掴んだ瞬間から離すまで true が
+            // 維持されるため、排他としては実用上問題ない(設計確認済み)。
+
+            bool OnMouseButton(const Core::Input::MouseButtonEvent &event) override
+            {
+                if (m_Context == nullptr)
+                {
+                    return false;
+                }
+                ::ImGui::SetCurrentContext(m_Context);
+                ImGuiIO &io = ::ImGui::GetIO();
+
+                int idx = -1;
+                switch (event.Button)
+                {
+                case Core::Input::MouseButton::Left:
+                    idx = 0;
+                    break;
+                case Core::Input::MouseButton::Right:
+                    idx = 1;
+                    break;
+                case Core::Input::MouseButton::Middle:
+                    idx = 2;
+                    break;
+                default:
+                    // X1/X2 等は ImGui のマウスボタン 0..2 に対応しないため供給せず伝播。
+                    return false;
+                }
+                io.AddMouseButtonEvent(idx, event.Action == Core::Input::InputAction::Pressed);
+                return io.WantCaptureMouse;
+            }
+
+            bool OnMouseMove(const Core::Input::MouseMoveEvent &event) override
+            {
+                if (m_Context == nullptr)
+                {
+                    return false;
+                }
+                ::ImGui::SetCurrentContext(m_Context);
+                ImGuiIO &io = ::ImGui::GetIO();
+                io.AddMousePosEvent(event.PositionX, event.PositionY);
+                return io.WantCaptureMouse;
+            }
+
+            bool OnMouseScroll(const Core::Input::MouseScrollEvent &event) override
+            {
+                if (m_Context == nullptr)
+                {
+                    return false;
+                }
+                ::ImGui::SetCurrentContext(m_Context);
+                ImGuiIO &io = ::ImGui::GetIO();
+                io.AddMouseWheelEvent(0.0f, event.Delta);
+                return io.WantCaptureMouse;
+            }
+
+            bool OnKey(const Core::Input::KeyEvent &event) override
+            {
+                if (m_Context == nullptr)
+                {
+                    return false;
+                }
+                ::ImGui::SetCurrentContext(m_Context);
+                ImGuiIO &io = ::ImGui::GetIO();
+                ImGuiKey imguiKey = ToImGuiKey(event.Code);
+                if (imguiKey != ImGuiKey_None)
+                {
+                    // 押下は Pressed/Repeat を down、Released を up とする。修飾キー(Ctrl/Shift/Alt)
+                    // の集約は個別の L/R 修飾キーイベントから ImGui が内部で行うため明示投入は不要。
+                    const bool bDown = event.Action == Core::Input::InputAction::Pressed ||
+                                       event.Action == Core::Input::InputAction::Repeat;
+                    io.AddKeyEvent(imguiKey, bDown);
+                }
+                return io.WantCaptureKeyboard;
+            }
+
+            bool OnChar(const Core::Input::CharEvent &event) override
+            {
+                if (m_Context == nullptr)
+                {
+                    return false;
+                }
+                ::ImGui::SetCurrentContext(m_Context);
+                ImGuiIO &io = ::ImGui::GetIO();
+                if (event.Codepoint != 0)
+                {
+                    io.AddInputCharacter(event.Codepoint);
+                }
+                return io.WantCaptureKeyboard;
+            }
+
+            const char *DebugName() const override
+            {
+                return "ImGuiModule";
             }
 
         private:
@@ -667,28 +776,14 @@ namespace NorvesLib::Modules::Gui
             }
 
             /**
-             * @brief 文字入力イベントハンドラ(OnCharEvent 購読・GameThread)
+             * @brief display size を ImGui IO へ反映する(GameThread・Tick)
              *
-             * IME 確定後の Unicode コードポイントをバッファへ積む。Tick(同 GameThread)で
-             * io.AddInputCharacter へ流して消費する。WindowProc と Tick は同一 GameThread で
-             * 直列実行されるためロック不要。
+             * C3 でマウス/キーボード/文字入力のポーリング供給は廃止し、入力は
+             * IInputController(On*)経由のイベント駆動供給に一本化した。本メソッドは
+             * レンダリング解像度から io.DisplaySize / DisplayFramebufferScale を更新する
+             * 表示設定のみを担う(NewFrame に必要)。
              */
-            void OnCharInput(const Core::Input::CharEvent &event)
-            {
-                if (event.Codepoint != 0)
-                {
-                    m_PendingChars.push_back(event.Codepoint);
-                }
-            }
-
-            /**
-             * @brief display size とマウス/キーボード/文字入力を ImGui IO へ反映する(GameThread)
-             *
-             * 2B-i のマウス橋渡しに加え、キー状態のポーリング → io.AddKeyEvent、修飾キーの
-             * AddKeyEvent(Mods)、バッファ済み文字 → io.AddInputCharacter を行う。ライブ入力は
-             * InputState のポーリングから読む(スナップショット主義に整合)。
-             */
-            void UpdateDisplayAndInput(ImGuiIO &io)
+            void UpdateDisplay(ImGuiIO &io)
             {
                 uint32_t width = 1280;
                 uint32_t height = 720;
@@ -700,46 +795,6 @@ namespace NorvesLib::Modules::Gui
                         width = 1280;
                         height = 720;
                     }
-
-                    const Core::Input::InputState &input =
-                        Core::Engine::GEngine->GetInputSystem().GetState();
-
-                    // --- マウス ---
-                    const Core::Input::MouseState &mouse = input.GetMouseState();
-                    io.AddMousePosEvent(mouse.PositionX, mouse.PositionY);
-                    io.AddMouseButtonEvent(0, input.IsMouseButtonDown(Core::Input::MouseButton::Left));
-                    io.AddMouseButtonEvent(1, input.IsMouseButtonDown(Core::Input::MouseButton::Right));
-                    io.AddMouseButtonEvent(2, input.IsMouseButtonDown(Core::Input::MouseButton::Middle));
-                    if (mouse.ScrollDelta != 0.0f)
-                    {
-                        io.AddMouseWheelEvent(0.0f, mouse.ScrollDelta);
-                    }
-
-                    // --- キーボード(状態ポーリング → AddKeyEvent) ---
-                    // 各キーの現在 down/up を ImGui へ。AddKeyEvent は内部で前回値と差分を取り、
-                    // 変化時のみ記録するため毎フレーム全キーを投げても冪等。
-                    const int keyCount = static_cast<int>(Core::Input::KeyCode::Count);
-                    for (int i = 1; i < keyCount; ++i) // 0 は None
-                    {
-                        Core::Input::KeyCode code = static_cast<Core::Input::KeyCode>(i);
-                        ImGuiKey imguiKey = ToImGuiKey(code);
-                        if (imguiKey != ImGuiKey_None)
-                        {
-                            io.AddKeyEvent(imguiKey, input.IsKeyDown(code));
-                        }
-                    }
-
-                    // 修飾キーの集約状態(Ctrl/Shift/Alt)。ショートカット解決に必要。
-                    io.AddKeyEvent(ImGuiMod_Ctrl, input.IsCtrlDown());
-                    io.AddKeyEvent(ImGuiMod_Shift, input.IsShiftDown());
-                    io.AddKeyEvent(ImGuiMod_Alt, input.IsAltDown());
-
-                    // --- 文字入力(バッファ済み Unicode を流す) ---
-                    for (uint32_t cp : m_PendingChars)
-                    {
-                        io.AddInputCharacter(cp);
-                    }
-                    m_PendingChars.clear();
                 }
 
                 io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
@@ -763,10 +818,6 @@ namespace NorvesLib::Modules::Gui
             // Sources/GlyphRanges を走査して全グリフを materialize するのに使う(SetupFonts で確定)。
             ImFont *m_BaseFont = nullptr;
             float m_BakedFontSize = kBaseFontSize;
-
-            // 文字入力バッファ(OnCharInput で積み Tick で消費・GameThread 直列でロック不要)。
-            Core::Container::VariableArray<uint32_t> m_PendingChars;
-            bool m_bCharSubscribed = false;
         };
     } // namespace
 } // namespace NorvesLib::Modules::Gui
