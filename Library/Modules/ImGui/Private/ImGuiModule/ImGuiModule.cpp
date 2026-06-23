@@ -1,6 +1,8 @@
 ﻿#include "ImGuiModule/ImGuiModule.h"
 #include "ImGuiModule/ImGuiOverlayPass.h"
 #include "ImGuiModule/NorvesImGuiStyle.h"
+#include "ImGuiModule/IImGuiView.h"
+#include "ImGuiModule/ImGuiViewRegistry.h"
 
 #include "Module/IModule.h"
 #include "Module/IRenderModule.h"
@@ -28,7 +30,11 @@
 //
 // 2B-ii(見た目仕上げ): カスタムフォント(Inter 本文 + FontAwesome アイコン + NotoSansJP
 // 日本語を 1 ハンドルにマージ)を静的アトラスで事前構築し、テーマ(NorvesImGuiStyle)・
-// DPI スケール・キーボード/文字入力ブリッジ・日本語＋アイコンのデモ窓を加える。
+// DPI スケール・キーボード/文字入力ブリッジを加える。
+//
+// Piece 2(view 登録機構): 固有の窓内容(旧ショーケース窓)はモジュールが持たず、外部
+// (Game の SubRoutine 等)が IImGuiView を RegisterImGuiView() で登録する。Tick は NewFrame と
+// Render の間で登録済み全 view の OnImGui() を順に呼ぶ(view が 0 件なら何も描かない)。
 //
 // 2B-ii-b(FreeType + 全範囲強制 bake): フォントラスタライザを FreeType に切替える
 // (imgui 既定の stb_truetype より crisp。NorvesThirdParty_ImGui の IMGUI_ENABLE_FREETYPE
@@ -311,11 +317,11 @@ namespace NorvesLib::Modules::Gui
              *
              * GEngine の RenderingCoordinator から device と overlay load render pass を取得し、
              * overlay pass の InitializeGameThread を駆動する。事前に ForceBakeAllGlyphs() で
-             * 設定済み全グリフ範囲(ASCII / 日本語常用 / FontAwesome アイコン)を強制 bake し、
-             * さらに「捨てフレーム」でショーケース窓を描いて残りのグリフ(混在テキスト)も
-             * materialize する。その後 GPU へ一度だけ載せる。imgui 1.92 の lazy bake 下でも
-             * 全 common グリフが初回に bake+アップロードされるため、以後アトラスは成長せず
-             * RenderThread がテクスチャ(ImTextureData::Status)に触れることはない。
+             * 設定済み全グリフ範囲(ASCII / 日本語常用 / FontAwesome アイコン)を強制 bake して
+             * から、空の捨てフレーム(NewFrame→Render のみ)を回して GPU へ一度だけ載せる。
+             * ForceBakeAllGlyphs が全 common グリフを materialize するため固定窓の描画は不要で、
+             * imgui 1.92 の lazy bake 下でも全 common グリフが初回に bake+アップロードされ、以後
+             * アトラスは成長せず RenderThread がテクスチャ(ImTextureData::Status)に触れることはない。
              *
              * @return 初期化+アップロードに成功した場合 true
              */
@@ -337,13 +343,13 @@ namespace NorvesLib::Modules::Gui
                     return false;
                 }
 
-                // 設定済み全グリフ範囲を強制 bake してから捨てフレームを描く。imgui 1.92 の
+                // 設定済み全グリフ範囲を強制 bake してから空の捨てフレームを回す。imgui 1.92 の
                 // RendererHasTextures 下では Build() は明示範囲を事前 bake せず実描画グリフのみ
                 // lazy bake するため、ここで全 common グリフ(ASCII / 日本語常用 / FA アイコン)を
                 // materialize して静的アトラスを確定する。これにより本番フレームで新規グリフ
                 // (=アトラス成長=テクスチャ更新要求)が発生せず、RenderThread が ImTextureData に
-                // 触れる必要が生じない。捨てフレーム(ショーケース窓)は残りの混在テキスト
-                // グリフを materialize しつつ、本 Tick の見た目には影響しない。
+                // 触れる必要が生じない。捨てフレームは NewFrame→Render のみ(固定窓の描画は不要
+                // =グリフ確定は ForceBakeAllGlyphs が担う)。
                 ::ImGui::SetCurrentContext(m_Context);
                 {
                     ImGuiIO &io = ::ImGui::GetIO();
@@ -365,7 +371,6 @@ namespace NorvesLib::Modules::Gui
                     ForceBakeAllGlyphs(io);
 
                     ::ImGui::NewFrame();
-                    BuildNorvesShowcaseWindow();
                     ::ImGui::Render();
                 }
 
@@ -397,9 +402,18 @@ namespace NorvesLib::Modules::Gui
 
                 ::ImGui::NewFrame();
 
-                // NorvesLib ショーケース窓(日本語 + アイコン + テーマ済み UI の可視成果物)。
+                // 登録済み view の UI を構築する(Piece 2: view 登録機構)。固有の窓内容は
+                // モジュールが持たず、外部(Game の SubRoutine 等)が RegisterImGuiView() で
+                // 登録した IImGuiView::OnImGui() を登録順に呼ぶ。view が 0 件なら何も描かない
+                // (overlay は空=no-op)。GameThread 単一スレッドで反復するためロック不要。
                 // ※ ImGui 既定のデモウィンドウ(ShowDemoWindow)は表示しない。
-                BuildNorvesShowcaseWindow();
+                for (IImGuiView *view : GetRegisteredImGuiViews())
+                {
+                    if (view != nullptr)
+                    {
+                        view->OnImGui();
+                    }
+                }
 
                 ::ImGui::Render();
 
@@ -732,49 +746,6 @@ namespace NorvesLib::Modules::Gui
                 io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
             }
 
-            /**
-             * @brief NorvesLib ショーケース窓(日本語 + アイコン + テーマ済み UI)
-             *
-             * デモ窓とは別に、混在テキスト(日本語＋FontAwesome アイコン)とテーマ済みの
-             * Button/Slider/Checkbox/InputText を 1 窓で見せる。スクショで見た目(フォント
-             * マージ・アクセント色・角丸)が一目で伝わるようにする。捨てフレームと本 Tick の
-             * 両方から呼ぶ(同じグリフ集合を要求して静的アトラスへ baking させるため)。
-             */
-            void BuildNorvesShowcaseWindow()
-            {
-                ::ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_FirstUseEver);
-                if (::ImGui::Begin(ICON_FA_PALETTE " NorvesLib"))
-                {
-                    ::ImGui::TextUnformatted(ICON_FA_FONT " Font / Theme showcase");
-                    ::ImGui::Separator();
-
-                    // 日本語 + 混在テキスト(Inter + NotoSansJP マージの実証)。narrow リテラルは
-                    // /utf-8(本 lib に付与)により実行時 UTF-8 になり ImGui へそのまま渡せる。
-                    ::ImGui::TextWrapped("日本語テスト：こんにちは、世界。Hello, NorvesLib!");
-                    ::ImGui::TextWrapped("漢字・ひらがな・カタカナ混在表示の確認。");
-
-                    ::ImGui::Spacing();
-
-                    // アイコン付きボタン(FontAwesome マージの実証)。ICON_FA_* は UTF-8 バイト列。
-                    ::ImGui::Button(ICON_FA_HEART " お気に入り");
-                    ::ImGui::SameLine();
-                    ::ImGui::Button(ICON_FA_STAR " 評価");
-                    ::ImGui::SameLine();
-                    ::ImGui::Button(ICON_FA_GEAR " 設定");
-
-                    ::ImGui::Spacing();
-
-                    // テーマ済み UI(アクセント色 / 角丸の実証)。
-                    ::ImGui::SliderFloat(ICON_FA_MAGNIFYING_GLASS " ズーム", &m_DemoSlider, 0.0f, 1.0f);
-                    ::ImGui::Checkbox(ICON_FA_CHECK " 有効化", &m_DemoCheck);
-                    ::ImGui::InputText(ICON_FA_KEYBOARD " 入力", m_DemoInput, sizeof(m_DemoInput));
-
-                    ::ImGui::Spacing();
-                    ::ImGui::TextDisabled(ICON_FA_CIRCLE_INFO " FreeType ラスタライザ(全範囲強制 bake 済み)");
-                }
-                ::ImGui::End();
-            }
-
             // ImGui コンテキスト(GameThread 所有)。Initialize で生成・Shutdown で破棄。
             ::ImGuiContext *m_Context = nullptr;
 
@@ -796,11 +767,6 @@ namespace NorvesLib::Modules::Gui
             // 文字入力バッファ(OnCharInput で積み Tick で消費・GameThread 直列でロック不要)。
             Core::Container::VariableArray<uint32_t> m_PendingChars;
             bool m_bCharSubscribed = false;
-
-            // ショーケース窓のウィジェット状態(可視化用)。
-            float m_DemoSlider = 0.5f;
-            bool m_DemoCheck = true;
-            char m_DemoInput[64] = "Norves";
         };
     } // namespace
 } // namespace NorvesLib::Modules::Gui

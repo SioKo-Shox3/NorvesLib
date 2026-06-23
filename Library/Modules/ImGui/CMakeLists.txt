@@ -13,6 +13,7 @@ set(PRIVATE_SOURCES
     Private/ImGuiModule/ImGuiModule.cpp
     Private/ImGuiModule/ImGuiOverlayPass.cpp
     Private/ImGuiModule/ImGuiDrawSnapshot.cpp
+    Private/ImGuiModule/ImGuiViewRegistry.cpp
     Private/ImGuiModule/NorvesImGuiStyle.cpp
     # imgui core はここに直追加しない。専用 lib NorvesThirdParty_ImGui を PRIVATE
     # リンクして imgui.h/シンボルを解決する(2A-i 再構成で確定)。
@@ -20,6 +21,7 @@ set(PRIVATE_SOURCES
 
 set(PUBLIC_HEADERS
     Public/ImGuiModule/ImGuiModule.h
+    Public/ImGuiModule/IImGuiView.h
 )
 
 # ThirdParty コードヘッダ(FontAwesome アイコンコード定義)。実行時アセットではなく
