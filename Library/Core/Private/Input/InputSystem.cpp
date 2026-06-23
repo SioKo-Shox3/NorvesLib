@@ -1,4 +1,5 @@
 ﻿#include "Input/InputSystem.h"
+#include "Input/InputRouter.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Input
@@ -56,6 +57,12 @@ namespace NorvesLib::Core::Input
         event.Code = code;
         event.Action = action;
         m_OnKeyEvent.Broadcast(event);
+
+        // 優先度付きルーターへ配送（登録 Controller がいなければ空振り）
+        if (m_Router)
+        {
+            m_Router->DispatchKey(event);
+        }
     }
 
     void InputSystem::InjectMouseButton(MouseButton button, InputAction action, float x, float y)
@@ -71,6 +78,12 @@ namespace NorvesLib::Core::Input
         event.PositionX = x;
         event.PositionY = y;
         m_OnMouseButtonEvent.Broadcast(event);
+
+        // 優先度付きルーターへ配送（登録 Controller がいなければ空振り）
+        if (m_Router)
+        {
+            m_Router->DispatchMouseButton(event);
+        }
     }
 
     void InputSystem::InjectMouseMove(float x, float y)
@@ -90,6 +103,12 @@ namespace NorvesLib::Core::Input
         event.DeltaX = x - prevX;
         event.DeltaY = y - prevY;
         m_OnMouseMoveEvent.Broadcast(event);
+
+        // 優先度付きルーターへ配送（登録 Controller がいなければ空振り）
+        if (m_Router)
+        {
+            m_Router->DispatchMouseMove(event);
+        }
     }
 
     void InputSystem::InjectMouseScroll(float delta)
@@ -104,6 +123,12 @@ namespace NorvesLib::Core::Input
         MouseScrollEvent event;
         event.Delta = delta;
         m_OnMouseScrollEvent.Broadcast(event);
+
+        // 優先度付きルーターへ配送（登録 Controller がいなければ空振り）
+        if (m_Router)
+        {
+            m_Router->DispatchMouseScroll(event);
+        }
     }
 
     void InputSystem::InjectCharEvent(uint32_t codepoint)
@@ -112,6 +137,17 @@ namespace NorvesLib::Core::Input
         CharEvent event;
         event.Codepoint = codepoint;
         m_OnCharEvent.Broadcast(event);
+
+        // 優先度付きルーターへ配送（登録 Controller がいなければ空振り）
+        if (m_Router)
+        {
+            m_Router->DispatchChar(event);
+        }
+    }
+
+    void InputSystem::SetRouter(InputRouter *router)
+    {
+        m_Router = router;
     }
 
 } // namespace NorvesLib::Core::Input

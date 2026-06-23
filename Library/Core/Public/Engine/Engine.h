@@ -7,6 +7,7 @@
 #include "Rendering/RenderWorld.h"
 #include "Object/World.h"
 #include "Input/InputSystem.h"
+#include "Input/InputRouter.h"
 
 namespace NorvesLib::Core::Application
 {
@@ -27,7 +28,8 @@ namespace NorvesLib::Core::Engine
     class Engine
     {
     public:
-        Engine() = default;
+        // コンストラクタで InputSystem へ Router を配線する（Engine.cpp）。
+        Engine();
         ~Engine();
 
         // コピー・ムーブ禁止
@@ -294,6 +296,25 @@ namespace NorvesLib::Core::Engine
             return m_InputSystem;
         }
 
+        // ========== 入力ルーター ==========
+
+        /**
+         * @brief 入力ルーターを取得
+         * @return InputRouterへの参照
+         */
+        Input::InputRouter &GetInputRouter()
+        {
+            return m_InputRouter;
+        }
+
+        /**
+         * @brief 入力ルーターを取得（const版）
+         */
+        const Input::InputRouter &GetInputRouter() const
+        {
+            return m_InputRouter;
+        }
+
     private:
         // サブシステムへの参照
         Container::TUniquePtr<NorvesLib::IApplication> m_PlatformApp;
@@ -309,6 +330,9 @@ namespace NorvesLib::Core::Engine
 
         // 入力システム（GEngine配下で実体保持）
         Input::InputSystem m_InputSystem;
+
+        // 入力ルーター（GEngine配下で実体保持・InputSystem からの配送先）
+        Input::InputRouter m_InputRouter;
 
         // 実行状態
         bool m_bIsRunning = false;
