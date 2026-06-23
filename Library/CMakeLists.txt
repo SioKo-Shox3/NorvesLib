@@ -1,11 +1,23 @@
 ﻿set(MODULE_NAME NorvesLib)
 
-# ImGui デバッグオーバーレイ(既定 OFF・opt-in ゲート)。option は本ファイル 1 箇所のみ。
+# ImGui デバッグオーバーレイ(既定 ON・ゲート)。option は本ファイル 1 箇所のみ。
 # ON のときだけ imgui 本体(第三者)を専用 static lib NorvesThirdParty_ImGui としてビルドし、
-# Core(imgui_impl_vulkan 用)と将来の NorvesModule_ImGui が PRIVATE 依存する。
-# OFF のときは imgui を 1 ファイルもビルドせず Core も非リンク=素ビルド byte-for-byte 不変。
-option(NORVES_ENABLE_IMGUI "Enable ImGui debug overlay" OFF)
+# Core(imgui_impl_vulkan 用)と NorvesModule_ImGui が PRIVATE 依存する。
+# OFF(-DNORVES_ENABLE_IMGUI=OFF)のときは imgui を 1 ファイルもビルドせず Core も非リンク
+# =素ビルド byte-for-byte 不変。実行時に ImGui を表示するには Game を --imgui で起動する
+# (モジュール登録ゲート。ビルドゲート ON だけでは描画されない)。
+option(NORVES_ENABLE_IMGUI "Enable ImGui debug overlay" ON)
 if(NORVES_ENABLE_IMGUI)
+    # ImGui ON は FreeType を vendoring した git submodule(Library/ThirdParty/freetype)に
+    # 依存する。未取得(fresh clone で submodule 未初期化)だと add_subdirectory が分かりにくく
+    # 失敗するため、先に存在を確認し明確なメッセージで止める。
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/freetype/CMakeLists.txt")
+        message(FATAL_ERROR
+            "NORVES_ENABLE_IMGUI=ON ですが FreeType submodule が未取得です。"
+            "`git submodule update --init Library/ThirdParty/freetype` を実行するか、"
+            "ImGui 不要なら -DNORVES_ENABLE_IMGUI=OFF で構成してください。")
+    endif()
+
     # FreeType フォントラスタライザ(2B-ii-b)。imgui の既定 stb_truetype より crisp な
     # グリフを生成し、imgui_freetype.cpp(IMGUI_ENABLE_FREETYPE 経由)が build 時に選ぶ。
     # 外部依存(zlib/bzip2/png/harfbuzz/brotli)は全て無効化して素の TTF/OTF ラスタライズ
