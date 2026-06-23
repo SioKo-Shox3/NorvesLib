@@ -12,6 +12,7 @@
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Input/InputSystem.h"
 #include "Core/Public/Input/InputState.h"
+#include "Core/Public/Input/InputRouter.h"
 #include "Core/Public/Rendering/ProceduralMeshGenerator.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Rendering/SceneView.h"
@@ -60,6 +61,12 @@ namespace Game::GameModes
             0.0f,                                       // yaw
             30.0f);                                     // pitch
         LOG_INFO("MayaCameraController initialized");
+
+        // カメラを入力ルーターへ登録（ゲーム優先度）。以降マウス入力は
+        // イベント駆動でカメラへ配送される。
+        ctx.EngineRef.GetInputRouter().RegisterController(
+            &data.m_CameraController,
+            NorvesLib::Core::Input::InputRouter::PriorityGame);
 
         // ========================================
         // 1. プロシージャルメッシュの生成とGPU登録
@@ -501,8 +508,7 @@ namespace Game::GameModes
         // ========================================
         const auto &inputState = ctx.InputRef.GetState();
 
-        // カメラコントローラー更新
-        data.m_CameraController.Update(inputState, deltaTime);
+        // カメラは InputRouter 経由でイベント駆動更新済み（Update 呼び出し不要）。
 
 #if NORVES_BUILD_DEVELOPMENT
         if (!inputState.IsAltDown())
@@ -650,6 +656,10 @@ namespace Game::GameModes
         LOG_INFO("=================================================");
         LOG_INFO("3Dレンダリングテスト終了");
         LOG_INFO("=================================================");
+
+        // カメラの入力ルーター登録を解除する（借用ポインタの寿命管理）。
+        // 以降マウスイベントが来てもカメラへは配送されない。
+        ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_CameraController);
 
         // 1) 非同期ロードの後始末（World/RenderResources 生存中に行う）。
         //    GameModeScope::Cleanup は Leave 直後に呼ばれるため、ここでは
