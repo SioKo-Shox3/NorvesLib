@@ -140,6 +140,35 @@ namespace
         assert(transparentCommands[3].Draw.ObjectId == 20);
     }
 
+    void TestBoardPayloadAlwaysClassifiesTransparent()
+    {
+        Container::VariableArray<DrawCommand> commands;
+
+        DrawCommand opaqueBoard = DrawCommand::CreateDraw();
+        opaqueBoard.Draw.PayloadKind = DrawPayloadKind::Board;
+        opaqueBoard.Draw.MaterialBlendMode = BlendMode::Opaque;
+        opaqueBoard.Draw.ObjectId = 1000u;
+        opaqueBoard.Draw.SortDepth = 1.0f;
+        commands.push_back(opaqueBoard);
+
+        DrawCommand maskedBoard = DrawCommand::CreateDraw();
+        maskedBoard.Draw.PayloadKind = DrawPayloadKind::Board;
+        maskedBoard.Draw.MaterialBlendMode = BlendMode::Masked;
+        maskedBoard.Draw.ObjectId = 1001u;
+        maskedBoard.Draw.SortDepth = 2.0f;
+        commands.push_back(maskedBoard);
+
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<DrawCommand> transparentCommands;
+        DrawCommandSorter::SortAndSeparate(commands, opaqueCommands, transparentCommands);
+        DrawCommandSorter::Sort(transparentCommands, DrawCommandSorter::SortMode::BackToFront);
+
+        assert(opaqueCommands.empty());
+        assert(transparentCommands.size() == 2);
+        assert(transparentCommands[0].Draw.ObjectId == 1001u);
+        assert(transparentCommands[1].Draw.ObjectId == 1000u);
+    }
+
     void TestTransparentBatchesStayNonInstanced()
     {
         Container::VariableArray<MeshProxy> proxies;
@@ -241,6 +270,7 @@ int main()
     TestBlendModeClassification();
     TestOpaqueCommandsSortFrontToBack();
     TestTransparentCommandsSortBackToFront();
+    TestBoardPayloadAlwaysClassifiesTransparent();
     TestTransparentBatchesStayNonInstanced();
     TestBuildMeshProxyFallsBackToOpaque();
     TestDirectProxyMaterialCountClampsToMaxSlots();

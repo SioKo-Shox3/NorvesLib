@@ -124,6 +124,10 @@ namespace NorvesLib::Core::Rendering
         // RenderThreadを先に停止してからリソース破棄へ進む
         // （Coordinatorのリソースへのアクセスが残らないようにする）
         m_RenderThread.Shutdown();
+        if (m_Device)
+        {
+            m_Device->WaitIdle();
+        }
         m_bResizePending.Store(false, std::memory_order_release);
 
         // pre-device-teardown フック: RenderThread 停止済み(in-flight 参照なし)かつ
@@ -302,7 +306,8 @@ namespace NorvesLib::Core::Rendering
         {
             m_RenderThread.WaitForIdle();
         }
-        else if (m_Device)
+
+        if (m_Device)
         {
             m_Device->WaitIdle();
         }

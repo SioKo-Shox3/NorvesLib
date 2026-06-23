@@ -438,7 +438,8 @@ namespace NorvesLib::Core::Rendering
 
         for (const DrawCommand &cmd : commands)
         {
-            const bool bIsTransparent = IsTransparentBlendMode(cmd.Draw.MaterialBlendMode);
+            const bool bIsTransparent = cmd.Draw.PayloadKind == DrawPayloadKind::Board ||
+                                        IsTransparentBlendMode(cmd.Draw.MaterialBlendMode);
 
             if (bIsTransparent)
             {

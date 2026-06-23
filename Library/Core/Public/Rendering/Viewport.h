@@ -82,6 +82,16 @@ namespace NorvesLib::Core::Rendering
         void SetCamera(const CameraProxy &camera);
 
         /**
+         * @brief 共有カメラIDを設定
+         */
+        void SetCameraId(uint64_t cameraId);
+
+        /**
+         * @brief 共有カメラIDを取得
+         */
+        uint64_t GetCameraId() const { return m_CameraId; }
+
+        /**
          * @brief カメラを取得
          */
         const CameraProxy &GetCamera() const { return m_Camera; }
@@ -195,6 +205,7 @@ namespace NorvesLib::Core::Rendering
     private:
         // カメラ
         CameraProxy m_Camera;
+        uint64_t m_CameraId = 0;
 
         // 行列
         Math::Matrix4x4 m_ViewMatrix;

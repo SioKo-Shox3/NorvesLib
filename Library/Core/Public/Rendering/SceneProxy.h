@@ -6,6 +6,8 @@
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
+#include "Math/Vector2.h"
+#include "Math/Vector4.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -196,6 +198,58 @@ namespace NorvesLib::Core::Rendering
         bool IsValid() const
         {
             return MegaMeshHandle.IsValid() && bVisible;
+        }
+    };
+
+    // ========================================
+    // BoardProxy
+    // ========================================
+
+    struct BoardProxy
+    {
+        uint64_t ObjectId = 0;
+        uint64_t ComponentId = 0;
+        uint64_t SortKey = 0;
+        uint32_t LayerPriority = 0;
+        uint32_t OrderInLayer = 0;
+
+        TextureHandle Texture = TextureHandle::Invalid();
+
+        Math::Matrix4x4 WorldTransform;
+        Math::Matrix4x4 PreviousWorldTransform;
+        BoundingSphere WorldBounds;
+
+        RenderLayer LayerMask = RenderLayer::UI;
+        BoardSpace Space = BoardSpace::ScreenSpace;
+        BoardRenderSubtype RenderSubtype = BoardRenderSubtype::Standard;
+        BlendMode BlendModeProp = BlendMode::Translucent;
+        float SortDepth = 0.0f;
+        uint64_t SourceMeshComponentId = 0;
+        float LODSwitchDistance = 0.0f;
+        uint32_t ImpostorCellResolution = 0;
+        uint32_t ImpostorAxisCellCountX = 0;
+        uint32_t ImpostorAxisCellCountY = 0;
+        uint32_t ImpostorAtlasWidth = 0;
+        uint32_t ImpostorAtlasHeight = 0;
+        Math::Vector4 Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
+        bool bFlipX = false;
+        bool bFlipY = false;
+        Math::Vector2 Pivot = Math::Vector2(0.0f, 0.0f);
+        Math::Vector2 SizePx = Math::Vector2(0.0f, 0.0f);
+        Math::Vector2 SizeWorld = Math::Vector2(0.0f, 0.0f);
+        Math::Vector4 UVRect = Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f);
+
+        bool bVisible = true;
+
+        static constexpr uint64_t ComputeSortKey(uint32_t layerPriority, uint32_t orderInLayer)
+        {
+            return (static_cast<uint64_t>(layerPriority) << 32u) |
+                   static_cast<uint64_t>(orderInLayer);
+        }
+
+        bool IsValid() const
+        {
+            return ComponentId != 0 && bVisible;
         }
     };
 

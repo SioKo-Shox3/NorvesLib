@@ -3,6 +3,9 @@
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/Entity.h"
+#include "Core/Public/Component/BoardComponent.h"
+#include "Core/Public/Component/BillboardComponent.h"
+#include "Core/Public/Component/ImpostorComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Component/LightComponent.h"
@@ -10,10 +13,12 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/RenderResourceContexts.h"
 #include "Core/Public/Rendering/RenderResources.h"
+#include "Core/Public/Rendering/CanvasView.h"
 #include "Core/Public/Input/InputSystem.h"
 #include "Core/Public/Input/InputState.h"
 #include "Core/Public/Input/InputRouter.h"
 #include "Core/Public/Rendering/ProceduralMeshGenerator.h"
+#include "Core/Public/Rendering/ImpostorBake.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Rendering/SceneView.h"
 #include "Core/Public/Rendering/RenderingCoordinator.h"
@@ -41,6 +46,7 @@ using namespace NorvesLib::Core::Rendering;
 using namespace NorvesLib::Core::Rendering::MegaGeometry;
 using namespace NorvesLib::Core::Engine;
 using namespace NorvesLib::Core;
+namespace Math = NorvesLib::Math;
 
 namespace Game::GameModes
 {
@@ -460,6 +466,391 @@ namespace Game::GameModes
         }
 
         // ========================================
+        // 2.5 F5 ScreenSpace Board showcase
+        // ========================================
+        {
+            auto canvasView = ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().GetCanvasView();
+            if (canvasView)
+            {
+                auto &world = ctx.WorldRef;
+                auto &textures = ctx.RenderResourcesRef.Textures();
+                LOG_INFO("Rendering3DTest board smoke count=%u batching=%s",
+                         data.m_BoardSmokeCount,
+                         canvasView->IsBoardInstanceBatchingEnabled() ? "enabled" : "disabled");
+                if (data.m_bLayerCompositeSmoke)
+                {
+                    canvasView->SetLayerCompositeMode(1u, CanvasLayerCompositeMode::OwnRT);
+                    canvasView->SetLayerOpacity(1u, 0.55f);
+                    LOG_INFO("Rendering3DTest layer composite smoke enabled layer=1 mode=OwnRT opacity=0.55");
+                }
+
+                constexpr uint32_t atlasWidth = 128;
+                constexpr uint32_t atlasHeight = 64;
+                constexpr uint32_t atlasCellWidth = 32;
+                constexpr uint32_t atlasCellHeight = 32;
+                VariableArray<uint8_t> atlasData(atlasWidth * atlasHeight * 4u);
+                const Math::Vector4 atlasColors[] =
+                {
+                    Math::Vector4(0.95f, 0.20f, 0.25f, 1.0f),
+                    Math::Vector4(0.20f, 0.80f, 0.35f, 1.0f),
+                    Math::Vector4(0.20f, 0.45f, 1.00f, 1.0f),
+                    Math::Vector4(0.95f, 0.75f, 0.20f, 1.0f),
+                    Math::Vector4(0.80f, 0.25f, 0.95f, 1.0f),
+                    Math::Vector4(0.20f, 0.85f, 0.85f, 1.0f),
+                    Math::Vector4(1.00f, 0.50f, 0.20f, 1.0f),
+                    Math::Vector4(0.90f, 0.90f, 0.90f, 1.0f),
+                };
+
+                for (uint32_t y = 0; y < atlasHeight; ++y)
+                {
+                    for (uint32_t x = 0; x < atlasWidth; ++x)
+                    {
+                        const uint32_t cellX = x / atlasCellWidth;
+                        const uint32_t cellY = y / atlasCellHeight;
+                        const uint32_t cellIndex = cellY * (atlasWidth / atlasCellWidth) + cellX;
+                        const uint32_t localX = x % atlasCellWidth;
+                        const uint32_t localY = y % atlasCellHeight;
+                        const float normalizedX = static_cast<float>(localX) / static_cast<float>(atlasCellWidth - 1u);
+                        const float normalizedY = static_cast<float>(localY) / static_cast<float>(atlasCellHeight - 1u);
+                        const bool bDiagonal = localX >= localY / 2u;
+                        const bool bCutout = localX > atlasCellWidth / 3u &&
+                                             localX < (atlasCellWidth * 2u) / 3u &&
+                                             localY > atlasCellHeight / 4u &&
+                                             localY < (atlasCellHeight * 3u) / 4u;
+                        const float alphaScale = bCutout ? 0.35f : 1.0f;
+                        const Math::Vector4 &cellColor = atlasColors[cellIndex % static_cast<uint32_t>(sizeof(atlasColors) / sizeof(atlasColors[0]))];
+                        const float brightness = bDiagonal ? 1.0f : 0.45f;
+                        const uint32_t pixelIndex = (y * atlasWidth + x) * 4u;
+                        atlasData[pixelIndex + 0u] = static_cast<uint8_t>(255.0f * cellColor.x * brightness);
+                        atlasData[pixelIndex + 1u] = static_cast<uint8_t>(255.0f * cellColor.y * (0.7f + 0.3f * normalizedX));
+                        atlasData[pixelIndex + 2u] = static_cast<uint8_t>(255.0f * cellColor.z * (0.7f + 0.3f * normalizedY));
+                        atlasData[pixelIndex + 3u] = static_cast<uint8_t>(255.0f * alphaScale);
+                    }
+                }
+
+                TextureCreateInfo atlasInfo;
+                atlasInfo.Width = atlasWidth;
+                atlasInfo.Height = atlasHeight;
+                atlasInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+                atlasInfo.DebugName = "F6BoardAtlas";
+                data.m_F6AtlasTextureHandle = textures.CreateTexture(
+                    atlasInfo,
+                    atlasData.data(),
+                    static_cast<uint32_t>(atlasData.size()));
+
+                const VariableArray<Math::Vector4> atlasRects =
+                    Component::BoardComponent::ComputeSpriteSheetUVRects(
+                        atlasWidth,
+                        atlasHeight,
+                        atlasCellWidth,
+                        atlasCellHeight);
+
+                struct F5BoardSpec
+                {
+                    float X;
+                    float Y;
+                    float Width;
+                    float Height;
+                    BlendMode BlendModeProp;
+                    Math::Vector4 Tint;
+                    bool bFlipX;
+                    bool bFlipY;
+                    Math::Vector2 Pivot;
+                    Math::Vector2 SizePx;
+                    uint32_t LayerPriority;
+                    uint32_t OrderInLayer;
+                    uint32_t AtlasRectIndex;
+                    bool bAnimated;
+                };
+
+                const F5BoardSpec boardSpecs[] =
+                {
+                    {72.0f, 72.0f, 160.0f, 96.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.90f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 0u, 0u, false},
+                    {112.0f, 104.0f, 180.0f, 104.0f, BlendMode::Opaque, Math::Vector4(1.00f, 1.00f, 1.00f, 1.00f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 1u, 1u, false},
+                    {176.0f, 132.0f, 132.0f, 72.0f, BlendMode::Additive, Math::Vector4(0.85f, 0.85f, 0.85f, 0.50f), false, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(0.0f, 0.0f), 0u, 2u, 2u, false},
+                    {472.0f, 108.0f, 72.0f, 72.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.80f), true, false, Math::Vector2(0.0f, 0.0f), Math::Vector2(140.0f, 40.0f), 0u, 3u, 4u, false},
+                    {400.0f, 260.0f, 96.0f, 96.0f, BlendMode::Translucent, Math::Vector4(1.00f, 1.00f, 1.00f, 0.95f), false, false, Math::Vector2(0.5f, 0.5f), Math::Vector2(112.0f, 112.0f), 1u, 0u, 0u, true},
+                };
+
+                constexpr uint32_t boardSpecCount = static_cast<uint32_t>(sizeof(boardSpecs) / sizeof(boardSpecs[0]));
+
+                data.m_F4BoardObjects.clear();
+                data.m_F4BoardComponents.clear();
+                const uint32_t totalBoardReserve = boardSpecCount + data.m_BoardSmokeCount;
+                data.m_F4BoardObjects.reserve(totalBoardReserve);
+                data.m_F4BoardComponents.reserve(totalBoardReserve);
+
+                for (const F5BoardSpec &boardSpec : boardSpecs)
+                {
+                    Entity *boardObject = world.SpawnObject<Entity>();
+                    ctx.ScopeRef.TrackObject(boardObject);
+                    boardObject->SetPosition(boardSpec.X, boardSpec.Y, 0.0f);
+                    boardObject->SetScale(boardSpec.Width, boardSpec.Height, 1.0f);
+
+                    auto *boardComponent = world.CreateComponent<Component::BoardComponent>(boardObject);
+                    boardComponent->SetBoardSpace(BoardSpace::ScreenSpace);
+                    boardComponent->SetRenderLayer(RenderLayer::UI);
+                    boardComponent->SetBlendMode(boardSpec.BlendModeProp);
+                    boardComponent->SetTint(boardSpec.Tint);
+                    boardComponent->SetFlipX(boardSpec.bFlipX);
+                    boardComponent->SetFlipY(boardSpec.bFlipY);
+                    boardComponent->SetPivot(boardSpec.Pivot);
+                    boardComponent->SetSizePx(boardSpec.SizePx);
+                    boardComponent->SetLayerPriority(boardSpec.LayerPriority);
+                    boardComponent->SetOrderInLayer(boardSpec.OrderInLayer);
+                    boardComponent->SetVisible(true);
+                    if (data.m_F6AtlasTextureHandle.IsValid())
+                    {
+                        boardComponent->SetTextureHandle(data.m_F6AtlasTextureHandle);
+                        if (boardSpec.AtlasRectIndex < atlasRects.size())
+                        {
+                            boardComponent->SetUVRect(atlasRects[boardSpec.AtlasRectIndex]);
+                        }
+
+                        if (boardSpec.bAnimated)
+                        {
+                            boardComponent->SetFrameCount(static_cast<uint32_t>(atlasRects.size()));
+                            if (boardComponent->SetFlipbookGrid(atlasWidth, atlasHeight, atlasCellWidth, atlasCellHeight, 0u))
+                            {
+                                boardComponent->SetFramesPerSecond(4.0f);
+                                boardComponent->SetLoop(true);
+                                boardComponent->Play();
+                            }
+                        }
+                    }
+
+                    data.m_F4BoardObjects.push_back(boardObject);
+                    data.m_F4BoardComponents.push_back(boardComponent);
+                }
+
+                LOG_INFO("F5/F7 ScreenSpace Board showcase created with blend, tint, flip, pivot, size, atlas UV, and flipbook variants");
+
+                if (data.m_BoardSmokeCount > 0u)
+                {
+                    if (!data.m_F6AtlasTextureHandle.IsValid() || atlasRects.empty())
+                    {
+                        LOG_WARNING("Rendering3DTest board smoke skipped because atlas texture creation failed");
+                    }
+                    else
+                    {
+                        constexpr uint32_t smokeColumns = 16u;
+                        constexpr float smokeCellWidth = 28.0f;
+                        constexpr float smokeCellHeight = 22.0f;
+                        constexpr float smokeStartX = 32.0f;
+                        constexpr float smokeStartY = 360.0f;
+                        for (uint32_t smokeIndex = 0; smokeIndex < data.m_BoardSmokeCount; ++smokeIndex)
+                        {
+                            const uint32_t column = smokeIndex % smokeColumns;
+                            const uint32_t row = smokeIndex / smokeColumns;
+
+                            Entity *boardObject = world.SpawnObject<Entity>();
+                            ctx.ScopeRef.TrackObject(boardObject);
+                            boardObject->SetPosition(smokeStartX + static_cast<float>(column) * smokeCellWidth,
+                                                     smokeStartY + static_cast<float>(row) * smokeCellHeight,
+                                                     0.0f);
+                            boardObject->SetScale(20.0f, 16.0f, 1.0f);
+
+                            auto *boardComponent = world.CreateComponent<Component::BoardComponent>(boardObject);
+                            boardComponent->SetBoardSpace(BoardSpace::ScreenSpace);
+                            boardComponent->SetRenderLayer(RenderLayer::UI);
+                            boardComponent->SetBlendMode(BlendMode::Translucent);
+                            boardComponent->SetTint(Math::Vector4(0.55f + 0.05f * static_cast<float>(column % 6u),
+                                                                  0.45f + 0.08f * static_cast<float>(row % 5u),
+                                                                  0.80f,
+                                                                  0.70f));
+                            boardComponent->SetLayerPriority(2u);
+                            boardComponent->SetOrderInLayer(smokeIndex);
+                            boardComponent->SetTextureHandle(data.m_F6AtlasTextureHandle);
+                            boardComponent->SetUVRect(atlasRects[smokeIndex % static_cast<uint32_t>(atlasRects.size())]);
+                            boardComponent->SetVisible(true);
+
+                            data.m_F4BoardObjects.push_back(boardObject);
+                            data.m_F4BoardComponents.push_back(boardComponent);
+                        }
+
+                        LOG_INFO("Rendering3DTest board smoke grid created count=%u batching=%s",
+                                 data.m_BoardSmokeCount,
+                                 canvasView->IsBoardInstanceBatchingEnabled() ? "enabled" : "disabled");
+                    }
+                }
+            }
+            else if (data.m_BoardSmokeCount > 0u || data.m_bLayerCompositeSmoke)
+            {
+                LOG_WARNING("Rendering3DTest Canvas smoke requested but CanvasView is not available");
+            }
+        }
+
+        // ========================================
+        // 2.6 F9 WorldSpace Billboard smoke
+        // ========================================
+        if (data.m_BillboardSmokeCount > 0u)
+        {
+            auto &world = ctx.WorldRef;
+            data.m_F9BillboardObjects.clear();
+            data.m_F9BillboardComponents.clear();
+            data.m_F9BillboardObjects.reserve(data.m_BillboardSmokeCount);
+            data.m_F9BillboardComponents.reserve(data.m_BillboardSmokeCount);
+
+            for (uint32_t smokeIndex = 0; smokeIndex < data.m_BillboardSmokeCount; ++smokeIndex)
+            {
+                const float column = static_cast<float>(smokeIndex % 5u);
+                const float row = static_cast<float>(smokeIndex / 5u);
+                const float x = -2.0f + column * 1.0f;
+                const float y = 0.45f + row * 0.65f;
+                const float z = (smokeIndex % 3u == 0u) ? -0.65f : ((smokeIndex % 3u == 1u) ? 0.0f : 0.65f);
+
+                Entity *billboardObject = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(billboardObject);
+                billboardObject->SetPosition(x, y, z);
+
+                auto *billboardComponent = world.CreateComponent<Component::BillboardComponent>(billboardObject);
+                billboardComponent->SetRenderLayer(RenderLayer::Default);
+                billboardComponent->SetBlendMode(BlendMode::Translucent);
+                billboardComponent->SetSizeWorld(Math::Vector2(0.55f, 0.55f));
+                billboardComponent->SetPivot(Math::Vector2(0.5f, 0.5f));
+                billboardComponent->SetTint(Math::Vector4(0.85f,
+                                                          0.45f + 0.10f * static_cast<float>(smokeIndex % 4u),
+                                                          0.20f + 0.12f * static_cast<float>(smokeIndex % 5u),
+                                                          0.82f));
+                if (data.m_CheckerTextureHandle.IsValid())
+                {
+                    billboardComponent->SetTextureHandle(data.m_CheckerTextureHandle);
+                }
+                billboardComponent->SetVisible(true);
+
+                data.m_F9BillboardObjects.push_back(billboardObject);
+                data.m_F9BillboardComponents.push_back(billboardComponent);
+            }
+
+            LOG_INFO("Rendering3DTest billboard smoke created count=%u texture=%s",
+                     data.m_BillboardSmokeCount,
+                     data.m_CheckerTextureHandle.IsValid() ? "checker" : "white-fallback");
+        }
+
+        // ========================================
+        // 2.7 F11 WorldSpace Impostor smoke
+        // ========================================
+        if (data.m_ImpostorSmokeCount > 0u)
+        {
+            auto &world = ctx.WorldRef;
+            auto &textures = ctx.RenderResourcesRef.Textures();
+            data.m_F11ImpostorSmokeObjects.clear();
+            data.m_F11ImpostorSourceMeshComponents.clear();
+            data.m_F11ImpostorComponents.clear();
+            data.m_F11ImpostorSmokeAtlasHandles.clear();
+            data.m_F11ImpostorSmokeObjects.reserve(data.m_ImpostorSmokeCount);
+            data.m_F11ImpostorSourceMeshComponents.reserve(data.m_ImpostorSmokeCount);
+            data.m_F11ImpostorComponents.reserve(data.m_ImpostorSmokeCount);
+            data.m_F11ImpostorSmokeAtlasHandles.reserve(data.m_ImpostorSmokeCount);
+
+            constexpr uint32_t impostorCellResolution = 32u;
+            constexpr uint32_t impostorAxisCellCountX = 4u;
+            constexpr uint32_t impostorAxisCellCountY = 4u;
+            constexpr uint32_t impostorAtlasWidth = impostorCellResolution * impostorAxisCellCountX;
+            constexpr uint32_t impostorAtlasHeight = impostorCellResolution * impostorAxisCellCountY;
+
+            VariableArray<uint8_t> impostorAtlasData(impostorAtlasWidth * impostorAtlasHeight * 4u);
+            for (uint32_t y = 0; y < impostorAtlasHeight; ++y)
+            {
+                for (uint32_t x = 0; x < impostorAtlasWidth; ++x)
+                {
+                    const uint32_t cellX = x / impostorCellResolution;
+                    const uint32_t cellY = y / impostorCellResolution;
+                    const uint32_t localX = x % impostorCellResolution;
+                    const uint32_t localY = y % impostorCellResolution;
+                    const uint32_t pixelIndex = (y * impostorAtlasWidth + x) * 4u;
+                    const uint8_t red = static_cast<uint8_t>(70u + cellX * 42u);
+                    const uint8_t green = static_cast<uint8_t>(70u + cellY * 42u);
+                    const uint8_t blue = static_cast<uint8_t>(120u + ((localX + localY) % 48u));
+                    const bool bCross = localX == localY ||
+                                        localX + localY + 1u == impostorCellResolution;
+                    impostorAtlasData[pixelIndex + 0u] = bCross ? 245u : red;
+                    impostorAtlasData[pixelIndex + 1u] = bCross ? 245u : green;
+                    impostorAtlasData[pixelIndex + 2u] = blue;
+                    impostorAtlasData[pixelIndex + 3u] = 220u;
+                }
+            }
+
+            ImpostorBakeMetadata metadata;
+            metadata.CellResolution = impostorCellResolution;
+            metadata.AxisCellCountX = impostorAxisCellCountX;
+            metadata.AxisCellCountY = impostorAxisCellCountY;
+            metadata.AtlasWidth = impostorAtlasWidth;
+            metadata.AtlasHeight = impostorAtlasHeight;
+            metadata.VertexCount = 3u;
+            metadata.IndexCount = 3u;
+            metadata.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+
+            uint32_t createdCount = 0u;
+            for (uint32_t smokeIndex = 0; smokeIndex < data.m_ImpostorSmokeCount; ++smokeIndex)
+            {
+                TextureCreateInfo atlasInfo;
+                atlasInfo.Width = impostorAtlasWidth;
+                atlasInfo.Height = impostorAtlasHeight;
+                atlasInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+                atlasInfo.DebugName = "F11ImpostorSmokeAtlas";
+
+                const TextureHandle atlasTexture = textures.CreateTexture(
+                    atlasInfo,
+                    impostorAtlasData.data(),
+                    static_cast<uint32_t>(impostorAtlasData.size()));
+                if (!atlasTexture.IsValid())
+                {
+                    NORVES_LOG_WARNING("Rendering3DTest",
+                                       "F11 impostor smoke atlas creation failed at index=%u",
+                                       smokeIndex);
+                    continue;
+                }
+
+                const float column = static_cast<float>(smokeIndex % 4u);
+                const float row = static_cast<float>(smokeIndex / 4u);
+                const float x = -1.8f + column * 1.2f;
+                const float y = 0.65f + row * 0.85f;
+                const float z = 1.4f + static_cast<float>(smokeIndex % 2u) * 0.55f;
+
+                Entity *impostorObject = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(impostorObject);
+                impostorObject->SetPosition(x, y, z);
+
+                auto *sourceMeshComponent = world.CreateComponent<Component::MeshComponent>(impostorObject);
+                sourceMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
+                sourceMeshComponent->SetMaterial(0, data.m_SilverMaterial);
+                sourceMeshComponent->SetCastShadow(true);
+                sourceMeshComponent->SetCustomData(0, 0.35f);
+                sourceMeshComponent->SetCustomData(1, 0.75f);
+                sourceMeshComponent->SetCustomData(2, 1.0f);
+                sourceMeshComponent->SetCustomData(3, 1.0f);
+
+                auto *impostorComponent = world.CreateComponent<Component::ImpostorComponent>(impostorObject);
+                impostorComponent->SetRenderLayer(RenderLayer::Default);
+                impostorComponent->SetBlendMode(BlendMode::Translucent);
+                impostorComponent->SetSizeWorld(Math::Vector2(0.9f, 0.9f));
+                impostorComponent->SetPivot(Math::Vector2(0.5f, 0.5f));
+                impostorComponent->SetTint(Math::Vector4(1.0f, 1.0f, 1.0f, 0.88f));
+                impostorComponent->SetSourceMeshComponentId(sourceMeshComponent->GetComponentId());
+                impostorComponent->SetLODSwitchDistance(3.5f);
+                if (!impostorComponent->SetBakedAtlas(atlasTexture, metadata))
+                {
+                    textures.ReleaseTexture(atlasTexture);
+                    ctx.ScopeRef.Untrack(impostorObject);
+                    world.RemoveObject(impostorObject);
+                    continue;
+                }
+                impostorComponent->SetVisible(true);
+
+                data.m_F11ImpostorSmokeObjects.push_back(impostorObject);
+                data.m_F11ImpostorSourceMeshComponents.push_back(sourceMeshComponent);
+                data.m_F11ImpostorComponents.push_back(impostorComponent);
+                data.m_F11ImpostorSmokeAtlasHandles.push_back(atlasTexture);
+                ++createdCount;
+            }
+
+            LOG_INFO("Rendering3DTest impostor smoke created count=%u requested=%u atlas=procedural-f11-grid sourceMesh=sphere switchDistance=3.5",
+                     createdCount,
+                     data.m_ImpostorSmokeCount);
+        }
+
+        // ========================================
         // 3. glTFモデルのロード
         // ========================================
         {
@@ -672,6 +1063,37 @@ namespace Game::GameModes
         //    boulder の各オブジェクト・3 メッシュ・boulder モデル）の解放は
         //    GameModeScope::Cleanup（Leave 直後に StateMachine が呼ぶ）が
         //    正しい順序で行う。ここでは手動解放しない。
+        if (!data.m_F11ImpostorComponents.empty())
+        {
+            ctx.EngineRef.GetRenderWorld().WaitForRender();
+            for (uint32_t index = 0; index < data.m_F11ImpostorComponents.size(); ++index)
+            {
+                auto *impostorComponent = data.m_F11ImpostorComponents[index];
+                if (impostorComponent)
+                {
+                    impostorComponent->ReleaseBakedAtlas(ctx.RenderResourcesRef.Textures());
+                    if (index < data.m_F11ImpostorSmokeAtlasHandles.size())
+                    {
+                        data.m_F11ImpostorSmokeAtlasHandles[index] = TextureHandle::Invalid();
+                    }
+                }
+            }
+        }
+
+        for (TextureHandle atlasHandle : data.m_F11ImpostorSmokeAtlasHandles)
+        {
+            if (atlasHandle.IsValid())
+            {
+                ctx.RenderResourcesRef.Textures().ReleaseTexture(atlasHandle);
+            }
+        }
+        data.m_F11ImpostorSmokeAtlasHandles.clear();
+
+        if (data.m_F6AtlasTextureHandle.IsValid())
+        {
+            ctx.RenderResourcesRef.Textures().ReleaseTexture(data.m_F6AtlasTextureHandle);
+            data.m_F6AtlasTextureHandle = TextureHandle::Invalid();
+        }
 
         // 3) 再 Enter（Change 往復）に備えてキャッシュをクリアする。
         //    スコープは独自の追跡リストを使うため、ここでの null 化は安全。
@@ -688,6 +1110,13 @@ namespace Game::GameModes
         data.m_pBoulderMegaGeometryComponent = nullptr;
         data.m_pDirectionalLightObject = nullptr;
         data.m_pDirectionalLightComponent = nullptr;
+        data.m_F4BoardObjects.clear();
+        data.m_F4BoardComponents.clear();
+        data.m_F9BillboardObjects.clear();
+        data.m_F9BillboardComponents.clear();
+        data.m_F11ImpostorSmokeObjects.clear();
+        data.m_F11ImpostorSourceMeshComponents.clear();
+        data.m_F11ImpostorComponents.clear();
 
         data.m_bMeshesRegistered = false;
         data.m_bBoulderModelLoaded = false;

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -49,6 +50,10 @@ namespace Game
         constexpr const TCHAR *kTextureAssetRootOption = TEXT("--texture-asset-root");
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
+        constexpr const TCHAR *kRendering3DTestBoardSmokeCountOption = TEXT("--rendering3dtest-board-smoke-count");
+        constexpr const TCHAR *kRendering3DTestBillboardSmokeCountOption = TEXT("--rendering3dtest-billboard-smoke-count");
+        constexpr const TCHAR *kRendering3DTestImpostorSmokeCountOption = TEXT("--rendering3dtest-impostor-smoke-count");
+        constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         // 値を取らない bare フラグ(--enable-canvas-view と同類)。指定時のみ描画ダミー
         // モジュールを登録する不変条件ゲート。
@@ -57,6 +62,10 @@ namespace Game
         // 不変条件ゲート。NORVES_ENABLE_IMGUI ビルドでのみ有効に処理される。
         constexpr const TCHAR *kImGuiOption = TEXT("--imgui");
         constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
+        uint32_t s_Rendering3DTestBoardSmokeCount = 0;
+        uint32_t s_Rendering3DTestBillboardSmokeCount = 0;
+        uint32_t s_Rendering3DTestImpostorSmokeCount = 0;
+        bool s_bRendering3DTestLayerCompositeSmoke = false;
 
         /**
          * @brief 文字列を符号なし 16bit ポートとして解析する。先頭末尾に空白がない 10 進数のみ
@@ -94,6 +103,34 @@ namespace Game
             }
 
             outPort = static_cast<uint16_t>(value);
+            return true;
+        }
+
+        bool TryParseUInt32(const String &text, uint32_t &outValue)
+        {
+            outValue = 0;
+            if (text.empty())
+            {
+                return false;
+            }
+
+            uint64_t value = 0;
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const TCHAR ch = text[i];
+                if (ch < TEXT('0') || ch > TEXT('9'))
+                {
+                    return false;
+                }
+
+                value = value * 10u + static_cast<uint64_t>(ch - TEXT('0'));
+                if (value > std::numeric_limits<uint32_t>::max())
+                {
+                    return false;
+                }
+            }
+
+            outValue = static_cast<uint32_t>(value);
             return true;
         }
 
@@ -229,6 +266,13 @@ namespace Game
         m_TextureAssetRoot = {};
         m_TextureAssetManifestPath = {};
         m_Rendering3DTestModelPath = {};
+        s_Rendering3DTestBoardSmokeCount = 0;
+        s_Rendering3DTestBillboardSmokeCount = 0;
+        s_Rendering3DTestImpostorSmokeCount = 0;
+        s_bRendering3DTestLayerCompositeSmoke = false;
+        bool bHasRendering3DTestBoardSmokeCount = false;
+        bool bHasRendering3DTestBillboardSmokeCount = false;
+        bool bHasRendering3DTestImpostorSmokeCount = false;
 
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
@@ -239,6 +283,12 @@ namespace Game
         {
             // コマンドライン引数のログ出力
             LOG_INFO_F("Arg[%zu]=%s", i, args[i].c_str());
+
+            if (ToStdString(args[i]) == std::basic_string<TCHAR>(kRendering3DTestLayerCompositeSmokeOption))
+            {
+                s_bRendering3DTestLayerCompositeSmoke = true;
+                continue;
+            }
 
             bool bMatchedRoot = false;
             bool bRootHasInlineValue = false;
@@ -346,6 +396,148 @@ namespace Game
                     LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
                     return false;
                 }
+                continue;
+            }
+
+            bool bMatchedBoardSmokeCount = false;
+            bool bBoardSmokeCountHasInlineValue = false;
+            String boardSmokeCountInlineValue;
+            if (!TryMatchTextureAssetOption(args[i],
+                                            kRendering3DTestBoardSmokeCountOption,
+                                            bMatchedBoardSmokeCount,
+                                            bBoardSmokeCountHasInlineValue,
+                                            boardSmokeCountInlineValue,
+                                            parseError))
+            {
+                LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                return false;
+            }
+
+            if (bMatchedBoardSmokeCount)
+            {
+                if (bHasRendering3DTestBoardSmokeCount)
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: duplicate --rendering3dtest-board-smoke-count");
+                    return false;
+                }
+
+                String boardSmokeCountText;
+                if (!ReadTextureAssetOptionValue(args,
+                                                 i,
+                                                 kRendering3DTestBoardSmokeCountOption,
+                                                 bBoardSmokeCountHasInlineValue,
+                                                 boardSmokeCountInlineValue,
+                                                 boardSmokeCountText,
+                                                 parseError))
+                {
+                    LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                    return false;
+                }
+
+                uint32_t parsedBoardSmokeCount = 0;
+                if (!TryParseUInt32(boardSmokeCountText, parsedBoardSmokeCount))
+                {
+                    LOG_ERROR_F("Rendering3DTest command line parse failed: invalid --rendering3dtest-board-smoke-count value \"%s\"",
+                                boardSmokeCountText.c_str());
+                    return false;
+                }
+
+                s_Rendering3DTestBoardSmokeCount = parsedBoardSmokeCount;
+                bHasRendering3DTestBoardSmokeCount = true;
+            }
+
+            bool bMatchedBillboardSmokeCount = false;
+            bool bBillboardSmokeCountHasInlineValue = false;
+            String billboardSmokeCountInlineValue;
+            if (!TryMatchTextureAssetOption(args[i],
+                                            kRendering3DTestBillboardSmokeCountOption,
+                                            bMatchedBillboardSmokeCount,
+                                            bBillboardSmokeCountHasInlineValue,
+                                            billboardSmokeCountInlineValue,
+                                            parseError))
+            {
+                LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                return false;
+            }
+
+            if (bMatchedBillboardSmokeCount)
+            {
+                if (bHasRendering3DTestBillboardSmokeCount)
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: duplicate --rendering3dtest-billboard-smoke-count");
+                    return false;
+                }
+
+                String billboardSmokeCountText;
+                if (!ReadTextureAssetOptionValue(args,
+                                                 i,
+                                                 kRendering3DTestBillboardSmokeCountOption,
+                                                 bBillboardSmokeCountHasInlineValue,
+                                                 billboardSmokeCountInlineValue,
+                                                 billboardSmokeCountText,
+                                                 parseError))
+                {
+                    LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                    return false;
+                }
+
+                uint32_t parsedBillboardSmokeCount = 0;
+                if (!TryParseUInt32(billboardSmokeCountText, parsedBillboardSmokeCount))
+                {
+                    LOG_ERROR_F("Rendering3DTest command line parse failed: invalid --rendering3dtest-billboard-smoke-count value \"%s\"",
+                                billboardSmokeCountText.c_str());
+                    return false;
+                }
+
+                s_Rendering3DTestBillboardSmokeCount = parsedBillboardSmokeCount;
+                bHasRendering3DTestBillboardSmokeCount = true;
+            }
+
+            bool bMatchedImpostorSmokeCount = false;
+            bool bImpostorSmokeCountHasInlineValue = false;
+            String impostorSmokeCountInlineValue;
+            if (!TryMatchTextureAssetOption(args[i],
+                                            kRendering3DTestImpostorSmokeCountOption,
+                                            bMatchedImpostorSmokeCount,
+                                            bImpostorSmokeCountHasInlineValue,
+                                            impostorSmokeCountInlineValue,
+                                            parseError))
+            {
+                LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                return false;
+            }
+
+            if (bMatchedImpostorSmokeCount)
+            {
+                if (bHasRendering3DTestImpostorSmokeCount)
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: duplicate --rendering3dtest-impostor-smoke-count");
+                    return false;
+                }
+
+                String impostorSmokeCountText;
+                if (!ReadTextureAssetOptionValue(args,
+                                                 i,
+                                                 kRendering3DTestImpostorSmokeCountOption,
+                                                 bImpostorSmokeCountHasInlineValue,
+                                                 impostorSmokeCountInlineValue,
+                                                 impostorSmokeCountText,
+                                                 parseError))
+                {
+                    LOG_ERROR_F("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                    return false;
+                }
+
+                uint32_t parsedImpostorSmokeCount = 0;
+                if (!TryParseUInt32(impostorSmokeCountText, parsedImpostorSmokeCount))
+                {
+                    LOG_ERROR_F("Rendering3DTest command line parse failed: invalid --rendering3dtest-impostor-smoke-count value \"%s\"",
+                                impostorSmokeCountText.c_str());
+                    return false;
+                }
+
+                s_Rendering3DTestImpostorSmokeCount = parsedImpostorSmokeCount;
+                bHasRendering3DTestImpostorSmokeCount = true;
             }
         }
 
@@ -368,6 +560,25 @@ namespace Game
         {
             LOG_INFO_F("Rendering3DTest model path parsed path=\"%s\"",
                        m_Rendering3DTestModelPath.c_str());
+        }
+        if (bHasRendering3DTestBoardSmokeCount)
+        {
+            LOG_INFO("Rendering3DTest board smoke count parsed count=%u",
+                     s_Rendering3DTestBoardSmokeCount);
+        }
+        if (bHasRendering3DTestBillboardSmokeCount)
+        {
+            LOG_INFO("Rendering3DTest billboard smoke count parsed count=%u",
+                     s_Rendering3DTestBillboardSmokeCount);
+        }
+        if (bHasRendering3DTestImpostorSmokeCount)
+        {
+            LOG_INFO("Rendering3DTest impostor smoke count parsed count=%u",
+                     s_Rendering3DTestImpostorSmokeCount);
+        }
+        if (s_bRendering3DTestLayerCompositeSmoke)
+        {
+            LOG_INFO("Rendering3DTest layer composite smoke parsed enabled=true");
         }
 
         // モジュールシステム第1段1C-ii: --dummy-overlay 不変条件ゲート。
@@ -693,6 +904,10 @@ namespace Game
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
                 mode->GetData().m_ModelPath = params.ModelPath;
+                mode->GetData().m_BoardSmokeCount = s_Rendering3DTestBoardSmokeCount;
+                mode->GetData().m_BillboardSmokeCount = s_Rendering3DTestBillboardSmokeCount;
+                mode->GetData().m_ImpostorSmokeCount = s_Rendering3DTestImpostorSmokeCount;
+                mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
                 return mode;
             });
         stateMachine->Registry().Register(
