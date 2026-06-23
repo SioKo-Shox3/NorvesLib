@@ -2,9 +2,12 @@
 
 #include "GameModeId.h"
 #include "GameModeParams.h"
+#include "Container/PointerTypes.h"
 
 namespace NorvesLib::Core::GameMode
 {
+
+    class ISubRoutine;
 
     /**
      * @brief ゲームモードコントローラーインターフェース
@@ -52,6 +55,25 @@ namespace NorvesLib::Core::GameMode
          * @param exitCode プロセス終了コード（デフォルト 0）
          */
         virtual void RequestExitApplication(int exitCode = 0) = 0;
+
+        /**
+         * @brief 現在のトップ段へサブルーチンを積む（GameMode は Suspend しない）
+         *
+         * 他の Request* と同じく遅延適用。次の Update 先頭のドレインで、現在の
+         * トップ段の sub-stack 末尾へ追加され Enter が呼ばれる。アクティブ段で
+         * ある限り Mode の Tick 後に毎フレーム Tick される。
+         * @param sub 積むサブルーチン（所有権を移譲）
+         */
+        virtual void RequestPushSubRoutine(Container::TUniquePtr<ISubRoutine> sub) = 0;
+
+        /**
+         * @brief 現在のトップ段の最後のサブルーチンを取り除く
+         *
+         * 他の Request* と同じく遅延適用。次の Update 先頭のドレインで、現在の
+         * トップ段の sub-stack 末尾のサブルーチンに Leave を呼び破棄する。
+         * 空のときは無視する。
+         */
+        virtual void RequestPopSubRoutine() = 0;
     };
 
 } // namespace NorvesLib::Core::GameMode
