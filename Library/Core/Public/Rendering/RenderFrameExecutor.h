@@ -37,6 +37,7 @@ namespace NorvesLib::Core::Rendering
         PresentationPass *PresentationGraphPass = nullptr;
         PresentationPassRequest GraphPresentationRequest;
         CompositePass *CompositeGraphPass = nullptr;
+        CompositePassRequest GraphCompositeRequest;
     };
 
     struct RenderFrameExecutionResult

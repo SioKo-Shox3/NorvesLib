@@ -113,6 +113,25 @@ int main()
         assert(IsNearlyEqual(constants.AspectRatio, 1.0f));
     }
 
+    {
+        CameraProxy camera = MakeCamera();
+        camera.Projection = ProjectionType::Orthographic;
+        camera.OrthoWidth = 80.0f;
+        camera.OrthoHeight = 25.0f;
+        camera.NearPlane = 0.5f;
+        camera.FarPlane = 9.5f;
+
+        const CameraViewConstants constants = CameraViewConstants::Build(camera, 4.0f);
+        const NorvesLib::Math::Matrix4x4 expected =
+            NorvesLib::Math::MatrixUtils::CreateOrthographic(80.0f, 25.0f, 0.5f, 9.5f);
+        assert(IsNearlyEqual(constants.ProjectionMatrix.m00, expected.m00));
+        assert(IsNearlyEqual(constants.ProjectionMatrix.m11, expected.m11));
+        assert(IsNearlyEqual(constants.ProjectionMatrix.m22, expected.m22));
+        assert(IsNearlyEqual(constants.ProjectionMatrix.m23, expected.m23));
+        assert(IsNearlyEqual(constants.ProjectionMatrix.m11, 2.0f / 25.0f));
+        assert(!IsNearlyEqual(constants.ProjectionMatrix.m11, 2.0f / 20.0f));
+    }
+
     std::cout << "CameraViewConstantsTest passed\n";
     return 0;
 }

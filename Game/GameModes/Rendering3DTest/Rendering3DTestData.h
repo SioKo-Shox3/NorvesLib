@@ -17,6 +17,9 @@ namespace NorvesLib::Core
     namespace Component
     {
         class MeshComponent;
+        class BoardComponent;
+        class BillboardComponent;
+        class ImpostorComponent;
         class MegaGeometryComponent;
         class LightComponent;
         class PointLightComponent;
@@ -68,6 +71,7 @@ namespace Game::GameModes
 
         // テクスチャハンドル
         NorvesLib::Core::Rendering::TextureHandle m_CheckerTextureHandle;
+        NorvesLib::Core::Rendering::TextureHandle m_F6AtlasTextureHandle;
 
         // マテリアルハンドル
         NorvesLib::Core::Rendering::MaterialHandle m_SilverMaterial;      // Silver PBR マテリアル
@@ -83,12 +87,19 @@ namespace Game::GameModes
         NorvesLib::Core::Entity *m_pLightSphereObject = nullptr;
         NorvesLib::Core::Entity *m_pBoulderObject = nullptr;
         NorvesLib::Core::Entity *m_pBoulderPlaceholderObject = nullptr;
+        VariableArray<NorvesLib::Core::Entity *> m_F4BoardObjects;
+        VariableArray<NorvesLib::Core::Entity *> m_F9BillboardObjects;
+        VariableArray<NorvesLib::Core::Entity *> m_F11ImpostorSmokeObjects;
 
         // MeshComponent参照（Entityが所有）
         NorvesLib::Core::Component::MeshComponent *m_pSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pGroundMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pLightSphereMeshComponent = nullptr;
         NorvesLib::Core::Component::MeshComponent *m_pBoulderPlaceholderMeshComponent = nullptr;
+        VariableArray<NorvesLib::Core::Component::MeshComponent *> m_F11ImpostorSourceMeshComponents;
+        VariableArray<NorvesLib::Core::Component::BoardComponent *> m_F4BoardComponents;
+        VariableArray<NorvesLib::Core::Component::BillboardComponent *> m_F9BillboardComponents;
+        VariableArray<NorvesLib::Core::Component::ImpostorComponent *> m_F11ImpostorComponents;
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
 
         // LightComponent参照（Entityが所有）
@@ -120,6 +131,11 @@ namespace Game::GameModes
         // glTF Model（Boulder）
         // ========================================
         String m_ModelPath;
+        uint32_t m_BoardSmokeCount = 0;
+        uint32_t m_BillboardSmokeCount = 0;
+        uint32_t m_ImpostorSmokeCount = 0;
+        bool m_bLayerCompositeSmoke = false;
+        VariableArray<NorvesLib::Core::Rendering::TextureHandle> m_F11ImpostorSmokeAtlasHandles;
         NorvesLib::Core::Rendering::ModelHandle m_BoulderModelHandle;
         uint32_t m_BoulderLoadRequestId = 0;
         bool m_bBoulderModelLoaded = false;

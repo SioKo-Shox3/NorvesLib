@@ -201,6 +201,18 @@ namespace NorvesLib::Core::Rendering
         All = 0xFF
     };
 
+    enum class BoardSpace : uint8_t
+    {
+        ScreenSpace,
+        WorldSpace
+    };
+
+    enum class BoardRenderSubtype : uint8_t
+    {
+        Standard,
+        Impostor
+    };
+
     inline RenderLayer operator|(RenderLayer a, RenderLayer b)
     {
         return static_cast<RenderLayer>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));

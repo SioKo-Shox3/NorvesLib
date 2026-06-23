@@ -215,7 +215,7 @@ namespace NorvesLib::Core::Rendering
         request.Context->Graph->Reset();
         ApplyViewportRenderPlan(*request.Context, primarySceneViewport);
 
-        CompositePassRequest compositeRequest;
+        CompositePassRequest compositeRequest = request.GraphCompositeRequest;
         compositeRequest.SceneTexture = sceneTexture;
         compositeRequest.CanvasTexture = canvasTexture;
         request.CompositeGraphPass->SetRequest(compositeRequest);
@@ -454,6 +454,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         if (view->GetPassCount() > 0)
+        {
+            view->Render(*request.Context);
+            return true;
+        }
+
+        if (dynamic_cast<CanvasView*>(view))
         {
             view->Render(*request.Context);
             return true;

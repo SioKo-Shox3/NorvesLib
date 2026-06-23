@@ -72,7 +72,7 @@ namespace NorvesLib::Core::Rendering
         {
             return Math::MatrixUtils::CreateOrthographic(
                 camera.OrthoWidth,
-                camera.OrthoWidth / aspectRatio,
+                camera.OrthoHeight,
                 camera.NearPlane,
                 camera.FarPlane);
         }

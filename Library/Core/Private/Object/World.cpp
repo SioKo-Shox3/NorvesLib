@@ -1,11 +1,14 @@
 #include "Object/World.h"
 #include "Object/Entity.h"
 #include "Object/PrefabAsset.h"
+#include "Component/BoardComponent.h"
+#include "Component/BillboardComponent.h"
 #include "Component/MeshComponent.h"
 #include "Component/MegaGeometryComponent.h"
 #include "Component/LightComponent.h"
 #include "Engine/NorvesEngine.h"
 #include "Engine/ComponentDataRegistry.h"
+#include "Rendering/IBoardProxySink.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneProxy.h"
 #include "Logging/LogMacros.h"
@@ -633,6 +636,7 @@ namespace NorvesLib::Core
         GEngine.GetComponentDataRegistry().UnregisterWorld(*this);
 
         m_SceneView = nullptr;
+        m_ScreenSpaceBoardSink = nullptr;
         NextObjectId = 1;
 
         Object::Finalize();
@@ -831,9 +835,26 @@ namespace NorvesLib::Core
         }
     }
 
+    void World::SetScreenSpaceBoardSink(Rendering::IBoardProxySink* sink)
+    {
+        if (m_ScreenSpaceBoardSink == sink)
+        {
+            return;
+        }
+
+        m_ScreenSpaceBoardSink = sink;
+
+        auto roots = GetRootEntities();
+        for (auto* entity : roots)
+        {
+            MarkEntitySubtreeRenderStateDirty(*entity);
+        }
+    }
+
     void World::SyncToSceneView(const Rendering::MaterialResources* materials)
     {
-        if (!m_SceneView || !HasFlag(OF_Initialized))
+        if (!HasFlag(OF_Initialized) ||
+            (!m_SceneView && !m_ScreenSpaceBoardSink))
         {
             return;
         }
@@ -849,11 +870,16 @@ namespace NorvesLib::Core
 
         UpdateWorldTransforms();
 
-        Container::UnorderedSet<uint64_t> liveMeshObjectIds;
+        Container::UnorderedSet<uint64_t> liveMeshComponentIds;
         Container::UnorderedSet<uint64_t> liveMegaGeometryObjectIds;
         Container::UnorderedSet<uint64_t> liveLightIds;
-        liveMeshObjectIds.reserve(m_Inners.size());
+        Container::UnorderedSet<uint64_t> liveScreenBoardComponentIds;
+        Container::UnorderedSet<uint64_t> liveWorldBoardComponentIds;
+        liveMeshComponentIds.reserve(m_Inners.size());
         liveMegaGeometryObjectIds.reserve(m_Inners.size());
+        liveLightIds.reserve(m_Inners.size());
+        liveScreenBoardComponentIds.reserve(m_Inners.size());
+        liveWorldBoardComponentIds.reserve(m_Inners.size());
 
         auto roots = GetRootEntities();
         for (auto* entity : roots)
@@ -861,15 +887,26 @@ namespace NorvesLib::Core
             SyncEntityRecursive(
                 *entity,
                 materials,
-                liveMeshObjectIds,
+                liveMeshComponentIds,
                 liveMegaGeometryObjectIds,
                 liveLightIds,
+                liveScreenBoardComponentIds,
+                liveWorldBoardComponentIds,
                 enabledComponentDataRegistry);
         }
 
-        m_SceneView->RemoveStaleMeshProxies(liveMeshObjectIds);
-        m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
-        m_SceneView->RemoveStaleLightProxies(liveLightIds);
+        if (m_SceneView)
+        {
+            m_SceneView->RemoveStaleMeshProxies(liveMeshComponentIds);
+            m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
+            m_SceneView->RemoveStaleLightProxies(liveLightIds);
+            m_SceneView->RemoveStaleBoardProxies(liveWorldBoardComponentIds);
+        }
+
+        if (m_ScreenSpaceBoardSink)
+        {
+            m_ScreenSpaceBoardSink->RemoveStaleBoardProxies(liveScreenBoardComponentIds);
+        }
     }
 
     void World::UpdateWorldTransforms()
@@ -921,9 +958,11 @@ namespace NorvesLib::Core
     void World::SyncEntityRecursive(
         Entity& entity,
         const Rendering::MaterialResources* materials,
-        Container::UnorderedSet<uint64_t>& liveMeshObjectIds,
+        Container::UnorderedSet<uint64_t>& liveMeshComponentIds,
         Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
         Container::UnorderedSet<uint64_t>& liveLightIds,
+        Container::UnorderedSet<uint64_t>& liveScreenBoardComponentIds,
+        Container::UnorderedSet<uint64_t>& liveWorldBoardComponentIds,
         ComponentDataRegistry* componentDataRegistry)
     {
         if (!entity.IsActive() || entity.IsPendingDestroy())
@@ -943,13 +982,13 @@ namespace NorvesLib::Core
             auto* megaComp = CastTo<Component::MegaGeometryComponent>(comp);
 
             auto* meshComp = CastTo<Component::MeshComponent>(comp);
-            if (meshComp && !megaComp)
+            if (m_SceneView && meshComp && !megaComp)
             {
                 const bool bNeedsSync = meshComp->IsRenderStateDirty() ||
                                         meshComp->GetLastSyncedTransformVersion() != ownerVersion;
                 if (!bNeedsSync)
                 {
-                    liveMeshObjectIds.insert(entity.GetObjectId());
+                    liveMeshComponentIds.insert(meshComp->GetComponentId());
                     if (componentDataRegistry)
                     {
                         Rendering::MeshProxy meshProxy;
@@ -971,7 +1010,7 @@ namespace NorvesLib::Core
                         meshProxy.ObjectId = entity.GetObjectId();
                         meshProxy.ComponentId = meshComp->GetComponentId();
                         m_SceneView->UpdateMeshProxy(meshProxy);
-                        liveMeshObjectIds.insert(meshProxy.ObjectId);
+                        liveMeshComponentIds.insert(meshProxy.ComponentId);
                         if (componentDataRegistry)
                         {
                             componentDataRegistry->PublishMeshProxy(entity, meshProxy);
@@ -983,7 +1022,7 @@ namespace NorvesLib::Core
                 }
             }
 
-            if (megaComp)
+            if (m_SceneView && megaComp)
             {
                 const bool bNeedsSync = megaComp->IsRenderStateDirty() ||
                                         megaComp->GetLastSyncedTransformVersion() != ownerVersion;
@@ -1024,7 +1063,7 @@ namespace NorvesLib::Core
             }
 
             auto* lightComp = CastTo<Component::LightComponent>(comp);
-            if (lightComp)
+            if (m_SceneView && lightComp)
             {
                 const bool bNeedsSync = lightComp->IsRenderStateDirty() ||
                                         lightComp->GetLastSyncedTransformVersion() != ownerVersion;
@@ -1046,6 +1085,79 @@ namespace NorvesLib::Core
                     lightComp->SetLastSyncedTransformVersion(ownerVersion);
                 }
             }
+
+            auto* boardComp = CastTo<Component::BoardComponent>(comp);
+            if (boardComp)
+            {
+                boardComp->PrepareFlipbookForRenderSync();
+                const bool bForceWorldSpace = CastTo<Component::BillboardComponent>(boardComp) != nullptr;
+                const Rendering::BoardSpace effectiveSpace = bForceWorldSpace
+                                                                  ? Rendering::BoardSpace::WorldSpace
+                                                                  : boardComp->GetBoardSpace();
+
+                const bool bNeedsSync = boardComp->IsRenderStateDirty() ||
+                                        boardComp->GetLastSyncedTransformVersion() != ownerVersion;
+                if (!bNeedsSync)
+                {
+                    if (effectiveSpace == Rendering::BoardSpace::WorldSpace)
+                    {
+                        liveWorldBoardComponentIds.insert(boardComp->GetComponentId());
+                    }
+                    else
+                    {
+                        liveScreenBoardComponentIds.insert(boardComp->GetComponentId());
+                    }
+                }
+                else
+                {
+                    boardComp->RefreshRenderTransformCache();
+
+                    Rendering::BoardProxy boardProxy;
+                    if (boardComp->BuildBoardProxy(boardProxy))
+                    {
+                        boardProxy.ObjectId = entity.GetObjectId();
+                        boardProxy.ComponentId = boardComp->GetComponentId();
+                        if (boardProxy.Space == Rendering::BoardSpace::WorldSpace)
+                        {
+                            liveWorldBoardComponentIds.insert(boardProxy.ComponentId);
+                            if (m_SceneView)
+                            {
+                                m_SceneView->UpdateBoardProxy(boardProxy);
+                            }
+                            if (m_ScreenSpaceBoardSink)
+                            {
+                                m_ScreenSpaceBoardSink->RemoveBoardProxy(boardProxy.ComponentId);
+                            }
+                        }
+                        else
+                        {
+                            liveScreenBoardComponentIds.insert(boardProxy.ComponentId);
+                            if (m_ScreenSpaceBoardSink)
+                            {
+                                m_ScreenSpaceBoardSink->UpdateBoardProxy(boardProxy.ComponentId, boardProxy);
+                            }
+                            if (m_SceneView)
+                            {
+                                m_SceneView->RemoveBoardProxy(boardProxy.ComponentId);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (m_ScreenSpaceBoardSink)
+                        {
+                            m_ScreenSpaceBoardSink->RemoveBoardProxy(boardComp->GetComponentId());
+                        }
+                        if (m_SceneView)
+                        {
+                            m_SceneView->RemoveBoardProxy(boardComp->GetComponentId());
+                        }
+                    }
+
+                    boardComp->ClearRenderStateDirty();
+                    boardComp->SetLastSyncedTransformVersion(ownerVersion);
+                }
+            }
         }
 
         auto children = entity.GetChildEntities();
@@ -1054,9 +1166,11 @@ namespace NorvesLib::Core
             SyncEntityRecursive(
                 *child,
                 materials,
-                liveMeshObjectIds,
+                liveMeshComponentIds,
                 liveMegaGeometryObjectIds,
                 liveLightIds,
+                liveScreenBoardComponentIds,
+                liveWorldBoardComponentIds,
                 componentDataRegistry);
         }
     }
@@ -1308,17 +1422,39 @@ namespace NorvesLib::Core
 
     void World::RemoveEntitySubtreeProxies(Entity& entity)
     {
+        auto components = entity.GetComponents();
+
         if (m_SceneView)
         {
-            m_SceneView->RemoveMeshProxy(entity.GetObjectId());
             m_SceneView->RemoveMegaGeometryProxy(entity.GetObjectId());
 
-            auto components = entity.GetComponents();
             for (auto* comp : components)
             {
+                if (auto* meshComp = CastTo<Component::MeshComponent>(comp))
+                {
+                    if (CastTo<Component::MegaGeometryComponent>(meshComp) == nullptr)
+                    {
+                        m_SceneView->RemoveMeshProxy(meshComp->GetComponentId());
+                    }
+                }
                 if (auto* lightComp = CastTo<Component::LightComponent>(comp))
                 {
                     m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
+                }
+                if (auto* boardComp = CastTo<Component::BoardComponent>(comp))
+                {
+                    m_SceneView->RemoveBoardProxy(boardComp->GetComponentId());
+                }
+            }
+        }
+
+        if (m_ScreenSpaceBoardSink)
+        {
+            for (auto* comp : components)
+            {
+                if (auto* boardComp = CastTo<Component::BoardComponent>(comp))
+                {
+                    m_ScreenSpaceBoardSink->RemoveBoardProxy(boardComp->GetComponentId());
                 }
             }
         }

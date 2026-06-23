@@ -16,6 +16,7 @@ namespace
     {
         MeshProxy proxy{};
         proxy.ObjectId = objectId;
+        proxy.ComponentId = objectId;
         proxy.MeshHandle.Id = meshId;
         proxy.MaterialCount = 1;
         proxy.Materials[0].Id = materialId;

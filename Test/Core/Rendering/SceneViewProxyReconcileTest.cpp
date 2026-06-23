@@ -55,11 +55,11 @@ int main()
     view.UpdateLightProxy(MakeLightProxy(101));
     view.UpdateLightProxy(MakeLightProxy(102));
 
-    Container::UnorderedSet<uint64_t> liveMeshObjectIds;
-    liveMeshObjectIds.insert(2);
-    view.RemoveStaleMeshProxies(liveMeshObjectIds);
+    Container::UnorderedSet<uint64_t> liveMeshComponentIds;
+    liveMeshComponentIds.insert(12);
+    view.RemoveStaleMeshProxies(liveMeshComponentIds);
     assert(view.GetMeshProxies().size() == 1);
-    assert(view.GetMeshProxies()[0].ObjectId == 2);
+    assert(view.GetMeshProxies()[0].ComponentId == 12);
 
     Container::UnorderedSet<uint64_t> liveMegaGeometryObjectIds;
     liveMegaGeometryObjectIds.insert(3);

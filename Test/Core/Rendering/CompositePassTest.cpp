@@ -3,6 +3,13 @@
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IBuffer.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
+#include "RHI/IFramebuffer.h"
+#include "RHI/IPipeline.h"
+#include "RHI/IRenderPass.h"
+#include "RHI/ISampler.h"
+#include "RHI/IShader.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/ITexture.h"
@@ -131,6 +138,231 @@ namespace
         Container::VariableArray<RHI::BufferPtr> Buffers;
     };
 
+
+    class FakeRenderPass final : public RHI::IRenderPass
+    {
+    public:
+        explicit FakeRenderPass(const RHI::RenderPassDesc& desc)
+            : Desc(desc)
+        {
+        }
+
+        uint32_t GetColorAttachmentCount() const override
+        {
+            return static_cast<uint32_t>(Desc.colorAttachments.size());
+        }
+        bool HasDepthStencilAttachment() const override { return Desc.hasDepthStencil; }
+        RHI::Format GetColorAttachmentFormat(uint32_t index) const override
+        {
+            return index < Desc.colorAttachments.size()
+                       ? Desc.colorAttachments[index].format
+                       : RHI::Format::UNKNOWN;
+        }
+        RHI::Format GetDepthStencilFormat() const override
+        {
+            return Desc.hasDepthStencil ? Desc.depthStencilAttachment.format : RHI::Format::UNKNOWN;
+        }
+
+        RHI::RenderPassDesc Desc;
+    };
+
+    class FakeFramebuffer final : public RHI::IFramebuffer
+    {
+    public:
+        explicit FakeFramebuffer(const RHI::FramebufferDesc& desc)
+            : Desc(desc)
+        {
+        }
+
+        uint32_t GetWidth() const override { return Desc.width; }
+        uint32_t GetHeight() const override { return Desc.height; }
+        RHI::RenderPassPtr GetRenderPass() const override { return Desc.renderPass; }
+        RHI::TexturePtr GetColorAttachment(uint32_t index) const override
+        {
+            return index < Desc.colorTargets.size() ? Desc.colorTargets[index] : nullptr;
+        }
+        RHI::TexturePtr GetDepthStencilAttachment() const override { return Desc.depthStencilTarget; }
+        uint32_t GetColorAttachmentCount() const override
+        {
+            return static_cast<uint32_t>(Desc.colorTargets.size());
+        }
+        bool HasDepthStencilAttachment() const override { return Desc.depthStencilTarget != nullptr; }
+
+        RHI::FramebufferDesc Desc;
+    };
+
+    class FakeShader final : public RHI::IShader
+    {
+    public:
+        explicit FakeShader(RHI::ShaderStage stage)
+            : m_Stage(stage)
+        {
+        }
+
+        RHI::ShaderStage GetStage() const override { return m_Stage; }
+        Container::String GetEntryPoint() const override { return "main"; }
+        const Container::VariableArray<uint8_t> &GetByteCode() const override { return m_ByteCode; }
+
+    private:
+        RHI::ShaderStage m_Stage = RHI::ShaderStage::None;
+        Container::VariableArray<uint8_t> m_ByteCode;
+    };
+
+    class FakePipeline final : public RHI::IPipeline
+    {
+    public:
+        RHI::PipelineType GetPipelineType() const override { return RHI::PipelineType::Graphics; }
+        uint32_t GetBindPointCount() const override { return 1; }
+    };
+
+    class FakeSampler final : public RHI::ISampler
+    {
+    public:
+        RHI::FilterMode GetFilterMin() const override { return RHI::FilterMode::Linear; }
+        RHI::FilterMode GetFilterMag() const override { return RHI::FilterMode::Linear; }
+        RHI::FilterMode GetFilterMip() const override { return RHI::FilterMode::Linear; }
+        RHI::TextureAddressMode GetAddressModeU() const override { return RHI::TextureAddressMode::Clamp; }
+        RHI::TextureAddressMode GetAddressModeV() const override { return RHI::TextureAddressMode::Clamp; }
+        RHI::TextureAddressMode GetAddressModeW() const override { return RHI::TextureAddressMode::Clamp; }
+        uint32_t GetMaxAnisotropy() const override { return 1; }
+        RHI::CompareFunc GetCompareFunc() const override { return RHI::CompareFunc::Never; }
+    };
+
+    class FakeDescriptorSet final : public RHI::IDescriptorSet
+    {
+    public:
+        void BindConstantBuffer(uint32_t binding, RHI::BufferPtr buffer, uint32_t offset, uint32_t size) override
+        {
+            (void)binding;
+            (void)buffer;
+            (void)offset;
+            (void)size;
+        }
+        void BindTexture(uint32_t binding, RHI::TexturePtr texture) override
+        {
+            if (binding == 0)
+            {
+                SceneTexture = texture;
+            }
+            else if (binding == 1)
+            {
+                CanvasTexture = texture;
+            }
+        }
+        void BindSampler(uint32_t binding, RHI::SamplerPtr sampler) override
+        {
+            if (binding == 0)
+            {
+                SceneSampler = sampler;
+            }
+            else if (binding == 1)
+            {
+                CanvasSampler = sampler;
+            }
+        }
+        void BindStorageBuffer(uint32_t binding, RHI::BufferPtr buffer, uint32_t offset, uint32_t size) override
+        {
+            (void)binding;
+            (void)buffer;
+            (void)offset;
+            (void)size;
+        }
+        void BindStorageTexture(uint32_t binding, RHI::TexturePtr texture) override
+        {
+            (void)binding;
+            (void)texture;
+        }
+        void BindStorageTexture(uint32_t binding, RHI::TexturePtr texture, uint32_t mipLevel) override
+        {
+            (void)binding;
+            (void)texture;
+            (void)mipLevel;
+        }
+        void Update() override { ++UpdateCount; }
+
+        RHI::TexturePtr SceneTexture;
+        RHI::TexturePtr CanvasTexture;
+        RHI::SamplerPtr SceneSampler;
+        RHI::SamplerPtr CanvasSampler;
+        uint32_t UpdateCount = 0;
+    };
+
+    class FakeDevice final : public RHI::IDevice
+    {
+    public:
+        RHI::BufferPtr CreateBuffer(const RHI::BufferDesc& desc) override
+        {
+            return Allocator.AllocateBuffer(desc).Buffer ? Allocator.Buffers.back() : nullptr;
+        }
+        RHI::TexturePtr CreateTexture(const RHI::TextureDesc& desc) override
+        {
+            return RHI::MakeShared<FakeTexture>(desc);
+        }
+        RHI::SamplerPtr CreateSampler(const RHI::SamplerDesc& desc) override
+        {
+            (void)desc;
+            return RHI::MakeShared<FakeSampler>();
+        }
+        RHI::ShaderPtr CreateShader(const RHI::ShaderDesc& desc) override
+        {
+            return RHI::MakeShared<FakeShader>(desc.stage);
+        }
+        RHI::CommandListPtr CreateCommandList() override { return nullptr; }
+        RHI::SwapChainPtr CreateSwapChain(const RHI::SwapChainDesc& desc) override
+        {
+            (void)desc;
+            return nullptr;
+        }
+        RHI::RenderPassPtr CreateRenderPass(const RHI::RenderPassDesc& desc) override
+        {
+            ++CreateRenderPassCount;
+            LastRenderPassDesc = desc;
+            return RHI::MakeShared<FakeRenderPass>(desc);
+        }
+        RHI::FramebufferPtr CreateFramebuffer(const RHI::FramebufferDesc& desc) override
+        {
+            ++CreateFramebufferCount;
+            LastFramebufferDesc = desc;
+            return RHI::MakeShared<FakeFramebuffer>(desc);
+        }
+        RHI::PipelinePtr CreateGraphicsPipeline(const RHI::GraphicsPipelineDesc& desc) override
+        {
+            ++CreateGraphicsPipelineCount;
+            LastPipelineDesc = desc;
+            return RHI::MakeShared<FakePipeline>();
+        }
+        RHI::PipelinePtr CreateComputePipeline(const RHI::ComputePipelineDesc& desc) override
+        {
+            (void)desc;
+            return nullptr;
+        }
+        RHI::DescriptorSetPtr CreateDescriptorSet(const RHI::DescriptorSetDesc& desc) override
+        {
+            (void)desc;
+            return RHI::MakeShared<FakeDescriptorSet>();
+        }
+        RHI::ShaderCompilerPtr CreateShaderCompiler() override { return nullptr; }
+        RHI::IGPUResourceAllocator* GetResourceAllocator() override { return &Allocator; }
+        void WaitIdle() override {}
+        RHI::API GetAPI() const override { return RHI::API::None; }
+        const RHI::DeviceCapabilities& GetCapabilities() const override { return Capabilities; }
+        NorvesLib::Math::Matrix4x4 AdjustProjectionForClipSpace(
+            const NorvesLib::Math::Matrix4x4 &projection,
+            bool bApplyYFlip = true) const override
+        {
+            (void)bApplyYFlip;
+            return projection;
+        }
+
+        FakeAllocator Allocator;
+        RHI::DeviceCapabilities Capabilities;
+        RHI::RenderPassDesc LastRenderPassDesc;
+        RHI::FramebufferDesc LastFramebufferDesc;
+        RHI::GraphicsPipelineDesc LastPipelineDesc;
+        uint32_t CreateRenderPassCount = 0;
+        uint32_t CreateFramebufferCount = 0;
+        uint32_t CreateGraphicsPipelineCount = 0;
+    };
     class FakeCommandList final : public RHI::ICommandList
     {
     public:
@@ -349,6 +581,7 @@ namespace
         RHI::TransientResourcePool Pool;
         RenderGraph Graph;
         FakeCommandList CommandList;
+        FakeDevice Device;
         Container::VariableArray<FrameCommand> PendingFrameCommands;
         ViewRenderContext Context;
 
@@ -361,6 +594,7 @@ namespace
             Context.Graph = &Graph;
             Context.CommandList = &CommandList;
             Context.TransientPool = &Pool;
+            Context.Device = &Device;
             Context.PendingFrameCommands = &PendingFrameCommands;
             Context.RenderWidth = 64;
             Context.RenderHeight = 32;
@@ -474,6 +708,65 @@ namespace
         assert(passResult.OutputTexture.get() == sceneTexture.get());
         std::cout << "TestCanvasTextureImportedPhysicallyButSceneStillPassthrough passed\n";
     }
+
+    void TestCanvasAlphaOverPublishesCompositeTexture()
+    {
+        CompositeFixture fixture;
+        RHI::TexturePtr sceneTexture = RHI::MakeShared<FakeTexture>("PhysicalSceneOutput");
+        RHI::TexturePtr canvasTexture = RHI::MakeShared<FakeTexture>("PhysicalCanvasOutput");
+        RHI::ShaderPtr vertexShader = RHI::MakeShared<FakeShader>(RHI::ShaderStage::Vertex);
+        RHI::ShaderPtr pixelShader = RHI::MakeShared<FakeShader>(RHI::ShaderStage::Pixel);
+        RHI::SamplerPtr sampler = RHI::MakeShared<FakeSampler>();
+        RHI::DescriptorSetPtr descriptorSet = RHI::MakeShared<FakeDescriptorSet>();
+
+        CompositePass pass;
+        CompositePassRequest request;
+        request.SceneTexture = sceneTexture;
+        request.CanvasTexture = canvasTexture;
+        request.VertexShader = vertexShader;
+        request.PixelShader = pixelShader;
+        request.Sampler = sampler;
+        request.DescriptorSet = descriptorSet;
+        pass.SetRequest(request);
+
+        const uint32_t passIndex = fixture.Graph.AddPass(&pass);
+        assert(fixture.Graph.Compile(fixture.Context));
+        assert(fixture.Graph.GetDeclaredPassAccessCount(passIndex) == 3);
+        AssertReadAccess(fixture.Graph, passIndex, 0);
+        AssertReadAccess(fixture.Graph, passIndex, 1);
+
+        RenderGraphExecutionResult result = fixture.Graph.ExecuteWithResult(fixture.Context);
+        assert(result.bSuccess);
+
+        RHI::TexturePtr outputTexture;
+        assert(result.TryGetTexture(RenderGraphResourceNames::CompositeColor, outputTexture));
+        assert(outputTexture.get() != sceneTexture.get());
+        assert(outputTexture->GetWidth() == sceneTexture->GetWidth());
+        assert(outputTexture->GetHeight() == sceneTexture->GetHeight());
+
+        const CompositePassResult& passResult = pass.GetLastResult();
+        assert(passResult.bPublishedComposite);
+        assert(passResult.bImportedCanvas);
+        assert(!passResult.bScenePassthrough);
+        assert(passResult.SceneTexture.get() == sceneTexture.get());
+        assert(passResult.CanvasTexture.get() == canvasTexture.get());
+        assert(passResult.OutputTexture.get() == outputTexture.get());
+        assert(passResult.RenderPass);
+        assert(passResult.Framebuffer);
+        assert(passResult.Pipeline);
+        assert(fixture.PendingFrameCommands.size() == 1);
+        assert(fixture.Device.CreateRenderPassCount == 1);
+        assert(fixture.Device.CreateFramebufferCount == 1);
+        assert(fixture.Device.CreateGraphicsPipelineCount == 1);
+
+        auto fakeDescriptorSet = static_cast<FakeDescriptorSet*>(descriptorSet.get());
+        assert(fakeDescriptorSet->SceneTexture.get() == sceneTexture.get());
+        assert(fakeDescriptorSet->CanvasTexture.get() == canvasTexture.get());
+        assert(fakeDescriptorSet->SceneSampler.get() == sampler.get());
+        assert(fakeDescriptorSet->CanvasSampler.get() == sampler.get());
+        assert(fakeDescriptorSet->UpdateCount == 1);
+        std::cout << "TestCanvasAlphaOverPublishesCompositeTexture passed\n";
+    }
 } // namespace
 
 int main()
@@ -483,6 +776,7 @@ int main()
     TestResourceNamesIncludeCanvasAndComposite();
     TestScenePassthroughWithoutCanvasPublishesCompositeColor();
     TestCanvasTextureImportedPhysicallyButSceneStillPassthrough();
+    TestCanvasAlphaOverPublishesCompositeTexture();
 
     std::cout << "CompositePassTest passed\n";
     return 0;

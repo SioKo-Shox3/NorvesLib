@@ -90,6 +90,36 @@ target_include_directories(CameraViewConstantsTest PRIVATE
 set_target_properties(CameraViewConstantsTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CameraViewConstantsTest COMMAND CameraViewConstantsTest)
 
+add_executable(CameraTableTest
+    CameraTableTest.cpp
+)
+target_link_libraries(CameraTableTest PRIVATE Core)
+target_include_directories(CameraTableTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CameraTableTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CameraTableTest COMMAND CameraTableTest)
+
+add_executable(ViewportCameraIdRenderPlanTest
+    ViewportCameraIdRenderPlanTest.cpp
+)
+target_link_libraries(ViewportCameraIdRenderPlanTest PRIVATE Core)
+target_include_directories(ViewportCameraIdRenderPlanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ViewportCameraIdRenderPlanTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ViewportCameraIdRenderPlanTest COMMAND ViewportCameraIdRenderPlanTest)
+
+add_executable(OrthographicViewportMatrixTest
+    OrthographicViewportMatrixTest.cpp
+)
+target_link_libraries(OrthographicViewportMatrixTest PRIVATE Core)
+target_include_directories(OrthographicViewportMatrixTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(OrthographicViewportMatrixTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME OrthographicViewportMatrixTest COMMAND OrthographicViewportMatrixTest)
+
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp
 )
@@ -272,6 +302,159 @@ target_include_directories(CanvasViewRenderTest PRIVATE
 )
 set_target_properties(CanvasViewRenderTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CanvasViewRenderTest COMMAND CanvasViewRenderTest)
+
+add_executable(CanvasLayerCompositeSnapshotTest
+    CanvasLayerCompositeSnapshotTest.cpp
+)
+target_link_libraries(CanvasLayerCompositeSnapshotTest PRIVATE Core)
+target_include_directories(CanvasLayerCompositeSnapshotTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CanvasLayerCompositeSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CanvasLayerCompositeSnapshotTest COMMAND CanvasLayerCompositeSnapshotTest)
+
+add_executable(BoardInstanceBatchingTest
+    BoardInstanceBatchingTest.cpp
+)
+target_link_libraries(BoardInstanceBatchingTest PRIVATE Core)
+target_include_directories(BoardInstanceBatchingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardInstanceBatchingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardInstanceBatchingTest COMMAND BoardInstanceBatchingTest)
+
+add_executable(BoardComponentRoutingTest
+    BoardComponentRoutingTest.cpp
+)
+target_link_libraries(BoardComponentRoutingTest PRIVATE Core)
+target_include_directories(BoardComponentRoutingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardComponentRoutingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardComponentRoutingTest COMMAND BoardComponentRoutingTest)
+
+add_executable(BillboardComponentTest
+    BillboardComponentTest.cpp
+)
+target_link_libraries(BillboardComponentTest PRIVATE Core)
+target_include_directories(BillboardComponentTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BillboardComponentTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BillboardComponentTest COMMAND BillboardComponentTest)
+
+add_executable(ImpostorBakeServiceTest
+    ImpostorBakeServiceTest.cpp
+)
+target_link_libraries(ImpostorBakeServiceTest PRIVATE Core)
+target_include_directories(ImpostorBakeServiceTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ImpostorBakeServiceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ImpostorBakeServiceTest COMMAND ImpostorBakeServiceTest)
+
+add_executable(ImpostorOctahedralTest
+    ImpostorOctahedralTest.cpp
+)
+target_link_libraries(ImpostorOctahedralTest PRIVATE Core)
+target_include_directories(ImpostorOctahedralTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ImpostorOctahedralTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ImpostorOctahedralTest COMMAND ImpostorOctahedralTest)
+
+add_executable(ImpostorLODSwitchTest
+    ImpostorLODSwitchTest.cpp
+)
+target_link_libraries(ImpostorLODSwitchTest PRIVATE Core)
+target_include_directories(ImpostorLODSwitchTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ImpostorLODSwitchTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ImpostorLODSwitchTest COMMAND ImpostorLODSwitchTest)
+
+add_executable(SceneViewWorldBoardDrawCommandTest
+    SceneViewWorldBoardDrawCommandTest.cpp
+)
+target_link_libraries(SceneViewWorldBoardDrawCommandTest PRIVATE Core)
+target_include_directories(SceneViewWorldBoardDrawCommandTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneViewWorldBoardDrawCommandTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SceneViewWorldBoardDrawCommandTest COMMAND SceneViewWorldBoardDrawCommandTest)
+
+add_executable(ForwardPassWorldBoardRoutingTest
+    ForwardPassWorldBoardRoutingTest.cpp
+)
+target_link_libraries(ForwardPassWorldBoardRoutingTest PRIVATE Core)
+target_include_directories(ForwardPassWorldBoardRoutingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(ForwardPassWorldBoardRoutingTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(ForwardPassWorldBoardRoutingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ForwardPassWorldBoardRoutingTest COMMAND ForwardPassWorldBoardRoutingTest)
+
+add_executable(BoardTransformTest
+    BoardTransformTest.cpp
+)
+target_link_libraries(BoardTransformTest PRIVATE Core)
+target_include_directories(BoardTransformTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardTransformTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardTransformTest COMMAND BoardTransformTest)
+
+add_executable(SpriteSheetUVRectTest
+    SpriteSheetUVRectTest.cpp
+)
+target_link_libraries(SpriteSheetUVRectTest PRIVATE Core)
+target_include_directories(SpriteSheetUVRectTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SpriteSheetUVRectTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SpriteSheetUVRectTest COMMAND SpriteSheetUVRectTest)
+
+add_executable(FlipbookAdvanceTest
+    FlipbookAdvanceTest.cpp
+)
+target_link_libraries(FlipbookAdvanceTest PRIVATE Core)
+target_include_directories(FlipbookAdvanceTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(FlipbookAdvanceTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME FlipbookAdvanceTest COMMAND FlipbookAdvanceTest)
+
+add_executable(BoardBlendModeTest
+    BoardBlendModeTest.cpp
+)
+target_link_libraries(BoardBlendModeTest PRIVATE Core)
+target_include_directories(BoardBlendModeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardBlendModeTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardBlendModeTest COMMAND BoardBlendModeTest)
+
+add_executable(BoardSortKeyStableTest
+    BoardSortKeyStableTest.cpp
+)
+target_link_libraries(BoardSortKeyStableTest PRIVATE Core)
+target_include_directories(BoardSortKeyStableTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(BoardSortKeyStableTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME BoardSortKeyStableTest COMMAND BoardSortKeyStableTest)
+
+add_executable(MultiLayerOrderTest
+    MultiLayerOrderTest.cpp
+)
+target_link_libraries(MultiLayerOrderTest PRIVATE Core)
+target_include_directories(MultiLayerOrderTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(MultiLayerOrderTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MultiLayerOrderTest COMMAND MultiLayerOrderTest)
 
 add_executable(CompositePassTest
     CompositePassTest.cpp

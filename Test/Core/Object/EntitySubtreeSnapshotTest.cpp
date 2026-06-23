@@ -1,5 +1,6 @@
 ﻿#include "Component/Component.h"
 #include "Component/PointLightComponent.h"
+#include "Component/BoardComponent.h"
 #include "Object/RuntimeSchema.h"
 #include "Object/SchemaProjection.h"
 #include "Object/World.h"
@@ -225,6 +226,65 @@ namespace
 
         world.Finalize();
     }
+
+    void TestBoardComponentSnapshotIncludesVisualProperties()
+    {
+        World world;
+        world.Initialize();
+
+        Entity* root = world.SpawnEntity<Entity>();
+        assert(root != nullptr);
+
+        Component::BoardComponent* board = world.CreateComponent<Component::BoardComponent>(root);
+        assert(board != nullptr);
+        board->SetTint(Math::Vector4(0.2f, 0.4f, 0.6f, 0.8f));
+        board->SetPivot(Math::Vector2(0.5f, 0.25f));
+        board->SetSizePx(Math::Vector2(128.0f, 96.0f));
+        board->SetUVRect(Math::Vector4(0.25f, 0.5f, 0.125f, 0.25f));
+        board->SetFrameCount(3);
+        board->SetFramesPerSecond(12.0f);
+        board->SetLoop(false);
+        assert(board->SetFlipbookGrid(128, 64, 32, 32, 4u));
+        board->Play();
+        board->Tick(1.0f);
+
+        EntitySubtreeSnapshot snapshot = RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*root);
+        assert(snapshot.Root.Components.size() == 1);
+
+        const ComponentSubtreeSnapshot& boardSnapshot = snapshot.Root.Components[0];
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "Tint", "Math::Vector4");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "Pivot", "Math::Vector2");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "SizePx", "Math::Vector2");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "UVRectProp", "Math::Vector4");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "FrameCount", "uint32");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "FramesPerSecond", "float");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "bLoop", "bool");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "bPlayOnBeginPlay", "bool");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "InitialFrame", "uint32");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "AtlasTextureWidth", "uint32");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "AtlasTextureHeight", "uint32");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "AtlasCellWidth", "uint32");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "AtlasCellHeight", "uint32");
+        AssertProjectedType(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "FirstFrameIndex", "uint32");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "Tint", "Vector4(0.200000003,0.400000006,0.600000024,0.800000012)");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "Pivot", "Vector2(0.5,0.25)");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "SizePx", "Vector2(128,96)");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "UVRectProp", "Vector4(0.5,0.5,0.25,0.5)");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "FrameCount", "3");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "FramesPerSecond", "12");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "bLoop", "0");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "bPlayOnBeginPlay", "0");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "InitialFrame", "0");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "AtlasTextureWidth", "128");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "AtlasTextureHeight", "64");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "AtlasCellWidth", "32");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "AtlasCellHeight", "32");
+        AssertProjectedValue(boardSnapshot.Object, Component::BoardComponent::StaticClass(), "FirstFrameIndex", "4");
+        assert(FindProjectedValue(boardSnapshot.Object, MakePropertyId(Component::BoardComponent::StaticClass(), "CurrentFrame")) == nullptr);
+        assert(FindProjectedValue(boardSnapshot.Object, MakePropertyId(Component::BoardComponent::StaticClass(), "bPlaying")) == nullptr);
+
+        world.Finalize();
+    }
 }
 
 int main()
@@ -232,6 +292,7 @@ int main()
     std::cout << "EntitySubtreeSnapshotTest start\n";
 
     TestEntitySubtreeSnapshot();
+    TestBoardComponentSnapshotIncludesVisualProperties();
 
     std::cout << "EntitySubtreeSnapshotTest passed\n";
     return 0;

@@ -115,17 +115,31 @@ namespace
         }
     };
 
-    MeshProxy* FindMeshProxy(SceneView& view, uint64_t objectId)
+    MeshProxy* FindMeshProxy(SceneView& view, uint64_t componentId)
     {
         auto& proxies = const_cast<Container::VariableArray<MeshProxy>&>(view.GetMeshProxies());
         for (MeshProxy& proxy : proxies)
         {
-            if (proxy.ObjectId == objectId)
+            if (proxy.ComponentId == componentId)
             {
                 return &proxy;
             }
         }
         return nullptr;
+    }
+
+    uint32_t CountMeshProxiesForObjectId(SceneView& view, uint64_t objectId)
+    {
+        uint32_t count = 0;
+        auto& proxies = const_cast<Container::VariableArray<MeshProxy>&>(view.GetMeshProxies());
+        for (MeshProxy& proxy : proxies)
+        {
+            if (proxy.ObjectId == objectId)
+            {
+                ++count;
+            }
+        }
+        return count;
     }
 
     MegaGeometryProxy* FindMegaGeometryProxy(SceneView& view, uint64_t objectId)
@@ -319,13 +333,15 @@ namespace
         assert(view.GetMeshProxies().size() == 2);
         assert(view.GetMegaGeometryProxies().size() == 1);
         assert(view.GetLightProxies().size() == 1);
-        assert(FindMeshProxy(view, root->GetObjectId()) != nullptr);
-        assert(FindMeshProxy(view, child->GetObjectId()) != nullptr);
+        assert(FindMeshProxy(view, rootMesh->GetComponentId()) != nullptr);
+        assert(FindMeshProxy(view, childMesh->GetComponentId()) != nullptr);
+        assert(FindMeshProxy(view, rootMesh->GetComponentId())->ObjectId == root->GetObjectId());
+        assert(FindMeshProxy(view, childMesh->GetComponentId())->ObjectId == child->GetObjectId());
         assert(FindMegaGeometryProxy(view, child->GetObjectId()) != nullptr);
         assert(FindLightProxy(view, childLight->GetComponentId()) != nullptr);
 
         world.SyncToSceneView();
-        assert(FindMeshProxy(view, child->GetObjectId()) != nullptr);
+        assert(FindMeshProxy(view, childMesh->GetComponentId()) != nullptr);
         assert(FindMegaGeometryProxy(view, child->GetObjectId()) != nullptr);
         assert(FindLightProxy(view, childLight->GetComponentId()) != nullptr);
 
@@ -340,6 +356,94 @@ namespace
         assert(view.GetMeshProxies().size() == 2);
         assert(view.GetMegaGeometryProxies().size() == 1);
         assert(view.GetLightProxies().size() == 1);
+
+        world.Finalize();
+    }
+
+    void TestSceneSyncRemovesOnlyDeletedMeshComponentProxy()
+    {
+        World world;
+        world.Initialize();
+
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+
+        Entity* entity = world.SpawnEntity<Entity>();
+        assert(entity != nullptr);
+
+        MeshComponent* firstMesh = world.CreateComponent<MeshComponent>(entity);
+        MeshComponent* secondMesh = world.CreateComponent<MeshComponent>(entity);
+        assert(firstMesh != nullptr);
+        assert(secondMesh != nullptr);
+        firstMesh->SetMeshHandle(MakeMeshHandle(101));
+        secondMesh->SetMeshHandle(MakeMeshHandle(102));
+
+        world.SyncToSceneView();
+        assert(view.GetMeshProxies().size() == 2);
+        assert(CountMeshProxiesForObjectId(view, entity->GetObjectId()) == 2);
+        assert(FindMeshProxy(view, firstMesh->GetComponentId()) != nullptr);
+        assert(FindMeshProxy(view, secondMesh->GetComponentId()) != nullptr);
+
+        const uint64_t removedComponentId = firstMesh->GetComponentId();
+        entity->RemoveComponent(firstMesh);
+        world.SyncToSceneView();
+
+        assert(view.GetMeshProxies().size() == 1);
+        assert(CountMeshProxiesForObjectId(view, entity->GetObjectId()) == 1);
+        assert(FindMeshProxy(view, removedComponentId) == nullptr);
+        assert(FindMeshProxy(view, secondMesh->GetComponentId()) != nullptr);
+        assert(FindMeshProxy(view, secondMesh->GetComponentId())->ObjectId == entity->GetObjectId());
+
+        world.Finalize();
+    }
+
+    void TestRemoveEntitySubtreeClearsAllMeshComponentProxies()
+    {
+        World world;
+        world.Initialize();
+
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+
+        Entity* root = world.SpawnEntity<Entity>();
+        Entity* child = world.SpawnEntity<Entity>(root);
+        assert(root != nullptr);
+        assert(child != nullptr);
+
+        MeshComponent* rootMeshA = world.CreateComponent<MeshComponent>(root);
+        MeshComponent* rootMeshB = world.CreateComponent<MeshComponent>(root);
+        MeshComponent* childMeshA = world.CreateComponent<MeshComponent>(child);
+        MeshComponent* childMeshB = world.CreateComponent<MeshComponent>(child);
+        assert(rootMeshA != nullptr);
+        assert(rootMeshB != nullptr);
+        assert(childMeshA != nullptr);
+        assert(childMeshB != nullptr);
+
+        rootMeshA->SetMeshHandle(MakeMeshHandle(201));
+        rootMeshB->SetMeshHandle(MakeMeshHandle(202));
+        childMeshA->SetMeshHandle(MakeMeshHandle(203));
+        childMeshB->SetMeshHandle(MakeMeshHandle(204));
+
+        world.SyncToSceneView();
+        assert(view.GetMeshProxies().size() == 4);
+        assert(CountMeshProxiesForObjectId(view, root->GetObjectId()) == 2);
+        assert(CountMeshProxiesForObjectId(view, child->GetObjectId()) == 2);
+
+        const uint64_t rootMeshAId = rootMeshA->GetComponentId();
+        const uint64_t rootMeshBId = rootMeshB->GetComponentId();
+        const uint64_t childMeshAId = childMeshA->GetComponentId();
+        const uint64_t childMeshBId = childMeshB->GetComponentId();
+
+        assert(world.RemoveEntity(root));
+        assert(view.GetMeshProxies().empty());
+        assert(FindMeshProxy(view, rootMeshAId) == nullptr);
+        assert(FindMeshProxy(view, rootMeshBId) == nullptr);
+        assert(FindMeshProxy(view, childMeshAId) == nullptr);
+        assert(FindMeshProxy(view, childMeshBId) == nullptr);
 
         world.Finalize();
     }
@@ -532,6 +636,8 @@ int main()
     TestPublicAttachPolicyAndAdoption();
     TestObjectHeapCreateRejected();
     TestRecursiveSceneSyncAndActiveState();
+    TestSceneSyncRemovesOnlyDeletedMeshComponentProxy();
+    TestRemoveEntitySubtreeClearsAllMeshComponentProxies();
     TestRecursiveTickAndPendingCleanup();
     TestRemoveEntityChildDirectly();
     TestReparentEntity();
