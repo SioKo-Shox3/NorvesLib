@@ -55,5 +55,16 @@ endif()
 # も行わず、--imgui も未処理=素の NorvesLib ビルドを byte-for-byte 不変に保つ。
 if(NORVES_ENABLE_IMGUI)
     target_link_libraries(${MODULE_NAME} PRIVATE NorvesModule_ImGui)
+    # DirectionalLightEditSubRoutine の view が OnImGui で imgui.h / ImGui:: を直接使うため、
+    # Game も imgui 本体 lib を直リンクする(NorvesThirdParty_ImGui の PUBLIC include で imgui.h を
+    # 解決し、ImGui:: シンボルを引き込む)。NorvesModule_ImGui は imgui を PRIVATE 依存するので
+    # Game へは透過しない=ここで明示直リンクが必要。
+    target_link_libraries(${MODULE_NAME} PRIVATE NorvesThirdParty_ImGui)
     target_compile_definitions(${MODULE_NAME} PRIVATE NORVES_ENABLE_IMGUI)
+    # 日本語ラベルの narrow リテラルを実行時 UTF-8 にする(ImGuiModule と同方式)。MSVC 既定の
+    # 実行文字コードは CP932 で ImGui 要求の UTF-8 と食い違うため /utf-8 を付与する。OFF 時は
+    # 付与されず素ビルド不変。
+    if(MSVC)
+        target_compile_options(${MODULE_NAME} PRIVATE /utf-8)
+    endif()
 endif()

@@ -25,6 +25,13 @@
 #include "Core/Public/Math/Quaternion.h"
 #include "Core/Public/Math/Vector3.h"
 
+// ImGui 有効時のみ、方向ライト編集 view を併走させる SubRoutine を引き込む。
+// OFF 時はヘッダごとガードアウトされ空 TU となり push もガードアウトされる(挙動不変)。
+#if defined(NORVES_ENABLE_IMGUI)
+#include "Core/Public/GameMode/IGameModeController.h"  // RequestPushSubRoutine の完全定義
+#include "GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.h"
+#endif
+
 #include <cmath>
 
 using namespace NorvesLib::Core::Container;
@@ -417,6 +424,15 @@ namespace Game::GameModes
             data.m_pDirectionalLightComponent->SetLightVisible(true);
             data.m_pDirectionalLightComponent->SetCastShadows(true);
             LOG_INFO("Directional light created and added to World");
+
+            // ImGui 有効時のみ、方向ライト編集 view を本段(Rendering3DTest)へ併走 push する。
+            // push は遅延適用され同一ドレイン内で現在の top 段へ積まれ Enter(=RegisterImGuiView)される。
+            // MakeUnique<派生>(=std::make_unique)の prvalue は ISubRoutine の仮想デストラクタにより
+            // TUniquePtr<ISubRoutine>(=std::unique_ptr<ISubRoutine>)の値引数へ暗黙 upcast move される。
+#if defined(NORVES_ENABLE_IMGUI)
+            ctx.ControllerRef.RequestPushSubRoutine(
+                MakeUnique<DirectionalLightEditSubRoutine>(data.m_pDirectionalLightComponent));
+#endif
         }
 
         // ========================================
