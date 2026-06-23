@@ -226,6 +226,7 @@ set(PUBLIC_HEADERS
     # GameMode
     Public/GameMode/IStateMachine.h
     Public/GameMode/IGameMode.h
+    Public/GameMode/ISubRoutine.h
     Public/GameMode/TGameMode.h
     Public/GameMode/GameModeId.h
     Public/GameMode/GameModeParams.h

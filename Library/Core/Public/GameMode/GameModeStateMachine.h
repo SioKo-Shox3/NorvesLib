@@ -6,6 +6,7 @@
 #include "GameModeTransition.h"
 #include "GameModeScope.h"
 #include "IGameMode.h"
+#include "ISubRoutine.h"
 #include "Container/Deque.h"
 #include "Container/PointerTypes.h"
 #include "Container/VariableArray.h"
@@ -77,19 +78,28 @@ namespace NorvesLib::Core::GameMode
         void RequestPop() override;
         void RequestReset(GameModeId id, GameModeParams params = {}) override;
         void RequestExitApplication(int exitCode = 0) override;
+        void RequestPushSubRoutine(Container::TUniquePtr<ISubRoutine> sub) override;
+        void RequestPopSubRoutine() override;
 
     private:
-        /// スタック 1 段分のエントリ（モード本体と、そのモードのスコープ）。
+        /// スタック 1 段分のエントリ（モード本体・スコープ・併走サブルーチン）。
         struct StackEntry
         {
             Container::TUniquePtr<IGameMode>     Mode;   // Scope より先に宣言: 破棄時にモードが先に壊れる
             Container::TUniquePtr<GameModeScope> Scope;
+            // この段に積まれた併走サブルーチン（登録順=末尾が最後に積んだもの）。
+            // 寿命=この段の寿命。段が破棄される際、Mode の Leave より前に逆順で
+            // Leave される（LeaveEntrySubRoutines を参照）。
+            Container::VariableArray<Container::TUniquePtr<ISubRoutine>> SubRoutines;
         };
 
         /// 保留キューを FIFO で空になるまで適用する（Update 先頭から呼ばれる）。
         void DrainPendingQueue();
         /// 1 件の遷移要求をスタックへ適用する（種別ごとに分岐）。
-        void ApplyTransition(const GameModeTransitionRequest& req);
+        /// PushSubRoutine は req から所有権を move-out するため非 const 参照で受ける。
+        void ApplyTransition(GameModeTransitionRequest& req);
+        /// 段が破棄される直前に、その段の全サブルーチンを逆順で Leave する（Mode より先）。
+        void LeaveEntrySubRoutines(StackEntry& entry);
         /// 呼び出しサイト用の GameModeContext を構築する（値返し・コピー省略）。
         GameModeContext MakeContext(GameModeScope& scope, float dt);
 

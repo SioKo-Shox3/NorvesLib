@@ -52,7 +52,41 @@ namespace NorvesLib::Core::GameMode
             StackEntry& top = m_Stack.back();
             GameModeContext ctx = MakeContext(*top.Scope, deltaTime);
             top.Mode->Tick(ctx, deltaTime);
+
+            // トップ段（=アクティブ段）のサブルーチンを登録順で Tick する。
+            // Suspend 中（トップでない）段のサブルーチンは Tick しない（並走は
+            // アクティブ段のみ）。サブルーチンの Tick 中に push/pop が要求されても、
+            // それらは遅延キューへ積まれ次フレームのドレインで適用されるため、
+            // この走査中に SubRoutines 配列がリサイズされることはない（再入安全）。
+            for (Container::TUniquePtr<ISubRoutine>& sub : top.SubRoutines)
+            {
+                if (sub)
+                {
+                    sub->Tick(ctx, deltaTime);
+                }
+            }
         }
+    }
+
+    void GameModeStateMachine::LeaveEntrySubRoutines(StackEntry& entry)
+    {
+        // 段が破棄される直前に、サブルーチンを積んだ逆順で Leave する。
+        // Mode はまだ生存しているため、サブルーチンは Mode のリソースを参照した
+        // まま安全に後始末できる。Leave 後に配列を空にして破棄を確定する。
+        if (entry.SubRoutines.empty())
+        {
+            return;
+        }
+        GameModeContext ctx = MakeContext(*entry.Scope, m_DeltaTime);
+        for (std::size_t i = entry.SubRoutines.size(); i > 0; --i)
+        {
+            Container::TUniquePtr<ISubRoutine>& sub = entry.SubRoutines[i - 1];
+            if (sub)
+            {
+                sub->Leave(ctx);
+            }
+        }
+        entry.SubRoutines.clear();
     }
 
     void GameModeStateMachine::DrainPendingQueue()
@@ -64,13 +98,15 @@ namespace NorvesLib::Core::GameMode
         // StackEntry 参照が無効化されることはない。
         while (!m_PendingQueue.empty())
         {
-            GameModeTransitionRequest req = m_PendingQueue.front(); // pop_front の前にコピーアウト
+            // pop_front の前に move アウトする（リクエストは TUniquePtr<ISubRoutine>
+            // を含みムーブ専用のため、コピーではなく move で取り出す）。
+            GameModeTransitionRequest req = std::move(m_PendingQueue.front());
             m_PendingQueue.pop_front();
             ApplyTransition(req);
         }
     }
 
-    void GameModeStateMachine::ApplyTransition(const GameModeTransitionRequest& req)
+    void GameModeStateMachine::ApplyTransition(GameModeTransitionRequest& req)
     {
         switch (req.Type)
         {
@@ -79,6 +115,7 @@ namespace NorvesLib::Core::GameMode
             if (!m_Stack.empty())
             {
                 StackEntry& top = m_Stack.back();
+                LeaveEntrySubRoutines(top); // Mode の Leave より前にサブルーチンを後始末
                 GameModeContext ctx = MakeContext(*top.Scope, m_DeltaTime);
                 top.Mode->Leave(ctx, GameModeExitReason::Change);
                 top.Scope->Cleanup();
@@ -161,6 +198,7 @@ namespace NorvesLib::Core::GameMode
             }
 
             StackEntry& top = m_Stack.back();
+            LeaveEntrySubRoutines(top); // Mode の Leave より前にサブルーチンを後始末
             GameModeContext leaveCtx = MakeContext(*top.Scope, m_DeltaTime);
             top.Mode->Leave(leaveCtx, GameModeExitReason::Pop);
             top.Scope->Cleanup();
@@ -181,6 +219,7 @@ namespace NorvesLib::Core::GameMode
             while (!m_Stack.empty())
             {
                 StackEntry& e = m_Stack.back();
+                LeaveEntrySubRoutines(e); // Mode の Leave より前にサブルーチンを後始末
                 GameModeContext ctx = MakeContext(*e.Scope, m_DeltaTime);
                 e.Mode->Leave(ctx, GameModeExitReason::Reset);
                 e.Scope->Cleanup();
@@ -218,6 +257,61 @@ namespace NorvesLib::Core::GameMode
             return;
         }
 
+        case GameModeTransitionType::PushSubRoutine:
+        {
+            // GameMode は Suspend しない・並走させる。現在のトップ段の sub-stack
+            // 末尾へ追加し Enter を呼ぶ。空スタックには積めない（積み先がない）。
+            if (m_Stack.empty())
+            {
+                NORVES_LOG_WARNING("GameMode", "RequestPushSubRoutine on empty stack; ignored");
+                return;
+            }
+            if (!req.SubRoutine)
+            {
+                NORVES_LOG_WARNING("GameMode", "RequestPushSubRoutine with null sub; ignored");
+                return;
+            }
+
+            StackEntry& top = m_Stack.back();
+            top.SubRoutines.push_back(std::move(req.SubRoutine));
+
+            // push_back 後に末尾参照を取得して Enter する。Enter 内で push/pop が
+            // 要求されても遅延キューへ積まれるだけで SubRoutines は同期変更されない。
+            Container::TUniquePtr<ISubRoutine>& added = top.SubRoutines.back();
+            GameModeContext ctx = MakeContext(*top.Scope, m_DeltaTime);
+            added->Enter(ctx);
+            return;
+        }
+
+        case GameModeTransitionType::PopSubRoutine:
+        {
+            if (m_Stack.empty())
+            {
+                NORVES_LOG_WARNING("GameMode", "RequestPopSubRoutine on empty stack; ignored");
+                return;
+            }
+
+            StackEntry& top = m_Stack.back();
+            if (top.SubRoutines.empty())
+            {
+                NORVES_LOG_WARNING("GameMode", "RequestPopSubRoutine with no sub on top entry; ignored");
+                return;
+            }
+
+            // 末尾（最後に積んだもの）を Leave してから配列から除去する。
+            // Leave 用に末尾を move アウトし、配列から先に外してから Leave する
+            // ことで、Leave 中の再入要求が解決される次ドレインまで配列形状が安定。
+            Container::TUniquePtr<ISubRoutine> sub = std::move(top.SubRoutines.back());
+            top.SubRoutines.pop_back();
+            if (sub)
+            {
+                GameModeContext ctx = MakeContext(*top.Scope, m_DeltaTime);
+                sub->Leave(ctx);
+            }
+            // sub はここで破棄される（Leave 済み）。
+            return;
+        }
+
         case GameModeTransitionType::None:
         default:
         {
@@ -238,6 +332,7 @@ namespace NorvesLib::Core::GameMode
         while (!m_Stack.empty())
         {
             StackEntry& e = m_Stack.back();
+            LeaveEntrySubRoutines(e); // Mode の Leave より前にサブルーチンを後始末
             GameModeContext ctx = MakeContext(*e.Scope, m_DeltaTime);
             e.Mode->Leave(ctx, GameModeExitReason::Shutdown);
             e.Scope->Cleanup();
@@ -292,6 +387,23 @@ namespace NorvesLib::Core::GameMode
         GameModeTransitionRequest r;
         r.Type     = GameModeTransitionType::Quit;
         r.ExitCode = exitCode;
+        m_PendingQueue.push_back(std::move(r));
+    }
+
+    void GameModeStateMachine::RequestPushSubRoutine(Container::TUniquePtr<ISubRoutine> sub)
+    {
+        // 他の Request* と同じく遅延適用。サブルーチンの所有権をリクエストへ
+        // 移し、次の Update 先頭のドレインで現在のトップ段へ積む。
+        GameModeTransitionRequest r;
+        r.Type       = GameModeTransitionType::PushSubRoutine;
+        r.SubRoutine = std::move(sub);
+        m_PendingQueue.push_back(std::move(r));
+    }
+
+    void GameModeStateMachine::RequestPopSubRoutine()
+    {
+        GameModeTransitionRequest r;
+        r.Type = GameModeTransitionType::PopSubRoutine;
         m_PendingQueue.push_back(std::move(r));
     }
 

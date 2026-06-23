@@ -2,6 +2,7 @@
 
 #include "GameModeId.h"
 #include "GameModeParams.h"
+#include "Container/PointerTypes.h"
 
 #include <cstdint>
 
@@ -21,7 +22,13 @@ namespace NorvesLib::Core::GameMode
         Pop,
         ResetStack,
         Quit,
+        PushSubRoutine, // 現在のトップ段にサブルーチンを積む（Enter を呼ぶ）
+        PopSubRoutine,  // 現在のトップ段の最後のサブルーチンを取り除く（Leave を呼ぶ）
     };
+
+    // 前方宣言: GameModeTransitionRequest が TUniquePtr<ISubRoutine> を運ぶ。
+    // 完全な定義は ISubRoutine.h（GameModeContext.h 経由で利用側が include）。
+    class ISubRoutine;
 
     /**
      * @brief ゲームモード退場理由
@@ -51,6 +58,12 @@ namespace NorvesLib::Core::GameMode
         GameModeId             Target;   // デフォルト構築 = 無効ID。Quit 遷移は Target を参照しない。
         GameModeParams         Params;
         int                    ExitCode = 0;
+
+        // PushSubRoutine のときのみ有効: 積むサブルーチンの所有権を運ぶ。
+        // 適用時にトップ段の sub-stack へ move される。TUniquePtr を含むため
+        // このリクエストはムーブ専用（コピー不可）になる。ドレインは front()
+        // から move-out すること（コピーアウトしない）。
+        Container::TUniquePtr<ISubRoutine> SubRoutine;
     };
 
 } // namespace NorvesLib::Core::GameMode
