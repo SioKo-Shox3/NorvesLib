@@ -50,15 +50,40 @@ namespace NorvesLib::Core::Rendering
             outData.NormalMatrix[7] = proxy.UVRect.y;
             outData.NormalMatrix[8] = proxy.UVRect.z;
             outData.NormalMatrix[9] = proxy.UVRect.w;
+            outData.NormalMatrix[10] = static_cast<float>(proxy.ImpostorAxisCellCountX);
+            outData.NormalMatrix[11] = static_cast<float>(proxy.ImpostorAxisCellCountY);
 
             outData.ObjectColor[0] = proxy.Tint.x;
             outData.ObjectColor[1] = proxy.Tint.y;
             outData.ObjectColor[2] = proxy.Tint.z;
             outData.ObjectColor[3] = proxy.BlendModeProp == BlendMode::Opaque ? 1.0f : proxy.Tint.w;
-            outData.CustomData[0] = 0.0f;
-            outData.CustomData[1] = 0.0f;
-            outData.CustomData[2] = 0.0f;
-            outData.CustomData[3] = 0.0f;
+            outData.CustomData[0] = static_cast<float>(proxy.ImpostorCellResolution);
+            outData.CustomData[1] = static_cast<float>(proxy.ImpostorAtlasWidth);
+            outData.CustomData[2] = static_cast<float>(proxy.ImpostorAtlasHeight);
+            outData.CustomData[3] = proxy.LODSwitchDistance;
+        }
+
+        float ComputeDistanceToBounds(const BoundingSphere &bounds,
+                                      const Math::Vector3 &cameraPosition)
+        {
+            const float dx = bounds.CenterX - cameraPosition.x;
+            const float dy = bounds.CenterY - cameraPosition.y;
+            const float dz = bounds.CenterZ - cameraPosition.z;
+            return std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
+        bool IsImpostorBoardEligibleForDistance(const BoardProxy &proxy,
+                                                float cameraDistance)
+        {
+            return proxy.RenderSubtype != BoardRenderSubtype::Impostor ||
+                   proxy.LODSwitchDistance <= 0.0f ||
+                   cameraDistance >= proxy.LODSwitchDistance;
+        }
+
+        bool ShouldSuppressMeshForImpostor(const BoardProxy &proxy)
+        {
+            return proxy.RenderSubtype == BoardRenderSubtype::Impostor &&
+                   proxy.SourceMeshComponentId != 0;
         }
     } // namespace
 
@@ -666,29 +691,7 @@ namespace NorvesLib::Core::Rendering
             camera.PositionY,
             camera.PositionZ);
 
-        for (MeshProxy &proxy : m_MeshProxies)
-        {
-            bool bVisible = true;
-
-            if (m_bEnableFrustumCulling && bVisible)
-            {
-                bVisible = FrustumCull(proxy, viewProjection);
-            }
-
-            if (m_bEnableDistanceCulling && bVisible)
-            {
-                bVisible = DistanceCull(proxy, cameraPosition);
-            }
-
-            if (bVisible)
-            {
-                float dx = proxy.WorldBounds.CenterX - cameraPosition.x;
-                float dy = proxy.WorldBounds.CenterY - cameraPosition.y;
-                float dz = proxy.WorldBounds.CenterZ - cameraPosition.z;
-                proxy.SortDepth = std::sqrt(dx * dx + dy * dy + dz * dz);
-                m_VisibleMeshProxies.push_back(&proxy);
-            }
-        }
+        Container::UnorderedSet<uint64_t> suppressedMeshComponentIds;
 
         for (BoardProxy &proxy : m_BoardProxies)
         {
@@ -708,11 +711,44 @@ namespace NorvesLib::Core::Rendering
 
             if (bVisible)
             {
-                float dx = proxy.WorldBounds.CenterX - cameraPosition.x;
-                float dy = proxy.WorldBounds.CenterY - cameraPosition.y;
-                float dz = proxy.WorldBounds.CenterZ - cameraPosition.z;
-                proxy.SortDepth = std::sqrt(dx * dx + dy * dy + dz * dz);
+                proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+                bVisible = IsImpostorBoardEligibleForDistance(proxy, proxy.SortDepth);
+            }
+
+            if (bVisible)
+            {
+                if (ShouldSuppressMeshForImpostor(proxy))
+                {
+                    suppressedMeshComponentIds.insert(proxy.SourceMeshComponentId);
+                }
+
                 m_VisibleBoardProxies.push_back(&proxy);
+            }
+        }
+
+        for (MeshProxy &proxy : m_MeshProxies)
+        {
+            if (suppressedMeshComponentIds.find(proxy.ComponentId) != suppressedMeshComponentIds.end())
+            {
+                continue;
+            }
+
+            bool bVisible = true;
+
+            if (m_bEnableFrustumCulling && bVisible)
+            {
+                bVisible = FrustumCull(proxy, viewProjection);
+            }
+
+            if (m_bEnableDistanceCulling && bVisible)
+            {
+                bVisible = DistanceCull(proxy, cameraPosition);
+            }
+
+            if (bVisible)
+            {
+                proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+                m_VisibleMeshProxies.push_back(&proxy);
             }
         }
 
@@ -765,29 +801,7 @@ namespace NorvesLib::Core::Rendering
         const Math::Matrix4x4 viewProjection =
             CameraViewConstants::BuildCullingViewProjectionMatrix(camera, aspectRatio);
 
-        for (MeshProxy &proxy : m_MeshProxies)
-        {
-            bool bVisible = true;
-
-            if (m_bEnableFrustumCulling && bVisible)
-            {
-                bVisible = FrustumCull(proxy, viewProjection);
-            }
-
-            if (m_bEnableDistanceCulling && bVisible)
-            {
-                bVisible = DistanceCull(proxy, cameraPosition);
-            }
-
-            if (bVisible)
-            {
-                float dx = proxy.WorldBounds.CenterX - cameraPosition.x;
-                float dy = proxy.WorldBounds.CenterY - cameraPosition.y;
-                float dz = proxy.WorldBounds.CenterZ - cameraPosition.z;
-                proxy.SortDepth = std::sqrt(dx * dx + dy * dy + dz * dz);
-                m_VisibleMeshProxies.push_back(&proxy);
-            }
-        }
+        Container::UnorderedSet<uint64_t> suppressedMeshComponentIds;
 
         for (BoardProxy &proxy : m_BoardProxies)
         {
@@ -807,11 +821,44 @@ namespace NorvesLib::Core::Rendering
 
             if (bVisible)
             {
-                float dx = proxy.WorldBounds.CenterX - cameraPosition.x;
-                float dy = proxy.WorldBounds.CenterY - cameraPosition.y;
-                float dz = proxy.WorldBounds.CenterZ - cameraPosition.z;
-                proxy.SortDepth = std::sqrt(dx * dx + dy * dy + dz * dz);
+                proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+                bVisible = IsImpostorBoardEligibleForDistance(proxy, proxy.SortDepth);
+            }
+
+            if (bVisible)
+            {
+                if (ShouldSuppressMeshForImpostor(proxy))
+                {
+                    suppressedMeshComponentIds.insert(proxy.SourceMeshComponentId);
+                }
+
                 m_VisibleBoardProxies.push_back(&proxy);
+            }
+        }
+
+        for (MeshProxy &proxy : m_MeshProxies)
+        {
+            if (suppressedMeshComponentIds.find(proxy.ComponentId) != suppressedMeshComponentIds.end())
+            {
+                continue;
+            }
+
+            bool bVisible = true;
+
+            if (m_bEnableFrustumCulling && bVisible)
+            {
+                bVisible = FrustumCull(proxy, viewProjection);
+            }
+
+            if (m_bEnableDistanceCulling && bVisible)
+            {
+                bVisible = DistanceCull(proxy, cameraPosition);
+            }
+
+            if (bVisible)
+            {
+                proxy.SortDepth = ComputeDistanceToBounds(proxy.WorldBounds, cameraPosition);
+                m_VisibleMeshProxies.push_back(&proxy);
             }
         }
 
@@ -861,6 +908,7 @@ namespace NorvesLib::Core::Rendering
             DrawCommand command = DrawCommand::CreateDraw();
             command.Type = DrawCommandType::DrawInstanced;
             command.Draw.PayloadKind = DrawPayloadKind::Board;
+            command.Draw.BoardSubtype = proxy->RenderSubtype;
             command.Draw.VertexOffset = 6;
             command.Draw.InstanceCount = 1;
             command.Draw.FirstInstance = instanceIndex;
@@ -870,6 +918,7 @@ namespace NorvesLib::Core::Rendering
             command.Draw.Texture = proxy->Texture;
             command.Draw.SortDepth = proxy->SortDepth;
             command.Draw.ObjectId = proxy->ObjectId;
+            command.Draw.SourceMeshComponentId = proxy->SourceMeshComponentId;
             command.SortKey = proxy->SortKey;
             m_DrawCommands.push_back(command);
         }

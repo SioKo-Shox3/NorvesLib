@@ -116,6 +116,22 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
+            m_ImpostorVertexShader = context.ShaderMgr->LoadShader("impostor.vert",
+                                                                   RHI::ShaderStage::Vertex);
+            if (!m_ImpostorVertexShader)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to load impostor vertex shader");
+                return false;
+            }
+
+            m_ImpostorFragmentShader = context.ShaderMgr->LoadShader("impostor.frag",
+                                                                     RHI::ShaderStage::Pixel);
+            if (!m_ImpostorFragmentShader)
+            {
+                NORVES_LOG_ERROR("ForwardPass", "Failed to load impostor fragment shader");
+                return false;
+            }
+
             RHI::DescriptorSetDesc descriptorSetDesc;
 
             RHI::DescriptorBinding uboBinding;
@@ -251,10 +267,13 @@ namespace NorvesLib::Core::Rendering
         m_ForwardFramebuffer.reset();
         m_TransparentPipeline.reset();
         m_WorldBoardPipeline.reset();
+        m_ImpostorPipeline.reset();
         m_TransparentVertexShader.reset();
         m_TransparentFragmentShader.reset();
         m_WorldBoardVertexShader.reset();
         m_WorldBoardFragmentShader.reset();
+        m_ImpostorVertexShader.reset();
+        m_ImpostorFragmentShader.reset();
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
@@ -515,7 +534,9 @@ namespace NorvesLib::Core::Rendering
             !m_TransparentVertexShader ||
             !m_TransparentFragmentShader ||
             !m_WorldBoardVertexShader ||
-            !m_WorldBoardFragmentShader)
+            !m_WorldBoardFragmentShader ||
+            !m_ImpostorVertexShader ||
+            !m_ImpostorFragmentShader)
         {
             return false;
         }
@@ -527,6 +548,7 @@ namespace NorvesLib::Core::Rendering
         m_ForwardFramebuffer.reset();
         m_TransparentPipeline.reset();
         m_WorldBoardPipeline.reset();
+        m_ImpostorPipeline.reset();
         m_ForwardRenderPass.reset();
         m_TransparentRenderPassSignature = {};
 
@@ -712,6 +734,17 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        RHI::GraphicsPipelineDesc impostorPipelineDesc = boardPipelineDesc;
+        impostorPipelineDesc.vertexShader = m_ImpostorVertexShader;
+        impostorPipelineDesc.pixelShader = m_ImpostorFragmentShader;
+
+        m_ImpostorPipeline = m_Device->CreateGraphicsPipeline(impostorPipelineDesc);
+        if (!m_ImpostorPipeline)
+        {
+            NORVES_LOG_ERROR("ForwardPass", "Failed to create impostor forward pipeline");
+            return false;
+        }
+
         m_TransparentRenderPassSignature = signature;
         return true;
     }
@@ -791,7 +824,8 @@ namespace NorvesLib::Core::Rendering
             !m_ForwardRenderPass ||
             !m_ForwardFramebuffer ||
             !m_TransparentPipeline ||
-            !m_WorldBoardPipeline;
+            !m_WorldBoardPipeline ||
+            !m_ImpostorPipeline;
 
         if (!bResourcesChanged)
         {
@@ -828,6 +862,7 @@ namespace NorvesLib::Core::Rendering
             !m_ForwardFramebuffer ||
             !m_TransparentPipeline ||
             !m_WorldBoardPipeline ||
+            !m_ImpostorPipeline ||
             !context.InstanceDataBuffer)
         {
             if (bUseRenderGraphManagedStates)
@@ -924,7 +959,9 @@ namespace NorvesLib::Core::Rendering
                 allocation.DescriptorSet->Update();
 
                 DrawCommand drawCommand = cmd;
-                drawCommand.Pipeline = m_WorldBoardPipeline;
+                drawCommand.Pipeline = cmd.Draw.BoardSubtype == BoardRenderSubtype::Impostor
+                                           ? m_ImpostorPipeline
+                                           : m_WorldBoardPipeline;
                 drawCommand.DescriptorSet = allocation.DescriptorSet;
                 drawCommand.DescriptorSetSlot = 0;
                 transparentCommands->push_back(drawCommand);

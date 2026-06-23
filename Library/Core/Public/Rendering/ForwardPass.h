@@ -151,10 +151,13 @@ namespace NorvesLib::Core::Rendering
         RHI::FramebufferPtr m_ForwardFramebuffer;
         RHI::PipelinePtr m_TransparentPipeline;
         RHI::PipelinePtr m_WorldBoardPipeline;
+        RHI::PipelinePtr m_ImpostorPipeline;
         RHI::ShaderPtr m_TransparentVertexShader;
         RHI::ShaderPtr m_TransparentFragmentShader;
         RHI::ShaderPtr m_WorldBoardVertexShader;
         RHI::ShaderPtr m_WorldBoardFragmentShader;
+        RHI::ShaderPtr m_ImpostorVertexShader;
+        RHI::ShaderPtr m_ImpostorFragmentShader;
 
         // 透明フォワード用PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;

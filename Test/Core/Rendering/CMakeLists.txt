@@ -353,6 +353,26 @@ target_include_directories(ImpostorBakeServiceTest PRIVATE
 set_target_properties(ImpostorBakeServiceTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ImpostorBakeServiceTest COMMAND ImpostorBakeServiceTest)
 
+add_executable(ImpostorOctahedralTest
+    ImpostorOctahedralTest.cpp
+)
+target_link_libraries(ImpostorOctahedralTest PRIVATE Core)
+target_include_directories(ImpostorOctahedralTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ImpostorOctahedralTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ImpostorOctahedralTest COMMAND ImpostorOctahedralTest)
+
+add_executable(ImpostorLODSwitchTest
+    ImpostorLODSwitchTest.cpp
+)
+target_link_libraries(ImpostorLODSwitchTest PRIVATE Core)
+target_include_directories(ImpostorLODSwitchTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ImpostorLODSwitchTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ImpostorLODSwitchTest COMMAND ImpostorLODSwitchTest)
+
 add_executable(SceneViewWorldBoardDrawCommandTest
     SceneViewWorldBoardDrawCommandTest.cpp
 )

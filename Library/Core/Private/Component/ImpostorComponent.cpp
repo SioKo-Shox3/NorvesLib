@@ -3,6 +3,7 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
 #include "Logging/LogMacros.h"
+#include <cmath>
 
 namespace NorvesLib::Core::Component
 {
@@ -13,6 +14,7 @@ namespace NorvesLib::Core::Component
     {
         BakedAtlasTextureHandle = Rendering::TextureHandle::Invalid();
         BakedAtlasMetadata = Rendering::ImpostorBakeMetadata{};
+        LODSwitchDistance = 0.0f;
         Space = Rendering::BoardSpace::WorldSpace;
     }
 
@@ -21,6 +23,7 @@ namespace NorvesLib::Core::Component
     {
         BakedAtlasTextureHandle = Rendering::TextureHandle::Invalid();
         BakedAtlasMetadata = Rendering::ImpostorBakeMetadata{};
+        LODSwitchDistance = 0.0f;
         Space = Rendering::BoardSpace::WorldSpace;
     }
 
@@ -29,6 +32,7 @@ namespace NorvesLib::Core::Component
     {
         BakedAtlasTextureHandle = Rendering::TextureHandle::Invalid();
         BakedAtlasMetadata = Rendering::ImpostorBakeMetadata{};
+        LODSwitchDistance = 0.0f;
         Space = Rendering::BoardSpace::WorldSpace;
     }
 
@@ -62,6 +66,18 @@ namespace NorvesLib::Core::Component
         return true;
     }
 
+    void ImpostorComponent::SetSourceMeshComponentId(uint64_t componentId)
+    {
+        m_SourceMeshComponentId = componentId;
+        MarkRenderStateDirty();
+    }
+
+    void ImpostorComponent::SetLODSwitchDistance(float distance)
+    {
+        LODSwitchDistance = std::isfinite(distance) && distance > 0.0f ? distance : 0.0f;
+        MarkRenderStateDirty();
+    }
+
     void ImpostorComponent::ReleaseBakedAtlas(Rendering::TextureResources &textures,
                                               Rendering::RenderWorld *renderWorld)
     {
@@ -90,7 +106,16 @@ namespace NorvesLib::Core::Component
 
         if (HasBakedAtlas())
         {
+            const Rendering::ImpostorBakeMetadata &metadata = BakedAtlasMetadata.Get();
+            outProxy.RenderSubtype = Rendering::BoardRenderSubtype::Impostor;
             outProxy.Texture = BakedAtlasTextureHandle;
+            outProxy.SourceMeshComponentId = m_SourceMeshComponentId;
+            outProxy.LODSwitchDistance = LODSwitchDistance;
+            outProxy.ImpostorCellResolution = metadata.CellResolution;
+            outProxy.ImpostorAxisCellCountX = metadata.AxisCellCountX;
+            outProxy.ImpostorAxisCellCountY = metadata.AxisCellCountY;
+            outProxy.ImpostorAtlasWidth = metadata.AtlasWidth;
+            outProxy.ImpostorAtlasHeight = metadata.AtlasHeight;
         }
 
         outProxy.Space = Rendering::BoardSpace::WorldSpace;
