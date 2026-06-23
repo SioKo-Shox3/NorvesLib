@@ -432,6 +432,23 @@ namespace Game::GameModes
             data.m_pDirectionalLightComponent->SetCastShadows(true);
             LOG_INFO("Directional light created and added to World");
 
+            // 方向ライト操作コントローラーを方向ライトへ接続し、入力ルーターへ
+            // ゲーム優先度で登録する。SetTargetComponent が現在方向/強度から
+            // 内部 Yaw/Pitch を seed するため初回入力でのジャンプは起きない。
+            // 自バインドキー（矢印・+/-・Shift）のみ consume し他は透過するため、
+            // 同優先度の debug コントローラと共存する。
+            data.m_LightController.SetTargetComponent(data.m_pDirectionalLightComponent);
+            ctx.EngineRef.GetInputRouter().RegisterController(
+                &data.m_LightController,
+                NorvesLib::Core::Input::InputRouter::PriorityGame);
+
+            // F1-F5 デバッグビュー切替コントローラーを RenderWorld へ接続し登録する。
+            // F1-F5 のみ consume・他は透過。light コントローラと同優先度で並ぶ。
+            data.m_DebugInput.SetRenderWorld(&ctx.EngineRef.GetRenderWorld());
+            ctx.EngineRef.GetInputRouter().RegisterController(
+                &data.m_DebugInput,
+                NorvesLib::Core::Input::InputRouter::PriorityGame);
+
             // ImGui 有効時のみ、方向ライト編集 view を本段(Rendering3DTest)へ併走 push する。
             // push は遅延適用され同一ドレイン内で現在の top 段へ積まれ Enter(=RegisterImGuiView)される。
             // MakeUnique<派生>(=std::make_unique)の prvalue は ISubRoutine の仮想デストラクタにより
@@ -509,53 +526,13 @@ namespace Game::GameModes
         const auto &inputState = ctx.InputRef.GetState();
 
         // カメラは InputRouter 経由でイベント駆動更新済み（Update 呼び出し不要）。
+        // F1-F5 デバッグビュー切替も Rendering3DTestDebugInput が
+        // InputRouter 経由で処理する（旧 inline poll は撤去済み）。
 
-#if NORVES_BUILD_DEVELOPMENT
-        if (!inputState.IsAltDown())
-        {
-            const DebugViewMode currentDebugViewMode = ctx.EngineRef.GetRenderWorld().GetMainViewportDebugViewMode();
-            DebugViewMode nextDebugViewMode = currentDebugViewMode;
-            bool bDebugViewModeRequested = true;
-
-            if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F1))
-            {
-                nextDebugViewMode = DebugViewMode::Normal;
-            }
-            else if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F2))
-            {
-                nextDebugViewMode = DebugViewMode::Unlit;
-            }
-            else if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F3))
-            {
-                nextDebugViewMode = DebugViewMode::Wireframe;
-            }
-            else if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F4))
-            {
-                nextDebugViewMode = DebugViewMode::MegaGeometryClusters;
-            }
-            else if (inputState.IsKeyPressed(NorvesLib::Core::Input::KeyCode::F5))
-            {
-                uint8_t nextModeIndex = static_cast<uint8_t>(currentDebugViewMode) + 1;
-                if (nextModeIndex >= static_cast<uint8_t>(DebugViewMode::Count))
-                {
-                    nextModeIndex = 0;
-                }
-                nextDebugViewMode = static_cast<DebugViewMode>(nextModeIndex);
-            }
-            else
-            {
-                bDebugViewModeRequested = false;
-            }
-
-            if (bDebugViewModeRequested && nextDebugViewMode != currentDebugViewMode)
-            {
-                ctx.EngineRef.GetRenderWorld().SetDebugViewModeAll(nextDebugViewMode);
-                const DebugViewMode reflectedDebugViewMode = ctx.EngineRef.GetRenderWorld().GetMainViewportDebugViewMode();
-                data.m_DebugViewMode = reflectedDebugViewMode;
-                NORVES_LOG_INFO("DebugView", "DebugViewMode -> %s", DebugViewModeToString(reflectedDebugViewMode));
-            }
-        }
-#endif
+        // 方向ライトの連続 hold 適用。held フラグは LightController::OnKey が
+        // InputRouter 経由で更新する。ImGui がキーボードを掴んでいる間は
+        // 上位で consume されるため held は積まれず、ここでも動かない（排他）。
+        data.m_LightController.Update(deltaTime);
 
         // デバッグ: スクロール値とカメラ距離を出力
         {
@@ -657,9 +634,11 @@ namespace Game::GameModes
         LOG_INFO("3Dレンダリングテスト終了");
         LOG_INFO("=================================================");
 
-        // カメラの入力ルーター登録を解除する（借用ポインタの寿命管理）。
-        // 以降マウスイベントが来てもカメラへは配送されない。
+        // 入力ルーター登録を解除する（借用ポインタの寿命管理）。以降イベントが
+        // 来てもカメラ/ライト/デバッグ各コントローラへは配送されない。
         ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_CameraController);
+        ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_LightController);
+        ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_DebugInput);
 
         // 1) 非同期ロードの後始末（World/RenderResources 生存中に行う）。
         //    GameModeScope::Cleanup は Leave 直後に呼ばれるため、ここでは
