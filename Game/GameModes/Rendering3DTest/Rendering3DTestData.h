@@ -2,8 +2,10 @@
 
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Container/PointerTypes.h"
+#include "Core/Public/Input/LightController.h"
 #include "Core/Public/Input/MayaCameraController.h"
 #include "Core/Public/Object/Entity.h"
+#include "GameModes/Rendering3DTest/Rendering3DTestDebugInput.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Core/Public/Rendering/RenderTypes.h"
@@ -105,8 +107,11 @@ namespace Game::GameModes
         // Maya準拠カメラコントローラー（シーン所有）
         NorvesLib::Core::Input::MayaCameraController m_CameraController;
 
-        // デバッグ描画モード（入力トグル用ミラー）
-        NorvesLib::Core::Rendering::DebugViewMode m_DebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
+        // 方向ライト操作コントローラー（矢印/+-、シーン所有・イベント駆動）
+        NorvesLib::Core::Input::LightController m_LightController;
+
+        // F1-F5 デバッグビュー切替コントローラー（シーン所有・イベント駆動）
+        Rendering3DTestDebugInput m_DebugInput;
 
         // メッシュ登録済みフラグ
         bool m_bMeshesRegistered = false;

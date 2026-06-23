@@ -1,37 +1,45 @@
 ﻿#pragma once
 
+#include "Input/IInputController.h"
 #include "Input/InputTypes.h"
-#include "Input/InputState.h"
 #include "Rendering/SceneProxy.h"
 #include "Math/Vector3.h"
+
+namespace NorvesLib::Core::Component
+{
+    class LightComponent;
+} // namespace NorvesLib::Core::Component
 
 namespace NorvesLib::Core::Input
 {
 
     /**
-     * @brief ライトコントローラー
+     * @brief ライトコントローラー（イベント駆動 IInputController）
      *
-     * キーボード/マウス操作でDirectionalライトの方向を操作します。
+     * キーボード操作でDirectionalライトの方向/強度を操作します。
+     * InputRouter にゲーム優先度で登録し、自分のバインドキー（矢印・+/-・Shift）
+     * のみを consume（その他は透過）。連続 hold は OnKey で held フラグを更新し、
+     * Update(deltaTime) で適用します。
      *
      * デフォルト操作:
      * - 矢印キー: ライトの方向を変更（Yaw/Pitch）
      * - +/-: ライトの強度を変更
      * - Shift + 矢印キー: 高速回転
      *
-     * 操作対象のLightProxyを設定して使用します。
+     * 操作対象は LightComponent（推奨）または LightProxy（後方互換）。
      */
-    class LightController
+    class LightController : public IInputController
     {
     public:
         LightController();
-        ~LightController() = default;
+        ~LightController() override = default;
 
         // ========================================
         // 初期化・設定
         // ========================================
 
         /**
-         * @brief 操作対象のライトを設定
+         * @brief 操作対象のライトを設定（LightProxy 直接・後方互換）
          * @param light 操作対象のLightProxy
          */
         void SetTargetLight(Rendering::LightProxy *light);
@@ -42,6 +50,21 @@ namespace NorvesLib::Core::Input
         Rendering::LightProxy *GetTargetLight() const;
 
         /**
+         * @brief 操作対象の LightComponent を設定（推奨経路）
+         *
+         * 設定時、コンポーネントの現在の方向/強度から内部の Yaw/Pitch と
+         * 強度を seed し、初回入力での値ジャンプを防ぐ。LightComponent が
+         * 設定されている間は LightProxy 経路より優先して反映する。
+         * @param light 操作対象の LightComponent（nullptr で解除）
+         */
+        void SetTargetComponent(Component::LightComponent *light);
+
+        /**
+         * @brief 操作対象の LightComponent を取得
+         */
+        Component::LightComponent *GetTargetComponent() const;
+
+        /**
          * @brief ライト方向を直接設定（Yaw/Pitch角度）
          * @param yaw 水平回転角度（度）
          * @param pitch 垂直回転角度（度）
@@ -49,15 +72,38 @@ namespace NorvesLib::Core::Input
         void SetDirection(float yaw, float pitch);
 
         // ========================================
+        // 入力イベント（IInputController）
+        // ========================================
+
+        /**
+         * @brief キーイベントを内部 held フラグへ反映する
+         *
+         * 自分のバインドキー（Yaw/Pitch/強度の各キーと Shift）の Pressed/Released
+         * を held フラグへ反映し、それらのキーは consume（true）する。その他の
+         * キーは透過（false）させ、下位（debug 等）のコントローラへ届ける。
+         */
+        bool OnKey(const KeyEvent &event) override;
+
+        /**
+         * @brief デバッグ用のコントローラ名
+         */
+        const char *DebugName() const override
+        {
+            return "LightController";
+        }
+
+        // ========================================
         // 更新
         // ========================================
 
         /**
-         * @brief 入力状態に基づいてライトを更新
-         * @param input 現在の入力状態
+         * @brief held フラグと経過時間に基づいてライトを更新
          * @param deltaTime フレーム間隔（秒）
+         *
+         * OnKey が更新した held フラグに従い、Yaw/Pitch の回転と強度変更を適用
+         * する（Shift 押下中は SHIFT_MULTIPLIER 倍）。InputState には依存しない。
          */
-        void Update(const InputState &input, float deltaTime);
+        void Update(float deltaTime);
 
         // ========================================
         // 速度設定
@@ -111,11 +157,27 @@ namespace NorvesLib::Core::Input
 
     private:
         /**
-         * @brief Yaw/PitchからLightProxyの方向ベクトルを再計算
+         * @brief Yaw/Pitchから対象（Component優先・なければProxy）の方向を再計算
          */
         void RecalculateDirection();
 
-        // 操作対象
+        /**
+         * @brief 現在の強度を取得（Component優先・なければProxy・無ければ0）
+         */
+        float GetCurrentIntensity() const;
+
+        /**
+         * @brief 強度を対象（Component優先・なければProxy）へ反映する
+         */
+        void ApplyIntensity(float intensity);
+
+        /**
+         * @brief 与えられた KeyCode が自分のバインドキーかを判定する
+         */
+        bool IsBoundKey(KeyCode code) const;
+
+        // 操作対象（Component を優先。後方互換で Proxy も保持）
+        Component::LightComponent *m_TargetComponent = nullptr;
         Rendering::LightProxy *m_TargetLight;
 
         // ライトの方向（球面座標）
@@ -133,6 +195,15 @@ namespace NorvesLib::Core::Input
         KeyCode m_KeyPitchPos;      ///< Pitch正方向
         KeyCode m_KeyIntensityUp;   ///< 強度増加
         KeyCode m_KeyIntensityDown; ///< 強度減少
+
+        // 押下中フラグ（OnKey で更新し Update で適用）
+        bool m_bHoldYawNeg = false;
+        bool m_bHoldYawPos = false;
+        bool m_bHoldPitchNeg = false;
+        bool m_bHoldPitchPos = false;
+        bool m_bHoldIntensityUp = false;
+        bool m_bHoldIntensityDown = false;
+        bool m_bHoldShift = false;
 
         // Shift倍率
         static constexpr float SHIFT_MULTIPLIER = 3.0f;
