@@ -32,12 +32,17 @@ namespace
 
         AssertContains(source, "struct WorldBoardForwardUBO");
         AssertContains(source, "m_WorldBoardPipeline");
+        AssertContains(source, "m_ImpostorPipeline");
         AssertContains(source, "m_WorldBoardVertexShader");
+        AssertContains(source, "m_ImpostorVertexShader");
         AssertContains(source, "m_WorldBoardUniformAllocator");
+        AssertContains(source, "LoadShader(\"impostor.vert\"");
+        AssertContains(source, "LoadShader(\"impostor.frag\"");
         AssertContains(source, "boardUboBinding.binding = 0");
         AssertContains(source, "boardTextureBinding.binding = 1");
         AssertContains(source, "boardInstanceBinding.binding = 7");
         AssertContains(source, "cmd.Draw.PayloadKind == DrawPayloadKind::Board");
+        AssertContains(source, "cmd.Draw.BoardSubtype == BoardRenderSubtype::Impostor");
         AssertContains(source, "BindTexture(1, boardTexture)");
         AssertContains(source, "BindStorageBuffer(7");
         AssertContains(source, "boardTexture = m_DefaultWhiteTexture");

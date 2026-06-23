@@ -221,8 +221,16 @@ namespace NorvesLib::Core::Rendering
 
         RenderLayer LayerMask = RenderLayer::UI;
         BoardSpace Space = BoardSpace::ScreenSpace;
+        BoardRenderSubtype RenderSubtype = BoardRenderSubtype::Standard;
         BlendMode BlendModeProp = BlendMode::Translucent;
         float SortDepth = 0.0f;
+        uint64_t SourceMeshComponentId = 0;
+        float LODSwitchDistance = 0.0f;
+        uint32_t ImpostorCellResolution = 0;
+        uint32_t ImpostorAxisCellCountX = 0;
+        uint32_t ImpostorAxisCellCountY = 0;
+        uint32_t ImpostorAtlasWidth = 0;
+        uint32_t ImpostorAtlasHeight = 0;
         Math::Vector4 Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
         bool bFlipX = false;
         bool bFlipY = false;

@@ -45,6 +45,7 @@ namespace NorvesLib::Core::Rendering
     {
         // メッシュデータ
         DrawPayloadKind PayloadKind = DrawPayloadKind::Mesh;
+        BoardRenderSubtype BoardSubtype = BoardRenderSubtype::Standard;
         MeshDataHandle MeshHandle; // メッシュハンドル
         uint32_t SubMeshIndex = 0; // サブメッシュインデックス
         uint32_t IndexOffset = 0;  // インデックスオフセット
@@ -58,6 +59,7 @@ namespace NorvesLib::Core::Rendering
         TextureHandle Texture = TextureHandle::Invalid();
         float SortDepth = 0.0f;
         uint64_t ObjectId = 0;
+        uint64_t SourceMeshComponentId = 0;
 
         // インスタンシング
         uint32_t InstanceCount = 1;      // インスタンス数

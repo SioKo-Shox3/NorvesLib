@@ -5,6 +5,7 @@
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Component/BoardComponent.h"
 #include "Core/Public/Component/BillboardComponent.h"
+#include "Core/Public/Component/ImpostorComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Component/LightComponent.h"
@@ -16,6 +17,7 @@
 #include "Core/Public/Input/InputSystem.h"
 #include "Core/Public/Input/InputState.h"
 #include "Core/Public/Rendering/ProceduralMeshGenerator.h"
+#include "Core/Public/Rendering/ImpostorBake.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Rendering/SceneView.h"
 #include "Core/Public/Rendering/RenderingCoordinator.h"
@@ -686,6 +688,129 @@ namespace Game::GameModes
         }
 
         // ========================================
+        // 2.7 F11 WorldSpace Impostor smoke
+        // ========================================
+        if (data.m_ImpostorSmokeCount > 0u)
+        {
+            auto &world = ctx.WorldRef;
+            auto &textures = ctx.RenderResourcesRef.Textures();
+            data.m_F11ImpostorSmokeObjects.clear();
+            data.m_F11ImpostorSourceMeshComponents.clear();
+            data.m_F11ImpostorComponents.clear();
+            data.m_F11ImpostorSmokeAtlasHandles.clear();
+            data.m_F11ImpostorSmokeObjects.reserve(data.m_ImpostorSmokeCount);
+            data.m_F11ImpostorSourceMeshComponents.reserve(data.m_ImpostorSmokeCount);
+            data.m_F11ImpostorComponents.reserve(data.m_ImpostorSmokeCount);
+            data.m_F11ImpostorSmokeAtlasHandles.reserve(data.m_ImpostorSmokeCount);
+
+            constexpr uint32_t impostorCellResolution = 32u;
+            constexpr uint32_t impostorAxisCellCountX = 4u;
+            constexpr uint32_t impostorAxisCellCountY = 4u;
+            constexpr uint32_t impostorAtlasWidth = impostorCellResolution * impostorAxisCellCountX;
+            constexpr uint32_t impostorAtlasHeight = impostorCellResolution * impostorAxisCellCountY;
+
+            VariableArray<uint8_t> impostorAtlasData(impostorAtlasWidth * impostorAtlasHeight * 4u);
+            for (uint32_t y = 0; y < impostorAtlasHeight; ++y)
+            {
+                for (uint32_t x = 0; x < impostorAtlasWidth; ++x)
+                {
+                    const uint32_t cellX = x / impostorCellResolution;
+                    const uint32_t cellY = y / impostorCellResolution;
+                    const uint32_t localX = x % impostorCellResolution;
+                    const uint32_t localY = y % impostorCellResolution;
+                    const uint32_t pixelIndex = (y * impostorAtlasWidth + x) * 4u;
+                    const uint8_t red = static_cast<uint8_t>(70u + cellX * 42u);
+                    const uint8_t green = static_cast<uint8_t>(70u + cellY * 42u);
+                    const uint8_t blue = static_cast<uint8_t>(120u + ((localX + localY) % 48u));
+                    const bool bCross = localX == localY ||
+                                        localX + localY + 1u == impostorCellResolution;
+                    impostorAtlasData[pixelIndex + 0u] = bCross ? 245u : red;
+                    impostorAtlasData[pixelIndex + 1u] = bCross ? 245u : green;
+                    impostorAtlasData[pixelIndex + 2u] = blue;
+                    impostorAtlasData[pixelIndex + 3u] = 220u;
+                }
+            }
+
+            ImpostorBakeMetadata metadata;
+            metadata.CellResolution = impostorCellResolution;
+            metadata.AxisCellCountX = impostorAxisCellCountX;
+            metadata.AxisCellCountY = impostorAxisCellCountY;
+            metadata.AtlasWidth = impostorAtlasWidth;
+            metadata.AtlasHeight = impostorAtlasHeight;
+            metadata.VertexCount = 3u;
+            metadata.IndexCount = 3u;
+            metadata.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+
+            uint32_t createdCount = 0u;
+            for (uint32_t smokeIndex = 0; smokeIndex < data.m_ImpostorSmokeCount; ++smokeIndex)
+            {
+                TextureCreateInfo atlasInfo;
+                atlasInfo.Width = impostorAtlasWidth;
+                atlasInfo.Height = impostorAtlasHeight;
+                atlasInfo.PixelFormat = TextureCreateInfo::Format::RGBA8_UNORM;
+                atlasInfo.DebugName = "F11ImpostorSmokeAtlas";
+
+                const TextureHandle atlasTexture = textures.CreateTexture(
+                    atlasInfo,
+                    impostorAtlasData.data(),
+                    static_cast<uint32_t>(impostorAtlasData.size()));
+                if (!atlasTexture.IsValid())
+                {
+                    NORVES_LOG_WARNING("Rendering3DTest",
+                                       "F11 impostor smoke atlas creation failed at index=%u",
+                                       smokeIndex);
+                    continue;
+                }
+
+                const float column = static_cast<float>(smokeIndex % 4u);
+                const float row = static_cast<float>(smokeIndex / 4u);
+                const float x = -1.8f + column * 1.2f;
+                const float y = 0.65f + row * 0.85f;
+                const float z = 1.4f + static_cast<float>(smokeIndex % 2u) * 0.55f;
+
+                Entity *impostorObject = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(impostorObject);
+                impostorObject->SetPosition(x, y, z);
+
+                auto *sourceMeshComponent = world.CreateComponent<Component::MeshComponent>(impostorObject);
+                sourceMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
+                sourceMeshComponent->SetMaterial(0, data.m_SilverMaterial);
+                sourceMeshComponent->SetCastShadow(true);
+                sourceMeshComponent->SetCustomData(0, 0.35f);
+                sourceMeshComponent->SetCustomData(1, 0.75f);
+                sourceMeshComponent->SetCustomData(2, 1.0f);
+                sourceMeshComponent->SetCustomData(3, 1.0f);
+
+                auto *impostorComponent = world.CreateComponent<Component::ImpostorComponent>(impostorObject);
+                impostorComponent->SetRenderLayer(RenderLayer::Default);
+                impostorComponent->SetBlendMode(BlendMode::Translucent);
+                impostorComponent->SetSizeWorld(Math::Vector2(0.9f, 0.9f));
+                impostorComponent->SetPivot(Math::Vector2(0.5f, 0.5f));
+                impostorComponent->SetTint(Math::Vector4(1.0f, 1.0f, 1.0f, 0.88f));
+                impostorComponent->SetSourceMeshComponentId(sourceMeshComponent->GetComponentId());
+                impostorComponent->SetLODSwitchDistance(3.5f);
+                if (!impostorComponent->SetBakedAtlas(atlasTexture, metadata))
+                {
+                    textures.ReleaseTexture(atlasTexture);
+                    ctx.ScopeRef.Untrack(impostorObject);
+                    world.RemoveObject(impostorObject);
+                    continue;
+                }
+                impostorComponent->SetVisible(true);
+
+                data.m_F11ImpostorSmokeObjects.push_back(impostorObject);
+                data.m_F11ImpostorSourceMeshComponents.push_back(sourceMeshComponent);
+                data.m_F11ImpostorComponents.push_back(impostorComponent);
+                data.m_F11ImpostorSmokeAtlasHandles.push_back(atlasTexture);
+                ++createdCount;
+            }
+
+            LOG_INFO("Rendering3DTest impostor smoke created count=%u requested=%u atlas=procedural-f11-grid sourceMesh=sphere switchDistance=3.5",
+                     createdCount,
+                     data.m_ImpostorSmokeCount);
+        }
+
+        // ========================================
         // 3. glTFモデルのロード
         // ========================================
         {
@@ -933,6 +1058,32 @@ namespace Game::GameModes
         //    boulder の各オブジェクト・3 メッシュ・boulder モデル）の解放は
         //    GameModeScope::Cleanup（Leave 直後に StateMachine が呼ぶ）が
         //    正しい順序で行う。ここでは手動解放しない。
+        if (!data.m_F11ImpostorComponents.empty())
+        {
+            ctx.EngineRef.GetRenderWorld().WaitForRender();
+            for (uint32_t index = 0; index < data.m_F11ImpostorComponents.size(); ++index)
+            {
+                auto *impostorComponent = data.m_F11ImpostorComponents[index];
+                if (impostorComponent)
+                {
+                    impostorComponent->ReleaseBakedAtlas(ctx.RenderResourcesRef.Textures());
+                    if (index < data.m_F11ImpostorSmokeAtlasHandles.size())
+                    {
+                        data.m_F11ImpostorSmokeAtlasHandles[index] = TextureHandle::Invalid();
+                    }
+                }
+            }
+        }
+
+        for (TextureHandle atlasHandle : data.m_F11ImpostorSmokeAtlasHandles)
+        {
+            if (atlasHandle.IsValid())
+            {
+                ctx.RenderResourcesRef.Textures().ReleaseTexture(atlasHandle);
+            }
+        }
+        data.m_F11ImpostorSmokeAtlasHandles.clear();
+
         if (data.m_F6AtlasTextureHandle.IsValid())
         {
             ctx.RenderResourcesRef.Textures().ReleaseTexture(data.m_F6AtlasTextureHandle);
@@ -958,6 +1109,9 @@ namespace Game::GameModes
         data.m_F4BoardComponents.clear();
         data.m_F9BillboardObjects.clear();
         data.m_F9BillboardComponents.clear();
+        data.m_F11ImpostorSmokeObjects.clear();
+        data.m_F11ImpostorSourceMeshComponents.clear();
+        data.m_F11ImpostorComponents.clear();
 
         data.m_bMeshesRegistered = false;
         data.m_bBoulderModelLoaded = false;

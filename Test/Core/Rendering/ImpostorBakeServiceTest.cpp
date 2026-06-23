@@ -422,6 +422,8 @@ namespace
         assert(CastTo<ImpostorComponent>(impostor) == impostor);
         assert(CastTo<BillboardComponent>(impostor) == impostor);
         assert(impostor->GetBoardSpace() == BoardSpace::WorldSpace);
+        assert(ImpostorComponent::StaticClass()->GetProperty(Identity("LODSwitchDistance")) != nullptr);
+        assert(ImpostorComponent::StaticClass()->GetProperty(Identity("SourceMeshComponentId")) == nullptr);
 
         const TextureHandle fallbackTexture{900u};
         impostor->SetTextureHandle(fallbackTexture);
@@ -436,8 +438,12 @@ namespace
 
         assert(impostor->SetBakedAtlas(bakeResult.AtlasTexture, bakeResult.Metadata));
         assert(impostor->HasBakedAtlas());
+        constexpr uint64_t sourceMeshComponentId = 123456u;
+        impostor->SetSourceMeshComponentId(sourceMeshComponentId);
+        assert(impostor->GetSourceMeshComponentId() == sourceMeshComponentId);
         assert(impostor->BuildBoardProxy(proxy));
         assert(proxy.Texture == bakeResult.AtlasTexture);
+        assert(proxy.SourceMeshComponentId == sourceMeshComponentId);
         assert(proxy.WorldBounds.CenterX == 2.0f);
         assert(proxy.WorldBounds.CenterY == 3.0f);
         assert(proxy.WorldBounds.CenterZ == 4.0f);

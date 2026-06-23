@@ -75,6 +75,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/SharedResourceRegistry.cpp
     Private/Rendering/RenderResources.cpp
     Private/Rendering/ImpostorBake.cpp
+    Private/Rendering/ImpostorMath.cpp
     Private/Rendering/TextureAssetRuntime.cpp
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
@@ -248,6 +249,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/RenderResourceContexts.h
     Public/Rendering/RenderResources.h
     Public/Rendering/ImpostorBake.h
+    Public/Rendering/ImpostorMath.h
     Public/Rendering/RenderThread.h
     Public/Rendering/RenderWorld.h
     Public/Rendering/Screen.h
