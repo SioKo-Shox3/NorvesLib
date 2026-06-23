@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Input/IInputController.h"
 #include "Input/InputState.h"
 #include "Math/Vector3.h"
 #include "Rendering/SceneProxy.h"
@@ -24,11 +25,11 @@ namespace NorvesLib::Core::Input
      * - Pitch: 垂直回転角度（度、-89～+89でクランプ）
      * - Distance: 注視点からカメラまでの距離
      */
-    class MayaCameraController
+    class MayaCameraController : public IInputController
     {
     public:
         MayaCameraController();
-        ~MayaCameraController() = default;
+        ~MayaCameraController() override = default;
 
         // ========================================
         // 初期化
@@ -44,15 +45,37 @@ namespace NorvesLib::Core::Input
         void Initialize(const Math::Vector3 &target, float distance, float yaw = 0.0f, float pitch = 30.0f);
 
         // ========================================
-        // 更新
+        // 入力イベント（IInputController）
         // ========================================
 
         /**
-         * @brief 入力状態に基づいてカメラを更新
-         * @param input 現在の入力状態
-         * @param deltaTime フレーム間隔（秒）
+         * @brief マウスボタンの押下/解放を内部状態へ反映する
+         *
+         * L/M/R いずれかのボタンであればドラッグ対象として consume する。
+         * それ以外（X1/X2 等）は consume しない。
          */
-        void Update(const InputState &input, float deltaTime);
+        bool OnMouseButton(const MouseButtonEvent &event) override;
+
+        /**
+         * @brief 押下中ボタンに応じて Orbit/Pan/Dolly を適用する
+         *
+         * Left→Orbit, Middle→Pan, Right→Dolly。いずれかのドラッグを適用した
+         * 場合のみ consume する（非押下時は伝播させる）。
+         */
+        bool OnMouseMove(const MouseMoveEvent &event) override;
+
+        /**
+         * @brief スクロール量に応じて Dolly を適用する（常に consume）
+         */
+        bool OnMouseScroll(const MouseScrollEvent &event) override;
+
+        /**
+         * @brief デバッグ用のコントローラ名
+         */
+        const char *DebugName() const override
+        {
+            return "MayaCameraController";
+        }
 
         // ========================================
         // カメラ状態の取得
@@ -192,6 +215,11 @@ namespace NorvesLib::Core::Input
 
         // 計算済みカメラ位置
         Math::Vector3 m_Position;
+
+        // ドラッグ中ボタンの押下状態（イベント駆動）
+        bool m_bLeftDown = false;
+        bool m_bMiddleDown = false;
+        bool m_bRightDown = false;
 
         // 感度設定
         float m_OrbitSpeed;       ///< 回転速度（度/ピクセル）

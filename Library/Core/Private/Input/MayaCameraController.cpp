@@ -21,35 +21,60 @@ namespace NorvesLib::Core::Input
         RecalculatePosition();
     }
 
-    void MayaCameraController::Update(const InputState &input, float deltaTime)
+    bool MayaCameraController::OnMouseButton(const MouseButtonEvent &event)
     {
-        (void)deltaTime; // マウスドラッグベースなので直接deltaTimeは使用しない
+        const bool bPressed = (event.Action == InputAction::Pressed);
 
-        const auto &mouse = input.GetMouseState();
+        switch (event.Button)
+        {
+        case MouseButton::Left:
+            m_bLeftDown = bPressed;
+            return true;
+        case MouseButton::Middle:
+            m_bMiddleDown = bPressed;
+            return true;
+        case MouseButton::Right:
+            m_bRightDown = bPressed;
+            return true;
+        default:
+            // X1/X2 等はカメラ操作の対象外。下位へ伝播させる。
+            return false;
+        }
+    }
+
+    bool MayaCameraController::OnMouseMove(const MouseMoveEvent &event)
+    {
+        bool bConsumed = false;
 
         // LMB: Orbit (Tumble)
-        if (input.IsMouseButtonDown(MouseButton::Left))
+        if (m_bLeftDown)
         {
-            Orbit(mouse.DeltaX, mouse.DeltaY);
+            Orbit(event.DeltaX, event.DeltaY);
+            bConsumed = true;
         }
 
         // MMB: Pan (Track)
-        if (input.IsMouseButtonDown(MouseButton::Middle))
+        if (m_bMiddleDown)
         {
-            Pan(mouse.DeltaX, mouse.DeltaY);
+            Pan(event.DeltaX, event.DeltaY);
+            bConsumed = true;
         }
 
         // RMB: Dolly
-        if (input.IsMouseButtonDown(MouseButton::Right))
+        if (m_bRightDown)
         {
-            Dolly(-mouse.DeltaX * m_DollySpeed * m_Distance);
+            Dolly(-event.DeltaX * m_DollySpeed * m_Distance);
+            bConsumed = true;
         }
 
+        return bConsumed;
+    }
+
+    bool MayaCameraController::OnMouseScroll(const MouseScrollEvent &event)
+    {
         // スクロール: Dolly
-        if (std::abs(mouse.ScrollDelta) > 0.0f)
-        {
-            Dolly(mouse.ScrollDelta * m_ScrollDollySpeed * m_Distance);
-        }
+        Dolly(event.Delta * m_ScrollDollySpeed * m_Distance);
+        return true;
     }
 
     Math::Vector3 MayaCameraController::GetPosition() const
