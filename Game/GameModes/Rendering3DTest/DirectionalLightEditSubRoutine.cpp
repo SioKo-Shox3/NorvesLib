@@ -20,6 +20,13 @@ namespace Game::GameModes
 
     void DirectionalLightEditView::OnImGui()
     {
+        // 初期サイズ/位置(初回のみ)。フォントサイズ(解像度連動の DPI スケールが乗って
+        // いる)基準で決め、低解像度でも極端に小さくならないようにする。以後はユーザーの
+        // リサイズ/移動を尊重する(ImGuiCond_FirstUseEver)。
+        const float fontSize = ImGui::GetFontSize();
+        ImGui::SetNextWindowSize(ImVec2(fontSize * 22.0f, fontSize * 13.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(fontSize * 2.0f, fontSize * 2.0f), ImGuiCond_FirstUseEver);
+
         // ウィンドウは常に開く。Begin が false(折りたたみ等)なら End して即座に抜ける。
         if (!ImGui::Begin("方向ライト"))
         {
