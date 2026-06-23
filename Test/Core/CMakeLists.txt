@@ -1,4 +1,5 @@
 add_subdirectory(Object)
+add_subdirectory(Input)
 add_subdirectory(Debug)
 add_subdirectory(Rendering)
 add_subdirectory(Module)

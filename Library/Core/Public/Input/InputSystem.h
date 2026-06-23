@@ -10,6 +10,8 @@ using NorvesLib::Core::MulticastDelegate;
 namespace NorvesLib::Core::Input
 {
 
+    class InputRouter;
+
     /**
      * @brief 入力システム
      *
@@ -138,6 +140,19 @@ namespace NorvesLib::Core::Input
          */
         void InjectCharEvent(uint32_t codepoint);
 
+        // ========================================
+        // イベントルーティング
+        // ========================================
+
+        /**
+         * @brief イベント配送ルーターを設定
+         * @param router 借用ポインタ（非所有）。nullptr で配送を無効化。
+         *
+         * 設定後、各 Inject* は InputState 更新・MulticastDelegate Broadcast に
+         * 加えて Router へ Dispatch する。Router は GameThread 専用。
+         */
+        void SetRouter(InputRouter *router);
+
     private:
         // 入力状態
         InputState m_State;
@@ -148,6 +163,9 @@ namespace NorvesLib::Core::Input
         MulticastDelegate<const MouseMoveEvent &> m_OnMouseMoveEvent;
         MulticastDelegate<const MouseScrollEvent &> m_OnMouseScrollEvent;
         MulticastDelegate<const CharEvent &> m_OnCharEvent;
+
+        // イベント配送ルーター（借用ポインタ・非所有）
+        InputRouter *m_Router = nullptr;
     };
 
 } // namespace NorvesLib::Core::Input

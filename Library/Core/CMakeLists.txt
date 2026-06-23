@@ -155,6 +155,7 @@ set(PRIVATE_SOURCES
     # Input
     Private/Input/InputState.cpp
     Private/Input/InputSystem.cpp
+    Private/Input/InputRouter.cpp
     Private/Input/MayaCameraController.cpp
     Private/Input/LightController.cpp
     # Random
@@ -406,6 +407,8 @@ set(PUBLIC_HEADERS
     Public/Input/InputTypes.h
     Public/Input/InputState.h
     Public/Input/InputSystem.h
+    Public/Input/IInputController.h
+    Public/Input/InputRouter.h
     Public/Input/IInputDevice.h
     Public/Input/MayaCameraController.h
     Public/Input/LightController.h
