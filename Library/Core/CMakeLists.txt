@@ -390,7 +390,6 @@ set(PUBLIC_HEADERS
     Public/RHI/IPipeline.h
     Public/RHI/IDescriptorSet.h
     Public/RHI/IDevice.h
-    Public/RHI/IImGuiRenderer.h
     Public/RHI/DeviceCapabilities.h
     Public/RHI/IShaderCompiler.h
     Public/RHI/IGPUResourceAllocator.h
@@ -514,38 +513,9 @@ if(WIN32)
     )
 endif()
 
-# ImGui デバッグオーバーレイ（既定 OFF・opt-in ゲート）
-# option(NORVES_ENABLE_IMGUI) の定義は Library/CMakeLists.txt に 1 箇所のみ置く。
-# OFF 時は imgui を1ファイルもコンパイルしない＝素ビルドと byte-for-byte 不変。
-# ON 時のみ Vulkan バックエンド実装(imgui_impl_vulkan.cpp)を Core に直追加し、
-# imgui 本体(core 4本)は専用 static lib NorvesThirdParty_ImGui へリンクして解決する。
-if(NORVES_ENABLE_IMGUI)
-    set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/Library/ThirdParty/imgui)
-    # imgui_impl_vulkan.cpp は生 Vulkan と共に Core でコンパイルする(imgui core は lib 側)。
-    # VulkanImGuiRenderer.cpp は impl_vulkan を RHI 抽象 IImGuiRenderer へ適合させる実装。
-    target_sources(${MODULE_NAME} PRIVATE
-        ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Private/RHI/Vulkan/VulkanImGuiRenderer.cpp
-    )
-    # imgui.h は NorvesThirdParty_ImGui の PUBLIC include 経由で来る。
-    # backends は impl_vulkan.h 用に Core 自身へ追加する。
-    target_include_directories(${MODULE_NAME} PRIVATE
-        ${IMGUI_DIR}/backends
-    )
-    # imgui core シンボルを解決する専用 lib への PRIVATE リンク。
-    # PRIVATE のため imgui の include/シンボルは Core 消費者(テスト/ツール)へ漏れず、
-    # かつ Core 自身のコンパイル(imgui_impl_vulkan.cpp)には imgui.h が伝播する。
-    target_link_libraries(${MODULE_NAME} PRIVATE NorvesThirdParty_ImGui)
-    # Core は VULKAN_HPP_DISPATCH_LOADER_DYNAMIC のため Vulkan 関数を動的ロードする。
-    # imgui_impl_vulkan.cpp と VulkanImGuiRenderer.cpp の両 TU が IMGUI_IMPL_VULKAN_NO_PROTOTYPES を
-    # 一貫して見るよう、per-source ではなくターゲット PRIVATE で付与する
-    # (TU 間で NO_PROTOTYPES の見え方が食い違うと imgui_impl_vulkan.h 経由の型/プロトタイプが
-    #  不整合になり ODR/ABI 問題を招くため)。NORVES_ENABLE_IMGUI と併せて付与する。
-    target_compile_definitions(${MODULE_NAME} PRIVATE
-        NORVES_ENABLE_IMGUI
-        IMGUI_IMPL_VULKAN_NO_PROTOTYPES
-    )
-endif()
+# オーバーレイ UI 等のモジュールは、その描画を抽象 RHI::I* だけで自前に行う。
+# よって Core は特定 UI 実装やそのサードパーティ依存を一切リンク/参照しない
+# (Core は RHI 抽象のみを公開し、各モジュールがそれだけで描画する)。
 
 # IDEでのファイル整理（Visual Studio等）
 source_group("Public Headers" FILES ${PUBLIC_HEADERS})

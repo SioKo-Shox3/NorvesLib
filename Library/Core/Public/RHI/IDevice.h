@@ -11,9 +11,6 @@
 namespace NorvesLib::RHI
 {
 
-    // 前方宣言（ImGui 描画バックエンドの抽象。imgui/Vulkan 型は露出しない）
-    class IImGuiRenderer;
-
     /**
      * @brief サンプラー作成情報
      */
@@ -253,23 +250,6 @@ namespace NorvesLib::RHI
          * @return 対応するRHI用Slangコンパイラ。未対応の場合はnullptr
          */
         virtual ShaderCompilerPtr CreateSlangShaderCompiler() { return nullptr; }
-
-        /**
-         * @brief ImGui 描画バックエンドを作成
-         *
-         * ImGui のフォントアトラス生成・ドローデータ記録を担う抽象
-         * IImGuiRenderer を生成する。未対応バックエンドでは nullptr を返す
-         * （ゲートに関係なく本メソッドは常に存在し、既定実装は nullptr のため
-         * 公開 ABI は不変）。
-         *
-         * 所有権: 戻り値は IDevice が所有する借用ポインタ（IDevice 破棄で連れ
-         * 破棄される）。呼び出し側は delete せず、IDevice 寿命内でのみ使用する。
-         * TSharedPtr ではなく生ポインタを返すのは、RHI 境界（将来の DLL 境界）
-         * 越しに制御ブロックが分かれて cross-heap 解放になるのを避けるため。
-         *
-         * @return IImGuiRenderer の借用ポインタ。未対応の場合は nullptr
-         */
-        virtual IImGuiRenderer *CreateImGuiRenderer() { return nullptr; }
 
         /**
          * @brief GPUリソースアロケーターを取得

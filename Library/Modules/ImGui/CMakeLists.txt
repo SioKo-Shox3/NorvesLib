@@ -32,9 +32,12 @@ set(THIRDPARTY_HEADERS
 
 add_library(${MODULE_NAME} STATIC ${PRIVATE_SOURCES} ${PUBLIC_HEADERS} ${THIRDPARTY_HEADERS})
 
-# Core への単一方向依存(枠組みヘッダ + 抽象 IImGuiRenderer/IViewPass を提供) +
-# imgui core(NorvesThirdParty_ImGui)を共に PRIVATE 依存。両者 PRIVATE のため
-# imgui/Core 詳細は本 lib の消費者(Game/Test)へ漏れない。
+# Core への単一方向依存(枠組みヘッダ + 抽象 RHI::I* + 汎用 Mesh2D 描画経路 +
+# IViewPass を提供) + imgui core(NorvesThirdParty_ImGui)を共に PRIVATE 依存。imgui 本体を
+# リンクするのは本モジュールのみで Core は ImGui を一切リンク/参照しない。両者 PRIVATE のため
+# imgui/Core 詳細は本 lib の消費者(Game/Test)へ漏れない。本モジュールは imgui core
+# (imgui.h/ImDrawData)と Core の RHI 抽象のみで ImDrawData を自前描画し、imgui_impl_vulkan や
+# 生 Vulkan は一切使わない。
 target_link_libraries(${MODULE_NAME} PRIVATE Core NorvesThirdParty_ImGui)
 
 target_include_directories(${MODULE_NAME}

@@ -2,7 +2,7 @@
 
 # ImGui デバッグオーバーレイ(既定 ON・ゲート)。option は本ファイル 1 箇所のみ。
 # ON のときだけ imgui 本体(第三者)を専用 static lib NorvesThirdParty_ImGui としてビルドし、
-# Core(imgui_impl_vulkan 用)と NorvesModule_ImGui が PRIVATE 依存する。
+# ImGui モジュール(Library/Modules/ImGui)のみが PRIVATE 依存する(Core は ImGui を参照/リンクしない)。
 # OFF(-DNORVES_ENABLE_IMGUI=OFF)のときは imgui を 1 ファイルもビルドせず Core も非リンク
 # =素ビルド byte-for-byte 不変。実行時に ImGui を表示するには Game を --imgui で起動する
 # (モジュール登録ゲート。ビルドゲート ON だけでは描画されない)。

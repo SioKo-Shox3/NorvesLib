@@ -1,8 +1,8 @@
 # NorvesThirdParty_ImGui — imgui 本体(第三者コード)を物理隔離した専用 static lib。
-# imgui core 4本のみをコンパイルする(imgui_impl_vulkan.cpp は含めない=それは
-# 生 Vulkan と共に Core の RHI/Vulkan 側でコンパイルされる)。
-# Core(imgui_impl_vulkan 用)と将来の NorvesModule_ImGui(UI 構築用)が共に
-# PRIVATE で依存する。NORVES_ENABLE_IMGUI が OFF のときは上位 CMake が本 lib を
+# imgui core 4本のみをコンパイルする(imgui_impl_vulkan.cpp は含めない=ImGui の描画は
+# モジュール側が抽象 RHI::I* と汎用 Mesh2D 経路で行うため不要)。
+# ImGui モジュール(Library/Modules/ImGui)のみが PRIVATE で依存する(Core は ImGui を
+# 参照/リンクしない)。NORVES_ENABLE_IMGUI が OFF のときは上位 CMake が本 lib を
 # add_subdirectory しない=素ビルド byte-for-byte 不変。
 
 add_library(NorvesThirdParty_ImGui STATIC

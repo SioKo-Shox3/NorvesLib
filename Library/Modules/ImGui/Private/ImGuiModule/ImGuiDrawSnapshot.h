@@ -83,7 +83,7 @@ namespace NorvesLib::Modules::Gui
         /**
          * @brief 複製済み ImDrawData を取得する(RenderThread・借用)
          *
-         * IImGuiRenderer::RecordDrawData へ const void* として渡す。複製の寿命は
+         * ImGuiOverlayPass::Execute が自前 mesh2d 描画のため走査する。複製の寿命は
          * 本スナップショット(=スロット所有)が保証する。Capture が一度も呼ばれて
          * いない/空のときは CmdListsCount=0 の有効な ImDrawData を返す。
          *
