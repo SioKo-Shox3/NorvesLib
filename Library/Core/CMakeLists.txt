@@ -113,6 +113,7 @@ set(PRIVATE_SOURCES
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/PointLightComponent.cpp
+    Private/Component/CameraComponent.cpp
     # Thread
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
@@ -318,6 +319,7 @@ set(PUBLIC_HEADERS
     Public/Component/MegaGeometryComponent.h
     Public/Component/LightComponent.h
     Public/Component/PointLightComponent.h
+    Public/Component/CameraComponent.h
     # Math
     Public/Math/MathForward.h
     Public/Math/MathTypes.h

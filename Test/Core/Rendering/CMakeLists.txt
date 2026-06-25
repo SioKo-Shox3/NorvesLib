@@ -90,6 +90,16 @@ target_include_directories(CameraViewConstantsTest PRIVATE
 set_target_properties(CameraViewConstantsTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CameraViewConstantsTest COMMAND CameraViewConstantsTest)
 
+add_executable(CameraComponentProxyTest
+    CameraComponentProxyTest.cpp
+)
+target_link_libraries(CameraComponentProxyTest PRIVATE Core)
+target_include_directories(CameraComponentProxyTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CameraComponentProxyTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CameraComponentProxyTest COMMAND CameraComponentProxyTest)
+
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp
 )
