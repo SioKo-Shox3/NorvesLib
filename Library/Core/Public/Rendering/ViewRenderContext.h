@@ -370,7 +370,7 @@ namespace NorvesLib::Core::Rendering
          *
          * RenderThread が RenderFrame で処理中のパケットのスロット index
          * (FramePacketManager::GetSlotIndex)を seam が設定する。overlay パスが
-         * FramePacket スロット寿命に束ねた per-slot リソース(ImGui のドローデータ
+         * FramePacket スロット寿命に束ねた per-slot リソース(オーバーレイのドローデータ
          * スナップショット等)を読む際の添字。GameThread の書込みスロットと RenderThread の
          * 読取スロットはプール排他で同一スロットに対して時間的に重ならないため、本 index で
          * 添字すれば use-after-free なく安全に読める。既定 FRAME_PACKET_BUFFER_COUNT は無効値。

@@ -102,7 +102,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::Instance GetVkInstance() const { return m_instance; }
 
         // インスタンス生成時に VkApplicationInfo::apiVersion へ渡した値。
-        // imgui バックエンド等、インスタンス apiVersion と一致させる必要がある
+        // 各サブシステムで、インスタンス apiVersion と一致させる必要がある
         // 利用側へ供給する（ハードコードを避けるため）。
         uint32_t GetInstanceApiVersion() const { return m_instanceApiVersion; }
 

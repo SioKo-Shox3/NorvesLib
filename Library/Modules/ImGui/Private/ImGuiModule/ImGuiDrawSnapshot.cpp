@@ -27,7 +27,6 @@ namespace NorvesLib::Modules::Gui
         // のみ Capture する。当該スロットが Writing である間は RT が同スロットを読まない
         // ことをプールが保証するため、ここでの破棄が RT の読取中クローンに当たることはない。
         ReleaseClonedLists();
-        m_TexturesCopy.clear();
 
         // 複製 ImDrawData を一旦リセット(空=CmdListsCount 0 で no-op になる)。
         m_DrawData = ::ImDrawData{};
@@ -85,27 +84,9 @@ namespace NorvesLib::Modules::Gui
         m_DrawData.FramebufferScale = source->FramebufferScale;
         m_DrawData.OwnerViewport = source->OwnerViewport;
 
-        // Textures: ライブ PlatformIO.Textures は ImGui::Render(EndFrame) 内の
-        // UpdateTexturesEndFrame が毎フレーム resize(0)→再構築する container であり、
-        // RT がこれを直接走査すると container レベルで GT と競合する。よって container の
-        // ポインタ一覧をスロット所有 m_TexturesCopy へ複製し、クローンの Textures を
-        // そのコピーへ向ける。要素 ImTextureData* 実体は context 所有でフレーム跨ぎ安定の
-        // ためポインタはそのまま保持する(実体の deep copy はしない)。source->Textures が
-        // null のとき(手動テクスチャ管理時)はクローンも null にして RT のテクスチャ更新
-        // ループを完全スキップさせる。
-        if (source->Textures != nullptr)
-        {
-            const ImVector<::ImTextureData *> &srcTextures = *source->Textures;
-            m_TexturesCopy.reserve(srcTextures.Size);
-            for (int i = 0; i < srcTextures.Size; ++i)
-            {
-                m_TexturesCopy.push_back(srcTextures[i]);
-            }
-            m_DrawData.Textures = &m_TexturesCopy;
-        }
-        else
-        {
-            m_DrawData.Textures = nullptr;
-        }
+        // 本モジュールはレガシー単一フォントアトラスを自前 ITexture として描画時に直接
+        // バインドし、ImDrawCmd 毎のテクスチャ切替(ImDrawData::Textures)は使わない。
+        // よってクローンの Textures は null のままにし、RT はテクスチャに一切触れない。
+        m_DrawData.Textures = nullptr;
     }
 } // namespace NorvesLib::Modules::Gui

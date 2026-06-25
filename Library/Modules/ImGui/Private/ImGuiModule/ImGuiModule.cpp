@@ -266,6 +266,9 @@ namespace NorvesLib::Modules::Gui
                 // .ini 永続化は無効化(ファイル I/O を持ち込まない)。
                 io.IniFilename = nullptr;
                 io.LogFilename = nullptr;
+                // 診断用バックエンド名(imgui_impl_* は使わず自前 Mesh2D 描画のため明示)。
+                io.BackendRendererName = "NorvesMesh2D";
+                io.BackendPlatformName = "NorvesLib";
 
                 // DPI スケール(取得元が無ければ 1.0)。フォントサイズ・スタイル両方に効かせる。
                 m_DpiScale = GetDpiScale();

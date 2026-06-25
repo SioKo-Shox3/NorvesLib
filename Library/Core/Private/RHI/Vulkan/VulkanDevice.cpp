@@ -120,7 +120,7 @@ namespace NorvesLib::RHI::Vulkan
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.apiVersion = VK_API_VERSION_1_2;
 
-        // imgui バックエンド等へ供給するため、インスタンスの apiVersion を保持する
+        // 各サブシステムへ供給するため、インスタンスの apiVersion を保持する
         // （appInfo.apiVersion と単一ソースに揃える）。
         m_instanceApiVersion = appInfo.apiVersion;
 
