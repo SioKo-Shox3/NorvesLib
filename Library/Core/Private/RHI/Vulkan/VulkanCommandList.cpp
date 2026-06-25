@@ -601,7 +601,7 @@ namespace NorvesLib::RHI::Vulkan
         m_commandBuffer.bindVertexBuffers(slot, 1, &vkBuf, &offset);
     }
 
-    void VulkanCommandList::SetIndexBuffer(BufferPtr buffer, uint64_t offset)
+    void VulkanCommandList::SetIndexBuffer(BufferPtr buffer, uint64_t offset, IndexType type)
     {
         auto vkBuffer = DynamicPointerCast<VulkanBuffer>(buffer);
         if (!vkBuffer)
@@ -612,7 +612,8 @@ namespace NorvesLib::RHI::Vulkan
         m_currentIndexBuffer = buffer;
         m_currentIndexBufferOffset = offset;
 
-        m_commandBuffer.bindIndexBuffer(vkBuffer->GetVkBuffer(), offset, vk::IndexType::eUint32);
+        const vk::IndexType vkIndexType = type == IndexType::Uint16 ? vk::IndexType::eUint16 : vk::IndexType::eUint32;
+        m_commandBuffer.bindIndexBuffer(vkBuffer->GetVkBuffer(), offset, vkIndexType);
     }
 
     void VulkanCommandList::SetConstantBuffer(BufferPtr buffer, uint32_t slot, ShaderStage stage)

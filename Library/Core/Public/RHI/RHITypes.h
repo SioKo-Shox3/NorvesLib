@@ -114,6 +114,15 @@ namespace NorvesLib::RHI
     }
 
     /**
+     * @brief インデックスバッファの要素型
+     */
+    enum class IndexType : uint8_t
+    {
+        Uint16,
+        Uint32
+    };
+
+    /**
      * @brief プリミティブトポロジーの種類
      */
     enum class PrimitiveTopology

@@ -223,7 +223,7 @@ namespace NorvesLib::RHI::Vulkan
         void SetPipeline(PipelinePtr pipeline) override;
 
         void SetVertexBuffer(BufferPtr buffer, uint64_t offset = 0, uint32_t slot = 0) override;
-        void SetIndexBuffer(BufferPtr buffer, uint64_t offset = 0) override;
+        void SetIndexBuffer(BufferPtr buffer, uint64_t offset = 0, IndexType type = IndexType::Uint32) override;
         void SetConstantBuffer(BufferPtr buffer, uint32_t slot, ShaderStage stage) override;
         void SetTexture(TexturePtr texture, uint32_t slot, ShaderStage stage) override;
         void SetSampler(SamplerPtr sampler, uint32_t slot, ShaderStage stage) override;

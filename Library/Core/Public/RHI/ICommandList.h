@@ -174,8 +174,9 @@ namespace NorvesLib::RHI
          * @brief インデックスバッファの設定
          * @param buffer インデックスバッファ
          * @param offset バッファ内のオフセット
+         * @param type インデックス要素型（既定は従来挙動の Uint32）
          */
-        virtual void SetIndexBuffer(BufferPtr buffer, uint64_t offset = 0) = 0;
+        virtual void SetIndexBuffer(BufferPtr buffer, uint64_t offset = 0, IndexType type = IndexType::Uint32) = 0;
 
         /**
          * @brief 定数バッファの設定
