@@ -100,6 +100,16 @@ target_include_directories(CameraComponentProxyTest PRIVATE
 set_target_properties(CameraComponentProxyTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CameraComponentProxyTest COMMAND CameraComponentProxyTest)
 
+add_executable(WorldCameraSyncTest
+    WorldCameraSyncTest.cpp
+)
+target_link_libraries(WorldCameraSyncTest PRIVATE Core)
+target_include_directories(WorldCameraSyncTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(WorldCameraSyncTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME WorldCameraSyncTest COMMAND WorldCameraSyncTest)
+
 add_executable(ViewRenderContextActiveInputTest
     ViewRenderContextActiveInputTest.cpp
 )

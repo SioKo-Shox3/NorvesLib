@@ -159,6 +159,46 @@ namespace NorvesLib::Core::Rendering
          */
         void ClearAllProxies();
 
+        // ========================================
+        // メインカメラ
+        // ========================================
+
+        /**
+         * @brief メインカメラProxyを設定
+         * @param proxy 設定するCameraProxy
+         *
+         * Worldがアクティブカメラを選定して構築したProxyを受け取ります。
+         */
+        void SetMainCameraProxy(const CameraProxy &proxy)
+        {
+            m_MainCameraProxy = proxy;
+            m_bHasMainCameraProxy = true;
+        }
+
+        /**
+         * @brief メインカメラProxyをクリア
+         */
+        void ClearMainCameraProxy()
+        {
+            m_bHasMainCameraProxy = false;
+        }
+
+        /**
+         * @brief メインカメラProxyを保持しているか
+         */
+        bool HasMainCameraProxy() const
+        {
+            return m_bHasMainCameraProxy;
+        }
+
+        /**
+         * @brief メインカメラProxyを取得
+         */
+        const CameraProxy &GetMainCameraProxy() const
+        {
+            return m_MainCameraProxy;
+        }
+
         /**
          * @brief MegaGeometryProxyのみクリア
          */
@@ -366,6 +406,10 @@ namespace NorvesLib::Core::Rendering
         Container::UnorderedMap<uint64_t, uint32_t> m_MeshProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_LightProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_MegaGeometryProxyIndex;
+
+        // メインカメラProxy（Worldがアクティブカメラから構築して設定）
+        CameraProxy m_MainCameraProxy;
+        bool m_bHasMainCameraProxy = false;
 
         // 可視Proxy（カリング後）
         Container::VariableArray<MeshProxy *> m_VisibleMeshProxies;

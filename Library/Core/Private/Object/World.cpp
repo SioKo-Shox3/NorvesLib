@@ -3,6 +3,7 @@
 #include "Component/MeshComponent.h"
 #include "Component/MegaGeometryComponent.h"
 #include "Component/LightComponent.h"
+#include "Component/CameraComponent.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneProxy.h"
 #include "Logging/LogMacros.h"
@@ -184,6 +185,9 @@ namespace NorvesLib::Core
                     m_SceneView->RemoveMegaGeometryProxy(object->GetObjectId());
 
                     // LightComponentのLightProxyも削除
+                    // 破棄対象が現在のメインカメラを持つ場合はメインカメラProxyをクリア。
+                    // CameraProxy.CameraId は CameraComponent::GetComponentId()
+                    //（BuildCameraProxy の契約）なので ComponentId と突き合わせる。
                     auto components = object->GetComponents();
                     for (auto* comp : components)
                     {
@@ -191,6 +195,14 @@ namespace NorvesLib::Core
                         if (lightComp)
                         {
                             m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
+                        }
+
+                        auto* cameraComp = CastTo<Component::CameraComponent>(comp);
+                        if (cameraComp &&
+                            m_SceneView->HasMainCameraProxy() &&
+                            m_SceneView->GetMainCameraProxy().CameraId == cameraComp->GetComponentId())
+                        {
+                            m_SceneView->ClearMainCameraProxy();
                         }
                     }
                 }
@@ -406,6 +418,70 @@ namespace NorvesLib::Core
         m_SceneView->RemoveStaleMeshProxies(liveMeshObjectIds);
         m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
         m_SceneView->RemoveStaleLightProxies(liveLightIds);
+
+        // アクティブCameraComponentを決定的に1つ選定してメインカメラProxyを構築する。
+        // 選定基準: RenderOrderが最小、同値ならComponentIdが最小（決定的）。
+        // カメラは数が少ないため、毎Syncで再構築する（dirty差分管理はしない）。
+        //
+        // 【再整合モデル】
+        // メインカメラは毎 Sync でアクティブカメラから再選定・全上書きされる
+        //（Mesh/Light の RemoveStale 掃引に相当する整合点）。
+        // RemoveObject / CleanupDestroyedObjects の明示クリアは防御的措置。
+        // WorldObject::RemoveComponent 経由でのカメラ破棄は SceneView に触れないが、
+        // 次 Sync の再選定で整合する
+        //（現行 Tick 順 World.Tick → SyncToSceneView → Render に依存。
+        //   Mesh/Light も同様に RemoveComponent では掃引に依存）。
+        Component::CameraComponent *selectedCamera = nullptr;
+        for (auto *inner : m_Inners)
+        {
+            auto *obj = CastTo<WorldObject>(inner);
+            if (!obj || !obj->IsActive() || obj->IsPendingDestroy())
+            {
+                continue;
+            }
+
+            auto components = obj->GetComponents();
+            for (auto *comp : components)
+            {
+                auto *cam = CastTo<Component::CameraComponent>(comp);
+                if (!cam || !cam->IsActiveCamera() || !cam->IsActive())
+                {
+                    continue;
+                }
+
+                if (!selectedCamera)
+                {
+                    selectedCamera = cam;
+                    continue;
+                }
+
+                const uint8_t candidateOrder = cam->GetRenderOrder();
+                const uint8_t selectedOrder = selectedCamera->GetRenderOrder();
+                if (candidateOrder < selectedOrder ||
+                    (candidateOrder == selectedOrder &&
+                     cam->GetComponentId() < selectedCamera->GetComponentId()))
+                {
+                    selectedCamera = cam;
+                }
+            }
+        }
+
+        if (selectedCamera)
+        {
+            Rendering::CameraProxy cameraProxy;
+            if (selectedCamera->BuildCameraProxy(cameraProxy))
+            {
+                m_SceneView->SetMainCameraProxy(cameraProxy);
+            }
+            else
+            {
+                m_SceneView->ClearMainCameraProxy();
+            }
+        }
+        else
+        {
+            m_SceneView->ClearMainCameraProxy();
+        }
     }
 
     void World::CleanupDestroyedObjects()
@@ -430,6 +506,9 @@ namespace NorvesLib::Core
                 m_SceneView->RemoveMegaGeometryProxy(obj->GetObjectId());
 
                 // LightComponentのLightProxyも削除
+                // 破棄対象が現在のメインカメラを持つ場合はメインカメラProxyをクリア。
+                // CameraProxy.CameraId は CameraComponent::GetComponentId()
+                //（BuildCameraProxy の契約）なので ComponentId と突き合わせる。
                 auto components = obj->GetComponents();
                 for (auto* comp : components)
                 {
@@ -437,6 +516,14 @@ namespace NorvesLib::Core
                     if (lightComp)
                     {
                         m_SceneView->RemoveLightProxy(lightComp->GetComponentId());
+                    }
+
+                    auto* cameraComp = CastTo<Component::CameraComponent>(comp);
+                    if (cameraComp &&
+                        m_SceneView->HasMainCameraProxy() &&
+                        m_SceneView->GetMainCameraProxy().CameraId == cameraComp->GetComponentId())
+                    {
+                        m_SceneView->ClearMainCameraProxy();
                     }
                 }
             }
