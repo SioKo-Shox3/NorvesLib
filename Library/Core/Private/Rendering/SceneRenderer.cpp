@@ -202,6 +202,31 @@ namespace NorvesLib::Core::Rendering
             commandList->SetDescriptorSet(command.DescriptorSet, command.DescriptorSetSlot);
         }
 
+        // ========================================
+        // 汎用2Dメッシュ描画（任意の頂点/インデックスバッファをバインド）
+        // ========================================
+        if (command.Draw.PayloadKind == DrawPayloadKind::Mesh2D)
+        {
+            const Mesh2DDrawParams &mesh2D = command.Mesh2D;
+            if (!mesh2D.VertexBuffer || !mesh2D.IndexBuffer || mesh2D.IndexCount == 0)
+            {
+                return;
+            }
+
+            if (command.HasScissor)
+            {
+                commandList->SetScissor(command.Scissor);
+            }
+
+            commandList->SetVertexBuffer(mesh2D.VertexBuffer, 0, 0);
+            commandList->SetIndexBuffer(mesh2D.IndexBuffer, 0, mesh2D.IndexType);
+            commandList->DrawIndexed(mesh2D.IndexCount, mesh2D.IndexOffset, mesh2D.VertexOffset);
+
+            ++m_Stats.DrawCallCount;
+            m_Stats.TriangleCount += mesh2D.IndexCount / 3;
+            return;
+        }
+
         const auto &draw = command.Draw;
 
         // MeshHandleからGPUデータを解決

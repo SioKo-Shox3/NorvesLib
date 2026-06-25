@@ -158,7 +158,7 @@ namespace
             (void)offset;
             (void)slot;
         }
-        void SetIndexBuffer(RHI::BufferPtr buffer, uint64_t offset = 0) override
+        void SetIndexBuffer(RHI::BufferPtr buffer, uint64_t offset = 0, RHI::IndexType = RHI::IndexType::Uint32) override
         {
             (void)buffer;
             (void)offset;

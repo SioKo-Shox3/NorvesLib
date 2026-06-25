@@ -105,7 +105,7 @@ namespace
         void SetScissor(const NorvesLib::RHI::ScissorRect &) override {}
         void SetPipeline(NorvesLib::RHI::PipelinePtr) override {}
         void SetVertexBuffer(NorvesLib::RHI::BufferPtr, uint64_t = 0, uint32_t = 0) override {}
-        void SetIndexBuffer(NorvesLib::RHI::BufferPtr, uint64_t = 0) override {}
+        void SetIndexBuffer(NorvesLib::RHI::BufferPtr, uint64_t = 0, NorvesLib::RHI::IndexType = NorvesLib::RHI::IndexType::Uint32) override {}
         void SetConstantBuffer(NorvesLib::RHI::BufferPtr, uint32_t, NorvesLib::RHI::ShaderStage) override {}
         void SetTexture(NorvesLib::RHI::TexturePtr, uint32_t, NorvesLib::RHI::ShaderStage) override {}
         void SetSampler(NorvesLib::RHI::SamplerPtr, uint32_t, NorvesLib::RHI::ShaderStage) override {}

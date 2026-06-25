@@ -5,6 +5,7 @@
 #include "MeshTypes.h"
 #include "Container/Containers.h"
 #include "RHI/RHITypes.h"
+#include "RHI/ICommandList.h"
 #include "Math/Matrix4x4.h"
 #include <cstdint>
 
@@ -29,7 +30,30 @@ namespace NorvesLib::Core::Rendering
     enum class DrawPayloadKind : uint8_t
     {
         Mesh,
-        Board
+        Board,
+        Mesh2D
+    };
+
+    // ========================================
+    // Mesh2DDrawParams
+    // ========================================
+
+    /**
+     * @brief 任意の頂点/インデックスバッファを直接バインドして描く汎用2Dメッシュ描画パラメータ
+     *
+     * Board（固定quad・VB非バインド）と異なり、呼び出し側が用意した頂点バッファと
+     * インデックスバッファをバインドしてインデックス描画する経路で使用します。
+     * 既存の DrawParams（MeshHandle 経路）とは独立した struct とし、
+     * メッシュ経路の条件式と衝突しないようにしています。
+     */
+    struct Mesh2DDrawParams
+    {
+        RHI::BufferPtr VertexBuffer;                        // バインドする頂点バッファ
+        RHI::BufferPtr IndexBuffer;                         // バインドするインデックスバッファ
+        uint32_t IndexCount = 0;                            // 描画するインデックス数
+        uint32_t IndexOffset = 0;                           // 開始インデックス位置
+        int32_t VertexOffset = 0;                           // ベース頂点位置
+        RHI::IndexType IndexType = RHI::IndexType::Uint16;  // インデックス要素型
     };
 
     // ========================================
@@ -125,8 +149,16 @@ namespace NorvesLib::Core::Rendering
         // コマンドパラメータ（種別に応じて使い分ける）
         // ========================================
 
-        DrawParams Draw;        // グラフィックス描画パラメータ
-        DispatchParams Compute; // コンピュートパラメータ
+        DrawParams Draw;             // グラフィックス描画パラメータ
+        DispatchParams Compute;      // コンピュートパラメータ
+        Mesh2DDrawParams Mesh2D;     // 汎用2Dメッシュ描画パラメータ（PayloadKind==Mesh2D時）
+
+        // ========================================
+        // per-drawシザー（汎用・任意）
+        // ========================================
+
+        bool HasScissor = false;     // シザーをこのコマンドで設定するか
+        RHI::ScissorRect Scissor{};  // 設定するシザー矩形
 
         // ========================================
         // ソートキー
@@ -155,6 +187,20 @@ namespace NorvesLib::Core::Rendering
         {
             DrawCommand cmd;
             cmd.Type = DrawCommandType::Draw;
+            return cmd;
+        }
+
+        /**
+         * @brief 汎用2Dメッシュ描画コマンドを生成
+         *
+         * 呼び出し側が用意した頂点/インデックスバッファを直接バインドして
+         * インデックス描画する経路（テクスチャ付き2Dメッシュ・per-drawシザー・αブレンド）。
+         */
+        static DrawCommand CreateMesh2D()
+        {
+            DrawCommand cmd;
+            cmd.Type = DrawCommandType::DrawIndexed;
+            cmd.Draw.PayloadKind = DrawPayloadKind::Mesh2D;
             return cmd;
         }
 
