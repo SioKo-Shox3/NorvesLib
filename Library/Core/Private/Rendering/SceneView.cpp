@@ -314,6 +314,7 @@ namespace NorvesLib::Core::Rendering
         m_MegaGeometryProxyIndex.clear();
         m_LightProxyIndex.clear();
         m_VisibleMeshProxies.clear();
+        m_bHasMainCameraProxy = false;
     }
 
     void SceneView::ClearMegaGeometryProxies()

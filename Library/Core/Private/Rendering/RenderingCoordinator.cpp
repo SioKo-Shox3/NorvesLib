@@ -724,8 +724,29 @@ namespace NorvesLib::Core::Rendering
         if (m_CurrentPacket)
         {
             m_CurrentPacket->bHasMainCamera = false;
-            if (m_bCameraSet)
+            if (m_MainSceneView && m_MainSceneView->HasMainCameraProxy())
             {
+                // SceneView（World同期）のメインカメラを最優先で採用する。
+                CameraProxy mainCamera = m_MainSceneView->GetMainCameraProxy();
+                if (!mainCamera.IsValid())
+                {
+                    // CameraComponent既定のViewportは0なので描画解像度で補完する。
+                    mainCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
+                    mainCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+                    // BuildViewportRenderPlan が実ピクセル矩形から AspectRatio を再計算するため、
+                    // packet 側も描画解像度で揃えて食い違いを防ぐ。
+                    if (m_RenderHeight > 0)
+                    {
+                        mainCamera.AspectRatio = static_cast<float>(m_RenderWidth) / static_cast<float>(m_RenderHeight);
+                    }
+                }
+
+                m_CurrentPacket->Scene.MainCamera = mainCamera;
+                m_CurrentPacket->bHasMainCamera = true;
+            }
+            else if (m_bCameraSet)
+            {
+                // 互換フォールバック: 明示的にSetMainCameraされたカメラ。
                 auto mainCamera = m_MainCamera;
                 if (!mainCamera.IsValid())
                 {
@@ -814,8 +835,19 @@ namespace NorvesLib::Core::Rendering
                     continue;
                 }
 
-                const CameraProxy *fallbackCamera =
-                    (bIsMainSceneView && m_bCameraSet) ? &m_MainCamera : nullptr;
+                const CameraProxy *fallbackCamera = nullptr;
+                if (bIsMainSceneView)
+                {
+                    // SceneView（World同期）のメインカメラを最優先、無ければ互換のSetMainCamera。
+                    if (m_MainSceneView && m_MainSceneView->HasMainCameraProxy())
+                    {
+                        fallbackCamera = &m_MainSceneView->GetMainCameraProxy();
+                    }
+                    else if (m_bCameraSet)
+                    {
+                        fallbackCamera = &m_MainCamera;
+                    }
+                }
                 ViewportRenderPlan viewportPlan = BuildViewportRenderPlan(*viewport,
                                                                           viewIndex,
                                                                           viewportIndex,
