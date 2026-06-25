@@ -312,7 +312,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief overlay 用の presentation load render pass を取得(借用)
          *
-         * overlay モジュール(例: ImGuiModule)が GameThread の初期化フェーズで
+         * overlay モジュール(例: オーバーレイUIモジュール)が GameThread の初期化フェーズで
          * バックエンドのパイプラインを当該 render pass に対して生成するために使う。
          * legacy(PresentationLoad)と composite(GraphPresentationLoad)は構成同一
          * (color1 Load + depth1 Load)で render-pass 互換のため、本アクセサは legacy 側を

@@ -29,17 +29,11 @@
 //   GT が Writing しない」ことを保証するため、同一スロットへの GT 書込みと RT 読取は
 //   決して重ならない。結果、ドロップ挙動やスレッド速度に依存せず証明可能に安全。
 //
-// テクスチャ(imgui 1.92 動的アトラス):
-//   ImDrawData::Textures は ImGui::GetPlatformIO().Textures[] (ImVector<ImTextureData*>*)
-//   を指す。このコンテナ実体は ImGuiContext 所有で、ImGui::Render(EndFrame) 内の
-//   UpdateTexturesEndFrame が毎フレーム resize(0)→再構築するため、RT がライブ実体を
-//   走査すると container レベルで競合する。よって本スナップショットは container を
-//   スロット所有の ImVector<ImTextureData*> へコピーし、クローンの Textures をその
-//   コピーへ向ける(container 競合を排除)。要素の ImTextureData* 実体は context 所有で
-//   フレーム跨ぎ安定(stable pointer)のためポインタはそのまま保持する。
-//   注意: ImTextureData の Status/TexID フィールド自体は GT(ImFontAtlasUpdateNewFrame)
-//   と RT(ImGui_ImplVulkan_UpdateTexture)が共有更新するため、container コピーだけでは
-//   この read-modify-write 競合は解消しない(残課題。レポート参照)。
+// テクスチャ:
+//   本モジュールはレガシー単一フォントアトラスを GameThread 初期化時に自前 ITexture へ
+//   アップロードし、描画時は常にそれを直接バインドする(ImDrawCmd 毎のテクスチャ切替=
+//   ImDrawData::Textures は使わない)。よってクローンの Textures は null のままにし、RT は
+//   テクスチャに一切触れない(動的アトラス由来の跨スレッド競合が構造的に存在しない)。
 namespace NorvesLib::Modules::Gui
 {
     /**
@@ -69,9 +63,9 @@ namespace NorvesLib::Modules::Gui
          *
          * 前回クローンの ImDrawList を破棄し、各 ImDrawList を CloneOutput() で
          * 複製して保持し、display 情報(DisplayPos/DisplaySize/FramebufferScale)を
-         * 複製 ImDrawData へ写す。Textures は container をスロット所有 ImVector へ
-         * コピーし、クローンの Textures をそのコピーへ向ける。source が null/Valid=false
-         * のときはクローンを空(CmdListsCount=0)にする。
+         * 複製 ImDrawData へ写す。Textures は使わない(単一アトラスを描画時に直接バインド)
+         * ため null のままにする。source が null/Valid=false のときはクローンを空
+         * (CmdListsCount=0)にする。
          *
          * 呼び出し側(ImGuiOverlayPass)は本メソッドを「書き込み中パケットのスロット index」に
          * 対応するスナップショットに対してのみ呼ぶこと(スロット排他で RT 読取と分離)。
@@ -109,11 +103,6 @@ namespace NorvesLib::Modules::Gui
         // CloneOutput() が IM_NEW した複製 ImDrawList(本クラスが IM_DELETE で所有解放)。
         // m_DrawData.CmdLists(ImVector)も同じポインタを指すが、所有解放の根拠は本配列。
         Core::Container::VariableArray<::ImDrawList *> m_ClonedLists;
-
-        // Textures container のスロット所有コピー。クローンの ImDrawData::Textures が
-        // ライブ PlatformIO.Textures(EndFrame で毎フレーム resize)を直接指さないよう、
-        // ポインタ一覧をここへ複製し m_DrawData.Textures をこれへ向ける。
-        ImVector<::ImTextureData *> m_TexturesCopy;
 
         // 複製を指す再構築済み ImDrawData。GetDrawData() がこれを返す。
         ::ImDrawData m_DrawData;
