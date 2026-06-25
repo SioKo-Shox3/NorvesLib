@@ -10,7 +10,6 @@
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "RHI/IDevice.h"
-#include "RHI/IRenderPass.h"
 #include "Input/InputTypes.h"
 #include "Input/IInputController.h"
 #include "Input/InputRouter.h"
@@ -25,8 +24,10 @@
 // IModule(寿命) + IRenderModule(描画参加)を実装する。ImGui コンテキストを GameThread で
 // 生成・所有し、毎フレーム Tick で NewFrame→UI 構築→Render→ImDrawData ディープクローンを
 // 行う。RenderThread はクローンのみを読み、ライブ ImGui コンテキストには一切触れない。
-// 描画(RHI リソース生成 + 録画)は ImGuiOverlayPass + 抽象 IImGuiRenderer(Core の Vulkan
-// 実装)に閉じ、本モジュールは生 Vulkan を見ない。
+// 描画(RHI リソース生成 + ImDrawData の自前描画)は ImGuiOverlayPass が Core の抽象 RHI::I* と
+// 汎用 Mesh2D 描画経路(DrawCommand::CreateMesh2D + SceneRenderer + DynamicBufferRing)のみで
+// 行う。Core は ImGui を一切参照/リンクせず、imgui core(imgui.h/ImDrawData)を見るのは本
+// モジュールだけ。imgui_impl_vulkan も生 Vulkan も使わない。
 //
 // 2B-ii(見た目仕上げ): カスタムフォント(Inter 本文 + FontAwesome アイコン + NotoSansJP
 // 日本語を 1 ハンドルにマージ)を静的アトラスで事前構築し、テーマ(NorvesImGuiStyle)・
@@ -39,11 +40,10 @@
 // 2B-ii-b(FreeType + 全範囲強制 bake): フォントラスタライザを FreeType に切替える
 // (imgui 既定の stb_truetype より crisp。NorvesThirdParty_ImGui の IMGUI_ENABLE_FREETYPE
 // 定義で imgui_draw.cpp が FreeType ローダを選ぶ。本モジュール側のコード変更は不要)。
-// さらに、imgui 1.92 の RendererHasTextures 下では Build() は明示範囲を事前 bake せず
-// 実描画グリフのみ lazy bake する性質があるため、初期化時に設定済みの全グリフ範囲を
-// 強制的に bake(materialize)して静的アトラスを確定する。これにより実行時にアトラスが
-// 成長せず、RenderThread が ImTextureData(テクスチャ Status)に触れる必要が恒久的に消える
-// (#2/#3/2B-ii-a で残っていた「未描画グリフ不可視」制約の解消)。
+// さらに初期化時に設定済みの全グリフ範囲を強制的に bake(materialize)してから
+// レガシー単一アトラス(GetTexDataAsRGBA32)を一度だけ確定する。これにより実行時にアトラスが
+// 成長せず(=テクスチャ再アップロード要求が出ず)、RenderThread が ImTextureData(テクスチャ
+// Status)に触れる必要が恒久的に消える(#2/#3/2B-ii-a の「未描画グリフ不可視」制約の解消)。
 namespace NorvesLib::Modules::Gui
 {
     namespace
@@ -258,10 +258,10 @@ namespace NorvesLib::Modules::Gui
                 ::ImGui::SetCurrentContext(m_Context);
 
                 ImGuiIO &io = ::ImGui::GetIO();
-                // imgui 1.92 動的テクスチャ機構。アトラスの GPU アップロードを描画中に
-                // バックエンドが自動実行する(RecordDrawData 内)。本構成では GameThread で
-                // 事前にアップロードし、RenderThread はテクスチャに触れない(2B-i②)。
-                io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+                // 脱 Core: 自前 mesh2d 描画はレガシー単一アトラス(io.Fonts->GetTexDataAsRGBA32 +
+                // SetTexID)に固定する。imgui 1.92 の動的テクスチャ(RendererHasTextures)は
+                // 使わない(RT が ImTextureData::Status を触る経路を構造的に排除し続けるため)。
+                // VtxOffset は自前経路が cmd.VtxOffset を正しく扱う(VertexOffset へ加算)ため有効化する。
                 io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
                 // .ini 永続化は無効化(ファイル I/O を持ち込まない)。
                 io.IniFilename = nullptr;
@@ -318,13 +318,16 @@ namespace NorvesLib::Modules::Gui
             /**
              * @brief imgui バックエンドを GameThread で初期化しフォントアトラスをアップロードする
              *
-             * GEngine の RenderingCoordinator から device と overlay load render pass を取得し、
-             * overlay pass の InitializeGameThread を駆動する。事前に ForceBakeAllGlyphs() で
-             * 設定済み全グリフ範囲(ASCII / 日本語常用 / FontAwesome アイコン)を強制 bake して
-             * から、空の捨てフレーム(NewFrame→Render のみ)を回して GPU へ一度だけ載せる。
-             * ForceBakeAllGlyphs が全 common グリフを materialize するため固定窓の描画は不要で、
-             * imgui 1.92 の lazy bake 下でも全 common グリフが初回に bake+アップロードされ、以後
-             * アトラスは成長せず RenderThread がテクスチャ(ImTextureData::Status)に触れることはない。
+             * GEngine の RenderingCoordinator から device を取得し、overlay pass の
+             * InitializeGameThread(device) を駆動してフォントアトラスを GPU へ載せる。脱 Core 後は
+             * 自前 mesh2d 描画がレガシー単一アトラス(io.Fonts->GetTexDataAsRGBA32 + SetTexID)に
+             * 固定のため、フォントテクスチャは GetTexDataAsRGBA32 が全範囲を一括 bake した CPU
+             * ピクセルから一度だけアップロードされ、以後 RenderThread はテクスチャに触れない。
+             * 事前に ForceBakeAllGlyphs() で設定済み全グリフ範囲(ASCII / 日本語常用 / FontAwesome
+             * アイコン)を確実に materialize し、続く空の捨てフレーム(NewFrame→Render のみ)で
+             * imgui の内部状態を確定させてからアトラスを確定する。mesh2d パイプライン/
+             * DescriptorSet/バッファの生成は overlay seam(RenderThread・ShaderManager 利用可)で
+             * 行うため、ここでは渡さない。
              *
              * @return 初期化+アップロードに成功した場合 true
              */
@@ -338,21 +341,17 @@ namespace NorvesLib::Modules::Gui
 
                 auto &coordinator = Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator();
                 Core::Container::TSharedPtr<RHI::IDevice> device = coordinator.GetDevice();
-                RHI::IRenderPass *loadRenderPass = coordinator.GetOverlayLoadRenderPass();
-                if (Core::Container::IsNull(device) || loadRenderPass == nullptr)
+                if (Core::Container::IsNull(device))
                 {
-                    NORVES_LOG_WARNING(kLogCategory,
-                                       "InitializeBackend skipped: device/overlay load render pass unavailable");
+                    NORVES_LOG_WARNING(kLogCategory, "InitializeBackend skipped: device unavailable");
                     return false;
                 }
 
-                // 設定済み全グリフ範囲を強制 bake してから空の捨てフレームを回す。imgui 1.92 の
-                // RendererHasTextures 下では Build() は明示範囲を事前 bake せず実描画グリフのみ
-                // lazy bake するため、ここで全 common グリフ(ASCII / 日本語常用 / FA アイコン)を
-                // materialize して静的アトラスを確定する。これにより本番フレームで新規グリフ
-                // (=アトラス成長=テクスチャ更新要求)が発生せず、RenderThread が ImTextureData に
-                // 触れる必要が生じない。捨てフレームは NewFrame→Render のみ(固定窓の描画は不要
-                // =グリフ確定は ForceBakeAllGlyphs が担う)。
+                // 設定済み全グリフ範囲を強制 bake してから空の捨てフレームを回す。レガシー単一
+                // アトラスでも明示範囲(ASCII / 日本語常用 / FA アイコン)を確実に materialize して
+                // から GetTexDataAsRGBA32 で確定させ、本番フレームで新規グリフが要求されない
+                // (=アトラス成長=テクスチャ再アップロード)状態を作る。捨てフレームは NewFrame→
+                // Render のみ(固定窓の描画は不要=グリフ確定は ForceBakeAllGlyphs が担う)。
                 ::ImGui::SetCurrentContext(m_Context);
                 {
                     ImGuiIO &io = ::ImGui::GetIO();
@@ -377,10 +376,10 @@ namespace NorvesLib::Modules::Gui
                     ::ImGui::Render();
                 }
 
-                // device + load RP を渡して overlay pass の GameThread 初期化を駆動する。
-                // 内部で renderer 生成 → Initialize(パイプライン) → BuildFontAtlas →
-                // UploadFontAtlas(全テクスチャを GPU へ同期アップロードし Status=OK 確定)。
-                if (!m_OverlayPass.InitializeGameThread(device.get(), loadRenderPass))
+                // device を渡して overlay pass の GameThread 初期化(フォント ITexture +
+                // サンプラー生成・アップロード)を駆動する。mesh2d パイプライン/DescriptorSet/
+                // バッファは overlay seam の IViewPass::Initialize(RenderThread)が生成する。
+                if (!m_OverlayPass.InitializeGameThread(device.get()))
                 {
                     NORVES_LOG_WARNING(kLogCategory, "InitializeBackend failed: overlay InitializeGameThread");
                     return false;
@@ -672,8 +671,9 @@ namespace NorvesLib::Modules::Gui
              * ImFontBaked::FindGlyph)で実現する。実グリフを持たないコードポイント(アイコン
              * フォントの空き番)は fallback に解決され追加コストは発生しない。
              *
-             * 呼出し後に全 common グリフがアトラスに載るため、続く UploadFontAtlas が一度だけ
-             * GPU へ上げて Status=OK を確定し、以後 RenderThread はテクスチャに触れない。
+             * 呼出し後に全 common グリフがアトラスに載るため、続く GetTexDataAsRGBA32(overlay pass の
+             * InitializeGameThread)が一度だけ CPU ピクセルを取得し ITexture へ GPU アップロードして
+             * 確定する。以後 RenderThread はテクスチャに触れない(レガシー単一アトラス固定)。
              */
             void ForceBakeAllGlyphs(ImGuiIO &io)
             {
