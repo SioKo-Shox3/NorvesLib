@@ -52,6 +52,72 @@ namespace NorvesLib::Core::Input
         }
     }
 
+    Component::SpringArmIntent MayaCameraController::BuildIntent(const InputState &input, float deltaTime, float currentArmLength) const
+    {
+        (void)deltaTime; // マウスドラッグベースなので直接deltaTimeは使用しない（Updateと同じ）
+
+        Component::SpringArmIntent intent;
+
+        const auto &mouse = input.GetMouseState();
+
+        // LMB: Orbit (Tumble)
+        // Update: Orbit() で m_Yaw -= deltaX*speed, m_Pitch -= deltaY*speed。
+        // ApplyIntent は Yaw += YawDelta / Pitch += PitchDelta なので符号をそのまま渡す。
+        if (input.IsMouseButtonDown(MouseButton::Left))
+        {
+            if (mouse.DeltaX != 0.0f || mouse.DeltaY != 0.0f)
+            {
+                intent.YawDelta += -mouse.DeltaX * m_OrbitSpeed;
+                intent.PitchDelta += -mouse.DeltaY * m_OrbitSpeed;
+                intent.bHasInput = true;
+            }
+        }
+
+        // MMB: Pan (Track)
+        // Update: panAmount = m_PanSpeed*m_Distance、
+        //         offset = right*(-deltaX*panAmount) + up*(deltaY*panAmount)。
+        // ApplyIntent は PanDelta（スクリーン基底 x=right, y=up）を basis へ投影する。
+        // ドラッグ感（右ドラッグで構図が右へ流れる）を保つよう同じ係数で表現する。
+        // 距離スケールは m_Distance ではなく呼び出し側の currentArmLength を使う
+        //（距離の真実が SpringArmComponent 側にあるため）。
+        if (input.IsMouseButtonDown(MouseButton::Middle))
+        {
+            if (mouse.DeltaX != 0.0f || mouse.DeltaY != 0.0f)
+            {
+                const float panAmount = m_PanSpeed * currentArmLength;
+                intent.PanDelta.x += -mouse.DeltaX * panAmount;
+                intent.PanDelta.y += mouse.DeltaY * panAmount;
+                intent.bHasInput = true;
+            }
+        }
+
+        // RMB: Dolly
+        // Update: Dolly(-deltaX*m_DollySpeed*m_Distance)、Dolly() は m_Distance -= delta
+        //         → m_Distance の変化 = +deltaX*m_DollySpeed*m_Distance。
+        // ApplyIntent は ArmLength -= DollyDelta なので DollyDelta = -deltaX*m_DollySpeed*currentArmLength。
+        // 距離スケールは m_Distance ではなく currentArmLength を使う。
+        if (input.IsMouseButtonDown(MouseButton::Right))
+        {
+            if (mouse.DeltaX != 0.0f)
+            {
+                intent.DollyDelta += -mouse.DeltaX * m_DollySpeed * currentArmLength;
+                intent.bHasInput = true;
+            }
+        }
+
+        // スクロール: Dolly
+        // Update: Dolly(scroll*m_ScrollDollySpeed*m_Distance) → m_Distance -= それ。
+        // ApplyIntent は ArmLength -= DollyDelta なので DollyDelta = scroll*m_ScrollDollySpeed*currentArmLength。
+        // 距離スケールは m_Distance ではなく currentArmLength を使う。
+        if (std::abs(mouse.ScrollDelta) > 0.0f)
+        {
+            intent.DollyDelta += mouse.ScrollDelta * m_ScrollDollySpeed * currentArmLength;
+            intent.bHasInput = true;
+        }
+
+        return intent;
+    }
+
     Math::Vector3 MayaCameraController::GetPosition() const
     {
         return m_Position;

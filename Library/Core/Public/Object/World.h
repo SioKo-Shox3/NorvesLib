@@ -141,6 +141,17 @@ namespace NorvesLib::Core
         void RemoveObject(WorldObject *object);
 
         /**
+         * @brief ObjectIdからWorldObjectを検索
+         * @param id 検索するObjectId（0はnullptrを返す）
+         * @return 一致しかつ破棄予約されていないWorldObject。見つからなければnullptr。
+         *
+         * Innersを走査し、CastTo<WorldObject>でObjectIdが一致し
+         * IsPendingDestroy()でないものを返します。SpringArmComponent等が
+         * ピボット参照をObjectId保持＋毎回解決する際に使用します（ObjectHeap不使用）。
+         */
+        WorldObject *FindObjectById(uint64_t id) const;
+
+        /**
          * @brief 管理下の全WorldObjectを取得（Innersからフィルタリング）
          */
         Container::VariableArray<WorldObject *> GetWorldObjects() const;

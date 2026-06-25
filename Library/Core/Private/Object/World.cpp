@@ -223,6 +223,24 @@ namespace NorvesLib::Core
         }
     }
 
+    WorldObject *World::FindObjectById(uint64_t id) const
+    {
+        if (id == 0)
+        {
+            return nullptr;
+        }
+
+        for (auto *inner : m_Inners)
+        {
+            auto *obj = CastTo<WorldObject>(inner);
+            if (obj && obj->GetObjectId() == id && !obj->IsPendingDestroy())
+            {
+                return obj;
+            }
+        }
+        return nullptr;
+    }
+
     Container::VariableArray<WorldObject *> World::GetWorldObjects() const
     {
         Container::VariableArray<WorldObject *> result;

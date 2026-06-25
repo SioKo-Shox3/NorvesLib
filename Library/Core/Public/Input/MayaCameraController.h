@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Input/InputState.h"
+#include "Component/SpringArmTypes.h"
 #include "Math/Vector3.h"
 #include "Rendering/SceneProxy.h"
 
@@ -53,6 +54,34 @@ namespace NorvesLib::Core::Input
          * @param deltaTime フレーム間隔（秒）
          */
         void Update(const InputState &input, float deltaTime);
+
+        /**
+         * @brief 入力状態をSpringArmIntentへ変換する（状態を書き換えないconst版）
+         * @param input 現在の入力状態
+         * @param deltaTime フレーム間隔（秒）
+         * @param currentArmLength 現在のアーム長（距離依存量のスケールに使う）
+         * @return この1フレームの操作意図
+         *
+         * Updateが行うOrbit/Pan/Dollyの感度換算ロジックを流用し、入力deltaを
+         * SpringArmIntentの各delta量へ変換します。内部状態（Yaw/Pitch/Distance/Target）は
+         * 一切変更しません。3層構成（MayaCameraController→SpringArmComponent→CameraComponent）の
+         * 入力層が、SpringArmComponent::ApplyIntentへ渡す意図を構築するために使います。
+         *
+         * 距離依存量（Pan量・Dolly量）は呼び出し側が渡す現在の ArmLength
+         * （currentArmLength）でスケールします。コントローラ内部 m_Distance には依存しません。
+         * これにより、距離の真実が SpringArmComponent 側にある構成でも、入力換算が
+         * 陳腐化した m_Distance とずれません。
+         *
+         * 換算規約（Updateと同一条件・同一係数。ただし m_Distance を currentArmLength に置換）:
+         * - LMB ドラッグ → YawDelta/PitchDelta（m_OrbitSpeed換算。Updateと同じ符号で
+         *   Yaw -= deltaX*speed / Pitch -= deltaY*speed をdeltaとして表現）
+         * - MMB ドラッグ → PanDelta（スクリーン基底 x=right, y=up。
+         *   Updateのoffset = right*(-deltaX*pan) + up*(deltaY*pan) と整合する係数。
+         *   panAmount = m_PanSpeed * currentArmLength）
+         * - RMB ドラッグ / スクロール → DollyDelta（m_DollySpeed/m_ScrollDollySpeed換算。
+         *   currentArmLength でスケール。+で近づく＝ArmLengthを縮める向き）
+         */
+        Component::SpringArmIntent BuildIntent(const InputState &input, float deltaTime, float currentArmLength) const;
 
         // ========================================
         // カメラ状態の取得
