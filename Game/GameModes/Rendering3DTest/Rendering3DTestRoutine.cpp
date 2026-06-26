@@ -7,6 +7,8 @@
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Component/LightComponent.h"
 #include "Core/Public/Component/PointLightComponent.h"
+#include "Core/Public/Component/CameraComponent.h"
+#include "Core/Public/Component/SpringArmComponent.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/RenderResourceContexts.h"
 #include "Core/Public/Rendering/RenderResources.h"
@@ -45,12 +47,45 @@ namespace Game::GameModes
         // カメラコントローラーの初期化（シーン所有）
         // ========================================
         // 原点を注視点とし、距離5.0、Yaw=0°、Pitch=30°で初期化
+        // （感度設定を保持する入力抽象化層として引き続き使用）
         data.m_CameraController.Initialize(
             NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), // target
             5.0f,                                       // distance
             0.0f,                                       // yaw
             30.0f);                                     // pitch
         LOG_INFO("MayaCameraController initialized");
+
+        // ========================================
+        // カメラ用 WorldObject の構築
+        // （SpringArmComponent + CameraComponent による新カメラ経路）
+        // ========================================
+        {
+            auto &world = ctx.WorldRef;
+
+            // ピボット（注視対象）オブジェクト：旧 Initialize の target と同じ原点
+            data.m_pPivotObject = world.SpawnObject<WorldObject>();
+            data.m_pPivotObject->SetPosition(0.0f, 0.0f, 0.0f);
+
+            // カメラ本体オブジェクト：SpringArm が毎フレーム位置・回転を上書きする
+            data.m_pCameraObject = world.SpawnObject<WorldObject>();
+
+            // SpringArmComponent：ピボットを中心とした球面アームを駆動
+            data.m_pSpringArm = world.CreateComponent<Component::SpringArmComponent>(data.m_pCameraObject);
+            data.m_pSpringArm->SetPivot(data.m_pPivotObject); // ObjectId を保持（ポインタ非所有）
+            data.m_pSpringArm->SetArmLength(5.0f);             // 旧 distance=5.0 と一致
+            data.m_pSpringArm->SetYaw(0.0f);                   // 旧 yaw=0 と一致
+            data.m_pSpringArm->SetPitch(30.0f);                // 旧 pitch=30 と一致
+
+            // CameraComponent：レンズ設定を保持しアクティブカメラとして登録
+            data.m_pCameraComponent = world.CreateComponent<Component::CameraComponent>(data.m_pCameraObject);
+            data.m_pCameraComponent->SetActiveCamera(true);
+
+            // 初期フレームでカメラ位置を確定させる
+            // （World::Tick が毎フレーム駆動するが、Enter 直後の整合のために一度呼ぶ）
+            data.m_pSpringArm->Tick(0.0f);
+
+            LOG_INFO("Camera (SpringArmComponent + CameraComponent) initialized");
+        }
 
         // ========================================
         // 1. プロシージャルメッシュの生成とGPU登録
@@ -471,30 +506,28 @@ namespace Game::GameModes
     void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
         // ========================================
-        // 入力に基づくカメラ更新（シーン所有）
+        // 入力に基づくカメラ意図の注入
+        // （SpringArmComponent::Tick は World::Tick が毎フレーム自動駆動するため
+        //  GameMode 側では ApplyIntent のみ呼ぶ。SetMainCamera は不要）
         // ========================================
         const auto &inputState = ctx.InputRef.GetState();
 
-        // カメラコントローラー更新
-        data.m_CameraController.Update(inputState, deltaTime);
-
-        // デバッグ: スクロール値とカメラ距離を出力
+        if (data.m_pSpringArm)
         {
+            Component::SpringArmIntent intent = data.m_CameraController.BuildIntent(
+                inputState, deltaTime, data.m_pSpringArm->GetArmLength());
+            data.m_pSpringArm->ApplyIntent(intent);
+
+            // デバッグ: スクロール値とカメラ距離を出力
             float scroll = inputState.GetMouseState().ScrollDelta;
             if (std::abs(scroll) > 0.0f)
             {
-                float dist = data.m_CameraController.GetDistance();
-                auto pos = data.m_CameraController.GetPosition();
-                NORVES_LOG_DEBUG("Input", "ScrollDelta={:.3f}, CamDist={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
-                                 scroll, dist, pos.x, pos.y, pos.z);
+                float armLength = data.m_pSpringArm->GetArmLength();
+                auto camPos = data.m_pCameraObject ? data.m_pCameraObject->GetPosition()
+                                                   : NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f);
+                NORVES_LOG_DEBUG("Input", "ScrollDelta={:.3f}, ArmLength={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
+                                 scroll, armLength, camPos.x, camPos.y, camPos.z);
             }
-        }
-
-        // カメラ状態をRenderWorldに反映
-        {
-            NorvesLib::Core::Rendering::CameraProxy cameraProxy;
-            data.m_CameraController.ApplyTo(cameraProxy);
-            ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
         }
 
         data.m_ElapsedTime += deltaTime;
@@ -620,6 +653,21 @@ namespace Game::GameModes
             world.RemoveObject(data.m_pDirectionalLightObject);
             data.m_pDirectionalLightObject = nullptr;
             data.m_pDirectionalLightComponent = nullptr;
+        }
+        // カメラオブジェクトの破棄
+        // SpringArmComponent は m_pCameraObject の Inner なので RemoveObject で連鎖破棄される
+        if (data.m_pCameraObject)
+        {
+            world.RemoveObject(data.m_pCameraObject);
+            data.m_pCameraObject = nullptr;
+            data.m_pSpringArm = nullptr;
+            data.m_pCameraComponent = nullptr;
+        }
+        // ピボットは独立した WorldObject なので別途 RemoveObject する
+        if (data.m_pPivotObject)
+        {
+            world.RemoveObject(data.m_pPivotObject);
+            data.m_pPivotObject = nullptr;
         }
 
         // 3) メッシュの登録解除（Proxy 除去後）
