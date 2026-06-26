@@ -19,6 +19,8 @@ namespace NorvesLib::Core
         class MegaGeometryComponent;
         class LightComponent;
         class PointLightComponent;
+        class CameraComponent;
+        class SpringArmComponent;
     } // namespace Component
 } // namespace NorvesLib::Core
 
@@ -103,8 +105,20 @@ namespace Game::GameModes
         // 球体回転速度（rad/s）
         float m_RotationSpeed = 0.5f;
 
-        // Maya準拠カメラコントローラー（シーン所有）
+        // Maya準拠カメラコントローラー（入力→意図の抽象化層。感度設定を保持）
         NorvesLib::Core::Input::MayaCameraController m_CameraController;
+
+        // ピボットオブジェクト（注視対象。旧 target 相当。World が所有）
+        NorvesLib::Core::WorldObject *m_pPivotObject = nullptr;
+
+        // カメラオブジェクト（SpringArmComponent + CameraComponent を同居。World が所有）
+        NorvesLib::Core::WorldObject *m_pCameraObject = nullptr;
+
+        // SpringArmComponent参照（m_pCameraObject が所有）
+        NorvesLib::Core::Component::SpringArmComponent *m_pSpringArm = nullptr;
+
+        // CameraComponent参照（m_pCameraObject が所有）
+        NorvesLib::Core::Component::CameraComponent *m_pCameraComponent = nullptr;
 
         // メッシュ登録済みフラグ
         bool m_bMeshesRegistered = false;
