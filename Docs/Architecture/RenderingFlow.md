@@ -40,6 +40,17 @@ Single-threaded path では `Ready -> Reading -> Empty` を GameThread 内で完
 - Component が disabled または owner が inactive の場合、その frame の proxy には残らない。
 - DrawCommand は `GenerateDrawCommands()` で `SceneView` から生成され、`FramePacket` にコピーされる。
 
+### カメラ経路（3 層）
+
+カメラは Mesh/Light/MegaGeometry とは別に、専用の 3 層構成で SceneView のメインカメラ proxy を駆動する。
+
+- **3 層カメラ構成**:
+  - `MayaCameraController`: 入力 → `SpringArmIntent` の感度換算のみを担う（World には属さない純粋な変換層）。
+  - `SpringArmComponent`: `SpringArmIntent` を受けて球面アームを駆動し、owner WorldObject の Transform（位置・回転）を毎フレーム上書きする。`World::Tick` が `SpringArmComponent::Tick` を自動駆動する。
+  - `CameraComponent`: レンズ層。owner Transform から forward/up/right を導出し `BuildCameraProxy` で `CameraProxy` を生成する。
+- **アクティブカメラの決定的選定**: `World::SyncToSceneView()` が全 WorldObject を走査し、`bIsActiveCamera && IsActive()` な `CameraComponent` を 1 つ選定する（複数該当時は RenderOrder 最小、同値なら ComponentId 最小で決定的に決まる）。選定したカメラは `BuildCameraProxy` → `SceneView::SetMainCameraProxy` で反映し、該当なしなら `ClearMainCameraProxy` する。Mesh/Light の RemoveStale 掃引と同様、毎 Sync で全上書きする。
+- **RenderingCoordinator の採用と補完**: `GenerateDrawCommands` は SceneView のメインカメラ proxy を最優先で採用する。`CameraComponent` は AspectRatio/Viewport を設定せず描画解像度に追従するため、`RenderingCoordinator` が空の Viewport を描画解像度で補完し、`BuildViewportRenderPlan` が実ピクセル矩形から AspectRatio を再計算する。
+
 ## RHI 境界
 
 - Rendering 層は `RHI::IDevice`、`ICommandList`、`ISwapChain` などの抽象 API だけを見る。
