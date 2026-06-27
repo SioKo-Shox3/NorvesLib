@@ -10,6 +10,7 @@
 #include "Rendering/Screen.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/RenderThread.h"
+#include "Rendering/DebugDrawQueue.h"
 
 namespace NorvesLib::Core
 {
@@ -149,6 +150,18 @@ namespace NorvesLib::Core
         const Rendering::RenderThread &GetRenderThread() const { return m_RenderThread; }
 
         /**
+         * @brief デバッグ描画キューを取得
+         * @return デバッグ描画キューへの参照
+         */
+        Rendering::DebugDrawQueue& GetDebugDraw() { return m_DebugDraw; }
+
+        /**
+         * @brief デバッグ描画キューを取得（const版）
+         * @return デバッグ描画キューへのconst参照
+         */
+        const Rendering::DebugDrawQueue& GetDebugDraw() const { return m_DebugDraw; }
+
+        /**
          * @brief Component data registryを取得
          * @return Component data registryへの参照
          */
@@ -171,6 +184,7 @@ namespace NorvesLib::Core
         ComponentDataRegistry m_ComponentDataRegistry;           ///< Component data scratch registry
         Rendering::RenderingCoordinator m_RenderingCoordinator; ///< 描画フロー管理
         Rendering::RenderThread m_RenderThread;                 ///< レンダースレッド
+        Rendering::DebugDrawQueue m_DebugDraw;                  ///< デバッグ描画キュー
     };
 
     /**
