@@ -124,7 +124,9 @@ set(PRIVATE_SOURCES
     Private/Component/MeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/LightComponent.cpp
+    Private/Component/DirectionalLightComponent.cpp
     Private/Component/PointLightComponent.cpp
+    Private/Component/SpotLightComponent.cpp
     # Thread
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
@@ -350,7 +352,9 @@ set(PUBLIC_HEADERS
     Public/Component/MeshComponent.h
     Public/Component/MegaGeometryComponent.h
     Public/Component/LightComponent.h
+    Public/Component/DirectionalLightComponent.h
     Public/Component/PointLightComponent.h
+    Public/Component/SpotLightComponent.h
     # Math
     Public/Math/MathForward.h
     Public/Math/MathTypes.h

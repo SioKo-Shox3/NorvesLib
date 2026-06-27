@@ -82,6 +82,15 @@ target_include_directories(ObjectCastTest PRIVATE
 )
 set_target_properties(ObjectCastTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(LightComponentBuildProxyTest
+    LightComponentBuildProxyTest.cpp
+)
+target_link_libraries(LightComponentBuildProxyTest PRIVATE Core)
+target_include_directories(LightComponentBuildProxyTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(LightComponentBuildProxyTest PROPERTIES FOLDER "Test/Core/Object")
+
 add_executable(ObjectGCTest
     ObjectGCTest.cpp
 )
@@ -166,6 +175,7 @@ add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
 add_test(NAME RuntimeSchemaSnapshotTest COMMAND RuntimeSchemaSnapshotTest)
 add_test(NAME ObjectHeapTest COMMAND ObjectHeapTest)
 add_test(NAME ObjectCastTest COMMAND ObjectCastTest)
+add_test(NAME LightComponentBuildProxyTest COMMAND LightComponentBuildProxyTest)
 add_test(NAME PropertyBagTest COMMAND PropertyBagTest)
 add_test(NAME InvocationQueueTest COMMAND InvocationQueueTest)
 add_test(NAME ResourceMetadataTest COMMAND ResourceMetadataTest)
