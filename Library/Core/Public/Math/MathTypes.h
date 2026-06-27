@@ -14,4 +14,13 @@ struct Constants
     static constexpr float EPSILON = 1.192092896e-07f;
 };
 
+/**
+ * @brief クリップ空間の深度レンジ規約（Vulkan系=ZeroToOne / OpenGL系=NegativeOneToOne）
+ */
+enum class ClipSpaceDepthRange
+{
+    ZeroToOne,
+    NegativeOneToOne
+};
+
 } // namespace NorvesLib::Math
