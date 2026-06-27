@@ -249,6 +249,42 @@ namespace
     }
 
     // ========================================
+    // ケース4b: CameraComponent 既定 == CameraProxy 既定 の一致回帰
+    // ========================================
+    void TestDefaultsMatchProxyDefaults()
+    {
+        // 素の CameraProxy 既定値（何も触らない）。
+        // BuildCameraProxy が書き込むレンズ系フィールドの既定の基準とする。
+        CameraProxy defaultProxy;
+
+        World world;
+        world.Initialize();
+
+        WorldObject *object = world.SpawnObject<WorldObject>();
+        assert(object);
+
+        CameraComponent *camera = world.CreateComponent<CameraComponent>(object);
+        assert(camera);
+
+        // setter を一切呼ばず（CameraComponent の素の既定値のまま）Build する。
+        CameraProxy built;
+        assert(camera->BuildCameraProxy(built));
+
+        // CameraComponent の既定レンズ値が CameraProxy の既定値と一致すること
+        // （どちらかが変わると画角が静かにズレるのを検出）。
+        assert(built.Projection == defaultProxy.Projection);
+        assert(IsNearlyEqual(built.FieldOfView, defaultProxy.FieldOfView));
+        assert(IsNearlyEqual(built.NearPlane, defaultProxy.NearPlane));
+        assert(IsNearlyEqual(built.FarPlane, defaultProxy.FarPlane));
+        // Ortho も含めて比較する（Perspective 既定でも Ortho 既定がズレると
+        // 投影切替時に静かに画角がズレるため）。
+        assert(IsNearlyEqual(built.OrthoWidth, defaultProxy.OrthoWidth));
+        assert(IsNearlyEqual(built.OrthoHeight, defaultProxy.OrthoHeight));
+
+        world.Finalize();
+    }
+
+    // ========================================
     // ケース5: AspectRatio は BuildCameraProxy が触らない
     // ========================================
     void TestAspectRatioUntouched()
@@ -361,6 +397,7 @@ int main()
     TestRoundTrip();
     TestLensValues();
     TestDefaultValues();
+    TestDefaultsMatchProxyDefaults();
     TestAspectRatioUntouched();
     TestBuildIdempotency();
 
