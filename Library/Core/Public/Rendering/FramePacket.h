@@ -3,6 +3,7 @@
 #include "RenderTypes.h"
 #include "SceneProxy.h"
 #include "DrawCommand.h"
+#include "Rendering/DebugDrawQueue.h"
 #include "ViewportSnapshot.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
@@ -73,6 +74,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief DrawCommandから参照するGPUシーンインスタンスデータ */
         Container::VariableArray<GPUSceneInstanceData> InstanceData;
 
+        /** @brief デバッグライン頂点スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
+        Container::VariableArray<DebugLineVertex> DebugLineVertices;
+
         // ========================================
         // View/Viewport render plan（新描画フロー用）
         // ========================================
@@ -118,6 +122,7 @@ namespace NorvesLib::Core::Rendering
             OpaqueCommandRange = CommandRange{};
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
+            DebugLineVertices.clear();
             Views.clear();
             OverlayPasses.clear();
         }

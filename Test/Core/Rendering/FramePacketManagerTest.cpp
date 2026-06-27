@@ -44,6 +44,10 @@ int main()
         standalonePacket.DrawCommands.push_back(DrawCommand::CreateDraw());
         standalonePacket.DrawCommands.push_back(DrawCommand::CreateDrawIndexed());
         standalonePacket.DrawCommands.push_back(DrawCommand::CreateDraw());
+        DebugLineVertex debugLineVertex{};
+        debugLineVertex.Position[0] = 1.0f;
+        debugLineVertex.Color[3] = 1.0f;
+        standalonePacket.DebugLineVertices.push_back(debugLineVertex);
         standalonePacket.OpaqueCommandRange = {0, 2};
         standalonePacket.TransparentCommandRange = {2, 1};
         standalonePacket.DrawCommandRange = {0, 3};
@@ -64,6 +68,7 @@ int main()
         standalonePacket.Clear();
         assert(standalonePacket.Views.empty());
         assert(standalonePacket.DrawCommands.empty());
+        assert(standalonePacket.DebugLineVertices.empty());
         assert(standalonePacket.DrawCommandRange.IsEmpty());
         assert(standalonePacket.OpaqueCommandRange.IsEmpty());
         assert(standalonePacket.TransparentCommandRange.IsEmpty());
