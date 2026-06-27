@@ -137,12 +137,6 @@ namespace NorvesLib::Core::Rendering
         void CollectScene();
 
         /**
-         * @brief カメラを設定（GameThread）
-         * @param camera メインカメラ情報
-         */
-        void SetMainCamera(const CameraProxy &camera);
-
-        /**
          * @brief フレーム終了（GameThread）
          *
          * FramePacketを完了状態にし、RenderThreadに通知します。

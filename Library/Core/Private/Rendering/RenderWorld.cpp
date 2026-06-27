@@ -231,11 +231,6 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.CollectScene();
     }
 
-    void RenderWorld::SetMainCamera(const CameraProxy &camera)
-    {
-        m_RenderingCoordinator.SetMainCamera(camera);
-    }
-
     void RenderWorld::EndFrame()
     {
         if (!m_bInitialized)

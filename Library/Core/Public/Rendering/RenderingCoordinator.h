@@ -211,17 +211,6 @@ namespace NorvesLib::Core::Rendering
         void DestroyView(Container::TSharedPtr<View> view);
 
         /**
-         * @brief メインカメラを設定
-         * @param camera カメラ情報
-         */
-        void SetMainCamera(const CameraProxy &camera);
-
-        /**
-         * @brief メインカメラを取得
-         */
-        const CameraProxy &GetMainCamera() const { return m_MainCamera; }
-
-        /**
          * @brief メインSceneViewを取得
          */
         Container::TSharedPtr<SceneView> GetMainSceneView() const { return m_MainSceneView; }
@@ -343,10 +332,6 @@ namespace NorvesLib::Core::Rendering
 
         // 深度バッファ（スワップチェーン用、将来的にForwardPass等で使用）
         Container::TSharedPtr<RHI::ITexture> m_DepthTexture;
-
-        // メインカメラ（GameThreadから設定される）
-        CameraProxy m_MainCamera;
-        bool m_bCameraSet = false;
 
         // Screen（最終出力先 - SwapChain所有）
         Screen m_Screen;
