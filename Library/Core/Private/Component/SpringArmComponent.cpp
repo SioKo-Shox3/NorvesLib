@@ -116,7 +116,11 @@ namespace NorvesLib::Core::Component
     void SpringArmComponent::Tick(float deltaTime)
     {
         (void)deltaTime;
+        RefreshOwnerTransform();
+    }
 
+    void SpringArmComponent::RefreshOwnerTransform()
+    {
         WorldObject *pivot = ResolvePivot();
         if (pivot == nullptr)
         {

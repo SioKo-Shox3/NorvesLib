@@ -176,6 +176,27 @@ namespace NorvesLib::Core::Component
          */
         void ApplyIntent(const SpringArmIntent &intent);
 
+        /**
+         * @brief 現在のアーム状態から owner WorldObject の Transform を即座に再計算して書き込む
+         *
+         * 現在の (ArmLength / Yaw / Pitch) と解決済みピボットから、owner WorldObject の
+         * Transform（位置・回転）を 1 回だけ確定します。通常は World の自動 Tick が
+         * `SpringArmComponent::Tick` を毎フレーム駆動しますが、それを待たず Enter 直後などに
+         * カメラ姿勢を 1 回確定したい場合に用います。
+         *
+         * 契約:
+         * - GameThread 前提（owner Transform を直接書き込むため）。
+         * - ピボットが解決できない場合は owner Transform を変更せず維持します
+         *   （破棄済みポインタには一切触れないため use-after-free 安全）。
+         * - ピボット未解決時の警告抑制カウンタ（m_MissingPivotWarnTicks）は通常 `Tick` と
+         *   同様に進みます。本メソッドと `Tick` は完全に同一のロジックを共有します
+         *   （`Tick` は本メソッドへ委譲します）。
+         *
+         * 命名は MeshComponent::RefreshRenderTransformCache()（Tick とは独立に状態を確定する
+         * 公開 API）と整合させています。
+         */
+        void RefreshOwnerTransform();
+
     protected:
         // ========================================
         // 内部駆動
