@@ -282,9 +282,9 @@ namespace NorvesLib::Core::Rendering
         float AttenuationLinear = 0.09f;
         float AttenuationQuadratic = 0.032f;
 
-        // スポットライト
-        float InnerConeAngle = 12.5f;
-        float OuterConeAngle = 17.5f;
+        // スポットライト（half-angleの余弦値）
+        float InnerConeAngle = 0.976296f;
+        float OuterConeAngle = 0.953717f;
 
         // シャドウ
         bool bCastShadows = false;

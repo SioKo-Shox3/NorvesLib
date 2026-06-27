@@ -21,8 +21,8 @@ namespace NorvesLib::Core::Component
      *
      * 派生クラス:
      * - PointLightComponent: 点光源
-     * - DirectionalLightComponent: 平行光源（将来）
-     * - SpotLightComponent: スポットライト（将来）
+     * - DirectionalLightComponent: 平行光源
+     * - SpotLightComponent: スポットライト
      *
      * World::SyncToSceneView() でMeshComponentと同様に
      * LightProxyが自動的にSceneViewに登録・更新されます。
