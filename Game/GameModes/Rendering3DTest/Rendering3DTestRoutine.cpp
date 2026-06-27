@@ -47,7 +47,7 @@ namespace Game::GameModes
         // カメラコントローラーの初期化（シーン所有）
         // ========================================
         // 原点を注視点とし、距離5.0、Yaw=0°、Pitch=30°で初期化
-        // （感度設定を保持する入力抽象化層として引き続き使用）
+        // （MayaCameraController は入力→SpringArmIntent の感度換算ロジックのみ使用）
         data.m_CameraController.Initialize(
             NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), // target
             5.0f,                                       // distance
@@ -81,8 +81,10 @@ namespace Game::GameModes
             data.m_pCameraComponent->SetActiveCamera(true);
 
             // 初期フレームでカメラ位置を確定させる
-            // （World::Tick が毎フレーム駆動するが、Enter 直後の整合のために一度呼ぶ）
-            data.m_pSpringArm->Tick(0.0f);
+            // （World::Tick が SpringArmComponent::Tick を毎フレーム駆動するが、Enter 直後の
+            //  整合のために、Component::Tick を直呼びせず公開 API RefreshOwnerTransform() で
+            //  カメラ姿勢を一度だけ初期確定する）
+            data.m_pSpringArm->RefreshOwnerTransform();
 
             LOG_INFO("Camera (SpringArmComponent + CameraComponent) initialized");
         }
