@@ -17,6 +17,7 @@
 #include "Rendering/RenderFrameExecutor.h"
 #include "Rendering/IViewPass.h"
 #include "Engine/Engine.h"
+#include "Engine/NorvesEngine.h"
 #include "RHI/ISampler.h"
 #include "RHI/IDevice.h"
 #include "RHI/ISwapChain.h"
@@ -895,6 +896,17 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->TransparentCommandRange = CommandRange{};
             m_CurrentPacket->InstanceData.clear();
             m_CurrentPacket->Views.clear();
+
+            auto& debugDraw = NorvesLib::Core::GEngine.GetDebugDraw();
+            m_CurrentPacket->DebugLineVertices.clear();
+            const auto &debugLineVertices = debugDraw.GetVertices();
+            if (!debugLineVertices.empty())
+            {
+                m_CurrentPacket->DebugLineVertices.insert(m_CurrentPacket->DebugLineVertices.end(),
+                                                          debugLineVertices.begin(),
+                                                          debugLineVertices.end());
+            }
+            debugDraw.Clear();
         }
 
         bool bLegacyCommandsSet = false;
@@ -1246,6 +1258,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotDrawCommandSource = &packet->DrawCommands;
         viewContext.SnapshotDrawCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                       packet->DrawCommandRange);
+        viewContext.SnapshotDebugLineVertices = &packet->DebugLineVertices;
         viewContext.SnapshotOpaqueCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                         packet->OpaqueCommandRange);
         viewContext.SnapshotTransparentCommands = DrawCommandView::FromRange(packet->DrawCommands,
