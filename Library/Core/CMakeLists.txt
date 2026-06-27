@@ -61,6 +61,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
     Private/Rendering/DebugDrawQueue.cpp
+    Private/Rendering/DebugDrawPass.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderGraph/RenderGraph.cpp
     Private/Rendering/RenderGraph/RenderGraphBuilder.cpp
@@ -278,6 +279,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/DynamicBufferRing.h
     Public/Rendering/DrawCommand.h
     Public/Rendering/DebugDrawQueue.h
+    Public/Rendering/DebugDrawPass.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
     Public/Rendering/RenderGraph/RenderGraphResourceNames.h

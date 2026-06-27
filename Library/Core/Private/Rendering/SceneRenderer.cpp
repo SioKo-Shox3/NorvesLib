@@ -349,6 +349,35 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        case FrameCommandType::DebugDrawLineList:
+        {
+            const DebugDrawLineListPassCommand &debugDraw = command.DebugDrawLineList;
+            if (!debugDraw.RenderPass ||
+                !debugDraw.Framebuffer ||
+                !debugDraw.Pipeline ||
+                !debugDraw.DescriptorSet ||
+                !debugDraw.VertexBuffer ||
+                debugDraw.VertexCount == 0)
+            {
+                return;
+            }
+
+            commandList->BeginRenderPass(debugDraw.RenderPass, debugDraw.Framebuffer);
+            commandList->SetViewport(debugDraw.Viewport);
+            commandList->SetScissor(debugDraw.Scissor);
+            m_BoundPipeline = nullptr;
+
+            commandList->SetPipeline(debugDraw.Pipeline);
+            commandList->SetDescriptorSet(debugDraw.DescriptorSet, 0);
+            commandList->SetVertexBuffer(debugDraw.VertexBuffer, 0, 0);
+            commandList->Draw(debugDraw.VertexCount, 0);
+
+            ++m_Stats.DrawCallCount;
+
+            commandList->EndRenderPass();
+            return;
+        }
+
         case FrameCommandType::TextureBarrier:
         {
             const TextureBarrierCommand &barrier = command.TextureBarrier;
