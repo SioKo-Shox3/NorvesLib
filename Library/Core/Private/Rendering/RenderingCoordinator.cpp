@@ -744,19 +744,6 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.MainCamera = mainCamera;
                 m_CurrentPacket->bHasMainCamera = true;
             }
-            else if (m_bCameraSet)
-            {
-                // 互換フォールバック: 明示的にSetMainCameraされたカメラ。
-                auto mainCamera = m_MainCamera;
-                if (!mainCamera.IsValid())
-                {
-                    mainCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
-                    mainCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
-                }
-
-                m_CurrentPacket->Scene.MainCamera = mainCamera;
-                m_CurrentPacket->bHasMainCamera = true;
-            }
 
             if (m_MainSceneView)
             {
@@ -838,14 +825,10 @@ namespace NorvesLib::Core::Rendering
                 const CameraProxy *fallbackCamera = nullptr;
                 if (bIsMainSceneView)
                 {
-                    // SceneView（World同期）のメインカメラを最優先、無ければ互換のSetMainCamera。
+                    // SceneView（World同期）のメインカメラを採用する。
                     if (m_MainSceneView && m_MainSceneView->HasMainCameraProxy())
                     {
                         fallbackCamera = &m_MainSceneView->GetMainCameraProxy();
-                    }
-                    else if (m_bCameraSet)
-                    {
-                        fallbackCamera = &m_MainCamera;
                     }
                 }
                 ViewportRenderPlan viewportPlan = BuildViewportRenderPlan(*viewport,
@@ -1241,31 +1224,6 @@ namespace NorvesLib::Core::Rendering
             (*it)->Shutdown();
             m_Views.erase(it);
         }
-    }
-
-    void RenderingCoordinator::SetMainCamera(const CameraProxy &camera)
-    {
-        m_MainCamera = camera;
-        if (!m_MainCamera.IsValid())
-        {
-            m_MainCamera.Viewport.X = 0.0f;
-            m_MainCamera.Viewport.Y = 0.0f;
-            m_MainCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
-            m_MainCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
-            m_MainCamera.Viewport.MinDepth = 0.0f;
-            m_MainCamera.Viewport.MaxDepth = 1.0f;
-        }
-
-        if (m_MainSceneView)
-        {
-            auto mainViewport = m_MainSceneView->GetMainViewport();
-            if (mainViewport)
-            {
-                mainViewport->SetCamera(m_MainCamera);
-            }
-        }
-
-        m_bCameraSet = true;
     }
 
     void RenderingCoordinator::Resize(uint32_t width, uint32_t height)
