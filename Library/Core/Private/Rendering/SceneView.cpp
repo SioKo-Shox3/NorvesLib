@@ -8,6 +8,7 @@
 #include "Rendering/ForwardPass.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/ToneMappingPass.h"
+#include "Rendering/DebugDrawPass.h"
 #include "Rendering/SSAOPass.h"
 #include "Rendering/FXAAPass.h"
 #include "Rendering/UpscalePass.h"
@@ -622,6 +623,10 @@ namespace NorvesLib::Core::Rendering
         auto toneMappingPass = MakeUnique<ToneMappingPass>(toneMappingSettings);
         postProcessStack->AddPass(std::move(toneMappingPass));
 
+        // DebugDraw（ToneMapping後のLDR色へ、SceneDepthで深度遮蔽）
+        auto debugDrawPass = MakeUnique<DebugDrawPass>();
+        postProcessStack->AddPass(std::move(debugDrawPass));
+
         // FXAA（アンチエイリアシング、最終パス）
         FXAASettings fxaaSettings;
         fxaaSettings.EdgeThreshold = 0.0312f;
@@ -636,7 +641,7 @@ namespace NorvesLib::Core::Rendering
         SetPostProcessStack(std::move(postProcessStack));
 
         NORVES_LOG_INFO("SceneView",
-                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> FXAA -> Upscale");
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> DebugDraw -> FXAA -> Upscale");
     }
 
     void SceneView::SetupForwardPipeline(SceneRenderer *sceneRenderer)
