@@ -53,9 +53,32 @@ int main()
 
     PostProcessStack *postProcessStack = sceneView.GetPostProcessStack();
     assert(postProcessStack != nullptr);
-    assert(postProcessStack->GetPassCount() == 5);
+    assert(postProcessStack->GetPassCount() == 6);
     assert(postProcessStack->GetPass("SSRPass") != nullptr);
     assert(dynamic_cast<SSRPass *>(postProcessStack->GetPass("SSRPass")) != nullptr);
+
+    // DebugDrawPass は ToneMapping 後の LDR 色へ描画されるため、ToneMappingPass の直後に配置される。
+    assert(postProcessStack->GetPass("ToneMappingPass") != nullptr);
+    assert(postProcessStack->GetPass("DebugDrawPass") != nullptr);
+
+    const auto &postPasses = postProcessStack->GetPasses();
+    const uint32_t postPassCount = static_cast<uint32_t>(postPasses.size());
+    uint32_t toneMappingIndex = postPassCount;
+    uint32_t debugDrawIndex = postPassCount;
+    for (uint32_t index = 0; index < postPassCount; ++index)
+    {
+        const char *passName = postPasses[index]->GetName();
+        if (std::strcmp(passName, "ToneMappingPass") == 0)
+        {
+            toneMappingIndex = index;
+        }
+        else if (std::strcmp(passName, "DebugDrawPass") == 0)
+        {
+            debugDrawIndex = index;
+        }
+    }
+    assert(toneMappingIndex < postPassCount);
+    assert(debugDrawIndex == toneMappingIndex + 1);
 
     std::cout << "ForwardPassPipelinePlacementTest passed\n";
     return 0;
