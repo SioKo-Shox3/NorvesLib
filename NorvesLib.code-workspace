@@ -85,5 +85,69 @@
             "codecvt": "cpp",
             "future": "cpp"
         }
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "CMake Configure (Bridge SDK)",
+                "type": "shell",
+                "command": "cmake",
+                "args": [
+                    "-B", "build",
+                    "-S", ".",
+                    "-G", "Visual Studio 17 2022",
+                    "-DNORVES_ENABLE_IMGUI=ON",
+                    "-DNORVES_BRIDGE_SDK_DIR=${workspaceFolder}/../NorvesEditor/bridge/cpp"
+                ],
+                "options": {
+                    "cwd": "${workspaceFolder}"
+                },
+                "problemMatcher": [],
+                "detail": "NorvesEditor の bridge/cpp を埋め込み NORVES_BRIDGE_ENABLED を有効化（兄弟ディレクトリ ../NorvesEditor を想定）"
+            },
+            {
+                "label": "Build Game Debug (Bridge SDK)",
+                "type": "shell",
+                "command": "cmake",
+                "args": [
+                    "--build", "build",
+                    "--config", "Debug",
+                    "--target", "Game"
+                ],
+                "options": {
+                    "cwd": "${workspaceFolder}"
+                },
+                "dependsOn": "CMake Configure (Bridge SDK)",
+                "dependsOrder": "sequence",
+                "problemMatcher": "$msCompile",
+                "detail": "Bridge SDK 有効版 Game.exe をビルド"
+            },
+            {
+                "label": "Launch NorvesEditor (tauri dev)",
+                "type": "shell",
+                "command": "pnpm",
+                "args": ["tauri", "dev"],
+                "options": {
+                    "cwd": "${workspaceFolder}/../NorvesEditor/apps/editor",
+                    "env": {
+                        "NORVES_ENGINE_PATH": "${workspaceFolder}/build/Game/Debug/Game.exe"
+                    }
+                },
+                "isBackground": true,
+                "problemMatcher": [],
+                "detail": "NORVES_ENGINE_PATH を Bridge有効 Game.exe に設定して NorvesEditor を起動。Editor の Game View の Launch でこの Game.exe が起動される"
+            },
+            {
+                "label": "Editor + Engine (dev)",
+                "dependsOrder": "sequence",
+                "dependsOn": [
+                    "Build Game Debug (Bridge SDK)",
+                    "Launch NorvesEditor (tauri dev)"
+                ],
+                "problemMatcher": [],
+                "detail": "Bridge有効ビルド→NorvesEditor起動。起動後 Game View の Launch でゲームを起動できる"
+            }
+        ]
     }
 }
