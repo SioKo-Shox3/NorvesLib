@@ -3,6 +3,7 @@
 #include "Object/Reflection.h"
 #include "Object/ObjectCast.h"
 #include "Component/Component.h"
+#include "Component/MeshComponent.h"
 
 namespace NorvesLib::Core
 {
@@ -29,6 +30,16 @@ namespace NorvesLib::Core
             return Math::Quaternion(-rotation.x, -rotation.y, -rotation.z, rotation.w);
         }
 
+        float AbsFloat(float value)
+        {
+            return value < 0.0f ? -value : value;
+        }
+
+        float MaxFloat(float lhs, float rhs)
+        {
+            return lhs > rhs ? lhs : rhs;
+        }
+
         Math::Transform ComposeTransform(const Math::Transform& parent, const Math::Transform& local)
         {
             return Math::Transform(
@@ -48,6 +59,43 @@ namespace NorvesLib::Core
             const Math::Quaternion localRotation = parentInverseRotation * worldTransform.rotation;
             const Math::Vector3 localScale = ComponentDivide(worldTransform.scale, parentWorld.scale);
             return Math::Transform(localPosition, localRotation, localScale);
+        }
+
+        bool ComputeMeshWorldAABB(
+            const Component::MeshComponent& meshComponent,
+            const Math::Transform& worldTransform,
+            Math::AABB& outAABB)
+        {
+            const Rendering::BoundingBox& localBounds = meshComponent.GetLocalBounds();
+            if (!localBounds.IsValid())
+            {
+                return false;
+            }
+
+            const Math::Vector3 localCenter(
+                (localBounds.MinX + localBounds.MaxX) * 0.5f,
+                (localBounds.MinY + localBounds.MaxY) * 0.5f,
+                (localBounds.MinZ + localBounds.MaxZ) * 0.5f);
+            const Math::Vector3 localHalfExtents(
+                (localBounds.MaxX - localBounds.MinX) * 0.5f,
+                (localBounds.MaxY - localBounds.MinY) * 0.5f,
+                (localBounds.MaxZ - localBounds.MinZ) * 0.5f);
+            const float localRadius = localHalfExtents.Length();
+
+            const float maxScale = MaxFloat(
+                AbsFloat(worldTransform.scale.x),
+                MaxFloat(AbsFloat(worldTransform.scale.y), AbsFloat(worldTransform.scale.z)));
+            const float worldRadius = localRadius * maxScale;
+            if (worldRadius <= 0.0f)
+            {
+                return false;
+            }
+
+            const Math::Vector3 worldCenter = worldTransform.TransformPoint(localCenter);
+            outAABB = Math::AABB::FromCenterExtents(
+                worldCenter,
+                Math::Vector3(worldRadius, worldRadius, worldRadius));
+            return true;
         }
 
         bool DestroyContextOwnedInner(IUnknown &owner, IUnknown *inner)
@@ -268,6 +316,39 @@ namespace NorvesLib::Core
         }
 
         return m_CachedWorldTransform;
+    }
+
+    bool Entity::GetWorldAABB(Math::AABB& outAABB) const
+    {
+        const Math::Transform worldTransform = EvaluateWorldTransformNonMutating();
+        bool bHasBounds = false;
+
+        auto components = GetComponents();
+        for (auto *component : components)
+        {
+            auto *meshComponent = CastTo<Component::MeshComponent>(component);
+            if (!meshComponent)
+            {
+                continue;
+            }
+
+            Math::AABB componentAABB;
+            if (!ComputeMeshWorldAABB(*meshComponent, worldTransform, componentAABB))
+            {
+                continue;
+            }
+
+            if (!bHasBounds)
+            {
+                outAABB = componentAABB;
+                bHasBounds = true;
+                continue;
+            }
+
+            outAABB.Merge(componentAABB);
+        }
+
+        return bHasBounds;
     }
 
     void Entity::SetPosition(const Math::Vector3& pos)
