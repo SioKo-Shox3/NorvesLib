@@ -90,6 +90,16 @@ target_include_directories(CameraViewConstantsTest PRIVATE
 set_target_properties(CameraViewConstantsTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CameraViewConstantsTest COMMAND CameraViewConstantsTest)
 
+add_executable(CameraPickingTest
+    CameraPickingTest.cpp
+)
+target_link_libraries(CameraPickingTest PRIVATE Core)
+target_include_directories(CameraPickingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CameraPickingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CameraPickingTest COMMAND CameraPickingTest)
+
 add_executable(CameraTableTest
     CameraTableTest.cpp
 )

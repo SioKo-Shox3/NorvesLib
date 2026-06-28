@@ -58,6 +58,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/CanvasView.cpp
     Private/Rendering/Viewport.cpp
     Private/Rendering/CameraViewConstants.cpp
+    Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
     Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DynamicBufferRing.cpp
@@ -276,6 +277,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/IBoardProxySink.h
     Public/Rendering/Viewport.h
     Public/Rendering/CameraViewConstants.h
+    Public/Rendering/CameraPicking.h
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
