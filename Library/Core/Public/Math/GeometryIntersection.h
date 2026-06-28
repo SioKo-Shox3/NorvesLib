@@ -131,4 +131,32 @@ inline bool AABBIntersectsAABB(const AABB& a, const AABB& b)
         && a.Min.z <= b.Max.z && a.Max.z >= b.Min.z;
 }
 
+inline bool SphereIntersectsAABB(const Sphere& sphere, const AABB& aabb)
+{
+    const Vector3 closestPoint(
+        std::fmaxf(aabb.Min.x, std::fminf(sphere.Center.x, aabb.Max.x)),
+        std::fmaxf(aabb.Min.y, std::fminf(sphere.Center.y, aabb.Max.y)),
+        std::fmaxf(aabb.Min.z, std::fminf(sphere.Center.z, aabb.Max.z)));
+    const Vector3 offset = sphere.Center - closestPoint;
+    return VectorUtils::Dot(offset, offset) <= sphere.Radius * sphere.Radius;
+}
+
+inline bool FrustumIntersectsAABB(const Frustum& frustum, const AABB& aabb)
+{
+    for (int planeIndex = 0; planeIndex < 6; ++planeIndex)
+    {
+        const Plane& plane = frustum.Planes[planeIndex];
+        const Vector3 pVertex(
+            plane.Normal.x >= 0.0f ? aabb.Max.x : aabb.Min.x,
+            plane.Normal.y >= 0.0f ? aabb.Max.y : aabb.Min.y,
+            plane.Normal.z >= 0.0f ? aabb.Max.z : aabb.Min.z);
+        if (plane.SignedDistance(pVertex) < 0.0f)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 } // namespace NorvesLib::Math
