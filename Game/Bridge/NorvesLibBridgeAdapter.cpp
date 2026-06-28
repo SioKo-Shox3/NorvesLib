@@ -300,8 +300,10 @@ namespace Game::Bridge
          *
          * NorvesLib の算術型 SerializeValue は std::ostringstream 既定で十進テキストを書く
          * （例: "60", "-10", "1.5", "3.14159"）。これは大半が JSON number として妥当だが、
-         * 念のため JSON number 文法（任意の先頭 '-'、数字、任意の小数部、任意の指数部）に
-         * 緩く照合し、妥当でなければ呼び出し側が文字列フォールバックする。
+         * 念のため JSON number 文法（任意の先頭 '-'、整数部、任意の小数部、任意の指数部）に
+         * 照合し、妥当でなければ呼び出し側が文字列フォールバックする。整数部は JSON 仕様どおり
+         * '0' 単独または非ゼロ始まりのみ許容し、複数桁の先頭ゼロ（"01" など）は弾く（裸 number 化を
+         * 防ぐ）。"0" / "0.5" / "-0" は許容、"01" / "00" は不可。
          *
          * @param s 検証対象のシリアライズ済みテキスト
          * @return JSON number として綴れるなら true
@@ -318,12 +320,18 @@ namespace Game::Bridge
                 ++i;
             }
             std::size_t digitsBefore = 0;
+            const std::size_t intStart = i;
             while (i < s.size() && s[i] >= '0' && s[i] <= '9')
             {
                 ++i;
                 ++digitsBefore;
             }
             if (digitsBefore == 0)
+            {
+                return false;
+            }
+            // JSON 仕様: 整数部は "0" 単独か非ゼロ始まり。複数桁で先頭が '0' は不可（"01"）。
+            if (digitsBefore > 1 && s[intStart] == '0')
             {
                 return false;
             }
@@ -728,6 +736,354 @@ namespace Game::Bridge
 
             out += '}';
         }
+
+        /**
+         * @brief std::string_view の前後の JSON 空白（space/tab/CR/LF）を取り除いた view を返す
+         *
+         * extract_json_field が返す生 JSON テキストは dump 出力なので通常は前後空白を含まないが、
+         * 防御的に trim してから number/bool/array/string 判定に回す。
+         *
+         * @param s trim 対象（借用）
+         * @return 前後空白を除いた view（s の部分ビュー）
+         */
+        std::string_view TrimJsonWhitespace(std::string_view s)
+        {
+            const auto isWs = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; };
+            std::size_t begin = 0;
+            std::size_t end = s.size();
+            while (begin < end && isWs(s[begin]))
+            {
+                ++begin;
+            }
+            while (end > begin && isWs(s[end - 1]))
+            {
+                --end;
+            }
+            return s.substr(begin, end - begin);
+        }
+
+        /**
+         * @brief JSON 文字列リテラル（引用符込み）を引用符を外して JSON アンエスケープし out へ書く
+         *
+         * AppendJsonString の逆。前後が `"` で囲まれていることを要求し、内側の `\"` `\\` `\/`
+         * `\b` `\f` `\n` `\r` `\t` `\uXXXX` を対応するバイトへ復号する。`\uXXXX` は BMP の範囲を
+         * UTF-8 へエンコードする（サロゲートペアは \uXXXX\uXXXX の連結として復号する）。不正な
+         * エスケープや未終端は false。out は成功時のみ意味を持つ（失敗時は途中まで書くため
+         * 呼び出し側は破棄すること）。
+         *
+         * @param quoted 引用符込みの JSON 文字列テキスト（借用）
+         * @param out 復号結果の追記先
+         * @return 正しく復号できたら true
+         */
+        bool DecodeJsonString(std::string_view quoted, std::string& out)
+        {
+            if (quoted.size() < 2 || quoted.front() != '"' || quoted.back() != '"')
+            {
+                return false;
+            }
+            const std::string_view body = quoted.substr(1, quoted.size() - 2);
+
+            const auto hexDigit = [](char c, unsigned& outVal) -> bool {
+                if (c >= '0' && c <= '9')
+                {
+                    outVal = static_cast<unsigned>(c - '0');
+                }
+                else if (c >= 'a' && c <= 'f')
+                {
+                    outVal = static_cast<unsigned>(c - 'a' + 10);
+                }
+                else if (c >= 'A' && c <= 'F')
+                {
+                    outVal = static_cast<unsigned>(c - 'A' + 10);
+                }
+                else
+                {
+                    return false;
+                }
+                return true;
+            };
+
+            const auto readHex4 = [&](std::size_t at, unsigned& outCode) -> bool {
+                if (at + 4 > body.size())
+                {
+                    return false;
+                }
+                unsigned code = 0;
+                for (std::size_t k = 0; k < 4; ++k)
+                {
+                    unsigned digit = 0;
+                    if (!hexDigit(body[at + k], digit))
+                    {
+                        return false;
+                    }
+                    code = (code << 4) | digit;
+                }
+                outCode = code;
+                return true;
+            };
+
+            const auto encodeUtf8 = [&out](unsigned cp) {
+                // BMP + 補助平面の UTF-8 エンコード。
+                if (cp <= 0x7F)
+                {
+                    out += static_cast<char>(cp);
+                }
+                else if (cp <= 0x7FF)
+                {
+                    out += static_cast<char>(0xC0 | (cp >> 6));
+                    out += static_cast<char>(0x80 | (cp & 0x3F));
+                }
+                else if (cp <= 0xFFFF)
+                {
+                    out += static_cast<char>(0xE0 | (cp >> 12));
+                    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                    out += static_cast<char>(0x80 | (cp & 0x3F));
+                }
+                else
+                {
+                    out += static_cast<char>(0xF0 | (cp >> 18));
+                    out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                    out += static_cast<char>(0x80 | (cp & 0x3F));
+                }
+            };
+
+            for (std::size_t i = 0; i < body.size(); ++i)
+            {
+                const char c = body[i];
+                if (c != '\\')
+                {
+                    // 生の制御文字（エスケープされていない 0x00-0x1F）は JSON では不正。
+                    if (static_cast<unsigned char>(c) < 0x20)
+                    {
+                        return false;
+                    }
+                    out += c;
+                    continue;
+                }
+                // エスケープシーケンス。
+                if (i + 1 >= body.size())
+                {
+                    return false;  // 末尾の単独バックスラッシュ。
+                }
+                const char esc = body[++i];
+                switch (esc)
+                {
+                    case '"':
+                        out += '"';
+                        break;
+                    case '\\':
+                        out += '\\';
+                        break;
+                    case '/':
+                        out += '/';
+                        break;
+                    case 'b':
+                        out += '\b';
+                        break;
+                    case 'f':
+                        out += '\f';
+                        break;
+                    case 'n':
+                        out += '\n';
+                        break;
+                    case 'r':
+                        out += '\r';
+                        break;
+                    case 't':
+                        out += '\t';
+                        break;
+                    case 'u':
+                    {
+                        unsigned code = 0;
+                        if (!readHex4(i + 1, code))
+                        {
+                            return false;
+                        }
+                        i += 4;
+                        // 上位サロゲートなら下位サロゲートを連結して 1 コードポイントへ。
+                        if (code >= 0xD800 && code <= 0xDBFF)
+                        {
+                            if (i + 2 < body.size() && body[i + 1] == '\\' && body[i + 2] == 'u')
+                            {
+                                unsigned low = 0;
+                                if (!readHex4(i + 3, low) || low < 0xDC00 || low > 0xDFFF)
+                                {
+                                    return false;
+                                }
+                                i += 6;
+                                code = 0x10000 + (((code - 0xD800) << 10) | (low - 0xDC00));
+                            }
+                            else
+                            {
+                                return false;  // 孤立した上位サロゲート。
+                            }
+                        }
+                        else if (code >= 0xDC00 && code <= 0xDFFF)
+                        {
+                            return false;  // 孤立した下位サロゲート。
+                        }
+                        encodeUtf8(code);
+                        break;
+                    }
+                    default:
+                        return false;  // 未知のエスケープ。
+                }
+            }
+            return true;
+        }
+
+        /**
+         * @brief wire JSON 値（純 JSON 値テキスト）を NorvesLib 内部シリアライズ表記へ逆変換する
+         *
+         * AppendWireValue の厳密な逆。エンジン側プロパティ型（TypeInfo）の Kind / Name に基づき、
+         * wire の JSON 値テキストを SerializeValue / DeserializeStable が期待する内部テキストへ写す。
+         * wire の valueType は信用せず、必ず呼び出し側がエンジン側プロパティ型から渡す TypeInfo を使う。
+         *   - Bool: wire JSON `true`/`false` → "1"/"0"。数値・文字列など他は false（型不一致）。
+         *   - Integer/Float: wire JSON number テキスト → trim したテキストをそのまま（number 文法
+         *     検証付き、非 number は false）。
+         *   - String: wire JSON 文字列 `"..."` → 引用符を剥がし JSON アンエスケープして out。
+         *   - Vector2/3/4・Quaternion（TypeInfo.Name 判定）: wire JSON 配列 `[a,b,c]` → 要素数を確認し
+         *     `Vector3(a,b,c)` 形式（接頭辞 Math:: なし、SerializeValue と同形）へ。要素数不一致は false。
+         *   - 上記以外（Transform/enum/object/null/未知）: false。
+         *
+         * @param type エンジン側プロパティ型の TypeInfo（借用）
+         * @param wireJson extract_json_field が返した生の wire JSON 値テキスト（借用）
+         * @param out 内部シリアライズ表記の出力先（成功時のみ意味を持つ）
+         * @return 逆変換できたら true（accepted 可）。型不一致や不正値は false
+         */
+        bool WireJsonToSerialized(const NorvesLib::Core::TypeInfo& type, std::string_view wireJson,
+                                  std::string& out)
+        {
+            using NorvesLib::Core::TypeKind;
+
+            const std::string_view trimmed = TrimJsonWhitespace(wireJson);
+            if (trimmed.empty())
+            {
+                return false;
+            }
+
+            switch (type.Kind)
+            {
+                case TypeKind::Bool:
+                {
+                    if (trimmed == "true")
+                    {
+                        out += '1';
+                        return true;
+                    }
+                    if (trimmed == "false")
+                    {
+                        out += '0';
+                        return true;
+                    }
+                    return false;  // 数値や文字列は bool として受けない（型不一致）。
+                }
+                case TypeKind::Integer:
+                case TypeKind::Float:
+                {
+                    if (!LooksLikeJsonNumber(trimmed))
+                    {
+                        return false;  // JSON number でなければ受けない。
+                    }
+                    out.append(trimmed.data(), trimmed.size());
+                    return true;
+                }
+                case TypeKind::String:
+                {
+                    return DecodeJsonString(trimmed, out);  // "..." を剥がしてアンエスケープ。
+                }
+                case TypeKind::Struct:
+                {
+                    // Vector2/3/4・Quaternion のみ受ける（接頭辞は付けない＝SerializeValue と同形）。
+                    std::string_view ctorName;
+                    std::size_t expectedCount = 0;
+                    const std::string_view typeName = ViewOf(type.Name);
+                    if (typeName == "Math::Vector2")
+                    {
+                        ctorName = "Vector2";
+                        expectedCount = 2;
+                    }
+                    else if (typeName == "Math::Vector3")
+                    {
+                        ctorName = "Vector3";
+                        expectedCount = 3;
+                    }
+                    else if (typeName == "Math::Vector4")
+                    {
+                        ctorName = "Vector4";
+                        expectedCount = 4;
+                    }
+                    else if (typeName == "Math::Quaternion")
+                    {
+                        ctorName = "Quaternion";
+                        expectedCount = 4;
+                    }
+                    else
+                    {
+                        return false;  // Transform 等 struct は配列化対象外。
+                    }
+
+                    // wire は JSON 配列 `[a,b,...]`。括弧を確認し、カンマ区切りで要素を読む。
+                    if (trimmed.front() != '[' || trimmed.back() != ']')
+                    {
+                        return false;
+                    }
+                    const std::string_view inner =
+                        TrimJsonWhitespace(trimmed.substr(1, trimmed.size() - 2));
+                    if (inner.empty())
+                    {
+                        return false;
+                    }
+
+                    std::string assembled;
+                    assembled.append(ctorName.data(), ctorName.size());
+                    assembled += '(';
+                    std::size_t count = 0;
+                    std::size_t start = 0;
+                    while (start <= inner.size())
+                    {
+                        const std::size_t comma = inner.find(',', start);
+                        const std::size_t end =
+                            (comma == std::string_view::npos) ? inner.size() : comma;
+                        const std::string_view component =
+                            TrimJsonWhitespace(inner.substr(start, end - start));
+                        if (!LooksLikeJsonNumber(component))
+                        {
+                            return false;  // 各要素は JSON number でなければならない。
+                        }
+                        if (count != 0)
+                        {
+                            assembled += ',';
+                        }
+                        assembled.append(component.data(), component.size());
+                        ++count;
+
+                        if (comma == std::string_view::npos)
+                        {
+                            break;
+                        }
+                        start = comma + 1;
+                    }
+                    assembled += ')';
+
+                    if (count != expectedCount)
+                    {
+                        return false;  // 要素数不一致。
+                    }
+                    out += assembled;
+                    return true;
+                }
+                case TypeKind::Void:
+                case TypeKind::Object:
+                case TypeKind::Resource:
+                case TypeKind::Array:
+                case TypeKind::Enum:
+                case TypeKind::Custom:
+                default:
+                    return false;  // Transform / enum / object / null / 未知は未対応。
+            }
+        }
     } // namespace
 
     AdapterResult
@@ -754,11 +1110,10 @@ namespace Game::Bridge
     AdapterResult
     NorvesLibBridgeAdapter::getCapabilities(const JsonValue& /*params*/)
     {
-        // runtime.control / log.stream / viewport.focus / scene.query / object.query を広告する。
-        // scene.query は scene.getTree と schema.getSnapshot を束ねる token（両者とも実装済み）。
-        // object.query は object.getSnapshot 用（実装済み）。object.edit（object.setProperty）は
-        // 後段 S4 で実装するためまだ広告しない。viewport.thumbnail と scene.liveUpdate は本実装
-        // 範囲外のため広告しない。
+        // runtime.control / log.stream / viewport.focus / scene.query / object.query / object.edit を
+        // 広告する。scene.query は scene.getTree と schema.getSnapshot を束ねる token（両者とも実装済み）。
+        // object.query は object.getSnapshot 用（実装済み）。object.edit は object.setProperty 用
+        // （実装済み）。viewport.thumbnail と scene.liveUpdate は本実装範囲外のため広告しない。
         // 実エンジンの capability 検証は superset（部分集合包含）方針なので、実装済み token のみ
         // 広告すればよい（mock の 8 token fixture には合わせない）。
         return OkLiteral(
@@ -767,7 +1122,8 @@ namespace Game::Bridge
             R"({"name":"log.stream"},)"
             R"({"name":"viewport.focus"},)"
             R"({"name":"scene.query"},)"
-            R"({"name":"object.query"}]})");
+            R"({"name":"object.query"},)"
+            R"({"name":"object.edit"}]})");
     }
 
     AdapterResult
@@ -1094,25 +1450,20 @@ namespace Game::Bridge
             return OkLiteral(buildEmpty(objectId));
         }
 
-        // クラスのプロパティスキーマ投影から StablePropertyId -> {Name, Type} のマップを作る。
-        // ここで得る Name/Type は値コピー済み DTO（live memory 非転送）。
+        // クラスのプロパティスキーマ投影から StablePropertyId -> 名前 のマップを作る。
+        // ここで得る Name は値コピー済み DTO（live memory 非転送）。wire 出力の value/valueType は
+        // snapshot 側の pv.Type を使うため、ここでは名前だけ引ければよい。
         const NorvesLib::Core::ClassSchemaProjection classProjection =
             NorvesLib::Core::RuntimeSchemaProjector::ProjectClass(*cls, "NorvesLib");
-        struct PropertyMeta
-        {
-            std::string_view Name;
-            NorvesLib::Core::StableTypeId Type = NorvesLib::Core::InvalidSchemaId;
-        };
-        std::unordered_map<uint64_t, PropertyMeta> metaByPropertyId;
-        metaByPropertyId.reserve(classProjection.Properties.size());
+        std::unordered_map<uint64_t, std::string_view> nameByPropertyId;
+        nameByPropertyId.reserve(classProjection.Properties.size());
         for (const NorvesLib::Core::PropertySchemaProjection& prop : classProjection.Properties)
         {
             if (prop.StableId == NorvesLib::Core::InvalidSchemaId || prop.Name.empty())
             {
                 continue;  // 名前を引けないプロパティは propertyEntry を出せないので除外。
             }
-            metaByPropertyId.emplace(static_cast<uint64_t>(prop.StableId),
-                                     PropertyMeta{ViewOf(prop.Name), prop.Type});
+            nameByPropertyId.emplace(static_cast<uint64_t>(prop.StableId), ViewOf(prop.Name));
         }
 
         // オブジェクトのシリアライズ済みプロパティ値スナップショットを取得する。ref は wire 出力に
@@ -1140,12 +1491,12 @@ namespace Game::Bridge
         bool bFirstProp = true;
         for (const NorvesLib::Core::ProjectedPropertyValue& pv : snapshot.Properties)
         {
-            const auto it = metaByPropertyId.find(static_cast<uint64_t>(pv.Property));
-            if (it == metaByPropertyId.end())
+            const auto it = nameByPropertyId.find(static_cast<uint64_t>(pv.Property));
+            if (it == nameByPropertyId.end())
             {
                 continue;  // スキーマ投影に名前が無いプロパティはスキップ（name 必須）。
             }
-            const PropertyMeta& meta = it->second;
+            const std::string_view propName = it->second;
 
             if (!bFirstProp)
             {
@@ -1154,7 +1505,7 @@ namespace Game::Bridge
             bFirstProp = false;
 
             text += R"({"name":")";
-            AppendJsonString(text, meta.Name);
+            AppendJsonString(text, propName);
             text += R"(","value":)";
             AppendWireValue(text, pv.Type, ViewOf(pv.SerializedValue));
             text += R"(,"valueType":")";
@@ -1164,6 +1515,169 @@ namespace Game::Bridge
 
         text += R"(]})";
         return OkLiteral(text);
+    }
+
+    AdapterResult
+    NorvesLibBridgeAdapter::objectSetProperty(const JsonValue& params)
+    {
+        // 適用失敗・型不一致・該当なし等はすべて graceful に {"accepted":false} を返す
+        // （エラー Result ではなく成功 Result に accepted:false を載せる＝result schema の必須形）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        // params を dump して objectId / property / value を読む（SDK の JsonValue に構造的読み取り
+        // API が無いため最小スキャナ。S2/S3 と同手法）。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> objectIdField = extract_string_field(paramsText, "objectId");
+        const std::optional<std::string> propertyField = extract_string_field(paramsText, "property");
+        const std::optional<std::string> valueField = extract_json_field(paramsText, "value");
+        if (!objectIdField.has_value() || !propertyField.has_value() || !valueField.has_value())
+        {
+            return OkLiteral(kRejected);  // 必須 params 欠落。
+        }
+        const std::string& objectId = objectIdField.value();
+        const std::string& propertyName = propertyField.value();
+        const std::string& wireValue = valueField.value();
+        if (objectId.empty() || propertyName.empty())
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // objectId 文字列 -> uint64_t（全桁数字を要求。objectGetSnapshot と同手法）。
+        uint64_t parsedId = 0;
+        bool bParsed = false;
+        {
+            errno = 0;
+            char* end = nullptr;
+            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
+            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
+            {
+                parsedId = static_cast<uint64_t>(v);
+                bParsed = true;
+            }
+        }
+        if (!bParsed)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // World から Entity を逆引き（GEngine null / 該当なしは reject）。
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::Entity* entity = FindEntityByObjectId(engine->GetWorld(), parsedId);
+        if (entity == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        const NorvesLib::Core::IClass* cls = entity->GetClass();
+        if (cls == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // クラスから ClassProperty を引く（プロパティ名 -> Identity）。IdentityPool 経由で
+        // 登録済み Identity と同じハッシュを得る（GetProperty はハッシュ一致で引く）。
+        const NorvesLib::Core::Container::String propertyString(propertyName);
+        const NorvesLib::Core::Identity propIdentity =
+            NorvesLib::Core::IdentityPool::Get().CreateIdentity(propertyString);
+        const NorvesLib::Core::ClassProperty* prop = cls->GetProperty(propIdentity);
+        if (prop == nullptr)
+        {
+            return OkLiteral(kRejected);  // 未知プロパティ。
+        }
+
+        // プロパティ型を解決する。GetRuntimeTypeId() は実行時 TypeId なので Find(TypeId) で
+        // TypeInfo* を引き、その StableId / Kind / Name を使う（wire の valueType は信用しない）。
+        const NorvesLib::Core::TypeId runtimeTypeId = prop->GetRuntimeTypeId();
+        const NorvesLib::Core::TypeInfo* typeInfo =
+            NorvesLib::Core::TypeRegistry::Get().Find(runtimeTypeId);
+        if (typeInfo == nullptr)
+        {
+            return OkLiteral(kRejected);  // 型未登録（適用先の型が決まらない）。
+        }
+
+        // wire JSON 値 -> NorvesLib 内部シリアライズ表記へ逆変換（AppendWireValue の逆）。
+        std::string internalText;
+        if (!WireJsonToSerialized(*typeInfo, wireValue, internalText))
+        {
+            return OkLiteral(kRejected);  // 型不一致 / 不正値 / 未対応型。
+        }
+
+        // DeserializeStable に渡す型は必ずエンジン側プロパティ型由来の StableId。
+        NorvesLib::Core::PropertyValue pv;
+        const NorvesLib::Core::Container::String internalString(internalText);
+        if (!pv.DeserializeStable(typeInfo->StableId, internalString))
+        {
+            return OkLiteral(kRejected);  // 内部表記のパース失敗。
+        }
+
+        // Entity を IUnknown* として渡して適用する（Entity : Object : UnknownImpl : IUnknown）。
+        // ApplyValue は PropertyValue の型がプロパティ型と一致しなければ false を返す。
+        if (!prop->ApplyValue(static_cast<NorvesLib::Core::IUnknown*>(entity), pv))
+        {
+            return OkLiteral(kRejected);  // 適用失敗（型不一致含む）。
+        }
+
+        // Transform 系（Position/Rotation/Scale 等）を変えた場合、ワールド変換は World::Tick の
+        // UpdateWorldTransforms が次フレームで反映する（既存挙動）。ここで明示呼び出しはしない。
+        // 同フレーム即時の getSnapshot ではローカル値が反映される。
+
+        // appliedValue: Entity を再投影して、実際に格納された値を読み戻して wire JSON 値へ。
+        // 該当プロパティの StablePropertyId を classProjection から名前一致で引き、再 BuildObjectSnapshot
+        // の SerializedValue を AppendWireValue で wire 値へ変換する（M-6 往復一致）。読み戻せない
+        // 場合は appliedValue を省略する（accepted:true は維持）。
+        std::string appliedValueWire;
+        bool bHaveApplied = false;
+        {
+            const NorvesLib::Core::ClassSchemaProjection classProjection =
+                NorvesLib::Core::RuntimeSchemaProjector::ProjectClass(*cls, "NorvesLib");
+            NorvesLib::Core::StablePropertyId targetStableId = NorvesLib::Core::InvalidSchemaId;
+            for (const NorvesLib::Core::PropertySchemaProjection& schemaProp :
+                 classProjection.Properties)
+            {
+                if (schemaProp.StableId == NorvesLib::Core::InvalidSchemaId)
+                {
+                    continue;
+                }
+                if (ViewOf(schemaProp.Name) == std::string_view{propertyName})
+                {
+                    targetStableId = schemaProp.StableId;
+                    break;
+                }
+            }
+
+            if (targetStableId != NorvesLib::Core::InvalidSchemaId)
+            {
+                NorvesLib::Core::StableObjectRef ref;
+                ref.Id = entity->GetObjectId();
+                const NorvesLib::Core::ObjectSnapshot snapshot =
+                    NorvesLib::Core::RuntimeSchemaProjector::BuildObjectSnapshot(*entity, ref,
+                                                                                 "NorvesLib");
+                for (const NorvesLib::Core::ProjectedPropertyValue& projected : snapshot.Properties)
+                {
+                    if (projected.Property == targetStableId)
+                    {
+                        AppendWireValue(appliedValueWire, projected.Type,
+                                        ViewOf(projected.SerializedValue));
+                        bHaveApplied = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 結果を組む。appliedValue は読み戻せたときのみ載せる（accepted は常に true）。
+        std::string out = R"({"accepted":true)";
+        if (bHaveApplied)
+        {
+            out += R"(,"appliedValue":)";
+            out += appliedValueWire;
+        }
+        out += '}';
+        return OkLiteral(out);
     }
 
 } // namespace Game::Bridge

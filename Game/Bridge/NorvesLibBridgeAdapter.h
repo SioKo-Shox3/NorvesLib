@@ -232,8 +232,35 @@ namespace Game::Bridge
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
         objectGetSnapshot(const norves::bridge::JsonValue& params) override;
 
-        // object.setProperty は後段（S4）で実装する。viewport.getThumbnail は本実装範囲外で、
-        // いずれも adapter.hpp の既定実装（METHOD_NOT_SUPPORTED）のまま。
+        // --- Object（書き込み系） ---
+
+        /**
+         * @brief object.setProperty。1 つの Entity の generic プロパティを書き換える
+         *
+         * params.objectId（文字列）を uint64_t へ解釈して World から該当 Entity を逆引きし、
+         * params.property（文字列）でクラスの ClassProperty を引く。params.value（propertyValue=
+         * 純 JSON 値）をエンジン側プロパティ型（prop->GetRuntimeTypeId() 由来の TypeInfo）に基づき
+         * NorvesLib 内部シリアライズ表記へ逆変換し（WireJsonToSerialized、AppendWireValue の逆）、
+         * PropertyValue::DeserializeStable → ClassProperty::ApplyValue で適用する。wire の valueType は
+         * 信用せず、必ずエンジン側プロパティ型の StableId で復元する。適用は呼び出し中の同期・同
+         * スレッド文脈（DrainInbound＝ゲームスレッド）でのみ行い、新規スレッド/marshal はしない。
+         * 引数 value はすべて値コピーから組み（live memory 非転送）、appliedValue は適用後に Entity を
+         * 再投影して読み戻した SerializedValue を wire JSON 値へ変換して入れる（M-6 往復一致）。
+         * Entity null / 該当なし / プロパティなし / 型不一致 / 適用失敗のいずれも {"accepted":false}。
+         *
+         * Position/Rotation/Scale 等の Transform 系プロパティを変えた場合、ワールド変換は
+         * World::Tick の UpdateWorldTransforms が次フレームで反映する（既存挙動）。ここで明示呼び出しは
+         * しない。同フレーム即時の getSnapshot ではローカル値が反映される。
+         *
+         * @param params リクエスト params（借用、objectId / property / value を読む）
+         * @return {accepted:bool, appliedValue?:<propertyValue>} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        objectSetProperty(const norves::bridge::JsonValue& params) override;
+
+        // viewport.getThumbnail は本実装範囲外で、adapter.hpp の既定実装
+        // （METHOD_NOT_SUPPORTED）のまま。scene/object（読み取り・書き込み）／schema は実装済み。
 
     private:
         /**
