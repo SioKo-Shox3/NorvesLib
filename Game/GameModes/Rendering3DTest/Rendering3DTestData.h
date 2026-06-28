@@ -4,6 +4,7 @@
 #include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Input/LightController.h"
 #include "Core/Public/Input/MayaCameraController.h"
+#include "Input/PickingController.h"
 #include "Core/Public/Object/Entity.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestDebugInput.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
@@ -117,6 +118,9 @@ namespace Game::GameModes
 
         // Maya準拠カメラコントローラー（シーン所有）
         NorvesLib::Core::Input::MayaCameraController m_CameraController;
+
+        // 左クリック選択コントローラー（シーン所有・イベント駆動）
+        Game::Input::PickingController m_PickingController;
 
         // 方向ライト操作コントローラー（矢印/+-、シーン所有・イベント駆動）
         NorvesLib::Core::Input::LightController m_LightController;
