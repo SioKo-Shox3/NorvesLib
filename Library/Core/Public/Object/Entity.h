@@ -5,6 +5,7 @@
 #include "Reflection.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Math/GeometryTypes.h"
 #include "Math/Transform.h"
 #include "Math/Vector3.h"
 #include "Math/Quaternion.h"
@@ -197,6 +198,11 @@ namespace NorvesLib::Core
          * @brief ワールドトランスフォームを取得
          */
         const Math::Transform& GetWorldTransform() const;
+
+        /**
+         * @brief このEntityに属するMeshComponentのワールドAABBを取得
+         */
+        bool GetWorldAABB(Math::AABB& outAABB) const;
 
         /**
          * @brief ワールド位置を設定
