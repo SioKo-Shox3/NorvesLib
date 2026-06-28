@@ -196,7 +196,43 @@ namespace Game::Bridge
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
         schemaGetSnapshot(const norves::bridge::JsonValue& params) override;
 
-        // scene/object は後段（S2 以降）で実装する。viewport.getThumbnail は本実装範囲外で、
+        // --- Scene / Object（読み取り系） ---
+
+        /**
+         * @brief scene.getTree。World の Entity 階層を sceneNode ツリーへ写して返す
+         *
+         * 合成ルート（id="scene-root", kind="Scene"）配下に各ルート Entity を再帰でノード化する。
+         * 各ノードの id は Entity の ObjectId（uint64_t）を 10 進文字列化したもの、kind は
+         * クラス名（IClass::GetClassName）。Entity ポインタや Object ポインタ、生ポインタ、
+         * ハンドルは JsonValue に入れない（live memory 非転送）。GEngine 未生成時は空ツリー
+         * （子なしの合成ルート）を返す（not_supported は返さない＝scene.query 広告と整合）。
+         *
+         * @param params リクエスト params（借用。rootId/maxDepth は本実装では無視し全ツリーを返す）
+         * @return {root:<sceneNode>} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。防御的に再帰深さ上限を設ける。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        sceneGetTree(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief object.getSnapshot。1 つの Entity のプロパティスナップショットを返す
+         *
+         * params.objectId（文字列）を uint64_t へ解釈し、World から該当 Entity を逆引きする。
+         * RuntimeSchemaProjector::ProjectClass / BuildObjectSnapshot が返す値コピー済み DTO
+         * （プロパティ名・型・シリアライズ済み値）だけを使い、各プロパティを propertyEntry
+         * （name / value / valueType）へ写す。value は SerializedValue を純 JSON 値へ変換する
+         * （bool は true/false、算術型は number、Vector は配列、その他は文字列）。Entity ポインタ
+         * や Object ポインタ、生ポインタ、ハンドルは JsonValue に入れない（live memory 非転送）。
+         * パース不可 or 該当 Entity 無しのときは空スナップショット（{objectId, properties:[]}）を返す。
+         *
+         * @param params リクエスト params（借用、objectId を読む）
+         * @return {objectId, kind?, properties:[propertyEntry, ...]} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        objectGetSnapshot(const norves::bridge::JsonValue& params) override;
+
+        // object.setProperty は後段（S4）で実装する。viewport.getThumbnail は本実装範囲外で、
         // いずれも adapter.hpp の既定実装（METHOD_NOT_SUPPORTED）のまま。
 
     private:
