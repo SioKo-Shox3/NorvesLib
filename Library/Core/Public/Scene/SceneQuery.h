@@ -41,6 +41,9 @@ namespace NorvesLib::Core::Scene
         // 保持中の全Entryを破棄する(shutdown時のdangling Entity*回避)。
         void Clear();
         bool Raycast(const Math::Ray& ray, RaycastHit& outHit) const;
+        void OverlapSphere(const Math::Sphere& sphere, Container::VariableArray<Entity*>& outEntities) const;
+        void OverlapBox(const Math::AABB& box, Container::VariableArray<Entity*>& outEntities) const;
+        void QueryFrustum(const Math::Frustum& frustum, Container::VariableArray<Entity*>& outEntities) const;
         size_t GetEntryCount() const;
 
     private:
@@ -72,6 +75,18 @@ namespace NorvesLib::Core::Scene
             RaycastHit& outHit,
             float& bestT,
             uint32_t& bestOriginalIndex) const;
+        void CollectSphereNode(
+            uint32_t nodeIndex,
+            const Math::Sphere& sphere,
+            Container::VariableArray<Entity*>& outEntities) const;
+        void CollectBoxNode(
+            uint32_t nodeIndex,
+            const Math::AABB& box,
+            Container::VariableArray<Entity*>& outEntities) const;
+        void CollectFrustumNode(
+            uint32_t nodeIndex,
+            const Math::Frustum& frustum,
+            Container::VariableArray<Entity*>& outEntities) const;
 
         Container::VariableArray<BVHNode> m_Nodes;
         Container::VariableArray<Entry> m_Entries;

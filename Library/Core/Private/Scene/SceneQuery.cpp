@@ -66,6 +66,45 @@ namespace NorvesLib::Core::Scene
         return outHit.bHit;
     }
 
+    void SceneQuery::OverlapSphere(
+        const Math::Sphere& sphere,
+        Container::VariableArray<Entity*>& outEntities) const
+    {
+        outEntities.clear();
+        if (m_Nodes.empty())
+        {
+            return;
+        }
+
+        CollectSphereNode(0, sphere, outEntities);
+    }
+
+    void SceneQuery::OverlapBox(
+        const Math::AABB& box,
+        Container::VariableArray<Entity*>& outEntities) const
+    {
+        outEntities.clear();
+        if (m_Nodes.empty())
+        {
+            return;
+        }
+
+        CollectBoxNode(0, box, outEntities);
+    }
+
+    void SceneQuery::QueryFrustum(
+        const Math::Frustum& frustum,
+        Container::VariableArray<Entity*>& outEntities) const
+    {
+        outEntities.clear();
+        if (m_Nodes.empty())
+        {
+            return;
+        }
+
+        CollectFrustumNode(0, frustum, outEntities);
+    }
+
     size_t SceneQuery::GetEntryCount() const
     {
         return m_Entries.size();
@@ -216,6 +255,96 @@ namespace NorvesLib::Core::Scene
         }
 
         return bFoundHit;
+    }
+
+    void SceneQuery::CollectSphereNode(
+        uint32_t nodeIndex,
+        const Math::Sphere& sphere,
+        Container::VariableArray<Entity*>& outEntities) const
+    {
+        const BVHNode& node = m_Nodes[nodeIndex];
+        if (!Math::SphereIntersectsAABB(sphere, node.Bounds))
+        {
+            return;
+        }
+
+        if (node.bLeaf)
+        {
+            const uint32_t end = node.Start + node.Count;
+            for (uint32_t entryIndex = node.Start; entryIndex < end; ++entryIndex)
+            {
+                const Entry& entry = m_Entries[entryIndex];
+                if (Math::SphereIntersectsAABB(sphere, entry.Bounds))
+                {
+                    outEntities.push_back(entry.EntityPtr);
+                }
+            }
+
+            return;
+        }
+
+        CollectSphereNode(node.Left, sphere, outEntities);
+        CollectSphereNode(node.Right, sphere, outEntities);
+    }
+
+    void SceneQuery::CollectBoxNode(
+        uint32_t nodeIndex,
+        const Math::AABB& box,
+        Container::VariableArray<Entity*>& outEntities) const
+    {
+        const BVHNode& node = m_Nodes[nodeIndex];
+        if (!Math::AABBIntersectsAABB(box, node.Bounds))
+        {
+            return;
+        }
+
+        if (node.bLeaf)
+        {
+            const uint32_t end = node.Start + node.Count;
+            for (uint32_t entryIndex = node.Start; entryIndex < end; ++entryIndex)
+            {
+                const Entry& entry = m_Entries[entryIndex];
+                if (Math::AABBIntersectsAABB(box, entry.Bounds))
+                {
+                    outEntities.push_back(entry.EntityPtr);
+                }
+            }
+
+            return;
+        }
+
+        CollectBoxNode(node.Left, box, outEntities);
+        CollectBoxNode(node.Right, box, outEntities);
+    }
+
+    void SceneQuery::CollectFrustumNode(
+        uint32_t nodeIndex,
+        const Math::Frustum& frustum,
+        Container::VariableArray<Entity*>& outEntities) const
+    {
+        const BVHNode& node = m_Nodes[nodeIndex];
+        if (!Math::FrustumIntersectsAABB(frustum, node.Bounds))
+        {
+            return;
+        }
+
+        if (node.bLeaf)
+        {
+            const uint32_t end = node.Start + node.Count;
+            for (uint32_t entryIndex = node.Start; entryIndex < end; ++entryIndex)
+            {
+                const Entry& entry = m_Entries[entryIndex];
+                if (Math::FrustumIntersectsAABB(frustum, entry.Bounds))
+                {
+                    outEntities.push_back(entry.EntityPtr);
+                }
+            }
+
+            return;
+        }
+
+        CollectFrustumNode(node.Left, frustum, outEntities);
+        CollectFrustumNode(node.Right, frustum, outEntities);
     }
 
     float SceneQuery::GetCenterAxis(const Math::AABB& bounds, uint32_t axis)
