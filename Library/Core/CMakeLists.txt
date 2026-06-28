@@ -47,6 +47,8 @@ set(PRIVATE_SOURCES
     Private/Engine/NorvesEngine.cpp
     Private/Engine/ComponentDataRegistry.cpp
     Private/Engine/ApplicationProcessor.cpp
+    # Scene
+    Private/Scene/SceneQuery.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
     Private/GameMode/GameModeStateMachine.cpp
@@ -229,6 +231,8 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Engine/ApplicationProcessor.h
+    # Scene
+    Public/Scene/SceneQuery.h
     # Module
     Public/Module/ModuleExport.h
     Public/Module/IModule.h

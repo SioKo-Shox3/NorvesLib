@@ -169,6 +169,15 @@ target_include_directories(EntityWorldAABBTest PRIVATE
 )
 set_target_properties(EntityWorldAABBTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(SceneQueryRaycastTest
+    SceneQueryRaycastTest.cpp
+)
+target_link_libraries(SceneQueryRaycastTest PRIVATE Core)
+target_include_directories(SceneQueryRaycastTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneQueryRaycastTest PROPERTIES FOLDER "Test/Core/Object")
+
 add_executable(EntityTreeTest
     EntityTreeTest.cpp
 )
@@ -196,4 +205,5 @@ add_test(NAME PrefabRoundTripTest COMMAND PrefabRoundTripTest)
 add_test(NAME LegacyCleanupTest COMMAND LegacyCleanupTest)
 add_test(NAME TransformHierarchyTest COMMAND TransformHierarchyTest)
 add_test(NAME EntityWorldAABBTest COMMAND EntityWorldAABBTest)
+add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
