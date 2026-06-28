@@ -489,6 +489,8 @@ namespace NorvesLib::Core::Engine
             }
 
             // ゲームワールドをFinalize
+            // SceneQuery clear before World::Finalize() to avoid holding destroyed Entity*
+            GEngine->GetSceneQuery().Clear();
             GEngine->GetWorld().Finalize();
 
             // レンダリングシステムをシャットダウン
@@ -584,6 +586,8 @@ namespace NorvesLib::Core::Engine
 
         // ワールドからSceneViewへProxy同期
         GEngine->GetWorld().SyncToSceneView(&GEngine->GetRenderResources().Materials());
+        // SceneQuery を当フレームの最新 world-AABB で再構築(SyncToSceneView が transform/bounds を確定済み)
+        GEngine->GetSceneQuery().Rebuild(GEngine->GetWorld());
 
         // モジュールの毎フレーム Tick(GameThread・SyncToSceneView 後・描画前)。空 registry で no-op。
         Module::GetModuleRegistry().TickAll(deltaTime);

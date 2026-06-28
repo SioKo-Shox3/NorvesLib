@@ -6,6 +6,7 @@
 #include "Application/IWindow.h"
 #include "Rendering/RenderWorld.h"
 #include "Object/World.h"
+#include "Scene/SceneQuery.h"
 #include "Input/InputSystem.h"
 #include "Input/InputRouter.h"
 
@@ -277,6 +278,23 @@ namespace NorvesLib::Core::Engine
             return m_World;
         }
 
+        /**
+         * @brief シーン空間検索を取得
+         * @return SceneQueryへの参照
+         */
+        Scene::SceneQuery &GetSceneQuery()
+        {
+            return m_SceneQuery;
+        }
+
+        /**
+         * @brief シーン空間検索を取得（const版）
+         */
+        const Scene::SceneQuery &GetSceneQuery() const
+        {
+            return m_SceneQuery;
+        }
+
         // ========== 入力システム ==========
 
         /**
@@ -327,6 +345,9 @@ namespace NorvesLib::Core::Engine
 
         // ゲームワールド（GEngine配下で実体保持）
         World m_World;
+
+        // シーン空間検索（GEngine配下で実体保持）
+        Scene::SceneQuery m_SceneQuery;
 
         // 入力システム（GEngine配下で実体保持）
         Input::InputSystem m_InputSystem;
