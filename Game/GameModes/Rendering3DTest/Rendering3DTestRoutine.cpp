@@ -74,6 +74,9 @@ namespace Game::GameModes
         ctx.EngineRef.GetInputRouter().RegisterController(
             &data.m_CameraController,
             NorvesLib::Core::Input::InputRouter::PriorityGame);
+        ctx.EngineRef.GetInputRouter().RegisterController(
+            &data.m_PickingController,
+            NorvesLib::Core::Input::InputRouter::PriorityGame + 10);
 
         // ========================================
         // 1. プロシージャルメッシュの生成とGPU登録
@@ -946,6 +949,7 @@ namespace Game::GameModes
         }
 
         SubmitRendering3DTestDebugDraw();
+        data.m_PickingController.DrawSelection();
 
         data.m_ElapsedTime += deltaTime;
 
@@ -1031,6 +1035,7 @@ namespace Game::GameModes
         // 入力ルーター登録を解除する（借用ポインタの寿命管理）。以降イベントが
         // 来てもカメラ/ライト/デバッグ各コントローラへは配送されない。
         ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_CameraController);
+        ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_PickingController);
         ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_LightController);
         ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_DebugInput);
 
