@@ -179,7 +179,88 @@ namespace Game::Bridge
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
         logUnsubscribe(const norves::bridge::JsonValue& params) override;
 
-        // scene/object/schema は adapter.hpp の既定実装（METHOD_NOT_SUPPORTED）のまま。
+        // --- Schema ---
+
+        /**
+         * @brief schema.getSnapshot。class スキーマ投影を DTO スナップショットへ変換して返す
+         *
+         * RuntimeSchemaProjector::BuildClassSchemaSnapshot() が返す値コピー済み DTO
+         * （ClassSchemaSnapshot）だけを使い、各 class を typeDescriptor（typeName / kind /
+         * properties[{name, valueType}]）へ写す。Entity ポインタや Object ポインタ、生ポインタ、
+         * ハンドルは JsonValue に入れない（live memory 非転送）。
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return {types:[typeDescriptor, ...]} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        schemaGetSnapshot(const norves::bridge::JsonValue& params) override;
+
+        // --- Scene / Object（読み取り系） ---
+
+        /**
+         * @brief scene.getTree。World の Entity 階層を sceneNode ツリーへ写して返す
+         *
+         * 合成ルート（id="scene-root", kind="Scene"）配下に各ルート Entity を再帰でノード化する。
+         * 各ノードの id は Entity の ObjectId（uint64_t）を 10 進文字列化したもの、kind は
+         * クラス名（IClass::GetClassName）。Entity ポインタや Object ポインタ、生ポインタ、
+         * ハンドルは JsonValue に入れない（live memory 非転送）。GEngine 未生成時は空ツリー
+         * （子なしの合成ルート）を返す（not_supported は返さない＝scene.query 広告と整合）。
+         *
+         * @param params リクエスト params（借用。rootId/maxDepth は本実装では無視し全ツリーを返す）
+         * @return {root:<sceneNode>} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。防御的に再帰深さ上限を設ける。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        sceneGetTree(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief object.getSnapshot。1 つの Entity のプロパティスナップショットを返す
+         *
+         * params.objectId（文字列）を uint64_t へ解釈し、World から該当 Entity を逆引きする。
+         * RuntimeSchemaProjector::ProjectClass / BuildObjectSnapshot が返す値コピー済み DTO
+         * （プロパティ名・型・シリアライズ済み値）だけを使い、各プロパティを propertyEntry
+         * （name / value / valueType）へ写す。value は SerializedValue を純 JSON 値へ変換する
+         * （bool は true/false、算術型は number、Vector は配列、その他は文字列）。Entity ポインタ
+         * や Object ポインタ、生ポインタ、ハンドルは JsonValue に入れない（live memory 非転送）。
+         * パース不可 or 該当 Entity 無しのときは空スナップショット（{objectId, properties:[]}）を返す。
+         *
+         * @param params リクエスト params（借用、objectId を読む）
+         * @return {objectId, kind?, properties:[propertyEntry, ...]} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        objectGetSnapshot(const norves::bridge::JsonValue& params) override;
+
+        // --- Object（書き込み系） ---
+
+        /**
+         * @brief object.setProperty。1 つの Entity の generic プロパティを書き換える
+         *
+         * params.objectId（文字列）を uint64_t へ解釈して World から該当 Entity を逆引きし、
+         * params.property（文字列）でクラスの ClassProperty を引く。params.value（propertyValue=
+         * 純 JSON 値）をエンジン側プロパティ型（prop->GetRuntimeTypeId() 由来の TypeInfo）に基づき
+         * NorvesLib 内部シリアライズ表記へ逆変換し（WireJsonToSerialized、AppendWireValue の逆）、
+         * PropertyValue::DeserializeStable → ClassProperty::ApplyValue で適用する。wire の valueType は
+         * 信用せず、必ずエンジン側プロパティ型の StableId で復元する。適用は呼び出し中の同期・同
+         * スレッド文脈（DrainInbound＝ゲームスレッド）でのみ行い、新規スレッド/marshal はしない。
+         * 引数 value はすべて値コピーから組み（live memory 非転送）、appliedValue は適用後に Entity を
+         * 再投影して読み戻した SerializedValue を wire JSON 値へ変換して入れる（M-6 往復一致）。
+         * Entity null / 該当なし / プロパティなし / 型不一致 / 適用失敗のいずれも {"accepted":false}。
+         *
+         * Position/Rotation/Scale 等の Transform 系プロパティを変えた場合、ワールド変換は
+         * World::Tick の UpdateWorldTransforms が次フレームで反映する（既存挙動）。ここで明示呼び出しは
+         * しない。同フレーム即時の getSnapshot ではローカル値が反映される。
+         *
+         * @param params リクエスト params（借用、objectId / property / value を読む）
+         * @return {accepted:bool, appliedValue?:<propertyValue>} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        objectSetProperty(const norves::bridge::JsonValue& params) override;
+
+        // viewport.getThumbnail は本実装範囲外で、adapter.hpp の既定実装
+        // （METHOD_NOT_SUPPORTED）のまま。scene/object（読み取り・書き込み）／schema は実装済み。
 
     private:
         /**
