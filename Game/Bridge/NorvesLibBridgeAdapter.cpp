@@ -101,6 +101,10 @@ namespace Game::Bridge
          * SDK の to_wire の可視性に依存せず、ここで wire 値（edit/playing/paused/stopped）を
          * 直接綴る。
          *
+         * @note これを SDK の to_wire(dto::RuntimeState) へ「DRY 解消」目的で置換しない。
+         *       手書きは未知値で "edit" を返すが、to_wire 経路は未知値で "unknown" を返すため、
+         *       置換は runtime.stateChanged の wire 出力を変える破壊的・可観測な挙動変更になる。
+         *
          * @param state wire 値へ変換する Bridge runtime 状態
          * @return wire 文字列の C 文字列（未知値は "edit"）
          */
