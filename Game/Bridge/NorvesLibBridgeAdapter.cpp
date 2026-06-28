@@ -9,10 +9,14 @@
 #include "Core/Public/Application/IWindow.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Object/SchemaProjection.h"
 #include "Core/Public/Platform/NativeWindowHandle.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 
 #include <Windows.h>
 
@@ -159,6 +163,84 @@ namespace Game::Bridge
             }
             host->EmitEvent("runtime.stateChanged", std::move(parsed).value());
         }
+
+        /**
+         * @brief JSON 文字列リテラルとして安全な形へエスケープして out へ追記する
+         *
+         * 動的文字列（型名 / プロパティ名）を JSON の文字列値へ綴る際に使う。前後の
+         * 引用符は付けない（呼び出し側が付ける）。`"` `\` は対応するエスケープへ、
+         * 制御文字（0x00-0x1F）は `\uXXXX` へ、よく使う制御文字は短縮形へ変換する。
+         * バイトは符号なしとして扱い、UTF-8 のマルチバイト列（0x80 以上）はそのまま
+         * 通す（Container::String は UTF-8 バイト列のため）。
+         *
+         * @param out 追記先の文字列
+         * @param s エスケープ対象の入力（UTF-8 バイト列）
+         */
+        void AppendJsonString(std::string& out, std::string_view s)
+        {
+            for (const char ch : s)
+            {
+                const auto byte = static_cast<unsigned char>(ch);
+                switch (byte)
+                {
+                    case '"':
+                        out += "\\\"";
+                        break;
+                    case '\\':
+                        out += "\\\\";
+                        break;
+                    case '\b':
+                        out += "\\b";
+                        break;
+                    case '\f':
+                        out += "\\f";
+                        break;
+                    case '\n':
+                        out += "\\n";
+                        break;
+                    case '\r':
+                        out += "\\r";
+                        break;
+                    case '\t':
+                        out += "\\t";
+                        break;
+                    default:
+                        if (byte < 0x20)
+                        {
+                            // 制御文字は \uXXXX（4 桁 16 進、小文字）へ。
+                            static constexpr char kHex[] = "0123456789abcdef";
+                            out += "\\u00";
+                            out += kHex[(byte >> 4) & 0x0F];
+                            out += kHex[byte & 0x0F];
+                        }
+                        else
+                        {
+                            // 印字可能 ASCII と UTF-8 継続バイトはそのまま。
+                            out += ch;
+                        }
+                        break;
+                }
+            }
+        }
+
+        /**
+         * @brief Container::String を境界 std::string_view として借用する
+         *
+         * Container::String は UTF-8 バイト列（TCHAR=char）であり data()/size() で
+         * そのまま読める（BridgeServerHost の log.message 変換と同じ流儀）。空のときは
+         * data() が番兵を指すため、空の view を返して data() を参照しない。
+         *
+         * @param s 借用元の Container::String（呼び出し中のみ有効）
+         * @return s のバイト列を指す string_view（s より長生きさせないこと）
+         */
+        std::string_view ViewOf(const NorvesLib::Core::Container::String& s)
+        {
+            if (s.empty())
+            {
+                return std::string_view{};
+            }
+            return std::string_view(s.data(), s.size());
+        }
     } // namespace
 
     AdapterResult
@@ -185,13 +267,20 @@ namespace Game::Bridge
     AdapterResult
     NorvesLibBridgeAdapter::getCapabilities(const JsonValue& /*params*/)
     {
-        // runtime.control / log.stream / viewport.focus を広告する
-        // （mock_adapter と同形だが NorvesLib 用）。スキーマ準拠の result.capabilities。
+        // runtime.control / log.stream / viewport.focus / scene.query を広告する。
+        // scene.query は mock で scene.getTree と schema.getSnapshot を束ねる token。本実装段では
+        // schema.getSnapshot のみ実装済みだが、scene.getTree は後段（S2）で同じ token 配下に
+        // 加わるため、ここで scene.query を広告する。
+        // viewport.thumbnail と scene.liveUpdate は本実装範囲外のため広告しない。object.query /
+        // object.edit も未実装のため広告しない（後段 S3/S4 で追加）。
+        // 実エンジンの capability 検証は superset（部分集合包含）方針なので、実装済み token のみ
+        // 広告すればよい（mock の 8 token fixture には合わせない）。
         return OkLiteral(
             R"({"capabilities":[)"
             R"({"name":"runtime.control","version":"0.1","description":"Play/pause/stop control."},)"
             R"({"name":"log.stream"},)"
-            R"({"name":"viewport.focus"}]})");
+            R"({"name":"viewport.focus"},)"
+            R"({"name":"scene.query"}]})");
     }
 
     AdapterResult
@@ -357,6 +446,78 @@ namespace Game::Bridge
 
         // log.unsubscribe.result スキーマの必須フィールドは ok(boolean)。
         return OkLiteral(R"({"ok":true})");
+    }
+
+    AdapterResult
+    NorvesLibBridgeAdapter::schemaGetSnapshot(const JsonValue& /*params*/)
+    {
+        // class スキーマ投影を値コピー済み DTO として取得する。Entity ポインタや Object
+        // ポインタ、生ポインタは一切触らず、DTO（ClassSchemaSnapshot）の値だけを読む
+        // （live memory 非転送）。
+        const NorvesLib::Core::ClassSchemaSnapshot snapshot =
+            NorvesLib::Core::RuntimeSchemaProjector::BuildClassSchemaSnapshot();
+
+        // StableTypeId -> 型名 の対応を Types から作る。これで各プロパティの Type を人間可読な
+        // 型名へ解決する。名前が空の TypeInfo は登録しない（解決不能扱いでフォールバックさせる）。
+        std::unordered_map<uint64_t, std::string_view> typeNameByStableId;
+        typeNameByStableId.reserve(snapshot.Types.size());
+        for (const NorvesLib::Core::TypeInfo& type : snapshot.Types)
+        {
+            if (type.StableId != NorvesLib::Core::InvalidSchemaId && !type.Name.empty())
+            {
+                typeNameByStableId.emplace(static_cast<uint64_t>(type.StableId), ViewOf(type.Name));
+            }
+        }
+
+        // 解決できない Type のフォールバック型名（propertyDefinition.valueType は必須・minLength:1）。
+        static constexpr std::string_view kUnknownType = "unknown";
+
+        // result wire: { "types": [ { typeName, kind, properties:[{name, valueType}] }, ... ] }。
+        // typeName / プロパティ名 / 型名はすべて AppendJsonString でエスケープして綴る。
+        std::string text = R"({"types":[)";
+        bool bFirstClass = true;
+        for (const NorvesLib::Core::ClassSchemaProjection& cls : snapshot.Classes)
+        {
+            if (!bFirstClass)
+            {
+                text += ',';
+            }
+            bFirstClass = false;
+
+            text += R"({"typeName":")";
+            AppendJsonString(text, ViewOf(cls.Name));
+            // class 投影なので kind は "object" 固定。
+            text += R"(","kind":"object","properties":[)";
+
+            bool bFirstProp = true;
+            for (const NorvesLib::Core::PropertySchemaProjection& prop : cls.Properties)
+            {
+                if (!bFirstProp)
+                {
+                    text += ',';
+                }
+                bFirstProp = false;
+
+                // Type（StableTypeId）を型名へ解決する。未登録/InvalidSchemaId は "unknown"。
+                std::string_view valueType = kUnknownType;
+                const auto it = typeNameByStableId.find(static_cast<uint64_t>(prop.Type));
+                if (it != typeNameByStableId.end())
+                {
+                    valueType = it->second;
+                }
+
+                text += R"({"name":")";
+                AppendJsonString(text, ViewOf(prop.Name));
+                text += R"(","valueType":")";
+                AppendJsonString(text, valueType);
+                text += R"("})";
+            }
+
+            text += R"(]})";
+        }
+        text += R"(]})";
+
+        return OkLiteral(text);
     }
 
 } // namespace Game::Bridge

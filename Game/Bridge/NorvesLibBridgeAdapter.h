@@ -179,7 +179,25 @@ namespace Game::Bridge
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
         logUnsubscribe(const norves::bridge::JsonValue& params) override;
 
-        // scene/object/schema は adapter.hpp の既定実装（METHOD_NOT_SUPPORTED）のまま。
+        // --- Schema ---
+
+        /**
+         * @brief schema.getSnapshot。class スキーマ投影を DTO スナップショットへ変換して返す
+         *
+         * RuntimeSchemaProjector::BuildClassSchemaSnapshot() が返す値コピー済み DTO
+         * （ClassSchemaSnapshot）だけを使い、各 class を typeDescriptor（typeName / kind /
+         * properties[{name, valueType}]）へ写す。Entity ポインタや Object ポインタ、生ポインタ、
+         * ハンドルは JsonValue に入れない（live memory 非転送）。
+         *
+         * @param params リクエスト params（借用、未使用）
+         * @return {types:[typeDescriptor, ...]} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        schemaGetSnapshot(const norves::bridge::JsonValue& params) override;
+
+        // scene/object は後段（S2 以降）で実装する。viewport.getThumbnail は本実装範囲外で、
+        // いずれも adapter.hpp の既定実装（METHOD_NOT_SUPPORTED）のまま。
 
     private:
         /**
