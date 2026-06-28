@@ -3,6 +3,7 @@
 #include "Math/GeometryTypes.h"
 #include "Container/Containers.h"
 #include "Container/Span.h"
+#include <cstdint>
 #include <cstddef>
 
 namespace NorvesLib::Core
@@ -47,10 +48,32 @@ namespace NorvesLib::Core::Scene
         {
             Entity* EntityPtr = nullptr;
             Math::AABB Bounds;
+            uint32_t OriginalIndex = 0;
+        };
+
+        struct BVHNode
+        {
+            Math::AABB Bounds;
+            uint32_t Start = 0;
+            uint32_t Count = 0;
+            uint32_t Left = 0;
+            uint32_t Right = 0;
+            bool bLeaf = false;
         };
 
         static void CollectRecursive(Entity* entity, Container::VariableArray<Entry>& entries);
+        static float GetCenterAxis(const Math::AABB& bounds, uint32_t axis);
 
+        void BuildBVH();
+        uint32_t BuildNode(uint32_t start, uint32_t count);
+        bool RaycastNode(
+            uint32_t nodeIndex,
+            const Math::Ray& ray,
+            RaycastHit& outHit,
+            float& bestT,
+            uint32_t& bestOriginalIndex) const;
+
+        Container::VariableArray<BVHNode> m_Nodes;
         Container::VariableArray<Entry> m_Entries;
     };
 
