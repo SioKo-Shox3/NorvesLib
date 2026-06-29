@@ -1,5 +1,6 @@
 ﻿#include "Rendering/DebugDrawQueue.h"
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 
@@ -34,6 +35,31 @@ int main()
             NorvesLib::Math::Vector3(1.0f, 2.0f, 3.0f)),
         color);
     assert(queue.GetVertexCount() == 24);
+
+    queue.Clear();
+    constexpr uint32_t kExpectedSegments = 24;
+    const NorvesLib::Math::Vector3 sphereCenter(2.0f, 3.0f, 4.0f);
+    const float sphereRadius = 5.0f;
+    queue.AddSphere(NorvesLib::Math::Sphere(sphereCenter, sphereRadius), color);
+    assert(queue.GetVertexCount() == 6u * kExpectedSegments);
+    assert(queue.GetVertices()[0].Color[0] == color.x);
+    assert(queue.GetVertices()[0].Color[1] == color.y);
+    assert(queue.GetVertices()[0].Color[2] == color.z);
+    assert(queue.GetVertices()[0].Color[3] == color.w);
+
+    queue.Clear();
+    queue.AddSphere(NorvesLib::Math::Sphere(sphereCenter, 0.0f), color);
+    assert(queue.GetVertexCount() == 0);
+    queue.AddSphere(NorvesLib::Math::Sphere(sphereCenter, -1.0f), color);
+    assert(queue.GetVertexCount() == 0);
+
+    queue.Clear();
+    queue.AddSphere(NorvesLib::Math::Sphere(sphereCenter, std::nanf("")), color);
+    assert(queue.GetVertexCount() == 0);
+
+    queue.Clear();
+    queue.AddSphere(sphereCenter, 1.0e6f, color);
+    assert(queue.GetVertexCount() <= DebugDrawQueue::kMaxDebugLineVertices);
 
     queue.Clear();
     const uint32_t maxVertices = DebugDrawQueue::kMaxDebugLineVertices;
