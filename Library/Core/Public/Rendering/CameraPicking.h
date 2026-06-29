@@ -31,4 +31,21 @@ namespace NorvesLib::Core::Rendering
         float y1,
         Math::Frustum& outFrustum);
 
+    /**
+     * @brief 中心点と外周点からワールド空間の選択球を構築します。
+     *
+     * centerX/centerY のピッキングレイ上で centerAlongRayDistance にある点を球中心とし、
+     * edgeX/edgeY のピッキングレイとカメラ forward に垂直な中心平面との交点までを半径にします。
+     * 入力が非有限、Viewport 外、距離が正でない、平面交差不能、半径縮退の場合は false を返します。
+     * false を返す場合 outSphere は変更しません。
+     */
+    bool BuildSelectionSphere(
+        const CameraProxy& camera,
+        float centerX,
+        float centerY,
+        float edgeX,
+        float edgeY,
+        float centerAlongRayDistance,
+        Math::Sphere& outSphere);
+
 } // namespace NorvesLib::Core::Rendering
