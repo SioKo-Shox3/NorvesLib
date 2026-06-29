@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Core/Public/Container/Containers.h"
 #include "Core/Public/Input/IInputController.h"
 #include "Core/Public/Object/EntityHandle.h"
 
@@ -20,11 +21,15 @@ namespace Game::Input
 
     private:
         void PerformPick(float screenX, float screenY);
+        void PerformBoxSelect(float x0, float y0, float x1, float y1);
 
         float m_PressX = 0.0f;
         float m_PressY = 0.0f;
         bool m_bLeftPressed = false;
-        NorvesLib::Core::EntityHandle m_SelectionHandle = NorvesLib::Core::EntityHandle::Invalid();
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::EntityHandle> m_SelectionHandles;
+        bool m_bBoxSelecting = false;
+        float m_BoxStartX = 0.0f;
+        float m_BoxStartY = 0.0f;
     };
 
 } // namespace Game::Input
