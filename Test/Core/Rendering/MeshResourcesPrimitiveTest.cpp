@@ -32,6 +32,13 @@ namespace
         float UV[2];
     };
 
+    struct TestVector3
+    {
+        float X;
+        float Y;
+        float Z;
+    };
+
     static_assert(sizeof(Vertex) == 32);
 
     constexpr float PrimitiveMinimumSize = 1e-4f;
@@ -46,6 +53,39 @@ namespace
     bool Near(float actual, float expected, float epsilon = Epsilon)
     {
         return std::fabs(actual - expected) <= epsilon;
+    }
+
+    TestVector3 MakePosition(const Vertex& vertex)
+    {
+        return TestVector3{vertex.Position[0], vertex.Position[1], vertex.Position[2]};
+    }
+
+    TestVector3 MakeNormal(const Vertex& vertex)
+    {
+        return TestVector3{vertex.Normal[0], vertex.Normal[1], vertex.Normal[2]};
+    }
+
+    TestVector3 Add(const TestVector3& left, const TestVector3& right)
+    {
+        return TestVector3{left.X + right.X, left.Y + right.Y, left.Z + right.Z};
+    }
+
+    TestVector3 Subtract(const TestVector3& left, const TestVector3& right)
+    {
+        return TestVector3{left.X - right.X, left.Y - right.Y, left.Z - right.Z};
+    }
+
+    TestVector3 Cross(const TestVector3& left, const TestVector3& right)
+    {
+        return TestVector3{
+            left.Y * right.Z - left.Z * right.Y,
+            left.Z * right.X - left.X * right.Z,
+            left.X * right.Y - left.Y * right.X};
+    }
+
+    float Dot(const TestVector3& left, const TestVector3& right)
+    {
+        return left.X * right.X + left.Y * right.Y + left.Z * right.Z;
     }
 
     void AssertStandardLayout(const NorvesLib::Core::Rendering::VertexLayout& layout)
@@ -94,6 +134,36 @@ namespace
         assert(Near(sphere.CenterY, 0.0f));
         assert(Near(sphere.CenterZ, 0.0f));
         assert(Near(sphere.Radius, std::sqrt(radius * radius + halfH * halfH)));
+    }
+
+    void AssertBounds(
+        const NorvesLib::Core::Rendering::BoundingBox& bounds,
+        const NorvesLib::Core::Rendering::BoundingSphere& sphere,
+        float minX,
+        float minY,
+        float minZ,
+        float maxX,
+        float maxY,
+        float maxZ,
+        float sphereRadius)
+    {
+        assert(bounds.IsValid());
+        assert(bounds.MaxX > bounds.MinX);
+        assert(bounds.MaxY > bounds.MinY);
+        assert(bounds.MaxZ > bounds.MinZ);
+
+        assert(Near(bounds.MinX, minX));
+        assert(Near(bounds.MinY, minY));
+        assert(Near(bounds.MinZ, minZ));
+        assert(Near(bounds.MaxX, maxX));
+        assert(Near(bounds.MaxY, maxY));
+        assert(Near(bounds.MaxZ, maxZ));
+
+        assert(sphere.IsValid());
+        assert(Near(sphere.CenterX, 0.0f));
+        assert(Near(sphere.CenterY, 0.0f));
+        assert(Near(sphere.CenterZ, 0.0f));
+        assert(Near(sphere.Radius, sphereRadius));
     }
 
     void ReadVertex(
@@ -179,11 +249,87 @@ namespace
         }
     }
 
+    void AssertWinding(const NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::MeshResource>& mesh)
+    {
+        const auto& vertexData = mesh->GetVertexData();
+        const auto& indices = mesh->GetIndexData();
+
+        uint32_t checkedTriangleCount = 0u;
+
+        for (uint32_t indexPosition = 0; indexPosition < mesh->GetIndexCount(); indexPosition += 3u)
+        {
+            Vertex vertex0;
+            Vertex vertex1;
+            Vertex vertex2;
+            ReadVertex(vertexData, indices[indexPosition], vertex0);
+            ReadVertex(vertexData, indices[indexPosition + 1u], vertex1);
+            ReadVertex(vertexData, indices[indexPosition + 2u], vertex2);
+
+            const TestVector3 p0 = MakePosition(vertex0);
+            const TestVector3 p1 = MakePosition(vertex1);
+            const TestVector3 p2 = MakePosition(vertex2);
+            const TestVector3 edge0 = Subtract(p1, p0);
+            const TestVector3 edge1 = Subtract(p2, p0);
+            const TestVector3 faceNormal = Cross(edge0, edge1);
+            const float faceNormalLengthSquared = Dot(faceNormal, faceNormal);
+
+            if (faceNormalLengthSquared <= 1e-12f)
+            {
+                continue;
+            }
+
+            ++checkedTriangleCount;
+
+            const TestVector3 averageNormal = Add(Add(MakeNormal(vertex0), MakeNormal(vertex1)), MakeNormal(vertex2));
+            assert(Dot(faceNormal, averageNormal) > 0.0f);
+        }
+
+        assert(checkedTriangleCount > 0u);
+    }
+
+    void AssertCapsuleJoinRings(
+        const NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::MeshResource>& mesh,
+        float halfHeight,
+        float radius)
+    {
+        const auto& vertexData = mesh->GetVertexData();
+
+        bool bHasTopRing = false;
+        bool bHasBottomRing = false;
+
+        for (uint32_t vertexIndex = 0; vertexIndex < mesh->GetVertexCount(); ++vertexIndex)
+        {
+            Vertex vertex;
+            ReadVertex(vertexData, vertexIndex, vertex);
+
+            const float horizontalRadius = std::sqrt(
+                vertex.Position[0] * vertex.Position[0] +
+                vertex.Position[2] * vertex.Position[2]);
+
+            if (Near(vertex.Position[1], halfHeight) && Near(horizontalRadius, radius))
+            {
+                bHasTopRing = true;
+            }
+            if (Near(vertex.Position[1], -halfHeight) && Near(horizontalRadius, radius))
+            {
+                bHasBottomRing = true;
+            }
+        }
+
+        assert(bHasTopRing);
+        assert(bHasBottomRing);
+    }
+
     void AssertPrimitive(
         const NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::MeshResource>& mesh,
         const char* expectedName,
-        float radius,
-        float height,
+        float minX,
+        float minY,
+        float minZ,
+        float maxX,
+        float maxY,
+        float maxZ,
+        float sphereRadius,
         bool bExpectTopCapNormal,
         bool bExpectBottomCapNormal)
     {
@@ -198,8 +344,31 @@ namespace
 
         AssertIndices(mesh);
         AssertStandardLayout(mesh->GetVertexLayout());
-        AssertBounds(mesh->GetBounds(), mesh->GetBoundingSphere(), radius, height);
+        AssertBounds(mesh->GetBounds(), mesh->GetBoundingSphere(), minX, minY, minZ, maxX, maxY, maxZ, sphereRadius);
         AssertVertexPayload(mesh, bExpectTopCapNormal, bExpectBottomCapNormal);
+    }
+
+    void AssertPrimitive(
+        const NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::MeshResource>& mesh,
+        const char* expectedName,
+        float radius,
+        float height,
+        bool bExpectTopCapNormal,
+        bool bExpectBottomCapNormal)
+    {
+        const float halfH = height * 0.5f;
+        AssertPrimitive(
+            mesh,
+            expectedName,
+            -radius,
+            -halfH,
+            -radius,
+            radius,
+            halfH,
+            radius,
+            std::sqrt(radius * radius + halfH * halfH),
+            bExpectTopCapNormal,
+            bExpectBottomCapNormal);
     }
 }
 
@@ -216,9 +385,20 @@ int main()
 
     auto cylinder = MeshResource::CreateCylinder(1.0f, 2.0f, 16u);
     AssertPrimitive(cylinder, "Primitive_Cylinder", 1.0f, 2.0f, true, true);
+    AssertWinding(cylinder);
 
     auto cone = MeshResource::CreateCone(1.5f, 3.0f, 24u);
     AssertPrimitive(cone, "Primitive_Cone", 1.5f, 3.0f, false, true);
+    AssertWinding(cone);
+
+    auto torus = MeshResource::CreateTorus(2.0f, 0.5f, 24u, 12u);
+    AssertPrimitive(torus, "Primitive_Torus", -2.5f, -0.5f, -2.5f, 2.5f, 0.5f, 2.5f, 2.5f, false, false);
+    AssertWinding(torus);
+
+    auto capsule = MeshResource::CreateCapsule(1.0f, 2.0f, 16u, 8u);
+    AssertPrimitive(capsule, "Primitive_Capsule", -1.0f, -2.0f, -1.0f, 1.0f, 2.0f, 1.0f, 2.0f, true, true);
+    AssertWinding(capsule);
+    AssertCapsuleJoinRings(capsule, 1.0f, 1.0f);
 
     const float clampedRadius = ClampPrimitiveSize(0.0f);
     const float clampedHeight = ClampPrimitiveSize(0.0f);
@@ -230,6 +410,40 @@ int main()
     auto clampedCone = MeshResource::CreateCone(-1.0f, 0.0f, 2u);
     AssertPrimitive(clampedCone, "Primitive_Cone", clampedRadius, clampedHeight, false, true);
     assert(clampedCone->GetIndexCount() == 18u);
+
+    const float clampedTorusBoundsRadius = 2.0f + clampedRadius;
+    auto clampedTorus = MeshResource::CreateTorus(2.0f, 0.0f, 2u, 2u);
+    AssertPrimitive(
+        clampedTorus,
+        "Primitive_Torus",
+        -clampedTorusBoundsRadius,
+        -clampedRadius,
+        -clampedTorusBoundsRadius,
+        clampedTorusBoundsRadius,
+        clampedRadius,
+        clampedTorusBoundsRadius,
+        clampedTorusBoundsRadius,
+        false,
+        false);
+    assert(clampedTorus->GetIndexCount() == 54u);
+
+    const float clampedCapsuleHalfHeight = clampedHeight * 0.5f;
+    const float clampedCapsuleExtent = clampedCapsuleHalfHeight + clampedRadius;
+    auto clampedCapsule = MeshResource::CreateCapsule(0.0f, 0.0f, 2u, 2u);
+    AssertPrimitive(
+        clampedCapsule,
+        "Primitive_Capsule",
+        -clampedRadius,
+        -clampedCapsuleExtent,
+        -clampedRadius,
+        clampedRadius,
+        clampedCapsuleExtent,
+        clampedRadius,
+        clampedCapsuleExtent,
+        true,
+        true);
+    AssertCapsuleJoinRings(clampedCapsule, clampedCapsuleHalfHeight, clampedRadius);
+    assert(clampedCapsule->GetIndexCount() == 108u);
 
     std::cout << "MeshResourcesPrimitiveTest passed\n";
     return 0;
