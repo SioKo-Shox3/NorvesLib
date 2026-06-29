@@ -31,21 +31,45 @@ namespace Game::Input
 
         if (event.Action == NorvesLib::Core::Input::InputAction::Pressed)
         {
+            NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
+            const bool bShift =
+                (engine != nullptr) && engine->GetInputSystem().GetState().IsShiftDown();
+
+            if (bShift)
+            {
+                m_bBoxSelecting = true;
+                m_BoxStartX = event.PositionX;
+                m_BoxStartY = event.PositionY;
+                m_bLeftPressed = false;
+                return true;
+            }
+
+            m_bBoxSelecting = false;
+            m_bLeftPressed = true;
             m_PressX = event.PositionX;
             m_PressY = event.PositionY;
-            m_bLeftPressed = true;
             return false;
         }
 
-        if (event.Action == NorvesLib::Core::Input::InputAction::Released && m_bLeftPressed)
+        if (event.Action == NorvesLib::Core::Input::InputAction::Released)
         {
-            m_bLeftPressed = false;
-
-            const float dx = event.PositionX - m_PressX;
-            const float dy = event.PositionY - m_PressY;
-            if (dx * dx + dy * dy <= ClickThresholdPixels * ClickThresholdPixels)
+            if (m_bBoxSelecting)
             {
-                PerformPick(event.PositionX, event.PositionY);
+                m_bBoxSelecting = false;
+                PerformBoxSelect(m_BoxStartX, m_BoxStartY, event.PositionX, event.PositionY);
+                return true;
+            }
+
+            if (m_bLeftPressed)
+            {
+                m_bLeftPressed = false;
+
+                const float dx = event.PositionX - m_PressX;
+                const float dy = event.PositionY - m_PressY;
+                if (dx * dx + dy * dy <= ClickThresholdPixels * ClickThresholdPixels)
+                {
+                    PerformPick(event.PositionX, event.PositionY);
+                }
             }
         }
 
@@ -54,34 +78,48 @@ namespace Game::Input
 
     void PickingController::DrawSelection()
     {
-        if (!m_SelectionHandle.IsValid())
+        if (m_SelectionHandles.empty())
         {
             return;
         }
 
-        NorvesLib::Core::Entity* entity =
-            NorvesLib::Core::GEngine.GetComponentDataRegistry().ResolveEntity(m_SelectionHandle);
-        if (entity == nullptr)
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::EntityHandle> liveHandles;
+        liveHandles.reserve(m_SelectionHandles.size());
+
+        for (const NorvesLib::Core::EntityHandle& handle : m_SelectionHandles)
         {
-            m_SelectionHandle = NorvesLib::Core::EntityHandle::Invalid();
-            return;
+            if (!handle.IsValid())
+            {
+                continue;
+            }
+
+            NorvesLib::Core::Entity* entity =
+                NorvesLib::Core::GEngine.GetComponentDataRegistry().ResolveEntity(handle);
+            if (entity == nullptr)
+            {
+                continue;
+            }
+
+            liveHandles.push_back(handle);
+
+            NorvesLib::Math::AABB bounds;
+            if (entity->GetWorldAABB(bounds))
+            {
+                NorvesLib::Core::GEngine.GetDebugDraw().AddAABB(bounds, SelectionColor);
+            }
         }
 
-        NorvesLib::Math::AABB bounds;
-        if (entity->GetWorldAABB(bounds))
-        {
-            NorvesLib::Core::GEngine.GetDebugDraw().AddAABB(bounds, SelectionColor);
-        }
+        m_SelectionHandles = liveHandles;
     }
 
     void PickingController::ClearSelection()
     {
-        m_SelectionHandle = NorvesLib::Core::EntityHandle::Invalid();
+        m_SelectionHandles.clear();
     }
 
     void PickingController::PerformPick(float screenX, float screenY)
     {
-        m_SelectionHandle = NorvesLib::Core::EntityHandle::Invalid();
+        m_SelectionHandles.clear();
 
         NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
         if (engine == nullptr)
@@ -111,7 +149,54 @@ namespace Game::Input
         const bool bHit = engine->GetSceneQuery().Raycast(ray, hit);
         if (bHit && hit.HitEntity != nullptr)
         {
-            m_SelectionHandle = hit.HitEntity->GetEntityHandle();
+            NorvesLib::Core::EntityHandle handle = hit.HitEntity->GetEntityHandle();
+            if (handle.IsValid())
+            {
+                m_SelectionHandles.push_back(handle);
+            }
+        }
+    }
+
+    void PickingController::PerformBoxSelect(float x0, float y0, float x1, float y1)
+    {
+        NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            m_SelectionHandles.clear();
+            return;
+        }
+
+        const NorvesLib::Core::Rendering::CameraProxy& camera =
+            engine->GetRenderWorld().GetRenderingCoordinator().GetMainCamera();
+        if (!camera.IsValid())
+        {
+            m_SelectionHandles.clear();
+            return;
+        }
+
+        NorvesLib::Math::Frustum frustum;
+        if (!NorvesLib::Core::Rendering::BuildScreenRectFrustum(camera, x0, y0, x1, y1, frustum))
+        {
+            m_SelectionHandles.clear();
+            return;
+        }
+
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Entity*> hits;
+        engine->GetSceneQuery().QueryFrustum(frustum, hits);
+
+        m_SelectionHandles.clear();
+        for (NorvesLib::Core::Entity* entity : hits)
+        {
+            if (entity == nullptr)
+            {
+                continue;
+            }
+
+            NorvesLib::Core::EntityHandle handle = entity->GetEntityHandle();
+            if (handle.IsValid())
+            {
+                m_SelectionHandles.push_back(handle);
+            }
         }
     }
 
