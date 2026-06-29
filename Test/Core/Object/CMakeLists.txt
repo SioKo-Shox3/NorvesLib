@@ -82,6 +82,15 @@ target_include_directories(ObjectCastTest PRIVATE
 )
 set_target_properties(ObjectCastTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(LightComponentBuildProxyTest
+    LightComponentBuildProxyTest.cpp
+)
+target_link_libraries(LightComponentBuildProxyTest PRIVATE Core)
+target_include_directories(LightComponentBuildProxyTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(LightComponentBuildProxyTest PROPERTIES FOLDER "Test/Core/Object")
+
 add_executable(ObjectGCTest
     ObjectGCTest.cpp
 )
@@ -151,6 +160,33 @@ target_include_directories(TransformHierarchyTest PRIVATE
 )
 set_target_properties(TransformHierarchyTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(EntityWorldAABBTest
+    EntityWorldAABBTest.cpp
+)
+target_link_libraries(EntityWorldAABBTest PRIVATE Core)
+target_include_directories(EntityWorldAABBTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(EntityWorldAABBTest PROPERTIES FOLDER "Test/Core/Object")
+
+add_executable(SceneQueryRaycastTest
+    SceneQueryRaycastTest.cpp
+)
+target_link_libraries(SceneQueryRaycastTest PRIVATE Core)
+target_include_directories(SceneQueryRaycastTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneQueryRaycastTest PROPERTIES FOLDER "Test/Core/Object")
+
+add_executable(SceneQueryOverlapTest
+    SceneQueryOverlapTest.cpp
+)
+target_link_libraries(SceneQueryOverlapTest PRIVATE Core)
+target_include_directories(SceneQueryOverlapTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneQueryOverlapTest PROPERTIES FOLDER "Test/Core/Object")
+
 add_executable(EntityTreeTest
     EntityTreeTest.cpp
 )
@@ -166,6 +202,7 @@ add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
 add_test(NAME RuntimeSchemaSnapshotTest COMMAND RuntimeSchemaSnapshotTest)
 add_test(NAME ObjectHeapTest COMMAND ObjectHeapTest)
 add_test(NAME ObjectCastTest COMMAND ObjectCastTest)
+add_test(NAME LightComponentBuildProxyTest COMMAND LightComponentBuildProxyTest)
 add_test(NAME PropertyBagTest COMMAND PropertyBagTest)
 add_test(NAME InvocationQueueTest COMMAND InvocationQueueTest)
 add_test(NAME ResourceMetadataTest COMMAND ResourceMetadataTest)
@@ -176,4 +213,7 @@ add_test(NAME EntitySubtreeSnapshotTest COMMAND EntitySubtreeSnapshotTest)
 add_test(NAME PrefabRoundTripTest COMMAND PrefabRoundTripTest)
 add_test(NAME LegacyCleanupTest COMMAND LegacyCleanupTest)
 add_test(NAME TransformHierarchyTest COMMAND TransformHierarchyTest)
+add_test(NAME EntityWorldAABBTest COMMAND EntityWorldAABBTest)
+add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
+add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryOverlapTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)

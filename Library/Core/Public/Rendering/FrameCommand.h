@@ -18,6 +18,7 @@ namespace NorvesLib::Core::Rendering
     {
         GeometryPass,
         FullscreenPass,
+        DebugDrawLineList,
         TextureBarrier,
         MegaGeometryPass,
     };
@@ -42,6 +43,18 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorSetPtr DescriptorSet;
         uint32_t DescriptorSetSlot = 0;
         uint32_t VertexCount = 3;
+    };
+
+    struct DebugDrawLineListPassCommand
+    {
+        RHI::RenderPassPtr RenderPass;
+        RHI::FramebufferPtr Framebuffer;
+        RHI::PipelinePtr Pipeline;
+        RHI::DescriptorSetPtr DescriptorSet;
+        RHI::BufferPtr VertexBuffer;
+        uint32_t VertexCount = 0;
+        RHI::Viewport Viewport;
+        RHI::ScissorRect Scissor;
     };
 
     struct TextureBarrierCommand
@@ -71,6 +84,7 @@ namespace NorvesLib::Core::Rendering
         FrameCommandType Type = FrameCommandType::GeometryPass;
         GeometryPassCommand GeometryPass;
         FullscreenPassCommand FullscreenPass;
+        DebugDrawLineListPassCommand DebugDrawLineList;
         TextureBarrierCommand TextureBarrier;
         MegaGeometryPassCommand MegaGeometry;
 
@@ -111,6 +125,28 @@ namespace NorvesLib::Core::Rendering
             command.FullscreenPass.DescriptorSet = descriptorSet;
             command.FullscreenPass.DescriptorSetSlot = descriptorSetSlot;
             command.FullscreenPass.VertexCount = vertexCount;
+            return command;
+        }
+
+        static FrameCommand CreateDebugDrawLineList(RHI::RenderPassPtr renderPass,
+                                                    RHI::FramebufferPtr framebuffer,
+                                                    const RHI::Viewport& viewport,
+                                                    const RHI::ScissorRect& scissor,
+                                                    RHI::PipelinePtr pipeline,
+                                                    RHI::DescriptorSetPtr descriptorSet,
+                                                    RHI::BufferPtr vertexBuffer,
+                                                    uint32_t vertexCount)
+        {
+            FrameCommand command;
+            command.Type = FrameCommandType::DebugDrawLineList;
+            command.DebugDrawLineList.RenderPass = renderPass;
+            command.DebugDrawLineList.Framebuffer = framebuffer;
+            command.DebugDrawLineList.Viewport = viewport;
+            command.DebugDrawLineList.Scissor = scissor;
+            command.DebugDrawLineList.Pipeline = pipeline;
+            command.DebugDrawLineList.DescriptorSet = descriptorSet;
+            command.DebugDrawLineList.VertexBuffer = vertexBuffer;
+            command.DebugDrawLineList.VertexCount = vertexCount;
             return command;
         }
 

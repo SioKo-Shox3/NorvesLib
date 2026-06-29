@@ -47,6 +47,8 @@ set(PRIVATE_SOURCES
     Private/Engine/NorvesEngine.cpp
     Private/Engine/ComponentDataRegistry.cpp
     Private/Engine/ApplicationProcessor.cpp
+    # Scene
+    Private/Scene/SceneQuery.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
     Private/GameMode/GameModeStateMachine.cpp
@@ -56,10 +58,13 @@ set(PRIVATE_SOURCES
     Private/Rendering/CanvasView.cpp
     Private/Rendering/Viewport.cpp
     Private/Rendering/CameraViewConstants.cpp
+    Private/Rendering/CameraPicking.cpp
     Private/Rendering/SceneView.cpp
     Private/Rendering/InstanceBufferRing.cpp
     Private/Rendering/DynamicBufferRing.cpp
     Private/Rendering/DrawCommand.cpp
+    Private/Rendering/DebugDrawQueue.cpp
+    Private/Rendering/DebugDrawPass.cpp
     Private/Rendering/RenderingCoordinator.cpp
     Private/Rendering/RenderGraph/RenderGraph.cpp
     Private/Rendering/RenderGraph/RenderGraphBuilder.cpp
@@ -124,7 +129,9 @@ set(PRIVATE_SOURCES
     Private/Component/MeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/LightComponent.cpp
+    Private/Component/DirectionalLightComponent.cpp
     Private/Component/PointLightComponent.cpp
+    Private/Component/SpotLightComponent.cpp
     # Thread
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
@@ -225,6 +232,8 @@ set(PUBLIC_HEADERS
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Engine/ApplicationProcessor.h
+    # Scene
+    Public/Scene/SceneQuery.h
     # Module
     Public/Module/ModuleExport.h
     Public/Module/IModule.h
@@ -268,12 +277,15 @@ set(PUBLIC_HEADERS
     Public/Rendering/IBoardProxySink.h
     Public/Rendering/Viewport.h
     Public/Rendering/CameraViewConstants.h
+    Public/Rendering/CameraPicking.h
     Public/Rendering/ViewRenderPlan.h
     Public/Rendering/ViewportSnapshot.h
     Public/Rendering/SceneView.h
     Public/Rendering/InstanceBufferRing.h
     Public/Rendering/DynamicBufferRing.h
     Public/Rendering/DrawCommand.h
+    Public/Rendering/DebugDrawQueue.h
+    Public/Rendering/DebugDrawPass.h
     Public/Rendering/RenderingCoordinator.h
     Public/Rendering/RenderGraph/RenderGraphTypes.h
     Public/Rendering/RenderGraph/RenderGraphResourceNames.h
@@ -350,7 +362,9 @@ set(PUBLIC_HEADERS
     Public/Component/MeshComponent.h
     Public/Component/MegaGeometryComponent.h
     Public/Component/LightComponent.h
+    Public/Component/DirectionalLightComponent.h
     Public/Component/PointLightComponent.h
+    Public/Component/SpotLightComponent.h
     # Math
     Public/Math/MathForward.h
     Public/Math/MathTypes.h
@@ -363,6 +377,8 @@ set(PUBLIC_HEADERS
     Public/Math/Vector3.h
     Public/Math/Vector4.h
     Public/Math/VectorUtils.h
+    Public/Math/GeometryTypes.h
+    Public/Math/GeometryIntersection.h
     # Thread
     Public/Thread/Atomic.h
     Public/Thread/ConditionVariable.h

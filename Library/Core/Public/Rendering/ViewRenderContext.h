@@ -3,6 +3,7 @@
 #include "RHI/RHITypes.h"
 #include "RHI/DeviceCapabilities.h"
 #include "DrawCommand.h"
+#include "Rendering/DebugDrawQueue.h"
 #include "Rendering/RenderResourceContexts.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
@@ -96,6 +97,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 全DrawCommandスナップショット（GameThreadが生成、パスが読み取る） */
         DrawCommandView SnapshotDrawCommands;
+
+        /** @brief デバッグライン頂点スナップショット（FramePacket::DebugLineVerticesを指す） */
+        const Container::VariableArray<DebugLineVertex> *SnapshotDebugLineVertices = nullptr;
 
         /** @brief 不透明DrawCommandスナップショット */
         DrawCommandView SnapshotOpaqueCommands;
