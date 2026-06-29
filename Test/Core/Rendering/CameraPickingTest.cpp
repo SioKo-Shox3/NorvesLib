@@ -1,6 +1,7 @@
 ﻿#include "Rendering/CameraPicking.h"
 #include "Math/GeometryIntersection.h"
 #include <cassert>
+#include <cmath>
 
 namespace
 {
@@ -60,6 +61,37 @@ namespace
         assert(IsNearlyEqual(actual.x, x));
         assert(IsNearlyEqual(actual.y, y));
         assert(IsNearlyEqual(actual.z, z));
+    }
+
+    void AssertSphereUnchanged(
+        const NorvesLib::Math::Sphere& actual,
+        const NorvesLib::Math::Sphere& expected)
+    {
+        AssertVectorNear(actual.Center, expected.Center.x, expected.Center.y, expected.Center.z);
+        assert(IsNearlyEqual(actual.Radius, expected.Radius));
+    }
+
+    void AssertSelectionSphereFailureDoesNotMutate(
+        const NorvesLib::Core::Rendering::CameraProxy& camera,
+        float centerX,
+        float centerY,
+        float edgeX,
+        float edgeY,
+        float centerAlongRayDistance)
+    {
+        const NorvesLib::Math::Sphere sentinel(NorvesLib::Math::Vector3(12.0f, -3.0f, 8.0f), 2.5f);
+        NorvesLib::Math::Sphere sphere = sentinel;
+
+        const bool bBuilt = NorvesLib::Core::Rendering::BuildSelectionSphere(
+            camera,
+            centerX,
+            centerY,
+            edgeX,
+            edgeY,
+            centerAlongRayDistance,
+            sphere);
+        assert(!bBuilt);
+        AssertSphereUnchanged(sphere, sentinel);
     }
 
     void AssertRayOrigin(const NorvesLib::Math::Ray& ray, float x, float y, float z)
@@ -167,6 +199,70 @@ int main()
         assert(bBuilt);
         AssertRayOrigin(ray, 0.0f, 10.0f, 0.0f);
         AssertRayDirection(ray, 0.0f, 0.0f, -1.0f);
+    }
+
+    {
+        const NorvesLib::Core::Rendering::CameraProxy camera = MakeCamera(
+            NorvesLib::Core::Rendering::ProjectionType::Perspective,
+            MakeViewport(0.0f, 0.0f, 100.0f, 100.0f));
+        NorvesLib::Math::Sphere sphere;
+
+        const float centerAlongRayDistance = 10.0f;
+        const bool bBuilt = NorvesLib::Core::Rendering::BuildSelectionSphere(
+            camera,
+            50.0f,
+            50.0f,
+            100.0f,
+            50.0f,
+            centerAlongRayDistance,
+            sphere);
+        assert(bBuilt);
+        AssertVectorNear(sphere.Center, 0.0f, 0.0f, -10.0f);
+
+        const float edgeNdcX = 1.0f;
+        const float edgeNdcY = 0.0f;
+        const float fieldOfViewRadians = camera.FieldOfView * (NorvesLib::Math::Constants::PI / 180.0f);
+        // 期待半径は depth * tan(fov/2) * sqrt((ndcX * aspect)^2 + ndcY^2)。
+        // edge=(100,50) では ndcX=1, ndcY=0, fov=90, aspect=1 なので式から 10 に定まる。
+        const float expectedRadius = centerAlongRayDistance
+            * std::tan(fieldOfViewRadians * 0.5f)
+            * std::sqrt((edgeNdcX * camera.AspectRatio) * (edgeNdcX * camera.AspectRatio) + edgeNdcY * edgeNdcY);
+        assert(IsNearlyEqual(expectedRadius, 10.0f));
+        assert(IsNearlyEqual(sphere.Radius, expectedRadius));
+    }
+
+    {
+        const NorvesLib::Core::Rendering::CameraProxy camera = MakeCamera(
+            NorvesLib::Core::Rendering::ProjectionType::Orthographic,
+            MakeViewport(0.0f, 0.0f, 100.0f, 100.0f));
+        NorvesLib::Math::Sphere sphere;
+
+        const bool bBuilt = NorvesLib::Core::Rendering::BuildSelectionSphere(
+            camera,
+            50.0f,
+            50.0f,
+            100.0f,
+            50.0f,
+            5.0f,
+            sphere);
+        assert(bBuilt);
+        AssertVectorNear(sphere.Center, 0.0f, 0.0f, -5.0f);
+        assert(IsNearlyEqual(sphere.Radius, camera.OrthoWidth * 0.5f));
+        assert(IsNearlyEqual(sphere.Radius, 10.0f));
+    }
+
+    {
+        const NorvesLib::Core::Rendering::CameraProxy camera = MakeCamera(
+            NorvesLib::Core::Rendering::ProjectionType::Perspective,
+            MakeViewport(0.0f, 0.0f, 100.0f, 100.0f));
+
+        AssertSelectionSphereFailureDoesNotMutate(camera, 50.0f, 50.0f, 100.0f, 50.0f, 0.0f);
+        AssertSelectionSphereFailureDoesNotMutate(camera, 50.0f, 50.0f, 100.0f, 50.0f, -1.0f);
+        AssertSelectionSphereFailureDoesNotMutate(camera, -5.0f, 50.0f, 100.0f, 50.0f, 10.0f);
+        AssertSelectionSphereFailureDoesNotMutate(camera, 50.0f, 50.0f, 50.0f, 150.0f, 10.0f);
+        AssertSelectionSphereFailureDoesNotMutate(camera, 50.0f, 50.0f, 50.0f, 50.0f, 10.0f);
+        AssertSelectionSphereFailureDoesNotMutate(camera, 50.0f, 50.0f, 100.0f, 50.0f, std::nanf(""));
+        AssertSelectionSphereFailureDoesNotMutate(camera, INFINITY, 50.0f, 100.0f, 50.0f, 10.0f);
     }
 
     {
