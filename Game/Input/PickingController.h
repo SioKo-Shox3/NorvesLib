@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "Core/Public/Input/IInputController.h"
-#include "Core/Public/Math/GeometryTypes.h"
+#include "Core/Public/Object/EntityHandle.h"
 
 namespace Game::Input
 {
@@ -10,7 +10,7 @@ namespace Game::Input
     {
     public:
         bool OnMouseButton(const NorvesLib::Core::Input::MouseButtonEvent& event) override;
-        void DrawSelection() const;
+        void DrawSelection();
         void ClearSelection();
 
         const char* DebugName() const override
@@ -24,8 +24,7 @@ namespace Game::Input
         float m_PressX = 0.0f;
         float m_PressY = 0.0f;
         bool m_bLeftPressed = false;
-        bool m_bHasSelection = false;
-        NorvesLib::Math::AABB m_SelectionBounds;
+        NorvesLib::Core::EntityHandle m_SelectionHandle = NorvesLib::Core::EntityHandle::Invalid();
     };
 
 } // namespace Game::Input

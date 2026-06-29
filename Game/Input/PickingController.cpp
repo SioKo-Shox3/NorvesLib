@@ -1,12 +1,14 @@
 ﻿#include "Input/PickingController.h"
 
 #include "Core/Public/Engine/Engine.h"
+#include "Core/Public/Engine/ComponentDataRegistry.h"
 #include "Core/Public/Engine/NorvesEngine.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Scene/SceneQuery.h"
 #include "Core/Public/Rendering/CameraPicking.h"
 #include "Core/Public/Rendering/RenderingCoordinator.h"
 #include "Core/Public/Rendering/SceneProxy.h"
+#include "Core/Public/Math/GeometryTypes.h"
 #include "Core/Public/Math/Vector4.h"
 
 namespace
@@ -50,21 +52,37 @@ namespace Game::Input
         return false;
     }
 
-    void PickingController::DrawSelection() const
+    void PickingController::DrawSelection()
     {
-        if (m_bHasSelection)
+        if (!m_SelectionHandle.IsValid())
         {
-            NorvesLib::Core::GEngine.GetDebugDraw().AddAABB(m_SelectionBounds, SelectionColor);
+            return;
+        }
+
+        NorvesLib::Core::Entity* entity =
+            NorvesLib::Core::GEngine.GetComponentDataRegistry().ResolveEntity(m_SelectionHandle);
+        if (entity == nullptr)
+        {
+            m_SelectionHandle = NorvesLib::Core::EntityHandle::Invalid();
+            return;
+        }
+
+        NorvesLib::Math::AABB bounds;
+        if (entity->GetWorldAABB(bounds))
+        {
+            NorvesLib::Core::GEngine.GetDebugDraw().AddAABB(bounds, SelectionColor);
         }
     }
 
     void PickingController::ClearSelection()
     {
-        m_bHasSelection = false;
+        m_SelectionHandle = NorvesLib::Core::EntityHandle::Invalid();
     }
 
     void PickingController::PerformPick(float screenX, float screenY)
     {
+        m_SelectionHandle = NorvesLib::Core::EntityHandle::Invalid();
+
         NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
         if (engine == nullptr)
         {
@@ -93,16 +111,8 @@ namespace Game::Input
         const bool bHit = engine->GetSceneQuery().Raycast(ray, hit);
         if (bHit && hit.HitEntity != nullptr)
         {
-            NorvesLib::Math::AABB bounds;
-            if (hit.HitEntity->GetWorldAABB(bounds))
-            {
-                m_SelectionBounds = bounds;
-                m_bHasSelection = true;
-                return;
-            }
+            m_SelectionHandle = hit.HitEntity->GetEntityHandle();
         }
-
-        m_bHasSelection = false;
     }
 
 } // namespace Game::Input
