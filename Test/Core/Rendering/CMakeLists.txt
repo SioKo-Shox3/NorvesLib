@@ -669,6 +669,16 @@ target_include_directories(MeshResourcesProceduralGpuTest PRIVATE
 set_target_properties(MeshResourcesProceduralGpuTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND MeshResourcesProceduralGpuTest)
 
+add_executable(MeshResourcesPrimitiveTest
+    MeshResourcesPrimitiveTest.cpp
+)
+target_link_libraries(MeshResourcesPrimitiveTest PRIVATE Core)
+target_include_directories(MeshResourcesPrimitiveTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(MeshResourcesPrimitiveTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MeshResourcesPrimitiveTest COMMAND MeshResourcesPrimitiveTest)
+
 add_executable(MegaGeometryResourcesTest
     MegaGeometryResourcesTest.cpp
 )
