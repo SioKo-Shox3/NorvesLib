@@ -265,6 +265,31 @@ namespace NorvesLib::Core
             float radius = 0.5f, float height = 1.0f, uint32_t segments = 32);
 
         /**
+         * @brief トーラスメッシュを作成します
+         * @param majorRadius 主半径
+         * @param minorRadius チューブ半径
+         * @note majorRadius は minorRadius 以上にクランプされます（標準トーラス。self-intersect な spindle torus は非対応）。
+         * @param majorSegments 主円セグメント数
+         * @param minorSegments チューブセグメント数
+         * @return 作成されたメッシュリソース
+         */
+        static Container::TSharedPtr<MeshResource> CreateTorus(
+            float majorRadius = 1.0f, float minorRadius = 0.25f,
+            uint32_t majorSegments = 32, uint32_t minorSegments = 16);
+
+        /**
+         * @brief カプセルメッシュを作成します
+         * @param radius 半径
+         * @param cylinderHeight 円柱部の高さ
+         * @param segments 円周セグメント数
+         * @param rings 半球ごとのリング分割数
+         * @return 作成されたメッシュリソース
+         */
+        static Container::TSharedPtr<MeshResource> CreateCapsule(
+            float radius = 0.5f, float cylinderHeight = 1.0f,
+            uint32_t segments = 32, uint32_t rings = 8);
+
+        /**
          * @brief MeshCreateInfoからMeshResourceを作成します
          * @param createInfo 作成情報
          * @return 作成されたメッシュリソース

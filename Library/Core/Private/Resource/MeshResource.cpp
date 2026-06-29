@@ -820,6 +820,426 @@ namespace NorvesLib::Core
         return mesh;
     }
 
+    Container::TSharedPtr<MeshResource> MeshResource::CreateTorus(
+        float majorRadius, float minorRadius, uint32_t majorSegments, uint32_t minorSegments)
+    {
+        majorRadius = std::max(majorRadius, 1e-4f);
+        minorRadius = std::max(minorRadius, 1e-4f);
+        majorRadius = std::max(majorRadius, minorRadius);
+        majorSegments = majorSegments < 3u ? 3u : majorSegments;
+        minorSegments = minorSegments < 3u ? 3u : minorSegments;
+
+        auto mesh = Container::MakeShared<MeshResource>();
+        if (!mesh)
+        {
+            return nullptr;
+        }
+
+        mesh->Initialize();
+
+        struct Vertex
+        {
+            float Position[3];
+            float Normal[3];
+            float UV[2];
+        };
+
+        Container::VariableArray<Vertex> vertices;
+        Container::VariableArray<uint32_t> indices;
+
+        const float pi = 3.14159265359f;
+        const uint32_t ringStride = minorSegments + 1u;
+
+        auto normalize = [](float normal[3])
+        {
+            const float length = std::sqrt(
+                normal[0] * normal[0] +
+                normal[1] * normal[1] +
+                normal[2] * normal[2]);
+
+            if (length > 0.0f)
+            {
+                normal[0] /= length;
+                normal[1] /= length;
+                normal[2] /= length;
+            }
+        };
+
+        // 頂点生成（major/minor ともシーム複製）
+        for (uint32_t u = 0; u <= majorSegments; ++u)
+        {
+            const float uSegment = static_cast<float>(u) / static_cast<float>(majorSegments);
+            const float au = 2.0f * pi * uSegment;
+            const float cosU = std::cos(au);
+            const float sinU = std::sin(au);
+
+            for (uint32_t v = 0; v <= minorSegments; ++v)
+            {
+                const float vSegment = static_cast<float>(v) / static_cast<float>(minorSegments);
+                const float av = 2.0f * pi * vSegment;
+                const float cosV = std::cos(av);
+                const float sinV = std::sin(av);
+                const float ringRadius = majorRadius + minorRadius * cosV;
+
+                Vertex vertex;
+                vertex.Position[0] = ringRadius * cosU;
+                vertex.Position[1] = minorRadius * sinV;
+                vertex.Position[2] = ringRadius * sinU;
+                vertex.Normal[0] = cosV * cosU;
+                vertex.Normal[1] = sinV;
+                vertex.Normal[2] = cosV * sinU;
+                normalize(vertex.Normal);
+                vertex.UV[0] = uSegment;
+                vertex.UV[1] = vSegment;
+                vertices.push_back(vertex);
+            }
+        }
+
+        // 格子: CCW outward。パラメータ順の外積が内向きなので v 辺を先に取る。
+        for (uint32_t u = 0; u < majorSegments; ++u)
+        {
+            for (uint32_t v = 0; v < minorSegments; ++v)
+            {
+                const uint32_t current = u * ringStride + v;
+                const uint32_t nextU = current + ringStride;
+
+                indices.push_back(current);
+                indices.push_back(current + 1u);
+                indices.push_back(nextU);
+
+                indices.push_back(current + 1u);
+                indices.push_back(nextU + 1u);
+                indices.push_back(nextU);
+            }
+        }
+
+        // 頂点データをバイト配列に変換
+        Container::VariableArray<uint8_t> vertexData(vertices.size() * sizeof(Vertex));
+        std::memcpy(vertexData.data(), vertices.data(), vertexData.size());
+
+        mesh->SetVertexData(std::move(vertexData));
+        mesh->SetIndexData(std::move(indices));
+        mesh->m_VertexCount = static_cast<uint32_t>(vertices.size());
+
+        // 頂点レイアウト設定
+        Rendering::VertexLayout layout;
+        layout.AddElement(Rendering::VertexElement(Rendering::VertexSemantic::Position, Rendering::VertexFormat::Float3, 0));
+        layout.AddElement(Rendering::VertexElement(Rendering::VertexSemantic::Normal, Rendering::VertexFormat::Float3, 12));
+        layout.AddElement(Rendering::VertexElement(Rendering::VertexSemantic::TexCoord0, Rendering::VertexFormat::Float2, 24));
+        layout.Stride = sizeof(Vertex);
+        mesh->SetVertexLayout(layout);
+
+        // サブメッシュ
+        mesh->AddSubMesh(Rendering::SubMesh(0, static_cast<uint32_t>(mesh->GetIndexData().size()), 0, 0));
+
+        // マテリアルスロット
+        mesh->AddMaterialSlot(Rendering::MaterialSlot("Default"));
+
+        // バウンディング
+        const float boundsRadius = majorRadius + minorRadius;
+
+        Rendering::BoundingBox bounds;
+        bounds.MinX = -boundsRadius;
+        bounds.MinY = -minorRadius;
+        bounds.MinZ = -boundsRadius;
+        bounds.MaxX = boundsRadius;
+        bounds.MaxY = minorRadius;
+        bounds.MaxZ = boundsRadius;
+        mesh->SetBounds(bounds);
+
+        Rendering::BoundingSphere sphere;
+        sphere.CenterX = 0.0f;
+        sphere.CenterY = 0.0f;
+        sphere.CenterZ = 0.0f;
+        sphere.Radius = boundsRadius;
+        mesh->SetBoundingSphere(sphere);
+
+        mesh->SetResourceState(ResourceState::Loaded);
+        mesh->SetResourceName(Identity("Primitive_Torus"));
+
+        return mesh;
+    }
+
+    Container::TSharedPtr<MeshResource> MeshResource::CreateCapsule(
+        float radius, float cylinderHeight, uint32_t segments, uint32_t rings)
+    {
+        radius = std::max(radius, 1e-4f);
+        cylinderHeight = std::max(cylinderHeight, 1e-4f);
+        segments = segments < 3u ? 3u : segments;
+        rings = rings < 3u ? 3u : rings;
+
+        auto mesh = Container::MakeShared<MeshResource>();
+        if (!mesh)
+        {
+            return nullptr;
+        }
+
+        mesh->Initialize();
+
+        struct Vertex
+        {
+            float Position[3];
+            float Normal[3];
+            float UV[2];
+        };
+
+        Container::VariableArray<Vertex> vertices;
+        Container::VariableArray<uint32_t> indices;
+
+        const float halfH = cylinderHeight * 0.5f;
+        const float pi = 3.14159265359f;
+        const uint32_t ringStride = segments + 1u;
+
+        auto normalize = [](float normal[3])
+        {
+            const float length = std::sqrt(
+                normal[0] * normal[0] +
+                normal[1] * normal[1] +
+                normal[2] * normal[2]);
+
+            if (length > 0.0f)
+            {
+                normal[0] /= length;
+                normal[1] /= length;
+                normal[2] /= length;
+            }
+        };
+
+        // 円柱側面頂点（シーム複製、放射状法線）
+        for (uint32_t i = 0; i <= segments; ++i)
+        {
+            const float segment = static_cast<float>(i) / static_cast<float>(segments);
+            const float angle = 2.0f * pi * segment;
+            const float cx = std::cos(angle);
+            const float cz = std::sin(angle);
+
+            Vertex bottom;
+            bottom.Position[0] = radius * cx;
+            bottom.Position[1] = -halfH;
+            bottom.Position[2] = radius * cz;
+            bottom.Normal[0] = cx;
+            bottom.Normal[1] = 0.0f;
+            bottom.Normal[2] = cz;
+            normalize(bottom.Normal);
+            bottom.UV[0] = segment;
+            bottom.UV[1] = 0.0f;
+            vertices.push_back(bottom);
+
+            Vertex top;
+            top.Position[0] = radius * cx;
+            top.Position[1] = halfH;
+            top.Position[2] = radius * cz;
+            top.Normal[0] = cx;
+            top.Normal[1] = 0.0f;
+            top.Normal[2] = cz;
+            normalize(top.Normal);
+            top.UV[0] = segment;
+            top.UV[1] = 1.0f;
+            vertices.push_back(top);
+        }
+
+        // 円柱側面: CCW outward。
+        for (uint32_t i = 0; i < segments; ++i)
+        {
+            const uint32_t bottomIndex = i * 2u;
+            const uint32_t topIndex = bottomIndex + 1u;
+            const uint32_t nextBottomIndex = (i + 1u) * 2u;
+            const uint32_t nextTopIndex = nextBottomIndex + 1u;
+
+            indices.push_back(bottomIndex);
+            indices.push_back(topIndex);
+            indices.push_back(nextBottomIndex);
+
+            indices.push_back(nextBottomIndex);
+            indices.push_back(topIndex);
+            indices.push_back(nextTopIndex);
+        }
+
+        const uint32_t topRingStart = static_cast<uint32_t>(vertices.size());
+
+        // 上半球頂点（k=0 が赤道、k=rings が極）
+        for (uint32_t k = 0; k <= rings; ++k)
+        {
+            const float ringSegment = static_cast<float>(k) / static_cast<float>(rings);
+            const float phi = (pi * 0.5f) * ringSegment;
+            const float sinPhi = std::sin(phi);
+            const float cosPhi = std::cos(phi);
+            const float y = halfH + radius * sinPhi;
+            const float horizontalRadius = radius * cosPhi;
+
+            for (uint32_t i = 0; i <= segments; ++i)
+            {
+                const float segment = static_cast<float>(i) / static_cast<float>(segments);
+                const float angle = 2.0f * pi * segment;
+                const float cx = std::cos(angle);
+                const float cz = std::sin(angle);
+
+                Vertex vertex;
+                vertex.Position[0] = horizontalRadius * cx;
+                vertex.Position[1] = y;
+                vertex.Position[2] = horizontalRadius * cz;
+                if (k == rings)
+                {
+                    vertex.Normal[0] = 0.0f;
+                    vertex.Normal[1] = 1.0f;
+                    vertex.Normal[2] = 0.0f;
+                }
+                else
+                {
+                    vertex.Normal[0] = cosPhi * cx;
+                    vertex.Normal[1] = sinPhi;
+                    vertex.Normal[2] = cosPhi * cz;
+                    normalize(vertex.Normal);
+                }
+                vertex.UV[0] = segment;
+                vertex.UV[1] = 0.5f + ringSegment * 0.5f;
+                vertices.push_back(vertex);
+            }
+        }
+
+        // 上半球: CCW outward。極は最後のリング頂点を使った扇。
+        for (uint32_t k = 0; k < rings; ++k)
+        {
+            for (uint32_t i = 0; i < segments; ++i)
+            {
+                const uint32_t current = topRingStart + k * ringStride + i;
+                const uint32_t nextRing = current + ringStride;
+
+                if (k + 1u == rings)
+                {
+                    indices.push_back(current);
+                    indices.push_back(nextRing);
+                    indices.push_back(current + 1u);
+                }
+                else
+                {
+                    indices.push_back(current);
+                    indices.push_back(nextRing);
+                    indices.push_back(current + 1u);
+
+                    indices.push_back(current + 1u);
+                    indices.push_back(nextRing);
+                    indices.push_back(nextRing + 1u);
+                }
+            }
+        }
+
+        const uint32_t bottomRingStart = static_cast<uint32_t>(vertices.size());
+
+        // 下半球頂点（k=0 が赤道、k=rings が極）
+        for (uint32_t k = 0; k <= rings; ++k)
+        {
+            const float ringSegment = static_cast<float>(k) / static_cast<float>(rings);
+            const float phi = (pi * 0.5f) * ringSegment;
+            const float sinPhi = std::sin(phi);
+            const float cosPhi = std::cos(phi);
+            const float y = -halfH - radius * sinPhi;
+            const float horizontalRadius = radius * cosPhi;
+
+            for (uint32_t i = 0; i <= segments; ++i)
+            {
+                const float segment = static_cast<float>(i) / static_cast<float>(segments);
+                const float angle = 2.0f * pi * segment;
+                const float cx = std::cos(angle);
+                const float cz = std::sin(angle);
+
+                Vertex vertex;
+                vertex.Position[0] = horizontalRadius * cx;
+                vertex.Position[1] = y;
+                vertex.Position[2] = horizontalRadius * cz;
+                if (k == rings)
+                {
+                    vertex.Normal[0] = 0.0f;
+                    vertex.Normal[1] = -1.0f;
+                    vertex.Normal[2] = 0.0f;
+                }
+                else
+                {
+                    vertex.Normal[0] = cosPhi * cx;
+                    vertex.Normal[1] = -sinPhi;
+                    vertex.Normal[2] = cosPhi * cz;
+                    normalize(vertex.Normal);
+                }
+                vertex.UV[0] = segment;
+                vertex.UV[1] = 0.5f - ringSegment * 0.5f;
+                vertices.push_back(vertex);
+            }
+        }
+
+        // 下半球: CCW outward。上半球と逆順で下向き外側を向ける。
+        for (uint32_t k = 0; k < rings; ++k)
+        {
+            for (uint32_t i = 0; i < segments; ++i)
+            {
+                const uint32_t current = bottomRingStart + k * ringStride + i;
+                const uint32_t nextRing = current + ringStride;
+
+                if (k + 1u == rings)
+                {
+                    indices.push_back(current);
+                    indices.push_back(current + 1u);
+                    indices.push_back(nextRing);
+                }
+                else
+                {
+                    indices.push_back(current);
+                    indices.push_back(current + 1u);
+                    indices.push_back(nextRing);
+
+                    indices.push_back(current + 1u);
+                    indices.push_back(nextRing + 1u);
+                    indices.push_back(nextRing);
+                }
+            }
+        }
+
+        // 頂点データをバイト配列に変換
+        Container::VariableArray<uint8_t> vertexData(vertices.size() * sizeof(Vertex));
+        std::memcpy(vertexData.data(), vertices.data(), vertexData.size());
+
+        mesh->SetVertexData(std::move(vertexData));
+        mesh->SetIndexData(std::move(indices));
+        mesh->m_VertexCount = static_cast<uint32_t>(vertices.size());
+
+        // 頂点レイアウト設定
+        Rendering::VertexLayout layout;
+        layout.AddElement(Rendering::VertexElement(Rendering::VertexSemantic::Position, Rendering::VertexFormat::Float3, 0));
+        layout.AddElement(Rendering::VertexElement(Rendering::VertexSemantic::Normal, Rendering::VertexFormat::Float3, 12));
+        layout.AddElement(Rendering::VertexElement(Rendering::VertexSemantic::TexCoord0, Rendering::VertexFormat::Float2, 24));
+        layout.Stride = sizeof(Vertex);
+        mesh->SetVertexLayout(layout);
+
+        // サブメッシュ
+        mesh->AddSubMesh(Rendering::SubMesh(0, static_cast<uint32_t>(mesh->GetIndexData().size()), 0, 0));
+
+        // マテリアルスロット
+        mesh->AddMaterialSlot(Rendering::MaterialSlot("Default"));
+
+        // バウンディング
+        const float verticalExtent = halfH + radius;
+
+        Rendering::BoundingBox bounds;
+        bounds.MinX = -radius;
+        bounds.MinY = -verticalExtent;
+        bounds.MinZ = -radius;
+        bounds.MaxX = radius;
+        bounds.MaxY = verticalExtent;
+        bounds.MaxZ = radius;
+        mesh->SetBounds(bounds);
+
+        Rendering::BoundingSphere sphere;
+        sphere.CenterX = 0.0f;
+        sphere.CenterY = 0.0f;
+        sphere.CenterZ = 0.0f;
+        sphere.Radius = verticalExtent;
+        mesh->SetBoundingSphere(sphere);
+
+        mesh->SetResourceState(ResourceState::Loaded);
+        mesh->SetResourceName(Identity("Primitive_Capsule"));
+
+        return mesh;
+    }
+
     Container::TSharedPtr<MeshResource> MeshResource::CreateFromInfo(
         const Rendering::MeshCreateInfo &createInfo)
     {
