@@ -90,6 +90,16 @@ target_include_directories(CameraViewConstantsTest PRIVATE
 set_target_properties(CameraViewConstantsTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CameraViewConstantsTest COMMAND CameraViewConstantsTest)
 
+add_executable(CameraPickingTest
+    CameraPickingTest.cpp
+)
+target_link_libraries(CameraPickingTest PRIVATE Core)
+target_include_directories(CameraPickingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CameraPickingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CameraPickingTest COMMAND CameraPickingTest)
+
 add_executable(CameraTableTest
     CameraTableTest.cpp
 )
@@ -180,6 +190,16 @@ target_include_directories(DebugViewModeStringTest PRIVATE
 )
 set_target_properties(DebugViewModeStringTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME DebugViewModeStringTest COMMAND DebugViewModeStringTest)
+
+add_executable(DebugDrawQueueTest
+    DebugDrawQueueTest.cpp
+)
+target_link_libraries(DebugDrawQueueTest PRIVATE Core)
+target_include_directories(DebugDrawQueueTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(DebugDrawQueueTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DebugDrawQueueTest COMMAND DebugDrawQueueTest)
 
 add_executable(ViewportDebugViewModeReleaseClampTest
     ViewportDebugViewModeReleaseClampTest.cpp
@@ -648,6 +668,16 @@ target_include_directories(MeshResourcesProceduralGpuTest PRIVATE
 )
 set_target_properties(MeshResourcesProceduralGpuTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND MeshResourcesProceduralGpuTest)
+
+add_executable(MeshResourcesPrimitiveTest
+    MeshResourcesPrimitiveTest.cpp
+)
+target_link_libraries(MeshResourcesPrimitiveTest PRIVATE Core)
+target_include_directories(MeshResourcesPrimitiveTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(MeshResourcesPrimitiveTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME MeshResourcesPrimitiveTest COMMAND MeshResourcesPrimitiveTest)
 
 add_executable(MegaGeometryResourcesTest
     MegaGeometryResourcesTest.cpp

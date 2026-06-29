@@ -13,11 +13,6 @@
 
 namespace NorvesLib::Math
 {
-    enum class ClipSpaceDepthRange
-    {
-        ZeroToOne,
-        NegativeOneToOne
-    };
 
     struct ClipSpaceSphereBounds
     {
