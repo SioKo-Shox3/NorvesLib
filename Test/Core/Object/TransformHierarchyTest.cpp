@@ -1,4 +1,5 @@
 ﻿#include "Component/MeshComponent.h"
+#include "Math/MatrixUtils.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
 #include <cassert>
@@ -213,25 +214,19 @@ namespace
         const NorvesLib::Math::Transform& worldTransform = child->GetWorldTransform();
         const NorvesLib::Math::Matrix4x4 transformMatrix = worldTransform.ToMatrix();
 
-        ExpectVectorNear(
-            NorvesLib::Math::Vector3(matrix.m30, matrix.m31, matrix.m32),
-            worldTransform.position);
-        assert(Near(matrix.m03, 0.0f));
-        assert(Near(matrix.m13, 0.0f));
-        assert(Near(matrix.m23, 0.0f));
-        assert(Near(transformMatrix.m03, worldTransform.position.x));
-        assert(Near(transformMatrix.m13, worldTransform.position.y));
-        assert(Near(transformMatrix.m23, worldTransform.position.z));
+        ExpectVectorNear(matrix.GetTranslationRow(), worldTransform.position);
 
-        assert(Near(matrix.m00, transformMatrix.m00));
-        assert(Near(matrix.m01, transformMatrix.m01));
-        assert(Near(matrix.m02, transformMatrix.m02));
-        assert(Near(matrix.m10, transformMatrix.m10));
-        assert(Near(matrix.m11, transformMatrix.m11));
-        assert(Near(matrix.m12, transformMatrix.m12));
-        assert(Near(matrix.m20, transformMatrix.m20));
-        assert(Near(matrix.m21, transformMatrix.m21));
-        assert(Near(matrix.m22, transformMatrix.m22));
+        const NorvesLib::Math::Vector4 matrixTranslationColumn = matrix.GetColumn(3);
+        assert(Near(matrixTranslationColumn.x, 0.0f));
+        assert(Near(matrixTranslationColumn.y, 0.0f));
+        assert(Near(matrixTranslationColumn.z, 0.0f));
+
+        const NorvesLib::Math::Vector4 transformTranslationColumn = transformMatrix.GetColumn(3);
+        assert(Near(transformTranslationColumn.x, worldTransform.position.x));
+        assert(Near(transformTranslationColumn.y, worldTransform.position.y));
+        assert(Near(transformTranslationColumn.z, worldTransform.position.z));
+
+        assert(NorvesLib::Math::MatrixUtils::ApproxEqualUpperLeft3x3(matrix, transformMatrix, Epsilon));
 
         world.Finalize();
     }

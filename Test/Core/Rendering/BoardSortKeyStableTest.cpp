@@ -46,7 +46,7 @@ namespace
         proxy.SortKey = BoardProxy::ComputeSortKey(layerPriority, orderInLayer);
         proxy.bVisible = true;
         proxy.WorldTransform = Math::Matrix4x4::Identity;
-        proxy.WorldTransform.m30 = x;
+        proxy.WorldTransform.SetTranslationRow(Math::Vector3(x, 0.0f, 0.0f));
         return proxy;
     }
 

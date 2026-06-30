@@ -45,7 +45,7 @@ namespace
         proxy.MaterialBlendModes[0] = BlendMode::Opaque;
         proxy.MaterialCount = 1u;
         proxy.WorldTransform = Math::Matrix4x4::Identity;
-        proxy.WorldTransform.m32 = -2.0f;
+        proxy.WorldTransform.SetTranslationRow(Math::Vector3(0.0f, 0.0f, -2.0f));
         proxy.WorldBounds.CenterX = 0.0f;
         proxy.WorldBounds.CenterY = 0.0f;
         proxy.WorldBounds.CenterZ = -2.0f;
@@ -70,7 +70,7 @@ namespace
         proxy.SizeWorld = Math::Vector2(1.0f, 1.0f);
         proxy.Pivot = Math::Vector2(0.5f, 0.5f);
         proxy.WorldTransform = Math::Matrix4x4::Identity;
-        proxy.WorldTransform.m32 = -2.0f;
+        proxy.WorldTransform.SetTranslationRow(Math::Vector3(0.0f, 0.0f, -2.0f));
         proxy.WorldBounds.CenterX = 0.0f;
         proxy.WorldBounds.CenterY = 0.0f;
         proxy.WorldBounds.CenterZ = -2.0f;
@@ -121,8 +121,9 @@ namespace
         assert(impostorCommand.Draw.BoardSubtype == BoardRenderSubtype::Impostor);
         assert(impostorCommand.Draw.SourceMeshComponentId == sourceMeshComponentId);
         assert(sceneView.GetInstanceData().size() == 1);
-        assert(sceneView.GetInstanceData()[0].NormalMatrix[10] == 4.0f);
-        assert(sceneView.GetInstanceData()[0].NormalMatrix[11] == 4.0f);
+        const float* impostorMetadata = sceneView.GetInstanceData()[0].NormalMatrix;
+        assert(impostorMetadata[10] == 4.0f);
+        assert(impostorMetadata[11] == 4.0f);
         assert(sceneView.GetInstanceData()[0].CustomData[0] == 64.0f);
         assert(sceneView.GetInstanceData()[0].CustomData[1] == 256.0f);
         assert(sceneView.GetInstanceData()[0].CustomData[2] == 256.0f);
