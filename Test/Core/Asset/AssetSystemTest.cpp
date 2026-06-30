@@ -432,6 +432,28 @@ int main()
         assert(escape.Status == AssetResolveStatus::InvalidRequest);
     }
 
+    {
+        // Manifest enumeration accessors (used by the NorvesLib Bridge adapter's asset.getManifest).
+        AssetSystem system = CreateSystem(root);
+        assert(system.LoadManifestFromJsonText(BuildManifest("Textures/Silver.png",
+                                                             "Cooked/Textures.nvpkg",
+                                                             "Textures/Silver.nvtex",
+                                                             textureType,
+                                                             cookedHash)));
+        assert(system.GetAssetCount() == 1);
+        const AssetCookedReference &reference = system.GetAssetReference(0);
+        assert(reference.LogicalPath == "Textures/Silver.png");
+        assert(reference.Kind == AssetKind::Texture);
+        assert(ToStdString(GetAssetKindName(reference.Kind)) == "texture");
+        assert(reference.SourceHashHex == "0000000000000001");
+    }
+
+    {
+        // No manifest loaded: enumeration is bounds-safe and reports zero entries.
+        AssetSystem emptySystem = CreateSystem(root);
+        assert(emptySystem.GetAssetCount() == 0);
+    }
+
     std::filesystem::remove_all(root);
 
     std::cout << "AssetSystemTest passed\n";
