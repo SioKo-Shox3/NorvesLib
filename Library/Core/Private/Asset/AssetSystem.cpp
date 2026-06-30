@@ -344,4 +344,14 @@ namespace NorvesLib::Core::Asset
         request.FallbackMode = fallbackMode;
         return ResolveAsset(request);
     }
+
+    size_t AssetSystem::GetAssetCount() const noexcept
+    {
+        return m_Manifest.GetReferenceCount();
+    }
+
+    const AssetCookedReference &AssetSystem::GetAssetReference(size_t index) const noexcept
+    {
+        return m_Manifest.GetReference(index);
+    }
 }

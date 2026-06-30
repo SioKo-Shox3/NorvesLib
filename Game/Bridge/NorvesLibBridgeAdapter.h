@@ -259,6 +259,47 @@ namespace Game::Bridge
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
         objectSetProperty(const norves::bridge::JsonValue& params) override;
 
+        // --- Asset（読み取り系） ---
+
+        /**
+         * @brief asset.resolve。1 つの論理アセットパスを解決し health/メタを DTO で返す
+         *
+         * params.logicalPath（必須 string）/ kind（任意 string）/ variant（任意 string）を読む。
+         * handler が注入されていない、または texture asset root/manifest パスが空のときは
+         * graceful に {status:"invalidManifest", source:"none", normalizedLogicalPath:<入力>} を返す
+         * （not_supported は返さない＝asset.read 広告と整合）。それ以外では handler の root/manifest
+         * パスから一時 AssetSystem を構築し manifest を読み込み、ResolveAsset を呼んで結果メタを
+         * camelCase wire（status/source/normalizedLogicalPath と任意 requiresExplicitLog/fallbackAction/
+         * failureKind/reason）へ写す。ResolveAsset は健全性検証（hash mismatch 検出）のため cooked
+         * 全バイトを Blob に読むが、Blob / Entry / LoosePath / 生バイトは wire へ一切入れない
+         * （DTO のメタ値だけを綴る＝live memory 非転送）。
+         *
+         * @param params リクエスト params（借用、logicalPath / kind / variant を読む）
+         * @return asset.resolve.result の JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（エンジン状態を変えない）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        assetResolve(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief asset.getManifest。読込済み manifest のスナップショットを DTO 配列で返す
+         *
+         * params.filter（任意 string）/ page（任意 integer）/ pageSize（任意 integer）を読む。
+         * handler が注入されていない、または root/manifest パスが空のときは graceful に
+         * {version:0, entries:[], totalCount:0} を返す。それ以外では一時 AssetSystem を構築し
+         * manifest を読み込み、GetAssetCount()/GetAssetReference(index) で各 AssetCookedReference を
+         * 列挙して assetEntry（logicalPath/kind 必須、variant/format/sourceHash/cookedPackage/
+         * entryName/entryType/cookedHash は非空時、cookedVersion は裸 integer）へ写す。filter は
+         * logicalPath 部分一致で絞り、totalCount はフィルタ後・ページング前の件数。Blob / Entry /
+         * LoosePath / 生 u64 ハッシュ・u32 EntryType は wire へ入れない（live memory 非転送）。
+         *
+         * @param params リクエスト params（借用、filter / page / pageSize を読む）
+         * @return asset.getManifest.result の JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        assetGetManifest(const norves::bridge::JsonValue& params) override;
+
         // viewport.getThumbnail は本実装範囲外で、adapter.hpp の既定実装
         // （METHOD_NOT_SUPPORTED）のまま。scene/object（読み取り・書き込み）／schema は実装済み。
 
