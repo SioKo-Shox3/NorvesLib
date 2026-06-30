@@ -3,9 +3,11 @@
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Engine/ComponentDataRegistry.h"
 #include "Core/Public/Engine/NorvesEngine.h"
+#include "Core/Public/Input/MayaCameraController.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Scene/SceneQuery.h"
 #include "Core/Public/Rendering/CameraPicking.h"
+#include "Core/Public/Rendering/DebugDrawQueue.h"
 #include "Core/Public/Rendering/RenderingCoordinator.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Math/GeometryTypes.h"
@@ -15,12 +17,19 @@ namespace
 {
     constexpr float ClickThresholdPixels = 4.0f;
     constexpr float RayLength = 1000.0f;
+    constexpr float kFallbackSelectionDepth = 5.0f;
     const NorvesLib::Math::Vector4 SelectionColor(0.1f, 0.85f, 1.0f, 1.0f);
+    const NorvesLib::Math::Vector4 SelectionSphereColor(0.1f, 0.85f, 1.0f, 1.0f);
     const NorvesLib::Math::Vector4 RayColor(1.0f, 0.25f, 0.1f, 0.75f);
 } // namespace
 
 namespace Game::Input
 {
+
+    void PickingController::SetCameraController(NorvesLib::Core::Input::MayaCameraController* controller)
+    {
+        m_pCameraController = controller;
+    }
 
     bool PickingController::OnMouseButton(const NorvesLib::Core::Input::MouseButtonEvent& event)
     {
@@ -32,11 +41,25 @@ namespace Game::Input
         if (event.Action == NorvesLib::Core::Input::InputAction::Pressed)
         {
             NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
+            const bool bCtrl =
+                (engine != nullptr) && engine->GetInputSystem().GetState().IsCtrlDown();
             const bool bShift =
                 (engine != nullptr) && engine->GetInputSystem().GetState().IsShiftDown();
 
+            if (bCtrl)
+            {
+                m_bSphereSelecting = true;
+                m_SphereCenterX = event.PositionX;
+                m_SphereCenterY = event.PositionY;
+                m_bBoxSelecting = false;
+                m_bLeftPressed = false;
+                m_bHasSelectionSphere = false;
+                return true;
+            }
+
             if (bShift)
             {
+                m_bSphereSelecting = false;
                 m_bBoxSelecting = true;
                 m_BoxStartX = event.PositionX;
                 m_BoxStartY = event.PositionY;
@@ -44,6 +67,7 @@ namespace Game::Input
                 return true;
             }
 
+            m_bSphereSelecting = false;
             m_bBoxSelecting = false;
             m_bLeftPressed = true;
             m_PressX = event.PositionX;
@@ -53,6 +77,13 @@ namespace Game::Input
 
         if (event.Action == NorvesLib::Core::Input::InputAction::Released)
         {
+            if (m_bSphereSelecting)
+            {
+                m_bSphereSelecting = false;
+                PerformSphereSelect(m_SphereCenterX, m_SphereCenterY, event.PositionX, event.PositionY);
+                return true;
+            }
+
             if (m_bBoxSelecting)
             {
                 m_bBoxSelecting = false;
@@ -76,8 +107,37 @@ namespace Game::Input
         return false;
     }
 
+    bool PickingController::OnMouseMove(const NorvesLib::Core::Input::MouseMoveEvent& event)
+    {
+        if (m_bSphereSelecting)
+        {
+            NorvesLib::Math::Sphere sphere;
+            if (BuildSelectionSphereFromScreen(
+                    m_SphereCenterX,
+                    m_SphereCenterY,
+                    event.PositionX,
+                    event.PositionY,
+                    sphere))
+            {
+                m_SelectionSphere = sphere;
+                m_bHasSelectionSphere = true;
+            }
+            else
+            {
+                m_bHasSelectionSphere = false;
+            }
+        }
+
+        return false;
+    }
+
     void PickingController::DrawSelection()
     {
+        if (m_bHasSelectionSphere)
+        {
+            NorvesLib::Core::GEngine.GetDebugDraw().AddSphere(m_SelectionSphere, SelectionSphereColor);
+        }
+
         if (m_SelectionHandles.empty())
         {
             return;
@@ -115,10 +175,14 @@ namespace Game::Input
     void PickingController::ClearSelection()
     {
         m_SelectionHandles.clear();
+        m_bSphereSelecting = false;
+        m_bHasSelectionSphere = false;
     }
 
     void PickingController::PerformPick(float screenX, float screenY)
     {
+        m_bSphereSelecting = false;
+        m_bHasSelectionSphere = false;
         m_SelectionHandles.clear();
 
         NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
@@ -159,6 +223,9 @@ namespace Game::Input
 
     void PickingController::PerformBoxSelect(float x0, float y0, float x1, float y1)
     {
+        m_bSphereSelecting = false;
+        m_bHasSelectionSphere = false;
+
         NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
         if (engine == nullptr)
         {
@@ -198,6 +265,97 @@ namespace Game::Input
                 m_SelectionHandles.push_back(handle);
             }
         }
+    }
+
+    void PickingController::PerformSphereSelect(float centerX, float centerY, float edgeX, float edgeY)
+    {
+        m_bSphereSelecting = false;
+
+        NorvesLib::Math::Sphere sphere;
+        if (!BuildSelectionSphereFromScreen(centerX, centerY, edgeX, edgeY, sphere))
+        {
+            m_SelectionHandles.clear();
+            m_bHasSelectionSphere = false;
+            return;
+        }
+
+        NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            m_SelectionHandles.clear();
+            m_bHasSelectionSphere = false;
+            return;
+        }
+
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Entity*> hits;
+        // OverlapSphere は Entity 中心ではなく、Entity AABB と球の交差で選択する。
+        engine->GetSceneQuery().OverlapSphere(sphere, hits);
+
+        m_SelectionHandles.clear();
+        for (NorvesLib::Core::Entity* entity : hits)
+        {
+            if (entity == nullptr)
+            {
+                continue;
+            }
+
+            NorvesLib::Core::EntityHandle handle = entity->GetEntityHandle();
+            if (handle.IsValid())
+            {
+                m_SelectionHandles.push_back(handle);
+            }
+        }
+
+        m_SelectionSphere = sphere;
+        m_bHasSelectionSphere = true;
+    }
+
+    bool PickingController::BuildSelectionSphereFromScreen(
+        float centerX,
+        float centerY,
+        float edgeX,
+        float edgeY,
+        NorvesLib::Math::Sphere& outSphere) const
+    {
+        NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return false;
+        }
+
+        const NorvesLib::Core::Rendering::CameraProxy& camera =
+            engine->GetRenderWorld().GetRenderingCoordinator().GetMainCamera();
+        if (!camera.IsValid())
+        {
+            return false;
+        }
+
+        NorvesLib::Math::Ray centerRay;
+        if (!NorvesLib::Core::Rendering::BuildPickingRay(camera, centerX, centerY, centerRay))
+        {
+            return false;
+        }
+
+        NorvesLib::Core::Scene::RaycastHit hit;
+        const bool bHit = engine->GetSceneQuery().Raycast(centerRay, hit);
+
+        // 入力 dispatch は BeginFrame 後・Tick 前に走るため、click/box と同じ
+        // 前フレームの SceneQuery キャッシュを見る。HitEntity は深度決定に使わず保持しない。
+        const float depth =
+            bHit
+                ? hit.Distance
+                : (m_pCameraController != nullptr
+                       ? m_pCameraController->GetDistance()
+                       : kFallbackSelectionDepth);
+        // カメラが AABB 内部にある場合は hit.Distance が 0 になりうる。
+        return NorvesLib::Core::Rendering::BuildSelectionSphere(
+            camera,
+            centerX,
+            centerY,
+            edgeX,
+            edgeY,
+            depth,
+            outSphere);
     }
 
 } // namespace Game::Input
