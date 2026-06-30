@@ -1,4 +1,5 @@
 ﻿#include "Component/MeshComponent.h"
+#include "Math/MatrixUtils.h"
 #include "Object/Entity.h"
 #include "Rendering/RenderResources.h"
 #include "Logging/LogMacros.h"
@@ -294,22 +295,15 @@ namespace NorvesLib::Core::Component
         localSphere.Radius = radius;
 
         // MeshProxy::UpdateWorldBoundsと同様のロジック
-        m_WorldBounds.CenterX = m_WorldTransform.m30 + localSphere.CenterX;
-        m_WorldBounds.CenterY = m_WorldTransform.m31 + localSphere.CenterY;
-        m_WorldBounds.CenterZ = m_WorldTransform.m32 + localSphere.CenterZ;
+        const Math::Vector3 translation = m_WorldTransform.GetTranslationRow();
+        m_WorldBounds.CenterX = translation.x + localSphere.CenterX;
+        m_WorldBounds.CenterY = translation.y + localSphere.CenterY;
+        m_WorldBounds.CenterZ = translation.z + localSphere.CenterZ;
 
         // スケールの概算
-        float scaleX = std::sqrt(m_WorldTransform.m00 * m_WorldTransform.m00 +
-                                 m_WorldTransform.m01 * m_WorldTransform.m01 +
-                                 m_WorldTransform.m02 * m_WorldTransform.m02);
-        float scaleY = std::sqrt(m_WorldTransform.m10 * m_WorldTransform.m10 +
-                                 m_WorldTransform.m11 * m_WorldTransform.m11 +
-                                 m_WorldTransform.m12 * m_WorldTransform.m12);
-        float scaleZ = std::sqrt(m_WorldTransform.m20 * m_WorldTransform.m20 +
-                                 m_WorldTransform.m21 * m_WorldTransform.m21 +
-                                 m_WorldTransform.m22 * m_WorldTransform.m22);
-        float maxScale = scaleX > scaleY ? (scaleX > scaleZ ? scaleX : scaleZ)
-                                         : (scaleY > scaleZ ? scaleY : scaleZ);
+        const Math::Vector3 scale = Math::MatrixUtils::ExtractScale(m_WorldTransform);
+        float maxScale = scale.x > scale.y ? (scale.x > scale.z ? scale.x : scale.z)
+                                           : (scale.y > scale.z ? scale.y : scale.z);
 
         m_WorldBounds.Radius = localSphere.Radius * maxScale;
 
@@ -332,16 +326,9 @@ namespace NorvesLib::Core::Component
         }
 
         const Math::Transform& worldTransform = owner->GetWorldTransform();
-        outMatrix = worldTransform.ToMatrix();
-
-        // Rendering currently consumes translation from m30/m31/m32.
-        outMatrix.m30 = worldTransform.position.x;
-        outMatrix.m31 = worldTransform.position.y;
-        outMatrix.m32 = worldTransform.position.z;
-        outMatrix.m03 = 0.0f;
-        outMatrix.m13 = 0.0f;
-        outMatrix.m23 = 0.0f;
-        outMatrix.m33 = 1.0f;
+        outMatrix = Math::MatrixUtils::CreateWorldRowVector(worldTransform.position,
+                                                            worldTransform.rotation,
+                                                            worldTransform.scale);
     }
 
 } // namespace NorvesLib::Core::Component

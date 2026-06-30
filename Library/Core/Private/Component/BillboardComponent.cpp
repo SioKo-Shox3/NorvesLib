@@ -1,4 +1,5 @@
 ﻿#include "Component/BillboardComponent.h"
+#include "Math/MatrixUtils.h"
 #include <cmath>
 
 namespace NorvesLib::Core::Component
@@ -17,10 +18,6 @@ namespace NorvesLib::Core::Component
             return a > b ? a : b;
         }
 
-        float ComputeAxisScale(float x, float y, float z)
-        {
-            return std::sqrt(x * x + y * y + z * z);
-        }
     } // namespace
 
     BillboardComponent::BillboardComponent()
@@ -66,16 +63,14 @@ namespace NorvesLib::Core::Component
         outProxy.Space = Rendering::BoardSpace::WorldSpace;
         outProxy.LayerMask = RenderLayerProp;
         outProxy.SizeWorld = SizeWorld;
-        outProxy.WorldBounds.CenterX = outProxy.WorldTransform.m30;
-        outProxy.WorldBounds.CenterY = outProxy.WorldTransform.m31;
-        outProxy.WorldBounds.CenterZ = outProxy.WorldTransform.m32;
+        const Math::Vector3 translation = outProxy.WorldTransform.GetTranslationRow();
+        outProxy.WorldBounds.CenterX = translation.x;
+        outProxy.WorldBounds.CenterY = translation.y;
+        outProxy.WorldBounds.CenterZ = translation.z;
 
-        const float scaleX = ComputeAxisScale(outProxy.WorldTransform.m00,
-                                              outProxy.WorldTransform.m01,
-                                              outProxy.WorldTransform.m02);
-        const float scaleY = ComputeAxisScale(outProxy.WorldTransform.m10,
-                                              outProxy.WorldTransform.m11,
-                                              outProxy.WorldTransform.m12);
+        const Math::Vector3 scale = Math::MatrixUtils::ExtractScale(outProxy.WorldTransform);
+        const float scaleX = scale.x;
+        const float scaleY = scale.y;
         const Math::Vector2 sizeWorld = SizeWorld;
         const Math::Vector2 pivot = Pivot;
         const float width = AbsFloat(sizeWorld.x) * scaleX;
