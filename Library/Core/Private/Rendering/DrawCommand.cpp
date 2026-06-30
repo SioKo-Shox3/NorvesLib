@@ -37,54 +37,6 @@ namespace NorvesLib::Core::Rendering
             return std::fabs(lhs - rhs) <= 0.0001f;
         }
 
-        Math::Matrix4x4 CalculateNormalMatrix(const Math::Matrix4x4 &world)
-        {
-            const float a00 = world.m00;
-            const float a01 = world.m01;
-            const float a02 = world.m02;
-            const float a10 = world.m10;
-            const float a11 = world.m11;
-            const float a12 = world.m12;
-            const float a20 = world.m20;
-            const float a21 = world.m21;
-            const float a22 = world.m22;
-
-            const float determinant =
-                a00 * (a11 * a22 - a12 * a21) -
-                a01 * (a10 * a22 - a12 * a20) +
-                a02 * (a10 * a21 - a11 * a20);
-
-            Math::Matrix4x4 normalMatrix = Math::Matrix4x4::Identity;
-            if (std::abs(determinant) < Math::Constants::EPSILON)
-            {
-                return normalMatrix;
-            }
-
-            const float invDeterminant = 1.0f / determinant;
-
-            const float inv00 = (a11 * a22 - a12 * a21) * invDeterminant;
-            const float inv01 = (a02 * a21 - a01 * a22) * invDeterminant;
-            const float inv02 = (a01 * a12 - a02 * a11) * invDeterminant;
-            const float inv10 = (a12 * a20 - a10 * a22) * invDeterminant;
-            const float inv11 = (a00 * a22 - a02 * a20) * invDeterminant;
-            const float inv12 = (a02 * a10 - a00 * a12) * invDeterminant;
-            const float inv20 = (a10 * a21 - a11 * a20) * invDeterminant;
-            const float inv21 = (a01 * a20 - a00 * a21) * invDeterminant;
-            const float inv22 = (a00 * a11 - a01 * a10) * invDeterminant;
-
-            normalMatrix.m00 = inv00;
-            normalMatrix.m01 = inv10;
-            normalMatrix.m02 = inv20;
-            normalMatrix.m10 = inv01;
-            normalMatrix.m11 = inv11;
-            normalMatrix.m12 = inv21;
-            normalMatrix.m20 = inv02;
-            normalMatrix.m21 = inv12;
-            normalMatrix.m22 = inv22;
-
-            return normalMatrix;
-        }
-
         void FillGPUSceneInstanceData(const Math::Matrix4x4 &world,
                                       const Math::Matrix4x4 &normalMatrix,
                                       const float *customData,
@@ -92,18 +44,7 @@ namespace NorvesLib::Core::Rendering
         {
             Math::MatrixUtils::CopyToShaderData(world, outData.World);
 
-            outData.NormalMatrix[0] = normalMatrix.m00;
-            outData.NormalMatrix[1] = normalMatrix.m01;
-            outData.NormalMatrix[2] = normalMatrix.m02;
-            outData.NormalMatrix[3] = 0.0f;
-            outData.NormalMatrix[4] = normalMatrix.m10;
-            outData.NormalMatrix[5] = normalMatrix.m11;
-            outData.NormalMatrix[6] = normalMatrix.m12;
-            outData.NormalMatrix[7] = 0.0f;
-            outData.NormalMatrix[8] = normalMatrix.m20;
-            outData.NormalMatrix[9] = normalMatrix.m21;
-            outData.NormalMatrix[10] = normalMatrix.m22;
-            outData.NormalMatrix[11] = 0.0f;
+            Math::MatrixUtils::CopyUpper3x3ToShaderData(normalMatrix, outData.NormalMatrix);
 
             if (customData)
             {
@@ -275,7 +216,7 @@ namespace NorvesLib::Core::Rendering
                     }
 
                     const Math::Matrix4x4 normalMatrix =
-                        CalculateNormalMatrix(batch.InstanceTransforms[instanceIndex]);
+                        Math::MatrixUtils::CreateNormalMatrix(batch.InstanceTransforms[instanceIndex]);
                     GPUSceneInstanceData instanceData;
                     FillGPUSceneInstanceData(batch.InstanceTransforms[instanceIndex],
                                              normalMatrix,
@@ -320,7 +261,7 @@ namespace NorvesLib::Core::Rendering
                     cmd.Draw.SortDepth = extra.SortDepth;
                     cmd.Draw.bCastShadow = extra.bCastShadow;
                 }
-                cmd.Draw.NormalMatrix = CalculateNormalMatrix(cmd.Draw.WorldMatrix);
+                cmd.Draw.NormalMatrix = Math::MatrixUtils::CreateNormalMatrix(cmd.Draw.WorldMatrix);
 
                 GPUSceneInstanceData instanceData;
                 FillGPUSceneInstanceData(cmd.Draw.WorldMatrix,
