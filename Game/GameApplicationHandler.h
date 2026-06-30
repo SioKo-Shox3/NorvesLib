@@ -61,6 +61,19 @@ namespace Game
          */
         void SetBridgeRuntimeState(Game::Bridge::BridgeRuntimeState state) { m_BridgeRuntimeState = state; }
 
+        /**
+         * @brief テクスチャアセットルートのアクセサ（Bridge adapter がゲームスレッド上から呼ぶ）。
+         * @return 設定済みのアセットルート（未設定なら空）。
+         * @note ゲームスレッド上からのみアクセスすること。借用参照（adapter は保持しない）。
+         */
+        const NorvesLib::Core::Container::String &GetTextureAssetRoot() const { return m_TextureAssetRoot; }
+        /**
+         * @brief テクスチャアセット manifest パスのアクセサ（Bridge adapter がゲームスレッド上から呼ぶ）。
+         * @return 設定済みの manifest パス（未設定なら空）。
+         * @note ゲームスレッド上からのみアクセスすること。借用参照（adapter は保持しない）。
+         */
+        const NorvesLib::Core::Container::String &GetTextureAssetManifestPath() const { return m_TextureAssetManifestPath; }
+
     private:
         bool ApplyTextureAssetRuntimeConfig();
 
