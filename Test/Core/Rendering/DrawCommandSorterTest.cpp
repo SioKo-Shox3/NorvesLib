@@ -39,7 +39,7 @@ namespace
         proxy.Materials[0].Id = materialId;
         proxy.MaterialBlendModes[0] = blendMode;
         proxy.SortDepth = sortDepth;
-        proxy.WorldTransform.m30 = sortDepth;
+        proxy.WorldTransform.SetTranslationRow(NorvesLib::Math::Vector3(sortDepth, 0.0f, 0.0f));
         proxy.WorldBounds.CenterX = sortDepth;
         proxy.WorldBounds.Radius = 1.0f;
         return proxy;
@@ -240,7 +240,7 @@ namespace
         proxy.MeshHandle = MakeMeshHandle(800);
         proxy.MaterialCount = overflowMaterialCount;
         proxy.SortDepth = 4.0f;
-        proxy.WorldTransform.m30 = 4.0f;
+        proxy.WorldTransform.SetTranslationRow(NorvesLib::Math::Vector3(4.0f, 0.0f, 0.0f));
         proxy.WorldBounds.CenterX = 4.0f;
         proxy.WorldBounds.Radius = 1.0f;
 

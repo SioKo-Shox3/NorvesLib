@@ -16,13 +16,7 @@ namespace
     void AssertMatrixNear(const NorvesLib::Math::Matrix4x4 &lhs,
                           const NorvesLib::Math::Matrix4x4 &rhs)
     {
-        for (uint32_t row = 0; row < 4; ++row)
-        {
-            for (uint32_t column = 0; column < 4; ++column)
-            {
-                assert(IsNearlyEqual(lhs.m[row][column], rhs.m[row][column]));
-            }
-        }
+        assert(NorvesLib::Math::MatrixUtils::ApproxEqual(lhs, rhs, 0.0001f));
     }
 }
 
@@ -49,8 +43,9 @@ int main()
     const NorvesLib::Math::Matrix4x4 expected =
         NorvesLib::Math::MatrixUtils::CreateOrthographic(80.0f, 25.0f, 0.5f, 9.5f);
     AssertMatrixNear(viewport.GetProjectionMatrix(), expected);
-    assert(IsNearlyEqual(viewport.GetProjectionMatrix().m11, 2.0f / 25.0f));
-    assert(!IsNearlyEqual(viewport.GetProjectionMatrix().m11, 2.0f / 40.0f));
+    const float projectionScaleY = viewport.GetProjectionMatrix().GetRow(1).y;
+    assert(IsNearlyEqual(projectionScaleY, 2.0f / 25.0f));
+    assert(!IsNearlyEqual(projectionScaleY, 2.0f / 40.0f));
 
     std::cout << "OrthographicViewportMatrixTest passed\n";
     return 0;

@@ -28,7 +28,7 @@ namespace
                         BlendMode blendMode = BlendMode::Opaque)
     {
         NorvesLib::Math::Matrix4x4 world;
-        world.m30 = static_cast<float>(objectId);
+        world.SetTranslationRow(NorvesLib::Math::Vector3(static_cast<float>(objectId), 0.0f, 0.0f));
         MeshProxy proxy = MakeProxy(objectId, meshId, materialId, world);
         proxy.MaterialBlendModes[0] = blendMode;
         return proxy;

@@ -193,8 +193,9 @@ namespace
         assert(proxy.LayerPriority == 0u);
         assert(proxy.OrderInLayer == 0u);
         assert(proxy.SortKey == BoardProxy::ComputeSortKey(0u, 0u));
-        assert(proxy.WorldTransform.m30 == 12.0f);
-        assert(proxy.WorldTransform.m31 == 34.0f);
+        const Math::Vector3 proxyTranslation = proxy.WorldTransform.GetTranslationRow();
+        assert(proxyTranslation.x == 12.0f);
+        assert(proxyTranslation.y == 34.0f);
 
         board->SetLayerPriority(3u);
         board->SetOrderInLayer(7u);
@@ -236,7 +237,7 @@ namespace
         assert(sink.Find(second->GetComponentId()));
         assert(sink.Find(first->GetComponentId())->ObjectId == entity->GetObjectId());
         assert(sink.Find(second->GetComponentId())->ObjectId == entity->GetObjectId());
-        assert(sink.Find(first->GetComponentId())->WorldTransform.m30 == 7.0f);
+        assert(sink.Find(first->GetComponentId())->WorldTransform.GetTranslationRow().x == 7.0f);
         assert(sink.StaleCount == 1);
 
         TrackingBoardSink replacementSink;

@@ -13,6 +13,18 @@ using namespace NorvesLib::Core::Rendering;
 
 namespace
 {
+    void SetTranslationX(NorvesLib::Math::Matrix4x4& matrix, float x)
+    {
+        NorvesLib::Math::Vector3 translation = matrix.GetTranslationRow();
+        translation.x = x;
+        matrix.SetTranslationRow(translation);
+    }
+
+    float GetTranslationX(const NorvesLib::Math::Matrix4x4& matrix)
+    {
+        return matrix.GetTranslationRow().x;
+    }
+
     MeshDataHandle MakeMeshHandle(uint64_t id)
     {
         MeshDataHandle handle;
@@ -106,7 +118,7 @@ namespace
         assert(meshProxy);
         assert(lightProxy);
 
-        meshProxy->WorldTransform.m30 = 777.0f;
+        SetTranslationX(meshProxy->WorldTransform, 777.0f);
         lightProxy->PositionX = 888.0f;
 
         world.SyncToSceneView();
@@ -114,13 +126,13 @@ namespace
         lightProxy = FindLightProxy(view, light->GetComponentId());
         assert(meshProxy);
         assert(lightProxy);
-        assert(meshProxy->WorldTransform.m30 == 777.0f);
+        assert(GetTranslationX(meshProxy->WorldTransform) == 777.0f);
         assert(lightProxy->PositionX == 888.0f);
 
         world.SyncToSceneView();
         assert(view.GetMeshProxies().size() == 1);
         assert(view.GetLightProxies().size() == 1);
-        assert(FindMeshProxy(view, object->GetObjectId())->WorldTransform.m30 == 777.0f);
+        assert(GetTranslationX(FindMeshProxy(view, object->GetObjectId())->WorldTransform) == 777.0f);
 
         object->SetPosition(3.0f, 4.0f, 5.0f);
         world.SyncToSceneView();
@@ -128,7 +140,7 @@ namespace
         lightProxy = FindLightProxy(view, light->GetComponentId());
         assert(meshProxy);
         assert(lightProxy);
-        assert(meshProxy->WorldTransform.m30 == 3.0f);
+        assert(GetTranslationX(meshProxy->WorldTransform) == 3.0f);
         assert(meshProxy->WorldBounds.CenterX == 3.0f);
         assert(lightProxy->PositionX == 3.0f);
         assert(lightProxy->PositionY == 4.0f);
@@ -155,13 +167,13 @@ namespace
 
         meshProxy = FindMeshProxy(view, object->GetObjectId());
         assert(meshProxy);
-        meshProxy->WorldTransform.m30 = 444.0f;
+        SetTranslationX(meshProxy->WorldTransform, 444.0f);
 
         world.SetSceneView(&view);
         world.SyncToSceneView();
         meshProxy = FindMeshProxy(view, object->GetObjectId());
         assert(meshProxy);
-        assert(meshProxy->WorldTransform.m30 == 3.0f);
+        assert(GetTranslationX(meshProxy->WorldTransform) == 3.0f);
 
         world.Finalize();
     }
@@ -190,28 +202,28 @@ namespace
 
         MegaGeometryProxy* megaProxy = FindMegaGeometryProxy(view, object->GetObjectId());
         assert(megaProxy);
-        megaProxy->WorldTransform.m30 = 999.0f;
+        SetTranslationX(megaProxy->WorldTransform, 999.0f);
 
         world.SyncToSceneView();
         megaProxy = FindMegaGeometryProxy(view, object->GetObjectId());
         assert(megaProxy);
-        assert(megaProxy->WorldTransform.m30 == 999.0f);
+        assert(GetTranslationX(megaProxy->WorldTransform) == 999.0f);
         assert(view.GetMeshProxies().empty());
 
         object->SetPosition(6.0f, 7.0f, 8.0f);
         world.SyncToSceneView();
         megaProxy = FindMegaGeometryProxy(view, object->GetObjectId());
         assert(megaProxy);
-        assert(megaProxy->WorldTransform.m30 == 6.0f);
+        assert(GetTranslationX(megaProxy->WorldTransform) == 6.0f);
         assert(megaProxy->WorldBounds.CenterX == 6.0f);
         assert(view.GetMeshProxies().empty());
 
-        megaProxy->WorldTransform.m30 = 555.0f;
+        SetTranslationX(megaProxy->WorldTransform, 555.0f);
         world.SetSceneView(&view);
         world.SyncToSceneView();
         megaProxy = FindMegaGeometryProxy(view, object->GetObjectId());
         assert(megaProxy);
-        assert(megaProxy->WorldTransform.m30 == 6.0f);
+        assert(GetTranslationX(megaProxy->WorldTransform) == 6.0f);
 
         SceneView replacementView;
         assert(replacementView.Initialize(settings));
@@ -219,7 +231,7 @@ namespace
         world.SyncToSceneView();
         assert(replacementView.GetMeshProxies().empty());
         assert(replacementView.GetMegaGeometryProxies().size() == 1);
-        assert(FindMegaGeometryProxy(replacementView, object->GetObjectId())->WorldTransform.m30 == 6.0f);
+        assert(GetTranslationX(FindMegaGeometryProxy(replacementView, object->GetObjectId())->WorldTransform) == 6.0f);
 
         world.Finalize();
     }
