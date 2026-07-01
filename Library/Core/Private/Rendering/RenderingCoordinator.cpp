@@ -150,6 +150,8 @@ namespace NorvesLib::Core::Rendering
             return baseInstance;
         }
 
+#include "Rendering/RenderingCoordinatorStatsPropagation.inl"
+
         CommandRange AppendRebasedDrawCommands(const Container::VariableArray<DrawCommand> &source,
                                                uint32_t baseInstance,
                                                Container::VariableArray<DrawCommand> &destination)
@@ -866,6 +868,10 @@ namespace NorvesLib::Core::Rendering
 
         NORVES_STAT_TIME_START(cmdGen);
 
+#if NORVES_ENABLE_STATS
+        const bool bTraceActive = NorvesLib::Debug::StatsManager::Get().IsTraceActive();
+#endif
+
         if (m_CurrentPacket)
         {
             m_CurrentPacket->bHasMainCamera = false;
@@ -896,6 +902,7 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->TransparentCommandRange = CommandRange{};
             m_CurrentPacket->InstanceData.clear();
             m_CurrentPacket->Views.clear();
+            m_CurrentPacket->Stats = FrameStatsSnapshot{};
 
             auto& debugDraw = NorvesLib::Core::GEngine.GetDebugDraw();
             m_CurrentPacket->DebugLineVertices.clear();
@@ -952,6 +959,12 @@ namespace NorvesLib::Core::Rendering
                                                   instanceBase,
                                                   m_CurrentPacket->DrawCommands);
                     drawCommandRange = CombineCommandRanges(opaqueCommandRange, transparentCommandRange);
+#if NORVES_ENABLE_STATS
+                    if (bTraceActive)
+                    {
+                        AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
+                    }
+#endif
                 }
 
                 if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
@@ -1004,6 +1017,12 @@ namespace NorvesLib::Core::Rendering
                         viewportPlan.DrawCommandRange =
                             CombineCommandRanges(viewportPlan.OpaqueCommandRange,
                                                  viewportPlan.TransparentCommandRange);
+#if NORVES_ENABLE_STATS
+                        if (bTraceActive)
+                        {
+                            AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
+                        }
+#endif
                     }
 
                     if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
@@ -1386,6 +1405,13 @@ namespace NorvesLib::Core::Rendering
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
         {
+            m_Stats.VisibleObjects = packet->Stats.VisibleObjects;
+            m_Stats.BatchCount = packet->Stats.BatchCount;
+            m_Stats.InstancedDrawCalls = packet->Stats.InstancedDrawCalls;
+            m_Stats.SavedDrawCalls = packet->Stats.SavedDrawCalls;
+            m_Stats.CullingTimeMs = packet->Stats.CullingTimeMs;
+            m_Stats.BatchingTimeMs = packet->Stats.BatchingTimeMs;
+
             auto renderFrameEndTime = std::chrono::high_resolution_clock::now();
             m_Stats.RenderFrameTimeMs =
                 std::chrono::duration<float, std::milli>(renderFrameEndTime - renderFrameStartTime).count();
