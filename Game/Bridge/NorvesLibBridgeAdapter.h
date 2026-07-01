@@ -259,6 +259,63 @@ namespace Game::Bridge
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
         objectSetProperty(const norves::bridge::JsonValue& params) override;
 
+        // --- Scene（書き込み系） ---
+
+        /**
+         * @brief scene.createObject。World に新規 Entity を生成する
+         *
+         * params.parentId（任意 string）を uint64_t へ解釈して親 Entity を逆引きし、
+         * World::SpawnEntity<Entity>(parent) で生成する。parentId が無ければ親 nullptr（ルート生成）。
+         * kind（任意 string）は無視する（動的型 + 親指定の public spawn API が無いため。MVP は常に
+         * 基底 Entity を生成する）。生成成功時は scene.treeChanged を発火してから
+         * {accepted:true, newId:"<ObjectId 10 進>"} を返す。parentId が指定されているのに逆引きできない、
+         * GEngine 未生成、SpawnEntity が nullptr（World 未初期化含む）のいずれも {accepted:false}。
+         * newId は ObjectId 値の 10 進文字列コピーのみを綴り、Entity ポインタや生ポインタは JsonValue へ
+         * 一切入れない（live memory 非転送）。適用は呼び出し中の同期・同スレッド文脈
+         * （DrainInbound＝ゲームスレッド）でのみ行い、新規スレッド/marshal はしない。
+         *
+         * @param params リクエスト params（借用、parentId / kind を読む）
+         * @return {accepted:bool, newId?:string} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        sceneCreateObject(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief scene.deleteObject。World から Entity を除去する
+         *
+         * params.objectId（必須 string）を uint64_t へ解釈して World から該当 Entity を逆引きし、
+         * World::RemoveEntity(entity) で除去する。その bool を accepted とし、true のときだけ
+         * scene.treeChanged を発火する。objectId 欠落 / パース失敗 / GEngine 未生成 / 該当なし /
+         * RemoveEntity が false のいずれも {accepted:false}。Entity ポインタや生ポインタは JsonValue へ
+         * 一切入れない（live memory 非転送）。適用は呼び出し中の同期・同スレッド文脈
+         * （DrainInbound＝ゲームスレッド）でのみ行い、新規スレッド/marshal はしない。
+         *
+         * @param params リクエスト params（借用、objectId を読む）
+         * @return {accepted:bool} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        sceneDeleteObject(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief scene.reparentObject。Entity を別親（またはルート）へ移動する
+         *
+         * params.objectId（必須 string）を uint64_t へ解釈して World から該当 Entity を逆引きする。
+         * params.newParentId（任意 string）が無ければ新親 nullptr（World 直下ルートへ移動）、あるのに
+         * 逆引きできなければ {accepted:false}。World::ReparentEntity(entity, newParent) の bool を
+         * accepted とし、true のときだけ scene.treeChanged を発火する。objectId 欠落 / パース失敗 /
+         * GEngine 未生成 / 該当なし / ReparentEntity が false のいずれも {accepted:false}。Entity ポインタや
+         * 生ポインタは JsonValue へ一切入れない（live memory 非転送）。適用は呼び出し中の同期・同
+         * スレッド文脈（DrainInbound＝ゲームスレッド）でのみ行い、新規スレッド/marshal はしない。
+         *
+         * @param params リクエスト params（借用、objectId / newParentId を読む）
+         * @return {accepted:bool} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        sceneReparentObject(const norves::bridge::JsonValue& params) override;
+
         // --- Asset（読み取り系） ---
 
         /**

@@ -627,6 +627,46 @@ namespace
 
         world.Finalize();
     }
+
+    bool RootEntitiesContain(const World& world, const Entity* target)
+    {
+        const auto roots = world.GetRootEntities();
+        for (const Entity* root : roots)
+        {
+            if (root == target)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void TestSpawnEntityThenReparentToRootAndBack()
+    {
+        World world;
+        world.Initialize();
+
+        Entity* root = world.SpawnEntity<Entity>();
+        Entity* child = world.SpawnEntity<Entity>(root);
+        assert(root != nullptr);
+        assert(child != nullptr);
+
+        // child は最初 root の子なので GetRootEntities には現れない。
+        assert(!RootEntitiesContain(world, child));
+        assert(RootEntitiesContain(world, root));
+
+        // child をルートへ昇格させると GetRootEntities に現れる。
+        assert(world.ReparentEntity(child, nullptr));
+        assert(child->GetParentEntity() == nullptr);
+        assert(RootEntitiesContain(world, child));
+
+        // child を除去すると GetRootEntities から消える。
+        assert(world.RemoveEntity(child));
+        assert(!RootEntitiesContain(world, child));
+        assert(RootEntitiesContain(world, root));
+
+        world.Finalize();
+    }
 }
 
 int main()
@@ -642,6 +682,7 @@ int main()
     TestRemoveEntityChildDirectly();
     TestReparentEntity();
     TestGameModeScopeTreeCleanup();
+    TestSpawnEntityThenReparentToRootAndBack();
 
     std::cout << "EntityTreeTest passed\n";
     return 0;
