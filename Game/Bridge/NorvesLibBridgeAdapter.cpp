@@ -11,6 +11,8 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/IClass.h"
+#include "Core/Public/Object/PrefabAsset.h"
+#include "Core/Public/Object/ResourceRegistry.h"
 #include "Core/Public/Object/SchemaProjection.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Platform/NativeWindowHandle.h"
@@ -1371,7 +1373,8 @@ namespace Game::Bridge
         // runtime.control / log.stream / viewport.focus / scene.query / scene.edit / scene.liveUpdate /
         // object.query / object.edit / asset.read を
         // 広告する。scene.query は scene.getTree と schema.getSnapshot を束ねる token（両者とも実装済み）。
-        // scene.edit は scene.createObject / scene.deleteObject / scene.reparentObject 用（実装済み）。
+        // scene.edit は scene.createObject / scene.deleteObject / scene.reparentObject /
+        // scene.duplicateObject 用（実装済み。duplicate は新規 token を足さず scene.edit に含める）。
         // scene.liveUpdate は scene.treeChanged イベントを発火するようになったため広告する（実装済み）。
         // object.query は object.getSnapshot 用（実装済み）。object.edit は object.setProperty 用
         // （実装済み）。asset.read は asset.resolve / asset.getManifest 用（実装済み＝NorvesLib アダプタが
@@ -2181,6 +2184,137 @@ namespace Game::Bridge
         }
 
         return OkLiteral(bAccepted ? R"({"accepted":true})" : kRejected);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::sceneDuplicateObject(const JsonValue& params)
+    {
+        // 該当なし・新親逆引き不可・GEngine null・一時 prefab 生成失敗・複製失敗等はすべて graceful に
+        // {"accepted":false} を返す（エラー Result ではなく成功 Result に accepted:false を載せる＝
+        // result schema の必須形。not_supported を返すとエディタの edit-disabled がラッチする）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        // params を dump して objectId（必須）/ newParentId（任意）を読む。sceneReparentObject と同手法。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> objectIdField =
+            extract_string_field(paramsText, "objectId");
+        if (!objectIdField.has_value())
+        {
+            return OkLiteral(kRejected);  // 必須 params 欠落。
+        }
+        const std::string& objectId = objectIdField.value();
+        if (objectId.empty())
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // objectId 文字列 -> uint64_t（全桁数字を要求。sceneReparentObject と同手法）。
+        uint64_t parsedId = 0;
+        bool bParsed = false;
+        {
+            errno = 0;
+            char* end = nullptr;
+            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
+            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
+            {
+                parsedId = static_cast<uint64_t>(v);
+                bParsed = true;
+            }
+        }
+        if (!bParsed)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // World から複製元 Entity を逆引き（GEngine null / 該当なしは reject）。
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+        NorvesLib::Core::Entity* src = FindEntityByObjectId(world, parsedId);
+        if (src == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // 複製先の親を決める。newParentId が指定されていれば逆引き必須（できなければ reject）。
+        // 無ければ複製元の親（同胞複製）＝GetParentEntity()。複製元がルートなら nullptr で World 直下へ。
+        NorvesLib::Core::Entity* newParent = nullptr;
+        const std::optional<std::string> newParentIdField =
+            extract_string_field(paramsText, "newParentId");
+        if (newParentIdField.has_value())
+        {
+            const std::string& newParentId = newParentIdField.value();
+            if (newParentId.empty())
+            {
+                return OkLiteral(kRejected);
+            }
+
+            uint64_t parsedParentId = 0;
+            bool bParentParsed = false;
+            {
+                errno = 0;
+                char* end = nullptr;
+                const unsigned long long v = std::strtoull(newParentId.c_str(), &end, 10);
+                if (end != nullptr && *end == '\0' && end != newParentId.c_str() && errno == 0)
+                {
+                    parsedParentId = static_cast<uint64_t>(v);
+                    bParentParsed = true;
+                }
+            }
+            if (!bParentParsed)
+            {
+                return OkLiteral(kRejected);
+            }
+
+            newParent = FindEntityByObjectId(world, parsedParentId);
+            if (newParent == nullptr)
+            {
+                return OkLiteral(kRejected);  // 指定新親が見つからない。
+            }
+        }
+        else
+        {
+            newParent = src->GetParentEntity();  // 同胞複製（ルートなら nullptr＝World 直下）。
+        }
+
+        // 複製元の部分木を値スナップショットへ投影する（生ポインタは持たない）。
+        NorvesLib::Core::EntitySubtreeSnapshot snap =
+            NorvesLib::Core::RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*src);
+
+        // 関数ローカルの ResourceRegistry + 一時 PrefabAsset へスナップショットを載せる
+        // （PrefabRoundTripTest と同経路。SpawnPrefab が同期消費するため関数ローカル寿命で十分）。
+        NorvesLib::Core::ResourceRegistry registry;
+        if (!registry.Initialize())
+        {
+            return OkLiteral(kRejected);
+        }
+        auto prefab = registry.CreateTransient<NorvesLib::Core::PrefabAsset>("BridgeDuplicate");
+        if (prefab == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        prefab->SetTree(std::move(snap));
+
+        // 複製を生成する。生成できたら accepted:true と新ルートの newId を返す。
+        NorvesLib::Core::Entity* dup = world.SpawnPrefab(*prefab, newParent);
+        if (dup == nullptr)
+        {
+            return OkLiteral(kRejected);  // World 未初期化含む生成失敗。
+        }
+
+        // ツリー構造が変わったので scene.treeChanged を発火する（ack 返却の前）。
+        EmitSceneTreeChanged(m_Host);
+
+        // newId は複製後ルートの ObjectId の 10 進文字列（sceneCreateObject と同じ綴り方）。
+        // 生ポインタは綴らない。
+        std::string out = R"({"accepted":true,"newId":")";
+        out += std::to_string(static_cast<unsigned long long>(dup->GetObjectId()));
+        out += R"("})";
+        return OkLiteral(out);
     }
 
 

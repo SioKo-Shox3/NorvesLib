@@ -3,6 +3,9 @@
 #include "Component/PointLightComponent.h"
 #include "GameMode/GameModeScope.h"
 #include "Object/ObjectHeap.h"
+#include "Object/PrefabAsset.h"
+#include "Object/ResourceRegistry.h"
+#include "Object/SchemaProjection.h"
 #include "Object/World.h"
 #include "Rendering/SceneView.h"
 #include <cassert>
@@ -667,6 +670,73 @@ namespace
 
         world.Finalize();
     }
+
+    // scene.duplicateObject が使うエンジン複製経路（BuildEntitySubtreeSnapshot -> 一時 PrefabAsset ->
+    // SpawnPrefab）を直接検証する。アダプタの params パース glue は harness 無しでは単体テストできない
+    // が（A2 と同じ既知の制約）、その extraction 経路は objectSetProperty / sceneReparentObject と共有で
+    // 変更なしのため glue リスクは低い。ここでは複製が独立クローンを生む（ObjectId が別・親配置が意図
+    // どおり・子構造が複製される・Name プロパティが往復する）ことを確認する。
+    void TestDuplicateObjectSubtreeProducesIndependentClone()
+    {
+        // Name は String 型 PROPERTY。往復（投影 -> SpawnPrefab 復元）には Entity / PrefabAsset の
+        // クラス登録が要るので StaticClass() を触って強制登録する（PrefabRoundTripTest と同手法）。
+        (void)Entity::StaticClass();
+        (void)PrefabAsset::StaticClass();
+
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+
+        World world;
+        world.Initialize();
+
+        // 複製元: root(+Name) と child(+Name) の小さな部分木を組む。
+        Entity* srcRoot = world.SpawnEntity<Entity>();
+        Entity* srcChild = world.SpawnEntity<Entity>(srcRoot);
+        assert(srcRoot != nullptr);
+        assert(srcChild != nullptr);
+        // PROPERTY マクロは getName()（PropertyRef を返す）を生成するので operator= が setter。
+        srcRoot->getName() = Container::String("DuplicateRoot");
+        srcChild->getName() = Container::String("DuplicateChild");
+
+        // 複製先の親（別のルート配下へ複製する）。
+        Entity* targetParent = world.SpawnEntity<Entity>();
+        assert(targetParent != nullptr);
+
+        // アダプタと同じ engine 呼び出し列: 部分木を値スナップショットへ投影する。
+        EntitySubtreeSnapshot snap = RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*srcRoot);
+
+        // 関数ローカルの一時 PrefabAsset へ載せて targetParent 直下へ SpawnPrefab する。
+        auto prefab = registry.CreateTransient<PrefabAsset>("BridgeDuplicate");
+        assert(prefab != nullptr);
+        prefab->SetTree(std::move(snap));
+
+        Entity* dupRoot = world.SpawnPrefab(*prefab, targetParent);
+        assert(dupRoot != nullptr);
+
+        // (a) クローンのルート ObjectId は複製元と異なる（新規オブジェクト）。
+        assert(dupRoot->GetObjectId() != srcRoot->GetObjectId());
+
+        // (b) クローンは意図した親（targetParent）の直下に生成される。
+        assert(dupRoot->GetParentEntity() == targetParent);
+        assert(!RootEntitiesContain(world, dupRoot));
+
+        // (c) 子構造が複製される（子数一致・子 ObjectId は複製元と異なる）。
+        const auto srcChildren = srcRoot->GetChildEntities();
+        const auto dupChildren = dupRoot->GetChildEntities();
+        assert(srcChildren.size() == 1);
+        assert(dupChildren.size() == srcChildren.size());
+        Entity* dupChild = dupChildren[0];
+        assert(dupChild != nullptr);
+        assert(dupChild->GetObjectId() != srcChild->GetObjectId());
+
+        // (d) Name プロパティが往復する（ルート・子とも）。
+        assert(Container::String(dupRoot->getName()) == Container::String("DuplicateRoot"));
+        assert(Container::String(dupChild->getName()) == Container::String("DuplicateChild"));
+
+        world.Finalize();
+        prefab.reset();
+        registry.Shutdown();
+    }
 }
 
 int main()
@@ -683,6 +753,7 @@ int main()
     TestReparentEntity();
     TestGameModeScopeTreeCleanup();
     TestSpawnEntityThenReparentToRootAndBack();
+    TestDuplicateObjectSubtreeProducesIndependentClone();
 
     std::cout << "EntityTreeTest passed\n";
     return 0;
