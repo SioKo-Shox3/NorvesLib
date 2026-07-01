@@ -851,7 +851,8 @@ namespace NorvesLib::Core
         }
     }
 
-    void World::SyncToSceneView(const Rendering::MaterialResources* materials)
+    void World::SyncToSceneView(const Rendering::MaterialResources* materials,
+                                const Rendering::MeshResources* meshes)
     {
         if (!HasFlag(OF_Initialized) ||
             (!m_SceneView && !m_ScreenSpaceBoardSink))
@@ -887,6 +888,7 @@ namespace NorvesLib::Core
             SyncEntityRecursive(
                 *entity,
                 materials,
+                meshes,
                 liveMeshComponentIds,
                 liveMegaGeometryObjectIds,
                 liveLightIds,
@@ -958,6 +960,7 @@ namespace NorvesLib::Core
     void World::SyncEntityRecursive(
         Entity& entity,
         const Rendering::MaterialResources* materials,
+        const Rendering::MeshResources* meshes,
         Container::UnorderedSet<uint64_t>& liveMeshComponentIds,
         Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
         Container::UnorderedSet<uint64_t>& liveLightIds,
@@ -992,7 +995,7 @@ namespace NorvesLib::Core
                     if (componentDataRegistry)
                     {
                         Rendering::MeshProxy meshProxy;
-                        if (meshComp->BuildMeshProxy(meshProxy, materials))
+                        if (meshComp->BuildMeshProxy(meshProxy, materials, meshes))
                         {
                             meshProxy.ObjectId = entity.GetObjectId();
                             meshProxy.ComponentId = meshComp->GetComponentId();
@@ -1005,7 +1008,7 @@ namespace NorvesLib::Core
                     meshComp->RefreshRenderTransformCache();
 
                     Rendering::MeshProxy meshProxy;
-                    if (meshComp->BuildMeshProxy(meshProxy, materials))
+                    if (meshComp->BuildMeshProxy(meshProxy, materials, meshes))
                     {
                         meshProxy.ObjectId = entity.GetObjectId();
                         meshProxy.ComponentId = meshComp->GetComponentId();
@@ -1166,6 +1169,7 @@ namespace NorvesLib::Core
             SyncEntityRecursive(
                 *child,
                 materials,
+                meshes,
                 liveMeshComponentIds,
                 liveMegaGeometryObjectIds,
                 liveLightIds,

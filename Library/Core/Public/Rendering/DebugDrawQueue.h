@@ -23,6 +23,8 @@ public:
 
     void AddLine(const Math::Vector3& p0, const Math::Vector3& p1, const Math::Vector4& color);
     void AddAABB(const Math::AABB& box, const Math::Vector4& color);
+    void AddSphere(const Math::Sphere& sphere, const Math::Vector4& color);
+    void AddSphere(const Math::Vector3& center, float radius, const Math::Vector4& color);
     void Clear();
 
     const Container::VariableArray<DebugLineVertex>& GetVertices() const;

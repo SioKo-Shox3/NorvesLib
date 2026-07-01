@@ -6,6 +6,7 @@
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
+#include "Math/MatrixUtils.h"
 #include "Math/Vector2.h"
 #include "Math/Vector4.h"
 #include <cstdint>
@@ -13,10 +14,6 @@
 namespace NorvesLib::Core::Rendering
 {
 
-    /**
-     * @brief 最大マテリアルスロット数
-     */
-    constexpr uint32_t MAX_MATERIAL_SLOTS = 8;
 
     // ========================================
     // MeshProxy
@@ -47,6 +44,9 @@ namespace NorvesLib::Core::Rendering
 
         MeshDataHandle MeshHandle; // メッシュデータへのハンドル
         uint8_t LODLevel = 0;      // 現在のLODレベル
+
+        Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS> SubMeshes;
+        uint32_t SubMeshCount = 0;
 
         // ========================================
         // トランスフォーム
@@ -131,22 +131,15 @@ namespace NorvesLib::Core::Rendering
         {
             // 簡易的な変換（スケールを考慮）
             // より正確にはワールド行列でバウンディングボックスを変換すべき
-            WorldBounds.CenterX = WorldTransform.m30 + localBounds.CenterX;
-            WorldBounds.CenterY = WorldTransform.m31 + localBounds.CenterY;
-            WorldBounds.CenterZ = WorldTransform.m32 + localBounds.CenterZ;
+            const Math::Vector3 translation = WorldTransform.GetTranslationRow();
+            WorldBounds.CenterX = translation.x + localBounds.CenterX;
+            WorldBounds.CenterY = translation.y + localBounds.CenterY;
+            WorldBounds.CenterZ = translation.z + localBounds.CenterZ;
 
             // スケールの概算（最大成分を使用）
-            float scaleX = std::sqrt(WorldTransform.m00 * WorldTransform.m00 +
-                                     WorldTransform.m01 * WorldTransform.m01 +
-                                     WorldTransform.m02 * WorldTransform.m02);
-            float scaleY = std::sqrt(WorldTransform.m10 * WorldTransform.m10 +
-                                     WorldTransform.m11 * WorldTransform.m11 +
-                                     WorldTransform.m12 * WorldTransform.m12);
-            float scaleZ = std::sqrt(WorldTransform.m20 * WorldTransform.m20 +
-                                     WorldTransform.m21 * WorldTransform.m21 +
-                                     WorldTransform.m22 * WorldTransform.m22);
-            float maxScale = scaleX > scaleY ? (scaleX > scaleZ ? scaleX : scaleZ)
-                                             : (scaleY > scaleZ ? scaleY : scaleZ);
+            const Math::Vector3 scale = Math::MatrixUtils::ExtractScale(WorldTransform);
+            float maxScale = scale.x > scale.y ? (scale.x > scale.z ? scale.x : scale.z)
+                                               : (scale.y > scale.z ? scale.y : scale.z);
             WorldBounds.Radius = localBounds.Radius * maxScale;
         }
 

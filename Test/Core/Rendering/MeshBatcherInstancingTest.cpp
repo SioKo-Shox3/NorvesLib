@@ -28,7 +28,7 @@ namespace
                         BlendMode blendMode = BlendMode::Opaque)
     {
         NorvesLib::Math::Matrix4x4 world;
-        world.m30 = static_cast<float>(objectId);
+        world.SetTranslationRow(NorvesLib::Math::Vector3(static_cast<float>(objectId), 0.0f, 0.0f));
         MeshProxy proxy = MakeProxy(objectId, meshId, materialId, world);
         proxy.MaterialBlendModes[0] = blendMode;
         return proxy;
@@ -171,6 +171,55 @@ namespace
         assert(commands[1].Draw.FirstInstance == 2);
     }
 
+    void TestExplicitSubMeshRangesStaySeparateWhenSharingMaterial()
+    {
+        MeshBatcher batcher;
+        NorvesLib::Core::Container::VariableArray<DrawCommand> commands;
+        NorvesLib::Core::Container::VariableArray<GPUSceneInstanceData> instanceData;
+
+        MeshProxy first = MakeProxy(1, 100, 200);
+        first.SubMeshCount = 2;
+        first.SubMeshes[0] = SubMeshRange{0, 6, 0, 0};
+        first.SubMeshes[1] = SubMeshRange{6, 3, 4, 0};
+        MeshProxy second = MakeProxy(2, 100, 200);
+        second.SubMeshCount = 2;
+        second.SubMeshes[0] = SubMeshRange{0, 6, 0, 0};
+        second.SubMeshes[1] = SubMeshRange{6, 3, 4, 0};
+
+        batcher.BeginBatching();
+        batcher.AddMeshProxy(first);
+        batcher.AddMeshProxy(second);
+        Generate(batcher, commands, instanceData, true, 2);
+
+        assert(commands.size() == 2);
+        assert(instanceData.size() == 4);
+        assert(commands[0].Draw.bInstanced);
+        assert(commands[1].Draw.bInstanced);
+        const DrawCommand* subMeshZero = nullptr;
+        const DrawCommand* subMeshOne = nullptr;
+        for (const DrawCommand& command : commands)
+        {
+            assert(command.Draw.MaterialHandle.Id == 200);
+            if (command.Draw.SubMeshIndex == 0)
+            {
+                subMeshZero = &command;
+            }
+            else if (command.Draw.SubMeshIndex == 1)
+            {
+                subMeshOne = &command;
+            }
+        }
+
+        assert(subMeshZero != nullptr);
+        assert(subMeshOne != nullptr);
+        assert(subMeshZero->Draw.IndexOffset == 0);
+        assert(subMeshZero->Draw.IndexCount == 6);
+        assert(subMeshZero->Draw.VertexOffset == 0);
+        assert(subMeshOne->Draw.IndexOffset == 6);
+        assert(subMeshOne->Draw.IndexCount == 3);
+        assert(subMeshOne->Draw.VertexOffset == 4);
+    }
+
     void TestCastShadowSeparation()
     {
         MeshBatcher batcher;
@@ -262,6 +311,7 @@ int main()
     TestDisabledInstancingExpandsCommands();
     TestMaterialSeparation();
     TestSubMeshSeparation();
+    TestExplicitSubMeshRangesStaySeparateWhenSharingMaterial();
     TestCastShadowSeparation();
     TestObjectColorFlatten();
     TestTransparentBatchNeverInstances();

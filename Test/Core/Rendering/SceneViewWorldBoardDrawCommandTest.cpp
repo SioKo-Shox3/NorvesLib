@@ -52,9 +52,7 @@ namespace
         proxy.SizeWorld = Math::Vector2(1.0f, 1.0f);
         proxy.Pivot = Math::Vector2(0.5f, 0.5f);
         proxy.WorldTransform = Math::Matrix4x4::Identity;
-        proxy.WorldTransform.m30 = x;
-        proxy.WorldTransform.m31 = y;
-        proxy.WorldTransform.m32 = z;
+        proxy.WorldTransform.SetTranslationRow(Math::Vector3(x, y, z));
         proxy.WorldBounds.CenterX = x;
         proxy.WorldBounds.CenterY = y;
         proxy.WorldBounds.CenterZ = z;
@@ -73,7 +71,7 @@ namespace
         proxy.MaterialBlendModes[0] = BlendMode::Translucent;
         proxy.MaterialCount = 1;
         proxy.WorldTransform = Math::Matrix4x4::Identity;
-        proxy.WorldTransform.m32 = z;
+        proxy.WorldTransform.SetTranslationRow(Math::Vector3(0.0f, 0.0f, z));
         proxy.WorldBounds.CenterZ = z;
         proxy.WorldBounds.Radius = 1.0f;
         proxy.LayerMask = RenderLayer::Default;

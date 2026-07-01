@@ -359,6 +359,7 @@ namespace NorvesLib::Core::Rendering
             float CollectionTimeMs = 0.0f;   // 収集時間
             float CullingTimeMs = 0.0f;      // カリング時間
             float BatchingTimeMs = 0.0f;     // バッチング時間
+            uint32_t SavedDrawCalls = 0;     // 削減された描画呼び出し数
         };
 
         const SceneViewStats &GetStats() const { return m_Stats; }

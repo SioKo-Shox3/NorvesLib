@@ -1,4 +1,5 @@
 #include "Rendering/RenderResources.h"
+#include "Rendering/MeshTypes.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "RHI/IFramebuffer.h"
@@ -176,8 +177,32 @@ int main()
     const auto firstVertexBuffer = gpuData->VertexBuffer;
     const float verticesB[9] = {0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f};
     const uint32_t indicesB[6] = {0, 1, 2, 2, 1, 0};
+
+    const MeshDataHandle subMeshHandle = MakeMeshHandle(78);
+    const SubMesh subMeshes[2] = {SubMesh(1, 3, 0, 0), SubMesh(4, 2, 7, 1)};
+    NorvesLib::Core::Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS> ranges;
+    uint32_t rangeCount = 99;
+    assert(!manager.Meshes().TryGetSubMeshRanges(subMeshHandle, ranges, rangeCount));
+    assert(rangeCount == 0);
+    assert(manager.Meshes().Register(subMeshHandle, verticesB, sizeof(verticesB), indicesB, 6, subMeshes, 2));
+    assert(manager.Meshes().TryGetSubMeshRanges(subMeshHandle, ranges, rangeCount));
+    assert(rangeCount == 2);
+    assert(ranges[0].IndexStart == 1);
+    assert(ranges[0].IndexCount == 3);
+    assert(ranges[0].VertexStart == 0);
+    assert(ranges[0].MaterialIndex == 0);
+    assert(ranges[1].IndexStart == 4);
+    assert(ranges[1].IndexCount == 2);
+    assert(ranges[1].VertexStart == 7);
+    assert(ranges[1].MaterialIndex == 1);
+    manager.Meshes().Unregister(subMeshHandle);
+    rangeCount = 99;
+    assert(!manager.Meshes().TryGetSubMeshRanges(subMeshHandle, ranges, rangeCount));
+    assert(rangeCount == 0);
+
+    const size_t bufferCountBeforeReregister = device->CreatedBufferDescs.size();
     assert(manager.Meshes().Register(meshHandle, verticesB, sizeof(verticesB), indicesB, 6));
-    assert(device->CreatedBufferDescs.size() == 4);
+    assert(device->CreatedBufferDescs.size() == bufferCountBeforeReregister + 2);
 
     gpuData = manager.Meshes().GetGPUData(meshHandle);
     assert(gpuData != nullptr);

@@ -123,7 +123,10 @@ namespace NorvesLib::Debug
         uint32_t BatchCount = 0;
 
         VariableArray<ProfileEvent> Events;
-
+        uint32_t InstancedDrawCalls = 0;
+        uint32_t SavedDrawCalls = 0;
+        float CullingTimeMs = 0.0f;
+        float BatchingTimeMs = 0.0f;
         void Reset() override
         {
             FrameNumber = 0;
@@ -141,6 +144,10 @@ namespace NorvesLib::Debug
             VisibleObjects = 0;
             BatchCount = 0;
             Events.clear();
+            InstancedDrawCalls = 0;
+            SavedDrawCalls = 0;
+            CullingTimeMs = 0.0f;
+            BatchingTimeMs = 0.0f;
         }
 
         String ToString() const override;
@@ -177,6 +184,7 @@ namespace NorvesLib::Debug
         float RenderFrameTimeMs = 0.0f;
         float GPUTimeMs = 0.0f;
         float TotalFrameTimeMs = 0.0f;
+        uint32_t SavedDrawCalls = 0;
 
         void Reset() override
         {
@@ -199,6 +207,7 @@ namespace NorvesLib::Debug
             RenderFrameTimeMs = 0.0f;
             GPUTimeMs = 0.0f;
             TotalFrameTimeMs = 0.0f;
+            SavedDrawCalls = 0;
         }
 
         String ToString() const override;

@@ -77,6 +77,7 @@ namespace Game::GameModes
         ctx.EngineRef.GetInputRouter().RegisterController(
             &data.m_PickingController,
             NorvesLib::Core::Input::InputRouter::PriorityGame + 10);
+        data.m_PickingController.SetCameraController(&data.m_CameraController);
 
         // ========================================
         // 1. プロシージャルメッシュの生成とGPU登録

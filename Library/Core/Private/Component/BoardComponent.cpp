@@ -1,4 +1,5 @@
 ﻿#include "Component/BoardComponent.h"
+#include "Math/MatrixUtils.h"
 #include "Object/Entity.h"
 #include <cmath>
 #include <limits>
@@ -611,14 +612,9 @@ namespace NorvesLib::Core::Component
         }
 
         const Math::Transform &worldTransform = owner->GetWorldTransform();
-        outMatrix = worldTransform.ToMatrix();
-        outMatrix.m30 = worldTransform.position.x;
-        outMatrix.m31 = worldTransform.position.y;
-        outMatrix.m32 = worldTransform.position.z;
-        outMatrix.m03 = 0.0f;
-        outMatrix.m13 = 0.0f;
-        outMatrix.m23 = 0.0f;
-        outMatrix.m33 = 1.0f;
+        outMatrix = Math::MatrixUtils::CreateWorldRowVector(worldTransform.position,
+                                                            worldTransform.rotation,
+                                                            worldTransform.scale);
     }
 
 } // namespace NorvesLib::Core::Component

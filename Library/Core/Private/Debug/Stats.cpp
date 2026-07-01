@@ -106,7 +106,8 @@ namespace NorvesLib::Debug
         oss << "=== Rendering Stats ===\n";
         oss << "Frame: " << FrameNumber << "\n";
         oss << "FPS: " << FPS << " (DeltaTime: " << DeltaTime * 1000.0f << " ms)\n";
-        oss << "Draw Calls: " << DrawCalls << " (Instanced: " << InstancedDrawCalls << ")\n";
+        oss << "Draw Calls: " << DrawCalls << " (Instanced: " << InstancedDrawCalls
+            << ", Saved: " << SavedDrawCalls << ")\n";
         oss << "Triangles: " << TrianglesRendered << "\n";
         oss << "Visible Objects: " << VisibleObjects << " (Batches: " << BatchCount << ")\n";
         oss << "RenderGraph: barriers=" << RenderGraphBarrierCount
@@ -448,6 +449,10 @@ namespace NorvesLib::Debug
         m_FrameProfile.TrianglesRendered = stats.TrianglesRendered;
         m_FrameProfile.VisibleObjects = stats.VisibleObjects;
         m_FrameProfile.BatchCount = stats.BatchCount;
+        m_FrameProfile.InstancedDrawCalls = stats.InstancedDrawCalls;
+        m_FrameProfile.SavedDrawCalls = stats.SavedDrawCalls;
+        m_FrameProfile.CullingTimeMs = stats.CullingTimeMs;
+        m_FrameProfile.BatchingTimeMs = stats.BatchingTimeMs;
         m_FrameProfile.RenderPrepareTimeMs = stats.CommandGenerationTimeMs;
         m_FrameProfile.RenderFrameTimeMs = stats.RenderFrameTimeMs;
         m_FrameProfile.GPUFrameTimeMs = stats.GPUTimeMs;
@@ -465,7 +470,8 @@ namespace NorvesLib::Debug
             m_TraceFile << "Type,Frame,TimestampUs,ThreadId,Category,Name,DurationMs,"
                            "GameThreadMs,RenderPrepareMs,RenderThreadMs,RenderFrameMs,"
                            "CPUFrameMs,GPUFrameMs,TotalFrameMs,DrawCalls,Triangles,VisibleObjects,Batches,"
-                           "RenderGraphBarriers,RenderGraphTransientAcquires\n";
+                           "RenderGraphBarriers,RenderGraphTransientAcquires,InstancedDrawCalls,"
+                           "SavedDrawCalls,CullingTimeMs,BatchingTimeMs\n";
         }
 #endif
     }
@@ -498,7 +504,11 @@ namespace NorvesLib::Debug
                     << m_FrameProfile.VisibleObjects << ','
                     << m_FrameProfile.BatchCount << ','
                     << m_RenderingStats.RenderGraphBarrierCount << ','
-                    << m_RenderingStats.RenderGraphTransientAcquireCount << '\n';
+                    << m_RenderingStats.RenderGraphTransientAcquireCount << ','
+                    << m_FrameProfile.InstancedDrawCalls << ','
+                    << m_FrameProfile.SavedDrawCalls << ','
+                    << m_FrameProfile.CullingTimeMs << ','
+                    << m_FrameProfile.BatchingTimeMs << '\n';
         m_TraceFile.flush();
 #endif
     }

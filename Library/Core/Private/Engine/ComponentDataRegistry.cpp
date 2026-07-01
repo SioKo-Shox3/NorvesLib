@@ -1,4 +1,5 @@
 ﻿#include "Engine/ComponentDataRegistry.h"
+#include "Math/MatrixUtils.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
 
@@ -372,15 +373,9 @@ namespace NorvesLib::Core
 
     Math::Matrix4x4 ComponentDataRegistry::MakeRegistryWorldMatrix(const Math::Transform& transform)
     {
-        Math::Matrix4x4 matrix = transform.ToMatrix();
-        matrix.m30 = transform.position.x;
-        matrix.m31 = transform.position.y;
-        matrix.m32 = transform.position.z;
-        matrix.m03 = 0.0f;
-        matrix.m13 = 0.0f;
-        matrix.m23 = 0.0f;
-        matrix.m33 = 1.0f;
-        return matrix;
+        return Math::MatrixUtils::CreateWorldRowVector(transform.position,
+                                                       transform.rotation,
+                                                       transform.scale);
     }
 
 } // namespace NorvesLib::Core

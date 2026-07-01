@@ -10,10 +10,18 @@ namespace
 {
     constexpr float RECT_EPSILON = 1.0e-3f;
     constexpr float PLANE_NORMAL_EPSILON = 1.0e-6f;
+    constexpr float RADIUS_EPSILON = 1.0e-4f;
 
     float ClampFloat(float value, float minValue, float maxValue)
     {
         return std::fmax(minValue, std::fmin(value, maxValue));
+    }
+
+    bool IsFiniteVector(const Math::Vector3& value)
+    {
+        return std::isfinite(value.x)
+            && std::isfinite(value.y)
+            && std::isfinite(value.z);
     }
 
     bool BuildSidePlane(
@@ -180,6 +188,89 @@ namespace
             Math::Plane(forward, cameraOrigin + forward * camera.NearPlane);
         outFrustum.Planes[static_cast<int>(Math::FrustumPlane::Far)] =
             Math::Plane(forward * -1.0f, cameraOrigin + forward * camera.FarPlane);
+        return true;
+    }
+
+    bool BuildSelectionSphere(
+        const CameraProxy& camera,
+        float centerX,
+        float centerY,
+        float edgeX,
+        float edgeY,
+        float centerAlongRayDistance,
+        Math::Sphere& outSphere)
+    {
+        if (!std::isfinite(centerX)
+            || !std::isfinite(centerY)
+            || !std::isfinite(edgeX)
+            || !std::isfinite(edgeY)
+            || !std::isfinite(centerAlongRayDistance)
+            || centerAlongRayDistance <= 0.0f)
+        {
+            return false;
+        }
+
+        Math::Ray centerRay;
+        if (!BuildPickingRay(camera, centerX, centerY, centerRay)
+            || !IsFiniteVector(centerRay.Origin)
+            || !IsFiniteVector(centerRay.Direction))
+        {
+            return false;
+        }
+
+        const Math::Vector3 center = centerRay.Origin + centerRay.Direction * centerAlongRayDistance;
+        if (!IsFiniteVector(center))
+        {
+            return false;
+        }
+
+        Math::Ray edgeRay;
+        if (!BuildPickingRay(camera, edgeX, edgeY, edgeRay)
+            || !IsFiniteVector(edgeRay.Origin)
+            || !IsFiniteVector(edgeRay.Direction))
+        {
+            return false;
+        }
+
+        const Math::Vector3 forward(camera.ForwardX, camera.ForwardY, camera.ForwardZ);
+        const float forwardLength = Math::VectorUtils::Length(forward);
+        if (!std::isfinite(forwardLength) || forwardLength <= PLANE_NORMAL_EPSILON)
+        {
+            return false;
+        }
+
+        const Math::Vector3 normal = Math::VectorUtils::Normalize(forward);
+        if (!IsFiniteVector(normal))
+        {
+            return false;
+        }
+
+        const float denom = Math::VectorUtils::Dot(normal, edgeRay.Direction);
+        if (!std::isfinite(denom) || std::fabs(denom) <= PLANE_NORMAL_EPSILON)
+        {
+            return false;
+        }
+
+        const float t = Math::VectorUtils::Dot(normal, center - edgeRay.Origin) / denom;
+        if (!std::isfinite(t) || t <= 0.0f)
+        {
+            return false;
+        }
+
+        const Math::Vector3 edgePoint = edgeRay.Origin + edgeRay.Direction * t;
+        if (!IsFiniteVector(edgePoint))
+        {
+            return false;
+        }
+
+        const float radius = Math::VectorUtils::Length(edgePoint - center);
+        if (!std::isfinite(radius) || radius <= RADIUS_EPSILON)
+        {
+            return false;
+        }
+
+        outSphere.Center = center;
+        outSphere.Radius = radius;
         return true;
     }
 

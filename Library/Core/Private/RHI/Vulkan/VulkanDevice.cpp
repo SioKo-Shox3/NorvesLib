@@ -13,6 +13,7 @@
 #include "VulkanSwapChain.h"
 #include "VulkanGPUResourceAllocator.h"
 #include "Logging/LogMacros.h"
+#include "Math/MatrixUtils.h"
 #include <iostream>
 #include <algorithm>
 #include "Container/Containers.h"
@@ -870,12 +871,8 @@ namespace NorvesLib::RHI::Vulkan
     {
         // Vulkanクリップ空間補正行列を構築
         // 右手系座標のZ軸反転（視線方向が-Zのため）+ オプションのY軸反転
-        Math::Matrix4x4 correction = Math::Matrix4x4::Identity;
-        correction.m22 = -1.0f; // Z反転（右手系→Vulkan深度[0,1]）
-        if (bApplyYFlip)
-        {
-            correction.m11 = -1.0f; // Y反転（Vulkan NDCのY方向）
-        }
+        const Math::Matrix4x4 correction =
+            Math::MatrixUtils::CreateScale(Math::Vector3(1.0f, bApplyYFlip ? -1.0f : 1.0f, -1.0f));
         return projection * correction;
     }
 

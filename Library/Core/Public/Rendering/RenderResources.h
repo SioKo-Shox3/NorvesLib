@@ -27,6 +27,8 @@ namespace NorvesLib::RHI
 
 namespace NorvesLib::Core::Rendering
 {
+    struct SubMesh;
+
     class GpuResources
     {
     public:
@@ -145,7 +147,17 @@ namespace NorvesLib::Core::Rendering
                       size_t vertexSize,
                       const uint32_t *indices,
                       uint32_t indexCount);
+        bool Register(MeshDataHandle handle,
+                      const void *vertices,
+                      size_t vertexSize,
+                      const uint32_t *indices,
+                      uint32_t indexCount,
+                      const SubMesh* subMeshes,
+                      uint32_t subMeshCount);
         const MeshGPUData *GetGPUData(MeshDataHandle handle) const;
+        bool TryGetSubMeshRanges(MeshDataHandle handle,
+                                 Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS>& out,
+                                 uint32_t& outCount) const;
         void Unregister(MeshDataHandle handle);
 
     private:
