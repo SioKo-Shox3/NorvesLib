@@ -285,6 +285,59 @@ namespace
 
         world.Finalize();
     }
+
+    // Entity の Name（Container::String）プロパティがリフレクション経由で end-to-end に
+    // 機能することを確認する。Container::String を PROPERTY にするのは Entity では前例が
+    // ないため、この確認テストは「String 用テンプレート（登録/シリアライズ/デシリアライズ）が
+    // 実際にインスタンス化・登録される」ことの load-bearing な証拠になる。
+    void TestEntityNamePropertyRoundTrip()
+    {
+        static constexpr const char* kTestName = "Player \"One\"\n<tab>\t";
+
+        World world;
+        world.Initialize();
+
+        Entity* source = world.SpawnEntity<Entity>();
+        assert(source != nullptr);
+        // PROPERTY マクロは setName() ではなく getName()（PropertyRef を返す）を生成するので、
+        // その operator= が値設定の「setter」になる。
+        source->getName() = Container::String(kTestName);
+
+        // 投影して Name が String 型・期待値で入っていることを確認する。
+        StableObjectRef sourceRef;
+        sourceRef.Path = "Source";
+        ObjectSnapshot snapshot = RuntimeSchemaProjector::BuildObjectSnapshot(*source, sourceRef);
+        AssertProjectedType(snapshot, Entity::StaticClass(), "Name", "String");
+        AssertProjectedValue(snapshot, Entity::StaticClass(), "Name", kTestName);
+
+        const ProjectedPropertyValue* projected =
+            FindProjectedValue(snapshot, MakePropertyId(Entity::StaticClass(), "Name"));
+        assert(projected != nullptr);
+
+        // String 型の StableId が実行時型レジストリに登録されていること
+        // （＝String 用テンプレートが実際にインスタンス化・登録されたこと）を直接確認する。
+        assert(projected->Type == MakeTypeStableId("String"));
+        assert(TypeRegistry::Get().FindStable(projected->Type) != nullptr);
+
+        // 投影値を新規 Entity へ適用して往復させる。objectSetProperty と同じ実行時適用経路
+        // （PropertyValue::DeserializeStable → ClassProperty::ApplyValue）を使う。
+        Entity* fresh = world.SpawnEntity<Entity>();
+        assert(fresh != nullptr);
+        assert(Container::String(fresh->getName()).empty());
+
+        PropertyValue value;
+        assert(value.DeserializeStable(projected->Type, projected->SerializedValue));
+
+        const IClass* cls = fresh->GetClass();
+        assert(cls != nullptr);
+        const ClassProperty* nameProperty = cls->GetProperty(Identity("Name"));
+        assert(nameProperty != nullptr);
+        assert(nameProperty->ApplyValue(static_cast<NorvesLib::Core::IUnknown*>(fresh), value));
+
+        assert(Container::String(fresh->getName()) == kTestName);
+
+        world.Finalize();
+    }
 }
 
 int main()
@@ -293,6 +346,7 @@ int main()
 
     TestEntitySubtreeSnapshot();
     TestBoardComponentSnapshotIncludesVisualProperties();
+    TestEntityNamePropertyRoundTrip();
 
     std::cout << "EntitySubtreeSnapshotTest passed\n";
     return 0;
