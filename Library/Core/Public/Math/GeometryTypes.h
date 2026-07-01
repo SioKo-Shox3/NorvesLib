@@ -177,6 +177,9 @@ struct AABB
     }
 };
 
+/**
+ * @brief Oriented bounding box. Axes are expected to be a unit-length orthonormal basis.
+ */
 struct OBB
 {
     Vector3 Center;
@@ -201,6 +204,32 @@ struct OBB
         : Center(center)
         , HalfExtents(halfExtents)
         , Axes{axisX, axisY, axisZ}
+    {
+    }
+};
+
+/**
+ * @brief Capsule swept along segment PointA-PointB with Radius.
+ *
+ * Degenerates to a sphere when PointA == PointB.
+ */
+struct Capsule
+{
+    Vector3 PointA;
+    Vector3 PointB;
+    float Radius;
+
+    Capsule()
+        : PointA()
+        , PointB()
+        , Radius(0.0f)
+    {
+    }
+
+    Capsule(const Vector3& pointA, const Vector3& pointB, float radius)
+        : PointA(pointA)
+        , PointB(pointB)
+        , Radius(radius)
     {
     }
 };
