@@ -713,11 +713,12 @@ namespace Game::Bridge
         /**
          * @brief Entity を sceneNode JSON へ再帰でノード化して out へ追記する
          *
-         * 出力: { "id":"<ObjectId>", "kind":"<クラス名>", "children":[ <子ノード>... ] }。
-         * name は付けない（Entity に表示名アクセサが無いため任意フィールドは省略）。id は ObjectId
-         * の 10 進文字列、kind はクラス名（空なら "Entity" にフォールバックして空文字を出さない）。
-         * 子が無い/深さ上限到達時は children を省略（葉ノード）。Entity ポインタや生ポインタは
-         * 一切 JSON へ入れず、ObjectId 値とクラス名文字列のコピーだけを綴る（live memory 非転送）。
+         * 出力: { "id":"<ObjectId>", "name":"<表示名>", "kind":"<クラス名>", "children":[ <子ノード>... ] }。
+         * name は Entity の Name プロパティが非空のときだけ出す（空なら省略し、エディタは id へ
+         * フォールバックする＝sceneNode.name は任意フィールド）。id は ObjectId の 10 進文字列、kind は
+         * クラス名（空なら "Entity" にフォールバックして空文字を出さない）。子が無い/深さ上限到達時は
+         * children を省略（葉ノード）。Entity ポインタや生ポインタは一切 JSON へ入れず、ObjectId 値・
+         * 表示名文字列・クラス名文字列のコピーだけを綴る（live memory 非転送）。
          *
          * @param out 追記先
          * @param entity ノード化する Entity
@@ -727,7 +728,20 @@ namespace Game::Bridge
         {
             out += R"({"id":")";
             out += std::to_string(static_cast<unsigned long long>(entity.GetObjectId()));
-            out += R"(","kind":")";
+            out += '"';
+
+            // 表示名（Name プロパティ）。非空のときだけ "name" を出す（空なら省略＝任意フィールド）。
+            // PROPERTY マクロ生成の const アクセサ getName() は ConstPropertyRef を返すので、
+            // operator* で const Container::String& を借用して ViewOf で読む。
+            const std::string_view name = ViewOf(*entity.getName());
+            if (!name.empty())
+            {
+                out += R"(,"name":")";
+                AppendJsonString(out, name);
+                out += '"';
+            }
+
+            out += R"(,"kind":")";
 
             // クラス名。空なら "Entity" にフォールバック（kind は minLength:1）。
             std::string_view kind = "Entity";
