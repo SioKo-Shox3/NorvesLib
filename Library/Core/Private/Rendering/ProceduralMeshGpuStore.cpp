@@ -1,9 +1,11 @@
 #include "Rendering/ProceduralMeshGpuStore.h"
 
+#include "Rendering/MeshTypes.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -21,7 +23,23 @@ namespace NorvesLib::Core::Rendering
                                               const uint32_t *indices,
                                               uint32_t indexCount)
     {
-        if (!m_Device || !handle.IsValid() || !vertices || !indices || indexCount == 0)
+        return RegisterMesh(handle, vertices, vertexSize, indices, indexCount, nullptr, 0);
+    }
+
+    bool ProceduralMeshGpuStore::RegisterMesh(MeshDataHandle handle,
+                                              const void *vertices,
+                                              size_t vertexSize,
+                                              const uint32_t *indices,
+                                              uint32_t indexCount,
+                                              const SubMesh* subMeshes,
+                                              uint32_t subMeshCount)
+    {
+        if (!m_Device ||
+            !handle.IsValid() ||
+            !vertices ||
+            !indices ||
+            indexCount == 0 ||
+            (subMeshCount > 0 && subMeshes == nullptr))
         {
             return false;
         }
@@ -62,6 +80,14 @@ namespace NorvesLib::Core::Rendering
         gpuData.VertexBuffer = vertexBuffer;
         gpuData.IndexBuffer = indexBuffer;
         gpuData.IndexCount = indexCount;
+        gpuData.SubMeshCount = std::min(subMeshCount, MAX_MATERIAL_SLOTS);
+        for (uint32_t i = 0; i < gpuData.SubMeshCount; ++i)
+        {
+            gpuData.SubMeshes[i].IndexStart = subMeshes[i].IndexStart;
+            gpuData.SubMeshes[i].IndexCount = subMeshes[i].IndexCount;
+            gpuData.SubMeshes[i].VertexStart = subMeshes[i].VertexStart;
+            gpuData.SubMeshes[i].MaterialIndex = subMeshes[i].MaterialIndex;
+        }
 
         {
             Thread::ScopedLock lock(m_Mutex);
@@ -81,6 +107,34 @@ namespace NorvesLib::Core::Rendering
             return &it->second;
         }
         return nullptr;
+    }
+
+    bool ProceduralMeshGpuStore::TryGetSubMeshRanges(
+        MeshDataHandle handle,
+        Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS>& out,
+        uint32_t& outCount) const
+    {
+        outCount = 0;
+        if (!handle.IsValid())
+        {
+            return false;
+        }
+
+        Thread::ScopedLock lock(m_Mutex);
+        auto it = m_Meshes.find(handle.Id);
+        if (it == m_Meshes.end())
+        {
+            return false;
+        }
+
+        const ProceduralMeshGPUData& gpuData = it->second;
+        outCount = gpuData.SubMeshCount;
+        for (uint32_t i = 0; i < outCount; ++i)
+        {
+            out[i] = gpuData.SubMeshes[i];
+        }
+
+        return true;
     }
 
     void ProceduralMeshGpuStore::UnregisterMesh(MeshDataHandle handle)

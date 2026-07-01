@@ -474,6 +474,17 @@ namespace NorvesLib::Core::Rendering
                                  const uint32_t *indices,
                                  uint32_t indexCount)
     {
+        return Register(handle, vertices, vertexSize, indices, indexCount, nullptr, 0);
+    }
+
+    bool MeshResources::Register(MeshDataHandle handle,
+                                 const void *vertices,
+                                 size_t vertexSize,
+                                 const uint32_t *indices,
+                                 uint32_t indexCount,
+                                 const SubMesh* subMeshes,
+                                 uint32_t subMeshCount)
+    {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         if (!impl ||
             !impl->bInitialized ||
@@ -482,12 +493,19 @@ namespace NorvesLib::Core::Rendering
             !handle.IsValid() ||
             !vertices ||
             !indices ||
-            indexCount == 0)
+            indexCount == 0 ||
+            (subMeshCount > 0 && subMeshes == nullptr))
         {
             return false;
         }
 
-        return impl->ProceduralMeshes->RegisterMesh(handle, vertices, vertexSize, indices, indexCount);
+        return impl->ProceduralMeshes->RegisterMesh(handle,
+                                                   vertices,
+                                                   vertexSize,
+                                                   indices,
+                                                   indexCount,
+                                                   subMeshes,
+                                                   subMeshCount);
     }
 
     const MeshResources::MeshGPUData *MeshResources::GetGPUData(MeshDataHandle handle) const
@@ -496,6 +514,18 @@ namespace NorvesLib::Core::Rendering
         return impl && impl->ProceduralMeshes
                    ? impl->ProceduralMeshes->GetMeshGPUData(handle)
                    : nullptr;
+    }
+
+    bool MeshResources::TryGetSubMeshRanges(
+        MeshDataHandle handle,
+        Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS>& out,
+        uint32_t& outCount) const
+    {
+        outCount = 0;
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->ProceduralMeshes
+                   ? impl->ProceduralMeshes->TryGetSubMeshRanges(handle, out, outCount)
+                   : false;
     }
 
     void MeshResources::Unregister(MeshDataHandle handle)

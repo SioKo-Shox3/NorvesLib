@@ -345,6 +345,9 @@ namespace NorvesLib::Core::Rendering
         MeshDataHandle MeshHandle;     // メッシュハンドル
         MaterialHandle MaterialHandle; // マテリアルハンドル
         uint32_t SubMeshIndex = 0;     // サブメッシュインデックス
+        uint32_t IndexOffset = 0;      // インデックスオフセット
+        uint32_t IndexCount = 0;       // インデックス数
+        uint32_t VertexOffset = 0;     // 頂点オフセット
         BlendMode MaterialBlendMode = BlendMode::Opaque;
         float SortDepth = 0.0f;
         bool bCastShadow = true;       // シャドウを落とすか

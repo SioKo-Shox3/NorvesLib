@@ -14,10 +14,6 @@
 namespace NorvesLib::Core::Rendering
 {
 
-    /**
-     * @brief 最大マテリアルスロット数
-     */
-    constexpr uint32_t MAX_MATERIAL_SLOTS = 8;
 
     // ========================================
     // MeshProxy
@@ -48,6 +44,9 @@ namespace NorvesLib::Core::Rendering
 
         MeshDataHandle MeshHandle; // メッシュデータへのハンドル
         uint8_t LODLevel = 0;      // 現在のLODレベル
+
+        Container::FixedArray<SubMeshRange, MAX_MATERIAL_SLOTS> SubMeshes;
+        uint32_t SubMeshCount = 0;
 
         // ========================================
         // トランスフォーム
