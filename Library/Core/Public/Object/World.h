@@ -12,6 +12,7 @@ namespace NorvesLib::Core::Rendering
 {
     class IBoardProxySink;
     class MaterialResources;
+    class MeshResources;
     class SceneView;
 }
 
@@ -223,7 +224,8 @@ namespace NorvesLib::Core
         /**
          * @brief MeshComponent/LightComponentからSceneViewへProxy同期
          */
-        void SyncToSceneView(const Rendering::MaterialResources *materials = nullptr);
+        void SyncToSceneView(const Rendering::MaterialResources* materials = nullptr,
+                             const Rendering::MeshResources* meshes = nullptr);
 
         /**
          * @brief Entity階層のワールドトランスフォームを更新
@@ -236,6 +238,7 @@ namespace NorvesLib::Core
         void TickEntityRecursive(Entity& entity, float deltaTime);
         void SyncEntityRecursive(Entity& entity,
                                  const Rendering::MaterialResources* materials,
+                                 const Rendering::MeshResources* meshes,
                                  Container::UnorderedSet<uint64_t>& liveMeshComponentIds,
                                  Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
                                  Container::UnorderedSet<uint64_t>& liveLightIds,

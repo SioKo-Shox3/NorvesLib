@@ -185,7 +185,8 @@ namespace NorvesLib::Core::Component
     // ========================================
 
     bool MeshComponent::BuildMeshProxy(Rendering::MeshProxy &outProxy,
-                                       const Rendering::MaterialResources *materials) const
+                                       const Rendering::MaterialResources* materials,
+                                       const Rendering::MeshResources* meshes) const
     {
         // メッシュが無効なら生成しない
         if (!MeshHandle->IsValid())
@@ -230,6 +231,11 @@ namespace NorvesLib::Core::Component
             outProxy.MaterialCount = 1;
             outProxy.Materials[0] = Rendering::MaterialHandle::Invalid();
             outProxy.MaterialBlendModes[0] = Rendering::BlendMode::Opaque;
+        }
+
+        if (meshes != nullptr)
+        {
+            meshes->TryGetSubMeshRanges(outProxy.MeshHandle, outProxy.SubMeshes, outProxy.SubMeshCount);
         }
 
         // 描画フラグ

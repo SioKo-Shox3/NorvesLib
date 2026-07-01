@@ -130,16 +130,65 @@ namespace NorvesLib::Core::Rendering
 
         m_Stats.TotalProxies++;
 
-        // 各マテリアルスロットごとにバッチを作成
-        const uint32_t materialCount = std::min(proxy.MaterialCount, MAX_MATERIAL_SLOTS);
-        for (uint32_t i = 0; i < materialCount; ++i)
+        if (proxy.SubMeshCount == 0)
         {
+            // 各マテリアルスロットごとにバッチを作成
+            const uint32_t materialCount = std::min(proxy.MaterialCount, MAX_MATERIAL_SLOTS);
+            for (uint32_t i = 0; i < materialCount; ++i)
+            {
+                // バッチキーを計算
+                MeshBatch tempBatch;
+                tempBatch.MeshHandle = proxy.MeshHandle;
+                tempBatch.MaterialHandle = proxy.Materials[i];
+                tempBatch.SubMeshIndex = i;
+                tempBatch.IndexOffset = 0;
+                tempBatch.IndexCount = 0;
+                tempBatch.VertexOffset = 0;
+                tempBatch.MaterialBlendMode = proxy.MaterialBlendModes[i];
+                tempBatch.SortDepth = proxy.SortDepth;
+                tempBatch.bCastShadow = proxy.bCastShadow;
+
+                uint64_t key = tempBatch.GetBatchKey();
+
+                // バッチを検索または作成
+                MeshBatch &batch = FindOrCreateBatch(key);
+                batch.MeshHandle = proxy.MeshHandle;
+                batch.MaterialHandle = proxy.Materials[i];
+                batch.SubMeshIndex = i;
+                batch.IndexOffset = 0;
+                batch.IndexCount = 0;
+                batch.VertexOffset = 0;
+                batch.MaterialBlendMode = proxy.MaterialBlendModes[i];
+                batch.bCastShadow = proxy.bCastShadow;
+
+                // インスタンスを追加（カスタムデータとシャドウフラグも含む）
+                batch.AddInstance(proxy.WorldTransform,
+                                  proxy.ObjectId,
+                                  proxy.CustomData,
+                                  proxy.bCastShadow,
+                                  proxy.SortDepth);
+            }
+            return;
+        }
+
+        const uint32_t subMeshCount = std::min(proxy.SubMeshCount, MAX_MATERIAL_SLOTS);
+        for (uint32_t i = 0; i < subMeshCount; ++i)
+        {
+            const SubMeshRange& subMesh = proxy.SubMeshes[i];
+            const uint32_t materialIndex = (subMesh.MaterialIndex < proxy.MaterialCount &&
+                                            subMesh.MaterialIndex < MAX_MATERIAL_SLOTS)
+                                               ? subMesh.MaterialIndex
+                                               : 0u;
+
             // バッチキーを計算
             MeshBatch tempBatch;
             tempBatch.MeshHandle = proxy.MeshHandle;
-            tempBatch.MaterialHandle = proxy.Materials[i];
+            tempBatch.MaterialHandle = proxy.Materials[materialIndex];
             tempBatch.SubMeshIndex = i;
-            tempBatch.MaterialBlendMode = proxy.MaterialBlendModes[i];
+            tempBatch.IndexOffset = subMesh.IndexStart;
+            tempBatch.IndexCount = subMesh.IndexCount;
+            tempBatch.VertexOffset = subMesh.VertexStart;
+            tempBatch.MaterialBlendMode = proxy.MaterialBlendModes[materialIndex];
             tempBatch.SortDepth = proxy.SortDepth;
             tempBatch.bCastShadow = proxy.bCastShadow;
 
@@ -148,9 +197,12 @@ namespace NorvesLib::Core::Rendering
             // バッチを検索または作成
             MeshBatch &batch = FindOrCreateBatch(key);
             batch.MeshHandle = proxy.MeshHandle;
-            batch.MaterialHandle = proxy.Materials[i];
+            batch.MaterialHandle = proxy.Materials[materialIndex];
             batch.SubMeshIndex = i;
-            batch.MaterialBlendMode = proxy.MaterialBlendModes[i];
+            batch.IndexOffset = subMesh.IndexStart;
+            batch.IndexCount = subMesh.IndexCount;
+            batch.VertexOffset = subMesh.VertexStart;
+            batch.MaterialBlendMode = proxy.MaterialBlendModes[materialIndex];
             batch.bCastShadow = proxy.bCastShadow;
 
             // インスタンスを追加（カスタムデータとシャドウフラグも含む）
@@ -189,6 +241,9 @@ namespace NorvesLib::Core::Rendering
                 cmd.Draw.MeshHandle = batch.MeshHandle;
                 cmd.Draw.MaterialHandle = batch.MaterialHandle;
                 cmd.Draw.SubMeshIndex = batch.SubMeshIndex;
+                cmd.Draw.IndexOffset = batch.IndexOffset;
+                cmd.Draw.IndexCount = batch.IndexCount;
+                cmd.Draw.VertexOffset = batch.VertexOffset;
                 cmd.Draw.MaterialBlendMode = batch.MaterialBlendMode;
                 cmd.Draw.SortDepth = batch.SortDepth;
                 cmd.Draw.ObjectId = batch.InstanceObjectIds.empty() ? 0 : batch.InstanceObjectIds[0];
@@ -244,6 +299,9 @@ namespace NorvesLib::Core::Rendering
                 cmd.Draw.MeshHandle = batch.MeshHandle;
                 cmd.Draw.MaterialHandle = batch.MaterialHandle;
                 cmd.Draw.SubMeshIndex = batch.SubMeshIndex;
+                cmd.Draw.IndexOffset = batch.IndexOffset;
+                cmd.Draw.IndexCount = batch.IndexCount;
+                cmd.Draw.VertexOffset = batch.VertexOffset;
                 cmd.Draw.MaterialBlendMode = batch.MaterialBlendMode;
                 cmd.Draw.bInstanced = false;
                 cmd.Draw.InstanceCount = 1;
