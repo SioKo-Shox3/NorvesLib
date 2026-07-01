@@ -10,6 +10,17 @@ set_target_properties(FramePacketManagerTest PROPERTIES FOLDER "Test/Core/Render
 include(CTest)
 add_test(NAME FramePacketManagerTest COMMAND FramePacketManagerTest)
 
+add_executable(RenderingCoordinatorStatsPropagationTest
+    RenderingCoordinatorStatsPropagationTest.cpp
+)
+target_link_libraries(RenderingCoordinatorStatsPropagationTest PRIVATE Core)
+target_include_directories(RenderingCoordinatorStatsPropagationTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(RenderingCoordinatorStatsPropagationTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorStatsPropagationTest)
+
 add_executable(MeshBatcherTest
     MeshBatcherTest.cpp
 )

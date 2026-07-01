@@ -18,8 +18,8 @@
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Math/MatrixUtils.h"
+#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
-#include <chrono>
 #include <cmath>
 
 namespace NorvesLib::Core::Rendering
@@ -677,7 +677,7 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::CullProxies(Viewport *viewport)
     {
-        auto startTime = std::chrono::high_resolution_clock::now();
+        NORVES_STAT_TIME_START(cullingViewport);
 
         m_VisibleMeshProxies.clear();
         m_VisibleBoardProxies.clear();
@@ -760,14 +760,12 @@ namespace NorvesLib::Core::Rendering
         m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
 
-        auto endTime = std::chrono::high_resolution_clock::now();
-        m_Stats.CullingTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+        NORVES_STAT_TIME_END(cullingViewport, m_Stats.CullingTimeMs);
     }
 
     void SceneView::CullProxies(const ViewportSnapshot &viewport)
     {
-        auto startTime = std::chrono::high_resolution_clock::now();
-
+        NORVES_STAT_TIME_START(cullingSnapshot);
         m_VisibleMeshProxies.clear();
         m_VisibleBoardProxies.clear();
 
@@ -775,8 +773,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_Stats.VisibleProxies = 0;
             m_Stats.CulledProxies = m_Stats.CollectedProxies;
-            auto endTime = std::chrono::high_resolution_clock::now();
-            m_Stats.CullingTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+            NORVES_STAT_TIME_END(cullingSnapshot, m_Stats.CullingTimeMs);
             return;
         }
 
@@ -870,14 +867,12 @@ namespace NorvesLib::Core::Rendering
         m_Stats.VisibleProxies = static_cast<uint32_t>(m_VisibleMeshProxies.size() + m_VisibleBoardProxies.size());
         m_Stats.CulledProxies = m_Stats.CollectedProxies - m_Stats.VisibleProxies;
 
-        auto endTime = std::chrono::high_resolution_clock::now();
-        m_Stats.CullingTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+        NORVES_STAT_TIME_END(cullingSnapshot, m_Stats.CullingTimeMs);
     }
 
     void SceneView::BatchProxies()
     {
-        auto startTime = std::chrono::high_resolution_clock::now();
-
+        NORVES_STAT_TIME_START(batching);
         m_Batcher.BeginBatching();
 
         for (MeshProxy *proxy : m_VisibleMeshProxies)
@@ -892,8 +887,7 @@ namespace NorvesLib::Core::Rendering
 
         m_Stats.BatchCount = m_Batcher.GetStats().TotalBatches;
 
-        auto endTime = std::chrono::high_resolution_clock::now();
-        m_Stats.BatchingTimeMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+        NORVES_STAT_TIME_END(batching, m_Stats.BatchingTimeMs);
     }
 
     void SceneView::AppendWorldBoardDrawCommands()
@@ -958,6 +952,7 @@ namespace NorvesLib::Core::Rendering
 
         m_Stats.DrawCommandCount = static_cast<uint32_t>(m_DrawCommands.size());
         m_Stats.InstancedDrawCalls = m_Batcher.GetStats().InstancedDrawCalls;
+        m_Stats.SavedDrawCalls = m_Batcher.GetStats().SavedDrawCalls;
     }
 
     void SceneView::RenderCommands(Viewport *viewport)

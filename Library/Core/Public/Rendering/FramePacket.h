@@ -32,6 +32,19 @@ namespace NorvesLib::Core::Rendering
     // ========================================
 
     /**
+     * @brief フレーム統計スナップショット
+     */
+    struct FrameStatsSnapshot
+    {
+        uint32_t VisibleObjects = 0;
+        uint32_t BatchCount = 0;
+        uint32_t InstancedDrawCalls = 0;
+        uint32_t SavedDrawCalls = 0;
+        float CullingTimeMs = 0.0f;
+        float BatchingTimeMs = 0.0f;
+    };
+
+    /**
      * @brief フレームパケット
      *
      * 1フレーム分の描画データを格納する構造体。
@@ -76,6 +89,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief デバッグライン頂点スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
         Container::VariableArray<DebugLineVertex> DebugLineVertices;
+
+        /** @brief 描画統計スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
+        FrameStatsSnapshot Stats;
 
         // ========================================
         // View/Viewport render plan（新描画フロー用）
@@ -123,6 +139,7 @@ namespace NorvesLib::Core::Rendering
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             DebugLineVertices.clear();
+            Stats = FrameStatsSnapshot{};
             Views.clear();
             OverlayPasses.clear();
         }
