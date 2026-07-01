@@ -330,6 +330,9 @@ namespace NorvesLib::Core
         PROPERTY(bool, bActive)         // アクティブ状態
         PROPERTY(bool, bPendingDestroy) // 破棄予約フラグ
 
+        // 表示名（エディタでのリネーム用。空文字は未設定を表す）
+        PROPERTY(Container::String, Name)
+
         // トランスフォーム
         PROPERTY(Math::Vector3, Position)    // ローカル位置
         PROPERTY(Math::Quaternion, Rotation) // ローカル回転（クォータニオン）
