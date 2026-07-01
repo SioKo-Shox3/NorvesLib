@@ -181,6 +181,33 @@ namespace Game::Bridge
         }
 
         /**
+         * @brief scene.treeChanged の params を組んで host から emit する
+         *
+         * params リテラル {"fullRefreshRequired":true} を組んで emit する。scene のツリー構造を
+         * 変更した直後、ack 返却の前に呼ぶ。params は EmitRuntimeStateChanged と同様 JsonValue::parse
+         * で作る（リテラルなので妥当）。値コピーのみを綴り、Entity ポインタや生ポインタは JsonValue へ
+         * 一切入れない（live memory 非転送）。
+         *
+         * @param host イベント発火先の host（借用、nullptr なら何もしない）
+         * @note host が nullptr のときは何もしない。
+         */
+        void EmitSceneTreeChanged(Game::Bridge::BridgeServerHost* host)
+        {
+            if (host == nullptr)
+            {
+                return;
+            }
+
+            auto parsed = JsonValue::parse(R"({"fullRefreshRequired":true})");
+            if (parsed.is_err())
+            {
+                // 到達しないはず（リテラルは常に妥当）。発火を諦める（無言）。
+                return;
+            }
+            host->EmitEvent("scene.treeChanged", std::move(parsed).value());
+        }
+
+        /**
          * @brief JSON 文字列リテラルとして安全な形へエスケープして out へ追記する
          *
          * 動的文字列（型名 / プロパティ名）を JSON の文字列値へ綴る際に使う。前後の
@@ -1327,12 +1354,14 @@ namespace Game::Bridge
     AdapterResult
     NorvesLibBridgeAdapter::getCapabilities(const JsonValue& /*params*/)
     {
-        // runtime.control / log.stream / viewport.focus / scene.query / object.query / object.edit /
-        // asset.read を
+        // runtime.control / log.stream / viewport.focus / scene.query / scene.edit / scene.liveUpdate /
+        // object.query / object.edit / asset.read を
         // 広告する。scene.query は scene.getTree と schema.getSnapshot を束ねる token（両者とも実装済み）。
+        // scene.edit は scene.createObject / scene.deleteObject / scene.reparentObject 用（実装済み）。
+        // scene.liveUpdate は scene.treeChanged イベントを発火するようになったため広告する（実装済み）。
         // object.query は object.getSnapshot 用（実装済み）。object.edit は object.setProperty 用
         // （実装済み）。asset.read は asset.resolve / asset.getManifest 用（実装済み＝NorvesLib アダプタが
-        // texture asset root/manifest から override 解決する）。viewport.thumbnail と scene.liveUpdate は
+        // texture asset root/manifest から override 解決する）。viewport.thumbnail は
         // 本実装範囲外のため広告しない。
         // 実エンジンの capability 検証は superset（部分集合包含）方針なので、実装済み token のみ
         // 広告すればよい（mock の 8 token fixture には合わせない）。
@@ -1342,6 +1371,8 @@ namespace Game::Bridge
             R"({"name":"log.stream"},)"
             R"({"name":"viewport.focus"},)"
             R"({"name":"scene.query"},)"
+            R"({"name":"scene.edit"},)"
+            R"({"name":"scene.liveUpdate"},)"
             R"({"name":"object.query"},)"
             R"({"name":"object.edit"},)"
             R"({"name":"asset.read"}]})");
@@ -1899,6 +1930,243 @@ namespace Game::Bridge
         }
         out += '}';
         return OkLiteral(out);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::sceneCreateObject(const JsonValue& params)
+    {
+        // 生成失敗・親逆引き不可・GEngine null 等はすべて graceful に {"accepted":false} を返す
+        // （エラー Result ではなく成功 Result に accepted:false を載せる＝result schema の必須形）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        // params を dump して parentId を読む（SDK の JsonValue に構造的読み取り API が無いため
+        // 最小スキャナ。objectSetProperty と同手法）。parentId は任意（無ければルート生成）。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> parentIdField =
+            extract_string_field(paramsText, "parentId");
+
+        // GEngine 未生成なら reject（World を得られない）。
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+
+        // 親 Entity を決める。parentId が指定されていれば必ず逆引きできること（できなければ reject）。
+        NorvesLib::Core::Entity* parent = nullptr;
+        if (parentIdField.has_value())
+        {
+            const std::string& parentId = parentIdField.value();
+            if (parentId.empty())
+            {
+                return OkLiteral(kRejected);
+            }
+
+            // parentId 文字列 -> uint64_t（全桁数字を要求。objectSetProperty と同手法）。
+            uint64_t parsedParentId = 0;
+            bool bParsed = false;
+            {
+                errno = 0;
+                char* end = nullptr;
+                const unsigned long long v = std::strtoull(parentId.c_str(), &end, 10);
+                if (end != nullptr && *end == '\0' && end != parentId.c_str() && errno == 0)
+                {
+                    parsedParentId = static_cast<uint64_t>(v);
+                    bParsed = true;
+                }
+            }
+            if (!bParsed)
+            {
+                return OkLiteral(kRejected);
+            }
+
+            parent = FindEntityByObjectId(world, parsedParentId);
+            if (parent == nullptr)
+            {
+                return OkLiteral(kRejected);  // 指定親が見つからない。
+            }
+        }
+
+        // kind is ignored: no public dynamic-type+parent spawn API (AttachChildEntity is private);
+        // MVP always spawns a base Entity.
+        NorvesLib::Core::Entity* created = world.SpawnEntity<NorvesLib::Core::Entity>(parent);
+        if (created == nullptr)
+        {
+            return OkLiteral(kRejected);  // World 未初期化含む生成失敗。
+        }
+
+        // ツリー構造が変わったので scene.treeChanged を発火する（ack 返却の前）。
+        EmitSceneTreeChanged(m_Host);
+
+        // newId は ObjectId の 10 進文字列（AppendEntityNode と同じ綴り方）。生ポインタは綴らない。
+        std::string out = R"({"accepted":true,"newId":")";
+        out += std::to_string(static_cast<unsigned long long>(created->GetObjectId()));
+        out += R"("})";
+        return OkLiteral(out);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::sceneDeleteObject(const JsonValue& params)
+    {
+        // 該当なし・GEngine null・除去失敗等はすべて graceful に {"accepted":false} を返す
+        // （エラー Result ではなく成功 Result に accepted:false を載せる＝result schema の必須形）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        // params を dump して objectId を読む（必須）。objectSetProperty と同手法。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> objectIdField =
+            extract_string_field(paramsText, "objectId");
+        if (!objectIdField.has_value())
+        {
+            return OkLiteral(kRejected);  // 必須 params 欠落。
+        }
+        const std::string& objectId = objectIdField.value();
+        if (objectId.empty())
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // objectId 文字列 -> uint64_t（全桁数字を要求。objectSetProperty と同手法）。
+        uint64_t parsedId = 0;
+        bool bParsed = false;
+        {
+            errno = 0;
+            char* end = nullptr;
+            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
+            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
+            {
+                parsedId = static_cast<uint64_t>(v);
+                bParsed = true;
+            }
+        }
+        if (!bParsed)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // World から Entity を逆引き（GEngine null / 該当なしは reject）。
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+        NorvesLib::Core::Entity* entity = FindEntityByObjectId(world, parsedId);
+        if (entity == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // 除去を試みる。その bool を accepted とし、除去できたときだけ scene.treeChanged を発火する。
+        const bool bAccepted = world.RemoveEntity(entity);
+        if (bAccepted)
+        {
+            EmitSceneTreeChanged(m_Host);
+        }
+
+        return OkLiteral(bAccepted ? R"({"accepted":true})" : kRejected);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::sceneReparentObject(const JsonValue& params)
+    {
+        // 該当なし・新親逆引き不可・GEngine null・移動失敗等はすべて graceful に {"accepted":false}
+        // を返す（エラー Result ではなく成功 Result に accepted:false を載せる＝result schema の必須形）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        // params を dump して objectId（必須）/ newParentId（任意）を読む。objectSetProperty と同手法。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> objectIdField =
+            extract_string_field(paramsText, "objectId");
+        if (!objectIdField.has_value())
+        {
+            return OkLiteral(kRejected);  // 必須 params 欠落。
+        }
+        const std::string& objectId = objectIdField.value();
+        if (objectId.empty())
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // objectId 文字列 -> uint64_t（全桁数字を要求。objectSetProperty と同手法）。
+        uint64_t parsedId = 0;
+        bool bParsed = false;
+        {
+            errno = 0;
+            char* end = nullptr;
+            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
+            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
+            {
+                parsedId = static_cast<uint64_t>(v);
+                bParsed = true;
+            }
+        }
+        if (!bParsed)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // World から対象 Entity を逆引き（GEngine null / 該当なしは reject）。
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+        NorvesLib::Core::Entity* entity = FindEntityByObjectId(world, parsedId);
+        if (entity == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // newParentId は任意。無ければ新親 nullptr（ルートへ移動）、あるのに逆引きできなければ reject。
+        NorvesLib::Core::Entity* newParent = nullptr;
+        const std::optional<std::string> newParentIdField =
+            extract_string_field(paramsText, "newParentId");
+        if (newParentIdField.has_value())
+        {
+            const std::string& newParentId = newParentIdField.value();
+            if (newParentId.empty())
+            {
+                return OkLiteral(kRejected);
+            }
+
+            uint64_t parsedParentId = 0;
+            bool bParentParsed = false;
+            {
+                errno = 0;
+                char* end = nullptr;
+                const unsigned long long v = std::strtoull(newParentId.c_str(), &end, 10);
+                if (end != nullptr && *end == '\0' && end != newParentId.c_str() && errno == 0)
+                {
+                    parsedParentId = static_cast<uint64_t>(v);
+                    bParentParsed = true;
+                }
+            }
+            if (!bParentParsed)
+            {
+                return OkLiteral(kRejected);
+            }
+
+            newParent = FindEntityByObjectId(world, parsedParentId);
+            if (newParent == nullptr)
+            {
+                return OkLiteral(kRejected);  // 指定新親が見つからない。
+            }
+        }
+
+        // 移動を試みる。その bool を accepted とし、移動できたときだけ scene.treeChanged を発火する。
+        const bool bAccepted = world.ReparentEntity(entity, newParent);
+        if (bAccepted)
+        {
+            EmitSceneTreeChanged(m_Host);
+        }
+
+        return OkLiteral(bAccepted ? R"({"accepted":true})" : kRejected);
     }
 
 
