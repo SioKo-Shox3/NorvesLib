@@ -585,7 +585,9 @@ namespace NorvesLib::Core::Engine
         }
 
         // ワールドからSceneViewへProxy同期
-        GEngine->GetWorld().SyncToSceneView(&GEngine->GetRenderResources().Materials());
+        GEngine->GetWorld().SyncToSceneView(
+            &GEngine->GetRenderResources().Materials(),
+            &GEngine->GetRenderResources().Meshes());
         // SceneQuery を当フレームの最新 world-AABB で再構築(SyncToSceneView が transform/bounds を確定済み)
         GEngine->GetSceneQuery().Rebuild(GEngine->GetWorld());
 

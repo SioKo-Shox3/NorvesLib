@@ -461,17 +461,22 @@ namespace NorvesLib::Core::Rendering
         commandList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
         commandList->SetIndexBuffer(gpuData->IndexBuffer, 0);
 
+        const bool bHasRange = command.Draw.IndexCount > 0;
+        const uint32_t indexCount = bHasRange ? command.Draw.IndexCount : gpuData->IndexCount;
+        const uint32_t firstIndex = bHasRange ? command.Draw.IndexOffset : 0u;
+        const uint32_t vertexOffset = bHasRange ? command.Draw.VertexOffset : 0u;
+
         // 描画
         commandList->DrawIndexedInstanced(
-            gpuData->IndexCount,
+            indexCount,
             std::max(1u, command.Draw.InstanceCount),
-            0,
-            0,
+            firstIndex,
+            static_cast<int32_t>(vertexOffset),
             command.Draw.FirstInstance);
 
         // 統計更新
         ++m_Stats.DrawCallCount;
-        m_Stats.TriangleCount += gpuData->IndexCount / 3;
+        m_Stats.TriangleCount += indexCount / 3;
 
         return true;
     }

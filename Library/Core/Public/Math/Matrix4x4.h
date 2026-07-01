@@ -156,6 +156,31 @@ namespace NorvesLib::Math
             }
         }
 
+        // 行ベクトル規約(並進=論理行3)のワールド行列から並進成分を取得する。
+        // 前提: 並進が論理行3(RowMajorではm30/m31/m32)に置かれた行列。
+        Vector3 GetTranslationRow() const
+        {
+            const Vector4 row = GetRow(3);
+            return Vector3(row.x, row.y, row.z);
+        }
+
+        // 行ベクトル規約(並進=論理行3)の並進成分を書き込む。
+        void SetTranslationRow(const Vector3& translation)
+        {
+            if constexpr (Layout == MatrixLayout::RowMajor)
+            {
+                m30 = translation.x;
+                m31 = translation.y;
+                m32 = translation.z;
+            }
+            else
+            {
+                m03 = translation.x;
+                m13 = translation.y;
+                m23 = translation.z;
+            }
+        }
+
         // 行列演算 - レイアウトに応じた実装
         template <MatrixLayout OtherLayout>
         Matrix4x4T operator*(const Matrix4x4T<OtherLayout> &other) const

@@ -14,6 +14,14 @@ namespace
         return std::fabs(a - b) <= epsilon;
     }
 
+    void AssertFloatArrayNear(const float* actual, const float* expected, uint32_t count)
+    {
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            assert(NearlyEqual(actual[i], expected[i]));
+        }
+    }
+
     MeshProxy MakeProxy(uint64_t objectId,
                         uint64_t meshId,
                         uint64_t materialId,
@@ -43,12 +51,12 @@ namespace
         for (uint64_t i = 0; i < 5; ++i)
         {
             NorvesLib::Math::Matrix4x4 world;
-            world.m30 = static_cast<float>(i);
+            world.SetTranslationRow(NorvesLib::Math::Vector3(static_cast<float>(i), 0.0f, 0.0f));
             batcher.AddMeshProxy(MakeProxy(i + 1, 100, 200, world));
         }
 
         NorvesLib::Math::Matrix4x4 otherWorld;
-        otherWorld.m30 = 10.0f;
+        otherWorld.SetTranslationRow(NorvesLib::Math::Vector3(10.0f, 0.0f, 0.0f));
         batcher.AddMeshProxy(MakeProxy(6, 101, 200, otherWorld));
         batcher.EndBatching();
         batcher.GenerateDrawCommands(commands, instanceData, false, 2);
@@ -89,24 +97,21 @@ namespace
         assert(cmd.Draw.InstanceDataOffset == 0);
         assert(!cmd.Draw.bInstanced);
 
-        assert(NearlyEqual(cmd.Draw.NormalMatrix.m00, 0.5f));
-        assert(NearlyEqual(cmd.Draw.NormalMatrix.m11, 0.25f));
-        assert(NearlyEqual(cmd.Draw.NormalMatrix.m22, 2.0f));
-        assert(NearlyEqual(cmd.Draw.NormalMatrix.m33, 1.0f));
+        const NorvesLib::Math::Matrix4x4 expectedNormal(
+            0.5f, 0.0f, 0.0f, 0.0f,
+            0.0f, 0.25f, 0.0f, 0.0f,
+            0.0f, 0.0f, 2.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f);
+        assert(NorvesLib::Math::MatrixUtils::ApproxEqual(cmd.Draw.NormalMatrix, expectedNormal, 0.0001f));
 
         const GPUSceneInstanceData &gpuData = instanceData[0];
-        assert(NearlyEqual(gpuData.NormalMatrix[0], 0.5f));
-        assert(NearlyEqual(gpuData.NormalMatrix[1], 0.0f));
-        assert(NearlyEqual(gpuData.NormalMatrix[2], 0.0f));
-        assert(NearlyEqual(gpuData.NormalMatrix[3], 0.0f));
-        assert(NearlyEqual(gpuData.NormalMatrix[4], 0.0f));
-        assert(NearlyEqual(gpuData.NormalMatrix[5], 0.25f));
-        assert(NearlyEqual(gpuData.NormalMatrix[6], 0.0f));
-        assert(NearlyEqual(gpuData.NormalMatrix[7], 0.0f));
-        assert(NearlyEqual(gpuData.NormalMatrix[8], 0.0f));
-        assert(NearlyEqual(gpuData.NormalMatrix[9], 0.0f));
-        assert(NearlyEqual(gpuData.NormalMatrix[10], 2.0f));
-        assert(NearlyEqual(gpuData.NormalMatrix[11], 0.0f));
+        const float expectedNormalData[12] =
+        {
+            0.5f, 0.0f, 0.0f, 0.0f,
+            0.0f, 0.25f, 0.0f, 0.0f,
+            0.0f, 0.0f, 2.0f, 0.0f
+        };
+        AssertFloatArrayNear(gpuData.NormalMatrix, expectedNormalData, 12);
     }
 
     void TestRebaseDrawCommandInstanceRange()

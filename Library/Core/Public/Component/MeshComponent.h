@@ -12,6 +12,7 @@
 namespace NorvesLib::Core::Rendering
 {
     class MaterialResources;
+    class MeshResources;
 }
 
 namespace NorvesLib::Core::Component
@@ -228,7 +229,8 @@ namespace NorvesLib::Core::Component
          * @return 有効なProxyが生成できた場合true
          */
         bool BuildMeshProxy(Rendering::MeshProxy &outProxy,
-                            const Rendering::MaterialResources *materials = nullptr) const;
+                            const Rendering::MaterialResources* materials = nullptr,
+                            const Rendering::MeshResources* meshes = nullptr) const;
 
     protected:
         // ========================================

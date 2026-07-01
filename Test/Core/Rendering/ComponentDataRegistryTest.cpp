@@ -165,17 +165,19 @@ namespace
 
         MeshProxy* sceneProxy = const_cast<MeshProxy*>(FindMeshProxy(view, entity->GetObjectId()));
         assert(sceneProxy);
-        sceneProxy->WorldTransform.m30 = 777.0f;
+        NorvesLib::Math::Vector3 sceneTranslation = sceneProxy->WorldTransform.GetTranslationRow();
+        sceneTranslation.x = 777.0f;
+        sceneProxy->WorldTransform.SetTranslationRow(sceneTranslation);
 
         world.SyncToSceneView();
         const MeshProxy* untouchedProxy = FindMeshProxy(view, entity->GetObjectId());
         assert(untouchedProxy);
-        assert(untouchedProxy->WorldTransform.m30 == 777.0f);
+        assert(untouchedProxy->WorldTransform.GetTranslationRow().x == 777.0f);
 
         EntityHandle handle = GEngine.GetComponentDataRegistry().GetHandle(*entity);
         const MeshComponentData* meshData = FindMeshData(handle);
         assert(meshData);
-        assert(meshData->Proxy.WorldTransform.m30 != 777.0f);
+        assert(meshData->Proxy.WorldTransform.GetTranslationRow().x != 777.0f);
         assert(GEngine.GetComponentDataRegistry().GetTransformData().size() == 1);
 
         world.Finalize();

@@ -112,6 +112,22 @@ namespace NorvesLib::Core::Rendering
      */
     using ModelHandle = ResourceHandle<ModelHandleTag>;
 
+    /**
+     * @brief 最大マテリアルスロット数
+     */
+    constexpr uint32_t MAX_MATERIAL_SLOTS = 8;
+
+    /**
+     * @brief 描画パイプライン内で使う軽量なサブメッシュ範囲
+     */
+    struct SubMeshRange
+    {
+        uint32_t IndexStart = 0;
+        uint32_t IndexCount = 0;
+        uint32_t VertexStart = 0;
+        uint32_t MaterialIndex = 0;
+    };
+
     // ========================================
     // 描画用列挙型
     // ========================================

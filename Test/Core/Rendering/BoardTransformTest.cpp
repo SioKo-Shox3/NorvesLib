@@ -35,6 +35,14 @@ namespace
         AssertNear(actual.y, expected.y);
     }
 
+    void AssertFloatArrayNear(const float* actual, const float* expected, uint32_t count)
+    {
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            AssertNear(actual[i], expected[i]);
+        }
+    }
+
     Math::Vector2 NormalizeOrZero(const Math::Vector2 &vector)
     {
         const float length = std::sqrt(vector.x * vector.x + vector.y * vector.y);
@@ -60,15 +68,18 @@ namespace
         }
 
         const Math::Vector2 local = uv - proxy.Pivot;
-        Math::Vector2 axisX(proxy.WorldTransform.m00, proxy.WorldTransform.m01);
-        Math::Vector2 axisY(proxy.WorldTransform.m10, proxy.WorldTransform.m11);
+        const Math::Vector4 row0 = proxy.WorldTransform.GetRow(0);
+        const Math::Vector4 row1 = proxy.WorldTransform.GetRow(1);
+        Math::Vector2 axisX(row0.x, row0.y);
+        Math::Vector2 axisY(row1.x, row1.y);
         if (proxy.SizePx.x > 0.0f && proxy.SizePx.y > 0.0f)
         {
             axisX = NormalizeOrZero(axisX) * proxy.SizePx.x;
             axisY = NormalizeOrZero(axisY) * proxy.SizePx.y;
         }
 
-        const Math::Vector2 origin(proxy.WorldTransform.m30, proxy.WorldTransform.m31);
+        const Math::Vector3 translation = proxy.WorldTransform.GetTranslationRow();
+        const Math::Vector2 origin(translation.x, translation.y);
         return origin + axisX * local.x + axisY * local.y;
     }
 
@@ -113,10 +124,14 @@ namespace
         assert(proxy.SizePx == Math::Vector2(0.0f, 0.0f));
         assert(proxy.UVRect == Math::Vector4(0.0f, 0.0f, 1.0f, 1.0f));
         assert(proxy.SortKey == BoardProxy::ComputeSortKey(0u, 0u));
-        AssertNear(proxy.WorldTransform.m30, 12.0f);
-        AssertNear(proxy.WorldTransform.m31, 34.0f);
-        AssertNear(proxy.WorldTransform.m00, 80.0f);
-        AssertNear(proxy.WorldTransform.m11, 24.0f);
+        const Math::Vector3 proxyTranslation = proxy.WorldTransform.GetTranslationRow();
+        AssertNear(proxyTranslation.x, 12.0f);
+        AssertNear(proxyTranslation.y, 34.0f);
+        AssertNear(proxyTranslation.z, 0.0f);
+        const Math::Vector4 proxyRow0 = proxy.WorldTransform.GetRow(0);
+        const Math::Vector4 proxyRow1 = proxy.WorldTransform.GetRow(1);
+        AssertNear(proxyRow0.x, 80.0f);
+        AssertNear(proxyRow1.y, 24.0f);
 
         world.Finalize();
         std::cout << "TestDefaultProxyValuesPreserveF4Behavior passed\n";
@@ -239,18 +254,13 @@ namespace
         AssertNear(opaqueInstance.ObjectColor[1], 0.4f);
         AssertNear(opaqueInstance.ObjectColor[2], 0.6f);
         AssertNear(opaqueInstance.ObjectColor[3], 1.0f);
-        AssertNear(opaqueInstance.NormalMatrix[0], 128.0f);
-        AssertNear(opaqueInstance.NormalMatrix[1], 96.0f);
-        AssertNear(opaqueInstance.NormalMatrix[2], 0.5f);
-        AssertNear(opaqueInstance.NormalMatrix[3], 0.25f);
-        AssertNear(opaqueInstance.NormalMatrix[4], 1.0f);
-        AssertNear(opaqueInstance.NormalMatrix[5], 0.0f);
-        AssertNear(opaqueInstance.NormalMatrix[6], 0.0f);
-        AssertNear(opaqueInstance.NormalMatrix[7], 0.0f);
-        AssertNear(opaqueInstance.NormalMatrix[8], 1.0f);
-        AssertNear(opaqueInstance.NormalMatrix[9], 1.0f);
-        AssertNear(opaqueInstance.NormalMatrix[10], 0.0f);
-        AssertNear(opaqueInstance.NormalMatrix[11], 0.0f);
+        const float expectedOpaqueBoardData[12] =
+        {
+            128.0f, 96.0f, 0.5f, 0.25f,
+            1.0f, 0.0f, 0.0f, 0.0f,
+            1.0f, 1.0f, 0.0f, 0.0f
+        };
+        AssertFloatArrayNear(opaqueInstance.NormalMatrix, expectedOpaqueBoardData, 12);
         AssertNear(opaqueInstance.CustomData[0], 640.0f);
         AssertNear(opaqueInstance.CustomData[1], 480.0f);
         AssertNear(opaqueInstance.CustomData[2], 0.0f);
@@ -263,18 +273,13 @@ namespace
         AssertNear(translucentInstance.ObjectColor[1], 0.1f);
         AssertNear(translucentInstance.ObjectColor[2], 0.3f);
         AssertNear(translucentInstance.ObjectColor[3], 0.6f);
-        AssertNear(translucentInstance.NormalMatrix[0], 0.0f);
-        AssertNear(translucentInstance.NormalMatrix[1], 0.0f);
-        AssertNear(translucentInstance.NormalMatrix[2], 0.0f);
-        AssertNear(translucentInstance.NormalMatrix[3], 1.0f);
-        AssertNear(translucentInstance.NormalMatrix[4], 0.0f);
-        AssertNear(translucentInstance.NormalMatrix[5], 1.0f);
-        AssertNear(translucentInstance.NormalMatrix[6], 0.0f);
-        AssertNear(translucentInstance.NormalMatrix[7], 0.0f);
-        AssertNear(translucentInstance.NormalMatrix[8], 1.0f);
-        AssertNear(translucentInstance.NormalMatrix[9], 1.0f);
-        AssertNear(translucentInstance.NormalMatrix[10], 0.0f);
-        AssertNear(translucentInstance.NormalMatrix[11], 0.0f);
+        const float expectedTranslucentBoardData[12] =
+        {
+            0.0f, 0.0f, 0.0f, 1.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            1.0f, 1.0f, 0.0f, 0.0f
+        };
+        AssertFloatArrayNear(translucentInstance.NormalMatrix, expectedTranslucentBoardData, 12);
 
         canvas.Shutdown();
         std::cout << "TestPrepareBoardDrawCommandsPacksBoardInstanceData passed\n";
@@ -318,8 +323,7 @@ namespace
     {
         BoardProxy proxy;
         proxy.WorldTransform = Math::Matrix4x4::Identity;
-        proxy.WorldTransform.m30 = 10.0f;
-        proxy.WorldTransform.m31 = 20.0f;
+        proxy.WorldTransform.SetTranslationRow(Math::Vector3(10.0f, 20.0f, 0.0f));
         proxy.SizePx = Math::Vector2(80.0f, 40.0f);
         proxy.Pivot = Math::Vector2(0.5f, 1.0f);
         proxy.bFlipX = true;

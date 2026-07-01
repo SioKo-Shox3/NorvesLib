@@ -33,6 +33,14 @@ namespace
         return std::abs(lhs - rhs) <= tolerance;
     }
 
+    void AssertFloatArrayNear(const float* actual, const float* expected, uint32_t count)
+    {
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            assert(IsNearlyEqual(actual[i], expected[i]));
+        }
+    }
+
     float PlaneNormalLength(const NorvesLib::Math::Vector4 &plane)
     {
         return std::sqrt(plane.x * plane.x + plane.y * plane.y + plane.z * plane.z);
@@ -61,8 +69,23 @@ int main()
         constants.CopyShaderProjection(shaderProjection);
         constants.CopyShaderInverseViewProjection(shaderInverseViewProjection);
 
-        assert(IsNearlyEqual(shaderView[0], constants.ViewMatrix.m00));
-        assert(IsNearlyEqual(shaderProjection[5], constants.ProjectionMatrix.m11));
+        const float expectedShaderView[16] =
+        {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, -5.0f, 1.0f
+        };
+        const float expectedShaderProjection[16] =
+        {
+            0.97427857f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.7320508f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0001f, 1.0f,
+            0.0f, 0.0f, -0.10001f, 0.0f
+        };
+
+        AssertFloatArrayNear(shaderView, expectedShaderView, 16);
+        AssertFloatArrayNear(shaderProjection, expectedShaderProjection, 16);
         assert(shaderInverseViewProjection[0] != 0.0f);
     }
 
@@ -124,12 +147,10 @@ int main()
         const CameraViewConstants constants = CameraViewConstants::Build(camera, 4.0f);
         const NorvesLib::Math::Matrix4x4 expected =
             NorvesLib::Math::MatrixUtils::CreateOrthographic(80.0f, 25.0f, 0.5f, 9.5f);
-        assert(IsNearlyEqual(constants.ProjectionMatrix.m00, expected.m00));
-        assert(IsNearlyEqual(constants.ProjectionMatrix.m11, expected.m11));
-        assert(IsNearlyEqual(constants.ProjectionMatrix.m22, expected.m22));
-        assert(IsNearlyEqual(constants.ProjectionMatrix.m23, expected.m23));
-        assert(IsNearlyEqual(constants.ProjectionMatrix.m11, 2.0f / 25.0f));
-        assert(!IsNearlyEqual(constants.ProjectionMatrix.m11, 2.0f / 20.0f));
+        assert(NorvesLib::Math::MatrixUtils::ApproxEqual(constants.ProjectionMatrix, expected, 0.0001f));
+        const float projectionScaleY = constants.ProjectionMatrix.GetRow(1).y;
+        assert(IsNearlyEqual(projectionScaleY, 2.0f / 25.0f));
+        assert(!IsNearlyEqual(projectionScaleY, 2.0f / 20.0f));
     }
 
     std::cout << "CameraViewConstantsTest passed\n";

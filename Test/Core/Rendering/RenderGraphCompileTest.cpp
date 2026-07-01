@@ -138,6 +138,9 @@ namespace
         uint32_t BeginRenderPassCount = 0;
         uint32_t EndRenderPassCount = 0;
         uint32_t DrawCallCount = 0;
+        uint32_t LastDrawIndexedInstancedIndexCount = 0;
+        uint32_t LastDrawIndexedInstancedStartIndexLocation = 0;
+        int32_t LastDrawIndexedInstancedBaseVertexLocation = 0;
 
         void Begin() override {}
         void End() override {}
@@ -207,11 +210,11 @@ namespace
                                   int32_t baseVertexLocation = 0,
                                   uint32_t startInstanceLocation = 0) override
         {
-            (void)indexCount;
             (void)instanceCount;
-            (void)startIndexLocation;
-            (void)baseVertexLocation;
             (void)startInstanceLocation;
+            LastDrawIndexedInstancedIndexCount = indexCount;
+            LastDrawIndexedInstancedStartIndexLocation = startIndexLocation;
+            LastDrawIndexedInstancedBaseVertexLocation = baseVertexLocation;
             ++DrawCallCount;
         }
         void DrawInstanced(uint32_t vertexCount,
@@ -5217,6 +5220,59 @@ namespace
         pool.Shutdown();
         shaderManager.Shutdown();
     }
+
+    void TestRecordMeshDrawCallUsesDrawCommandRangesAndFallback()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        MeshDataHandle meshHandle;
+        meshHandle.Id = 4401;
+        const float vertices[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 2.0f, 0.0f, 0.0f};
+        const uint32_t indices[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 7, 6};
+        assert(renderResources.Meshes().Register(meshHandle, vertices, sizeof(vertices), indices, 12));
+
+        SceneRenderer renderer;
+        FakeCommandList commandList;
+
+        DrawCommand firstSubMesh;
+        firstSubMesh.Draw.MeshHandle = meshHandle;
+        firstSubMesh.Draw.IndexOffset = 3;
+        firstSubMesh.Draw.IndexCount = 6;
+        firstSubMesh.Draw.VertexOffset = 2;
+        assert(renderer.RecordMeshDrawCall(firstSubMesh, &commandList, &renderResources.Meshes(), nullptr));
+        assert(commandList.LastDrawIndexedInstancedIndexCount == 6);
+        assert(commandList.LastDrawIndexedInstancedStartIndexLocation == 3);
+        assert(commandList.LastDrawIndexedInstancedBaseVertexLocation == 2);
+
+        DrawCommand secondSubMesh;
+        secondSubMesh.Draw.MeshHandle = meshHandle;
+        secondSubMesh.Draw.IndexOffset = 9;
+        secondSubMesh.Draw.IndexCount = 3;
+        secondSubMesh.Draw.VertexOffset = 5;
+        assert(renderer.RecordMeshDrawCall(secondSubMesh, &commandList, &renderResources.Meshes(), nullptr));
+        assert(commandList.LastDrawIndexedInstancedIndexCount == 3);
+        assert(commandList.LastDrawIndexedInstancedStartIndexLocation == 9);
+        assert(commandList.LastDrawIndexedInstancedBaseVertexLocation == 5);
+
+        DrawCommand fallback;
+        fallback.Draw.MeshHandle = meshHandle;
+        fallback.Draw.IndexOffset = 9;
+        fallback.Draw.IndexCount = 0;
+        fallback.Draw.VertexOffset = 5;
+        assert(renderer.RecordMeshDrawCall(fallback, &commandList, &renderResources.Meshes(), nullptr));
+        assert(commandList.LastDrawIndexedInstancedIndexCount == 12);
+        assert(commandList.LastDrawIndexedInstancedStartIndexLocation == 0);
+        assert(commandList.LastDrawIndexedInstancedBaseVertexLocation == 0);
+
+        assert(commandList.DrawCallCount == 3);
+        assert(renderer.GetStats().DrawCallCount == 3);
+        assert(renderer.GetStats().TriangleCount == 7);
+
+        renderResources.Shutdown();
+    }
 } // namespace
 
 int main()
@@ -5259,6 +5315,7 @@ int main()
     TestNeuralDecodeNativeExecuteSkipsUnsupportedPath();
     TestMegaGeometryNativeExecuteSkipsWhenNoInstances();
     TestGBufferNativeExecuteClearsWhenOpaqueCommandsEmpty();
+    TestRecordMeshDrawCallUsesDrawCommandRangesAndFallback();
     TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestGBufferSSAOLightingNativeExecuteWithoutSharedResources();
     TestProductionDeferredNativeExecuteSkipsLegacyBridge();

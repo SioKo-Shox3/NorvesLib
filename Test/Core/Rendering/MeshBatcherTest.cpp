@@ -1,4 +1,5 @@
 #include "Rendering/DrawCommand.h"
+#include "Math/MatrixUtils.h"
 #include "Rendering/SceneProxy.h"
 #include <cassert>
 #include <iostream>
@@ -35,7 +36,7 @@ int main()
     {
         NorvesLib::Math::Matrix4x4 worldA;
         NorvesLib::Math::Matrix4x4 worldB;
-        worldB.m30 = 3.0f;
+        worldB.SetTranslationRow(NorvesLib::Math::Vector3(3.0f, 0.0f, 0.0f));
 
         batcher.BeginBatching();
         batcher.AddMeshProxy(MakeProxy(1, 100, 200, worldA));
@@ -59,8 +60,8 @@ int main()
         assert(commands[1].Draw.MeshHandle.Id == 100);
         assert(commands[0].Draw.MaterialHandle.Id == 200);
         assert(commands[1].Draw.MaterialHandle.Id == 200);
-        assert(commands[0].Draw.WorldMatrix.m30 == 0.0f);
-        assert(commands[1].Draw.WorldMatrix.m30 == 3.0f);
+        assert(NorvesLib::Math::MatrixUtils::ApproxEqual(commands[0].Draw.WorldMatrix, worldA, 0.0f));
+        assert(NorvesLib::Math::MatrixUtils::ApproxEqual(commands[1].Draw.WorldMatrix, worldB, 0.0f));
         assert(instanceData[0].World[12] == 0.0f);
         assert(instanceData[1].World[12] == 3.0f);
         assert(commands[0].Draw.CustomData[0] == 1.0f);
@@ -77,7 +78,7 @@ int main()
     {
         NorvesLib::Math::Matrix4x4 worldA;
         NorvesLib::Math::Matrix4x4 worldB;
-        worldB.m30 = 7.0f;
+        worldB.SetTranslationRow(NorvesLib::Math::Vector3(7.0f, 0.0f, 0.0f));
 
         batcher.BeginBatching();
         batcher.AddMeshProxy(MakeProxy(3, 100, 200, worldA));
