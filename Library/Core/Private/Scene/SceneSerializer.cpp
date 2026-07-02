@@ -44,6 +44,13 @@ namespace NorvesLib::Core::Scene
                 return false;
             }
 
+            // 先頭は10進数字のみ許可（strtoullが受理する先頭空白/符号を弾く）
+            const char firstChar = text.c_str()[0];
+            if (firstChar < '0' || firstChar > '9')
+            {
+                return false;
+            }
+
             errno = 0;
             char* end = nullptr;
             const unsigned long long parsed = std::strtoull(text.c_str(), &end, 10);
@@ -948,6 +955,10 @@ namespace NorvesLib::Core::Scene
             if (!stream || !stream->IsOpen())
             {
                 NORVES_LOG_ERROR("Scene", "LoadIntoWorld: failed to open '%s' for reading", filePath.c_str());
+                if (pOutStats)
+                {
+                    *pOutStats = SceneLoadStats();
+                }
                 return false;
             }
             jsonText = stream->ReadString();
@@ -959,6 +970,10 @@ namespace NorvesLib::Core::Scene
         {
             NORVES_LOG_ERROR("Scene", "LoadIntoWorld: parse failed for '%s': %s",
                              filePath.c_str(), parseError.c_str());
+            if (pOutStats)
+            {
+                *pOutStats = SceneLoadStats();
+            }
             return false;
         }
 

@@ -212,6 +212,29 @@ namespace
         target.Finalize();
         holder.Finalize();
     }
+
+    void TestBoundaryValues()
+    {
+        // 8bit整数の厳密な境界値
+        const int8_t i8min = -128;
+        const int8_t i8max = 127;
+        const uint8_t u8max = 255;
+        Container::String s;
+        assert(Detail::SerializeValue<int8_t>(&i8min, s) && s == "-128");
+        assert(Detail::SerializeValue<int8_t>(&i8max, s) && s == "127");
+        assert(Detail::SerializeValue<uint8_t>(&u8max, s) && s == "255");
+        int8_t i8 = 0;
+        assert(Detail::DeserializeValue<int8_t>(Container::String("-128"), &i8) && i8 == -128);
+        assert(Detail::DeserializeValue<int8_t>(Container::String("127"), &i8) && i8 == 127);
+        uint8_t u8 = 0;
+        assert(Detail::DeserializeValue<uint8_t>(Container::String("255"), &u8) && u8 == 255);
+
+        // 末尾空白のみは許容、先頭符号"+"は受理、空文字列は拒否
+        int32_t i32 = 0;
+        assert(Detail::DeserializeValue<int32_t>(Container::String("42 "), &i32) && i32 == 42);
+        assert(Detail::DeserializeValue<int32_t>(Container::String("+7"), &i32) && i32 == 7);
+        assert(!Detail::DeserializeValue<int32_t>(Container::String(""), &i32));
+    }
 }
 
 int main()
@@ -221,6 +244,7 @@ int main()
     TestEnumDetailRoundTrip();
     TestEightBitIntegersAreNumericized();
     TestTrailingJunkIsRejected();
+    TestBoundaryValues();
     TestPropertyValueEnumRoundTrip();
     TestObjectSnapshotContainsEnumProperty();
 
