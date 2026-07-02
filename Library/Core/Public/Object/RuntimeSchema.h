@@ -530,10 +530,50 @@ namespace NorvesLib::Core
                 outValue = *static_cast<const ValueType *>(value);
                 return true;
             }
+            else if constexpr (std::is_enum_v<ValueType>)
+            {
+                // enumはunderlying整数として文字列化する（silently drop対策）。
+                using Underlying = std::underlying_type_t<ValueType>;
+                std::basic_ostringstream<TCHAR> stream;
+                stream.imbue(std::locale::classic());
+                const auto raw = static_cast<Underlying>(*static_cast<const ValueType *>(value));
+                if constexpr (std::is_signed_v<Underlying>)
+                {
+                    stream << static_cast<int64_t>(raw);
+                }
+                else
+                {
+                    stream << static_cast<uint64_t>(raw);
+                }
+                outValue = Container::String(stream.str());
+                return !stream.fail();
+            }
             else if constexpr (std::is_arithmetic_v<T>)
             {
                 std::basic_ostringstream<TCHAR> stream;
-                stream << *static_cast<const T *>(value);
+                stream.imbue(std::locale::classic());
+                if constexpr (std::is_floating_point_v<ValueType>)
+                {
+                    // 往復劣化を防ぐためmax_digits10で書く（従来はデフォルト6桁）。
+                    stream << std::setprecision(std::numeric_limits<ValueType>::max_digits10);
+                    stream << *static_cast<const T *>(value);
+                }
+                else if constexpr (sizeof(ValueType) == 1 && !std::is_same_v<ValueType, bool>)
+                {
+                    // int8/uint8はostreamで文字として書かれるため数値へ昇格する。
+                    if constexpr (std::is_signed_v<ValueType>)
+                    {
+                        stream << static_cast<int32_t>(*static_cast<const T *>(value));
+                    }
+                    else
+                    {
+                        stream << static_cast<uint32_t>(*static_cast<const T *>(value));
+                    }
+                }
+                else
+                {
+                    stream << *static_cast<const T *>(value);
+                }
                 outValue = Container::String(stream.str());
                 return !stream.fail();
             }
@@ -578,6 +618,29 @@ namespace NorvesLib::Core
             }
         }
 
+        // 抽出後にストリームが末尾まで消費されたか（残りは空白のみ許容）を検証する。
+        // "1abc" のようなprefix-parse成功値を拒否するために全数値branchで使う。
+        inline bool ConsumedEntireStream(std::basic_istringstream<TCHAR>& stream)
+        {
+            if (stream.fail())
+            {
+                return false;
+            }
+
+            TCHAR remaining = static_cast<TCHAR>(0);
+            while (stream.get(remaining))
+            {
+                if (remaining != static_cast<TCHAR>(' ') &&
+                    remaining != static_cast<TCHAR>('\t') &&
+                    remaining != static_cast<TCHAR>('\r') &&
+                    remaining != static_cast<TCHAR>('\n'))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         template <typename T>
         inline bool DeserializeValue(const Container::String &inValue, void *outValue)
         {
@@ -593,12 +656,88 @@ namespace NorvesLib::Core
                 *static_cast<ValueType *>(outValue) = inValue;
                 return true;
             }
+            else if constexpr (std::is_enum_v<ValueType>)
+            {
+                using Underlying = std::underlying_type_t<ValueType>;
+                std::basic_string<TCHAR> text(inValue.data(), inValue.size());
+                std::basic_istringstream<TCHAR> stream(text);
+                stream.imbue(std::locale::classic());
+                if constexpr (std::is_signed_v<Underlying>)
+                {
+                    int64_t parsed = 0;
+                    stream >> parsed;
+                    if (!ConsumedEntireStream(stream) ||
+                        parsed < static_cast<int64_t>(std::numeric_limits<Underlying>::min()) ||
+                        parsed > static_cast<int64_t>(std::numeric_limits<Underlying>::max()))
+                    {
+                        return false;
+                    }
+                    *static_cast<ValueType *>(outValue) = static_cast<ValueType>(static_cast<Underlying>(parsed));
+                }
+                else
+                {
+                    if (!inValue.empty() && inValue[0] == '-')
+                    {
+                        return false;
+                    }
+                    uint64_t parsed = 0;
+                    stream >> parsed;
+                    if (!ConsumedEntireStream(stream) ||
+                        parsed > static_cast<uint64_t>(std::numeric_limits<Underlying>::max()))
+                    {
+                        return false;
+                    }
+                    *static_cast<ValueType *>(outValue) = static_cast<ValueType>(static_cast<Underlying>(parsed));
+                }
+                return true;
+            }
             else if constexpr (std::is_arithmetic_v<T>)
             {
                 std::basic_string<TCHAR> text(inValue.data(), inValue.size());
                 std::basic_istringstream<TCHAR> stream(text);
-                stream >> *static_cast<T *>(outValue);
-                return !stream.fail();
+                stream.imbue(std::locale::classic());
+                if constexpr (sizeof(ValueType) == 1 && std::is_integral_v<ValueType> && !std::is_same_v<ValueType, bool>)
+                {
+                    if constexpr (std::is_signed_v<ValueType>)
+                    {
+                        int32_t parsed = 0;
+                        stream >> parsed;
+                        if (!ConsumedEntireStream(stream) ||
+                            parsed < static_cast<int32_t>(std::numeric_limits<ValueType>::min()) ||
+                            parsed > static_cast<int32_t>(std::numeric_limits<ValueType>::max()))
+                        {
+                            return false;
+                        }
+                        *static_cast<ValueType *>(outValue) = static_cast<ValueType>(parsed);
+                    }
+                    else
+                    {
+                        if (!inValue.empty() && inValue[0] == '-')
+                        {
+                            return false;
+                        }
+                        uint32_t parsed = 0;
+                        stream >> parsed;
+                        if (!ConsumedEntireStream(stream) ||
+                            parsed > static_cast<uint32_t>(std::numeric_limits<ValueType>::max()))
+                        {
+                            return false;
+                        }
+                        *static_cast<ValueType *>(outValue) = static_cast<ValueType>(parsed);
+                    }
+                    return true;
+                }
+                else
+                {
+                    ValueType parsed{};
+                    stream >> parsed;
+                    if (!ConsumedEntireStream(stream))
+                    {
+                        return false;
+                    }
+                    *static_cast<T *>(outValue) = parsed;
+                    return true;
+                }
             }
             else if constexpr (std::is_same_v<ValueType, Math::Vector2>)
             {
