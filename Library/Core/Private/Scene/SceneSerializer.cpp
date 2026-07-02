@@ -4,6 +4,9 @@
 #include "Object/Entity.h"
 #include "Object/IClass.h"
 #include "Object/PrefabAsset.h"
+#include "Object/ResourceRegistry.h"
+#include "Object/World.h"
+#include "FileStream/FileStream.h"
 #include "Text/JsonDocument.h"
 #include "Text/JsonWriter.h"
 #include "Logging/LogMacros.h"
@@ -579,6 +582,117 @@ namespace NorvesLib::Core::Scene
             }
             return true;
         }
+        // ========================================
+        // 保存側: pending-destroyフィルタ＋シリアライズ不能プロパティ計上
+        // BuildEntitySubtreeSnapshotNode（SchemaProjection.cpp）と同じ走査条件
+        // （null/GetClass() nullをskip）でライブ列とスナップショット列を
+        // ロックステップ対応させる。SchemaProjection自体は変更しない
+        // （PrefabRoundTripTestが無条件walkを前提にしているため）。
+        // ========================================
+
+        struct SceneCaptureStats
+        {
+            size_t PrunedEntities = 0;
+            size_t PrunedComponents = 0;
+            size_t UnserializedProperties = 0;
+        };
+
+        size_t CountSnapshotEntities(const EntitySubtreeSnapshotNode& node)
+        {
+            size_t count = 1;
+            for (const EntitySubtreeSnapshotNode& child : node.Children)
+            {
+                count += CountSnapshotEntities(child);
+            }
+            return count;
+        }
+
+        void CountUnserializedProperties(const Object& liveObject, const ObjectSnapshot& snapshot, SceneCaptureStats& stats)
+        {
+            const IClass* cls = liveObject.GetClass();
+            if (!cls)
+            {
+                return;
+            }
+
+            size_t total = 0;
+            Container::VariableArray<const ClassProperty*> properties = cls->GetAllProperties();
+            for (const ClassProperty* property : properties)
+            {
+                if (property)
+                {
+                    ++total;
+                }
+            }
+            if (total > snapshot.Properties.size())
+            {
+                stats.UnserializedProperties += total - snapshot.Properties.size();
+            }
+        }
+
+        void PruneSnapshotNode(const Entity& liveEntity, EntitySubtreeSnapshotNode& node, SceneCaptureStats& stats)
+        {
+            CountUnserializedProperties(liveEntity, node.Object, stats);
+
+            Container::VariableArray<Component::Component*> components = liveEntity.GetComponents();
+            Container::VariableArray<ComponentSubtreeSnapshot> keptComponents;
+            keptComponents.reserve(node.Components.size());
+            size_t componentIndex = 0;
+            for (Component::Component* component : components)
+            {
+                if (!component || !component->GetClass())
+                {
+                    continue; // projector側もskipするため添字を進めない
+                }
+                if (componentIndex >= node.Components.size())
+                {
+                    break; // 走査中にWorldが変わった場合の保険（GameThread前提で通常到達しない）
+                }
+
+                ComponentSubtreeSnapshot& componentSnapshot = node.Components[componentIndex];
+                ++componentIndex;
+
+                if (component->IsPendingDestroy())
+                {
+                    ++stats.PrunedComponents;
+                    continue;
+                }
+
+                CountUnserializedProperties(*component, componentSnapshot.Object, stats);
+                keptComponents.push_back(std::move(componentSnapshot));
+            }
+            node.Components = std::move(keptComponents);
+
+            Container::VariableArray<Entity*> children = liveEntity.GetChildEntities();
+            Container::VariableArray<EntitySubtreeSnapshotNode> keptChildren;
+            keptChildren.reserve(node.Children.size());
+            size_t childIndex = 0;
+            for (Entity* child : children)
+            {
+                if (!child || !child->GetClass())
+                {
+                    continue;
+                }
+                if (childIndex >= node.Children.size())
+                {
+                    break;
+                }
+
+                EntitySubtreeSnapshotNode& childNode = node.Children[childIndex];
+                ++childIndex;
+
+                if (child->IsPendingDestroy())
+                {
+                    stats.PrunedEntities += CountSnapshotEntities(childNode);
+                    continue;
+                }
+
+                PruneSnapshotNode(*child, childNode, stats);
+                keptChildren.push_back(std::move(childNode));
+            }
+            node.Children = std::move(keptChildren);
+        }
+
     } // namespace
 
     SceneDocument SceneSerializer::BuildDocument(const Container::VariableArray<EntitySubtreeSnapshot>& roots)
@@ -739,6 +853,182 @@ namespace NorvesLib::Core::Scene
             ++outStats.LoadedRoots;
         }
         return true;
+    }
+
+    size_t SceneSerializer::CaptureWorld(const World& world, Container::VariableArray<EntitySubtreeSnapshot>& outRoots)
+    {
+        outRoots.clear();
+
+        SceneCaptureStats stats;
+        Container::VariableArray<Entity*> roots = world.GetRootEntities();
+        outRoots.reserve(roots.size());
+        for (Entity* root : roots)
+        {
+            if (!root || !root->GetClass())
+            {
+                continue;
+            }
+            if (root->IsPendingDestroy())
+            {
+                ++stats.PrunedEntities;
+                continue;
+            }
+
+            EntitySubtreeSnapshot snapshot = RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*root);
+            PruneSnapshotNode(*root, snapshot.Root, stats);
+            outRoots.push_back(std::move(snapshot));
+        }
+
+        if (stats.PrunedEntities > 0 || stats.PrunedComponents > 0)
+        {
+            NORVES_LOG_INFO("Scene", "CaptureWorld: pruned %llu pending-destroy entities and %llu components",
+                            static_cast<unsigned long long>(stats.PrunedEntities),
+                            static_cast<unsigned long long>(stats.PrunedComponents));
+        }
+        if (stats.UnserializedProperties > 0)
+        {
+            NORVES_LOG_WARNING("Scene", "CaptureWorld: %llu properties could not be serialized and were omitted",
+                               static_cast<unsigned long long>(stats.UnserializedProperties));
+        }
+
+        return outRoots.size();
+    }
+
+    bool SceneSerializer::SaveToFile(const World& world, const Container::String& filePath)
+    {
+        Container::VariableArray<EntitySubtreeSnapshot> roots;
+        CaptureWorld(world, roots);
+
+        const SceneDocument document = BuildDocument(roots);
+        const Container::String json = ToJson(document);
+        // ToJsonはwriterのIsComplete()/HasError()検査で失敗時に空文字を返す（防御チェック）
+        if (json.empty())
+        {
+            NORVES_LOG_ERROR("Scene", "SaveToFile: JSON serialization failed (writer incomplete or error)");
+            return false;
+        }
+
+        NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
+            filePath,
+            NorvesLib::FileStream::FileMode::Write,
+            NorvesLib::FileStream::FileAccess::Write);
+        // TUniquePtrはstd::unique_ptrの素のエイリアスで、IsNull/IsValidはフリー関数
+        // （Container/PointerTypes.h L24-25, L113-129）。メンバ呼び出しは不可なので!streamで判定する。
+        if (!stream || !stream->IsOpen())
+        {
+            NORVES_LOG_ERROR("Scene", "SaveToFile: failed to open '%s' for writing", filePath.c_str());
+            return false;
+        }
+
+        const size_t written = stream->WriteString(json);
+        stream->Flush();
+        if (written != json.size())
+        {
+            NORVES_LOG_ERROR("Scene", "SaveToFile: short write to '%s' (%llu of %llu bytes)",
+                             filePath.c_str(),
+                             static_cast<unsigned long long>(written),
+                             static_cast<unsigned long long>(json.size()));
+            return false;
+        }
+
+        NORVES_LOG_INFO("Scene", "SaveToFile: wrote %llu roots to '%s'",
+                        static_cast<unsigned long long>(document.Roots.size()),
+                        filePath.c_str());
+        return true;
+    }
+
+    bool SceneSerializer::LoadIntoWorld(World& world, const Container::String& filePath, SceneLoadStats* pOutStats)
+    {
+        Container::String jsonText;
+        {
+            NorvesLib::FileStream::FileStreamUniquePtr stream = NorvesLib::FileStream::FileStream::CreateUnique(
+                filePath,
+                NorvesLib::FileStream::FileMode::Read,
+                NorvesLib::FileStream::FileAccess::Read);
+            if (!stream || !stream->IsOpen())
+            {
+                NORVES_LOG_ERROR("Scene", "LoadIntoWorld: failed to open '%s' for reading", filePath.c_str());
+                return false;
+            }
+            jsonText = stream->ReadString();
+        }
+
+        SceneDocument document;
+        Container::String parseError;
+        if (!TryParseJson(jsonText, document, &parseError))
+        {
+            NORVES_LOG_ERROR("Scene", "LoadIntoWorld: parse failed for '%s': %s",
+                             filePath.c_str(), parseError.c_str());
+            return false;
+        }
+
+        SceneLoadStats stats;
+        Container::VariableArray<EntitySubtreeSnapshot> roots;
+        if (!ReconcileWithSchema(document, roots, stats))
+        {
+            if (pOutStats)
+            {
+                *pOutStats = stats;
+            }
+            return false;
+        }
+
+        // ReconcileWithSchemaはreconcile成功ルート数をLoadedRootsに計上するが、
+        // LoadIntoWorldは実際にSpawnPrefabできたルート数を報告するため一旦ゼロ化する。
+        stats.LoadedRoots = 0;
+
+        // Bridge sceneDuplicateObjectと同経路: 関数ローカルRegistry＋一時PrefabAsset。
+        // SpawnPrefabは同期消費するため関数ローカル寿命で十分。
+        ResourceRegistry registry;
+        if (!registry.Initialize())
+        {
+            NORVES_LOG_ERROR("Scene", "LoadIntoWorld: transient ResourceRegistry initialization failed");
+            if (pOutStats)
+            {
+                *pOutStats = stats;
+            }
+            return false;
+        }
+
+        bool bAllSpawned = true;
+        {
+            Container::VariableArray<Container::TSharedPtr<PrefabAsset>> prefabs;
+            prefabs.reserve(roots.size());
+            for (EntitySubtreeSnapshot& root : roots)
+            {
+                Container::TSharedPtr<PrefabAsset> prefab = registry.CreateTransient<PrefabAsset>("SceneLoad");
+                if (prefab == nullptr)
+                {
+                    bAllSpawned = false;
+                    continue;
+                }
+                prefabs.push_back(prefab);
+                prefab->SetTree(std::move(root));
+
+                Entity* spawned = world.SpawnPrefab(*prefab);
+                if (spawned == nullptr)
+                {
+                    NORVES_LOG_ERROR("Scene", "LoadIntoWorld: SpawnPrefab failed for a scene root in '%s'", filePath.c_str());
+                    bAllSpawned = false;
+                    continue;
+                }
+                ++stats.LoadedRoots;
+            }
+            prefabs.clear();
+        }
+        registry.Shutdown();
+
+        if (pOutStats)
+        {
+            *pOutStats = stats;
+        }
+        NORVES_LOG_INFO("Scene", "LoadIntoWorld: spawned %llu roots from '%s' (dropped: %llu entities, %llu components, %llu properties)",
+                        static_cast<unsigned long long>(stats.LoadedRoots),
+                        filePath.c_str(),
+                        static_cast<unsigned long long>(stats.DroppedEntities),
+                        static_cast<unsigned long long>(stats.DroppedComponents),
+                        static_cast<unsigned long long>(stats.DroppedProperties));
+        return bAllSpawned;
     }
 
 } // namespace NorvesLib::Core::Scene

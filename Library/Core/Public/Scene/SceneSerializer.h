@@ -4,6 +4,11 @@
 #include "Container/Containers.h"
 #include <cstdint>
 
+namespace NorvesLib::Core
+{
+    class World;
+}
+
 namespace NorvesLib::Core::Scene
 {
     /**
@@ -96,6 +101,27 @@ namespace NorvesLib::Core::Scene
             const SceneDocument& document,
             Container::VariableArray<EntitySubtreeSnapshot>& outRoots,
             SceneLoadStats& outStats);
+        // ---- 入口API（GameThread限定。Worldのライブ状態を読む/書くため） ----
+
+        /**
+         * @brief Worldのルート群をスナップショット化する。
+         * bPendingDestroyのEntity（部分木ごと）とComponentを除外し、
+         * シリアライズ不能で落ちたプロパティ数をNORVES_LOGに計上する。
+         * @return outRootsへ書き出したルート数
+         */
+        static size_t CaptureWorld(const World& world, Container::VariableArray<EntitySubtreeSnapshot>& outRoots);
+
+        /**
+         * @brief WorldをシーンJSONファイルへ保存する。
+         */
+        static bool SaveToFile(const World& world, const Container::String& filePath);
+
+        /**
+         * @brief シーンJSONファイルをWorldへ加算ロードする（既存Entityはクリアしない）。
+         * 復元Entity/ComponentのIDはAssignFreshObjectIdsRecursiveで再採番される（仕様）。
+         * 事前フィルタ済みルートのSpawnPrefabが1つでも失敗した場合false（成功分は残る）。
+         */
+        static bool LoadIntoWorld(World& world, const Container::String& filePath, SceneLoadStats* pOutStats = nullptr);
     };
 
 } // namespace NorvesLib::Core::Scene

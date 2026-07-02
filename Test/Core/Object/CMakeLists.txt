@@ -205,6 +205,15 @@ target_include_directories(SceneSerializerTest PRIVATE
 )
 set_target_properties(SceneSerializerTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(SceneFileRoundTripTest
+    SceneFileRoundTripTest.cpp
+)
+target_link_libraries(SceneFileRoundTripTest PRIVATE Core)
+target_include_directories(SceneFileRoundTripTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneFileRoundTripTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
@@ -227,3 +236,4 @@ add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
 add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryOverlapTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
 add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
+add_test(NAME SceneFileRoundTripTest COMMAND SceneFileRoundTripTest)
