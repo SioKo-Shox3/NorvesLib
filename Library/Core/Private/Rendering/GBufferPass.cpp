@@ -1,4 +1,5 @@
 ﻿#include "Rendering/GBufferPass.h"
+#include "Rendering/MaterialDescriptorCache.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneView.h"
@@ -20,6 +21,8 @@
 #include "RHI/TransientResourcePool.h"
 #include "Math/MatrixUtils.h"
 #include "Logging/LogMacros.h"
+
+#include <Windows.h>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -488,20 +491,34 @@ namespace NorvesLib::Core::Rendering
 
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
-        for (const auto& cmd : opaqueCommands)
+        // Execute-local by design: descriptors contain view/frame constants, and allocator slot lifetime
+        // assumes this GBufferPass instance is executed once per frame.
+        Container::UnorderedMap<uint64_t, RHI::DescriptorSetPtr> materialDescriptorCache;
+        const bool bMaterialDescriptorCacheEnabled = IsMaterialDescriptorCacheEnabled();
+
+        auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr& defaultTex) -> RHI::TexturePtr
         {
-            // UBOスロット確保
+            if (handle.IsValid() && textures)
+            {
+                auto tex = textures->GetRHITexturePtr(handle);
+                if (tex)
+                {
+                    return tex;
+                }
+            }
+            return defaultTex;
+        };
+
+        auto BuildMaterialDescriptor = [&](uint64_t materialKey) -> RHI::DescriptorSetPtr
+        {
             auto allocation = m_UniformAllocator.Allocate();
             if (!allocation.UniformBuffer)
             {
-                NORVES_LOG_WARNING("GBufferPass", "UBO allocation failed, skipping remaining objects");
-                break;
+                return nullptr;
             }
 
-            // UBOデータ構築
             PerObjectUBO uboData = frameTemplate;
 
-            // マテリアルからテクスチャとエミッシブを取得
             TextureHandle matAlbedo;
             TextureHandle matNormal;
             TextureHandle matMetallic;
@@ -512,9 +529,11 @@ namespace NorvesLib::Core::Rendering
             float matEmissiveR = 0.0f, matEmissiveG = 0.0f, matEmissiveB = 0.0f;
             float matEmissiveStrength = 0.0f;
 
-            if (cmd.Draw.MaterialHandle.IsValid() && materials)
+            MaterialHandle materialHandle;
+            materialHandle.Id = materialKey;
+            if (materialHandle.IsValid() && materials)
             {
-                const auto *matData = materials->GetData(cmd.Draw.MaterialHandle);
+                const auto* matData = materials->GetData(materialHandle);
                 if (matData)
                 {
                     matAlbedo = matData->AlbedoTexture;
@@ -531,34 +550,17 @@ namespace NorvesLib::Core::Rendering
                 }
             }
 
-            // エミッシブカラー（rgb=色, a=強度）
             uboData.emissiveColor[0] = matEmissiveR;
             uboData.emissiveColor[1] = matEmissiveG;
             uboData.emissiveColor[2] = matEmissiveB;
             uboData.emissiveColor[3] = matEmissiveStrength;
 
-            // POMパラメータ
             uboData.pomParams[0] = matHeightScale;
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
             uboData.pomParams[2] = 0.0f;
             uboData.pomParams[3] = 0.0f;
 
-            // UBO更新
             allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
-
-            // PBRテクスチャバインド（マテリアル経由、未設定ならデフォルトテクスチャ）
-            auto ResolveTexture = [&](TextureHandle handle, const RHI::TexturePtr& defaultTex) -> RHI::TexturePtr
-            {
-                if (handle.IsValid() && textures)
-                {
-                    auto tex = textures->GetRHITexturePtr(handle);
-                    if (tex)
-                    {
-                        return tex;
-                    }
-                }
-                return defaultTex;
-            };
 
             RHI::TexturePtr albedoTex = ResolveTexture(matAlbedo, m_DefaultWhiteTexture);
             RHI::TexturePtr normalTex = ResolveTexture(matNormal, m_DefaultFlatNormalTexture);
@@ -585,14 +587,63 @@ namespace NorvesLib::Core::Rendering
                                                         instanceDataSize);
             allocation.DescriptorSet->Update();
 
+            return allocation.DescriptorSet;
+        };
+
+        for (const auto& cmd : opaqueCommands)
+        {
+            const uint64_t materialKey = cmd.Draw.MaterialHandle.Id;
+
+            RHI::DescriptorSetPtr descriptorSet;
+            if (bMaterialDescriptorCacheEnabled)
+            {
+                descriptorSet = ResolveMaterialDescriptor<decltype(materialDescriptorCache), RHI::DescriptorSetPtr>(
+                    materialDescriptorCache,
+                    materialKey,
+                    BuildMaterialDescriptor);
+            }
+            else
+            {
+                descriptorSet = BuildMaterialDescriptor(materialKey);
+            }
+
+            if (!descriptorSet)
+            {
+                NORVES_LOG_WARNING("GBufferPass", "UBO allocation failed, skipping remaining objects");
+                break;
+            }
+
             DrawCommand drawCommand = cmd;
             drawCommand.Pipeline = SelectGBufferPipeline(context.GetActiveDebugMode());
-            drawCommand.DescriptorSet = allocation.DescriptorSet;
+            drawCommand.DescriptorSet = descriptorSet;
             drawCommand.DescriptorSetSlot = 0;
             gBufferCommands->push_back(drawCommand);
         }
 
         EnqueueGBufferGeometryPass(context, gBufferCommands, viewport, scissor, meshes);
+    }
+
+    bool GBufferPass::IsMaterialDescriptorCacheEnabled()
+    {
+        if (m_MaterialDescriptorCacheState < 0)
+        {
+            char disableValue[16] = {};
+            const DWORD valueLength = ::GetEnvironmentVariableA("NORVES_DISABLE_MATERIAL_DESCRIPTOR_CACHE",
+                                                                disableValue,
+                                                                static_cast<DWORD>(sizeof(disableValue)));
+
+            bool bDisabled = false;
+            if (valueLength > 0 && valueLength < static_cast<DWORD>(sizeof(disableValue)))
+            {
+                bDisabled = ::lstrcmpiA(disableValue, "1") == 0 ||
+                            ::lstrcmpiA(disableValue, "true") == 0 ||
+                            ::lstrcmpiA(disableValue, "on") == 0;
+            }
+
+            m_MaterialDescriptorCacheState = bDisabled ? 0 : 1;
+        }
+
+        return m_MaterialDescriptorCacheState == 1;
     }
 
     void GBufferPass::EnqueueGBufferGeometryPass(

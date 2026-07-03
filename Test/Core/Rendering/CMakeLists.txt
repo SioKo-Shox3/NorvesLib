@@ -61,6 +61,17 @@ target_include_directories(DrawCommandSorterTest PRIVATE
 set_target_properties(DrawCommandSorterTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME DrawCommandSorterTest COMMAND DrawCommandSorterTest)
 
+add_executable(GBufferMaterialDescriptorCacheTest
+    GBufferMaterialDescriptorCacheTest.cpp
+)
+target_link_libraries(GBufferMaterialDescriptorCacheTest PRIVATE Core)
+target_include_directories(GBufferMaterialDescriptorCacheTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(GBufferMaterialDescriptorCacheTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME GBufferMaterialDescriptorCacheTest COMMAND GBufferMaterialDescriptorCacheTest)
+
 add_executable(ForwardPassPipelinePlacementTest
     ForwardPassPipelinePlacementTest.cpp
 )

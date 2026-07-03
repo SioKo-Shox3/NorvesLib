@@ -171,6 +171,7 @@ namespace NorvesLib::Core::Rendering
         bool EnsureGBufferPipeline();
         bool CreateGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline);
         RHI::PipelinePtr SelectGBufferPipeline(DebugViewMode mode) const;
+        bool IsMaterialDescriptorCacheEnabled();
         void EnqueueGBufferGeometryPass(ViewRenderContext& context,
                                         Container::TSharedPtr<Container::VariableArray<DrawCommand>> drawCommands,
                                         const RHI::Viewport &viewport,
@@ -269,6 +270,7 @@ namespace NorvesLib::Core::Rendering
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;
+        int8_t m_MaterialDescriptorCacheState = -1;
 
         // デフォルトテクスチャ・サンプラー（テクスチャ未設定オブジェクト用）
         RHI::TexturePtr m_DefaultWhiteTexture;      // 1x1 白 (255,255,255,255) — アルベド/AOデフォルト
