@@ -30,6 +30,7 @@ set(PRIVATE_SOURCES
     Private/Object/World.cpp
     Private/Text/IdentityPool.cpp
     Private/Text/JsonDocument.cpp
+    Private/Text/JsonWriter.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
     Private/Debug/DebugOutput.cpp
@@ -49,6 +50,7 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/SceneQuery.cpp
+    Private/Scene/SceneSerializer.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
     Private/GameMode/GameModeStateMachine.cpp
@@ -199,6 +201,7 @@ set(PUBLIC_HEADERS
     Public/Object/Object.h
     Public/Text/IdentityPool.h
     Public/Text/JsonDocument.h
+    Public/Text/JsonWriter.h
     Public/Container/Containers.h
     Public/Container/PointerTypes.h
     Public/Container/VariableArray.h
@@ -234,6 +237,7 @@ set(PUBLIC_HEADERS
     Public/Engine/ApplicationProcessor.h
     # Scene
     Public/Scene/SceneQuery.h
+    Public/Scene/SceneSerializer.h
     # Module
     Public/Module/ModuleExport.h
     Public/Module/IModule.h
