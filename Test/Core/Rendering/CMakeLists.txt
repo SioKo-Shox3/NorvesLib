@@ -10,6 +10,16 @@ set_target_properties(FramePacketManagerTest PROPERTIES FOLDER "Test/Core/Render
 include(CTest)
 add_test(NAME FramePacketManagerTest COMMAND FramePacketManagerTest)
 
+add_executable(RHITextureToBufferReadbackVulkanTest
+    RHITextureToBufferReadbackVulkanTest.cpp
+)
+target_link_libraries(RHITextureToBufferReadbackVulkanTest PRIVATE Core)
+target_include_directories(RHITextureToBufferReadbackVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureToBufferReadbackVulkanTest)
+
 add_executable(RenderingCoordinatorStatsPropagationTest
     RenderingCoordinatorStatsPropagationTest.cpp
 )
