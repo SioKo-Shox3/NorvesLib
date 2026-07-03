@@ -917,6 +917,18 @@ namespace NorvesLib::Core::Rendering
         m_UniformAllocator.Reset();
         m_WorldBoardUniformAllocator.Reset();
 
+        WorldBoardForwardUBO worldBoardFrameUBO{};
+        std::memcpy(worldBoardFrameUBO.view, viewData, sizeof(viewData));
+        std::memcpy(worldBoardFrameUBO.projection, projectionData, sizeof(projectionData));
+        std::memcpy(worldBoardFrameUBO.cameraPosition, cameraPosition, sizeof(cameraPosition));
+        std::memcpy(worldBoardFrameUBO.cameraRight, cameraRight, sizeof(cameraRight));
+        std::memcpy(worldBoardFrameUBO.cameraUp, cameraUp, sizeof(cameraUp));
+
+        TransparentForwardUBO transparentFrameTemplate{};
+        std::memcpy(transparentFrameTemplate.view, viewData, sizeof(viewData));
+        std::memcpy(transparentFrameTemplate.projection, projectionData, sizeof(projectionData));
+        std::memcpy(transparentFrameTemplate.cameraPosition, cameraPosition, sizeof(cameraPosition));
+
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());
 
@@ -932,13 +944,7 @@ namespace NorvesLib::Core::Rendering
                     break;
                 }
 
-                WorldBoardForwardUBO uboData{};
-                std::memcpy(uboData.view, viewData, sizeof(viewData));
-                std::memcpy(uboData.projection, projectionData, sizeof(projectionData));
-                std::memcpy(uboData.cameraPosition, cameraPosition, sizeof(cameraPosition));
-                std::memcpy(uboData.cameraRight, cameraRight, sizeof(cameraRight));
-                std::memcpy(uboData.cameraUp, cameraUp, sizeof(cameraUp));
-                allocation.UniformBuffer->Update(&uboData, sizeof(WorldBoardForwardUBO));
+                allocation.UniformBuffer->Update(&worldBoardFrameUBO, sizeof(WorldBoardForwardUBO));
 
                 RHI::TexturePtr boardTexture = m_DefaultWhiteTexture;
                 if (textures && cmd.Draw.Texture.IsValid())
@@ -981,10 +987,7 @@ namespace NorvesLib::Core::Rendering
                 break;
             }
 
-            TransparentForwardUBO uboData{};
-            std::memcpy(uboData.view, viewData, sizeof(viewData));
-            std::memcpy(uboData.projection, projectionData, sizeof(projectionData));
-            std::memcpy(uboData.cameraPosition, cameraPosition, sizeof(cameraPosition));
+            TransparentForwardUBO uboData = transparentFrameTemplate;
 
             TextureHandle matAlbedo;
             TextureHandle matNormal;

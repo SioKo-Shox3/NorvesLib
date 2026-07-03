@@ -481,6 +481,11 @@ namespace NorvesLib::Core::Rendering
         // フレーム開始時にアロケータリセット
         m_UniformAllocator.Reset();
 
+        PerObjectUBO frameTemplate{};
+        std::memcpy(frameTemplate.view, viewData, sizeof(viewData));
+        std::memcpy(frameTemplate.projection, projData, sizeof(projData));
+        std::memcpy(frameTemplate.cameraPosition, cameraPos, sizeof(cameraPos));
+
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
         for (const auto& cmd : opaqueCommands)
@@ -494,10 +499,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             // UBOデータ構築
-            PerObjectUBO uboData;
-            std::memcpy(uboData.view, viewData, sizeof(viewData));
-            std::memcpy(uboData.projection, projData, sizeof(projData));
-            std::memcpy(uboData.cameraPosition, cameraPos, sizeof(cameraPos));
+            PerObjectUBO uboData = frameTemplate;
 
             // マテリアルからテクスチャとエミッシブを取得
             TextureHandle matAlbedo;
