@@ -14,10 +14,10 @@
 #include <thread>
 #include <utility>
 
-#include "norves/bridge/adapter.hpp"
-#include "norves/bridge/dto/common.hpp"
-#include "norves/bridge/dto/events.hpp"
-#include "norves/bridge/ws_server_transport.hpp"
+#include "Norves/Bridge/adapter.hpp"
+#include "Norves/Bridge/Dto/common.hpp"
+#include "Norves/Bridge/Dto/events.hpp"
+#include "Norves/Bridge/ws_server_transport.hpp"
 
 namespace Game::Bridge
 {
@@ -41,12 +41,12 @@ namespace Game::Bridge
          * @param port 待ち受けポート（127.0.0.1 ループバックのみ）
          * @return bind 成功した transport。全試行が失敗したら nullptr
          */
-        std::unique_ptr<norves::bridge::ITransport> BindWithRetry(uint16_t port)
+        std::unique_ptr<Norves::Bridge::ITransport> BindWithRetry(uint16_t port)
         {
             for (int attempt = 0; attempt < kMaxBindAttempts; ++attempt)
             {
-                std::unique_ptr<norves::bridge::ITransport> transport =
-                    norves::bridge::make_websocket_server_transport(port,
+                std::unique_ptr<Norves::Bridge::ITransport> transport =
+                    Norves::Bridge::make_websocket_server_transport(port,
                                                                     kSendCapacity,
                                                                     kRecvCapacity,
                                                                     nullptr);
@@ -72,10 +72,10 @@ namespace Game::Bridge
          * @param level NorvesLib のログレベル
          * @return 対応する Bridge wire の dto::LogLevel
          */
-        norves::bridge::dto::LogLevel FoldLevel(NorvesLib::Core::Logging::LogLevel level)
+        Norves::Bridge::Dto::LogLevel FoldLevel(NorvesLib::Core::Logging::LogLevel level)
         {
             using SrcLevel = NorvesLib::Core::Logging::LogLevel;
-            using DtoLevel = norves::bridge::dto::LogLevel;
+            using DtoLevel = Norves::Bridge::Dto::LogLevel;
             switch (level)
             {
                 case SrcLevel::Trace:
@@ -109,7 +109,7 @@ namespace Game::Bridge
     /**
      * @brief WebSocket サーバーを bind し、READY を出力し、受信スレッドを起動する
      */
-    bool BridgeServerHost::Start(uint16_t port, norves::bridge::IBridgeEngineAdapter& adapter)
+    bool BridgeServerHost::Start(uint16_t port, Norves::Bridge::IBridgeEngineAdapter& adapter)
     {
         if (m_bActive.GetValue())
         {
@@ -127,7 +127,7 @@ namespace Game::Bridge
         }
 
         // サーバーを生成（adapter を参照保持。adapter は本ホストより長生きする）。
-        m_Server = NorvesLib::Core::Container::MakeUnique<norves::bridge::BridgeEngineServer>(adapter, nullptr);
+        m_Server = NorvesLib::Core::Container::MakeUnique<Norves::Bridge::BridgeEngineServer>(adapter, nullptr);
 
         // bind 成功後に READY <port> を生ハンドルへ出力する（エディタはこれを待つ）。
         if (!WriteReadyLine(port))
@@ -220,7 +220,7 @@ namespace Game::Bridge
         BridgeLogSink::ForwardEntry fe;
         for (int drained = 0; drained < kMaxDrainPerFrame && m_LogSink.TryPopForward(fe); ++drained)
         {
-            norves::bridge::dto::LogMessageEvent evt;
+            Norves::Bridge::Dto::LogMessageEvent evt;
             evt.level = FoldLevel(fe.level);
             // String は UTF-8 バイト列（TCHAR=char）。data()/size() でそのまま運ぶ。
             evt.message = std::string(fe.message.data(), fe.message.size());
@@ -272,7 +272,7 @@ namespace Game::Bridge
      *
      * @note ゲームスレッド（DrainInbound 経由）上でのみ実行される。
      */
-    void BridgeServerHost::EmitEvent(std::string_view eventName, const norves::bridge::JsonValue& params)
+    void BridgeServerHost::EmitEvent(std::string_view eventName, const Norves::Bridge::JsonValue& params)
     {
         if (!m_bActive.GetValue() || !m_Server || !m_Transport)
         {

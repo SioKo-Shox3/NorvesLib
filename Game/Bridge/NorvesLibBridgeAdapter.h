@@ -20,10 +20,10 @@
 #include <string>
 #include <string_view>
 
-#include "norves/bridge/adapter.hpp"
-#include "norves/bridge/error.hpp"
-#include "norves/bridge/json_value.hpp"
-#include "norves/bridge/result.hpp"
+#include "Norves/Bridge/adapter.hpp"
+#include "Norves/Bridge/error.hpp"
+#include "Norves/Bridge/json_value.hpp"
+#include "Norves/Bridge/result.hpp"
 
 // GameApplicationHandler を adapter.h で include すると循環になる
 // （GameApplicationHandler.h が adapter.h を include する）。adapter は実体を
@@ -46,7 +46,7 @@ namespace Game::Bridge
     /**
      * @brief NorvesLib の Bridge アダプタ（P2a 最小スキーマ準拠実装）
      */
-    class NorvesLibBridgeAdapter final : public norves::bridge::IBridgeEngineAdapter
+    class NorvesLibBridgeAdapter final : public Norves::Bridge::IBridgeEngineAdapter
     {
     public:
         NorvesLibBridgeAdapter() = default;
@@ -82,8 +82,8 @@ namespace Game::Bridge
          * @param selectedProtocolVersion サーバが選んだプロトコルバージョン
          * @return HelloResult を収めた JsonValue
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        hello(const norves::bridge::JsonValue& params,
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        hello(const Norves::Bridge::JsonValue& params,
               std::string_view selectedProtocolVersion) override;
 
         /**
@@ -92,8 +92,8 @@ namespace Game::Bridge
          * @param params リクエスト params（借用、未使用）
          * @return capabilities を収めた JsonValue
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        getCapabilities(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        getCapabilities(const Norves::Bridge::JsonValue& params) override;
 
         // --- Engine status / launch ---
 
@@ -103,8 +103,8 @@ namespace Game::Bridge
          * @param params リクエスト params（借用、未使用）
          * @return StatusSnapshot を収めた JsonValue
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        getStatus(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        getStatus(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief engine.launchInfo。pid と title を返す
@@ -112,8 +112,8 @@ namespace Game::Bridge
          * @param params リクエスト params（借用、未使用）
          * @return {pid, title} を収めた JsonValue
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        launchInfo(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        launchInfo(const Norves::Bridge::JsonValue& params) override;
 
         // --- Runtime control ---
 
@@ -124,8 +124,8 @@ namespace Game::Bridge
          * @return PlayAck を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。runtime.stateChanged を先に emit する。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        runtimePlay(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        runtimePlay(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief runtime.pause。runtime 状態を Paused へ遷移させ PlayAck を返す
@@ -134,8 +134,8 @@ namespace Game::Bridge
          * @return PlayAck を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。runtime.stateChanged を先に emit する。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        runtimePause(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        runtimePause(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief runtime.stop。runtime 状態を Stopped へ遷移させ PlayAck を返す
@@ -144,8 +144,8 @@ namespace Game::Bridge
          * @return PlayAck を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。runtime.stateChanged を先に emit する。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        runtimeStop(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        runtimeStop(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief runtime.focusViewport。best-effort でエンジンウィンドウを前面化する
@@ -154,8 +154,8 @@ namespace Game::Bridge
          * @return {focused} を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。Win32 ハンドル取得時のみ操作する。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        runtimeFocusViewport(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        runtimeFocusViewport(const Norves::Bridge::JsonValue& params) override;
 
         // --- Log streaming ---
 
@@ -166,8 +166,8 @@ namespace Game::Bridge
          * @return {subscriptionId} を収めた JsonValue
          * @note 単一購読前提。ゲームスレッド上から逐次呼ばれる。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        logSubscribe(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        logSubscribe(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief log.unsubscribe。ログ転送を停止する（冪等）
@@ -176,8 +176,8 @@ namespace Game::Bridge
          * @return {ok} を収めた JsonValue
          * @note 単一購読前提で subscriptionId 照合はしない。ゲームスレッド上から逐次呼ばれる。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        logUnsubscribe(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        logUnsubscribe(const Norves::Bridge::JsonValue& params) override;
 
         // --- Schema ---
 
@@ -193,8 +193,8 @@ namespace Game::Bridge
          * @return {types:[typeDescriptor, ...]} を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        schemaGetSnapshot(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        schemaGetSnapshot(const Norves::Bridge::JsonValue& params) override;
 
         // --- Scene / Object（読み取り系） ---
 
@@ -211,8 +211,8 @@ namespace Game::Bridge
          * @return {root:<sceneNode>} を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。防御的に再帰深さ上限を設ける。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        sceneGetTree(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        sceneGetTree(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief object.getSnapshot。1 つの Entity のプロパティスナップショットを返す
@@ -229,8 +229,8 @@ namespace Game::Bridge
          * @return {objectId, kind?, properties:[propertyEntry, ...]} を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        objectGetSnapshot(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        objectGetSnapshot(const Norves::Bridge::JsonValue& params) override;
 
         // --- Object（書き込み系） ---
 
@@ -256,8 +256,8 @@ namespace Game::Bridge
          * @return {accepted:bool, appliedValue?:<propertyValue>} を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        objectSetProperty(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        objectSetProperty(const Norves::Bridge::JsonValue& params) override;
 
         // --- Scene（書き込み系） ---
 
@@ -278,8 +278,8 @@ namespace Game::Bridge
          * @return {accepted:bool, newId?:string} を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        sceneCreateObject(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        sceneCreateObject(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief scene.deleteObject。World から Entity を除去する
@@ -295,8 +295,8 @@ namespace Game::Bridge
          * @return {accepted:bool} を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        sceneDeleteObject(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        sceneDeleteObject(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief scene.reparentObject。Entity を別親（またはルート）へ移動する
@@ -313,8 +313,8 @@ namespace Game::Bridge
          * @return {accepted:bool} を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        sceneReparentObject(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        sceneReparentObject(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief scene.duplicateObject。Entity 部分木を複製して別親（または同一親）へ生成する
@@ -335,8 +335,8 @@ namespace Game::Bridge
          * @return {accepted:bool[, newId:string]} を収めた JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        sceneDuplicateObject(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        sceneDuplicateObject(const Norves::Bridge::JsonValue& params) override;
 
         // --- Asset（読み取り系） ---
 
@@ -357,8 +357,8 @@ namespace Game::Bridge
          * @return asset.resolve.result の JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。無副作用（エンジン状態を変えない）。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        assetResolve(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        assetResolve(const Norves::Bridge::JsonValue& params) override;
 
         /**
          * @brief asset.getManifest。読込済み manifest のスナップショットを DTO 配列で返す
@@ -376,8 +376,8 @@ namespace Game::Bridge
          * @return asset.getManifest.result の JsonValue
          * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。
          */
-        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
-        assetGetManifest(const norves::bridge::JsonValue& params) override;
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        assetGetManifest(const Norves::Bridge::JsonValue& params) override;
 
         // viewport.getThumbnail は本実装範囲外で、adapter.hpp の既定実装
         // （METHOD_NOT_SUPPORTED）のまま。scene/object（読み取り・書き込み）／schema は実装済み。

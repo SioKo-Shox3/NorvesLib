@@ -48,14 +48,14 @@
 #include <memory>
 #include <string>
 
-#include "norves/bridge/json_value.hpp"
-#include "norves/bridge/server.hpp"
-#include "norves/bridge/transport.hpp"
+#include "Norves/Bridge/json_value.hpp"
+#include "Norves/Bridge/server.hpp"
+#include "Norves/Bridge/transport.hpp"
 
-namespace norves::bridge
+namespace Norves::Bridge
 {
     class IBridgeEngineAdapter;
-} // namespace norves::bridge
+} // namespace Norves::Bridge
 
 namespace Game::Bridge
 {
@@ -85,7 +85,7 @@ namespace Game::Bridge
          * @param adapter ハンドラ群。本ホストより長く生存しなければならない（参照保持）
          * @return bind と起動に成功したら true、失敗したら false
          */
-        bool Start(uint16_t port, norves::bridge::IBridgeEngineAdapter& adapter);
+        bool Start(uint16_t port, Norves::Bridge::IBridgeEngineAdapter& adapter);
 
         /**
          * @brief ゲームスレッドから呼び、キュー済みの受信フレームを処理して応答を送る
@@ -123,7 +123,7 @@ namespace Game::Bridge
          * @param params イベント params（コピーされる）
          * @note 呼び出しスレッド: ゲームスレッド（DrainInbound 経由）からのみ呼ぶこと。
          */
-        void EmitEvent(std::string_view eventName, const norves::bridge::JsonValue& params);
+        void EmitEvent(std::string_view eventName, const Norves::Bridge::JsonValue& params);
 
         /**
          * @brief Logger -> Bridge のログ転送を開始する（log.subscribe 時）
@@ -155,11 +155,11 @@ namespace Game::Bridge
         void RecvLoop();
 
         // SDK が返す形のまま保持する unique_ptr（SDK 境界の例外的 std 利用）。
-        std::unique_ptr<norves::bridge::ITransport> m_Transport;
+        std::unique_ptr<Norves::Bridge::ITransport> m_Transport;
 
         // BridgeEngineServer は NorvesLib の TUniquePtr で保持。adapter を参照保持
         // するため、adapter は本サーバーより長生きする必要がある。
-        NorvesLib::Core::Container::TUniquePtr<norves::bridge::BridgeEngineServer> m_Server;
+        NorvesLib::Core::Container::TUniquePtr<Norves::Bridge::BridgeEngineServer> m_Server;
 
         // 受信フレームキュー（Mutex 保護）。受信スレッドが push、ゲームスレッドが pop。
         // 要素はトランスポートの生フレーム（UTF-8 JSON バイト列）で、SDK 境界の
@@ -186,11 +186,11 @@ namespace Game::Bridge
 
 #else // NORVES_BRIDGE_ENABLED
 
-namespace norves::bridge
+namespace Norves::Bridge
 {
     class IBridgeEngineAdapter;
     class JsonValue;
-} // namespace norves::bridge
+} // namespace Norves::Bridge
 
 namespace Game::Bridge
 {
@@ -209,7 +209,7 @@ namespace Game::Bridge
         BridgeServerHost(BridgeServerHost&&) = delete;
         BridgeServerHost& operator=(BridgeServerHost&&) = delete;
 
-        bool Start(uint16_t /*port*/, norves::bridge::IBridgeEngineAdapter& /*adapter*/)
+        bool Start(uint16_t /*port*/, Norves::Bridge::IBridgeEngineAdapter& /*adapter*/)
         {
             return false;
         }
@@ -229,7 +229,7 @@ namespace Game::Bridge
 
         // SDK 非設定ビルドでは Bridge engine SDK が無いため何もしない。public API を
         // 活性版と揃えるためだけのスタブ（このビルドでは誰も呼ばない）。
-        void EmitEvent(std::string_view /*eventName*/, const norves::bridge::JsonValue& /*params*/)
+        void EmitEvent(std::string_view /*eventName*/, const Norves::Bridge::JsonValue& /*params*/)
         {
         }
     };
