@@ -11,9 +11,21 @@
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/IClass.h"
+#include "Core/Public/Object/PrefabAsset.h"
+#include "Core/Public/Object/ResourceRegistry.h"
 #include "Core/Public/Object/SchemaProjection.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Platform/NativeWindowHandle.h"
+
+#include "Core/Public/Asset/AssetManifest.h"
+#include "Core/Public/Asset/AssetResolveResult.h"
+#include "Core/Public/Asset/AssetSystem.h"
+#include "Core/Public/Container/String.h"
+#include "Core/Public/Container/StringView.h"
+
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 
 #include <cerrno>
 #include <cstdint>
@@ -168,6 +180,33 @@ namespace Game::Bridge
                 return;
             }
             host->EmitEvent("runtime.stateChanged", std::move(parsed).value());
+        }
+
+        /**
+         * @brief scene.treeChanged の params を組んで host から emit する
+         *
+         * params リテラル {"fullRefreshRequired":true} を組んで emit する。scene のツリー構造を
+         * 変更した直後、ack 返却の前に呼ぶ。params は EmitRuntimeStateChanged と同様 JsonValue::parse
+         * で作る（リテラルなので妥当）。値コピーのみを綴り、Entity ポインタや生ポインタは JsonValue へ
+         * 一切入れない（live memory 非転送）。
+         *
+         * @param host イベント発火先の host（借用、nullptr なら何もしない）
+         * @note host が nullptr のときは何もしない。
+         */
+        void EmitSceneTreeChanged(Game::Bridge::BridgeServerHost* host)
+        {
+            if (host == nullptr)
+            {
+                return;
+            }
+
+            auto parsed = JsonValue::parse(R"({"fullRefreshRequired":true})");
+            if (parsed.is_err())
+            {
+                // 到達しないはず（リテラルは常に妥当）。発火を諦める（無言）。
+                return;
+            }
+            host->EmitEvent("scene.treeChanged", std::move(parsed).value());
         }
 
         /**
@@ -676,11 +715,12 @@ namespace Game::Bridge
         /**
          * @brief Entity を sceneNode JSON へ再帰でノード化して out へ追記する
          *
-         * 出力: { "id":"<ObjectId>", "kind":"<クラス名>", "children":[ <子ノード>... ] }。
-         * name は付けない（Entity に表示名アクセサが無いため任意フィールドは省略）。id は ObjectId
-         * の 10 進文字列、kind はクラス名（空なら "Entity" にフォールバックして空文字を出さない）。
-         * 子が無い/深さ上限到達時は children を省略（葉ノード）。Entity ポインタや生ポインタは
-         * 一切 JSON へ入れず、ObjectId 値とクラス名文字列のコピーだけを綴る（live memory 非転送）。
+         * 出力: { "id":"<ObjectId>", "name":"<表示名>", "kind":"<クラス名>", "children":[ <子ノード>... ] }。
+         * name は Entity の Name プロパティが非空のときだけ出す（空なら省略し、エディタは id へ
+         * フォールバックする＝sceneNode.name は任意フィールド）。id は ObjectId の 10 進文字列、kind は
+         * クラス名（空なら "Entity" にフォールバックして空文字を出さない）。子が無い/深さ上限到達時は
+         * children を省略（葉ノード）。Entity ポインタや生ポインタは一切 JSON へ入れず、ObjectId 値・
+         * 表示名文字列・クラス名文字列のコピーだけを綴る（live memory 非転送）。
          *
          * @param out 追記先
          * @param entity ノード化する Entity
@@ -690,7 +730,20 @@ namespace Game::Bridge
         {
             out += R"({"id":")";
             out += std::to_string(static_cast<unsigned long long>(entity.GetObjectId()));
-            out += R"(","kind":")";
+            out += '"';
+
+            // 表示名（Name プロパティ）。非空のときだけ "name" を出す（空なら省略＝任意フィールド）。
+            // PROPERTY マクロ生成の const アクセサ getName() は ConstPropertyRef を返すので、
+            // operator* で const Container::String& を借用して ViewOf で読む。
+            const std::string_view name = ViewOf(*entity.getName());
+            if (!name.empty())
+            {
+                out += R"(,"name":")";
+                AppendJsonString(out, name);
+                out += '"';
+            }
+
+            out += R"(,"kind":")";
 
             // クラス名。空なら "Entity" にフォールバック（kind は minLength:1）。
             std::string_view kind = "Entity";
@@ -1084,6 +1137,213 @@ namespace Game::Bridge
                     return false;  // Transform / enum / object / null / 未知は未対応。
             }
         }
+        /**
+         * @brief Container::AnsiString を境界 std::string_view として借用する
+         *
+         * AssetCookedReference 等のメタ値（AnsiString = TString<char>）を JSON へ綴る際に借用で読む。
+         * narrow ビルドでは Container::String と同型だが、型安全のため別名のヘルパを用意する。
+         * 空のときは data() を参照せず空 view を返す。
+         *
+         * @param s 借用元の AnsiString（呼び出し中のみ有効）
+         * @return s のバイト列を指す string_view（s より長生きさせないこと）
+         */
+        std::string_view ViewOfAnsi(const NorvesLib::Core::Container::AnsiString& s)
+        {
+            if (s.empty())
+            {
+                return std::string_view{};
+            }
+            return std::string_view(s.data(), s.size());
+        }
+
+        /**
+         * @brief AssetResolveStatus を asset.resolve wire の status 文字列（camelCase）へ
+         *
+         * schema enum（successCooked/successLoose/invalidRequest/invalidManifest/looseReadFailed/
+         * cookedPackageReadFailed/cookedPackageParseFailed/cookedEntryMissing/cookedEntryHashMismatch）
+         * を固定リテラルで綴る。未知値は invalidRequest（最も無害な失敗）。
+         *
+         * @param status エンジンの解決ステータス
+         * @return wire の status 文字列
+         */
+        const char* AssetResolveStatusWire(NorvesLib::Core::Asset::AssetResolveStatus status)
+        {
+            using S = NorvesLib::Core::Asset::AssetResolveStatus;
+            switch (status)
+            {
+                case S::SuccessCooked:
+                    return "successCooked";
+                case S::SuccessLoose:
+                    return "successLoose";
+                case S::InvalidRequest:
+                    return "invalidRequest";
+                case S::InvalidManifest:
+                    return "invalidManifest";
+                case S::LooseReadFailed:
+                    return "looseReadFailed";
+                case S::CookedPackageReadFailed:
+                    return "cookedPackageReadFailed";
+                case S::CookedPackageParseFailed:
+                    return "cookedPackageParseFailed";
+                case S::CookedEntryMissing:
+                    return "cookedEntryMissing";
+                case S::CookedEntryHashMismatch:
+                    return "cookedEntryHashMismatch";
+            }
+            return "invalidRequest";
+        }
+
+        /**
+         * @brief AssetResolveSource を asset.resolve wire の source 文字列（camelCase）へ
+         *
+         * schema enum（none/cooked/loose/debugLooseFallback）を固定リテラルで綴る。未知値は none。
+         *
+         * @param source 解決バイトの出所
+         * @return wire の source 文字列
+         */
+        const char* AssetResolveSourceWire(NorvesLib::Core::Asset::AssetResolveSource source)
+        {
+            using Src = NorvesLib::Core::Asset::AssetResolveSource;
+            switch (source)
+            {
+                case Src::None:
+                    return "none";
+                case Src::Cooked:
+                    return "cooked";
+                case Src::Loose:
+                    return "loose";
+                case Src::DebugLooseFallback:
+                    return "debugLooseFallback";
+            }
+            return "none";
+        }
+
+        /**
+         * @brief AssetFallbackAction を camelCase wire 文字列へ
+         *
+         * 実 enum 値名（UseCooked/UseLoose/Fail）を camelCase（useCooked/useLoose/fail）へ。未知値は fail。
+         *
+         * @param action フォールバック決定のアクション
+         * @return wire のアクション文字列
+         */
+        const char* AssetFallbackActionWire(NorvesLib::Core::Asset::AssetFallbackAction action)
+        {
+            using A = NorvesLib::Core::Asset::AssetFallbackAction;
+            switch (action)
+            {
+                case A::UseCooked:
+                    return "useCooked";
+                case A::UseLoose:
+                    return "useLoose";
+                case A::Fail:
+                    return "fail";
+            }
+            return "fail";
+        }
+
+        /**
+         * @brief AssetCookedFailureKind を camelCase wire 文字列へ
+         *
+         * 実 enum 値名（Unknown/PackageMissing/PackageReadFailed/PackageParseFailed/EntryMissing/
+         * EntryHashMismatch）を camelCase へ。未知値は unknown。
+         *
+         * @param kind cooked 失敗の分類
+         * @return wire の failureKind 文字列
+         */
+        const char* AssetCookedFailureKindWire(NorvesLib::Core::Asset::AssetCookedFailureKind kind)
+        {
+            using K = NorvesLib::Core::Asset::AssetCookedFailureKind;
+            switch (kind)
+            {
+                case K::Unknown:
+                    return "unknown";
+                case K::PackageMissing:
+                    return "packageMissing";
+                case K::PackageReadFailed:
+                    return "packageReadFailed";
+                case K::PackageParseFailed:
+                    return "packageParseFailed";
+                case K::EntryMissing:
+                    return "entryMissing";
+                case K::EntryHashMismatch:
+                    return "entryHashMismatch";
+            }
+            return "unknown";
+        }
+
+        /**
+         * @brief manifest ファイルのバイト列を Container::String（UTF-8 バイト列）へ写す
+         *
+         * GameApplicationHandler::ApplyTextureAssetRuntimeConfig の MakeStringFromUtf8Bytes と同手順。
+         * 各バイトを TCHAR（narrow=char）へそのままコピーする（adapter は narrow 前提＝ViewOf の
+         * static_assert と整合）。
+         *
+         * @param bytes ifstream で読んだ生バイト列
+         * @return UTF-8 バイト列としての Container::String
+         */
+        NorvesLib::Core::Container::String MakeCoreStringFromUtf8Bytes(const std::string& bytes)
+        {
+            std::basic_string<NorvesLib::Core::Container::String::value_type> converted;
+            converted.reserve(bytes.size());
+            for (const unsigned char ch : bytes)
+            {
+                converted.push_back(
+                    static_cast<NorvesLib::Core::Container::String::value_type>(ch));
+            }
+            return NorvesLib::Core::Container::String(converted);
+        }
+
+        /**
+         * @brief handler の texture asset root/manifest から一時 AssetSystem を構築し manifest を読む
+         *
+         * root（Container::String）を AnsiString の assetRoot として AssetSystem を構築し、manifest
+         * ファイルを ifstream(binary) で読み、MakeCoreStringFromUtf8Bytes 経由で LoadManifestFromJsonText
+         * へ渡す。GameApplicationHandler.cpp の manifest 読込と同手順。読込/パース失敗時は false。
+         * 失敗しても outSystem は構築済み（GetAssetCount()==0）なので呼び出し側は graceful に扱える。
+         *
+         * @param root texture asset root（Container::String、空なら false）
+         * @param manifestPath manifest ファイルパス（Container::String、空なら false）
+         * @param outSystem 構築先（root から構築。manifest 読込成否に関わらず構築する）
+         * @return manifest を読み込めたら true
+         */
+        bool BuildAssetSystemFromPaths(const NorvesLib::Core::Container::String& root,
+                                       const NorvesLib::Core::Container::String& manifestPath,
+                                       NorvesLib::Core::Asset::AssetSystem& outSystem)
+        {
+            if (root.empty() || manifestPath.empty())
+            {
+                return false;
+            }
+
+            // root（Container::String=narrow char）を AnsiStringView 経由で AnsiString assetRoot に。
+            const std::string_view rootView = ViewOf(root);
+            const NorvesLib::Core::Container::AnsiString rootAnsi(
+                NorvesLib::Core::Container::AnsiStringView(rootView.data(), rootView.size()));
+            outSystem = NorvesLib::Core::Asset::AssetSystem(rootAnsi);
+
+            // manifest ファイルを ifstream(binary) で読む（GameApplicationHandler と同手順）。
+            // narrow 前提なので c_str() を std::filesystem::path へ。
+            const std::filesystem::path manifestFsPath(manifestPath.c_str());
+            std::ifstream manifestInput(manifestFsPath, std::ios::binary);
+            if (!manifestInput.is_open())
+            {
+                return false;
+            }
+            const std::string manifestBytes((std::istreambuf_iterator<char>(manifestInput)),
+                                            std::istreambuf_iterator<char>());
+            if (!manifestInput.eof() && manifestInput.fail())
+            {
+                return false;
+            }
+
+            const NorvesLib::Core::Container::String manifestText =
+                MakeCoreStringFromUtf8Bytes(manifestBytes);
+            const std::string_view manifestPathView = ViewOf(manifestPath);
+            const NorvesLib::Core::Container::AnsiStringView sourceName(
+                manifestPathView.data(), manifestPathView.size());
+            return outSystem.LoadManifestFromJsonText(manifestText, sourceName);
+        }
+
     } // namespace
 
     AdapterResult
@@ -1110,10 +1370,16 @@ namespace Game::Bridge
     AdapterResult
     NorvesLibBridgeAdapter::getCapabilities(const JsonValue& /*params*/)
     {
-        // runtime.control / log.stream / viewport.focus / scene.query / object.query / object.edit を
+        // runtime.control / log.stream / viewport.focus / scene.query / scene.edit / scene.liveUpdate /
+        // object.query / object.edit / asset.read を
         // 広告する。scene.query は scene.getTree と schema.getSnapshot を束ねる token（両者とも実装済み）。
+        // scene.edit は scene.createObject / scene.deleteObject / scene.reparentObject /
+        // scene.duplicateObject 用（実装済み。duplicate は新規 token を足さず scene.edit に含める）。
+        // scene.liveUpdate は scene.treeChanged イベントを発火するようになったため広告する（実装済み）。
         // object.query は object.getSnapshot 用（実装済み）。object.edit は object.setProperty 用
-        // （実装済み）。viewport.thumbnail と scene.liveUpdate は本実装範囲外のため広告しない。
+        // （実装済み）。asset.read は asset.resolve / asset.getManifest 用（実装済み＝NorvesLib アダプタが
+        // texture asset root/manifest から override 解決する）。viewport.thumbnail は
+        // 本実装範囲外のため広告しない。
         // 実エンジンの capability 検証は superset（部分集合包含）方針なので、実装済み token のみ
         // 広告すればよい（mock の 8 token fixture には合わせない）。
         return OkLiteral(
@@ -1122,8 +1388,11 @@ namespace Game::Bridge
             R"({"name":"log.stream"},)"
             R"({"name":"viewport.focus"},)"
             R"({"name":"scene.query"},)"
+            R"({"name":"scene.edit"},)"
+            R"({"name":"scene.liveUpdate"},)"
             R"({"name":"object.query"},)"
-            R"({"name":"object.edit"}]})");
+            R"({"name":"object.edit"},)"
+            R"({"name":"asset.read"}]})");
     }
 
     AdapterResult
@@ -1678,6 +1947,686 @@ namespace Game::Bridge
         }
         out += '}';
         return OkLiteral(out);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::sceneCreateObject(const JsonValue& params)
+    {
+        // 生成失敗・親逆引き不可・GEngine null 等はすべて graceful に {"accepted":false} を返す
+        // （エラー Result ではなく成功 Result に accepted:false を載せる＝result schema の必須形）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        // params を dump して parentId を読む（SDK の JsonValue に構造的読み取り API が無いため
+        // 最小スキャナ。objectSetProperty と同手法）。parentId は任意（無ければルート生成）。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> parentIdField =
+            extract_string_field(paramsText, "parentId");
+
+        // GEngine 未生成なら reject（World を得られない）。
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+
+        // 親 Entity を決める。parentId が指定されていれば必ず逆引きできること（できなければ reject）。
+        NorvesLib::Core::Entity* parent = nullptr;
+        if (parentIdField.has_value())
+        {
+            const std::string& parentId = parentIdField.value();
+            if (parentId.empty())
+            {
+                return OkLiteral(kRejected);
+            }
+
+            // parentId 文字列 -> uint64_t（全桁数字を要求。objectSetProperty と同手法）。
+            uint64_t parsedParentId = 0;
+            bool bParsed = false;
+            {
+                errno = 0;
+                char* end = nullptr;
+                const unsigned long long v = std::strtoull(parentId.c_str(), &end, 10);
+                if (end != nullptr && *end == '\0' && end != parentId.c_str() && errno == 0)
+                {
+                    parsedParentId = static_cast<uint64_t>(v);
+                    bParsed = true;
+                }
+            }
+            if (!bParsed)
+            {
+                return OkLiteral(kRejected);
+            }
+
+            parent = FindEntityByObjectId(world, parsedParentId);
+            if (parent == nullptr)
+            {
+                return OkLiteral(kRejected);  // 指定親が見つからない。
+            }
+        }
+
+        // kind is ignored: no public dynamic-type+parent spawn API (AttachChildEntity is private);
+        // MVP always spawns a base Entity.
+        NorvesLib::Core::Entity* created = world.SpawnEntity<NorvesLib::Core::Entity>(parent);
+        if (created == nullptr)
+        {
+            return OkLiteral(kRejected);  // World 未初期化含む生成失敗。
+        }
+
+        // ツリー構造が変わったので scene.treeChanged を発火する（ack 返却の前）。
+        EmitSceneTreeChanged(m_Host);
+
+        // newId は ObjectId の 10 進文字列（AppendEntityNode と同じ綴り方）。生ポインタは綴らない。
+        std::string out = R"({"accepted":true,"newId":")";
+        out += std::to_string(static_cast<unsigned long long>(created->GetObjectId()));
+        out += R"("})";
+        return OkLiteral(out);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::sceneDeleteObject(const JsonValue& params)
+    {
+        // 該当なし・GEngine null・除去失敗等はすべて graceful に {"accepted":false} を返す
+        // （エラー Result ではなく成功 Result に accepted:false を載せる＝result schema の必須形）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        // params を dump して objectId を読む（必須）。objectSetProperty と同手法。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> objectIdField =
+            extract_string_field(paramsText, "objectId");
+        if (!objectIdField.has_value())
+        {
+            return OkLiteral(kRejected);  // 必須 params 欠落。
+        }
+        const std::string& objectId = objectIdField.value();
+        if (objectId.empty())
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // objectId 文字列 -> uint64_t（全桁数字を要求。objectSetProperty と同手法）。
+        uint64_t parsedId = 0;
+        bool bParsed = false;
+        {
+            errno = 0;
+            char* end = nullptr;
+            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
+            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
+            {
+                parsedId = static_cast<uint64_t>(v);
+                bParsed = true;
+            }
+        }
+        if (!bParsed)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // World から Entity を逆引き（GEngine null / 該当なしは reject）。
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+        NorvesLib::Core::Entity* entity = FindEntityByObjectId(world, parsedId);
+        if (entity == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // 除去を試みる。その bool を accepted とし、除去できたときだけ scene.treeChanged を発火する。
+        const bool bAccepted = world.RemoveEntity(entity);
+        if (bAccepted)
+        {
+            EmitSceneTreeChanged(m_Host);
+        }
+
+        return OkLiteral(bAccepted ? R"({"accepted":true})" : kRejected);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::sceneReparentObject(const JsonValue& params)
+    {
+        // 該当なし・新親逆引き不可・GEngine null・移動失敗等はすべて graceful に {"accepted":false}
+        // を返す（エラー Result ではなく成功 Result に accepted:false を載せる＝result schema の必須形）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        // params を dump して objectId（必須）/ newParentId（任意）を読む。objectSetProperty と同手法。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> objectIdField =
+            extract_string_field(paramsText, "objectId");
+        if (!objectIdField.has_value())
+        {
+            return OkLiteral(kRejected);  // 必須 params 欠落。
+        }
+        const std::string& objectId = objectIdField.value();
+        if (objectId.empty())
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // objectId 文字列 -> uint64_t（全桁数字を要求。objectSetProperty と同手法）。
+        uint64_t parsedId = 0;
+        bool bParsed = false;
+        {
+            errno = 0;
+            char* end = nullptr;
+            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
+            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
+            {
+                parsedId = static_cast<uint64_t>(v);
+                bParsed = true;
+            }
+        }
+        if (!bParsed)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // World から対象 Entity を逆引き（GEngine null / 該当なしは reject）。
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+        NorvesLib::Core::Entity* entity = FindEntityByObjectId(world, parsedId);
+        if (entity == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // newParentId は任意。無ければ新親 nullptr（ルートへ移動）、あるのに逆引きできなければ reject。
+        NorvesLib::Core::Entity* newParent = nullptr;
+        const std::optional<std::string> newParentIdField =
+            extract_string_field(paramsText, "newParentId");
+        if (newParentIdField.has_value())
+        {
+            const std::string& newParentId = newParentIdField.value();
+            if (newParentId.empty())
+            {
+                return OkLiteral(kRejected);
+            }
+
+            uint64_t parsedParentId = 0;
+            bool bParentParsed = false;
+            {
+                errno = 0;
+                char* end = nullptr;
+                const unsigned long long v = std::strtoull(newParentId.c_str(), &end, 10);
+                if (end != nullptr && *end == '\0' && end != newParentId.c_str() && errno == 0)
+                {
+                    parsedParentId = static_cast<uint64_t>(v);
+                    bParentParsed = true;
+                }
+            }
+            if (!bParentParsed)
+            {
+                return OkLiteral(kRejected);
+            }
+
+            newParent = FindEntityByObjectId(world, parsedParentId);
+            if (newParent == nullptr)
+            {
+                return OkLiteral(kRejected);  // 指定新親が見つからない。
+            }
+        }
+
+        // 移動を試みる。その bool を accepted とし、移動できたときだけ scene.treeChanged を発火する。
+        const bool bAccepted = world.ReparentEntity(entity, newParent);
+        if (bAccepted)
+        {
+            EmitSceneTreeChanged(m_Host);
+        }
+
+        return OkLiteral(bAccepted ? R"({"accepted":true})" : kRejected);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::sceneDuplicateObject(const JsonValue& params)
+    {
+        // 該当なし・新親逆引き不可・GEngine null・一時 prefab 生成失敗・複製失敗等はすべて graceful に
+        // {"accepted":false} を返す（エラー Result ではなく成功 Result に accepted:false を載せる＝
+        // result schema の必須形。not_supported を返すとエディタの edit-disabled がラッチする）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        // params を dump して objectId（必須）/ newParentId（任意）を読む。sceneReparentObject と同手法。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> objectIdField =
+            extract_string_field(paramsText, "objectId");
+        if (!objectIdField.has_value())
+        {
+            return OkLiteral(kRejected);  // 必須 params 欠落。
+        }
+        const std::string& objectId = objectIdField.value();
+        if (objectId.empty())
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // objectId 文字列 -> uint64_t（全桁数字を要求。sceneReparentObject と同手法）。
+        uint64_t parsedId = 0;
+        bool bParsed = false;
+        {
+            errno = 0;
+            char* end = nullptr;
+            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
+            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
+            {
+                parsedId = static_cast<uint64_t>(v);
+                bParsed = true;
+            }
+        }
+        if (!bParsed)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // World から複製元 Entity を逆引き（GEngine null / 該当なしは reject）。
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+        NorvesLib::Core::Entity* src = FindEntityByObjectId(world, parsedId);
+        if (src == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // 複製先の親を決める。newParentId が指定されていれば逆引き必須（できなければ reject）。
+        // 無ければ複製元の親（同胞複製）＝GetParentEntity()。複製元がルートなら nullptr で World 直下へ。
+        NorvesLib::Core::Entity* newParent = nullptr;
+        const std::optional<std::string> newParentIdField =
+            extract_string_field(paramsText, "newParentId");
+        if (newParentIdField.has_value())
+        {
+            const std::string& newParentId = newParentIdField.value();
+            if (newParentId.empty())
+            {
+                return OkLiteral(kRejected);
+            }
+
+            uint64_t parsedParentId = 0;
+            bool bParentParsed = false;
+            {
+                errno = 0;
+                char* end = nullptr;
+                const unsigned long long v = std::strtoull(newParentId.c_str(), &end, 10);
+                if (end != nullptr && *end == '\0' && end != newParentId.c_str() && errno == 0)
+                {
+                    parsedParentId = static_cast<uint64_t>(v);
+                    bParentParsed = true;
+                }
+            }
+            if (!bParentParsed)
+            {
+                return OkLiteral(kRejected);
+            }
+
+            newParent = FindEntityByObjectId(world, parsedParentId);
+            if (newParent == nullptr)
+            {
+                return OkLiteral(kRejected);  // 指定新親が見つからない。
+            }
+        }
+        else
+        {
+            newParent = src->GetParentEntity();  // 同胞複製（ルートなら nullptr＝World 直下）。
+        }
+
+        // 複製元の部分木を値スナップショットへ投影する（生ポインタは持たない）。
+        NorvesLib::Core::EntitySubtreeSnapshot snap =
+            NorvesLib::Core::RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*src);
+
+        // 関数ローカルの ResourceRegistry + 一時 PrefabAsset へスナップショットを載せる
+        // （PrefabRoundTripTest と同経路。SpawnPrefab が同期消費するため関数ローカル寿命で十分）。
+        NorvesLib::Core::ResourceRegistry registry;
+        if (!registry.Initialize())
+        {
+            return OkLiteral(kRejected);
+        }
+        auto prefab = registry.CreateTransient<NorvesLib::Core::PrefabAsset>("BridgeDuplicate");
+        if (prefab == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        prefab->SetTree(std::move(snap));
+
+        // 複製を生成する。生成できたら accepted:true と新ルートの newId を返す。
+        NorvesLib::Core::Entity* dup = world.SpawnPrefab(*prefab, newParent);
+        if (dup == nullptr)
+        {
+            return OkLiteral(kRejected);  // World 未初期化含む生成失敗。
+        }
+
+        // ツリー構造が変わったので scene.treeChanged を発火する（ack 返却の前）。
+        EmitSceneTreeChanged(m_Host);
+
+        // newId は複製後ルートの ObjectId の 10 進文字列（sceneCreateObject と同じ綴り方）。
+        // 生ポインタは綴らない。
+        std::string out = R"({"accepted":true,"newId":")";
+        out += std::to_string(static_cast<unsigned long long>(dup->GetObjectId()));
+        out += R"("})";
+        return OkLiteral(out);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::assetResolve(const JsonValue& params)
+    {
+        using namespace NorvesLib::Core::Asset;
+
+        // params.logicalPath（必須 string）/ kind（任意 string）/ variant（任意 string）を読む。
+        // SDK の JsonValue に構造的読み取り API は無いため dump() の最小スキャナで読む（他メソッドと同手法）。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> logicalPathField = extract_string_field(paramsText, "logicalPath");
+        const std::optional<std::string> kindField = extract_string_field(paramsText, "kind");
+        const std::optional<std::string> variantField = extract_string_field(paramsText, "variant");
+        const std::string logicalPath = logicalPathField.value_or(std::string{});
+
+        // 入力 logicalPath をエコーする graceful な invalidManifest を組むヘルパ。
+        // not_supported は返さない（asset.read 広告と整合）。schema 必須は status/source/normalizedLogicalPath。
+        const auto buildInvalidManifest = [](std::string_view echoPath) -> std::string {
+            std::string out = R"({"status":"invalidManifest","source":"none","normalizedLogicalPath":")";
+            AppendJsonString(out, echoPath);
+            out += R"("})";
+            return out;
+        };
+
+        // handler 未注入は graceful。texture asset root/manifest パスは handler 経由で借用する。
+        if (m_Handler == nullptr)
+        {
+            return OkLiteral(buildInvalidManifest(logicalPath));
+        }
+        const NorvesLib::Core::Container::String& root = m_Handler->GetTextureAssetRoot();
+        const NorvesLib::Core::Container::String& manifestPath = m_Handler->GetTextureAssetManifestPath();
+
+        // 一時 AssetSystem を構築し manifest を読む。root/manifest 空・読込/パース失敗は graceful invalidManifest。
+        AssetSystem system;
+        if (!BuildAssetSystemFromPaths(root, manifestPath, system))
+        {
+            return OkLiteral(buildInvalidManifest(logicalPath));
+        }
+
+        // kind: 欠落 or 未知文字列なら AssetKind::Unknown のまま渡す（ResolveAsset が InvalidRequest を返す）。
+        AssetKind kind = AssetKind::Unknown;
+        if (kindField.has_value() && !kindField.value().empty())
+        {
+            AssetKind parsedKind = AssetKind::Unknown;
+            const NorvesLib::Core::Container::AnsiStringView kindView(
+                kindField.value().data(), kindField.value().size());
+            if (TryParseAssetKind(kindView, parsedKind))
+            {
+                kind = parsedKind;
+            }
+        }
+
+        // variant: 欠落なら DefaultVariant。
+        const std::string variant =
+            (variantField.has_value() && !variantField.value().empty())
+                ? variantField.value()
+                : std::string(AssetManifest::DefaultVariant);
+
+        // ResolveAsset は健全性検証（hash mismatch 検出）のため cooked 全バイトを Blob に読むが、
+        // Blob / Entry / LoosePath / 生バイトは wire へ一切入れない（DTO のメタ値だけ綴る＝live memory 非転送）。
+        const NorvesLib::Core::Container::AnsiStringView logicalPathView(
+            logicalPath.data(), logicalPath.size());
+        const NorvesLib::Core::Container::AnsiStringView variantView(
+            variant.data(), variant.size());
+        const AssetResolveResult result =
+            system.ResolveAsset(logicalPathView, kind, variantView, AssetFallbackMode::FailOnCookedFailure);
+
+        // wire（camelCase, additionalProperties:false 厳守）。
+        std::string text = R"({"status":")";
+        text += AssetResolveStatusWire(result.Status);
+        text += R"(","source":")";
+        text += AssetResolveSourceWire(result.Source);
+        text += R"(","normalizedLogicalPath":")";
+        // normalizedLogicalPath は空なら入力 logicalPath をエコー（schema 必須 string）。
+        const std::string_view normalized = ViewOfAnsi(result.NormalizedLogicalPath);
+        AppendJsonString(text, normalized.empty() ? std::string_view{logicalPath} : normalized);
+        text += '"';
+
+        // requiresExplicitLog は true のときのみ。
+        if (result.RequiresExplicitLog())
+        {
+            text += R"(,"requiresExplicitLog":true)";
+        }
+        // fallbackAction は Action != Fail のときのみ。
+        if (result.FallbackDecision.Action != AssetFallbackAction::Fail)
+        {
+            text += R"(,"fallbackAction":")";
+            text += AssetFallbackActionWire(result.FallbackDecision.Action);
+            text += '"';
+        }
+        // failureKind は FailureKind != Unknown のときのみ。
+        if (result.FallbackDecision.FailureKind != AssetCookedFailureKind::Unknown)
+        {
+            text += R"(,"failureKind":")";
+            text += AssetCookedFailureKindWire(result.FallbackDecision.FailureKind);
+            text += '"';
+        }
+        // reason は非空のときのみ（AppendJsonString エスケープ）。
+        const std::string_view reason = ViewOfAnsi(result.Reason);
+        if (!reason.empty())
+        {
+            text += R"(,"reason":")";
+            AppendJsonString(text, reason);
+            text += '"';
+        }
+
+        text += '}';
+        return OkLiteral(text);
+    }
+
+    AdapterResult
+    NorvesLibBridgeAdapter::assetGetManifest(const JsonValue& params)
+    {
+        using namespace NorvesLib::Core::Asset;
+
+        // params.filter（任意 string）/ page（任意 integer）/ pageSize（任意 integer）を読む。
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> filterField = extract_string_field(paramsText, "filter");
+        const std::optional<std::string> pageField = extract_json_field(paramsText, "page");
+        const std::optional<std::string> pageSizeField = extract_json_field(paramsText, "pageSize");
+
+        // page / pageSize は extract_json_field の生値（裸 integer テキスト）を strtol で読む。
+        // pageSize は「指定された」ことを別フラグで持つ（指定時のみページングし page/pageSize を echo）。
+        long page = 0;
+        if (pageField.has_value())
+        {
+            const std::string trimmed(pageField.value());
+            char* end = nullptr;
+            const long v = std::strtol(trimmed.c_str(), &end, 10);
+            if (end != nullptr && end != trimmed.c_str() && v >= 0)
+            {
+                page = v;
+            }
+        }
+        bool bHasPageSize = false;
+        long pageSize = 0;
+        if (pageSizeField.has_value())
+        {
+            const std::string trimmed(pageSizeField.value());
+            char* end = nullptr;
+            const long v = std::strtol(trimmed.c_str(), &end, 10);
+            if (end != nullptr && end != trimmed.c_str() && v >= 1)
+            {
+                pageSize = v;
+                bHasPageSize = true;
+            }
+        }
+
+        // graceful な空 manifest（schema 必須 version/entries/totalCount）。
+        static constexpr std::string_view kEmptyManifest =
+            R"({"version":0,"entries":[],"totalCount":0})";
+
+        if (m_Handler == nullptr)
+        {
+            return OkLiteral(std::string(kEmptyManifest));
+        }
+        const NorvesLib::Core::Container::String& root = m_Handler->GetTextureAssetRoot();
+        const NorvesLib::Core::Container::String& manifestPath = m_Handler->GetTextureAssetManifestPath();
+
+        // 一時 AssetSystem を構築し manifest を読む。読込成功なら version=1、失敗なら version=0。
+        // パーサが version==1 を強制するためテキスト再スキャンせず load 成否で等価判定する。
+        AssetSystem system;
+        const bool bLoaded = BuildAssetSystemFromPaths(root, manifestPath, system);
+        if (!bLoaded)
+        {
+            return OkLiteral(std::string(kEmptyManifest));
+        }
+        const int version = 1;
+
+        // filter（部分一致）。境界は必ず GetAssetCount() で取る。フィルタ一致判定はヘルパで共有する。
+        const std::string filter = filterField.value_or(std::string{});
+        const std::size_t assetCount = system.GetAssetCount();
+        const auto matchesFilter = [&](const AssetCookedReference& ref) -> bool {
+            if (filter.empty())
+            {
+                return true;
+            }
+            const std::string_view logicalView = ViewOfAnsi(ref.LogicalPath);
+            return logicalView.find(filter) != std::string_view::npos;
+        };
+
+        // Pass 1: totalCount はフィルタ後・ページング前の件数。std コンテナを避けて 2 パスで走る。
+        std::size_t totalCount = 0;
+        for (std::size_t i = 0; i < assetCount; ++i)
+        {
+            if (matchesFilter(system.GetAssetReference(i)))
+            {
+                ++totalCount;
+            }
+        }
+
+        // ページング: pageSize 指定時のみ start=page*pageSize, end=min(start+pageSize,total) でスライス。
+        std::size_t sliceBegin = 0;
+        std::size_t sliceEnd = totalCount;
+        if (bHasPageSize)
+        {
+            const std::size_t pageSz = static_cast<std::size_t>(pageSize);
+            const std::size_t pageIdx = static_cast<std::size_t>(page);
+            const std::size_t start = pageIdx * pageSz;
+            sliceBegin = (start < totalCount) ? start : totalCount;
+            const std::size_t end = sliceBegin + pageSz;
+            sliceEnd = (end < totalCount) ? end : totalCount;
+        }
+
+        // wire（camelCase, additionalProperties:false 厳守）。
+        std::string text = R"({"version":)";
+        text += std::to_string(version);
+        text += R"(,"entries":[)";
+
+        // Pass 2: フィルタ一致の通し番号（matchOrdinal）が [sliceBegin, sliceEnd) のものだけ emit する。
+        // 一致順 == 走査順なので、インデックス集合を保持せず単一パスでスライスできる。
+        std::size_t matchOrdinal = 0;
+        bool bFirst = true;
+        for (std::size_t i = 0; i < assetCount; ++i)
+        {
+            const AssetCookedReference& ref = system.GetAssetReference(i);
+            if (!matchesFilter(ref))
+            {
+                continue;
+            }
+            const std::size_t ordinal = matchOrdinal;
+            ++matchOrdinal;
+            if (ordinal < sliceBegin || ordinal >= sliceEnd)
+            {
+                continue;
+            }
+            if (!bFirst)
+            {
+                text += ',';
+            }
+            bFirst = false;
+
+            text += R"({"logicalPath":")";
+            AppendJsonString(text, ViewOfAnsi(ref.LogicalPath));
+            text += R"(","kind":")";
+            // kind は GetAssetKindName（texture/model/raw/unknown）を流用（AnsiString 返し→ViewOfAnsi で借用）。
+            const NorvesLib::Core::Container::AnsiString kindName = GetAssetKindName(ref.Kind);
+            AppendJsonString(text, ViewOfAnsi(kindName));
+            text += '"';
+
+            // 任意フィールドは非空時のみ。生 u64/u32（SourceHash/CookedHash/EntryType）は出さない。
+            const std::string_view variantView = ViewOfAnsi(ref.Variant);
+            if (!variantView.empty())
+            {
+                text += R"(,"variant":")";
+                AppendJsonString(text, variantView);
+                text += '"';
+            }
+            const std::string_view formatView = ViewOfAnsi(ref.Format);
+            if (!formatView.empty())
+            {
+                text += R"(,"format":")";
+                AppendJsonString(text, formatView);
+                text += '"';
+            }
+            const std::string_view sourceHashView = ViewOfAnsi(ref.SourceHashHex);
+            if (!sourceHashView.empty())
+            {
+                text += R"(,"sourceHash":")";
+                AppendJsonString(text, sourceHashView);
+                text += '"';
+            }
+            const std::string_view cookedPackageView = ViewOfAnsi(ref.CookedPackage);
+            if (!cookedPackageView.empty())
+            {
+                text += R"(,"cookedPackage":")";
+                AppendJsonString(text, cookedPackageView);
+                text += '"';
+            }
+            const std::string_view entryNameView = ViewOfAnsi(ref.EntryName);
+            if (!entryNameView.empty())
+            {
+                text += R"(,"entryName":")";
+                AppendJsonString(text, entryNameView);
+                text += '"';
+            }
+            const std::string_view entryTypeView = ViewOfAnsi(ref.EntryTypeText);
+            if (!entryTypeView.empty())
+            {
+                text += R"(,"entryType":")";
+                AppendJsonString(text, entryTypeView);
+                text += '"';
+            }
+            const std::string_view cookedHashView = ViewOfAnsi(ref.CookedHashHex);
+            if (!cookedHashView.empty())
+            {
+                text += R"(,"cookedHash":")";
+                AppendJsonString(text, cookedHashView);
+                text += '"';
+            }
+            // cookedVersion は裸 integer（std::to_string）。schema は integer minimum:0。
+            text += R"(,"cookedVersion":)";
+            text += std::to_string(static_cast<unsigned long>(ref.CookedVersion));
+
+            text += '}';
+        }
+
+        text += R"(],"totalCount":)";
+        text += std::to_string(static_cast<unsigned long long>(totalCount));
+
+        // page/pageSize は pageSize 指定時のみ echo（pageSize 欠落時は全件返しで両者を出さない）。
+        if (bHasPageSize)
+        {
+            text += R"(,"page":)";
+            text += std::to_string(page);
+            text += R"(,"pageSize":)";
+            text += std::to_string(pageSize);
+        }
+
+        text += '}';
+        return OkLiteral(text);
     }
 
 } // namespace Game::Bridge

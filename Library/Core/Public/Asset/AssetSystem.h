@@ -38,6 +38,13 @@ namespace NorvesLib::Core::Asset
                                                       Container::AnsiStringView variant = AssetManifest::DefaultVariant,
                                                       AssetFallbackMode fallbackMode = AssetFallbackMode::FailOnCookedFailure) const;
 
+        // Manifest enumeration accessors. Delegate to the privately-held manifest so callers
+        // (e.g. the NorvesLib Bridge adapter's asset.getManifest) can list cooked references
+        // without reaching into AssetManifest directly. Bounds are the caller's responsibility:
+        // index must be < GetAssetCount(). When no manifest is loaded, GetAssetCount() is 0.
+        [[nodiscard]] size_t GetAssetCount() const noexcept;
+        [[nodiscard]] const AssetCookedReference &GetAssetReference(size_t index) const noexcept;
+
     private:
         AssetManifest m_Manifest;
         AssetFileReader m_FileReader;

@@ -259,6 +259,126 @@ namespace Game::Bridge
         norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
         objectSetProperty(const norves::bridge::JsonValue& params) override;
 
+        // --- Scene（書き込み系） ---
+
+        /**
+         * @brief scene.createObject。World に新規 Entity を生成する
+         *
+         * params.parentId（任意 string）を uint64_t へ解釈して親 Entity を逆引きし、
+         * World::SpawnEntity<Entity>(parent) で生成する。parentId が無ければ親 nullptr（ルート生成）。
+         * kind（任意 string）は無視する（動的型 + 親指定の public spawn API が無いため。MVP は常に
+         * 基底 Entity を生成する）。生成成功時は scene.treeChanged を発火してから
+         * {accepted:true, newId:"<ObjectId 10 進>"} を返す。parentId が指定されているのに逆引きできない、
+         * GEngine 未生成、SpawnEntity が nullptr（World 未初期化含む）のいずれも {accepted:false}。
+         * newId は ObjectId 値の 10 進文字列コピーのみを綴り、Entity ポインタや生ポインタは JsonValue へ
+         * 一切入れない（live memory 非転送）。適用は呼び出し中の同期・同スレッド文脈
+         * （DrainInbound＝ゲームスレッド）でのみ行い、新規スレッド/marshal はしない。
+         *
+         * @param params リクエスト params（借用、parentId / kind を読む）
+         * @return {accepted:bool, newId?:string} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        sceneCreateObject(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief scene.deleteObject。World から Entity を除去する
+         *
+         * params.objectId（必須 string）を uint64_t へ解釈して World から該当 Entity を逆引きし、
+         * World::RemoveEntity(entity) で除去する。その bool を accepted とし、true のときだけ
+         * scene.treeChanged を発火する。objectId 欠落 / パース失敗 / GEngine 未生成 / 該当なし /
+         * RemoveEntity が false のいずれも {accepted:false}。Entity ポインタや生ポインタは JsonValue へ
+         * 一切入れない（live memory 非転送）。適用は呼び出し中の同期・同スレッド文脈
+         * （DrainInbound＝ゲームスレッド）でのみ行い、新規スレッド/marshal はしない。
+         *
+         * @param params リクエスト params（借用、objectId を読む）
+         * @return {accepted:bool} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        sceneDeleteObject(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief scene.reparentObject。Entity を別親（またはルート）へ移動する
+         *
+         * params.objectId（必須 string）を uint64_t へ解釈して World から該当 Entity を逆引きする。
+         * params.newParentId（任意 string）が無ければ新親 nullptr（World 直下ルートへ移動）、あるのに
+         * 逆引きできなければ {accepted:false}。World::ReparentEntity(entity, newParent) の bool を
+         * accepted とし、true のときだけ scene.treeChanged を発火する。objectId 欠落 / パース失敗 /
+         * GEngine 未生成 / 該当なし / ReparentEntity が false のいずれも {accepted:false}。Entity ポインタや
+         * 生ポインタは JsonValue へ一切入れない（live memory 非転送）。適用は呼び出し中の同期・同
+         * スレッド文脈（DrainInbound＝ゲームスレッド）でのみ行い、新規スレッド/marshal はしない。
+         *
+         * @param params リクエスト params（借用、objectId / newParentId を読む）
+         * @return {accepted:bool} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        sceneReparentObject(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief scene.duplicateObject。Entity 部分木を複製して別親（または同一親）へ生成する
+         *
+         * params.objectId（必須 string）を uint64_t へ解釈して World から複製元 Entity を逆引きする。
+         * params.newParentId（任意 string）が無ければ複製元の親（GetParentEntity()）直下へ、ルート
+         * 複製元なら World 直下ルートへ複製する（同胞複製）。あるのに逆引きできなければ {accepted:false}。
+         * 複製は RuntimeSchemaProjector::BuildEntitySubtreeSnapshot で部分木スナップショットを取り、
+         * 関数ローカルの ResourceRegistry + 一時 PrefabAsset へ載せて World::SpawnPrefab で生成する
+         * （PrefabRoundTripTest と同経路）。生成できたら accepted:true と新ルートの newId（ObjectId の
+         * 10 進文字列）を返し、scene.treeChanged を発火する。objectId 欠落 / パース失敗 / GEngine 未生成 /
+         * 該当なし / 一時 prefab 生成失敗 / SpawnPrefab が nullptr のいずれも {accepted:false}。Entity
+         * ポインタや生ポインタは JsonValue へ一切入れない（live memory 非転送。snapshot は値、registry /
+         * prefab は関数ローカルで SpawnPrefab が同期消費するため寿命は十分）。適用は呼び出し中の同期・
+         * 同スレッド文脈（DrainInbound＝ゲームスレッド）でのみ行い、新規スレッド/marshal はしない。
+         *
+         * @param params リクエスト params（借用、objectId / newParentId を読む）
+         * @return {accepted:bool[, newId:string]} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        sceneDuplicateObject(const norves::bridge::JsonValue& params) override;
+
+        // --- Asset（読み取り系） ---
+
+        /**
+         * @brief asset.resolve。1 つの論理アセットパスを解決し health/メタを DTO で返す
+         *
+         * params.logicalPath（必須 string）/ kind（任意 string）/ variant（任意 string）を読む。
+         * handler が注入されていない、または texture asset root/manifest パスが空のときは
+         * graceful に {status:"invalidManifest", source:"none", normalizedLogicalPath:<入力>} を返す
+         * （not_supported は返さない＝asset.read 広告と整合）。それ以外では handler の root/manifest
+         * パスから一時 AssetSystem を構築し manifest を読み込み、ResolveAsset を呼んで結果メタを
+         * camelCase wire（status/source/normalizedLogicalPath と任意 requiresExplicitLog/fallbackAction/
+         * failureKind/reason）へ写す。ResolveAsset は健全性検証（hash mismatch 検出）のため cooked
+         * 全バイトを Blob に読むが、Blob / Entry / LoosePath / 生バイトは wire へ一切入れない
+         * （DTO のメタ値だけを綴る＝live memory 非転送）。
+         *
+         * @param params リクエスト params（借用、logicalPath / kind / variant を読む）
+         * @return asset.resolve.result の JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（エンジン状態を変えない）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        assetResolve(const norves::bridge::JsonValue& params) override;
+
+        /**
+         * @brief asset.getManifest。読込済み manifest のスナップショットを DTO 配列で返す
+         *
+         * params.filter（任意 string）/ page（任意 integer）/ pageSize（任意 integer）を読む。
+         * handler が注入されていない、または root/manifest パスが空のときは graceful に
+         * {version:0, entries:[], totalCount:0} を返す。それ以外では一時 AssetSystem を構築し
+         * manifest を読み込み、GetAssetCount()/GetAssetReference(index) で各 AssetCookedReference を
+         * 列挙して assetEntry（logicalPath/kind 必須、variant/format/sourceHash/cookedPackage/
+         * entryName/entryType/cookedHash は非空時、cookedVersion は裸 integer）へ写す。filter は
+         * logicalPath 部分一致で絞り、totalCount はフィルタ後・ページング前の件数。Blob / Entry /
+         * LoosePath / 生 u64 ハッシュ・u32 EntryType は wire へ入れない（live memory 非転送）。
+         *
+         * @param params リクエスト params（借用、filter / page / pageSize を読む）
+         * @return asset.getManifest.result の JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。無副作用（読み取りのみ）。
+         */
+        norves::bridge::Result<norves::bridge::JsonValue, norves::bridge::BridgeError>
+        assetGetManifest(const norves::bridge::JsonValue& params) override;
+
         // viewport.getThumbnail は本実装範囲外で、adapter.hpp の既定実装
         // （METHOD_NOT_SUPPORTED）のまま。scene/object（読み取り・書き込み）／schema は実装済み。
 
