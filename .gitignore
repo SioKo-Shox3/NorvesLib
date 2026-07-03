@@ -131,3 +131,7 @@ build_output*.txt
 
 # 作業メモ・計画ノート（追跡対象外のスクラッチ文書）
 Docs/Plans/
+
+# Claude Code のマシンローカル設定（agents/hooks は追跡する。settings はテンプレートから再展開）
+.claude/settings.local.json
+.claude/worktrees/
