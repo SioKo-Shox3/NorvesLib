@@ -138,6 +138,7 @@ namespace Game::GameModes
         uint32_t m_BoardSmokeCount = 0;
         uint32_t m_BillboardSmokeCount = 0;
         uint32_t m_ImpostorSmokeCount = 0;
+        uint32_t m_InstancedMeshCount = 0;
         bool m_bLayerCompositeSmoke = false;
         VariableArray<NorvesLib::Core::Rendering::TextureHandle> m_F11ImpostorSmokeAtlasHandles;
         NorvesLib::Core::Rendering::ModelHandle m_BoulderModelHandle;

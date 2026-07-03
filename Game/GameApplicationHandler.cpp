@@ -53,6 +53,7 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestBoardSmokeCountOption = TEXT("--rendering3dtest-board-smoke-count");
         constexpr const TCHAR *kRendering3DTestBillboardSmokeCountOption = TEXT("--rendering3dtest-billboard-smoke-count");
         constexpr const TCHAR *kRendering3DTestImpostorSmokeCountOption = TEXT("--rendering3dtest-impostor-smoke-count");
+        constexpr const TCHAR *kRendering3DTestInstancedMeshCountOption = TEXT("--rendering3dtest-instanced-mesh-count");
         constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         // 値を取らない bare フラグ(--enable-canvas-view と同類)。指定時のみ描画ダミー
@@ -62,9 +63,11 @@ namespace Game
         // 不変条件ゲート。NORVES_ENABLE_IMGUI ビルドでのみ有効に処理される。
         constexpr const TCHAR *kImGuiOption = TEXT("--imgui");
         constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
+        constexpr uint32_t kRendering3DTestMaxInstancedMeshCount = 200u;
         uint32_t s_Rendering3DTestBoardSmokeCount = 0;
         uint32_t s_Rendering3DTestBillboardSmokeCount = 0;
         uint32_t s_Rendering3DTestImpostorSmokeCount = 0;
+        uint32_t s_Rendering3DTestInstancedMeshCount = 0;
         bool s_bRendering3DTestLayerCompositeSmoke = false;
 
         /**
@@ -269,10 +272,12 @@ namespace Game
         s_Rendering3DTestBoardSmokeCount = 0;
         s_Rendering3DTestBillboardSmokeCount = 0;
         s_Rendering3DTestImpostorSmokeCount = 0;
+        s_Rendering3DTestInstancedMeshCount = 0;
         s_bRendering3DTestLayerCompositeSmoke = false;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;
+        bool bHasRendering3DTestInstancedMeshCount = false;
 
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
@@ -539,6 +544,61 @@ namespace Game
                 s_Rendering3DTestImpostorSmokeCount = parsedImpostorSmokeCount;
                 bHasRendering3DTestImpostorSmokeCount = true;
             }
+
+            bool bMatchedInstancedMeshCount = false;
+            bool bInstancedMeshCountHasInlineValue = false;
+            String instancedMeshCountInlineValue;
+            if (!TryMatchTextureAssetOption(args[i],
+                                            kRendering3DTestInstancedMeshCountOption,
+                                            bMatchedInstancedMeshCount,
+                                            bInstancedMeshCountHasInlineValue,
+                                            instancedMeshCountInlineValue,
+                                            parseError))
+            {
+                LOG_ERROR("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                return false;
+            }
+
+            if (bMatchedInstancedMeshCount)
+            {
+                if (bHasRendering3DTestInstancedMeshCount)
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: duplicate --rendering3dtest-instanced-mesh-count");
+                    return false;
+                }
+
+                String instancedMeshCountText;
+                if (!ReadTextureAssetOptionValue(args,
+                                                 i,
+                                                 kRendering3DTestInstancedMeshCountOption,
+                                                 bInstancedMeshCountHasInlineValue,
+                                                 instancedMeshCountInlineValue,
+                                                 instancedMeshCountText,
+                                                 parseError))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: %s", parseError.c_str());
+                    return false;
+                }
+
+                uint32_t parsedInstancedMeshCount = 0;
+                if (!TryParseUInt32(instancedMeshCountText, parsedInstancedMeshCount))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: invalid --rendering3dtest-instanced-mesh-count value \"%s\"",
+                              instancedMeshCountText.c_str());
+                    return false;
+                }
+
+                if (parsedInstancedMeshCount > kRendering3DTestMaxInstancedMeshCount)
+                {
+                    LOG_WARNING("Rendering3DTest instanced mesh count clamped requested=%u clamped=%u",
+                                parsedInstancedMeshCount,
+                                kRendering3DTestMaxInstancedMeshCount);
+                    parsedInstancedMeshCount = kRendering3DTestMaxInstancedMeshCount;
+                }
+
+                s_Rendering3DTestInstancedMeshCount = parsedInstancedMeshCount;
+                bHasRendering3DTestInstancedMeshCount = true;
+            }
         }
 
         const bool bHasRoot = !m_TextureAssetRoot.empty();
@@ -575,6 +635,11 @@ namespace Game
         {
             LOG_INFO("Rendering3DTest impostor smoke count parsed count=%u",
                      s_Rendering3DTestImpostorSmokeCount);
+        }
+        if (bHasRendering3DTestInstancedMeshCount)
+        {
+            LOG_INFO("Rendering3DTest instanced mesh count parsed count=%u",
+                     s_Rendering3DTestInstancedMeshCount);
         }
         if (s_bRendering3DTestLayerCompositeSmoke)
         {
@@ -907,6 +972,7 @@ namespace Game
                 mode->GetData().m_BoardSmokeCount = s_Rendering3DTestBoardSmokeCount;
                 mode->GetData().m_BillboardSmokeCount = s_Rendering3DTestBillboardSmokeCount;
                 mode->GetData().m_ImpostorSmokeCount = s_Rendering3DTestImpostorSmokeCount;
+                mode->GetData().m_InstancedMeshCount = s_Rendering3DTestInstancedMeshCount;
                 mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
                 return mode;
             });

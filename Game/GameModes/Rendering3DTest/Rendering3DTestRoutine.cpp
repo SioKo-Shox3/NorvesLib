@@ -382,6 +382,40 @@ namespace Game::GameModes
 
             LOG_INFO("Sphere Entity created and added to World");
 
+            if (data.m_InstancedMeshCount > 0u)
+            {
+                constexpr uint32_t kInstancedMeshGridColumns = 8u;
+                constexpr float kInstancedMeshSpacing = 1.25f;
+                constexpr float kInstancedMeshStartZ = -4.5f;
+                const float startX =
+                    -static_cast<float>(kInstancedMeshGridColumns - 1u) * kInstancedMeshSpacing * 0.5f;
+
+                for (uint32_t meshIndex = 0; meshIndex < data.m_InstancedMeshCount; ++meshIndex)
+                {
+                    const float column = static_cast<float>(meshIndex % kInstancedMeshGridColumns);
+                    const float row = static_cast<float>(meshIndex / kInstancedMeshGridColumns);
+                    const float x = startX + column * kInstancedMeshSpacing;
+                    const float z = kInstancedMeshStartZ + row * kInstancedMeshSpacing;
+
+                    Entity* instancedObject = world.SpawnObject<Entity>();
+                    ctx.ScopeRef.TrackObject(instancedObject);
+                    instancedObject->SetPosition(x, 0.5f, z);
+
+                    Component::MeshComponent* instancedMeshComponent =
+                        world.CreateComponent<Component::MeshComponent>(instancedObject);
+                    instancedMeshComponent->SetMeshHandle(data.m_SphereMeshHandle);
+                    instancedMeshComponent->SetCastShadow(true);
+                    instancedMeshComponent->SetCustomData(0, 1.0f);
+                    instancedMeshComponent->SetCustomData(1, 1.0f);
+                    instancedMeshComponent->SetCustomData(2, 1.0f);
+                    instancedMeshComponent->SetCustomData(3, 1.0f);
+                    instancedMeshComponent->SetMaterial(0, data.m_CobbleStoneMaterial);
+                }
+
+                LOG_INFO("Rendering3DTest instanced mesh grid created count=%u",
+                         data.m_InstancedMeshCount);
+            }
+
             // --- 地面オブジェクト ---
             data.m_pGroundObject = world.SpawnObject<Entity>();
             ctx.ScopeRef.TrackObject(data.m_pGroundObject);
