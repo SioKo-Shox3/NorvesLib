@@ -38,16 +38,16 @@
 
 #include <Windows.h>
 
-#include "norves/bridge/dto/common.hpp"
-#include "norves/bridge/dto/methods.hpp"
+#include "Norves/Bridge/Dto/common.hpp"
+#include "Norves/Bridge/Dto/methods.hpp"
 
 namespace Game::Bridge
 {
     namespace
     {
-        using norves::bridge::BridgeError;
-        using norves::bridge::JsonValue;
-        using norves::bridge::Result;
+        using Norves::Bridge::BridgeError;
+        using Norves::Bridge::JsonValue;
+        using Norves::Bridge::Result;
 
         using AdapterResult = Result<JsonValue, BridgeError>;
 
@@ -78,9 +78,9 @@ namespace Game::Bridge
          * @param state NorvesLib の Bridge runtime 状態
          * @return 対応する SDK DTO の RuntimeState（未知値は Unknown）
          */
-        norves::bridge::dto::RuntimeState ToDtoRuntimeState(Game::Bridge::BridgeRuntimeState state)
+        Norves::Bridge::Dto::RuntimeState ToDtoRuntimeState(Game::Bridge::BridgeRuntimeState state)
         {
-            using DtoState = norves::bridge::dto::RuntimeState;
+            using DtoState = Norves::Bridge::Dto::RuntimeState;
             switch (state)
             {
                 case Game::Bridge::BridgeRuntimeState::Edit:
@@ -1357,10 +1357,10 @@ namespace Game::Bridge
         sessionId += "-";
         sessionId += std::to_string(static_cast<unsigned long long>(m_NextSessionSeq));
 
-        norves::bridge::dto::HelloResult result;
+        Norves::Bridge::Dto::HelloResult result;
         result.sessionId = std::move(sessionId);
         result.protocolVersion = std::string(selectedProtocolVersion);
-        result.server = norves::bridge::dto::ServerInfo{
+        result.server = Norves::Bridge::Dto::ServerInfo{
             "NorvesLib",
             std::optional<std::string>{"1.0"},
             std::optional<std::string>{"NorvesLib"}};
@@ -1400,15 +1400,15 @@ namespace Game::Bridge
     {
         // 実エンジン状態を DTO スナップショットへ変換して返す。GEngine が走行中
         // （かつ終了要求なし）なら Running、そうでなければ Initializing として扱う。
-        norves::bridge::dto::StatusSnapshot snap;
+        Norves::Bridge::Dto::StatusSnapshot snap;
         const bool bRunning = (NorvesLib::Core::Engine::GEngine != nullptr) &&
                               NorvesLib::Core::Engine::GEngine->IsRunning() &&
                               !NorvesLib::Core::Engine::GEngine->IsExitRequested();
-        snap.engineState = bRunning ? norves::bridge::dto::EngineState::Running
-                                    : norves::bridge::dto::EngineState::Initializing;
+        snap.engineState = bRunning ? Norves::Bridge::Dto::EngineState::Running
+                                    : Norves::Bridge::Dto::EngineState::Initializing;
         snap.runtimeState = (m_Handler != nullptr)
                                 ? ToDtoRuntimeState(m_Handler->GetBridgeRuntimeState())
-                                : norves::bridge::dto::RuntimeState::Unknown;
+                                : Norves::Bridge::Dto::RuntimeState::Unknown;
         snap.engineName = "NorvesLib";
         snap.engineVersion = "1.0";
         return AdapterResult::ok(snap.to_json());
@@ -1445,9 +1445,9 @@ namespace Game::Bridge
         // イベント先・response 後の順で runtime.stateChanged を発火する（PlayAck の前）。
         EmitRuntimeStateChanged(m_Host, previous, next);
 
-        norves::bridge::dto::PlayAck ack;
+        Norves::Bridge::Dto::PlayAck ack;
         ack.accepted = true;
-        ack.requestedState = norves::bridge::dto::RuntimeState::Playing;
+        ack.requestedState = Norves::Bridge::Dto::RuntimeState::Playing;
         return AdapterResult::ok(ack.to_json());
     }
 
@@ -1469,9 +1469,9 @@ namespace Game::Bridge
 
         EmitRuntimeStateChanged(m_Host, previous, next);
 
-        norves::bridge::dto::PlayAck ack;
+        Norves::Bridge::Dto::PlayAck ack;
         ack.accepted = true;
-        ack.requestedState = norves::bridge::dto::RuntimeState::Paused;
+        ack.requestedState = Norves::Bridge::Dto::RuntimeState::Paused;
         return AdapterResult::ok(ack.to_json());
     }
 
@@ -1493,9 +1493,9 @@ namespace Game::Bridge
 
         EmitRuntimeStateChanged(m_Host, previous, next);
 
-        norves::bridge::dto::PlayAck ack;
+        Norves::Bridge::Dto::PlayAck ack;
         ack.accepted = true;
-        ack.requestedState = norves::bridge::dto::RuntimeState::Stopped;
+        ack.requestedState = Norves::Bridge::Dto::RuntimeState::Stopped;
         return AdapterResult::ok(ack.to_json());
     }
 
