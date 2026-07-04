@@ -31,6 +31,17 @@ target_include_directories(FrameCaptureReadbackHelperTest PRIVATE
 set_target_properties(FrameCaptureReadbackHelperTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME FrameCaptureReadbackHelperTest COMMAND FrameCaptureReadbackHelperTest)
 
+add_executable(FrameCaptureThumbnailEncoderTest
+    FrameCaptureThumbnailEncoderTest.cpp
+)
+target_link_libraries(FrameCaptureThumbnailEncoderTest PRIVATE Core)
+target_include_directories(FrameCaptureThumbnailEncoderTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+)
+set_target_properties(FrameCaptureThumbnailEncoderTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME FrameCaptureThumbnailEncoderTest COMMAND FrameCaptureThumbnailEncoderTest)
+
 add_executable(RenderingCoordinatorStatsPropagationTest
     RenderingCoordinatorStatsPropagationTest.cpp
 )
