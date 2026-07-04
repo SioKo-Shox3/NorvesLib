@@ -176,8 +176,10 @@ namespace NorvesLib::Core::Rendering
         if (bNeedsOutputTexture)
         {
             // LDR出力テクスチャ作成
-            m_OutputTexture = m_Device->CreateTexture(
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "ToneMappedColor"));
+            RHI::TextureDesc outputDesc =
+                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "ToneMappedColor");
+            outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+            m_OutputTexture = m_Device->CreateTexture(outputDesc);
 
             if (!m_OutputTexture)
             {

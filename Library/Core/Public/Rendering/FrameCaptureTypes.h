@@ -35,6 +35,14 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    struct FrameCaptureSource
+    {
+        RHI::TexturePtr Texture;
+        RHI::ResourceState CurrentState = RHI::ResourceState::ShaderResource;
+        RHI::ResourceState RestoreState = RHI::ResourceState::ShaderResource;
+        uint64_t FrameNumber = 0;
+    };
+
     struct CapturedFrame
     {
         FrameCaptureResultStatus Status = FrameCaptureResultStatus::SourceUnavailable;

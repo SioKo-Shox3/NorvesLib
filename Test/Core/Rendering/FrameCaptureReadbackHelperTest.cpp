@@ -1,7 +1,9 @@
 ﻿#include "CoreTypes.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
+#define private public
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
+#undef private
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -23,6 +25,7 @@ namespace
     using Container::DynamicPointerCast;
     using Container::MakeShared;
     using Container::TSharedPtr;
+    using Container::TWeakPtr;
     using Container::VariableArray;
 
     constexpr uint32_t BytesPerPixel = 4;
@@ -824,6 +827,35 @@ namespace
         assert(helper.TryConsumeCapturedFrame(frame));
     }
 
+    void TestSourceTextureIsNotRetainedPastRecord()
+    {
+        FakeDevice device;
+        FakeCommandList commandList;
+        FrameCaptureReadbackHelper helper;
+        assert(helper.Initialize(&device, 2));
+        assert(helper.RequestFrameCapture().IsAccepted());
+
+        RHI::TexturePtr texture = MakeTexture(3, 2);
+        auto fakeTexture = DynamicPointerCast<FakeTexture>(texture);
+        TWeakPtr<FakeTexture> weakTexture = fakeTexture;
+        VariableArray<uint8_t> expectedPixels = fakeTexture->Bytes;
+
+        assert(helper.TryRecordCopy(0, &commandList, MakeSource(texture, 91)) == FrameCaptureRecordStatus::Recorded);
+        texture.reset();
+        fakeTexture.reset();
+        assert(weakTexture.expired());
+
+        helper.PublishCompletedFrameSlot(0);
+
+        CapturedFrame frame;
+        assert(helper.TryConsumeCapturedFrame(frame));
+        assert(frame.IsSuccess());
+        assert(frame.FrameNumber == 91);
+        assert(frame.Pixels.size() == expectedPixels.size());
+        assert(std::memcmp(frame.Pixels.data(), expectedPixels.data(), frame.Pixels.size()) == 0);
+        assert(device.WaitIdleCount == 0);
+    }
+
     void TestPublicPreInitWrappers()
     {
         RenderingCoordinator coordinator;
@@ -853,6 +885,37 @@ namespace
         assert(frame.Pixels.empty());
     }
 
+    void TestPublicWrappersDelegateWhenInitialized()
+    {
+        FakeDevice device;
+
+        RenderingCoordinator coordinator;
+        coordinator.m_bInitialized = true;
+        coordinator.m_FrameCaptureReadbackHelper = Container::MakeUnique<FrameCaptureReadbackHelper>();
+        assert(coordinator.m_FrameCaptureReadbackHelper->Initialize(&device, 2));
+
+        FrameCaptureRequestResult coordinatorRequest = coordinator.RequestFrameCapture();
+        assert(coordinatorRequest.Status == FrameCaptureRequestStatus::Accepted);
+        assert(coordinatorRequest.RequestId != 0);
+        FrameCaptureRequestResult coordinatorSecondRequest = coordinator.RequestFrameCapture();
+        assert(coordinatorSecondRequest.Status == FrameCaptureRequestStatus::AlreadyPending);
+        assert(coordinatorSecondRequest.RequestId == coordinatorRequest.RequestId);
+
+        RenderWorld renderWorld;
+        renderWorld.m_bInitialized = true;
+        renderWorld.m_RenderingCoordinator.m_bInitialized = true;
+        renderWorld.m_RenderingCoordinator.m_FrameCaptureReadbackHelper =
+            Container::MakeUnique<FrameCaptureReadbackHelper>();
+        assert(renderWorld.m_RenderingCoordinator.m_FrameCaptureReadbackHelper->Initialize(&device, 2));
+
+        FrameCaptureRequestResult worldRequest = renderWorld.RequestFrameCapture();
+        assert(worldRequest.Status == FrameCaptureRequestStatus::Accepted);
+        assert(worldRequest.RequestId != 0);
+        FrameCaptureRequestResult worldSecondRequest = renderWorld.RequestFrameCapture();
+        assert(worldSecondRequest.Status == FrameCaptureRequestStatus::AlreadyPending);
+        assert(worldSecondRequest.RequestId == worldRequest.RequestId);
+    }
+
     int RunTest()
     {
         TestCapturedFrameType();
@@ -866,7 +929,9 @@ namespace
         TestMapFailures();
         TestConsumeOneShot();
         TestBufferReuseAndSlotIsolation();
+        TestSourceTextureIsNotRetainedPastRecord();
         TestPublicPreInitWrappers();
+        TestPublicWrappersDelegateWhenInitialized();
 
         std::cout << "FrameCaptureReadbackHelperTest passed" << std::endl;
         return 0;

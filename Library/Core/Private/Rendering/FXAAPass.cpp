@@ -167,8 +167,10 @@ namespace NorvesLib::Core::Rendering
         if (bNeedsOutputTexture)
         {
             // 出力テクスチャ作成
-            m_OutputTexture = m_Device->CreateTexture(
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "FXAAOutput"));
+            RHI::TextureDesc outputDesc =
+                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "FXAAOutput");
+            outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+            m_OutputTexture = m_Device->CreateTexture(outputDesc);
 
             if (!m_OutputTexture)
             {

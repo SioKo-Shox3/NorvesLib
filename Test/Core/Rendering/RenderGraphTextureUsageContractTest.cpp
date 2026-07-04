@@ -1,4 +1,5 @@
 ﻿#include "Rendering/CompositePass.h"
+#define private public
 #include "Rendering/FXAAPass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
@@ -6,6 +7,7 @@
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ToneMappingPass.h"
 #include "Rendering/UpscalePass.h"
+#undef private
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -20,6 +22,7 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
+#include <cstring>
 #include <iostream>
 
 using namespace NorvesLib::Core::Rendering;
@@ -461,6 +464,7 @@ namespace
 
         RHI::TexturePtr CreateTexture(const RHI::TextureDesc& desc) override
         {
+            CreatedTextureDescs.push_back(desc);
             return RHI::MakeShared<FakeTexture>(desc);
         }
 
@@ -548,6 +552,7 @@ namespace
 
         FakeAllocator Allocator;
         RHI::DeviceCapabilities Capabilities;
+        Container::VariableArray<RHI::TextureDesc> CreatedTextureDescs;
     };
 
     class FakeCommandList final : public RHI::ICommandList
@@ -871,6 +876,28 @@ namespace
         assert(HasUsage(texture->GetUsage(), RHI::ResourceUsage::TransferSrc));
     }
 
+    const RHI::TextureDesc* FindCreatedTextureDesc(const FakeDevice& device, const char* debugName)
+    {
+        for (const RHI::TextureDesc& desc : device.CreatedTextureDescs)
+        {
+            if (desc.DebugName && std::strcmp(desc.DebugName, debugName) == 0)
+            {
+                return &desc;
+            }
+        }
+
+        return nullptr;
+    }
+
+    class TestFXAAPass final : public FXAAPass
+    {
+    public:
+        void SetTestDevice(RHI::IDevice* device)
+        {
+            m_Device = device;
+        }
+    };
+
     void TestRenderTargetDescDoesNotIncludeTransferSrc()
     {
         RGTextureDesc desc = RGTextureDesc::RenderTarget(64,
@@ -895,6 +922,19 @@ namespace
         std::cout << "TestToneMappingGraphOutputIncludesTransferSrc passed\n";
     }
 
+    void TestToneMappingPersistentOutputIncludesTransferSrc()
+    {
+        GraphFixture fixture;
+        ToneMappingPass pass;
+        pass.m_Device = &fixture.Device;
+        pass.Setup(fixture.Context);
+
+        const RHI::TextureDesc* desc = FindCreatedTextureDesc(fixture.Device, "ToneMappedColor");
+        assert(desc);
+        assert(HasUsage(desc->Usage, RHI::ResourceUsage::TransferSrc));
+        std::cout << "TestToneMappingPersistentOutputIncludesTransferSrc passed\n";
+    }
+
     void TestFXAAGraphOutputIncludesTransferSrc()
     {
         GraphFixture fixture;
@@ -910,6 +950,19 @@ namespace
         RHI::TexturePtr outputTexture = resources.GetTexture(fxaaPass.GetToneMappedColorHandle());
         AssertTextureHasTransferSrc(outputTexture);
         std::cout << "TestFXAAGraphOutputIncludesTransferSrc passed\n";
+    }
+
+    void TestFXAAPersistentOutputIncludesTransferSrc()
+    {
+        GraphFixture fixture;
+        TestFXAAPass pass;
+        pass.SetTestDevice(&fixture.Device);
+        pass.Setup(fixture.Context);
+
+        const RHI::TextureDesc* desc = FindCreatedTextureDesc(fixture.Device, "FXAAOutput");
+        assert(desc);
+        assert(HasUsage(desc->Usage, RHI::ResourceUsage::TransferSrc));
+        std::cout << "TestFXAAPersistentOutputIncludesTransferSrc passed\n";
     }
 
     void TestUpscaleFreshPresentationColorIncludesTransferSrc()
@@ -932,6 +985,22 @@ namespace
         RHI::TexturePtr outputTexture = resources.GetTexture(upscalePass.GetPresentationColorHandle());
         AssertTextureHasTransferSrc(outputTexture);
         std::cout << "TestUpscaleFreshPresentationColorIncludesTransferSrc passed\n";
+    }
+
+    void TestUpscalePersistentOutputIncludesTransferSrc()
+    {
+        GraphFixture fixture;
+        fixture.Context.ScreenWidth = 128;
+        fixture.Context.ScreenHeight = 64;
+
+        UpscalePass pass;
+        pass.m_Device = &fixture.Device;
+        pass.Setup(fixture.Context);
+
+        const RHI::TextureDesc* desc = FindCreatedTextureDesc(fixture.Device, "PresentationColor");
+        assert(desc);
+        assert(HasUsage(desc->Usage, RHI::ResourceUsage::TransferSrc));
+        std::cout << "TestUpscalePersistentOutputIncludesTransferSrc passed\n";
     }
 
     void TestCompositeAlphaOverFreshColorIncludesTransferSrc()
@@ -1011,8 +1080,11 @@ int main()
 
     TestRenderTargetDescDoesNotIncludeTransferSrc();
     TestToneMappingGraphOutputIncludesTransferSrc();
+    TestToneMappingPersistentOutputIncludesTransferSrc();
     TestFXAAGraphOutputIncludesTransferSrc();
+    TestFXAAPersistentOutputIncludesTransferSrc();
     TestUpscaleFreshPresentationColorIncludesTransferSrc();
+    TestUpscalePersistentOutputIncludesTransferSrc();
     TestCompositeAlphaOverFreshColorIncludesTransferSrc();
     TestCompositePassthroughPresentationKeepsImportedSceneWithoutTransferSrc();
 

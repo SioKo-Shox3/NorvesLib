@@ -528,6 +528,30 @@ namespace
         }
     };
 
+    class ClearSharedResourcesViewPass final : public IViewPass, public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "ClearSharedResourcesViewPass"; }
+        bool Initialize(ViewRenderContext& context) override
+        {
+            (void)context;
+            m_bInitialized = true;
+            return true;
+        }
+        void Shutdown() override { m_bInitialized = false; }
+        void Setup(ViewRenderContext& context) override { (void)context; }
+        void Execute(ViewRenderContext& context) override { (void)context; }
+        void Declare(RenderGraphBuilder& builder) override { (void)builder; }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            if (context.SharedResources)
+            {
+                context.SharedResources->Clear();
+            }
+        }
+    };
+
     class DirectOutputCanvasView final : public CanvasView
     {
     public:
@@ -594,6 +618,7 @@ namespace
             Context.ScreenWidth = 64;
             Context.ScreenHeight = 32;
 
+            Packet.FrameNumber = 73;
             Packet.Views.push_back(MakeViewPlan(0, ViewType::Scene));
         }
 
@@ -825,6 +850,13 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        assert(result.bHasFrameCaptureSource);
+        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSource.Texture);
+        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
+        assert(result.CaptureSource.Texture.get() == fixture.GraphPresentationPass.GetLastResult().InputTexture.get());
+        assert(result.CaptureSource.CurrentState == RHI::ResourceState::ShaderResource);
+        assert(result.CaptureSource.RestoreState == RHI::ResourceState::ShaderResource);
         std::cout << "TestGraphPresentationHandledWithoutComposerSkipsFallbackCompose passed\n";
     }
 
@@ -849,7 +881,38 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        assert(result.bHasFrameCaptureSource);
+        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSource.Texture.get() == fixture.FallbackTexture.get());
+        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
+        assert(result.CaptureSource.CurrentState == RHI::ResourceState::ShaderResource);
+        assert(result.CaptureSource.RestoreState == RHI::ResourceState::ShaderResource);
         std::cout << "TestMissingGraphPresentationInputFallsBackToComposer passed\n";
+    }
+
+    {
+        ExecutorPresentationFixture fixture;
+        auto firstView = Container::MakeShared<View>();
+        auto secondView = Container::MakeShared<View>();
+        ViewSettings settings;
+        assert(firstView->Initialize(settings));
+        assert(secondView->Initialize(settings));
+        firstView->AddPass(Container::MakeUnique<EmptyGraphViewPass>());
+        secondView->AddPass(Container::MakeUnique<ClearSharedResourcesViewPass>());
+        fixture.Views.push_back(firstView);
+        fixture.Views.push_back(secondView);
+        fixture.Packet.Views.push_back(MakeViewPlan(1, ViewType::Scene));
+
+        RenderFrameExecutor executor;
+        RenderFrameExecutionResult result = executor.Execute(fixture.MakeExecutionRequest());
+
+        assert(result.RenderedViewportCount == 2);
+        assert(result.PresentationBlitCount == 2);
+        assert(fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
+        assert(fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        assert(!result.bHasFrameCaptureSource);
+        assert(!result.CaptureSource.Texture);
+        std::cout << "TestLaterSourceUnavailableFallbackClearsPreviousCaptureSource passed\n";
     }
 
     {
@@ -876,6 +939,9 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        assert(result.bHasFrameCaptureSource);
+        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
         std::cout << "TestMissingGraphPresentationResourceFallsBackToComposer passed\n";
     }
 
@@ -903,6 +969,8 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        assert(!result.bHasFrameCaptureSource);
+        assert(!result.CaptureSource.Texture);
         std::cout << "TestMissingGraphPresentationInputWithoutComposerSkipsFallback passed\n";
     }
 
@@ -934,6 +1002,11 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
         assert(!fixture.GraphCompositePass.GetLastResult().bPublishedComposite);
+        assert(result.bHasFrameCaptureSource);
+        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSource.Texture);
+        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
+        assert(result.CaptureSource.Texture.get() == fixture.GraphPresentationPass.GetLastResult().InputTexture.get());
         std::cout << "TestTwoSceneViewsWithoutCanvasStayOnLegacyExecutorPath passed\n";
     }
 
@@ -972,6 +1045,10 @@ int main()
         assert(!fixture.Context.PresentationGraphPass);
         assert(!fixture.Context.bPresentationGraphPassHandled);
         assert(!fixture.GraphCompositePass.GetLastResult().bPublishedComposite);
+        assert(result.bHasFrameCaptureSource);
+        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSource.Texture);
+        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
         std::cout << "TestZeroViewportCanvasRendersDirectlyAndPresentsOnce passed\n";
     }
 
@@ -1003,6 +1080,12 @@ int main()
         assert(fixture.PendingFrameCommands.empty());
         assert(fixture.CommandList.HasRenderPass(fixture.GraphClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
+        assert(result.bHasFrameCaptureSource);
+        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSource.Texture);
+        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
+        assert(!fixture.Context.PresentationGraphPass);
+        assert(!fixture.Context.bPresentationGraphPassHandled);
         std::cout << "TestOneViewportCanvasRendersStage1AndCompositePresentation passed\n";
     }
 
@@ -1035,6 +1118,10 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
+        assert(result.bHasFrameCaptureSource);
+        assert(result.CaptureSource.FrameNumber == fixture.Packet.FrameNumber);
+        assert(result.CaptureSource.Texture);
+        assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
         std::cout << "TestUnpresentedViewportDoesNotConsumeClearPresentation passed\n";
     }
 

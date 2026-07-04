@@ -315,13 +315,23 @@ namespace NorvesLib::Core::Rendering
 
     FrameCaptureRequestResult RenderWorld::RequestFrameCapture()
     {
-        return {};
+        if (!m_bInitialized)
+        {
+            return {};
+        }
+
+        return m_RenderingCoordinator.RequestFrameCapture();
     }
 
     bool RenderWorld::TryConsumeCapturedFrame(CapturedFrame& outFrame)
     {
-        outFrame = CapturedFrame{};
-        return false;
+        if (!m_bInitialized)
+        {
+            outFrame = CapturedFrame{};
+            return false;
+        }
+
+        return m_RenderingCoordinator.TryConsumeCapturedFrame(outFrame);
     }
 
     void RenderWorld::Resize(uint32_t width, uint32_t height)

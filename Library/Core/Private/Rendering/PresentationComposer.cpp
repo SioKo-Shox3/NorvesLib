@@ -12,6 +12,11 @@ namespace NorvesLib::Core::Rendering
 {
     bool PresentationComposer::Compose(const PresentationComposeRequest &request) const
     {
+        if (request.OutCaptureSource)
+        {
+            *request.OutCaptureSource = FrameCaptureSource{};
+        }
+
         if (!request.Context || !request.Renderer || !request.CommandList)
         {
             return false;
@@ -43,6 +48,13 @@ namespace NorvesLib::Core::Rendering
             request.BlitDescriptorSet->BindTexture(0, presentationTexture);
             request.BlitDescriptorSet->BindSampler(0, request.BlitSampler);
             request.BlitDescriptorSet->Update();
+
+            if (request.OutCaptureSource)
+            {
+                request.OutCaptureSource->Texture = presentationTexture;
+                request.OutCaptureSource->CurrentState = RHI::ResourceState::ShaderResource;
+                request.OutCaptureSource->RestoreState = RHI::ResourceState::ShaderResource;
+            }
         }
 
         Container::VariableArray<FrameCommand> commands;

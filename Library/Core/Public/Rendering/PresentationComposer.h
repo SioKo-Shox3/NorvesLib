@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Rendering/FrameCaptureTypes.h"
 #include "RHI/RHITypes.h"
 
 namespace NorvesLib::RHI
@@ -25,6 +26,8 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr BlitPipeline;
         RHI::DescriptorSetPtr BlitDescriptorSet;
         RHI::SamplerPtr BlitSampler;
+
+        FrameCaptureSource* OutCaptureSource = nullptr;
 
         bool bClearPresentation = true;
     };

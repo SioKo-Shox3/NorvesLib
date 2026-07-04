@@ -15,6 +15,7 @@
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderFrameExecutor.h"
+#include "Rendering/FrameCaptureReadbackHelper.h"
 #include "Rendering/IViewPass.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
@@ -217,6 +218,10 @@ namespace NorvesLib::Core::Rendering
     // ========================================
     // RenderingCoordinator
     // ========================================
+
+    RenderingCoordinator::RenderingCoordinator() = default;
+
+    RenderingCoordinator::~RenderingCoordinator() = default;
 
     bool RenderingCoordinator::Initialize(const RenderingCoordinatorSettings &settings)
     {
@@ -607,6 +612,15 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         m_PacketManager.Initialize();
 
+        m_FrameCaptureReadbackHelper = Container::MakeUnique<FrameCaptureReadbackHelper>();
+        if (!m_FrameCaptureReadbackHelper ||
+            !m_FrameCaptureReadbackHelper->Initialize(m_Device.get(), swapChain->GetMaxFramesInFlight()))
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize FrameCaptureReadbackHelper");
+            ReleaseInitializedResources();
+            return false;
+        }
+
         m_bInitialized = true;
         LOG_INFO("RenderingCoordinator::Initialize() - Initialization completed successfully");
         return true;
@@ -633,6 +647,12 @@ namespace NorvesLib::Core::Rendering
         if (m_Device)
         {
             m_Device->WaitIdle();
+        }
+
+        if (m_FrameCaptureReadbackHelper)
+        {
+            m_FrameCaptureReadbackHelper->Shutdown();
+            m_FrameCaptureReadbackHelper.reset();
         }
 
         // Writing中のパケットを安全にキャンセル（シャットダウン前のGT書き込み中断）
@@ -1118,13 +1138,23 @@ namespace NorvesLib::Core::Rendering
 
     FrameCaptureRequestResult RenderingCoordinator::RequestFrameCapture()
     {
-        return {};
+        if (!m_bInitialized || !m_FrameCaptureReadbackHelper)
+        {
+            return {};
+        }
+
+        return m_FrameCaptureReadbackHelper->RequestFrameCapture();
     }
 
     bool RenderingCoordinator::TryConsumeCapturedFrame(CapturedFrame& outFrame)
     {
-        outFrame = CapturedFrame{};
-        return false;
+        if (!m_bInitialized || !m_FrameCaptureReadbackHelper)
+        {
+            outFrame = CapturedFrame{};
+            return false;
+        }
+
+        return m_FrameCaptureReadbackHelper->TryConsumeCapturedFrame(outFrame);
     }
 
     void RenderingCoordinator::RenderFrame(FramePacket *packet)
@@ -1191,6 +1221,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         const uint32_t frameIndex = ResolveFrameIndex(*swapChain);
+        if (m_FrameCaptureReadbackHelper)
+        {
+            m_FrameCaptureReadbackHelper->PublishCompletedFrameSlot(frameIndex);
+        }
         m_TransientPool.BeginFrame(frameIndex);
         m_RenderGraph.BeginFrame(frameIndex);
         RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
@@ -1342,9 +1376,26 @@ namespace NorvesLib::Core::Rendering
         executionRequest.GraphCompositeRequest = graphCompositeRequest;
 
         RenderFrameExecutor frameExecutor;
-        const RenderFrameExecutionResult executionResult = frameExecutor.Execute(executionRequest);
+        RenderFrameExecutionResult executionResult = frameExecutor.Execute(executionRequest);
         m_Stats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
         m_Stats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
+
+        if (m_FrameCaptureReadbackHelper)
+        {
+            FrameCaptureSource captureSource;
+            if (executionResult.bHasFrameCaptureSource)
+            {
+                captureSource = executionResult.CaptureSource;
+            }
+            else
+            {
+                captureSource.FrameNumber = packet->FrameNumber;
+            }
+
+            m_FrameCaptureReadbackHelper->TryRecordCopy(frameIndex, m_CommandList.get(), captureSource);
+            executionResult.CaptureSource = FrameCaptureSource{};
+            executionResult.bHasFrameCaptureSource = false;
+        }
 
         // ========================================
         // overlay seam(モジュール描画の最終段。録画窓内・executor 外側)
