@@ -98,6 +98,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
+    Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
     Private/Rendering/ToneMappingPass.cpp

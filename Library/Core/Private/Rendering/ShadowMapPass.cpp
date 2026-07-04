@@ -1,4 +1,5 @@
 ﻿#include "Rendering/ShadowMapPass.h"
+#include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SceneView.h"
@@ -291,43 +292,31 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // ========================================
-        // ライトビュー・プロジェクション行列の構築
-        // ========================================
-        using namespace NorvesLib::Math;
+        DirectionalShadowMatrixSettings shadowSettings = MakeDefaultDirectionalShadowMatrixSettings();
+        shadowSettings.OrthoSize = m_Settings.OrthoSize;
+        shadowSettings.NearPlane = m_Settings.NearPlane;
+        shadowSettings.FarPlane = m_Settings.FarPlane;
+        const DirectionalShadowMatrixResult shadowMatrices =
+            BuildDirectionalShadowLightMatrices(context.SnapshotLightProxies, shadowSettings);
 
-        // ディレクショナルライト方向（LightingPassと同じ値）
-        float lightDirX = -0.577f;
-        float lightDirY = -0.577f;
-        float lightDirZ = -0.577f;
-
-        // ライト"位置"（方向光なので、シーンを覆う十分な距離に配置）
-        float lightDistance = 20.0f;
-        Vector3 lightPos(-lightDirX * lightDistance, -lightDirY * lightDistance, -lightDirZ * lightDistance);
-        Vector3 lightTarget(0.0f, 0.0f, 0.0f);
-        Vector3 upDir(0.0f, 1.0f, 0.0f);
-
-        Matrix4x4 lightViewMat = MatrixUtils::CreateLookAt(lightPos, lightTarget, upDir);
-
-        // 正射影
-        float orthoSize = m_Settings.OrthoSize;
-        Matrix4x4 lightProjMat = MatrixUtils::CreateOrthographic(
-            orthoSize * 2.0f, orthoSize * 2.0f,
-            m_Settings.NearPlane, m_Settings.FarPlane);
-
-        // RHI側でAPI固有のクリップ空間補正を適用（シャドウマップではY反転なし）
-        lightProjMat = context.Device->AdjustProjectionForClipSpace(lightProjMat, false);
+        Math::Matrix4x4 lightProjMat =
+            context.Device->AdjustProjectionForClipSpace(shadowMatrices.Projection, false);
 
         // ライトビュー・プロジェクションをGPU用データに変換
         float lightViewData[16];
         float lightProjData[16];
-        MatrixUtils::TransposeToShaderData(lightViewMat, lightViewData);
-        MatrixUtils::TransposeToShaderData(lightProjMat, lightProjData);
+        CopyShadowMatrixToShaderData(shadowMatrices.View, lightViewData);
+        CopyShadowMatrixToShaderData(lightProjMat, lightProjData);
 
         // SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ公開する。
         if (m_bRegisterLegacyBridge && context.SharedResources)
         {
             context.SharedResources->RegisterTexturePtr("ShadowMap", m_ShadowMapTexture);
+        }
+
+        if (!shadowMatrices.bEnabled)
+        {
+            return;
         }
 
         RHI::Viewport viewport;

@@ -176,6 +176,30 @@ target_compile_definitions(LightingParamsLayoutTest PRIVATE
 set_target_properties(LightingParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME LightingParamsLayoutTest COMMAND LightingParamsLayoutTest)
 
+add_executable(DirectionalShadowLightMatricesTest
+    DirectionalShadowLightMatricesTest.cpp
+)
+target_link_libraries(DirectionalShadowLightMatricesTest PRIVATE Core)
+target_include_directories(DirectionalShadowLightMatricesTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(DirectionalShadowLightMatricesTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DirectionalShadowLightMatricesTest COMMAND DirectionalShadowLightMatricesTest)
+
+add_executable(DirectionalShadowPassWiringContractTest
+    DirectionalShadowPassWiringContractTest.cpp
+)
+target_link_libraries(DirectionalShadowPassWiringContractTest PRIVATE Core)
+target_include_directories(DirectionalShadowPassWiringContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(DirectionalShadowPassWiringContractTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(DirectionalShadowPassWiringContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DirectionalShadowPassWiringContractTest COMMAND DirectionalShadowPassWiringContractTest)
+
 add_executable(ToneMappingParamsLayoutTest
     ToneMappingParamsLayoutTest.cpp
 )

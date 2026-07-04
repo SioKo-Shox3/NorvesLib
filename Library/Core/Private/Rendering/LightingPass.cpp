@@ -1,4 +1,5 @@
 ﻿#include "Rendering/LightingPass.h"
+#include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/GBufferPass.h"
@@ -1229,40 +1230,20 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // シャドウマップ用ライトビュー・プロジェクション行列
         // ========================================
+        const DirectionalShadowMatrixResult shadowMatrices =
+            BuildDirectionalShadowLightMatrices(context.SnapshotLightProxies, MakeDefaultDirectionalShadowMatrixSettings());
+        CopyIdentityShadowMatricesToShaderData(params.lightView, params.lightProjection);
+        params.bShadowEnabled = 0;
         if (bShadowAvailable)
         {
-            // ShadowMapPassと同じライト方向・パラメータ
-            float lightDirX = -0.577f;
-            float lightDirY = -0.577f;
-            float lightDirZ = -0.577f;
-
-            float lightDistance = 20.0f;
-            Vector3 lightPos(-lightDirX * lightDistance, -lightDirY * lightDistance, -lightDirZ * lightDistance);
-            Vector3 lightTarget(0.0f, 0.0f, 0.0f);
-            Vector3 upDir(0.0f, 1.0f, 0.0f);
-
-            Matrix4x4 lightViewMat = MatrixUtils::CreateLookAt(lightPos, lightTarget, upDir);
-
-            float orthoSize = 20.0f;
-            Matrix4x4 lightProjMat = MatrixUtils::CreateOrthographic(
-                orthoSize * 2.0f, orthoSize * 2.0f, 0.1f, 50.0f);
-
-            // RHI側でAPI固有のクリップ空間補正を適用（シャドウマップではY反転なし）
-            lightProjMat = context.Device->AdjustProjectionForClipSpace(lightProjMat, false);
-
-            MatrixUtils::TransposeToShaderData(lightViewMat, params.lightView);
-            MatrixUtils::TransposeToShaderData(lightProjMat, params.lightProjection);
-            params.bShadowEnabled = 1;
-        }
-        else
-        {
-            // シャドウ無効時は単位行列を設定
-            for (int i = 0; i < 16; ++i)
+            if (shadowMatrices.bEnabled)
             {
-                params.lightView[i] = (i % 5 == 0) ? 1.0f : 0.0f;
-                params.lightProjection[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+                Math::Matrix4x4 lightProjMat =
+                    context.Device->AdjustProjectionForClipSpace(shadowMatrices.Projection, false);
+                CopyShadowMatrixToShaderData(shadowMatrices.View, params.lightView);
+                CopyShadowMatrixToShaderData(lightProjMat, params.lightProjection);
+                params.bShadowEnabled = 1;
             }
-            params.bShadowEnabled = 0;
         }
 
         // ========================================
