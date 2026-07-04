@@ -2158,21 +2158,7 @@ namespace NorvesLib::Core::Rendering
             return nullptr;
         }
 
-        RHI::ITexture* texture = nullptr;
-        if (HasResourceUsage(resource.TextureDesc.Usage, RHI::ResourceUsage::DepthStencil))
-        {
-            texture = m_TransientPool->AcquireDepthStencil(resource.TextureDesc.Width,
-                                                           resource.TextureDesc.Height,
-                                                           resource.TextureDesc.Format,
-                                                           resource.TextureDesc.DebugName);
-        }
-        else
-        {
-            texture = m_TransientPool->AcquireRenderTarget(resource.TextureDesc.Width,
-                                                           resource.TextureDesc.Height,
-                                                           resource.TextureDesc.Format,
-                                                           resource.TextureDesc.DebugName);
-        }
+        RHI::ITexture* texture = m_TransientPool->AcquireTexture(resource.TextureDesc.ToRHI());
 
         if (!texture)
         {

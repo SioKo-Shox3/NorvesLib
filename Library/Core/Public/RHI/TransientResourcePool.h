@@ -14,6 +14,11 @@ namespace NorvesLib::RHI
     {
         uint32_t Width = 0;
         uint32_t Height = 0;
+        uint32_t Depth = 1;
+        uint32_t MipLevels = 1;
+        uint32_t ArraySize = 1;
+        TextureDimension Dimension = TextureDimension::Texture2D;
+        bool IsCubemap = false;
         Format Format = Format::UNKNOWN;
         ResourceUsage Usage = ResourceUsage::None;
 
@@ -21,15 +26,49 @@ namespace NorvesLib::RHI
         {
             return Width == other.Width &&
                    Height == other.Height &&
+                   Depth == other.Depth &&
+                   MipLevels == other.MipLevels &&
+                   ArraySize == other.ArraySize &&
+                   Dimension == other.Dimension &&
+                   IsCubemap == other.IsCubemap &&
                    Format == other.Format &&
                    Usage == other.Usage;
         }
 
         bool operator<(const RenderTargetKey& other) const
         {
-            if (Width != other.Width) return Width < other.Width;
-            if (Height != other.Height) return Height < other.Height;
-            if (Format != other.Format) return static_cast<int>(Format) < static_cast<int>(other.Format);
+            if (Width != other.Width)
+            {
+                return Width < other.Width;
+            }
+            if (Height != other.Height)
+            {
+                return Height < other.Height;
+            }
+            if (Depth != other.Depth)
+            {
+                return Depth < other.Depth;
+            }
+            if (MipLevels != other.MipLevels)
+            {
+                return MipLevels < other.MipLevels;
+            }
+            if (ArraySize != other.ArraySize)
+            {
+                return ArraySize < other.ArraySize;
+            }
+            if (Dimension != other.Dimension)
+            {
+                return static_cast<int>(Dimension) < static_cast<int>(other.Dimension);
+            }
+            if (IsCubemap != other.IsCubemap)
+            {
+                return IsCubemap < other.IsCubemap;
+            }
+            if (Format != other.Format)
+            {
+                return static_cast<int>(Format) < static_cast<int>(other.Format);
+            }
             return static_cast<uint32_t>(Usage) < static_cast<uint32_t>(other.Usage);
         }
     };
@@ -123,6 +162,13 @@ namespace NorvesLib::RHI
         // ========================================
         // レンダーターゲット
         // ========================================
+
+        /**
+         * @brief テクスチャを取得します（プールから再利用 or 新規作成）
+         * @param desc テクスチャ記述子
+         * @return テクスチャ
+         */
+        ITexture* AcquireTexture(const TextureDesc& desc);
 
         /**
          * @brief レンダーターゲットを取得します（プールから再利用 or 新規作成）

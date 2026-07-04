@@ -390,9 +390,15 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(width,
+                                                               height,
+                                                               m_Settings.OutputFormat,
+                                                               "FXAAOutput");
+        outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+
         RGTextureHandle outputHandle = builder.WriteTexture(
             RenderGraphResourceNames::ToneMappedColor,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "FXAAOutput"),
+            outputDesc,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
         m_OutputTextureHandle = outputHandle;

@@ -463,9 +463,15 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(width,
+                                                               height,
+                                                               m_Settings.OutputFormat,
+                                                               "ToneMappedColor");
+        outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+
         RGTextureHandle outputHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::ToneMappedColor,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "ToneMappedColor"),
+            outputDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::DontCare,
             RHI::AttachmentStoreOp::Store,

@@ -41,11 +41,42 @@ namespace NorvesLib::RHI
 
         size_t EstimateTextureSize(const TextureDesc& desc)
         {
-            return static_cast<size_t>(desc.Width) *
-                   static_cast<size_t>(desc.Height) *
-                   static_cast<size_t>(desc.Depth) *
-                   static_cast<size_t>(desc.ArraySize) *
-                   static_cast<size_t>(GetFormatBytesPerPixel(desc.TextureFormat));
+            size_t total = 0;
+            uint32_t width = desc.Width > 0 ? desc.Width : 1;
+            uint32_t height = desc.Height > 0 ? desc.Height : 1;
+            uint32_t depth = desc.Depth > 0 ? desc.Depth : 1;
+            const uint32_t mipLevels = desc.MipLevels > 0 ? desc.MipLevels : 1;
+            const size_t bytesPerPixel = GetFormatBytesPerPixel(desc.TextureFormat);
+
+            for (uint32_t mipLevel = 0; mipLevel < mipLevels; ++mipLevel)
+            {
+                total += static_cast<size_t>(width) *
+                         static_cast<size_t>(height) *
+                         static_cast<size_t>(depth) *
+                         static_cast<size_t>(desc.ArraySize) *
+                         bytesPerPixel;
+
+                width = width > 1 ? width / 2 : 1;
+                height = height > 1 ? height / 2 : 1;
+                depth = depth > 1 ? depth / 2 : 1;
+            }
+
+            return total;
+        }
+
+        RenderTargetKey MakeRenderTargetKey(const TextureDesc& desc)
+        {
+            RenderTargetKey key;
+            key.Width = desc.Width;
+            key.Height = desc.Height;
+            key.Depth = desc.Depth;
+            key.MipLevels = desc.MipLevels;
+            key.ArraySize = desc.ArraySize;
+            key.Dimension = desc.Dimension;
+            key.IsCubemap = desc.IsCubemap;
+            key.Format = desc.TextureFormat;
+            key.Usage = desc.Usage;
+            return key;
         }
     } // namespace
 
@@ -54,7 +85,7 @@ namespace NorvesLib::RHI
         Shutdown();
     }
 
-    bool TransientResourcePool::Initialize(IGPUResourceAllocator *allocator, uint32_t framesInFlight)
+    bool TransientResourcePool::Initialize(IGPUResourceAllocator* allocator, uint32_t framesInFlight)
     {
         if (m_bInitialized)
         {
@@ -112,18 +143,14 @@ namespace NorvesLib::RHI
         m_UsedBuffers.clear();
     }
 
-    ITexture *TransientResourcePool::AcquireRenderTarget(uint32_t width, uint32_t height, Format format, const char *debugName)
+    ITexture* TransientResourcePool::AcquireTexture(const TextureDesc& desc)
     {
         if (!m_bInitialized || !m_Allocator)
         {
             return nullptr;
         }
 
-        RenderTargetKey key;
-        key.Width = width;
-        key.Height = height;
-        key.Format = format;
-        key.Usage = ResourceUsage::RenderTarget | ResourceUsage::ShaderRead;
+        RenderTargetKey key = MakeRenderTargetKey(desc);
 
         auto it = m_RTPool.find(key);
         if (it != m_RTPool.end())
@@ -144,81 +171,39 @@ namespace NorvesLib::RHI
             }
         }
 
+        TextureAllocation allocation = m_Allocator->AllocateTexture(desc, AllocationType::Transient);
+        if (!allocation.IsValid())
+        {
+            return nullptr;
+        }
+
+        if (allocation.Size == 0)
+        {
+            allocation.Size = EstimateTextureSize(desc);
+        }
+
+        PooledResource<ITexture> resource;
+        resource.Resource = allocation.Texture;
+        resource.Texture = allocation;
+        resource.TextureKey = key;
+        resource.Size = allocation.Size;
+        m_UsedRenderTargets.push_back(resource);
+        return allocation.Texture;
+    }
+
+    ITexture* TransientResourcePool::AcquireRenderTarget(uint32_t width, uint32_t height, Format format, const char* debugName)
+    {
         TextureDesc desc = TextureDesc::RenderTarget(width, height, format, debugName);
-        TextureAllocation allocation = m_Allocator->AllocateTexture(desc, AllocationType::Transient);
-        if (!allocation.IsValid())
-        {
-            return nullptr;
-        }
-
-        if (allocation.Size == 0)
-        {
-            allocation.Size = EstimateTextureSize(desc);
-        }
-
-        PooledResource<ITexture> resource;
-        resource.Resource = allocation.Texture;
-        resource.Texture = allocation;
-        resource.TextureKey = key;
-        resource.Size = allocation.Size;
-        m_UsedRenderTargets.push_back(resource);
-        return allocation.Texture;
+        return AcquireTexture(desc);
     }
 
-    ITexture *TransientResourcePool::AcquireDepthStencil(uint32_t width, uint32_t height, Format format, const char *debugName)
+    ITexture* TransientResourcePool::AcquireDepthStencil(uint32_t width, uint32_t height, Format format, const char* debugName)
     {
-        if (!m_bInitialized || !m_Allocator)
-        {
-            return nullptr;
-        }
-
-        RenderTargetKey key;
-        key.Width = width;
-        key.Height = height;
-        key.Format = format;
-        key.Usage = ResourceUsage::DepthStencil | ResourceUsage::ShaderRead;
-
-        auto it = m_RTPool.find(key);
-        if (it != m_RTPool.end())
-        {
-            auto& resources = it->second;
-            for (auto resourceIt = resources.begin(); resourceIt != resources.end(); ++resourceIt)
-            {
-                if (resourceIt->LastUsedFrameSlot == m_CurrentFrameSlot &&
-                    resourceIt->LastUsedSerial < m_CurrentSerial &&
-                    resourceIt->Texture.IsValid())
-                {
-                    PooledResource<ITexture> resource = *resourceIt;
-                    resources.erase(resourceIt);
-                    ITexture* texture = resource.Texture.Texture;
-                    m_UsedRenderTargets.push_back(resource);
-                    return texture;
-                }
-            }
-        }
-
         TextureDesc desc = TextureDesc::DepthStencil(width, height, format, debugName);
-        TextureAllocation allocation = m_Allocator->AllocateTexture(desc, AllocationType::Transient);
-        if (!allocation.IsValid())
-        {
-            return nullptr;
-        }
-
-        if (allocation.Size == 0)
-        {
-            allocation.Size = EstimateTextureSize(desc);
-        }
-
-        PooledResource<ITexture> resource;
-        resource.Resource = allocation.Texture;
-        resource.Texture = allocation;
-        resource.TextureKey = key;
-        resource.Size = allocation.Size;
-        m_UsedRenderTargets.push_back(resource);
-        return allocation.Texture;
+        return AcquireTexture(desc);
     }
 
-    IBuffer *TransientResourcePool::AcquireBuffer(uint64_t size, ResourceUsage usage, const char *debugName)
+    IBuffer* TransientResourcePool::AcquireBuffer(uint64_t size, ResourceUsage usage, const char* debugName)
     {
         if (!m_bInitialized || !m_Allocator)
         {

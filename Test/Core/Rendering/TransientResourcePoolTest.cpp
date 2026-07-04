@@ -27,11 +27,31 @@ namespace
 
     size_t EstimateTextureSize(const NorvesLib::RHI::TextureDesc& desc)
     {
-        return static_cast<size_t>(desc.Width) *
-               static_cast<size_t>(desc.Height) *
-               static_cast<size_t>(desc.Depth) *
-               static_cast<size_t>(desc.ArraySize) *
-               GetFormatBytesPerPixel(desc.TextureFormat);
+        size_t total = 0;
+        uint32_t width = desc.Width > 0 ? desc.Width : 1;
+        uint32_t height = desc.Height > 0 ? desc.Height : 1;
+        uint32_t depth = desc.Depth > 0 ? desc.Depth : 1;
+        const uint32_t mipLevels = desc.MipLevels > 0 ? desc.MipLevels : 1;
+
+        for (uint32_t mipLevel = 0; mipLevel < mipLevels; ++mipLevel)
+        {
+            total += static_cast<size_t>(width) *
+                     static_cast<size_t>(height) *
+                     static_cast<size_t>(depth) *
+                     static_cast<size_t>(desc.ArraySize) *
+                     GetFormatBytesPerPixel(desc.TextureFormat);
+
+            width = width > 1 ? width / 2 : 1;
+            height = height > 1 ? height / 2 : 1;
+            depth = depth > 1 ? depth / 2 : 1;
+        }
+
+        return total;
+    }
+
+    bool HasUsage(NorvesLib::RHI::ResourceUsage value, NorvesLib::RHI::ResourceUsage flag)
+    {
+        return static_cast<uint32_t>(value & flag) != 0;
     }
 
     class FakeTexture final : public NorvesLib::RHI::ITexture
@@ -143,10 +163,14 @@ namespace
             const NorvesLib::RHI::TextureDesc& desc,
             NorvesLib::RHI::AllocationType type = NorvesLib::RHI::AllocationType::Dedicated) override
         {
+            LastTextureDesc = desc;
+            LastTextureAllocationType = type;
+            ++TextureAllocationCount;
+
             auto texture = MakeUnique<FakeTexture>(desc);
             NorvesLib::RHI::TextureAllocation allocation;
             allocation.Texture = texture.get();
-            allocation.Size = EstimateTextureSize(desc);
+            allocation.Size = bReturnZeroTextureAllocationSize ? 0 : EstimateTextureSize(desc);
             allocation.Type = type;
 
             TextureRecord record;
@@ -187,6 +211,12 @@ namespace
         {
             return m_Textures.size() + m_Buffers.size();
         }
+
+        NorvesLib::RHI::TextureDesc LastTextureDesc;
+        NorvesLib::RHI::AllocationType LastTextureAllocationType =
+            NorvesLib::RHI::AllocationType::Dedicated;
+        uint32_t TextureAllocationCount = 0;
+        bool bReturnZeroTextureAllocationSize = false;
 
     private:
         struct TextureRecord
@@ -334,6 +364,159 @@ namespace
         assert(allocator.GetLiveAllocationCount() == 0);
         std::cout << "ReleaseAll and Shutdown passed\n";
     }
+
+    void TestAcquireTexturePreservesUsageAndAllocatesTransient()
+    {
+        MockAllocator allocator;
+        NorvesLib::RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 2));
+
+        NorvesLib::RHI::TextureDesc desc =
+            NorvesLib::RHI::TextureDesc::RenderTarget(96,
+                                                      48,
+                                                      NorvesLib::RHI::Format::R16G16B16A16_FLOAT,
+                                                      "TransferSrcOutput");
+        desc.Usage = desc.Usage | NorvesLib::RHI::ResourceUsage::TransferSrc;
+
+        pool.BeginFrame(0);
+        auto* texture = pool.AcquireTexture(desc);
+        assert(texture);
+        assert(HasUsage(texture->GetUsage(), NorvesLib::RHI::ResourceUsage::TransferSrc));
+        assert(HasUsage(allocator.LastTextureDesc.Usage, NorvesLib::RHI::ResourceUsage::TransferSrc));
+        assert(allocator.LastTextureAllocationType == NorvesLib::RHI::AllocationType::Transient);
+        assert(allocator.TextureAllocationCount == 1);
+        pool.EndFrame();
+
+        pool.Shutdown();
+        assert(allocator.GetLiveAllocationCount() == 0);
+        std::cout << "AcquireTexture usage preservation passed\n";
+    }
+
+    void AssertTextureKeySeparates(const NorvesLib::RHI::TextureDesc& firstDesc,
+                                   const NorvesLib::RHI::TextureDesc& secondDesc,
+                                   const char* label)
+    {
+        MockAllocator allocator;
+        NorvesLib::RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 2));
+
+        pool.BeginFrame(0);
+        auto* first = pool.AcquireTexture(firstDesc);
+        assert(first);
+        pool.EndFrame();
+
+        pool.BeginFrame(0);
+        auto* second = pool.AcquireTexture(secondDesc);
+        assert(second);
+        assert(second != first);
+        assert(allocator.TextureAllocationCount == 2);
+        pool.EndFrame();
+
+        pool.Shutdown();
+        assert(allocator.GetLiveAllocationCount() == 0);
+        std::cout << label << " key separation passed\n";
+    }
+
+    NorvesLib::RHI::TextureDesc MakeKeySeparationBaseDesc(const char* debugName)
+    {
+        NorvesLib::RHI::TextureDesc desc =
+            NorvesLib::RHI::TextureDesc::RenderTarget(32,
+                                                      16,
+                                                      NorvesLib::RHI::Format::R16G16B16A16_FLOAT,
+                                                      debugName);
+        desc.Depth = 1;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.Dimension = NorvesLib::RHI::TextureDimension::Texture2D;
+        desc.IsCubemap = false;
+        return desc;
+    }
+
+    void TestTextureKeySeparatesUsage()
+    {
+        auto firstDesc = MakeKeySeparationBaseDesc("UsageA");
+        firstDesc.Usage = firstDesc.Usage | NorvesLib::RHI::ResourceUsage::TransferSrc;
+        auto secondDesc = MakeKeySeparationBaseDesc("UsageB");
+        AssertTextureKeySeparates(firstDesc, secondDesc, "Usage");
+    }
+
+    void TestTextureKeySeparatesDepth()
+    {
+        auto firstDesc = MakeKeySeparationBaseDesc("DepthA");
+        firstDesc.Dimension = NorvesLib::RHI::TextureDimension::Texture3D;
+        firstDesc.Depth = 4;
+        auto secondDesc = MakeKeySeparationBaseDesc("DepthB");
+        secondDesc.Dimension = NorvesLib::RHI::TextureDimension::Texture3D;
+        secondDesc.Depth = 8;
+        AssertTextureKeySeparates(firstDesc, secondDesc, "Depth");
+    }
+
+    void TestTextureKeySeparatesMipLevels()
+    {
+        auto firstDesc = MakeKeySeparationBaseDesc("MipsA");
+        firstDesc.MipLevels = 1;
+        auto secondDesc = MakeKeySeparationBaseDesc("MipsB");
+        secondDesc.MipLevels = 4;
+        AssertTextureKeySeparates(firstDesc, secondDesc, "MipLevels");
+    }
+
+    void TestTextureKeySeparatesArraySize()
+    {
+        auto firstDesc = MakeKeySeparationBaseDesc("ArrayA");
+        firstDesc.ArraySize = 1;
+        auto secondDesc = MakeKeySeparationBaseDesc("ArrayB");
+        secondDesc.ArraySize = 4;
+        AssertTextureKeySeparates(firstDesc, secondDesc, "ArraySize");
+    }
+
+    void TestTextureKeySeparatesDimension()
+    {
+        auto firstDesc = MakeKeySeparationBaseDesc("DimensionA");
+        firstDesc.Dimension = NorvesLib::RHI::TextureDimension::Texture2D;
+        firstDesc.Depth = 1;
+        auto secondDesc = MakeKeySeparationBaseDesc("DimensionB");
+        secondDesc.Dimension = NorvesLib::RHI::TextureDimension::Texture3D;
+        secondDesc.Depth = 1;
+        AssertTextureKeySeparates(firstDesc, secondDesc, "Dimension");
+    }
+
+    void TestTextureKeySeparatesCubemap()
+    {
+        auto firstDesc = MakeKeySeparationBaseDesc("CubemapA");
+        firstDesc.ArraySize = 6;
+        firstDesc.IsCubemap = true;
+        auto secondDesc = MakeKeySeparationBaseDesc("CubemapB");
+        secondDesc.ArraySize = 6;
+        secondDesc.IsCubemap = false;
+        AssertTextureKeySeparates(firstDesc, secondDesc, "Cubemap");
+    }
+
+    void TestZeroSizeTextureAllocationFallbackIsMipAware()
+    {
+        MockAllocator allocator;
+        allocator.bReturnZeroTextureAllocationSize = true;
+
+        NorvesLib::RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 2));
+
+        NorvesLib::RHI::TextureDesc desc =
+            NorvesLib::RHI::TextureDesc::RenderTarget(64,
+                                                      32,
+                                                      NorvesLib::RHI::Format::R16G16B16A16_FLOAT,
+                                                      "MipAwareFallback");
+        desc.MipLevels = 4;
+
+        pool.BeginFrame(0);
+        auto* texture = pool.AcquireTexture(desc);
+        assert(texture);
+        pool.EndFrame();
+
+        assert(pool.GetPoolMemoryUsage() == EstimateTextureSize(desc));
+
+        pool.Shutdown();
+        assert(allocator.GetLiveAllocationCount() == 0);
+        std::cout << "Mip-aware zero-size allocation fallback passed\n";
+    }
 } // namespace
 
 int main()
@@ -343,6 +526,14 @@ int main()
     TestSameSerialDoesNotReuseOrTrim();
     TestTrimOnlyFreesMatchingPastSlot();
     TestReleaseAllAndShutdownFreeLiveAllocations();
+    TestAcquireTexturePreservesUsageAndAllocatesTransient();
+    TestTextureKeySeparatesUsage();
+    TestTextureKeySeparatesDepth();
+    TestTextureKeySeparatesMipLevels();
+    TestTextureKeySeparatesArraySize();
+    TestTextureKeySeparatesDimension();
+    TestTextureKeySeparatesCubemap();
+    TestZeroSizeTextureAllocationFallbackIsMipAware();
 
     std::cout << "TransientResourcePoolTest passed\n";
     return 0;

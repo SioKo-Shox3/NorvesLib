@@ -320,9 +320,15 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(screenWidth,
+                                                               screenHeight,
+                                                               m_Settings.OutputFormat,
+                                                               "PresentationColor");
+        outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+
         RGTextureHandle outputHandle = builder.WriteTexture(
             RenderGraphResourceNames::PresentationColor,
-            RGTextureDesc::RenderTarget(screenWidth, screenHeight, m_Settings.OutputFormat, "PresentationColor"),
+            outputDesc,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
         m_OutputHandle = outputHandle.ToResourceHandle();

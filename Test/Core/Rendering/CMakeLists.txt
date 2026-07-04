@@ -538,6 +538,16 @@ target_include_directories(RenderGraphPresentationPassTest PRIVATE
 set_target_properties(RenderGraphPresentationPassTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderGraphPresentationPassTest COMMAND RenderGraphPresentationPassTest)
 
+add_executable(RenderGraphTextureUsageContractTest
+    RenderGraphTextureUsageContractTest.cpp
+)
+target_link_libraries(RenderGraphTextureUsageContractTest PRIVATE Core)
+target_include_directories(RenderGraphTextureUsageContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphTextureUsageContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphTextureUsageContractTest COMMAND RenderGraphTextureUsageContractTest)
+
 add_executable(RenderGraphCompileTest
     RenderGraphCompileTest.cpp
 )
