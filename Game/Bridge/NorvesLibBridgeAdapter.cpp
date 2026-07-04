@@ -2,6 +2,7 @@
 
 #if defined(NORVES_BRIDGE_ENABLED)
 
+#include "Bridge/BridgeBase64.h"
 #include "Bridge/BridgeRuntimeState.h"
 #include "Bridge/BridgeServerHost.h"
 #include "GameApplicationHandler.h"
@@ -16,6 +17,7 @@
 #include "Core/Public/Object/SchemaProjection.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Platform/NativeWindowHandle.h"
+#include "Core/Public/Rendering/FrameCaptureThumbnailEncoder.h"
 
 #include "Core/Public/Asset/AssetManifest.h"
 #include "Core/Public/Asset/AssetResolveResult.h"
@@ -50,6 +52,13 @@ namespace Game::Bridge
         using Norves::Bridge::Result;
 
         using AdapterResult = Result<JsonValue, BridgeError>;
+        using CapturedFrame = NorvesLib::Core::Rendering::CapturedFrame;
+        using FrameCaptureRequestResult = NorvesLib::Core::Rendering::FrameCaptureRequestResult;
+        using FrameCaptureRequestStatus = NorvesLib::Core::Rendering::FrameCaptureRequestStatus;
+        using FrameCaptureResultStatus = NorvesLib::Core::Rendering::FrameCaptureResultStatus;
+        using FrameCaptureThumbnailOptions = NorvesLib::Core::Rendering::FrameCaptureThumbnailOptions;
+        using FrameCaptureThumbnailResult = NorvesLib::Core::Rendering::FrameCaptureThumbnailResult;
+        using FrameCaptureThumbnailStatus = NorvesLib::Core::Rendering::FrameCaptureThumbnailStatus;
 
         /**
          * @brief 制御下のリテラル JSON をパースして成功 Result を作る
@@ -816,6 +825,347 @@ namespace Game::Bridge
         }
 
         /**
+         * @brief FrameCaptureResultStatus を警告ログ用の文字列へ変換する
+         *
+         * @param status 変換対象
+         * @return status 名
+         */
+        const char* FrameCaptureResultStatusName(FrameCaptureResultStatus status)
+        {
+            switch (status)
+            {
+                case FrameCaptureResultStatus::Success:
+                    return "Success";
+                case FrameCaptureResultStatus::SourceUnavailable:
+                    return "SourceUnavailable";
+                case FrameCaptureResultStatus::SourceMissingTransferSrc:
+                    return "SourceMissingTransferSrc";
+                case FrameCaptureResultStatus::UnsupportedFormat:
+                    return "UnsupportedFormat";
+                case FrameCaptureResultStatus::InvalidDimensions:
+                    return "InvalidDimensions";
+                case FrameCaptureResultStatus::ReadbackBufferCreateFailed:
+                    return "ReadbackBufferCreateFailed";
+                case FrameCaptureResultStatus::MapFailed:
+                    return "MapFailed";
+            }
+            return "Unknown";
+        }
+
+        /**
+         * @brief FrameCaptureThumbnailStatus を警告ログ用の文字列へ変換する
+         *
+         * @param status 変換対象
+         * @return status 名
+         */
+        const char* FrameCaptureThumbnailStatusName(FrameCaptureThumbnailStatus status)
+        {
+            switch (status)
+            {
+                case FrameCaptureThumbnailStatus::Success:
+                    return "Success";
+                case FrameCaptureThumbnailStatus::CapturedFrameNotReady:
+                    return "CapturedFrameNotReady";
+                case FrameCaptureThumbnailStatus::InvalidOptions:
+                    return "InvalidOptions";
+                case FrameCaptureThumbnailStatus::InvalidDimensions:
+                    return "InvalidDimensions";
+                case FrameCaptureThumbnailStatus::UnsupportedFormat:
+                    return "UnsupportedFormat";
+                case FrameCaptureThumbnailStatus::InvalidPixelData:
+                    return "InvalidPixelData";
+                case FrameCaptureThumbnailStatus::EncodeFailed:
+                    return "EncodeFailed";
+                case FrameCaptureThumbnailStatus::EncodedBytesTooLarge:
+                    return "EncodedBytesTooLarge";
+            }
+            return "Unknown";
+        }
+
+        /**
+         * @brief 正の JSON integer token を uint32 cap として読む
+         *
+         * 文字列や bool、負数、0、小数、object/array は false。指定 hardMax を超える正整数は
+         * hardMax へ clamp する。
+         *
+         * @param raw dump() 由来の生 JSON token
+         * @param hardMax clamp 上限
+         * @param outValue 読み取り成功時の値
+         * @return 正の integer token なら true
+         */
+        bool TryParsePositiveIntegerCap(std::string_view raw, uint32_t hardMax, uint32_t& outValue)
+        {
+            const std::string_view trimmed = TrimJsonWhitespace(raw);
+            if (trimmed.empty())
+            {
+                return false;
+            }
+
+            uint64_t value = 0;
+            for (const char c : trimmed)
+            {
+                if (c < '0' || c > '9')
+                {
+                    return false;
+                }
+
+                const uint32_t digit = static_cast<uint32_t>(c - '0');
+                if (value <= static_cast<uint64_t>(hardMax))
+                {
+                    value = (value * 10u) + digit;
+                }
+            }
+
+            if (value == 0)
+            {
+                return false;
+            }
+
+            outValue = (value > static_cast<uint64_t>(hardMax))
+                ? hardMax
+                : static_cast<uint32_t>(value);
+            return true;
+        }
+
+        /**
+         * @brief compact JSON object からトップレベル field だけを取り出す
+         *
+         * SDK の dump() 出力を前提に、トップレベル member を順に読み、値のネストをスキップする。
+         * unknown object/array 内の同名 field は無視する。
+         *
+         * @param objectText params.dump() の compact JSON text
+         * @param key トップレベルで探す field 名
+         * @return 生の値テキスト（文字列なら引用符込み）。無ければ nullopt
+         */
+        std::optional<std::string> ExtractTopLevelJsonField(const std::string& objectText,
+                                                            std::string_view key)
+        {
+            const std::string_view trimmed = TrimJsonWhitespace(objectText);
+            if (trimmed.size() < 2u || trimmed.front() != '{' || trimmed.back() != '}')
+            {
+                return std::nullopt;
+            }
+
+            std::size_t pos = static_cast<std::size_t>(trimmed.data() - objectText.data()) + 1u;
+            const std::size_t objectEnd =
+                static_cast<std::size_t>(trimmed.data() - objectText.data()) + trimmed.size() - 1u;
+
+            while (pos < objectEnd)
+            {
+                while (pos < objectEnd &&
+                       (objectText[pos] == ' ' || objectText[pos] == '\t' ||
+                        objectText[pos] == '\n' || objectText[pos] == '\r' ||
+                        objectText[pos] == ','))
+                {
+                    ++pos;
+                }
+                if (pos >= objectEnd || objectText[pos] != '"')
+                {
+                    return std::nullopt;
+                }
+
+                const std::size_t keyBodyStart = pos + 1u;
+                ++pos;
+                bool bEscaped = false;
+                while (pos < objectEnd)
+                {
+                    const char c = objectText[pos];
+                    if (bEscaped)
+                    {
+                        bEscaped = false;
+                    }
+                    else if (c == '\\')
+                    {
+                        bEscaped = true;
+                    }
+                    else if (c == '"')
+                    {
+                        break;
+                    }
+                    ++pos;
+                }
+                if (pos >= objectEnd || objectText[pos] != '"')
+                {
+                    return std::nullopt;
+                }
+
+                const std::string_view memberKey(
+                    objectText.data() + keyBodyStart,
+                    pos - keyBodyStart);
+                ++pos;
+
+                while (pos < objectEnd &&
+                       (objectText[pos] == ' ' || objectText[pos] == '\t' ||
+                        objectText[pos] == '\n' || objectText[pos] == '\r'))
+                {
+                    ++pos;
+                }
+                if (pos >= objectEnd || objectText[pos] != ':')
+                {
+                    return std::nullopt;
+                }
+                ++pos;
+
+                while (pos < objectEnd &&
+                       (objectText[pos] == ' ' || objectText[pos] == '\t' ||
+                        objectText[pos] == '\n' || objectText[pos] == '\r'))
+                {
+                    ++pos;
+                }
+
+                const std::size_t valueStart = pos;
+                int depth = 0;
+                bool bInString = false;
+                bEscaped = false;
+                while (pos < objectEnd)
+                {
+                    const char c = objectText[pos];
+                    if (bInString)
+                    {
+                        if (bEscaped)
+                        {
+                            bEscaped = false;
+                        }
+                        else if (c == '\\')
+                        {
+                            bEscaped = true;
+                        }
+                        else if (c == '"')
+                        {
+                            bInString = false;
+                        }
+                    }
+                    else if (c == '"')
+                    {
+                        bInString = true;
+                    }
+                    else if (c == '{' || c == '[')
+                    {
+                        ++depth;
+                    }
+                    else if (c == '}' || c == ']')
+                    {
+                        if (depth == 0)
+                        {
+                            break;
+                        }
+                        --depth;
+                    }
+                    else if (c == ',' && depth == 0)
+                    {
+                        break;
+                    }
+                    ++pos;
+                }
+
+                if (memberKey == key)
+                {
+                    return objectText.substr(valueStart, pos - valueStart);
+                }
+            }
+
+            return std::nullopt;
+        }
+
+        /**
+         * @brief viewport.getThumbnail params を lenient に options へ変換する
+         *
+         * params が object でない、field が無い、field 値が不正な場合は defaults のまま。
+         * unknown field は無視する。
+         *
+         * @param params リクエスト params
+         * @return Core thumbnail encoder に渡す options
+         */
+        FrameCaptureThumbnailOptions ParseViewportThumbnailOptions(const JsonValue& params)
+        {
+            FrameCaptureThumbnailOptions options;
+            const std::string paramsText = params.dump();
+            const std::string_view trimmed = TrimJsonWhitespace(paramsText);
+            if (trimmed.size() < 2u || trimmed.front() != '{' || trimmed.back() != '}')
+            {
+                return options;
+            }
+
+            const auto applyCap = [&](std::string_view key, uint32_t hardMax, uint32_t& target) {
+                const std::optional<std::string> raw = ExtractTopLevelJsonField(paramsText, key);
+                if (!raw.has_value())
+                {
+                    return;
+                }
+
+                uint32_t parsed = 0;
+                if (TryParsePositiveIntegerCap(raw.value(), hardMax, parsed))
+                {
+                    target = parsed;
+                }
+            };
+
+            applyCap("maxWidth",
+                     NorvesLib::Core::Rendering::FrameCaptureThumbnailHardMaxWidth,
+                     options.MaxWidth);
+            applyCap("maxHeight",
+                     NorvesLib::Core::Rendering::FrameCaptureThumbnailHardMaxHeight,
+                     options.MaxHeight);
+            return options;
+        }
+
+        /**
+         * @brief viewport thumbnail success JSON を組む
+         *
+         * @param imageBase64 PNG bytes の base64 文字列
+         * @param width thumbnail 幅
+         * @param height thumbnail 高さ
+         * @return schema 準拠の JSON object text
+         */
+        std::string BuildViewportThumbnailJson(
+            std::string_view imageBase64,
+            uint32_t width,
+            uint32_t height)
+        {
+            std::string out = R"({"imageBase64":")";
+            AppendJsonString(out, imageBase64);
+            out += R"(","mimeType":")";
+            out += NorvesLib::Core::Rendering::GetFrameCaptureThumbnailMimeType();
+            out += R"(","width":)";
+            out += std::to_string(static_cast<unsigned long>(width));
+            out += R"(,"height":)";
+            out += std::to_string(static_cast<unsigned long>(height));
+            out += '}';
+            return out;
+        }
+
+        /**
+         * @brief 静的な 1x1 PNG placeholder の success JSON を組む
+         *
+         * @return schema 準拠の JSON object text
+         */
+        std::string BuildViewportThumbnailPlaceholderJson()
+        {
+            static constexpr std::string_view kPlaceholder1x1PngBase64 =
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+            return BuildViewportThumbnailJson(kPlaceholder1x1PngBase64, 1u, 1u);
+        }
+
+        /**
+         * @brief cached thumbnail が現在の caps に収まるか判定する
+         *
+         * @param width cached width
+         * @param height cached height
+         * @param options 現リクエスト caps
+         * @return cache を返してよいなら true
+         */
+        bool CachedViewportThumbnailFits(
+            uint32_t width,
+            uint32_t height,
+            const FrameCaptureThumbnailOptions& options)
+        {
+            return width > 0u &&
+                   height > 0u &&
+                   width <= options.MaxWidth &&
+                   height <= options.MaxHeight;
+        }
+
+        /**
          * @brief JSON 文字列リテラル（引用符込み）を引用符を外して JSON アンエスケープし out へ書く
          *
          * AppendJsonString の逆。前後が `"` で囲まれていることを要求し、内側の `\"` `\\` `\/`
@@ -1370,7 +1720,7 @@ namespace Game::Bridge
     AdapterResult
     NorvesLibBridgeAdapter::getCapabilities(const JsonValue& /*params*/)
     {
-        // runtime.control / log.stream / viewport.focus / scene.query / scene.edit / scene.liveUpdate /
+        // runtime.control / log.stream / viewport.focus / viewport.thumbnail / scene.query / scene.edit / scene.liveUpdate /
         // object.query / object.edit / asset.read を
         // 広告する。scene.query は scene.getTree と schema.getSnapshot を束ねる token（両者とも実装済み）。
         // scene.edit は scene.createObject / scene.deleteObject / scene.reparentObject /
@@ -1379,7 +1729,7 @@ namespace Game::Bridge
         // object.query は object.getSnapshot 用（実装済み）。object.edit は object.setProperty 用
         // （実装済み）。asset.read は asset.resolve / asset.getManifest 用（実装済み＝NorvesLib アダプタが
         // texture asset root/manifest から override 解決する）。viewport.thumbnail は
-        // 本実装範囲外のため広告しない。
+        // viewport.getThumbnail 用（実装済み、キャプチャ未到着時も cache/placeholder success）。
         // 実エンジンの capability 検証は superset（部分集合包含）方針なので、実装済み token のみ
         // 広告すればよい（mock の 8 token fixture には合わせない）。
         return OkLiteral(
@@ -1387,6 +1737,7 @@ namespace Game::Bridge
             R"({"name":"runtime.control","version":"0.1","description":"Play/pause/stop control."},)"
             R"({"name":"log.stream"},)"
             R"({"name":"viewport.focus"},)"
+            R"({"name":"viewport.thumbnail"},)"
             R"({"name":"scene.query"},)"
             R"({"name":"scene.edit"},)"
             R"({"name":"scene.liveUpdate"},)"
@@ -1412,6 +1763,117 @@ namespace Game::Bridge
         snap.engineName = "NorvesLib";
         snap.engineVersion = "1.0";
         return AdapterResult::ok(snap.to_json());
+    }
+
+    AdapterResult
+    NorvesLibBridgeAdapter::viewportGetThumbnail(const JsonValue& params)
+    {
+        const FrameCaptureThumbnailOptions options = ParseViewportThumbnailOptions(params);
+
+        CapturedFrame frame;
+        bool bConsumedFrame = false;
+
+#if defined(NORVES_BRIDGE_TESTING)
+        if (m_ViewportThumbnailCaptureProviderForTesting.TryConsumeCapturedFrame != nullptr)
+        {
+            bConsumedFrame =
+                m_ViewportThumbnailCaptureProviderForTesting.TryConsumeCapturedFrame(
+                    m_ViewportThumbnailCaptureProviderForTesting.Context,
+                    frame);
+        }
+        else
+#endif // NORVES_BRIDGE_TESTING
+        {
+            auto* engine = NorvesLib::Core::Engine::GEngine;
+            if (engine != nullptr)
+            {
+                bConsumedFrame = engine->GetRenderWorld().TryConsumeCapturedFrame(frame);
+            }
+        }
+
+        if (bConsumedFrame)
+        {
+            if (!frame.IsSuccess())
+            {
+                NORVES_LOG_WARNING("Bridge",
+                                   "viewport.getThumbnail consumed failed frame: status=%s requestId=%llu frameNumber=%llu",
+                                   FrameCaptureResultStatusName(frame.Status),
+                                   static_cast<unsigned long long>(frame.RequestId),
+                                   static_cast<unsigned long long>(frame.FrameNumber));
+            }
+            else
+            {
+                const FrameCaptureThumbnailResult thumbnailResult =
+                    NorvesLib::Core::Rendering::EncodeCapturedFrameThumbnail(frame, options);
+                if (thumbnailResult.IsSuccess())
+                {
+                    const std::string base64 =
+                        EncodeBridgeBase64(thumbnailResult.PngBytes.data(), thumbnailResult.PngBytes.size());
+                    if (!base64.empty())
+                    {
+                        m_CachedViewportThumbnailBase64 = base64;
+                        m_CachedViewportThumbnailWidth = thumbnailResult.Width;
+                        m_CachedViewportThumbnailHeight = thumbnailResult.Height;
+                        m_bHasCachedViewportThumbnail = true;
+                        return OkLiteral(BuildViewportThumbnailJson(
+                            m_CachedViewportThumbnailBase64,
+                            m_CachedViewportThumbnailWidth,
+                            m_CachedViewportThumbnailHeight));
+                    }
+
+                    NORVES_LOG_WARNING("Bridge",
+                                       "viewport.getThumbnail base64 encode produced empty data: requestId=%llu frameNumber=%llu",
+                                       static_cast<unsigned long long>(thumbnailResult.RequestId),
+                                       static_cast<unsigned long long>(thumbnailResult.FrameNumber));
+                }
+                else
+                {
+                    NORVES_LOG_WARNING("Bridge",
+                                       "viewport.getThumbnail encode failed: status=%s requestId=%llu frameNumber=%llu",
+                                       FrameCaptureThumbnailStatusName(thumbnailResult.Status),
+                                       static_cast<unsigned long long>(thumbnailResult.RequestId),
+                                       static_cast<unsigned long long>(thumbnailResult.FrameNumber));
+                }
+            }
+        }
+
+        FrameCaptureRequestResult requestResult;
+#if defined(NORVES_BRIDGE_TESTING)
+        if (m_ViewportThumbnailCaptureProviderForTesting.RequestFrameCapture != nullptr)
+        {
+            requestResult =
+                m_ViewportThumbnailCaptureProviderForTesting.RequestFrameCapture(
+                    m_ViewportThumbnailCaptureProviderForTesting.Context);
+        }
+        else
+#endif // NORVES_BRIDGE_TESTING
+        {
+            auto* engine = NorvesLib::Core::Engine::GEngine;
+            if (engine != nullptr)
+            {
+                requestResult = engine->GetRenderWorld().RequestFrameCapture();
+            }
+            else
+            {
+                requestResult.Status = FrameCaptureRequestStatus::NotInitialized;
+                requestResult.RequestId = 0;
+            }
+        }
+        (void)requestResult;
+
+        if (m_bHasCachedViewportThumbnail &&
+            CachedViewportThumbnailFits(
+                m_CachedViewportThumbnailWidth,
+                m_CachedViewportThumbnailHeight,
+                options))
+        {
+            return OkLiteral(BuildViewportThumbnailJson(
+                m_CachedViewportThumbnailBase64,
+                m_CachedViewportThumbnailWidth,
+                m_CachedViewportThumbnailHeight));
+        }
+
+        return OkLiteral(BuildViewportThumbnailPlaceholderJson());
     }
 
     AdapterResult
