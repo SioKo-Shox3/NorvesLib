@@ -1116,6 +1116,17 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    FrameCaptureRequestResult RenderingCoordinator::RequestFrameCapture()
+    {
+        return {};
+    }
+
+    bool RenderingCoordinator::TryConsumeCapturedFrame(CapturedFrame& outFrame)
+    {
+        outFrame = CapturedFrame{};
+        return false;
+    }
+
     void RenderingCoordinator::RenderFrame(FramePacket *packet)
     {
         if (!m_bInitialized || !packet)

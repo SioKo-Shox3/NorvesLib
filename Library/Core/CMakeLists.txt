@@ -68,6 +68,8 @@ set(PRIVATE_SOURCES
     Private/Rendering/DebugDrawQueue.cpp
     Private/Rendering/DebugDrawPass.cpp
     Private/Rendering/RenderingCoordinator.cpp
+    Private/Rendering/FrameCaptureReadbackHelper.h
+    Private/Rendering/FrameCaptureReadbackHelper.cpp
     Private/Rendering/RenderGraph/RenderGraph.cpp
     Private/Rendering/RenderGraph/RenderGraphBuilder.cpp
     Private/Rendering/RenderGraph/RenderGraphDump.cpp
@@ -268,6 +270,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ProceduralMeshGPUData.h
     Public/Rendering/SceneProxy.h
     Public/Rendering/FramePacket.h
+    Public/Rendering/FrameCaptureTypes.h
     Public/Rendering/RenderResourcesFwd.h
     Public/Rendering/RenderResourceContexts.h
     Public/Rendering/RenderResources.h

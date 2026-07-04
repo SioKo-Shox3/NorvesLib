@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "FrameCaptureTypes.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
@@ -154,6 +155,9 @@ namespace NorvesLib::Core::Rendering
          * @brief フレームの描画完了を待機
          */
         void WaitForRender();
+
+        FrameCaptureRequestResult RequestFrameCapture();
+        bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
 
         // ========================================
         // pre-device-teardown フック

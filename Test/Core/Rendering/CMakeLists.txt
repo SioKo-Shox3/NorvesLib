@@ -20,6 +20,17 @@ target_include_directories(RHITextureToBufferReadbackVulkanTest PRIVATE
 set_target_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureToBufferReadbackVulkanTest)
 
+add_executable(FrameCaptureReadbackHelperTest
+    FrameCaptureReadbackHelperTest.cpp
+)
+target_link_libraries(FrameCaptureReadbackHelperTest PRIVATE Core)
+target_include_directories(FrameCaptureReadbackHelperTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(FrameCaptureReadbackHelperTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME FrameCaptureReadbackHelperTest COMMAND FrameCaptureReadbackHelperTest)
+
 add_executable(RenderingCoordinatorStatsPropagationTest
     RenderingCoordinatorStatsPropagationTest.cpp
 )

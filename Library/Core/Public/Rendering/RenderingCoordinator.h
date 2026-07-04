@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "FrameCaptureTypes.h"
 #include "Screen.h"
 #include "View.h"
 #include "CanvasView.h"
@@ -163,6 +164,9 @@ namespace NorvesLib::Core::Rendering
          * 描画シームは完全 no-op になる。非所有(寿命はモジュール側が所有)。
          */
         void SetOverlayPassesForNextFrame(Container::Span<IViewPass *> passes);
+
+        FrameCaptureRequestResult RequestFrameCapture();
+        bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
 
         // ========================================
         // レンダリング実行（RenderThread）
