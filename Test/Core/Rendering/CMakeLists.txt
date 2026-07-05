@@ -214,6 +214,20 @@ target_compile_definitions(ToneMappingParamsLayoutTest PRIVATE
 set_target_properties(ToneMappingParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ToneMappingParamsLayoutTest COMMAND ToneMappingParamsLayoutTest)
 
+add_executable(VignetteParamsLayoutTest
+    VignetteParamsLayoutTest.cpp
+)
+target_link_libraries(VignetteParamsLayoutTest PRIVATE Core)
+target_include_directories(VignetteParamsLayoutTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(VignetteParamsLayoutTest PRIVATE
+    NORVES_SHADER_DIR="${CMAKE_SOURCE_DIR}/Assets/Shaders"
+)
+set_target_properties(VignetteParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME VignetteParamsLayoutTest COMMAND VignetteParamsLayoutTest)
+
 add_executable(DebugPostProcessPassThroughContractTest
     DebugPostProcessPassThroughContractTest.cpp
 )

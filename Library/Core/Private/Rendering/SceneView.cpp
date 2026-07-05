@@ -8,6 +8,7 @@
 #include "Rendering/ForwardPass.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/ToneMappingPass.h"
+#include "Rendering/VignettePass.h"
 #include "Rendering/DebugDrawPass.h"
 #include "Rendering/SSAOPass.h"
 #include "Rendering/FXAAPass.h"
@@ -595,7 +596,7 @@ namespace NorvesLib::Core::Rendering
         transparentForwardPass->SetRegisterOutputs(false);
         AddPass(std::move(transparentForwardPass));
 
-        // PostProcessStack: SSR -> Bloom -> ToneMapping -> FXAA
+        // PostProcessStack: SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA
         auto postProcessStack = MakeUnique<PostProcessStack>();
 
         // SSR（スクリーンスペース反射、HDR空間で適用）
@@ -617,11 +618,17 @@ namespace NorvesLib::Core::Rendering
         auto bloomPass = MakeUnique<BloomPass>(bloomSettings);
         postProcessStack->AddPass(std::move(bloomPass));
 
-        // ToneMapping（HDR→LDR変換 + Vignette + Color Grading）
+        // ToneMapping（HDR→LDR変換 + Color Grading）
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
+        // Standalone VignettePass owns default SceneView vignette while ToneMapping ABI remains intact.
+        toneMappingSettings.VignetteIntensity = 0.0f;
         auto toneMappingPass = MakeUnique<ToneMappingPass>(toneMappingSettings);
         postProcessStack->AddPass(std::move(toneMappingPass));
+
+        // Vignette（ToneMapping後のLDR色へ適用）
+        auto vignettePass = MakeUnique<VignettePass>();
+        postProcessStack->AddPass(std::move(vignettePass));
 
         // DebugDraw（ToneMapping後のLDR色へ、SceneDepthで深度遮蔽）
         auto debugDrawPass = MakeUnique<DebugDrawPass>();
@@ -641,7 +648,7 @@ namespace NorvesLib::Core::Rendering
         SetPostProcessStack(std::move(postProcessStack));
 
         NORVES_LOG_INFO("SceneView",
-                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> DebugDraw -> FXAA -> Upscale");
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
     }
 
     void SceneView::SetupForwardPipeline(SceneRenderer *sceneRenderer)
@@ -664,15 +671,18 @@ namespace NorvesLib::Core::Rendering
         auto forwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
         AddPass(std::move(forwardPass));
 
-        // PostProcessStack: ToneMapping
+        // PostProcessStack: ToneMapping -> Vignette -> Upscale
         auto postProcessStack = MakeUnique<PostProcessStack>();
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
+        // Standalone VignettePass owns default SceneView vignette while ToneMapping ABI remains intact.
+        toneMappingSettings.VignetteIntensity = 0.0f;
         postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
+        postProcessStack->AddPass(MakeUnique<VignettePass>());
         postProcessStack->AddPass(MakeUnique<UpscalePass>());
         SetPostProcessStack(std::move(postProcessStack));
 
-        NORVES_LOG_INFO("SceneView", "Forward pipeline configured: Forward -> ToneMapping -> Upscale");
+        NORVES_LOG_INFO("SceneView", "Forward pipeline configured: Forward -> ToneMapping -> Vignette -> Upscale");
     }
 
     void SceneView::CullProxies(Viewport *viewport)

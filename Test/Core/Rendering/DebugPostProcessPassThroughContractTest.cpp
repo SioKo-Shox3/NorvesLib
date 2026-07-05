@@ -7,11 +7,24 @@
 #include <iterator>
 #include <regex>
 #include <string>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 
 using namespace NorvesLib::Core::Rendering;
 
 namespace
 {
+    void ConfigureAssertOutput()
+    {
+#ifdef _MSC_VER
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
     std::string ReadTextFile(const std::string& path)
     {
         std::ifstream file(path, std::ios::binary);
@@ -58,6 +71,8 @@ namespace
 
 int main()
 {
+    ConfigureAssertOutput();
+
     std::cout << "DebugPostProcessPassThroughContractTest start\n";
 
     assert(!IsDebugPostProcessBypassMode(DebugViewMode::Normal));
@@ -81,11 +96,13 @@ int main()
     const std::string ssrPass = ReadTextFile(renderingDir + "/SSRPass.cpp");
     const std::string bloomPass = ReadTextFile(renderingDir + "/BloomPass.cpp");
     const std::string toneMappingPass = ReadTextFile(renderingDir + "/ToneMappingPass.cpp");
+    const std::string vignettePass = ReadTextFile(renderingDir + "/VignettePass.cpp");
     const std::string fxaaPass = ReadTextFile(renderingDir + "/FXAAPass.cpp");
 
     AssertPostProcessSourceContract(ssrPass);
     AssertPostProcessSourceContract(bloomPass);
     AssertPostProcessSourceContract(toneMappingPass);
+    AssertPostProcessSourceContract(vignettePass);
     AssertPostProcessSourceContract(fxaaPass);
 
     AssertContains(ssrPass,
@@ -94,19 +111,26 @@ int main()
                    "params.intensity = bDebugPostProcessBypass ? 0.0f : m_Settings.Intensity;");
     AssertContains(toneMappingPass,
                    "params.bBypass = bDebugPostProcessBypass ? 1u : 0u;");
+    AssertContains(vignettePass,
+                   "params.bEnabled = bDebugPostProcessBypass ? 0u : (m_Settings.bEnabled ? 1u : 0u);");
     AssertContains(fxaaPass,
                    "params.bEnabled = bDebugPostProcessBypass ? 0u : (m_Settings.bEnabled ? 1u : 0u);");
 
     AssertContains(ssrPass, "RenderGraphResourceNames::SSRSceneColor");
     AssertContains(bloomPass, "RenderGraphResourceNames::BloomSceneColor");
     AssertContains(toneMappingPass, "RenderGraphResourceNames::ToneMappedColor");
+    AssertContains(vignettePass, "RenderGraphResourceNames::ToneMappedColor");
     AssertContains(fxaaPass, "RenderGraphResourceNames::ToneMappedColor");
     AssertContains(toneMappingPass, "builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor");
+    AssertContains(vignettePass, "builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor");
     AssertContains(fxaaPass, "builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor");
+    AssertContains(vignettePass, "fullscreen.vert");
+    AssertContains(vignettePass, "vignette.frag");
 
     const std::string ssrShader = ReadTextFile(shaderDir + "/ssr.frag");
     const std::string bloomShader = ReadTextFile(shaderDir + "/bloom.frag");
     const std::string toneMappingShader = ReadTextFile(shaderDir + "/tonemapping.frag");
+    const std::string vignetteShader = ReadTextFile(shaderDir + "/vignette.frag");
     const std::string fxaaShader = ReadTextFile(shaderDir + "/fxaa.frag");
 
     AssertContains(ssrShader, "if (params.bEnabled == 0u)");
@@ -119,6 +143,10 @@ int main()
     AssertContains(toneMappingShader, "uint bBypass;");
     AssertContains(toneMappingShader, "if (params.bBypass != 0u)");
     AssertContains(toneMappingShader, "outColor = texture(sceneColor, fragUV);");
+
+    AssertContains(vignetteShader, "uint bEnabled;");
+    AssertContains(vignetteShader, "if (params.bEnabled == 0u)");
+    AssertContains(vignetteShader, "outColor = texture(inputTexture, fragUV);");
 
     AssertContains(fxaaShader, "if (params.bEnabled == 0u)");
     AssertContains(fxaaShader, "outColor = texture(inputTexture, fragUV);");

@@ -102,6 +102,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
     Private/Rendering/ToneMappingPass.cpp
+    Private/Rendering/VignettePass.cpp
     Private/Rendering/BloomPass.cpp
     Private/Rendering/SSAOPass.cpp
     Private/Rendering/FXAAPass.cpp
@@ -314,6 +315,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ShadowMapPass.h
     Public/Rendering/LightingPass.h
     Public/Rendering/ToneMappingPass.h
+    Public/Rendering/VignettePass.h
     Public/Rendering/BloomPass.h
     Public/Rendering/SSAOPass.h
     Public/Rendering/FXAAPass.h

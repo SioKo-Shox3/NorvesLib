@@ -11,6 +11,12 @@
 #include "Rendering/SSAOPass.h"
 #include "Rendering/SSRPass.h"
 #include "Rendering/ToneMappingPass.h"
+#if __has_include("Rendering/VignettePass.h")
+#include "Rendering/VignettePass.h"
+#define NORVES_HAS_VIGNETTE_PASS 1
+#else
+#define NORVES_HAS_VIGNETTE_PASS 0
+#endif
 #include "Rendering/UpscalePass.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneRenderer.h"
@@ -34,6 +40,9 @@
 #include <cassert>
 #include <iostream>
 #include <utility>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 
 using namespace NorvesLib::Core::Rendering;
 namespace Container = NorvesLib::Core::Container;
@@ -41,6 +50,16 @@ namespace RHI = NorvesLib::RHI;
 
 namespace
 {
+    void ConfigureAssertOutput()
+    {
+#ifdef _MSC_VER
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
     struct BarrierEvent
     {
         RGBarrierKind Kind = RGBarrierKind::Texture;
@@ -3269,6 +3288,251 @@ namespace
         assert(bHasToneMappedOutputWrite);
     }
 
+    void TestVignetteNativeDeclareDependencies()
+    {
+        assert(NORVES_HAS_VIGNETTE_PASS == 1);
+
+#if NORVES_HAS_VIGNETTE_PASS
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        ToneMappingPass toneMappingPass;
+        VignettePass vignettePass;
+
+        const uint32_t toneMappingPassIndex = graph.AddPass(&toneMappingPass);
+        const uint32_t vignettePassIndex = graph.AddPass(&vignettePass);
+
+        ViewRenderContext context;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        assert(toneMappingPass.GetToneMappedColorHandle().IsValid());
+        assert(vignettePass.GetToneMappedColorHandle().IsValid());
+        assert(vignettePass.GetToneMappedColorHandle() != toneMappingPass.GetToneMappedColorHandle());
+        assert(graph.GetDeclaredPassAccessCount(vignettePassIndex) == 2);
+
+        bool bHasToneMappedRead = false;
+        bool bHasOutputWrite = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(vignettePassIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(vignettePassIndex,
+                                                  accessIndex,
+                                                  resource,
+                                                  mode,
+                                                  state,
+                                                  finalState));
+
+            if (resource == toneMappingPass.GetToneMappedColorHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasToneMappedRead = true;
+            }
+
+            if (resource == vignettePass.GetToneMappedColorHandle())
+            {
+                assert(mode == RGAccessMode::Write);
+                assert(state == RHI::ResourceState::RenderTarget);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bHasOutputWrite = true;
+            }
+        }
+
+        assert(bHasToneMappedRead);
+        assert(bHasOutputWrite);
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 2);
+        assert(order[0] == toneMappingPassIndex);
+        assert(order[1] == vignettePassIndex);
+
+        RGCompiledResourceLifetime vignetteLifetime;
+        assert(graph.TryGetCompiledResourceLifetime(vignettePass.GetToneMappedColorHandle(),
+                                                    vignetteLifetime));
+        assert(vignetteLifetime.bExported);
+        assert(vignetteLifetime.bPinnedUntilGraphEnd);
+        assert(vignetteLifetime.LifetimeEndOrderIndex == graph.GetCompiledPassOrder().size());
+
+        bool bHasVignetteOutputWrite = false;
+        for (const RGCompiledBarrier& barrier : graph.GetCompiledBarriers())
+        {
+            if (barrier.PassIndex != vignettePassIndex)
+            {
+                continue;
+            }
+
+            if (barrier.Resource == vignettePass.GetToneMappedColorHandle())
+            {
+                assert(barrier.BeforeState == RHI::ResourceState::Undefined);
+                assert(barrier.AfterState == RHI::ResourceState::RenderTarget);
+                bHasVignetteOutputWrite = true;
+            }
+        }
+
+        assert(bHasVignetteOutputWrite);
+#endif
+    }
+
+    void TestToneMappedVersionChainFeedsFXAAAndUpscale()
+    {
+        assert(NORVES_HAS_VIGNETTE_PASS == 1);
+
+#if NORVES_HAS_VIGNETTE_PASS
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        ToneMappingPass toneMappingPass;
+        VignettePass vignettePass;
+        FXAAPass fxaaPass;
+        UpscalePass upscalePass;
+
+        const uint32_t toneMappingPassIndex = graph.AddPass(&toneMappingPass);
+        const uint32_t vignettePassIndex = graph.AddPass(&vignettePass);
+        const uint32_t fxaaPassIndex = graph.AddPass(&fxaaPass);
+        const uint32_t upscalePassIndex = graph.AddPass(&upscalePass);
+
+        ViewRenderContext context;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.ScreenWidth = 256;
+        context.ScreenHeight = 128;
+
+        assert(graph.Compile(context));
+        assert(vignettePass.GetToneMappedColorHandle().IsValid());
+        assert(fxaaPass.GetToneMappedColorHandle().IsValid());
+        assert(upscalePass.GetPresentationColorHandle().IsValid());
+
+        bool bFXAAReadsVignette = false;
+        bool bFXAAReadsToneMapping = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(fxaaPassIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(fxaaPassIndex,
+                                                  accessIndex,
+                                                  resource,
+                                                  mode,
+                                                  state,
+                                                  finalState));
+
+            if (resource == vignettePass.GetToneMappedColorHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bFXAAReadsVignette = true;
+            }
+
+            if (resource == toneMappingPass.GetToneMappedColorHandle())
+            {
+                bFXAAReadsToneMapping = true;
+            }
+        }
+
+        assert(bFXAAReadsVignette);
+        assert(!bFXAAReadsToneMapping);
+
+        bool bUpscaleReadsFXAA = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(upscalePassIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(upscalePassIndex,
+                                                  accessIndex,
+                                                  resource,
+                                                  mode,
+                                                  state,
+                                                  finalState));
+
+            if (resource == fxaaPass.GetToneMappedColorHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bUpscaleReadsFXAA = true;
+            }
+        }
+
+        assert(bUpscaleReadsFXAA);
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 4);
+        assert(order[0] == toneMappingPassIndex);
+        assert(order[1] == vignettePassIndex);
+        assert(order[2] == fxaaPassIndex);
+        assert(order[3] == upscalePassIndex);
+#endif
+    }
+
+    void TestToneMappedVersionChainFeedsUpscaleWithoutFXAA()
+    {
+        assert(NORVES_HAS_VIGNETTE_PASS == 1);
+
+#if NORVES_HAS_VIGNETTE_PASS
+        RenderGraph graph;
+        assert(graph.Initialize(nullptr));
+
+        ToneMappingPass toneMappingPass;
+        VignettePass vignettePass;
+        UpscalePass upscalePass;
+
+        const uint32_t toneMappingPassIndex = graph.AddPass(&toneMappingPass);
+        const uint32_t vignettePassIndex = graph.AddPass(&vignettePass);
+        const uint32_t upscalePassIndex = graph.AddPass(&upscalePass);
+
+        ViewRenderContext context;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.ScreenWidth = 256;
+        context.ScreenHeight = 128;
+
+        assert(graph.Compile(context));
+        assert(vignettePass.GetToneMappedColorHandle().IsValid());
+        assert(upscalePass.GetPresentationColorHandle().IsValid());
+
+        bool bUpscaleReadsVignette = false;
+        for (uint32_t accessIndex = 0; accessIndex < graph.GetDeclaredPassAccessCount(upscalePassIndex); ++accessIndex)
+        {
+            RGResourceHandle resource;
+            RGAccessMode mode = RGAccessMode::Read;
+            RHI::ResourceState state = RHI::ResourceState::Undefined;
+            RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+            assert(graph.TryGetDeclaredPassAccess(upscalePassIndex,
+                                                  accessIndex,
+                                                  resource,
+                                                  mode,
+                                                  state,
+                                                  finalState));
+
+            if (resource == vignettePass.GetToneMappedColorHandle())
+            {
+                assert(mode == RGAccessMode::Read);
+                assert(state == RHI::ResourceState::ShaderResource);
+                assert(finalState == RHI::ResourceState::ShaderResource);
+                bUpscaleReadsVignette = true;
+            }
+        }
+
+        assert(bUpscaleReadsVignette);
+
+        const auto& order = graph.GetCompiledPassOrder();
+        assert(order.size() == 3);
+        assert(order[0] == toneMappingPassIndex);
+        assert(order[1] == vignettePassIndex);
+        assert(order[2] == upscalePassIndex);
+#endif
+    }
+
     void TestPostProcessNativeDeclareUsesNamedResourcesWithoutPassPointers()
     {
         RenderGraph graph;
@@ -4224,6 +4488,119 @@ namespace
         shaderManager.Shutdown();
     }
 
+    void TestVignetteNativeExecuteExportsToneMappedColorWithoutBridge()
+    {
+        assert(NORVES_HAS_VIGNETTE_PASS == 1);
+
+#if NORVES_HAS_VIGNETTE_PASS
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        SceneView sceneView;
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        SSAOPass ssaoPass;
+        ssaoPass.SetGBufferPass(&gbufferPass);
+        LightingPass lightingPass;
+        lightingPass.SetGBufferPass(&gbufferPass);
+        lightingPass.SetSSAOPass(&ssaoPass);
+        ForwardPass forwardPass(&sceneView, &renderer);
+        forwardPass.SetTransparentOnly(true);
+        forwardPass.SetRegisterOutputs(false);
+        forwardPass.SetLightingPass(&lightingPass);
+        forwardPass.SetGBufferPass(&gbufferPass);
+        SSRPass ssrPass;
+        ssrPass.SetGBufferPass(&gbufferPass);
+        ssrPass.SetLightingPass(&lightingPass);
+        BloomPass bloomPass;
+        bloomPass.SetInputPass(&ssrPass);
+        ToneMappingPass toneMappingPass;
+        toneMappingPass.SetInputPass(&bloomPass);
+        VignettePass vignettePass;
+
+        graph.AddPass(&gbufferPass);
+        graph.AddPass(&ssaoPass);
+        graph.AddPass(&lightingPass);
+        graph.AddPass(&forwardPass);
+        graph.AddPass(&ssrPass);
+        graph.AddPass(&bloomPass);
+        graph.AddPass(&toneMappingPass);
+        graph.AddPass(&vignettePass);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<DrawCommand> transparentCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotTransparentCommands = DrawCommandView::FromArray(transparentCommands);
+        context.Resources.Textures = &renderResources.Textures();
+        context.Resources.Materials = &renderResources.Materials();
+        context.Resources.Meshes = &renderResources.Meshes();
+
+        assert(graph.Compile(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr vignetteOutput = graphResources.GetTexture(vignettePass.GetToneMappedColorHandle());
+        assert(vignetteOutput);
+        RHI::TexturePtr exportedTexture;
+        assert(result.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, exportedTexture));
+        assert(exportedTexture.get() == vignetteOutput.get());
+
+        assert(graph.GetLastExecutedPassCount() == 8);
+        assert(commandList.BeginRenderPassCount == commandList.EndRenderPassCount);
+        assert(commandList.BeginRenderPassCount > 0);
+        assert(commandList.DrawCallCount > 0);
+        assert(pendingFrameCommands.empty());
+        assert(!sharedResources.HasTexture("ToneMappedColor"));
+
+        vignettePass.Shutdown();
+        toneMappingPass.Shutdown();
+        bloomPass.Shutdown();
+        ssrPass.Shutdown();
+        forwardPass.Shutdown();
+        lightingPass.Shutdown();
+        ssaoPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+#endif
+    }
+
     void TestFXAANativeExecuteExportsToneMappedColorWithoutBridge()
     {
         auto device = RHI::MakeShared<FakeDevice>();
@@ -4572,6 +4949,70 @@ namespace
         pool.EndFrame();
         pool.Shutdown();
         shaderManager.Shutdown();
+    }
+
+    void TestVignetteNativeExecuteRegistersBridgeWhenUsingSharedResourceFallback()
+    {
+        assert(NORVES_HAS_VIGNETTE_PASS == 1);
+
+#if NORVES_HAS_VIGNETTE_PASS
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(0);
+
+        VignettePass vignettePass;
+        graph.AddPass(&vignettePass);
+
+        RHI::TexturePtr toneMappedTexture = device->CreateTexture(
+            RHI::TextureDesc::RenderTarget(128, 64, RHI::Format::R8G8B8A8_UNORM, "FallbackToneMappedColor"));
+        assert(toneMappedTexture);
+
+        FakeCommandList commandList;
+        SharedResourceRegistry sharedResources;
+        sharedResources.RegisterTexturePtr("ToneMappedColor", toneMappedTexture);
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = device.get();
+        context.TransientPool = &pool;
+        context.SharedResources = &sharedResources;
+        context.ShaderMgr = &shaderManager;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        assert(graph.Compile(context));
+        RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
+        assert(result.bSuccess);
+
+        RenderGraphResources graphResources(&graph);
+        RHI::TexturePtr vignetteOutput = graphResources.GetTexture(vignettePass.GetToneMappedColorHandle());
+        assert(vignetteOutput);
+        RHI::TexturePtr exportedTexture;
+        assert(result.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, exportedTexture));
+        assert(exportedTexture.get() == vignetteOutput.get());
+
+        assert(graph.GetLastExecutedPassCount() == 1);
+        assert(sharedResources.HasTexture("ToneMappedColor"));
+        assert(sharedResources.GetTexturePtr("ToneMappedColor").get() == vignetteOutput.get());
+
+        vignettePass.Shutdown();
+        graph.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+#endif
     }
 
     void TestFXAANativeExecuteRegistersBridgeWhenUsingSharedResourceFallback()
@@ -5277,6 +5718,8 @@ namespace
 
 int main()
 {
+    ConfigureAssertOutput();
+
     std::cout << "RenderGraphCompileTest start\n";
 
     TestLinearDependencyOrder();
@@ -5307,6 +5750,9 @@ int main()
     TestSSRNativeDeclareDependencies();
     TestBloomNativeDeclareDependencies();
     TestToneMappingNativeDeclareDependencies();
+    TestVignetteNativeDeclareDependencies();
+    TestToneMappedVersionChainFeedsFXAAAndUpscale();
+    TestToneMappedVersionChainFeedsUpscaleWithoutFXAA();
     TestPostProcessNativeDeclareUsesNamedResourcesWithoutPassPointers();
     TestPostProcessMissingNamedInputsCompileWithoutErrors();
     TestFXAANativeDeclareDependencies();
@@ -5326,10 +5772,12 @@ int main()
     TestSSRNativeExecuteUsesGraphSceneColorWithoutBridge();
     TestBloomNativeExecuteUsesGraphSceneColorWithoutBridge();
     TestToneMappingNativeExecuteExportsToneMappedColorWithoutBridge();
+    TestVignetteNativeExecuteExportsToneMappedColorWithoutBridge();
     TestFXAANativeExecuteExportsToneMappedColorWithoutBridge();
     TestUpscaleNativeExecuteExportsPresentationColorWithoutBridge();
     TestSSRNativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestBloomNativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
+    TestVignetteNativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestFXAANativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestUpscaleNativeExecuteExportsPresentationAliasWhenNoUpscale();
     TestUpscaleNativeExecuteExportsPresentationAliasFromInputPassFallback();

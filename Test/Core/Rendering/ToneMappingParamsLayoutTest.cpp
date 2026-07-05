@@ -6,11 +6,24 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 
 using namespace NorvesLib::Core::Rendering;
 
 namespace
 {
+    void ConfigureAssertOutput()
+    {
+#ifdef _MSC_VER
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
     std::string ReadTextFile(const std::string& path)
     {
         std::ifstream file(path, std::ios::binary);
@@ -39,6 +52,8 @@ namespace
 
 int main()
 {
+    ConfigureAssertOutput();
+
     std::cout << "ToneMappingParamsLayoutTest start\n";
 
     assert(sizeof(GPUToneMappingParams) == 64);
@@ -83,7 +98,12 @@ int main()
     assert(bypassOutputPosition < bypassReturnPosition);
     assert(bypassReturnPosition < hdrSamplePosition);
 
+    const std::size_t vignetteFalloffPosition =
+        RequirePosition(shaderSource, "float vignette = smoothstep(radius - softness, radius, dist);");
+    const std::size_t vignetteMixPosition =
+        RequirePositionAfter(shaderSource, "return mix(1.0, 1.0 - vignette, intensity);", vignetteFalloffPosition);
+    assert(vignetteFalloffPosition < vignetteMixPosition);
+
     std::cout << "ToneMappingParamsLayoutTest passed\n";
     return 0;
 }
-

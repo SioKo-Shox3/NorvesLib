@@ -82,8 +82,8 @@ float ComputeVignette(vec2 uv, float intensity, float radius, float softness)
 {
     vec2 centered = uv - 0.5;
     float dist = length(centered);
-    float vignette = smoothstep(radius, radius - softness, dist);
-    return mix(1.0, vignette, intensity);
+    float vignette = smoothstep(radius - softness, radius, dist);
+    return mix(1.0, 1.0 - vignette, intensity);
 }
 
 // ========================================
