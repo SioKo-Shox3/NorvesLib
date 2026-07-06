@@ -416,10 +416,260 @@ namespace
         CheckGolden(target, distance, 60.0f, -89.0f, true);
     }
 
-    // 注: Pan 方向の旧 Maya 一致（旧 rubin ケース6, MayaCameraController::BuildIntent
-    // 依存）は F3（develop の MayaCameraController に BuildIntent を追加するフェーズ）
-    // 完了後に追加する。develop の MayaCameraController はまだイベント駆動のみで
-    // BuildIntent を持たないため、本フェーズ（F2）では移植しない。
+    // ========================================
+    // ケース6: Pan 方向の旧 Maya 一致（符号パリティ）
+    // ========================================
+    // 同一入力（MMB ドラッグ）に対し、
+    //   旧: MayaCameraController のイベント駆動（OnMouseButton→OnMouseMove）後の
+    //       GetTarget() の移動量
+    //   新: BuildIntent（poll 版） → SpringArmComponent::ApplyIntent 後の
+    //       pivot 移動量
+    // が一致することを確認する。develop の MayaCameraController はイベント駆動
+    // （OnMouseButton/OnMouseMove）と poll 版 BuildIntent の両方を持つが、
+    // 単発ドラッグ（同一フレーム内1イベント）については同一の感度換算式を
+    // 使うため、同一入力に対する移動量は一致するはずである。これは Pan-X の
+    // 符号反転バグ（LookRotation 由来 right が旧 GetRight() と逆符号）に対する
+    // 回帰テスト。
+    void CheckPanParity(float dx, float dy)
+    {
+        const Vector3 target(2.0f, 1.0f, -3.0f);
+        const float distance = 6.0f;
+        const float yaw = 35.0f;
+        const float pitch = 25.0f; // 特異点から離れた姿勢
+        const float dt = 0.016f;
+
+        // --- 旧経路: イベント駆動（OnMouseButton→OnMouseMove）で m_Target が移動する ---
+        MayaCameraController ctrlOld;
+        ctrlOld.Initialize(target, distance, yaw, pitch);
+        {
+            MouseButtonEvent buttonEvent;
+            buttonEvent.Button = MouseButton::Middle;
+            buttonEvent.Action = InputAction::Pressed;
+            ctrlOld.OnMouseButton(buttonEvent);
+
+            MouseMoveEvent moveEvent;
+            moveEvent.DeltaX = dx;
+            moveEvent.DeltaY = dy;
+            ctrlOld.OnMouseMove(moveEvent);
+        }
+        const Vector3 oldTargetDelta = ctrlOld.GetTarget() - target;
+
+        // 横・縦ともに非ゼロな delta であること（方向検証として意味を持たせる）
+        assert(std::abs(oldTargetDelta.x) > 1e-5f || std::abs(oldTargetDelta.z) > 1e-5f);
+        assert(IsFinite3(oldTargetDelta));
+
+        // --- 新経路: BuildIntent（poll 版） → ApplyIntent で pivot が移動する ---
+        World world;
+        world.Initialize();
+
+        Entity *pivot = world.SpawnObject<Entity>();
+        assert(pivot);
+        pivot->SetPosition(target);
+
+        Entity *cameraObj = world.SpawnObject<Entity>();
+        assert(cameraObj);
+
+        SpringArmComponent *arm = world.CreateComponent<SpringArmComponent>(cameraObj);
+        assert(arm);
+        arm->SetPivot(pivot);
+        arm->SetTargetOffset(Vector3::Zero);
+        arm->SetArmLength(distance);
+        arm->SetYaw(yaw);
+        arm->SetPitch(pitch);
+
+        // InputState を MMB 押下 + delta(dx,dy) で合成する（公開 API のみ使用）。
+        //  - SetMouseButtonState(MouseButton::Middle, true) で MMB を押下状態に。
+        //  - SetMousePosition(0,0) で初回更新（delta=0、prev=0,0 に確定）。
+        //  - SetMousePosition(dx,dy) で delta=(dx,dy) を生成（prev は 0,0）。
+        InputState input;
+        input.SetMouseButtonState(MouseButton::Middle, true);
+        input.SetMousePosition(0.0f, 0.0f);
+        input.SetMousePosition(dx, dy);
+
+        // BuildIntent には現在のアーム長を渡す（distance と一致させ旧 panAmount と揃える）。
+        MayaCameraController ctrlNew;
+        ctrlNew.Initialize(target, distance, yaw, pitch);
+        const SpringArmIntent intent = ctrlNew.BuildIntent(input, dt, distance);
+
+        // MMB のみの入力では Pan だけが立ち、Orbit/Dolly は混ざらない。
+        assert(IsNearlyEqual(intent.YawDelta, 0.0f));
+        assert(IsNearlyEqual(intent.PitchDelta, 0.0f));
+        assert(IsNearlyEqual(intent.DollyDelta, 0.0f));
+
+        const Vector3 pivotBefore = pivot->GetPosition();
+        arm->ApplyIntent(intent);
+        const Vector3 pivotDelta = pivot->GetPosition() - pivotBefore;
+
+        // 横・縦両方向で旧 Maya の焦点移動量と一致する。
+        assert(VecNearlyEqual(pivotDelta, oldTargetDelta));
+
+        world.Finalize();
+    }
+
+    void TestPanParity()
+    {
+        CheckPanParity(10.0f, 6.0f);  // 右下ドラッグ
+        CheckPanParity(-8.0f, 4.0f);  // 左下ドラッグ（X 符号反転の検出に重要）
+    }
+
+    // ========================================
+    // ケース6b: Orbit / Dolly（ドラッグ・スクロール）の符号パリティ、
+    //           および無入力時に bHasInput が立たないことの確認
+    // ========================================
+    // TestPanParity（MMB=Pan）と同じ手法で、LMB=Orbit・RMB=Dolly・スクロール=Dolly
+    // についてもイベント駆動側と poll版 BuildIntent 側の一致を確認する。
+    void CheckOrbitParity(float dx, float dy)
+    {
+        const Vector3 target(1.0f, -2.0f, 3.0f);
+        const float distance = 4.0f;
+        const float yaw = 20.0f;
+        const float pitch = -10.0f;
+        const float dt = 0.016f;
+
+        // --- 旧経路: OnMouseButton(Left)→OnMouseMove ---
+        MayaCameraController ctrlOld;
+        ctrlOld.Initialize(target, distance, yaw, pitch);
+        {
+            MouseButtonEvent buttonEvent;
+            buttonEvent.Button = MouseButton::Left;
+            buttonEvent.Action = InputAction::Pressed;
+            ctrlOld.OnMouseButton(buttonEvent);
+
+            MouseMoveEvent moveEvent;
+            moveEvent.DeltaX = dx;
+            moveEvent.DeltaY = dy;
+            ctrlOld.OnMouseMove(moveEvent);
+        }
+        const float oldYawDelta = ctrlOld.GetYaw() - yaw;
+        const float oldPitchDelta = ctrlOld.GetPitch() - pitch;
+        assert(std::abs(oldYawDelta) > 1e-5f || std::abs(oldPitchDelta) > 1e-5f);
+
+        // --- 新経路: BuildIntent（poll 版） ---
+        InputState input;
+        input.SetMouseButtonState(MouseButton::Left, true);
+        input.SetMousePosition(0.0f, 0.0f);
+        input.SetMousePosition(dx, dy);
+
+        MayaCameraController ctrlNew;
+        ctrlNew.Initialize(target, distance, yaw, pitch);
+        const SpringArmIntent intent = ctrlNew.BuildIntent(input, dt, distance);
+
+        assert(intent.bHasInput);
+        assert(IsNearlyEqual(intent.DollyDelta, 0.0f));
+        assert(IsNearlyEqual(intent.PanDelta.x, 0.0f));
+        assert(IsNearlyEqual(intent.PanDelta.y, 0.0f));
+        assert(IsNearlyEqual(intent.YawDelta, oldYawDelta));
+        assert(IsNearlyEqual(intent.PitchDelta, oldPitchDelta));
+    }
+
+    void CheckRmbDollyParity(float dragDx)
+    {
+        const Vector3 target(0.0f, 0.0f, 0.0f);
+        const float distance = 8.0f;
+        const float yaw = 0.0f;
+        const float pitch = 30.0f;
+        const float dt = 0.016f;
+
+        // RMB ドラッグによる Dolly。
+        MayaCameraController ctrlOld;
+        ctrlOld.Initialize(target, distance, yaw, pitch);
+        {
+            MouseButtonEvent buttonEvent;
+            buttonEvent.Button = MouseButton::Right;
+            buttonEvent.Action = InputAction::Pressed;
+            ctrlOld.OnMouseButton(buttonEvent);
+
+            MouseMoveEvent moveEvent;
+            moveEvent.DeltaX = dragDx;
+            moveEvent.DeltaY = 0.0f;
+            ctrlOld.OnMouseMove(moveEvent);
+        }
+        const float oldDistanceDelta = ctrlOld.GetDistance() - distance;
+        assert(std::abs(oldDistanceDelta) > 1e-5f);
+
+        InputState input;
+        input.SetMouseButtonState(MouseButton::Right, true);
+        input.SetMousePosition(0.0f, 0.0f);
+        input.SetMousePosition(dragDx, 0.0f);
+
+        MayaCameraController ctrlNew;
+        ctrlNew.Initialize(target, distance, yaw, pitch);
+        const SpringArmIntent intent = ctrlNew.BuildIntent(input, dt, distance);
+
+        assert(intent.bHasInput);
+        assert(IsNearlyEqual(intent.YawDelta, 0.0f));
+        assert(IsNearlyEqual(intent.PitchDelta, 0.0f));
+        // ApplyIntent は ArmLength -= DollyDelta。旧経路は m_Distance += oldDistanceDelta。
+        // 両者が同じ ArmLength/Distance 変化になるには DollyDelta == -oldDistanceDelta。
+        assert(IsNearlyEqual(intent.DollyDelta, -oldDistanceDelta));
+    }
+
+    void CheckScrollDollyParity(float scrollDelta)
+    {
+        const Vector3 target(0.0f, 0.0f, 0.0f);
+        const float distance = 8.0f;
+        const float yaw = 0.0f;
+        const float pitch = 30.0f;
+        const float dt = 0.016f;
+
+        // スクロールによる Dolly。
+        MayaCameraController ctrlOld;
+        ctrlOld.Initialize(target, distance, yaw, pitch);
+        {
+            MouseScrollEvent scrollEvent;
+            scrollEvent.Delta = scrollDelta;
+            ctrlOld.OnMouseScroll(scrollEvent);
+        }
+        const float oldDistanceDelta = ctrlOld.GetDistance() - distance;
+        assert(std::abs(oldDistanceDelta) > 1e-5f);
+
+        InputState input;
+        input.AddMouseScroll(scrollDelta);
+
+        MayaCameraController ctrlNew;
+        ctrlNew.Initialize(target, distance, yaw, pitch);
+        const SpringArmIntent intent = ctrlNew.BuildIntent(input, dt, distance);
+
+        assert(intent.bHasInput);
+        assert(IsNearlyEqual(intent.YawDelta, 0.0f));
+        assert(IsNearlyEqual(intent.PitchDelta, 0.0f));
+        assert(IsNearlyEqual(intent.DollyDelta, -oldDistanceDelta));
+    }
+
+    void TestOrbitAndDollyParity()
+    {
+        CheckOrbitParity(12.0f, -5.0f);
+        CheckOrbitParity(-7.0f, 9.0f);
+        CheckRmbDollyParity(6.0f);
+        CheckRmbDollyParity(-4.0f);
+        CheckScrollDollyParity(-3.0f);
+        CheckScrollDollyParity(2.0f);
+    }
+
+    // ========================================
+    // ケース6c: 無入力時は bHasInput が立たず全 Delta が 0 のままであること
+    // ========================================
+    void TestBuildIntentNoInput()
+    {
+        const Vector3 target(2.0f, 2.0f, 2.0f);
+        const float distance = 5.0f;
+
+        MayaCameraController ctrl;
+        ctrl.Initialize(target, distance, 0.0f, 30.0f);
+
+        // ボタン非押下・移動なし・スクロールなしの InputState。
+        InputState input;
+
+        const SpringArmIntent intent = ctrl.BuildIntent(input, 0.016f, distance);
+
+        assert(intent.bHasInput == false);
+        assert(IsNearlyEqual(intent.YawDelta, 0.0f));
+        assert(IsNearlyEqual(intent.PitchDelta, 0.0f));
+        assert(IsNearlyEqual(intent.DollyDelta, 0.0f));
+        assert(IsNearlyEqual(intent.PanDelta.x, 0.0f));
+        assert(IsNearlyEqual(intent.PanDelta.y, 0.0f));
+        assert(IsNearlyEqual(intent.PanDelta.z, 0.0f));
+    }
 
     // ========================================
     // ケース7: ピボットが child Entity の場合は警告を出しつつ処理を継続する
@@ -474,6 +724,9 @@ int main()
     TestLifetimePendingDestroy();
     TestApplyIntent();
     TestGolden();
+    TestPanParity();
+    TestOrbitAndDollyParity();
+    TestBuildIntentNoInput();
     TestChildPivotWarns();
 
     std::cout << "SpringArmComponentTest passed\n";

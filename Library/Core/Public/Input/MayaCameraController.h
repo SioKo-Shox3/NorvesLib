@@ -2,6 +2,7 @@
 
 #include "Input/IInputController.h"
 #include "Input/InputState.h"
+#include "Component/SpringArmTypes.h"
 #include "Math/Vector3.h"
 #include "Rendering/SceneProxy.h"
 
@@ -68,6 +69,44 @@ namespace NorvesLib::Core::Input
          * @brief スクロール量に応じて Dolly を適用する（常に consume）
          */
         bool OnMouseScroll(const MouseScrollEvent &event) override;
+
+        /**
+         * @brief 入力状態を SpringArmIntent へ変換する（状態を書き換えない const 版）
+         * @param input 現在の入力状態
+         * @param deltaTime フレーム間隔（秒）
+         * @param currentArmLength 現在のアーム長（距離依存量のスケールに使う）
+         * @return この1フレームの操作意図
+         *
+         * イベント駆動の OnMouseButton/OnMouseMove/OnMouseScroll（内部の
+         * m_Target/m_Distance/m_Yaw/m_Pitch を直接更新する）とは独立した、
+         * poll 型の入力換算 API です。内部状態は一切変更しません。
+         * 3層構成（MayaCameraController→SpringArmComponent→CameraComponent）で
+         * SpringArmComponent を単一の真実源として駆動する構成のときは、
+         * このメソッドで作った意図を SpringArmComponent::ApplyIntent へ渡し、
+         * OnMouseButton/OnMouseMove/OnMouseScroll（イベント駆動側）は
+         * InputRouter に登録しない運用を想定しています
+         *（両方を同時に使うと m_Target 等と SpringArmComponent が二重に
+         *   状態を持ち、Pan の焦点位置がずれる可能性があるため）。
+         *
+         * 距離依存量（Pan量・Dolly量）は呼び出し側が渡す現在の ArmLength
+         * （currentArmLength）でスケールします。内部 m_Distance には依存しません。
+         *
+         * 換算規約（単一フレームに集約された入力に対し、OnMouseMove/OnMouseScroll と
+         * 同一の感度係数を用いる。ただし m_Distance を currentArmLength に置換）:
+         * - LMB ドラッグ → YawDelta/PitchDelta（m_OrbitSpeed 換算）
+         * - MMB ドラッグ → PanDelta（スクリーン基底 x=right, y=up。
+         *   panAmount = m_PanSpeed * currentArmLength）
+         * - RMB ドラッグ / スクロール → DollyDelta（m_DollySpeed/m_ScrollDollySpeed 換算。
+         *   currentArmLength でスケール。+で近づく＝ArmLengthを縮める向き）
+         *
+         * 注意: poll 版は `input` に蓄積された1フレーム分の Delta/ScrollDelta を
+         * currentArmLength で1回だけスケールします。イベント駆動側（OnMouseMove/
+         * OnMouseScroll）は同一フレームに複数イベントが来ると、その都度更新後の
+         * m_Distance を使って逐次スケールするため、複数イベントが重なる場合は
+         * 両者の結果が厳密には一致しません（単一イベント／単一フレーム集約の
+         * 入力であれば一致します）。
+         */
+        Component::SpringArmIntent BuildIntent(const InputState &input, float deltaTime, float currentArmLength) const;
 
         /**
          * @brief デバッグ用のコントローラ名
