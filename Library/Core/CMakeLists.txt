@@ -134,6 +134,7 @@ set(PRIVATE_SOURCES
     Private/Component/DirectionalLightComponent.cpp
     Private/Component/PointLightComponent.cpp
     Private/Component/SpotLightComponent.cpp
+    Private/Component/CameraComponent.cpp
     # Thread
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
@@ -369,6 +370,7 @@ set(PUBLIC_HEADERS
     Public/Component/DirectionalLightComponent.h
     Public/Component/PointLightComponent.h
     Public/Component/SpotLightComponent.h
+    Public/Component/CameraComponent.h
     # Math
     Public/Math/MathForward.h
     Public/Math/MathTypes.h

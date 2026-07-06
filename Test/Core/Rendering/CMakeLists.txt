@@ -21,6 +21,16 @@ target_include_directories(RenderingCoordinatorStatsPropagationTest PRIVATE
 set_target_properties(RenderingCoordinatorStatsPropagationTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorStatsPropagationTest)
 
+add_executable(CameraComponentProxyTest
+    CameraComponentProxyTest.cpp
+)
+target_link_libraries(CameraComponentProxyTest PRIVATE Core)
+target_include_directories(CameraComponentProxyTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CameraComponentProxyTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CameraComponentProxyTest COMMAND CameraComponentProxyTest)
+
 add_executable(MeshBatcherTest
     MeshBatcherTest.cpp
 )
