@@ -5,6 +5,7 @@
 #include "Core/Public/Input/LightController.h"
 #include "Core/Public/Input/MayaCameraController.h"
 #include "Input/PickingController.h"
+#include "Input/CameraInputCollector.h"
 #include "Core/Public/Object/Entity.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestDebugInput.h"
 #include "Core/Public/Rendering/MaterialTypes.h"
@@ -24,6 +25,8 @@ namespace NorvesLib::Core
         class MegaGeometryComponent;
         class LightComponent;
         class PointLightComponent;
+        class CameraComponent;
+        class SpringArmComponent;
     } // namespace Component
 } // namespace NorvesLib::Core
 
@@ -110,14 +113,32 @@ namespace Game::GameModes
         // ディレクショナルライト用Entity（位置は不要だがComponentホスト用）
         NorvesLib::Core::Entity *m_pDirectionalLightObject = nullptr;
 
+        // ピボット（注視対象）Entity（Worldが所有）
+        NorvesLib::Core::Entity *m_pPivotObject = nullptr;
+
+        // カメラEntity（SpringArmComponent + CameraComponent を同居。Worldが所有）
+        NorvesLib::Core::Entity *m_pCameraObject = nullptr;
+
+        // SpringArmComponent参照（m_pCameraObject が所有）
+        NorvesLib::Core::Component::SpringArmComponent *m_pSpringArm = nullptr;
+
+        // CameraComponent参照（m_pCameraObject が所有）
+        NorvesLib::Core::Component::CameraComponent *m_pCameraComponent = nullptr;
+
         // 経過時間
         float m_ElapsedTime = 0.0f;
 
         // 球体回転速度（rad/s）
         float m_RotationSpeed = 0.5f;
 
-        // Maya準拠カメラコントローラー（シーン所有）
+        // Maya準拠カメラコントローラー（入力→意図の感度換算層。InputRouter には
+        // 登録しない。SpringArmComponent を単一の真実源として駆動するため）
         NorvesLib::Core::Input::MayaCameraController m_CameraController;
+
+        // カメラ操作用の入力収集器（シーン所有・イベント駆動・InputRouter登録）。
+        // Overlay/Picking が consume しなかった入力だけを蓄積し、Tick で
+        // m_CameraController.BuildIntent へ渡すことで従来の入力排他を維持する。
+        Game::Input::CameraInputCollector m_CameraInputCollector;
 
         // 左クリック選択コントローラー（シーン所有・イベント駆動）
         Game::Input::PickingController m_PickingController;

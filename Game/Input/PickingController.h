@@ -5,11 +5,6 @@
 #include "Core/Public/Math/GeometryTypes.h"
 #include "Core/Public/Object/EntityHandle.h"
 
-namespace NorvesLib::Core::Input
-{
-    class MayaCameraController;
-}
-
 namespace Game::Input
 {
 
@@ -18,7 +13,19 @@ namespace Game::Input
     public:
         bool OnMouseButton(const NorvesLib::Core::Input::MouseButtonEvent& event) override;
         bool OnMouseMove(const NorvesLib::Core::Input::MouseMoveEvent& event) override;
-        void SetCameraController(NorvesLib::Core::Input::MayaCameraController* controller);
+
+        /**
+         * @brief ヒットが得られなかった場合のフォールバック選択深度を設定する
+         * @param depth 現在のカメラ距離相当の深度（ワールド単位）
+         *
+         * 従来は MayaCameraController::GetDistance() を直接参照していたが、
+         * カメラ駆動を SpringArmComponent（3層カメラ構成）へ移行したため、
+         * GameMode 側が毎フレーム現在のアーム長を渡す形にする。呼び出しが
+         * 無い場合は既定値（コンストラクタ既定の m_FallbackSelectionDepth）
+         * のまま動作する。
+         */
+        void SetFallbackSelectionDepth(float depth);
+
         void DrawSelection();
         void ClearSelection();
 
@@ -50,7 +57,9 @@ namespace Game::Input
         float m_SphereCenterY = 0.0f;
         NorvesLib::Math::Sphere m_SelectionSphere;
         bool m_bHasSelectionSphere = false;
-        NorvesLib::Core::Input::MayaCameraController* m_pCameraController = nullptr;
+        // ヒットが得られなかった場合のフォールバック選択深度。GameMode が現在の
+        // アーム長（SpringArmComponent::GetArmLength）で毎フレーム更新する。
+        float m_FallbackSelectionDepth = 5.0f;
     };
 
 } // namespace Game::Input

@@ -11,6 +11,8 @@
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Component/LightComponent.h"
 #include "Core/Public/Component/PointLightComponent.h"
+#include "Core/Public/Component/CameraComponent.h"
+#include "Core/Public/Component/SpringArmComponent.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/RenderResourceContexts.h"
 #include "Core/Public/Rendering/RenderResources.h"
@@ -62,6 +64,7 @@ namespace Game::GameModes
         // カメラコントローラーの初期化（シーン所有）
         // ========================================
         // 原点を注視点とし、距離5.0、Yaw=0°、Pitch=30°で初期化
+        // （MayaCameraController は入力→SpringArmIntent の感度換算ロジックのみ使用）
         data.m_CameraController.Initialize(
             NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), // target
             5.0f,                                       // distance
@@ -69,15 +72,68 @@ namespace Game::GameModes
             30.0f);                                     // pitch
         LOG_INFO("MayaCameraController initialized");
 
-        // カメラを入力ルーターへ登録（ゲーム優先度）。以降マウス入力は
-        // イベント駆動でカメラへ配送される。
+        // カメラコントローラー本体（MayaCameraController）は InputRouter に登録
+        // しない（SpringArmComponent を単一の真実源として駆動するため。イベント
+        // 駆動側と二重に状態を持つと Pan の焦点位置がずれる）。
+        //
+        // ただし入力の消費順序（Overlay > Picking > Camera）は維持する必要が
+        // あるため、軽量な CameraInputCollector を旧 MayaCameraController と同じ
+        // 優先度（PriorityGame）で登録する。BuildIntent に生の InputState
+        // （消費と無関係に常時更新される）をそのまま渡すと、ImGui オーバーレイや
+        // Picking の Ctrl/Shift 選択開始が消費した入力にもカメラが反応してしまう
+        // ため、CameraInputCollector が「消費されず自分に届いた」入力だけを
+        // フレーム単位で蓄積し、Tick でその蓄積値から一時 InputState を組み立てて
+        // BuildIntent へ渡す。
         ctx.EngineRef.GetInputRouter().RegisterController(
-            &data.m_CameraController,
+            &data.m_CameraInputCollector,
             NorvesLib::Core::Input::InputRouter::PriorityGame);
         ctx.EngineRef.GetInputRouter().RegisterController(
             &data.m_PickingController,
             NorvesLib::Core::Input::InputRouter::PriorityGame + 10);
-        data.m_PickingController.SetCameraController(&data.m_CameraController);
+
+        // ========================================
+        // カメラ用 Entity の構築
+        // （SpringArmComponent + CameraComponent による3層カメラ経路）
+        // ========================================
+        {
+            auto &world = ctx.WorldRef;
+
+            // ピボット（注視対象）Entity：旧 Initialize の target と同じ原点
+            data.m_pPivotObject = world.SpawnObject<Entity>();
+            data.m_pPivotObject->SetPosition(0.0f, 0.0f, 0.0f);
+            ctx.ScopeRef.TrackObject(data.m_pPivotObject);
+
+            // カメラ本体 Entity：SpringArm が毎フレーム位置・回転を上書きする
+            data.m_pCameraObject = world.SpawnObject<Entity>();
+            ctx.ScopeRef.TrackObject(data.m_pCameraObject);
+
+            // SpringArmComponent：ピボットを中心とした球面アームを駆動
+            data.m_pSpringArm = world.CreateComponent<Component::SpringArmComponent>(data.m_pCameraObject);
+            data.m_pSpringArm->SetPivot(data.m_pPivotObject); // ObjectId を保持（ポインタ非所有）
+            data.m_pSpringArm->SetArmLength(5.0f);             // 旧 distance=5.0 と一致
+            data.m_pSpringArm->SetYaw(0.0f);                   // 旧 yaw=0 と一致
+            data.m_pSpringArm->SetPitch(30.0f);                // 旧 pitch=30 と一致
+
+            // CameraComponent：レンズ設定を保持しアクティブカメラとして登録
+            data.m_pCameraComponent = world.CreateComponent<Component::CameraComponent>(data.m_pCameraObject);
+            data.m_pCameraComponent->SetActiveCamera(true);
+
+            // Enter 直後の整合のため、Component::Tick を直呼びせず公開 API
+            // RefreshOwnerTransform() でカメラ姿勢を一度だけ初期確定する。
+            data.m_pSpringArm->RefreshOwnerTransform();
+
+            // 初回フレームの SetMainCamera（Tick を待たず描画開始時から有効にする）。
+            NorvesLib::Core::Rendering::CameraProxy initialCameraProxy;
+            if (data.m_pCameraComponent->BuildCameraProxy(initialCameraProxy))
+            {
+                ctx.EngineRef.GetRenderWorld().SetMainCamera(initialCameraProxy);
+            }
+
+            // Picking のフォールバック選択深度を初期アーム長に合わせる。
+            data.m_PickingController.SetFallbackSelectionDepth(data.m_pSpringArm->GetArmLength());
+
+            LOG_INFO("Camera (SpringArmComponent + CameraComponent) initialized");
+        }
 
         // ========================================
         // 1. プロシージャルメッシュの生成とGPU登録
@@ -951,12 +1007,13 @@ namespace Game::GameModes
     void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
         // ========================================
-        // 入力に基づくカメラ更新（シーン所有）
+        // 入力に基づくカメラ意図の注入
+        // （SpringArmComponent::Tick は World::Tick が毎フレーム自動駆動するが、
+        //  最新の意図を反映した姿勢を同一フレームの描画に間に合わせるため、
+        //  ここで RefreshOwnerTransform → BuildCameraProxy → SetMainCamera まで行う）
         // ========================================
-        const auto &inputState = ctx.InputRef.GetState();
 
-        // カメラは InputRouter 経由でイベント駆動更新済み（Update 呼び出し不要）。
-        // F1-F5 デバッグビュー切替も Rendering3DTestDebugInput が
+        // F1-F5 デバッグビュー切替は Rendering3DTestDebugInput が
         // InputRouter 経由で処理する（旧 inline poll は撤去済み）。
 
         // 方向ライトの連続 hold 適用。held フラグは LightController::OnKey が
@@ -964,23 +1021,50 @@ namespace Game::GameModes
         // 上位で consume されるため held は積まれず、ここでも動かない（排他）。
         data.m_LightController.Update(deltaTime);
 
-        // デバッグ: スクロール値とカメラ距離を出力
+        if (data.m_pSpringArm)
         {
-            float scroll = inputState.GetMouseState().ScrollDelta;
+            // 生の InputState（ctx.InputRef.GetState()）は InputRouter の
+            // consume 判定と無関係に常時更新される。ImGui オーバーレイや
+            // Picking の Ctrl/Shift 選択開始が consume した入力にもカメラが
+            // 反応してしまう退行を避けるため、CameraInputCollector が
+            // 「consume されず自分に届いた」入力だけを蓄積したフレーム限定の
+            // InputState を組み立てて BuildIntent へ渡す。
+            const NorvesLib::Core::Input::InputState collectedInput =
+                data.m_CameraInputCollector.BuildFrameInputState();
+
+            Component::SpringArmIntent intent = data.m_CameraController.BuildIntent(
+                collectedInput, deltaTime, data.m_pSpringArm->GetArmLength());
+            data.m_pSpringArm->ApplyIntent(intent);
+            data.m_CameraInputCollector.ResetFrame();
+
+            // デバッグ: スクロール値とカメラ距離を出力
+            float scroll = collectedInput.GetMouseState().ScrollDelta;
             if (std::abs(scroll) > 0.0f)
             {
-                float dist = data.m_CameraController.GetDistance();
-                auto pos = data.m_CameraController.GetPosition();
-                NORVES_LOG_DEBUG("Input", "ScrollDelta={:.3f}, CamDist={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
-                                 scroll, dist, pos.x, pos.y, pos.z);
+                float armLength = data.m_pSpringArm->GetArmLength();
+                auto camPos = data.m_pCameraObject ? data.m_pCameraObject->GetPosition()
+                                                   : NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f);
+                NORVES_LOG_DEBUG("Input", "ScrollDelta={:.3f}, ArmLength={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
+                                 scroll, armLength, camPos.x, camPos.y, camPos.z);
             }
-        }
 
-        // カメラ状態をRenderWorldに反映
-        {
-            NorvesLib::Core::Rendering::CameraProxy cameraProxy;
-            data.m_CameraController.ApplyTo(cameraProxy);
-            ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
+            // ApplyIntent 直後に owner Transform を即確定する（root Entity なので
+            // World::UpdateWorldTransforms 前でも GetPosition が新鮮）。World.Tick が
+            // 後で再度 RefreshOwnerTransform() を呼んでも冪等で害はない。
+            data.m_pSpringArm->RefreshOwnerTransform();
+
+            // Picking のフォールバック選択深度を現在のアーム長に追従させる。
+            data.m_PickingController.SetFallbackSelectionDepth(data.m_pSpringArm->GetArmLength());
+
+            // 確定した最新のカメラ姿勢を RenderWorld へ供給する（D1 ハイブリッド）。
+            if (data.m_pCameraComponent)
+            {
+                NorvesLib::Core::Rendering::CameraProxy cameraProxy;
+                if (data.m_pCameraComponent->BuildCameraProxy(cameraProxy))
+                {
+                    ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
+                }
+            }
         }
 
         SubmitRendering3DTestDebugDraw();
@@ -1069,7 +1153,10 @@ namespace Game::GameModes
 
         // 入力ルーター登録を解除する（借用ポインタの寿命管理）。以降イベントが
         // 来てもカメラ/ライト/デバッグ各コントローラへは配送されない。
+        // m_CameraController は登録していないが UnregisterController は未登録に
+        // 対して no-op（冪等）なので、防御的にそのまま呼んでおく。
         ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_CameraController);
+        ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_CameraInputCollector);
         ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_PickingController);
         ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_LightController);
         ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_DebugInput);
@@ -1153,6 +1240,12 @@ namespace Game::GameModes
         data.m_pBoulderMegaGeometryComponent = nullptr;
         data.m_pDirectionalLightObject = nullptr;
         data.m_pDirectionalLightComponent = nullptr;
+        // SpringArm/CameraComponent は m_pCameraObject の Inner なので、
+        // GameModeScope::Cleanup が m_pCameraObject を破棄する際に連鎖破棄される。
+        data.m_pPivotObject = nullptr;
+        data.m_pCameraObject = nullptr;
+        data.m_pSpringArm = nullptr;
+        data.m_pCameraComponent = nullptr;
         data.m_F4BoardObjects.clear();
         data.m_F4BoardComponents.clear();
         data.m_F9BillboardObjects.clear();
