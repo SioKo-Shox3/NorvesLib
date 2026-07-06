@@ -4,6 +4,7 @@
 #include "Rendering/BloomPass.h"
 #include "Rendering/FXAAPass.h"
 #include "Rendering/ForwardPass.h"
+#include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/NeuralMaterialDecodePass.h"
@@ -38,6 +39,8 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
+#include <cstddef>
+#include <cstring>
 #include <iostream>
 #include <utility>
 #ifdef _MSC_VER
@@ -69,6 +72,92 @@ namespace
         RHI::ResourceState AfterState = RHI::ResourceState::Undefined;
         uint64_t BufferSize = 0;
     };
+
+    enum class FakeRenderEvent
+    {
+        LightSsboUpdate,
+        BindStorageBuffer5,
+        DescriptorSetUpdate,
+        CommandSetDescriptorSet,
+        Draw
+    };
+
+    struct FakeBufferLifetimeTracker
+    {
+        bool bDestroyed = false;
+    };
+
+    struct BufferCreationRecord
+    {
+        RHI::BufferDesc Desc;
+        RHI::TSharedPtr<FakeBufferLifetimeTracker> Tracker;
+    };
+
+    Container::VariableArray<FakeRenderEvent> GRenderEvents;
+    Container::VariableArray<uint8_t> GLastDescriptorBinding4UpdateBytes;
+    Container::VariableArray<uint8_t> GLastDescriptorBinding5UpdateBytes;
+    RHI::IBuffer* GLastDescriptorBinding4Buffer = nullptr;
+    RHI::IBuffer* GLastDescriptorBinding5Buffer = nullptr;
+    uint32_t GLastDescriptorBinding4Offset = 0;
+    uint32_t GLastDescriptorBinding4Size = 0;
+    uint32_t GLastDescriptorBinding5Offset = 0;
+    uint32_t GLastDescriptorBinding5Size = 0;
+
+    bool HasUsage(RHI::ResourceUsage usage, RHI::ResourceUsage flag)
+    {
+        return (static_cast<uint32_t>(usage) & static_cast<uint32_t>(flag)) != 0;
+    }
+
+    bool IsDebugName(const char* actual, const char* expected)
+    {
+        return actual != nullptr && std::strcmp(actual, expected) == 0;
+    }
+
+    void PushRenderEvent(FakeRenderEvent event)
+    {
+        GRenderEvents.push_back(event);
+    }
+
+    uint32_t FindRenderEventIndex(FakeRenderEvent event)
+    {
+        for (uint32_t i = 0; i < GRenderEvents.size(); ++i)
+        {
+            if (GRenderEvents[i] == event)
+            {
+                return i;
+            }
+        }
+
+        assert(false);
+        return 0;
+    }
+
+    uint32_t FindRenderEventIndexAfter(FakeRenderEvent event, uint32_t afterIndex)
+    {
+        for (uint32_t i = afterIndex + 1; i < GRenderEvents.size(); ++i)
+        {
+            if (GRenderEvents[i] == event)
+            {
+                return i;
+            }
+        }
+
+        assert(false);
+        return 0;
+    }
+
+    void ResetLightingDescriptorCapture()
+    {
+        GRenderEvents.clear();
+        GLastDescriptorBinding4UpdateBytes.clear();
+        GLastDescriptorBinding5UpdateBytes.clear();
+        GLastDescriptorBinding4Buffer = nullptr;
+        GLastDescriptorBinding5Buffer = nullptr;
+        GLastDescriptorBinding4Offset = 0;
+        GLastDescriptorBinding4Size = 0;
+        GLastDescriptorBinding5Offset = 0;
+        GLastDescriptorBinding5Size = 0;
+    }
 
     class FakeTexture final : public RHI::ITexture
     {
@@ -127,6 +216,19 @@ namespace
         {
         }
 
+        FakeBuffer(const RHI::BufferDesc& desc, RHI::TSharedPtr<FakeBufferLifetimeTracker> tracker)
+            : m_Desc(desc), m_Tracker(tracker)
+        {
+        }
+
+        ~FakeBuffer() override
+        {
+            if (m_Tracker)
+            {
+                m_Tracker->bDestroyed = true;
+            }
+        }
+
         uint64_t GetSize() const override { return m_Desc.Size; }
         void* Map(uint64_t offset = 0, uint64_t size = 0) override
         {
@@ -137,17 +239,37 @@ namespace
         void Unmap() override {}
         void Update(const void* data, uint64_t size, uint64_t offset = 0) override
         {
-            (void)data;
-            (void)size;
-            (void)offset;
+            LastUpdateOffset = offset;
+            LastUpdateSize = size;
+            LastUpdateBytes.resize(static_cast<size_t>(size));
+            if (size > 0)
+            {
+                assert(data != nullptr);
+                std::memcpy(LastUpdateBytes.data(), data, static_cast<size_t>(size));
+            }
+
+            if (IsDebugName(m_Desc.DebugName, "LightArraySSBO"))
+            {
+                PushRenderEvent(FakeRenderEvent::LightSsboUpdate);
+            }
         }
         RHI::ResourceUsage GetUsage() const override
         {
             return m_Desc.Usage;
         }
 
+        const RHI::BufferDesc& GetDesc() const
+        {
+            return m_Desc;
+        }
+
+        uint64_t LastUpdateOffset = 0;
+        uint64_t LastUpdateSize = 0;
+        Container::VariableArray<uint8_t> LastUpdateBytes;
+
     private:
         RHI::BufferDesc m_Desc;
+        RHI::TSharedPtr<FakeBufferLifetimeTracker> m_Tracker;
     };
 
     class FakeCommandList final : public RHI::ICommandList
@@ -207,6 +329,7 @@ namespace
         {
             (void)descriptorSet;
             (void)slot;
+            PushRenderEvent(FakeRenderEvent::CommandSetDescriptorSet);
         }
         void DrawIndexed(uint32_t indexCount,
                          uint32_t startIndexLocation = 0,
@@ -215,12 +338,14 @@ namespace
             (void)indexCount;
             (void)startIndexLocation;
             (void)baseVertexLocation;
+            PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
         }
         void Draw(uint32_t vertexCount, uint32_t startVertexLocation = 0) override
         {
             (void)vertexCount;
             (void)startVertexLocation;
+            PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
         }
         void DrawIndexedInstanced(uint32_t indexCount,
@@ -234,6 +359,7 @@ namespace
             LastDrawIndexedInstancedIndexCount = indexCount;
             LastDrawIndexedInstancedStartIndexLocation = startIndexLocation;
             LastDrawIndexedInstancedBaseVertexLocation = baseVertexLocation;
+            PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
         }
         void DrawInstanced(uint32_t vertexCount,
@@ -245,6 +371,7 @@ namespace
             (void)instanceCount;
             (void)startVertexLocation;
             (void)startInstanceLocation;
+            PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
         }
         void DrawIndexedIndirect(RHI::BufferPtr indirectBuffer,
@@ -256,6 +383,7 @@ namespace
             (void)offset;
             (void)drawCount;
             (void)stride;
+            PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
         }
         void DrawIndexedIndirectCount(RHI::BufferPtr indirectBuffer,
@@ -271,6 +399,7 @@ namespace
             (void)countOffset;
             (void)maxDrawCount;
             (void)stride;
+            PushRenderEvent(FakeRenderEvent::Draw);
             ++DrawCallCount;
         }
         void FillBuffer(RHI::BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) override
@@ -513,10 +642,13 @@ namespace
                                 uint32_t offset,
                                 uint32_t size) override
         {
-            (void)binding;
-            (void)buffer;
-            (void)offset;
-            (void)size;
+            if (binding == 4)
+            {
+                m_Binding4Buffer = buffer;
+                GLastDescriptorBinding4Buffer = buffer.get();
+                GLastDescriptorBinding4Offset = offset;
+                GLastDescriptorBinding4Size = size;
+            }
         }
 
         void BindTexture(uint32_t binding, RHI::TexturePtr texture) override
@@ -538,10 +670,14 @@ namespace
                                uint32_t offset,
                                uint32_t size) override
         {
-            (void)binding;
-            (void)buffer;
-            (void)offset;
-            (void)size;
+            if (binding == 5)
+            {
+                m_Binding5Buffer = buffer;
+                GLastDescriptorBinding5Buffer = buffer.get();
+                GLastDescriptorBinding5Offset = offset;
+                GLastDescriptorBinding5Size = size;
+                PushRenderEvent(FakeRenderEvent::BindStorageBuffer5);
+            }
         }
 
         void BindStorageTexture(uint32_t binding, RHI::TexturePtr texture) override
@@ -557,7 +693,36 @@ namespace
             (void)mipLevel;
         }
 
-        void Update() override {}
+        void Update() override
+        {
+            CopyLastUpdateBytes(m_Binding4Buffer, GLastDescriptorBinding4UpdateBytes);
+            CopyLastUpdateBytes(m_Binding5Buffer, GLastDescriptorBinding5UpdateBytes);
+            if (m_Binding4Buffer || m_Binding5Buffer)
+            {
+                PushRenderEvent(FakeRenderEvent::DescriptorSetUpdate);
+            }
+        }
+
+    private:
+        static void CopyLastUpdateBytes(const RHI::BufferPtr& buffer,
+                                        Container::VariableArray<uint8_t>& outBytes)
+        {
+            outBytes.clear();
+            RHI::TSharedPtr<FakeBuffer> fakeBuffer = Container::DynamicPointerCast<FakeBuffer>(buffer);
+            if (!fakeBuffer)
+            {
+                return;
+            }
+
+            outBytes.resize(fakeBuffer->LastUpdateBytes.size());
+            if (!outBytes.empty())
+            {
+                std::memcpy(outBytes.data(), fakeBuffer->LastUpdateBytes.data(), outBytes.size());
+            }
+        }
+
+        RHI::BufferPtr m_Binding4Buffer;
+        RHI::BufferPtr m_Binding5Buffer;
     };
 
     class FakeShaderCompiler final : public RHI::IShaderCompiler
@@ -603,7 +768,22 @@ namespace
     public:
         RHI::BufferPtr CreateBuffer(const RHI::BufferDesc& desc) override
         {
-            return RHI::MakeShared<FakeBuffer>(desc);
+            BufferCreationRecord record;
+            record.Desc = desc;
+            record.Tracker = RHI::MakeShared<FakeBufferLifetimeTracker>();
+            CreatedBuffers.push_back(record);
+
+            if (IsDebugName(desc.DebugName, "LightArraySSBO"))
+            {
+                ++LightArraySSBOCreateCount;
+                if (FailLightArraySSBOCreateIndex != 0 &&
+                    LightArraySSBOCreateCount == FailLightArraySSBOCreateIndex)
+                {
+                    return nullptr;
+                }
+            }
+
+            return RHI::MakeShared<FakeBuffer>(desc, record.Tracker);
         }
 
         RHI::TexturePtr CreateTexture(const RHI::TextureDesc& desc) override
@@ -645,6 +825,7 @@ namespace
 
         RHI::PipelinePtr CreateGraphicsPipeline(const RHI::GraphicsPipelineDesc& desc) override
         {
+            LastGraphicsPipelineDescriptorSetLayouts = desc.descriptorSetLayouts;
             return RHI::MakeShared<FakePipeline>(RHI::PipelineType::Graphics,
                                                 static_cast<uint32_t>(desc.descriptorSetLayouts.size()));
         }
@@ -657,7 +838,7 @@ namespace
 
         RHI::DescriptorSetPtr CreateDescriptorSet(const RHI::DescriptorSetDesc& desc) override
         {
-            (void)desc;
+            LastDescriptorSetDesc = desc;
             return RHI::MakeShared<FakeDescriptorSet>();
         }
 
@@ -687,6 +868,11 @@ namespace
         }
 
         Container::VariableArray<RHI::RenderPassDesc> CreatedRenderPassDescs;
+        Container::VariableArray<BufferCreationRecord> CreatedBuffers;
+        RHI::DescriptorSetDesc LastDescriptorSetDesc;
+        Container::VariableArray<RHI::DescriptorSetDesc> LastGraphicsPipelineDescriptorSetLayouts;
+        uint32_t LightArraySSBOCreateCount = 0;
+        uint32_t FailLightArraySSBOCreateIndex = 0;
 
     private:
         RHI::DeviceCapabilities m_Capabilities;
@@ -3988,6 +4174,400 @@ namespace
         shaderManager.Shutdown();
     }
 
+    LightProxy MakeLightingBufferPointLight(uint32_t index)
+    {
+        LightProxy proxy;
+        proxy.LightId = index + 1;
+        proxy.Type = LightType::Point;
+        proxy.PositionX = 1.0f + static_cast<float>(index);
+        proxy.PositionY = 2.0f + static_cast<float>(index);
+        proxy.PositionZ = 3.0f + static_cast<float>(index);
+        proxy.DirectionX = -0.1f;
+        proxy.DirectionY = -0.2f;
+        proxy.DirectionZ = -0.3f;
+        proxy.InnerConeAngle = 0.81f;
+        proxy.OuterConeAngle = 0.62f;
+        proxy.ColorR = 0.25f + static_cast<float>(index);
+        proxy.ColorG = 0.5f + static_cast<float>(index);
+        proxy.ColorB = 0.75f + static_cast<float>(index);
+        proxy.Intensity = 2.0f + static_cast<float>(index);
+        proxy.Range = 25.0f + static_cast<float>(index);
+        proxy.bVisible = true;
+        return proxy;
+    }
+
+    RHI::ResourceBindType FindDescriptorBindingType(const RHI::DescriptorSetDesc& desc,
+                                                    uint32_t binding)
+    {
+        for (const RHI::DescriptorBinding& descriptorBinding : desc.bindings)
+        {
+            if (descriptorBinding.binding == binding)
+            {
+                return descriptorBinding.type;
+            }
+        }
+
+        assert(false);
+        return RHI::ResourceBindType::ConstantBuffer;
+    }
+
+    void AssertBinding5IsStructuredBuffer(const FakeDevice& device)
+    {
+        assert(FindDescriptorBindingType(device.LastDescriptorSetDesc, 5) ==
+               RHI::ResourceBindType::StructuredBuffer);
+        assert(!device.LastGraphicsPipelineDescriptorSetLayouts.empty());
+        assert(FindDescriptorBindingType(device.LastGraphicsPipelineDescriptorSetLayouts[0], 5) ==
+               RHI::ResourceBindType::StructuredBuffer);
+    }
+
+    const BufferCreationRecord& FindLastLightArraySSBOCreation(const FakeDevice& device)
+    {
+        for (size_t i = device.CreatedBuffers.size(); i > 0; --i)
+        {
+            const BufferCreationRecord& record = device.CreatedBuffers[i - 1];
+            if (IsDebugName(record.Desc.DebugName, "LightArraySSBO"))
+            {
+                return record;
+            }
+        }
+
+        assert(false);
+        return device.CreatedBuffers[0];
+    }
+
+    uint32_t CountLightArraySSBOCreations(const FakeDevice& device)
+    {
+        uint32_t count = 0;
+        for (const BufferCreationRecord& record : device.CreatedBuffers)
+        {
+            if (IsDebugName(record.Desc.DebugName, "LightArraySSBO"))
+            {
+                ++count;
+            }
+        }
+
+        return count;
+    }
+
+    bool HasRenderEvent(FakeRenderEvent event)
+    {
+        for (FakeRenderEvent recordedEvent : GRenderEvents)
+        {
+            if (recordedEvent == event)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void DecodeLightingParams(GPULightingParams& outParams)
+    {
+        assert(GLastDescriptorBinding4UpdateBytes.size() == sizeof(GPULightingParams));
+        std::memcpy(&outParams, GLastDescriptorBinding4UpdateBytes.data(), sizeof(GPULightingParams));
+    }
+
+    GPULightData DecodeLightDataAt(uint32_t index)
+    {
+        const size_t offset = static_cast<size_t>(index) * sizeof(GPULightData);
+        assert(GLastDescriptorBinding5UpdateBytes.size() >= offset + sizeof(GPULightData));
+
+        GPULightData light = {};
+        std::memcpy(&light, GLastDescriptorBinding5UpdateBytes.data() + offset, sizeof(GPULightData));
+        return light;
+    }
+
+    void ExecuteLightingGraphWithLights(FakeDevice& device,
+                                        ShaderManager& shaderManager,
+                                        RHI::TransientResourcePool& pool,
+                                        RenderResources& renderResources,
+                                        SceneRenderer& renderer,
+                                        LightingPass& lightingPass,
+                                        Container::VariableArray<LightProxy>& lightProxies,
+                                        FakeCommandList& commandList,
+                                        uint64_t frameIndex)
+    {
+        RenderGraph graph;
+        assert(graph.Initialize(&pool));
+        graph.BeginFrame(frameIndex);
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        graph.AddPass(&gbufferPass);
+        graph.AddPass(&lightingPass);
+
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+
+        ViewRenderContext context;
+        context.CommandList = &commandList;
+        context.Device = &device;
+        context.TransientPool = &pool;
+        context.SharedResources = nullptr;
+        context.ShaderMgr = &shaderManager;
+        context.Renderer = &renderer;
+        context.PendingFrameCommands = &pendingFrameCommands;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        context.SnapshotLightProxies = &lightProxies;
+        context.Resources.Textures = &renderResources.Textures();
+        context.Resources.Materials = &renderResources.Materials();
+        context.Resources.Meshes = &renderResources.Meshes();
+
+        ResetLightingDescriptorCapture();
+        assert(graph.Compile(context));
+        assert(graph.Execute(context));
+        assert(pendingFrameCommands.empty());
+
+        gbufferPass.Shutdown();
+        graph.Shutdown();
+    }
+
+    void TestLightingNativeExecuteBindsExpandedLightStorageBuffer()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        LightingPass lightingPass;
+        Container::VariableArray<LightProxy> lightProxies;
+        for (uint32_t i = 0; i < 20; ++i)
+        {
+            lightProxies.push_back(MakeLightingBufferPointLight(i));
+        }
+
+        FakeCommandList commandList;
+        ExecuteLightingGraphWithLights(*device,
+                                       shaderManager,
+                                       pool,
+                                       renderResources,
+                                       renderer,
+                                       lightingPass,
+                                       lightProxies,
+                                       commandList,
+                                       0);
+
+        const uint32_t expectedBytes = 20u * static_cast<uint32_t>(sizeof(GPULightData));
+        const BufferCreationRecord& lightBufferRecord = FindLastLightArraySSBOCreation(*device);
+        assert(lightBufferRecord.Desc.Size >= expectedBytes);
+        assert(HasUsage(lightBufferRecord.Desc.Usage, RHI::ResourceUsage::StorageBuffer));
+        assert(HasUsage(lightBufferRecord.Desc.Usage, RHI::ResourceUsage::ShaderRead));
+        assert(lightBufferRecord.Desc.CPUAccessible);
+        AssertBinding5IsStructuredBuffer(*device);
+
+        assert(GLastDescriptorBinding5Buffer != nullptr);
+        assert(GLastDescriptorBinding5Offset == 0);
+        assert(GLastDescriptorBinding5Size >= expectedBytes);
+        assert(GLastDescriptorBinding5UpdateBytes.size() == expectedBytes);
+
+        GPULightingParams params = {};
+        DecodeLightingParams(params);
+        assert(params.lightCount == 20);
+
+        const GPULightData first = DecodeLightDataAt(0);
+        const GPULightData last = DecodeLightDataAt(19);
+        assert(first.position[0] == lightProxies[0].PositionX);
+        assert(first.position[1] == lightProxies[0].PositionY);
+        assert(first.position[2] == lightProxies[0].PositionZ);
+        assert(first.position[3] == static_cast<float>(static_cast<int>(LightType::Point)));
+        assert(first.direction[3] == lightProxies[0].InnerConeAngle);
+        assert(first.color[3] == lightProxies[0].Intensity);
+        assert(first.attenuation[0] == lightProxies[0].Range);
+        assert(first.attenuation[1] == lightProxies[0].OuterConeAngle);
+        assert(last.position[0] == lightProxies[19].PositionX);
+        assert(last.color[0] == lightProxies[19].ColorR);
+        assert(last.color[3] == lightProxies[19].Intensity);
+        assert(last.attenuation[0] == lightProxies[19].Range);
+
+        const uint32_t ssboUpdateIndex = FindRenderEventIndex(FakeRenderEvent::LightSsboUpdate);
+        const uint32_t bindStorageIndex = FindRenderEventIndex(FakeRenderEvent::BindStorageBuffer5);
+        const uint32_t descriptorUpdateIndex =
+            FindRenderEventIndexAfter(FakeRenderEvent::DescriptorSetUpdate, bindStorageIndex);
+        const uint32_t commandSetDescriptorIndex =
+            FindRenderEventIndexAfter(FakeRenderEvent::CommandSetDescriptorSet, descriptorUpdateIndex);
+        assert(ssboUpdateIndex < bindStorageIndex);
+        assert(bindStorageIndex < descriptorUpdateIndex);
+        assert(descriptorUpdateIndex < commandSetDescriptorIndex);
+
+        lightingPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestLightingLightBufferGrowthRetainsRetiredBuffersAndReusesCapacity()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        LightingPass lightingPass;
+
+        Container::VariableArray<LightProxy> oneLight;
+        oneLight.push_back(MakeLightingBufferPointLight(0));
+        FakeCommandList firstCommandList;
+        ExecuteLightingGraphWithLights(*device,
+                                       shaderManager,
+                                       pool,
+                                       renderResources,
+                                       renderer,
+                                       lightingPass,
+                                       oneLight,
+                                       firstCommandList,
+                                       0);
+        const uint32_t firstSsboCount = CountLightArraySSBOCreations(*device);
+        assert(firstSsboCount >= 1);
+        RHI::TSharedPtr<FakeBufferLifetimeTracker> firstTracker =
+            FindLastLightArraySSBOCreation(*device).Tracker;
+        assert(firstTracker);
+        assert(!firstTracker->bDestroyed);
+
+        Container::VariableArray<LightProxy> twentyLights;
+        for (uint32_t i = 0; i < 20; ++i)
+        {
+            twentyLights.push_back(MakeLightingBufferPointLight(i));
+        }
+        FakeCommandList secondCommandList;
+        ExecuteLightingGraphWithLights(*device,
+                                       shaderManager,
+                                       pool,
+                                       renderResources,
+                                       renderer,
+                                       lightingPass,
+                                       twentyLights,
+                                       secondCommandList,
+                                       1);
+        const uint32_t grownSsboCount = CountLightArraySSBOCreations(*device);
+        assert(grownSsboCount > firstSsboCount);
+        RHI::TSharedPtr<FakeBufferLifetimeTracker> grownTracker =
+            FindLastLightArraySSBOCreation(*device).Tracker;
+        assert(grownTracker);
+        assert(!firstTracker->bDestroyed);
+        assert(!grownTracker->bDestroyed);
+
+        Container::VariableArray<LightProxy> twelveLights;
+        for (uint32_t i = 0; i < 12; ++i)
+        {
+            twelveLights.push_back(MakeLightingBufferPointLight(i));
+        }
+        FakeCommandList thirdCommandList;
+        ExecuteLightingGraphWithLights(*device,
+                                       shaderManager,
+                                       pool,
+                                       renderResources,
+                                       renderer,
+                                       lightingPass,
+                                       twelveLights,
+                                       thirdCommandList,
+                                       2);
+        assert(CountLightArraySSBOCreations(*device) == grownSsboCount);
+
+        lightingPass.Shutdown();
+        assert(firstTracker->bDestroyed);
+        assert(grownTracker->bDestroyed);
+
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestLightingLightBufferGrowthFailureSkipsDescriptorUpdateAndDraw()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        LightingPass lightingPass;
+
+        Container::VariableArray<LightProxy> oneLight;
+        oneLight.push_back(MakeLightingBufferPointLight(0));
+        FakeCommandList firstCommandList;
+        ExecuteLightingGraphWithLights(*device,
+                                       shaderManager,
+                                       pool,
+                                       renderResources,
+                                       renderer,
+                                       lightingPass,
+                                       oneLight,
+                                       firstCommandList,
+                                       0);
+
+        device->FailLightArraySSBOCreateIndex = device->LightArraySSBOCreateCount + 1;
+
+        Container::VariableArray<LightProxy> twentyLights;
+        for (uint32_t i = 0; i < 20; ++i)
+        {
+            twentyLights.push_back(MakeLightingBufferPointLight(i));
+        }
+
+        FakeCommandList secondCommandList;
+        ExecuteLightingGraphWithLights(*device,
+                                       shaderManager,
+                                       pool,
+                                       renderResources,
+                                       renderer,
+                                       lightingPass,
+                                       twentyLights,
+                                       secondCommandList,
+                                       1);
+
+        assert(GLastDescriptorBinding5Buffer == nullptr);
+        assert(!HasRenderEvent(FakeRenderEvent::BindStorageBuffer5));
+        assert(!HasRenderEvent(FakeRenderEvent::DescriptorSetUpdate));
+        assert(!HasRenderEvent(FakeRenderEvent::CommandSetDescriptorSet));
+        assert(!HasRenderEvent(FakeRenderEvent::Draw));
+        assert(secondCommandList.DrawCallCount == 0);
+
+        lightingPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
     void TestProductionDeferredNativeExecuteSkipsLegacyBridge()
     {
         auto device = RHI::MakeShared<FakeDevice>();
@@ -5764,6 +6344,9 @@ int main()
     TestRecordMeshDrawCallUsesDrawCommandRangesAndFallback();
     TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestGBufferSSAOLightingNativeExecuteWithoutSharedResources();
+    TestLightingNativeExecuteBindsExpandedLightStorageBuffer();
+    TestLightingLightBufferGrowthRetainsRetiredBuffersAndReusesCapacity();
+    TestLightingLightBufferGrowthFailureSkipsDescriptorUpdateAndDraw();
     TestProductionDeferredNativeExecuteSkipsLegacyBridge();
     TestLightingNativeExecuteClearsWhenInputsMissingWithoutBridge();
     TestLightingNativeExecutePrefersNamedShadowMapOverRegistry();

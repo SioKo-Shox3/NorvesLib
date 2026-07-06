@@ -175,6 +175,19 @@ target_compile_definitions(LightingParamsLayoutTest PRIVATE
 )
 set_target_properties(LightingParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME LightingParamsLayoutTest COMMAND LightingParamsLayoutTest)
+add_executable(LightingLightBufferTest
+    LightingLightBufferTest.cpp
+)
+target_link_libraries(LightingLightBufferTest PRIVATE Core)
+target_include_directories(LightingLightBufferTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(LightingLightBufferTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(LightingLightBufferTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME LightingLightBufferTest COMMAND LightingLightBufferTest)
 
 add_executable(DirectionalShadowLightMatricesTest
     DirectionalShadowLightMatricesTest.cpp
@@ -572,6 +585,7 @@ add_executable(RenderGraphCompileTest
 target_link_libraries(RenderGraphCompileTest PRIVATE Core)
 target_include_directories(RenderGraphCompileTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 set_target_properties(RenderGraphCompileTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderGraphCompileTest COMMAND RenderGraphCompileTest)

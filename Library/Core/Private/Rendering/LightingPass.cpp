@@ -1,6 +1,7 @@
 ﻿#include "Rendering/LightingPass.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/LightingPassGpuTypes.h"
+#include "Rendering/LightingPassLightPacking.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SSAOPass.h"
@@ -62,22 +63,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    // ========================================
-    // GPU側ライトデータ構造（シェーダーのUBOレイアウトに対応）
-    // ========================================
-
-    /** @brief GPUライトデータ（std140アライメント） */
-    struct GPULightData
-    {
-        float position[4];    // xyz=position, w=type (0:Dir, 1:Point, 2:Spot)
-        float direction[4];   // xyz=direction, w=innerAngle
-        float color[4];       // xyz=color, w=intensity
-        float attenuation[4]; // x=range, y=outerAngle, z=unused, w=unused
-    };
-
-    static constexpr uint32_t MAX_LIGHTS = 16;
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
-    static constexpr uint32_t LIGHT_BUFFER_SIZE = sizeof(GPULightData) * MAX_LIGHTS;
 
     static RHI::DescriptorSetDesc CreateLightingDescriptorSetDesc(bool bNeuralBRDFAvailable)
     {
@@ -115,7 +101,7 @@ namespace NorvesLib::Core::Rendering
 
         RHI::DescriptorBinding lightBinding;
         lightBinding.binding = 5;
-        lightBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        lightBinding.type = RHI::ResourceBindType::StructuredBuffer;
         lightBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(lightBinding);
 
@@ -243,22 +229,13 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ========================================
-        // ライト配列UBOバッファ作成（binding=5用）
+        // ライト配列SSBOバッファ作成（binding=5用）
         // ========================================
-        RHI::BufferDesc lightArrayUboDesc(
-            LIGHT_BUFFER_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "LightArrayUBO");
-        m_LightArrayBuffer = m_Device->CreateBuffer(lightArrayUboDesc);
-        if (!m_LightArrayBuffer)
+        if (!EnsureLightArrayBufferCapacity(1))
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to create light array buffer");
             return false;
         }
-
-        // ========================================
-        // ライトバッファ作成（ライト配列用別UBO）
-        // ========================================
-        // Note: ライトバッファはm_LightDataBufferの後ろに配置するのではなく、
-        //       別のバインディングポイント（binding=5）として作成
 
         m_bInitialized = true;
 
@@ -360,6 +337,8 @@ namespace NorvesLib::Core::Rendering
         m_LightingFragmentShader.reset();
         m_LightDataBuffer.reset();
         m_LightArrayBuffer.reset();
+        m_RetiredLightArrayBuffers.clear();
+        m_LightArrayCapacity = 0;
         m_LightingDescriptorSet.reset();
         m_GBufferSampler.reset();
 
@@ -1000,7 +979,6 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_LightingDescriptorSet->BindConstantBuffer(4, m_LightDataBuffer, 0, LIGHTING_PARAMS_SIZE);
-        m_LightingDescriptorSet->BindConstantBuffer(5, m_LightArrayBuffer, 0, LIGHT_BUFFER_SIZE);
         return true;
     }
 
@@ -1076,12 +1054,16 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        if (!UpdateLightBuffer(context, shadowMapTexture != nullptr, ssaoTexture != nullptr))
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to update lighting light buffer, skipping lighting draw");
+            return;
+        }
+
         if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {
             RegisterOutputs(context, m_SceneColorTexture, depthTexture);
         }
-
-        UpdateLightBuffer(context, shadowMapTexture != nullptr, ssaoTexture != nullptr);
 
         m_LightingDescriptorSet->BindTexture(0, albedoTexture);
         m_LightingDescriptorSet->BindTexture(1, normalTexture);
@@ -1136,6 +1118,11 @@ namespace NorvesLib::Core::Rendering
             m_LightingDescriptorSet->BindTexture(10, albedoTexture);
         }
         m_LightingDescriptorSet->BindSampler(10, m_GBufferSampler);
+
+        m_LightingDescriptorSet->BindStorageBuffer(5,
+                                                   m_LightArrayBuffer,
+                                                   0,
+                                                   GetLightArrayBufferSizeBytes());
 
         if (m_bNeuralBRDFAvailable && m_NeuralBRDFWeightBuffer)
         {
@@ -1195,7 +1182,56 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void LightingPass::UpdateLightBuffer(ViewRenderContext& context,
+    bool LightingPass::EnsureLightArrayBufferCapacity(uint32_t requiredLightCount)
+    {
+        if (requiredLightCount == 0)
+        {
+            requiredLightCount = 1;
+        }
+
+        if (requiredLightCount <= m_LightArrayCapacity && m_LightArrayBuffer)
+        {
+            return true;
+        }
+
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        uint32_t newCapacity = m_LightArrayCapacity > 0 ? m_LightArrayCapacity : 1;
+        while (newCapacity < requiredLightCount)
+        {
+            newCapacity *= 2;
+        }
+
+        const uint64_t newSizeBytes = static_cast<uint64_t>(newCapacity) * sizeof(GPULightData);
+        RHI::BufferDesc lightArraySsboDesc(newSizeBytes,
+                                           RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead,
+                                           true,
+                                           "LightArraySSBO");
+        RHI::BufferPtr newLightArrayBuffer = m_Device->CreateBuffer(lightArraySsboDesc);
+        if (!newLightArrayBuffer)
+        {
+            return false;
+        }
+
+        if (m_LightArrayBuffer)
+        {
+            m_RetiredLightArrayBuffers.push_back(m_LightArrayBuffer);
+        }
+
+        m_LightArrayBuffer = newLightArrayBuffer;
+        m_LightArrayCapacity = newCapacity;
+        return true;
+    }
+
+    uint32_t LightingPass::GetLightArrayBufferSizeBytes() const
+    {
+        return m_LightArrayCapacity * static_cast<uint32_t>(sizeof(GPULightData));
+    }
+
+    bool LightingPass::UpdateLightBuffer(ViewRenderContext& context,
                                          bool bShadowAvailable,
                                          bool bSSAOAvailable)
     {
@@ -1249,67 +1285,18 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // SceneViewのLightProxyからライト配列を構築
         // ========================================
-        uint32_t lightCount = 0;
-        GPULightData lightArray[MAX_LIGHTS] = {};
-
+        Container::VariableArray<GPULightData> lightArray;
+        Container::Span<const LightProxy> lightProxies;
         if (context.SnapshotLightProxies)
         {
-            const auto &lightProxies = *context.SnapshotLightProxies;
-            for (const auto &proxy : lightProxies)
-            {
-                if (lightCount >= MAX_LIGHTS)
-                {
-                    break;
-                }
-                if (!proxy.IsValid())
-                {
-                    continue;
-                }
-
-                GPULightData &gpu = lightArray[lightCount];
-
-                // position.w = type (0:Dir, 1:Point, 2:Spot)
-                gpu.position[0] = proxy.PositionX;
-                gpu.position[1] = proxy.PositionY;
-                gpu.position[2] = proxy.PositionZ;
-                gpu.position[3] = static_cast<float>(static_cast<int>(proxy.Type));
-
-                // direction
-                gpu.direction[0] = proxy.DirectionX;
-                gpu.direction[1] = proxy.DirectionY;
-                gpu.direction[2] = proxy.DirectionZ;
-                gpu.direction[3] = proxy.InnerConeAngle;
-
-                // color * intensity
-                gpu.color[0] = proxy.ColorR;
-                gpu.color[1] = proxy.ColorG;
-                gpu.color[2] = proxy.ColorB;
-                gpu.color[3] = proxy.Intensity;
-
-                // attenuation
-                gpu.attenuation[0] = proxy.Range;
-                gpu.attenuation[1] = proxy.OuterConeAngle;
-                gpu.attenuation[2] = 0.0f;
-                gpu.attenuation[3] = 0.0f;
-
-                ++lightCount;
-            }
+            lightProxies = Container::Span<const LightProxy>(*context.SnapshotLightProxies);
         }
 
-        // ライトが登録されていない場合はデフォルトのディレクショナルライトを追加
-        if (lightCount == 0)
+        uint32_t lightCount = 0;
+        lightCount = PackLightingPassLights(lightProxies, lightArray);
+        if (!EnsureLightArrayBufferCapacity(lightCount))
         {
-            GPULightData &gpu = lightArray[0];
-            gpu.position[3] = 0.0f; // Directional
-            gpu.direction[0] = -0.577f;
-            gpu.direction[1] = -0.577f;
-            gpu.direction[2] = -0.577f;
-            gpu.color[0] = 1.0f;
-            gpu.color[1] = 1.0f;
-            gpu.color[2] = 1.0f;
-            gpu.color[3] = 1.0f;
-            gpu.attenuation[0] = 100.0f;
-            lightCount = 1;
+            return false;
         }
 
         params.lightCount = lightCount;
@@ -1329,10 +1316,14 @@ namespace NorvesLib::Core::Rendering
             params.ambientColor[3] = m_Settings.IBLIntensity;
         }
 
-        m_LightDataBuffer->Update(&params, sizeof(GPULightingParams));
+        if (!m_LightDataBuffer || !m_LightArrayBuffer)
+        {
+            return false;
+        }
 
-        // ライト配列バッファ更新
-        m_LightArrayBuffer->Update(lightArray, sizeof(GPULightData) * lightCount);
+        m_LightDataBuffer->Update(&params, sizeof(GPULightingParams));
+        m_LightArrayBuffer->Update(lightArray.data(), sizeof(GPULightData) * lightCount);
+        return true;
     }
 
     // ========================================

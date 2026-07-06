@@ -35,10 +35,10 @@ struct LightData
     vec4 attenuation;   // x=range, y=outerAngle, z=unused, w=unused
 };
 
-// ライト配列（SSBO的にUBO内に配置、最大16ライト）
-layout(set = 0, binding = 5) uniform LightBuffer
+// ライト配列
+layout(std430, set = 0, binding = 5) readonly buffer LightBuffer
 {
-    LightData lights[16];
+    LightData lights[];
 } lightBuffer;
 
 // シャドウマップ
@@ -469,7 +469,7 @@ void main()
     vec3 Lo_diffuse = vec3(0.0);
     vec3 Lo_specular = vec3(0.0);
 
-    for (uint i = 0u; i < min(params.lightCount, 16u); i++)
+    for (uint i = 0u; i < params.lightCount; i++)
     {
         LightData light = lightBuffer.lights[i];
         float lightType = light.position.w;

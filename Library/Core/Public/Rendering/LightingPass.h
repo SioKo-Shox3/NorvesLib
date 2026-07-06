@@ -57,7 +57,7 @@ namespace NorvesLib::Core::Rendering
      * - "SceneColor"       : HDRライティング結果 (R16G16B16A16_FLOAT)
      * - "SceneDepth"       : 深度のコピー（GBuffer_Depthのエイリアス）
      *
-     * ライトデータはSceneViewのLightProxyから収集してUBOにパックします。
+     * ライトデータはSceneViewのLightProxyから収集してSSBOにパックします。
      */
     class SceneView;
     class GBufferPass;
@@ -143,7 +143,9 @@ namespace NorvesLib::Core::Rendering
          * @param bShadowAvailable シャドウマップが利用可能か
          * @param bSSAOAvailable SSAOテクスチャが利用可能か
          */
-        void UpdateLightBuffer(ViewRenderContext& context, bool bShadowAvailable, bool bSSAOAvailable);
+        bool UpdateLightBuffer(ViewRenderContext& context, bool bShadowAvailable, bool bSSAOAvailable);
+        bool EnsureLightArrayBufferCapacity(uint32_t requiredLightCount);
+        uint32_t GetLightArrayBufferSizeBytes() const;
 
         uint32_t ResolveLightingWidth(const ViewRenderContext& context) const;
         uint32_t ResolveLightingHeight(const ViewRenderContext& context) const;
@@ -236,6 +238,7 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_LightingFragmentShader;
         RHI::BufferPtr m_LightDataBuffer;
         RHI::BufferPtr m_LightArrayBuffer;
+        Container::VariableArray<RHI::BufferPtr> m_RetiredLightArrayBuffers;
         RHI::DescriptorSetPtr m_LightingDescriptorSet;
         RHI::SamplerPtr m_GBufferSampler;
 
@@ -262,6 +265,7 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
+        uint32_t m_LightArrayCapacity = 0;
         bool m_bRegisterLegacyBridge = true;
         bool m_bLegacyInputFallbackActive = false;
         bool m_bUsingRenderGraphResources = false;
