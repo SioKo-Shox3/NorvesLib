@@ -40,6 +40,40 @@ Single-threaded path では `Ready -> Reading -> Empty` を GameThread 内で完
 - Component が disabled または owner が inactive の場合、その frame の proxy には残らない。
 - DrawCommand は `GenerateDrawCommands()` で `SceneView` から生成され、`FramePacket` にコピーされる。
 
+## カメラ供給（Component ベース3層カメラ）
+
+カメラは Mesh/Light/MegaGeometry の `SyncToSceneView()` 経路とは別に、GameMode が
+明示的に `RenderWorld::SetMainCamera()` へ供給する経路（D1 ハイブリッド）を使う。
+
+- **3層構成**:
+  - `MayaCameraController`: 入力 → `SpringArmIntent` への感度換算のみを担う
+    （`BuildIntent(InputState, deltaTime, currentArmLength)`、const・内部状態を
+    変更しない）。イベント駆動の `OnMouseButton`/`OnMouseMove`/`OnMouseScroll` も
+    別途持つが、GameMode が3層カメラを使う場合はこれらを直接 `InputRouter` に
+    登録せず、Overlay/Picking の consume 判定を経由させるための軽量な
+    `IInputController`（例: Rendering3DTest の `CameraInputCollector`）を介して
+    集めた入力から一時 `InputState` を組み立て、`BuildIntent` へ渡す。
+  - `SpringArmComponent`: `SpringArmIntent` を `ApplyIntent()` で受け、ピボット
+    （root Entity）を中心とした球面座標でアームを駆動し、owner Entity の
+    Transform（位置・回転）を書き込む。`World::Tick` が毎フレーム
+    `SpringArmComponent::Tick`（内部で `RefreshOwnerTransform()` を呼ぶ）を
+    自動駆動するが、GameMode の Tick はそれを待たず `ApplyIntent` 直後に明示的
+    `RefreshOwnerTransform()` を呼び、同一フレームの描画に最新姿勢を間に合わせる
+    （root Entity なので `World::UpdateWorldTransforms()` 前でも `GetPosition()`
+    が新鮮。`World.Tick` が後で再度呼んでも冪等）。
+  - `CameraComponent`: レンズ層。owner Entity の Transform から
+    `BuildCameraProxy(CameraProxy&)` で forward/up/right を導出し `CameraProxy`
+    を構築する。`AspectRatio` は触らず、`Viewport` は未設定（既定値）のまま
+    コピーする。描画解像度への追従は Component 側では行わず、
+    `RenderingCoordinator::SetMainCamera` が未設定 Viewport を描画解像度で
+    補完し、render plan がピクセルサイズから AspectRatio を再計算する。
+- **供給**: GameMode の Tick が `BuildCameraProxy()` の結果を
+  `RenderWorld::SetMainCamera(CameraProxy)` へ渡す。これは
+  `RenderingCoordinator` の既存カメラテーブル（`RegisterCamera`/
+  `UpdateCamera`/`FindCamera`、`m_MainCameraId`）と Canvas カメラ機構を
+  そのまま使う経路であり、Component 側は「カメラテーブルへ渡す値を作る」
+  役割に留まる。
+
 ## DebugViewMode
 
 - `Rendering3DTest` の入力は `F1=Normal`、`F2=Unlit`、`F3=Wireframe`、`F4=MegaGeometryClusters`、`F5=循環`。
