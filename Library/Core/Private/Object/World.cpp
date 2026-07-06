@@ -795,6 +795,26 @@ namespace NorvesLib::Core
         return result;
     }
 
+    Entity* World::FindEntityByObjectId(uint64_t id) const
+    {
+        if (id == 0)
+        {
+            return nullptr;
+        }
+
+        for (auto* inner : m_Inners)
+        {
+            if (auto* entity = CastTo<Entity>(inner))
+            {
+                if (entity->GetObjectId() == id && !entity->IsPendingDestroy())
+                {
+                    return entity;
+                }
+            }
+        }
+        return nullptr;
+    }
+
     size_t World::GetObjectCount() const
     {
         size_t count = 0;

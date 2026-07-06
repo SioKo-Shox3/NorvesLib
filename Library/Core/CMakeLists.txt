@@ -135,6 +135,7 @@ set(PRIVATE_SOURCES
     Private/Component/PointLightComponent.cpp
     Private/Component/SpotLightComponent.cpp
     Private/Component/CameraComponent.cpp
+    Private/Component/SpringArmComponent.cpp
     # Thread
     Private/Thread/ConditionVariable.cpp
     Private/Thread/Fiber.cpp
@@ -371,6 +372,8 @@ set(PUBLIC_HEADERS
     Public/Component/PointLightComponent.h
     Public/Component/SpotLightComponent.h
     Public/Component/CameraComponent.h
+    Public/Component/SpringArmComponent.h
+    Public/Component/SpringArmTypes.h
     # Math
     Public/Math/MathForward.h
     Public/Math/MathTypes.h

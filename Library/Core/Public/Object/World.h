@@ -189,6 +189,20 @@ namespace NorvesLib::Core
         Container::VariableArray<Entity *> GetRootEntities() const;
 
         /**
+         * @brief ObjectIdからルートEntityを検索（非再帰・rootのみ）
+         * @param id 検索するObjectId（0はnullptrを返す）
+         * @return 一致しかつ破棄予約されていないルートEntity。見つからなければnullptr。
+         *
+         * GetRootEntities() が返すルート集合のみを走査します（子Entityは対象外）。
+         * SpringArmComponent 等のピボット参照のように「少数の参照専用」用途を想定した
+         * O(N) 線形探索です。大量呼び出し（多数Entityへの毎フレーム適用等）には
+         * 使用しないでください。ObjectId は World::Initialize/Finalize で 1 にリセットされる
+         * ため、同一 World ライフサイクル内でのみ有効です（再Initialize後は別Entityに
+         * 誤解決し得ます）。
+         */
+        Entity *FindEntityByObjectId(uint64_t id) const;
+
+        /**
          * @brief World直下のルートEntity数を取得
          */
         size_t GetObjectCount() const;

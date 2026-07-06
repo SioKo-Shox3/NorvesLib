@@ -214,6 +214,15 @@ target_include_directories(SceneFileRoundTripTest PRIVATE
 )
 set_target_properties(SceneFileRoundTripTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(SpringArmComponentTest
+    SpringArmComponentTest.cpp
+)
+target_link_libraries(SpringArmComponentTest PRIVATE Core)
+target_include_directories(SpringArmComponentTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SpringArmComponentTest PROPERTIES FOLDER "Test/Core/Object")
+
 include(CTest)
 add_test(NAME ObjectReflectionTest COMMAND ObjectReflectionTest)
 add_test(NAME ResourceRegistryTest COMMAND ResourceRegistryTest)
@@ -237,3 +246,4 @@ add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryOverlapTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
 add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
 add_test(NAME SceneFileRoundTripTest COMMAND SceneFileRoundTripTest)
+add_test(NAME SpringArmComponentTest COMMAND SpringArmComponentTest)
