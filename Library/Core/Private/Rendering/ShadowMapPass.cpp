@@ -292,12 +292,13 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        DirectionalShadowMatrixSettings shadowSettings = MakeDefaultDirectionalShadowMatrixSettings();
-        shadowSettings.OrthoSize = m_Settings.OrthoSize;
-        shadowSettings.NearPlane = m_Settings.NearPlane;
-        shadowSettings.FarPlane = m_Settings.FarPlane;
+        context.ActiveShadowMapSettings = &m_Settings;
+        const DirectionalShadowMatrixSettings shadowSettings = MakeDirectionalShadowMatrixSettings(m_Settings);
         const DirectionalShadowMatrixResult shadowMatrices =
-            BuildDirectionalShadowLightMatrices(context.SnapshotLightProxies, shadowSettings);
+            BuildFittedDirectionalShadowLightMatrices(context.SnapshotLightProxies,
+                                                     context.SnapshotMeshProxies,
+                                                     context.SnapshotMegaGeometryProxies,
+                                                     shadowSettings);
 
         Math::Matrix4x4 lightProjMat =
             context.Device->AdjustProjectionForClipSpace(shadowMatrices.Projection, false);

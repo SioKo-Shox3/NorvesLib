@@ -1282,6 +1282,7 @@ namespace NorvesLib::Core::Rendering
                                                                         packet->OpaqueCommandRange);
         viewContext.SnapshotTransparentCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                              packet->TransparentCommandRange);
+        viewContext.SnapshotMeshProxies = &packet->Scene.MeshProxies;
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 

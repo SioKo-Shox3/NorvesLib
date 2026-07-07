@@ -31,6 +31,7 @@ namespace NorvesLib::Core::Rendering
     class PresentationPass;
     class RenderGraph;
     struct RenderGraphExecutionResult;
+    struct ShadowMapPassSettings;
 
     /**
      * @brief View描画コンテキスト
@@ -116,11 +117,17 @@ namespace NorvesLib::Core::Rendering
         /** @brief 現在描画中のViewportに対応する半透明DrawCommand */
         DrawCommandView CurrentTransparentCommands;
 
+        /** @brief MeshProxyスナップショット（FramePacket::Scene.MeshProxiesを指す） */
+        const Container::VariableArray<MeshProxy>* SnapshotMeshProxies = nullptr;
+
         /** @brief LightProxyスナップショット（FramePacket::Scene.LightProxiesを指す） */
         const Container::VariableArray<LightProxy> *SnapshotLightProxies = nullptr;
 
         /** @brief MegaGeometryProxyスナップショット（FramePacket::Scene.MegaGeometryProxiesを指す） */
         const Container::VariableArray<MegaGeometryProxy> *SnapshotMegaGeometryProxies = nullptr;
+
+        /** @brief 現在のViewportで実行済みのShadowMapPass設定（フレーム内借用） */
+        const ShadowMapPassSettings* ActiveShadowMapSettings = nullptr;
 
         // ========================================
         // FrameCommand queue（mixed mode migration 用）

@@ -252,6 +252,7 @@ namespace NorvesLib::Core::Rendering
     void RenderFrameExecutor::ApplyViewportRenderPlan(ViewRenderContext &context, const ViewportRenderPlan *viewportPlan)
     {
         context.CurrentGraphExecutionResult = nullptr;
+        context.ActiveShadowMapSettings = nullptr;
         context.bPresentationGraphPassHandled = false;
 
         if (!viewportPlan)

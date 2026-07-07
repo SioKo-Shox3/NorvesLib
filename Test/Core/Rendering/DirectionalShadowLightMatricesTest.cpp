@@ -31,6 +31,35 @@ namespace
         return std::abs(lhs - rhs) <= epsilon;
     }
 
+    void ExpectNearlyEqual(float lhs, float rhs, const char* message)
+    {
+        Expect(NearlyEqual(lhs, rhs), message);
+    }
+
+    void ExpectVectorNearlyEqual(const NorvesLib::Math::Vector3& lhs,
+                                 const NorvesLib::Math::Vector3& rhs,
+                                 const char* message)
+    {
+        Expect(NearlyEqual(lhs.x, rhs.x) &&
+                   NearlyEqual(lhs.y, rhs.y) &&
+                   NearlyEqual(lhs.z, rhs.z),
+               message);
+    }
+
+    void ExpectSettingsNearlyEqual(const DirectionalShadowMatrixSettings& lhs,
+                                   const DirectionalShadowMatrixSettings& rhs,
+                                   const char* message)
+    {
+        Expect(NearlyEqual(lhs.OrthoSize, rhs.OrthoSize) &&
+                   NearlyEqual(lhs.NearPlane, rhs.NearPlane) &&
+                   NearlyEqual(lhs.FarPlane, rhs.FarPlane) &&
+                   NearlyEqual(lhs.LightDistance, rhs.LightDistance) &&
+                   NearlyEqual(lhs.Target.x, rhs.Target.x) &&
+                   NearlyEqual(lhs.Target.y, rhs.Target.y) &&
+                   NearlyEqual(lhs.Target.z, rhs.Target.z),
+               message);
+    }
+
     bool MatrixNearlyEqual(const NorvesLib::Math::Matrix4x4& lhs,
                            const NorvesLib::Math::Matrix4x4& rhs,
                            float epsilon = 1.0e-4f)
@@ -103,6 +132,48 @@ namespace
     {
         LightProxy proxy = MakeDirectional(lightId, 0.0f, -1.0f, 0.0f, true);
         proxy.Type = LightType::Spot;
+        return proxy;
+    }
+
+    BoundingSphere MakeBounds(float centerX, float centerY, float centerZ, float radius)
+    {
+        BoundingSphere bounds;
+        bounds.CenterX = centerX;
+        bounds.CenterY = centerY;
+        bounds.CenterZ = centerZ;
+        bounds.Radius = radius;
+        return bounds;
+    }
+
+    MeshProxy MakeMeshCaster(uint64_t handleId,
+                             float centerX,
+                             float centerY,
+                             float centerZ,
+                             float radius,
+                             bool bCastShadow = true,
+                             bool bVisible = true)
+    {
+        MeshProxy proxy;
+        proxy.MeshHandle = MeshDataHandle{handleId};
+        proxy.bVisible = bVisible;
+        proxy.bCastShadow = bCastShadow;
+        proxy.WorldBounds = MakeBounds(centerX, centerY, centerZ, radius);
+        return proxy;
+    }
+
+    MegaGeometryProxy MakeMegaCaster(uint64_t handleId,
+                                     float centerX,
+                                     float centerY,
+                                     float centerZ,
+                                     float radius,
+                                     bool bCastShadow = true,
+                                     bool bVisible = true)
+    {
+        MegaGeometryProxy proxy;
+        proxy.MegaMeshHandle = MegaGeometry::MegaMeshHandle{handleId};
+        proxy.bVisible = bVisible;
+        proxy.bCastShadow = bCastShadow;
+        proxy.WorldBounds = MakeBounds(centerX, centerY, centerZ, radius);
         return proxy;
     }
 
@@ -305,6 +376,219 @@ namespace
                "helper default FarPlane matches ShadowMapPassSettings");
     }
 
+    void TestMeshCasterTargetFollowsBoundsCenter()
+    {
+        const DirectionalShadowMatrixSettings baseSettings = MakeDefaultDirectionalShadowMatrixSettings();
+        CoreContainer::VariableArray<MeshProxy> meshes;
+        meshes.push_back(MakeMeshCaster(101, 10.0f, 20.0f, -5.0f, 2.0f));
+
+        const DirectionalShadowMatrixSettings fitted =
+            FitDirectionalShadowMatrixSettingsToCasters(baseSettings, &meshes, nullptr);
+
+        ExpectVectorNearlyEqual(fitted.Target,
+                                NorvesLib::Math::Vector3(10.0f, 20.0f, -5.0f),
+                                "mesh caster target follows bounds center");
+        ExpectNearlyEqual(fitted.OrthoSize, baseSettings.OrthoSize,
+                          "small mesh caster keeps base ortho size");
+        ExpectNearlyEqual(fitted.LightDistance, baseSettings.LightDistance,
+                          "small mesh caster keeps base light distance");
+        Expect(IsEligibleDirectionalShadowMeshCaster(meshes[0]),
+               "valid mesh caster is eligible");
+    }
+
+    void TestLargeCasterExpandsRange()
+    {
+        const DirectionalShadowMatrixSettings baseSettings = MakeDefaultDirectionalShadowMatrixSettings();
+        CoreContainer::VariableArray<MeshProxy> meshes;
+        meshes.push_back(MakeMeshCaster(102, 0.0f, 0.0f, 0.0f, 80.0f));
+
+        const DirectionalShadowMatrixSettings fitted =
+            FitDirectionalShadowMatrixSettingsToCasters(baseSettings, &meshes, nullptr);
+
+        ExpectVectorNearlyEqual(fitted.Target,
+                                NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f),
+                                "large caster target remains at center");
+        ExpectNearlyEqual(fitted.OrthoSize, 80.0f,
+                          "large caster expands ortho size");
+        ExpectNearlyEqual(fitted.LightDistance, 80.1f,
+                          "large caster expands light distance with near plane");
+        ExpectNearlyEqual(fitted.FarPlane, 160.1f,
+                          "large caster expands far plane beyond base");
+    }
+
+    void TestInvalidCastersIgnored()
+    {
+        const DirectionalShadowMatrixSettings baseSettings = MakeDefaultDirectionalShadowMatrixSettings();
+        CoreContainer::VariableArray<MeshProxy> meshes;
+        meshes.push_back(MakeMeshCaster(0, 1000.0f, 0.0f, 0.0f, 500.0f));
+        meshes.push_back(MakeMeshCaster(103, -1000.0f, 0.0f, 0.0f, 500.0f, false));
+        meshes.push_back(MakeMeshCaster(104, 1000.0f, 0.0f, 0.0f, 500.0f, true, false));
+        meshes.push_back(MakeMeshCaster(105, 1000.0f, 0.0f, 0.0f, 0.0f));
+        meshes.push_back(MakeMeshCaster(106, 4.0f, 0.0f, 0.0f, 30.0f));
+
+        const DirectionalShadowMatrixSettings fitted =
+            FitDirectionalShadowMatrixSettingsToCasters(baseSettings, &meshes, nullptr);
+
+        Expect(!IsEligibleDirectionalShadowMeshCaster(meshes[0]),
+               "mesh caster with invalid handle is ignored");
+        Expect(!IsEligibleDirectionalShadowMeshCaster(meshes[1]),
+               "non-shadow mesh caster is ignored");
+        Expect(!IsEligibleDirectionalShadowMeshCaster(meshes[2]),
+               "invisible mesh caster is ignored");
+        Expect(!IsEligibleDirectionalShadowMeshCaster(meshes[3]),
+               "invalid bounds mesh caster is ignored");
+        ExpectVectorNearlyEqual(fitted.Target,
+                                NorvesLib::Math::Vector3(4.0f, 0.0f, 0.0f),
+                                "invalid mesh casters do not affect target");
+        ExpectNearlyEqual(fitted.OrthoSize, 30.0f,
+                          "valid mesh caster drives ortho after invalid casters");
+        ExpectNearlyEqual(fitted.LightDistance, 30.1f,
+                          "valid mesh caster drives light distance after invalid casters");
+        ExpectNearlyEqual(fitted.FarPlane, 60.1f,
+                          "valid mesh caster drives far plane after invalid casters");
+    }
+
+    void TestMegaGeometryCasterIncluded()
+    {
+        const DirectionalShadowMatrixSettings baseSettings = MakeDefaultDirectionalShadowMatrixSettings();
+        CoreContainer::VariableArray<MegaGeometryProxy> megas;
+        megas.push_back(MakeMegaCaster(201, 0.0f, -10.0f, 0.0f, 25.0f));
+
+        const DirectionalShadowMatrixSettings fitted =
+            FitDirectionalShadowMatrixSettingsToCasters(baseSettings, nullptr, &megas);
+
+        Expect(IsEligibleDirectionalShadowMegaGeometryCaster(megas[0]),
+               "valid mega geometry caster is eligible");
+        ExpectVectorNearlyEqual(fitted.Target,
+                                NorvesLib::Math::Vector3(0.0f, -10.0f, 0.0f),
+                                "mega geometry caster contributes target");
+        ExpectNearlyEqual(fitted.OrthoSize, 25.0f,
+                          "mega geometry caster expands ortho size");
+        ExpectNearlyEqual(fitted.LightDistance, 25.1f,
+                          "mega geometry caster expands light distance");
+        ExpectNearlyEqual(fitted.FarPlane, 50.1f,
+                          "mega geometry caster expands far plane when needed");
+    }
+
+    void TestNullAndEmptyCasterFallbackEqualsBase()
+    {
+        DirectionalShadowMatrixSettings baseSettings;
+        baseSettings.OrthoSize = 33.0f;
+        baseSettings.NearPlane = 0.5f;
+        baseSettings.FarPlane = 77.0f;
+        baseSettings.LightDistance = 44.0f;
+        baseSettings.Target = NorvesLib::Math::Vector3(3.0f, 4.0f, 5.0f);
+
+        CoreContainer::VariableArray<MeshProxy> emptyMeshes;
+        CoreContainer::VariableArray<MegaGeometryProxy> emptyMegas;
+
+        ExpectSettingsNearlyEqual(FitDirectionalShadowMatrixSettingsToCasters(baseSettings, nullptr, nullptr),
+                                  baseSettings,
+                                  "null caster arrays keep base settings");
+        ExpectSettingsNearlyEqual(FitDirectionalShadowMatrixSettingsToCasters(baseSettings, &emptyMeshes, &emptyMegas),
+                                  baseSettings,
+                                  "empty caster arrays keep base settings");
+    }
+
+    void TestFittedSettingsBuildMatricesWithExpectedLightPosition()
+    {
+        const DirectionalShadowMatrixSettings baseSettings = MakeDefaultDirectionalShadowMatrixSettings();
+        CoreContainer::VariableArray<LightProxy> lights;
+        lights.push_back(MakeDirectional(301, 1.0f, 0.0f, 0.0f, true));
+
+        CoreContainer::VariableArray<MeshProxy> meshes;
+        meshes.push_back(MakeMeshCaster(107, 10.0f, 0.0f, 0.0f, 30.0f));
+
+        const DirectionalShadowMatrixResult result =
+            BuildFittedDirectionalShadowLightMatrices(&lights, &meshes, nullptr, baseSettings);
+
+        Expect(result.bEnabled, "fitted build enables eligible directional shadow light");
+        ExpectVectorNearlyEqual(result.LightPosition,
+                                NorvesLib::Math::Vector3(-20.1f, 0.0f, 0.0f),
+                                "fitted build uses fitted target and light distance");
+    }
+
+    void TestMultiCasterFitUsesAllValidCasters()
+    {
+        const DirectionalShadowMatrixSettings baseSettings = MakeDefaultDirectionalShadowMatrixSettings();
+        CoreContainer::VariableArray<MeshProxy> meshes;
+        meshes.push_back(MakeMeshCaster(108, -10.0f, 0.0f, 0.0f, 2.0f));
+
+        CoreContainer::VariableArray<MegaGeometryProxy> megas;
+        megas.push_back(MakeMegaCaster(202, 30.0f, 0.0f, 0.0f, 6.0f));
+
+        const DirectionalShadowMatrixSettings fitted =
+            FitDirectionalShadowMatrixSettingsToCasters(baseSettings, &meshes, &megas);
+
+        ExpectVectorNearlyEqual(fitted.Target,
+                                NorvesLib::Math::Vector3(12.0f, 0.0f, 0.0f),
+                                "multi-caster AABB center is used as target");
+        ExpectNearlyEqual(fitted.OrthoSize, 24.0f,
+                          "multi-caster fit radius drives ortho size");
+        ExpectNearlyEqual(fitted.LightDistance, 24.1f,
+                          "multi-caster fit radius drives light distance");
+        ExpectNearlyEqual(fitted.FarPlane, 50.0f,
+                          "multi-caster fit keeps base far plane when sufficient");
+    }
+
+    void TestNonFiniteCasterBoundsIgnored()
+    {
+        const float quietNaN = std::numeric_limits<float>::quiet_NaN();
+        const float infinity = std::numeric_limits<float>::infinity();
+        const DirectionalShadowMatrixSettings baseSettings = MakeDefaultDirectionalShadowMatrixSettings();
+
+        CoreContainer::VariableArray<MeshProxy> nonFiniteMeshes;
+        nonFiniteMeshes.push_back(MakeMeshCaster(109, quietNaN, 0.0f, 0.0f, 10.0f));
+        nonFiniteMeshes.push_back(MakeMeshCaster(110, infinity, 0.0f, 0.0f, 10.0f));
+        nonFiniteMeshes.push_back(MakeMeshCaster(111, 0.0f, 0.0f, 0.0f, quietNaN));
+        nonFiniteMeshes.push_back(MakeMeshCaster(112, 0.0f, 0.0f, 0.0f, infinity));
+
+        ExpectSettingsNearlyEqual(FitDirectionalShadowMatrixSettingsToCasters(baseSettings, &nonFiniteMeshes, nullptr),
+                                  baseSettings,
+                                  "only non-finite casters fall back to base settings");
+        for (const MeshProxy& proxy : nonFiniteMeshes)
+        {
+            Expect(!IsEligibleDirectionalShadowMeshCaster(proxy),
+                   "non-finite mesh caster is ineligible");
+        }
+
+        nonFiniteMeshes.push_back(MakeMeshCaster(113, 0.0f, 5.0f, 0.0f, 40.0f));
+        const DirectionalShadowMatrixSettings fitted =
+            FitDirectionalShadowMatrixSettingsToCasters(baseSettings, &nonFiniteMeshes, nullptr);
+
+        ExpectVectorNearlyEqual(fitted.Target,
+                                NorvesLib::Math::Vector3(0.0f, 5.0f, 0.0f),
+                                "valid caster controls target after non-finite casters");
+        ExpectNearlyEqual(fitted.OrthoSize, 40.0f,
+                          "valid caster controls ortho after non-finite casters");
+        ExpectNearlyEqual(fitted.LightDistance, 40.1f,
+                          "valid caster controls light distance after non-finite casters");
+        ExpectNearlyEqual(fitted.FarPlane, 80.1f,
+                          "valid caster controls far plane after non-finite casters");
+    }
+
+    void TestShadowMapSettingsConverter()
+    {
+        ShadowMapPassSettings passSettings;
+        passSettings.OrthoSize = 37.0f;
+        passSettings.NearPlane = 0.25f;
+        passSettings.FarPlane = 123.0f;
+
+        const DirectionalShadowMatrixSettings defaults = MakeDefaultDirectionalShadowMatrixSettings();
+        const DirectionalShadowMatrixSettings converted = MakeDirectionalShadowMatrixSettings(passSettings);
+
+        ExpectNearlyEqual(converted.OrthoSize, passSettings.OrthoSize,
+                          "converter maps ShadowMapPassSettings OrthoSize");
+        ExpectNearlyEqual(converted.NearPlane, passSettings.NearPlane,
+                          "converter maps ShadowMapPassSettings NearPlane");
+        ExpectNearlyEqual(converted.FarPlane, passSettings.FarPlane,
+                          "converter maps ShadowMapPassSettings FarPlane");
+        ExpectNearlyEqual(converted.LightDistance, defaults.LightDistance,
+                          "converter preserves default LightDistance");
+        ExpectVectorNearlyEqual(converted.Target, defaults.Target,
+                                "converter preserves default Target");
+    }
+
     void TestShaderMatrixCopies()
     {
         const NorvesLib::Math::Matrix4x4 matrix(
@@ -345,6 +629,15 @@ int main()
     TestDifferentDirectionsProduceDifferentViews();
     TestFallbackUpProducesFiniteMatrices();
     TestDefaultSettingsMatchShadowMapPass();
+    TestMeshCasterTargetFollowsBoundsCenter();
+    TestLargeCasterExpandsRange();
+    TestInvalidCastersIgnored();
+    TestMegaGeometryCasterIncluded();
+    TestNullAndEmptyCasterFallbackEqualsBase();
+    TestFittedSettingsBuildMatricesWithExpectedLightPosition();
+    TestMultiCasterFitUsesAllValidCasters();
+    TestNonFiniteCasterBoundsIgnored();
+    TestShadowMapSettingsConverter();
     TestShaderMatrixCopies();
 
     if (g_FailureCount != 0)

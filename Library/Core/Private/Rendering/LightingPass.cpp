@@ -1266,8 +1266,15 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // シャドウマップ用ライトビュー・プロジェクション行列
         // ========================================
+        const DirectionalShadowMatrixSettings shadowSettings =
+            context.ActiveShadowMapSettings
+                ? MakeDirectionalShadowMatrixSettings(*context.ActiveShadowMapSettings)
+                : MakeDefaultDirectionalShadowMatrixSettings();
         const DirectionalShadowMatrixResult shadowMatrices =
-            BuildDirectionalShadowLightMatrices(context.SnapshotLightProxies, MakeDefaultDirectionalShadowMatrixSettings());
+            BuildFittedDirectionalShadowLightMatrices(context.SnapshotLightProxies,
+                                                     context.SnapshotMeshProxies,
+                                                     context.SnapshotMegaGeometryProxies,
+                                                     shadowSettings);
         CopyIdentityShadowMatricesToShaderData(params.lightView, params.lightProjection);
         params.bShadowEnabled = 0;
         if (bShadowAvailable)

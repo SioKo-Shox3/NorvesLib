@@ -9,6 +9,8 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    struct ShadowMapPassSettings;
+
     struct DirectionalShadowMatrixSettings
     {
         float OrthoSize = 20.0f;
@@ -31,7 +33,14 @@ namespace NorvesLib::Core::Rendering
 
     DirectionalShadowMatrixSettings MakeDefaultDirectionalShadowMatrixSettings();
 
+    DirectionalShadowMatrixSettings MakeDirectionalShadowMatrixSettings(
+        const ShadowMapPassSettings& settings);
+
     bool IsEligibleDirectionalShadowLight(const LightProxy& proxy);
+
+    bool IsEligibleDirectionalShadowMeshCaster(const MeshProxy& proxy);
+
+    bool IsEligibleDirectionalShadowMegaGeometryCaster(const MegaGeometryProxy& proxy);
 
     const LightProxy* SelectDirectionalShadowLight(
         const Container::VariableArray<LightProxy>* lightProxies);
@@ -42,6 +51,17 @@ namespace NorvesLib::Core::Rendering
     DirectionalShadowMatrixResult BuildDirectionalShadowLightMatrices(
         const Container::VariableArray<LightProxy>* lightProxies,
         const DirectionalShadowMatrixSettings& settings);
+
+    DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(
+        const DirectionalShadowMatrixSettings& baseSettings,
+        const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies);
+
+    DirectionalShadowMatrixResult BuildFittedDirectionalShadowLightMatrices(
+        const Container::VariableArray<LightProxy>* lightProxies,
+        const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
+        const DirectionalShadowMatrixSettings& baseSettings);
 
     void CopyShadowMatrixToShaderData(const Math::Matrix4x4& matrix, float* outData);
 
