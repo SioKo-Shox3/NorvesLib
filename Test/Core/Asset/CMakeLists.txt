@@ -61,6 +61,15 @@ target_include_directories(CookedTextureTest PRIVATE
 )
 set_target_properties(CookedTextureTest PROPERTIES FOLDER "Test/Core/Asset")
 
+add_executable(CookedMeshTest
+    CookedMeshTest.cpp
+)
+target_link_libraries(CookedMeshTest PRIVATE Core)
+target_include_directories(CookedMeshTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CookedMeshTest PROPERTIES FOLDER "Test/Core/Asset")
+
 include(CTest)
 add_test(NAME AssetBlobLifetimeTest COMMAND AssetBlobLifetimeTest)
 add_test(NAME AssetPathTest COMMAND AssetPathTest)
@@ -69,3 +78,4 @@ add_test(NAME PackageFormatTest COMMAND PackageFormatTest)
 add_test(NAME AssetManifestTest COMMAND AssetManifestTest)
 add_test(NAME AssetSystemTest COMMAND AssetSystemTest)
 add_test(NAME CookedTextureTest COMMAND CookedTextureTest)
+add_test(NAME CookedMeshTest COMMAND CookedMeshTest)

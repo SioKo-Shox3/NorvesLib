@@ -10,6 +10,7 @@ find_package(Vulkan REQUIRED)
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Asset/AssetBlob.cpp
+    Private/Asset/CookedMeshLoader.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
@@ -192,6 +193,7 @@ set(PRIVATE_SOURCES
 set(PUBLIC_HEADERS
     Public/CoreModule.h
     Public/Asset/AssetBlob.h
+    Public/Asset/CookedMeshFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/AssetManifest.h
