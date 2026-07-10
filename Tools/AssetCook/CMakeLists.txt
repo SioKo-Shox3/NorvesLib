@@ -1,5 +1,7 @@
 add_executable(AssetCook
     Main.cpp
+    MeshCooker.cpp
+    MeshCooker.h
     TextureCooker.cpp
     TextureCooker.h
 )
@@ -31,4 +33,13 @@ add_test(NAME AssetCookTextureSmoke
         -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
         -DSMOKE_DIR=${ASSET_COOK_TEXTURE_SMOKE_DIR}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookTextureSmoke.cmake.in"
+)
+
+set(ASSET_COOK_MESH_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Mesh")
+add_test(NAME AssetCookMeshSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${ASSET_COOK_MESH_SMOKE_DIR}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookMeshSmoke.cmake.in"
 )

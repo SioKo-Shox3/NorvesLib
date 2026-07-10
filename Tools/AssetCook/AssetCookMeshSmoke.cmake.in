@@ -1,0 +1,1744 @@
+cmake_minimum_required(VERSION 3.14)
+
+# Keep this standalone smoke within the root project's minimum CMake contract.
+file(STRINGS "${CMAKE_CURRENT_LIST_FILE}" smoke_policy_first_line LIMIT_COUNT 1)
+if(NOT smoke_policy_first_line STREQUAL "cmake_minimum_required(VERSION 3.14)")
+    message(FATAL_ERROR
+        "AssetCookMeshSmoke source policy requires cmake_minimum_required(VERSION 3.14)")
+endif()
+
+file(READ "${CMAKE_CURRENT_LIST_FILE}" smoke_policy_source)
+string(CONCAT forbidden_json_token "string(" "JSON")
+string(CONCAT forbidden_hex_token "string(" "HEX")
+foreach(forbidden_token IN ITEMS "${forbidden_json_token}" "${forbidden_hex_token}")
+    string(FIND "${smoke_policy_source}" "${forbidden_token}" forbidden_token_offset)
+    if(NOT forbidden_token_offset EQUAL -1)
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke source policy rejects a post-CMake-3.14 string subcommand")
+    endif()
+endforeach()
+
+if(NOT DEFINED ASSET_COOK_EXE)
+    message(FATAL_ERROR "ASSET_COOK_EXE is required")
+endif()
+
+if(NOT DEFINED SOURCE_ROOT)
+    message(FATAL_ERROR "SOURCE_ROOT is required")
+endif()
+
+if(NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "SMOKE_DIR is required")
+endif()
+
+set(SOURCE_MODEL_DIR "${SOURCE_ROOT}/Assets/Models/Rendering3DTestSilverGltf")
+set(SOURCE_GLTF "${SOURCE_MODEL_DIR}/Rendering3DTestSilverGltf.gltf")
+set(SOURCE_BIN "${SOURCE_MODEL_DIR}/Rendering3DTestSilverGltf.bin")
+set(LOGICAL_PATH "Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.gltf")
+set(ENTRY_NAME "Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.nvmesh")
+set(MESH_FORMAT "nvmesh.v0.mesh3d.pnt.u32.clustered")
+
+# NVMESH v0 header/record offsets mirrored from Library/Core/Public/Asset/CookedMeshFormat.h.
+set(NVMESH_HEADER_MATERIAL_TABLE_OFFSET 64)
+set(NVMESH_HEADER_STRING_TABLE_OFFSET 96)
+set(NVMESH_HEADER_STRING_TABLE_SIZE 104)
+set(NVMESH_HEADER_VERTEX_COUNT 152)
+set(NVMESH_HEADER_INDEX_COUNT 156)
+set(NVMESH_HEADER_MATERIAL_COUNT 164)
+set(NVMESH_HEADER_CLUSTER_COUNT 168)
+set(NVMESH_MATERIAL_ALBEDO_TEXTURE 0)
+set(NVMESH_MATERIAL_NORMAL_TEXTURE 16)
+set(NVMESH_MATERIAL_ARM_TEXTURE 32)
+set(NVMESH_STRING_REF_OFFSET 0)
+set(NVMESH_STRING_REF_LENGTH 8)
+
+file(MAKE_DIRECTORY "${SMOKE_DIR}")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/Cooked")
+
+# Structurally decode the single-entry NVPACK v1 mesh package before inspecting NVMESH v0.
+set(PACKAGE_DECODER "${SMOKE_DIR}/AssetCookMeshPackageDecoder.ps1")
+file(WRITE "${PACKAGE_DECODER}" [=[
+param(
+    [Parameter(Mandatory = $true)][string]$PackagePath,
+    [Parameter(Mandatory = $true)][string]$ExpectedName
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Fail-Package([string]$Message)
+{
+    throw "NVPACK decoder: $Message"
+}
+
+function Assert-Range(
+    [string]$Label,
+    [uint64]$Offset,
+    [uint64]$Size,
+    [uint64]$PackageSize)
+{
+    if ($Offset -gt $PackageSize)
+    {
+        Fail-Package "$Label offset $Offset exceeds package size $PackageSize"
+    }
+    if ($Size -gt ($PackageSize - $Offset))
+    {
+        Fail-Package "$Label range offset=$Offset size=$Size exceeds package size $PackageSize"
+    }
+}
+
+function Assert-Aligned([string]$Label, [uint64]$Offset, [uint32]$Alignment)
+{
+    if (($Offset % $Alignment) -ne 0)
+    {
+        Fail-Package "$Label offset $Offset is not aligned to $Alignment bytes"
+    }
+}
+
+function Read-UInt16([byte[]]$Bytes, [uint64]$Offset, [uint64]$PackageSize)
+{
+    Assert-Range 'uint16 field' $Offset 2 $PackageSize
+    return [BitConverter]::ToUInt16($Bytes, [int]$Offset)
+}
+
+function Read-UInt32([byte[]]$Bytes, [uint64]$Offset, [uint64]$PackageSize)
+{
+    Assert-Range 'uint32 field' $Offset 4 $PackageSize
+    return [BitConverter]::ToUInt32($Bytes, [int]$Offset)
+}
+
+function Read-UInt64([byte[]]$Bytes, [uint64]$Offset, [uint64]$PackageSize)
+{
+    Assert-Range 'uint64 field' $Offset 8 $PackageSize
+    return [BitConverter]::ToUInt64($Bytes, [int]$Offset)
+}
+
+function Assert-PayloadRange(
+    [string]$Label,
+    [uint64]$RelativeOffset,
+    [uint64]$Size,
+    [uint64]$PayloadSize)
+{
+    if ($RelativeOffset -gt $PayloadSize -or $Size -gt ($PayloadSize - $RelativeOffset))
+    {
+        Fail-Package "NVMESH $Label range offset=$RelativeOffset size=$Size exceeds FileSize $PayloadSize"
+    }
+}
+
+function Read-PayloadUInt32(
+    [byte[]]$Bytes,
+    [uint64]$PayloadOffset,
+    [uint64]$PayloadSize,
+    [uint64]$RelativeOffset,
+    [string]$Label)
+{
+    Assert-PayloadRange $Label $RelativeOffset 4 $PayloadSize
+    return [BitConverter]::ToUInt32($Bytes, [int]($PayloadOffset + $RelativeOffset))
+}
+
+function Read-PayloadUInt64(
+    [byte[]]$Bytes,
+    [uint64]$PayloadOffset,
+    [uint64]$PayloadSize,
+    [uint64]$RelativeOffset,
+    [string]$Label)
+{
+    Assert-PayloadRange $Label $RelativeOffset 8 $PayloadSize
+    return [BitConverter]::ToUInt64($Bytes, [int]($PayloadOffset + $RelativeOffset))
+}
+
+function Assert-NvmeshSection(
+    [string]$Name,
+    [uint64]$Offset,
+    [uint64]$Size,
+    [uint64]$ExpectedSize,
+    [uint64]$FileSize)
+{
+    if ($Offset -lt 256)
+    {
+        Fail-Package "NVMESH $Name section offset $Offset is smaller than HeaderSize 256"
+    }
+    Assert-PayloadRange "$Name section" $Offset $Size $FileSize
+    if ($Size -ne $ExpectedSize)
+    {
+        Fail-Package "NVMESH $Name section size $Size does not match expected $ExpectedSize"
+    }
+}
+
+if (-not [System.IO.File]::Exists($PackagePath))
+{
+    Fail-Package "package does not exist: '$PackagePath'"
+}
+
+$bytes = [System.IO.File]::ReadAllBytes($PackagePath)
+$actualPackageSize = [uint64]$bytes.LongLength
+if ($actualPackageSize -lt 96)
+{
+    Fail-Package "package size $actualPackageSize is smaller than the 96-byte header"
+}
+
+$expectedMagic = [byte[]](0x4e, 0x56, 0x50, 0x4b, 0x47, 0x76, 0x31, 0x00)
+for ($index = 0; $index -lt $expectedMagic.Length; ++$index)
+{
+    if ($bytes[$index] -ne $expectedMagic[$index])
+    {
+        Fail-Package '8-byte magic must be NVPKGv1\0'
+    }
+}
+
+$headerSize = Read-UInt32 $bytes 8 $actualPackageSize
+$versionMajor = Read-UInt16 $bytes 12 $actualPackageSize
+$versionMinor = Read-UInt16 $bytes 14 $actualPackageSize
+$endianMarker = Read-UInt32 $bytes 16 $actualPackageSize
+$entryRecordSize = Read-UInt32 $bytes 20 $actualPackageSize
+$declaredPackageSize = Read-UInt64 $bytes 24 $actualPackageSize
+$entryCount = Read-UInt32 $bytes 32 $actualPackageSize
+$headerFlags = Read-UInt32 $bytes 36 $actualPackageSize
+$entryTableOffset = Read-UInt64 $bytes 40 $actualPackageSize
+$entryTableSize = Read-UInt64 $bytes 48 $actualPackageSize
+$nameTableOffset = Read-UInt64 $bytes 56 $actualPackageSize
+$nameTableSize = Read-UInt64 $bytes 64 $actualPackageSize
+$blobDataOffset = Read-UInt64 $bytes 72 $actualPackageSize
+$alignment = Read-UInt32 $bytes 80 $actualPackageSize
+$headerReserved0 = Read-UInt32 $bytes 84 $actualPackageSize
+$headerReserved1 = Read-UInt64 $bytes 88 $actualPackageSize
+
+if ($headerSize -ne 96) { Fail-Package "header size $headerSize must be 96" }
+if ($versionMajor -ne 1 -or $versionMinor -ne 0)
+{
+    Fail-Package "version $versionMajor.$versionMinor must be 1.0"
+}
+if ($endianMarker -ne 0x01020304) { Fail-Package 'endian marker must be 0x01020304' }
+if ($entryRecordSize -ne 64) { Fail-Package "entry record size $entryRecordSize must be 64" }
+if ($declaredPackageSize -ne $actualPackageSize)
+{
+    Fail-Package "declared package size $declaredPackageSize does not match actual $actualPackageSize"
+}
+if ($entryCount -ne 1) { Fail-Package "entry count $entryCount must be 1" }
+if ($headerFlags -ne 0 -or $headerReserved0 -ne 0 -or $headerReserved1 -ne 0)
+{
+    Fail-Package 'header flags/reserved fields must be zero'
+}
+if ($alignment -ne 8) { Fail-Package "alignment $alignment must be 8" }
+if ($entryTableSize -ne 64) { Fail-Package "entry table size $entryTableSize must be 64" }
+if ($nameTableSize -eq 0) { Fail-Package 'name table must not be empty' }
+
+Assert-Aligned 'entry table' $entryTableOffset $alignment
+Assert-Aligned 'name table' $nameTableOffset $alignment
+Assert-Aligned 'blob data' $blobDataOffset $alignment
+Assert-Range 'entry table' $entryTableOffset $entryTableSize $actualPackageSize
+Assert-Range 'name table' $nameTableOffset $nameTableSize $actualPackageSize
+Assert-Range 'blob data' $blobDataOffset 0 $actualPackageSize
+$blobDataSize = $actualPackageSize - $blobDataOffset
+Assert-Range 'blob data' $blobDataOffset $blobDataSize $actualPackageSize
+
+$entryTableEnd = $entryTableOffset + $entryTableSize
+$nameTableEnd = $nameTableOffset + $nameTableSize
+if ($entryTableOffset -lt $headerSize -or $nameTableOffset -lt $entryTableEnd -or
+    $blobDataOffset -lt $nameTableEnd)
+{
+    Fail-Package 'entry table, name table and blob data ranges overlap or are out of order'
+}
+
+$nameOffset = Read-UInt64 $bytes ($entryTableOffset + 0) $actualPackageSize
+$nameSize = Read-UInt32 $bytes ($entryTableOffset + 8) $actualPackageSize
+$entryType = Read-UInt32 $bytes ($entryTableOffset + 12) $actualPackageSize
+$compression = Read-UInt32 $bytes ($entryTableOffset + 16) $actualPackageSize
+$entryFlags = Read-UInt32 $bytes ($entryTableOffset + 20) $actualPackageSize
+$dataOffset = Read-UInt64 $bytes ($entryTableOffset + 24) $actualPackageSize
+$storedSize = Read-UInt64 $bytes ($entryTableOffset + 32) $actualPackageSize
+$uncompressedSize = Read-UInt64 $bytes ($entryTableOffset + 40) $actualPackageSize
+$entryReserved0 = Read-UInt64 $bytes ($entryTableOffset + 56) $actualPackageSize
+
+if ($nameSize -eq 0) { Fail-Package 'entry name must not be empty' }
+if ($nameOffset -lt $nameTableOffset -or $nameOffset -gt $nameTableEnd)
+{
+    Fail-Package 'entry name offset must be contained in the name table'
+}
+if ($nameSize -gt ($nameTableEnd - $nameOffset))
+{
+    Fail-Package 'entry name range must be contained in the name table'
+}
+Assert-Range 'entry name' $nameOffset $nameSize $actualPackageSize
+
+try
+{
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $entryName = $strictUtf8.GetString($bytes, [int]$nameOffset, [int]$nameSize)
+}
+catch
+{
+    Fail-Package "entry name is not valid UTF-8: $($_.Exception.Message)"
+}
+if ($entryName -cne $ExpectedName)
+{
+    Fail-Package "entry name '$entryName' does not match expected '$ExpectedName'"
+}
+
+if ($entryType -ne 0x3068734d)
+{
+    Fail-Package ('entry FourCC 0x{0:x8} must be Msh0 (0x3068734d)' -f $entryType)
+}
+if ($compression -ne 0) { Fail-Package "Msh0 compression $compression must be 0" }
+if ($entryFlags -ne 0 -or $entryReserved0 -ne 0)
+{
+    Fail-Package 'Msh0 flags/reserved fields must be zero'
+}
+if ($storedSize -lt 256) { Fail-Package "Msh0 StoredSize $storedSize is smaller than the 256-byte NVMESH header" }
+if ($storedSize -ne $uncompressedSize)
+{
+    Fail-Package "Msh0 stored size $storedSize does not match uncompressed size $uncompressedSize"
+}
+if ($dataOffset -lt $blobDataOffset)
+{
+    Fail-Package 'Msh0 data offset is before blob data'
+}
+Assert-Aligned 'Msh0 data' $dataOffset $alignment
+Assert-Range 'Msh0 payload' $dataOffset $storedSize $actualPackageSize
+
+$expectedPayloadMagic = [System.Text.Encoding]::ASCII.GetBytes('NVMESHv0')
+for ($index = 0; $index -lt $expectedPayloadMagic.Length; ++$index)
+{
+    if ($bytes[[int]$dataOffset + $index] -ne $expectedPayloadMagic[$index])
+    {
+        Fail-Package 'Msh0 payload must begin with NVMESHv0'
+    }
+}
+
+$nvmeshHeaderSize = Read-PayloadUInt32 $bytes $dataOffset $storedSize 8 'HeaderSize field'
+if ($nvmeshHeaderSize -ne 256)
+{
+    Fail-Package "NVMESH HeaderSize $nvmeshHeaderSize must be 256"
+}
+$nvmeshFileSize = Read-PayloadUInt64 $bytes $dataOffset $storedSize 40 'FileSize field'
+if ($nvmeshFileSize -ne $storedSize)
+{
+    Fail-Package "NVMESH FileSize $nvmeshFileSize does not match Msh0 StoredSize $storedSize"
+}
+
+$vertexCount = Read-PayloadUInt32 $bytes $dataOffset $storedSize 152 'VertexCount field'
+$indexCount = Read-PayloadUInt32 $bytes $dataOffset $storedSize 156 'IndexCount field'
+$submeshCount = Read-PayloadUInt32 $bytes $dataOffset $storedSize 160 'SubmeshCount field'
+$materialCount = Read-PayloadUInt32 $bytes $dataOffset $storedSize 164 'MaterialCount field'
+$clusterCount = Read-PayloadUInt32 $bytes $dataOffset $storedSize 168 'ClusterCount field'
+$stringByteCount = Read-PayloadUInt32 $bytes $dataOffset $storedSize 172 'StringByteCount field'
+
+$sections = @(
+    @('submesh', 48, 56, ([uint64]$submeshCount * 64)),
+    @('material', 64, 72, ([uint64]$materialCount * 64)),
+    @('cluster', 80, 88, ([uint64]$clusterCount * 80)),
+    @('string', 96, 104, [uint64]$stringByteCount),
+    @('vertex', 112, 120, ([uint64]$vertexCount * 32)),
+    @('index', 128, 136, ([uint64]$indexCount * 4))
+)
+foreach ($section in $sections)
+{
+    $sectionName = [string]$section[0]
+    $sectionOffset = Read-PayloadUInt64 $bytes $dataOffset $storedSize ([uint64]$section[1]) "$sectionName section offset field"
+    $sectionSize = Read-PayloadUInt64 $bytes $dataOffset $storedSize ([uint64]$section[2]) "$sectionName section size field"
+    Assert-NvmeshSection $sectionName $sectionOffset $sectionSize ([uint64]$section[3]) $nvmeshFileSize
+}
+
+Write-Output "PAYLOAD_OFFSET=$dataOffset"
+Write-Output "PAYLOAD_SIZE=$storedSize"
+]=])
+
+# Keep JSON parsing and mutation in PowerShell's structured JSON APIs so this
+# standalone script remains compatible with CMake 3.14.
+set(JSON_SCRIPT "${SMOKE_DIR}/AssetCookMeshJson.ps1")
+file(WRITE "${JSON_SCRIPT}" [=[
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet(
+        'GenerateVariants',
+        'ReadManifestIdentity',
+        'ReadHashPair',
+        'ReadCookedHashTriple',
+        'Utf8ToLowerHex')]
+    [string]$Operation,
+    [string]$SourcePath,
+    [string]$ValidDir,
+    [string]$InvalidDir,
+    [string]$InputPath,
+    [string]$SecondInputPath,
+    [string]$ThirdInputPath,
+    [string]$InputText
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Assert-JsonObject([object]$Value, [string]$Path)
+{
+    if ($null -eq $Value -or $Value -isnot [pscustomobject])
+    {
+        throw "JSON path '$Path' must be an object"
+    }
+}
+
+function Get-RequiredProperty([object]$Object, [string]$Name, [string]$Path)
+{
+    Assert-JsonObject $Object $Path
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property)
+    {
+        throw "JSON path '$Path.$Name' does not exist"
+    }
+    return ,$property.Value
+}
+
+function Get-RequiredObjectProperty([object]$Object, [string]$Name, [string]$Path)
+{
+    $value = Get-RequiredProperty $Object $Name $Path
+    Assert-JsonObject $value "$Path.$Name"
+    return $value
+}
+
+function Get-RequiredArrayProperty([object]$Object, [string]$Name, [string]$Path)
+{
+    $value = Get-RequiredProperty $Object $Name $Path
+    if ($null -eq $value -or $value -isnot [System.Collections.IList])
+    {
+        throw "JSON path '$Path.$Name' must be an array"
+    }
+    return ,$value
+}
+
+function Get-RequiredArrayItem([System.Collections.IList]$Array, [int]$Index, [string]$Path)
+{
+    if ($Index -lt 0 -or $Index -ge $Array.Count)
+    {
+        throw "JSON path '$Path[$Index]' does not exist"
+    }
+    return ,$Array[$Index]
+}
+
+function Get-RequiredStringProperty([object]$Object, [string]$Name, [string]$Path)
+{
+    $value = Get-RequiredProperty $Object $Name $Path
+    if ($value -isnot [string] -or [string]::IsNullOrEmpty($value))
+    {
+        throw "JSON path '$Path.$Name' must be a non-empty string"
+    }
+    return $value
+}
+
+function Set-JsonProperty(
+    [object]$Object,
+    [string]$Name,
+    [AllowNull()][object]$Value,
+    [string]$Path)
+{
+    Assert-JsonObject $Object $Path
+    $Object | Add-Member -MemberType NoteProperty -Name $Name -Value $Value -Force
+}
+
+function Remove-JsonProperty([object]$Object, [string]$Name, [string]$Path)
+{
+    [void](Get-RequiredProperty $Object $Name $Path)
+    $Object.PSObject.Properties.Remove($Name)
+    if ($null -ne $Object.PSObject.Properties[$Name])
+    {
+        throw "Failed to remove JSON path '$Path.$Name'"
+    }
+}
+
+function Read-JsonDocument([string]$Path)
+{
+    if ([string]::IsNullOrEmpty($Path) -or -not [System.IO.File]::Exists($Path))
+    {
+        throw "JSON input file does not exist: '$Path'"
+    }
+    try
+    {
+        $jsonText = [System.IO.File]::ReadAllText($Path)
+        $document = ConvertFrom-Json -InputObject $jsonText -ErrorAction Stop
+    }
+    catch
+    {
+        throw "Failed to parse JSON input '$Path': $($_.Exception.Message)"
+    }
+    Assert-JsonObject $document '$'
+    return $document
+}
+
+function Copy-JsonValue([object]$Value)
+{
+    try
+    {
+        $jsonText = ConvertTo-Json -InputObject $Value -Depth 100 -Compress -ErrorAction Stop
+        return ConvertFrom-Json -InputObject $jsonText -ErrorAction Stop
+    }
+    catch
+    {
+        throw "Failed to clone JSON value: $($_.Exception.Message)"
+    }
+}
+
+function Write-JsonDocument([string]$Path, [object]$Document)
+{
+    try
+    {
+        $jsonText = ConvertTo-Json -InputObject $Document -Depth 100 -Compress -ErrorAction Stop
+        [System.IO.File]::WriteAllText($Path, $jsonText, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch
+    {
+        throw "Failed to write JSON output '$Path': $($_.Exception.Message)"
+    }
+}
+
+function Convert-Utf8ToLowerHex([string]$Text)
+{
+    if ([string]::IsNullOrEmpty($Text))
+    {
+        throw 'UTF-8 hex input text must not be empty'
+    }
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $builder = [System.Text.StringBuilder]::new($bytes.Length * 2)
+    foreach ($byte in $bytes)
+    {
+        [void]$builder.Append(
+            $byte.ToString('x2', [System.Globalization.CultureInfo]::InvariantCulture))
+    }
+    return $builder.ToString()
+}
+
+function Get-ManifestAsset([string]$Path)
+{
+    $manifest = Read-JsonDocument $Path
+    $assets = Get-RequiredArrayProperty $manifest 'assets' '$'
+    $asset = Get-RequiredArrayItem $assets 0 '$.assets'
+    Assert-JsonObject $asset '$.assets[0]'
+    return $asset
+}
+
+function Get-Primitive([object]$Document)
+{
+    $meshes = Get-RequiredArrayProperty $Document 'meshes' '$'
+    $mesh = Get-RequiredArrayItem $meshes 0 '$.meshes'
+    Assert-JsonObject $mesh '$.meshes[0]'
+    $primitives = Get-RequiredArrayProperty $mesh 'primitives' '$.meshes[0]'
+    $primitive = Get-RequiredArrayItem $primitives 0 '$.meshes[0].primitives'
+    Assert-JsonObject $primitive '$.meshes[0].primitives[0]'
+    return $primitive
+}
+
+function Get-BaseColorTexture([object]$Document)
+{
+    $materials = Get-RequiredArrayProperty $Document 'materials' '$'
+    $material = Get-RequiredArrayItem $materials 0 '$.materials'
+    Assert-JsonObject $material '$.materials[0]'
+    $pbr = Get-RequiredObjectProperty $material 'pbrMetallicRoughness' '$.materials[0]'
+    return Get-RequiredObjectProperty $pbr 'baseColorTexture' '$.materials[0].pbrMetallicRoughness'
+}
+
+function Write-Variant([string]$Directory, [string]$Name, [object]$Document)
+{
+    if ([string]::IsNullOrEmpty($Directory) -or -not [System.IO.Directory]::Exists($Directory))
+    {
+        throw "Variant output directory does not exist: '$Directory'"
+    }
+    Write-JsonDocument (Join-Path $Directory "$Name.gltf") $Document
+}
+
+function Generate-Variants
+{
+    $source = Read-JsonDocument $SourcePath
+
+    # Validate every parent path shared by the generated mutations before writing outputs.
+    [void](Get-BaseColorTexture $source)
+    $nodes = Get-RequiredArrayProperty $source 'nodes' '$'
+    $node = Get-RequiredArrayItem $nodes 0 '$.nodes'
+    Assert-JsonObject $node '$.nodes[0]'
+    $primitive = Get-Primitive $source
+    [void](Get-RequiredObjectProperty $primitive 'attributes' '$.meshes[0].primitives[0]')
+    [void](Get-RequiredProperty $primitive 'indices' '$.meshes[0].primitives[0]')
+    $buffers = Get-RequiredArrayProperty $source 'buffers' '$'
+    $buffer = Get-RequiredArrayItem $buffers 0 '$.buffers'
+    Assert-JsonObject $buffer '$.buffers[0]'
+    [void](Get-RequiredStringProperty $buffer 'uri' '$.buffers[0]')
+    [void](Get-RequiredProperty $buffer 'byteLength' '$.buffers[0]')
+    $bufferViews = Get-RequiredArrayProperty $source 'bufferViews' '$'
+    if ($bufferViews.Count -ne 4)
+    {
+        throw "JSON path '$.bufferViews' must contain exactly four entries"
+    }
+    $accessors = Get-RequiredArrayProperty $source 'accessors' '$'
+    $accessor = Get-RequiredArrayItem $accessors 0 '$.accessors'
+    Assert-JsonObject $accessor '$.accessors[0]'
+
+    $variant = Copy-JsonValue $source
+    Set-JsonProperty (Get-BaseColorTexture $variant) 'texCoord' 0 `
+        '$.materials[0].pbrMetallicRoughness.baseColorTexture'
+    Write-Variant $ValidDir 'base_color_tex_coord_zero' $variant
+
+    $variant = Copy-JsonValue $source
+    Set-JsonProperty $variant 'extensionsRequired' ([object[]]@()) '$'
+    Write-Variant $ValidDir 'extensions_required_empty' $variant
+
+    $variant = Copy-JsonValue $source
+    $primitive = Get-Primitive $variant
+    $optionalExtension = [pscustomobject]@{
+        EXT_asset_cook_optional = [pscustomobject]@{ ignored = $true }
+    }
+    Set-JsonProperty $primitive 'extensions' $optionalExtension '$.meshes[0].primitives[0]'
+    Write-Variant $ValidDir 'optional_primitive_extension' $variant
+
+    $variant = Copy-JsonValue $source
+    $nodes = Get-RequiredArrayProperty $variant 'nodes' '$'
+    $node = Get-RequiredArrayItem $nodes 0 '$.nodes'
+    Assert-JsonObject $node '$.nodes[0]'
+    Set-JsonProperty $node 'translation' ([double[]](10.0, 20.0, 30.0)) '$.nodes[0]'
+    Write-Variant $ValidDir 'transformed_mesh_node' $variant
+
+    $variant = Copy-JsonValue $source
+    Set-JsonProperty $variant 'extensionsRequired' $null '$'
+    Write-Variant $InvalidDir 'extensions_required_null' $variant
+
+    $variant = Copy-JsonValue $source
+    Set-JsonProperty $variant 'extensionsRequired' ([object[]]@([int64]42)) '$'
+    Write-Variant $InvalidDir 'extensions_required_non_string' $variant
+
+    $variant = Copy-JsonValue $source
+    Set-JsonProperty $variant 'extensionsRequired' ([string[]]@('EXT_asset_cook_required')) '$'
+    Write-Variant $InvalidDir 'extensions_required_nonempty' $variant
+
+    $variant = Copy-JsonValue $source
+    Set-JsonProperty (Get-Primitive $variant) 'mode' ([int64]1) '$.meshes[0].primitives[0]'
+    Write-Variant $InvalidDir 'explicit_mode_not_triangles' $variant
+
+    $variant = Copy-JsonValue $source
+    $buffers = Get-RequiredArrayProperty $variant 'buffers' '$'
+    $buffer = Get-RequiredArrayItem $buffers 0 '$.buffers'
+    Assert-JsonObject $buffer '$.buffers[0]'
+    Set-JsonProperty $buffer 'uri' 'data:application/octet-stream;base64,AA==' '$.buffers[0]'
+    Write-Variant $InvalidDir 'data_uri_buffer' $variant
+
+    $variant = Copy-JsonValue $source
+    $buffers = Get-RequiredArrayProperty $variant 'buffers' '$'
+    $buffer = Get-RequiredArrayItem $buffers 0 '$.buffers'
+    Assert-JsonObject $buffer '$.buffers[0]'
+    Set-JsonProperty $buffer 'uri' '../escape.bin' '$.buffers[0]'
+    Write-Variant $InvalidDir 'buffer_path_traversal' $variant
+
+    $variant = Copy-JsonValue $source
+    $buffers = Get-RequiredArrayProperty $variant 'buffers' '$'
+    $buffer = Get-RequiredArrayItem $buffers 0 '$.buffers'
+    Assert-JsonObject $buffer '$.buffers[0]'
+    Set-JsonProperty $buffer 'byteLength' ([int64]2938809) '$.buffers[0]'
+    Write-Variant $InvalidDir 'buffer_byte_length_too_large' $variant
+
+    $variant = Copy-JsonValue $source
+    $views = @(Get-RequiredArrayProperty $variant 'bufferViews' '$')
+    $views += [pscustomobject]@{ buffer = [int64]0; byteLength = [int64]1; byteOffset = [int64]0 }
+    $views += [pscustomobject]@{ buffer = [int64]0; byteLength = [int64]12; byteOffset = [int64]4 }
+    Set-JsonProperty $variant 'bufferViews' $views '$'
+    $accessors = Get-RequiredArrayProperty $variant 'accessors' '$'
+    $accessor = Get-RequiredArrayItem $accessors 0 '$.accessors'
+    Assert-JsonObject $accessor '$.accessors[0]'
+    $sparse = [pscustomobject]@{
+        count = [int64]1
+        indices = [pscustomobject]@{
+            bufferView = [int64]4
+            byteOffset = [int64]0
+            componentType = [int64]5121
+        }
+        values = [pscustomobject]@{ bufferView = [int64]5; byteOffset = [int64]0 }
+    }
+    Set-JsonProperty $accessor 'sparse' $sparse '$.accessors[0]'
+    Write-Variant $InvalidDir 'sparse_accessor' $variant
+
+    $variant = Copy-JsonValue $source
+    $accessors = Get-RequiredArrayProperty $variant 'accessors' '$'
+    $accessor = Get-RequiredArrayItem $accessors 0 '$.accessors'
+    Assert-JsonObject $accessor '$.accessors[0]'
+    Set-JsonProperty $accessor 'byteOffset' ([int64]2) '$.accessors[0]'
+    $views = Get-RequiredArrayProperty $variant 'bufferViews' '$'
+    $view = Get-RequiredArrayItem $views 0 '$.bufferViews'
+    Assert-JsonObject $view '$.bufferViews[0]'
+    Set-JsonProperty $view 'byteOffset' ([int64]2) '$.bufferViews[0]'
+    Write-Variant $InvalidDir 'position_accessor_byte_offset' $variant
+
+    $variant = Copy-JsonValue $source
+    $views = Get-RequiredArrayProperty $variant 'bufferViews' '$'
+    $view = Get-RequiredArrayItem $views 0 '$.bufferViews'
+    Assert-JsonObject $view '$.bufferViews[0]'
+    Set-JsonProperty $view 'byteOffset' ([int64]2) '$.bufferViews[0]'
+    Set-JsonProperty $view 'byteLength' ([int64]804502) '$.bufferViews[0]'
+    Write-Variant $InvalidDir 'position_absolute_byte_offset' $variant
+
+    $variant = Copy-JsonValue $source
+    $views = Get-RequiredArrayProperty $variant 'bufferViews' '$'
+    $view = Get-RequiredArrayItem $views 3 '$.bufferViews'
+    Assert-JsonObject $view '$.bufferViews[3]'
+    Set-JsonProperty $view 'byteStride' ([int64]6) '$.bufferViews[3]'
+    Write-Variant $InvalidDir 'index_buffer_view_byte_stride' $variant
+
+    $variant = Copy-JsonValue $source
+    Set-JsonProperty (Get-BaseColorTexture $variant) 'texCoord' ([int64]1) `
+        '$.materials[0].pbrMetallicRoughness.baseColorTexture'
+    Write-Variant $InvalidDir 'base_color_tex_coord_nonzero' $variant
+
+    $variant = Copy-JsonValue $source
+    $textureTransform = [pscustomobject]@{
+        KHR_texture_transform = [pscustomobject]@{
+            offset = [double[]](0.5, 0.5)
+            scale = [double[]](2.0, 2.0)
+        }
+    }
+    Set-JsonProperty (Get-BaseColorTexture $variant) 'extensions' $textureTransform `
+        '$.materials[0].pbrMetallicRoughness.baseColorTexture'
+    Write-Variant $InvalidDir 'base_color_texture_transform' $variant
+
+    foreach ($attributeName in @('POSITION', 'NORMAL', 'TEXCOORD_0'))
+    {
+        $variant = Copy-JsonValue $source
+        $primitive = Get-Primitive $variant
+        $attributes = Get-RequiredObjectProperty $primitive 'attributes' '$.meshes[0].primitives[0]'
+        Remove-JsonProperty $attributes $attributeName '$.meshes[0].primitives[0].attributes'
+        Write-Variant $InvalidDir "missing_$($attributeName.ToLowerInvariant())" $variant
+    }
+
+    $variant = Copy-JsonValue $source
+    Remove-JsonProperty (Get-Primitive $variant) 'indices' '$.meshes[0].primitives[0]'
+    Write-Variant $InvalidDir 'missing_indices' $variant
+
+    $variant = Copy-JsonValue $source
+    $meshes = @(Get-RequiredArrayProperty $variant 'meshes' '$')
+    if ($meshes.Count -ne 1)
+    {
+        throw "JSON path '$.meshes' must contain exactly one entry"
+    }
+    $meshes += Copy-JsonValue $meshes[0]
+    Set-JsonProperty $variant 'meshes' $meshes '$'
+    Write-Variant $InvalidDir 'multiple_meshes' $variant
+
+    $variant = Copy-JsonValue $source
+    $meshes = Get-RequiredArrayProperty $variant 'meshes' '$'
+    $mesh = Get-RequiredArrayItem $meshes 0 '$.meshes'
+    Assert-JsonObject $mesh '$.meshes[0]'
+    $primitives = @(Get-RequiredArrayProperty $mesh 'primitives' '$.meshes[0]')
+    if ($primitives.Count -ne 1)
+    {
+        throw "JSON path '$.meshes[0].primitives' must contain exactly one entry"
+    }
+    $primitives += Copy-JsonValue $primitives[0]
+    Set-JsonProperty $mesh 'primitives' $primitives '$.meshes[0]'
+    Write-Variant $InvalidDir 'multiple_primitives' $variant
+}
+
+switch ($Operation)
+{
+    'GenerateVariants'
+    {
+        Generate-Variants
+    }
+    'ReadManifestIdentity'
+    {
+        $asset = Get-ManifestAsset $InputPath
+        Write-Output (Get-RequiredStringProperty $asset 'kind' '$.assets[0]')
+        Write-Output (Get-RequiredStringProperty $asset 'entry_type' '$.assets[0]')
+        Write-Output (Get-RequiredStringProperty $asset 'format' '$.assets[0]')
+    }
+    'ReadHashPair'
+    {
+        foreach ($path in @($InputPath, $SecondInputPath))
+        {
+            $asset = Get-ManifestAsset $path
+            Write-Output (Get-RequiredStringProperty $asset 'source_hash' '$.assets[0]')
+            Write-Output (Get-RequiredStringProperty $asset 'cooked_hash' '$.assets[0]')
+        }
+    }
+    'ReadCookedHashTriple'
+    {
+        foreach ($path in @($InputPath, $SecondInputPath, $ThirdInputPath))
+        {
+            $asset = Get-ManifestAsset $path
+            Write-Output (Get-RequiredStringProperty $asset 'cooked_hash' '$.assets[0]')
+        }
+    }
+    'Utf8ToLowerHex'
+    {
+        Write-Output (Convert-Utf8ToLowerHex $InputText)
+    }
+}
+]=])
+
+function(run_mesh_json_helper operation out_var)
+    execute_process(
+        COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+            -File "${JSON_SCRIPT}" -Operation "${operation}" ${ARGN}
+        RESULT_VARIABLE json_result
+        OUTPUT_VARIABLE json_stdout
+        ERROR_VARIABLE json_stderr
+    )
+    if(NOT "${json_result}" STREQUAL "0")
+        message(STATUS "${json_stdout}")
+        message(STATUS "${json_stderr}")
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke JSON helper ${operation} failed: ${json_result}")
+    endif()
+
+    string(REPLACE "\r\n" "\n" json_output "${json_stdout}")
+    string(REPLACE "\r" "\n" json_output "${json_output}")
+    string(REGEX REPLACE "\n+$" "" json_output "${json_output}")
+    set(${out_var} "${json_output}" PARENT_SCOPE)
+endfunction()
+
+function(split_json_helper_output helper_output expected_count out_var)
+    if(helper_output STREQUAL "")
+        message(FATAL_ERROR "AssetCookMeshSmoke JSON helper returned no values")
+    endif()
+    string(REPLACE "\n" ";" helper_values "${helper_output}")
+    list(LENGTH helper_values helper_value_count)
+    if(NOT helper_value_count EQUAL expected_count)
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke JSON helper returned ${helper_value_count} values, expected ${expected_count}")
+    endif()
+    set(${out_var} "${helper_values}" PARENT_SCOPE)
+endfunction()
+
+function(decode_mesh_package package_path expected_name out_offset out_size)
+    execute_process(
+        COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+            -File "${PACKAGE_DECODER}"
+            -PackagePath "${package_path}"
+            -ExpectedName "${expected_name}"
+        RESULT_VARIABLE decoder_result
+        OUTPUT_VARIABLE decoder_stdout
+        ERROR_VARIABLE decoder_stderr
+    )
+    if(NOT "${decoder_result}" STREQUAL "0")
+        message(STATUS "${decoder_stdout}")
+        message(STATUS "${decoder_stderr}")
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke package decoder failed for ${package_path}: ${decoder_result}")
+    endif()
+
+    string(REPLACE "\r\n" "\n" decoder_output "${decoder_stdout}")
+    string(REPLACE "\r" "\n" decoder_output "${decoder_output}")
+    string(REGEX REPLACE "\n+$" "" decoder_output "${decoder_output}")
+    string(REPLACE "\n" ";" decoder_values "${decoder_output}")
+    list(LENGTH decoder_values decoder_value_count)
+    if(NOT decoder_value_count EQUAL 2)
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke package decoder returned ${decoder_value_count} values, expected 2")
+    endif()
+
+    list(GET decoder_values 0 decoder_offset_line)
+    if(NOT decoder_offset_line MATCHES "^PAYLOAD_OFFSET=([0-9]+)$")
+        message(FATAL_ERROR "AssetCookMeshSmoke package decoder returned an invalid payload offset")
+    endif()
+    set(payload_offset "${CMAKE_MATCH_1}")
+
+    list(GET decoder_values 1 decoder_size_line)
+    if(NOT decoder_size_line MATCHES "^PAYLOAD_SIZE=([0-9]+)$")
+        message(FATAL_ERROR "AssetCookMeshSmoke package decoder returned an invalid payload size")
+    endif()
+    set(payload_size "${CMAKE_MATCH_1}")
+
+    set(${out_offset} "${payload_offset}" PARENT_SCOPE)
+    set(${out_size} "${payload_size}" PARENT_SCOPE)
+endfunction()
+
+# MeshCooker owns data through NorvesLib containers/strings. Standard facilities used at
+# filesystem, stream, conversion, algorithm, numeric, bit, math, memory and error boundaries remain allowed.
+set(MESH_COOKER_POLICY_FILES
+    "${SOURCE_ROOT}/Tools/AssetCook/MeshCooker.h"
+    "${SOURCE_ROOT}/Tools/AssetCook/MeshCooker.cpp"
+)
+foreach(policy_file IN LISTS MESH_COOKER_POLICY_FILES)
+    file(READ "${policy_file}" policy_source)
+    if(policy_source MATCHES "#include[ \t]*<((vector)|(string)|(string_view)|(array))>" OR
+       policy_source MATCHES "std::((vector)|(string)|(string_view)|(wstring)|(array)|(to_string))")
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke MeshCooker source policy rejects std owned container/string spelling in ${policy_file}")
+    endif()
+endforeach()
+
+set(OUTPUT_PACKAGE "${SMOKE_DIR}/Cooked/Rendering3DTestSilverGltf.nvpkg")
+set(OUTPUT_MANIFEST "${SMOKE_DIR}/manifest.json")
+
+# Cooks one model and requires success.
+function(cook_model_expect_success case_name input_path package_path manifest_path)
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${input_path}"
+            --out "${package_path}"
+            --manifest "${manifest_path}"
+            --logical "${LOGICAL_PATH}"
+            --kind model
+            --entry "${ENTRY_NAME}"
+            --entry-type Msh0
+            --format "${MESH_FORMAT}"
+            --variant default
+        RESULT_VARIABLE case_result
+        OUTPUT_VARIABLE case_stdout
+        ERROR_VARIABLE case_stderr
+    )
+
+    if(NOT case_result EQUAL 0)
+        message(STATUS "${case_stdout}")
+        message(STATUS "${case_stderr}")
+        message(FATAL_ERROR "AssetCookMeshSmoke positive case ${case_name} failed with exit code ${case_result}")
+    endif()
+
+    set(case_output "${case_stdout}${case_stderr}")
+    string(FIND "${case_output}" "AssetCook wrote model package" success_message_offset)
+    if(success_message_offset EQUAL -1)
+        message(STATUS "${case_output}")
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke positive case ${case_name} did not report the model success message")
+    endif()
+
+    message(STATUS "${case_output}")
+endfunction()
+
+# Cooks one model and requires a nonzero exit code plus an expected diagnostic substring.
+function(expect_model_cook_failure case_name input_path expected_message)
+    set(case_package "${INVALID_DIR}/Cooked/${case_name}.nvpkg")
+    set(case_manifest "${INVALID_DIR}/${case_name}.manifest.json")
+
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${input_path}"
+            --out "${case_package}"
+            --manifest "${case_manifest}"
+            --logical "${LOGICAL_PATH}"
+            --kind model
+            --entry "${ENTRY_NAME}"
+            --entry-type Msh0
+            --format "${MESH_FORMAT}"
+            --variant default
+        RESULT_VARIABLE case_result
+        OUTPUT_VARIABLE case_stdout
+        ERROR_VARIABLE case_stderr
+    )
+
+    set(case_output "${case_stdout}${case_stderr}")
+
+    if("${case_result}" STREQUAL "0")
+        message(STATUS "${case_output}")
+        message(FATAL_ERROR "AssetCookMeshSmoke negative case ${case_name} unexpectedly succeeded")
+    endif()
+
+    if(NOT "${case_result}" MATCHES "^[0-9]+$")
+        message(STATUS "${case_output}")
+        message(FATAL_ERROR "AssetCookMeshSmoke negative case ${case_name} failed to execute: ${case_result}")
+    endif()
+
+    if(expected_message STREQUAL "")
+        message(FATAL_ERROR "AssetCookMeshSmoke negative case ${case_name} requires an expected diagnostic")
+    endif()
+
+    string(FIND "${case_output}" "${expected_message}" diagnostic_offset)
+    if(diagnostic_offset EQUAL -1)
+        message(STATUS "${case_output}")
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke negative case ${case_name} did not report the expected diagnostic: ${expected_message}")
+    endif()
+
+    message(STATUS "AssetCookMeshSmoke negative case ${case_name} rejected with exit code ${case_result}")
+endfunction()
+
+# Validates a payload-relative range before converting it to a package offset.
+function(nvmesh_relative_range relative_offset byte_count out_absolute_offset)
+    math(EXPR relative_end "${relative_offset} + ${byte_count}")
+    if(relative_offset LESS 0 OR relative_end GREATER PAYLOAD_SIZE)
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke NVMESH payload read out of range: offset=${relative_offset} "
+            "count=${byte_count} FileSize=${PAYLOAD_SIZE}")
+    endif()
+    math(EXPR absolute_offset "${PAYLOAD_BASE} + ${relative_offset}")
+    set(${out_absolute_offset} "${absolute_offset}" PARENT_SCOPE)
+endfunction()
+
+# Reads a little-endian unsigned integer from a payload-relative offset.
+function(nvmesh_read_le_uint hex_data relative_offset byte_count out_var)
+    nvmesh_relative_range(${relative_offset} ${byte_count} byte_offset)
+    string(LENGTH "${hex_data}" hex_total)
+    math(EXPR hex_offset "${byte_offset} * 2")
+    math(EXPR hex_count "${byte_count} * 2")
+    math(EXPR hex_end "${hex_offset} + ${hex_count}")
+    if(byte_offset LESS 0 OR hex_end GREATER hex_total)
+        message(FATAL_ERROR "AssetCookMeshSmoke read out of range: offset=${byte_offset} count=${byte_count}")
+    endif()
+
+    string(SUBSTRING "${hex_data}" ${hex_offset} ${hex_count} le_hex)
+
+    set(be_hex "")
+    math(EXPR last_byte "${byte_count} - 1")
+    foreach(byte_index RANGE ${last_byte})
+        math(EXPR source_index "(${last_byte} - ${byte_index}) * 2")
+        string(SUBSTRING "${le_hex}" ${source_index} 2 byte_hex)
+        string(APPEND be_hex "${byte_hex}")
+    endforeach()
+
+    if(byte_count EQUAL 8)
+        string(SUBSTRING "${be_hex}" 0 8 be_high_hex)
+        if(NOT be_high_hex STREQUAL "00000000")
+            message(FATAL_ERROR "AssetCookMeshSmoke value at offset ${byte_offset} exceeds the supported range")
+        endif()
+    endif()
+
+    math(EXPR parsed_value "0x${be_hex}")
+    set(${out_var} "${parsed_value}" PARENT_SCOPE)
+endfunction()
+
+function(nvmesh_read_hex_bytes hex_data relative_offset byte_count out_var)
+    nvmesh_relative_range(${relative_offset} ${byte_count} byte_offset)
+    math(EXPR hex_offset "${byte_offset} * 2")
+    math(EXPR hex_count "${byte_count} * 2")
+    string(SUBSTRING "${hex_data}" ${hex_offset} ${hex_count} byte_hex)
+    set(${out_var} "${byte_hex}" PARENT_SCOPE)
+endfunction()
+
+# Follows one material StringRef and requires it to resolve to an exact cooked texture path.
+function(expect_material_string_ref role_label role_offset expected_path)
+    math(EXPR record_offset "${MATERIAL_TABLE_OFFSET} + ${role_offset}")
+    math(EXPR string_offset_field "${record_offset} + ${NVMESH_STRING_REF_OFFSET}")
+    math(EXPR string_length_field "${record_offset} + ${NVMESH_STRING_REF_LENGTH}")
+
+    nvmesh_read_le_uint("${PACKAGE_HEX}" ${string_offset_field} 8 string_offset)
+    nvmesh_read_le_uint("${PACKAGE_HEX}" ${string_length_field} 4 string_length)
+
+    string(LENGTH "${expected_path}" expected_length)
+    if(NOT string_length EQUAL expected_length)
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke ${role_label} StringRef length ${string_length} != expected ${expected_length}")
+    endif()
+
+    math(EXPR string_end "${string_offset} + ${string_length}")
+    if(string_end GREATER STRING_TABLE_SIZE)
+        message(FATAL_ERROR "AssetCookMeshSmoke ${role_label} StringRef escapes the string table")
+    endif()
+
+    math(EXPR relative_offset "${STRING_TABLE_OFFSET} + ${string_offset}")
+    nvmesh_read_hex_bytes("${PACKAGE_HEX}" ${relative_offset} ${string_length} actual_hex)
+
+    run_mesh_json_helper("Utf8ToLowerHex" expected_hex -InputText "${expected_path}")
+    if(NOT actual_hex STREQUAL expected_hex)
+        message(FATAL_ERROR
+            "AssetCookMeshSmoke ${role_label} StringRef does not resolve to ${expected_path}")
+    endif()
+
+    message(STATUS "AssetCookMeshSmoke ${role_label} StringRef resolves to ${expected_path}")
+endfunction()
+
+cook_model_expect_success("baseline" "${SOURCE_GLTF}" "${OUTPUT_PACKAGE}" "${OUTPUT_MANIFEST}")
+
+run_mesh_json_helper("ReadManifestIdentity" manifest_identity_output
+    -InputPath "${OUTPUT_MANIFEST}")
+split_json_helper_output("${manifest_identity_output}" 3 manifest_identity_values)
+list(GET manifest_identity_values 0 manifest_kind)
+list(GET manifest_identity_values 1 manifest_entry_type)
+list(GET manifest_identity_values 2 manifest_format)
+
+if(NOT manifest_kind STREQUAL "model")
+    message(FATAL_ERROR "AssetCookMeshSmoke positive manifest kind mismatch: ${manifest_kind}")
+endif()
+
+if(NOT manifest_entry_type STREQUAL "Msh0")
+    message(FATAL_ERROR "AssetCookMeshSmoke positive manifest entry_type mismatch: ${manifest_entry_type}")
+endif()
+
+if(NOT manifest_format STREQUAL "${MESH_FORMAT}")
+    message(FATAL_ERROR "AssetCookMeshSmoke positive manifest format mismatch: ${manifest_format}")
+endif()
+
+# Decode the NVPACK v1 framing, then follow every NVMESH material StringRef to its exact target.
+decode_mesh_package("${OUTPUT_PACKAGE}" "${ENTRY_NAME}" PAYLOAD_BASE PAYLOAD_SIZE)
+if(PAYLOAD_SIZE LESS 256)
+    message(FATAL_ERROR "AssetCookMeshSmoke baseline NVMESH payload is smaller than its required header")
+endif()
+file(READ "${OUTPUT_PACKAGE}" PACKAGE_HEX HEX)
+nvmesh_read_le_uint("${PACKAGE_HEX}" ${NVMESH_HEADER_MATERIAL_TABLE_OFFSET} 8 MATERIAL_TABLE_OFFSET)
+nvmesh_read_le_uint("${PACKAGE_HEX}" ${NVMESH_HEADER_STRING_TABLE_OFFSET} 8 STRING_TABLE_OFFSET)
+nvmesh_read_le_uint("${PACKAGE_HEX}" ${NVMESH_HEADER_STRING_TABLE_SIZE} 8 STRING_TABLE_SIZE)
+nvmesh_read_le_uint("${PACKAGE_HEX}" ${NVMESH_HEADER_MATERIAL_COUNT} 4 material_count)
+
+nvmesh_read_le_uint("${PACKAGE_HEX}" ${NVMESH_HEADER_VERTEX_COUNT} 4 baseline_vertex_count)
+nvmesh_read_le_uint("${PACKAGE_HEX}" ${NVMESH_HEADER_INDEX_COUNT} 4 baseline_index_count)
+nvmesh_read_le_uint("${PACKAGE_HEX}" ${NVMESH_HEADER_CLUSTER_COUNT} 4 baseline_cluster_count)
+
+if(NOT baseline_vertex_count EQUAL 67042 OR
+   NOT baseline_index_count EQUAL 198366 OR
+   NOT baseline_cluster_count EQUAL 25562)
+    message(FATAL_ERROR
+        "AssetCookMeshSmoke baseline counts changed: vertices=${baseline_vertex_count} "
+        "indices=${baseline_index_count} clusters=${baseline_cluster_count}")
+endif()
+
+message(STATUS
+    "AssetCookMeshSmoke baseline counts: ${baseline_vertex_count}/${baseline_index_count}/${baseline_cluster_count}")
+
+if(NOT material_count EQUAL 1)
+    message(FATAL_ERROR "AssetCookMeshSmoke expected exactly one NVMESH material, found ${material_count}")
+endif()
+
+expect_material_string_ref("albedo" ${NVMESH_MATERIAL_ALBEDO_TEXTURE}
+    "Models/Rendering3DTestSilverGltf/textures/silver_albedo.png")
+expect_material_string_ref("normal" ${NVMESH_MATERIAL_NORMAL_TEXTURE}
+    "Models/Rendering3DTestSilverGltf/textures/silver_normal-ogl.png")
+expect_material_string_ref("ARM" ${NVMESH_MATERIAL_ARM_TEXTURE}
+    "Models/Rendering3DTestSilverGltf/textures/silver_arm.png")
+
+# Prove the package parser rejects framing corruption independently of AssetCook failures.
+set(CORRUPT_FOURCC_PACKAGE "${SMOKE_DIR}/CorruptMsh0FourCC.nvpkg")
+configure_file("${OUTPUT_PACKAGE}" "${CORRUPT_FOURCC_PACKAGE}" COPYONLY)
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+        "$bytes = [System.IO.File]::ReadAllBytes('${CORRUPT_FOURCC_PACKAGE}'); $entry = [int][BitConverter]::ToUInt64($bytes, 40); $bytes[$entry + 12] = [byte]($bytes[$entry + 12] -bxor 1); [System.IO.File]::WriteAllBytes('${CORRUPT_FOURCC_PACKAGE}', $bytes)"
+    RESULT_VARIABLE corrupt_fourcc_write_result
+    OUTPUT_VARIABLE corrupt_fourcc_write_stdout
+    ERROR_VARIABLE corrupt_fourcc_write_stderr
+)
+if(NOT corrupt_fourcc_write_result EQUAL 0)
+    message(STATUS "${corrupt_fourcc_write_stdout}")
+    message(STATUS "${corrupt_fourcc_write_stderr}")
+    message(FATAL_ERROR "AssetCookMeshSmoke failed to create the corrupt FourCC fixture")
+endif()
+
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File "${PACKAGE_DECODER}"
+        -PackagePath "${CORRUPT_FOURCC_PACKAGE}"
+        -ExpectedName "${ENTRY_NAME}"
+    RESULT_VARIABLE corrupt_fourcc_result
+    OUTPUT_VARIABLE corrupt_fourcc_stdout
+    ERROR_VARIABLE corrupt_fourcc_stderr
+)
+if("${corrupt_fourcc_result}" STREQUAL "0")
+    message(FATAL_ERROR "AssetCookMeshSmoke decoder accepted a corrupt Msh0 FourCC")
+endif()
+set(corrupt_fourcc_output "${corrupt_fourcc_stdout}${corrupt_fourcc_stderr}")
+string(FIND "${corrupt_fourcc_output}" "Msh0" corrupt_fourcc_diagnostic_offset)
+if(corrupt_fourcc_diagnostic_offset EQUAL -1)
+    message(STATUS "${corrupt_fourcc_output}")
+    message(FATAL_ERROR "AssetCookMeshSmoke corrupt FourCC rejection did not diagnose Msh0")
+endif()
+message(STATUS "AssetCookMeshSmoke package decoder rejected the corrupt Msh0 FourCC fixture")
+
+set(SHORT_STORED_SIZE_PACKAGE "${SMOKE_DIR}/ShortMsh0StoredSize.nvpkg")
+configure_file("${OUTPUT_PACKAGE}" "${SHORT_STORED_SIZE_PACKAGE}" COPYONLY)
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+        "$bytes = [System.IO.File]::ReadAllBytes('${SHORT_STORED_SIZE_PACKAGE}'); $entry = [int][BitConverter]::ToUInt64($bytes, 40); $stored = [BitConverter]::ToUInt64($bytes, $entry + 32); $shortened = [uint64]($stored - 8); [BitConverter]::GetBytes($shortened).CopyTo($bytes, $entry + 32); [BitConverter]::GetBytes($shortened).CopyTo($bytes, $entry + 40); [System.IO.File]::WriteAllBytes('${SHORT_STORED_SIZE_PACKAGE}', $bytes)"
+    RESULT_VARIABLE short_stored_size_write_result
+    OUTPUT_VARIABLE short_stored_size_write_stdout
+    ERROR_VARIABLE short_stored_size_write_stderr
+)
+if(NOT short_stored_size_write_result EQUAL 0)
+    message(STATUS "${short_stored_size_write_stdout}")
+    message(STATUS "${short_stored_size_write_stderr}")
+    message(FATAL_ERROR "AssetCookMeshSmoke failed to create the short StoredSize fixture")
+endif()
+
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File "${PACKAGE_DECODER}"
+        -PackagePath "${SHORT_STORED_SIZE_PACKAGE}"
+        -ExpectedName "${ENTRY_NAME}"
+    RESULT_VARIABLE short_stored_size_result
+    OUTPUT_VARIABLE short_stored_size_stdout
+    ERROR_VARIABLE short_stored_size_stderr
+)
+if("${short_stored_size_result}" STREQUAL "0")
+    message(FATAL_ERROR "AssetCookMeshSmoke decoder accepted a short Msh0 StoredSize")
+endif()
+set(short_stored_size_output "${short_stored_size_stdout}${short_stored_size_stderr}")
+string(FIND "${short_stored_size_output}" "NVMESH FileSize" short_stored_size_diagnostic_offset)
+if(short_stored_size_diagnostic_offset EQUAL -1)
+    message(STATUS "${short_stored_size_output}")
+    message(FATAL_ERROR "AssetCookMeshSmoke short StoredSize rejection did not diagnose NVMESH FileSize")
+endif()
+message(STATUS "AssetCookMeshSmoke package decoder rejected the short Msh0 StoredSize fixture")
+
+# The package source_hash must cover the external buffer bytes, not only the glTF JSON.
+set(HASH_DIR "${SMOKE_DIR}/SourceHash")
+set(HASH_BASELINE_DIR "${HASH_DIR}/Baseline")
+set(HASH_MUTATED_DIR "${HASH_DIR}/MutatedBuffer")
+foreach(hash_case_dir IN ITEMS "${HASH_BASELINE_DIR}" "${HASH_MUTATED_DIR}")
+    file(MAKE_DIRECTORY "${hash_case_dir}")
+    file(MAKE_DIRECTORY "${hash_case_dir}/Cooked")
+    configure_file("${SOURCE_GLTF}" "${hash_case_dir}/Rendering3DTestSilverGltf.gltf" COPYONLY)
+    configure_file("${SOURCE_BIN}" "${hash_case_dir}/Rendering3DTestSilverGltf.bin" COPYONLY)
+endforeach()
+
+file(READ "${HASH_BASELINE_DIR}/Rendering3DTestSilverGltf.gltf" hash_baseline_gltf_hex HEX)
+file(READ "${HASH_MUTATED_DIR}/Rendering3DTestSilverGltf.gltf" hash_mutated_gltf_hex HEX)
+if(NOT hash_baseline_gltf_hex STREQUAL hash_mutated_gltf_hex)
+    message(FATAL_ERROR "AssetCookMeshSmoke source_hash cases must share byte-identical glTF JSON")
+endif()
+
+set(MUTATED_BIN "${HASH_MUTATED_DIR}/Rendering3DTestSilverGltf.bin")
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+        "$bytes = [System.IO.File]::ReadAllBytes('${MUTATED_BIN}'); $bytes[0] = [byte]($bytes[0] -bxor 1); [System.IO.File]::WriteAllBytes('${MUTATED_BIN}', $bytes)"
+    RESULT_VARIABLE mutate_result
+    OUTPUT_VARIABLE mutate_stdout
+    ERROR_VARIABLE mutate_stderr
+)
+if(NOT mutate_result EQUAL 0)
+    message(STATUS "${mutate_stdout}")
+    message(STATUS "${mutate_stderr}")
+    message(FATAL_ERROR "AssetCookMeshSmoke failed to mutate the external buffer: ${mutate_result}")
+endif()
+
+file(READ "${HASH_BASELINE_DIR}/Rendering3DTestSilverGltf.bin" hash_baseline_bin_hex HEX)
+file(READ "${MUTATED_BIN}" hash_mutated_bin_hex HEX)
+if(hash_baseline_bin_hex STREQUAL hash_mutated_bin_hex)
+    message(FATAL_ERROR "AssetCookMeshSmoke buffer mutation did not change the external buffer")
+endif()
+
+cook_model_expect_success("source_hash_baseline"
+    "${HASH_BASELINE_DIR}/Rendering3DTestSilverGltf.gltf"
+    "${HASH_BASELINE_DIR}/Cooked/Rendering3DTestSilverGltf.nvpkg"
+    "${HASH_BASELINE_DIR}/manifest.json")
+cook_model_expect_success("source_hash_mutated_buffer"
+    "${HASH_MUTATED_DIR}/Rendering3DTestSilverGltf.gltf"
+    "${HASH_MUTATED_DIR}/Cooked/Rendering3DTestSilverGltf.nvpkg"
+    "${HASH_MUTATED_DIR}/manifest.json")
+
+run_mesh_json_helper("ReadHashPair" source_hash_output
+    -InputPath "${HASH_BASELINE_DIR}/manifest.json"
+    -SecondInputPath "${HASH_MUTATED_DIR}/manifest.json")
+split_json_helper_output("${source_hash_output}" 4 source_hash_values)
+list(GET source_hash_values 0 hash_baseline_source_hash)
+list(GET source_hash_values 1 hash_baseline_cooked_hash)
+list(GET source_hash_values 2 hash_mutated_source_hash)
+list(GET source_hash_values 3 hash_mutated_cooked_hash)
+
+if(hash_baseline_source_hash STREQUAL hash_mutated_source_hash)
+    message(FATAL_ERROR
+        "AssetCookMeshSmoke source_hash ignores external buffer bytes: ${hash_baseline_source_hash}")
+endif()
+
+if(hash_baseline_cooked_hash STREQUAL hash_mutated_cooked_hash)
+    message(FATAL_ERROR
+        "AssetCookMeshSmoke cooked_hash ignores external buffer bytes: ${hash_baseline_cooked_hash}")
+endif()
+
+message(STATUS "AssetCookMeshSmoke source_hash changed with the external buffer: "
+    "${hash_baseline_source_hash} -> ${hash_mutated_source_hash}")
+
+# A UTF-8 BOM changes the source hash but is stripped before parsing, so the cooked mesh stays identical.
+set(BOM_DIR "${SMOKE_DIR}/Bom")
+set(BOM_PLAIN_DIR "${BOM_DIR}/Plain")
+set(BOM_PREFIXED_DIR "${BOM_DIR}/Prefixed")
+foreach(bom_case_dir IN ITEMS "${BOM_PLAIN_DIR}" "${BOM_PREFIXED_DIR}")
+    file(MAKE_DIRECTORY "${bom_case_dir}/Cooked")
+    configure_file("${SOURCE_BIN}" "${bom_case_dir}/Rendering3DTestSilverGltf.bin" COPYONLY)
+endforeach()
+configure_file("${SOURCE_GLTF}" "${BOM_PLAIN_DIR}/Rendering3DTestSilverGltf.gltf" COPYONLY)
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command
+        "$source = [System.IO.File]::ReadAllBytes('${SOURCE_GLTF}'); $bytes = [byte[]]::new($source.Length + 3); $bytes[0] = 0xef; $bytes[1] = 0xbb; $bytes[2] = 0xbf; [System.Array]::Copy($source, 0, $bytes, 3, $source.Length); [System.IO.File]::WriteAllBytes('${BOM_PREFIXED_DIR}/Rendering3DTestSilverGltf.gltf', $bytes)"
+    RESULT_VARIABLE bom_write_result
+    OUTPUT_VARIABLE bom_write_stdout
+    ERROR_VARIABLE bom_write_stderr
+)
+if(NOT bom_write_result EQUAL 0)
+    message(STATUS "${bom_write_stdout}")
+    message(STATUS "${bom_write_stderr}")
+    message(FATAL_ERROR "AssetCookMeshSmoke failed to create BOM-prefixed glTF: ${bom_write_result}")
+endif()
+
+cook_model_expect_success("bom_plain"
+    "${BOM_PLAIN_DIR}/Rendering3DTestSilverGltf.gltf"
+    "${BOM_PLAIN_DIR}/Cooked/Rendering3DTestSilverGltf.nvpkg"
+    "${BOM_PLAIN_DIR}/manifest.json")
+cook_model_expect_success("bom_prefixed"
+    "${BOM_PREFIXED_DIR}/Rendering3DTestSilverGltf.gltf"
+    "${BOM_PREFIXED_DIR}/Cooked/Rendering3DTestSilverGltf.nvpkg"
+    "${BOM_PREFIXED_DIR}/manifest.json")
+
+run_mesh_json_helper("ReadHashPair" bom_hash_output
+    -InputPath "${BOM_PLAIN_DIR}/manifest.json"
+    -SecondInputPath "${BOM_PREFIXED_DIR}/manifest.json")
+split_json_helper_output("${bom_hash_output}" 4 bom_hash_values)
+list(GET bom_hash_values 0 bom_plain_source_hash)
+list(GET bom_hash_values 1 bom_plain_cooked_hash)
+list(GET bom_hash_values 2 bom_prefixed_source_hash)
+list(GET bom_hash_values 3 bom_prefixed_cooked_hash)
+if(bom_plain_source_hash STREQUAL bom_prefixed_source_hash)
+    message(FATAL_ERROR "AssetCookMeshSmoke BOM bytes did not change source_hash")
+endif()
+if(NOT bom_plain_cooked_hash STREQUAL bom_prefixed_cooked_hash)
+    message(FATAL_ERROR "AssetCookMeshSmoke BOM bytes changed cooked_hash")
+endif()
+message(STATUS "AssetCookMeshSmoke BOM characterization preserved cooked hash ${bom_plain_cooked_hash}")
+
+# Synthetic binary fixtures and package decoding run from a temporary PowerShell script under SMOKE_DIR.
+set(SYNTHETIC_SCRIPT "${SMOKE_DIR}/AssetCookMeshSynthetic.ps1")
+file(WRITE "${SYNTHETIC_SCRIPT}" [=[
+param(
+    [Parameter(Mandatory = $true)][string]$AssetCookExe,
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$PackageDecoder
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Assert-PayloadRange(
+    [byte[]]$Bytes,
+    [int64]$PayloadOffset,
+    [int64]$PayloadSize,
+    [int64]$RelativeOffset,
+    [int64]$Size)
+{
+    if ($RelativeOffset -lt 0 -or $RelativeOffset -gt $PayloadSize -or
+        $Size -gt ($PayloadSize - $RelativeOffset))
+    {
+        throw "NVMESH payload read out of range: offset=$RelativeOffset size=$Size FileSize=$PayloadSize"
+    }
+    if ($PayloadOffset -lt 0 -or $PayloadOffset -gt $Bytes.LongLength -or
+        $PayloadSize -gt ($Bytes.LongLength - $PayloadOffset))
+    {
+        throw "NVMESH payload range offset=$PayloadOffset size=$PayloadSize exceeds package size $($Bytes.LongLength)"
+    }
+}
+
+function Read-UInt32(
+    [byte[]]$Bytes,
+    [int64]$PayloadOffset,
+    [int64]$PayloadSize,
+    [int64]$RelativeOffset)
+{
+    Assert-PayloadRange $Bytes $PayloadOffset $PayloadSize $RelativeOffset 4
+    return [BitConverter]::ToUInt32($Bytes, [int]($PayloadOffset + $RelativeOffset))
+}
+
+function Read-UInt64(
+    [byte[]]$Bytes,
+    [int64]$PayloadOffset,
+    [int64]$PayloadSize,
+    [int64]$RelativeOffset)
+{
+    Assert-PayloadRange $Bytes $PayloadOffset $PayloadSize $RelativeOffset 8
+    return [BitConverter]::ToUInt64($Bytes, [int]($PayloadOffset + $RelativeOffset))
+}
+
+function Read-Single(
+    [byte[]]$Bytes,
+    [int64]$PayloadOffset,
+    [int64]$PayloadSize,
+    [int64]$RelativeOffset)
+{
+    Assert-PayloadRange $Bytes $PayloadOffset $PayloadSize $RelativeOffset 4
+    return [BitConverter]::ToSingle($Bytes, [int]($PayloadOffset + $RelativeOffset))
+}
+
+function Invoke-PackageDecoder([string]$PackagePath, [string]$ExpectedName)
+{
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $output = & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+        -File $PackageDecoder -PackagePath $PackagePath -ExpectedName $ExpectedName 2>&1
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($exitCode -ne 0)
+    {
+        throw "Package decoder failed for '$PackagePath' with exit code $exitCode`n$($output -join "`n")"
+    }
+
+    $lines = @($output | ForEach-Object { "$($_)".TrimEnd("`r") } | Where-Object { $_ -ne '' })
+    if ($lines.Count -ne 2 -or $lines[0] -notmatch '^PAYLOAD_OFFSET=([0-9]+)$')
+    {
+        throw "Package decoder returned invalid output for '$PackagePath': $($lines -join '; ')"
+    }
+    $payloadOffset = [int64]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
+    if ($lines[1] -notmatch '^PAYLOAD_SIZE=([0-9]+)$')
+    {
+        throw "Package decoder returned invalid payload size for '$PackagePath': $($lines[1])"
+    }
+    $payloadSize = [int64]::Parse($Matches[1], [System.Globalization.CultureInfo]::InvariantCulture)
+    return [pscustomobject]@{ Offset = $payloadOffset; Size = $payloadSize }
+}
+
+function Assert-Near([string]$Label, [single]$Actual, [single]$Expected, [single]$Epsilon)
+{
+    if ([Math]::Abs($Actual - $Expected) -gt $Epsilon)
+    {
+        throw "$Label mismatch: actual=$Actual expected=$Expected epsilon=$Epsilon"
+    }
+}
+
+function Invoke-MeshCook([string]$CaseName, [string]$InputPath)
+{
+    $caseDir = Join-Path $Root $CaseName
+    [System.IO.Directory]::CreateDirectory($caseDir) | Out-Null
+    $packagePath = Join-Path $caseDir "$CaseName.nvpkg"
+    $manifestPath = Join-Path $caseDir "$CaseName.manifest.json"
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $output = & $AssetCookExe --input $InputPath --out $packagePath --manifest $manifestPath `
+        --logical "Models/Synthetic/$CaseName.gltf" --kind model --entry "Models/Synthetic/$CaseName.nvmesh" `
+        --entry-type Msh0 --format nvmesh.v0.mesh3d.pnt.u32.clustered --variant default 2>&1 | Out-String
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($exitCode -ne 0)
+    {
+        throw "Synthetic case $CaseName failed with exit code $exitCode`n$output"
+    }
+    return $packagePath
+}
+
+function Write-OneTriangleFixture([string]$CaseDir)
+{
+    [System.IO.Directory]::CreateDirectory($CaseDir) | Out-Null
+    $binPath = Join-Path $CaseDir 'one_triangle.bin'
+    $stream = [System.IO.MemoryStream]::new()
+    $writer = [System.IO.BinaryWriter]::new($stream)
+    foreach ($value in [single[]](0,0,0, 1,0,0, 0,1,0)) { $writer.Write($value) }
+    foreach ($value in [single[]](0,0,1, 0,0,1, 0,0,1)) { $writer.Write($value) }
+    foreach ($value in [single[]](0,0, 0,0, 0,0)) { $writer.Write($value) }
+    foreach ($value in [uint16[]](0,1,2)) { $writer.Write($value) }
+    $writer.Flush()
+    [System.IO.File]::WriteAllBytes($binPath, $stream.ToArray())
+    $writer.Dispose()
+    $stream.Dispose()
+
+    $json = @'
+{"asset":{"version":"2.0"},"buffers":[{"uri":"one_triangle.bin","byteLength":102}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":36},{"buffer":0,"byteOffset":72,"byteLength":24},{"buffer":0,"byteOffset":96,"byteLength":6}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":3,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":3,"type":"SCALAR"}],"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"mode":4}]}]}
+'@
+    $gltfPath = Join-Path $CaseDir 'one_triangle.gltf'
+    [System.IO.File]::WriteAllText($gltfPath, $json, [System.Text.UTF8Encoding]::new($false))
+    return $gltfPath
+}
+
+function Write-GeneratedFixture(
+    [string]$CaseDir,
+    [string]$BaseName,
+    [System.Collections.Generic.List[single]]$Positions,
+    [System.Collections.Generic.List[uint32]]$Indices)
+{
+    [System.IO.Directory]::CreateDirectory($CaseDir) | Out-Null
+    $vertexCount = [int]($Positions.Count / 3)
+    $binPath = Join-Path $CaseDir "$BaseName.bin"
+    $stream = [System.IO.MemoryStream]::new()
+    $writer = [System.IO.BinaryWriter]::new($stream)
+    foreach ($value in $Positions) { $writer.Write($value) }
+    for ($vertex = 0; $vertex -lt $vertexCount; ++$vertex)
+    {
+        $writer.Write([single]0)
+        $writer.Write([single]0)
+        $writer.Write([single]1)
+    }
+    for ($vertex = 0; $vertex -lt $vertexCount; ++$vertex)
+    {
+        $writer.Write([single]0)
+        $writer.Write([single]0)
+    }
+    foreach ($index in $Indices) { $writer.Write($index) }
+    $writer.Flush()
+    [System.IO.File]::WriteAllBytes($binPath, $stream.ToArray())
+    $writer.Dispose()
+    $stream.Dispose()
+
+    $positionBytes = $vertexCount * 12
+    $normalOffset = $positionBytes
+    $normalBytes = $vertexCount * 12
+    $texCoordOffset = $normalOffset + $normalBytes
+    $texCoordBytes = $vertexCount * 8
+    $indexOffset = $texCoordOffset + $texCoordBytes
+    $indexBytes = $Indices.Count * 4
+    $totalBytes = $indexOffset + $indexBytes
+    $json = @"
+{"asset":{"version":"2.0"},"buffers":[{"uri":"$BaseName.bin","byteLength":$totalBytes}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":$positionBytes},{"buffer":0,"byteOffset":$normalOffset,"byteLength":$normalBytes},{"buffer":0,"byteOffset":$texCoordOffset,"byteLength":$texCoordBytes},{"buffer":0,"byteOffset":$indexOffset,"byteLength":$indexBytes}],"accessors":[{"bufferView":0,"componentType":5126,"count":$vertexCount,"type":"VEC3"},{"bufferView":1,"componentType":5126,"count":$vertexCount,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":$vertexCount,"type":"VEC2"},{"bufferView":3,"componentType":5125,"count":$($Indices.Count),"type":"SCALAR"}],"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"mode":4}]}]}
+"@
+    $gltfPath = Join-Path $CaseDir "$BaseName.gltf"
+    [System.IO.File]::WriteAllText($gltfPath, $json, [System.Text.UTF8Encoding]::new($false))
+    return $gltfPath
+}
+
+$fixtureDir = Join-Path $Root 'OneTriangleFixture'
+$gltfPath = Write-OneTriangleFixture $fixtureDir
+$packagePath = Invoke-MeshCook 'one_triangle' $gltfPath
+$packageBytes = [System.IO.File]::ReadAllBytes($packagePath)
+$decodedPackage = Invoke-PackageDecoder $packagePath 'Models/Synthetic/one_triangle.nvmesh'
+$payloadOffset = $decodedPackage.Offset
+$payloadSize = $decodedPackage.Size
+if ($payloadSize -lt 256) { throw 'one_triangle NVMESH payload is smaller than its required header' }
+if ((Read-UInt32 $packageBytes $payloadOffset $payloadSize 152) -ne 3 -or
+    (Read-UInt32 $packageBytes $payloadOffset $payloadSize 156) -ne 3 -or
+    (Read-UInt32 $packageBytes $payloadOffset $payloadSize 168) -ne 1)
+{
+    throw 'one_triangle NVMESH header counts changed'
+}
+$indexPayloadOffset = [int64](Read-UInt64 $packageBytes $payloadOffset $payloadSize 128)
+$actualIndices = @(
+    (Read-UInt32 $packageBytes $payloadOffset $payloadSize $indexPayloadOffset)
+    (Read-UInt32 $packageBytes $payloadOffset $payloadSize ($indexPayloadOffset + 4))
+    (Read-UInt32 $packageBytes $payloadOffset $payloadSize ($indexPayloadOffset + 8))
+)
+if (($actualIndices -join ',') -ne '0,2,1')
+{
+    throw "one_triangle cooked winding changed: $($actualIndices -join ',')"
+}
+Write-Output "AssetCookMeshSmoke one-triangle winding: [$($actualIndices -join ',')]"
+
+$splitPositions = [System.Collections.Generic.List[single]]::new()
+$splitIndices = [System.Collections.Generic.List[uint32]]::new()
+for ($triangle = 0; $triangle -lt 43; ++$triangle)
+{
+    $x = if ($triangle -eq 42) { [single]1000 } else { [single](2 * $triangle) }
+    $baseVertex = [uint32](3 * $triangle)
+    foreach ($value in [single[]]($x,0,0, ($x + 1),0,0, $x,1,0)) { $splitPositions.Add($value) }
+    $splitIndices.Add($baseVertex)
+    $splitIndices.Add($baseVertex + 1)
+    $splitIndices.Add($baseVertex + 2)
+}
+$splitFixtureDir = Join-Path $Root 'Split129Fixture'
+$splitGltfPath = Write-GeneratedFixture $splitFixtureDir 'split_129' $splitPositions $splitIndices
+$splitPackagePath = Invoke-MeshCook 'split_129' $splitGltfPath
+$splitBytes = [System.IO.File]::ReadAllBytes($splitPackagePath)
+$splitDecodedPackage = Invoke-PackageDecoder $splitPackagePath 'Models/Synthetic/split_129.nvmesh'
+$splitPayload = $splitDecodedPackage.Offset
+$splitPayloadSize = $splitDecodedPackage.Size
+if ($splitPayloadSize -lt 256) { throw 'split_129 NVMESH payload is smaller than its required header' }
+if ((Read-UInt32 $splitBytes $splitPayload $splitPayloadSize 152) -ne 129 -or
+    (Read-UInt32 $splitBytes $splitPayload $splitPayloadSize 156) -ne 129 -or
+    (Read-UInt32 $splitBytes $splitPayload $splitPayloadSize 168) -ne 2)
+{
+    throw 'split_129 NVMESH header counts must be 129/129/2'
+}
+$splitClusterTable = [int64](Read-UInt64 $splitBytes $splitPayload $splitPayloadSize 80)
+$splitIndexPayload = [int64](Read-UInt64 $splitBytes $splitPayload $splitPayloadSize 128)
+$expectedRanges = @(@(0,126), @(126,3))
+$expectedBounds = @(@(41.5,0.5,0,41.50301194), @(1000.5,0.5,0,0.70710678))
+for ($clusterIndex = 0; $clusterIndex -lt 2; ++$clusterIndex)
+{
+    $record = $splitClusterTable + $clusterIndex * 80
+    $actualOffset = Read-UInt32 $splitBytes $splitPayload $splitPayloadSize ($record + 32)
+    $actualCount = Read-UInt32 $splitBytes $splitPayload $splitPayloadSize ($record + 36)
+    $actualVertexOffset = Read-UInt32 $splitBytes $splitPayload $splitPayloadSize ($record + 40)
+    $actualVertexCount = Read-UInt32 $splitBytes $splitPayload $splitPayloadSize ($record + 44)
+    if ($actualOffset -ne $expectedRanges[$clusterIndex][0] -or
+        $actualCount -ne $expectedRanges[$clusterIndex][1] -or
+        $actualVertexOffset -ne 0 -or $actualVertexCount -ne 0)
+    {
+        throw "split_129 cluster $clusterIndex range/vertex fields changed"
+    }
+    Assert-Near "split_129 cluster $clusterIndex centerX" (Read-Single $splitBytes $splitPayload $splitPayloadSize ($record + 0)) $expectedBounds[$clusterIndex][0] 0.0001
+    Assert-Near "split_129 cluster $clusterIndex centerY" (Read-Single $splitBytes $splitPayload $splitPayloadSize ($record + 4)) $expectedBounds[$clusterIndex][1] 0.0001
+    Assert-Near "split_129 cluster $clusterIndex centerZ" (Read-Single $splitBytes $splitPayload $splitPayloadSize ($record + 8)) $expectedBounds[$clusterIndex][2] 0.0001
+    Assert-Near "split_129 cluster $clusterIndex radius" (Read-Single $splitBytes $splitPayload $splitPayloadSize ($record + 12)) $expectedBounds[$clusterIndex][3] 0.0001
+    Assert-Near "split_129 cluster $clusterIndex coneX" (Read-Single $splitBytes $splitPayload $splitPayloadSize ($record + 16)) 0 0.0001
+    Assert-Near "split_129 cluster $clusterIndex coneY" (Read-Single $splitBytes $splitPayload $splitPayloadSize ($record + 20)) 0 0.0001
+    Assert-Near "split_129 cluster $clusterIndex coneZ" (Read-Single $splitBytes $splitPayload $splitPayloadSize ($record + 24)) 1 0.0001
+    Assert-Near "split_129 cluster $clusterIndex cutoff" (Read-Single $splitBytes $splitPayload $splitPayloadSize ($record + 28)) 1 0.0001
+}
+for ($triangle = 0; $triangle -lt 43; ++$triangle)
+{
+    $indexOffset = $splitIndexPayload + $triangle * 12
+    $actualTriplet = @(
+        (Read-UInt32 $splitBytes $splitPayload $splitPayloadSize $indexOffset)
+        (Read-UInt32 $splitBytes $splitPayload $splitPayloadSize ($indexOffset + 4))
+        (Read-UInt32 $splitBytes $splitPayload $splitPayloadSize ($indexOffset + 8))
+    )
+    $baseVertex = 3 * $triangle
+    if (($actualTriplet -join ',') -ne "$baseVertex,$($baseVertex + 2),$($baseVertex + 1)")
+    {
+        throw "split_129 triangle $triangle winding/order changed: $($actualTriplet -join ',')"
+    }
+}
+Write-Output 'AssetCookMeshSmoke split_129 ranges, winding, bounds and cones validated'
+
+$boundaryPositions = [System.Collections.Generic.List[single]]::new()
+$boundaryIndices = [System.Collections.Generic.List[uint32]]::new()
+foreach ($value in [single[]](0,0,0)) { $boundaryPositions.Add($value) }
+for ($vertex = 0; $vertex -lt 127; ++$vertex)
+{
+    $angle = 2.0 * [Math]::PI * $vertex / 127.0
+    foreach ($value in [single[]]([Math]::Cos($angle), [Math]::Sin($angle), 0))
+    {
+        $boundaryPositions.Add($value)
+    }
+}
+for ($triangle = 0; $triangle -lt 128; ++$triangle)
+{
+    $first = [uint32](1 + ($triangle % 127))
+    $second = [uint32](1 + (($triangle + 1) % 127))
+    $boundaryIndices.Add(0)
+    $boundaryIndices.Add($first)
+    $boundaryIndices.Add($second)
+}
+$boundaryFixtureDir = Join-Path $Root 'Boundary128Fixture'
+$boundaryGltfPath = Write-GeneratedFixture $boundaryFixtureDir 'boundary_128' $boundaryPositions $boundaryIndices
+$boundaryPackagePath = Invoke-MeshCook 'boundary_128' $boundaryGltfPath
+$boundaryBytes = [System.IO.File]::ReadAllBytes($boundaryPackagePath)
+$boundaryDecodedPackage = Invoke-PackageDecoder $boundaryPackagePath 'Models/Synthetic/boundary_128.nvmesh'
+$boundaryPayload = $boundaryDecodedPackage.Offset
+$boundaryPayloadSize = $boundaryDecodedPackage.Size
+if ($boundaryPayloadSize -lt 256) { throw 'boundary_128 NVMESH payload is smaller than its required header' }
+if ((Read-UInt32 $boundaryBytes $boundaryPayload $boundaryPayloadSize 152) -ne 128 -or
+    (Read-UInt32 $boundaryBytes $boundaryPayload $boundaryPayloadSize 156) -ne 384 -or
+    (Read-UInt32 $boundaryBytes $boundaryPayload $boundaryPayloadSize 168) -ne 1)
+{
+    throw 'boundary_128 NVMESH header counts must be 128/384/1'
+}
+$boundaryClusterTable = [int64](Read-UInt64 $boundaryBytes $boundaryPayload $boundaryPayloadSize 80)
+$boundaryRecord = $boundaryClusterTable
+if ((Read-UInt32 $boundaryBytes $boundaryPayload $boundaryPayloadSize ($boundaryRecord + 32)) -ne 0 -or
+    (Read-UInt32 $boundaryBytes $boundaryPayload $boundaryPayloadSize ($boundaryRecord + 36)) -ne 384 -or
+    (Read-UInt32 $boundaryBytes $boundaryPayload $boundaryPayloadSize ($boundaryRecord + 40)) -ne 0 -or
+    (Read-UInt32 $boundaryBytes $boundaryPayload $boundaryPayloadSize ($boundaryRecord + 44)) -ne 0)
+{
+    throw 'boundary_128 must remain one 0/384 cluster with zero vertex fields'
+}
+Write-Output 'AssetCookMeshSmoke boundary_128 remained one 0/384 cluster'
+]=])
+
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File "${SYNTHETIC_SCRIPT}"
+        -AssetCookExe "${ASSET_COOK_EXE}"
+        -Root "${SMOKE_DIR}/Synthetic"
+        -PackageDecoder "${PACKAGE_DECODER}"
+    RESULT_VARIABLE synthetic_result
+    OUTPUT_VARIABLE synthetic_stdout
+    ERROR_VARIABLE synthetic_stderr
+)
+if(NOT synthetic_result EQUAL 0)
+    message(STATUS "${synthetic_stdout}")
+    message(STATUS "${synthetic_stderr}")
+    message(FATAL_ERROR "AssetCookMeshSmoke synthetic characterization failed: ${synthetic_result}")
+endif()
+message(STATUS "${synthetic_stdout}")
+
+set(INVALID_DIR "${SMOKE_DIR}/Invalid")
+file(MAKE_DIRECTORY "${INVALID_DIR}")
+file(MAKE_DIRECTORY "${INVALID_DIR}/Cooked")
+configure_file(
+    "${SOURCE_BIN}"
+    "${INVALID_DIR}/Rendering3DTestSilverGltf.bin"
+    COPYONLY
+)
+
+# An explicit textureInfo.texCoord of 0 is the default UV set and must still cook.
+set(VALID_DIR "${SMOKE_DIR}/ValidVariants")
+file(MAKE_DIRECTORY "${VALID_DIR}")
+file(MAKE_DIRECTORY "${VALID_DIR}/Cooked")
+configure_file("${SOURCE_BIN}" "${VALID_DIR}/Rendering3DTestSilverGltf.bin" COPYONLY)
+
+run_mesh_json_helper("GenerateVariants" variant_generation_output
+    -SourcePath "${SOURCE_GLTF}"
+    -ValidDir "${VALID_DIR}"
+    -InvalidDir "${INVALID_DIR}")
+
+set(tex_coord_zero_path "${VALID_DIR}/base_color_tex_coord_zero.gltf")
+cook_model_expect_success("base_color_tex_coord_zero" "${tex_coord_zero_path}"
+    "${VALID_DIR}/Cooked/base_color_tex_coord_zero.nvpkg"
+    "${VALID_DIR}/base_color_tex_coord_zero.manifest.json")
+
+# extensionsRequired is compatible only when present as an empty string array.
+set(empty_required_path "${VALID_DIR}/extensions_required_empty.gltf")
+cook_model_expect_success("extensions_required_empty" "${empty_required_path}"
+    "${VALID_DIR}/Cooked/extensions_required_empty.nvpkg"
+    "${VALID_DIR}/extensions_required_empty.manifest.json")
+
+# Unknown optional primitive extensions retain their complete core fallback.
+set(optional_extension_path "${VALID_DIR}/optional_primitive_extension.gltf")
+cook_model_expect_success("optional_primitive_extension" "${optional_extension_path}"
+    "${VALID_DIR}/Cooked/optional_primitive_extension.nvpkg"
+    "${VALID_DIR}/optional_primitive_extension.manifest.json")
+
+# Node transforms remain outside the mesh-local payload policy.
+set(transformed_node_path "${VALID_DIR}/transformed_mesh_node.gltf")
+cook_model_expect_success("transformed_mesh_node" "${transformed_node_path}"
+    "${VALID_DIR}/Cooked/transformed_mesh_node.nvpkg"
+    "${VALID_DIR}/transformed_mesh_node.manifest.json")
+
+run_mesh_json_helper("ReadCookedHashTriple" mesh_local_hash_output
+    -InputPath "${OUTPUT_MANIFEST}"
+    -SecondInputPath "${VALID_DIR}/optional_primitive_extension.manifest.json"
+    -ThirdInputPath "${VALID_DIR}/transformed_mesh_node.manifest.json")
+split_json_helper_output("${mesh_local_hash_output}" 3 mesh_local_hash_values)
+list(GET mesh_local_hash_values 0 mesh_local_baseline_hash)
+list(GET mesh_local_hash_values 1 optional_extension_hash)
+list(GET mesh_local_hash_values 2 transformed_node_hash)
+if(NOT optional_extension_hash STREQUAL mesh_local_baseline_hash)
+    message(FATAL_ERROR "AssetCookMeshSmoke optional primitive fallback changed the cooked mesh hash")
+endif()
+if(NOT transformed_node_hash STREQUAL mesh_local_baseline_hash)
+    message(FATAL_ERROR "AssetCookMeshSmoke transformed mesh node changed the mesh-local cooked hash")
+endif()
+message(STATUS "AssetCookMeshSmoke optional fallback and transformed node preserved cooked hash "
+    "${mesh_local_baseline_hash}")
+
+set(malformed_required_null_path "${INVALID_DIR}/extensions_required_null.gltf")
+expect_model_cook_failure("extensions_required_null" "${malformed_required_null_path}"
+    "glTF extensionsRequired must be an array of strings")
+
+set(malformed_required_item_path "${INVALID_DIR}/extensions_required_non_string.gltf")
+expect_model_cook_failure("extensions_required_non_string" "${malformed_required_item_path}"
+    "glTF extensionsRequired must be an array of strings")
+
+set(unsupported_required_path "${INVALID_DIR}/extensions_required_nonempty.gltf")
+expect_model_cook_failure("extensions_required_nonempty" "${unsupported_required_path}"
+    "glTF required extensions are not supported")
+
+set(invalid_mode_path "${INVALID_DIR}/explicit_mode_not_triangles.gltf")
+expect_model_cook_failure("explicit_mode_not_triangles" "${invalid_mode_path}"
+    "glTF primitive must be indexed TRIANGLES with POSITION, NORMAL and TEXCOORD_0")
+
+set(data_uri_path "${INVALID_DIR}/data_uri_buffer.gltf")
+expect_model_cook_failure("data_uri_buffer" "${data_uri_path}"
+    "buffer URI data URI is not supported")
+
+set(traversal_path "${INVALID_DIR}/buffer_path_traversal.gltf")
+expect_model_cook_failure("buffer_path_traversal" "${traversal_path}"
+    "buffer URI must not contain empty, . or .. path segments")
+
+set(oversized_buffer_path "${INVALID_DIR}/buffer_byte_length_too_large.gltf")
+expect_model_cook_failure("buffer_byte_length_too_large" "${oversized_buffer_path}"
+    "glTF buffer file is smaller than its declared byteLength")
+
+set(sparse_path "${INVALID_DIR}/sparse_accessor.gltf")
+expect_model_cook_failure("sparse_accessor" "${sparse_path}"
+    "invalid or sparse glTF accessor at index 0")
+
+# accessor.byteOffset itself must honour the component-size alignment even when the
+# combined accessor + bufferView offset happens to be aligned (2 + 2 == 4).
+set(accessor_offset_path "${INVALID_DIR}/position_accessor_byte_offset.gltf")
+expect_model_cook_failure("position_accessor_byte_offset" "${accessor_offset_path}"
+    "POSITION accessor byteOffset must be a multiple of the component size")
+
+# A bufferView offset can be individually in range while making the combined absolute accessor offset invalid.
+set(absolute_offset_path "${INVALID_DIR}/position_absolute_byte_offset.gltf")
+expect_model_cook_failure("position_absolute_byte_offset" "${absolute_offset_path}"
+    "POSITION accessor absolute byteOffset must be a multiple of the component size")
+
+# Index data is tightly packed for this cooker: a strided index bufferView is rejected.
+set(index_stride_path "${INVALID_DIR}/index_buffer_view_byte_stride.gltf")
+expect_model_cook_failure("index_buffer_view_byte_stride" "${index_stride_path}"
+    "indices bufferView must not define byteStride")
+
+# NVMESH v0 stores a single UV set: a nonzero textureInfo.texCoord changes UV semantics.
+set(tex_coord_path "${INVALID_DIR}/base_color_tex_coord_nonzero.gltf")
+expect_model_cook_failure("base_color_tex_coord_nonzero" "${tex_coord_path}"
+    "albedo texture info texCoord must be 0")
+
+# textureInfo extensions such as KHR_texture_transform silently change UV semantics.
+set(tex_transform_path "${INVALID_DIR}/base_color_texture_transform.gltf")
+expect_model_cook_failure("base_color_texture_transform" "${tex_transform_path}"
+    "albedo texture info extensions are not supported")
+
+foreach(attribute_name IN ITEMS POSITION NORMAL TEXCOORD_0)
+    string(TOLOWER "${attribute_name}" attribute_case_name)
+    set(missing_attribute_path "${INVALID_DIR}/missing_${attribute_case_name}.gltf")
+    expect_model_cook_failure("missing_${attribute_case_name}" "${missing_attribute_path}"
+        "glTF primitive must be indexed TRIANGLES with POSITION, NORMAL and TEXCOORD_0")
+endforeach()
+
+set(missing_indices_path "${INVALID_DIR}/missing_indices.gltf")
+expect_model_cook_failure("missing_indices" "${missing_indices_path}"
+    "glTF primitive must be indexed TRIANGLES with POSITION, NORMAL and TEXCOORD_0")
+
+set(multiple_meshes_path "${INVALID_DIR}/multiple_meshes.gltf")
+expect_model_cook_failure("multiple_meshes" "${multiple_meshes_path}"
+    "NVMESH v0 requires exactly one glTF mesh")
+
+set(multiple_primitives_path "${INVALID_DIR}/multiple_primitives.gltf")
+expect_model_cook_failure("multiple_primitives" "${multiple_primitives_path}"
+    "NVMESH v0 requires exactly one glTF primitive")

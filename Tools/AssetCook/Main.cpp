@@ -1,5 +1,7 @@
+#include "MeshCooker.h"
 #include "TextureCooker.h"
 
+#include "Asset/CookedMeshFormat.h"
 #include "Asset/CookedTextureFormat.h"
 #include "Asset/AssetManifest.h"
 #include "Asset/AssetPackageFormat.h"
@@ -34,6 +36,7 @@ namespace
     using NorvesLib::Core::Asset::FormatAssetHashHex;
     using NorvesLib::Core::Asset::FormatAssetPackageFourCCText;
     using NorvesLib::Core::Asset::MakeAssetPackageFourCC;
+    using NorvesLib::Core::Asset::ParseCookedMesh;
     using NorvesLib::Core::Asset::ParseCookedTexture;
     using NorvesLib::Core::Asset::AssetPackageFormatV1::EndianMarker;
     using NorvesLib::Core::Asset::AssetPackageFormatV1::EntryRecordSize;
@@ -678,6 +681,73 @@ namespace
         return true;
     }
 
+    bool ValidateCookedMeshPayload(const std::vector<uint8_t>& expectedPayload, std::string& error)
+    {
+        const NorvesLib::Core::Container::Span<const uint8_t> span(expectedPayload.data(), expectedPayload.size());
+        const NorvesLib::Core::Asset::CookedMeshParseResult result =
+            ParseCookedMesh(AssetBlob::CopyBytes(span, "AssetCook mesh self-validation"));
+        if (!result.Succeeded())
+        {
+            error = "self-validation failed: cooked mesh parse failed: status=" +
+                    std::to_string(static_cast<int>(result.Status));
+            return false;
+        }
+
+        return true;
+    }
+
+    bool ValidateCookedMeshPackageOutput(const std::filesystem::path& packagePath,
+                                         const std::string& entryName,
+                                         AssetPackageFourCC entryType,
+                                         const std::vector<uint8_t>& expectedPayload,
+                                         std::string& error)
+    {
+        std::vector<uint8_t> packageBytes;
+        if (!ReadBinaryFile(packagePath, packageBytes, error))
+        {
+            return false;
+        }
+
+        NorvesLib::FileStream::Package package;
+        const NorvesLib::Core::Container::Span<const uint8_t> packageSpan(packageBytes.data(), packageBytes.size());
+        if (!package.LoadFromMemory(packageSpan))
+        {
+            error = "self-validation failed: mesh package parse failed";
+            return false;
+        }
+
+        NorvesLib::FileStream::PackageEntry entry;
+        if (!package.FindEntry(NorvesLib::Core::Container::AnsiString(entryName), entryType, entry))
+        {
+            error = "self-validation failed: mesh package entry name or type mismatch";
+            return false;
+        }
+
+        const uint64_t expectedHash = ComputeAssetPackagePayloadHash(expectedPayload.data(), expectedPayload.size());
+        if (entry.PayloadHash != expectedHash)
+        {
+            error = "self-validation failed: mesh package entry hash mismatch";
+            return false;
+        }
+
+        const AssetBlob blob = package.OpenEntry(entry);
+        if (!blob.IsValid() || !CompareBytes(blob.GetData(), blob.GetSize(), expectedPayload))
+        {
+            error = "self-validation failed: mesh package entry bytes mismatch";
+            return false;
+        }
+
+        const NorvesLib::Core::Asset::CookedMeshParseResult result = ParseCookedMesh(blob);
+        if (!result.Succeeded())
+        {
+            error = "self-validation failed: package cooked mesh parse failed: status=" +
+                    std::to_string(static_cast<int>(result.Status));
+            return false;
+        }
+
+        return true;
+    }
+
     bool ValidateManifestOutput(const std::filesystem::path &manifestPath,
                                 const std::string &manifestJson,
                                 std::string &error)
@@ -889,9 +959,23 @@ namespace
                 return false;
             }
         }
+        else if (outOptions.Kind == "model")
+        {
+            if (!NorvesLib::Tools::AssetCook::IsSupportedMeshCookFormat(outOptions.Format))
+            {
+                error = "--kind model requires --format nvmesh.v0.mesh3d.pnt.u32.clustered";
+                return false;
+            }
+
+            if (outOptions.EntryTypeText != "Msh0")
+            {
+                error = "--kind model requires --entry-type Msh0";
+                return false;
+            }
+        }
         else
         {
-            error = "--kind must be raw or texture";
+            error = "--kind must be raw, texture, or model";
             return false;
         }
 
@@ -907,6 +991,10 @@ namespace
             << "       AssetCook --input <image> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind texture --entry <entry.nvtex> --entry-type Tex0 "
             << "--format nvtex.v0.rgba8.srgb|nvtex.v0.rgba8.linear|nvtex.v0.rg8.linear|nvtex.v0.r8.linear "
+            << "--variant default\n"
+            << "       AssetCook --input <model.gltf> --out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind model --entry <entry.nvmesh> --entry-type Msh0 "
+            << "--format nvmesh.v0.mesh3d.pnt.u32.clustered "
             << "--variant default\n";
     }
 
@@ -988,7 +1076,7 @@ namespace
             return false;
         }
 
-        std::cout << "AssetCook wrote package=\"" << packagePath.generic_string()
+        std::cerr << "AssetCook wrote package=\"" << packagePath.generic_string()
                   << "\" manifest=\"" << manifestPath.generic_string()
                   << "\" bytes=" << inputBytes.size() << "\n";
         return true;
@@ -1101,7 +1189,7 @@ namespace
             return false;
         }
 
-        std::cout << "AssetCook wrote texture package=\"" << packagePath.generic_string()
+        std::cerr << "AssetCook wrote texture package=\"" << packagePath.generic_string()
                   << "\" manifest=\"" << manifestPath.generic_string()
                   << "\" source_bytes=" << inputBytes.size()
                   << " nvtex_bytes=" << textureResult.NvtexBytes.size()
@@ -1109,6 +1197,140 @@ namespace
                   << " height=" << textureResult.Height
                   << " mips=" << textureResult.MipCount
                   << " bytes_per_pixel=" << textureResult.BytesPerPixel
+                  << "\n";
+        return true;
+    }
+
+    bool CookModelAsset(const CookOptions& options, std::string& error)
+    {
+        std::filesystem::path inputPath;
+        std::filesystem::path packagePath;
+        std::filesystem::path manifestPath;
+        if (!MakeAbsolutePath(options.InputPath, inputPath, error) ||
+            !MakeAbsolutePath(options.PackagePath, packagePath, error) ||
+            !MakeAbsolutePath(options.ManifestPath, manifestPath, error))
+        {
+            return false;
+        }
+
+        std::vector<uint8_t> inputBytes;
+        if (!ReadBinaryFile(inputPath, inputBytes, error))
+        {
+            return false;
+        }
+
+        std::string logicalPath;
+        std::string entryName;
+        if (!NormalizeManifestPathField("logical_path", options.LogicalPath, logicalPath, error) ||
+            !NormalizeManifestPathField("entry_name", options.EntryName, entryName, error) ||
+            !ValidateAsciiJsonField("variant", options.Variant, error) ||
+            !ValidateAsciiJsonField("format", options.Format, error))
+        {
+            return false;
+        }
+
+        AssetPackageFourCC entryType = 0;
+        std::string entryTypeText;
+        if (!ParseEntryType(options.EntryTypeText, entryType, entryTypeText, error))
+        {
+            return false;
+        }
+        if (entryTypeText != "Msh0")
+        {
+            error = "--kind model requires --entry-type Msh0";
+            return false;
+        }
+
+        NorvesLib::Tools::AssetCook::MeshCookResult meshResult;
+        NorvesLib::Core::Container::AnsiString meshError;
+        if (!NorvesLib::Tools::AssetCook::CookGltfToNvmesh(inputBytes.data(),
+                                                           inputBytes.size(),
+                                                           options.Format,
+                                                           inputPath.generic_string(),
+                                                           logicalPath,
+                                                           meshResult,
+                                                           meshError))
+        {
+            error = ToStdString(meshError);
+            return false;
+        }
+
+        // Single conversion at the package boundary: MeshCooker exposes NorvesLib containers,
+        // the package/manifest writers below still take std::vector payloads.
+        const std::vector<uint8_t> nvmeshBytes(meshResult.NvmeshBytes.begin(), meshResult.NvmeshBytes.end());
+        if (!ValidateCookedMeshPayload(nvmeshBytes, error))
+        {
+            return false;
+        }
+
+        const std::filesystem::path manifestParent = manifestPath.parent_path();
+        std::string cookedPackagePath;
+        if (!MakeCookedPackageManifestPath(packagePath, manifestParent, cookedPackagePath, error))
+        {
+            return false;
+        }
+
+        uint64_t cookedHash = 0;
+        std::vector<uint8_t> packageBytes;
+        if (!BuildSingleEntryPackage(entryName,
+                                     entryType,
+                                     nvmeshBytes,
+                                     packageBytes,
+                                     cookedHash,
+                                     error))
+        {
+            return false;
+        }
+
+        // The mesh source hash covers the glTF JSON and every external buffer it loaded,
+        // not just the JSON bytes handed to this process.
+        const uint64_t sourceHash = meshResult.SourceHash;
+        std::string manifestJson;
+        if (!BuildManifestJson(logicalPath,
+                               options.Kind,
+                               sourceHash,
+                               options.Variant,
+                               options.Format,
+                               cookedPackagePath,
+                               entryName,
+                               entryTypeText,
+                               cookedHash,
+                               manifestJson,
+                               error))
+        {
+            return false;
+        }
+
+        if (!WriteBinaryFile(packagePath, packageBytes, error) ||
+            !WriteTextFile(manifestPath, manifestJson, error))
+        {
+            return false;
+        }
+
+        if (!ValidateCookedMeshPackageOutput(packagePath,
+                                             entryName,
+                                             entryType,
+                                             nvmeshBytes,
+                                             error) ||
+            !ValidateManifestOutput(manifestPath, manifestJson, error) ||
+            !ValidateAssetSystemOutput(manifestPath,
+                                       manifestJson,
+                                       logicalPath,
+                                       AssetKind::Model,
+                                       options.Variant,
+                                       nvmeshBytes,
+                                       error))
+        {
+            return false;
+        }
+
+        std::cerr << "AssetCook wrote model package=\"" << packagePath.generic_string()
+                  << "\" manifest=\"" << manifestPath.generic_string()
+                  << "\" source_bytes=" << inputBytes.size()
+                  << " nvmesh_bytes=" << meshResult.NvmeshBytes.size()
+                  << " vertices=" << meshResult.VertexCount
+                  << " indices=" << meshResult.IndexCount
+                  << " clusters=" << meshResult.ClusterCount
                   << "\n";
         return true;
     }
@@ -1128,9 +1350,19 @@ int main(int argc, char **argv)
         return error.empty() ? 0 : 1;
     }
 
-    const bool bSucceeded = options.Kind == "raw"
-                                ? CookRawAsset(options, error)
-                                : CookTextureAsset(options, error);
+    bool bSucceeded = false;
+    if (options.Kind == "raw")
+    {
+        bSucceeded = CookRawAsset(options, error);
+    }
+    else if (options.Kind == "texture")
+    {
+        bSucceeded = CookTextureAsset(options, error);
+    }
+    else if (options.Kind == "model")
+    {
+        bSucceeded = CookModelAsset(options, error);
+    }
     if (!bSucceeded)
     {
         std::cerr << "AssetCook error: " << error << "\n";
