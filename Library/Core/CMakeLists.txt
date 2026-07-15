@@ -126,6 +126,7 @@ set(PRIVATE_SOURCES
     Private/Resource/MeshResource.cpp
     Private/Resource/MaterialResource.cpp
     Private/Resource/GLTFAnalyzer.cpp
+    Private/Resource/ModelStaging.cpp
     # Component
     Private/Component/Component.cpp
     Private/Component/BoardComponent.cpp

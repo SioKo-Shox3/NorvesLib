@@ -1,6 +1,7 @@
 #include "Rendering/RenderResources.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
+#include "Library/Core/Private/Resource/ModelStaging.h"
 
 #include <cassert>
 #include <cstddef>
@@ -25,6 +26,7 @@
 
 using namespace NorvesLib::Core::Rendering;
 using NorvesLib::Core::Container::MakeShared;
+namespace ModelStaging = NorvesLib::Core::Resource::ModelStaging;
 
 namespace
 {
@@ -363,6 +365,71 @@ namespace
         assert(manager.MegaGeometry().GetMegaMeshGPUData(megaMesh) == nullptr);
     }
 
+    void TestFinalizeModelStagingNoTextureSuccess()
+    {
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(manager.Initialize(device));
+
+        ModelStaging::ModelStagingData staging;
+        staging.Vertices.push_back(Mesh3DVertex{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}});
+        staging.Vertices.push_back(Mesh3DVertex{{1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}});
+        staging.Vertices.push_back(Mesh3DVertex{{0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}});
+        staging.ClusterizedIndices.push_back(0);
+        staging.ClusterizedIndices.push_back(1);
+        staging.ClusterizedIndices.push_back(2);
+
+        MegaGeometry::MeshCluster cluster;
+        cluster.IndexOffset = 0;
+        cluster.IndexCount = 3;
+        cluster.VertexOffset = 0;
+        cluster.VertexCount = 3;
+        cluster.Bounds.CenterX = 0.5f;
+        cluster.Bounds.CenterY = 0.5f;
+        cluster.Bounds.CenterZ = 0.0f;
+        cluster.Bounds.Radius = 0.75f;
+        staging.Clusters.push_back(cluster);
+        staging.TotalBounds = cluster.Bounds;
+        staging.DebugName = "StagedModel";
+        staging.ResolvedPath = "staged.model";
+
+        assert(ModelStaging::GetStagedTextureCount(staging) == 0);
+        assert(ModelStaging::GetStagedPreparedTextureCount(staging) == 0);
+        assert(ModelStaging::GetStagedLooseTextureBytes(staging) == 0);
+
+        const ModelHandle model = ModelStaging::FinalizeModelStaging(
+            staging,
+            ModelLoadResourceContext{manager.Textures(), manager.MegaGeometry()},
+            "test",
+            1);
+        assert(model.IsValid());
+
+        const MegaGeometry::MegaMeshHandle megaMesh = manager.MegaGeometry().GetModelMegaMeshHandle(model);
+        assert(megaMesh.IsValid());
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(megaMesh) != nullptr);
+
+        const uint64_t expectedVertexBytes = staging.Vertices.size() * sizeof(Mesh3DVertex);
+        const uint64_t expectedIndexBytes = staging.ClusterizedIndices.size() * sizeof(uint32_t);
+        const uint64_t expectedClusterBytes = staging.Clusters.size() * sizeof(MegaGeometry::GPUClusterData);
+        assert(device->CreatedBufferDescs.size() == 3);
+        assert(device->CreatedBufferDescs[0].Size == expectedVertexBytes);
+        assert(device->CreatedBufferDescs[0].Usage ==
+               (NorvesLib::RHI::ResourceUsage::VertexBuffer | NorvesLib::RHI::ResourceUsage::StorageBuffer));
+        assert(device->CreatedBufferDescs[1].Size == expectedIndexBytes);
+        assert(device->CreatedBufferDescs[1].Usage ==
+               (NorvesLib::RHI::ResourceUsage::IndexBuffer | NorvesLib::RHI::ResourceUsage::StorageBuffer));
+        assert(device->CreatedBufferDescs[2].Size == expectedClusterBytes);
+        assert(device->CreatedBufferDescs[2].Usage == NorvesLib::RHI::ResourceUsage::StorageBuffer);
+        assert(device->CreatedBuffers.size() == 3);
+        assert(device->CreatedBuffers[0]->LastUpdateSize == expectedVertexBytes);
+        assert(device->CreatedBuffers[1]->LastUpdateSize == expectedIndexBytes);
+        assert(device->CreatedBuffers[2]->LastUpdateSize == expectedClusterBytes);
+
+        manager.MegaGeometry().ReleaseModel(model);
+        assert(!manager.MegaGeometry().GetModelMegaMeshHandle(model).IsValid());
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(megaMesh) == nullptr);
+    }
+
     void TestReleaseClearShutdown()
     {
         RenderResources manager;
@@ -410,6 +477,7 @@ int main()
     TestCreateFailureDoesNotRegister(2);
     TestCreateFailureDoesNotRegister(3);
     TestModelRegisterAndReleaseCoupledMegaMesh();
+    TestFinalizeModelStagingNoTextureSuccess();
     TestReleaseClearShutdown();
 
     std::cout << "MegaGeometryResourcesTest passed\n";
