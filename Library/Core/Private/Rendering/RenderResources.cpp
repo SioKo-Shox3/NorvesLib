@@ -10,6 +10,7 @@
 #include "RHI/IDevice.h"
 #include "RHI/IShader.h"
 #include "RHI/ITexture.h"
+#include "Resource/ModelAssetLoader.h"
 #include "Thread/Atomic.h"
 
 #include <utility>
@@ -580,6 +581,22 @@ namespace NorvesLib::Core::Rendering
         return impl && impl->MegaGeometryResources
                    ? impl->MegaGeometryResources->RegisterModel(megaMeshHandle, debugName, sourcePath)
                    : ModelHandle::Invalid();
+    }
+
+    ModelHandle MegaGeometryResources::LoadModel(
+        const Asset::AssetSystem& assetSystem,
+        const Container::String& logicalPath)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!impl || !impl->bInitialized || !impl->MegaGeometryResources || !m_pOwner)
+        {
+            return ModelHandle::Invalid();
+        }
+
+        return Resource::LoadCookedModel(
+            assetSystem,
+            logicalPath,
+            ModelLoadResourceContext{m_pOwner->Textures(), *this});
     }
 
     MegaGeometry::MegaMeshHandle MegaGeometryResources::GetModelMegaMeshHandle(ModelHandle handle) const

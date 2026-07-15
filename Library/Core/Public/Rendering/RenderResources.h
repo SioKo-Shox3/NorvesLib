@@ -25,6 +25,11 @@ namespace NorvesLib::RHI
     class ITexture;
 }
 
+namespace NorvesLib::Core::Asset
+{
+    class AssetSystem;
+}
+
 namespace NorvesLib::Core::Rendering
 {
     struct SubMesh;
@@ -178,6 +183,8 @@ namespace NorvesLib::Core::Rendering
         ModelHandle RegisterModel(MegaGeometry::MegaMeshHandle megaMeshHandle,
                                   const Container::String &debugName = "",
                                   const Container::String &sourcePath = "");
+        ModelHandle LoadModel(const Asset::AssetSystem& assetSystem,
+                              const Container::String& logicalPath);
         MegaGeometry::MegaMeshHandle GetModelMegaMeshHandle(ModelHandle handle) const;
         void ReleaseModel(ModelHandle handle);
 

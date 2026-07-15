@@ -199,7 +199,9 @@ namespace
                          std::string entryName = "Textures/Silver.nvtex",
                          AssetPackageFourCC entryType = MakeAssetPackageFourCC('T', 'e', 'x', '0'),
                          uint64_t cookedHash = 0,
-                         std::string variant = "default")
+                         std::string variant = "default",
+                         std::string kind = "texture",
+                         std::string format = "nvtex.v0.rgba8.srgb")
     {
         const std::string cookedHashText = ToStdString(FormatAssetHashHex(cookedHash));
         const std::string entryTypeText = ToStdString(FormatAssetPackageFourCCText(entryType));
@@ -209,10 +211,10 @@ namespace
             "\"assets\":["
             "{"
             "\"logical_path\":\"" + logicalPath + "\","
-            "\"kind\":\"texture\","
+            "\"kind\":\"" + kind + "\","
             "\"source_hash\":\"0000000000000001\","
             "\"variant\":\"" + variant + "\","
-            "\"format\":\"nvtex.v0.rgba8.srgb\","
+            "\"format\":\"" + format + "\","
             "\"cooked_package\":\"" + cookedPackage + "\","
             "\"entry_name\":\"" + entryName + "\","
             "\"entry_type\":\"" + entryTypeText + "\","
@@ -244,10 +246,15 @@ int main()
     const std::vector<uint8_t> cookedPayload = {1, 2, 3, 4};
     const uint64_t cookedHash = ComputeAssetPackagePayloadHash(cookedPayload.data(), cookedPayload.size());
     const AssetPackageFourCC textureType = MakeAssetPackageFourCC('T', 'e', 'x', '0');
+    const std::vector<uint8_t> modelPayload = {5, 4, 3, 2, 1};
+    const uint64_t modelHash = ComputeAssetPackagePayloadHash(modelPayload.data(), modelPayload.size());
+    const AssetPackageFourCC modelType = MakeAssetPackageFourCC('M', 's', 'h', '0');
 
     WriteBinaryFile(root / "Textures" / "Silver.png", loosePayload);
     WriteBinaryFile(root / "Cooked" / "Textures.nvpkg",
                     BuildPackage({{"Textures/Silver.nvtex", textureType, cookedPayload}}));
+    WriteBinaryFile(root / "Cooked" / "Models.nvpkg",
+                    BuildPackage({{"Models/Triangle.nvmesh", modelType, modelPayload}}));
 
     {
         AssetSystem system = CreateSystem(root);
@@ -452,6 +459,49 @@ int main()
         // No manifest loaded: enumeration is bounds-safe and reports zero entries.
         AssetSystem emptySystem = CreateSystem(root);
         assert(emptySystem.GetAssetCount() == 0);
+    }
+
+    {
+        AssetSystem system = CreateSystem(root);
+        assert(system.LoadManifestFromJsonText(BuildManifest("Models/Triangle.nvmesh",
+                                                             "Cooked/Models.nvpkg",
+                                                             "Models/Triangle.nvmesh",
+                                                             modelType,
+                                                             modelHash,
+                                                             "default",
+                                                             "model",
+                                                             "nvmesh.v0")));
+        assert(system.GetAssetCount() == 1);
+        assert(system.GetAssetReference(0).Format == "nvmesh.v0");
+        const AssetResolveResult result = system.ResolveAsset(
+            "Models/Triangle.nvmesh",
+            AssetKind::Model,
+            AssetManifest::DefaultVariant,
+            AssetFallbackMode::FailOnCookedFailure);
+        assert(result.UsedCooked());
+        assert(result.Status == AssetResolveStatus::SuccessCooked);
+        assert(result.Entry.Type == modelType);
+        AssertBlobBytes(result.Blob, modelPayload);
+    }
+
+    {
+        AssetSystem system = CreateSystem(root);
+        assert(system.LoadManifestFromJsonText(BuildManifest("Models/Triangle.nvmesh",
+                                                             "Cooked/Models.nvpkg",
+                                                             "Models/Triangle.nvmesh",
+                                                             modelType,
+                                                             modelHash ^ 1ull,
+                                                             "default",
+                                                             "model",
+                                                             "nvmesh.v0")));
+        const AssetResolveResult result = system.ResolveAsset(
+            "Models/Triangle.nvmesh",
+            AssetKind::Model,
+            AssetManifest::DefaultVariant,
+            AssetFallbackMode::FailOnCookedFailure);
+        assert(!result.Succeeded());
+        assert(!result.UsedCooked());
+        assert(result.Status == AssetResolveStatus::CookedEntryHashMismatch);
     }
 
     std::filesystem::remove_all(root);

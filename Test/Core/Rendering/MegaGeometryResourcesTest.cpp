@@ -1,12 +1,17 @@
+#include "Asset/AssetSystem.h"
 #include "Rendering/RenderResources.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
+#include "Library/Core/Private/Resource/ModelAssetLoader.h"
 #include "Library/Core/Private/Resource/ModelStaging.h"
+#include "Test/Core/Asset/CookedModelTestSupport.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <vector>
 #if defined(_MSC_VER)
@@ -26,6 +31,8 @@
 
 using namespace NorvesLib::Core::Rendering;
 using NorvesLib::Core::Container::MakeShared;
+namespace CookedModelSupport = NorvesLib::Test::CookedModelSupport;
+namespace ModelAssetLoader = NorvesLib::Core::Resource;
 namespace ModelStaging = NorvesLib::Core::Resource::ModelStaging;
 
 namespace
@@ -430,6 +437,190 @@ namespace
         assert(manager.MegaGeometry().GetMegaMeshGPUData(megaMesh) == nullptr);
     }
 
+    void TestBuildModelStagingMapsCookedDataAndOwnsStrings()
+    {
+        ModelStaging::ModelStagingData staging;
+        {
+            const std::vector<uint8_t> stringBytes = {
+                'T', 'e', 'x', 't', 'u', 'r', 'e', 's', '/', 'A', '.', 'p', 'n', 'g',
+                'T', 'e', 'x', 't', 'u', 'r', 'e', 's', '/', 'N', '.', 'p', 'n', 'g',
+                'T', 'e', 'x', 't', 'u', 'r', 'e', 's', '/', 'R', '.', 'p', 'n', 'g'};
+            NorvesLib::Core::Asset::CookedMeshData cooked;
+            cooked.SourceBlob = NorvesLib::Core::Asset::AssetBlob::CopyBytes(
+                NorvesLib::Core::Container::Span<const uint8_t>(stringBytes.data(), stringBytes.size()),
+                "mapping.nvmesh");
+            cooked.StringTableOffset = 0;
+            cooked.StringTableSize = stringBytes.size();
+            cooked.TotalBoundsCenter = {0.25f, 0.5f, 0.75f};
+            cooked.TotalBoundsRadius = 2.5f;
+            cooked.Vertices.push_back({{1.0f, 2.0f, 3.0f}, {0.0f, 0.0f, 1.0f}, {0.25f, 0.5f}});
+            cooked.Vertices.push_back({{4.0f, 5.0f, 6.0f}, {0.0f, 1.0f, 0.0f}, {0.75f, 1.0f}});
+            cooked.Indices.push_back(2);
+            cooked.Indices.push_back(1);
+            cooked.Indices.push_back(0);
+
+            NorvesLib::Core::Asset::CookedMeshCluster cluster;
+            cluster.BoundsCenter = {0.5f, 0.75f, 1.0f};
+            cluster.BoundsRadius = 1.25f;
+            cluster.ConeAxis = {0.0f, 0.0f, 1.0f};
+            cluster.ConeCutoff = 0.4f;
+            cluster.IndexOffset = 0;
+            cluster.IndexCount = 3;
+            cluster.VertexOffset = 0;
+            cluster.VertexCount = 2;
+            cooked.Clusters.push_back(cluster);
+
+            NorvesLib::Core::Asset::CookedMeshMaterial material;
+            material.AlbedoTexture = {0, 14};
+            material.NormalTexture = {14, 14};
+            material.ArmTexture = {28, 14};
+            cooked.Materials.push_back(material);
+
+            assert(ModelAssetLoader::BuildModelStagingFromCookedMesh(
+                cooked,
+                "MappingModel",
+                "Models/Mapping.nvmesh",
+                staging));
+        }
+
+        assert(staging.Vertices.size() == 2);
+        assert(staging.Vertices[0].Position[0] == 1.0f);
+        assert(staging.Vertices[0].Position[1] == 2.0f);
+        assert(staging.Vertices[0].Position[2] == 3.0f);
+        assert(staging.Vertices[0].Normal[2] == 1.0f);
+        assert(staging.Vertices[0].TexCoord[0] == 0.25f);
+        assert(staging.Vertices[1].TexCoord[1] == 1.0f);
+        assert(staging.ClusterizedIndices.size() == 3);
+        assert(staging.ClusterizedIndices[0] == 2);
+        assert(staging.ClusterizedIndices[2] == 0);
+        assert(staging.Clusters.size() == 1);
+        assert(staging.Clusters[0].Bounds.CenterX == 0.5f);
+        assert(staging.Clusters[0].Bounds.CenterY == 0.75f);
+        assert(staging.Clusters[0].Bounds.CenterZ == 1.0f);
+        assert(staging.Clusters[0].Bounds.Radius == 1.25f);
+        assert(staging.Clusters[0].ConeAxisZ == 1.0f);
+        assert(staging.Clusters[0].ConeCutoff == 0.4f);
+        assert(staging.Clusters[0].IndexOffset == 0);
+        assert(staging.Clusters[0].IndexCount == 3);
+        assert(staging.Clusters[0].VertexOffset == 0);
+        assert(staging.Clusters[0].VertexCount == 2);
+        assert(staging.Clusters[0].MaterialIndex == 0);
+        assert(staging.Clusters[0].LODLevel == 0);
+        assert(staging.Clusters[0].LODError == 0.0f);
+        assert(staging.Clusters[0].ParentStart == 0);
+        assert(staging.Clusters[0].ParentCount == 0);
+        assert(staging.TotalBounds.CenterX == 0.25f);
+        assert(staging.TotalBounds.CenterY == 0.5f);
+        assert(staging.TotalBounds.CenterZ == 0.75f);
+        assert(staging.TotalBounds.Radius == 2.5f);
+        assert(staging.DebugName == "MappingModel");
+        assert(staging.ResolvedPath == "Models/Mapping.nvmesh");
+        assert(staging.TextureReferences.Albedo.RequestPath == "Textures/A.png");
+        assert(staging.TextureReferences.Normal.RequestPath == "Textures/N.png");
+        assert(staging.TextureReferences.Arm.RequestPath == "Textures/R.png");
+    }
+
+    std::filesystem::path CreateCookedModelTestRoot(const char* suffix)
+    {
+        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        std::filesystem::path root = std::filesystem::temp_directory_path() /
+                                     (std::string("NorvesLibCookedModel_") + suffix + "_" + std::to_string(now));
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root);
+        return root;
+    }
+
+    NorvesLib::Core::Asset::AssetSystem CreateCookedModelAssetSystem(
+        const std::filesystem::path& root,
+        const CookedModelSupport::ByteArray& payload)
+    {
+        CookedModelSupport::WriteBinaryFile(
+            root / "Cooked" / "Models.nvpkg",
+            CookedModelSupport::BuildModelPackage(payload));
+        const uint64_t cookedHash = NorvesLib::Core::Asset::ComputeAssetPackagePayloadHash(
+            payload.data(),
+            payload.size());
+        NorvesLib::Core::Asset::AssetSystem assetSystem(root.generic_string().c_str());
+        assert(assetSystem.LoadManifestFromJsonText(CookedModelSupport::BuildModelManifest(cookedHash)));
+        return assetSystem;
+    }
+
+    void TestLoadCookedModelThroughPublicResources()
+    {
+        const std::filesystem::path root = CreateCookedModelTestRoot("valid");
+        const CookedModelSupport::ByteArray payload = CookedModelSupport::BuildCookedModelMesh();
+        NorvesLib::Core::Asset::AssetSystem assetSystem = CreateCookedModelAssetSystem(root, payload);
+
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(manager.Initialize(device));
+        const ModelHandle model = manager.MegaGeometry().LoadModel(assetSystem, "Models/Triangle.nvmesh");
+        assert(model.IsValid());
+
+        const MegaGeometry::MegaMeshHandle megaMesh = manager.MegaGeometry().GetModelMegaMeshHandle(model);
+        assert(megaMesh.IsValid());
+        const MegaGeometry::MegaMeshGPUData* gpuData = manager.MegaGeometry().GetMegaMeshGPUData(megaMesh);
+        assert(gpuData != nullptr);
+        assert(gpuData->VertexCount == 3);
+        assert(gpuData->IndexCount == 3);
+        assert(gpuData->ClusterCount == 1);
+        assert(gpuData->TotalBounds.CenterX == 0.5f);
+        assert(gpuData->TotalBounds.CenterY == 0.5f);
+        assert(gpuData->TotalBounds.Radius == 1.0f);
+        assert(device->CreatedBufferDescs.size() == 3);
+        assert(device->CreatedBuffers.size() == 3);
+        assert(device->CreatedBufferDescs[0].Size == 3 * sizeof(Mesh3DVertex));
+        assert(device->CreatedBufferDescs[1].Size == 3 * sizeof(uint32_t));
+        assert(device->CreatedBufferDescs[2].Size == sizeof(MegaGeometry::GPUClusterData));
+        assert(device->CreatedBuffers[0]->LastUpdateSize == 3 * sizeof(Mesh3DVertex));
+        assert(device->CreatedBuffers[1]->LastUpdateSize == 3 * sizeof(uint32_t));
+        assert(device->CreatedBuffers[2]->LastUpdateSize == sizeof(MegaGeometry::GPUClusterData));
+
+        MegaGeometry::GPUClusterData uploadedCluster{};
+        std::memcpy(&uploadedCluster,
+                    device->CreatedBuffers[2]->Bytes.data(),
+                    sizeof(MegaGeometry::GPUClusterData));
+        assert(uploadedCluster.IndexOffset == 0);
+        assert(uploadedCluster.IndexCount == 3);
+        assert(uploadedCluster.VertexOffset == 0);
+        assert(uploadedCluster.MaterialIndex == 0);
+        assert(uploadedCluster.LODLevel == 0);
+        assert(uploadedCluster.LODError == 0.0f);
+        assert(uploadedCluster.ParentStart == 0);
+        assert(uploadedCluster.ParentCount == 0);
+
+        manager.MegaGeometry().ReleaseModel(model);
+        assert(!manager.MegaGeometry().GetModelMegaMeshHandle(model).IsValid());
+        assert(manager.MegaGeometry().GetMegaMeshGPUData(megaMesh) == nullptr);
+        std::filesystem::remove_all(root);
+    }
+
+    void TestCorruptCookedModelCreatesNoBuffers()
+    {
+        const std::filesystem::path root = CreateCookedModelTestRoot("corrupt");
+        const CookedModelSupport::ByteArray payload = {'B', 'A', 'D'};
+        NorvesLib::Core::Asset::AssetSystem assetSystem = CreateCookedModelAssetSystem(root, payload);
+        const NorvesLib::Core::Asset::AssetResolveResult resolveResult = assetSystem.ResolveAsset(
+            "Models/Triangle.nvmesh",
+            NorvesLib::Core::Asset::AssetKind::Model,
+            NorvesLib::Core::Asset::AssetManifest::DefaultVariant,
+            NorvesLib::Core::Asset::AssetFallbackMode::FailOnCookedFailure);
+        assert(resolveResult.UsedCooked());
+        assert(NorvesLib::Core::Asset::ParseCookedMesh(resolveResult.Blob).Status !=
+               NorvesLib::Core::Asset::CookedMeshParseStatus::Success);
+
+        RenderResources manager;
+        auto device = MakeShared<FakeDevice>();
+        assert(manager.Initialize(device));
+        const size_t bufferDescCount = device->CreatedBufferDescs.size();
+        const size_t bufferCount = device->CreatedBuffers.size();
+        const ModelHandle model = manager.MegaGeometry().LoadModel(assetSystem, "Models/Triangle.nvmesh");
+        assert(!model.IsValid());
+        assert(device->CreatedBufferDescs.size() == bufferDescCount);
+        assert(device->CreatedBuffers.size() == bufferCount);
+        std::filesystem::remove_all(root);
+    }
+
     void TestReleaseClearShutdown()
     {
         RenderResources manager;
@@ -478,6 +669,9 @@ int main()
     TestCreateFailureDoesNotRegister(3);
     TestModelRegisterAndReleaseCoupledMegaMesh();
     TestFinalizeModelStagingNoTextureSuccess();
+    TestBuildModelStagingMapsCookedDataAndOwnsStrings();
+    TestLoadCookedModelThroughPublicResources();
+    TestCorruptCookedModelCreatesNoBuffers();
     TestReleaseClearShutdown();
 
     std::cout << "MegaGeometryResourcesTest passed\n";
