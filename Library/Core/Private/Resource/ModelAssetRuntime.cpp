@@ -78,6 +78,7 @@ namespace NorvesLib::Core::Rendering
         m_pTextures = nullptr;
         m_pMegaGeometry = nullptr;
         m_AssetSystem.reset();
+        m_AssetRoot.clear();
         m_bBound = false;
         m_bAcceptingRequests = false;
         m_bClosing = true;
@@ -87,6 +88,29 @@ namespace NorvesLib::Core::Rendering
     {
         Thread::ScopedLock lock(m_AssetMutex);
         return m_bBound && m_pTextures != nullptr && m_pMegaGeometry != nullptr;
+    }
+
+    bool ModelAssetRuntime::CanReloadSnapshotLocked() const
+    {
+        return m_bBound && !m_bClosing && m_bAcceptingRequests &&
+               m_pTextures != nullptr && m_pMegaGeometry != nullptr &&
+               !m_Queue.HasPendingOrActiveFlush();
+    }
+
+    ModelCacheHandleBatch ModelAssetRuntime::ApplyReloadSnapshotLocked(
+        const Container::String& assetRoot,
+        const Container::TSharedPtr<const Asset::AssetSystem>& assetSystem)
+    {
+        ModelCacheHandleBatch retired = m_Cache.RetireCurrent();
+        m_AssetSystem = assetSystem;
+        m_AssetRoot = assetRoot;
+        ++m_Generation;
+        return retired;
+    }
+
+    void ModelAssetRuntime::ReleaseRetiredAfterReload(ModelCacheHandleBatch batch)
+    {
+        ReleaseHandles(std::move(batch));
     }
 
     bool ModelAssetRuntime::SetAssetSystem(
@@ -113,11 +137,9 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            retired = m_Cache.RetireCurrent();
-            m_AssetSystem = std::move(assetSystem);
-            ++m_Generation;
+            retired = ApplyReloadSnapshotLocked({}, assetSystem);
         }
-        ReleaseHandles(std::move(retired));
+        ReleaseRetiredAfterReload(std::move(retired));
         return true;
     }
 

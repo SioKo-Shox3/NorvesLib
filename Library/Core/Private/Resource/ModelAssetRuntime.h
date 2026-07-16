@@ -11,7 +11,9 @@
 namespace NorvesLib::Core::Rendering
 {
     class MegaGeometryResources;
+    class RenderResources;
     class TextureResources;
+    struct AssetRuntimeSnapshotReloadTestAccess;
 
     class ModelAssetRuntime final
     {
@@ -42,6 +44,14 @@ namespace NorvesLib::Core::Rendering
                                                       ModelHandle handle);
 
     private:
+        friend class RenderResources;
+        friend struct AssetRuntimeSnapshotReloadTestAccess;
+
+        [[nodiscard]] bool CanReloadSnapshotLocked() const;
+        [[nodiscard]] Resource::ModelCacheHandleBatch ApplyReloadSnapshotLocked(
+            const Container::String& assetRoot,
+            const Container::TSharedPtr<const Asset::AssetSystem>& assetSystem);
+        void ReleaseRetiredAfterReload(Resource::ModelCacheHandleBatch batch);
         [[nodiscard]] bool TryBuildPlan(const Container::String& logicalPath,
                                         Resource::CookedModelLoadPlan& outPlan) const;
         [[nodiscard]] bool IsRequestCurrent(const Resource::ModelAsyncLoadQueue::RequestPtr& request) const;
@@ -50,6 +60,7 @@ namespace NorvesLib::Core::Rendering
 
         mutable Thread::Mutex m_AssetMutex;
         Container::TSharedPtr<const Asset::AssetSystem> m_AssetSystem;
+        Container::String m_AssetRoot;
         TextureResources* m_pTextures = nullptr;
         MegaGeometryResources* m_pMegaGeometry = nullptr;
         uint64_t m_Generation = 0;

@@ -8,6 +8,11 @@
 #include "Bridge/BridgeServerHost.h"
 #include "Bridge/NorvesLibBridgeAdapter.h"
 
+namespace NorvesLib::Core::Asset
+{
+    class AssetSystem;
+} // namespace NorvesLib::Core::Asset
+
 namespace Game
 {
 
@@ -74,9 +79,22 @@ namespace Game
          */
         const NorvesLib::Core::Container::String &GetTextureAssetManifestPath() const { return m_TextureAssetManifestPath; }
 
-    private:
-        bool ApplyTextureAssetRuntimeConfig();
+        /**
+         * @brief 起動時に構成された asset manifest を同期再読込する。
+         * @return runtime が同一 immutable snapshot を受理した場合だけ true。
+         * @note 失敗時は現在の snapshot を変更しない。ゲームスレッド上からのみ呼ぶこと。
+         */
+        bool ReloadConfiguredAssetManifest();
 
+        /**
+         * @brief Bridge 読み取り用の immutable asset snapshot を取得する。
+         * @return 現在保持中の snapshot。未構成または未受理なら null。
+         * @note by-value で返し、呼び出し中の snapshot 寿命を保持する。
+         */
+        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>
+        GetAssetSystemSnapshot() const;
+
+    private:
         /**
          * @brief --bridge-port を解析する（OnPreInitialize から呼ぶ）。無効値は
          *        m_bBridgeEnabled=false のまま（Bridge 無効）にして警告ログを出すのみで、
@@ -91,6 +109,7 @@ namespace Game
         bool m_bHasTextureAssetRuntimeConfig = false;
         NorvesLib::Core::Container::String m_TextureAssetRoot;
         NorvesLib::Core::Container::String m_TextureAssetManifestPath;
+        NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem> m_AssetSystemSnapshot;
         NorvesLib::Core::Container::String m_Rendering3DTestModelPath;
 
         // Bridge（NorvesEditor 連携）。adapter は host より長生きする必要があるため、

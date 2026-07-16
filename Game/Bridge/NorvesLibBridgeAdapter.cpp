@@ -23,10 +23,6 @@
 #include "Core/Public/Container/String.h"
 #include "Core/Public/Container/StringView.h"
 
-#include <filesystem>
-#include <fstream>
-#include <iterator>
-
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -1271,79 +1267,6 @@ namespace Game::Bridge
             return "unknown";
         }
 
-        /**
-         * @brief manifest ファイルのバイト列を Container::String（UTF-8 バイト列）へ写す
-         *
-         * GameApplicationHandler::ApplyTextureAssetRuntimeConfig の MakeStringFromUtf8Bytes と同手順。
-         * 各バイトを TCHAR（narrow=char）へそのままコピーする（adapter は narrow 前提＝ViewOf の
-         * static_assert と整合）。
-         *
-         * @param bytes ifstream で読んだ生バイト列
-         * @return UTF-8 バイト列としての Container::String
-         */
-        NorvesLib::Core::Container::String MakeCoreStringFromUtf8Bytes(const std::string& bytes)
-        {
-            std::basic_string<NorvesLib::Core::Container::String::value_type> converted;
-            converted.reserve(bytes.size());
-            for (const unsigned char ch : bytes)
-            {
-                converted.push_back(
-                    static_cast<NorvesLib::Core::Container::String::value_type>(ch));
-            }
-            return NorvesLib::Core::Container::String(converted);
-        }
-
-        /**
-         * @brief handler の texture asset root/manifest から一時 AssetSystem を構築し manifest を読む
-         *
-         * root（Container::String）を AnsiString の assetRoot として AssetSystem を構築し、manifest
-         * ファイルを ifstream(binary) で読み、MakeCoreStringFromUtf8Bytes 経由で LoadManifestFromJsonText
-         * へ渡す。GameApplicationHandler.cpp の manifest 読込と同手順。読込/パース失敗時は false。
-         * 失敗しても outSystem は構築済み（GetAssetCount()==0）なので呼び出し側は graceful に扱える。
-         *
-         * @param root texture asset root（Container::String、空なら false）
-         * @param manifestPath manifest ファイルパス（Container::String、空なら false）
-         * @param outSystem 構築先（root から構築。manifest 読込成否に関わらず構築する）
-         * @return manifest を読み込めたら true
-         */
-        bool BuildAssetSystemFromPaths(const NorvesLib::Core::Container::String& root,
-                                       const NorvesLib::Core::Container::String& manifestPath,
-                                       NorvesLib::Core::Asset::AssetSystem& outSystem)
-        {
-            if (root.empty() || manifestPath.empty())
-            {
-                return false;
-            }
-
-            // root（Container::String=narrow char）を AnsiStringView 経由で AnsiString assetRoot に。
-            const std::string_view rootView = ViewOf(root);
-            const NorvesLib::Core::Container::AnsiString rootAnsi(
-                NorvesLib::Core::Container::AnsiStringView(rootView.data(), rootView.size()));
-            outSystem = NorvesLib::Core::Asset::AssetSystem(rootAnsi);
-
-            // manifest ファイルを ifstream(binary) で読む（GameApplicationHandler と同手順）。
-            // narrow 前提なので c_str() を std::filesystem::path へ。
-            const std::filesystem::path manifestFsPath(manifestPath.c_str());
-            std::ifstream manifestInput(manifestFsPath, std::ios::binary);
-            if (!manifestInput.is_open())
-            {
-                return false;
-            }
-            const std::string manifestBytes((std::istreambuf_iterator<char>(manifestInput)),
-                                            std::istreambuf_iterator<char>());
-            if (!manifestInput.eof() && manifestInput.fail())
-            {
-                return false;
-            }
-
-            const NorvesLib::Core::Container::String manifestText =
-                MakeCoreStringFromUtf8Bytes(manifestBytes);
-            const std::string_view manifestPathView = ViewOf(manifestPath);
-            const NorvesLib::Core::Container::AnsiStringView sourceName(
-                manifestPathView.data(), manifestPathView.size());
-            return outSystem.LoadManifestFromJsonText(manifestText, sourceName);
-        }
-
     } // namespace
 
     AdapterResult
@@ -1371,14 +1294,15 @@ namespace Game::Bridge
     NorvesLibBridgeAdapter::getCapabilities(const JsonValue& /*params*/)
     {
         // runtime.control / log.stream / viewport.focus / scene.query / scene.edit / scene.liveUpdate /
-        // object.query / object.edit / asset.read を
+        // object.query / object.edit / asset.read / asset.reload を
         // 広告する。scene.query は scene.getTree と schema.getSnapshot を束ねる token（両者とも実装済み）。
         // scene.edit は scene.createObject / scene.deleteObject / scene.reparentObject /
         // scene.duplicateObject 用（実装済み。duplicate は新規 token を足さず scene.edit に含める）。
         // scene.liveUpdate は scene.treeChanged イベントを発火するようになったため広告する（実装済み）。
         // object.query は object.getSnapshot 用（実装済み）。object.edit は object.setProperty 用
         // （実装済み）。asset.read は asset.resolve / asset.getManifest 用（実装済み＝NorvesLib アダプタが
-        // texture asset root/manifest から override 解決する）。viewport.thumbnail は
+        // handler が保持する immutable snapshot から解決する）。asset.reload は
+        // asset.reloadManifest 用（実装済み）。viewport.thumbnail は
         // 本実装範囲外のため広告しない。
         // 実エンジンの capability 検証は superset（部分集合包含）方針なので、実装済み token のみ
         // 広告すればよい（mock の 8 token fixture には合わせない）。
@@ -1392,7 +1316,8 @@ namespace Game::Bridge
             R"({"name":"scene.liveUpdate"},)"
             R"({"name":"object.query"},)"
             R"({"name":"object.edit"},)"
-            R"({"name":"asset.read"}]})");
+            R"({"name":"asset.read"},)"
+            R"({"name":"asset.reload"}]})");
     }
 
     AdapterResult
@@ -2340,17 +2265,15 @@ namespace Game::Bridge
             return out;
         };
 
-        // handler 未注入は graceful。texture asset root/manifest パスは handler 経由で借用する。
+        // handler 未注入または snapshot 未受理は graceful。by-value shared snapshot により、
+        // この解決中の immutable manifest と asset root の寿命を保持する。
         if (m_Handler == nullptr)
         {
             return OkLiteral(buildInvalidManifest(logicalPath));
         }
-        const NorvesLib::Core::Container::String& root = m_Handler->GetTextureAssetRoot();
-        const NorvesLib::Core::Container::String& manifestPath = m_Handler->GetTextureAssetManifestPath();
-
-        // 一時 AssetSystem を構築し manifest を読む。root/manifest 空・読込/パース失敗は graceful invalidManifest。
-        AssetSystem system;
-        if (!BuildAssetSystemFromPaths(root, manifestPath, system))
+        const NorvesLib::Core::Container::TSharedPtr<const AssetSystem> system =
+            m_Handler->GetAssetSystemSnapshot();
+        if (NorvesLib::Core::Container::IsNull(system))
         {
             return OkLiteral(buildInvalidManifest(logicalPath));
         }
@@ -2381,7 +2304,7 @@ namespace Game::Bridge
         const NorvesLib::Core::Container::AnsiStringView variantView(
             variant.data(), variant.size());
         const AssetResolveResult result =
-            system.ResolveAsset(logicalPathView, kind, variantView, AssetFallbackMode::FailOnCookedFailure);
+            system->ResolveAsset(logicalPathView, kind, variantView, AssetFallbackMode::FailOnCookedFailure);
 
         // wire（camelCase, additionalProperties:false 厳守）。
         std::string text = R"({"status":")";
@@ -2472,14 +2395,10 @@ namespace Game::Bridge
         {
             return OkLiteral(std::string(kEmptyManifest));
         }
-        const NorvesLib::Core::Container::String& root = m_Handler->GetTextureAssetRoot();
-        const NorvesLib::Core::Container::String& manifestPath = m_Handler->GetTextureAssetManifestPath();
-
-        // 一時 AssetSystem を構築し manifest を読む。読込成功なら version=1、失敗なら version=0。
-        // パーサが version==1 を強制するためテキスト再スキャンせず load 成否で等価判定する。
-        AssetSystem system;
-        const bool bLoaded = BuildAssetSystemFromPaths(root, manifestPath, system);
-        if (!bLoaded)
+        // by-value shared snapshot により列挙中の immutable manifest の寿命を保持する。
+        const NorvesLib::Core::Container::TSharedPtr<const AssetSystem> system =
+            m_Handler->GetAssetSystemSnapshot();
+        if (NorvesLib::Core::Container::IsNull(system))
         {
             return OkLiteral(std::string(kEmptyManifest));
         }
@@ -2487,7 +2406,7 @@ namespace Game::Bridge
 
         // filter（部分一致）。境界は必ず GetAssetCount() で取る。フィルタ一致判定はヘルパで共有する。
         const std::string filter = filterField.value_or(std::string{});
-        const std::size_t assetCount = system.GetAssetCount();
+        const std::size_t assetCount = system->GetAssetCount();
         const auto matchesFilter = [&](const AssetCookedReference& ref) -> bool {
             if (filter.empty())
             {
@@ -2501,7 +2420,7 @@ namespace Game::Bridge
         std::size_t totalCount = 0;
         for (std::size_t i = 0; i < assetCount; ++i)
         {
-            if (matchesFilter(system.GetAssetReference(i)))
+            if (matchesFilter(system->GetAssetReference(i)))
             {
                 ++totalCount;
             }
@@ -2531,7 +2450,7 @@ namespace Game::Bridge
         bool bFirst = true;
         for (std::size_t i = 0; i < assetCount; ++i)
         {
-            const AssetCookedReference& ref = system.GetAssetReference(i);
+            const AssetCookedReference& ref = system->GetAssetReference(i);
             if (!matchesFilter(ref))
             {
                 continue;
@@ -2627,6 +2546,15 @@ namespace Game::Bridge
 
         text += '}';
         return OkLiteral(text);
+    }
+
+    AdapterResult
+    NorvesLibBridgeAdapter::assetReloadManifest(const JsonValue& /*params*/)
+    {
+        const bool bAccepted =
+            m_Handler != nullptr && m_Handler->ReloadConfiguredAssetManifest();
+        return OkLiteral(bAccepted ? R"({"accepted":true})"
+                                   : R"({"accepted":false})");
     }
 
 } // namespace Game::Bridge

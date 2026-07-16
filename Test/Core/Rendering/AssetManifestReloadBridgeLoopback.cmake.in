@@ -1,0 +1,202 @@
+if(NOT DEFINED ASSET_COOK_EXE)
+    message(FATAL_ERROR "ASSET_COOK_EXE is required")
+endif()
+if(NOT DEFINED LOOPBACK_TEST_EXE)
+    message(FATAL_ERROR "LOOPBACK_TEST_EXE is required")
+endif()
+if(NOT DEFINED GAME_EXE)
+    message(FATAL_ERROR "GAME_EXE is required")
+endif()
+if(NOT DEFINED NORVES_EDITOR_SOURCE_DIR)
+    message(FATAL_ERROR "NORVES_EDITOR_SOURCE_DIR is required")
+endif()
+if(NOT DEFINED E2E_DIR)
+    message(FATAL_ERROR "E2E_DIR is required")
+endif()
+
+find_program(CARGO_EXE cargo)
+if(NOT CARGO_EXE)
+    message(FATAL_ERROR "cargo is required for the NorvesEditor process E2E")
+endif()
+
+file(REMOVE_RECURSE "${E2E_DIR}")
+file(MAKE_DIRECTORY "${E2E_DIR}/Source")
+file(MAKE_DIRECTORY "${E2E_DIR}/RuntimeRoot/Cooked")
+
+set(SOURCE_DIR "${E2E_DIR}/Source")
+set(RUNTIME_ROOT "${E2E_DIR}/RuntimeRoot")
+set(LIVE_MANIFEST "${RUNTIME_ROOT}/live.manifest.json")
+set(MANIFEST_A "${RUNTIME_ROOT}/A.manifest.json")
+set(MANIFEST_B "${RUNTIME_ROOT}/B.manifest.json")
+
+file(WRITE "${SOURCE_DIR}/A.ppm" "P6\n1 1\n255\nABC")
+file(WRITE "${SOURCE_DIR}/B.ppm" "P6\n1 1\n255\nDEF")
+file(WRITE "${SOURCE_DIR}/triangle.gltf" [=[
+{"asset":{"version":"2.0"},"buffers":[{"uri":"triangle.bin","byteLength":102}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":36},{"buffer":0,"byteOffset":72,"byteLength":24},{"buffer":0,"byteOffset":96,"byteLength":6}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":3,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":3,"type":"SCALAR"}],"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"mode":4}]}]}
+]=])
+
+set(FIXTURE_SCRIPT "${SOURCE_DIR}/write_triangle.ps1")
+file(WRITE "${FIXTURE_SCRIPT}" [=[
+param([Parameter(Mandatory = $true)][string]$OutputPath)
+$bytes = [byte[]]::new(102)
+$offset = 0
+foreach ($value in [single[]](0,0,0, 1,0,0, 0,1,0, 0,0,1, 0,0,1, 0,0,1, 0,0, 1,0, 0,1))
+{
+    [BitConverter]::GetBytes($value).CopyTo($bytes, $offset)
+    $offset += 4
+}
+foreach ($value in [uint16[]](0,1,2))
+{
+    [BitConverter]::GetBytes($value).CopyTo($bytes, $offset)
+    $offset += 2
+}
+[IO.File]::WriteAllBytes($OutputPath, $bytes)
+]=])
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File "${FIXTURE_SCRIPT}" "${SOURCE_DIR}/triangle.bin"
+    RESULT_VARIABLE fixture_result
+    OUTPUT_VARIABLE fixture_stdout
+    ERROR_VARIABLE fixture_stderr
+)
+if(NOT fixture_result EQUAL 0)
+    message(STATUS "${fixture_stdout}")
+    message(STATUS "${fixture_stderr}")
+    message(FATAL_ERROR "Task8 model fixture generation failed: ${fixture_result}")
+endif()
+
+function(run_asset_cook label input logical kind entry entry_type format)
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${input}"
+            --out "${RUNTIME_ROOT}/Cooked/${label}.nvpkg"
+            --manifest "${RUNTIME_ROOT}/${label}.fragment.json"
+            --logical "${logical}"
+            --kind "${kind}"
+            --entry "${entry}"
+            --entry-type "${entry_type}"
+            --format "${format}"
+            --variant default
+        RESULT_VARIABLE cook_result
+        OUTPUT_VARIABLE cook_stdout
+        ERROR_VARIABLE cook_stderr
+    )
+    if(NOT cook_result EQUAL 0)
+        message(STATUS "${cook_stdout}")
+        message(STATUS "${cook_stderr}")
+        message(FATAL_ERROR "Task8 AssetCook ${label} failed: ${cook_result}")
+    endif()
+    message(STATUS "${cook_stdout}${cook_stderr}")
+endfunction()
+
+run_asset_cook(
+    "A_texture" "${SOURCE_DIR}/A.ppm" "Textures/A.nvtex"
+    texture "Textures/A.nvtex" Tex0 "nvtex.v0.rgba8.srgb")
+run_asset_cook(
+    "A_model" "${SOURCE_DIR}/triangle.gltf" "Models/A.nvmesh"
+    model "Models/A.nvmesh" Msh0 "nvmesh.v0.mesh3d.pnt.u32.clustered")
+run_asset_cook(
+    "B_texture" "${SOURCE_DIR}/B.ppm" "Textures/B.nvtex"
+    texture "Textures/B.nvtex" Tex0 "nvtex.v0.rgba8.srgb")
+run_asset_cook(
+    "B_model" "${SOURCE_DIR}/triangle.gltf" "Models/B.nvmesh"
+    model "Models/B.nvmesh" Msh0 "nvmesh.v0.mesh3d.pnt.u32.clustered")
+
+set(COMBINE_SCRIPT "${SOURCE_DIR}/combine_manifests.ps1")
+file(WRITE "${COMBINE_SCRIPT}" [=[
+param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$ManifestA,
+    [Parameter(Mandatory = $true)][string]$ManifestB
+)
+function Read-Asset([string]$Name)
+{
+    $fragment = Get-Content -Raw -LiteralPath (Join-Path $Root "$Name.fragment.json") | ConvertFrom-Json
+    if ($fragment.version -ne 1 -or $fragment.assets.Count -ne 1)
+    {
+        throw "Unexpected AssetCook fragment shape: $Name"
+    }
+    return $fragment.assets[0]
+}
+$jsonA = [ordered]@{ version = 1; assets = @((Read-Asset 'A_texture'), (Read-Asset 'A_model')) }
+$jsonB = [ordered]@{ version = 1; assets = @((Read-Asset 'B_texture'), (Read-Asset 'B_model')) }
+[IO.File]::WriteAllText($ManifestA, ($jsonA | ConvertTo-Json -Depth 8 -Compress), [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($ManifestB, ($jsonB | ConvertTo-Json -Depth 8 -Compress), [Text.UTF8Encoding]::new($false))
+]=])
+execute_process(
+    COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File "${COMBINE_SCRIPT}"
+        -Root "${RUNTIME_ROOT}"
+        -ManifestA "${MANIFEST_A}"
+        -ManifestB "${MANIFEST_B}"
+    RESULT_VARIABLE combine_result
+    OUTPUT_VARIABLE combine_stdout
+    ERROR_VARIABLE combine_stderr
+)
+if(NOT combine_result EQUAL 0)
+    message(STATUS "${combine_stdout}")
+    message(STATUS "${combine_stderr}")
+    message(FATAL_ERROR "Task8 manifest combination failed: ${combine_result}")
+endif()
+configure_file("${MANIFEST_A}" "${LIVE_MANIFEST}" COPYONLY)
+
+execute_process(
+    COMMAND "${LOOPBACK_TEST_EXE}" "${RUNTIME_ROOT}" "${LIVE_MANIFEST}" "${MANIFEST_B}"
+    RESULT_VARIABLE loopback_result
+    OUTPUT_VARIABLE loopback_stdout
+    ERROR_VARIABLE loopback_stderr
+)
+if(NOT loopback_result EQUAL 0)
+    message(STATUS "${loopback_stdout}")
+    message(STATUS "${loopback_stderr}")
+    message(FATAL_ERROR "Task8 C++ loopback failed: ${loopback_result}")
+endif()
+string(FIND "${loopback_stdout}${loopback_stderr}"
+    "[PASS] AssetManifestReloadBridgeLoopbackTest" loopback_pass_index)
+if(loopback_pass_index EQUAL -1)
+    message(STATUS "${loopback_stdout}")
+    message(STATUS "${loopback_stderr}")
+    message(FATAL_ERROR "Task8 C++ loopback did not emit its PASS marker")
+endif()
+message(STATUS "${loopback_stdout}${loopback_stderr}")
+
+# The C++ loopback intentionally leaves the live file at B. Reset it so the
+# real-process proof observes A at startup before it atomically installs B.
+configure_file("${MANIFEST_A}" "${LIVE_MANIFEST}" COPYONLY)
+
+set(EDITOR_MANIFEST "${NORVES_EDITOR_SOURCE_DIR}/apps/editor/src-tauri/Cargo.toml")
+if(NOT EXISTS "${EDITOR_MANIFEST}")
+    message(FATAL_ERROR "NorvesEditor Cargo manifest is unavailable: ${EDITOR_MANIFEST}")
+endif()
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "NORVES_NORVESLIB_ENGINE_PATH=${GAME_EXE}"
+        "NORVES_ASSET_RELOAD_ROOT=${RUNTIME_ROOT}"
+        "NORVES_ASSET_RELOAD_LIVE_MANIFEST=${LIVE_MANIFEST}"
+        "NORVES_ASSET_RELOAD_MANIFEST_B=${MANIFEST_B}"
+        "${CARGO_EXE}" test
+            --manifest-path "${EDITOR_MANIFEST}"
+            --test process_e2e
+            engine_asset_manifest_reload_contract
+            -- --nocapture
+    WORKING_DIRECTORY "${NORVES_EDITOR_SOURCE_DIR}"
+    RESULT_VARIABLE rust_result
+    OUTPUT_VARIABLE rust_stdout
+    ERROR_VARIABLE rust_stderr
+)
+set(rust_output "${rust_stdout}${rust_stderr}")
+if(NOT rust_result EQUAL 0)
+    message(STATUS "${rust_output}")
+    message(FATAL_ERROR "Task8 NorvesEditor process E2E failed: ${rust_result}")
+endif()
+string(FIND "${rust_output}" "[SKIP]" rust_skip_index)
+if(NOT rust_skip_index EQUAL -1)
+    message(STATUS "${rust_output}")
+    message(FATAL_ERROR "Task8 NorvesEditor process E2E skipped")
+endif()
+string(FIND "${rust_output}" "[PASS] engine_asset_manifest_reload_contract" rust_pass_index)
+if(rust_pass_index EQUAL -1)
+    message(STATUS "${rust_output}")
+    message(FATAL_ERROR "Task8 NorvesEditor process E2E did not emit its PASS marker")
+endif()
+message(STATUS "${rust_output}")

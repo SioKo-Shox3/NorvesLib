@@ -14,6 +14,10 @@ namespace NorvesLib::Core::Asset
 
 namespace NorvesLib::Core::Rendering
 {
+    class RenderResources;
+    class TextureAssetRuntime;
+    struct AssetRuntimeSnapshotReloadTestAccess;
+
     struct TextureAssetLoadPlan
     {
         bool bUseAssetSystem = false;
@@ -63,6 +67,13 @@ namespace NorvesLib::Core::Rendering
         [[nodiscard]] static bool AllowsDebugLooseFallback(TextureAssetFallbackMode mode);
 
     private:
+        friend class RenderResources;
+        friend class TextureAssetRuntime;
+        friend struct AssetRuntimeSnapshotReloadTestAccess;
+
+        void ReplaceSnapshot(
+            const Container::String& assetRoot,
+            Container::TSharedPtr<const Asset::AssetSystem> candidate);
         [[nodiscard]] Container::TSharedPtr<const Asset::AssetSystem> CreateSystemSnapshot() const;
         [[nodiscard]] Container::String ResolveLoosePath(const Container::String &path) const;
 

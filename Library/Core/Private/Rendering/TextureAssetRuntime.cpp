@@ -136,6 +136,23 @@ namespace NorvesLib::Core::Rendering
         return *m_TextureAssetResolver;
     }
 
+    bool TextureAssetRuntime::CanReloadSnapshotLocked() const
+    {
+        return IsBound() && m_TextureAsyncLoads &&
+               !m_TextureAsyncLoads->HasPendingOrActiveFlush();
+    }
+
+    void TextureAssetRuntime::ApplyReloadSnapshotLocked(
+        const Container::String& assetRoot,
+        const Container::TSharedPtr<const Asset::AssetSystem>& candidate)
+    {
+        GetTextureAssetResolverLocked().ReplaceSnapshot(assetRoot, candidate);
+        if (m_TextureHandleCache)
+        {
+            m_TextureHandleCache->Clear();
+        }
+    }
+
     TextureHandle TextureAssetRuntime::RegisterUploadedTexture(
         Container::TSharedPtr<RHI::ITexture> rhiTexture,
         const TextureCreateInfo &createInfo)
@@ -558,79 +575,88 @@ namespace NorvesLib::Core::Rendering
     uint32_t TextureAssetRuntime::LoadTextureAsync(const Container::String &path,
                                                    NorvesLib::Core::Delegate<void, TextureHandle> callback)
     {
-        if (!IsBound())
-        {
-            return 0;
-        }
+        TextureHandle cachedHandle = TextureHandle::Invalid();
+        uint32_t requestId = 0;
+        bool bSubmitted = false;
 
-        if (!m_TextureAsyncLoads)
-        {
-            m_TextureAsyncLoads = Container::MakeUnique<TextureAsyncLoadQueue>();
-        }
-
-        auto buildPlan = [this](const Container::String &requestPath)
         {
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
-            return GetTextureAssetResolverLocked().BuildTextureLoadPlan(requestPath);
-        };
+            if (!IsBound())
+            {
+                return 0;
+            }
 
-        TextureAssetLoadPlan plan = buildPlan(path);
+            if (!m_TextureAsyncLoads)
+            {
+                m_TextureAsyncLoads = Container::MakeUnique<TextureAsyncLoadQueue>();
+            }
 
-        const TextureHandle cachedHandle = m_TextureHandleCache
-                                               ? m_TextureHandleCache->Find(plan.CacheKey)
-                                               : TextureHandle::Invalid();
+            const TextureAssetLoadPlan plan =
+                GetTextureAssetResolverLocked().BuildTextureLoadPlan(path);
+            m_AsyncPlanBuiltBarrierForTesting.InvokeIfBound(plan);
+
+            cachedHandle = m_TextureHandleCache
+                               ? m_TextureHandleCache->Find(plan.CacheKey)
+                               : TextureHandle::Invalid();
+            if (!cachedHandle.IsValid())
+            {
+                const uint32_t duplicateRequestId =
+                    m_TextureAsyncLoads->TryAppendDuplicate(plan.CacheKey, callback);
+                if (duplicateRequestId != 0)
+                {
+                    return duplicateRequestId;
+                }
+
+                auto request = m_TextureAsyncLoads->CreateRequest(
+                    plan,
+                    TextureAssetResolver::ToTextureAssetFallbackMode(plan.FallbackMode),
+                    std::move(callback));
+                if (!request)
+                {
+                    return 0;
+                }
+
+                auto taskFunction = [request, plan]()
+                {
+                    TextureAssetCpuLoadResult cpuResult = TextureAssetLoader::LoadForWorker(
+                        plan,
+                        request->RequestId);
+
+                    auto &result = request->Result;
+                    result.Path = std::move(cpuResult.Path);
+                    result.ResolvedPath = std::move(cpuResult.ResolvedPath);
+                    result.CacheKey = std::move(cpuResult.CacheKey);
+                    result.LogicalPath = std::move(cpuResult.LogicalPath);
+                    result.CreateInfo = std::move(cpuResult.CreateInfo);
+                    result.PixelData = std::move(cpuResult.PixelData);
+                    result.CookedTexture = std::move(cpuResult.CookedTexture);
+                    result.Source = cpuResult.Source;
+                    result.FallbackMode = cpuResult.FallbackMode;
+                    result.AssetGeneration = cpuResult.AssetGeneration;
+                    result.bSuccess = cpuResult.bSuccess;
+                };
+
+                request->Task = Thread::Task::Create(taskFunction, Thread::TaskPriority::NORMAL);
+                const TextureAsyncLoadQueue::EnqueueResult enqueueResult =
+                    m_TextureAsyncLoads->EnqueueOrAppendDuplicateAndSubmit(request);
+                requestId = enqueueResult.RequestId;
+                bSubmitted = enqueueResult.bSubmitted;
+            }
+        }
+
         if (cachedHandle.IsValid())
         {
             callback.InvokeIfBound(cachedHandle);
             return 0;
         }
 
-        const uint32_t duplicateRequestId = m_TextureAsyncLoads->TryAppendDuplicate(plan.CacheKey, callback);
-        if (duplicateRequestId != 0)
-        {
-            return duplicateRequestId;
-        }
-
-        auto request = m_TextureAsyncLoads->CreateRequest(
-            plan,
-            TextureAssetResolver::ToTextureAssetFallbackMode(plan.FallbackMode),
-            std::move(callback));
-        if (!request)
-        {
-            return 0;
-        }
-
-        auto taskFunction = [request, plan]()
-        {
-            TextureAssetCpuLoadResult cpuResult = TextureAssetLoader::LoadForWorker(
-                plan,
-                request->RequestId);
-
-            auto &result = request->Result;
-            result.Path = std::move(cpuResult.Path);
-            result.ResolvedPath = std::move(cpuResult.ResolvedPath);
-            result.CacheKey = std::move(cpuResult.CacheKey);
-            result.LogicalPath = std::move(cpuResult.LogicalPath);
-            result.CreateInfo = std::move(cpuResult.CreateInfo);
-            result.PixelData = std::move(cpuResult.PixelData);
-            result.CookedTexture = std::move(cpuResult.CookedTexture);
-            result.Source = cpuResult.Source;
-            result.FallbackMode = cpuResult.FallbackMode;
-            result.AssetGeneration = cpuResult.AssetGeneration;
-            result.bSuccess = cpuResult.bSuccess;
-        };
-
-        request->Task = Thread::Task::Create(taskFunction, Thread::TaskPriority::NORMAL);
-
-        const TextureAsyncLoadQueue::EnqueueResult enqueueResult =
-            m_TextureAsyncLoads->EnqueueOrAppendDuplicateAndSubmit(request);
-        if (enqueueResult.bSubmitted)
+        if (bSubmitted)
         {
             NORVES_LOG_INFO("TextureResources", "Async texture load started: %s (RequestId=%u)",
-                            path.c_str(), static_cast<unsigned int>(request->RequestId));
+                            path.c_str(), static_cast<unsigned int>(requestId));
         }
 
-        return enqueueResult.RequestId;
+        return requestId;
     }
 
     uint32_t TextureAssetRuntime::FlushCompletedTextureLoads()

@@ -33,7 +33,9 @@ namespace NorvesLib::Core::Asset
 namespace NorvesLib::Core::Rendering
 {
     struct SubMesh;
+    struct AssetRuntimeSnapshotReloadTestAccess;
     class ModelAssetRuntime;
+    class TextureAssetRuntime;
 
     class GpuResources
     {
@@ -219,6 +221,9 @@ namespace NorvesLib::Core::Rendering
         bool Initialize(Container::TSharedPtr<RHI::IDevice> device);
         void Shutdown();
         bool IsInitialized() const;
+        bool ReloadAssetRuntimeSnapshot(
+            const Container::String& assetRoot,
+            Container::TSharedPtr<const Asset::AssetSystem> candidate);
 
         void ClearAllResources();
         void CleanupUnusedResources();
@@ -245,8 +250,12 @@ namespace NorvesLib::Core::Rendering
         friend class MaterialResources;
         friend class MeshResources;
         friend class MegaGeometryResources;
+        friend struct AssetRuntimeSnapshotReloadTestAccess;
 
         struct Impl;
+
+        TextureAssetRuntime* GetTextureAssetRuntimeForTesting();
+        ModelAssetRuntime* GetModelAssetRuntimeForTesting();
 
         Container::TUniquePtr<Impl> m_Impl;
         GpuResources m_Gpu;

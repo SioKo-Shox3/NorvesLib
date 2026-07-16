@@ -16,7 +16,22 @@ namespace NorvesLib::Core::Rendering
     void TextureAssetResolver::SetAssetRoot(const Container::String &assetRoot)
     {
         m_AssetRoot = ToAnsiString(assetRoot);
-        m_System = CreateSystemSnapshot();
+        if (m_bManifestLoadAttempted)
+        {
+            m_System = CreateSystemSnapshot();
+        }
+        ++m_Generation;
+    }
+
+    void TextureAssetResolver::ReplaceSnapshot(
+        const Container::String& assetRoot,
+        Container::TSharedPtr<const Asset::AssetSystem> candidate)
+    {
+        m_AssetRoot = ToAnsiString(assetRoot);
+        m_System = candidate;
+        m_ManifestJson.clear();
+        m_ManifestSourceName.clear();
+        m_bManifestLoadAttempted = false;
         ++m_Generation;
     }
 

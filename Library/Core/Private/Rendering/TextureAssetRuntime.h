@@ -18,12 +18,20 @@ namespace NorvesLib::RHI
     class ITexture;
 }
 
+namespace NorvesLib::Core::Asset
+{
+    class AssetSystem;
+}
+
 namespace NorvesLib::Core::Rendering
 {
     class GpuResourceStore;
     class TextureAsyncLoadQueue;
     class TextureAssetResolver;
     class TextureHandleCache;
+    class RenderResources;
+    struct TextureAssetLoadPlan;
+    struct AssetRuntimeSnapshotReloadTestAccess;
 
     class TextureAssetRuntime final
     {
@@ -72,6 +80,13 @@ namespace NorvesLib::Core::Rendering
             uint32_t requestId = 0) const;
 
     private:
+        friend class RenderResources;
+        friend struct AssetRuntimeSnapshotReloadTestAccess;
+
+        [[nodiscard]] bool CanReloadSnapshotLocked() const;
+        void ApplyReloadSnapshotLocked(
+            const Container::String& assetRoot,
+            const Container::TSharedPtr<const Asset::AssetSystem>& candidate);
         [[nodiscard]] bool IsBound() const noexcept;
         TextureAssetResolver &GetTextureAssetResolverLocked();
         TextureHandle RegisterUploadedTexture(Container::TSharedPtr<RHI::ITexture> rhiTexture,
@@ -85,6 +100,7 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<TextureAssetResolver> m_TextureAssetResolver;
         Container::TUniquePtr<TextureHandleCache> m_TextureHandleCache;
         Container::TUniquePtr<TextureAsyncLoadQueue> m_TextureAsyncLoads;
+        NorvesLib::Core::Delegate<void, const TextureAssetLoadPlan&> m_AsyncPlanBuiltBarrierForTesting;
         mutable Thread::Mutex m_TextureAssetMutex;
     };
 }

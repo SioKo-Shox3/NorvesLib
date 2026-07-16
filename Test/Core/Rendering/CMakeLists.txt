@@ -715,6 +715,85 @@ target_include_directories(ModelResourcesAssetRuntimeTest PRIVATE
 set_target_properties(ModelResourcesAssetRuntimeTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ModelResourcesAssetRuntimeTest COMMAND ModelResourcesAssetRuntimeTest)
 
+add_executable(AssetRuntimeSnapshotReloadTest
+    AssetRuntimeSnapshotReloadTest.cpp
+)
+target_link_libraries(AssetRuntimeSnapshotReloadTest PRIVATE Core)
+target_include_directories(AssetRuntimeSnapshotReloadTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(AssetRuntimeSnapshotReloadTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME AssetRuntimeSnapshotReloadTest COMMAND AssetRuntimeSnapshotReloadTest)
+
+add_executable(TextureAssetReloadAdmissionTest
+    TextureAssetReloadAdmissionTest.cpp
+)
+target_link_libraries(TextureAssetReloadAdmissionTest PRIVATE Core)
+target_include_directories(TextureAssetReloadAdmissionTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(TextureAssetReloadAdmissionTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME TextureAssetReloadAdmissionTest COMMAND TextureAssetReloadAdmissionTest)
+
+if(NORVES_BRIDGE_SDK_DIR)
+    add_executable(AssetManifestReloadBridgeLoopbackTest
+        AssetManifestReloadBridgeLoopbackTest.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameApplicationHandler.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Bridge/NorvesLibBridgeAdapter.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeServerHost.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeLogSink.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Bridge/ReadyHandshake.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/MemoryAgingTest/MemoryAgingTestRoutine.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugDraw.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugInput.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp
+    )
+    target_link_libraries(AssetManifestReloadBridgeLoopbackTest PRIVATE
+        Core
+        NorvesModule_Dummy
+        norves_bridge_engine_sdk
+    )
+    target_compile_definitions(AssetManifestReloadBridgeLoopbackTest PRIVATE
+        NORVES_BRIDGE_ENABLED
+    )
+    target_include_directories(AssetManifestReloadBridgeLoopbackTest PRIVATE
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/Game
+        ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    )
+    add_dependencies(AssetManifestReloadBridgeLoopbackTest AssetCook Game)
+    set_target_properties(AssetManifestReloadBridgeLoopbackTest PROPERTIES
+        FOLDER "Test/Core/Rendering"
+    )
+    get_filename_component(NORVES_EDITOR_SOURCE_DIR
+        "${NORVES_BRIDGE_SDK_DIR}/../.."
+        ABSOLUTE
+    )
+    if(NOT EXISTS "${NORVES_EDITOR_SOURCE_DIR}/apps/editor/src-tauri/Cargo.toml")
+        get_filename_component(NORVES_EDITOR_SOURCE_DIR
+            "${NORVES_BRIDGE_SDK_DIR}/../../.."
+            ABSOLUTE
+        )
+    endif()
+    set(ASSET_MANIFEST_RELOAD_BRIDGE_E2E_DIR
+        "${CMAKE_BINARY_DIR}/AssetManifestReloadBridgeLoopback/$<CONFIG>"
+    )
+    add_test(NAME AssetManifestReloadBridgeLoopbackTest
+        COMMAND ${CMAKE_COMMAND}
+            "-DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>"
+            "-DLOOPBACK_TEST_EXE=$<TARGET_FILE:AssetManifestReloadBridgeLoopbackTest>"
+            "-DGAME_EXE=$<TARGET_FILE:Game>"
+            "-DNORVES_EDITOR_SOURCE_DIR=${NORVES_EDITOR_SOURCE_DIR}"
+            "-DE2E_DIR=${ASSET_MANIFEST_RELOAD_BRIDGE_E2E_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetManifestReloadBridgeLoopback.cmake.in"
+    )
+    set_tests_properties(AssetManifestReloadBridgeLoopbackTest PROPERTIES TIMEOUT 600)
+endif()
+
 add_executable(ModelResourcesAssetLoadProfileContractTest
     ModelResourcesAssetLoadProfileContractTest.cpp
 )

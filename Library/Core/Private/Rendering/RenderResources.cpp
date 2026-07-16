@@ -5,6 +5,7 @@
 #include "Rendering/ProceduralMeshGpuStore.h"
 #include "Rendering/RenderMaterialStore.h"
 #include "Rendering/TextureAssetRuntime.h"
+#include "Rendering/TextureAssetResolver.h"
 #include "Logging/LogMacros.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
@@ -775,6 +776,95 @@ namespace NorvesLib::Core::Rendering
     bool RenderResources::IsInitialized() const
     {
         return m_Impl->bInitialized;
+    }
+
+    bool RenderResources::ReloadAssetRuntimeSnapshot(
+        const Container::String& assetRoot,
+        Container::TSharedPtr<const Asset::AssetSystem> candidate)
+    {
+        if (!m_Impl || !m_Impl->bInitialized || m_Impl->bShuttingDown)
+        {
+            NORVES_LOG_WARNING(
+                "RenderResources",
+                "Asset runtime snapshot reload rejected: reason=runtime_not_ready");
+            return false;
+        }
+        if (assetRoot.empty())
+        {
+            NORVES_LOG_WARNING(
+                "RenderResources",
+                "Asset runtime snapshot reload rejected: reason=invalid_asset_root");
+            return false;
+        }
+        if (!candidate)
+        {
+            NORVES_LOG_WARNING(
+                "RenderResources",
+                "Asset runtime snapshot reload rejected: reason=null_candidate");
+            return false;
+        }
+        if (!m_Impl->TextureAssets || !m_Impl->ModelAssets)
+        {
+            NORVES_LOG_WARNING(
+                "RenderResources",
+                "Asset runtime snapshot reload rejected: reason=runtime_missing");
+            return false;
+        }
+
+        TextureAssetRuntime& textureRuntime = *m_Impl->TextureAssets;
+        ModelAssetRuntime& modelRuntime = *m_Impl->ModelAssets;
+        Resource::ModelCacheHandleBatch retired;
+        const char* pRejectedReason = nullptr;
+        uint64_t textureGeneration = 0;
+        uint64_t modelGeneration = 0;
+        {
+            Thread::ScopedLock textureLock(textureRuntime.m_TextureAssetMutex);
+            Thread::ScopedLock modelLock(modelRuntime.m_AssetMutex);
+            const bool bTextureReady = textureRuntime.CanReloadSnapshotLocked();
+            const bool bModelReady = modelRuntime.CanReloadSnapshotLocked();
+            if (!bTextureReady)
+            {
+                pRejectedReason = "texture_busy_or_unbound";
+            }
+            else if (!bModelReady)
+            {
+                pRejectedReason = "model_busy_or_unbound";
+            }
+            else
+            {
+                textureRuntime.ApplyReloadSnapshotLocked(assetRoot, candidate);
+                retired = modelRuntime.ApplyReloadSnapshotLocked(assetRoot, candidate);
+                textureGeneration = textureRuntime.GetTextureAssetResolverLocked().GetGeneration();
+                modelGeneration = modelRuntime.m_Generation;
+            }
+        }
+
+        if (pRejectedReason != nullptr)
+        {
+            NORVES_LOG_WARNING(
+                "RenderResources",
+                "Asset runtime snapshot reload rejected: reason=%s",
+                pRejectedReason);
+            return false;
+        }
+
+        modelRuntime.ReleaseRetiredAfterReload(std::move(retired));
+        NORVES_LOG_INFO(
+            "RenderResources",
+            "Asset runtime snapshot reload accepted: texture_generation=%llu model_generation=%llu",
+            static_cast<unsigned long long>(textureGeneration),
+            static_cast<unsigned long long>(modelGeneration));
+        return true;
+    }
+
+    TextureAssetRuntime* RenderResources::GetTextureAssetRuntimeForTesting()
+    {
+        return m_Impl ? m_Impl->TextureAssets.get() : nullptr;
+    }
+
+    ModelAssetRuntime* RenderResources::GetModelAssetRuntimeForTesting()
+    {
+        return m_Impl ? m_Impl->ModelAssets.get() : nullptr;
     }
 
     void RenderResources::ClearAllResources()

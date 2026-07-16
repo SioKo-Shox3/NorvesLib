@@ -344,10 +344,10 @@ namespace Game::Bridge
          * @brief asset.resolve。1 つの論理アセットパスを解決し health/メタを DTO で返す
          *
          * params.logicalPath（必須 string）/ kind（任意 string）/ variant（任意 string）を読む。
-         * handler が注入されていない、または texture asset root/manifest パスが空のときは
+         * handler が注入されていない、または retained immutable snapshot が null のときは
          * graceful に {status:"invalidManifest", source:"none", normalizedLogicalPath:<入力>} を返す
-         * （not_supported は返さない＝asset.read 広告と整合）。それ以外では handler の root/manifest
-         * パスから一時 AssetSystem を構築し manifest を読み込み、ResolveAsset を呼んで結果メタを
+         * （not_supported は返さない＝asset.read 広告と整合）。それ以外では handler から snapshot を
+         * by-value で借りて寿命を保持し、ResolveAsset を呼んで結果メタを
          * camelCase wire（status/source/normalizedLogicalPath と任意 requiresExplicitLog/fallbackAction/
          * failureKind/reason）へ写す。ResolveAsset は健全性検証（hash mismatch 検出）のため cooked
          * 全バイトを Blob に読むが、Blob / Entry / LoosePath / 生バイトは wire へ一切入れない
@@ -364,9 +364,9 @@ namespace Game::Bridge
          * @brief asset.getManifest。読込済み manifest のスナップショットを DTO 配列で返す
          *
          * params.filter（任意 string）/ page（任意 integer）/ pageSize（任意 integer）を読む。
-         * handler が注入されていない、または root/manifest パスが空のときは graceful に
-         * {version:0, entries:[], totalCount:0} を返す。それ以外では一時 AssetSystem を構築し
-         * manifest を読み込み、GetAssetCount()/GetAssetReference(index) で各 AssetCookedReference を
+         * handler が注入されていない、または retained immutable snapshot が null のときは graceful に
+         * {version:0, entries:[], totalCount:0} を返す。それ以外では snapshot を by-value で借りて
+         * GetAssetCount()/GetAssetReference(index) で各 AssetCookedReference を
          * 列挙して assetEntry（logicalPath/kind 必須、variant/format/sourceHash/cookedPackage/
          * entryName/entryType/cookedHash は非空時、cookedVersion は裸 integer）へ写す。filter は
          * logicalPath 部分一致で絞り、totalCount はフィルタ後・ページング前の件数。Blob / Entry /
@@ -378,6 +378,14 @@ namespace Game::Bridge
          */
         Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
         assetGetManifest(const Norves::Bridge::JsonValue& params) override;
+
+        /**
+         * @brief asset.reloadManifest。構成済み manifest を同期再読込する
+         * @param params SDK が空 object として厳格検証済みの params。
+         * @return runtime の受理結果だけを含む {accepted:boolean}。
+         */
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        assetReloadManifest(const Norves::Bridge::JsonValue& params) override;
 
         // viewport.getThumbnail は本実装範囲外で、adapter.hpp の既定実装
         // （METHOD_NOT_SUPPORTED）のまま。scene/object（読み取り・書き込み）／schema は実装済み。

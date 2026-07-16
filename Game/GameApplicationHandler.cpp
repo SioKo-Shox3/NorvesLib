@@ -1,5 +1,6 @@
 ﻿#include "GameApplicationHandler.h"
 #include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/Entity.h"
@@ -737,7 +738,7 @@ namespace Game
     {
         LOG_INFO("GameApplicationHandler::OnPostInitialize()");
 
-        if (m_bHasTextureAssetRuntimeConfig && !ApplyTextureAssetRuntimeConfig())
+        if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())
         {
             if (GEngine)
             {
@@ -751,11 +752,19 @@ namespace Game
         // ここでの直接登録は行わない
     }
 
-    bool GameApplicationHandler::ApplyTextureAssetRuntimeConfig()
+    bool GameApplicationHandler::ReloadConfiguredAssetManifest()
     {
+        if (!m_bHasTextureAssetRuntimeConfig ||
+            m_TextureAssetRoot.empty() ||
+            m_TextureAssetManifestPath.empty())
+        {
+            LOG_WARNING("Asset runtime snapshot reload rejected: asset runtime config is not set");
+            return false;
+        }
+
         if (!GEngine)
         {
-            LOG_ERROR("Texture asset runtime setup failed: GEngine is null");
+            LOG_ERROR("Asset runtime snapshot reload failed: GEngine is null");
             return false;
         }
 
@@ -765,40 +774,40 @@ namespace Game
         std::error_code errorCode;
         if (!std::filesystem::exists(rootPath, errorCode) || errorCode)
         {
-            LOG_ERROR_F("Texture asset runtime setup failed: root does not exist path=\"%s\"",
-                        m_TextureAssetRoot.c_str());
+            LOG_ERROR("Asset runtime snapshot reload failed: root does not exist path=\"%s\"",
+                      m_TextureAssetRoot.c_str());
             return false;
         }
 
         errorCode = {};
         if (!std::filesystem::is_directory(rootPath, errorCode) || errorCode)
         {
-            LOG_ERROR_F("Texture asset runtime setup failed: root is not a directory path=\"%s\"",
-                        m_TextureAssetRoot.c_str());
+            LOG_ERROR("Asset runtime snapshot reload failed: root is not a directory path=\"%s\"",
+                      m_TextureAssetRoot.c_str());
             return false;
         }
 
         errorCode = {};
         if (!std::filesystem::exists(manifestPath, errorCode) || errorCode)
         {
-            LOG_ERROR_F("Texture asset runtime setup failed: manifest does not exist path=\"%s\"",
-                        m_TextureAssetManifestPath.c_str());
+            LOG_ERROR("Asset runtime snapshot reload failed: manifest does not exist path=\"%s\"",
+                      m_TextureAssetManifestPath.c_str());
             return false;
         }
 
         errorCode = {};
         if (!std::filesystem::is_regular_file(manifestPath, errorCode) || errorCode)
         {
-            LOG_ERROR_F("Texture asset runtime setup failed: manifest is not a regular file path=\"%s\"",
-                        m_TextureAssetManifestPath.c_str());
+            LOG_ERROR("Asset runtime snapshot reload failed: manifest is not a regular file path=\"%s\"",
+                      m_TextureAssetManifestPath.c_str());
             return false;
         }
 
         std::ifstream manifestInput(manifestPath, std::ios::binary);
         if (!manifestInput.is_open())
         {
-            LOG_ERROR_F("Texture asset runtime setup failed: manifest read failed path=\"%s\"",
-                        m_TextureAssetManifestPath.c_str());
+            LOG_ERROR("Asset runtime snapshot reload failed: manifest read failed path=\"%s\"",
+                      m_TextureAssetManifestPath.c_str());
             return false;
         }
 
@@ -806,31 +815,43 @@ namespace Game
                                         std::istreambuf_iterator<char>());
         if (!manifestInput.eof() && manifestInput.fail())
         {
-            LOG_ERROR_F("Texture asset runtime setup failed: manifest read failed path=\"%s\"",
-                        m_TextureAssetManifestPath.c_str());
-            return false;
-        }
-
-        auto &textures = GEngine->GetRenderResources().Textures();
-        if (!textures.SetTextureAssetRoot(m_TextureAssetRoot))
-        {
-            LOG_ERROR_F("Texture asset runtime setup failed: SetTextureAssetRoot rejected root=\"%s\"",
-                        m_TextureAssetRoot.c_str());
+            LOG_ERROR("Asset runtime snapshot reload failed: manifest read failed path=\"%s\"",
+                      m_TextureAssetManifestPath.c_str());
             return false;
         }
 
         const String manifestText = MakeStringFromUtf8Bytes(manifestBytes);
-        if (!textures.LoadTextureAssetManifestFromJsonText(manifestText, m_TextureAssetManifestPath))
+        auto candidate = MakeShared<Asset::AssetSystem>(AnsiString(m_TextureAssetRoot.c_str()));
+        const AnsiStringView sourceName(m_TextureAssetManifestPath.data(),
+                                        m_TextureAssetManifestPath.size());
+        if (!candidate->LoadManifestFromJsonText(manifestText, sourceName))
         {
-            LOG_ERROR_F("Texture asset runtime setup failed: texture asset manifest parse failed path=\"%s\"",
+            LOG_ERROR("Asset runtime snapshot reload failed: manifest parse failed path=\"%s\"",
+                      m_TextureAssetManifestPath.c_str());
+            return false;
+        }
+
+        TSharedPtr<const Asset::AssetSystem> immutableCandidate = candidate;
+        if (!GEngine->GetRenderResources().ReloadAssetRuntimeSnapshot(
+                m_TextureAssetRoot,
+                immutableCandidate))
+        {
+            LOG_WARNING("Asset runtime snapshot reload rejected by runtime root=\"%s\" manifest=\"%s\"",
+                        m_TextureAssetRoot.c_str(),
                         m_TextureAssetManifestPath.c_str());
             return false;
         }
 
-        LOG_INFO_F("Texture asset runtime setup completed root=\"%s\" manifest=\"%s\"",
-                   m_TextureAssetRoot.c_str(),
-                   m_TextureAssetManifestPath.c_str());
+        m_AssetSystemSnapshot = immutableCandidate;
+        LOG_INFO("Asset runtime snapshot reload completed root=\"%s\" manifest=\"%s\"",
+                 m_TextureAssetRoot.c_str(),
+                 m_TextureAssetManifestPath.c_str());
         return true;
+    }
+
+    TSharedPtr<const Asset::AssetSystem> GameApplicationHandler::GetAssetSystemSnapshot() const
+    {
+        return m_AssetSystemSnapshot;
     }
 
     void GameApplicationHandler::ParseBridgePortOption(const VariableArray<String>& args)
