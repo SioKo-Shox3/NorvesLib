@@ -275,7 +275,7 @@ foreach ($record in $records) {
 
 $requiredMissing = @()
 if ($RequireCompleteModelFlush) {
-    foreach ($stage in @("gltf_staging_total", "gltf_finalize_total", "megamesh_gpu_upload", "renderworld_model_flush")) {
+    foreach ($stage in @("gltf_staging_total", "model_finalize_total", "megamesh_gpu_upload", "renderworld_model_flush")) {
         if (-not $stageSet.ContainsKey($stage)) {
             $requiredMissing += $stage
         }
@@ -524,8 +524,8 @@ $modelStages = @(
     "gltf_clusterize",
     "gltf_texture_staging",
     "gltf_staging_total",
-    "gltf_finalize_textures",
-    "gltf_finalize_total"
+    "model_finalize_textures",
+    "model_finalize_total"
 )
 $modelRecords = $records | Where-Object { $_.Stage -in $modelStages }
 $modelRows = @()
@@ -547,7 +547,7 @@ foreach ($group in ($modelRecords | Group-Object { Get-Field $_.Fields "request_
         (Format-Number (Sum-StageMetric -Records $items -Stage "gltf_clusterize" -Metric "ms" -UseMsField)),
         (Format-Number (Sum-StageMetric -Records $items -Stage "gltf_texture_staging" -Metric "ms" -UseMsField)),
         (Format-Number (Sum-StageMetric -Records $items -Stage "gltf_staging_total" -Metric "ms" -UseMsField)),
-        (Format-Number (Sum-StageMetric -Records $items -Stage "gltf_finalize_total" -Metric "ms" -UseMsField)),
+        (Format-Number (Sum-StageMetric -Records $items -Stage "model_finalize_total" -Metric "ms" -UseMsField)),
         (Get-FirstFieldFromStages $items @("gltf_staging_total") "vertices"),
         (Get-FirstFieldFromStages $items @("gltf_staging_total") "indices"),
         (Get-FirstFieldFromStages $items @("gltf_staging_total") "clusters"),
@@ -571,7 +571,7 @@ Write-Output ""
 
 $mainRenderRecords = $records | Where-Object {
     (Get-Field $_.Fields "role") -eq "main_render" -or
-    $_.Stage -in @("texture_async_flush", "renderworld_texture_flush", "gltf_finalize_total", "megamesh_gpu_upload", "renderworld_model_flush")
+    $_.Stage -in @("texture_async_flush", "renderworld_texture_flush", "model_finalize_total", "megamesh_gpu_upload", "renderworld_model_flush")
 }
 
 $mainRows = @()

@@ -2,6 +2,8 @@
 
 #include "Asset/AssetSystem.h"
 #include "Container/StringView.h"
+#include "Debug/Stats.h"
+#include "Logging/LogMacros.h"
 #include "Resource/ModelAssetResolver.h"
 
 namespace NorvesLib::Core::Resource
@@ -84,13 +86,36 @@ namespace NorvesLib::Core::Resource
         const Container::String& logicalPath,
         Rendering::ModelLoadResourceContext resources)
     {
-        Asset::AssetResolveResult resolveResult = ResolveCookedModel(assetSystem, logicalPath);
+        Asset::AssetResolveResult resolveResult;
+        {
+            NORVES_STAT_SCOPE_CATEGORY("ModelAsset.Resolve", "AssetLoad");
+            resolveResult = ResolveCookedModel(assetSystem, logicalPath);
+        }
+        NORVES_LOG_INFO(
+            "AssetLoadProfile",
+            "stage=model_asset_resolve role=caller source=%s request_id=0 normalized_path=\"%.*s\" status=%u success=%d",
+            resolveResult.UsedCooked() ? "cooked_nvmesh" : "none",
+            static_cast<int>(resolveResult.NormalizedLogicalPath.size()),
+            resolveResult.NormalizedLogicalPath.data(),
+            static_cast<unsigned int>(resolveResult.Status),
+            resolveResult.UsedCooked() ? 1 : 0);
         if (!resolveResult.UsedCooked())
         {
             return Rendering::ModelHandle::Invalid();
         }
 
-        Asset::CookedMeshParseResult parseResult = Asset::ParseCookedMesh(resolveResult.Blob);
+        Asset::CookedMeshParseResult parseResult;
+        {
+            NORVES_STAT_SCOPE_CATEGORY("ModelAsset.ParseCooked", "AssetLoad");
+            parseResult = Asset::ParseCookedMesh(resolveResult.Blob);
+        }
+        NORVES_LOG_INFO(
+            "AssetLoadProfile",
+            "stage=model_cooked_parse role=caller source=cooked_nvmesh request_id=0 normalized_path=\"%.*s\" status=%u success=%d",
+            static_cast<int>(resolveResult.NormalizedLogicalPath.size()),
+            resolveResult.NormalizedLogicalPath.data(),
+            static_cast<unsigned int>(parseResult.Status),
+            parseResult.Status == Asset::CookedMeshParseStatus::Success ? 1 : 0);
         if (parseResult.Status != Asset::CookedMeshParseStatus::Success)
         {
             return Rendering::ModelHandle::Invalid();
@@ -116,7 +141,6 @@ namespace NorvesLib::Core::Resource
                                   uint32_t requestId,
                                   CookedModelCpuLoadResult& outResult)
     {
-        (void)requestId;
         outResult = {};
         outResult.CacheKey = plan.CacheKey;
         outResult.Generation = plan.Generation;
@@ -125,14 +149,39 @@ namespace NorvesLib::Core::Resource
             return false;
         }
 
-        Asset::AssetResolveResult resolveResult = ResolveCookedModel(*plan.AssetSystem, plan.RequestPath);
+        Asset::AssetResolveResult resolveResult;
+        {
+            NORVES_STAT_SCOPE_CATEGORY("ModelAsset.Resolve", "AssetLoad");
+            resolveResult = ResolveCookedModel(*plan.AssetSystem, plan.RequestPath);
+        }
+        NORVES_LOG_INFO(
+            "AssetLoadProfile",
+            "stage=model_asset_resolve role=worker source=%s request_id=%u normalized_path=\"%.*s\" status=%u success=%d",
+            resolveResult.UsedCooked() ? "cooked_nvmesh" : "none",
+            static_cast<unsigned int>(requestId),
+            static_cast<int>(resolveResult.NormalizedLogicalPath.size()),
+            resolveResult.NormalizedLogicalPath.data(),
+            static_cast<unsigned int>(resolveResult.Status),
+            resolveResult.UsedCooked() ? 1 : 0);
         if (!resolveResult.UsedCooked() ||
             resolveResult.NormalizedLogicalPath != plan.NormalizedLogicalPath)
         {
             return false;
         }
 
-        Asset::CookedMeshParseResult parseResult = Asset::ParseCookedMesh(resolveResult.Blob);
+        Asset::CookedMeshParseResult parseResult;
+        {
+            NORVES_STAT_SCOPE_CATEGORY("ModelAsset.ParseCooked", "AssetLoad");
+            parseResult = Asset::ParseCookedMesh(resolveResult.Blob);
+        }
+        NORVES_LOG_INFO(
+            "AssetLoadProfile",
+            "stage=model_cooked_parse role=worker source=cooked_nvmesh request_id=%u normalized_path=\"%.*s\" status=%u success=%d",
+            static_cast<unsigned int>(requestId),
+            static_cast<int>(resolveResult.NormalizedLogicalPath.size()),
+            resolveResult.NormalizedLogicalPath.data(),
+            static_cast<unsigned int>(parseResult.Status),
+            parseResult.Status == Asset::CookedMeshParseStatus::Success ? 1 : 0);
         if (parseResult.Status != Asset::CookedMeshParseStatus::Success)
         {
             return false;

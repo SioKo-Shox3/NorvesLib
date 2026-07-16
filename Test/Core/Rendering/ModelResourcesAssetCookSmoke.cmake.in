@@ -1,0 +1,100 @@
+if(NOT DEFINED ASSET_COOK_EXE)
+    message(FATAL_ERROR "ASSET_COOK_EXE is required")
+endif()
+
+if(NOT DEFINED RUNTIME_TEST_EXE)
+    message(FATAL_ERROR "RUNTIME_TEST_EXE is required")
+endif()
+
+if(NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "SMOKE_DIR is required")
+endif()
+
+file(REMOVE_RECURSE "${SMOKE_DIR}")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/Source")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/RuntimeRoot/Cooked")
+
+set(SOURCE_GLTF "${SMOKE_DIR}/Source/runtime_cooked.gltf")
+set(SOURCE_BIN "${SMOKE_DIR}/Source/runtime_cooked.bin")
+set(FIXTURE_SCRIPT "${SMOKE_DIR}/Source/write_fixture.ps1")
+set(RUNTIME_ROOT "${SMOKE_DIR}/RuntimeRoot")
+set(OUTPUT_PACKAGE "${RUNTIME_ROOT}/Cooked/runtime_cooked.nvpkg")
+set(OUTPUT_MANIFEST "${RUNTIME_ROOT}/manifest.json")
+set(LOGICAL_PATH "Models/runtime_cooked.gltf")
+set(ENTRY_NAME "Models/runtime_cooked.nvmesh")
+
+file(WRITE "${SOURCE_GLTF}" [=[
+{"asset":{"version":"2.0"},"buffers":[{"uri":"runtime_cooked.bin","byteLength":102}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":36},{"buffer":0,"byteOffset":72,"byteLength":24},{"buffer":0,"byteOffset":96,"byteLength":6}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":3,"type":"VEC2"},{"bufferView":3,"componentType":5123,"count":3,"type":"SCALAR"}],"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":3,"mode":4}]}]}
+]=])
+
+file(WRITE "${FIXTURE_SCRIPT}" [=[
+param([Parameter(Mandatory = $true)][string]$OutputPath)
+$bytes = [byte[]]::new(102)
+$offset = 0
+foreach ($value in [single[]](0,0,0, 1,0,0, 0,1,0, 0,0,1, 0,0,1, 0,0,1, 0,0, 1,0, 0,1))
+{
+    [BitConverter]::GetBytes($value).CopyTo($bytes, $offset)
+    $offset += 4
+}
+foreach ($value in [uint16[]](0,1,2))
+{
+    [BitConverter]::GetBytes($value).CopyTo($bytes, $offset)
+    $offset += 2
+}
+[IO.File]::WriteAllBytes($OutputPath, $bytes)
+]=])
+
+execute_process(
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${FIXTURE_SCRIPT}" "${SOURCE_BIN}"
+    RESULT_VARIABLE fixture_result
+    OUTPUT_VARIABLE fixture_stdout
+    ERROR_VARIABLE fixture_stderr
+)
+if(NOT fixture_result EQUAL 0)
+    message(STATUS "${fixture_stdout}")
+    message(STATUS "${fixture_stderr}")
+    message(FATAL_ERROR "ModelResources fixture generation failed with exit code ${fixture_result}")
+endif()
+
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}"
+        --input "${SOURCE_GLTF}"
+        --out "${OUTPUT_PACKAGE}"
+        --manifest "${OUTPUT_MANIFEST}"
+        --logical "${LOGICAL_PATH}"
+        --kind model
+        --entry "${ENTRY_NAME}"
+        --entry-type Msh0
+        --format nvmesh.v0.mesh3d.pnt.u32.clustered
+        --variant default
+    RESULT_VARIABLE cook_result
+    OUTPUT_VARIABLE cook_stdout
+    ERROR_VARIABLE cook_stderr
+)
+if(NOT cook_result EQUAL 0)
+    message(STATUS "${cook_stdout}")
+    message(STATUS "${cook_stderr}")
+    message(FATAL_ERROR "AssetCook model runtime smoke cook step failed with exit code ${cook_result}")
+endif()
+
+execute_process(
+    COMMAND "${RUNTIME_TEST_EXE}"
+        --asset-root "${RUNTIME_ROOT}"
+        --manifest "${OUTPUT_MANIFEST}"
+        --package "${OUTPUT_PACKAGE}"
+        --logical "${LOGICAL_PATH}"
+        --entry "${ENTRY_NAME}"
+    RESULT_VARIABLE runtime_result
+    OUTPUT_VARIABLE runtime_stdout
+    ERROR_VARIABLE runtime_stderr
+)
+if(NOT runtime_result EQUAL 0)
+    message(STATUS "${cook_stdout}")
+    message(STATUS "${cook_stderr}")
+    message(STATUS "${runtime_stdout}")
+    message(STATUS "${runtime_stderr}")
+    message(FATAL_ERROR "ModelResources AssetCook smoke failed with exit code ${runtime_result}")
+endif()
+
+message(STATUS "${cook_stdout}")
+message(STATUS "${runtime_stdout}")

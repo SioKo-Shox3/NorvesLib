@@ -15,8 +15,8 @@ Post-AssetCook scoped texture-path comparison: [AssetLoadPostCookComparison.md](
 | command used | `build\Game\Debug\Game.exe --exit-after-frames=30000` |
 | timeout | 600 sec wall-clock timeout with process kill on timeout |
 | exit code | `0` |
-| required stages | present: `gltf_staging_total`, `gltf_finalize_total`, `megamesh_gpu_upload`, `renderworld_model_flush`, texture stages |
-| rejected run | `--exit-after-frames=10000` exited `0`, but missed `gltf_finalize_total`, `megamesh_gpu_upload`, and `renderworld_model_flush` |
+| required stages | present: `gltf_staging_total`, `model_finalize_total`, `megamesh_gpu_upload`, `renderworld_model_flush`, texture stages |
+| rejected run | `--exit-after-frames=10000` exited `0`, but missed `model_finalize_total`, `megamesh_gpu_upload`, and `renderworld_model_flush` |
 | OS | Microsoft Windows 11 Home 10.0.22631 build 22631 |
 | GPU | NVIDIA GeForce RTX 4080, driver 32.0.15.9186 |
 | repo drive | Lexar SSD NM790 4TB, NVMe, drive `C:` |
@@ -43,10 +43,10 @@ The 10000-frame run is a sanity check only. It is not long enough for this basel
 | gltf_buffer_read | 1 | 1 | 0 | 2.945 | 2.945 | 2.945 |
 | gltf_buffer_read_total | 1 | 1 | 0 | 3.137 | 3.137 | 3.137 |
 | gltf_clusterize | 1 | 1 | 0 | 2176.298 | 2176.298 | 2176.298 |
-| gltf_finalize_megamesh | 1 | 1 | 0 | 2.385 | 2.385 | 2.385 |
-| gltf_finalize_register | 1 | 1 | 0 | 0.005 | 0.005 | 0.005 |
-| gltf_finalize_textures | 1 | 1 | 0 | 42.868 | 42.868 | 42.868 |
-| gltf_finalize_total | 1 | 1 | 0 | 45.946 | 45.946 | 45.946 |
+| model_finalize_megamesh | 1 | 1 | 0 | 2.385 | 2.385 | 2.385 |
+| model_finalize_register | 1 | 1 | 0 | 0.005 | 0.005 | 0.005 |
+| model_finalize_textures | 1 | 1 | 0 | 42.868 | 42.868 | 42.868 |
+| model_finalize_total | 1 | 1 | 0 | 45.946 | 45.946 | 45.946 |
 | gltf_image_copy | 3 | 3 | 0 | 63.545 | 21.182 | 22.193 |
 | gltf_image_decode | 3 | 3 | 0 | 1146.175 | 382.058 | 477.714 |
 | gltf_image_read | 3 | 3 | 0 | 44.866 | 14.955 | 19.182 |
@@ -93,10 +93,10 @@ The 10000-frame run is a sanity check only. It is not long enough for this basel
 
 | stage | count | processed | success | failed | total_ms | max_ms |
 | --- | --- | --- | --- | --- | --- | --- |
-| gltf_finalize_megamesh | 1 | 0 | 1 | 0 | 2.385 | 2.385 |
-| gltf_finalize_register | 1 | 0 | 1 | 0 | 0.005 | 0.005 |
-| gltf_finalize_textures | 1 | 0 | 1 | 0 | 42.868 | 42.868 |
-| gltf_finalize_total | 1 | 0 | 1 | 0 | 45.946 | 45.946 |
+| model_finalize_megamesh | 1 | 0 | 1 | 0 | 2.385 | 2.385 |
+| model_finalize_register | 1 | 0 | 1 | 0 | 0.005 | 0.005 |
+| model_finalize_textures | 1 | 0 | 1 | 0 | 42.868 | 42.868 |
+| model_finalize_total | 1 | 0 | 1 | 0 | 45.946 | 45.946 |
 | gltf_model_flush | 1 | 1 | 1 | 0 | 46.187 | 46.187 |
 | megamesh_gpu_upload | 1 | 0 | 1 | 0 |  |  |
 | renderworld_model_flush | 1 | 1 | 1 | 0 | 46.243 | 46.243 |
@@ -111,6 +111,6 @@ The 10000-frame run is a sanity check only. It is not long enough for this basel
 - Use `Scripts/SummarizeAssetLoadProfile.ps1 -RequireCompleteModelFlush` before accepting a baseline.
 - Cooked texture work should remove runtime `texture_async_worker` decode cost for cooked targets.
 - Cooked model work should remove runtime `gltf_json_parse`, `gltf_buffer_read`, `gltf_mesh_extract`, and `gltf_clusterize` cost for cooked targets.
-- `gltf_finalize_total`, `megamesh_gpu_upload`, and `renderworld_model_flush` must still appear so GPU-side completion is represented.
+- `model_finalize_total`, `megamesh_gpu_upload`, and `renderworld_model_flush` must still appear so GPU-side completion is represented.
 - Do not commit raw logs, redirected stdout/stderr, or generated summaries.
 - Keep in mind that shader compile, IBL generation, GPU driver cache, storage cache, and Debug build overhead can affect the values.

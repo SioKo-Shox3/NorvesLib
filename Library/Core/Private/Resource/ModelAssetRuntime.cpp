@@ -1,6 +1,8 @@
 ﻿#include "Resource/ModelAssetRuntime.h"
 
 #include "Asset/AssetPath.h"
+#include "Debug/Stats.h"
+#include "Logging/LogMacros.h"
 #include "Rendering/RenderResources.h"
 #include "Resource/ModelStaging.h"
 
@@ -203,6 +205,7 @@ namespace NorvesLib::Core::Rendering
 
     uint32_t ModelAssetRuntime::FlushCompletedModelLoads(uint32_t maxLoadsPerFrame)
     {
+        NORVES_STAT_SCOPE_CATEGORY("ModelAsset.AsyncFlush", "AssetLoad");
         {
             Thread::ScopedLock lock(m_AssetMutex);
             if (!m_bBound || m_bClosing || !m_bAcceptingRequests ||
@@ -270,6 +273,10 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
+        NORVES_LOG_INFO(
+            "AssetLoadProfile",
+            "stage=model_async_flush role=main_render processed=%u success=1",
+            static_cast<unsigned int>(processed));
         return processed;
     }
 

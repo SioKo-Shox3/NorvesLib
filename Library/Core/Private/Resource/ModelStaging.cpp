@@ -703,7 +703,7 @@ namespace NorvesLib::Core::Resource::ModelStaging
             bRoughnessFinalizeSuccess &&
             bMetallicFinalizeSuccess;
         NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=gltf_finalize_textures role=%s request_id=%u debug_name=\"%s\" textures=%u prepared_textures=%u loose_texture_bytes=%zu ms=%.3f success=%d",
+                        "stage=model_finalize_textures role=%s request_id=%u debug_name=\"%s\" textures=%u prepared_textures=%u loose_texture_bytes=%zu ms=%.3f success=%d",
                         role,
                         static_cast<unsigned int>(requestId),
                         staging.DebugName.c_str(),
@@ -734,7 +734,7 @@ namespace NorvesLib::Core::Resource::ModelStaging
         Rendering::MegaGeometry::MegaMeshHandle megaMeshHandle = resources.MegaGeometry.CreateMegaMesh(createInfo);
         double megaMeshCreateMs = LoadProfileElapsedMs(megaMeshCreateStartTime);
         NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=gltf_finalize_megamesh role=%s request_id=%u debug_name=\"%s\" vertices=%zu indices=%zu clusters=%zu ms=%.3f success=%d",
+                        "stage=model_finalize_megamesh role=%s request_id=%u debug_name=\"%s\" vertices=%zu indices=%zu clusters=%zu ms=%.3f success=%d",
                         role,
                         static_cast<unsigned int>(requestId),
                         staging.DebugName.c_str(),
@@ -756,7 +756,7 @@ namespace NorvesLib::Core::Resource::ModelStaging
             staging.ResolvedPath);
         double modelRegisterMs = LoadProfileElapsedMs(modelRegisterStartTime);
         NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=gltf_finalize_register role=%s request_id=%u debug_name=\"%s\" path=\"%s\" ms=%.3f success=%d",
+                        "stage=model_finalize_register role=%s request_id=%u debug_name=\"%s\" path=\"%s\" ms=%.3f success=%d",
                         role,
                         static_cast<unsigned int>(requestId),
                         staging.DebugName.c_str(),
@@ -772,7 +772,7 @@ namespace NorvesLib::Core::Resource::ModelStaging
 
         NORVES_LOG_INFO("GLTFAnalyzer", "glTF model loaded: %s", staging.DebugName.c_str());
         NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=gltf_finalize_total role=%s request_id=%u debug_name=\"%s\" path=\"%s\" loose_texture_bytes=%zu prepared_textures=%u ms=%.3f success=1",
+                        "stage=model_finalize_total role=%s request_id=%u debug_name=\"%s\" path=\"%s\" loose_texture_bytes=%zu prepared_textures=%u ms=%.3f success=1",
                         role,
                         static_cast<unsigned int>(requestId),
                         staging.DebugName.c_str(),

@@ -715,6 +715,16 @@ target_include_directories(ModelResourcesAssetRuntimeTest PRIVATE
 set_target_properties(ModelResourcesAssetRuntimeTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ModelResourcesAssetRuntimeTest COMMAND ModelResourcesAssetRuntimeTest)
 
+add_executable(ModelResourcesAssetLoadProfileContractTest
+    ModelResourcesAssetLoadProfileContractTest.cpp
+)
+target_link_libraries(ModelResourcesAssetLoadProfileContractTest PRIVATE Core)
+target_include_directories(ModelResourcesAssetLoadProfileContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(ModelResourcesAssetLoadProfileContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ModelResourcesAssetLoadProfileContractTest COMMAND ModelResourcesAssetLoadProfileContractTest)
+
 add_executable(TextureAsyncTypesTest
     TextureAsyncTypesTest.cpp
 )
@@ -824,4 +834,24 @@ add_test(NAME TextureResourcesAssetCookSmoke
         "-DRUNTIME_TEST_EXE=$<TARGET_FILE:TextureResourcesAssetCookSmokeTest>"
         "-DSMOKE_DIR=${TEXTURE_RESOURCES_ASSET_COOK_SMOKE_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/TextureResourcesAssetCookSmoke.cmake.in"
+)
+
+add_executable(ModelResourcesAssetCookSmokeTest
+    ModelResourcesAssetCookSmokeTest.cpp
+)
+target_link_libraries(ModelResourcesAssetCookSmokeTest PRIVATE Core)
+target_include_directories(ModelResourcesAssetCookSmokeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+add_dependencies(ModelResourcesAssetCookSmokeTest AssetCook)
+set_target_properties(ModelResourcesAssetCookSmokeTest PROPERTIES FOLDER "Test/Core/Rendering")
+
+set(MODEL_RESOURCES_ASSET_COOK_SMOKE_DIR
+    "${CMAKE_BINARY_DIR}/ModelResourcesAssetCookSmoke/$<CONFIG>")
+add_test(NAME ModelResourcesAssetCookSmoke
+    COMMAND ${CMAKE_COMMAND}
+        "-DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>"
+        "-DRUNTIME_TEST_EXE=$<TARGET_FILE:ModelResourcesAssetCookSmokeTest>"
+        "-DSMOKE_DIR=${MODEL_RESOURCES_ASSET_COOK_SMOKE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/ModelResourcesAssetCookSmoke.cmake.in"
 )
