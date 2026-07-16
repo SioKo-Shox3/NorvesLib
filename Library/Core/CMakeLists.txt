@@ -127,6 +127,9 @@ set(PRIVATE_SOURCES
     Private/Resource/MaterialResource.cpp
     Private/Resource/GLTFAnalyzer.cpp
     Private/Resource/ModelAssetLoader.cpp
+    Private/Resource/ModelAssetRuntime.cpp
+    Private/Resource/ModelAsyncLoadQueue.cpp
+    Private/Resource/ModelHandleCache.cpp
     Private/Resource/ModelAssetResolver.cpp
     Private/Resource/ModelStaging.cpp
     # Component

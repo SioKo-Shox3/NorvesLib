@@ -33,6 +33,7 @@ namespace NorvesLib::Core::Asset
 namespace NorvesLib::Core::Rendering
 {
     struct SubMesh;
+    class ModelAssetRuntime;
 
     class GpuResources
     {
@@ -185,13 +186,23 @@ namespace NorvesLib::Core::Rendering
                                   const Container::String &sourcePath = "");
         ModelHandle LoadModel(const Asset::AssetSystem& assetSystem,
                               const Container::String& logicalPath);
+        bool SetModelAssetSystem(Container::TSharedPtr<const Asset::AssetSystem> assetSystem);
+        uint32_t LoadModelAsync(const Container::String& logicalPath,
+                                Delegate<void, ModelHandle> callback = {});
+        uint32_t FlushCompletedModelLoads(uint32_t maxLoadsPerFrame = 1);
+        void CancelModelLoad(uint32_t requestId);
+        // Blocking cancellation and RenderResources clear/shutdown must not be called by a completion callback.
+        bool CancelPendingModelLoadsAndWait();
+        uint32_t GetPendingAsyncModelLoadCount() const;
         MegaGeometry::MegaMeshHandle GetModelMegaMeshHandle(ModelHandle handle) const;
         void ReleaseModel(ModelHandle handle);
 
     private:
         friend class RenderResources;
+        friend class ModelAssetRuntime;
 
         explicit MegaGeometryResources(RenderResources *pOwner);
+        void ReleaseModelUnmanaged(ModelHandle handle);
 
         RenderResources *m_pOwner = nullptr;
     };

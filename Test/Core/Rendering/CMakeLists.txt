@@ -682,6 +682,39 @@ target_include_directories(TextureHandleCacheTest PRIVATE
 set_target_properties(TextureHandleCacheTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME TextureHandleCacheTest COMMAND TextureHandleCacheTest)
 
+add_executable(ModelHandleCacheTest
+    ModelHandleCacheTest.cpp
+)
+target_link_libraries(ModelHandleCacheTest PRIVATE Core)
+target_include_directories(ModelHandleCacheTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(ModelHandleCacheTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ModelHandleCacheTest COMMAND ModelHandleCacheTest)
+
+add_executable(ModelAsyncLoadQueueTest
+    ModelAsyncLoadQueueTest.cpp
+)
+target_link_libraries(ModelAsyncLoadQueueTest PRIVATE Core)
+target_include_directories(ModelAsyncLoadQueueTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(ModelAsyncLoadQueueTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ModelAsyncLoadQueueTest COMMAND ModelAsyncLoadQueueTest)
+
+add_executable(ModelResourcesAssetRuntimeTest
+    ModelResourcesAssetRuntimeTest.cpp
+)
+target_link_libraries(ModelResourcesAssetRuntimeTest PRIVATE Core)
+target_include_directories(ModelResourcesAssetRuntimeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(ModelResourcesAssetRuntimeTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ModelResourcesAssetRuntimeTest COMMAND ModelResourcesAssetRuntimeTest)
+
 add_executable(TextureAsyncTypesTest
     TextureAsyncTypesTest.cpp
 )

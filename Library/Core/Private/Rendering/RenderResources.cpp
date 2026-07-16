@@ -11,6 +11,7 @@
 #include "RHI/IShader.h"
 #include "RHI/ITexture.h"
 #include "Resource/ModelAssetLoader.h"
+#include "Resource/ModelAssetRuntime.h"
 #include "Thread/Atomic.h"
 
 #include <utility>
@@ -69,7 +70,8 @@ namespace NorvesLib::Core::Rendering
     {
         Impl()
             : MaterialStore(Container::MakeUnique<RenderMaterialStore>(NextHandleId)),
-              TextureAssets(Container::MakeUnique<TextureAssetRuntime>())
+              TextureAssets(Container::MakeUnique<TextureAssetRuntime>()),
+              ModelAssets(Container::MakeUnique<ModelAssetRuntime>())
         {
         }
 
@@ -80,7 +82,9 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<RenderMaterialStore> MaterialStore;
         Container::TUniquePtr<MegaGeometryResourceStore> MegaGeometryResources;
         Container::TUniquePtr<TextureAssetRuntime> TextureAssets;
+        Container::TUniquePtr<ModelAssetRuntime> ModelAssets;
         bool bInitialized = false;
+        bool bShuttingDown = false;
     };
 
     GpuResources::GpuResources(RenderResources *pOwner)
@@ -599,6 +603,58 @@ namespace NorvesLib::Core::Rendering
             ModelLoadResourceContext{m_pOwner->Textures(), *this});
     }
 
+    bool MegaGeometryResources::SetModelAssetSystem(
+        Container::TSharedPtr<const Asset::AssetSystem> assetSystem)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->ModelAssets
+                   ? impl->ModelAssets->SetAssetSystem(std::move(assetSystem))
+                   : false;
+    }
+
+    uint32_t MegaGeometryResources::LoadModelAsync(
+        const Container::String& logicalPath,
+        Delegate<void, ModelHandle> callback)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->ModelAssets
+                   ? impl->ModelAssets->LoadModelAsync(logicalPath, std::move(callback))
+                   : 0;
+    }
+
+    uint32_t MegaGeometryResources::FlushCompletedModelLoads(uint32_t maxLoadsPerFrame)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->ModelAssets
+                   ? impl->ModelAssets->FlushCompletedModelLoads(maxLoadsPerFrame)
+                   : 0;
+    }
+
+    void MegaGeometryResources::CancelModelLoad(uint32_t requestId)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->ModelAssets)
+        {
+            impl->ModelAssets->CancelModelLoad(requestId);
+        }
+    }
+
+    bool MegaGeometryResources::CancelPendingModelLoadsAndWait()
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->ModelAssets
+                   ? impl->ModelAssets->CancelPendingModelLoadsAndWait()
+                   : false;
+    }
+
+    uint32_t MegaGeometryResources::GetPendingAsyncModelLoadCount() const
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->ModelAssets
+                   ? impl->ModelAssets->GetPendingAsyncModelLoadCount()
+                   : 0;
+    }
+
     MegaGeometry::MegaMeshHandle MegaGeometryResources::GetModelMegaMeshHandle(ModelHandle handle) const
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
@@ -610,6 +666,31 @@ namespace NorvesLib::Core::Rendering
     void MegaGeometryResources::ReleaseModel(ModelHandle handle)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!impl || !impl->MegaGeometryResources)
+        {
+            return;
+        }
+
+        if (!impl->ModelAssets || !impl->ModelAssets->IsBound())
+        {
+            ReleaseModelUnmanaged(handle);
+            return;
+        }
+
+        Resource::ModelCacheReleaseResult released = impl->ModelAssets->ReleaseManagedModel(handle);
+        if (!released.bManaged)
+        {
+            ReleaseModelUnmanaged(handle);
+        }
+        else if (released.HandleToRelease.IsValid())
+        {
+            ReleaseModelUnmanaged(released.HandleToRelease);
+        }
+    }
+
+    void MegaGeometryResources::ReleaseModelUnmanaged(ModelHandle handle)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         if (impl && impl->MegaGeometryResources)
         {
             impl->MegaGeometryResources->ReleaseModel(handle);
@@ -638,6 +719,7 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        m_Impl->bShuttingDown = false;
         m_Impl->Device = std::move(device);
         if (!m_Impl->Device)
         {
@@ -655,6 +737,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_Impl->bInitialized = true;
+        if (m_Impl->ModelAssets)
+        {
+            m_Impl->ModelAssets->Bind(&m_Textures, &m_MegaGeometry);
+        }
         LOG_INFO("RenderResources initialized");
         return true;
     }
@@ -666,7 +752,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        m_Impl->bShuttingDown = true;
         ClearAllResources();
+        if (m_Impl->ModelAssets)
+        {
+            m_Impl->ModelAssets->Unbind();
+        }
         if (m_Impl->TextureAssets)
         {
             m_Impl->TextureAssets->Unbind();
@@ -677,6 +768,7 @@ namespace NorvesLib::Core::Rendering
         m_Impl->GpuResources.reset();
         m_Impl->Device.reset();
         m_Impl->bInitialized = false;
+        m_Impl->bShuttingDown = false;
         LOG_INFO("RenderResources shutdown");
     }
 
@@ -687,6 +779,11 @@ namespace NorvesLib::Core::Rendering
 
     void RenderResources::ClearAllResources()
     {
+        if (m_Impl->ModelAssets)
+        {
+            (void)m_Impl->ModelAssets->CloseAndDrain();
+        }
+
         if (m_Impl->MaterialStore)
         {
             m_Impl->MaterialStore->Clear(m_Textures);
@@ -710,6 +807,12 @@ namespace NorvesLib::Core::Rendering
         if (m_Impl->GpuResources)
         {
             m_Impl->GpuResources->Clear();
+        }
+
+        if (!m_Impl->bShuttingDown && m_Impl->bInitialized &&
+            m_Impl->ModelAssets && m_Impl->ModelAssets->IsBound())
+        {
+            m_Impl->ModelAssets->ReopenAfterClear();
         }
     }
 

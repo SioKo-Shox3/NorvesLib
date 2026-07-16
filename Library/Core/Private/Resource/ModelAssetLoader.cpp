@@ -111,4 +111,41 @@ namespace NorvesLib::Core::Resource
 
         return ModelStaging::FinalizeModelStaging(staging, resources, "main_render", 0);
     }
+
+    bool LoadCookedModelForWorker(const CookedModelLoadPlan& plan,
+                                  uint32_t requestId,
+                                  CookedModelCpuLoadResult& outResult)
+    {
+        (void)requestId;
+        outResult = {};
+        outResult.CacheKey = plan.CacheKey;
+        outResult.Generation = plan.Generation;
+        if (!plan.AssetSystem)
+        {
+            return false;
+        }
+
+        Asset::AssetResolveResult resolveResult = ResolveCookedModel(*plan.AssetSystem, plan.RequestPath);
+        if (!resolveResult.UsedCooked() ||
+            resolveResult.NormalizedLogicalPath != plan.NormalizedLogicalPath)
+        {
+            return false;
+        }
+
+        Asset::CookedMeshParseResult parseResult = Asset::ParseCookedMesh(resolveResult.Blob);
+        if (parseResult.Status != Asset::CookedMeshParseStatus::Success)
+        {
+            return false;
+        }
+
+        const Container::AnsiStringView normalizedLogicalPath(
+            resolveResult.NormalizedLogicalPath.data(),
+            resolveResult.NormalizedLogicalPath.size());
+        outResult.bSuccess = BuildModelStagingFromCookedMesh(
+            parseResult.Mesh,
+            plan.RequestPath,
+            ToOwnedString(normalizedLogicalPath),
+            outResult.Staging);
+        return outResult.bSuccess;
+    }
 } // namespace NorvesLib::Core::Resource

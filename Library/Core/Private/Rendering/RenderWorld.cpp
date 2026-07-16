@@ -187,6 +187,8 @@ namespace NorvesLib::Core::Rendering
                             textureFlushMs);
         }
 
+        m_RenderResources.MegaGeometry().FlushCompletedModelLoads(1);
+
         auto modelFlushStartTime = LoadProfileNow();
         ModelLoadResourceContext modelLoadContext{
             m_RenderResources.Textures(),
