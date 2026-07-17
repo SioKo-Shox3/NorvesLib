@@ -1,0 +1,163 @@
+﻿if(NOT DEFINED SUMMARY_SCRIPT)
+    message(FATAL_ERROR "SUMMARY_SCRIPT is required")
+endif()
+if(NOT DEFINED CASE_DIR)
+    message(FATAL_ERROR "CASE_DIR is required")
+endif()
+
+file(REMOVE_RECURSE "${CASE_DIR}")
+file(MAKE_DIRECTORY "${CASE_DIR}")
+
+function(run_summary_case name log_text expected_exit expected_text)
+    set(log_path "${CASE_DIR}/${name}.log")
+    file(WRITE "${log_path}" "${log_text}")
+    set(arguments -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File "${SUMMARY_SCRIPT}" -LogPath "${log_path}")
+    set(require_complete_cooked_model FALSE)
+    foreach(argument IN LISTS ARGN)
+        list(APPEND arguments "${argument}")
+        if(argument STREQUAL "-RequireCompleteCookedModel")
+            set(require_complete_cooked_model TRUE)
+        endif()
+    endforeach()
+    if(require_complete_cooked_model)
+        list(APPEND arguments
+            -ExpectedCookedModelLogicalPath "${expected_cooked_logical}"
+            -ExpectedCookedModelDebugName "${expected_cooked_debug}"
+        )
+    endif()
+    execute_process(
+        COMMAND powershell ${arguments}
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE stdout
+        ERROR_VARIABLE stderr
+    )
+    set(output "${stdout}${stderr}")
+    file(WRITE "${CASE_DIR}/${name}.output.txt" "${output}")
+    if(NOT result EQUAL expected_exit)
+        message(STATUS "${output}")
+        message(FATAL_ERROR "${name}: expected exit ${expected_exit}, got ${result}")
+    endif()
+    string(FIND "${output}" "${expected_text}" expected_index)
+    if(expected_index EQUAL -1)
+        message(STATUS "${output}")
+        message(FATAL_ERROR "${name}: missing expected output: ${expected_text}")
+    endif()
+endfunction()
+
+set(expected_cooked_logical "Models/Fixture.gltf")
+set(expected_cooked_debug "Assets/Models/Fixture.gltf")
+set(complete_cooked [=[
+[AssetLoadProfile] stage=model_asset_resolve role=worker source=cooked_nvmesh request_id=7 normalized_path="Models/Fixture.gltf" status=0 success=1
+[AssetLoadProfile] stage=model_cooked_parse role=worker source=cooked_nvmesh request_id=7 normalized_path="Models/Fixture.gltf" status=0 success=1
+[AssetLoadProfile] stage=model_finalize_textures role=main_render request_id=7 debug_name="Assets/Models/Fixture.gltf" ms=1 success=1
+[AssetLoadProfile] stage=model_finalize_megamesh role=main_render request_id=7 debug_name="Assets/Models/Fixture.gltf" ms=1 success=1
+[AssetLoadProfile] stage=model_finalize_register role=main_render request_id=7 debug_name="Assets/Models/Fixture.gltf" path="Models/Fixture.gltf" ms=1 success=1
+[AssetLoadProfile] stage=model_finalize_total role=main_render request_id=7 debug_name="Assets/Models/Fixture.gltf" path="Models/Fixture.gltf" ms=1 success=1
+[AssetLoadProfile] stage=megamesh_gpu_upload role=main_render debug_name="Assets/Models/Fixture.gltf" ms=1 success=1
+[AssetLoadProfile] stage=model_async_flush role=main_render processed=1 success=1
+]=])
+
+# 1. Complete cooked contract and model-table source.
+run_summary_case(complete "${complete_cooked}" 0 "Cooked model contract: PASS" -RequireCompleteCookedModel)
+file(READ "${CASE_DIR}/complete.output.txt" complete_output)
+string(FIND "${complete_output}" "| cooked_nvmesh | 7 | Models/Fixture.gltf |" model_row_index)
+if(model_row_index EQUAL -1)
+    message(FATAL_ERROR "complete: target cooked model row/source is missing")
+endif()
+
+# 2. Required stage missing.
+string(REPLACE
+    "[AssetLoadProfile] stage=model_asset_resolve role=worker source=cooked_nvmesh request_id=7 normalized_path=\"Models/Fixture.gltf\" status=0 success=1\n"
+    "" missing_required "${complete_cooked}")
+run_summary_case(missing_required "${missing_required}" 2
+    "missing required stage=model_asset_resolve" -RequireCompleteCookedModel)
+
+# 3. Forbidden legacy stage.
+set(forbidden "${complete_cooked}[AssetLoadProfile] stage=gltf_json_parse role=worker request_id=7 path=\"Models/Fixture.gltf\" ms=1 success=1\n")
+run_summary_case(forbidden "${forbidden}" 2 "forbidden stage=gltf_json_parse" -RequireCompleteCookedModel)
+
+# 4. Resolve/parse request mismatch.
+string(REPLACE "stage=model_cooked_parse role=worker source=cooked_nvmesh request_id=7"
+    "stage=model_cooked_parse role=worker source=cooked_nvmesh request_id=8"
+    request_mismatch "${complete_cooked}")
+run_summary_case(request_mismatch "${request_mismatch}" 2 "request_id mismatch" -RequireCompleteCookedModel)
+
+# 5. Resolve/parse path mismatch.
+string(REPLACE
+    "stage=model_cooked_parse role=worker source=cooked_nvmesh request_id=7 normalized_path=\"Models/Fixture.gltf\""
+    "stage=model_cooked_parse role=worker source=cooked_nvmesh request_id=7 normalized_path=\"Models/Other.gltf\""
+    path_mismatch "${complete_cooked}")
+run_summary_case(path_mismatch "${path_mismatch}" 2 "normalized_path mismatch" -RequireCompleteCookedModel)
+
+# External expected logical/debug anchors reject a self-consistent different model.
+string(REPLACE "Models/Fixture.gltf" "Models/Other.gltf"
+    all_fields_other_model "${complete_cooked}")
+run_summary_case(external_anchor "${all_fields_other_model}" 2
+    "normalized_path mismatch" -RequireCompleteCookedModel)
+
+# 6. Zero request id.
+string(REPLACE "request_id=7" "request_id=0" zero_request "${complete_cooked}")
+run_summary_case(zero_request "${zero_request}" 2 "nonzero request_id required" -RequireCompleteCookedModel)
+
+# 7. Resolve status failure.
+string(REPLACE
+    "stage=model_asset_resolve role=worker source=cooked_nvmesh request_id=7 normalized_path=\"Models/Fixture.gltf\" status=0"
+    "stage=model_asset_resolve role=worker source=cooked_nvmesh request_id=7 normalized_path=\"Models/Fixture.gltf\" status=1"
+    status_failure "${complete_cooked}")
+run_summary_case(status_failure "${status_failure}" 2 "status must be 0" -RequireCompleteCookedModel)
+
+# 8. Parse success failure.
+string(REPLACE
+    "stage=model_cooked_parse role=worker source=cooked_nvmesh request_id=7 normalized_path=\"Models/Fixture.gltf\" status=0 success=1"
+    "stage=model_cooked_parse role=worker source=cooked_nvmesh request_id=7 normalized_path=\"Models/Fixture.gltf\" status=0 success=0"
+    success_failure "${complete_cooked}")
+run_summary_case(success_failure "${success_failure}" 2 "success must be 1" -RequireCompleteCookedModel)
+
+# 9. Finalize correlation failures identify request, debug name, and path separately.
+string(REPLACE "stage=model_finalize_register role=main_render request_id=7"
+    "stage=model_finalize_register role=main_render request_id=8"
+    finalize_request_mismatch "${complete_cooked}")
+run_summary_case(finalize_request_mismatch "${finalize_request_mismatch}" 2
+    "request_id mismatch" -RequireCompleteCookedModel)
+string(REPLACE
+    "stage=model_finalize_register role=main_render request_id=7 debug_name=\"Assets/Models/Fixture.gltf\""
+    "stage=model_finalize_register role=main_render request_id=7 debug_name=\"Assets/Models/Other.gltf\""
+    finalize_debug_mismatch "${complete_cooked}")
+run_summary_case(finalize_debug_mismatch "${finalize_debug_mismatch}" 2
+    "debug_name mismatch" -RequireCompleteCookedModel)
+string(REPLACE
+    "stage=model_finalize_register role=main_render request_id=7 debug_name=\"Assets/Models/Fixture.gltf\" path=\"Models/Fixture.gltf\""
+    "stage=model_finalize_register role=main_render request_id=7 debug_name=\"Assets/Models/Fixture.gltf\" path=\"Models/Other.gltf\""
+    finalize_path_mismatch "${complete_cooked}")
+run_summary_case(finalize_path_mismatch "${finalize_path_mismatch}" 2
+    "path mismatch" -RequireCompleteCookedModel)
+
+# 10. One of the four finalize stages missing.
+string(REPLACE
+    "[AssetLoadProfile] stage=model_finalize_textures role=main_render request_id=7 debug_name=\"Assets/Models/Fixture.gltf\" ms=1 success=1\n"
+    "" finalize_missing "${complete_cooked}")
+run_summary_case(finalize_missing "${finalize_missing}" 2
+    "missing finalize stage=model_finalize_textures" -RequireCompleteCookedModel)
+
+# 11. Flush that only reports zero processed work.
+string(REPLACE "stage=model_async_flush role=main_render processed=1"
+    "stage=model_async_flush role=main_render processed=0"
+    flush_zero "${complete_cooked}")
+run_summary_case(flush_zero "${flush_zero}" 2 "processed must be >= 1" -RequireCompleteCookedModel)
+
+# 12. The legacy and cooked completeness switches are incompatible.
+run_summary_case(incompatible "${complete_cooked}" 2 "incompatible switches"
+    -RequireCompleteModelFlush -RequireCompleteCookedModel)
+
+# 13. The pre-existing loose glTF completeness contract remains compatible.
+set(legacy_complete [=[
+[AssetLoadProfile] stage=gltf_staging_total role=worker request_id=3 path="Models/Legacy.gltf" ms=1 success=1
+[AssetLoadProfile] stage=model_finalize_total role=main_render request_id=3 debug_name="Models/Legacy.gltf" path="Models/Legacy.gltf" ms=1 success=1
+[AssetLoadProfile] stage=megamesh_gpu_upload role=main_render debug_name="Models/Legacy.gltf" ms=1 success=1
+[AssetLoadProfile] stage=renderworld_model_flush role=main_render processed=1 ms=1 success=1
+[AssetLoadProfile] stage=texture_async_worker role=worker path="Textures/Legacy.png" ms=1 success=1
+]=])
+run_summary_case(legacy_complete "${legacy_complete}" 0 "## glTF / Model" -RequireCompleteModelFlush)
+
+message(STATUS "AssetLoadProfile summary contract passed 16 invocations across 14 cases")

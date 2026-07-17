@@ -25,6 +25,7 @@ namespace NorvesLib::RHI::Vulkan
 {
     // 明示的なusing宣言（グローバル名前空間から参照）
     using ::NorvesLib::Core::Container::DynamicPointerCast;
+    using ::NorvesLib::Core::Container::FixedArray;
     using ::NorvesLib::Core::Container::MakeUnique;
     using ::NorvesLib::Core::Container::MakeShared;
     using ::NorvesLib::Core::Container::StaticPointerCast;
@@ -32,6 +33,24 @@ namespace NorvesLib::RHI::Vulkan
     using ::NorvesLib::Core::Container::TWeakPtr;
     using ::NorvesLib::Core::Container::UnorderedMap;
     using ::NorvesLib::Core::Container::VariableArray;
+
+    namespace
+    {
+        VkResult WaitIdleWithoutResultCheck(vk::Device device, const char* context) noexcept
+        {
+            if (!device)
+            {
+                return VK_SUCCESS;
+            }
+
+            const VkResult result = VULKAN_HPP_DEFAULT_DISPATCHER.vkDeviceWaitIdle(static_cast<VkDevice>(device));
+            if (result != VK_SUCCESS)
+            {
+                NORVES_LOG_ERROR("Vulkan", "vkDeviceWaitIdle failed context=%s result=%d", context, static_cast<int32_t>(result));
+            }
+            return result;
+        }
+    }
 
     // バリデーションレイヤー名
     const VariableArray<const char *> validationLayers = {
@@ -74,7 +93,7 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (m_device)
         {
-            static_cast<void>(m_device.waitIdle());
+            WaitIdle();
         }
 
         m_ResourceAllocator.reset();
@@ -278,17 +297,47 @@ namespace NorvesLib::RHI::Vulkan
             vulkan12Query.drawIndirectCount == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.pNext = &m_vulkan12Features;
 
-        // Cooperative Vector 機能を検出してチェーンに追加
+        // Optional device extensions are selected before their feature queries.
         auto extensions = GetDeviceExtensions();
 
+        bool bDeviceFaultRequested = false;
         bool bCooperativeVectorRequested = false;
         for (const auto *ext : extensions)
         {
+            if (String(ext) == String(VK_EXT_DEVICE_FAULT_EXTENSION_NAME))
+            {
+                bDeviceFaultRequested = true;
+            }
+
             if (String(ext) == String(VK_NV_COOPERATIVE_VECTOR_EXTENSION_NAME))
             {
                 bCooperativeVectorRequested = true;
-                break;
             }
+        }
+
+        if (bDeviceFaultRequested)
+        {
+            VkPhysicalDeviceFaultFeaturesEXT deviceFaultFeaturesQuery{
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT,
+                nullptr,
+                VK_FALSE,
+                VK_FALSE};
+            vk::PhysicalDeviceFeatures2 deviceFaultFeatures2Query{};
+            deviceFaultFeatures2Query.pNext = &deviceFaultFeaturesQuery;
+            m_physicalDevice.getFeatures2(&deviceFaultFeatures2Query);
+
+            m_deviceFaultFeatures.deviceFault =
+                deviceFaultFeaturesQuery.deviceFault == VK_TRUE ? VK_TRUE : VK_FALSE;
+            m_deviceFaultFeatures.deviceFaultVendorBinary =
+                m_deviceFaultFeatures.deviceFault == VK_TRUE &&
+                deviceFaultFeaturesQuery.deviceFaultVendorBinary == VK_TRUE ? VK_TRUE : VK_FALSE;
+        }
+
+        void **featuresTail = &m_vulkan12Features.pNext;
+        if (m_deviceFaultFeatures.deviceFault == VK_TRUE)
+        {
+            *featuresTail = &m_deviceFaultFeatures;
+            featuresTail = &m_deviceFaultFeatures.pNext;
         }
 
         if (bCooperativeVectorRequested)
@@ -297,10 +346,10 @@ namespace NorvesLib::RHI::Vulkan
             m_cooperativeVectorFeatures.cooperativeVector = VK_TRUE;
             m_cooperativeVectorFeatures.cooperativeVectorTraining = VK_FALSE;
 
-            // Vulkan12FeaturesのpNextにチェーン
-            m_cooperativeVectorFeatures.pNext = nullptr;
-            m_vulkan12Features.pNext = &m_cooperativeVectorFeatures;
+            *featuresTail = &m_cooperativeVectorFeatures;
+            featuresTail = &m_cooperativeVectorFeatures.pNext;
         }
+        *featuresTail = nullptr;
 
         // デバイス作成情報
         vk::DeviceCreateInfo createInfo{};
@@ -530,6 +579,12 @@ namespace NorvesLib::RHI::Vulkan
         {
             extensions.push_back(VK_NV_COOPERATIVE_VECTOR_EXTENSION_NAME);
             NORVES_LOG_INFO("VulkanDevice", "Optional extension enabled: VK_NV_cooperative_vector");
+        }
+
+        if (hasExtension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME))
+        {
+            extensions.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+            NORVES_LOG_INFO("VulkanDevice", "Optional extension enabled: VK_EXT_device_fault");
         }
 
         return extensions;
@@ -846,7 +901,115 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanDevice::WaitIdle()
     {
-        static_cast<void>(m_device.waitIdle());
+        const VkResult result = WaitIdleWithoutResultCheck(m_device, "VulkanDevice::WaitIdle");
+        if (result == VK_ERROR_DEVICE_LOST)
+        {
+            ReportDeviceFaultOnce();
+        }
+    }
+
+    void VulkanDevice::ReportDeviceFaultOnce()
+    {
+        if (m_bDeviceFaultReported.Exchange(true))
+        {
+            return;
+        }
+
+        if (m_deviceFaultFeatures.deviceFault != VK_TRUE)
+        {
+            NORVES_LOG_ERROR("Vulkan", "vkGetDeviceFaultInfoEXT unavailable feature_device_fault=0");
+            return;
+        }
+
+        const PFN_vkGetDeviceFaultInfoEXT getDeviceFaultInfo =
+            VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceFaultInfoEXT;
+        if (getDeviceFaultInfo == nullptr)
+        {
+            NORVES_LOG_ERROR("Vulkan", "vkGetDeviceFaultInfoEXT unavailable function_pointer=0");
+            return;
+        }
+
+        VkDeviceFaultCountsEXT totalCounts{
+            VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT,
+            nullptr,
+            0,
+            0,
+            0};
+        const VkResult totalResult = getDeviceFaultInfo(static_cast<VkDevice>(m_device), &totalCounts, nullptr);
+        if (totalResult != VK_SUCCESS && totalResult != VK_INCOMPLETE)
+        {
+            NORVES_LOG_ERROR("Vulkan", "vkGetDeviceFaultInfoEXT failed step=counts result=%d", static_cast<int32_t>(totalResult));
+            return;
+        }
+
+        const uint32_t totalAddressInfoCount = totalCounts.addressInfoCount;
+        const uint32_t totalVendorInfoCount = totalCounts.vendorInfoCount;
+        const VkDeviceSize totalVendorBinarySize = totalCounts.vendorBinarySize;
+        constexpr uint32_t maxCapturedFaultInfos = 16;
+        const uint32_t requestedAddressInfoCount = std::min(totalAddressInfoCount, maxCapturedFaultInfos);
+        const uint32_t requestedVendorInfoCount = std::min(totalVendorInfoCount, maxCapturedFaultInfos);
+
+        FixedArray<VkDeviceFaultAddressInfoEXT, 16> addressInfos{};
+        FixedArray<VkDeviceFaultVendorInfoEXT, 16> vendorInfos{};
+        VkDeviceFaultCountsEXT writtenCounts{
+            VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT,
+            nullptr,
+            requestedAddressInfoCount,
+            requestedVendorInfoCount,
+            0};
+        writtenCounts.vendorBinarySize = 0;
+        VkDeviceFaultInfoEXT faultInfo{
+            VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT,
+            nullptr,
+            {},
+            addressInfos.data(),
+            vendorInfos.data(),
+            nullptr};
+        faultInfo.pVendorBinaryData = nullptr;
+        const VkResult detailsResult = getDeviceFaultInfo(static_cast<VkDevice>(m_device), &writtenCounts, &faultInfo);
+        if (detailsResult != VK_SUCCESS && detailsResult != VK_INCOMPLETE)
+        {
+            NORVES_LOG_ERROR("Vulkan", "vkGetDeviceFaultInfoEXT failed step=details result=%d", static_cast<int32_t>(detailsResult));
+            return;
+        }
+
+        const uint32_t writtenAddressInfoCount = std::min(writtenCounts.addressInfoCount, maxCapturedFaultInfos);
+        const uint32_t writtenVendorInfoCount = std::min(writtenCounts.vendorInfoCount, maxCapturedFaultInfos);
+        NORVES_LOG_ERROR(
+            "Vulkan",
+            "vkGetDeviceFaultInfoEXT captured result=%d total_addresses=%u written_addresses=%u total_vendors=%u written_vendors=%u total_vendor_binary_size=%llu written_vendor_binary_size=%llu description=%s",
+            static_cast<int32_t>(detailsResult),
+            totalAddressInfoCount,
+            writtenAddressInfoCount,
+            totalVendorInfoCount,
+            writtenVendorInfoCount,
+            static_cast<unsigned long long>(totalVendorBinarySize),
+            static_cast<unsigned long long>(writtenCounts.vendorBinarySize),
+            faultInfo.description);
+
+        for (uint32_t index = 0; index < writtenAddressInfoCount; ++index)
+        {
+            const VkDeviceFaultAddressInfoEXT &addressInfo = addressInfos[index];
+            NORVES_LOG_ERROR(
+                "Vulkan",
+                "vkGetDeviceFaultInfoEXT address index=%u type=%d reported_address=%llu precision=%llu",
+                index,
+                static_cast<int32_t>(addressInfo.addressType),
+                static_cast<unsigned long long>(addressInfo.reportedAddress),
+                static_cast<unsigned long long>(addressInfo.addressPrecision));
+        }
+
+        for (uint32_t index = 0; index < writtenVendorInfoCount; ++index)
+        {
+            const VkDeviceFaultVendorInfoEXT &vendorInfo = vendorInfos[index];
+            NORVES_LOG_ERROR(
+                "Vulkan",
+                "vkGetDeviceFaultInfoEXT vendor index=%u description=%s code=%llu data=%llu",
+                index,
+                vendorInfo.description,
+                static_cast<unsigned long long>(vendorInfo.vendorFaultCode),
+                static_cast<unsigned long long>(vendorInfo.vendorFaultData));
+        }
     }
 
     IGPUResourceAllocator* VulkanDevice::GetResourceAllocator()

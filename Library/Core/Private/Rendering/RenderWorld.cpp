@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RenderWorld.h"
+#include "RenderWorldAssetFlushPolicy.h"
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/Viewport.h"
@@ -43,6 +44,7 @@ namespace NorvesLib::Core::Rendering
         m_bVSyncEnabled = settings.bVSync;
         m_bFullscreen = settings.bFullscreen;
         m_bMultiThreadedRendering = settings.bEnableMultiThreadedRendering;
+        m_Stats = RenderingStats{};
         m_bResizePending.Store(false, std::memory_order_release);
         m_PendingWidth.Store(settings.Width, std::memory_order_release);
         m_PendingHeight.Store(settings.Height, std::memory_order_release);
@@ -160,6 +162,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        bool bRenderThreadQuiesced = false;
+
         // 保留中のリサイズをフレーム開始時に安全に適用する
         bool bExpectedResizePending = true;
         if (m_bResizePending.CompareExchangeStrong(bExpectedResizePending,
@@ -171,38 +175,57 @@ namespace NorvesLib::Core::Rendering
             uint32_t h = m_PendingHeight.Load(std::memory_order_acquire);
 
             WaitForRender();
+            bRenderThreadQuiesced = true;
             m_Width = w;
             m_Height = h;
             m_RenderingCoordinator.Resize(w, h);
         }
 
-        auto textureFlushStartTime = LoadProfileNow();
-        uint32_t textureFlushProcessed = m_RenderResources.Textures().FlushCompletedTextureLoads();
-        double textureFlushMs = LoadProfileElapsedMs(textureFlushStartTime);
-        if (textureFlushProcessed > 0)
+        const bool bHasPendingAsyncAssets = HasPendingAsyncAssets();
+        bool bAssetGpuFlushWindowAcquired = false;
+        if (m_RenderThread.IsRunning() && !bRenderThreadQuiesced && bHasPendingAsyncAssets)
         {
-            NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=renderworld_texture_flush role=main_render processed=%u ms=%.3f success=1",
-                            static_cast<unsigned int>(textureFlushProcessed),
-                            textureFlushMs);
+            bAssetGpuFlushWindowAcquired = m_RenderThread.TryAcquireAssetGpuFlushWindow();
         }
 
-        m_RenderResources.MegaGeometry().FlushCompletedModelLoads(1);
+        const Detail::AssetGpuFlushAction assetFlushAction = Detail::DecideAssetGpuFlushAction(
+            m_RenderThread.IsRunning(), bRenderThreadQuiesced, bAssetGpuFlushWindowAcquired,
+            bHasPendingAsyncAssets);
 
-        auto modelFlushStartTime = LoadProfileNow();
-        ModelLoadResourceContext modelLoadContext{
-            m_RenderResources.Textures(),
-            m_RenderResources.MegaGeometry()};
-        uint32_t modelFlushProcessed = Resource::GLTFAnalyzer::FlushCompletedModelLoads(modelLoadContext);
-        double modelFlushMs = LoadProfileElapsedMs(modelFlushStartTime);
-        if (modelFlushProcessed > 0)
+        if (assetFlushAction == Detail::AssetGpuFlushAction::FlushAndRender)
         {
-            NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=renderworld_model_flush role=main_render processed=%u ms=%.3f success=1",
-                            static_cast<unsigned int>(modelFlushProcessed),
-                            modelFlushMs);
+            auto textureFlushStartTime = LoadProfileNow();
+            uint32_t textureFlushProcessed = m_RenderResources.Textures().FlushCompletedTextureLoads();
+            double textureFlushMs = LoadProfileElapsedMs(textureFlushStartTime);
+            if (textureFlushProcessed > 0)
+            {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=renderworld_texture_flush role=main_render processed=%u ms=%.3f success=1",
+                                static_cast<unsigned int>(textureFlushProcessed),
+                                textureFlushMs);
+            }
+
+            m_RenderResources.MegaGeometry().FlushCompletedModelLoads(1);
+
+            auto modelFlushStartTime = LoadProfileNow();
+            ModelLoadResourceContext modelLoadContext{
+                m_RenderResources.Textures(),
+                m_RenderResources.MegaGeometry()};
+            uint32_t modelFlushProcessed = Resource::GLTFAnalyzer::FlushCompletedModelLoads(modelLoadContext);
+            double modelFlushMs = LoadProfileElapsedMs(modelFlushStartTime);
+            if (modelFlushProcessed > 0)
+            {
+                NORVES_LOG_INFO("AssetLoadProfile",
+                                "stage=renderworld_model_flush role=main_render processed=%u ms=%.3f success=1",
+                                static_cast<unsigned int>(modelFlushProcessed),
+                                modelFlushMs);
+            }
         }
-        m_RenderingCoordinator.BeginFrame();
+
+        if (assetFlushAction != Detail::AssetGpuFlushAction::DeferFlushAndSkipRender)
+        {
+            m_RenderingCoordinator.BeginFrame();
+        }
     }
 
     void RenderWorld::Render()
@@ -296,10 +319,25 @@ namespace NorvesLib::Core::Rendering
             m_Stats.TrianglesRendered = coordStats.TrianglesRendered;
             m_Stats.VisibleObjects = coordStats.VisibleObjects;
             m_Stats.GameThreadTimeMs = coordStats.GameThreadTimeMs;
-            m_Stats.RenderThreadTimeMs = m_RenderThread.GetStats().FrameTimeMs;
             m_Stats.GPUTimeMs = coordStats.GPUTimeMs;
         }
 #endif
+    }
+
+    bool RenderWorld::HasPendingAsyncAssets() const
+    {
+        return m_RenderResources.Textures().GetPendingAsyncLoadCount() > 0 ||
+               m_RenderResources.MegaGeometry().GetPendingAsyncModelLoadCount() > 0 ||
+               Resource::GLTFAnalyzer::GetPendingAsyncModelLoadCount() > 0;
+    }
+
+    uint64_t RenderWorld::GetRenderedFrameCount() const
+    {
+        if (m_bMultiThreadedRendering && m_RenderThread.IsRunning())
+        {
+            return m_RenderThread.m_PublishedFramesRendered.Load(std::memory_order_acquire);
+        }
+        return m_Stats.FrameNumber;
     }
 
     void RenderWorld::WaitForRender()

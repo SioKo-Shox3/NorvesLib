@@ -135,6 +135,7 @@ namespace Game::GameModes
         // glTF Model（Boulder）
         // ========================================
         String m_ModelPath;
+        bool m_bUseCookedModel = false;
         uint32_t m_BoardSmokeCount = 0;
         uint32_t m_BillboardSmokeCount = 0;
         uint32_t m_ImpostorSmokeCount = 0;

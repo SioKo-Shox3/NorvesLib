@@ -107,6 +107,7 @@ namespace Game
         // ゲーム固有のメンバー変数
         bool m_bIsPaused = false;
         bool m_bHasTextureAssetRuntimeConfig = false;
+        bool m_bRendering3DTestUseCookedModel = false;
         NorvesLib::Core::Container::String m_TextureAssetRoot;
         NorvesLib::Core::Container::String m_TextureAssetManifestPath;
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem> m_AssetSystemSnapshot;

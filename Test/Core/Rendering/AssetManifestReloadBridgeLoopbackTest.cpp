@@ -27,6 +27,9 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#if defined(_MSC_VER)
+#include <crtdbg.h>
+#endif
 
 namespace Asset = NorvesLib::Core::Asset;
 namespace Container = NorvesLib::Core::Container;
@@ -306,6 +309,41 @@ namespace
         return CookedModelSupport::ToCoreString(path.generic_string());
     }
 
+    bool ParseRendering3DTestOptions(std::initializer_list<const char*> arguments)
+    {
+        Game::GameApplicationHandler handler;
+        Container::VariableArray<Container::String> args;
+        args.push_back(ToCoreString("AssetManifestReloadBridgeLoopbackTest"));
+        for (const char* argument : arguments)
+        {
+            args.push_back(ToCoreString(argument));
+        }
+        return handler.OnPreInitialize(args);
+    }
+
+    void TestCookedModelOptInParserContract()
+    {
+        constexpr const char* kCookedFlag = "--rendering3dtest-use-cooked-model";
+        assert(!ParseRendering3DTestOptions({kCookedFlag}));
+        assert(!ParseRendering3DTestOptions({kCookedFlag,
+                                            "--rendering3dtest-model", "Models/Silver.gltf"}));
+        assert(!ParseRendering3DTestOptions({kCookedFlag,
+                                            "--texture-asset-root", "RuntimeRoot",
+                                            "--texture-asset-manifest", "RuntimeRoot/manifest.json"}));
+        assert(ParseRendering3DTestOptions({kCookedFlag,
+                                           "--texture-asset-root", "RuntimeRoot",
+                                           "--texture-asset-manifest", "RuntimeRoot/manifest.json",
+                                           "--rendering3dtest-model", "Models/Silver.gltf"}));
+        assert(!ParseRendering3DTestOptions({kCookedFlag,
+                                            kCookedFlag,
+                                            "--texture-asset-root", "RuntimeRoot",
+                                            "--texture-asset-manifest", "RuntimeRoot/manifest.json",
+                                            "--rendering3dtest-model", "Models/Silver.gltf"}));
+        assert(ParseRendering3DTestOptions({"--texture-asset-root", "RuntimeRoot",
+                                           "--texture-asset-manifest", "RuntimeRoot/manifest.json",
+                                           "--rendering3dtest-model", "Models/Silver.gltf"}));
+    }
+
     void AssertStateUnchanged(const Rendering::AssetRuntimeSnapshotReloadTestAccess::State& before,
                               const Rendering::AssetRuntimeSnapshotReloadTestAccess::State& after)
     {
@@ -350,7 +388,12 @@ namespace
 
 int main(int argc, char** argv)
 {
+#if defined(_MSC_VER)
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
     assert(argc == 4);
+    TestCookedModelOptInParserContract();
     const std::filesystem::path assetRoot = std::filesystem::path(argv[1]);
     const std::filesystem::path liveManifest = std::filesystem::path(argv[2]);
     const std::filesystem::path manifestB = std::filesystem::path(argv[3]);

@@ -6,14 +6,16 @@ Exact millisecond values below are Debug smoke-run comparison data from this mac
 
 ## Scope
 
-The comparison covers two texture paths:
+The comparison covers two texture paths and one model-path pair:
 
 - Direct cooked Silver texture loading through the runtime cooked texture path.
 - glTF fixture-level prepared texture loading for `Rendering3DTestSilverGltf`.
+- The same `Rendering3DTestSilverGltf` model loaded through the compatible loose
+  glTF path and through the explicitly opted-in cooked `NVMESHv0` path.
 
-This does not include cooked model data. Runtime glTF JSON parse, buffer read, mesh extract, clusterize, model finalization, and render-world model flush can still remain when the model itself is loaded from loose glTF.
-
-Model cook and packed ARM cook are deferred future phases. The glTF prepared run below validates the texture path for a fixture; it is not a full cooked-model baseline.
+The texture-only rows remain useful for their original scoped checks. The cooked-model
+comparison later in this document is the M4 post-cook model measurement; it is not a
+general engine benchmark or a release-build performance target.
 
 ## Direct Cooked Silver Texture Path
 
@@ -43,7 +45,8 @@ Stage summary from the Debug smoke run:
 
 Compared with the pre-AssetCook Silver rows in [AssetLoadBaseline.md](AssetLoadBaseline.md), the cooked Silver targets no longer use `source=loose_stbi` and should not pay runtime `texture_async_worker` image decode for those cooked texture assets.
 
-This direct smoke still includes startup Boulder glTF loose image read/decode because model cook and startup-scene cooked model wiring are not part of this path.
+This direct texture smoke still uses the normal startup model path unless the dedicated
+cooked-model opt-in is supplied.
 
 ## glTF Prepared Texture Path
 
@@ -78,7 +81,80 @@ Stage summary from the Debug smoke run:
 
 Texture source rows are `source=cooked_nvtex` for the model-local albedo, normal, and ARM prepared texture assets. The ARM asset uses `texture_prepared_split`, so the packed source can feed separate material channels at finalize time.
 
-For these cooked model-local texture paths, the prepared flow should avoid `gltf_image_read`, `gltf_image_decode`, and `source=loose_stbi`. Remaining glTF model work is expected until model cook is implemented.
+For these cooked model-local texture paths, the prepared flow should avoid `gltf_image_read`, `gltf_image_decode`, and `source=loose_stbi`. The flagless compatibility path still performs glTF model work; the dedicated cooked-model opt-in below bypasses those model stages.
+
+## Cooked Model Real-Game Comparison
+
+The opt-in comparison uses one four-entry runtime manifest: the three texture entries
+from `Rendering3DTestSilverGltfTextures.json` plus the model entry
+`Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.gltf` whose cooked entry is
+`Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.nvmesh`. Both sides receive
+the same asset root, manifest, model request, and cooked model-local textures. The loose
+side omits the opt-in flag and therefore remains on `GLTFAnalyzer` with prepared
+textures; the cooked side adds `--rendering3dtest-use-cooked-model` and enters
+`MegaGeometryResources::LoadModelAsync`.
+
+Command:
+
+```powershell
+.\Scripts\RunCookedModelGameProfile.ps1 `
+  -AssetCookExe .\build\Tools\AssetCook\Debug\AssetCook.exe `
+  -GameExe .\build\Game\Debug\Game.exe
+```
+
+The runner alternates order to reduce a fixed warm-up bias:
+`loose,cooked`, `cooked,loose`, `loose,cooked`. Model-ready latency is the difference
+between the exact logger timestamps on the single expected-path
+`Boulder model async load started: ...` line and the later single
+`Boulder model loaded and added to World` line. Process wall time is retained as an
+auxiliary diagnostic and is not substituted for model-ready latency.
+
+| pair/order | path | model-ready ms | wall ms |
+| --- | --- | ---: | ---: |
+| 1/1 | loose | 9499 | 10697.362 |
+| 1/2 | cooked | 8772 | 10033.079 |
+| 2/1 | cooked | 8708 | 9975.765 |
+| 2/2 | loose | 9421 | 10698.297 |
+| 3/1 | loose | 9300 | 10604.889 |
+| 3/2 | cooked | 8921 | 10126.546 |
+
+| path | samples (model-ready ms) | median ms |
+| --- | --- | ---: |
+| loose glTF + prepared textures | 9499, 9421, 9300 | 9421 |
+| cooked NVMESH + same textures | 8772, 8708, 8921 | 8772 |
+
+For this captured Debug run, the cooked median is shorter. The completeness contract
+requires the correlated worker `model_asset_resolve` and `model_cooked_parse` records,
+all four correlated `model_finalize_*` records, the matching-debug GPU upload, and a
+successful non-empty async flush. It rejects every legacy `gltf_*` model stage on the
+cooked side. These checks intentionally contain no numeric performance threshold.
+
+Captured provenance (generated 2026-07-17 18:26:13.042 local time): HEAD
+`0670f65ac73e6abc13f77d7fe93bd1d26c3842c2`, HEAD tree
+`52f29c61a6a37754aab96bd8a2426185a6aa9947`, and `dirty=true`. The runner used
+three rendered frames after asset settle, a 600-second timeout, three pairs, and the
+`Phase5UR1Verify` configuration. It ran on Windows `10.0.22631.0` with Meta Virtual
+Monitor driver `17.12.55.198`, NVIDIA GeForce RTX 4080 driver `32.0.15.9186`, and
+Virtual Desktop Monitor driver `13.50.53.699`.
+
+The behavior provenance covers `Game`, `Scripts`, `Test`, and `Library`: the tracked
+diff SHA-256 was `85b19d8199538603af296458f9eb6776cd4ec6778d7caf21c01f9578861d3ab0`,
+the tracked-plus-untracked behavior SHA-256 was
+`b3a3c0b3763881e9f1bdc2ba3563e32dcf76758de12191eb60fcf72aacd7e7fb`, and the sorted
+untracked composite SHA-256 was
+`0aaa125a712ecb85a23254d3561dc1461d05a3d64e34064e24f073567bc1221d`.
+The measured `Game.exe` SHA-256 was
+`4a0ea84dd55e786ca2671877f3b494d7fa780e989d2c8737e34a9d100ab53a0d`; the
+`AssetCook.exe` SHA-256 was
+`70446f03446dc17471c3acdd7bcaf169ec2fd318b47b30dbeab144097bcf46de`.
+
+The recorded dirty status includes the Phase 5 source, script, test, and documentation
+changes. It also records empty root `Game.stdout.txt` and `Game.stderr.txt` files that
+existed only at measurement time; current runners capture those streams under each run
+directory, and the root files are no longer present. All raw paths, full status entries,
+timestamps, samples, behavior-file hashes, and per-run artifacts are recorded in
+generated
+`build/CookedModelGameProfile/Phase5UR1Verify/comparison.json`.
 
 ## Fallback And stb_image Decision
 
@@ -88,6 +164,7 @@ Replacing `stb_image`, or writing self-owned PNG/JPEG decode, is deferred. It sh
 
 ## Follow-Up Scope
 
-- Add cooked model data before treating glTF startup loading as a full cooked asset baseline.
 - Add packed ARM cook if material bandwidth/capacity profiling shows it is worth handling as a separate optimization.
+- Repeat the model-ready comparison in Release and on representative target hardware
+  before using it for product performance claims.
 - Keep raw `Game.log`, redirected output, cooked packages, manifests, and generated summaries out of commits unless a future test fixture intentionally needs them.

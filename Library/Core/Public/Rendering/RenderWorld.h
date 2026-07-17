@@ -155,6 +155,9 @@ namespace NorvesLib::Core::Rendering
          */
         void WaitForRender();
 
+        [[nodiscard]] bool HasPendingAsyncAssets() const;
+        [[nodiscard]] uint64_t GetRenderedFrameCount() const;
+
         // ========================================
         // pre-device-teardown フック
         // ========================================

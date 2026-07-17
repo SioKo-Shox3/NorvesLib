@@ -40,6 +40,7 @@
 #endif
 
 #include <cmath>
+#include <utility>
 
 using namespace NorvesLib::Core::Container;
 using namespace NorvesLib::Core::GameMode;
@@ -919,18 +920,29 @@ namespace Game::GameModes
             const String modelPath = data.m_ModelPath.empty()
                                          ? String("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf")
                                          : data.m_ModelPath;
-            data.m_BoulderLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
-                modelPath,
-                modelLoadContext,
+            Delegate<void, ModelHandle> modelLoadedCallback =
                 [asyncState](ModelHandle handle)
                 {
                     // cancelled 済みで到着した結果は破棄する。Leave 側で
-                    // GLTFAnalyzer::CancelModelLoad と finalize 済みハンドルの
+                    // 発行元の CancelModelLoad と finalize 済みハンドルの
                     // 明示解放を行うため、ここでの use-after-free・リークは防がれる。
                     asyncState->m_Handle = handle;
                     asyncState->m_bLoaded = handle.IsValid();
                     asyncState->m_bCompleted.Store(true);
-                });
+                };
+            if (data.m_bUseCookedModel)
+            {
+                data.m_BoulderLoadRequestId = renderResources.MegaGeometry().LoadModelAsync(
+                    modelPath,
+                    std::move(modelLoadedCallback));
+            }
+            else
+            {
+                data.m_BoulderLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+                    modelPath,
+                    modelLoadContext,
+                    std::move(modelLoadedCallback));
+            }
 
             if (data.m_BoulderLoadRequestId == 0)
             {
@@ -1098,7 +1110,14 @@ namespace Game::GameModes
         // するためリークしない）。
         if (data.m_BoulderLoadRequestId != 0)
         {
-            Resource::GLTFAnalyzer::CancelModelLoad(data.m_BoulderLoadRequestId);
+            if (data.m_bUseCookedModel)
+            {
+                ctx.RenderResourcesRef.MegaGeometry().CancelModelLoad(data.m_BoulderLoadRequestId);
+            }
+            else
+            {
+                Resource::GLTFAnalyzer::CancelModelLoad(data.m_BoulderLoadRequestId);
+            }
             data.m_BoulderLoadRequestId = 0;
         }
 

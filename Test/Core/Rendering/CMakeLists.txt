@@ -804,6 +804,16 @@ target_include_directories(ModelResourcesAssetLoadProfileContractTest PRIVATE
 set_target_properties(ModelResourcesAssetLoadProfileContractTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ModelResourcesAssetLoadProfileContractTest COMMAND ModelResourcesAssetLoadProfileContractTest)
 
+set(ASSET_LOAD_PROFILE_SUMMARY_CONTRACT_DIR
+    "${CMAKE_BINARY_DIR}/AssetLoadProfileSummaryContract/$<CONFIG>"
+)
+add_test(NAME AssetLoadProfileSummaryContractTest
+    COMMAND ${CMAKE_COMMAND}
+        "-DSUMMARY_SCRIPT=${CMAKE_SOURCE_DIR}/Scripts/SummarizeAssetLoadProfile.ps1"
+        "-DCASE_DIR=${ASSET_LOAD_PROFILE_SUMMARY_CONTRACT_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetLoadProfileSummaryContract.cmake.in"
+)
+
 add_executable(TextureAsyncTypesTest
     TextureAsyncTypesTest.cpp
 )
@@ -933,4 +943,21 @@ add_test(NAME ModelResourcesAssetCookSmoke
         "-DRUNTIME_TEST_EXE=$<TARGET_FILE:ModelResourcesAssetCookSmokeTest>"
         "-DSMOKE_DIR=${MODEL_RESOURCES_ASSET_COOK_SMOKE_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/ModelResourcesAssetCookSmoke.cmake.in"
+)
+
+add_executable(ApplicationExitFramePolicyTest
+    ApplicationExitFramePolicyTest.cpp
+)
+target_link_libraries(ApplicationExitFramePolicyTest PRIVATE Core)
+target_include_directories(ApplicationExitFramePolicyTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(ApplicationExitFramePolicyTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ApplicationExitFramePolicyTest COMMAND ApplicationExitFramePolicyTest)
+
+add_test(NAME CookedModelGameProfileScriptContractTest
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_CURRENT_SOURCE_DIR}/CookedModelGameProfileScriptContractTest.ps1"
+        -RepoRoot "${CMAKE_SOURCE_DIR}"
 )

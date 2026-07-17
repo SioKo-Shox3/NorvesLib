@@ -1,4 +1,6 @@
 #include "Rendering/RenderResources.h"
+#include "Library/Core/Private/Rendering/RenderWorldAssetFlushPolicy.h"
+#include "Container/String.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -13,6 +15,8 @@
 #include <cassert>
 #include <cstring>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <vector>
 #if defined(_MSC_VER)
@@ -32,9 +36,594 @@
 
 using namespace NorvesLib::Core::Rendering;
 using NorvesLib::Core::Container::MakeShared;
+using NorvesLib::Core::Container::String;
 
 namespace
 {
+    String ReadTextFile(const std::filesystem::path& path)
+    {
+        std::ifstream input(path, std::ios::binary);
+        assert(input.is_open());
+
+        String contents;
+        char character = '\0';
+        while (input.get(character))
+        {
+            contents.push_back(static_cast<TCHAR>(static_cast<unsigned char>(character)));
+        }
+        return contents;
+    }
+
+    size_t FindMatchingBrace(const String& source, size_t openingBrace)
+    {
+        assert(openingBrace < source.size());
+        assert(source[openingBrace] == _T('{'));
+
+        size_t depth = 0;
+        for (size_t index = openingBrace; index < source.size(); ++index)
+        {
+            if (source[index] == _T('{'))
+            {
+                ++depth;
+            }
+            else if (source[index] == _T('}'))
+            {
+                assert(depth > 0);
+                --depth;
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        assert(false);
+        return String::npos;
+    }
+
+    String ReadFunctionSource(const String& source, const String& signature)
+    {
+        const size_t functionPosition = source.find(signature);
+        assert(functionPosition != String::npos);
+
+        const size_t openingBrace = source.find(_T('{'), functionPosition);
+        assert(openingBrace != String::npos);
+        const size_t closingBrace = FindMatchingBrace(source, openingBrace);
+        return source.substr(functionPosition, closingBrace - functionPosition + 1);
+    }
+
+    size_t CountOccurrences(const String& source, const String& needle)
+    {
+        assert(!needle.empty());
+
+        size_t count = 0;
+        size_t position = 0;
+        while ((position = source.find(needle, position)) != String::npos)
+        {
+            ++count;
+            position += needle.size();
+        }
+        return count;
+    }
+
+    bool HasRenderThreadStartPublicationReset(const String& source)
+    {
+        const size_t statsResetPosition = source.find(_T("m_Stats = ThreadStats{};"));
+        const size_t publishedResetPosition = source.find(
+            _T("m_PublishedFramesRendered.Store(0, std::memory_order_release);"));
+        const size_t threadStartPosition = source.find(_T("m_Thread = Container::MakeUnique<Thread::Thread>"));
+        return statsResetPosition != String::npos &&
+               publishedResetPosition != String::npos &&
+               threadStartPosition != String::npos &&
+               statsResetPosition < publishedResetPosition &&
+               publishedResetPosition < threadStartPosition;
+    }
+
+    bool HasRenderedFramePublication(const String& source)
+    {
+        const String framesRendered = _T("m_Stats.FramesRendered++;");
+        const String publishedFrames = _T("m_PublishedFramesRendered.Store(m_Stats.FramesRendered, std::memory_order_release);");
+        const size_t resumedLogPosition = source.find(
+            _T("stage=asset_gpu_flush_window_resumed role=render_thread window_id=%llu ready_frames=%llu frames_rendered=%llu success=1"));
+        if (resumedLogPosition == String::npos ||
+            CountOccurrences(source, framesRendered) != 2 ||
+            CountOccurrences(source, publishedFrames) != 2)
+        {
+            return false;
+        }
+
+        size_t incrementPosition = source.find(framesRendered);
+        while (incrementPosition != String::npos)
+        {
+            const size_t publicationPosition = source.find(publishedFrames, incrementPosition + framesRendered.size());
+            const size_t nextIncrementPosition = source.find(framesRendered, incrementPosition + framesRendered.size());
+            if (publicationPosition == String::npos ||
+                publicationPosition >= resumedLogPosition ||
+                (nextIncrementPosition != String::npos && publicationPosition >= nextIncrementPosition))
+            {
+                return false;
+            }
+            incrementPosition = nextIncrementPosition;
+        }
+        return true;
+    }
+
+    bool HasRenderWorldInitializeStatsReset(const String& source)
+    {
+        const size_t statsResetPosition = source.find(_T("m_Stats = RenderingStats{};"));
+        const size_t coordinatorInitializePosition = source.find(_T("m_RenderingCoordinator.Initialize(coordSettings)"));
+        return statsResetPosition != String::npos &&
+               coordinatorInitializePosition != String::npos &&
+               statsResetPosition < coordinatorInitializePosition;
+    }
+
+    void AssertRenderWorldAssetFlushWiring()
+    {
+        std::filesystem::path repositoryRoot = std::filesystem::path(__FILE__).parent_path();
+        for (uint32_t level = 0; level < 3; ++level)
+        {
+            repositoryRoot = repositoryRoot.parent_path();
+        }
+
+        const String renderWorldSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/Rendering/RenderWorld.cpp");
+        const String beginFrameSource = ReadFunctionSource(
+            renderWorldSource, _T("void RenderWorld::BeginFrame()"));
+        const String pendingAssetsSource = ReadFunctionSource(
+            renderWorldSource, _T("bool RenderWorld::HasPendingAsyncAssets() const"));
+        const String endFrameSource = ReadFunctionSource(
+            renderWorldSource, _T("void RenderWorld::EndFrame()"));
+        const String waitForRenderSource = ReadFunctionSource(
+            renderWorldSource, _T("void RenderWorld::WaitForRender()"));
+
+        const String initializeSource = ReadFunctionSource(
+            renderWorldSource, _T("bool RenderWorld::Initialize(const RenderWorldSettings &settings)"));
+
+        assert(HasRenderWorldInitializeStatsReset(initializeSource));
+        assert(!HasRenderWorldInitializeStatsReset(_T("m_RenderingCoordinator.Initialize(coordSettings)")));
+
+        const size_t texturePendingPosition = pendingAssetsSource.find(
+            _T("m_RenderResources.Textures().GetPendingAsyncLoadCount()"));
+        const size_t cookedModelPendingPosition = pendingAssetsSource.find(
+            _T("m_RenderResources.MegaGeometry().GetPendingAsyncModelLoadCount()"));
+        const size_t gltfPendingPosition = pendingAssetsSource.find(
+            _T("Resource::GLTFAnalyzer::GetPendingAsyncModelLoadCount()"));
+        const size_t pendingAssetsCallPosition = beginFrameSource.find(_T("HasPendingAsyncAssets()"));
+        const size_t decisionPosition = beginFrameSource.find(_T("Detail::DecideAssetGpuFlushAction("));
+        assert(texturePendingPosition != String::npos);
+        assert(cookedModelPendingPosition != String::npos);
+        assert(gltfPendingPosition != String::npos);
+        assert(decisionPosition != String::npos);
+        assert(pendingAssetsCallPosition != String::npos);
+        assert(CountOccurrences(beginFrameSource, _T("Detail::DecideAssetGpuFlushAction(")) == 1);
+        assert(CountOccurrences(beginFrameSource, _T("HasPendingAsyncAssets()")) == 1);
+
+        const size_t acquirePosition = beginFrameSource.find(
+            _T("m_RenderThread.TryAcquireAssetGpuFlushWindow()"));
+        const size_t flushGuardPosition = beginFrameSource.find(
+            _T("assetFlushAction == Detail::AssetGpuFlushAction::FlushAndRender"));
+        assert(acquirePosition != String::npos);
+        assert(flushGuardPosition != String::npos);
+        assert(pendingAssetsCallPosition < acquirePosition);
+        assert(acquirePosition < decisionPosition);
+        assert(pendingAssetsCallPosition < decisionPosition);
+        assert(decisionPosition < flushGuardPosition);
+
+        const size_t flushGuardOpeningBrace = beginFrameSource.find(_T('{'), flushGuardPosition);
+        assert(flushGuardOpeningBrace != String::npos);
+        const size_t flushGuardClosingBrace = FindMatchingBrace(beginFrameSource, flushGuardOpeningBrace);
+        const size_t textureFlushPosition = beginFrameSource.find(
+            _T("FlushCompletedTextureLoads()"), flushGuardPosition);
+        const size_t cookedModelFlushPosition = beginFrameSource.find(
+            _T("MegaGeometry().FlushCompletedModelLoads(1)"), flushGuardPosition);
+        const size_t gltfFlushPosition = beginFrameSource.find(
+            _T("Resource::GLTFAnalyzer::FlushCompletedModelLoads(modelLoadContext)"), flushGuardPosition);
+        assert(textureFlushPosition != String::npos);
+        assert(cookedModelFlushPosition != String::npos);
+        assert(gltfFlushPosition != String::npos);
+        assert(flushGuardOpeningBrace < textureFlushPosition);
+        assert(textureFlushPosition < cookedModelFlushPosition);
+        assert(cookedModelFlushPosition < gltfFlushPosition);
+        assert(gltfFlushPosition < flushGuardClosingBrace);
+
+        const size_t coordinatorBeginFramePosition = beginFrameSource.find(
+            _T("m_RenderingCoordinator.BeginFrame();"));
+        const size_t skipRenderGuardPosition = beginFrameSource.find(
+            _T("assetFlushAction != Detail::AssetGpuFlushAction::DeferFlushAndSkipRender"));
+        assert(coordinatorBeginFramePosition != String::npos);
+        assert(skipRenderGuardPosition != String::npos);
+        assert(flushGuardClosingBrace < coordinatorBeginFramePosition);
+        assert(skipRenderGuardPosition < coordinatorBeginFramePosition);
+
+        const size_t resizeWaitPosition = beginFrameSource.find(_T("WaitForRender();"));
+        const size_t resizeQuiescedPosition = beginFrameSource.find(
+            _T("bRenderThreadQuiesced = true;"), resizeWaitPosition);
+        assert(beginFrameSource.find(_T("bool bRenderThreadQuiesced = false;")) != String::npos);
+        assert(resizeWaitPosition != String::npos);
+        assert(resizeQuiescedPosition != String::npos);
+        assert(resizeWaitPosition < resizeQuiescedPosition);
+        assert(resizeQuiescedPosition < decisionPosition);
+        assert(CountOccurrences(beginFrameSource, _T("WaitForRender();")) == 1);
+        assert(beginFrameSource.find(
+                   _T("m_RenderThread.IsRunning(), bRenderThreadQuiesced, bAssetGpuFlushWindowAcquired,")) !=
+               String::npos);
+        assert(beginFrameSource.find(_T("bHasPendingAsyncAssets);"), decisionPosition) != String::npos);
+
+        assert(beginFrameSource.find(_T("NotifyNewFrame(")) == String::npos);
+        assert(endFrameSource.find(_T("m_RenderThread.NotifyNewFrame(packet);")) != String::npos);
+        assert(waitForRenderSource.find(_T("m_RenderThread.WaitForIdle();")) != String::npos);
+        assert(waitForRenderSource.find(_T("m_Device->WaitIdle();")) != String::npos);
+    }
+
+    void AssertRenderThreadAssetGpuFlushWindowWiring()
+    {
+        std::filesystem::path repositoryRoot = std::filesystem::path(__FILE__).parent_path();
+        for (uint32_t level = 0; level < 3; ++level)
+        {
+            repositoryRoot = repositoryRoot.parent_path();
+        }
+
+        const String renderThreadHeader = ReadTextFile(
+            repositoryRoot / "Library/Core/Public/Rendering/RenderThread.h");
+        const String renderThreadSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/Rendering/RenderThread.cpp");
+        const String acquireSource = ReadFunctionSource(
+            renderThreadSource, _T("bool RenderThread::TryAcquireAssetGpuFlushWindow()"));
+        const String startSource = ReadFunctionSource(
+            renderThreadSource, _T("void RenderThread::Start()"));
+        const String stopSource = ReadFunctionSource(
+            renderThreadSource, _T("void RenderThread::Stop()"));
+        const String waitForIdleSource = ReadFunctionSource(
+            renderThreadSource, _T("void RenderThread::WaitForIdle()"));
+        const String waitForFrameSource = ReadFunctionSource(
+            renderThreadSource, _T("void RenderThread::WaitForFrame()"));
+        const String notifyNewFrameSource = ReadFunctionSource(
+            renderThreadSource, _T("void RenderThread::NotifyNewFrame(FramePacket* packet)"));
+        const String renderLoopSource = ReadFunctionSource(
+            renderThreadSource, _T("void RenderThread::RenderLoop()"));
+
+        assert(HasRenderThreadStartPublicationReset(startSource));
+        assert(!HasRenderThreadStartPublicationReset(
+            _T("m_Stats = ThreadStats{}; m_Thread = Container::MakeUnique<Thread::Thread>")));
+        assert(HasRenderedFramePublication(renderLoopSource));
+        assert(!HasRenderedFramePublication(
+            _T("m_Stats.FramesRendered++; m_Stats.FramesRendered++; stage=asset_gpu_flush_window_resumed role=render_thread window_id=%llu ready_frames=%llu frames_rendered=%llu success=1")));
+
+        assert(renderThreadHeader.find(_T("friend class RenderWorld;")) != String::npos);
+        assert(renderThreadHeader.find(_T("bool TryAcquireAssetGpuFlushWindow();")) != String::npos);
+        assert(renderThreadHeader.find(_T("m_bAssetGpuFlushWindowRequested")) != String::npos);
+        assert(renderThreadHeader.find(_T("m_bAssetGpuFlushWindowReady")) != String::npos);
+        assert(renderThreadHeader.find(_T("m_bReportAssetGpuFlushWindowResume")) != String::npos);
+
+        for (const String* lifecycleSource : {&startSource, &stopSource})
+        {
+            assert(lifecycleSource->find(_T("m_bAssetGpuFlushWindowRequested = false;")) != String::npos);
+            assert(lifecycleSource->find(_T("m_bAssetGpuFlushWindowReady = false;")) != String::npos);
+            assert(lifecycleSource->find(_T("m_bReportAssetGpuFlushWindowResume = false;")) != String::npos);
+            assert(lifecycleSource->find(_T("m_AssetGpuFlushWindowId = 0;")) != String::npos);
+            assert(lifecycleSource->find(_T("m_AssetGpuFlushWindowReadyFrames = 0;")) != String::npos);
+        }
+
+        assert(acquireSource.find(_T("m_FrameMutex.TryLock()")) != String::npos);
+        assert(CountOccurrences(acquireSource, _T("m_FrameMutex.Unlock();")) == 2);
+        assert(acquireSource.find(_T("m_bFrameComplete.Load(std::memory_order_acquire)")) != String::npos);
+        assert(acquireSource.find(_T("!m_bNewFrameReady.Load(std::memory_order_acquire)")) != String::npos);
+        assert(acquireSource.find(_T("m_CurrentPacket == nullptr")) != String::npos);
+        assert(acquireSource.find(_T("m_bAssetGpuFlushWindowReady = false;")) != String::npos);
+        assert(acquireSource.find(_T("m_bReportAssetGpuFlushWindowResume = true;")) != String::npos);
+        assert(acquireSource.find(_T("m_bAssetGpuFlushWindowRequested = true;")) != String::npos);
+        assert(acquireSource.find(_T("m_FrameCondition.NotifyOne();")) != String::npos);
+        assert(acquireSource.find(_T("Wait(")) == String::npos);
+        assert(acquireSource.find(_T("WaitIdle(")) == String::npos);
+
+        assert(waitForFrameSource.find(_T("!m_bAssetGpuFlushWindowRequested")) != String::npos);
+        assert(waitForFrameSource.find(_T("m_bShouldExit.Load(std::memory_order_acquire)")) != String::npos);
+        assert(waitForIdleSource.find(_T("WaitForFrame();")) != String::npos);
+        assert(notifyNewFrameSource.find(_T("m_bAssetGpuFlushWindowReady = false;")) != String::npos);
+
+        const size_t frameCompletePredicatePosition = waitForFrameSource.find(
+            _T("m_bFrameComplete.Load(std::memory_order_acquire)"));
+        const size_t newFramePredicatePosition = waitForFrameSource.find(
+            _T("!m_bNewFrameReady.Load(std::memory_order_acquire)"));
+        const size_t packetPredicatePosition = waitForFrameSource.find(_T("m_CurrentPacket == nullptr"));
+        const size_t flushWindowPredicatePosition = waitForFrameSource.find(
+            _T("!m_bAssetGpuFlushWindowRequested"));
+        const size_t exitPredicatePosition = waitForFrameSource.find(
+            _T("m_bShouldExit.Load(std::memory_order_acquire)"));
+        assert(frameCompletePredicatePosition != String::npos);
+        assert(newFramePredicatePosition != String::npos);
+        assert(packetPredicatePosition != String::npos);
+        assert(flushWindowPredicatePosition != String::npos);
+        assert(exitPredicatePosition != String::npos);
+        assert(frameCompletePredicatePosition < newFramePredicatePosition);
+        assert(newFramePredicatePosition < packetPredicatePosition);
+        assert(packetPredicatePosition < flushWindowPredicatePosition);
+        assert(flushWindowPredicatePosition < exitPredicatePosition);
+
+        const size_t selectionPosition = renderLoopSource.find(_T("FramePacket* packet = nullptr;"));
+        const size_t newFramePosition = renderLoopSource.find(
+            _T("if (m_bNewFrameReady.Load(std::memory_order_acquire))"), selectionPosition);
+        const size_t requestPosition = renderLoopSource.find(
+            _T("else if (m_bAssetGpuFlushWindowRequested)"), newFramePosition);
+        const size_t drainBranchPosition = renderLoopSource.find(_T("if (bDrainAssetGpuFlushWindow)"));
+        const size_t waitIdlePosition = renderLoopSource.find(_T("device->WaitIdle();"), drainBranchPosition);
+        const size_t readyPosition = renderLoopSource.find(_T("m_bAssetGpuFlushWindowReady = true;"), drainBranchPosition);
+        const size_t readyLogPosition = renderLoopSource.find(
+            _T("stage=asset_gpu_flush_window_ready role=render_thread window_id=%llu frames_rendered=%llu success=1"),
+            drainBranchPosition);
+        const size_t drainNotifyPosition = renderLoopSource.find(
+            _T("m_IdleCondition.NotifyAll();"), drainBranchPosition);
+        const size_t drainContinuePosition = renderLoopSource.find(_T("continue;"), drainBranchPosition);
+        assert(selectionPosition != String::npos);
+        assert(newFramePosition != String::npos);
+        assert(requestPosition != String::npos);
+        assert(newFramePosition < requestPosition);
+        assert(drainBranchPosition != String::npos);
+        assert(waitIdlePosition != String::npos);
+        assert(readyPosition != String::npos);
+        assert(readyLogPosition != String::npos);
+        assert(drainNotifyPosition != String::npos);
+        assert(drainContinuePosition != String::npos);
+        assert(drainBranchPosition < waitIdlePosition);
+        assert(waitIdlePosition < readyPosition);
+        assert(readyPosition < readyLogPosition);
+        assert(readyLogPosition < drainNotifyPosition);
+        assert(drainNotifyPosition < drainContinuePosition);
+
+        const String drainBranchSource = renderLoopSource.substr(
+            drainBranchPosition, drainContinuePosition - drainBranchPosition);
+        assert(drainBranchSource.find(_T("FramesRendered++")) == String::npos);
+        assert(drainBranchSource.find(_T("m_Stats.FramesRendered =")) == String::npos);
+
+        const size_t packetBranchPosition = renderLoopSource.find(_T("if (m_Coordinator && packet)"));
+        const size_t packetBranchOpeningBrace = renderLoopSource.find(_T('{'), packetBranchPosition);
+        const size_t packetBranchClosingBrace = FindMatchingBrace(renderLoopSource, packetBranchOpeningBrace);
+        const size_t renderFramePosition = renderLoopSource.find(_T("m_Coordinator->RenderFrame(packet);"), packetBranchPosition);
+        const size_t releasePacketPosition = renderLoopSource.find(_T("m_Coordinator->ReleasePacket(packet);"), renderFramePosition);
+        const size_t framesRenderedPosition = renderLoopSource.find(_T("m_Stats.FramesRendered++;"), renderFramePosition);
+        const size_t resumedLogPosition = renderLoopSource.find(
+            _T("stage=asset_gpu_flush_window_resumed role=render_thread window_id=%llu ready_frames=%llu frames_rendered=%llu success=1"),
+            framesRenderedPosition);
+        assert(packetBranchPosition != String::npos);
+        assert(renderFramePosition != String::npos);
+        assert(framesRenderedPosition != String::npos);
+        assert(resumedLogPosition != String::npos);
+        assert(packetBranchPosition < renderFramePosition);
+        assert(renderFramePosition < framesRenderedPosition);
+        assert(framesRenderedPosition < resumedLogPosition);
+        assert(resumedLogPosition < packetBranchClosingBrace);
+        assert(drainContinuePosition < packetBranchPosition);
+
+        const size_t frameCompletePosition = renderLoopSource.find(
+            _T("m_bFrameComplete.Store(true, std::memory_order_release);"), packetBranchClosingBrace);
+        assert(releasePacketPosition != String::npos);
+        assert(frameCompletePosition != String::npos);
+        assert(releasePacketPosition < frameCompletePosition);
+    }
+
+    void AssertApplicationShutdownQuiescenceWiring()
+    {
+        std::filesystem::path repositoryRoot = std::filesystem::path(__FILE__).parent_path();
+        for (uint32_t level = 0; level < 3; ++level)
+        {
+            repositoryRoot = repositoryRoot.parent_path();
+        }
+
+        const String applicationProcessorSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/Engine/ApplicationProcessor.cpp");
+        const String shutdownSource = ReadFunctionSource(
+            applicationProcessorSource, _T("void ApplicationProcessor::Shutdown()"));
+
+        const String waitForRenderCall = _T("GEngine->GetRenderWorld().WaitForRender();");
+        const size_t handlerLookupPosition = shutdownSource.find(_T("auto *handler = GEngine->GetApplicationHandler();"));
+        const size_t waitForRenderPosition = shutdownSource.find(waitForRenderCall);
+        const size_t preShutdownPosition = shutdownSource.find(_T("handler->OnPreShutdown();"));
+        const size_t stateMachineShutdownPosition = shutdownSource.find(_T("stateMachine->Shutdown();"));
+        const size_t sceneQueryClearPosition = shutdownSource.find(_T("GEngine->GetSceneQuery().Clear();"));
+        const size_t worldFinalizePosition = shutdownSource.find(_T("GEngine->GetWorld().Finalize();"));
+        const size_t renderWorldShutdownPosition = shutdownSource.find(_T("GEngine->GetRenderWorld().Shutdown();"));
+
+        assert(CountOccurrences(shutdownSource, waitForRenderCall) == 1);
+        assert(handlerLookupPosition != String::npos);
+        assert(waitForRenderPosition != String::npos);
+        assert(preShutdownPosition != String::npos);
+        assert(stateMachineShutdownPosition != String::npos);
+        assert(sceneQueryClearPosition != String::npos);
+        assert(worldFinalizePosition != String::npos);
+        assert(renderWorldShutdownPosition != String::npos);
+        assert(handlerLookupPosition < waitForRenderPosition);
+        assert(waitForRenderPosition < preShutdownPosition);
+        assert(preShutdownPosition < stateMachineShutdownPosition);
+        assert(stateMachineShutdownPosition < sceneQueryClearPosition);
+        assert(sceneQueryClearPosition < worldFinalizePosition);
+        assert(worldFinalizePosition < renderWorldShutdownPosition);
+    }
+
+    void AssertAssetGpuFlushDecisionMatrix()
+    {
+        using NorvesLib::Core::Rendering::Detail::AssetGpuFlushAction;
+        using NorvesLib::Core::Rendering::Detail::DecideAssetGpuFlushAction;
+
+        assert(DecideAssetGpuFlushAction(false, false, false, true) == AssetGpuFlushAction::FlushAndRender);
+        assert(DecideAssetGpuFlushAction(true, true, false, true) == AssetGpuFlushAction::FlushAndRender);
+        assert(DecideAssetGpuFlushAction(true, false, false, false) ==
+               AssetGpuFlushAction::DeferFlushAndRender);
+        assert(DecideAssetGpuFlushAction(true, false, false, true) ==
+               AssetGpuFlushAction::DeferFlushAndSkipRender);
+        assert(DecideAssetGpuFlushAction(true, false, true, true) == AssetGpuFlushAction::FlushAndRender);
+
+        AssetGpuFlushAction action = DecideAssetGpuFlushAction(true, false, false, true);
+        assert(action == AssetGpuFlushAction::DeferFlushAndSkipRender);
+        action = DecideAssetGpuFlushAction(true, false, true, true);
+        assert(action == AssetGpuFlushAction::FlushAndRender);
+    }
+
+    void AssertVulkanWaitIdleTeardownWiring()
+    {
+        std::filesystem::path repositoryRoot = std::filesystem::path(__FILE__).parent_path();
+        for (uint32_t level = 0; level < 3; ++level)
+        {
+            repositoryRoot = repositoryRoot.parent_path();
+        }
+
+        const String deviceSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/RHI/Vulkan/VulkanDevice.cpp");
+        const String deviceHeaderSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/RHI/Vulkan/VulkanDevice.h");
+        const String swapChainSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/RHI/Vulkan/VulkanSwapChain.cpp");
+        const String commandListSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp");
+        const String coreCMakeSource = ReadTextFile(repositoryRoot / "Library/Core/CMakeLists.txt");
+
+        const String helperSource = ReadFunctionSource(
+            deviceSource,
+            _T("VkResult WaitIdleWithoutResultCheck(vk::Device device, const char* context) noexcept"));
+        const String deviceDestructorSource = ReadFunctionSource(deviceSource, _T("VulkanDevice::~VulkanDevice()"));
+        const String publicWaitIdleSource = ReadFunctionSource(deviceSource, _T("void VulkanDevice::WaitIdle()"));
+        const String createLogicalDeviceSource = ReadFunctionSource(
+            deviceSource,
+            _T("void VulkanDevice::CreateLogicalDevice()"));
+        const String getDeviceExtensionsSource = ReadFunctionSource(
+            deviceSource,
+            _T("VariableArray<const char *> VulkanDevice::GetDeviceExtensions()"));
+        const String deviceFaultReportSource = ReadFunctionSource(
+            deviceSource,
+            _T("void VulkanDevice::ReportDeviceFaultOnce()"));
+        const String swapChainDestructorSource = ReadFunctionSource(
+            swapChainSource,
+            _T("VulkanSwapChain::~VulkanSwapChain()"));
+        const String resizeSource = ReadFunctionSource(
+            swapChainSource,
+            _T("void VulkanSwapChain::Resize(uint32_t width, uint32_t height)"));
+        const String commandListDestructorSource = ReadFunctionSource(
+            commandListSource,
+            _T("VulkanCommandList::~VulkanCommandList()"));
+
+        assert(helperSource.find(_T("if (!device)")) != String::npos);
+        assert(helperSource.find(_T("return VK_SUCCESS;")) != String::npos);
+        assert(helperSource.find(_T("const VkResult result = VULKAN_HPP_DEFAULT_DISPATCHER.vkDeviceWaitIdle(")) !=
+               String::npos);
+        assert(helperSource.find(_T("static_cast<VkDevice>(device)")) != String::npos);
+        assert(helperSource.find(_T("if (result != VK_SUCCESS)")) != String::npos);
+        assert(helperSource.find(
+                   _T("NORVES_LOG_ERROR(\"Vulkan\", \"vkDeviceWaitIdle failed context=%s result=%d\", context, static_cast<int32_t>(result));")) !=
+               String::npos);
+        assert(helperSource.find(_T("return result;")) != String::npos);
+
+        assert(deviceSource.find(_T("VULKAN_HPP_DEFAULT_DISPATCHER.init(m_device);")) != String::npos);
+        assert(CountOccurrences(deviceSource, _T("WaitIdleWithoutResultCheck(")) == 2);
+        assert(publicWaitIdleSource.find(_T("const VkResult result = WaitIdleWithoutResultCheck(m_device, \"VulkanDevice::WaitIdle\");")) !=
+               String::npos);
+        assert(publicWaitIdleSource.find(_T("if (result == VK_ERROR_DEVICE_LOST)")) != String::npos);
+        assert(publicWaitIdleSource.find(_T("ReportDeviceFaultOnce();")) != String::npos);
+        assert(deviceDestructorSource.find(_T("if (m_device)")) != String::npos);
+        assert(deviceDestructorSource.find(_T("WaitIdle();")) != String::npos);
+
+        assert(deviceHeaderSource.find(_T("#include \"Thread/Atomic.h\"")) != String::npos);
+        assert(deviceHeaderSource.find(_T("VkPhysicalDeviceFaultFeaturesEXT m_deviceFaultFeatures")) != String::npos);
+        assert(deviceHeaderSource.find(_T("Thread::Atomic<bool> m_bDeviceFaultReported")) != String::npos);
+        assert(deviceHeaderSource.find(_T("void ReportDeviceFaultOnce();")) != String::npos);
+
+        const size_t exchangePosition = deviceFaultReportSource.find(
+            _T("if (m_bDeviceFaultReported.Exchange(true))"));
+        const size_t featureGuardPosition = deviceFaultReportSource.find(
+            _T("if (m_deviceFaultFeatures.deviceFault != VK_TRUE)"));
+        const size_t procLookupPosition = deviceFaultReportSource.find(
+            _T("const PFN_vkGetDeviceFaultInfoEXT getDeviceFaultInfo ="));
+        const size_t procGuardPosition = deviceFaultReportSource.find(
+            _T("if (getDeviceFaultInfo == nullptr)"));
+        const size_t totalCallPosition = deviceFaultReportSource.find(
+            _T("getDeviceFaultInfo(static_cast<VkDevice>(m_device), &totalCounts, nullptr);"));
+        const size_t totalCountsPosition = deviceFaultReportSource.find(_T("totalAddressInfoCount"));
+        const size_t detailsCallPosition = deviceFaultReportSource.find(
+            _T("getDeviceFaultInfo(static_cast<VkDevice>(m_device), &writtenCounts, &faultInfo);"));
+        assert(exchangePosition != String::npos);
+        assert(featureGuardPosition != String::npos);
+        assert(procLookupPosition != String::npos);
+        assert(procGuardPosition != String::npos);
+        assert(totalCallPosition != String::npos);
+        assert(totalCountsPosition != String::npos);
+        assert(detailsCallPosition != String::npos);
+        assert(exchangePosition < featureGuardPosition);
+        assert(featureGuardPosition < procLookupPosition);
+        assert(procLookupPosition < procGuardPosition);
+        assert(procGuardPosition < totalCallPosition);
+        assert(totalCallPosition < totalCountsPosition);
+        assert(totalCountsPosition < detailsCallPosition);
+        assert(deviceFaultReportSource.find(_T("VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("FixedArray<VkDeviceFaultAddressInfoEXT, 16>")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("FixedArray<VkDeviceFaultVendorInfoEXT, 16>")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("constexpr uint32_t maxCapturedFaultInfos = 16;")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("std::min(totalAddressInfoCount, maxCapturedFaultInfos)")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("std::min(totalVendorInfoCount, maxCapturedFaultInfos)")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("totalVendorInfoCount")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("totalVendorBinarySize")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("writtenCounts")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("writtenCounts.vendorBinarySize = 0;")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("pVendorBinaryData = nullptr")) != String::npos);
+        assert(deviceFaultReportSource.find(_T("if (totalResult != VK_SUCCESS && totalResult != VK_INCOMPLETE)")) !=
+               String::npos);
+        assert(deviceFaultReportSource.find(_T("if (detailsResult != VK_SUCCESS && detailsResult != VK_INCOMPLETE)")) !=
+               String::npos);
+        assert(deviceFaultReportSource.find(_T("while (")) == String::npos);
+
+        const size_t extensionGuardPosition = getDeviceExtensionsSource.find(
+            _T("if (hasExtension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME))"));
+        const size_t extensionPushPosition = getDeviceExtensionsSource.find(
+            _T("extensions.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);"));
+        assert(extensionGuardPosition != String::npos);
+        assert(extensionPushPosition != String::npos);
+        assert(extensionGuardPosition < extensionPushPosition);
+
+        const size_t deviceFaultRequestedPosition = createLogicalDeviceSource.find(
+            _T("bool bDeviceFaultRequested = false;"));
+        const size_t deviceFaultQueryGuardPosition = createLogicalDeviceSource.find(
+            _T("if (bDeviceFaultRequested)"));
+        const size_t deviceFaultQueryPosition = createLogicalDeviceSource.find(
+            _T("m_physicalDevice.getFeatures2(&deviceFaultFeatures2Query);"));
+        const size_t featuresTailPosition = createLogicalDeviceSource.find(
+            _T("void **featuresTail = &m_vulkan12Features.pNext;"));
+        const size_t deviceFaultFeatureGuardPosition = createLogicalDeviceSource.find(
+            _T("if (m_deviceFaultFeatures.deviceFault == VK_TRUE)"));
+        const size_t deviceFaultTailPosition = createLogicalDeviceSource.find(
+            _T("*featuresTail = &m_deviceFaultFeatures;"));
+        const size_t cooperativeVectorGuardPosition = createLogicalDeviceSource.find(
+            _T("if (bCooperativeVectorRequested)"));
+        const size_t cooperativeVectorTailPosition = createLogicalDeviceSource.find(
+            _T("*featuresTail = &m_cooperativeVectorFeatures;"));
+        assert(deviceFaultRequestedPosition != String::npos);
+        assert(deviceFaultQueryGuardPosition != String::npos);
+        assert(deviceFaultQueryPosition != String::npos);
+        assert(featuresTailPosition != String::npos);
+        assert(deviceFaultFeatureGuardPosition != String::npos);
+        assert(deviceFaultTailPosition != String::npos);
+        assert(cooperativeVectorGuardPosition != String::npos);
+        assert(cooperativeVectorTailPosition != String::npos);
+        assert(deviceFaultRequestedPosition < deviceFaultQueryGuardPosition);
+        assert(deviceFaultQueryGuardPosition < deviceFaultQueryPosition);
+        assert(deviceFaultQueryPosition < featuresTailPosition);
+        assert(featuresTailPosition < deviceFaultFeatureGuardPosition);
+        assert(deviceFaultFeatureGuardPosition < deviceFaultTailPosition);
+        assert(deviceFaultTailPosition < cooperativeVectorGuardPosition);
+        assert(cooperativeVectorGuardPosition < cooperativeVectorTailPosition);
+
+        assert(swapChainDestructorSource.find(_T("m_device->WaitIdle();")) != String::npos);
+        assert(resizeSource.find(_T("m_device->WaitIdle();")) != String::npos);
+        assert(commandListDestructorSource.find(_T("m_device->WaitIdle();")) != String::npos);
+
+        assert(publicWaitIdleSource.find(_T(".waitIdle(")) == String::npos);
+        assert(deviceDestructorSource.find(_T(".waitIdle(")) == String::npos);
+        assert(swapChainDestructorSource.find(_T(".waitIdle(")) == String::npos);
+        assert(resizeSource.find(_T(".waitIdle(")) == String::npos);
+        assert(commandListDestructorSource.find(_T(".waitIdle(")) == String::npos);
+        assert(deviceSource.find(_T("m_graphicsQueue.waitIdle();")) != String::npos);
+
+        assert(coreCMakeSource.find(_T("VULKAN_HPP_ASSERT_ON_RESULT")) == String::npos);
+        assert(coreCMakeSource.find(_T("VULKAN_HPP_DISABLE_ENHANCED_MODE")) == String::npos);
+    }
+
     class FakeTexture final : public NorvesLib::RHI::ITexture
     {
     public:
@@ -215,6 +804,12 @@ int main()
 #endif
 
     std::cout << "RenderResourcesDomainContractTest start\n";
+
+    AssertAssetGpuFlushDecisionMatrix();
+    AssertRenderWorldAssetFlushWiring();
+    AssertRenderThreadAssetGpuFlushWindowWiring();
+    AssertApplicationShutdownQuiescenceWiring();
+    AssertVulkanWaitIdleTeardownWiring();
 
     RenderResources manager;
     const TextureCreateInfo createInfo = MakeTextureCreateInfo("OwnedTexture");

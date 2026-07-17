@@ -1,5 +1,6 @@
 ﻿#include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
+#include "Engine/ApplicationExitFramePolicy.h"
 #include "Boot/BootConfig.h"
 #include "Application/IApplicationHandler.h"
 #include "Application/IApplication.h"
@@ -252,25 +253,39 @@ namespace NorvesLib::Core::Engine
 
         // コマンドライン引数を config.Arguments から取得してパース
         m_ExitAfterFrames = 0;
+        m_ExitAfterRenderedFrames = 0;
+        m_AssetSettleRenderedBaseline = 0;
+        m_bWaitForAssetSettle = false;
+        m_bObservedPendingAssets = false;
+        m_bAssetSettleBaselineLatched = false;
+        Detail::ExitFrameOptionsAccumulator exitFrameOptions{};
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         bool bEnableCanvasView = false;
         bool bBoardInstanceBatchingEnabled = true;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
-            uint64_t parsedFrameCount = 0;
-            bool bMatchedExitAfterFrames = false;
             bool bParsedMultiThreadedRendering = false;
             bool bMatchedRenderThread = false;
-            if (TryParseExitAfterFramesOption(args[i].c_str(), parsedFrameCount, bMatchedExitAfterFrames))
+            const Detail::ExitFrameArgumentResult exitFrameArgument =
+                Detail::AccumulateExitFrameArgument(exitFrameOptions, args[i].c_str());
+            if (exitFrameArgument.Kind == Detail::ExitFrameArgumentKind::LegacyValid)
             {
-                m_ExitAfterFrames = parsedFrameCount;
-                LOG_INFO_F("ApplicationProcessor runtime option exit_after_frames=%llu",
-                           static_cast<unsigned long long>(m_ExitAfterFrames));
+                LOG_INFO("ApplicationProcessor runtime option exit_after_frames=%llu",
+                         static_cast<unsigned long long>(exitFrameArgument.Value));
             }
-            else if (bMatchedExitAfterFrames)
+            else if (exitFrameArgument.Kind == Detail::ExitFrameArgumentKind::LegacyInvalid)
             {
                 LOG_WARNING("ApplicationProcessor runtime option --exit-after-frames ignored: value must be a positive integer");
+            }
+            else if (exitFrameArgument.Kind == Detail::ExitFrameArgumentKind::RenderedValid)
+            {
+                LOG_INFO("ApplicationProcessor runtime option exit_after_rendered_frames=%llu",
+                         static_cast<unsigned long long>(exitFrameArgument.Value));
+            }
+            else if (exitFrameArgument.Kind == Detail::ExitFrameArgumentKind::RenderedInvalid)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --exit-after-rendered-frames ignored: value must be a positive integer");
             }
 
             if (TryParseRenderThreadOption(args[i].c_str(), bParsedMultiThreadedRendering, bMatchedRenderThread))
@@ -296,6 +311,19 @@ namespace NorvesLib::Core::Engine
                 bBoardInstanceBatchingEnabled = false;
                 LOG_INFO("ApplicationProcessor runtime option board_instance_batching=false");
             }
+        }
+
+        const Detail::ExitFrameSelection exitFrameSelection = Detail::SelectExitFrameSelection(exitFrameOptions);
+        m_ExitAfterFrames = exitFrameSelection.Metric == Detail::ExitFrameMetric::GameThreadFrames ? exitFrameSelection.Target : 0;
+        m_ExitAfterRenderedFrames = exitFrameSelection.Metric == Detail::ExitFrameMetric::RenderedFrames ? exitFrameSelection.Target : 0;
+        m_bWaitForAssetSettle = exitFrameSelection.bWaitForAssetSettle;
+        if (exitFrameOptions.LegacyTarget > 0 && exitFrameOptions.RenderedTarget > 0)
+        {
+            LOG_WARNING("ApplicationProcessor runtime option --exit-after-rendered-frames takes precedence over --exit-after-frames");
+        }
+        if (exitFrameOptions.bWaitForAssetSettle && m_ExitAfterRenderedFrames == 0)
+        {
+            LOG_WARNING("ApplicationProcessor runtime option --wait-for-asset-settle ignored without --exit-after-rendered-frames");
         }
 
         // OnPreInitialize呼び出し
@@ -475,6 +503,9 @@ namespace NorvesLib::Core::Engine
         {
             auto *handler = GEngine->GetApplicationHandler();
 
+            // GameModeがResourceを解放する前に最後の描画とGPU使用を完了させる。
+            GEngine->GetRenderWorld().WaitForRender();
+
             // OnPreShutdown呼び出し
             if (handler)
             {
@@ -615,11 +646,20 @@ namespace NorvesLib::Core::Engine
             handler->OnPreRender();
         }
 
+        bool bRenderedExitReached = false;
+        uint64_t renderedFrameCount = 0;
         // 描画処理
         {
             auto &renderWorld = GEngine->GetRenderWorld();
             if (renderWorld.IsInitialized())
             {
+                if (m_bWaitForAssetSettle)
+                {
+                    Detail::ObservePendingAssets(
+                        renderWorld.HasPendingAsyncAssets(),
+                        m_bObservedPendingAssets,
+                        m_bAssetSettleBaselineLatched);
+                }
                 renderWorld.BeginFrame();
                 // BeginFrame で書き込み中パケットが確保された後に overlay 集合を載せる
                 // (同一フレームで RenderFrame が消費・1 フレーム遅延なし)。空なら完全 no-op。
@@ -627,6 +667,32 @@ namespace NorvesLib::Core::Engine
                     Container::Span<Rendering::IViewPass *>(overlayPasses.data(), overlayPasses.size()));
                 renderWorld.Render();
                 renderWorld.EndFrame();
+                renderedFrameCount = renderWorld.GetRenderedFrameCount();
+                if (m_ExitAfterRenderedFrames > 0)
+                {
+                    if (m_bWaitForAssetSettle)
+                    {
+                        const bool bWasLatched = m_bAssetSettleBaselineLatched;
+                        const uint64_t previousBaseline = m_AssetSettleRenderedBaseline;
+                        bRenderedExitReached = Detail::EvaluateSettledRenderedExit(
+                            renderWorld.HasPendingAsyncAssets(),
+                            renderedFrameCount,
+                            m_ExitAfterRenderedFrames,
+                            m_bObservedPendingAssets,
+                            m_bAssetSettleBaselineLatched,
+                            m_AssetSettleRenderedBaseline);
+                        if (m_bAssetSettleBaselineLatched &&
+                            (!bWasLatched || previousBaseline != m_AssetSettleRenderedBaseline))
+                        {
+                            LOG_INFO("ApplicationProcessor asset settle baseline rendered=%llu",
+                                     static_cast<unsigned long long>(m_AssetSettleRenderedBaseline));
+                        }
+                    }
+                    else
+                    {
+                        bRenderedExitReached = renderedFrameCount >= m_ExitAfterRenderedFrames;
+                    }
+                }
             }
         }
 
@@ -643,6 +709,14 @@ namespace NorvesLib::Core::Engine
             LOG_INFO_F("ApplicationProcessor::Tick() - exit-after-frames reached frame=%llu target=%llu",
                        static_cast<unsigned long long>(GEngine->GetFrameCount()),
                        static_cast<unsigned long long>(m_ExitAfterFrames));
+            GEngine->RequestExit(0);
+        }
+        else if (bRenderedExitReached)
+        {
+            LOG_INFO("ApplicationProcessor::Tick() - exit-after-rendered-frames reached rendered=%llu baseline=%llu target=%llu",
+                     static_cast<unsigned long long>(renderedFrameCount),
+                     static_cast<unsigned long long>(m_AssetSettleRenderedBaseline),
+                     static_cast<unsigned long long>(m_ExitAfterRenderedFrames));
             GEngine->RequestExit(0);
         }
 

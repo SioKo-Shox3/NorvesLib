@@ -2,11 +2,22 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$LogPath,
 
-    [switch]$RequireCompleteModelFlush
+    [switch]$RequireCompleteModelFlush,
+
+    [switch]$RequireCompleteCookedModel,
+
+    [string]$ExpectedCookedModelLogicalPath = "",
+
+    [string]$ExpectedCookedModelDebugName = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($RequireCompleteModelFlush -and $RequireCompleteCookedModel) {
+    [Console]::Error.WriteLine("Cooked model contract failed: incompatible switches")
+    exit 2
+}
 
 $InvariantCulture = [System.Globalization.CultureInfo]::InvariantCulture
 $DurationKeys = @(
@@ -273,6 +284,170 @@ foreach ($record in $records) {
     $stageSet[$record.Stage] = $true
 }
 
+function Fail-CookedModelContract {
+    param([string]$Reason)
+
+    [Console]::Error.WriteLine("Cooked model contract failed: $Reason")
+    exit 2
+}
+
+function Get-SingleCookedContractRecord {
+    param([string]$Stage)
+
+    $matches = @($records | Where-Object { $_.Stage -eq $Stage })
+    if ($matches.Count -eq 0) {
+        Fail-CookedModelContract "missing required stage=$Stage"
+    }
+    if ($matches.Count -ne 1) {
+        Fail-CookedModelContract "stage=$Stage must occur exactly once"
+    }
+    return $matches[0]
+}
+
+if ($RequireCompleteCookedModel) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedCookedModelLogicalPath)) {
+        Fail-CookedModelContract "ExpectedCookedModelLogicalPath is required"
+    }
+    if ([string]::IsNullOrWhiteSpace($ExpectedCookedModelDebugName)) {
+        Fail-CookedModelContract "ExpectedCookedModelDebugName is required"
+    }
+
+    $forbiddenStages = @(
+        "gltf_text_read",
+        "gltf_json_parse",
+        "gltf_buffer_metadata_parse",
+        "gltf_buffer_read",
+        "gltf_buffer_read_total",
+        "gltf_mesh_extract",
+        "gltf_clusterize",
+        "gltf_texture_staging",
+        "gltf_staging_total",
+        "gltf_model_flush"
+    )
+    foreach ($stage in $forbiddenStages) {
+        if ($stageSet.ContainsKey($stage)) {
+            Fail-CookedModelContract "forbidden stage=$stage"
+        }
+    }
+
+    $resolveRecord = Get-SingleCookedContractRecord "model_asset_resolve"
+    $parseRecord = Get-SingleCookedContractRecord "model_cooked_parse"
+    foreach ($record in @($resolveRecord, $parseRecord)) {
+        $source = Get-Field $record.Fields "source"
+        if ($source -ne "cooked_nvmesh") {
+            Fail-CookedModelContract "stage=$($record.Stage) source must be cooked_nvmesh"
+        }
+        if ((Get-Field $record.Fields "role") -ne "worker") {
+            Fail-CookedModelContract "stage=$($record.Stage) role must be worker"
+        }
+
+        $requestId = Get-NumberField $record.Fields "request_id"
+        if ($null -eq $requestId -or $requestId -le 0 -or $requestId -ne [math]::Truncate($requestId)) {
+            Fail-CookedModelContract "stage=$($record.Stage) nonzero request_id required"
+        }
+        if ((Get-NumberField $record.Fields "status") -ne 0) {
+            Fail-CookedModelContract "stage=$($record.Stage) status must be 0"
+        }
+        if ((Get-NumberField $record.Fields "success") -ne 1) {
+            Fail-CookedModelContract "stage=$($record.Stage) success must be 1"
+        }
+    }
+
+    $contractRequestId = Get-Field $resolveRecord.Fields "request_id"
+    if ((Get-Field $parseRecord.Fields "request_id") -ne $contractRequestId) {
+        Fail-CookedModelContract "resolve/parse request_id mismatch"
+    }
+    $contractPath = Get-Field $resolveRecord.Fields "normalized_path"
+    if ([string]::IsNullOrWhiteSpace($contractPath)) {
+        Fail-CookedModelContract "normalized_path must be non-empty"
+    }
+    if ((Get-Field $parseRecord.Fields "normalized_path") -ne $contractPath) {
+        Fail-CookedModelContract "resolve/parse normalized_path mismatch"
+    }
+    if ($contractPath -ne $ExpectedCookedModelLogicalPath) {
+        Fail-CookedModelContract "normalized_path mismatch: expected=$ExpectedCookedModelLogicalPath actual=$contractPath"
+    }
+
+    $finalizeStages = @(
+        "model_finalize_textures",
+        "model_finalize_megamesh",
+        "model_finalize_register",
+        "model_finalize_total"
+    )
+    $finalizeRecords = @()
+    foreach ($stage in $finalizeStages) {
+        $matches = @($records | Where-Object { $_.Stage -eq $stage })
+        if ($matches.Count -eq 0) {
+            Fail-CookedModelContract "missing finalize stage=$stage"
+        }
+        if ($matches.Count -ne 1) {
+            Fail-CookedModelContract "finalize stage=$stage must occur exactly once"
+        }
+        $finalizeRecords += $matches[0]
+    }
+
+    $contractDebugName = Get-Field $finalizeRecords[0].Fields "debug_name"
+    if ([string]::IsNullOrWhiteSpace($contractDebugName)) {
+        Fail-CookedModelContract "finalize debug_name must be non-empty"
+    }
+    if ($contractDebugName -ne $ExpectedCookedModelDebugName) {
+        Fail-CookedModelContract "finalize debug_name mismatch: expected=$ExpectedCookedModelDebugName actual=$contractDebugName"
+    }
+    foreach ($record in $finalizeRecords) {
+        if ((Get-Field $record.Fields "role") -ne "main_render") {
+            Fail-CookedModelContract "stage=$($record.Stage) role must be main_render"
+        }
+        if ((Get-Field $record.Fields "request_id") -ne $contractRequestId) {
+            Fail-CookedModelContract "stage=$($record.Stage) request_id mismatch"
+        }
+        if ((Get-Field $record.Fields "debug_name") -ne $contractDebugName) {
+            Fail-CookedModelContract "stage=$($record.Stage) debug_name mismatch"
+        }
+        if ((Get-NumberField $record.Fields "success") -ne 1) {
+            Fail-CookedModelContract "stage=$($record.Stage) success must be 1"
+        }
+    }
+
+    $registerPath = Get-Field $finalizeRecords[2].Fields "path"
+    $totalPath = Get-Field $finalizeRecords[3].Fields "path"
+    if ($registerPath -ne $totalPath -or $registerPath -ne $ExpectedCookedModelLogicalPath) {
+        Fail-CookedModelContract "finalize path mismatch"
+    }
+
+    $gpuRecords = @($records | Where-Object {
+        $_.Stage -eq "megamesh_gpu_upload" -and
+        (Get-Field $_.Fields "debug_name") -eq $ExpectedCookedModelDebugName
+    })
+    if ($gpuRecords.Count -eq 0) {
+        Fail-CookedModelContract "missing required stage=megamesh_gpu_upload"
+    }
+    foreach ($record in $gpuRecords) {
+        if ((Get-Field $record.Fields "role") -ne "main_render") {
+            Fail-CookedModelContract "stage=megamesh_gpu_upload role must be main_render"
+        }
+        if ((Get-NumberField $record.Fields "success") -ne 1) {
+            Fail-CookedModelContract "stage=megamesh_gpu_upload success must be 1"
+        }
+    }
+
+    $flushRecords = @($records | Where-Object { $_.Stage -eq "model_async_flush" })
+    if ($flushRecords.Count -eq 0) {
+        Fail-CookedModelContract "missing required stage=model_async_flush"
+    }
+    $hasSuccessfulFlush = $false
+    foreach ($record in $flushRecords) {
+        $processed = Get-NumberField $record.Fields "processed"
+        $success = Get-NumberField $record.Fields "success"
+        if ($null -ne $processed -and $processed -ge 1 -and $success -eq 1) {
+            $hasSuccessfulFlush = $true
+            break
+        }
+    }
+    if (-not $hasSuccessfulFlush) {
+        Fail-CookedModelContract "stage=model_async_flush processed must be >= 1 and success must be 1"
+    }
+}
+
 $requiredMissing = @()
 if ($RequireCompleteModelFlush) {
     foreach ($stage in @("gltf_staging_total", "model_finalize_total", "megamesh_gpu_upload", "renderworld_model_flush")) {
@@ -516,6 +691,8 @@ else {
 Write-Output ""
 
 $modelStages = @(
+    "model_asset_resolve",
+    "model_cooked_parse",
     "gltf_text_read",
     "gltf_json_parse",
     "gltf_buffer_read",
@@ -531,7 +708,14 @@ $modelRecords = $records | Where-Object { $_.Stage -in $modelStages }
 $modelRows = @()
 foreach ($group in ($modelRecords | Group-Object { Get-Field $_.Fields "request_id" } | Sort-Object Name)) {
     $items = @($group.Group)
-    $modelPath = Get-FirstFieldFromStages $items @("gltf_staging_total", "gltf_text_read", "gltf_json_parse") "path"
+    $modelPath = Get-FirstFieldFromStages $items @("model_asset_resolve", "model_cooked_parse") "normalized_path"
+    if ([string]::IsNullOrWhiteSpace($modelPath)) {
+        $modelPath = Get-FirstFieldFromStages $items @("gltf_staging_total", "gltf_text_read", "gltf_json_parse") "path"
+    }
+    $modelSource = Get-FirstFieldFromStages $items @("model_asset_resolve", "model_cooked_parse") "source"
+    if ([string]::IsNullOrWhiteSpace($modelSource)) {
+        $modelSource = "loose_gltf"
+    }
 
     $bufferTotal = Sum-StageMetric -Records $items -Stage "gltf_buffer_read_total" -Metric "ms" -UseMsField
     if ($null -eq $bufferTotal) {
@@ -539,8 +723,11 @@ foreach ($group in ($modelRecords | Group-Object { Get-Field $_.Fields "request_
     }
 
     $modelRows += ,@(
+        $modelSource,
         $group.Name,
         $modelPath,
+        (Get-FirstFieldFromStages $items @("model_asset_resolve") "status"),
+        (Get-FirstFieldFromStages $items @("model_cooked_parse") "status"),
         (Format-Number (Sum-StageMetric -Records $items -Stage "gltf_json_parse" -Metric "ms" -UseMsField)),
         (Format-Number $bufferTotal),
         (Format-Number (Sum-StageMetric -Records $items -Stage "gltf_mesh_extract" -Metric "ms" -UseMsField)),
@@ -561,13 +748,18 @@ Write-Output "## glTF / Model"
 Write-Output ""
 if ($modelRows.Count -gt 0) {
     Write-MarkdownTable `
-        -Headers @("request_id", "path", "json_parse_ms", "buffer_read_ms", "mesh_extract_ms", "clusterize_ms", "texture_staging_ms", "staging_total_ms", "finalize_ms", "vertices", "indices", "clusters", "cpu_staging_bytes", "loose_texture_bytes", "prepared_textures") `
+        -Headers @("source", "request_id", "path", "resolve_status", "parse_status", "json_parse_ms", "buffer_read_ms", "mesh_extract_ms", "clusterize_ms", "texture_staging_ms", "staging_total_ms", "finalize_ms", "vertices", "indices", "clusters", "cpu_staging_bytes", "loose_texture_bytes", "prepared_textures") `
         -Rows $modelRows
 }
 else {
     Write-Output "_No glTF/model records._"
 }
 Write-Output ""
+
+if ($RequireCompleteCookedModel) {
+    Write-Output "Cooked model contract: PASS"
+    Write-Output ""
+}
 
 $mainRenderRecords = $records | Where-Object {
     (Get-Field $_.Fields "role") -eq "main_render" -or

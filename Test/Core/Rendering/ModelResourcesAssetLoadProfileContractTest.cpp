@@ -301,14 +301,38 @@ int main()
         AssertCount(logText, "stage=model_finalize_total role=main_render request_id=0", 1);
         AssertCount(logText, "stage=model_finalize_textures role=main_render request_id=" + requestId, 1);
         AssertCount(logText, "stage=model_finalize_megamesh role=main_render request_id=" + requestId, 1);
-        AssertCount(logText, "stage=model_finalize_register role=main_render request_id=" + requestId, 1);
-        AssertCount(logText, "stage=model_finalize_total role=main_render request_id=" + requestId, 1);
+        const std::string asyncFinalizePrefix =
+            " role=main_render request_id=" + requestId +
+            " debug_name=\"Models/runtime_profile.gltf\"";
+        AssertCount(logText, "stage=model_finalize_textures" + asyncFinalizePrefix, 1);
+        AssertCount(logText, "stage=model_finalize_megamesh" + asyncFinalizePrefix, 1);
+        AssertCount(logText,
+                    "stage=model_finalize_register" + asyncFinalizePrefix +
+                        " path=\"Models/runtime_profile.gltf\"",
+                    1);
+        AssertCount(logText,
+                    "stage=model_finalize_total" + asyncFinalizePrefix +
+                        " path=\"Models/runtime_profile.gltf\"",
+                    1);
+        AssertCount(logText,
+                    "stage=megamesh_gpu_upload role=main_render debug_name=\"Models/runtime_profile.gltf\"",
+                    2);
         AssertCount(logText, "stage=model_async_flush role=main_render processed=1 success=1", 1);
 
-        AssertNotContains(logText, "stage=gltf_finalize_textures");
-        AssertNotContains(logText, "stage=gltf_finalize_megamesh");
-        AssertNotContains(logText, "stage=gltf_finalize_register");
-        AssertNotContains(logText, "stage=gltf_finalize_total");
+        for (const char* legacyStage : {
+                 "gltf_text_read",
+                 "gltf_json_parse",
+                 "gltf_buffer_metadata_parse",
+                 "gltf_buffer_read",
+                 "gltf_buffer_read_total",
+                 "gltf_mesh_extract",
+                 "gltf_clusterize",
+                 "gltf_texture_staging",
+                 "gltf_staging_total",
+                 "gltf_model_flush"})
+        {
+            AssertNotContains(logText, std::string("stage=") + legacyStage);
+        }
         std::filesystem::remove_all(root);
     }
     catch (const std::exception& error)

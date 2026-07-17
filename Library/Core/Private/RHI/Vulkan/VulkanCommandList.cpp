@@ -224,7 +224,7 @@ namespace NorvesLib::RHI::Vulkan
 
     VulkanCommandList::~VulkanCommandList()
     {
-        m_device->GetVkDevice().waitIdle();
+        m_device->WaitIdle();
 
 #if NORVES_ENABLE_STATS
         DestroyTimestampQueryPool();

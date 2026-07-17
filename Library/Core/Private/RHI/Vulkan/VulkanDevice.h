@@ -13,6 +13,7 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
+#include "Thread/Atomic.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -153,6 +154,14 @@ namespace NorvesLib::RHI::Vulkan
         // Cooperative Vector 機能構造体（Features2チェーン用）
         vk::PhysicalDeviceCooperativeVectorFeaturesNV m_cooperativeVectorFeatures{};
 
+        // Device Fault 機能構造体（Features2チェーン用）
+        VkPhysicalDeviceFaultFeaturesEXT m_deviceFaultFeatures{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT,
+            nullptr,
+            VK_FALSE,
+            VK_FALSE};
+        Thread::Atomic<bool> m_bDeviceFaultReported{false};
+
         // Vulkan 1.2 機能構造体（Features2チェーン用）
         vk::PhysicalDeviceVulkan12Features m_vulkan12Features{};
 
@@ -196,6 +205,7 @@ namespace NorvesLib::RHI::Vulkan
         VariableArray<const char *> GetRequiredExtensions();
         VariableArray<const char *> GetDeviceExtensions();
         void FindQueueFamilies(vk::PhysicalDevice device);
+        void ReportDeviceFaultOnce();
 
         // バリデーション関連
         bool CheckValidationLayerSupport();

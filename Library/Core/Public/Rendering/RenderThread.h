@@ -10,6 +10,7 @@
 namespace NorvesLib::Core::Rendering
 {
     // 前方宣言
+    class RenderWorld;
     class RenderingCoordinator;
     struct FramePacket;
 
@@ -132,6 +133,8 @@ namespace NorvesLib::Core::Rendering
         const ThreadStats& GetStats() const { return m_Stats; }
 
     private:
+        friend class RenderWorld;
+
         // ========================================
         // スレッドエントリポイント
         // ========================================
@@ -140,6 +143,8 @@ namespace NorvesLib::Core::Rendering
          * @brief レンダースレッドメインループ
          */
         void RenderLoop();
+
+        [[nodiscard]] bool TryAcquireAssetGpuFlushWindow();
 
     private:
         // RenderingCoordinator（外部参照）
@@ -158,12 +163,20 @@ namespace NorvesLib::Core::Rendering
         Thread::Atomic<bool> m_bNewFrameReady{false};
         Thread::Atomic<bool> m_bShouldExit{false};
         Thread::Atomic<bool> m_bFrameComplete{true};
+        bool m_bAssetGpuFlushWindowRequested = false;
+        bool m_bAssetGpuFlushWindowReady = false;
+        bool m_bReportAssetGpuFlushWindowResume = false;
+        uint64_t m_AssetGpuFlushWindowId = 0;
+        uint64_t m_AssetGpuFlushWindowReadyFrames = 0;
+        uint64_t m_AssetGpuFlushWindowResumeId = 0;
+        uint64_t m_AssetGpuFlushWindowResumeReadyFrames = 0;
 
         // 現在のフレームパケット
         FramePacket* m_CurrentPacket = nullptr;
 
         // 統計
         ThreadStats m_Stats;
+        Thread::Atomic<uint64_t> m_PublishedFramesRendered{0};
     };
 
 } // namespace NorvesLib::Core::Rendering

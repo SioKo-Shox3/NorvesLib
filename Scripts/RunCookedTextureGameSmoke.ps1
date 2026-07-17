@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$GameExe,
 
-    [int]$FrameCount = 30000,
+    [int]$RenderedFrameCount = 3,
 
     [int]$TimeoutSeconds = 180,
 
@@ -25,6 +25,19 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+. (Join-Path $PSScriptRoot 'CookedModelGameProfileContract.ps1')
+$ExpectedDefaultTexturePaths = @(
+    'Textures/Silver/silver_albedo.png',
+    'Textures/Silver/silver_normal-ogl.png',
+    'Textures/Silver/silver_metallic.png',
+    'Textures/Silver/silver_roughness.png',
+    'Textures/Silver/silver_ao.png',
+    'Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png',
+    'Textures/CobbleStoneFloor/cobblestone_floor_09_nor_gl_4k.png',
+    'Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png',
+    'Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png',
+    'Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png'
+)
 
 function Test-IsUncPath {
     param([string]$Path)
@@ -154,6 +167,7 @@ function Invoke-CheckedProcess {
         [string]$ExePath,
         [string[]]$Arguments,
         [string]$WorkingDirectory,
+        [string]$CaptureDirectory,
         [int]$TimeoutSeconds,
         [string]$Name
     )
@@ -161,12 +175,18 @@ function Invoke-CheckedProcess {
     $argumentLine = ($Arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join " "
     Write-Host "$Name $argumentLine"
 
+    $stdoutPath = Join-Path $CaptureDirectory "$Name.stdout.txt"
+    $stderrPath = Join-Path $CaptureDirectory "$Name.stderr.txt"
+
     $process = Start-Process `
         -FilePath $ExePath `
         -ArgumentList $argumentLine `
         -WorkingDirectory $WorkingDirectory `
         -WindowStyle Hidden `
-        -PassThru
+        -PassThru `
+        -RedirectStandardOutput $stdoutPath `
+        -RedirectStandardError $stderrPath
+    $null = $process.Handle
 
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         Stop-Process -Id $process.Id -Force
@@ -176,6 +196,8 @@ function Invoke-CheckedProcess {
     if ($process.ExitCode -ne 0) {
         throw "$Name failed with exit code $($process.ExitCode)"
     }
+
+    return [pscustomobject]@{ StdoutPath = $stdoutPath; StderrPath = $stderrPath }
 }
 
 function Require-LogMatch {
@@ -390,6 +412,9 @@ function Read-TextureLogPathsFromSpec {
 if ($TimeoutSeconds -le 0) {
     throw "TimeoutSeconds must be greater than zero"
 }
+if ($RenderedFrameCount -le 0) {
+    throw "RenderedFrameCount must be greater than zero"
+}
 
 $AssetCookPath = Assert-ExistingFile -Path $AssetCookExe -Name "AssetCook"
 $GamePath = Assert-ExistingFile -Path $GameExe -Name "Game"
@@ -454,7 +479,9 @@ if (Test-Path -LiteralPath $ResolvedLogPath) {
 }
 
 $GameArguments = @(
-    "--exit-after-frames=$FrameCount",
+    '--render-thread=mt',
+    '--wait-for-asset-settle',
+    "--exit-after-rendered-frames=$RenderedFrameCount",
     "--texture-asset-root", $RuntimeRoot,
     "--texture-asset-manifest", $ManifestPath
 )
@@ -462,9 +489,10 @@ if (-not [string]::IsNullOrWhiteSpace($GameModelPath)) {
     $GameArguments += @("--rendering3dtest-model", $GameModelPath)
 }
 
-Invoke-CheckedProcess `
+$gameOutput = Invoke-CheckedProcess `
     -ExePath $GamePath `
     -WorkingDirectory $RepoRoot `
+    -CaptureDirectory $ResolvedSmokeDir `
     -TimeoutSeconds $TimeoutSeconds `
     -Name "Game" `
     -Arguments $GameArguments
@@ -474,6 +502,8 @@ if (-not (Test-Path -LiteralPath $ResolvedLogPath -PathType Leaf)) {
 }
 
 $LogLines = Get-Content -LiteralPath $ResolvedLogPath
+$runtimeLines = @($LogLines + @(Get-Content -LiteralPath $gameOutput.StdoutPath) + @(Get-Content -LiteralPath $gameOutput.StderrPath))
+Assert-ProfileRuntimeSignals -Lines $runtimeLines -RuntimeRoot $RuntimeRoot -ExpectedDefaultTexturePaths $ExpectedDefaultTexturePaths
 $CookedSourceMatchCount = 0
 $CookedUploadMatchCount = 0
 $PreparedUploadMatchCount = 0

@@ -31,7 +31,7 @@ namespace NorvesLib::RHI::Vulkan
     VulkanSwapChain::~VulkanSwapChain()
     {
         // デバイスの処理が完了するのを待機
-        m_device->GetVkDevice().waitIdle();
+        m_device->WaitIdle();
 
         // 同期オブジェクトのクリーンアップ
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -145,7 +145,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // デバイスがアイドル状態になるまで待機
-        m_device->GetVkDevice().waitIdle();
+        m_device->WaitIdle();
 
         // 新しいサイズを保存
         m_width = width;

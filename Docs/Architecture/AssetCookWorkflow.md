@@ -74,6 +74,48 @@ The expected prepared profile stages are:
 
 Prepared cooked loads must not produce `gltf_image_read`, `gltf_image_decode`, or `source=loose_stbi` logs for the model-local cooked source paths. `stb_image` remains part of the cook-time source decode path and loose/debug fallback path, but cooked-ready runtime loads do not use it.
 
+## Cooked Model Opt-In And Four-Entry Fixture
+
+`Scripts/RunCookedModelGameProfile.ps1` turns the model-local Silver fixture into one
+runtime root. It first uses `CookTextureAssetSet.ps1` for the three texture packages,
+then invokes `AssetCook` for the glTF model and aggregates the model fragment with the
+texture manifest. Before Game starts, the runner checks schema version `1` as a
+mathematical integer, exactly four entries, unique `logical_path|kind|variant` keys,
+normalized non-traversing package paths contained under the runtime root, package
+existence, exact model fields, and the exact three glTF image URI/logical-path matches.
+
+Cooked model loading is deliberately opt-in:
+
+```text
+--rendering3dtest-use-cooked-model
+--texture-asset-root <absolute runtime root>
+--texture-asset-manifest <absolute four-entry manifest>
+--rendering3dtest-model Assets/Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.gltf
+```
+
+The bare opt-in flag requires all three accompanying values and rejects duplicates.
+Without it, the same root/manifest/model arguments preserve the existing
+`GLTFAnalyzer` path and its `GltfPrepared` texture behavior. With it, only the Boulder
+model request is issued through `MegaGeometryResources::LoadModelAsync`; the shared
+callback, placeholder replacement, scope tracking, release, and cancellation behavior
+remain unchanged, with cancellation returning to the same subsystem that issued the
+request.
+
+`SummarizeAssetLoadProfile.ps1 -RequireCompleteCookedModel` validates the cooked model
+profile as a correlated contract. It requires worker resolve/parse rows from
+`cooked_nvmesh`, the same nonzero request id and normalized path, four successful
+main-render finalize stages with matching request/debug/path fields, a matching-debug
+GPU upload, and a successful async flush that processed work. It rejects loose glTF
+read/parse/buffer/extract/clusterize/staging/flush stages. The legacy
+`-RequireCompleteModelFlush` switch remains available for loose GLTF profiles; the two
+completeness switches are intentionally incompatible.
+The cooked contract also requires external anchors so a self-consistent different
+model cannot pass: supply `-ExpectedCookedModelLogicalPath` with the normalized logical
+path and `-ExpectedCookedModelDebugName` with the original request/debug name. For the
+Silver runner these are respectively
+`Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.gltf` and
+`Assets/Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.gltf`.
+
 ## Validation Commands
 
 Build the cook tool and game:
@@ -110,5 +152,21 @@ Run the glTF prepared smoke:
   -ModelPath Assets/Models/Rendering3DTestSilverGltf/Rendering3DTestSilverGltf.gltf `
   -ExpectedLoadMode GltfPrepared
 ```
+
+Run the alternating three-pair real-Game model profile:
+
+```powershell
+.\Scripts\RunCookedModelGameProfile.ps1 `
+  -AssetCookExe .\build\Tools\AssetCook\Debug\AssetCook.exe `
+  -GameExe .\build\Game\Debug\Game.exe
+```
+
+The default order is `loose,cooked`, `cooked,loose`, `loose,cooked`. Every run gets its
+own working directory, `Game.log`, stdout, stderr, and generated summary beneath the
+strict child `build/CookedModelGameProfile/Debug/`. `comparison.json` records all
+samples and medians together with HEAD/tree, dirty status, tracked-diff and sorted
+untracked hashes, input/output paths, configuration, order, timestamps, OS, and GPU.
+The runner treats missing logs/markers, skips, timeouts, nonzero exits, contract
+failures, or a non-shorter cooked median as failures and retains the evidence.
 
 Generated packages, manifests, and smoke logs are build outputs. Keep them under `build/` or other ignored output locations and do not commit them.

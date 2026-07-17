@@ -117,6 +117,11 @@ namespace NorvesLib::Core::Engine
         uint64_t m_LastFrameTime = 0;
         float m_TargetFrameTime = 1.0f / 60.0f; // デフォルト60FPS
         uint64_t m_ExitAfterFrames = 0;         // 0は無効
+        uint64_t m_ExitAfterRenderedFrames = 0;
+        uint64_t m_AssetSettleRenderedBaseline = 0;
+        bool m_bWaitForAssetSettle = false;
+        bool m_bObservedPendingAssets = false;
+        bool m_bAssetSettleBaselineLatched = false;
     };
 
 } // namespace NorvesLib::Core::Engine

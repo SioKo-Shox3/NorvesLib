@@ -51,6 +51,7 @@ namespace Game
         constexpr const TCHAR *kTextureAssetRootOption = TEXT("--texture-asset-root");
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
+        constexpr const TCHAR *kRendering3DTestUseCookedModelOption = TEXT("--rendering3dtest-use-cooked-model");
         constexpr const TCHAR *kRendering3DTestBoardSmokeCountOption = TEXT("--rendering3dtest-board-smoke-count");
         constexpr const TCHAR *kRendering3DTestBillboardSmokeCountOption = TEXT("--rendering3dtest-billboard-smoke-count");
         constexpr const TCHAR *kRendering3DTestImpostorSmokeCountOption = TEXT("--rendering3dtest-impostor-smoke-count");
@@ -267,6 +268,7 @@ namespace Game
         LOG_INFO("GameApplicationHandler::OnPreInitialize()");
 
         m_bHasTextureAssetRuntimeConfig = false;
+        m_bRendering3DTestUseCookedModel = false;
         m_TextureAssetRoot = {};
         m_TextureAssetManifestPath = {};
         m_Rendering3DTestModelPath = {};
@@ -293,6 +295,18 @@ namespace Game
             if (ToStdString(args[i]) == std::basic_string<TCHAR>(kRendering3DTestLayerCompositeSmokeOption))
             {
                 s_bRendering3DTestLayerCompositeSmoke = true;
+                continue;
+            }
+
+            if (ToStdString(args[i]) == std::basic_string<TCHAR>(kRendering3DTestUseCookedModelOption))
+            {
+                if (m_bRendering3DTestUseCookedModel)
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: duplicate --rendering3dtest-use-cooked-model");
+                    return false;
+                }
+
+                m_bRendering3DTestUseCookedModel = true;
                 continue;
             }
 
@@ -611,6 +625,12 @@ namespace Game
         }
 
         m_bHasTextureAssetRuntimeConfig = bHasRoot && bHasManifest;
+        if (m_bRendering3DTestUseCookedModel &&
+            (!m_bHasTextureAssetRuntimeConfig || m_Rendering3DTestModelPath.empty()))
+        {
+            LOG_ERROR("Rendering3DTest command line parse failed: --rendering3dtest-use-cooked-model requires --texture-asset-root, --texture-asset-manifest, and --rendering3dtest-model");
+            return false;
+        }
         if (m_bHasTextureAssetRuntimeConfig)
         {
             LOG_INFO_F("Texture asset runtime config parsed root=\"%s\" manifest=\"%s\"",
@@ -984,12 +1004,14 @@ namespace Game
         using namespace Game::GameModes;
 
         auto stateMachine = MakeUnique<GameModeStateMachine>();
+        const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         stateMachine->Registry().Register(
             Rendering3DTest,
-            [](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
+            [bUseCookedModel](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
                 mode->GetData().m_ModelPath = params.ModelPath;
+                mode->GetData().m_bUseCookedModel = bUseCookedModel;
                 mode->GetData().m_BoardSmokeCount = s_Rendering3DTestBoardSmokeCount;
                 mode->GetData().m_BillboardSmokeCount = s_Rendering3DTestBillboardSmokeCount;
                 mode->GetData().m_ImpostorSmokeCount = s_Rendering3DTestImpostorSmokeCount;
