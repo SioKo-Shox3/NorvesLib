@@ -15,8 +15,10 @@ namespace NorvesLib::Core::Rendering
 
     void TextureAssetResolver::SetAssetRoot(const Container::String &assetRoot)
     {
-        m_AssetRoot = ToAnsiString(assetRoot);
-        if (m_bManifestLoadAttempted)
+        const Container::AnsiString newAssetRoot = ToAnsiString(assetRoot);
+        const bool bAssetRootChanged = newAssetRoot != m_AssetRoot;
+        m_AssetRoot = newAssetRoot;
+        if (bAssetRootChanged || m_bManifestLoadAttempted)
         {
             m_System = CreateSystemSnapshot();
         }
