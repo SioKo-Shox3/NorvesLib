@@ -154,6 +154,25 @@ The host was `Microsoft Windows NT 10.0.22631.0` with Meta Virtual Monitor drive
 `17.12.55.198`, NVIDIA GeForce RTX 4080 driver `32.0.15.9186`, and Virtual Desktop
 Monitor driver `13.50.53.699`.
 
+**M4 status: CLOSED (2026-07-18).** The recorded acceptance above and CADENCE
+repayment are complete.
+
+#### Known accepted risks
+
+Both risks are non-blocking and do not reopen M4.
+
+1. `InstanceBufferRing` uses `uint32` instance/capacity arithmetic, so a theoretical
+   `>UINT32_MAX` instance / roughly 576 GiB overflow/narrowing boundary exists. A
+   read-only audit found no reachable independent overflow at current scale; normal
+   allocation/bounds checks fail earlier, and permanent `VK_EXT_device_fault` plus
+   device-address-binding instrumentation remains the tripwire. No new max/failure API
+   is added because it would be a behavior/RHI design change disproportionate to the
+   current risk.
+2. The profile allowlist accepts any positive ASCII decimal physical source line via
+   `[1-9][0-9]*`. Leading-zero and digit-count restrictions intentionally remain
+   unspecified because records are internal logger output, and should be revisited only
+   if external/untrusted logs become input.
+
 Raw logs, summaries, packages, manifests, and diagnostic artifacts remain under
 `build/` only and are not committed.
 
