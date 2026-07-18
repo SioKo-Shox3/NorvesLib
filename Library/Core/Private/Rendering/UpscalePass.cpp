@@ -106,8 +106,10 @@ namespace NorvesLib::Core::Rendering
 
         if (bNeedsOutputTexture)
         {
-            m_OutputTexture = m_Device->CreateTexture(
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "PresentationColor"));
+            RHI::TextureDesc outputDesc =
+                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "PresentationColor");
+            outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+            m_OutputTexture = m_Device->CreateTexture(outputDesc);
             if (!m_OutputTexture)
             {
                 NORVES_LOG_ERROR("UpscalePass", "Failed to create output texture");
@@ -320,9 +322,15 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(screenWidth,
+                                                               screenHeight,
+                                                               m_Settings.OutputFormat,
+                                                               "PresentationColor");
+        outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+
         RGTextureHandle outputHandle = builder.WriteTexture(
             RenderGraphResourceNames::PresentationColor,
-            RGTextureDesc::RenderTarget(screenWidth, screenHeight, m_Settings.OutputFormat, "PresentationColor"),
+            outputDesc,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
         m_OutputHandle = outputHandle.ToResourceHandle();

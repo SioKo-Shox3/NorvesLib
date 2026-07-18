@@ -411,7 +411,7 @@ namespace
             Context.ScreenHeight = 32;
         }
 
-        bool Compose()
+        bool Compose(FrameCaptureSource* outCaptureSource = nullptr)
         {
             PresentationComposeRequest request;
             request.Context = &Context;
@@ -424,6 +424,7 @@ namespace
             request.BlitPipeline = BlitPipeline;
             request.BlitDescriptorSet = BlitDescriptorSet;
             request.BlitSampler = BlitSampler;
+            request.OutCaptureSource = outCaptureSource;
             request.bClearPresentation = true;
             return Composer.Compose(request);
         }
@@ -454,8 +455,13 @@ namespace
         AddOutput(result, RenderGraphResourceNames::PresentationColor, graphTexture);
         fixture.Context.CurrentGraphExecutionResult = &result;
 
-        assert(fixture.Compose());
+        FrameCaptureSource source;
+        assert(fixture.Compose(&source));
         assert(fixture.GetDescriptorSet()->Binding0Texture.get() == graphTexture.get());
+        assert(source.Texture.get() == graphTexture.get());
+        assert(source.Texture.get() != registryTexture.get());
+        assert(source.CurrentState == RHI::ResourceState::ShaderResource);
+        assert(source.RestoreState == RHI::ResourceState::ShaderResource);
         assert(fixture.CommandList.SetDescriptorSetCount == 1);
         assert(fixture.CommandList.DrawCallCount == 1);
         std::cout << "TestGraphPresentationColorOverridesRegistry passed\n";
@@ -471,8 +477,12 @@ namespace
         AddOutput(result, RenderGraphResourceNames::ToneMappedColor, graphTexture);
         fixture.Context.CurrentGraphExecutionResult = &result;
 
-        assert(fixture.Compose());
+        FrameCaptureSource source;
+        assert(fixture.Compose(&source));
         assert(fixture.GetDescriptorSet()->Binding0Texture.get() == graphTexture.get());
+        assert(source.Texture.get() == graphTexture.get());
+        assert(source.CurrentState == RHI::ResourceState::ShaderResource);
+        assert(source.RestoreState == RHI::ResourceState::ShaderResource);
         std::cout << "TestGraphToneMappedColorUsedWhenPresentationMissing passed\n";
     }
 
@@ -482,8 +492,12 @@ namespace
         RHI::TexturePtr registryTexture = RHI::MakeShared<FakeTexture>("RegistryPresentationColor");
         fixture.SharedResources.RegisterTexturePtr(RenderGraphResourceNames::PresentationColor, registryTexture);
 
-        assert(fixture.Compose());
+        FrameCaptureSource source;
+        assert(fixture.Compose(&source));
         assert(fixture.GetDescriptorSet()->Binding0Texture.get() == registryTexture.get());
+        assert(source.Texture.get() == registryTexture.get());
+        assert(source.CurrentState == RHI::ResourceState::ShaderResource);
+        assert(source.RestoreState == RHI::ResourceState::ShaderResource);
         std::cout << "TestNullGraphResultFallsBackToRegistryPresentation passed\n";
     }
 
@@ -523,7 +537,16 @@ namespace
     {
         ComposerFixture fixture;
 
-        assert(fixture.Compose());
+        FrameCaptureSource source;
+        source.Texture = RHI::MakeShared<FakeTexture>("StaleCaptureSource");
+        source.CurrentState = RHI::ResourceState::CopySource;
+        source.RestoreState = RHI::ResourceState::CopySource;
+        source.FrameNumber = 99;
+        assert(fixture.Compose(&source));
+        assert(!source.Texture);
+        assert(source.CurrentState == RHI::ResourceState::ShaderResource);
+        assert(source.RestoreState == RHI::ResourceState::ShaderResource);
+        assert(source.FrameNumber == 0);
         assert(fixture.GetDescriptorSet()->Binding0Texture == nullptr);
         assert(fixture.GetDescriptorSet()->BindTextureCount == 0);
         assert(fixture.CommandList.BeginRenderPassCount == 1);

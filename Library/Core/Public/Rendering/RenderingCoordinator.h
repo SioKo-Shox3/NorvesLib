@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "FrameCaptureTypes.h"
 #include "Screen.h"
 #include "View.h"
 #include "CanvasView.h"
@@ -42,6 +43,7 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     // 前方宣言
+    class FrameCaptureReadbackHelper;
 
     /**
      * @brief レンダリング調整設定
@@ -87,12 +89,12 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief コンストラクタ
          */
-        RenderingCoordinator() = default;
+        RenderingCoordinator();
 
         /**
          * @brief デストラクタ
          */
-        ~RenderingCoordinator() = default;
+        ~RenderingCoordinator();
 
         // コピー・ムーブ禁止
         RenderingCoordinator(const RenderingCoordinator &) = delete;
@@ -163,6 +165,9 @@ namespace NorvesLib::Core::Rendering
          * 描画シームは完全 no-op になる。非所有(寿命はモジュール側が所有)。
          */
         void SetOverlayPassesForNextFrame(Container::Span<IViewPass *> passes);
+
+        FrameCaptureRequestResult RequestFrameCapture();
+        bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
 
         // ========================================
         // レンダリング実行（RenderThread）
@@ -451,6 +456,9 @@ namespace NorvesLib::Core::Rendering
 
         // レンダリングリソース（RenderWorld所有、フレーム実行中のみ参照）
         RenderResources *m_RenderResources = nullptr;
+
+        // フレームキャプチャ読み戻し
+        Container::TUniquePtr<FrameCaptureReadbackHelper> m_FrameCaptureReadbackHelper;
 
         // FramePacket管理
         FramePacketManager m_PacketManager;

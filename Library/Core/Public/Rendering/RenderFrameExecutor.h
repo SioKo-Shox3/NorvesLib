@@ -4,6 +4,7 @@
 #include "Container/PointerTypes.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
 #include <cstdint>
@@ -48,6 +49,8 @@ namespace NorvesLib::Core::Rendering
         // Which presentation path actually ran. true = composite(graph) path, false = legacy path.
         // The overlay seam reads this to pick the path-dependent presentation load family (backward compatible: default false).
         bool bComposite = false;
+        bool bHasFrameCaptureSource = false;
+        FrameCaptureSource CaptureSource;
     };
 
     class RenderFrameExecutor
@@ -75,8 +78,11 @@ namespace NorvesLib::Core::Rendering
         static bool RenderViewForCurrentViewport(const RenderFrameExecutionRequest &request, View *view);
         static void ConfigurePresentationGraphPass(const RenderFrameExecutionRequest &request, bool bClearPresentation);
         static bool WasPresentationHandledByGraph(const RenderFrameExecutionRequest &request);
+        static bool TryExportGraphCaptureSource(const RenderFrameExecutionRequest& request,
+                                                RenderFrameExecutionResult& result);
         static bool ComposeLegacyPresentationFallback(const RenderFrameExecutionRequest &request,
-                                                      bool bClearPresentation);
+                                                      bool bClearPresentation,
+                                                      RenderFrameExecutionResult& result);
     };
 
 } // namespace NorvesLib::Core::Rendering

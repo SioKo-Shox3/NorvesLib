@@ -367,6 +367,27 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    FrameCaptureRequestResult RenderWorld::RequestFrameCapture()
+    {
+        if (!m_bInitialized)
+        {
+            return {};
+        }
+
+        return m_RenderingCoordinator.RequestFrameCapture();
+    }
+
+    bool RenderWorld::TryConsumeCapturedFrame(CapturedFrame& outFrame)
+    {
+        if (!m_bInitialized)
+        {
+            outFrame = CapturedFrame{};
+            return false;
+        }
+
+        return m_RenderingCoordinator.TryConsumeCapturedFrame(outFrame);
+    }
+
     void RenderWorld::Resize(uint32_t width, uint32_t height)
     {
         if (width == 0 || height == 0)

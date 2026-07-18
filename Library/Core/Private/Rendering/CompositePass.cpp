@@ -186,12 +186,15 @@ namespace NorvesLib::Core::Rendering
                                    m_Request.Sampler;
         if (bCanAlphaOver)
         {
+            RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(m_Request.SceneTexture->GetWidth(),
+                                                                   m_Request.SceneTexture->GetHeight(),
+                                                                   m_Request.SceneTexture->GetFormat(),
+                                                                   "Composite.Color");
+            outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+
             RGTextureHandle outputHandle = builder.WriteTextureAttachment(
                 RenderGraphResourceNames::CompositeColor,
-                RGTextureDesc::RenderTarget(m_Request.SceneTexture->GetWidth(),
-                                            m_Request.SceneTexture->GetHeight(),
-                                            m_Request.SceneTexture->GetFormat(),
-                                            "Composite.Color"),
+                outputDesc,
                 RGAttachmentKind::Color,
                 RHI::AttachmentLoadOp::Clear,
                 RHI::AttachmentStoreOp::Store,

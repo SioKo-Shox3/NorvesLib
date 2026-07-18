@@ -20,6 +20,38 @@ target_include_directories(RenderThreadFrameCompletionTest PRIVATE
 set_target_properties(RenderThreadFrameCompletionTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderThreadFrameCompletionTest COMMAND RenderThreadFrameCompletionTest)
 
+add_executable(RHITextureToBufferReadbackVulkanTest
+    RHITextureToBufferReadbackVulkanTest.cpp
+)
+target_link_libraries(RHITextureToBufferReadbackVulkanTest PRIVATE Core)
+target_include_directories(RHITextureToBufferReadbackVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureToBufferReadbackVulkanTest)
+
+add_executable(FrameCaptureReadbackHelperTest
+    FrameCaptureReadbackHelperTest.cpp
+)
+target_link_libraries(FrameCaptureReadbackHelperTest PRIVATE Core)
+target_include_directories(FrameCaptureReadbackHelperTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(FrameCaptureReadbackHelperTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME FrameCaptureReadbackHelperTest COMMAND FrameCaptureReadbackHelperTest)
+
+add_executable(FrameCaptureThumbnailEncoderTest
+    FrameCaptureThumbnailEncoderTest.cpp
+)
+target_link_libraries(FrameCaptureThumbnailEncoderTest PRIVATE Core)
+target_include_directories(FrameCaptureThumbnailEncoderTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+)
+set_target_properties(FrameCaptureThumbnailEncoderTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME FrameCaptureThumbnailEncoderTest COMMAND FrameCaptureThumbnailEncoderTest)
+
 add_executable(RenderingCoordinatorStatsPropagationTest
     RenderingCoordinatorStatsPropagationTest.cpp
 )
@@ -588,6 +620,16 @@ target_include_directories(RenderGraphPresentationPassTest PRIVATE
 )
 set_target_properties(RenderGraphPresentationPassTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderGraphPresentationPassTest COMMAND RenderGraphPresentationPassTest)
+
+add_executable(RenderGraphTextureUsageContractTest
+    RenderGraphTextureUsageContractTest.cpp
+)
+target_link_libraries(RenderGraphTextureUsageContractTest PRIVATE Core)
+target_include_directories(RenderGraphTextureUsageContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderGraphTextureUsageContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphTextureUsageContractTest COMMAND RenderGraphTextureUsageContractTest)
 
 add_executable(RenderGraphCompileTest
     RenderGraphCompileTest.cpp
