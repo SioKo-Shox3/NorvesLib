@@ -128,9 +128,67 @@ foreach ($case in @(
 }
 
 $allowedError = "[2026-07-17 17:48:01.921] [ERROR] [T:62468] [TextureResources] [TextureAssetRuntime.cpp:NorvesLib::Core::Rendering::TextureAssetRuntime::FlushCompletedTextureLoads:851] Async texture load failed: $runtimeRoot\Textures\CobbleStoneFloor\cobblestone_floor_09_diff_4k.png"
+$allowedTexture857 = $allowedError.Replace(':851]', ':857]')
+$allowedTextureOne = $allowedError.Replace(':851]', ':1]')
+$allowedSlang = '[2026-07-17 17:48:01.921] [ERROR] [T:62468] [SlangCompiler] [VulkanSlangCompiler.cpp:NorvesLib::RHI::Vulkan::VulkanSlangCompiler::CompileFromSource:215] Cannot compile [neural_material_decode.slang]: Slang SDK not available. Rebuild with NORVES_HAS_SLANG to enable.'
+$allowedSlang216 = $allowedSlang.Replace(':215]', ':216]')
+$allowedSlangOne = $allowedSlang.Replace(':215]', ':1]')
+$allowedShaderManager = '[2026-07-17 17:48:01.921] [ERROR] [T:62468] [ShaderManager] [ShaderManager.cpp:NorvesLib::Core::Rendering::ShaderManager::LoadShader:97] Failed to compile shader [neural_material_decode.slang]: Slang SDK not available. Rebuild with NORVES_HAS_SLANG to enable.'
+$allowedShaderManager98 = $allowedShaderManager.Replace(':97]', ':98]')
+$allowedShaderManagerOne = $allowedShaderManager.Replace(':97]', ':1]')
 Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $allowedError, 'stage=sample success=0') -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
-Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, '[2026-07-17 17:48:01.921] [ERROR] [T:62468] [SlangCompiler] [VulkanSlangCompiler.cpp:NorvesLib::RHI::Vulkan::VulkanSlangCompiler::CompileFromSource:215] Cannot compile [neural_material_decode.slang]: Slang SDK not available. Rebuild with NORVES_HAS_SLANG to enable.') -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
-Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, '[2026-07-17 17:48:01.921] [ERROR] [T:62468] [ShaderManager] [ShaderManager.cpp:NorvesLib::Core::Rendering::ShaderManager::LoadShader:97] Failed to compile shader [neural_material_decode.slang]: Slang SDK not available. Rebuild with NORVES_HAS_SLANG to enable.') -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
+Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $allowedTexture857) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
+Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $allowedTextureOne) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
+Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $allowedSlang) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
+Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $allowedSlang216) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
+Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $allowedSlangOne) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
+Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $allowedShaderManager) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
+Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $allowedShaderManager98) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
+Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $allowedShaderManagerOne) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults
+foreach ($line in @(
+        $allowedError.Replace(':851]', ':0]'),
+        $allowedError.Replace(':851]', ':-1]'),
+        $allowedError.Replace(':851]', ':85x]'),
+        $allowedSlang.Replace(':215]', ':0]'),
+        $allowedSlang.Replace(':215]', ':-1]'),
+        $allowedSlang.Replace(':215]', ':85x]'),
+        $allowedShaderManager.Replace(':97]', ':0]'),
+        $allowedShaderManager.Replace(':97]', ':-1]'),
+        $allowedShaderManager.Replace(':97]', ':85x]')
+    )) {
+    Assert-Throws { Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $line) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults } 'invalid allowlist line number'
+}
+foreach ($line in @(
+        $allowedError.Replace('TextureAssetRuntime.cpp', 'OtherTextureAssetRuntime.cpp'),
+        $allowedError.Replace('FlushCompletedTextureLoads', 'OtherFunction'),
+        $allowedError.Replace('[TextureResources]', '[OtherCategory]'),
+        $allowedError.Replace('Async texture load failed:', 'Other message:'),
+        $allowedError.Replace($runtimeRoot, 'C:\OtherRoot'),
+        $allowedError.Replace('CobbleStoneFloor\cobblestone_floor_09_diff_4k.png', 'Unknown\missing.png'),
+        "[ERROR] [Unexpected] $allowedError"
+    )) {
+    Assert-Throws { Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $line) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults } 'single-mutation allowlist rejection'
+}
+foreach ($line in @(
+        $allowedSlang.Replace('[SlangCompiler]', '[OtherCategory]'),
+        $allowedSlang.Replace('VulkanSlangCompiler.cpp', 'OtherVulkanSlangCompiler.cpp'),
+        $allowedSlang.Replace('NorvesLib::RHI::Vulkan::VulkanSlangCompiler::CompileFromSource', 'NorvesLib::RHI::Vulkan::VulkanSlangCompiler::OtherFunction'),
+        $allowedSlang.Replace('Slang SDK not available. Rebuild with NORVES_HAS_SLANG to enable.', 'Slang SDK unavailable. Rebuild with NORVES_HAS_SLANG to enable.'),
+        $allowedSlang.Replace('neural_material_decode.slang', 'other_material_decode.slang'),
+        "[ERROR] [Unexpected] $allowedSlang"
+    )) {
+    Assert-Throws { Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $line) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults } 'single-mutation Slang allowlist rejection'
+}
+foreach ($line in @(
+        $allowedShaderManager.Replace('[ShaderManager]', '[OtherCategory]'),
+        $allowedShaderManager.Replace('ShaderManager.cpp', 'OtherShaderManager.cpp'),
+        $allowedShaderManager.Replace('NorvesLib::Core::Rendering::ShaderManager::LoadShader', 'NorvesLib::Core::Rendering::ShaderManager::OtherFunction'),
+        $allowedShaderManager.Replace('Failed to compile shader [neural_material_decode.slang]: Slang SDK not available. Rebuild with NORVES_HAS_SLANG to enable.', 'Failed to load shader [neural_material_decode.slang]: Slang SDK not available. Rebuild with NORVES_HAS_SLANG to enable.'),
+        $allowedShaderManager.Replace('neural_material_decode.slang', 'other_material_decode.slang'),
+        "[ERROR] [Unexpected] $allowedShaderManager"
+    )) {
+    Assert-Throws { Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, $line) -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults } 'single-mutation ShaderManager allowlist rejection'
+}
 Assert-Throws { Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, 'Assertion failed: fixture') -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults } 'Assertion failed blocker'
 Assert-Throws { Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, "[ERROR] [Unexpected] Async texture load failed: $runtimeRoot\Textures\CobbleStoneFloor\cobblestone_floor_09_diff_4k.png") -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults } 'unexpected texture logger shape'
 Assert-Throws { Assert-ProfileRuntimeSignals -Lines @($readyOne, $resumedOne, "[ERROR] [Unexpected] [ERROR] [T:62468] [TextureResources] [TextureAssetRuntime.cpp:NorvesLib::Core::Rendering::TextureAssetRuntime::FlushCompletedTextureLoads:851] Async texture load failed: $runtimeRoot\Textures\CobbleStoneFloor\cobblestone_floor_09_diff_4k.png") -RuntimeRoot $runtimeRoot -ExpectedDefaultTexturePaths $allowedDefaults } 'prefixed unexpected texture logger record'

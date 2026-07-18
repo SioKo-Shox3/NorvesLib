@@ -99,7 +99,7 @@ function Assert-ProfileRuntimeSignals {
             throw "Blocked runtime signal: $line"
         }
         if ($line -match '\[ERROR\]') {
-            $textureError = [regex]::Match($line, '^\[[^\]\r\n]+\] \[ERROR\] \[T:[0-9]+\] \[TextureResources\] \[TextureAssetRuntime\.cpp:NorvesLib::Core::Rendering::TextureAssetRuntime::FlushCompletedTextureLoads:851\] Async texture load failed: (?<path>.+)$')
+            $textureError = [regex]::Match($line, '^\[[^\]\r\n]+\] \[ERROR\] \[T:[0-9]+\] \[TextureResources\] \[TextureAssetRuntime\.cpp:NorvesLib::Core::Rendering::TextureAssetRuntime::FlushCompletedTextureLoads:[1-9][0-9]*\] Async texture load failed: (?<path>.+)$')
             if ($textureError.Success) {
                 $candidatePath = [System.IO.Path]::GetFullPath($textureError.Groups['path'].Value.Trim())
                 if ($expectedDefaultPaths.ContainsKey($candidatePath)) {
@@ -108,8 +108,8 @@ function Assert-ProfileRuntimeSignals {
             }
 
             $approvedNeuralPatterns = @(
-                '^\[[^\]\r\n]+\] \[ERROR\] \[T:[0-9]+\] \[SlangCompiler\] \[VulkanSlangCompiler\.cpp:NorvesLib::RHI::Vulkan::VulkanSlangCompiler::CompileFromSource:215\] Cannot compile \[neural_material_decode\.slang\]: Slang SDK not available\. Rebuild with NORVES_HAS_SLANG to enable\.$',
-                '^\[[^\]\r\n]+\] \[ERROR\] \[T:[0-9]+\] \[ShaderManager\] \[ShaderManager\.cpp:NorvesLib::Core::Rendering::ShaderManager::LoadShader:97\] Failed to compile shader \[neural_material_decode\.slang\]: Slang SDK not available\. Rebuild with NORVES_HAS_SLANG to enable\.$'
+                '^\[[^\]\r\n]+\] \[ERROR\] \[T:[0-9]+\] \[SlangCompiler\] \[VulkanSlangCompiler\.cpp:NorvesLib::RHI::Vulkan::VulkanSlangCompiler::CompileFromSource:[1-9][0-9]*\] Cannot compile \[neural_material_decode\.slang\]: Slang SDK not available\. Rebuild with NORVES_HAS_SLANG to enable\.$',
+                '^\[[^\]\r\n]+\] \[ERROR\] \[T:[0-9]+\] \[ShaderManager\] \[ShaderManager\.cpp:NorvesLib::Core::Rendering::ShaderManager::LoadShader:[1-9][0-9]*\] Failed to compile shader \[neural_material_decode\.slang\]: Slang SDK not available\. Rebuild with NORVES_HAS_SLANG to enable\.$'
             )
             if (@($approvedNeuralPatterns | Where-Object { $line -match $_ }).Count -eq 1) {
                 continue
