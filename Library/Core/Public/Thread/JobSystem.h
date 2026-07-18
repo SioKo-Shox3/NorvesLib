@@ -14,6 +14,8 @@
 namespace NorvesLib::Thread
 {
 
+    struct JobSystemTestAccess;
+
     // class Thread;
 
     /**
@@ -60,7 +62,24 @@ namespace NorvesLib::Thread
          * @brief タスクをキューに追加する
          * @param task 実行するタスク
          */
-        void SubmitTask(TaskPtr task);
+        bool SubmitTask(TaskPtr task);
+
+        /**
+         * @brief 有限 drain の対象外となる常駐タスクをキューに追加する
+         * @param task 実行するタスク
+         * @return タスクが受理された場合はtrue
+         */
+        bool SubmitPersistentTask(TaskPtr task);
+
+        /**
+         * @brief 新しいタスクの受理を停止する
+         */
+        void StopAcceptingTasks();
+
+        /**
+         * @brief 現在の有限タスク世代だけが完了するまで待機する
+         */
+        void DrainAcceptedFiniteTasks();
 
         /**
          * @brief 複数のタスクをバッチ実行する
@@ -154,6 +173,8 @@ namespace NorvesLib::Thread
         size_t AdjustWorkerThreadCount(size_t targetThreadCount);
 
     private:
+        friend struct JobSystemTestAccess;
+
         JobSystem();
         ~JobSystem();
 
@@ -181,6 +202,23 @@ namespace NorvesLib::Thread
         void CreateAndStartWorkerThread();
 
         void MarkQueuedTaskCompleted();
+
+        bool SubmitTaskInternal(TaskPtr task, bool bFiniteTask);
+
+        struct FiniteDrainState
+        {
+            size_t OutstandingFiniteTasks = 0;
+            Mutex Mutex;
+            ConditionVariable Condition;
+        };
+
+        enum class LifecycleState
+        {
+            Constructed,
+            Running,
+            ShuttingDown,
+            ShutdownComplete
+        };
 
         // ワーカースレッドのプール
         Core::Container::VariableArray<std::unique_ptr<Thread>> m_workerThreads;
@@ -228,6 +266,11 @@ namespace NorvesLib::Thread
         ConditionVariable m_conditionVar;
         Atomic<bool> m_shutdownRequested;
         Atomic<bool> m_monitorActive;
+        bool m_bAcceptingTasks;
+        LifecycleState m_lifecycleState;
+        Core::Container::TSharedPtr<FiniteDrainState> m_currentFiniteDrainState;
+        void (*m_finiteDrainWaitHook)(void*);
+        void* m_finiteDrainWaitHookContext;
 
         // ワーカーごとの実行継続境界。dynamic shrink 時に上位 index のワーカーを停止する。
         Atomic<size_t> m_workerThreadLimit;

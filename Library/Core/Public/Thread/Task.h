@@ -19,7 +19,7 @@ class Task;
 /**
  * @brief タスクのスマートポインタ型定義
  */
-using TaskPtr = std::shared_ptr<Task>;
+using TaskPtr = Core::Container::TSharedPtr<Task>;
 
 /**
  * @brief タスクの完了イベントハンドラ型定義

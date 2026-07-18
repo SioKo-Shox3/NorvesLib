@@ -29,6 +29,11 @@ namespace NorvesLib::Thread
           m_totalStolenTasks(0),
           m_shutdownRequested(false),
           m_monitorActive(false),
+          m_bAcceptingTasks(true),
+          m_lifecycleState(LifecycleState::Constructed),
+          m_currentFiniteDrainState(Core::Container::MakeShared<FiniteDrainState>()),
+          m_finiteDrainWaitHook(nullptr),
+          m_finiteDrainWaitHookContext(nullptr),
           m_workerThreadLimit(0),
           m_activeThreads(0),
           m_queuedTaskCount(0),
@@ -46,10 +51,14 @@ namespace NorvesLib::Thread
     void JobSystem::Initialize(uint32_t threadCount, ExecutionMode mode)
     {
         ScopedLock shutdownLock(m_shutdownMutex);
-        ScopedLock resizeLock(m_resizeMutex);
 
-        // シャットダウン状態をリセット
-        m_shutdownRequested = false;
+        if (m_lifecycleState == LifecycleState::Running ||
+            m_lifecycleState == LifecycleState::ShuttingDown)
+        {
+            return;
+        }
+
+        ScopedLock resizeLock(m_resizeMutex);
 
         // 指定がなければハードウェアの最適なスレッド数を取得
         if (threadCount == 0)
@@ -59,19 +68,31 @@ namespace NorvesLib::Thread
             threadCount = std::max(1u, concurrentThreads > 1 ? concurrentThreads - 1 : concurrentThreads);
         }
 
-        // 実行モードを保存
-        m_executionMode = mode;
-        m_workerThreadLimit = threadCount;
+        {
+            ScopedLock workerLock(m_workerThreadMutex);
+            ScopedLock queueLock(m_queueMutex);
+
+            if (m_lifecycleState == LifecycleState::ShutdownComplete)
+            {
+                m_currentFiniteDrainState = Core::Container::MakeShared<FiniteDrainState>();
+                m_bAcceptingTasks = true;
+            }
+            else if (m_lifecycleState == LifecycleState::Constructed)
+            {
+                m_bAcceptingTasks = true;
+            }
+
+            m_shutdownRequested = false;
+            m_lifecycleState = LifecycleState::Running;
+            m_executionMode = mode;
+            m_workerThreadLimit = threadCount;
+            m_localQueues.clear();
+        }
 
         // Initializeごとにワーカーと同じ数だけ統計情報とローカルキューを作り直す
         {
             ScopedLock statsLock(m_statsMutex);
             m_tasksProcessedPerThread.clear();
-        }
-
-        {
-            ScopedLock workerLock(m_workerThreadMutex);
-            m_localQueues.clear();
         }
 
         // スチールカウンターをリセット
@@ -101,67 +122,109 @@ namespace NorvesLib::Thread
 
     void JobSystem::Shutdown()
     {
-        ScopedLock shutdownLock(m_shutdownMutex);
+        Core::Container::VariableArray<TaskPtr> tasksToCancel;
 
         {
-            ScopedLock workerLock(m_workerThreadMutex);
-            ScopedLock queueLock(m_queueMutex);
-            if (m_shutdownRequested)
+            ScopedLock shutdownLock(m_shutdownMutex);
+
+            if (m_lifecycleState == LifecycleState::ShuttingDown ||
+                m_lifecycleState == LifecycleState::ShutdownComplete)
             {
-                return; // 既にシャットダウン処理中
+                return;
             }
 
-            // シャットダウン要求を設定
-            m_shutdownRequested = true;
+            {
+                ScopedLock resizeLock(m_resizeMutex);
+                ScopedLock workerLock(m_workerThreadMutex);
+                ScopedLock queueLock(m_queueMutex);
+                m_lifecycleState = LifecycleState::ShuttingDown;
+                m_bAcceptingTasks = false;
+                m_shutdownRequested = true;
+                m_workerThreadLimit = 0;
+            }
+
+            m_monitorActive = false;
+
+            // モニタースレッドが終了するのを待つ
+            if (m_monitorThread)
+            {
+                m_monitorThread.reset();
+            }
+
+            ScopedLock resizeLock(m_resizeMutex);
             m_workerThreadLimit = 0;
-        }
 
-        m_monitorActive = false;
+            // 全ワーカースレッドに作業終了を通知
+            m_conditionVar.NotifyAll();
 
-        // モニタースレッドが終了するのを待つ
-        if (m_monitorThread)
-        {
-            m_monitorThread.reset();
-        }
-
-        ScopedLock resizeLock(m_resizeMutex);
-        m_workerThreadLimit = 0;
-
-        // 全ワーカースレッドに作業終了を通知
-        m_conditionVar.NotifyAll();
-
-        // 全てのワーカースレッドが終了するのを待つ。
-        // Threadの破棄はjoinを行うため、m_workerThreadMutexを解放してから実行する。
-        Core::Container::VariableArray<std::unique_ptr<Thread>> workerThreadsToJoin;
-        {
-            ScopedLock lock(m_workerThreadMutex);
-            workerThreadsToJoin.swap(m_workerThreads);
-        }
-        workerThreadsToJoin.clear();
-
-        // 残りのタスクをクリア
-        {
-            ScopedLock lock(m_queueMutex);
-            while (!m_taskQueue.empty())
+            // 全てのワーカースレッドが終了するのを待つ。
+            // Threadの破棄はjoinを行うため、m_workerThreadMutexを解放してから実行する。
+            Core::Container::VariableArray<std::unique_ptr<Thread>> workerThreadsToJoin;
             {
-                m_taskQueue.pop();
+                ScopedLock workerLock(m_workerThreadMutex);
+                workerThreadsToJoin.swap(m_workerThreads);
             }
-            m_queuedTaskCount = 0;
+            workerThreadsToJoin.clear();
+
+            {
+                ScopedLock workerLock(m_workerThreadMutex);
+                ScopedLock queueLock(m_queueMutex);
+                while (!m_taskQueue.empty())
+                {
+                    tasksToCancel.push_back(m_taskQueue.top());
+                    m_taskQueue.pop();
+                }
+
+                for (const Core::Container::TUniquePtr<WorkStealingQueue>& localQueue : m_localQueues)
+                {
+                    if (!localQueue)
+                    {
+                        continue;
+                    }
+
+                    while (TaskPtr task = localQueue->Pop())
+                    {
+                        tasksToCancel.push_back(task);
+                    }
+                }
+
+                m_queuedTaskCount = 0;
+                m_localQueues.clear();
+            }
         }
 
-        // ローカルキューをクリア
+        for (const TaskPtr& task : tasksToCancel)
         {
-            ScopedLock lock(m_workerThreadMutex);
-            m_localQueues.clear();
+            task->Cancel();
+        }
+
+        {
+            ScopedLock shutdownLock(m_shutdownMutex);
+            if (m_lifecycleState == LifecycleState::ShuttingDown)
+            {
+                m_lifecycleState = LifecycleState::ShutdownComplete;
+            }
         }
     }
 
-    void JobSystem::SubmitTask(TaskPtr task)
+    bool JobSystem::SubmitTask(TaskPtr task)
+    {
+        return SubmitTaskInternal(std::move(task), true);
+    }
+
+    bool JobSystem::SubmitPersistentTask(TaskPtr task)
+    {
+        return SubmitTaskInternal(std::move(task), false);
+    }
+
+    bool JobSystem::SubmitTaskInternal(TaskPtr task, bool bFiniteTask)
     {
         if (!task)
         {
-            return; // nullタスクは追加しない
+            return false;
         }
+
+        bool bAccepted = false;
 
         const ExecutionMode mode = m_executionMode.Load();
 
@@ -171,15 +234,42 @@ namespace NorvesLib::Thread
             {
                 ScopedLock lock(m_queueMutex);
 
-                // シャットダウン中なら追加しない
-                if (m_shutdownRequested)
+                if (m_shutdownRequested || !m_bAcceptingTasks)
                 {
-                    return;
+                    bAccepted = false;
                 }
+                else
+                {
+                    if (bFiniteTask)
+                    {
+                        Core::Container::TSharedPtr<FiniteDrainState> finiteDrainState = m_currentFiniteDrainState;
+                        {
+                            ScopedLock finiteLock(finiteDrainState->Mutex);
+                            finiteDrainState->OutstandingFiniteTasks++;
+                        }
+                        task->OnComplete([finiteDrainState](const TaskPtr&)
+                        {
+                            bool bNotify = false;
+                            {
+                                ScopedLock finiteLock(finiteDrainState->Mutex);
+                                if (finiteDrainState->OutstandingFiniteTasks > 0)
+                                {
+                                    finiteDrainState->OutstandingFiniteTasks--;
+                                    bNotify = finiteDrainState->OutstandingFiniteTasks == 0;
+                                }
+                            }
 
-                // キューへタスクを追加（優先度付きキュー）
-                m_taskQueue.push(task);
-                m_queuedTaskCount++;
+                            if (bNotify)
+                            {
+                                finiteDrainState->Condition.NotifyAll();
+                            }
+                        });
+                    }
+
+                    m_taskQueue.push(task);
+                    m_queuedTaskCount++;
+                    bAccepted = true;
+                }
             }
         }
         else
@@ -187,41 +277,109 @@ namespace NorvesLib::Thread
             // ワークスチーリングモード - ランダムなワーカーのローカルキューに追加
             ScopedLock lock(m_workerThreadMutex);
 
-            if (m_shutdownRequested)
+            if (m_shutdownRequested || !m_bAcceptingTasks)
             {
-                return;
-            }
-
-            if (m_localQueues.empty())
-            {
-                // ローカルキューが無い場合はグローバルキューに追加
-                ScopedLock queueLock(m_queueMutex);
-                m_taskQueue.push(task);
-                m_queuedTaskCount++;
+                bAccepted = false;
             }
             else
             {
-                // ランダムなローカルキューに追加
-                std::uniform_int_distribution<size_t> dist(0, m_localQueues.size() - 1);
-                size_t queueIndex = dist(m_randomGenerator);
+                if (bFiniteTask)
+                {
+                    Core::Container::TSharedPtr<FiniteDrainState> finiteDrainState = m_currentFiniteDrainState;
+                    {
+                        ScopedLock finiteLock(finiteDrainState->Mutex);
+                        finiteDrainState->OutstandingFiniteTasks++;
+                    }
+                    task->OnComplete([finiteDrainState](const TaskPtr&)
+                    {
+                        bool bNotify = false;
+                        {
+                            ScopedLock finiteLock(finiteDrainState->Mutex);
+                            if (finiteDrainState->OutstandingFiniteTasks > 0)
+                            {
+                                finiteDrainState->OutstandingFiniteTasks--;
+                                bNotify = finiteDrainState->OutstandingFiniteTasks == 0;
+                            }
+                        }
 
-                if (queueIndex < m_localQueues.size() && m_localQueues[queueIndex])
-                {
-                    m_localQueues[queueIndex]->Push(task);
-                    m_queuedTaskCount++;
+                        if (bNotify)
+                        {
+                            finiteDrainState->Condition.NotifyAll();
+                        }
+                    });
                 }
-                else
+
+                if (m_localQueues.empty())
                 {
-                    // フォールバック：グローバルキューに追加
                     ScopedLock queueLock(m_queueMutex);
                     m_taskQueue.push(task);
                     m_queuedTaskCount++;
                 }
+                else
+                {
+                    std::uniform_int_distribution<size_t> dist(0, m_localQueues.size() - 1);
+                    size_t queueIndex = dist(m_randomGenerator);
+
+                    if (queueIndex < m_localQueues.size() && m_localQueues[queueIndex])
+                    {
+                        m_localQueues[queueIndex]->Push(task);
+                        m_queuedTaskCount++;
+                    }
+                    else
+                    {
+                        ScopedLock queueLock(m_queueMutex);
+                        m_taskQueue.push(task);
+                        m_queuedTaskCount++;
+                    }
+                }
+
+                bAccepted = true;
             }
         }
 
-        // ワーカースレッドに通知
+        if (!bAccepted)
+        {
+            task->Cancel();
+            return false;
+        }
+
         m_conditionVar.NotifyOne();
+        return true;
+    }
+
+    void JobSystem::StopAcceptingTasks()
+    {
+        ScopedLock resizeLock(m_resizeMutex);
+        ScopedLock workerLock(m_workerThreadMutex);
+        ScopedLock queueLock(m_queueMutex);
+        m_bAcceptingTasks = false;
+    }
+
+    void JobSystem::DrainAcceptedFiniteTasks()
+    {
+        Core::Container::TSharedPtr<FiniteDrainState> finiteDrainState;
+        {
+            ScopedLock resizeLock(m_resizeMutex);
+            ScopedLock workerLock(m_workerThreadMutex);
+            ScopedLock queueLock(m_queueMutex);
+            finiteDrainState = m_currentFiniteDrainState;
+        }
+
+        ScopedLock finiteLock(finiteDrainState->Mutex);
+        finiteDrainState->Condition.Wait(finiteDrainState->Mutex, [this, finiteDrainState]()
+        {
+            if (finiteDrainState->OutstandingFiniteTasks == 0)
+            {
+                return true;
+            }
+
+            if (m_finiteDrainWaitHook)
+            {
+                m_finiteDrainWaitHook(m_finiteDrainWaitHookContext);
+            }
+
+            return false;
+        });
     }
 
     TaskPtr JobSystem::SubmitTasks(const Core::Container::VariableArray<TaskPtr> &tasks, TaskPriority priority)

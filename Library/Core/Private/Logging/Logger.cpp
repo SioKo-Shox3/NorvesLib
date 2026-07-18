@@ -101,7 +101,7 @@ namespace NorvesLib::Core::Logging
         {
             m_workerTask = NorvesLib::Thread::Task::Create([this]()
                                                            { AsyncLogWorker(); });
-            NorvesLib::Thread::JobSystem::Get().SubmitTask(m_workerTask);
+            NorvesLib::Thread::JobSystem::Get().SubmitPersistentTask(m_workerTask);
         }
 
         m_bInitialized.Store(true);

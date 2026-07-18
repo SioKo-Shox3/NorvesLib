@@ -6,13 +6,13 @@ namespace NorvesLib::Thread
 
     TaskPtr Task::Create(TaskFunction function, TaskPriority priority)
     {
-        return std::make_shared<Task>(std::move(function), priority);
+        return Core::Container::MakeShared<Task>(std::move(function), priority);
     }
 
     TaskPtr Task::CreateBatch(const Core::Container::VariableArray<TaskPtr> &tasks, TaskPriority priority)
     {
         // バッチタスクを作成（すべての依存タスクの完了を待つ）
-        auto batchTask = std::make_shared<Task>([tasks]()
+        auto batchTask = Core::Container::MakeShared<Task>([tasks]()
                                                 {
         // すべての依存タスクを待機
         for (const auto& task : tasks)
@@ -110,18 +110,25 @@ namespace NorvesLib::Thread
 
     TaskPtr Task::OnComplete(TaskCompletionHandler handler)
     {
-        ScopedLock lock(m_mutex);
+        bool bInvokeHandler = false;
 
-        // 既に完了している場合は直接ハンドラを実行
-        if (m_state.Load() == State::COMPLETED)
         {
-            // ロックを手動で解除する必要はありません。ScopedLockはスコープを抜けると自動的に解除されます
-            handler(shared_from_this());
+            ScopedLock lock(m_mutex);
+
+            const State state = m_state.Load();
+            if (state == State::COMPLETED || state == State::CANCELED)
+            {
+                bInvokeHandler = true;
+            }
+            else
+            {
+                m_completionHandlers.push_back(std::move(handler));
+            }
         }
-        else
+
+        if (bInvokeHandler)
         {
-            // 完了ハンドラをリストに追加
-            m_completionHandlers.push_back(std::move(handler));
+            handler(shared_from_this());
         }
 
         return shared_from_this();
