@@ -106,6 +106,42 @@ namespace
         return count;
     }
 
+    size_t FindMatchingPreprocessorEnd(const String& source, size_t openingDirective)
+    {
+        assert(openingDirective < source.size());
+
+        size_t depth = 0;
+        size_t lineStart = openingDirective;
+        while (lineStart < source.size())
+        {
+            const size_t lineEnd = source.find(_T('\n'), lineStart);
+            const size_t lineLength = (lineEnd == String::npos ? source.size() : lineEnd) - lineStart;
+            const String line = source.substr(lineStart, lineLength);
+            if (line.find(_T("#if")) == 0)
+            {
+                ++depth;
+            }
+            else if (line.find(_T("#endif")) == 0)
+            {
+                assert(depth > 0);
+                --depth;
+                if (depth == 0)
+                {
+                    return lineEnd == String::npos ? source.size() : lineEnd;
+                }
+            }
+
+            if (lineEnd == String::npos)
+            {
+                break;
+            }
+            lineStart = lineEnd + 1;
+        }
+
+        assert(false);
+        return String::npos;
+    }
+
     bool HasRenderThreadStartPublicationReset(const String& source)
     {
         const size_t statsResetPosition = source.find(_T("m_Stats = ThreadStats{};"));
@@ -624,6 +660,205 @@ namespace
         assert(coreCMakeSource.find(_T("VULKAN_HPP_DISABLE_ENHANCED_MODE")) == String::npos);
     }
 
+    void AssertVulkanAddressBindingDiagnosticsWiring()
+    {
+        std::filesystem::path repositoryRoot = std::filesystem::path(__FILE__).parent_path();
+        for (uint32_t level = 0; level < 3; ++level)
+        {
+            repositoryRoot = repositoryRoot.parent_path();
+        }
+
+        const String deviceSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/RHI/Vulkan/VulkanDevice.cpp");
+        const String deviceHeaderSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/RHI/Vulkan/VulkanDevice.h");
+        const String bufferSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/RHI/Vulkan/VulkanBuffer.cpp");
+        const String textureSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/RHI/Vulkan/VulkanTexture.cpp");
+        const String createInstanceSource = ReadFunctionSource(deviceSource, _T("void VulkanDevice::CreateInstance()"));
+        const String constructorSource = ReadFunctionSource(deviceSource, _T("VulkanDevice::VulkanDevice(bool bEnableValidation)"));
+        const String setupDebugMessengerSource = ReadFunctionSource(
+            deviceSource,
+            _T("void VulkanDevice::SetupDebugMessenger()"));
+        const size_t setupAddressBindingDebugMessengerSourcePosition = deviceSource.find(
+            _T("void VulkanDevice::SetupAddressBindingDebugMessenger()"));
+        const String setupAddressBindingDebugMessengerSource =
+            setupAddressBindingDebugMessengerSourcePosition == String::npos
+                ? String()
+                : ReadFunctionSource(
+                    deviceSource,
+                    _T("void VulkanDevice::SetupAddressBindingDebugMessenger()"));
+        const String createLogicalDeviceSource = ReadFunctionSource(
+            deviceSource,
+            _T("void VulkanDevice::CreateLogicalDevice()"));
+        const String getDeviceExtensionsSource = ReadFunctionSource(
+            deviceSource,
+            _T("VariableArray<const char *> VulkanDevice::GetDeviceExtensions()"));
+        const String debugCallbackSource = ReadFunctionSource(
+            deviceSource,
+            _T("VKAPI_ATTR VkBool32 VKAPI_CALL VulkanDevice::DebugCallback("));
+        const String findAddressBindingCallbackDataSource = ReadFunctionSource(
+            deviceSource,
+            _T("const VkDeviceAddressBindingCallbackDataEXT *VulkanDevice::FindAddressBindingCallbackData("));
+        const String destructorSource = ReadFunctionSource(deviceSource, _T("VulkanDevice::~VulkanDevice()"));
+        const String bufferCreateSource = ReadFunctionSource(
+            bufferSource,
+            _T("void VulkanBuffer::CreateBuffer(vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties)"));
+        const String bufferUpdateSource = ReadFunctionSource(
+            bufferSource,
+            _T("void VulkanBuffer::Update(const void *data, uint64_t size, uint64_t offset)"));
+        const String ownedTextureCreateSource = ReadFunctionSource(textureSource, _T("void VulkanTexture::CreateTexture()"));
+        const String externalTextureConstructorSource = ReadFunctionSource(
+            textureSource,
+            _T("VulkanTexture::VulkanTexture(TSharedPtr<VulkanDevice> device, const TextureDesc &desc, vk::Image image)"));
+        const String textureUpdateSource = ReadFunctionSource(
+            textureSource,
+            _T("void VulkanTexture::Update(const void *data, uint32_t rowPitch, uint32_t slicePitch,"));
+
+        assert(deviceHeaderSource.find(_T("VkPhysicalDeviceAddressBindingReportFeaturesEXT m_addressBindingReportFeatures")) != String::npos);
+        assert(deviceHeaderSource.find(_T("FileStream::FileStreamPtr m_addressBindingDiagnosticsSink")) != String::npos);
+        assert(deviceHeaderSource.find(_T("Thread::Mutex m_addressBindingDiagnosticsMutex")) != String::npos);
+        assert(deviceHeaderSource.find(_T("void InitializeAddressBindingDiagnostics();")) != String::npos);
+        assert(deviceHeaderSource.find(_T("void ShutdownAddressBindingDiagnostics();")) != String::npos);
+        assert(deviceHeaderSource.find(_T("void RecordAddressBindingDiagnostic(")) != String::npos);
+        assert(deviceHeaderSource.find(_T("void SetupAddressBindingDebugMessenger();")) != String::npos);
+        assert(deviceHeaderSource.find(_T("vk::DebugUtilsMessengerEXT m_addressBindingDebugMessenger;")) != String::npos);
+        assert(deviceHeaderSource.find(_T("void SetDebugObjectName(")) != String::npos);
+        const size_t headerAddressBindingGuardPosition = deviceHeaderSource.find(
+            _T("#if defined(VK_EXT_device_address_binding_report)"));
+        const size_t headerAddressBindingGuardEnd = FindMatchingPreprocessorEnd(
+            deviceHeaderSource,
+            headerAddressBindingGuardPosition);
+        const size_t headerSetDebugObjectNamePosition = deviceHeaderSource.find(_T("void SetDebugObjectName("));
+        assert(headerAddressBindingGuardPosition != String::npos);
+        assert(headerSetDebugObjectNamePosition > headerAddressBindingGuardEnd);
+
+        const size_t sourceAddressBindingGuardPosition = deviceSource.find(
+            _T("#if defined(VK_EXT_device_address_binding_report)"),
+            deviceSource.find(_T("return Format::UNKNOWN;")));
+        const size_t sourceAddressBindingGuardEnd = FindMatchingPreprocessorEnd(
+            deviceSource,
+            sourceAddressBindingGuardPosition);
+        const size_t sourceSetDebugObjectNamePosition = deviceSource.find(
+            _T("void VulkanDevice::SetDebugObjectName("));
+        assert(sourceAddressBindingGuardPosition != String::npos);
+        assert(sourceSetDebugObjectNamePosition > sourceAddressBindingGuardEnd);
+
+        assert(getDeviceExtensionsSource.find(_T("m_bValidationEnabled && hasExtension(VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME)")) != String::npos);
+        assert(getDeviceExtensionsSource.find(_T("extensions.push_back(VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME);")) != String::npos);
+        assert(createLogicalDeviceSource.find(_T("bool bAddressBindingReportRequested = false;")) != String::npos);
+        assert(createLogicalDeviceSource.find(_T("VkPhysicalDeviceAddressBindingReportFeaturesEXT addressBindingReportFeaturesQuery")) != String::npos);
+        assert(createLogicalDeviceSource.find(_T("m_addressBindingReportFeatures")) != String::npos);
+        assert(createLogicalDeviceSource.find(_T("*featuresTail = &m_addressBindingReportFeatures;")) != String::npos);
+        assert(createLogicalDeviceSource.find(_T("featuresTail = &m_addressBindingReportFeatures.pNext;")) != String::npos);
+        assert(createLogicalDeviceSource.find(_T("createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());")) != String::npos);
+        assert(createLogicalDeviceSource.find(_T("createInfo.ppEnabledExtensionNames = extensions.data();")) != String::npos);
+        assert(createLogicalDeviceSource.find(_T("*featuresTail = &m_deviceFaultFeatures;")) <
+               createLogicalDeviceSource.find(_T("*featuresTail = &m_cooperativeVectorFeatures;")));
+        assert(createLogicalDeviceSource.find(_T("*featuresTail = &m_cooperativeVectorFeatures;")) <
+               createLogicalDeviceSource.find(_T("*featuresTail = &m_addressBindingReportFeatures;")));
+        assert(createLogicalDeviceSource.find(_T("*featuresTail = &m_addressBindingReportFeatures;")) <
+               createLogicalDeviceSource.find(_T("*featuresTail = nullptr;")));
+
+        assert(createInstanceSource.find(_T("eInfo |")) == String::npos);
+        assert(createInstanceSource.find(_T("eDeviceAddressBinding")) == String::npos);
+        assert(createInstanceSource.find(_T("pUserData")) == String::npos);
+        const size_t setupDebugMessengerPosition = constructorSource.find(_T("SetupDebugMessenger();"));
+        const size_t pickPhysicalDevicePosition = constructorSource.find(_T("PickPhysicalDevice();"));
+        const size_t createLogicalDevicePosition = constructorSource.find(_T("CreateLogicalDevice();"));
+        const size_t setupAddressBindingDebugMessengerPosition = constructorSource.find(
+            _T("SetupAddressBindingDebugMessenger();"));
+        const size_t initializeAddressBindingDiagnosticsPosition = constructorSource.find(
+            _T("InitializeAddressBindingDiagnostics();"));
+        const size_t resourceAllocatorPosition = constructorSource.find(_T("m_ResourceAllocator ="));
+        assert(setupDebugMessengerPosition != String::npos);
+        assert(setupDebugMessengerPosition < pickPhysicalDevicePosition);
+        assert(pickPhysicalDevicePosition < createLogicalDevicePosition);
+        assert(setupDebugMessengerSource.find(_T("vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral")) != String::npos);
+        assert(setupDebugMessengerSource.find(_T("vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation")) != String::npos);
+        assert(setupDebugMessengerSource.find(_T("vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance")) != String::npos);
+        assert(setupDebugMessengerSource.find(_T("vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding")) == String::npos);
+        assert(setupDebugMessengerSource.find(_T("createInfo.pUserData = this;")) != String::npos);
+        assert(setupDebugMessengerSource.find(_T("m_addressBindingReportFeatures")) == String::npos);
+        assert(setupAddressBindingDebugMessengerSourcePosition != String::npos);
+        assert(setupAddressBindingDebugMessengerPosition != String::npos);
+        assert(initializeAddressBindingDiagnosticsPosition != String::npos);
+        assert(resourceAllocatorPosition != String::npos);
+        assert(createLogicalDevicePosition < setupAddressBindingDebugMessengerPosition);
+        assert(setupAddressBindingDebugMessengerPosition < initializeAddressBindingDiagnosticsPosition);
+        assert(initializeAddressBindingDiagnosticsPosition < resourceAllocatorPosition);
+        assert(setupAddressBindingDebugMessengerSource.find(
+            _T("vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo")) != String::npos);
+        assert(setupAddressBindingDebugMessengerSource.find(
+            _T("vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding")) != String::npos);
+        assert(setupAddressBindingDebugMessengerSource.find(
+            _T("vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral")) == String::npos);
+        assert(setupAddressBindingDebugMessengerSource.find(
+            _T("vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation")) == String::npos);
+        assert(setupAddressBindingDebugMessengerSource.find(
+            _T("vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance")) == String::npos);
+        assert(setupAddressBindingDebugMessengerSource.find(_T("createInfo.pUserData = this;")) != String::npos);
+        assert(debugCallbackSource.find(_T("try")) != String::npos);
+        assert(debugCallbackSource.find(_T("catch (...)")) != String::npos);
+        assert(debugCallbackSource.find(_T("VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT")) != String::npos);
+        assert(debugCallbackSource.find(_T("VkDeviceAddressBindingCallbackDataEXT")) != String::npos);
+        assert(findAddressBindingCallbackDataSource.find(_T("pNext")) != String::npos);
+        assert(findAddressBindingCallbackDataSource.find(_T("while (pNext != nullptr)")) != String::npos);
+        assert(debugCallbackSource.find(_T("return VK_FALSE;")) != String::npos);
+        assert(debugCallbackSource.find(_T("m_device")) == String::npos);
+        assert(debugCallbackSource.find(_T("vkGet")) == String::npos);
+        assert(debugCallbackSource.find(_T("std::cerr")) != String::npos);
+        assert(debugCallbackSource.find(_T("NORVES_LOG_WARNING")) == String::npos);
+
+        assert(deviceSource.find(_T("schema=vulkan_device_address_binding_v1")) != String::npos);
+        assert(deviceSource.find(_T("event_id=")) != String::npos);
+        assert(deviceSource.find(_T("binding=")) != String::npos);
+        assert(deviceSource.find(_T("base=0x")) != String::npos);
+        assert(deviceSource.find(_T("size=0x")) != String::npos);
+        assert(deviceSource.find(_T("end=0x")) != String::npos);
+        assert(deviceSource.find(_T("internal_object=")) != String::npos);
+        assert(deviceSource.find(_T("object_count=")) != String::npos);
+        assert(deviceSource.find(_T("type_name=")) != String::npos);
+        assert(deviceSource.find(_T("<unnamed>")) != String::npos);
+        assert(deviceSource.find(_T("NORVES_ASSET_DIR")) != String::npos);
+        assert(deviceSource.find(_T("assetDirectory.substr")) != String::npos);
+        assert(deviceSource.find(_T("std::filesystem::create_directories")) != String::npos);
+        assert(deviceSource.find(_T("std::error_code")) != String::npos);
+        assert(deviceSource.find(_T("std::filesystem::create_directories")) <
+               deviceSource.find(_T("FileStream::FileStream::Create(")));
+        assert(deviceSource.find(_T("NorvesLib::Thread::ScopedLock lock(m_addressBindingDiagnosticsMutex);")) != String::npos);
+        assert(CountOccurrences(deviceSource, _T("NorvesLib::Thread::ScopedLock lock(m_addressBindingDiagnosticsMutex);")) == 2);
+        assert(deviceSource.find(_T("m_addressBindingDiagnosticsSink->Close();")) != String::npos);
+        assert(deviceSource.find(_T("m_addressBindingDiagnosticsSink.reset();")) != String::npos);
+        assert(destructorSource.find(_T("ShutdownAddressBindingDiagnostics();")) != String::npos);
+        const size_t deviceDestroyPosition = destructorSource.find(_T("m_device.destroy();"));
+        const size_t shutdownAddressBindingDiagnosticsPosition = destructorSource.find(
+            _T("ShutdownAddressBindingDiagnostics();"));
+        const size_t addressBindingMessengerDestroyPosition = destructorSource.find(
+            _T("destroyDebugUtilsMessengerEXT(m_addressBindingDebugMessenger)"));
+        const size_t debugMessengerDestroyPosition = destructorSource.find(
+            _T("destroyDebugUtilsMessengerEXT(m_debugMessenger)"));
+        assert(deviceDestroyPosition != String::npos);
+        assert(shutdownAddressBindingDiagnosticsPosition != String::npos);
+        assert(addressBindingMessengerDestroyPosition != String::npos);
+        assert(debugMessengerDestroyPosition != String::npos);
+        assert(deviceDestroyPosition < shutdownAddressBindingDiagnosticsPosition);
+        assert(shutdownAddressBindingDiagnosticsPosition < addressBindingMessengerDestroyPosition);
+        assert(addressBindingMessengerDestroyPosition < debugMessengerDestroyPosition);
+
+        assert(bufferCreateSource.find(_T("SetDebugObjectName(")) != String::npos);
+        assert(bufferCreateSource.find(_T("m_desc.DebugName")) != String::npos);
+        assert(ownedTextureCreateSource.find(_T("SetDebugObjectName(")) != String::npos);
+        assert(ownedTextureCreateSource.find(_T("m_desc.DebugName")) != String::npos);
+        assert(externalTextureConstructorSource.find(_T("SetDebugObjectName(")) != String::npos);
+        assert(externalTextureConstructorSource.find(_T("m_desc.DebugName")) != String::npos);
+        assert(bufferUpdateSource.find(_T("stagingDesc.DebugName = \"VulkanBuffer.Update.Staging\";")) != String::npos);
+        assert(textureUpdateSource.find(_T("VulkanTexture.Update.Staging")) != String::npos);
+        assert(bufferUpdateSource.find(_T("m_desc.DebugName")) == String::npos);
+        assert(textureUpdateSource.find(_T("m_desc.DebugName")) == String::npos);
+    }
+
     class FakeTexture final : public NorvesLib::RHI::ITexture
     {
     public:
@@ -810,6 +1045,7 @@ int main()
     AssertRenderThreadAssetGpuFlushWindowWiring();
     AssertApplicationShutdownQuiescenceWiring();
     AssertVulkanWaitIdleTeardownWiring();
+    AssertVulkanAddressBindingDiagnosticsWiring();
 
     RenderResources manager;
     const TextureCreateInfo createInfo = MakeTextureCreateInfo("OwnedTexture");

@@ -16,6 +16,8 @@
 #include "Math/MatrixUtils.h"
 #include <iostream>
 #include <algorithm>
+#include <filesystem>
+#include <limits>
 #include "Container/Containers.h"
 
 // Dynamic dispatcherの定義
@@ -28,6 +30,8 @@ namespace NorvesLib::RHI::Vulkan
     using ::NorvesLib::Core::Container::FixedArray;
     using ::NorvesLib::Core::Container::MakeUnique;
     using ::NorvesLib::Core::Container::MakeShared;
+    using ::NorvesLib::Core::Container::String;
+    using ::NorvesLib::Core::Container::StringBuilder;
     using ::NorvesLib::Core::Container::StaticPointerCast;
     using ::NorvesLib::Core::Container::TSharedPtr;
     using ::NorvesLib::Core::Container::TWeakPtr;
@@ -79,9 +83,19 @@ namespace NorvesLib::RHI::Vulkan
         {
             SetupDebugMessenger();
         }
-
         PickPhysicalDevice();
         CreateLogicalDevice();
+#if defined(VK_EXT_device_address_binding_report)
+        if (m_bValidationEnabled &&
+            m_addressBindingReportFeatures.reportAddressBinding == VK_TRUE)
+        {
+            SetupAddressBindingDebugMessenger();
+            if (m_addressBindingDebugMessenger)
+            {
+                InitializeAddressBindingDiagnostics();
+            }
+        }
+#endif
         m_ResourceAllocator = MakeUnique<VulkanGPUResourceAllocator>(this);
         CreateCommandPool();
         InitFormatMaps();
@@ -109,6 +123,14 @@ namespace NorvesLib::RHI::Vulkan
         {
             m_device.destroy();
         }
+
+#if defined(VK_EXT_device_address_binding_report)
+        ShutdownAddressBindingDiagnostics();
+        if (m_addressBindingDebugMessenger)
+        {
+            m_instance.destroyDebugUtilsMessengerEXT(m_addressBindingDebugMessenger);
+        }
+#endif
 
         // デバッグメッセンジャーを破棄
         if (m_debugMessenger)
@@ -204,6 +226,7 @@ namespace NorvesLib::RHI::Vulkan
             vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
             vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
         createInfo.pfnUserCallback = reinterpret_cast<vk::PFN_DebugUtilsMessengerCallbackEXT>(DebugCallback);
+        createInfo.pUserData = this;
 
         auto result = m_instance.createDebugUtilsMessengerEXT(createInfo);
         if (result.result != vk::Result::eSuccess)
@@ -212,6 +235,24 @@ namespace NorvesLib::RHI::Vulkan
         }
         m_debugMessenger = result.value;
     }
+
+#if defined(VK_EXT_device_address_binding_report)
+    void VulkanDevice::SetupAddressBindingDebugMessenger()
+    {
+        vk::DebugUtilsMessengerCreateInfoEXT createInfo{};
+        createInfo.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo;
+        createInfo.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding;
+        createInfo.pfnUserCallback = reinterpret_cast<vk::PFN_DebugUtilsMessengerCallbackEXT>(DebugCallback);
+        createInfo.pUserData = this;
+
+        auto result = m_instance.createDebugUtilsMessengerEXT(createInfo);
+        if (result.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("アドレスバインディングデバッグメッセンジャーの設定に失敗しました");
+        }
+        m_addressBindingDebugMessenger = result.value;
+    }
+#endif
 
     // 物理デバイスの選択
     void VulkanDevice::PickPhysicalDevice()
@@ -302,6 +343,9 @@ namespace NorvesLib::RHI::Vulkan
 
         bool bDeviceFaultRequested = false;
         bool bCooperativeVectorRequested = false;
+#if defined(VK_EXT_device_address_binding_report)
+        bool bAddressBindingReportRequested = false;
+#endif
         for (const auto *ext : extensions)
         {
             if (String(ext) == String(VK_EXT_DEVICE_FAULT_EXTENSION_NAME))
@@ -313,6 +357,13 @@ namespace NorvesLib::RHI::Vulkan
             {
                 bCooperativeVectorRequested = true;
             }
+
+#if defined(VK_EXT_device_address_binding_report)
+            if (String(ext) == String(VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME))
+            {
+                bAddressBindingReportRequested = true;
+            }
+#endif
         }
 
         if (bDeviceFaultRequested)
@@ -333,6 +384,26 @@ namespace NorvesLib::RHI::Vulkan
                 deviceFaultFeaturesQuery.deviceFaultVendorBinary == VK_TRUE ? VK_TRUE : VK_FALSE;
         }
 
+#if defined(VK_EXT_device_address_binding_report)
+        m_addressBindingReportFeatures = {
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ADDRESS_BINDING_REPORT_FEATURES_EXT,
+            nullptr,
+            VK_FALSE};
+        if (bAddressBindingReportRequested)
+        {
+            VkPhysicalDeviceAddressBindingReportFeaturesEXT addressBindingReportFeaturesQuery{
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ADDRESS_BINDING_REPORT_FEATURES_EXT,
+                nullptr,
+                VK_FALSE};
+            vk::PhysicalDeviceFeatures2 addressBindingReportFeatures2Query{};
+            addressBindingReportFeatures2Query.pNext = &addressBindingReportFeaturesQuery;
+            m_physicalDevice.getFeatures2(&addressBindingReportFeatures2Query);
+
+            m_addressBindingReportFeatures.reportAddressBinding =
+                addressBindingReportFeaturesQuery.reportAddressBinding == VK_TRUE ? VK_TRUE : VK_FALSE;
+        }
+#endif
+
         void **featuresTail = &m_vulkan12Features.pNext;
         if (m_deviceFaultFeatures.deviceFault == VK_TRUE)
         {
@@ -349,6 +420,14 @@ namespace NorvesLib::RHI::Vulkan
             *featuresTail = &m_cooperativeVectorFeatures;
             featuresTail = &m_cooperativeVectorFeatures.pNext;
         }
+
+#if defined(VK_EXT_device_address_binding_report)
+        if (m_addressBindingReportFeatures.reportAddressBinding == VK_TRUE)
+        {
+            *featuresTail = &m_addressBindingReportFeatures;
+            featuresTail = &m_addressBindingReportFeatures.pNext;
+        }
+#endif
         *featuresTail = nullptr;
 
         // デバイス作成情報
@@ -587,6 +666,14 @@ namespace NorvesLib::RHI::Vulkan
             NORVES_LOG_INFO("VulkanDevice", "Optional extension enabled: VK_EXT_device_fault");
         }
 
+#if defined(VK_EXT_device_address_binding_report)
+        if (m_bValidationEnabled && hasExtension(VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME))
+        {
+            extensions.push_back(VK_EXT_DEVICE_ADDRESS_BINDING_REPORT_EXTENSION_NAME);
+            NORVES_LOG_INFO("VulkanDevice", "Optional extension enabled: VK_EXT_device_address_binding_report");
+        }
+#endif
+
         return extensions;
     }
 
@@ -744,6 +831,243 @@ namespace NorvesLib::RHI::Vulkan
         return Format::UNKNOWN;
     }
 
+#if defined(VK_EXT_device_address_binding_report)
+    namespace
+    {
+        const char *GetAddressBindingTypeName(VkDeviceAddressBindingTypeEXT bindingType)
+        {
+            switch (bindingType)
+            {
+            case VK_DEVICE_ADDRESS_BINDING_TYPE_BIND_EXT:
+                return "bind";
+            case VK_DEVICE_ADDRESS_BINDING_TYPE_UNBIND_EXT:
+                return "unbind";
+            default:
+                return "unknown";
+            }
+        }
+
+        const char *GetDebugObjectTypeName(VkObjectType objectType)
+        {
+            switch (objectType)
+            {
+            case VK_OBJECT_TYPE_BUFFER:
+                return "VK_OBJECT_TYPE_BUFFER";
+            case VK_OBJECT_TYPE_IMAGE:
+                return "VK_OBJECT_TYPE_IMAGE";
+            case VK_OBJECT_TYPE_DEVICE_MEMORY:
+                return "VK_OBJECT_TYPE_DEVICE_MEMORY";
+            case VK_OBJECT_TYPE_IMAGE_VIEW:
+                return "VK_OBJECT_TYPE_IMAGE_VIEW";
+            case VK_OBJECT_TYPE_SAMPLER:
+                return "VK_OBJECT_TYPE_SAMPLER";
+            case VK_OBJECT_TYPE_PIPELINE:
+                return "VK_OBJECT_TYPE_PIPELINE";
+            case VK_OBJECT_TYPE_DESCRIPTOR_SET:
+                return "VK_OBJECT_TYPE_DESCRIPTOR_SET";
+            default:
+                return "<unknown>";
+            }
+        }
+
+        String EscapeAddressBindingText(const char *pText)
+        {
+            if (pText == nullptr || pText[0] == '\0')
+            {
+                return "<unnamed>";
+            }
+
+            StringBuilder builder;
+            for (const unsigned char *pCharacter = reinterpret_cast<const unsigned char *>(pText);
+                 *pCharacter != '\0';
+                 ++pCharacter)
+            {
+                switch (*pCharacter)
+                {
+                case '\\':
+                    builder.Append("\\\\");
+                    break;
+                case '\"':
+                    builder.Append("\\\"");
+                    break;
+                case '\r':
+                    builder.Append("\\r");
+                    break;
+                case '\n':
+                    builder.Append("\\n");
+                    break;
+                default:
+                    if (*pCharacter < 0x20 || *pCharacter == 0x7F)
+                    {
+                        builder.AppendFormat("\\x%02X", static_cast<uint32_t>(*pCharacter));
+                    }
+                    else
+                    {
+                        builder.Append(static_cast<char>(*pCharacter));
+                    }
+                    break;
+                }
+            }
+            return builder.ToString();
+        }
+    }
+
+    void VulkanDevice::InitializeAddressBindingDiagnostics()
+    {
+#if defined(NORVES_ASSET_DIR)
+        String assetDirectory = NORVES_ASSET_DIR;
+        constexpr const char *assetsName = "Assets";
+        const size_t assetsNameLength = 6;
+        if (assetDirectory.size() <= assetsNameLength ||
+            assetDirectory.substr(assetDirectory.size() - assetsNameLength) != assetsName ||
+            (assetDirectory[assetDirectory.size() - assetsNameLength - 1] != '/' &&
+             assetDirectory[assetDirectory.size() - assetsNameLength - 1] != '\\'))
+        {
+            NORVES_LOG_WARNING("VulkanDevice", "Address binding diagnostics disabled: NORVES_ASSET_DIR must end in Assets");
+            return;
+        }
+
+        const String repositoryRoot = assetDirectory.substr(0, assetDirectory.size() - assetsNameLength - 1);
+        const String diagnosticsDirectory = repositoryRoot + "/build/Diagnostics";
+        std::error_code errorCode;
+        std::filesystem::create_directories(diagnosticsDirectory.c_str(), errorCode);
+        if (errorCode)
+        {
+            NORVES_LOG_WARNING("VulkanDevice", "Address binding diagnostics disabled: cannot create diagnostics directory");
+            return;
+        }
+
+        const String diagnosticsPath = diagnosticsDirectory + "/VulkanAddressBindings.log";
+        m_addressBindingDiagnosticsSink = FileStream::FileStream::Create(
+            diagnosticsPath,
+            FileStream::FileMode::Append,
+            FileStream::FileAccess::Write);
+        if (!m_addressBindingDiagnosticsSink || !m_addressBindingDiagnosticsSink->IsOpen())
+        {
+            m_addressBindingDiagnosticsSink.reset();
+            NORVES_LOG_WARNING("VulkanDevice", "Address binding diagnostics disabled: cannot open diagnostics file");
+            return;
+        }
+
+        m_addressBindingDiagnosticsSink->WriteString("schema=vulkan_device_address_binding_v1\n");
+        m_addressBindingDiagnosticsSink->Flush();
+#else
+        NORVES_LOG_WARNING("VulkanDevice", "Address binding diagnostics disabled: NORVES_ASSET_DIR is unavailable");
+#endif
+    }
+
+    void VulkanDevice::ShutdownAddressBindingDiagnostics()
+    {
+        NorvesLib::Thread::ScopedLock lock(m_addressBindingDiagnosticsMutex);
+        if (m_addressBindingDiagnosticsSink && m_addressBindingDiagnosticsSink->IsOpen())
+        {
+            m_addressBindingDiagnosticsSink->Flush();
+            m_addressBindingDiagnosticsSink->Close();
+        }
+        m_addressBindingDiagnosticsSink.reset();
+    }
+
+    const VkDeviceAddressBindingCallbackDataEXT *VulkanDevice::FindAddressBindingCallbackData(
+        const VkDebugUtilsMessengerCallbackDataEXT &callbackData)
+    {
+        const VkBaseInStructure *pNext = reinterpret_cast<const VkBaseInStructure *>(callbackData.pNext);
+        while (pNext != nullptr)
+        {
+            if (pNext->sType == VK_STRUCTURE_TYPE_DEVICE_ADDRESS_BINDING_CALLBACK_DATA_EXT)
+            {
+                return reinterpret_cast<const VkDeviceAddressBindingCallbackDataEXT *>(pNext);
+            }
+            pNext = pNext->pNext;
+        }
+        return nullptr;
+    }
+
+    void VulkanDevice::RecordAddressBindingDiagnostic(
+        const VkDebugUtilsMessengerCallbackDataEXT &callbackData,
+        const VkDeviceAddressBindingCallbackDataEXT &addressBindingData)
+    {
+        NorvesLib::Thread::ScopedLock lock(m_addressBindingDiagnosticsMutex);
+        if (!m_addressBindingDiagnosticsSink || !m_addressBindingDiagnosticsSink->IsOpen())
+        {
+            return;
+        }
+
+        const uint64_t baseAddress = static_cast<uint64_t>(addressBindingData.baseAddress);
+        const uint64_t size = static_cast<uint64_t>(addressBindingData.size);
+        const uint64_t endAddress = size > std::numeric_limits<uint64_t>::max() - baseAddress
+                                        ? std::numeric_limits<uint64_t>::max()
+                                        : baseAddress + size;
+        StringBuilder line;
+        line.AppendFormat(
+            "event_id=%llu binding=%s base=0x%llX size=0x%llX end=0x%llX flags=0x%X internal_object=%u object_count=%u",
+            static_cast<unsigned long long>(m_addressBindingDiagnosticsSequence++),
+            GetAddressBindingTypeName(addressBindingData.bindingType),
+            static_cast<unsigned long long>(baseAddress),
+            static_cast<unsigned long long>(size),
+            static_cast<unsigned long long>(endAddress),
+            static_cast<uint32_t>(addressBindingData.flags),
+            (addressBindingData.flags & VK_DEVICE_ADDRESS_BINDING_INTERNAL_OBJECT_BIT_EXT) != 0 ? 1U : 0U,
+            callbackData.objectCount);
+
+        if (callbackData.objectCount == 0)
+        {
+            line.Append(" object0_type=0 object0_type_name=\"<none>\" object0_handle=0x0 object0_name=\"<unnamed>\"");
+        }
+        else if (callbackData.pObjects == nullptr)
+        {
+            line.Append(" object0_type=0 object0_type_name=\"<unavailable>\" object0_handle=0x0 object0_name=\"<unnamed>\"");
+        }
+        else
+        {
+            for (uint32_t objectIndex = 0; objectIndex < callbackData.objectCount; ++objectIndex)
+            {
+                const VkDebugUtilsObjectNameInfoEXT &object = callbackData.pObjects[objectIndex];
+                line.AppendFormat(
+                    " object%u_type=%u object%u_type_name=\"%s\" object%u_handle=0x%llX object%u_name=\"%s\"",
+                    objectIndex,
+                    static_cast<uint32_t>(object.objectType),
+                    objectIndex,
+                    GetDebugObjectTypeName(object.objectType),
+                    objectIndex,
+                    static_cast<unsigned long long>(object.objectHandle),
+                    objectIndex,
+                    EscapeAddressBindingText(object.pObjectName).c_str());
+            }
+        }
+
+        line.Append("\n");
+        m_addressBindingDiagnosticsSink->WriteString(line.ToString());
+        m_addressBindingDiagnosticsSink->Flush();
+    }
+
+#endif
+
+    void VulkanDevice::SetDebugObjectName(vk::ObjectType objectType, uint64_t objectHandle, const char *pName)
+    {
+        if (!m_device || objectHandle == 0 || pName == nullptr || pName[0] == '\0')
+        {
+            return;
+        }
+
+        const PFN_vkSetDebugUtilsObjectNameEXT setDebugUtilsObjectName =
+            reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+                VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr(
+                    static_cast<VkDevice>(m_device),
+                    "vkSetDebugUtilsObjectNameEXT"));
+        if (setDebugUtilsObjectName == nullptr)
+        {
+            return;
+        }
+
+        const VkDebugUtilsObjectNameInfoEXT nameInfo{
+            VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+            nullptr,
+            static_cast<VkObjectType>(objectType),
+            objectHandle,
+            pName};
+        (void)setDebugUtilsObjectName(static_cast<VkDevice>(m_device), &nameInfo);
+    }
+
     // デバッグコールバック
     VKAPI_ATTR VkBool32 VKAPI_CALL VulkanDevice::DebugCallback(
         VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -751,12 +1075,37 @@ namespace NorvesLib::RHI::Vulkan
         const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
         void *pUserData)
     {
-        if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+        try
         {
-            std::cerr << "Vulkanバリデーション: " << pCallbackData->pMessage << std::endl;
+            if (pCallbackData != nullptr &&
+                messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+            {
+                std::cerr << "Vulkanバリデーション: " << pCallbackData->pMessage << std::endl;
+            }
+
+#if defined(VK_EXT_device_address_binding_report)
+            if (pCallbackData != nullptr && pUserData != nullptr &&
+                (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT) != 0)
+            {
+                const VkDeviceAddressBindingCallbackDataEXT *addressBindingData =
+                    FindAddressBindingCallbackData(*pCallbackData);
+                if (addressBindingData != nullptr)
+                {
+                    static_cast<VulkanDevice *>(pUserData)->RecordAddressBindingDiagnostic(
+                        *pCallbackData,
+                        *addressBindingData);
+                }
+            }
+#else
+            (void)messageType;
+            (void)pUserData;
+#endif
+        }
+        catch (...)
+        {
         }
 
-        return VK_FALSE; // メッセージを処理したことを示す
+        return VK_FALSE;
     }
 
 #include "VulkanBuffer.h"

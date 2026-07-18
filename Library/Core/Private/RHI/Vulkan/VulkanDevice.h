@@ -13,7 +13,9 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
+#include "FileStream/FileStream.h"
 #include "Thread/Atomic.h"
+#include "Thread/Mutex.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -162,6 +164,17 @@ namespace NorvesLib::RHI::Vulkan
             VK_FALSE};
         Thread::Atomic<bool> m_bDeviceFaultReported{false};
 
+#if defined(VK_EXT_device_address_binding_report)
+        // Address Binding Report 機能構造体（Features2チェーン用）
+        VkPhysicalDeviceAddressBindingReportFeaturesEXT m_addressBindingReportFeatures{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ADDRESS_BINDING_REPORT_FEATURES_EXT,
+            nullptr,
+            VK_FALSE};
+        FileStream::FileStreamPtr m_addressBindingDiagnosticsSink;
+        Thread::Mutex m_addressBindingDiagnosticsMutex;
+        uint64_t m_addressBindingDiagnosticsSequence = 0;
+#endif
+
         // Vulkan 1.2 機能構造体（Features2チェーン用）
         vk::PhysicalDeviceVulkan12Features m_vulkan12Features{};
 
@@ -185,6 +198,9 @@ namespace NorvesLib::RHI::Vulkan
 
         // デバッグ・バリデーション用
         vk::DebugUtilsMessengerEXT m_debugMessenger;
+#if defined(VK_EXT_device_address_binding_report)
+        vk::DebugUtilsMessengerEXT m_addressBindingDebugMessenger;
+#endif
         bool m_bValidationEnabled = false;
 
         // フォーマット変換テーブル
@@ -207,6 +223,18 @@ namespace NorvesLib::RHI::Vulkan
         void FindQueueFamilies(vk::PhysicalDevice device);
         void ReportDeviceFaultOnce();
 
+#if defined(VK_EXT_device_address_binding_report)
+        void SetupAddressBindingDebugMessenger();
+        void InitializeAddressBindingDiagnostics();
+        void ShutdownAddressBindingDiagnostics();
+        void RecordAddressBindingDiagnostic(
+            const VkDebugUtilsMessengerCallbackDataEXT &callbackData,
+            const VkDeviceAddressBindingCallbackDataEXT &addressBindingData);
+        static const VkDeviceAddressBindingCallbackDataEXT *FindAddressBindingCallbackData(
+            const VkDebugUtilsMessengerCallbackDataEXT &callbackData);
+#endif
+        void SetDebugObjectName(vk::ObjectType objectType, uint64_t objectHandle, const char *pName);
+
         // バリデーション関連
         bool CheckValidationLayerSupport();
         static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
@@ -214,6 +242,9 @@ namespace NorvesLib::RHI::Vulkan
             VkDebugUtilsMessageTypeFlagsEXT messageType,
             const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
             void *pUserData);
+
+        friend class VulkanBuffer;
+        friend class VulkanTexture;
     };
 
 } // namespace NorvesLib::RHI::Vulkan

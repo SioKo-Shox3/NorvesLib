@@ -129,6 +129,10 @@ namespace NorvesLib::RHI::Vulkan
         : m_device(device), m_desc(desc), m_image(image), m_bOwnsImage(false)
     {
         InitializeSubresourceLayouts(vk::ImageLayout::eUndefined);
+        m_device->SetDebugObjectName(
+            vk::ObjectType::eImage,
+            reinterpret_cast<uint64_t>(static_cast<VkImage>(m_image)),
+            m_desc.DebugName);
         CreateImageView();
     }
 
@@ -212,6 +216,10 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("イメージの作成に失敗しました");
         }
         m_image = createResult.value;
+        m_device->SetDebugObjectName(
+            vk::ObjectType::eImage,
+            reinterpret_cast<uint64_t>(static_cast<VkImage>(m_image)),
+            m_desc.DebugName);
 
         // メモリ要件の取得
         vk::MemoryRequirements memRequirements = vkDevice.getImageMemoryRequirements(m_image);
@@ -477,6 +485,10 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("ステージングバッファの作成に失敗しました");
         }
         vk::Buffer stagingBuffer = bufferResult.value;
+        m_device->SetDebugObjectName(
+            vk::ObjectType::eBuffer,
+            reinterpret_cast<uint64_t>(static_cast<VkBuffer>(stagingBuffer)),
+            "VulkanTexture.Update.Staging");
 
         // メモリ要件の取得
         vk::MemoryRequirements memRequirements = vkDevice.getBufferMemoryRequirements(stagingBuffer);

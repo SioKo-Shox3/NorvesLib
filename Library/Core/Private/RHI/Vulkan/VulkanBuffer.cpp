@@ -131,6 +131,7 @@ namespace NorvesLib::RHI::Vulkan
             stagingDesc.Size = size;
             stagingDesc.Usage = ResourceUsage::TransferSrc;
             stagingDesc.CPUAccessible = true;
+            stagingDesc.DebugName = "VulkanBuffer.Update.Staging";
 
             auto stagingBuffer = MakeShared<VulkanBuffer>(m_device, stagingDesc);
 
@@ -174,6 +175,10 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("Vulkanバッファの作成に失敗しました");
         }
         m_buffer = createResult.value;
+        m_device->SetDebugObjectName(
+            vk::ObjectType::eBuffer,
+            reinterpret_cast<uint64_t>(static_cast<VkBuffer>(m_buffer)),
+            m_desc.DebugName);
 
         // メモリ要件の取得
         vk::MemoryRequirements memRequirements = vkDevice.getBufferMemoryRequirements(m_buffer);
