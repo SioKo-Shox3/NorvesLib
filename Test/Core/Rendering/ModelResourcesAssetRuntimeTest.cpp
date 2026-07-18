@@ -14,7 +14,10 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <condition_variable>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #undef assert
@@ -32,6 +35,22 @@ namespace CookedModelSupport = NorvesLib::Test::CookedModelSupport;
 namespace Rendering = NorvesLib::Core::Rendering;
 namespace Container = NorvesLib::Core::Container;
 namespace Asset = NorvesLib::Core::Asset;
+
+namespace NorvesLib::Core::Rendering
+{
+    struct ModelAssetRuntimeShutdownTestAccess
+    {
+        static void SetAdmissionCloseHook(ModelAssetRuntime& runtime, Delegate<void> hook)
+        {
+            runtime.m_AdmissionCloseHookForTesting = std::move(hook);
+        }
+
+        static void SetQueueWaitHook(ModelAssetRuntime& runtime, Delegate<void> hook)
+        {
+            runtime.m_Queue.SetWaitHookForTesting(std::move(hook));
+        }
+    };
+}
 
 namespace
 {
@@ -401,15 +420,142 @@ namespace
         assert(!resources.MegaGeometry().GetModelMegaMeshHandle(zeroLease).IsValid());
         assert(resources.MegaGeometry().GetMegaMeshGPUData(zeroLeaseMega) == nullptr);
 
-        assert(runtime.CloseAndDrain());
+        bool bAdmissionCloseHookRan = false;
+        Rendering::ModelAssetRuntimeShutdownTestAccess::SetAdmissionCloseHook(
+            runtime,
+            [&bAdmissionCloseHookRan]()
+            {
+                bAdmissionCloseHookRan = true;
+            });
+        runtime.CloseAndDrain();
+        assert(bAdmissionCloseHookRan);
         assert(runtime.LoadModelAsync("Models/Triangle.nvmesh", {}) == 0);
         assert(!runtime.SetAssetSystem(fixture.System));
         assert(runtime.FlushCompletedModelLoads(0) == 0);
-        runtime.ReopenAfterClear();
+        runtime.Bind(&resources.Textures(), &resources.MegaGeometry());
         assert(runtime.SetAssetSystem(fixture.System));
         runtime.Unbind();
         resources.Shutdown();
         assert(FakeBuffer::LiveCount.load() == 0);
+    }
+
+    void TestModelProductionCallbackCloseWait()
+    {
+        using namespace std::chrono_literals;
+        AssetFixture fixture("callback_close");
+        Rendering::RenderResources resources;
+        auto device = Container::MakeShared<FakeDevice>();
+        assert(resources.Initialize(device));
+
+        Rendering::ModelAssetRuntime runtime;
+        runtime.Bind(&resources.Textures(), &resources.MegaGeometry());
+        assert(runtime.SetAssetSystem(fixture.System));
+
+        std::mutex gateMutex;
+        std::condition_variable gateCondition;
+        bool bCallbackEntered = false;
+        bool bCloseAdmissionReached = false;
+        bool bQueueWaitReached = false;
+        bool bReleaseCallback = false;
+        uint32_t lateRequestId = 99;
+        std::atomic<bool> bCloseReturned{false};
+
+        Rendering::ModelAssetRuntimeShutdownTestAccess::SetAdmissionCloseHook(
+            runtime,
+            [&gateMutex, &gateCondition, &bCloseAdmissionReached]()
+            {
+                std::lock_guard<std::mutex> lock(gateMutex);
+                bCloseAdmissionReached = true;
+                gateCondition.notify_all();
+            });
+        Rendering::ModelAssetRuntimeShutdownTestAccess::SetQueueWaitHook(
+            runtime,
+            [&gateMutex, &gateCondition, &bQueueWaitReached]()
+            {
+                std::lock_guard<std::mutex> lock(gateMutex);
+                bQueueWaitReached = true;
+                gateCondition.notify_all();
+            });
+
+        assert(runtime.LoadModelAsync(
+                   "Models/Triangle.nvmesh",
+                   [&runtime, &gateMutex, &gateCondition, &bCallbackEntered,
+                    &bCloseAdmissionReached, &bReleaseCallback, &lateRequestId](Rendering::ModelHandle)
+                   {
+                       std::unique_lock<std::mutex> lock(gateMutex);
+                       bCallbackEntered = true;
+                       gateCondition.notify_all();
+                       gateCondition.wait(lock, [&bCloseAdmissionReached]()
+                       {
+                           return bCloseAdmissionReached;
+                       });
+                       lateRequestId = runtime.LoadModelAsync("Models/Triangle.nvmesh", {});
+                       gateCondition.wait(lock, [&bReleaseCallback]()
+                       {
+                           return bReleaseCallback;
+                       });
+                   }) != 0);
+        WaitForWorkers();
+
+        std::thread flushThread([&runtime]()
+        {
+            runtime.FlushCompletedModelLoads(0);
+        });
+
+        bool bCallbackObserved = false;
+        {
+            std::unique_lock<std::mutex> lock(gateMutex);
+            bCallbackObserved = gateCondition.wait_for(lock, 2s, [&bCallbackEntered]()
+            {
+                return bCallbackEntered;
+            });
+        }
+        bool bWaitObserved = false;
+        bool bCloseBlocked = false;
+        std::thread closeThread;
+        if (bCallbackObserved)
+        {
+            closeThread = std::thread([&runtime, &bCloseReturned]()
+            {
+                runtime.CloseAndDrain();
+                bCloseReturned.store(true, std::memory_order_release);
+            });
+            {
+                std::unique_lock<std::mutex> lock(gateMutex);
+                bWaitObserved = gateCondition.wait_for(lock, 2s, [&bQueueWaitReached]()
+                {
+                    return bQueueWaitReached;
+                });
+            }
+            bCloseBlocked = !bCloseReturned.load(std::memory_order_acquire);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(gateMutex);
+            bCloseAdmissionReached = true;
+            bReleaseCallback = true;
+            gateCondition.notify_all();
+        }
+        flushThread.join();
+        if (closeThread.joinable())
+        {
+            closeThread.join();
+        }
+
+        assert(bCallbackObserved);
+        assert(bWaitObserved);
+        assert(lateRequestId == 0);
+        assert(bCloseBlocked);
+        assert(bCloseReturned.load(std::memory_order_acquire));
+        assert(runtime.GetPendingAsyncModelLoadCount() == 0);
+
+        runtime.Bind(&resources.Textures(), &resources.MegaGeometry());
+        assert(runtime.SetAssetSystem(fixture.System));
+        const uint32_t reopenedRequest = runtime.LoadModelAsync("Models/Triangle.nvmesh", {});
+        assert(reopenedRequest != 0);
+        runtime.CancelModelLoad(reopenedRequest);
+        runtime.CloseAndDrain();
+        resources.Shutdown();
     }
 }
 
@@ -419,6 +565,7 @@ int main()
     TestPublicSyncAndAsyncLeaseContract();
     TestCancelClearAndShutdownAdmission();
     TestGenerationGatesAndLostPublishCleanup();
+    TestModelProductionCallbackCloseWait();
     NorvesLib::Thread::JobSystem::Get().Shutdown();
     std::cout << "ModelResourcesAssetRuntimeTest passed\n";
     return 0;

@@ -1,4 +1,8 @@
 #include "Rendering/RenderResources.h"
+#include "Library/Core/Private/Rendering/TextureAssetRuntime.h"
+#include "Library/Core/Private/Rendering/TextureAssetResolver.h"
+#include "Library/Core/Private/Rendering/TextureAsyncLoadQueue.h"
+#include "Resource/GLTFAnalyzer.h"
 #include "Library/Core/Private/Rendering/RenderWorldAssetFlushPolicy.h"
 #include "Container/String.h"
 #include "RHI/IBuffer.h"
@@ -11,13 +15,19 @@
 #include "RHI/IShader.h"
 #include "RHI/IShaderCompiler.h"
 #include "RHI/ISwapChain.h"
+#include "Thread/JobSystem.h"
 
 #include <cassert>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
+#include <thread>
 #include <vector>
 #if defined(_MSC_VER)
 #include <crtdbg.h>
@@ -37,6 +47,66 @@
 using namespace NorvesLib::Core::Rendering;
 using NorvesLib::Core::Container::MakeShared;
 using NorvesLib::Core::Container::String;
+
+namespace NorvesLib::Core::Resource
+{
+    struct GLTFAnalyzerShutdownTestAccess
+    {
+        static void Close()
+        {
+            GLTFAnalyzer::CloseAsyncAssetLoadAdmissionAndWait();
+        }
+
+        static void Reopen()
+        {
+            GLTFAnalyzer::ReopenAsyncAssetLoadAdmission();
+        }
+
+        static bool IsOpen()
+        {
+            return GLTFAnalyzer::IsAsyncAssetLoadAdmissionOpen();
+        }
+    };
+}
+
+namespace NorvesLib::Core::Rendering
+{
+    struct TextureAsyncLoadQueueShutdownTestAccess
+    {
+        static void SetWaitHook(TextureAsyncLoadQueue& queue, Delegate<void> hook)
+        {
+            queue.SetWaitHookForTesting(std::move(hook));
+        }
+    };
+
+    struct TextureAssetRuntimeShutdownTestAccess
+    {
+        static TextureAssetRuntime* Get(RenderResources& resources)
+        {
+            return resources.GetTextureAssetRuntimeForTesting();
+        }
+
+        static void SetAdmissionCloseHook(TextureAssetRuntime& runtime, Delegate<void> hook)
+        {
+            runtime.m_AdmissionCloseHookForTesting = std::move(hook);
+        }
+
+        static void Close(TextureAssetRuntime& runtime)
+        {
+            runtime.CloseAndWait();
+        }
+
+        static void Reopen(TextureAssetRuntime& runtime)
+        {
+            runtime.Bind(runtime.m_pDevice, runtime.m_pGpuResources);
+        }
+
+        static void SetQueueWaitHook(TextureAssetRuntime& runtime, Delegate<void> hook)
+        {
+            TextureAsyncLoadQueueShutdownTestAccess::SetWaitHook(*runtime.m_TextureAsyncLoads, std::move(hook));
+        }
+    };
+}
 
 namespace
 {
@@ -447,19 +517,56 @@ namespace
 
         const String applicationProcessorSource = ReadTextFile(
             repositoryRoot / "Library/Core/Private/Engine/ApplicationProcessor.cpp");
+        const String renderWorldHeader = ReadTextFile(
+            repositoryRoot / "Library/Core/Public/Rendering/RenderWorld.h");
+        const String renderWorldSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/Rendering/RenderWorld.cpp");
+        const String renderResourcesSource = ReadTextFile(
+            repositoryRoot / "Library/Core/Private/Rendering/RenderResources.cpp");
         const String shutdownSource = ReadFunctionSource(
             applicationProcessorSource, _T("void ApplicationProcessor::Shutdown()"));
+        const String renderWorldShutdownSource = ReadFunctionSource(
+            renderWorldSource, _T("void RenderWorld::Shutdown()"));
+        const String quiesceSource = ReadFunctionSource(
+            renderWorldSource, _T("void RenderWorld::QuiesceAsyncAssetProducersAndWait()"));
+        const String closeResourcesSource = ReadFunctionSource(
+            renderResourcesSource, _T("void RenderResources::CloseAsyncAssetLoadAdmissionAndWait()"));
 
         const String waitForRenderCall = _T("GEngine->GetRenderWorld().WaitForRender();");
+        const String quiesceCall = _T("GEngine->GetRenderWorld().QuiesceAsyncAssetProducersAndWait();");
+        const String stopAcceptingCall = _T("Thread::JobSystem::Get().StopAcceptingTasks();");
+        const String drainAcceptedCall = _T("Thread::JobSystem::Get().DrainAcceptedFiniteTasks();");
         const size_t handlerLookupPosition = shutdownSource.find(_T("auto *handler = GEngine->GetApplicationHandler();"));
         const size_t waitForRenderPosition = shutdownSource.find(waitForRenderCall);
+        const size_t quiescePosition = shutdownSource.find(quiesceCall);
+        const size_t stopAcceptingPosition = shutdownSource.find(stopAcceptingCall);
+        const size_t drainAcceptedPosition = shutdownSource.find(drainAcceptedCall);
         const size_t preShutdownPosition = shutdownSource.find(_T("handler->OnPreShutdown();"));
         const size_t stateMachineShutdownPosition = shutdownSource.find(_T("stateMachine->Shutdown();"));
         const size_t sceneQueryClearPosition = shutdownSource.find(_T("GEngine->GetSceneQuery().Clear();"));
         const size_t worldFinalizePosition = shutdownSource.find(_T("GEngine->GetWorld().Finalize();"));
         const size_t renderWorldShutdownPosition = shutdownSource.find(_T("GEngine->GetRenderWorld().Shutdown();"));
+        const size_t rhiTeardownPosition = shutdownSource.find(_T("m_Device.reset();"));
+        const size_t destroyEnginePosition = shutdownSource.find(_T("DestroyEngine();"));
+        const size_t jobSystemShutdownPosition = shutdownSource.find(_T("Thread::JobSystem::Get().Shutdown();"));
+        const size_t legacyClosePosition = quiesceSource.find(
+            _T("Resource::GLTFAnalyzer::CloseAsyncAssetLoadAdmissionAndWait();"));
+        const size_t resourcesClosePosition = quiesceSource.find(
+            _T("m_RenderResources.CloseAsyncAssetLoadAdmissionAndWait();"));
+        const size_t modelClosePosition = closeResourcesSource.find(_T("m_Impl->ModelAssets->CloseAndDrain();"));
+        const size_t textureClosePosition = closeResourcesSource.find(_T("m_Impl->TextureAssets->CloseAndWait();"));
 
         assert(CountOccurrences(shutdownSource, waitForRenderCall) == 1);
+        assert(CountOccurrences(shutdownSource, quiesceCall) == 1);
+        assert(CountOccurrences(shutdownSource, stopAcceptingCall) == 1);
+        assert(CountOccurrences(shutdownSource, drainAcceptedCall) == 1);
+        assert(shutdownSource.find(_T("WaitForAll()")) == String::npos);
+        assert(renderWorldHeader.find(_T("void QuiesceAsyncAssetProducersAndWait();")) != String::npos);
+        assert(quiesceSource.find(_T("Resource::GLTFAnalyzer::CloseAsyncAssetLoadAdmissionAndWait();")) != String::npos);
+        assert(quiesceSource.find(_T("m_RenderResources.CloseAsyncAssetLoadAdmissionAndWait();")) != String::npos);
+        assert(renderWorldShutdownSource.find(_T("QuiesceAsyncAssetProducersAndWait();")) != String::npos);
+        assert(closeResourcesSource.find(_T("m_Impl->ModelAssets->CloseAndDrain();")) != String::npos);
+        assert(closeResourcesSource.find(_T("m_Impl->TextureAssets->CloseAndWait();")) != String::npos);
         assert(handlerLookupPosition != String::npos);
         assert(waitForRenderPosition != String::npos);
         assert(preShutdownPosition != String::npos);
@@ -467,12 +574,23 @@ namespace
         assert(sceneQueryClearPosition != String::npos);
         assert(worldFinalizePosition != String::npos);
         assert(renderWorldShutdownPosition != String::npos);
+        assert(rhiTeardownPosition != String::npos);
+        assert(destroyEnginePosition != String::npos);
+        assert(jobSystemShutdownPosition != String::npos);
+        assert(legacyClosePosition < resourcesClosePosition);
+        assert(modelClosePosition < textureClosePosition);
         assert(handlerLookupPosition < waitForRenderPosition);
-        assert(waitForRenderPosition < preShutdownPosition);
+        assert(waitForRenderPosition < quiescePosition);
+        assert(quiescePosition < stopAcceptingPosition);
+        assert(stopAcceptingPosition < drainAcceptedPosition);
+        assert(drainAcceptedPosition < preShutdownPosition);
         assert(preShutdownPosition < stateMachineShutdownPosition);
         assert(stateMachineShutdownPosition < sceneQueryClearPosition);
         assert(sceneQueryClearPosition < worldFinalizePosition);
         assert(worldFinalizePosition < renderWorldShutdownPosition);
+        assert(renderWorldShutdownPosition < rhiTeardownPosition);
+        assert(rhiTeardownPosition < destroyEnginePosition);
+        assert(destroyEnginePosition < jobSystemShutdownPosition);
     }
 
     void AssertAssetGpuFlushDecisionMatrix()
@@ -1029,6 +1147,255 @@ namespace
         desc.DebugName = "ExternalTexture";
         return desc;
     }
+
+    void TestLegacyGLTFAdmission(RenderResources& manager)
+    {
+        using NorvesLib::Core::Resource::GLTFAnalyzer;
+        using NorvesLib::Core::Resource::GLTFAnalyzerShutdownTestAccess;
+
+        GLTFAnalyzerShutdownTestAccess::Reopen();
+        assert(GLTFAnalyzerShutdownTestAccess::IsOpen());
+        const ModelLoadResourceContext context{manager.Textures(), manager.MegaGeometry()};
+        const uint32_t firstRequest = GLTFAnalyzer::LoadModelAsync("missing_shutdown_contract.gltf", context);
+        assert(firstRequest != 0);
+        GLTFAnalyzer::CancelModelLoad(firstRequest);
+        assert(GLTFAnalyzerShutdownTestAccess::IsOpen());
+
+        GLTFAnalyzerShutdownTestAccess::Close();
+        assert(!GLTFAnalyzerShutdownTestAccess::IsOpen());
+        assert(GLTFAnalyzer::GetPendingAsyncModelLoadCount() == 0);
+        assert(GLTFAnalyzer::LoadModelAsync("missing_shutdown_contract.gltf", context) == 0);
+        GLTFAnalyzerShutdownTestAccess::Close();
+
+        GLTFAnalyzerShutdownTestAccess::Reopen();
+        assert(GLTFAnalyzerShutdownTestAccess::IsOpen());
+        const uint32_t reopenedRequest = GLTFAnalyzer::LoadModelAsync("missing_shutdown_reopen.gltf", context);
+        assert(reopenedRequest != 0);
+        GLTFAnalyzer::CancelModelLoad(reopenedRequest);
+        GLTFAnalyzerShutdownTestAccess::Close();
+        GLTFAnalyzerShutdownTestAccess::Reopen();
+    }
+
+    void TestTextureAdmission(RenderResources& manager)
+    {
+        TextureAssetRuntime* runtime =
+            NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Get(manager);
+        assert(runtime != nullptr);
+
+        bool bAdmissionCloseHookRan = false;
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::SetAdmissionCloseHook(
+            *runtime,
+            [&bAdmissionCloseHookRan]()
+            {
+                bAdmissionCloseHookRan = true;
+            });
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Close(*runtime);
+        assert(bAdmissionCloseHookRan);
+        assert(manager.Textures().GetPendingAsyncLoadCount() == 0);
+        assert(manager.Textures().LoadTextureAsync("missing_shutdown_contract.png") == 0);
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Close(*runtime);
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Reopen(*runtime);
+
+        const uint32_t reopenedRequest = manager.Textures().LoadTextureAsync("missing_shutdown_reopen.png");
+        assert(reopenedRequest != 0);
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Close(*runtime);
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Reopen(*runtime);
+    }
+
+    void TestTextureQueueCloseWaitHandshake()
+    {
+        using namespace std::chrono_literals;
+        TextureAsyncLoadQueue queue;
+        TextureAssetLoadPlan plan;
+        plan.RequestPath = "queue_wait_handshake.png";
+        plan.CacheKey = "queue_wait_handshake";
+        auto request = queue.CreateRequest(
+            plan,
+            TextureAssetFallbackMode::FailOnCookedFailure,
+            {});
+        assert(request != nullptr);
+        request->Task = NorvesLib::Thread::Task::Create([]() {});
+        assert(queue.EnqueueOrAppendDuplicateAndSubmit(request).bSubmitted);
+        request->Task->Cancel();
+        request->Task->Wait();
+
+        TextureAsyncLoadQueue::CompletedBatch batch = queue.DetachCompletedRequests();
+        assert(batch.Requests.size() == 1);
+
+        std::mutex gateMutex;
+        std::condition_variable gateCondition;
+        bool bWaitHookReached = false;
+        std::atomic<bool> bCloseReturned{false};
+        NorvesLib::Core::Rendering::TextureAsyncLoadQueueShutdownTestAccess::SetWaitHook(
+            queue,
+            [&gateMutex, &gateCondition, &bWaitHookReached]()
+            {
+                std::lock_guard<std::mutex> lock(gateMutex);
+                bWaitHookReached = true;
+                gateCondition.notify_all();
+            });
+
+        std::thread closeThread([&queue, &bCloseReturned]()
+        {
+            queue.CloseCancelAllAndWait();
+            bCloseReturned.store(true, std::memory_order_release);
+        });
+
+        bool bHookObserved = false;
+        {
+            std::unique_lock<std::mutex> lock(gateMutex);
+            bHookObserved = gateCondition.wait_for(lock, 2s, [&bWaitHookReached]()
+            {
+                return bWaitHookReached;
+            });
+        }
+        if (!bHookObserved)
+        {
+            batch.Guard.Reset();
+            closeThread.join();
+            assert(bHookObserved);
+        }
+        assert(!bCloseReturned.load(std::memory_order_acquire));
+
+        batch.Guard.Reset();
+        closeThread.join();
+        assert(bCloseReturned.load(std::memory_order_acquire));
+        assert(queue.GetPendingCount() == 0);
+    }
+
+    void TestTextureProductionCallbackCloseWait(RenderResources& manager)
+    {
+        using namespace std::chrono_literals;
+        TextureAssetRuntime* runtime =
+            NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Get(manager);
+        assert(runtime != nullptr);
+
+        std::mutex gateMutex;
+        std::condition_variable gateCondition;
+        bool bCallbackEntered = false;
+        bool bCloseAdmissionReached = false;
+        bool bQueueWaitReached = false;
+        bool bReleaseCallback = false;
+        uint32_t lateRequestId = 99;
+        std::atomic<bool> bCloseReturned{false};
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::SetAdmissionCloseHook(
+            *runtime,
+            [&gateMutex, &gateCondition, &bCloseAdmissionReached]()
+            {
+                std::lock_guard<std::mutex> lock(gateMutex);
+                bCloseAdmissionReached = true;
+                gateCondition.notify_all();
+            });
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::SetQueueWaitHook(
+            *runtime,
+            [&gateMutex, &gateCondition, &bQueueWaitReached]()
+            {
+                std::lock_guard<std::mutex> lock(gateMutex);
+                bQueueWaitReached = true;
+                gateCondition.notify_all();
+            });
+
+        assert(manager.Textures().LoadTextureAsync(
+                   "missing_texture_callback_close.png",
+                   [&manager, &gateMutex, &gateCondition, &bCallbackEntered,
+                    &bCloseAdmissionReached, &bReleaseCallback, &lateRequestId](TextureHandle)
+                   {
+                       std::unique_lock<std::mutex> lock(gateMutex);
+                       bCallbackEntered = true;
+                       gateCondition.notify_all();
+                       gateCondition.wait(lock, [&bCloseAdmissionReached]()
+                       {
+                           return bCloseAdmissionReached;
+                       });
+                       lateRequestId = manager.Textures().LoadTextureAsync("late_texture_callback.png");
+                       gateCondition.wait(lock, [&bReleaseCallback]()
+                       {
+                           return bReleaseCallback;
+                       });
+                   }) != 0);
+        NorvesLib::Thread::JobSystem::Get().DrainAcceptedFiniteTasks();
+
+        std::thread flushThread([&manager]()
+        {
+            manager.Textures().FlushCompletedTextureLoads();
+        });
+        bool bCallbackObserved = false;
+        {
+            std::unique_lock<std::mutex> lock(gateMutex);
+            bCallbackObserved = gateCondition.wait_for(lock, 2s, [&bCallbackEntered]()
+            {
+                return bCallbackEntered;
+            });
+        }
+        bool bWaitObserved = false;
+        bool bCloseBlocked = false;
+        std::thread closeThread;
+        if (bCallbackObserved)
+        {
+            closeThread = std::thread([runtime, &bCloseReturned]()
+            {
+                NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Close(*runtime);
+                bCloseReturned.store(true, std::memory_order_release);
+            });
+            {
+                std::unique_lock<std::mutex> lock(gateMutex);
+                bWaitObserved = gateCondition.wait_for(lock, 2s, [&bQueueWaitReached]()
+                {
+                    return bQueueWaitReached;
+                });
+            }
+            bCloseBlocked = !bCloseReturned.load(std::memory_order_acquire);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(gateMutex);
+            bCloseAdmissionReached = true;
+            bReleaseCallback = true;
+            gateCondition.notify_all();
+        }
+        flushThread.join();
+        if (closeThread.joinable())
+        {
+            closeThread.join();
+        }
+
+        assert(bCallbackObserved);
+        assert(bWaitObserved);
+        assert(lateRequestId == 0);
+        assert(bCloseBlocked);
+        assert(bCloseReturned.load(std::memory_order_acquire));
+        assert(manager.Textures().GetPendingAsyncLoadCount() == 0);
+
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Reopen(*runtime);
+        const uint32_t reopenedRequest = manager.Textures().LoadTextureAsync("reopen_texture_callback.png");
+        assert(reopenedRequest != 0);
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Close(*runtime);
+        NorvesLib::Core::Rendering::TextureAssetRuntimeShutdownTestAccess::Reopen(*runtime);
+    }
+
+    void TestTextureQueueRejectsAfterJobSystemStop()
+    {
+        TextureAsyncLoadQueue queue;
+        TextureAssetLoadPlan plan;
+        plan.RequestPath = "queue_rejected_after_stop.png";
+        plan.CacheKey = "queue_rejected_after_stop";
+        auto request = queue.CreateRequest(
+            plan,
+            TextureAssetFallbackMode::FailOnCookedFailure,
+            {});
+        assert(request != nullptr);
+        request->Task = NorvesLib::Thread::Task::Create([]() {});
+
+        NorvesLib::Thread::JobSystem::Get().StopAcceptingTasks();
+        const TextureAsyncLoadQueue::EnqueueResult rejected = queue.EnqueueOrAppendDuplicateAndSubmit(request);
+        assert(rejected.RequestId == 0);
+        assert(!rejected.bSubmitted);
+        assert(queue.GetPendingCount() == 0);
+        TextureAsyncLoadQueue::Callback callback;
+        assert(queue.TryAppendDuplicate(plan.CacheKey, callback) == 0);
+        NorvesLib::Thread::JobSystem::Get().DrainAcceptedFiniteTasks();
+        NorvesLib::Thread::JobSystem::Get().Shutdown();
+    }
 }
 
 int main()
@@ -1039,6 +1406,7 @@ int main()
 #endif
 
     std::cout << "RenderResourcesDomainContractTest start\n";
+    NorvesLib::Thread::JobSystem::Get().Initialize(2, NorvesLib::Thread::JobSystem::EXECUTION_SIMPLE);
 
     AssertAssetGpuFlushDecisionMatrix();
     AssertRenderWorldAssetFlushWiring();
@@ -1055,6 +1423,10 @@ int main()
 
     auto device = MakeShared<FakeDevice>();
     assert(manager.Initialize(device));
+    TestLegacyGLTFAdmission(manager);
+    TestTextureAdmission(manager);
+    TestTextureQueueCloseWaitHandshake();
+    TestTextureProductionCallbackCloseWait(manager);
 
     BufferCreateInfo bufferInfo;
     bufferInfo.Size = 64;
@@ -1149,6 +1521,8 @@ int main()
     assert(manager.GetResourceStats().TextureCount == 0);
     assert(manager.Textures().GetRHITexture(shutdownHandle) == nullptr);
     assert(!manager.Textures().GetRHITexturePtr(shutdownHandle));
+
+    TestTextureQueueRejectsAfterJobSystemStop();
 
     std::cout << "RenderResourcesDomainContractTest passed\n";
     return 0;

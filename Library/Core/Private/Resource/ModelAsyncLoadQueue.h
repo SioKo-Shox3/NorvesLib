@@ -89,6 +89,7 @@ namespace NorvesLib::Core::Resource
         [[nodiscard]] bool HasPendingOrActiveFlush() const;
         [[nodiscard]] bool IsAccepting() const;
         [[nodiscard]] static bool IsInCallbackContext();
+        void SetWaitHookForTesting(Delegate<void> hook);
 
     private:
         Container::TSharedPtr<State> m_State;

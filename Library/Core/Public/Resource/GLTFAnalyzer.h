@@ -5,8 +5,14 @@
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderTypes.h"
 
+namespace NorvesLib::Core::Rendering
+{
+    class RenderWorld;
+}
+
 namespace NorvesLib::Core::Resource
 {
+    struct GLTFAnalyzerShutdownTestAccess;
     /**
      * @brief Analyzes a glTF file and builds a renderable model resource.
      */
@@ -62,6 +68,14 @@ namespace NorvesLib::Core::Resource
          * @return Pending request count.
          */
         static uint32_t GetPendingAsyncModelLoadCount();
+
+    private:
+        friend class NorvesLib::Core::Rendering::RenderWorld;
+        friend struct GLTFAnalyzerShutdownTestAccess;
+
+        static void CloseAsyncAssetLoadAdmissionAndWait();
+        static void ReopenAsyncAssetLoadAdmission();
+        [[nodiscard]] static bool IsAsyncAssetLoadAdmissionOpen();
     };
 
 } // namespace NorvesLib::Core::Resource

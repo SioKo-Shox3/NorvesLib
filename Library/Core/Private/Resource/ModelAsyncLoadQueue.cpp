@@ -4,6 +4,7 @@
 #include "Thread/JobSystem.h"
 
 #include <utility>
+#include <cassert>
 
 namespace NorvesLib::Core::Resource
 {
@@ -21,6 +22,7 @@ namespace NorvesLib::Core::Resource
         bool bAccepting = true;
         mutable Thread::Mutex Mutex;
         Thread::ConditionVariable Condition;
+        Delegate<void> WaitHookForTesting;
         Thread::Atomic<uint32_t> NextRequestId{1};
     };
 
@@ -195,7 +197,30 @@ namespace NorvesLib::Core::Resource
             return {duplicateId, false};
         }
 
-        Thread::JobSystem::Get().SubmitTask(request->Task);
+        if (!Thread::JobSystem::Get().SubmitTask(request->Task))
+        {
+            Thread::ScopedLock lock(state->Mutex);
+            request->bCancelled.Store(true, std::memory_order_release);
+            request->Callbacks.clear();
+            auto pending = std::find(state->Pending.begin(), state->Pending.end(), request);
+            if (pending != state->Pending.end())
+            {
+                state->Pending.erase(pending);
+            }
+            const Identity cacheIdentity(request->Plan.CacheKey);
+            auto keyIt = state->ByKey.find(cacheIdentity);
+            if (keyIt != state->ByKey.end() && keyIt->second == request)
+            {
+                state->ByKey.erase(keyIt);
+            }
+            auto idIt = state->ById.find(request->RequestId);
+            if (idIt != state->ById.end() && idIt->second == request)
+            {
+                state->ById.erase(idIt);
+            }
+            request->Task.reset();
+            return {};
+        }
         return {request->RequestId, true};
     }
 
@@ -328,6 +353,17 @@ namespace NorvesLib::Core::Resource
             task->Wait();
         }
 
+        Delegate<void> waitHook;
+        {
+            Thread::ScopedLock lock(state->Mutex);
+            if (state->ActiveFlushCount != 0)
+            {
+                waitHook = std::move(state->WaitHookForTesting);
+                state->WaitHookForTesting.Clear();
+            }
+        }
+        waitHook.InvokeIfBound();
+
         {
             Thread::ScopedLock lock(state->Mutex);
             state->Condition.Wait(state->Mutex, [state]()
@@ -396,5 +432,17 @@ namespace NorvesLib::Core::Resource
     bool ModelAsyncLoadQueue::IsInCallbackContext()
     {
         return GModelCallbackDepth != 0;
+    }
+
+    void ModelAsyncLoadQueue::SetWaitHookForTesting(Delegate<void> hook)
+    {
+        Container::TSharedPtr<State> state = m_State;
+        if (!state)
+        {
+            return;
+        }
+
+        Thread::ScopedLock lock(state->Mutex);
+        state->WaitHookForTesting = std::move(hook);
     }
 } // namespace NorvesLib::Core::Resource

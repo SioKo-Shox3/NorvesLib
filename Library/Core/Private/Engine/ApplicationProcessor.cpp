@@ -505,6 +505,9 @@ namespace NorvesLib::Core::Engine
 
             // GameModeがResourceを解放する前に最後の描画とGPU使用を完了させる。
             GEngine->GetRenderWorld().WaitForRender();
+            GEngine->GetRenderWorld().QuiesceAsyncAssetProducersAndWait();
+            Thread::JobSystem::Get().StopAcceptingTasks();
+            Thread::JobSystem::Get().DrainAcceptedFiniteTasks();
 
             // OnPreShutdown呼び出し
             if (handler)

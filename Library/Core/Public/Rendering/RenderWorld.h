@@ -155,6 +155,13 @@ namespace NorvesLib::Core::Rendering
          */
         void WaitForRender();
 
+        /**
+         * @brief Closes async asset producer admission and waits for in-flight flush callbacks.
+         *
+         * GameThread only. Must not be called from an async asset completion callback.
+         */
+        void QuiesceAsyncAssetProducersAndWait();
+
         [[nodiscard]] bool HasPendingAsyncAssets() const;
         [[nodiscard]] uint64_t GetRenderedFrameCount() const;
 
@@ -355,6 +362,7 @@ namespace NorvesLib::Core::Rendering
 
         // 初期化フラグ
         bool m_bInitialized = false;
+        bool m_bAsyncAssetProducersQuiesced = false;
 
         // ========================================
         // リサイズ保留

@@ -53,7 +53,8 @@ namespace NorvesLib::Core::Rendering
 
     ModelAssetRuntime::~ModelAssetRuntime()
     {
-        (void)CloseAndDrain();
+        CloseAndDrain();
+        CloseForResourceClear();
     }
 
     void ModelAssetRuntime::Bind(TextureResources* pTextures,
@@ -64,6 +65,7 @@ namespace NorvesLib::Core::Rendering
         m_pMegaGeometry = pMegaGeometry;
         m_bBound = pTextures != nullptr && pMegaGeometry != nullptr;
         m_bClosing = false;
+        m_bTerminallyQuiesced = false;
         m_bAcceptingRequests = m_bBound;
         if (m_bAcceptingRequests)
         {
@@ -73,7 +75,8 @@ namespace NorvesLib::Core::Rendering
 
     void ModelAssetRuntime::Unbind()
     {
-        (void)CloseAndDrain();
+        CloseAndDrain();
+        CloseForResourceClear();
         Thread::ScopedLock lock(m_AssetMutex);
         m_pTextures = nullptr;
         m_pMegaGeometry = nullptr;
@@ -309,10 +312,12 @@ namespace NorvesLib::Core::Rendering
 
     bool ModelAssetRuntime::CancelPendingModelLoadsAndWait()
     {
-        if (!m_Queue.CloseCancelAllAndWait())
+        if (ModelAsyncLoadQueue::IsInCallbackContext())
         {
             return false;
         }
+
+        m_Queue.CloseCancelAllAndWait();
 
         Thread::ScopedLock lock(m_AssetMutex);
         if (m_bBound && !m_bClosing && m_bAcceptingRequests)
@@ -332,7 +337,34 @@ namespace NorvesLib::Core::Rendering
         return m_Cache.ReleaseLease(handle);
     }
 
-    bool ModelAssetRuntime::CloseAndDrain()
+    void ModelAssetRuntime::CloseAndDrain()
+    {
+        Delegate<void> closeHook;
+        {
+            Thread::ScopedLock lock(m_AssetMutex);
+            m_bClosing = true;
+            m_bTerminallyQuiesced = true;
+            m_bAcceptingRequests = false;
+            closeHook = std::move(m_AdmissionCloseHookForTesting);
+            m_AdmissionCloseHookForTesting.Clear();
+        }
+
+        closeHook.InvokeIfBound();
+        m_Queue.CloseCancelAllAndWait();
+    }
+
+    void ModelAssetRuntime::ReopenAfterClear()
+    {
+        Thread::ScopedLock lock(m_AssetMutex);
+        if (!m_bTerminallyQuiesced && m_bBound && m_pTextures != nullptr && m_pMegaGeometry != nullptr)
+        {
+            m_bClosing = false;
+            m_bAcceptingRequests = true;
+            m_Queue.Reopen();
+        }
+    }
+
+    void ModelAssetRuntime::CloseForResourceClear()
     {
         MegaGeometryResources* pMegaGeometry = nullptr;
         {
@@ -342,10 +374,7 @@ namespace NorvesLib::Core::Rendering
             pMegaGeometry = m_pMegaGeometry;
         }
 
-        if (!m_Queue.CloseCancelAllAndWait())
-        {
-            return false;
-        }
+        m_Queue.CloseCancelAllAndWait();
         ModelCacheHandleBatch drained = m_Cache.DrainAll();
         if (pMegaGeometry != nullptr)
         {
@@ -356,18 +385,6 @@ namespace NorvesLib::Core::Rendering
                     pMegaGeometry->ReleaseModelUnmanaged(handle);
                 }
             }
-        }
-        return true;
-    }
-
-    void ModelAssetRuntime::ReopenAfterClear()
-    {
-        Thread::ScopedLock lock(m_AssetMutex);
-        if (m_bBound && m_pTextures != nullptr && m_pMegaGeometry != nullptr)
-        {
-            m_bClosing = false;
-            m_bAcceptingRequests = true;
-            m_Queue.Reopen();
         }
     }
 

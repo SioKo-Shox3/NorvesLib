@@ -12,6 +12,7 @@
 #include "Thread/Task.h"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -98,6 +99,22 @@ namespace NorvesLib::Core::Resource
         VariableArray<TSharedPtr<AsyncModelLoadRequest>> g_PendingModelLoads;
         Map<String, TSharedPtr<AsyncModelLoadRequest>> g_PendingModelLoadsByPath;
         Thread::Atomic<uint32_t> g_NextAsyncModelLoadRequestId{1};
+        bool g_bAsyncModelLoadAdmissionOpen = true;
+        thread_local uint32_t GAsyncModelLoadCallbackDepth = 0;
+
+        class CallbackContextGuard
+        {
+        public:
+            CallbackContextGuard()
+            {
+                ++GAsyncModelLoadCallbackDepth;
+            }
+
+            ~CallbackContextGuard()
+            {
+                --GAsyncModelLoadCallbackDepth;
+            }
+        };
 
         String ResolveAssetPath(const String& path)
         {
@@ -1055,6 +1072,10 @@ namespace NorvesLib::Core::Resource
         String resolvedGltfPath = ResolveAssetPath(gltfPath);
         {
             Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+            if (!g_bAsyncModelLoadAdmissionOpen)
+            {
+                return 0;
+            }
             auto pendingIt = g_PendingModelLoadsByPath.find(resolvedGltfPath);
             if (pendingIt != g_PendingModelLoadsByPath.end() && pendingIt->second)
             {
@@ -1087,11 +1108,42 @@ namespace NorvesLib::Core::Resource
 
         {
             Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+            if (!g_bAsyncModelLoadAdmissionOpen)
+            {
+                return 0;
+            }
+            auto pendingIt = g_PendingModelLoadsByPath.find(resolvedGltfPath);
+            if (pendingIt != g_PendingModelLoadsByPath.end() && pendingIt->second)
+            {
+                for (auto& pendingCallback : request->Callbacks)
+                {
+                    if (pendingCallback.IsBound())
+                    {
+                        pendingIt->second->Callbacks.push_back(std::move(pendingCallback));
+                    }
+                }
+                return pendingIt->second->RequestId;
+            }
             g_PendingModelLoads.push_back(request);
             g_PendingModelLoadsByPath[resolvedGltfPath] = request;
+            if (!Thread::JobSystem::Get().SubmitTask(request->Task))
+            {
+                request->Cancelled.Store(true, std::memory_order_release);
+                request->Callbacks.clear();
+                auto pendingRequest = std::find(
+                    g_PendingModelLoads.begin(), g_PendingModelLoads.end(), request);
+                if (pendingRequest != g_PendingModelLoads.end())
+                {
+                    g_PendingModelLoads.erase(pendingRequest);
+                }
+                auto byPathIt = g_PendingModelLoadsByPath.find(resolvedGltfPath);
+                if (byPathIt != g_PendingModelLoadsByPath.end() && byPathIt->second == request)
+                {
+                    g_PendingModelLoadsByPath.erase(byPathIt);
+                }
+                return 0;
+            }
         }
-
-        Thread::JobSystem::Get().SubmitTask(request->Task);
         NORVES_LOG_INFO("GLTFAnalyzer", "Async glTF model load started: %s (RequestId=%u)",
                         resolvedGltfPath.c_str(),
                         static_cast<unsigned int>(request->RequestId));
@@ -1111,13 +1163,18 @@ namespace NorvesLib::Core::Resource
             for (auto it = g_PendingModelLoads.begin(); it != g_PendingModelLoads.end();)
             {
                 auto& request = *it;
-                if (!request || !request->Task || !request->Task->IsCompleted())
+                if (!request || !request->Task ||
+                    (!request->Task->IsCompleted() && !request->Task->IsCanceled()))
                 {
                     ++it;
                     continue;
                 }
 
-                g_PendingModelLoadsByPath.erase(request->ResolvedPath);
+                auto byPathIt = g_PendingModelLoadsByPath.find(request->ResolvedPath);
+                if (byPathIt != g_PendingModelLoadsByPath.end() && byPathIt->second == request)
+                {
+                    g_PendingModelLoadsByPath.erase(byPathIt);
+                }
                 completedRequests.push_back(request);
                 it = g_PendingModelLoads.erase(it);
 
@@ -1173,7 +1230,11 @@ namespace NorvesLib::Core::Resource
 
             for (const auto& callback : request->Callbacks)
             {
-                callback.InvokeIfBound(modelHandle);
+                if (callback.IsBound())
+                {
+                    CallbackContextGuard callbackContext;
+                    callback(modelHandle);
+                }
             }
             ++processedCount;
         }
@@ -1214,6 +1275,7 @@ namespace NorvesLib::Core::Resource
         {
             if (request && request->Task)
             {
+                request->Task->Cancel();
                 request->Task->Wait();
             }
         }
@@ -1270,6 +1332,52 @@ namespace NorvesLib::Core::Resource
     {
         Thread::ScopedLock lock(g_AsyncModelLoadMutex);
         return static_cast<uint32_t>(g_PendingModelLoads.size());
+    }
+
+    void GLTFAnalyzer::CloseAsyncAssetLoadAdmissionAndWait()
+    {
+        assert(GAsyncModelLoadCallbackDepth == 0);
+
+        VariableArray<TSharedPtr<AsyncModelLoadRequest>> pendingRequests;
+        {
+            Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+            g_bAsyncModelLoadAdmissionOpen = false;
+            pendingRequests = std::move(g_PendingModelLoads);
+            g_PendingModelLoads.clear();
+            g_PendingModelLoadsByPath.clear();
+            for (const auto& request : pendingRequests)
+            {
+                if (request)
+                {
+                    request->Cancelled.Store(true, std::memory_order_release);
+                    request->Callbacks.clear();
+                }
+            }
+        }
+
+        for (const auto& request : pendingRequests)
+        {
+            if (request && request->Task)
+            {
+                request->Task->Cancel();
+                request->Task->Wait();
+            }
+        }
+    }
+
+    void GLTFAnalyzer::ReopenAsyncAssetLoadAdmission()
+    {
+        Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+        if (g_PendingModelLoads.empty())
+        {
+            g_bAsyncModelLoadAdmissionOpen = true;
+        }
+    }
+
+    bool GLTFAnalyzer::IsAsyncAssetLoadAdmissionOpen()
+    {
+        Thread::ScopedLock lock(g_AsyncModelLoadMutex);
+        return g_bAsyncModelLoadAdmissionOpen;
     }
 
 } // namespace NorvesLib::Core::Resource

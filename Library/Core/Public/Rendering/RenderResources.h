@@ -34,8 +34,10 @@ namespace NorvesLib::Core::Rendering
 {
     struct SubMesh;
     struct AssetRuntimeSnapshotReloadTestAccess;
+    struct TextureAssetRuntimeShutdownTestAccess;
     class ModelAssetRuntime;
     class TextureAssetRuntime;
+    class RenderWorld;
 
     class GpuResources
     {
@@ -250,12 +252,15 @@ namespace NorvesLib::Core::Rendering
         friend class MaterialResources;
         friend class MeshResources;
         friend class MegaGeometryResources;
+        friend class RenderWorld;
         friend struct AssetRuntimeSnapshotReloadTestAccess;
+        friend struct TextureAssetRuntimeShutdownTestAccess;
 
         struct Impl;
 
         TextureAssetRuntime* GetTextureAssetRuntimeForTesting();
         ModelAssetRuntime* GetModelAssetRuntimeForTesting();
+        void CloseAsyncAssetLoadAdmissionAndWait();
 
         Container::TUniquePtr<Impl> m_Impl;
         GpuResources m_Gpu;

@@ -6,6 +6,7 @@
 #include "Container/PointerTypes.h"
 #include "Delegate/Delegate.h"
 #include "Thread/Atomic.h"
+#include "Thread/ConditionVariable.h"
 #include "Thread/Mutex.h"
 
 #include <cstdint>
@@ -13,6 +14,7 @@
 namespace NorvesLib::Core::Rendering
 {
     struct TextureAssetLoadPlan;
+    struct TextureAsyncLoadQueueShutdownTestAccess;
 
     class TextureAsyncLoadQueue
     {
@@ -52,6 +54,15 @@ namespace NorvesLib::Core::Rendering
             Container::TSharedPtr<State> m_State;
         };
 
+        class CallbackContextGuard
+        {
+        public:
+            CallbackContextGuard();
+            ~CallbackContextGuard();
+            CallbackContextGuard(const CallbackContextGuard&) = delete;
+            CallbackContextGuard& operator=(const CallbackContextGuard&) = delete;
+        };
+
         struct CompletedBatch
         {
             Container::VariableArray<RequestPtr> Requests;
@@ -76,10 +87,17 @@ namespace NorvesLib::Core::Rendering
 
         [[nodiscard]] uint32_t GetPendingCount() const;
         [[nodiscard]] bool HasPendingOrActiveFlush() const;
+        [[nodiscard]] bool IsAccepting() const;
+        [[nodiscard]] static bool IsInCallbackContext();
 
         void ClearPending();
+        void CloseCancelAllAndWait();
+        void Reopen();
 
     private:
+        friend struct TextureAsyncLoadQueueShutdownTestAccess;
+
+        void SetWaitHookForTesting(Delegate<void> hook);
         Container::TSharedPtr<State> m_State;
     };
 }

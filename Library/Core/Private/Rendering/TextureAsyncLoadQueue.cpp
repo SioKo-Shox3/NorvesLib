@@ -5,15 +5,24 @@
 #include "Thread/JobSystem.h"
 
 #include <utility>
+#include <cassert>
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        thread_local uint32_t GTextureCallbackDepth = 0;
+    }
+
     struct TextureAsyncLoadQueue::State
     {
         Container::VariableArray<TextureAsyncLoadQueue::RequestPtr> PendingTextureLoads;
         Container::Map<Container::String, TextureAsyncLoadQueue::RequestPtr> PendingTextureLoadsByPath;
         uint32_t ActiveTextureLoadFlushCount = 0;
+        bool bAccepting = true;
         mutable Thread::Mutex AsyncLoadMutex;
+        Thread::ConditionVariable ActiveTextureLoadFlushCondition;
+        Delegate<void> ActiveTextureLoadFlushWaitHookForTesting;
         Thread::Atomic<uint32_t> NextAsyncRequestId{1};
     };
 
@@ -57,6 +66,10 @@ namespace NorvesLib::Core::Rendering
             if (state->ActiveTextureLoadFlushCount > 0)
             {
                 --state->ActiveTextureLoadFlushCount;
+                if (state->ActiveTextureLoadFlushCount == 0)
+                {
+                    state->ActiveTextureLoadFlushCondition.NotifyAll();
+                }
             }
         }
     }
@@ -66,7 +79,20 @@ namespace NorvesLib::Core::Rendering
     {
     }
 
-    TextureAsyncLoadQueue::~TextureAsyncLoadQueue() = default;
+    TextureAsyncLoadQueue::~TextureAsyncLoadQueue()
+    {
+        CloseCancelAllAndWait();
+    }
+
+    TextureAsyncLoadQueue::CallbackContextGuard::CallbackContextGuard()
+    {
+        ++GTextureCallbackDepth;
+    }
+
+    TextureAsyncLoadQueue::CallbackContextGuard::~CallbackContextGuard()
+    {
+        --GTextureCallbackDepth;
+    }
 
     TextureAsyncLoadQueue::RequestPtr TextureAsyncLoadQueue::CreateRequest(
         const TextureAssetLoadPlan &plan,
@@ -107,6 +133,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         Thread::ScopedLock lock(state->AsyncLoadMutex);
+        if (!state->bAccepting)
+        {
+            return 0;
+        }
         auto pendingIt = state->PendingTextureLoadsByPath.find(cacheKey);
         if (pendingIt == state->PendingTextureLoadsByPath.end() || !pendingIt->second)
         {
@@ -145,6 +175,10 @@ namespace NorvesLib::Core::Rendering
 
         {
             Thread::ScopedLock lock(state->AsyncLoadMutex);
+            if (!state->bAccepting)
+            {
+                return {};
+            }
             auto pendingIt = state->PendingTextureLoadsByPath.find(request->CacheKey);
             if (pendingIt != state->PendingTextureLoadsByPath.end() && pendingIt->second)
             {
@@ -177,7 +211,24 @@ namespace NorvesLib::Core::Rendering
             return {duplicateRequestId, false};
         }
 
-        Thread::JobSystem::Get().SubmitTask(request->Task);
+        if (!Thread::JobSystem::Get().SubmitTask(request->Task))
+        {
+            Thread::ScopedLock lock(state->AsyncLoadMutex);
+            request->Callbacks.clear();
+            auto pending = std::find(
+                state->PendingTextureLoads.begin(), state->PendingTextureLoads.end(), request);
+            if (pending != state->PendingTextureLoads.end())
+            {
+                state->PendingTextureLoads.erase(pending);
+            }
+            auto byPathIt = state->PendingTextureLoadsByPath.find(request->CacheKey);
+            if (byPathIt != state->PendingTextureLoadsByPath.end() && byPathIt->second == request)
+            {
+                state->PendingTextureLoadsByPath.erase(byPathIt);
+            }
+            request->Task.reset();
+            return {};
+        }
         return {request->RequestId, true};
     }
 
@@ -194,7 +245,8 @@ namespace NorvesLib::Core::Rendering
         for (auto it = state->PendingTextureLoads.begin(); it != state->PendingTextureLoads.end();)
         {
             auto &request = *it;
-            if (!request || !request->Task || !request->Task->IsCompleted())
+            if (!request || !request->Task ||
+                (!request->Task->IsCompleted() && !request->Task->IsCanceled()))
             {
                 ++it;
                 continue;
@@ -261,6 +313,23 @@ namespace NorvesLib::Core::Rendering
         return !state->PendingTextureLoads.empty() || state->ActiveTextureLoadFlushCount != 0;
     }
 
+    bool TextureAsyncLoadQueue::IsAccepting() const
+    {
+        auto state = m_State;
+        if (!state)
+        {
+            return false;
+        }
+
+        Thread::ScopedLock lock(state->AsyncLoadMutex);
+        return state->bAccepting;
+    }
+
+    bool TextureAsyncLoadQueue::IsInCallbackContext()
+    {
+        return GTextureCallbackDepth != 0;
+    }
+
     void TextureAsyncLoadQueue::ClearPending()
     {
         auto state = m_State;
@@ -272,5 +341,82 @@ namespace NorvesLib::Core::Rendering
         Thread::ScopedLock lock(state->AsyncLoadMutex);
         state->PendingTextureLoads.clear();
         state->PendingTextureLoadsByPath.clear();
+    }
+
+    void TextureAsyncLoadQueue::CloseCancelAllAndWait()
+    {
+        assert(!IsInCallbackContext());
+
+        auto state = m_State;
+        if (!state)
+        {
+            return;
+        }
+
+        Container::VariableArray<Thread::TaskPtr> tasks;
+        {
+            Thread::ScopedLock lock(state->AsyncLoadMutex);
+            state->bAccepting = false;
+            for (RequestPtr& request : state->PendingTextureLoads)
+            {
+                if (request && request->Task)
+                {
+                    request->Callbacks.clear();
+                    tasks.push_back(request->Task);
+                }
+            }
+        }
+
+        for (Thread::TaskPtr& task : tasks)
+        {
+            task->Cancel();
+            task->Wait();
+        }
+
+        Delegate<void> waitHook;
+        {
+            Thread::ScopedLock lock(state->AsyncLoadMutex);
+            if (state->ActiveTextureLoadFlushCount != 0)
+            {
+                waitHook = std::move(state->ActiveTextureLoadFlushWaitHookForTesting);
+                state->ActiveTextureLoadFlushWaitHookForTesting.Clear();
+            }
+        }
+        waitHook.InvokeIfBound();
+
+        Thread::ScopedLock lock(state->AsyncLoadMutex);
+        state->ActiveTextureLoadFlushCondition.Wait(state->AsyncLoadMutex, [state]()
+        {
+            return state->ActiveTextureLoadFlushCount == 0;
+        });
+        state->PendingTextureLoads.clear();
+        state->PendingTextureLoadsByPath.clear();
+    }
+
+    void TextureAsyncLoadQueue::Reopen()
+    {
+        auto state = m_State;
+        if (!state)
+        {
+            return;
+        }
+
+        Thread::ScopedLock lock(state->AsyncLoadMutex);
+        if (state->PendingTextureLoads.empty() && state->ActiveTextureLoadFlushCount == 0)
+        {
+            state->bAccepting = true;
+        }
+    }
+
+    void TextureAsyncLoadQueue::SetWaitHookForTesting(Delegate<void> hook)
+    {
+        auto state = m_State;
+        if (!state)
+        {
+            return;
+        }
+
+        Thread::ScopedLock lock(state->AsyncLoadMutex);
+        state->ActiveTextureLoadFlushWaitHookForTesting = std::move(hook);
     }
 }

@@ -14,6 +14,7 @@ namespace NorvesLib::Core::Rendering
     class RenderResources;
     class TextureResources;
     struct AssetRuntimeSnapshotReloadTestAccess;
+    struct ModelAssetRuntimeShutdownTestAccess;
 
     class ModelAssetRuntime final
     {
@@ -36,7 +37,7 @@ namespace NorvesLib::Core::Rendering
         [[nodiscard]] uint32_t GetPendingAsyncModelLoadCount() const;
         [[nodiscard]] Resource::ModelCacheReleaseResult ReleaseManagedModel(ModelHandle handle);
 
-        [[nodiscard]] bool CloseAndDrain();
+        void CloseAndDrain();
         void ReopenAfterClear();
 
         void AdvanceGenerationForTesting();
@@ -46,6 +47,7 @@ namespace NorvesLib::Core::Rendering
     private:
         friend class RenderResources;
         friend struct AssetRuntimeSnapshotReloadTestAccess;
+        friend struct ModelAssetRuntimeShutdownTestAccess;
 
         [[nodiscard]] bool CanReloadSnapshotLocked() const;
         [[nodiscard]] Resource::ModelCacheHandleBatch ApplyReloadSnapshotLocked(
@@ -57,6 +59,7 @@ namespace NorvesLib::Core::Rendering
         [[nodiscard]] bool IsRequestCurrent(const Resource::ModelAsyncLoadQueue::RequestPtr& request) const;
         void ReleaseHandles(Resource::ModelCacheHandleBatch batch);
         void ReleaseHandles(Container::VariableArray<ModelHandle> handles);
+        void CloseForResourceClear();
 
         mutable Thread::Mutex m_AssetMutex;
         Container::TSharedPtr<const Asset::AssetSystem> m_AssetSystem;
@@ -67,6 +70,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bBound = false;
         bool m_bAcceptingRequests = false;
         bool m_bClosing = false;
+        bool m_bTerminallyQuiesced = false;
+        Delegate<void> m_AdmissionCloseHookForTesting;
         Resource::ModelAsyncLoadQueue m_Queue;
         Resource::ModelHandleCache m_Cache;
         Thread::Atomic<uint32_t> m_NextCacheHitRequestId{0x80000000u};

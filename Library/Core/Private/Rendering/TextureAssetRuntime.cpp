@@ -92,29 +92,32 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        Thread::ScopedLock assetLock(m_TextureAssetMutex);
         m_pDevice = pDevice;
         m_pGpuResources = pGpuResources;
         if (!m_TextureAsyncLoads)
         {
             m_TextureAsyncLoads = Container::MakeUnique<TextureAsyncLoadQueue>();
         }
+        m_bTerminallyQuiesced = false;
+        m_TextureAsyncLoads->Reopen();
+        m_bAcceptingAsyncLoads = true;
     }
 
     void TextureAssetRuntime::Unbind()
     {
+        CloseAndWait();
+        Thread::ScopedLock assetLock(m_TextureAssetMutex);
         m_pDevice = nullptr;
         m_pGpuResources = nullptr;
+        m_bAcceptingAsyncLoads = false;
         m_TextureAsyncLoads.reset();
     }
 
     void TextureAssetRuntime::ClearRuntimeResources()
     {
+        CloseForResourceClear();
         Thread::ScopedLock assetLock(m_TextureAssetMutex);
-        if (m_TextureAsyncLoads)
-        {
-            m_TextureAsyncLoads->ClearPending();
-        }
-
         if (m_TextureHandleCache)
         {
             m_TextureHandleCache->Clear();
@@ -581,7 +584,7 @@ namespace NorvesLib::Core::Rendering
 
         {
             Thread::ScopedLock assetLock(m_TextureAssetMutex);
-            if (!IsBound())
+            if (!IsBound() || !m_bAcceptingAsyncLoads)
             {
                 return 0;
             }
@@ -646,6 +649,7 @@ namespace NorvesLib::Core::Rendering
 
         if (cachedHandle.IsValid())
         {
+            TextureAsyncLoadQueue::CallbackContextGuard callbackContext;
             callback.InvokeIfBound(cachedHandle);
             return 0;
         }
@@ -753,6 +757,7 @@ namespace NorvesLib::Core::Rendering
                 auto callbacks = takeCallbacksAndReleasePendingMap(request);
                 for (const auto &callback : callbacks)
                 {
+                    TextureAsyncLoadQueue::CallbackContextGuard callbackContext;
                     callback.InvokeIfBound(TextureHandle::Invalid());
                 }
 
@@ -841,6 +846,7 @@ namespace NorvesLib::Core::Rendering
                 auto callbacks = takeCallbacksAndReleasePendingMap(request);
                 for (const auto &callback : callbacks)
                 {
+                    TextureAsyncLoadQueue::CallbackContextGuard callbackContext;
                     callback.InvokeIfBound(handle);
                 }
             }
@@ -853,6 +859,7 @@ namespace NorvesLib::Core::Rendering
                 auto callbacks = takeCallbacksAndReleasePendingMap(request);
                 for (const auto &callback : callbacks)
                 {
+                    TextureAsyncLoadQueue::CallbackContextGuard callbackContext;
                     callback.InvokeIfBound(TextureHandle::Invalid());
                 }
             }
@@ -885,5 +892,55 @@ namespace NorvesLib::Core::Rendering
         }
 
         return m_TextureAsyncLoads ? m_TextureAsyncLoads->GetPendingCount() : 0;
+    }
+
+    void TextureAssetRuntime::CloseAndWait()
+    {
+        Delegate<void> closeHook;
+        TextureAsyncLoadQueue* pQueue = nullptr;
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            m_bTerminallyQuiesced = true;
+            m_bAcceptingAsyncLoads = false;
+            closeHook = std::move(m_AdmissionCloseHookForTesting);
+            m_AdmissionCloseHookForTesting.Clear();
+            pQueue = m_TextureAsyncLoads.get();
+        }
+
+        closeHook.InvokeIfBound();
+        if (pQueue)
+        {
+            pQueue->CloseCancelAllAndWait();
+        }
+    }
+
+    void TextureAssetRuntime::CloseForResourceClear()
+    {
+        TextureAsyncLoadQueue* pQueue = nullptr;
+        {
+            Thread::ScopedLock assetLock(m_TextureAssetMutex);
+            m_bAcceptingAsyncLoads = false;
+            pQueue = m_TextureAsyncLoads.get();
+        }
+
+        if (pQueue)
+        {
+            pQueue->CloseCancelAllAndWait();
+        }
+    }
+
+    void TextureAssetRuntime::ReopenAfterClose()
+    {
+        Thread::ScopedLock assetLock(m_TextureAssetMutex);
+        if (!m_bTerminallyQuiesced && IsBound() && m_TextureAsyncLoads)
+        {
+            m_TextureAsyncLoads->Reopen();
+            m_bAcceptingAsyncLoads = true;
+        }
+    }
+
+    void TextureAssetRuntime::ReopenAfterClear()
+    {
+        ReopenAfterClose();
     }
 }

@@ -754,6 +754,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_Impl->bShuttingDown = true;
+        CloseAsyncAssetLoadAdmissionAndWait();
         ClearAllResources();
         if (m_Impl->ModelAssets)
         {
@@ -867,11 +868,32 @@ namespace NorvesLib::Core::Rendering
         return m_Impl ? m_Impl->ModelAssets.get() : nullptr;
     }
 
+    void RenderResources::CloseAsyncAssetLoadAdmissionAndWait()
+    {
+        if (!m_Impl)
+        {
+            return;
+        }
+
+        if (m_Impl->ModelAssets)
+        {
+            m_Impl->ModelAssets->CloseAndDrain();
+        }
+        if (m_Impl->TextureAssets)
+        {
+            m_Impl->TextureAssets->CloseAndWait();
+        }
+    }
+
     void RenderResources::ClearAllResources()
     {
         if (m_Impl->ModelAssets)
         {
-            (void)m_Impl->ModelAssets->CloseAndDrain();
+            if (m_Impl->bShuttingDown)
+            {
+                m_Impl->ModelAssets->CloseAndDrain();
+            }
+            m_Impl->ModelAssets->CloseForResourceClear();
         }
 
         if (m_Impl->MaterialStore)
@@ -903,6 +925,10 @@ namespace NorvesLib::Core::Rendering
             m_Impl->ModelAssets && m_Impl->ModelAssets->IsBound())
         {
             m_Impl->ModelAssets->ReopenAfterClear();
+        }
+        if (!m_Impl->bShuttingDown && m_Impl->bInitialized && m_Impl->TextureAssets)
+        {
+            m_Impl->TextureAssets->ReopenAfterClear();
         }
     }
 

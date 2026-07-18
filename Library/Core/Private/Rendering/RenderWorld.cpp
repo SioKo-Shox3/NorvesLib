@@ -48,6 +48,7 @@ namespace NorvesLib::Core::Rendering
         m_bResizePending.Store(false, std::memory_order_release);
         m_PendingWidth.Store(settings.Width, std::memory_order_release);
         m_PendingHeight.Store(settings.Height, std::memory_order_release);
+        m_bAsyncAssetProducersQuiesced = false;
 
         // ========================================
         // 1. RHI Device (passed from Engine layer)
@@ -91,6 +92,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("Rendering", "Failed to initialize RenderResources");
             return false;
         }
+        Resource::GLTFAnalyzer::ReopenAsyncAssetLoadAdmission();
 
         // RenderingCoordinatorにRenderResourcesを設定
         m_RenderingCoordinator.SetRenderResources(&m_RenderResources);
@@ -123,6 +125,8 @@ namespace NorvesLib::Core::Rendering
 
         LOG_INFO("RenderWorld::Shutdown() - Starting shutdown");
 
+        QuiesceAsyncAssetProducersAndWait();
+
         // RenderThreadを先に停止してからリソース破棄へ進む
         // （Coordinatorのリソースへのアクセスが残らないようにする）
         m_RenderThread.Shutdown();
@@ -140,8 +144,6 @@ namespace NorvesLib::Core::Rendering
             m_PreDeviceTeardownHook(m_PreDeviceTeardownContext);
         }
 
-        Resource::GLTFAnalyzer::CancelPendingModelLoadsAndWait();
-
         // RenderResourcesの終了（メッシュGPUリソース等の解放）
         m_RenderResources.Shutdown();
 
@@ -153,6 +155,18 @@ namespace NorvesLib::Core::Rendering
 
         m_bInitialized = false;
         LOG_INFO("RenderWorld::Shutdown() - Shutdown completed");
+    }
+
+    void RenderWorld::QuiesceAsyncAssetProducersAndWait()
+    {
+        if (m_bAsyncAssetProducersQuiesced)
+        {
+            return;
+        }
+
+        Resource::GLTFAnalyzer::CloseAsyncAssetLoadAdmissionAndWait();
+        m_RenderResources.CloseAsyncAssetLoadAdmissionAndWait();
+        m_bAsyncAssetProducersQuiesced = true;
     }
 
     void RenderWorld::BeginFrame()
