@@ -795,6 +795,7 @@ if(NORVES_BRIDGE_SDK_DIR)
         ${CMAKE_SOURCE_DIR}/Game/GameApplicationHandler.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/NorvesLibBridgeAdapter.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeBase64.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeServerHost.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeLogSink.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/ReadyHandshake.cpp
