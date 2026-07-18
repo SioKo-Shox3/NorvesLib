@@ -20,8 +20,19 @@ add_executable(NorvesLibBridgeAdapterThumbnailTest
     ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeServerHost.cpp
     ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeLogSink.cpp
     ${CMAKE_SOURCE_DIR}/Game/Bridge/ReadyHandshake.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameApplicationHandler.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/MemoryAgingTest/MemoryAgingTestRoutine.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugDraw.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugInput.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp
 )
-target_link_libraries(NorvesLibBridgeAdapterThumbnailTest PRIVATE Core norves_bridge_engine_sdk)
+target_link_libraries(NorvesLibBridgeAdapterThumbnailTest PRIVATE
+    Core
+    NorvesModule_Dummy
+    norves_bridge_engine_sdk
+)
 target_compile_definitions(NorvesLibBridgeAdapterThumbnailTest PRIVATE
     NORVES_BRIDGE_ENABLED
     NORVES_BRIDGE_TESTING
@@ -31,6 +42,7 @@ target_include_directories(NorvesLibBridgeAdapterThumbnailTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Game
     ${CMAKE_SOURCE_DIR}/Library
     ${CMAKE_SOURCE_DIR}/Library/Core/Public
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
 )
 if(MSVC)
