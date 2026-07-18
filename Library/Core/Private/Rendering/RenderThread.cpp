@@ -229,6 +229,10 @@ namespace NorvesLib::Core::Rendering
                 packet = m_CurrentPacket;
                 m_CurrentPacket = nullptr;
                 m_bNewFrameReady.Store(false, std::memory_order_release);
+                if (packet)
+                {
+                    m_bFrameComplete.Store(false, std::memory_order_release);
+                }
             }
             else if (m_bAssetGpuFlushWindowRequested)
             {
@@ -293,6 +297,11 @@ namespace NorvesLib::Core::Rendering
                     startTime = std::chrono::high_resolution_clock::now();
                 }
 #endif
+
+                if (m_RenderFrameTestHook)
+                {
+                    m_RenderFrameTestHook(packet);
+                }
 
                 m_Coordinator->RenderFrame(packet);
                 // 描画完了後にパケットをEmpty状態に戻して再利用可能にする

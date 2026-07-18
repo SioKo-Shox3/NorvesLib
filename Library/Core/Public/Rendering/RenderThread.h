@@ -13,6 +13,7 @@ namespace NorvesLib::Core::Rendering
     class RenderWorld;
     class RenderingCoordinator;
     struct FramePacket;
+    struct RenderThreadFrameCompletionTestAccess;
 
     /**
      * @brief レンダースレッド状態
@@ -134,6 +135,7 @@ namespace NorvesLib::Core::Rendering
 
     private:
         friend class RenderWorld;
+        friend struct RenderThreadFrameCompletionTestAccess;
 
         // ========================================
         // スレッドエントリポイント
@@ -177,6 +179,9 @@ namespace NorvesLib::Core::Rendering
         // 統計
         ThreadStats m_Stats;
         Thread::Atomic<uint64_t> m_PublishedFramesRendered{0};
+
+        // テスト専用: RenderFrame 呼び出し直前の同期シーム。Start 前に設定し、Shutdown 後に解除する。
+        void (*m_RenderFrameTestHook)(FramePacket*) = nullptr;
     };
 
 } // namespace NorvesLib::Core::Rendering

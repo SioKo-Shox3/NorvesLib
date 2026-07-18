@@ -10,6 +10,16 @@ set_target_properties(FramePacketManagerTest PROPERTIES FOLDER "Test/Core/Render
 include(CTest)
 add_test(NAME FramePacketManagerTest COMMAND FramePacketManagerTest)
 
+add_executable(RenderThreadFrameCompletionTest
+    RenderThreadFrameCompletionTest.cpp
+)
+target_link_libraries(RenderThreadFrameCompletionTest PRIVATE Core)
+target_include_directories(RenderThreadFrameCompletionTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RenderThreadFrameCompletionTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderThreadFrameCompletionTest COMMAND RenderThreadFrameCompletionTest)
+
 add_executable(RenderingCoordinatorStatsPropagationTest
     RenderingCoordinatorStatsPropagationTest.cpp
 )
