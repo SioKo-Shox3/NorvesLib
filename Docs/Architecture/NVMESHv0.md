@@ -2,14 +2,14 @@
 
 ## Scope / Status
 
-This document is the M4 Phase 1 design specification for the `.nvmesh` cooked mesh
-format. Phase 1 is documentation only: no loader, runtime resolver, renderer adapter,
-or cook implementation consumes this format yet.
+This document specifies the `.nvmesh` cooked mesh format implemented by M4 Phases 2–5.
+`CookedMesh` parsing, AssetCook glTF-to-NVMESH/`Msh0` output, package/hash/model
+resolution, synchronous and asynchronous MegaGeometry runtime finalization, generation
+cache/cancel/drain, manifest snapshot and Bridge reload, and the strict real-Game
+profile are landed. The loose glTF compatibility path remains available.
 
-Runtime parsing, AssetCook mesh cooking, model package resolution, and Rendering-side
-finalization are deferred to later M4 phases. If later implementation discovers a code
-change is required before this contract can be honored, that is a new phase decision,
-not part of Phase 1.
+In-place rebind, multi-submesh/material, skin/morph, compression, and baked LOD remain
+out of scope for v0.
 
 `Docs/agent-guide/` is absent in the current repository. This specification therefore
 uses `AGENTS.md`, `Docs/Architecture/AssetCookWorkflow.md`,
@@ -257,7 +257,7 @@ The index payload is a `uint32` little-endian clusterized index stream.
 v0 supports exactly one submesh and exactly one material. Multi-submesh,
 multi-material, and multi-primitive behavior are out of scope.
 
-Baked clusters are required. Future runtime finalization uses the existing MegaGeometry
+Baked clusters are required. Runtime finalization uses the existing MegaGeometry
 creation behavior equivalent to `bBuildLODHierarchy=false`; cooked v0 data must not
 trigger automatic LOD hierarchy building.
 
@@ -297,7 +297,7 @@ LOD fields are stored for future compatibility. v0 requires:
 
 ## Parser Validation Contract
 
-The future parser should mirror the NVTEX-style status-driven contract. Expected
+The parser mirrors the NVTEX-style status-driven contract. Expected
 statuses/cases include:
 
 - success
@@ -342,9 +342,10 @@ Validation requirements:
 
 ## API / Layer Boundary
 
-The future public Asset parser API returns `Asset::CookedMeshData`
-and retains the original `AssetBlob SourceBlob`, matching the
-texture parser ownership pattern.
+The public Asset parser API is `CookedMeshParseResult ParseCookedMesh(AssetBlob)`.
+Its status-driven result exposes parsed `CookedMeshData` as `.Mesh`; the result and
+mesh retain the original `AssetBlob SourceBlob`, matching the texture parser ownership
+pattern.
 
 The Asset API must not expose `GLTFAnalyzer.cpp` private `ModelStagingData`.
 `ModelStagingData` is a Resource-layer private staging detail and must remain private.
@@ -352,7 +353,7 @@ The Asset API must not expose `GLTFAnalyzer.cpp` private `ModelStagingData`.
 The Asset layer must not include Rendering or RHI types. There is no Asset -> Rendering
 dependency in this design.
 
-A later Resource/Rendering-side adapter converts `CookedMeshData` into shared private
+The Resource/Rendering-side adapter converts `CookedMeshData` into shared private
 model staging data and calls a `FinalizeModelStaging` equivalent. The allowed dependency
 direction is:
 
@@ -374,7 +375,7 @@ invalidate existing cooked mesh packages.
 Cluster algorithm or cluster settings changes that can alter cluster ranges, index
 packing, bounds, cones, or LOD metadata require invalidation. `ClusterAlgorithmId`,
 `ClusterAlgorithmVersion`, `ClusterMaxTriangles`, `ClusterMaxVertices`, and
-`ClusterSettingsFlags` are serialized so later phases can detect incompatible cooked
+`ClusterSettingsFlags` are serialized so format revisions can detect incompatible cooked
 data explicitly.
 
 For v0:
@@ -388,25 +389,19 @@ For v0:
 Changing any of those fields for produced content requires either a new format string,
 a `cooked_version` bump, or both, depending on whether the wire schema itself changed.
 
-## Phase 2 / 3 Tests and Acceptance Gates
+## Implemented Tests and Acceptance Gates
 
-Later phases should add focused tests and smoke gates before runtime adoption:
+Focused coverage includes:
 
-- `CookedMeshTest` parser tests with RED/GREEN expectations for every parser status
-  category listed above.
-- `AssetCookMeshSmoke`: glTF -> `.nvmesh` -> package entry type `Msh0` -> manifest
-  `kind="model"`.
-- Model AssetSystem resolve/package/hash tests for manifest model entries and package
-  `cooked_hash` validation.
-- Runtime cooked-ready path test forbidding `gltf_json_parse`, `gltf_buffer_read`, and
-  `gltf_clusterize`; expected profile stages should be cooked parse/finalize stages
-  such as `mesh_cooked_parse` and `mesh_cooked_finalize`.
-- Parity test comparing direct glTF staging against cooked mesh staging for
-  vertex/index/cluster/bounds data.
-- `MegaGeometryResourcesTest` and the runtime adapter should ensure cooked clusters are
-  finalized with `bBuildLODHierarchy=false`.
+- `CookedMeshTest` parser validation.
+- `AssetCookMeshSmoke` for glTF -> `.nvmesh` -> `Msh0` package/manifest output.
+- `ModelResourcesAssetRuntimeTest`, `ModelAsyncLoadQueueTest`, and
+  `MegaGeometryResourcesTest` for cooked model resolution, runtime finalization, and
+  cancellation/drain behavior.
+- `ModelResourcesAssetLoadProfileContractTest` for the cooked-ready profile contract.
+- `AssetManifestReloadBridgeLoopbackTest` for manifest snapshot/Bridge reload.
 
-Helpful focused commands for later phases:
+Helpful focused commands:
 
 ```powershell
 cmake --build build --config Debug --target CookedMeshTest
@@ -417,9 +412,8 @@ cmake --build build --config Debug --target MegaGeometryResourcesTest
 ctest --test-dir build -C Debug -R MegaGeometryResourcesTest
 ```
 
-When the runtime path is added, the game/profile smoke should prove that cooked-ready
-model loading uses cooked mesh parse/finalize stages and does not fall back to loose
-glTF parsing or clustering.
+The strict real-Game profile proves that cooked-ready model loading uses cooked mesh
+parse/finalize stages and does not fall back to loose glTF parsing or clustering.
 
 ## Out of Scope
 

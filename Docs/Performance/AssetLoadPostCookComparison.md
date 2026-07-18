@@ -111,17 +111,17 @@ auxiliary diagnostic and is not substituted for model-ready latency.
 
 | pair/order | path | model-ready ms | wall ms |
 | --- | --- | ---: | ---: |
-| 1/1 | loose | 9499 | 10697.362 |
-| 1/2 | cooked | 8772 | 10033.079 |
-| 2/1 | cooked | 8708 | 9975.765 |
-| 2/2 | loose | 9421 | 10698.297 |
-| 3/1 | loose | 9300 | 10604.889 |
-| 3/2 | cooked | 8921 | 10126.546 |
+| 1/1 | loose | 10069 | 11516.874 |
+| 1/2 | cooked | 9545 | 10999.586 |
+| 2/1 | cooked | 9680 | 11131.43 |
+| 2/2 | loose | 10098 | 11522.438 |
+| 3/1 | loose | 9981 | 11397.864 |
+| 3/2 | cooked | 10069 | 11652.719 |
 
 | path | samples (model-ready ms) | median ms |
 | --- | --- | ---: |
-| loose glTF + prepared textures | 9499, 9421, 9300 | 9421 |
-| cooked NVMESH + same textures | 8772, 8708, 8921 | 8772 |
+| loose glTF + prepared textures | 10069, 10098, 9981 | 10069 |
+| cooked NVMESH + same textures | 9545, 9680, 10069 | 9680 |
 
 For this captured Debug run, the cooked median is shorter. The completeness contract
 requires the correlated worker `model_asset_resolve` and `model_cooked_parse` records,
@@ -129,32 +129,33 @@ all four correlated `model_finalize_*` records, the matching-debug GPU upload, a
 successful non-empty async flush. It rejects every legacy `gltf_*` model stage on the
 cooked side. These checks intentionally contain no numeric performance threshold.
 
-Captured provenance (generated 2026-07-17 18:26:13.042 local time): HEAD
-`0670f65ac73e6abc13f77d7fe93bd1d26c3842c2`, HEAD tree
-`52f29c61a6a37754aab96bd8a2426185a6aa9947`, and `dirty=true`. The runner used
-three rendered frames after asset settle, a 600-second timeout, three pairs, and the
-`Phase5UR1Verify` configuration. It ran on Windows `10.0.22631.0` with Meta Virtual
-Monitor driver `17.12.55.198`, NVIDIA GeForce RTX 4080 driver `32.0.15.9186`, and
-Virtual Desktop Monitor driver `13.50.53.699`.
+### M4 Closure Acceptance
 
-The behavior provenance covers `Game`, `Scripts`, `Test`, and `Library`: the tracked
-diff SHA-256 was `85b19d8199538603af296458f9eb6776cd4ec6778d7caf21c01f9578861d3ab0`,
-the tracked-plus-untracked behavior SHA-256 was
-`b3a3c0b3763881e9f1bdc2ba3563e32dcf76758de12191eb60fcf72aacd7e7fb`, and the sorted
-untracked composite SHA-256 was
-`0aaa125a712ecb85a23254d3561dc1461d05a3d64e34064e24f073567bc1221d`.
+Current measurement provenance is
+`build/CookedModelGameProfile/M4Closure-2d59d56e/comparison.json`, generated
+`2026-07-18 19:49:12.337`. It records HEAD
+`2d59d56efe78fffccf7fff34cecc2efa9441fffe`, tree
+`e7158f8d4d5642d050a8727896310b6b6092c2ea`, `dirty=false`, and `status=[]`.
+The configuration used three rendered frames after asset settle, a 600-second timeout,
+and three ordered pairs: `loose,cooked`, `cooked,loose`, `loose,cooked`.
+
+| acceptance item | result |
+| --- | --- |
+| build | `AssetCook`, `Game`, and `ALL_BUILD` PASS; CTest 137/137 PASS |
+| strict real-Game profile | 3 pairs PASS; strict cooked 3/3 PASS |
+| controlled address-binding gate | `build/Diagnostics/AddressBindingFaultGate-20260718-194943`; 48/48 PASS (24/24 per mode), 0 faults, 115344 binds and 115344 unbinds |
+| overlay coexistence | `build/Diagnostics/OverlayCohab-20260718-200110`; 1/1 PASS, Game exit 0, ExceptionStream absent, Event153=0; present modules: `graphics-hook64.dll`, `ow-graphics-vulkan.dll`, `ow-graphics-hook64.dll`, `nvspcap64.dll` |
+
 The measured `Game.exe` SHA-256 was
-`4a0ea84dd55e786ca2671877f3b494d7fa780e989d2c8737e34a9d100ab53a0d`; the
+`360f17d9599f01da0c9be9e961d589d2361361bee2e19341d7bf17ea01c38482`; the
 `AssetCook.exe` SHA-256 was
-`70446f03446dc17471c3acdd7bcaf169ec2fd318b47b30dbeab144097bcf46de`.
+`a1d401ebfecce61b05d04775a7da0e77efbb68a3f2278b8ca400c5e4157f7cc5`.
+The host was `Microsoft Windows NT 10.0.22631.0` with Meta Virtual Monitor driver
+`17.12.55.198`, NVIDIA GeForce RTX 4080 driver `32.0.15.9186`, and Virtual Desktop
+Monitor driver `13.50.53.699`.
 
-The recorded dirty status includes the Phase 5 source, script, test, and documentation
-changes. It also records empty root `Game.stdout.txt` and `Game.stderr.txt` files that
-existed only at measurement time; current runners capture those streams under each run
-directory, and the root files are no longer present. All raw paths, full status entries,
-timestamps, samples, behavior-file hashes, and per-run artifacts are recorded in
-generated
-`build/CookedModelGameProfile/Phase5UR1Verify/comparison.json`.
+Raw logs, summaries, packages, manifests, and diagnostic artifacts remain under
+`build/` only and are not committed.
 
 ## Fallback And stb_image Decision
 
