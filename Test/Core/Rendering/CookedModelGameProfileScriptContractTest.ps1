@@ -36,6 +36,7 @@ Assert-HandleCachedExitCode 0
 Assert-HandleCachedExitCode 3
 
 $runnerSource = [System.IO.File]::ReadAllText($modelRunner)
+$textureRunnerSource = [System.IO.File]::ReadAllText($textureRunner)
 if ($runnerSource.Contains('$process.Refresh()')) {
     throw 'Model runner must not call stale Process.Refresh()'
 }
@@ -106,6 +107,25 @@ $allowedDefaults = @(
     'Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png',
     'Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png'
 )
+$actualDefaultTexturePaths = @(Get-ExpectedDefaultTexturePaths)
+if ($actualDefaultTexturePaths.Count -ne $allowedDefaults.Count) {
+    throw "Expected $($allowedDefaults.Count) default texture paths, got $($actualDefaultTexturePaths.Count)"
+}
+for ($index = 0; $index -lt $allowedDefaults.Count; ++$index) {
+    if ($actualDefaultTexturePaths[$index] -cne $allowedDefaults[$index]) {
+        throw "Default texture path mismatch at index $index"
+    }
+}
+foreach ($source in @($runnerSource, $textureRunnerSource)) {
+    if (-not $source.Contains('Get-ExpectedDefaultTexturePaths')) {
+        throw 'Runner must invoke Get-ExpectedDefaultTexturePaths'
+    }
+    foreach ($path in $allowedDefaults) {
+        if ($source.Contains($path)) {
+            throw "Runner must not contain default texture literal: $path"
+        }
+    }
+}
 $readyOne = 'stage=asset_gpu_flush_window_ready role=render_thread window_id=1 frames_rendered=4 success=1'
 $resumedOne = 'stage=asset_gpu_flush_window_resumed role=render_thread window_id=1 ready_frames=4 frames_rendered=5 success=1'
 $readyTwo = 'stage=asset_gpu_flush_window_ready role=render_thread window_id=2 frames_rendered=8 success=1'

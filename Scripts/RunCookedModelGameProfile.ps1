@@ -33,18 +33,7 @@ $ExpectedTextureLogicalPaths = @(
     "Models/Rendering3DTestSilverGltf/textures/silver_normal-ogl.png",
     "Models/Rendering3DTestSilverGltf/textures/silver_arm.png"
 )
-$ExpectedDefaultTexturePaths = @(
-    'Textures/Silver/silver_albedo.png',
-    'Textures/Silver/silver_normal-ogl.png',
-    'Textures/Silver/silver_metallic.png',
-    'Textures/Silver/silver_roughness.png',
-    'Textures/Silver/silver_ao.png',
-    'Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png',
-    'Textures/CobbleStoneFloor/cobblestone_floor_09_nor_gl_4k.png',
-    'Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png',
-    'Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png',
-    'Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png'
-)
+$ExpectedDefaultTexturePaths = @(Get-ExpectedDefaultTexturePaths)
 
 function Normalize-BoundaryPath {
     param([string]$Path)
