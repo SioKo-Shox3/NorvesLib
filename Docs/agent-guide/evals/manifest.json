@@ -1,0 +1,12 @@
+{
+  "project": "NorvesLib",
+  "tasks": [
+    {
+      "id": "m4-profile-line-number",
+      "fixture": "fixtures/m4-profile-line-number",
+      "prompt_file": "tasks/m4-profile-line-number.md",
+      "check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../../fixtures/m4-profile-line-number/test.ps1 -ContractPath ./CookedModelGameProfileContract.ps1",
+      "budget_ms": 600000
+    }
+  ]
+}
