@@ -69,6 +69,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/DebugDrawQueue.cpp
     Private/Rendering/DebugDrawPass.cpp
     Private/Rendering/RenderingCoordinator.cpp
+    Private/Rendering/FrameCaptureReadbackHelper.h
+    Private/Rendering/FrameCaptureReadbackHelper.cpp
+    Private/Rendering/FrameCaptureThumbnailEncoder.cpp
     Private/Rendering/RenderGraph/RenderGraph.cpp
     Private/Rendering/RenderGraph/RenderGraphBuilder.cpp
     Private/Rendering/RenderGraph/RenderGraphDump.cpp
@@ -194,6 +197,7 @@ set(PRIVATE_SOURCES
     Private/Module/ModuleRegistry.cpp
     # ThirdParty
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb/stb_image_impl.cpp
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb/stb_image_write_impl.cpp
 )
 
 set(PUBLIC_HEADERS
@@ -278,6 +282,8 @@ set(PUBLIC_HEADERS
     Public/Rendering/ProceduralMeshGPUData.h
     Public/Rendering/SceneProxy.h
     Public/Rendering/FramePacket.h
+    Public/Rendering/FrameCaptureTypes.h
+    Public/Rendering/FrameCaptureThumbnailEncoder.h
     Public/Rendering/RenderResourcesFwd.h
     Public/Rendering/RenderResourceContexts.h
     Public/Rendering/RenderResources.h

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "FrameCaptureTypes.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
@@ -164,6 +165,9 @@ namespace NorvesLib::Core::Rendering
 
         [[nodiscard]] bool HasPendingAsyncAssets() const;
         [[nodiscard]] uint64_t GetRenderedFrameCount() const;
+
+        FrameCaptureRequestResult RequestFrameCapture();
+        bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
 
         // ========================================
         // pre-device-teardown フック

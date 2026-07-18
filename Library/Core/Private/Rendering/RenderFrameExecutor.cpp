@@ -11,6 +11,25 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        void SetFrameCaptureSource(RenderFrameExecutionResult& result,
+                                   const RHI::TexturePtr& texture,
+                                   uint64_t frameNumber)
+        {
+            if (!texture)
+            {
+                return;
+            }
+
+            result.CaptureSource.Texture = texture;
+            result.CaptureSource.CurrentState = RHI::ResourceState::ShaderResource;
+            result.CaptureSource.RestoreState = RHI::ResourceState::ShaderResource;
+            result.CaptureSource.FrameNumber = frameNumber;
+            result.bHasFrameCaptureSource = true;
+        }
+    } // namespace
+
     RenderFrameExecutionResult RenderFrameExecutor::Execute(const RenderFrameExecutionRequest &request) const
     {
         RenderFrameExecutionResult result;
@@ -77,9 +96,13 @@ namespace NorvesLib::Core::Rendering
 
                 FlushPendingFrameCommands(request);
                 bool bPresented = WasPresentationHandledByGraph(request);
+                if (bPresented)
+                {
+                    TryExportGraphCaptureSource(request, result);
+                }
                 if (!bPresented)
                 {
-                    bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation);
+                    bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation, result);
                 }
                 if (bPresented)
                 {
@@ -101,9 +124,13 @@ namespace NorvesLib::Core::Rendering
             }
             FlushPendingFrameCommands(request);
             bool bPresented = WasPresentationHandledByGraph(request);
+            if (bPresented)
+            {
+                TryExportGraphCaptureSource(request, result);
+            }
             if (!bPresented)
             {
-                bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation);
+                bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation, result);
             }
             if (bPresented)
             {
@@ -237,6 +264,7 @@ namespace NorvesLib::Core::Rendering
                 FlushPendingFrameCommands(request);
                 if (WasPresentationHandledByGraph(request))
                 {
+                    TryExportGraphCaptureSource(request, result);
                     ++result.PresentationBlitCount;
                 }
             }
@@ -510,20 +538,53 @@ namespace NorvesLib::Core::Rendering
                request.PresentationGraphPass->WasHandled();
     }
 
-    bool RenderFrameExecutor::ComposeLegacyPresentationFallback(const RenderFrameExecutionRequest &request,
-                                                               bool bClearPresentation)
+    bool RenderFrameExecutor::TryExportGraphCaptureSource(const RenderFrameExecutionRequest& request,
+                                                          RenderFrameExecutionResult& result)
     {
-        if (!request.Presentation)
+        if (!request.Packet || !request.PresentationGraphPass)
         {
             return false;
         }
 
+        const PresentationPassResult& presentationResult = request.PresentationGraphPass->GetLastResult();
+        if (!presentationResult.bPresented || !presentationResult.InputTexture)
+        {
+            return false;
+        }
+
+        SetFrameCaptureSource(result, presentationResult.InputTexture, request.Packet->FrameNumber);
+        return true;
+    }
+
+    bool RenderFrameExecutor::ComposeLegacyPresentationFallback(const RenderFrameExecutionRequest &request,
+                                                               bool bClearPresentation,
+                                                               RenderFrameExecutionResult& result)
+    {
+        if (!request.Presentation || !request.Packet)
+        {
+            return false;
+        }
+
+        FrameCaptureSource captureSource;
         PresentationComposeRequest composeRequest = request.PresentationRequest;
         composeRequest.Context = request.Context;
         composeRequest.Renderer = request.Renderer;
         composeRequest.CommandList = request.CommandList;
         composeRequest.bClearPresentation = bClearPresentation;
-        return request.Presentation->Compose(composeRequest);
+        composeRequest.OutCaptureSource = &captureSource;
+        const bool bComposed = request.Presentation->Compose(composeRequest);
+        if (bComposed && captureSource.Texture)
+        {
+            captureSource.FrameNumber = request.Packet->FrameNumber;
+            result.CaptureSource = captureSource;
+            result.bHasFrameCaptureSource = true;
+        }
+        else if (bComposed)
+        {
+            result.CaptureSource = FrameCaptureSource{};
+            result.bHasFrameCaptureSource = false;
+        }
+        return bComposed;
     }
 
 } // namespace NorvesLib::Core::Rendering

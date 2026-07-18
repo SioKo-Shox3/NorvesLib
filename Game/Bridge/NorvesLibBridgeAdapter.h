@@ -25,6 +25,12 @@
 #include "Norves/Bridge/json_value.hpp"
 #include "Norves/Bridge/result.hpp"
 
+namespace NorvesLib::Core::Rendering
+{
+    struct CapturedFrame;
+    struct FrameCaptureRequestResult;
+} // namespace NorvesLib::Core::Rendering
+
 // GameApplicationHandler を adapter.h で include すると循環になる
 // （GameApplicationHandler.h が adapter.h を include する）。adapter は実体を
 // .cpp でのみ使うため、ここでは前方宣言に留める。
@@ -72,6 +78,21 @@ namespace Game::Bridge
          * @param host イベント発火用の host（借用）
          */
         void SetHost(Game::Bridge::BridgeServerHost& host) { m_Host = &host; }
+
+#if defined(NORVES_BRIDGE_TESTING)
+        struct ViewportThumbnailCaptureProviderForTesting
+        {
+            void* Context = nullptr;
+            bool (*TryConsumeCapturedFrame)(void*, NorvesLib::Core::Rendering::CapturedFrame&) = nullptr;
+            NorvesLib::Core::Rendering::FrameCaptureRequestResult (*RequestFrameCapture)(void*) = nullptr;
+        };
+
+        void SetViewportThumbnailCaptureProviderForTesting(
+            ViewportThumbnailCaptureProviderForTesting provider)
+        {
+            m_ViewportThumbnailCaptureProviderForTesting = provider;
+        }
+#endif // NORVES_BRIDGE_TESTING
 
         // --- Handshake ---
 
@@ -387,8 +408,22 @@ namespace Game::Bridge
         Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
         assetReloadManifest(const Norves::Bridge::JsonValue& params) override;
 
-        // viewport.getThumbnail は本実装範囲外で、adapter.hpp の既定実装
-        // （METHOD_NOT_SUPPORTED）のまま。scene/object（読み取り・書き込み）／schema は実装済み。
+        // --- Viewport ---
+
+        /**
+         * @brief viewport.getThumbnail。最新キャプチャ、キャッシュ、または 1x1 PNG placeholder を返す
+         *
+         * 完了済みフレームがあれば非同期読み戻し済みデータだけを消費し、Core の PNG thumbnail
+         * encoder と Bridge の base64 helper で schema 準拠の成功応答を返す。フレーム未到着、
+         * pending、未初期化、GEngine null、キャプチャ/エンコード失敗、params 不正はいずれも
+         * BridgeError にせず、cap に収まる直近キャッシュまたは placeholder を返す。
+         *
+         * @param params リクエスト params（借用、maxWidth/maxHeight を lenient に読む）
+         * @return {imageBase64,mimeType,width,height} を収めた成功 JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。GPU 待機・sleep・poll は行わない。
+         */
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        viewportGetThumbnail(const Norves::Bridge::JsonValue& params) override;
 
     private:
         /**
@@ -420,6 +455,15 @@ namespace Game::Bridge
          * @note SetHost で注入され、EmitEvent / Start・StopLogForwarding はゲームスレッド上から呼ばれる。
          */
         Game::Bridge::BridgeServerHost* m_Host = nullptr;
+
+        std::string m_CachedViewportThumbnailBase64;
+        uint32_t m_CachedViewportThumbnailWidth = 0;
+        uint32_t m_CachedViewportThumbnailHeight = 0;
+        bool m_bHasCachedViewportThumbnail = false;
+
+#if defined(NORVES_BRIDGE_TESTING)
+        ViewportThumbnailCaptureProviderForTesting m_ViewportThumbnailCaptureProviderForTesting{};
+#endif // NORVES_BRIDGE_TESTING
     };
 
 } // namespace Game::Bridge
