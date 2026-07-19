@@ -30,6 +30,7 @@ namespace NorvesLib::Core::Rendering
         void UpdateBoardProxy(uint64_t componentId, const BoardProxy &proxy) override;
         void RemoveBoardProxy(uint64_t componentId) override;
         void RemoveStaleBoardProxies(const Container::UnorderedSet<uint64_t> &liveComponentIds) override;
+        void SetTransientBoardProxies(const Container::VariableArray<BoardProxy>& proxies);
 
         void SetLayerCompositeMode(uint32_t layerPriority, CanvasLayerCompositeMode mode);
         CanvasLayerCompositeMode GetLayerCompositeMode(uint32_t layerPriority) const;
@@ -42,6 +43,7 @@ namespace NorvesLib::Core::Rendering
         bool IsBoardInstanceBatchingEnabled() const { return m_bBoardInstanceBatchingEnabled; }
 
         const Container::VariableArray<BoardProxy> &GetBoardProxies() const { return m_BoardProxies; }
+        const Container::VariableArray<BoardProxy>& GetTransientBoardProxies() const { return m_TransientBoardProxies; }
         const Container::VariableArray<DrawCommand> &GetBoardDrawCommands() const { return m_BoardDrawCommands; }
         const Container::VariableArray<GPUSceneInstanceData> &GetBoardInstanceData() const { return m_BoardInstanceData; }
         uint32_t GetRetainedBoardFrameResourceCount() const
@@ -80,6 +82,7 @@ namespace NorvesLib::Core::Rendering
         static void AddRetainedOpacityBuffer(RetainedBoardFrameResources &resources, RHI::BufferPtr buffer);
 
         Container::VariableArray<BoardProxy> m_BoardProxies;
+        Container::VariableArray<BoardProxy> m_TransientBoardProxies;
         Container::UnorderedMap<uint64_t, uint32_t> m_BoardProxyIndex;
         Container::UnorderedMap<uint64_t, uint64_t> m_BoardInsertionSequenceByComponentId;
         Container::UnorderedMap<uint32_t, CanvasLayerCompositeConfig> m_LayerCompositeConfigs;

@@ -15,6 +15,11 @@ namespace NorvesLib::Core::Application
     class IApplicationHandler;
 }
 
+namespace NorvesLib::Core
+{
+    class FontAtlas;
+}
+
 namespace NorvesLib::Core::Engine
 {
 
@@ -259,6 +264,21 @@ namespace NorvesLib::Core::Engine
             return m_RenderWorld.GetRenderResources();
         }
 
+        void SetDefaultFontAtlas(Container::TSharedPtr<FontAtlas> atlas)
+        {
+            m_DefaultFontAtlas = std::move(atlas);
+        }
+
+        Container::TSharedPtr<FontAtlas> GetDefaultFontAtlas() const
+        {
+            return m_DefaultFontAtlas;
+        }
+
+        void ResetDefaultFontAtlas()
+        {
+            m_DefaultFontAtlas.reset();
+        }
+
         // ========== ゲームワールド ==========
 
         /**
@@ -342,6 +362,7 @@ namespace NorvesLib::Core::Engine
 
         // レンダリングシステム（GEngine配下で実体保持）
         Rendering::RenderWorld m_RenderWorld;
+        Container::TSharedPtr<FontAtlas> m_DefaultFontAtlas;
 
         // ゲームワールド（GEngine配下で実体保持）
         World m_World;

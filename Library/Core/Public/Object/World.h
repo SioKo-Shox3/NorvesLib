@@ -14,6 +14,7 @@ namespace NorvesLib::Core::Rendering
     class MaterialResources;
     class MeshResources;
     class SceneView;
+    struct BoardProxy;
 }
 
 namespace NorvesLib::Core
@@ -269,6 +270,7 @@ namespace NorvesLib::Core
         // システムポインタ（リフレクション対象外）
         Rendering::SceneView *m_SceneView = nullptr;
         Rendering::IBoardProxySink *m_ScreenSpaceBoardSink = nullptr;
+        Container::VariableArray<Rendering::BoardProxy> m_TransientBoardProxies;
 
         // リフレクションプロパティ
         PROPERTY(uint64_t, NextObjectId)

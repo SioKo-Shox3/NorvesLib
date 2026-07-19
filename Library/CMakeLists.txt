@@ -7,13 +7,14 @@
 # =素ビルド byte-for-byte 不変。実行時に ImGui を表示するには Game を --imgui で起動する
 # (モジュール登録ゲート。ビルドゲート ON だけでは描画されない)。
 option(NORVES_ENABLE_IMGUI "Enable ImGui debug overlay" ON)
-if(NORVES_ENABLE_IMGUI)
+option(NORVES_ENABLE_CORE_TEXT "Enable Core text rendering" ${NORVES_ENABLE_IMGUI})
+if(NORVES_ENABLE_IMGUI OR NORVES_ENABLE_CORE_TEXT)
     # ImGui ON は FreeType を vendoring した git submodule(Library/ThirdParty/freetype)に
     # 依存する。未取得(fresh clone で submodule 未初期化)だと add_subdirectory が分かりにくく
     # 失敗するため、先に存在を確認し明確なメッセージで止める。
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/freetype/CMakeLists.txt")
         message(FATAL_ERROR
-            "NORVES_ENABLE_IMGUI=ON ですが FreeType submodule が未取得です。"
+            "NORVES_ENABLE_IMGUI または NORVES_ENABLE_CORE_TEXT が ON ですが FreeType submodule が未取得です。"
             "`git submodule update --init Library/ThirdParty/freetype` を実行するか、"
             "ImGui 不要なら -DNORVES_ENABLE_IMGUI=OFF で構成してください。")
     endif()
@@ -32,7 +33,9 @@ if(NORVES_ENABLE_IMGUI)
     set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
     add_subdirectory(ThirdParty/freetype)
 
-    add_subdirectory(ThirdParty/imgui)
+    if(NORVES_ENABLE_IMGUI)
+        add_subdirectory(ThirdParty/imgui)
+    endif()
 endif()
 
 # ライブラリモジュールを追加
