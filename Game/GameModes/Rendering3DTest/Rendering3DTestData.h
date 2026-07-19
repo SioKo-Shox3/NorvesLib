@@ -12,6 +12,7 @@
 #include "Core/Public/Rendering/RenderTypes.h"
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
+#include "Core/Public/Particle/ParticleSystem.h"
 
 namespace NorvesLib::Core
 {
@@ -147,6 +148,7 @@ namespace Game::GameModes
         bool m_bBoulderModelLoaded = false;
         bool m_bBoulderModelLoadPending = false;
         TSharedPtr<BoulderAsyncState> m_BoulderAsyncState; ///< 非同期ロード共有状態
+        NorvesLib::Core::Particle::ParticleEmitterHandle m_ParticleEmitter;
     };
 
 } // namespace Game::GameModes

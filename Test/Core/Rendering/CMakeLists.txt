@@ -1031,6 +1031,23 @@ if(NORVES_ENABLE_CORE_TEXT)
     add_test(NAME TextComponentBoardProxyTest COMMAND TextComponentBoardProxyTest)
 endif()
 
+add_executable(ParticleSystemTest
+    ParticleSystemTest.cpp
+)
+target_link_libraries(ParticleSystemTest PRIVATE Core)
+set_target_properties(ParticleSystemTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ParticleSystemTest COMMAND ParticleSystemTest)
+
+add_executable(ParticleFrameSnapshotTest
+    ParticleFrameSnapshotTest.cpp
+)
+target_link_libraries(ParticleFrameSnapshotTest PRIVATE Core)
+target_compile_definitions(ParticleFrameSnapshotTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(ParticleFrameSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ParticleFrameSnapshotTest COMMAND ParticleFrameSnapshotTest)
+
 add_executable(CanvasTransientBoardSnapshotTest
     CanvasTransientBoardSnapshotTest.cpp
 )

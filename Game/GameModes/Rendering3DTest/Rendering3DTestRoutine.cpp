@@ -28,6 +28,7 @@
 #include "Core/Public/Debug/DebugConfig.h"
 #include "Core/Public/Rendering/MegaGeometryPass.h"
 #include "Core/Public/Resource/GLTFAnalyzer.h"
+#include "Core/Public/Particle/ParticleSystem.h"
 
 #include "Core/Public/Math/Matrix4x4.h"
 #include "Core/Public/Math/Quaternion.h"
@@ -73,6 +74,19 @@ namespace Game::GameModes
             text->SetTint(Math::Vector4(1.0f, 1.0f, 1.0f, 1.0f));
         }
 #endif
+
+        NorvesLib::Core::Particle::ParticleEmitterDesc particleDesc;
+        particleDesc.Position = Math::Vector3(96.0f, 72.0f, 0.0f);
+        particleDesc.VelocityMin = Math::Vector3(-16.0f, -28.0f, 0.0f);
+        particleDesc.VelocityMax = Math::Vector3(16.0f, -12.0f, 0.0f);
+        particleDesc.Gravity = Math::Vector3(0.0f, 16.0f, 0.0f);
+        particleDesc.SpawnRate = 12.0f;
+        particleDesc.Lifetime = 1.5f;
+        particleDesc.MaxCount = 24u;
+        particleDesc.Color = Math::Vector4(1.0f, 0.45f, 0.1f, 0.85f);
+        particleDesc.SizePx = Math::Vector2(14.0f, 14.0f);
+        data.m_ParticleEmitter = ctx.EngineRef.GetParticleSystem().CreateEmitter(particleDesc);
+        LOG_INFO("Rendering3DTest particle emitter created valid=%d", data.m_ParticleEmitter.IsValid());
 
         // ========================================
         // カメラコントローラーの初期化（シーン所有）
@@ -1202,6 +1216,12 @@ namespace Game::GameModes
 
         // 非同期マテリアル更新のクリア
         data.m_PendingMaterialUpdates.clear();
+
+        if (data.m_ParticleEmitter.IsValid())
+        {
+            ctx.EngineRef.GetParticleSystem().DestroyEmitter(data.m_ParticleEmitter);
+            data.m_ParticleEmitter = {};
+        }
     }
 
 } // namespace Game::GameModes

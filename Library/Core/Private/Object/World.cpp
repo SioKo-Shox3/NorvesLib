@@ -856,13 +856,6 @@ namespace NorvesLib::Core
     void World::SyncToSceneView(const Rendering::MaterialResources* materials,
                                 const Rendering::MeshResources* meshes)
     {
-        auto* canvas = dynamic_cast<Rendering::CanvasView*>(m_ScreenSpaceBoardSink);
-        m_TransientBoardProxies.clear();
-        if (canvas)
-        {
-            canvas->SetTransientBoardProxies(m_TransientBoardProxies);
-        }
-
         if (!HasFlag(OF_Initialized) ||
             (!m_SceneView && !m_ScreenSpaceBoardSink))
         {
@@ -919,9 +912,19 @@ namespace NorvesLib::Core
             m_ScreenSpaceBoardSink->RemoveStaleBoardProxies(liveScreenBoardComponentIds);
         }
 
-        if (canvas)
+    }
+
+    void World::CollectTransientBoardProxies(Container::VariableArray<Rendering::BoardProxy>& outProxies)
+    {
+        if (!HasFlag(OF_Initialized))
         {
-            canvas->SetTransientBoardProxies(m_TransientBoardProxies);
+            return;
+        }
+
+        auto roots = GetRootEntities();
+        for (Entity* entity : roots)
+        {
+            CollectTransientBoardProxiesRecursive(*entity, outProxies);
         }
     }
 
@@ -1107,7 +1110,6 @@ namespace NorvesLib::Core
             if (textComp)
             {
                 textComp->RefreshRenderTransformCache();
-                textComp->BuildGlyphBoardProxies(m_TransientBoardProxies);
                 continue;
             }
 
@@ -1198,6 +1200,29 @@ namespace NorvesLib::Core
                 liveScreenBoardComponentIds,
                 liveWorldBoardComponentIds,
                 componentDataRegistry);
+        }
+    }
+
+    void World::CollectTransientBoardProxiesRecursive(
+        Entity& entity,
+        Container::VariableArray<Rendering::BoardProxy>& outProxies)
+    {
+        if (!entity.IsActive() || entity.IsPendingDestroy())
+        {
+            return;
+        }
+
+        for (Component::Component* component : entity.GetComponents())
+        {
+            if (Component::TextComponent* textComponent = CastTo<Component::TextComponent>(component))
+            {
+                textComponent->BuildGlyphBoardProxies(outProxies);
+            }
+        }
+
+        for (Entity* child : entity.GetChildEntities())
+        {
+            CollectTransientBoardProxiesRecursive(*child, outProxies);
         }
     }
 

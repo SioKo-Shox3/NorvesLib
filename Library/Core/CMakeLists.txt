@@ -29,6 +29,7 @@ set(PRIVATE_SOURCES
     Private/Object/Entity.cpp
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
+    Private/Particle/ParticleSystem.cpp
     Private/Text/IdentityPool.cpp
     Private/Text/JsonDocument.cpp
     Private/Text/JsonWriter.cpp
@@ -250,6 +251,7 @@ set(PUBLIC_HEADERS
     Public/Application/IApplicationHandler.h
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
+    Public/Particle/ParticleSystem.h
     Public/Engine/ApplicationProcessor.h
     # Scene
     Public/Scene/SceneQuery.h
