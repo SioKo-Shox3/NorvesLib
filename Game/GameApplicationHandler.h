@@ -8,6 +8,10 @@
 #include "Bridge/BridgeServerHost.h"
 #include "Bridge/NorvesLibBridgeAdapter.h"
 
+#if defined(NORVES_ENABLE_IMGUI)
+#include "Debug/EngineStatsImGuiView.h"
+#endif
+
 namespace NorvesLib::Core::Asset
 {
     class AssetSystem;
@@ -129,6 +133,12 @@ namespace Game
          * @note m_bIsPaused（フォーカス由来のポーズ）とは別概念なので流用しない。
          */
         Game::Bridge::BridgeRuntimeState m_BridgeRuntimeState = Game::Bridge::BridgeRuntimeState::Edit;
+
+#if defined(NORVES_ENABLE_IMGUI)
+        bool m_bImGuiRequested = false;
+        bool m_bEngineStatsImGuiViewRegistered = false;
+        Game::Debug::EngineStatsImGuiView m_EngineStatsImGuiView;
+#endif
     };
 
 } // namespace Game

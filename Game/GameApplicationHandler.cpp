@@ -37,6 +37,7 @@
 // 一切無く、--imgui は未処理=完全 no-op(素ビルド byte-for-byte 不変)。
 #if defined(NORVES_ENABLE_IMGUI)
 #include "ImGuiModule/ImGuiModule.h"
+#include "ImGuiModule/IImGuiView.h"
 #endif
 
 using namespace NorvesLib::Core::Container;
@@ -269,6 +270,9 @@ namespace Game
 
         m_bHasTextureAssetRuntimeConfig = false;
         m_bRendering3DTestUseCookedModel = false;
+#if defined(NORVES_ENABLE_IMGUI)
+        m_bImGuiRequested = false;
+#endif
         m_TextureAssetRoot = {};
         m_TextureAssetManifestPath = {};
         m_Rendering3DTestModelPath = {};
@@ -710,6 +714,9 @@ namespace Game
             LOG_WARNING("Module runtime option --imgui ignored: build without NORVES_ENABLE_IMGUI");
 #endif
         }
+#if defined(NORVES_ENABLE_IMGUI)
+        m_bImGuiRequested = bImGui;
+#endif
         return true;
     }
 
@@ -770,6 +777,27 @@ namespace Game
         // メインディレクショナルライトはGameMode（Rendering3DTest）内の
         // LightComponent経由でSceneViewに登録されるため、
         // ここでの直接登録は行わない
+#if defined(NORVES_ENABLE_IMGUI)
+        if (m_bImGuiRequested)
+        {
+            NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
+            if (engine == nullptr || !engine->GetRenderWorld().IsInitialized())
+            {
+                LOG_ERROR("EngineStats ImGui view registration failed: RenderWorld unavailable");
+                if (engine != nullptr)
+                {
+                    engine->RequestExit(1);
+                }
+                return;
+            }
+
+            m_EngineStatsImGuiView.SetRenderingCoordinator(
+                &engine->GetRenderWorld().GetRenderingCoordinator());
+            NorvesLib::Modules::Gui::RegisterImGuiView(&m_EngineStatsImGuiView);
+            m_bEngineStatsImGuiViewRegistered = true;
+            LOG_INFO("EngineStats ImGui view registered");
+        }
+#endif
     }
 
     bool GameApplicationHandler::ReloadConfiguredAssetManifest()
@@ -962,6 +990,16 @@ namespace Game
     void GameApplicationHandler::OnPreShutdown()
     {
         LOG_INFO("GameApplicationHandler::OnPreShutdown()");
+
+#if defined(NORVES_ENABLE_IMGUI)
+        if (m_bEngineStatsImGuiViewRegistered)
+        {
+            NorvesLib::Modules::Gui::UnregisterImGuiView(&m_EngineStatsImGuiView);
+            LOG_INFO("EngineStats ImGui view unregistered");
+            m_bEngineStatsImGuiViewRegistered = false;
+        }
+        m_EngineStatsImGuiView.ClearRenderingCoordinator();
+#endif
 
         // Bridge を World/RenderWorld 破棄より前に停止する（close→join、冪等）。
         // 受信スレッドは GEngine に触れないが、確実に join してから先の解体へ進む。
