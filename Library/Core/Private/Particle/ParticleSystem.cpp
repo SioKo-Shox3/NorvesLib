@@ -232,6 +232,9 @@ namespace NorvesLib::Core::Particle
         return static_cast<float>(NextRandom(state) >> 8u) / 16777216.0f;
     }
 
+    // BoardProxy needs Object/Component IDs although particles are value-owned.
+    // Bit 63 is the synthetic tag; bits 32-62 carry the low 31 generation bits.
+    // Low 32 bits carry index + 1 so slot 0 never yields a zero low word.
     uint64_t ParticleSystem::MakeSyntheticEmitterId(uint32_t index, uint32_t generation)
     {
         return (uint64_t{1} << 63u) |
