@@ -228,6 +228,8 @@ namespace NorvesLib::Core
         void SyncToSceneView(const Rendering::MaterialResources* materials = nullptr,
                              const Rendering::MeshResources* meshes = nullptr);
 
+        void CollectTransientBoardProxies(Container::VariableArray<Rendering::BoardProxy>& outProxies);
+
         /**
          * @brief Entity階層のワールドトランスフォームを更新
          */
@@ -246,6 +248,8 @@ namespace NorvesLib::Core
                                  Container::UnorderedSet<uint64_t>& liveScreenBoardComponentIds,
                                  Container::UnorderedSet<uint64_t>& liveWorldBoardComponentIds,
                                  ComponentDataRegistry* componentDataRegistry);
+        void CollectTransientBoardProxiesRecursive(Entity& entity,
+                                                   Container::VariableArray<Rendering::BoardProxy>& outProxies);
         void CollectPendingDestroyRecursive(Entity& entity, Container::VariableArray<Entity*>& toRemove);
         bool AttachRootEntity(Entity* entity);
         bool AttachChildEntity(Entity* parent, Entity* child);
@@ -270,7 +274,6 @@ namespace NorvesLib::Core
         // システムポインタ（リフレクション対象外）
         Rendering::SceneView *m_SceneView = nullptr;
         Rendering::IBoardProxySink *m_ScreenSpaceBoardSink = nullptr;
-        Container::VariableArray<Rendering::BoardProxy> m_TransientBoardProxies;
 
         // リフレクションプロパティ
         PROPERTY(uint64_t, NextObjectId)

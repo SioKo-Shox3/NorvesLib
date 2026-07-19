@@ -141,18 +141,32 @@ int main()
     world.SyncToSceneView();
     assert(sceneView.GetBoardProxies().empty());
     assert(canvas.GetBoardProxies().empty());
+    assert(canvas.GetTransientBoardProxies().empty());
+    Container::VariableArray<BoardProxy> frameTransient;
+    world.CollectTransientBoardProxies(frameTransient);
+    assert(frameTransient.size() == 5);
+    canvas.SetTransientBoardProxies(frameTransient);
     assert(canvas.GetTransientBoardProxies().size() == 5);
 
     text->SetVisible(false);
     world.SyncToSceneView();
+    frameTransient.clear();
+    world.CollectTransientBoardProxies(frameTransient);
+    canvas.SetTransientBoardProxies(frameTransient);
     assert(canvas.GetTransientBoardProxies().empty());
     text->SetVisible(true);
     text->SetFontAtlas(nullptr);
     world.SyncToSceneView();
+    frameTransient.clear();
+    world.CollectTransientBoardProxies(frameTransient);
+    canvas.SetTransientBoardProxies(frameTransient);
     assert(canvas.GetTransientBoardProxies().empty());
     text->SetFontAtlas(&atlas);
     text->SetText("");
     world.SyncToSceneView();
+    frameTransient.clear();
+    world.CollectTransientBoardProxies(frameTransient);
+    canvas.SetTransientBoardProxies(frameTransient);
     assert(canvas.GetTransientBoardProxies().empty());
 
     canvas.Shutdown();

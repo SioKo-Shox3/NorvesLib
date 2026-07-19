@@ -9,6 +9,7 @@
 #include "Scene/SceneQuery.h"
 #include "Input/InputSystem.h"
 #include "Input/InputRouter.h"
+#include "Particle/ParticleSystem.h"
 
 namespace NorvesLib::Core::Application
 {
@@ -298,6 +299,16 @@ namespace NorvesLib::Core::Engine
             return m_World;
         }
 
+        Particle::ParticleSystem& GetParticleSystem()
+        {
+            return m_ParticleSystem;
+        }
+
+        const Particle::ParticleSystem& GetParticleSystem() const
+        {
+            return m_ParticleSystem;
+        }
+
         /**
          * @brief シーン空間検索を取得
          * @return SceneQueryへの参照
@@ -366,6 +377,8 @@ namespace NorvesLib::Core::Engine
 
         // ゲームワールド（GEngine配下で実体保持）
         World m_World;
+
+        Particle::ParticleSystem m_ParticleSystem;
 
         // シーン空間検索（GEngine配下で実体保持）
         Scene::SceneQuery m_SceneQuery;

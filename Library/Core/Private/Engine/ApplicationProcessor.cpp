@@ -640,12 +640,20 @@ namespace NorvesLib::Core::Engine
         if (bAdvanceSim)
         {
             GEngine->GetWorld().Tick(deltaTime);
+            GEngine->GetParticleSystem().Tick(deltaTime);
         }
 
         // ワールドからSceneViewへProxy同期
         GEngine->GetWorld().SyncToSceneView(
             &GEngine->GetRenderResources().Materials(),
             &GEngine->GetRenderResources().Meshes());
+        Container::VariableArray<Rendering::BoardProxy> frameTransient;
+        GEngine->GetWorld().CollectTransientBoardProxies(frameTransient);
+        GEngine->GetParticleSystem().AppendBoardProxies(frameTransient);
+        if (auto canvasView = GEngine->GetRenderWorld().GetRenderingCoordinator().GetCanvasView())
+        {
+            canvasView->SetTransientBoardProxies(frameTransient);
+        }
         // SceneQuery を当フレームの最新 world-AABB で再構築(SyncToSceneView が transform/bounds を確定済み)
         GEngine->GetSceneQuery().Rebuild(GEngine->GetWorld());
 
