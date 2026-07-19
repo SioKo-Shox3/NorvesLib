@@ -326,7 +326,9 @@ namespace NorvesLib::Core::Rendering
 #if NORVES_ENABLE_STATS
         if (NorvesLib::Debug::StatsManager::Get().IsTraceActive())
         {
-            const auto &coordStats = m_RenderingCoordinator.GetStats();
+            const RenderingCoordinatorStatsSnapshot coordinatorSnapshot =
+                m_RenderingCoordinator.GetStatsSnapshot();
+            const Debug::RenderingStats coordStats = coordinatorSnapshot.Stats;
             m_Stats.DeltaTime = coordStats.DeltaTime;
             m_Stats.FPS = coordStats.FPS;
             m_Stats.DrawCalls = coordStats.DrawCalls;

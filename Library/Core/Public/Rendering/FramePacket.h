@@ -5,6 +5,7 @@
 #include "DrawCommand.h"
 #include "Rendering/DebugDrawQueue.h"
 #include "ViewportSnapshot.h"
+#include "Debug/Stats.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
 #include <cstdint>
@@ -36,12 +37,14 @@ namespace NorvesLib::Core::Rendering
      */
     struct FrameStatsSnapshot
     {
+        Debug::RenderingStats GameThreadStats;
         uint32_t VisibleObjects = 0;
         uint32_t BatchCount = 0;
         uint32_t InstancedDrawCalls = 0;
         uint32_t SavedDrawCalls = 0;
         float CullingTimeMs = 0.0f;
         float BatchingTimeMs = 0.0f;
+        bool bGameThreadTimingsAvailable = false;
     };
 
     /**
@@ -93,6 +96,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief 描画統計スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
         FrameStatsSnapshot Stats;
 
+        /** @brief GameThreadが生成したDrawCommand数。RTの実描画DrawCallsとは別指標。 */
+        uint32_t GeneratedDrawCommandCount = 0;
+
         // ========================================
         // View/Viewport render plan（新描画フロー用）
         // ========================================
@@ -140,6 +146,7 @@ namespace NorvesLib::Core::Rendering
             InstanceData.clear();
             DebugLineVertices.clear();
             Stats = FrameStatsSnapshot{};
+            GeneratedDrawCommandCount = 0;
             Views.clear();
             OverlayPasses.clear();
         }

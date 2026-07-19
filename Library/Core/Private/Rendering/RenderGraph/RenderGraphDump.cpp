@@ -247,8 +247,13 @@ namespace NorvesLib::Core::Rendering
 
     RGDumpStrings RenderGraph::BuildDebugDump() const
     {
+        return BuildDebugDump(m_DebugDumpOptions);
+    }
+
+    RGDumpStrings RenderGraph::BuildDebugDump(const RGDumpOptions &options) const
+    {
         RGDumpStrings strings;
-        if (!ShouldBuildDebugDump())
+        if (!IsDebugDumpSupported() || !options.bEnabled)
         {
             return strings;
         }
@@ -332,7 +337,7 @@ namespace NorvesLib::Core::Rendering
             }
         };
 
-        if (m_DebugDumpOptions.bText)
+        if (options.bText)
         {
             Container::StringBuilder text(4096);
             text.AppendFormat("RenderGraph Dump frame=%llu\n", static_cast<unsigned long long>(m_FrameIndex));
@@ -499,7 +504,7 @@ namespace NorvesLib::Core::Rendering
             strings.Text = text.ToString();
         }
 
-        if (m_DebugDumpOptions.bDot)
+        if (options.bDot)
         {
             Container::StringBuilder dot(4096);
             dot.AppendLine("digraph RenderGraph {");
@@ -566,7 +571,7 @@ namespace NorvesLib::Core::Rendering
             strings.Dot = dot.ToString();
         }
 
-        if (m_DebugDumpOptions.bJson)
+        if (options.bJson)
         {
             Container::StringBuilder json(8192);
             json.Append("{");
@@ -874,6 +879,12 @@ namespace NorvesLib::Core::Rendering
 
     RGDumpStrings RenderGraph::BuildDebugDump() const
     {
+        return RGDumpStrings{};
+    }
+
+    RGDumpStrings RenderGraph::BuildDebugDump(const RGDumpOptions &options) const
+    {
+        (void)options;
         return RGDumpStrings{};
     }
 

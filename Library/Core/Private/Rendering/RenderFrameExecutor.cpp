@@ -48,6 +48,7 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
+        request.Context->DebugDumpCapture = request.DebugDumpCapture;
         ResetFrameOutputs(request);
         if (ShouldCompose(*request.Packet, *request.Views))
         {

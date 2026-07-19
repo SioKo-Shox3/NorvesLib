@@ -65,6 +65,30 @@ namespace NorvesLib::Core::Rendering
         RGDumpOptions RenderGraphDumpOptions;
     };
 
+    struct RenderingCoordinatorStatsSnapshot
+    {
+        Debug::RenderingStats Stats;
+        uint32_t GeneratedDrawCommandCount = 0;
+        uint64_t PublicationSequence = 0;
+        bool bRenderFrameCompleted = false;
+        bool bGameThreadTimingsAvailable = false;
+        bool bRenderFrameTimingAvailable = false;
+        bool bGPUTimeAvailable = false;
+        bool bTotalFrameTimeAvailable = false;
+    };
+
+    struct RenderGraphDebugDumpSnapshot
+    {
+        Container::String Text;
+        Container::String UnavailableReason;
+        uint64_t FrameNumber = 0;
+        uint64_t PublicationSequence = 0;
+        bool bAvailable = false;
+        bool bTruncated = false;
+    };
+
+    class RenderingCoordinatorDiagnostics;
+
     /**
      * @brief レンダリングコーディネーター
      *
@@ -357,8 +381,16 @@ namespace NorvesLib::Core::Rendering
          * @brief レンダリングスタットを取得
          * @note Debug::RenderingStats を使用します
          */
-        Debug::RenderingStats &GetStats() { return m_Stats; }
-        const Debug::RenderingStats &GetStats() const { return m_Stats; }
+        RenderingCoordinatorStatsSnapshot GetStatsSnapshot() const;
+        Debug::RenderingStats GetStats() const;
+        void RequestRenderGraphDebugDump();
+        /**
+         * @brief 最後に消費した公開連番より新しいRenderGraphダンプを値コピーで取得
+         * @param knownPublicationSequence 0は未消費を表し、存在する最初の公開を取得する
+         * @return 新しい公開が存在した場合true。outSnapshotはtrueの場合だけ更新する
+         */
+        bool TryGetRenderGraphDebugDumpSnapshot(uint64_t knownPublicationSequence,
+                                                 RenderGraphDebugDumpSnapshot &outSnapshot) const;
 
     private:
         // ========================================
@@ -479,8 +511,15 @@ namespace NorvesLib::Core::Rendering
         bool m_bBoardInstanceBatchingEnabled = true;
         uint32_t m_MaxDrawCallsPerFrame = 10000;
 
-        // 統計（Debug::RenderingStats使用）
-        Debug::RenderingStats m_Stats;
+        Container::TUniquePtr<RenderingCoordinatorDiagnostics> m_Diagnostics;
+
+        // 統計はGameThread専用。公開はm_Diagnosticsの値スナップショットだけを使う。
+        Debug::RenderingStats m_GameThreadStats;
+
+        // RenderThread専用の完了フレーム履歴。
+        float m_PreviousCompletedTotalFrameTimeMs = 0.0f;
+        float m_LatestCompletedGPUTimeMs = 0.0f;
+        bool m_bLatestCompletedGPUTimeValid = false;
 
         // フレームタイミング
         double m_LastFrameTime = 0.0;
