@@ -20,6 +20,7 @@ namespace NorvesLib::Core::Rendering
     struct ViewRenderPlan;
     struct ViewportRenderPlan;
     struct ViewRenderContext;
+    struct RenderGraphDebugCapture;
     class SceneRenderer;
     class CanvasView;
     class View;
@@ -39,6 +40,7 @@ namespace NorvesLib::Core::Rendering
         PresentationPassRequest GraphPresentationRequest;
         CompositePass *CompositeGraphPass = nullptr;
         CompositePassRequest GraphCompositeRequest;
+        RenderGraphDebugCapture *DebugDumpCapture = nullptr;
     };
 
     struct RenderFrameExecutionResult

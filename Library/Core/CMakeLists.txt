@@ -70,6 +70,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DebugDrawQueue.cpp
     Private/Rendering/DebugDrawPass.cpp
     Private/Rendering/RenderingCoordinator.cpp
+    Private/Rendering/RenderingCoordinatorDiagnostics.cpp
     Private/Rendering/FrameCaptureReadbackHelper.h
     Private/Rendering/FrameCaptureReadbackHelper.cpp
     Private/Rendering/FrameCaptureThumbnailEncoder.cpp

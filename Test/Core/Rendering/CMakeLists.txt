@@ -63,6 +63,17 @@ target_include_directories(RenderingCoordinatorStatsPropagationTest PRIVATE
 set_target_properties(RenderingCoordinatorStatsPropagationTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorStatsPropagationTest)
 
+add_executable(RenderingCoordinatorDiagnosticsSnapshotTest
+    RenderingCoordinatorDiagnosticsSnapshotTest.cpp
+)
+target_link_libraries(RenderingCoordinatorDiagnosticsSnapshotTest PRIVATE Core)
+target_include_directories(RenderingCoordinatorDiagnosticsSnapshotTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(RenderingCoordinatorDiagnosticsSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderingCoordinatorDiagnosticsSnapshotTest COMMAND RenderingCoordinatorDiagnosticsSnapshotTest)
+
 add_executable(MeshBatcherTest
     MeshBatcherTest.cpp
 )

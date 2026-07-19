@@ -582,6 +582,24 @@ namespace
 
         assert(graph.Compile());
 
+        const RGDumpOptions storedOptions = graph.GetDebugDumpOptions();
+        RGDumpOptions textOnlyOptions;
+        textOnlyOptions.bEnabled = true;
+        textOnlyOptions.bWriteFiles = false;
+        textOnlyOptions.bText = true;
+        textOnlyOptions.bDot = false;
+        textOnlyOptions.bJson = false;
+        const RGDumpStrings textOnlyDump = graph.BuildDebugDump(textOnlyOptions);
+        assert(graph.GetDebugDumpOptions().bEnabled == storedOptions.bEnabled);
+        assert(graph.GetDebugDumpOptions().bWriteFiles == storedOptions.bWriteFiles);
+#if !NORVES_ENABLE_RENDERGRAPH_DUMP
+        assert(textOnlyDump.IsEmpty());
+#else
+        assert(!textOnlyDump.Text.empty());
+        assert(textOnlyDump.Dot.empty());
+        assert(textOnlyDump.Json.empty());
+#endif
+
         RGNamedResourceVersionDiagnostic diagnostic;
         assert(graph.TryGetDeclaredPassVersionDiagnostic(0, 0, diagnostic));
         assert(diagnostic.NamedResourceIdentity == sceneColor);

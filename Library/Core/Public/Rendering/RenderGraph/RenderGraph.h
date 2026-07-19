@@ -83,6 +83,8 @@ namespace NorvesLib::Core::Rendering
             return m_DebugDumpOptions;
         }
         RGDumpStrings BuildDebugDump() const;
+        RGDumpStrings BuildDebugDump(const RGDumpOptions &options) const;
+        bool IsDebugDumpSupported() const;
         bool WriteDebugDumpFiles();
 
         const RenderGraphExecutionResult& GetLastExecutionResult() const

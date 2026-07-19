@@ -19,7 +19,11 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <string>
 
 using namespace NorvesLib::Core::Rendering;
 namespace Container = NorvesLib::Core::Container;
@@ -29,6 +33,152 @@ namespace
 {
     ViewportRenderPlan MakeViewportPlan(uint32_t viewId, uint32_t viewportId);
     ViewRenderPlan MakeViewPlan(uint32_t viewId, ViewType type);
+
+    std::string ReadTextFile(const std::filesystem::path& path)
+    {
+        std::ifstream file(path, std::ios::binary);
+        assert(file.is_open());
+        return std::string((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+    }
+
+    std::filesystem::path FindSourceRoot()
+    {
+        std::filesystem::path candidate = std::filesystem::absolute(__FILE__).parent_path();
+        for (;;)
+        {
+            if (std::filesystem::exists(candidate / "Library/Core/Private/Rendering/RenderFrameExecutor.cpp"))
+            {
+                return candidate;
+            }
+
+            const std::filesystem::path parent = candidate.parent_path();
+            if (parent == candidate)
+            {
+                break;
+            }
+            candidate = parent;
+        }
+
+        candidate = std::filesystem::current_path();
+        for (;;)
+        {
+            if (std::filesystem::exists(candidate / "Library/Core/Private/Rendering/RenderFrameExecutor.cpp"))
+            {
+                return candidate;
+            }
+
+            const std::filesystem::path parent = candidate.parent_path();
+            if (parent == candidate)
+            {
+                break;
+            }
+            candidate = parent;
+        }
+
+        assert(false);
+        return {};
+    }
+
+    std::size_t FindMatchingBrace(const std::string& source, std::size_t openBrace)
+    {
+        assert(openBrace != std::string::npos);
+        assert(source[openBrace] == '{');
+
+        uint32_t depth = 0;
+        for (std::size_t index = openBrace; index < source.size(); ++index)
+        {
+            if (source[index] == '{')
+            {
+                ++depth;
+            }
+            else if (source[index] == '}')
+            {
+                --depth;
+                if (depth == 0)
+                {
+                    return index;
+                }
+            }
+        }
+
+        assert(false);
+        return std::string::npos;
+    }
+
+    std::string ExtractBraceBlock(const std::string& source, const std::string& marker)
+    {
+        const std::size_t markerPosition = source.find(marker);
+        assert(markerPosition != std::string::npos);
+        const std::size_t openBrace = source.find('{', markerPosition);
+        assert(openBrace != std::string::npos);
+        const std::size_t closeBrace = FindMatchingBrace(source, openBrace);
+        return source.substr(markerPosition, closeBrace - markerPosition + 1);
+    }
+
+    void AssertDebugDumpCaptureSourceContract()
+    {
+        const std::filesystem::path sourceRoot = FindSourceRoot();
+        const std::string executor = ReadTextFile(sourceRoot / "Library/Core/Private/Rendering/RenderFrameExecutor.cpp");
+        const std::string coordinator = ReadTextFile(sourceRoot / "Library/Core/Private/Rendering/RenderingCoordinator.cpp");
+        const std::string diagnostics =
+            ReadTextFile(sourceRoot / "Library/Core/Private/Rendering/RenderingCoordinatorDiagnostics.cpp");
+        const std::string view = ReadTextFile(sourceRoot / "Library/Core/Private/Rendering/View.cpp");
+
+        const std::string executeBlock = ExtractBraceBlock(executor, "RenderFrameExecutor::Execute(");
+        const std::size_t armPosition = executeBlock.find("request.Context->DebugDumpCapture = request.DebugDumpCapture;");
+        const std::size_t dispatchPosition = executeBlock.find("if (ShouldCompose(*request.Packet, *request.Views))");
+        assert(armPosition != std::string::npos);
+        assert(dispatchPosition != std::string::npos);
+        assert(armPosition < dispatchPosition);
+
+        const std::string viewRenderBlock = ExtractBraceBlock(view, "void View::Render(ViewRenderContext &context)");
+        const std::size_t targetCheckPosition = viewRenderBlock.find("context.CurrentViewport->ViewId == context.DebugDumpCapture->TargetSceneViewId");
+        const std::size_t buildPosition = viewRenderBlock.find("BuildDebugDump(context.DebugDumpCapture->Options)");
+        assert(targetCheckPosition != std::string::npos);
+        assert(buildPosition != std::string::npos);
+        assert(targetCheckPosition < buildPosition);
+
+        const std::string coordinatorRenderBlock = ExtractBraceBlock(coordinator, "void RenderingCoordinator::RenderFrame(");
+        const std::size_t primaryPosition = coordinatorRenderBlock.find("FindPrimarySceneViewportRenderPlan(*packet)");
+        const std::size_t targetPosition = coordinatorRenderBlock.find("debugDumpCapture.TargetSceneViewId = primarySceneViewport->ViewId;");
+        const std::size_t executePosition = coordinatorRenderBlock.find("frameExecutor.Execute(executionRequest)");
+        assert(primaryPosition != std::string::npos);
+        assert(targetPosition != std::string::npos);
+        assert(executePosition != std::string::npos);
+        assert(primaryPosition < targetPosition);
+        assert(targetPosition < executePosition);
+
+        const std::string executionRequestBlock =
+            coordinatorRenderBlock.substr(targetPosition, executePosition - targetPosition);
+        const std::size_t claimedPosition = executionRequestBlock.find("debugDumpClaim.IsClaimed()");
+        const std::size_t validTargetPosition = executionRequestBlock.find("debugDumpCapture.TargetSceneViewId != UINT32_MAX");
+        const std::size_t capturePointerPosition = executionRequestBlock.find("? &debugDumpCapture");
+        assert(claimedPosition != std::string::npos);
+        assert(validTargetPosition != std::string::npos);
+        assert(capturePointerPosition != std::string::npos);
+        assert(claimedPosition < validTargetPosition);
+        assert(validTargetPosition < capturePointerPosition);
+
+        const std::string afterExecutor = coordinatorRenderBlock.substr(executePosition);
+        assert(afterExecutor.find("BuildDebugDump") == std::string::npos);
+
+        const std::string claimBlock = ExtractBraceBlock(coordinatorRenderBlock,
+                                                         "if (debugDumpClaim.IsClaimed() && m_Diagnostics)");
+        const std::size_t unsupportedPosition = claimBlock.find("if (!m_RenderGraph.IsDebugDumpSupported())");
+        const std::size_t capturedPosition = claimBlock.find("else if (debugDumpCapture.bCaptured)");
+        const std::size_t markProcessedCount = claimBlock.find("debugDumpClaim.MarkProcessed();");
+        assert(unsupportedPosition != std::string::npos);
+        assert(capturedPosition != std::string::npos);
+        assert(markProcessedCount != std::string::npos);
+        assert(markProcessedCount > unsupportedPosition);
+        assert(claimBlock.find("debugDumpClaim.MarkProcessed();", markProcessedCount + 1) != std::string::npos);
+
+        const std::string claimDestructor =
+            ExtractBraceBlock(diagnostics, "RenderGraphDebugDumpRequestClaim::~RenderGraphDebugDumpRequestClaim()");
+        assert(claimDestructor.find("if (m_Owner && m_bRestoreRequest)") != std::string::npos);
+        assert(claimDestructor.find("m_Owner->RestoreRenderGraphDebugDumpRequest();") != std::string::npos);
+    }
 
     class FakeTexture final : public RHI::ITexture
     {
@@ -526,6 +676,51 @@ namespace
             (void)resources;
             (void)context;
         }
+    };
+
+    class FirstDeclareFailsThenPublishesViewPass final : public IViewPass, public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "FirstDeclareFailsThenPublishesViewPass"; }
+        bool Initialize(ViewRenderContext& context) override
+        {
+            (void)context;
+            m_bInitialized = true;
+            return true;
+        }
+        void Shutdown() override { m_bInitialized = false; }
+        void Setup(ViewRenderContext& context) override { (void)context; }
+        void Execute(ViewRenderContext& context) override { (void)context; }
+
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            if (m_DeclareCount++ == 0)
+            {
+                builder.Read(RGResourceHandle{});
+                return;
+            }
+
+            m_Handle = builder.WriteTexture(RenderGraphResourceNames::ToneMappedColor,
+                                            RGTextureDesc::RenderTarget(64,
+                                                                        32,
+                                                                        RHI::Format::R8G8B8A8_UNORM,
+                                                                        "ExecutorSecondViewportToneMappedColor"),
+                                            RHI::ResourceState::RenderTarget,
+                                            RHI::ResourceState::ShaderResource);
+            builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor, m_Handle);
+        }
+
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+        uint32_t GetDeclareCount() const { return m_DeclareCount; }
+
+    private:
+        RGTextureHandle m_Handle;
+        uint32_t m_DeclareCount = 0;
     };
 
     class ClearSharedResourcesViewPass final : public IViewPass, public IRenderGraphPass
@@ -1124,6 +1319,105 @@ int main()
         assert(result.CaptureSource.Texture.get() != fixture.BackBuffer.get());
         std::cout << "TestUnpresentedViewportDoesNotConsumeClearPresentation passed\n";
     }
+
+    {
+        ExecutorPresentationFixture fixture;
+        auto primarySceneView = Container::MakeShared<View>();
+        auto secondarySceneView = Container::MakeShared<View>();
+        ViewSettings settings;
+        assert(primarySceneView->Initialize(settings));
+        assert(secondarySceneView->Initialize(settings));
+        primarySceneView->AddPass(Container::MakeUnique<FirstDeclareFailsThenPublishesViewPass>());
+        secondarySceneView->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
+        fixture.Views.push_back(primarySceneView);
+        fixture.Views.push_back(secondarySceneView);
+        fixture.Packet.Views.push_back(MakeViewPlan(1, ViewType::Scene));
+
+        RenderGraphDebugCapture debugDumpCapture;
+        debugDumpCapture.TargetSceneViewId = 0;
+        debugDumpCapture.Options.bEnabled = true;
+        debugDumpCapture.Options.bText = true;
+
+        RenderFrameExecutionRequest request = fixture.MakeExecutionRequest();
+        request.DebugDumpCapture = &debugDumpCapture;
+
+        RenderFrameExecutor executor;
+        const RenderFrameExecutionResult result = executor.Execute(request);
+
+        assert(result.bRenderedAnyViewport);
+        assert(result.RenderedViewportCount == 2);
+        assert(!debugDumpCapture.bAttempted);
+        assert(!debugDumpCapture.bCaptured);
+        std::cout << "TestPrimarySceneFailureDoesNotCaptureFromSecondaryScene passed\n";
+    }
+
+    {
+        ExecutorPresentationFixture fixture;
+        auto primarySceneView = Container::MakeShared<View>();
+        auto firstFailureThenSuccess = Container::MakeUnique<FirstDeclareFailsThenPublishesViewPass>();
+        FirstDeclareFailsThenPublishesViewPass* pass = firstFailureThenSuccess.get();
+        ViewSettings settings;
+        assert(primarySceneView->Initialize(settings));
+        primarySceneView->AddPass(std::move(firstFailureThenSuccess));
+        fixture.Views.push_back(primarySceneView);
+        fixture.Packet.Views[0].Viewports.push_back(MakeViewportPlan(0, 101));
+
+        RenderGraphDebugCapture debugDumpCapture;
+        debugDumpCapture.TargetSceneViewId = 0;
+        debugDumpCapture.Options.bEnabled = true;
+        debugDumpCapture.Options.bText = true;
+
+        RenderFrameExecutionRequest request = fixture.MakeExecutionRequest();
+        request.DebugDumpCapture = &debugDumpCapture;
+
+        RenderFrameExecutor executor;
+        const RenderFrameExecutionResult result = executor.Execute(request);
+
+        assert(result.bRenderedAnyViewport);
+        assert(result.RenderedViewportCount == 2);
+        assert(pass->GetDeclareCount() == 2);
+        assert(debugDumpCapture.bAttempted);
+        assert(debugDumpCapture.bCaptured);
+        assert(!debugDumpCapture.Text.empty());
+        std::cout << "TestPrimarySceneNextViewportCanCaptureAfterFirstGraphFailure passed\n";
+    }
+
+    {
+        ExecutorPresentationFixture fixture;
+        auto sceneView = Container::MakeShared<View>();
+        auto canvasView = Container::MakeShared<DirectOutputCanvasView>();
+        ViewSettings sceneSettings;
+        ViewSettings canvasSettings;
+        canvasSettings.Type = ViewType::UI;
+        assert(sceneView->Initialize(sceneSettings));
+        assert(canvasView->Initialize(canvasSettings));
+        sceneView->AddPass(Container::MakeUnique<PublishedTextureViewPass>());
+        fixture.Views.push_back(sceneView);
+        fixture.Views.push_back(canvasView);
+
+        ViewRenderPlan canvasPlan = MakeViewPlan(1, ViewType::UI);
+        canvasPlan.Priority = 10;
+        fixture.Packet.Views.push_back(canvasPlan);
+
+        RenderGraphDebugCapture debugDumpCapture;
+        debugDumpCapture.TargetSceneViewId = 0;
+        debugDumpCapture.Options.bEnabled = true;
+        debugDumpCapture.Options.bText = true;
+
+        RenderFrameExecutionRequest request = fixture.MakeExecutionRequest();
+        request.DebugDumpCapture = &debugDumpCapture;
+
+        RenderFrameExecutor executor;
+        const RenderFrameExecutionResult result = executor.Execute(request);
+
+        assert(result.bComposite);
+        assert(debugDumpCapture.bCaptured);
+        assert(debugDumpCapture.Text.find("CompositePass") == Container::String::npos);
+        std::cout << "TestCompositeCaptureStopsBeforeCanvasAndStage2 passed\n";
+    }
+
+    AssertDebugDumpCaptureSourceContract();
+    std::cout << "TestDebugDumpCaptureSourceContract passed\n";
 
     std::cout << "RenderFrameExecutorPlanTest passed\n";
     return 0;

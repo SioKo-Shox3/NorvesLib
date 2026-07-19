@@ -308,6 +308,20 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        if (context.DebugDumpCapture &&
+            !context.DebugDumpCapture->bCaptured &&
+            context.CurrentViewport &&
+            context.CurrentViewport->ViewId == context.DebugDumpCapture->TargetSceneViewId)
+        {
+            context.DebugDumpCapture->bAttempted = true;
+            const RGDumpStrings dump = context.Graph->BuildDebugDump(context.DebugDumpCapture->Options);
+            if (!dump.Text.empty())
+            {
+                context.DebugDumpCapture->Text = dump.Text;
+                context.DebugDumpCapture->bCaptured = true;
+            }
+        }
+
         const RenderGraphExecutionResult& lastResult = context.Graph->GetLastExecutionResult();
         RHI::TexturePtr outputTexture;
         if (lastResult.TryGetTexture(RenderGraphResourceNames::PresentationColor, outputTexture) ||

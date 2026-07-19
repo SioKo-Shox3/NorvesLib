@@ -5,6 +5,7 @@
 #include "DrawCommand.h"
 #include "Rendering/DebugDrawQueue.h"
 #include "Rendering/RenderResourceContexts.h"
+#include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
@@ -32,6 +33,15 @@ namespace NorvesLib::Core::Rendering
     class RenderGraph;
     struct RenderGraphExecutionResult;
     struct ShadowMapPassSettings;
+
+    struct RenderGraphDebugCapture
+    {
+        uint32_t TargetSceneViewId = UINT32_MAX;
+        RGDumpOptions Options;
+        Container::String Text;
+        bool bCaptured = false;
+        bool bAttempted = false;
+    };
 
     /**
      * @brief View描画コンテキスト
@@ -141,6 +151,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 有効な場合、ViewはRenderGraph経由でパスチェーンを実行する */
         RenderGraph* Graph = nullptr;
+
+        /** @brief RenderFrame stack-owned, requested text-only graph diagnostics. */
+        RenderGraphDebugCapture* DebugDumpCapture = nullptr;
 
         /** @brief フレーム中だけ借用するGraph最終合成パス */
         PresentationPass* PresentationGraphPass = nullptr;

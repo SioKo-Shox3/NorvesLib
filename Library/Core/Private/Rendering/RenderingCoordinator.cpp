@@ -1,5 +1,6 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
 #include "Rendering/CanvasView.h"
+#include "Rendering/RenderingCoordinatorDiagnostics.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/Screen.h"
 #include "Rendering/SceneView.h"
@@ -219,9 +220,38 @@ namespace NorvesLib::Core::Rendering
     // RenderingCoordinator
     // ========================================
 
-    RenderingCoordinator::RenderingCoordinator() = default;
+    RenderingCoordinator::RenderingCoordinator()
+        : m_Diagnostics(Container::MakeUnique<RenderingCoordinatorDiagnostics>())
+    {
+    }
 
     RenderingCoordinator::~RenderingCoordinator() = default;
+
+    RenderingCoordinatorStatsSnapshot RenderingCoordinator::GetStatsSnapshot() const
+    {
+        return m_Diagnostics ? m_Diagnostics->GetStatsSnapshot() : RenderingCoordinatorStatsSnapshot{};
+    }
+
+    Debug::RenderingStats RenderingCoordinator::GetStats() const
+    {
+        return GetStatsSnapshot().Stats;
+    }
+
+    void RenderingCoordinator::RequestRenderGraphDebugDump()
+    {
+        if (m_Diagnostics)
+        {
+            m_Diagnostics->RequestRenderGraphDebugDump();
+        }
+    }
+
+    bool RenderingCoordinator::TryGetRenderGraphDebugDumpSnapshot(
+        uint64_t knownPublicationSequence,
+        RenderGraphDebugDumpSnapshot &outSnapshot) const
+    {
+        return m_Diagnostics &&
+               m_Diagnostics->TryGetRenderGraphDebugDumpSnapshot(knownPublicationSequence, outSnapshot);
+    }
 
     bool RenderingCoordinator::Initialize(const RenderingCoordinatorSettings &settings)
     {
@@ -231,6 +261,15 @@ namespace NorvesLib::Core::Rendering
         }
 
         LOG_INFO("RenderingCoordinator::Initialize() - Starting initialization");
+
+        m_PreviousCompletedTotalFrameTimeMs = 0.0f;
+        m_LatestCompletedGPUTimeMs = 0.0f;
+        m_bLatestCompletedGPUTimeValid = false;
+
+        if (m_Diagnostics)
+        {
+            m_Diagnostics->Reset();
+        }
 
         m_Width = settings.Width;
         m_Height = settings.Height;
@@ -628,6 +667,15 @@ namespace NorvesLib::Core::Rendering
 
     void RenderingCoordinator::Shutdown()
     {
+        m_PreviousCompletedTotalFrameTimeMs = 0.0f;
+        m_LatestCompletedGPUTimeMs = 0.0f;
+        m_bLatestCompletedGPUTimeValid = false;
+
+        if (m_Diagnostics)
+        {
+            m_Diagnostics->Reset();
+        }
+
         if (!m_bInitialized)
         {
             return;
@@ -839,15 +887,15 @@ namespace NorvesLib::Core::Rendering
         }
         if (m_CurrentPacket)
         {
-            m_CurrentPacket->FrameNumber = m_Stats.FrameNumber;
+            m_CurrentPacket->FrameNumber = m_GameThreadStats.FrameNumber;
             m_CurrentPacket->DeltaTime = deltaTime;
             m_CurrentPacket->TotalTime = m_TotalTime;
         }
 
-        m_Stats.DeltaTime = deltaTime;
+        m_GameThreadStats.DeltaTime = deltaTime;
         if (deltaTime > 0.0f)
         {
-            m_Stats.FPS = 1.0f / deltaTime;
+            m_GameThreadStats.FPS = 1.0f / deltaTime;
         }
 
         // Screen.BeginFrame（swapchain acquire）はRenderFrame内に移動。
@@ -876,7 +924,7 @@ namespace NorvesLib::Core::Rendering
             // SceneViewのProxy情報は既にWorldから設定済み
         }
 
-        NORVES_STAT_TIME_END(collection, m_Stats.CollectionTimeMs);
+        NORVES_STAT_TIME_END(collection, m_GameThreadStats.CollectionTimeMs);
     }
 
     void RenderingCoordinator::GenerateDrawCommands()
@@ -887,10 +935,6 @@ namespace NorvesLib::Core::Rendering
         }
 
         NORVES_STAT_TIME_START(cmdGen);
-
-#if NORVES_ENABLE_STATS
-        const bool bTraceActive = NorvesLib::Debug::StatsManager::Get().IsTraceActive();
-#endif
 
         if (m_CurrentPacket)
         {
@@ -923,6 +967,7 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->InstanceData.clear();
             m_CurrentPacket->Views.clear();
             m_CurrentPacket->Stats = FrameStatsSnapshot{};
+            m_CurrentPacket->GeneratedDrawCommandCount = 0;
 
             auto& debugDraw = NorvesLib::Core::GEngine.GetDebugDraw();
             m_CurrentPacket->DebugLineVertices.clear();
@@ -979,12 +1024,7 @@ namespace NorvesLib::Core::Rendering
                                                   instanceBase,
                                                   m_CurrentPacket->DrawCommands);
                     drawCommandRange = CombineCommandRanges(opaqueCommandRange, transparentCommandRange);
-#if NORVES_ENABLE_STATS
-                    if (bTraceActive)
-                    {
-                        AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
-                    }
-#endif
+                    AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
                 }
 
                 if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
@@ -1037,12 +1077,7 @@ namespace NorvesLib::Core::Rendering
                         viewportPlan.DrawCommandRange =
                             CombineCommandRanges(viewportPlan.OpaqueCommandRange,
                                                  viewportPlan.TransparentCommandRange);
-#if NORVES_ENABLE_STATS
-                        if (bTraceActive)
-                        {
-                            AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
-                        }
-#endif
+                        AccumulateViewStats(m_CurrentPacket, sceneView->GetStats());
                     }
 
                     if (m_CurrentPacket && bIsMainSceneView && !bLegacyCommandsSet)
@@ -1081,10 +1116,14 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        NORVES_STAT_TIME_END(cmdGen, m_Stats.CommandGenerationTimeMs);
+        if (m_CurrentPacket)
+        {
+            m_CurrentPacket->GeneratedDrawCommandCount =
+                static_cast<uint32_t>(m_CurrentPacket->DrawCommands.size());
+        }
 
-        NORVES_STAT_ADD(m_Stats.DrawCalls,
-                        m_CurrentPacket ? static_cast<uint32_t>(m_CurrentPacket->DrawCommands.size()) : 0u);
+        NORVES_STAT_TIME_END(cmdGen, m_GameThreadStats.CommandGenerationTimeMs);
+
     }
 
     FramePacket* RenderingCoordinator::EndFrame()
@@ -1099,11 +1138,16 @@ namespace NorvesLib::Core::Rendering
         FramePacket* finishedPacket = m_CurrentPacket;
         if (m_CurrentPacket)
         {
+            m_CurrentPacket->Stats.GameThreadStats = m_GameThreadStats;
+#if NORVES_ENABLE_STATS
+            m_CurrentPacket->Stats.bGameThreadTimingsAvailable =
+                NorvesLib::Debug::StatsManager::Get().IsTraceActive();
+#endif
             m_PacketManager.FinishWrite(m_CurrentPacket);
             m_CurrentPacket = nullptr;
         }
 
-        m_Stats.FrameNumber++;
+        m_GameThreadStats.FrameNumber++;
         return finishedPacket;
     }
 
@@ -1185,9 +1229,52 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        Debug::RenderingStats renderStats = packet->Stats.GameThreadStats;
+        renderStats.VisibleObjects = packet->Stats.VisibleObjects;
+        renderStats.BatchCount = packet->Stats.BatchCount;
+        renderStats.InstancedDrawCalls = packet->Stats.InstancedDrawCalls;
+        renderStats.SavedDrawCalls = packet->Stats.SavedDrawCalls;
+        renderStats.CullingTimeMs = packet->Stats.CullingTimeMs;
+        renderStats.BatchingTimeMs = packet->Stats.BatchingTimeMs;
+        const bool bGameThreadTimingsAvailable = packet->Stats.bGameThreadTimingsAvailable;
+
+        RenderGraphDebugDumpRequestClaim debugDumpClaim;
+        RenderGraphDebugCapture debugDumpCapture;
+        if (m_Diagnostics)
+        {
+            debugDumpClaim = m_Diagnostics->TryClaimRenderGraphDebugDumpRequest();
+            const ViewportRenderPlan *primarySceneViewport =
+                RenderFrameExecutor::FindPrimarySceneViewportRenderPlan(*packet);
+            if (debugDumpClaim.IsClaimed() && primarySceneViewport)
+            {
+                debugDumpCapture.TargetSceneViewId = primarySceneViewport->ViewId;
+                debugDumpCapture.Options.bEnabled = true;
+                debugDumpCapture.Options.bWriteFiles = false;
+                debugDumpCapture.Options.bText = true;
+                debugDumpCapture.Options.bDot = false;
+                debugDumpCapture.Options.bJson = false;
+                debugDumpCapture.Options.bDebugMarkers = false;
+            }
+        }
+
+        auto publishIncompleteStats = [this, packet, &renderStats, bGameThreadTimingsAvailable]()
+        {
+            if (!m_Diagnostics)
+            {
+                return;
+            }
+
+            RenderingCoordinatorStatsSnapshot statsSnapshot;
+            statsSnapshot.Stats = renderStats;
+            statsSnapshot.GeneratedDrawCommandCount = packet->GeneratedDrawCommandCount;
+            statsSnapshot.bGameThreadTimingsAvailable = bGameThreadTimingsAvailable;
+            m_Diagnostics->PublishStatsSnapshot(statsSnapshot);
+        };
+
         auto swapChain = m_Screen.GetSwapChain();
         if (!swapChain)
         {
+            publishIncompleteStats();
             return;
         }
 
@@ -1217,6 +1304,7 @@ namespace NorvesLib::Core::Rendering
                 }
             }
 
+            publishIncompleteStats();
             return;
         }
 
@@ -1235,6 +1323,7 @@ namespace NorvesLib::Core::Rendering
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Swapchain presentation resources are not ready");
             m_TransientPool.EndFrame();
+            publishIncompleteStats();
             return;
         }
 
@@ -1251,6 +1340,7 @@ namespace NorvesLib::Core::Rendering
                              m_GraphPresentationClearFramebuffers.size(),
                              m_GraphPresentationLoadFramebuffers.size());
             m_TransientPool.EndFrame();
+            publishIncompleteStats();
             return;
         }
 
@@ -1269,8 +1359,15 @@ namespace NorvesLib::Core::Rendering
             const float latestGPUTimeMs = m_CommandList->GetLastGPUTimestampDurationMs();
             if (latestGPUTimeMs > 0.0f)
             {
-                m_Stats.GPUTimeMs = latestGPUTimeMs;
+                m_LatestCompletedGPUTimeMs = latestGPUTimeMs;
+                m_bLatestCompletedGPUTimeValid = true;
+                renderStats.GPUTimeMs = latestGPUTimeMs;
                 statsManager.SetGPUFrameTimeMs(latestGPUTimeMs);
+            }
+
+            if (m_bLatestCompletedGPUTimeValid)
+            {
+                renderStats.GPUTimeMs = m_LatestCompletedGPUTimeMs;
             }
 
             if (m_CommandList->SupportsGPUTimestamps())
@@ -1301,8 +1398,8 @@ namespace NorvesLib::Core::Rendering
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;
         viewContext.RenderHeight = m_RenderHeight;
-        viewContext.DeltaTime = static_cast<float>(m_Stats.TotalFrameTimeMs * 0.001);
-        viewContext.TotalTime = m_TotalTime;
+        viewContext.DeltaTime = m_PreviousCompletedTotalFrameTimeMs * 0.001f;
+        viewContext.TotalTime = packet->TotalTime;
         if (m_RenderResources)
         {
             viewContext.Resources.Gpu = &m_RenderResources->Gpu();
@@ -1375,11 +1472,37 @@ namespace NorvesLib::Core::Rendering
         executionRequest.GraphPresentationRequest = graphPresentationRequest;
         executionRequest.CompositeGraphPass = &m_CompositePass;
         executionRequest.GraphCompositeRequest = graphCompositeRequest;
+        executionRequest.DebugDumpCapture = debugDumpClaim.IsClaimed() &&
+                                                  debugDumpCapture.TargetSceneViewId != UINT32_MAX
+                                              ? &debugDumpCapture
+                                              : nullptr;
 
         RenderFrameExecutor frameExecutor;
         RenderFrameExecutionResult executionResult = frameExecutor.Execute(executionRequest);
-        m_Stats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
-        m_Stats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
+
+        if (debugDumpClaim.IsClaimed() && m_Diagnostics)
+        {
+            if (!m_RenderGraph.IsDebugDumpSupported())
+            {
+                m_Diagnostics->PublishRenderGraphDebugDump(
+                    Container::String{},
+                    packet->FrameNumber,
+                    false,
+                    "RenderGraph debug dump is unavailable in this build");
+                debugDumpClaim.MarkProcessed();
+            }
+            else if (debugDumpCapture.bCaptured)
+            {
+                m_Diagnostics->PublishRenderGraphDebugDump(
+                    debugDumpCapture.Text,
+                    packet->FrameNumber,
+                    true,
+                    Container::String{});
+                debugDumpClaim.MarkProcessed();
+            }
+        }
+        renderStats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
+        renderStats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
 
         if (m_FrameCaptureReadbackHelper)
         {
@@ -1459,8 +1582,8 @@ namespace NorvesLib::Core::Rendering
 
         // 統計更新
         const auto &rendererStats = m_SceneRenderer.GetStats();
-        m_Stats.DrawCalls = rendererStats.DrawCallCount;
-        m_Stats.TrianglesRendered = rendererStats.TriangleCount;
+        renderStats.DrawCalls = rendererStats.DrawCallCount;
+        renderStats.TrianglesRendered = rendererStats.TriangleCount;
 
         // コマンドリストをサブミット＆Present（旧EndFrame経路から移動）
         m_Screen.EndFrame(m_CommandList);
@@ -1468,20 +1591,13 @@ namespace NorvesLib::Core::Rendering
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
         {
-            m_Stats.VisibleObjects = packet->Stats.VisibleObjects;
-            m_Stats.BatchCount = packet->Stats.BatchCount;
-            m_Stats.InstancedDrawCalls = packet->Stats.InstancedDrawCalls;
-            m_Stats.SavedDrawCalls = packet->Stats.SavedDrawCalls;
-            m_Stats.CullingTimeMs = packet->Stats.CullingTimeMs;
-            m_Stats.BatchingTimeMs = packet->Stats.BatchingTimeMs;
-
             auto renderFrameEndTime = std::chrono::high_resolution_clock::now();
-            m_Stats.RenderFrameTimeMs =
+            renderStats.RenderFrameTimeMs =
                 std::chrono::duration<float, std::milli>(renderFrameEndTime - renderFrameStartTime).count();
-            m_Stats.TotalFrameTimeMs = std::max(std::max(m_Stats.GameThreadTimeMs, m_Stats.RenderThreadTimeMs),
-                                                std::max(m_Stats.RenderFrameTimeMs, m_Stats.GPUTimeMs));
-            statsManager.SetRenderFrameTimeMs(m_Stats.RenderFrameTimeMs);
-            statsManager.UpdateRenderingStats(m_Stats);
+            renderStats.TotalFrameTimeMs = std::max(std::max(renderStats.GameThreadTimeMs, renderStats.RenderThreadTimeMs),
+                                                    std::max(renderStats.RenderFrameTimeMs, renderStats.GPUTimeMs));
+            statsManager.SetRenderFrameTimeMs(renderStats.RenderFrameTimeMs);
+            statsManager.UpdateRenderingStats(renderStats);
         }
 #endif
 
@@ -1516,6 +1632,28 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
+
+        if (m_Diagnostics)
+        {
+            RenderingCoordinatorStatsSnapshot statsSnapshot;
+            statsSnapshot.Stats = renderStats;
+            statsSnapshot.GeneratedDrawCommandCount = packet->GeneratedDrawCommandCount;
+            statsSnapshot.bRenderFrameCompleted = true;
+            statsSnapshot.bGameThreadTimingsAvailable = bGameThreadTimingsAvailable;
+#if NORVES_ENABLE_STATS
+            statsSnapshot.bRenderFrameTimingAvailable = bTraceActive;
+            statsSnapshot.bGPUTimeAvailable = bTraceActive && m_bLatestCompletedGPUTimeValid;
+            statsSnapshot.bTotalFrameTimeAvailable = bTraceActive;
+#endif
+            m_Diagnostics->PublishStatsSnapshot(statsSnapshot);
+        }
+
+#if NORVES_ENABLE_STATS
+        if (bTraceActive)
+        {
+            m_PreviousCompletedTotalFrameTimeMs = renderStats.TotalFrameTimeMs;
+        }
+#endif
     }
 
     void RenderingCoordinator::ExecuteDrawCommands(const Container::VariableArray<DrawCommand> &commands)

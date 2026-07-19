@@ -2291,8 +2291,13 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderGraph::ShouldBuildDebugDump() const
     {
+        return IsDebugDumpSupported() && m_DebugDumpOptions.bEnabled;
+    }
+
+    bool RenderGraph::IsDebugDumpSupported() const
+    {
 #if NORVES_ENABLE_RENDERGRAPH_DUMP
-        return m_DebugDumpOptions.bEnabled;
+        return true;
 #else
         return false;
 #endif
