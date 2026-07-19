@@ -1,26 +1,26 @@
 # NorvesLib エンジンロードマップ（M1〜M9）
 
-作成日: 2026-07-02 ／ 最終更新: 2026-07-18 ／ ステータス: 進行中（M1〜M4完了、次はM5）
+作成日: 2026-07-02 ／ 最終更新: 2026-07-19 ／ ステータス: 進行中（M1〜M5完了、次はM6）
 
-## 0. 現在地（2026-07-18）と実行順の再整理
+## 0. 現在地（2026-07-19）と実行順の再整理
 
 - **M1「シーンSave/Load」完了**。シーン永続化は完了済みである。
 - **M2「viewport.getThumbnail」完了・main に統合済み**。エディタの Game View 向けサムネイル取得を完了した。
 - **M3「シャドウ結線・ライト」完了・main に統合済み**（`5d1bce01`、`8ae2f7c6`、`6ed4152f`）。シャドウ行列のライト追従と LightingPass の SSBO 化を完了した。
 - **M4「メッシュクック＋リロード最小」完了**（`fddbba0e` でマイルストーンを閉鎖）。メッシュ cook・ランタイム経路・manifest reload は完了済みである。受容済み non-blocking リスクは [閉鎖記録](../Performance/AssetLoadPostCookComparison.md#known-accepted-risks) の2件（`InstanceBufferRing` の `uint32` 理論上限、profile 行番号 allowlist の未規定範囲）に限る。
-- **現在の次工程は M5**。M1〜M4 は完了済みであり、M5 のテキスト描画・パーティクル・デバッグUIへ着手する。
+- **M5「テキスト描画・パーティクル・デバッグUI」完了**（`42e287d3`、`8498c4e2`、`5c37a964`、`a6e79d8d`）。M1〜M5 は完了済みであり、次工程は M6 の AngelScript 統合である。
   | 順 | M | 依存 | 独立性 | 備考 |
   |---|---|---|---|---|
   | 完了 | M2 ビューポート | なし（RHI/Rendering 単独） | 高 | viewport.getThumbnail を main へ統合済み |
   | 完了 | M3 シャドウ結線・ライト | なし（Rendering 単独） | 高 | shadow追従とライトSSBO化を main へ統合済み |
   | 完了 | M4 メッシュクック | なし（Asset 単独） | 中 | cook・runtime・reload を完了し、`fddbba0e` で閉鎖済み |
-  | 次 | M5 テキスト/パーティクル/デバッグUI | M3 の絵作り土台があると映える | 中 | 各項独立フェーズ |
-  | 5 | M6 スクリプティング(AngelScript) | **M1**（ScriptComponent がシーン永続化に乗る＝完了済み） | 中 | 第2部の入口 |
+  | 完了 | M5 テキスト/パーティクル/デバッグUI | M3 の絵作り土台があると映える | 中 | Canvas/FramePacket 経路、CPU particles、ImGui 統計を完了 |
+  | 次 | M6 スクリプティング(AngelScript) | **M1**（ScriptComponent がシーン永続化に乗る＝完了済み） | 中 | 第2部の入口 |
   | 6 | M7 固定タイムステップ | なし（M8 の前提工事） | 中 | エンジンクリティカル |
   | 7 | M8 最小物理 | **M7** 必須 | 低 | M7 通過後 |
   | 8 | M9 アニメ＋オーディオ | なし（M4 のメッシュ経路を流用可） | 中 | 2 サブ機能は並行可 |
-  - M2/M3/M4 は互いに疎で並行着手できるが、**共有ファイル（中央 CMake・公開ヘッダ）の順次編集はオーケストレーターが単一オーナーで管理**すること。M6 の前提（M1）は達成済み。
-- **M1〜M4 で得た運用知見（M5 以降に必ず適用）**:
+  - M2〜M5 は互いに疎で並行着手できたが、**共有ファイル（中央 CMake・公開ヘッダ）の順次編集はオーケストレーターが単一オーナーで管理**すること。M6 の前提（M1）は達成済み。
+- **M1〜M5 で得た運用知見（M6 以降に必ず適用）**:
   1. **計画駆動・完成コード転写が有効**: 計画書に完成コードを全文埋め込み → 実装は「正確な転写＋検証」に還元できた。エンジンクリティカル箇所ほど計画段階でコードを固め切る。
   2. **レビューゲートは実利がある**: M1 の二重レビューが実バグ3件（LoadedRoots未加算・LoadIntoWorldの二重カウント・インデント崩れ）を捕捉。計画レビュー・実装レビューを省略しない。
   3. **実装委譲と停止規則を守る**: 実装は `implementer` サブエージェントへ委譲し、同一手法で2回失敗したら反復せず停止して証拠を添えて報告する。以後の判断は上位モデルへの昇格または別手段の相談で仕切り直す。
@@ -45,7 +45,7 @@ NorvesLib はレンダリングとエンジン基盤に厚く投資された「3
 |---|---|---|
 | シーン永続化 | M1 で JSON writer・SceneSerializer・World の Save/Load 入口・round-trip を完了 | 完了済み。将来の形式拡張は個別Mで扱う |
 | ビューポート連携 | M2 で readback・キャプチャ・PNG・Bridge による `viewport.getThumbnail` を完了 | 完了済み。将来のライブビュー/ギズモは別設計で扱う |
-| レンダリング | M3 でシャドウのライト追従と LightingPass の SSBO 化を完了。RenderGraph、2D、ImGui モジュールも実装済み | M5 のゲーム内テキスト描画・パーティクル・デバッグUI |
+| レンダリング | M3 のシャドウ/SSBO 化に加え、M5 で Canvas 経由のテキスト、同一 FramePacket 経路の CPU パーティクル、ImGui 統計を完了 | 最小閉鎖は完了。IBL は任意の後続拡張 |
 | アセット | M4 でメッシュ cook・ランタイム解決経路・manifest reload を完了。テクスチャ経路も cook（NVTEXv0）→ manifest → 非同期ロードまで完成 | 受容済み non-blocking リスクを除き、M4 の最小スコープは完了 |
 | ゲームプレイ基盤 | GameMode/入力/Tick経路/Module/BVHクエリ/リフレクション動的呼び出しは実用水準 | 固定タイムステップ無し。物理・スケルタルアニメ・オーディオ・スクリプティングは未着手 |
 
@@ -57,13 +57,13 @@ NorvesLib はレンダリングとエンジン基盤に厚く投資された「3
 | M2 | エンジンが見えるエディタ — viewport.getThumbnail | Editor連携 | ✅ 完了 |
 | M3 | 動くライトと正しい影 — シャドウ結線・ライト拡張 | レンダリング | ✅ 完了（main統合済み） |
 | M4 | アセットが流れるエンジン — メッシュクック＋リロード最小 | アセット | ✅ 完了（`fddbba0e`で閉鎖、受容済みnon-blockingリスクあり） |
-| M5 | デモが映える画面 — テキスト描画・パーティクル・デバッグUI | レンダリング/2D | ▶ 次 |
-| M6 | スクリプトで動く世界 — AngelScript 統合 | スクリプティング | 未着手（前提M1達成） |
+| M5 | デモが映える画面 — テキスト描画・パーティクル・デバッグUI | レンダリング/2D | ✅ 完了 |
+| M6 | スクリプトで動く世界 — AngelScript 統合 | スクリプティング | ▶ 次（前提M1達成） |
 | M7 | 時間が正しいエンジン — 固定タイムステップ | 基盤 | 未着手 |
 | M8 | 触れる世界 — 最小物理/衝突応答 | 物理 | 未着手（M7依存） |
 | M9 | 動き、鳴る世界 — スケルタルアニメ＋オーディオ | アニメ/音 | 未着手 |
 
-依存関係: M1→M6（ScriptComponent のプロパティ保存）、M7→M8（物理は固定ステップ前提）以外は疎。M1〜M4 は完了済みであり、次は M5 に着手する。ただし共有ファイル（公開ヘッダ・中央CMake）の編集は単一オーナー原則を守ること。
+依存関係: M1→M6（ScriptComponent のプロパティ保存）、M7→M8（物理は固定ステップ前提）以外は疎。M1〜M5 は完了済みであり、次は M6 に着手する。ただし共有ファイル（公開ヘッダ・中央CMake）の編集は単一オーナー原則を守ること。
 
 ## 4. 第1部: エディタと絵作り
 
@@ -160,17 +160,11 @@ Phase 1 design spec: [NVMESHv0](../Architecture/NVMESHv0.md).
 
 **受容済み non-blocking リスク**: [閉鎖記録](../Performance/AssetLoadPostCookComparison.md#known-accepted-risks) の2件のみを受容してM4を閉鎖した。`InstanceBufferRing` の instance/capacity 算術は `uint32` のため理論上 `UINT32_MAX` 超で狭窄/オーバーフローし得る。profile 行番号 allowlist は正のASCII十進数を受理し、先頭ゼロ・桁数の制約は未規定である。
 
-### M5 「デモが映える画面」— レンダリング拡充・第2弾＋2D仕上げ
+### M5 「デモが映える画面」— レンダリング拡充・第2弾＋2D仕上げ（完了）
 
-**目的**: 技術デモの画面を完成度高く見せるための表現力と、エンジン内デバッグUIの整備。
+**完了したスコープ**: ASCII `FontAtlas` と `TextComponent` を Canvas の transient データから FramePacket へ渡す既存スナップショット経路へ結線した。CPU で決定的にシミュレーションするパーティクルを世代付きハンドルで管理し、同じスナップショット経路で BoardProxy 化した。値スナップショットの診断と ImGui の標準統計表示も完了した。IBL は最小閉鎖の対象外であり、任意の後続強化として扱う。
 
-**フェーズ分割案**（各項は独立フェーズ、優先順は着手時判断）:
-1. ゲーム内テキスト描画 — FreeType を ImGui 専用から Core 利用可能へ昇格（CMake）、フォントアトラス＋グリフ→`BoardProxy.UVRect` 変換。既存 Mesh2D 経路（`DrawCommand::CreateMesh2D`、ImGuiOverlayPass が実証済み）を流用しパス新設不要
-2. パーティクル Phase 1 — CPU シミュレーション＋既存 Board インスタンスバッチング描画。GPU シム（RenderGraph WriteBuffer+Dispatch、MegaGeometryPass が参照実装）は将来の Phase 2 に分離。新規 Manager は作らず GEngine サブシステムとして追加
-3. ImGui 標準エンジン統計ウィンドウ — RenderingCoordinator の Stats、RenderGraph デバッグダンプを IImGuiView で表示
-4. IBL 強化（選択制）— プリフィルタ済みキューブマップ等
-
-**受け入れ基準**: テキスト＋パーティクルを含むデモシーンが動き、ImGui でエンジン統計を確認できる。
+**閉鎖証跡**: fresh Game build は exit 0、fresh CTest は 149/149、`--enable-canvas-view --imgui --render-thread=mt --exit-after-rendered-frames=120` は exit 0。視覚受入は [M5 acceptance screenshot](assets/m5/m5-acceptance-2026-07-19.png) で記録した。ログでは particle `valid=1`、統計では `generated_draws=10`、`draw_calls=27`、`completed=1`、終了では `rendered120` と `Application finished` を確認した。
 
 ## 5. 第2部: ゲームプレイ基盤
 

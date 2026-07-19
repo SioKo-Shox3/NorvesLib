@@ -7,6 +7,13 @@
       "prompt_file": "tasks/m4-profile-line-number.md",
       "check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../../fixtures/m4-profile-line-number/test.ps1 -ContractPath ./CookedModelGameProfileContract.ps1",
       "budget_ms": 600000
+    },
+    {
+      "id": "m5-particle-emitter-identity",
+      "fixture": "fixtures/m5-particle-emitter-identity",
+      "prompt_file": "tasks/m5-particle-emitter-identity.md",
+      "check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../../fixtures/m5-particle-emitter-identity/test.ps1 -SourcePath ./ParticleEmitterIdentity.cpp",
+      "budget_ms": 600000
     }
   ]
 }
