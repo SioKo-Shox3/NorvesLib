@@ -1,6 +1,7 @@
 ﻿#include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
 #include "Engine/ApplicationExitFramePolicy.h"
+#include "Asset/AssetFileReader.h"
 #include "Boot/BootConfig.h"
 #include "Application/IApplicationHandler.h"
 #include "Application/IApplication.h"
@@ -10,6 +11,7 @@
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/IViewPass.h"
+#include "Resource/FontAtlas.h"
 #include "Module/ModuleRegistry.h"
 #include "RHI/RHIDeviceFactory.h"
 #include "Debug/Stats.h"
@@ -397,6 +399,22 @@ namespace NorvesLib::Core::Engine
                     LOG_WARNING("CanvasView runtime option was requested but creation failed");
                 }
             }
+
+#if NORVES_ENABLE_CORE_TEXT
+            if (auto canvasView = coordinator.GetCanvasView())
+            {
+                auto atlas = MakeShared<FontAtlas>();
+                Asset::AssetFileReader reader;
+                if (!atlas->Build(FontAtlasDesc{}, reader, GEngine->GetRenderResources().Textures()))
+                {
+                    NORVES_LOG_ERROR("ApplicationProcessor", "Failed to build default Core text atlas");
+                    GEngine->GetRenderWorld().Shutdown();
+                    m_Device.reset();
+                    return false;
+                }
+                GEngine->SetDefaultFontAtlas(atlas);
+            }
+#endif
         }
 
         // ゲームワールドを初期化
@@ -526,6 +544,12 @@ namespace NorvesLib::Core::Engine
             // SceneQuery clear before World::Finalize() to avoid holding destroyed Entity*
             GEngine->GetSceneQuery().Clear();
             GEngine->GetWorld().Finalize();
+
+            if (auto atlas = GEngine->GetDefaultFontAtlas())
+            {
+                atlas->Shutdown(GEngine->GetRenderResources().Textures());
+                GEngine->ResetDefaultFontAtlas();
+            }
 
             // レンダリングシステムをシャットダウン
             GEngine->GetRenderWorld().Shutdown();

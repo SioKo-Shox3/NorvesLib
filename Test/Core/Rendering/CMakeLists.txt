@@ -1009,6 +1009,38 @@ target_include_directories(ApplicationExitFramePolicyTest PRIVATE
 set_target_properties(ApplicationExitFramePolicyTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ApplicationExitFramePolicyTest COMMAND ApplicationExitFramePolicyTest)
 
+if(NORVES_ENABLE_CORE_TEXT)
+    add_executable(FontAtlasTest
+        FontAtlasTest.cpp
+    )
+    target_link_libraries(FontAtlasTest PRIVATE Core)
+    target_include_directories(FontAtlasTest PRIVATE
+        ${CMAKE_SOURCE_DIR}
+    )
+    set_target_properties(FontAtlasTest PROPERTIES FOLDER "Test/Core/Rendering")
+    add_test(NAME FontAtlasTest COMMAND FontAtlasTest)
+
+    add_executable(TextComponentBoardProxyTest
+        TextComponentBoardProxyTest.cpp
+    )
+    target_link_libraries(TextComponentBoardProxyTest PRIVATE Core)
+    target_include_directories(TextComponentBoardProxyTest PRIVATE
+        ${CMAKE_SOURCE_DIR}
+    )
+    set_target_properties(TextComponentBoardProxyTest PROPERTIES FOLDER "Test/Core/Rendering")
+    add_test(NAME TextComponentBoardProxyTest COMMAND TextComponentBoardProxyTest)
+endif()
+
+add_executable(CanvasTransientBoardSnapshotTest
+    CanvasTransientBoardSnapshotTest.cpp
+)
+target_link_libraries(CanvasTransientBoardSnapshotTest PRIVATE Core)
+target_include_directories(CanvasTransientBoardSnapshotTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(CanvasTransientBoardSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CanvasTransientBoardSnapshotTest COMMAND CanvasTransientBoardSnapshotTest)
+
 add_test(NAME CookedModelGameProfileScriptContractTest
     COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
         -File "${CMAKE_CURRENT_SOURCE_DIR}/CookedModelGameProfileScriptContractTest.ps1"

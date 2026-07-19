@@ -5,6 +5,7 @@
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Component/BoardComponent.h"
+#include "Core/Public/Component/TextComponent.h"
 #include "Core/Public/Component/BillboardComponent.h"
 #include "Core/Public/Component/ImpostorComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
@@ -58,6 +59,20 @@ namespace Game::GameModes
         LOG_INFO("=================================================");
         LOG_INFO("3Dレンダリングテスト開始");
         LOG_INFO("=================================================");
+
+#if NORVES_ENABLE_CORE_TEXT
+        if (ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().GetCanvasView() &&
+            ctx.EngineRef.GetDefaultFontAtlas())
+        {
+            auto* textEntity = ctx.WorldRef.SpawnObject<Entity>();
+            ctx.ScopeRef.TrackObject(textEntity);
+            textEntity->SetPosition(24.0f, 48.0f, 0.0f);
+            auto* text = ctx.WorldRef.CreateComponent<Component::TextComponent>(textEntity);
+            text->SetText("NorvesLib M5");
+            text->SetFontAtlas(ctx.EngineRef.GetDefaultFontAtlas().get());
+            text->SetTint(Math::Vector4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+#endif
 
         // ========================================
         // カメラコントローラーの初期化（シーン所有）

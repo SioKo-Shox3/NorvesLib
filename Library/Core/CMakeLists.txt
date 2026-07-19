@@ -129,6 +129,7 @@ set(PRIVATE_SOURCES
     Private/Resource/MeshResource.cpp
     Private/Resource/MaterialResource.cpp
     Private/Resource/GLTFAnalyzer.cpp
+    Private/Resource/FontAtlas.cpp
     Private/Resource/ModelAssetLoader.cpp
     Private/Resource/ModelAssetRuntime.cpp
     Private/Resource/ModelAsyncLoadQueue.cpp
@@ -138,6 +139,7 @@ set(PRIVATE_SOURCES
     # Component
     Private/Component/Component.cpp
     Private/Component/BoardComponent.cpp
+    Private/Component/TextComponent.cpp
     Private/Component/BillboardComponent.cpp
     Private/Component/ImpostorComponent.cpp
     Private/Component/MeshComponent.cpp
@@ -375,9 +377,11 @@ set(PUBLIC_HEADERS
     Public/Resource/MeshResource.h
     Public/Resource/MaterialResource.h
     Public/Resource/GLTFAnalyzer.h
+    Public/Resource/FontAtlas.h
     # Component
     Public/Component/Component.h
     Public/Component/BoardComponent.h
+    Public/Component/TextComponent.h
     Public/Component/BillboardComponent.h
     Public/Component/ImpostorComponent.h
     Public/Component/MeshComponent.h
@@ -487,6 +491,7 @@ target_compile_definitions(${MODULE_NAME}
         NORVES_ENABLE_RENDERGRAPH_DUMP=$<IF:$<CONFIG:Debug>,1,0>
         NORVES_ENABLE_PROFILING=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
         NORVES_ENABLE_COMPONENT_DATA_REGISTRY=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
+        NORVES_ENABLE_CORE_TEXT=$<BOOL:${NORVES_ENABLE_CORE_TEXT}>
 )
 
 # shaderc（Vulkan SDK同梱のランタイムシェーダーコンパイラ）
@@ -515,6 +520,10 @@ target_link_libraries(${MODULE_NAME}
         $<$<CONFIG:Debug>:${SHADERC_LIB_DEBUG}>
         $<$<NOT:$<CONFIG:Debug>>:${SHADERC_LIB_RELEASE}>
 )
+
+if(NORVES_ENABLE_CORE_TEXT)
+    target_link_libraries(${MODULE_NAME} PRIVATE freetype)
+endif()
 
 # Slang SDKリンク（オプション）
 if(NORVES_HAS_SLANG)

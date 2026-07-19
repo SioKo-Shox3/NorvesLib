@@ -34,6 +34,8 @@ namespace NorvesLib::Core::Rendering
         {
             const BoardProxy* Proxy = nullptr;
             uint64_t CanvasInsertionSequence = 0;
+            uint32_t TransientOrdinal = 0;
+            bool bTransient = false;
         };
 
         struct BoardBatchKey
@@ -1068,6 +1070,11 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void CanvasView::SetTransientBoardProxies(const Container::VariableArray<BoardProxy>& proxies)
+    {
+        m_TransientBoardProxies = proxies;
+    }
+
     void CanvasView::PrepareBoardDrawCommands(ViewportRenderPlan &viewportPlan, uint32_t packetCommandBase)
     {
         ClearBoardDrawCommands();
@@ -1101,6 +1108,23 @@ namespace NorvesLib::Core::Rendering
             sortedBoards.push_back(entry);
         }
 
+        for (uint32_t ordinal = 0; ordinal < m_TransientBoardProxies.size(); ++ordinal)
+        {
+            const BoardProxy& proxy = m_TransientBoardProxies[ordinal];
+            if (!proxy.IsValid() ||
+                proxy.Space != BoardSpace::ScreenSpace ||
+                !HasFlag(viewportPlan.Camera.CullingMask, proxy.LayerMask))
+            {
+                continue;
+            }
+
+            SortedBoardEntry entry;
+            entry.Proxy = &proxy;
+            entry.TransientOrdinal = ordinal;
+            entry.bTransient = true;
+            sortedBoards.push_back(entry);
+        }
+
         std::stable_sort(sortedBoards.begin(),
                          sortedBoards.end(),
                          [](const SortedBoardEntry &lhs, const SortedBoardEntry &rhs)
@@ -1110,9 +1134,19 @@ namespace NorvesLib::Core::Rendering
                                  return lhs.Proxy->SortKey < rhs.Proxy->SortKey;
                              }
 
-                             if (lhs.CanvasInsertionSequence != rhs.CanvasInsertionSequence)
+                             if (lhs.bTransient != rhs.bTransient)
+                             {
+                                 return !lhs.bTransient;
+                             }
+
+                             if (!lhs.bTransient && lhs.CanvasInsertionSequence != rhs.CanvasInsertionSequence)
                              {
                                  return lhs.CanvasInsertionSequence < rhs.CanvasInsertionSequence;
+                             }
+
+                             if (lhs.bTransient && lhs.TransientOrdinal != rhs.TransientOrdinal)
+                             {
+                                 return lhs.TransientOrdinal < rhs.TransientOrdinal;
                              }
 
                              return lhs.Proxy->ComponentId < rhs.Proxy->ComponentId;

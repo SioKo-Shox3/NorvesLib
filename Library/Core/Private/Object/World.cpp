@@ -2,6 +2,7 @@
 #include "Object/Entity.h"
 #include "Object/PrefabAsset.h"
 #include "Component/BoardComponent.h"
+#include "Component/TextComponent.h"
 #include "Component/BillboardComponent.h"
 #include "Component/MeshComponent.h"
 #include "Component/MegaGeometryComponent.h"
@@ -9,6 +10,7 @@
 #include "Engine/NorvesEngine.h"
 #include "Engine/ComponentDataRegistry.h"
 #include "Rendering/IBoardProxySink.h"
+#include "Rendering/CanvasView.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneProxy.h"
 #include "Logging/LogMacros.h"
@@ -854,6 +856,13 @@ namespace NorvesLib::Core
     void World::SyncToSceneView(const Rendering::MaterialResources* materials,
                                 const Rendering::MeshResources* meshes)
     {
+        auto* canvas = dynamic_cast<Rendering::CanvasView*>(m_ScreenSpaceBoardSink);
+        m_TransientBoardProxies.clear();
+        if (canvas)
+        {
+            canvas->SetTransientBoardProxies(m_TransientBoardProxies);
+        }
+
         if (!HasFlag(OF_Initialized) ||
             (!m_SceneView && !m_ScreenSpaceBoardSink))
         {
@@ -908,6 +917,11 @@ namespace NorvesLib::Core
         if (m_ScreenSpaceBoardSink)
         {
             m_ScreenSpaceBoardSink->RemoveStaleBoardProxies(liveScreenBoardComponentIds);
+        }
+
+        if (canvas)
+        {
+            canvas->SetTransientBoardProxies(m_TransientBoardProxies);
         }
     }
 
@@ -1087,6 +1101,14 @@ namespace NorvesLib::Core
                     lightComp->ClearRenderStateDirty();
                     lightComp->SetLastSyncedTransformVersion(ownerVersion);
                 }
+            }
+
+            auto* textComp = CastTo<Component::TextComponent>(comp);
+            if (textComp)
+            {
+                textComp->RefreshRenderTransformCache();
+                textComp->BuildGlyphBoardProxies(m_TransientBoardProxies);
+                continue;
             }
 
             auto* boardComp = CastTo<Component::BoardComponent>(comp);
