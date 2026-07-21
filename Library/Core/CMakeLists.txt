@@ -48,6 +48,8 @@ set(PRIVATE_SOURCES
     Private/Boot/AppLauncher.cpp
     Private/Engine/Engine.cpp
     Private/Engine/NorvesEngine.cpp
+    Private/Scripting/AngelScriptEngineOwner.cpp
+    Private/Scripting/ScriptRuntime.cpp
     Private/Engine/ComponentDataRegistry.cpp
     Private/Engine/ApplicationProcessor.cpp
     # Scene
@@ -373,6 +375,7 @@ set(PUBLIC_HEADERS
     Public/Object/World.h
     # Engine
     Public/Engine/NorvesEngine.h
+    Public/Scripting/ScriptRuntime.h
     Public/Engine/IEngine.h
     Public/Engine/AssetRegistry.h
     Public/Engine/ComponentDataRegistry.h
@@ -520,6 +523,7 @@ target_link_libraries(${MODULE_NAME}
     PUBLIC
         Vulkan::Vulkan
     PRIVATE
+        NorvesThirdParty_AngelScript
         $<$<CONFIG:Debug>:${SHADERC_LIB_DEBUG}>
         $<$<NOT:$<CONFIG:Debug>>:${SHADERC_LIB_RELEASE}>
 )
