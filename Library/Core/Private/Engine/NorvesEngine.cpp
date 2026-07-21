@@ -161,4 +161,14 @@ namespace NorvesLib::Core
         return m_version;
     }
 
+    ScriptRuntime& NorvesEngine::GetScriptRuntime()
+    {
+        return m_ScriptRuntime;
+    }
+
+    const ScriptRuntime& NorvesEngine::GetScriptRuntime() const
+    {
+        return m_ScriptRuntime;
+    }
+
 } // namespace NorvesLib::Core

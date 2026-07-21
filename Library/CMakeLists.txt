@@ -38,6 +38,8 @@ if(NORVES_ENABLE_IMGUI OR NORVES_ENABLE_CORE_TEXT)
     endif()
 endif()
 
+add_subdirectory(ThirdParty/angelscript)
+
 # ライブラリモジュールを追加
 add_subdirectory(Core)
 

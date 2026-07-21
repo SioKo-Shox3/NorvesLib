@@ -7,6 +7,7 @@
 #include "Object/ResourceRegistry.h"
 #include "Engine/AssetRegistry.h"
 #include "Engine/ComponentDataRegistry.h"
+#include "Scripting/ScriptRuntime.h"
 #include "Rendering/Screen.h"
 #include "Rendering/RenderingCoordinator.h"
 #include "Rendering/RenderThread.h"
@@ -173,6 +174,9 @@ namespace NorvesLib::Core
          */
         const ComponentDataRegistry &GetComponentDataRegistry() const { return m_ComponentDataRegistry; }
 
+        ScriptRuntime& GetScriptRuntime();
+        const ScriptRuntime& GetScriptRuntime() const;
+
     private:
         Thread::Atomic<bool> m_isRunning;             ///< エンジンが実行中かどうか
         NorvesLib::Core::Container::String m_version; ///< エンジンのバージョン
@@ -182,6 +186,7 @@ namespace NorvesLib::Core
         ResourceRegistry m_ResourceRegistry;                    ///< リソース管理
         AssetRegistry m_AssetRegistry;                          ///< アセット（ファイル）管理
         ComponentDataRegistry m_ComponentDataRegistry;           ///< Component data scratch registry
+        ScriptRuntime m_ScriptRuntime;                            ///< AngelScript runtime
         Rendering::RenderingCoordinator m_RenderingCoordinator; ///< 描画フロー管理
         Rendering::RenderThread m_RenderThread;                 ///< レンダースレッド
         Rendering::DebugDrawQueue m_DebugDraw;                  ///< デバッグ描画キュー

@@ -1,0 +1,386 @@
+{
+  "name": "AngelScript",
+  "version": "2.38.0",
+  "headerVersion": 23800,
+  "officialZip": {
+    "url": "https://www.angelcode.com/angelscript/sdk/files/angelscript_2.38.0.zip",
+    "size": 2060096,
+    "sha256": "B33B5DBCDA10317EF67D628353D83246984CE6FCAC102D4DC2AED121EBA52E6F"
+  },
+  "upstream": {
+    "tag": "v2.38.0",
+    "commit": "0601da029d846a658bf23f2888e953a45a94450a",
+    "commitArchiveSha256": "0c2ed8bfa0bb3ace32efa842ac96ed605d6ad96bb35d8952a4e4c3acae8004bc"
+  },
+  "license": {
+    "spdx": "Zlib",
+    "source": "sdk/angelscript/include/angelscript.h license preamble"
+  },
+  "files": [
+    {
+      "path": "upstream/sdk/angelscript/include/angelscript.h",
+      "size": 72613,
+      "sha256": "052C90B82E6EB554115B9E70395160F6885E74808EC05EBD6E1B858D9361F673"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_array.h",
+      "size": 12046,
+      "sha256": "64034208F95073F1F4C7D414CCB3E8ADFD04CE37ACA3A68BBBBFD6989585C0F8"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_atomic.cpp",
+      "size": 4343,
+      "sha256": "1A9370C1A8781D5C440E555C08E0AE45B52FC56442A9CF2D3F24763A93C53146"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_atomic.h",
+      "size": 1686,
+      "sha256": "864E6693DB84225ABD8B86A87E9E60902813FD977F6D5F3D5AAD139CF8BF8DEF"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_builder.cpp",
+      "size": 219581,
+      "sha256": "AEA1940003E10D997D9A002D8DB8713281D6D0C222CD0D4A775854D82D143179"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_builder.h",
+      "size": 15298,
+      "sha256": "25725F2BCDD876FE36BCA50B54D5DCDC7C45A30F2DD16AEA3C20D83E6C9EF246"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_bytecode.cpp",
+      "size": 89136,
+      "sha256": "7CF596924026B426F90EFB35D0B3E4BD6C3CF7F0C57165F9FF4EED4B049A9D0D"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_bytecode.h",
+      "size": 6215,
+      "sha256": "AF35B8E2CF69066C5380FE3DD0B7B678200337FA7962D470879EF225B0FA1AE0"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_callfunc_mips.cpp",
+      "size": 21935,
+      "sha256": "EC333DC96973E691B5B8610EFD7683F4F12B040180E269635F31275877D6F387"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_callfunc_x64_gcc.cpp",
+      "size": 15589,
+      "sha256": "5B321E7DAFA9A5F177995DCC55C2F00002559ED617F266B9B3E2F6A80C217AF9"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_callfunc_x64_mingw.cpp",
+      "size": 10741,
+      "sha256": "0C6A72BFD652EF039ED2B3D29D59E5CDFE48E8163117B1A20C8693A476C41AFB"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_callfunc_x64_msvc_asm.asm",
+      "size": 5041,
+      "sha256": "05580E0CE327A367942B31EB179D3E654E0214F7B4CA30544A83E71D0122E767"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_callfunc_x64_msvc.cpp",
+      "size": 6711,
+      "sha256": "74EA8C753ABDF1BAB2E5C6FD05081629349CCF9DB75270CD4F360F9EE7E62F65"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_callfunc_x86.cpp",
+      "size": 46886,
+      "sha256": "1514D9AEFAAD5A257AE0CEA1537ACDE28AE0141B8D297E49CB0A73402B5C1665"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_callfunc.cpp",
+      "size": 35037,
+      "sha256": "59290D36265639AC0C876453698D7EF5F8CA0D37D7B427E519F27B28CBC577D7"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_callfunc.h",
+      "size": 5237,
+      "sha256": "FCCA4F74576507C2A59516E87AB8AEECF917D883E050ECFA2AF0E742A6A1B8CA"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_compiler.cpp",
+      "size": 606514,
+      "sha256": "55EE6F6E7C8D5FF2EDBFBCD98937645CCFAADFFB0C4EE3CD94A9985AF93609E6"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_compiler.h",
+      "size": 24169,
+      "sha256": "B5AB28B39A2452BD1944B7B858369C2898831FE88F25C2F4ECE11A5F8D01698B"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_config.h",
+      "size": 48674,
+      "sha256": "8C140CD8866A1BE437419CBC59800E07DACFAF45B26361BF8DC4D4BC1B465CE4"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_configgroup.cpp",
+      "size": 7539,
+      "sha256": "128A150D59F9A4E6001D5A60A819F11B7D8049C56978C094FE217F73BAD50EBE"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_configgroup.h",
+      "size": 2346,
+      "sha256": "EFB96B41384B420061285776E9D14E9B9693CC5DA89CD1E00D5259077E2C3BBC"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_context.cpp",
+      "size": 213683,
+      "sha256": "1A6920B2B5D178EB107A8BCCACA94C4AA40752CAD65A321D6080B65AC0A05029"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_context.h",
+      "size": 10057,
+      "sha256": "04238AC66FB24383B0AA642E12389A56B97DE9F3218E83AD8FEF7D6A1287D5EE"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_criticalsection.h",
+      "size": 4585,
+      "sha256": "3338255D7345431498B584FA2228E94CD44851D0626BA45771F8FDDB36EF8D57"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_datatype.cpp",
+      "size": 18061,
+      "sha256": "A195A00F3D7FB8E3481C6A7A6DA6259EC9FDCB1FAEF64938615B8794D8790C57"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_datatype.h",
+      "size": 5347,
+      "sha256": "489BF15F091134230C5CEA04B6E0E3C15C90AAF4050C448899B08CFF52C17435"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_debug.h",
+      "size": 5982,
+      "sha256": "5CE5A37BCE009E66146B8480BF10FA40967FEF869B7678B692F54764433933C9"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_gc.cpp",
+      "size": 31057,
+      "sha256": "1D5C11198E84B7AFE07242FEC01329DC7FBB758ACD7A69E1E3430CF60F5DD6CD"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_gc.h",
+      "size": 4905,
+      "sha256": "0BB96EC5807E4D35220DF70153CCBABCDDF71911189B890ADDE784A736B4E985"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_generic.cpp",
+      "size": 20664,
+      "sha256": "EC9C5B66058E1AF66E4717B2D649B2B8408CB3A3F5E04044C1EA6275B74B9528"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_generic.h",
+      "size": 3928,
+      "sha256": "F57E28AD7DE9CA58D98DF44C8F11AE90637DE741014B2033C1CF9F4FDF004FCB"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_globalproperty.cpp",
+      "size": 3401,
+      "sha256": "6CA73B36ED1F57A58D7E1CD4CF723383AB0BA0D077C0EAE483BE241C5767E7ED"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_map.h",
+      "size": 17413,
+      "sha256": "7BB9A839FEDEACA8A250B872DCA18AD191176CD80B2D3C541F69CC195C6E5499"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_memory.cpp",
+      "size": 9214,
+      "sha256": "BF270AA757B81510F5372D95EB2CB3B39F1004BF1140D7A3B2F019791F810A6E"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_memory.h",
+      "size": 3827,
+      "sha256": "2EC7DA38F88D4BE8879592A54B4191EEA4FBE34EA62DF8E708380B578F8228F8"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_module.cpp",
+      "size": 50244,
+      "sha256": "A664AE8CF9FE97AE79248696F2179DA28136406AB362CF382351EBC7D5D75953"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_module.h",
+      "size": 11442,
+      "sha256": "65C7CAABAF6321E6A1E682C1A2EFF0EF1C05F3824AD61BF2AA09A4AA335658B9"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_namespace.h",
+      "size": 2111,
+      "sha256": "2B98D0BF6298A11F6FB768F959376EE7A5AECBD70A8D1105AF8C5FA80C85CB0D"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_objecttype.cpp",
+      "size": 18698,
+      "sha256": "EEE31D7D5B74CCE20217377B157BDF0A22E2B3F6841C73ECC717FE7772A2B9C0"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_objecttype.h",
+      "size": 5269,
+      "sha256": "0B44759C0F198D5B29ABAB6D0B325C783D5919CB825DE76897B2A5F6ADDD0ACA"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_outputbuffer.cpp",
+      "size": 2773,
+      "sha256": "08D77091ACA68C6A8A1CA5D1E86C238C7F481C9C7D388404D4EF47A21EF19F52"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_outputbuffer.h",
+      "size": 2063,
+      "sha256": "5293F14BF2875FFF4C108C9262747D7C4D5AF7D57B1C5070BF52C4A2C28F3394"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_parser.cpp",
+      "size": 112071,
+      "sha256": "2E7C37F91844CC7809B54D8593B9C1A7A7F17BB1943E17827F49A28A60E1EA28"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_parser.h",
+      "size": 6485,
+      "sha256": "7C2154F02D87AEBBF2FCBDEC76FAFC5A262BCC4782E2A3673CDD67FE7A835981"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_property.h",
+      "size": 3695,
+      "sha256": "302BCEB7C489D3F27BC89498D9149267C524F7C22746A9F6214D5B9D9DEA6322"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_restore.cpp",
+      "size": 168767,
+      "sha256": "D8DF0A24A0D8D37E9E4327A8302EF5BE7BF5FE83512F0847FEE7C54EB7A5CA3F"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_restore.h",
+      "size": 8716,
+      "sha256": "E616FACD245A4602F2510DD8F8ED564A9B79761C3F86CBC0998B8FDC6304B3ED"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptcode.cpp",
+      "size": 3568,
+      "sha256": "D78C3B81EDA99259C96ABFCFEDC644097E564BCAED1DE6D9FF3091070038C72F"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptcode.h",
+      "size": 1933,
+      "sha256": "78DAF68CA38481D755F1E8A38C81D175F54854B12AD5B5B81FAB6969488A9905"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptengine.cpp",
+      "size": 216585,
+      "sha256": "4A533F6D3F7AC9D73B6CDC68D1F0F36E036B4F68AC7F6D36912D2E2F809535CE"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptengine.h",
+      "size": 25831,
+      "sha256": "40AC464AB8D075ED1EED6F8A41E3DCFC5E59B1C9EA4EA92C6036E59A53F38B10"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptfunction.cpp",
+      "size": 57676,
+      "sha256": "8A09DF045140A316D3661D3463E7CB1726CC58EB4F1D6E45C8EF417FAF03E1B2"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptfunction.h",
+      "size": 14387,
+      "sha256": "BC6CAF374A5DDFA0A945CE859DDC71E2F20A718B516A1FD74C58EE058B39EA2C"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptnode.cpp",
+      "size": 3806,
+      "sha256": "968DEF92BA2195E27E77AD73A3D9589207263207F6E8EA6F63E5F77294C2D5C8"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptnode.h",
+      "size": 2839,
+      "sha256": "FFE6B86DD5385B29DE092F40CEF18B1613D6CFE3B62A34BF268CD4FACADE2057"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptobject.cpp",
+      "size": 37090,
+      "sha256": "D5DCD315F9138F23DEDD414449058FC4FB3460742B317603BA16B6F295450E9B"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_scriptobject.h",
+      "size": 5085,
+      "sha256": "14879208DB4A70A4A7C1F330966AA3D1AD5FB1D6CBF6ED2DDF42100729E01B38"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_string_util.cpp",
+      "size": 9571,
+      "sha256": "EC2577CC8316A00DA18A9C2AC2B775E7A98EEDF2DE42270B3FC524A4BB484116"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_string_util.h",
+      "size": 1752,
+      "sha256": "E94D4A88ECF5CB7B15EA4CEF6BA76D24DA563290D3594511C282DC89DCC6E97C"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_string.cpp",
+      "size": 10046,
+      "sha256": "E75D0060F1312D1F310BDA13BB460428F699580784E32679A039413CED137709"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_string.h",
+      "size": 3892,
+      "sha256": "6CBC9219B88855712E1E9AD42D77DF4B2C3E05EFC14B087E64AAB3FFA3308650"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_symboltable.h",
+      "size": 12362,
+      "sha256": "DF0898B9D4E9628C6944F4A1B877C8A76732F90184B7DD3E18B2EA8EBB95F071"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_texts.h",
+      "size": 33890,
+      "sha256": "22B175597F89EF6117480E1B272D5A2214B29B14F4574AEA9C23B582AFC9A294"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_thread.cpp",
+      "size": 12218,
+      "sha256": "9D6C261756F688635C6998387CDE03FA7395A60EDCEFBD48DAEDB9A89E2AF6DA"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_thread.h",
+      "size": 2958,
+      "sha256": "E4B84D5C403FFFAB85FAEA1A62E3855A291BFFA3A6DD75535B4F10065DB1532B"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_tokendef.h",
+      "size": 10914,
+      "sha256": "695A74460C6B18CD6EFD2A2DD382103F1D385D308C27C69B12D208A32F825601"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_tokenizer.cpp",
+      "size": 13174,
+      "sha256": "2EB686957AF2E54D52741D49D4C350691B567CA1CC0F7996BAF294DF101349FE"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_tokenizer.h",
+      "size": 2565,
+      "sha256": "3F3A69EA7FED27846932136F46F7F77AAA45CCD6B3273FB1BA75D862E3205766"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_typeinfo.cpp",
+      "size": 11382,
+      "sha256": "914BE68AA560B3E74B2BB1A0D229BA901EFF477CF0ECBF974B7BCBB2F622A53C"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_typeinfo.h",
+      "size": 8235,
+      "sha256": "E00D4EC49EABCAFE69F0C9EDC8413F9BAD59636A1DF201D12660014711018537"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_variablescope.cpp",
+      "size": 3279,
+      "sha256": "AE6083CA42BA913CCC1927609BB66C4317AF3E16900818453596D395DEDBB3E3"
+    },
+    {
+      "path": "upstream/sdk/angelscript/source/as_variablescope.h",
+      "size": 2124,
+      "sha256": "4C34D659547C095A35F7183FD0BC775A05E597FF53582A918C8FF8D7B7738663"
+    },
+    {
+      "path": "LICENSE",
+      "size": 1022,
+      "sha256": "439BB471704939DBC53B7FF42AF46CB7ABA20CF48FF43661E7988BF524C94013"
+    }
+  ]
+}
