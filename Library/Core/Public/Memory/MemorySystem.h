@@ -1,18 +1,13 @@
 ﻿#pragma once
 
 #include "IAllocator.h"
-#include "GlobalAllocator.h"
-#include "ThreadLocalCache.h"
-#include "StackAllocator.h"
-#include "FrameAllocator.h"
-#include "PoolAllocator.h"
-#include "SizeClassAllocator.h"
-#include "Thread/ThreadLocalStorage.h"
 #include <cstdint>
-#include <vector>
 
 namespace NorvesLib::Memory
 {
+    class FrameAllocator;
+    class GlobalAllocator;
+    class ThreadLocalCache;
     /**
      * @brief メモリシステム
      *
@@ -178,15 +173,6 @@ namespace NorvesLib::Memory
          */
         static ThreadLocalCache *GetOrCreateThreadCache();
 
-        // 静的メンバ（実装ファイルで定義）
-        static bool s_bInitialized;
-        static Core::Container::TUniquePtr<GlobalAllocator> s_globalAllocator;
-        static Core::Container::TUniquePtr<FrameAllocator> s_frameAllocator;
-        static Thread::ThreadLocalStorage<ThreadLocalCache *> s_threadCache;
-
-        // スレッドキャッシュのリスト（統計・クリーンアップ用）
-        static Thread::Mutex s_cacheMutex;
-        static std::vector<ThreadLocalCache *> s_allThreadCaches;
     };
 
 // ===========================================

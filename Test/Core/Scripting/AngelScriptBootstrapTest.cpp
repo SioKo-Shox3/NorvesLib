@@ -1,4 +1,5 @@
 ﻿#include "Scripting/ScriptRuntime.h"
+#include "Component/ScriptComponent.h"
 
 #include "Scripting/AngelScriptEngineOwner.h"
 #include "EngineGlobals/MemoryOverrides.h"
@@ -13,13 +14,6 @@
 
 #include <Windows.h>
 #include <angelscript.h>
-
-namespace NorvesLib::Core::Component
-{
-    class ScriptComponent
-    {
-    };
-} // namespace NorvesLib::Core::Component
 
 namespace
 {
@@ -67,6 +61,14 @@ namespace
     void* ProbeAllocate(size_t size)
     {
         return NorvesLib::Memory::Malloc(size);
+    }
+
+    void RequireChildPredicate(bool bCondition, UINT exitCode)
+    {
+        if (!bCondition)
+        {
+            ExitProcess(exitCode);
+        }
     }
 
     struct RetainedResources
@@ -222,15 +224,12 @@ namespace
         CHECK_EXPRESSION(runtime.GetDiagnostics().GcStepCount == 0);
 
         CHECK_EXPRESSION(runtime.BindComponent(component, handle) ==
-            NorvesLib::Core::EScriptRuntimeResult::BindFailed);
+            NorvesLib::Core::EScriptRuntimeResult::InvalidArgument);
         CHECK_EXPRESSION(handle.SlotIndex == 7);
         CHECK_EXPRESSION(handle.Generation == 11);
-        CHECK_EXPRESSION(runtime.UnbindComponent(handle) == NorvesLib::Core::EScriptRuntimeResult::InvalidHandle);
-        CHECK_EXPRESSION(handle.SlotIndex == 7);
-        CHECK_EXPRESSION(handle.Generation == 11);
-        CHECK_EXPRESSION(runtime.TickComponent(handle, 0.016f) == NorvesLib::Core::EScriptRuntimeResult::BindFailed);
-        CHECK_EXPRESSION(handle.SlotIndex == 7);
-        CHECK_EXPRESSION(handle.Generation == 11);
+        CHECK_EXPRESSION(runtime.UnbindComponent(handle) == NorvesLib::Core::EScriptRuntimeResult::Success);
+        CHECK_EXPRESSION(!handle.IsValid());
+        CHECK_EXPRESSION(runtime.TickComponent(handle, 0.016f) == NorvesLib::Core::EScriptRuntimeResult::InvalidHandle);
         CHECK_EXPRESSION(runtime.Shutdown() == NorvesLib::Core::EScriptRuntimeResult::Success);
         return true;
     }
@@ -261,6 +260,22 @@ namespace
     {
         DWORD exitCode = EXIT_FAILURE;
         CHECK_EXPRESSION(RunChildProbe(L"--pimpl-phase-probe", exitCode));
+        CHECK_EXPRESSION(exitCode == EXIT_SUCCESS);
+        return true;
+    }
+
+    bool VerifyBindingStorageCrossesMemorySystemPhase()
+    {
+        DWORD exitCode = EXIT_FAILURE;
+        CHECK_EXPRESSION(RunChildProbe(L"--binding-storage-probe", exitCode));
+        CHECK_EXPRESSION(exitCode == EXIT_SUCCESS);
+        return true;
+    }
+
+    bool VerifyBindingStorageShutdownRetry()
+    {
+        DWORD exitCode = EXIT_FAILURE;
+        CHECK_EXPRESSION(RunChildProbe(L"--binding-storage-shutdown-retry-probe", exitCode));
         CHECK_EXPRESSION(exitCode == EXIT_SUCCESS);
         return true;
     }
@@ -339,6 +354,8 @@ namespace
         CHECK_EXPRESSION(RunCase("VerifyRuntimeShutdownFailurePropagation", &VerifyRuntimeShutdownFailurePropagation));
         CHECK_EXPRESSION(RunCase("VerifyBootstrapStubsPreserveState", &VerifyBootstrapStubsPreserveState));
         CHECK_EXPRESSION(RunCase("VerifyPimplAllocatorCrossesMemorySystemPhase", &VerifyPimplAllocatorCrossesMemorySystemPhase));
+        CHECK_EXPRESSION(RunCase("VerifyBindingStorageCrossesMemorySystemPhase", &VerifyBindingStorageCrossesMemorySystemPhase));
+        CHECK_EXPRESSION(RunCase("VerifyBindingStorageShutdownRetry", &VerifyBindingStorageShutdownRetry));
         CHECK_EXPRESSION(RunCase("VerifyHandleBasics", &VerifyHandleBasics));
         CHECK_EXPRESSION(RunCase("VerifyResultOrdering", &VerifyResultOrdering));
         CHECK_EXPRESSION(RunCase("VerifyDestructorFailsFastWithoutPoisoningParent", &VerifyDestructorFailsFastWithoutPoisoningParent));
@@ -348,11 +365,117 @@ namespace
 
 int main(int argumentCount, char** arguments)
 {
+#ifdef _MSC_VER
+    if (argumentCount == 2)
+    {
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+        _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    }
+#endif
     if (argumentCount == 2 && std::strcmp(arguments[1], "--pimpl-phase-probe") == 0)
     {
         {
             NorvesLib::Core::ScriptRuntime runtime;
             NorvesLib::Memory::Initialize();
+            NorvesLib::Memory::Shutdown();
+        }
+        ExitProcess(EXIT_SUCCESS);
+    }
+    if (argumentCount == 2 && std::strcmp(arguments[1], "--binding-storage-probe") == 0)
+    {
+        NorvesLib::Core::ScriptBindingHandle firstGenerationHandle;
+        NorvesLib::Core::ScriptBindingHandle staleFirstGenerationHandle;
+        NorvesLib::Core::ScriptBindingHandle secondGenerationHandle;
+        {
+            NorvesLib::Core::ScriptRuntime runtime;
+            NorvesLib::Memory::Initialize();
+            {
+                NorvesLib::Core::World world;
+                world.Initialize();
+                RequireChildPredicate(runtime.Initialize(world) == NorvesLib::Core::EScriptRuntimeResult::Success, 10);
+                NorvesLib::Core::Entity* owner = world.SpawnEntity<NorvesLib::Core::Entity>();
+                RequireChildPredicate(owner != nullptr, 11);
+                auto* component = new NorvesLib::Core::Component::ScriptComponent();
+                RequireChildPredicate(component != nullptr, 12);
+                component->getScriptPath() = NorvesLib::Core::Container::String("Scripts/Test/ScriptComponentMover.as");
+                component->getScriptClassName() = NorvesLib::Core::Container::String("ScriptComponentMover");
+                RequireChildPredicate(owner->AddComponent(component), 13);
+                RequireChildPredicate(runtime.BindComponent(*component, firstGenerationHandle) ==
+                    NorvesLib::Core::EScriptRuntimeResult::Success, 14);
+                RequireChildPredicate(runtime.TickComponent(firstGenerationHandle, 1.0f) ==
+                    NorvesLib::Core::EScriptRuntimeResult::Success, 15);
+                staleFirstGenerationHandle = firstGenerationHandle;
+                RequireChildPredicate(runtime.UnbindComponent(firstGenerationHandle) ==
+                    NorvesLib::Core::EScriptRuntimeResult::Success, 16);
+                RequireChildPredicate(runtime.Shutdown() == NorvesLib::Core::EScriptRuntimeResult::Success, 17);
+                world.Finalize();
+            }
+            {
+                NorvesLib::Core::World world;
+                world.Initialize();
+                RequireChildPredicate(runtime.Initialize(world) == NorvesLib::Core::EScriptRuntimeResult::Success, 18);
+                NorvesLib::Core::Entity* owner = world.SpawnEntity<NorvesLib::Core::Entity>();
+                RequireChildPredicate(owner != nullptr, 19);
+                auto* component = new NorvesLib::Core::Component::ScriptComponent();
+                RequireChildPredicate(component != nullptr, 20);
+                component->getScriptPath() = NorvesLib::Core::Container::String("Scripts/Test/ScriptComponentMover.as");
+                component->getScriptClassName() = NorvesLib::Core::Container::String("ScriptComponentMover");
+                RequireChildPredicate(owner->AddComponent(component), 21);
+                RequireChildPredicate(runtime.BindComponent(*component, secondGenerationHandle) ==
+                    NorvesLib::Core::EScriptRuntimeResult::Success, 22);
+                RequireChildPredicate(secondGenerationHandle.SlotIndex == staleFirstGenerationHandle.SlotIndex, 23);
+                RequireChildPredicate(secondGenerationHandle.Generation != staleFirstGenerationHandle.Generation, 24);
+                RequireChildPredicate(runtime.TickComponent(staleFirstGenerationHandle, 1.0f) ==
+                    NorvesLib::Core::EScriptRuntimeResult::InvalidHandle, 25);
+                const NorvesLib::Math::Vector3 positionBeforeTick = owner->GetPosition();
+                RequireChildPredicate(runtime.TickComponent(secondGenerationHandle, 1.0f) ==
+                    NorvesLib::Core::EScriptRuntimeResult::Success, 26);
+                RequireChildPredicate(owner->GetPosition().x == positionBeforeTick.x + 1.0f, 27);
+                RequireChildPredicate(runtime.UnbindComponent(secondGenerationHandle) ==
+                    NorvesLib::Core::EScriptRuntimeResult::Success, 28);
+                RequireChildPredicate(runtime.Shutdown() == NorvesLib::Core::EScriptRuntimeResult::Success, 29);
+                world.Finalize();
+            }
+            NorvesLib::Memory::Shutdown();
+        }
+        ExitProcess(EXIT_SUCCESS);
+    }
+    if (argumentCount == 2 && std::strcmp(arguments[1], "--binding-storage-shutdown-retry-probe") == 0)
+    {
+        {
+            NorvesLib::Core::ScriptRuntime runtime;
+            NorvesLib::Memory::Initialize();
+            {
+                NorvesLib::Core::World world;
+                world.Initialize();
+                RequireChildPredicate(runtime.Initialize(world) == NorvesLib::Core::EScriptRuntimeResult::Success, 30);
+                NorvesLib::Core::Entity* owner = world.SpawnEntity<NorvesLib::Core::Entity>();
+                RequireChildPredicate(owner != nullptr, 31);
+                auto* component = new NorvesLib::Core::Component::ScriptComponent();
+                RequireChildPredicate(component != nullptr, 32);
+                component->getScriptPath() = NorvesLib::Core::Container::String("Scripts/Test/ScriptComponentMover.as");
+                component->getScriptClassName() = NorvesLib::Core::Container::String("ScriptComponentMover");
+                RequireChildPredicate(owner->AddComponent(component), 33);
+                NorvesLib::Core::ScriptBindingHandle handle;
+                RequireChildPredicate(runtime.BindComponent(*component, handle) ==
+                    NorvesLib::Core::EScriptRuntimeResult::Success, 34);
+                asIScriptEngine* engine = NorvesLib::Core::Scripting::GetActiveAngelScriptEngine();
+                RequireChildPredicate(engine != nullptr, 35);
+                RequireChildPredicate(engine->AddRef() > 0, 36);
+                RequireChildPredicate(runtime.Shutdown() == NorvesLib::Core::EScriptRuntimeResult::ExecutionFailed, 37);
+                RequireChildPredicate(runtime.GetDiagnostics().ActiveBindingCount == 0, 38);
+                RequireChildPredicate(runtime.TickComponent(handle, 1.0f) ==
+                    NorvesLib::Core::EScriptRuntimeResult::InvalidHandle, 39);
+                RequireChildPredicate(engine->Release() > 0, 40);
+                RequireChildPredicate(runtime.Shutdown() == NorvesLib::Core::EScriptRuntimeResult::Success, 41);
+                world.Finalize();
+            }
+            NorvesLib::Memory::Shutdown();
         }
         ExitProcess(EXIT_SUCCESS);
     }

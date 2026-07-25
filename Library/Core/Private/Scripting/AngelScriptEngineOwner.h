@@ -29,6 +29,7 @@ namespace NorvesLib::Core::Scripting
         asIScriptEngine* GetEngine() const;
         const ScriptRuntimeDiagnostics& GetDiagnostics() const;
         void SetLastResult(EScriptRuntimeResult result);
+        void SetActiveBindingCount(uint32_t count);
 
     private:
         asIScriptEngine* m_Engine = nullptr;
