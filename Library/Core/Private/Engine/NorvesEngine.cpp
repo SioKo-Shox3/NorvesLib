@@ -1,5 +1,6 @@
 ﻿// filepath: c:\Users\<user>\Documents\NorvesLib\Library\Core\Private\Engine\NorvesEngine.cpp
 #include "Engine/NorvesEngine.h"
+#include "Component/ScriptComponent.h"
 #include "Logging/LogMacros.h"
 
 using namespace NorvesLib::Core::Container;
@@ -13,6 +14,7 @@ namespace NorvesLib::Core
     NorvesEngine::NorvesEngine()
         : m_isRunning(false), m_version(String("1.0.0")), m_FrameCounter(0)
     {
+        (void)Component::ScriptComponent::StaticClass();
         // コンストラクタで初期化する処理を追加
         LOG_INFO_F("NorvesEngine created. Version: %s", m_version.c_str());
     }

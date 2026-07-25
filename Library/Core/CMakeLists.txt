@@ -50,6 +50,7 @@ set(PRIVATE_SOURCES
     Private/Engine/NorvesEngine.cpp
     Private/Scripting/AngelScriptEngineOwner.cpp
     Private/Scripting/ScriptRuntime.cpp
+    Private/Component/ScriptComponent.cpp
     Private/Engine/ComponentDataRegistry.cpp
     Private/Engine/ApplicationProcessor.cpp
     # Scene
@@ -376,6 +377,7 @@ set(PUBLIC_HEADERS
     # Engine
     Public/Engine/NorvesEngine.h
     Public/Scripting/ScriptRuntime.h
+    Public/Component/ScriptComponent.h
     Public/Engine/IEngine.h
     Public/Engine/AssetRegistry.h
     Public/Engine/ComponentDataRegistry.h

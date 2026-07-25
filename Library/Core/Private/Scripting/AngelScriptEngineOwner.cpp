@@ -184,4 +184,10 @@ namespace NorvesLib::Core::Scripting
     {
         m_Diagnostics.LastResult = result;
     }
+
+    void AngelScriptEngineOwner::SetActiveBindingCount(uint32_t count)
+    {
+        m_Diagnostics.ActiveBindingCount = count;
+    }
+
 } // namespace NorvesLib::Core::Scripting
