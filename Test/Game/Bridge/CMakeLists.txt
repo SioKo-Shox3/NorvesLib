@@ -21,6 +21,7 @@ add_executable(NorvesLibBridgeAdapterThumbnailTest
     ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeLogSink.cpp
     ${CMAKE_SOURCE_DIR}/Game/Bridge/ReadyHandshake.cpp
     ${CMAKE_SOURCE_DIR}/Game/GameApplicationHandler.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Scripting/M6ScriptSmokeController.cpp
     ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
     ${CMAKE_SOURCE_DIR}/Game/GameModes/MemoryAgingTest/MemoryAgingTestRoutine.cpp
     ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.cpp
@@ -59,6 +60,7 @@ add_executable(NorvesLibBridgeAdapterScriptComponentTest
     ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeLogSink.cpp
     ${CMAKE_SOURCE_DIR}/Game/Bridge/ReadyHandshake.cpp
     ${CMAKE_SOURCE_DIR}/Game/GameApplicationHandler.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Scripting/M6ScriptSmokeController.cpp
     ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
     ${CMAKE_SOURCE_DIR}/Game/GameModes/MemoryAgingTest/MemoryAgingTestRoutine.cpp
     ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.cpp

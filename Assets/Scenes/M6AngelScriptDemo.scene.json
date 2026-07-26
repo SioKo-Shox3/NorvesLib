@@ -1,0 +1,49 @@
+{
+    "formatVersion": 1,
+    "module": "NorvesLib",
+    "roots": [
+        {
+            "formatVersion": 1,
+            "rootAlias": "1",
+            "rootPath": "",
+            "root": {
+                "alias": "1",
+                "parentAlias": "0",
+                "object": {
+                    "class": "Entity",
+                    "classId": "0",
+                    "path": "",
+                    "properties": []
+                },
+                "components": [
+                    {
+                        "alias": "2",
+                        "ownerAlias": "1",
+                        "object": {
+                            "class": "ScriptComponent",
+                            "classId": "0",
+                            "path": "",
+                            "properties": [
+                                {
+                                    "name": "ScriptPath",
+                                    "propertyId": "0",
+                                    "type": "String",
+                                    "typeId": "0",
+                                    "value": "Scripts/M6Mover.as"
+                                },
+                                {
+                                    "name": "ScriptClassName",
+                                    "propertyId": "0",
+                                    "type": "String",
+                                    "typeId": "0",
+                                    "value": "M6Mover"
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "children": []
+            }
+        }
+    ]
+}

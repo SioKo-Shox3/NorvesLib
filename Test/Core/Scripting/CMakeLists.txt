@@ -94,6 +94,18 @@ target_compile_definitions(ScriptHotReloadTest PRIVATE
 )
 set_target_properties(ScriptHotReloadTest PROPERTIES FOLDER "Test/Core/Scripting")
 
+add_executable(M6AngelScriptAcceptanceTest
+    M6AngelScriptAcceptanceTest.cpp
+)
+target_link_libraries(M6AngelScriptAcceptanceTest PRIVATE Core)
+target_include_directories(M6AngelScriptAcceptanceTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(M6AngelScriptAcceptanceTest PRIVATE
+    NORVES_ASSET_DIR="${CMAKE_SOURCE_DIR}/Assets"
+)
+set_target_properties(M6AngelScriptAcceptanceTest PROPERTIES FOLDER "Test/Core/Scripting")
+
 include(CTest)
 add_test(NAME AngelScriptVendorContractTest COMMAND AngelScriptVendorContractTest)
 add_test(NAME AngelScriptBootstrapTest COMMAND AngelScriptBootstrapTest)
@@ -109,8 +121,10 @@ add_test(NAME ScriptComponentSceneRoundTripTest COMMAND ScriptComponentSceneRoun
 add_test(NAME ScriptPathResolutionTest COMMAND ScriptPathResolutionTest)
 add_test(NAME ScriptHotReloadTest COMMAND ScriptHotReloadTest)
 add_test(NAME ScriptSourceTrackerContractTest COMMAND ScriptHotReloadTest --tracker-contract)
+add_test(NAME M6AngelScriptAcceptanceTest COMMAND M6AngelScriptAcceptanceTest)
 set_tests_properties(
     ScriptHotReloadTest
     ScriptSourceTrackerContractTest
     PROPERTIES TIMEOUT 300
 )
+set_tests_properties(M6AngelScriptAcceptanceTest PROPERTIES TIMEOUT 300)
