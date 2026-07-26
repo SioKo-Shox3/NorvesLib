@@ -32,22 +32,16 @@ namespace Game::Bridge
         }
 
         const std::size_t remaining = byteCount - index;
-        if (remaining == 1u)
+        if (remaining > 0u)
         {
-            const uint32_t triple = static_cast<uint32_t>(bytes[index]) << 16u;
+            uint32_t triple = static_cast<uint32_t>(bytes[index]) << 16u;
+            if (remaining == 2u)
+            {
+                triple |= static_cast<uint32_t>(bytes[index + 1u]) << 8u;
+            }
             encoded += kAlphabet[(triple >> 18u) & 0x3Fu];
             encoded += kAlphabet[(triple >> 12u) & 0x3Fu];
-            encoded += '=';
-            encoded += '=';
-        }
-        else if (remaining == 2u)
-        {
-            const uint32_t triple =
-                (static_cast<uint32_t>(bytes[index]) << 16u) |
-                (static_cast<uint32_t>(bytes[index + 1u]) << 8u);
-            encoded += kAlphabet[(triple >> 18u) & 0x3Fu];
-            encoded += kAlphabet[(triple >> 12u) & 0x3Fu];
-            encoded += kAlphabet[(triple >> 6u) & 0x3Fu];
+            encoded += remaining == 2u ? kAlphabet[(triple >> 6u) & 0x3Fu] : '=';
             encoded += '=';
         }
 
