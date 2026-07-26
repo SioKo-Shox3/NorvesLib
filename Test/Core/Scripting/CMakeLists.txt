@@ -24,6 +24,32 @@ target_include_directories(AngelScriptBootstrapTest PRIVATE
 )
 set_target_properties(AngelScriptBootstrapTest PROPERTIES FOLDER "Test/Core/Scripting")
 
+add_executable(ScriptRuntimeSafetyTest
+    ScriptRuntimeSafetyTest.cpp
+)
+target_link_libraries(ScriptRuntimeSafetyTest PRIVATE Core)
+target_include_directories(ScriptRuntimeSafetyTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/angelscript/upstream/sdk/angelscript/include
+)
+target_compile_definitions(ScriptRuntimeSafetyTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(ScriptRuntimeSafetyTest PROPERTIES FOLDER "Test/Core/Scripting")
+
+add_executable(ScriptApplicationLifecycleContractTest
+    ScriptApplicationLifecycleContractTest.cpp
+)
+target_link_libraries(ScriptApplicationLifecycleContractTest PRIVATE Core)
+target_include_directories(ScriptApplicationLifecycleContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(ScriptApplicationLifecycleContractTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(ScriptApplicationLifecycleContractTest PROPERTIES FOLDER "Test/Core/Scripting")
+
 add_executable(ScriptComponentTickTest
     ScriptComponentTickTest.cpp
 )
@@ -57,6 +83,13 @@ set_target_properties(ScriptPathResolutionTest PROPERTIES FOLDER "Test/Core/Scri
 include(CTest)
 add_test(NAME AngelScriptVendorContractTest COMMAND AngelScriptVendorContractTest)
 add_test(NAME AngelScriptBootstrapTest COMMAND AngelScriptBootstrapTest)
+add_test(NAME ScriptRuntimeSafetyTest COMMAND ScriptRuntimeSafetyTest)
+add_test(NAME ScriptApplicationLifecycleContractTest COMMAND ScriptApplicationLifecycleContractTest)
+set_tests_properties(
+    ScriptRuntimeSafetyTest
+    ScriptApplicationLifecycleContractTest
+    PROPERTIES TIMEOUT 300
+)
 add_test(NAME ScriptComponentTickTest COMMAND ScriptComponentTickTest)
 add_test(NAME ScriptComponentSceneRoundTripTest COMMAND ScriptComponentSceneRoundTripTest)
 add_test(NAME ScriptPathResolutionTest COMMAND ScriptPathResolutionTest)
