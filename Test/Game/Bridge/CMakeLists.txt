@@ -50,3 +50,65 @@ if(MSVC)
 endif()
 set_target_properties(NorvesLibBridgeAdapterThumbnailTest PROPERTIES FOLDER "Test/Game/Bridge")
 add_test(NAME NorvesLibBridgeAdapterThumbnailTest COMMAND NorvesLibBridgeAdapterThumbnailTest)
+
+add_executable(NorvesLibBridgeAdapterScriptComponentTest
+    NorvesLibBridgeAdapterScriptComponentTest.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Bridge/NorvesLibBridgeAdapter.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeBase64.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeServerHost.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeLogSink.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Bridge/ReadyHandshake.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameApplicationHandler.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/MemoryAgingTest/MemoryAgingTestRoutine.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugDraw.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugInput.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp
+)
+
+target_link_libraries(NorvesLibBridgeAdapterScriptComponentTest PRIVATE
+    Core
+    NorvesModule_Dummy
+    norves_bridge_engine_sdk
+)
+
+target_compile_definitions(NorvesLibBridgeAdapterScriptComponentTest PRIVATE
+    NORVES_BRIDGE_ENABLED
+    NORVES_ASSET_DIR="${CMAKE_SOURCE_DIR}/Assets"
+)
+
+target_include_directories(NorvesLibBridgeAdapterScriptComponentTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
+    ${CMAKE_SOURCE_DIR}/Library
+    ${CMAKE_SOURCE_DIR}/Library/Core/Public
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/angelscript/upstream/sdk/angelscript/include
+)
+
+if(MSVC)
+    target_compile_options(NorvesLibBridgeAdapterScriptComponentTest PRIVATE /utf-8)
+endif()
+
+set_target_properties(
+    NorvesLibBridgeAdapterScriptComponentTest
+    PROPERTIES FOLDER "Test/Game/Bridge"
+)
+
+add_test(
+    NAME NorvesLibBridgeAdapterScriptComponentTest
+    COMMAND NorvesLibBridgeAdapterScriptComponentTest
+)
+
+add_test(
+    NAME NorvesLibBridgeAdapterNumericEntityRegressionTest
+    COMMAND NorvesLibBridgeAdapterScriptComponentTest --numeric-regression
+)
+
+set_tests_properties(
+    NorvesLibBridgeAdapterScriptComponentTest
+    NorvesLibBridgeAdapterNumericEntityRegressionTest
+    PROPERTIES TIMEOUT 300
+)

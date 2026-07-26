@@ -8,6 +8,8 @@
 #include "GameApplicationHandler.h"
 
 #include "Core/Public/Application/IWindow.h"
+#include "Core/Public/Component/Component.h"
+#include "Core/Public/Component/ScriptComponent.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
@@ -28,6 +30,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -613,6 +616,146 @@ namespace Game::Bridge
                 }
             }
             return nullptr;
+        }
+
+        enum class EBridgeObjectTargetKind : uint8_t
+        {
+            Invalid,
+            Entity,
+            Component
+        };
+
+        struct BridgeObjectTarget
+        {
+            EBridgeObjectTargetKind Kind = EBridgeObjectTargetKind::Invalid;
+            NorvesLib::Core::Entity* EntityValue = nullptr;
+            NorvesLib::Core::Component::Component* ComponentValue = nullptr;
+        };
+
+        bool TryParseStrictDecimalId(std::string_view text, uint64_t& outValue) noexcept
+        {
+            if (text.empty())
+            {
+                return false;
+            }
+
+            uint64_t value = 0;
+            for (const char c : text)
+            {
+                if (c < '0' || c > '9')
+                {
+                    return false;
+                }
+
+                const uint64_t digit = static_cast<uint64_t>(c - '0');
+                if (value > (std::numeric_limits<uint64_t>::max() - digit) / 10u)
+                {
+                    return false;
+                }
+                value = value * 10u + digit;
+            }
+
+            outValue = value;
+            return true;
+        }
+
+        inline constexpr std::string_view kComponentObjectIdPrefix = "component:";
+
+        BridgeObjectTarget ResolveBridgeObjectTarget(
+            NorvesLib::Core::World& world,
+            std::string_view objectId)
+        {
+            if (objectId.starts_with(kComponentObjectIdPrefix))
+            {
+                const std::string_view componentTokens = objectId.substr(kComponentObjectIdPrefix.size());
+                const std::size_t colon = componentTokens.find(':');
+                if (colon == std::string_view::npos ||
+                    componentTokens.find(':', colon + 1) != std::string_view::npos)
+                {
+                    return {};
+                }
+
+                uint64_t ownerId = 0;
+                uint64_t componentId = 0;
+                if (!TryParseStrictDecimalId(componentTokens.substr(0, colon), ownerId) ||
+                    !TryParseStrictDecimalId(componentTokens.substr(colon + 1), componentId))
+                {
+                    return {};
+                }
+
+                NorvesLib::Core::Entity* owner = FindEntityByObjectId(world, ownerId);
+                if (owner == nullptr)
+                {
+                    return {};
+                }
+
+                const auto components = owner->GetComponents();
+                for (NorvesLib::Core::Component::Component* component : components)
+                {
+                    if (component != nullptr && component->GetComponentId() == componentId)
+                    {
+                        BridgeObjectTarget target;
+                        target.Kind = EBridgeObjectTargetKind::Component;
+                        target.ComponentValue = component;
+                        return target;
+                    }
+                }
+                return {};
+            }
+
+            uint64_t entityId = 0;
+            if (!TryParseStrictDecimalId(objectId, entityId))
+            {
+                return {};
+            }
+
+            NorvesLib::Core::Entity* entity = FindEntityByObjectId(world, entityId);
+            if (entity == nullptr)
+            {
+                return {};
+            }
+
+            BridgeObjectTarget target;
+            target.Kind = EBridgeObjectTargetKind::Entity;
+            target.EntityValue = entity;
+            return target;
+        }
+
+        NorvesLib::Core::Component::ScriptComponent* AsScriptComponent(
+            NorvesLib::Core::Component::Component* component) noexcept
+        {
+            using ScriptComponent = NorvesLib::Core::Component::ScriptComponent;
+            if (component == nullptr || component->GetClass() != ScriptComponent::StaticClass())
+            {
+                return nullptr;
+            }
+            return static_cast<ScriptComponent*>(component);
+        }
+
+        std::string BuildEmptyObjectSnapshot(std::string_view objectId)
+        {
+            std::string out = R"({"objectId":")";
+            AppendJsonString(out, objectId.empty() ? std::string_view{"0"} : objectId);
+            out += R"(","properties":[]})";
+            return out;
+        }
+
+        std::string BuildScriptComponentSnapshot(
+            std::string_view objectId,
+            const NorvesLib::Core::Component::ScriptComponent& component)
+        {
+            std::string out = R"({"objectId":")";
+            AppendJsonString(out, objectId);
+            out += R"(","kind":"ScriptComponent","properties":[{"name":"ScriptPath","value":")";
+
+            const auto pathRef = component.getScriptPath();
+            AppendJsonString(out, ViewOf(*pathRef));
+            out += R"(","valueType":"string"},{"name":"ScriptClassName","value":")";
+
+            const auto classRef = component.getScriptClassName();
+            AppendJsonString(out, ViewOf(*classRef));
+            out += R"(","valueType":"string"}]})";
+            return out;
         }
 
         /**
@@ -1329,6 +1472,40 @@ namespace Game::Bridge
                         return false;  // 未知のエスケープ。
                 }
             }
+            return true;
+        }
+
+        bool ApplyScriptComponentStringProperty(
+            NorvesLib::Core::Component::ScriptComponent& component,
+            std::string_view propertyName,
+            std::string_view rawJsonValue,
+            std::string& outAppliedValueJson)
+        {
+            std::string decoded;
+            if (!DecodeJsonString(rawJsonValue, decoded))
+            {
+                return false;
+            }
+
+            NorvesLib::Core::Container::String value;
+            value.append(decoded.data(), decoded.size());
+            if (propertyName == "ScriptPath")
+            {
+                component.getScriptPath() = value;
+            }
+            else if (propertyName == "ScriptClassName")
+            {
+                component.getScriptClassName() = value;
+            }
+            else
+            {
+                return false;
+            }
+
+            outAppliedValueJson.clear();
+            outAppliedValueJson += '"';
+            AppendJsonString(outAppliedValueJson, decoded);
+            outAppliedValueJson += '"';
             return true;
         }
 
@@ -2062,48 +2239,35 @@ namespace Game::Bridge
         const std::optional<std::string> objectIdField = extract_string_field(paramsText, "objectId");
         const std::string objectId = objectIdField.value_or(std::string{});
 
-        // 入力 objectId をエコーする空スナップショットを組むヘルパ（graceful フォールバック用）。
-        // schema 準拠の最小形 { "objectId":<入力>, "properties":[] }。objectId は minLength:1 のため
-        // 入力が空でも非空のプレースホルダ "0" を出す。
-        const auto buildEmpty = [](std::string_view id) -> std::string {
-            std::string out = R"({"objectId":")";
-            AppendJsonString(out, id.empty() ? std::string_view{"0"} : id);
-            out += R"(","properties":[]})";
-            return out;
-        };
-
-        // objectId 文字列 -> uint64_t。パース不可なら空スナップショット。
-        uint64_t parsedId = 0;
-        bool bParsed = false;
-        if (!objectId.empty())
-        {
-            errno = 0;
-            char* end = nullptr;
-            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
-            // 全体が数字で消費され、かつ少なくとも 1 桁あること（end が進んだこと）を要求。
-            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
-            {
-                parsedId = static_cast<uint64_t>(v);
-                bParsed = true;
-            }
-        }
-
         auto* engine = NorvesLib::Core::Engine::GEngine;
-        NorvesLib::Core::Entity* entity = nullptr;
-        if (bParsed && engine != nullptr)
+        if (engine == nullptr)
         {
-            entity = FindEntityByObjectId(engine->GetWorld(), parsedId);
+            return OkLiteral(BuildEmptyObjectSnapshot(objectId));
         }
-        if (entity == nullptr)
+
+        NorvesLib::Core::World& world = engine->GetWorld();
+        const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
+        if (target.Kind == EBridgeObjectTargetKind::Component)
         {
-            // パース不可 or 該当 Entity 無し: graceful な空スナップショット。
-            return OkLiteral(buildEmpty(objectId));
+            auto* scriptComponent = AsScriptComponent(target.ComponentValue);
+            if (scriptComponent == nullptr)
+            {
+                return OkLiteral(BuildEmptyObjectSnapshot(objectId));
+            }
+            return OkLiteral(BuildScriptComponentSnapshot(objectId, *scriptComponent));
         }
+
+        if (target.Kind != EBridgeObjectTargetKind::Entity || target.EntityValue == nullptr)
+        {
+            return OkLiteral(BuildEmptyObjectSnapshot(objectId));
+        }
+
+        NorvesLib::Core::Entity* entity = target.EntityValue;
 
         const NorvesLib::Core::IClass* cls = entity->GetClass();
         if (cls == nullptr)
         {
-            return OkLiteral(buildEmpty(objectId));
+            return OkLiteral(BuildEmptyObjectSnapshot(objectId));
         }
 
         // クラスのプロパティスキーマ投影から StablePropertyId -> 名前 のマップを作る。
@@ -2198,35 +2362,44 @@ namespace Game::Bridge
             return OkLiteral(kRejected);
         }
 
-        // objectId 文字列 -> uint64_t（全桁数字を要求。objectGetSnapshot と同手法）。
-        uint64_t parsedId = 0;
-        bool bParsed = false;
-        {
-            errno = 0;
-            char* end = nullptr;
-            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
-            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
-            {
-                parsedId = static_cast<uint64_t>(v);
-                bParsed = true;
-            }
-        }
-        if (!bParsed)
-        {
-            return OkLiteral(kRejected);
-        }
-
-        // World から Entity を逆引き（GEngine null / 該当なしは reject）。
         auto* engine = NorvesLib::Core::Engine::GEngine;
         if (engine == nullptr)
         {
             return OkLiteral(kRejected);
         }
-        NorvesLib::Core::Entity* entity = FindEntityByObjectId(engine->GetWorld(), parsedId);
-        if (entity == nullptr)
+
+        NorvesLib::Core::World& world = engine->GetWorld();
+        const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
+        if (target.Kind == EBridgeObjectTargetKind::Component)
+        {
+            auto* scriptComponent = AsScriptComponent(target.ComponentValue);
+            if (scriptComponent == nullptr)
+            {
+                return OkLiteral(kRejected);
+            }
+
+            std::string appliedValueJson;
+            if (!ApplyScriptComponentStringProperty(
+                    *scriptComponent,
+                    propertyName,
+                    wireValue,
+                    appliedValueJson))
+            {
+                return OkLiteral(kRejected);
+            }
+
+            std::string out = R"({"accepted":true,"appliedValue":)";
+            out += appliedValueJson;
+            out += '}';
+            return OkLiteral(out);
+        }
+
+        if (target.Kind != EBridgeObjectTargetKind::Entity || target.EntityValue == nullptr)
         {
             return OkLiteral(kRejected);
         }
+
+        NorvesLib::Core::Entity* entity = target.EntityValue;
 
         const NorvesLib::Core::IClass* cls = entity->GetClass();
         if (cls == nullptr)
@@ -2368,29 +2541,14 @@ namespace Game::Bridge
                 return OkLiteral(kRejected);
             }
 
-            // parentId 文字列 -> uint64_t（全桁数字を要求。objectSetProperty と同手法）。
-            uint64_t parsedParentId = 0;
-            bool bParsed = false;
-            {
-                errno = 0;
-                char* end = nullptr;
-                const unsigned long long v = std::strtoull(parentId.c_str(), &end, 10);
-                if (end != nullptr && *end == '\0' && end != parentId.c_str() && errno == 0)
-                {
-                    parsedParentId = static_cast<uint64_t>(v);
-                    bParsed = true;
-                }
-            }
-            if (!bParsed)
-            {
-                return OkLiteral(kRejected);
-            }
-
-            parent = FindEntityByObjectId(world, parsedParentId);
-            if (parent == nullptr)
+            const BridgeObjectTarget resolvedParent =
+                ResolveBridgeObjectTarget(world, parentId);
+            if (resolvedParent.Kind != EBridgeObjectTargetKind::Entity ||
+                resolvedParent.EntityValue == nullptr)
             {
                 return OkLiteral(kRejected);  // 指定親が見つからない。
             }
+            parent = resolvedParent.EntityValue;
         }
 
         // kind is ignored: no public dynamic-type+parent spawn API (AttachChildEntity is private);
@@ -2433,36 +2591,18 @@ namespace Game::Bridge
             return OkLiteral(kRejected);
         }
 
-        // objectId 文字列 -> uint64_t（全桁数字を要求。objectSetProperty と同手法）。
-        uint64_t parsedId = 0;
-        bool bParsed = false;
-        {
-            errno = 0;
-            char* end = nullptr;
-            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
-            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
-            {
-                parsedId = static_cast<uint64_t>(v);
-                bParsed = true;
-            }
-        }
-        if (!bParsed)
-        {
-            return OkLiteral(kRejected);
-        }
-
-        // World から Entity を逆引き（GEngine null / 該当なしは reject）。
         auto* engine = NorvesLib::Core::Engine::GEngine;
         if (engine == nullptr)
         {
             return OkLiteral(kRejected);
         }
         NorvesLib::Core::World& world = engine->GetWorld();
-        NorvesLib::Core::Entity* entity = FindEntityByObjectId(world, parsedId);
-        if (entity == nullptr)
+        const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
+        if (target.Kind != EBridgeObjectTargetKind::Entity || target.EntityValue == nullptr)
         {
             return OkLiteral(kRejected);
         }
+        NorvesLib::Core::Entity* entity = target.EntityValue;
 
         // 除去を試みる。その bool を accepted とし、除去できたときだけ scene.treeChanged を発火する。
         const bool bAccepted = world.RemoveEntity(entity);
@@ -2496,36 +2636,18 @@ namespace Game::Bridge
             return OkLiteral(kRejected);
         }
 
-        // objectId 文字列 -> uint64_t（全桁数字を要求。objectSetProperty と同手法）。
-        uint64_t parsedId = 0;
-        bool bParsed = false;
-        {
-            errno = 0;
-            char* end = nullptr;
-            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
-            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
-            {
-                parsedId = static_cast<uint64_t>(v);
-                bParsed = true;
-            }
-        }
-        if (!bParsed)
-        {
-            return OkLiteral(kRejected);
-        }
-
-        // World から対象 Entity を逆引き（GEngine null / 該当なしは reject）。
         auto* engine = NorvesLib::Core::Engine::GEngine;
         if (engine == nullptr)
         {
             return OkLiteral(kRejected);
         }
         NorvesLib::Core::World& world = engine->GetWorld();
-        NorvesLib::Core::Entity* entity = FindEntityByObjectId(world, parsedId);
-        if (entity == nullptr)
+        const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
+        if (target.Kind != EBridgeObjectTargetKind::Entity || target.EntityValue == nullptr)
         {
             return OkLiteral(kRejected);
         }
+        NorvesLib::Core::Entity* entity = target.EntityValue;
 
         // newParentId は任意。無ければ新親 nullptr（ルートへ移動）、あるのに逆引きできなければ reject。
         NorvesLib::Core::Entity* newParent = nullptr;
@@ -2539,28 +2661,14 @@ namespace Game::Bridge
                 return OkLiteral(kRejected);
             }
 
-            uint64_t parsedParentId = 0;
-            bool bParentParsed = false;
-            {
-                errno = 0;
-                char* end = nullptr;
-                const unsigned long long v = std::strtoull(newParentId.c_str(), &end, 10);
-                if (end != nullptr && *end == '\0' && end != newParentId.c_str() && errno == 0)
-                {
-                    parsedParentId = static_cast<uint64_t>(v);
-                    bParentParsed = true;
-                }
-            }
-            if (!bParentParsed)
-            {
-                return OkLiteral(kRejected);
-            }
-
-            newParent = FindEntityByObjectId(world, parsedParentId);
-            if (newParent == nullptr)
+            const BridgeObjectTarget resolvedParent =
+                ResolveBridgeObjectTarget(world, newParentId);
+            if (resolvedParent.Kind != EBridgeObjectTargetKind::Entity ||
+                resolvedParent.EntityValue == nullptr)
             {
                 return OkLiteral(kRejected);  // 指定新親が見つからない。
             }
+            newParent = resolvedParent.EntityValue;
         }
 
         // 移動を試みる。その bool を accepted とし、移動できたときだけ scene.treeChanged を発火する。
@@ -2596,36 +2704,18 @@ namespace Game::Bridge
             return OkLiteral(kRejected);
         }
 
-        // objectId 文字列 -> uint64_t（全桁数字を要求。sceneReparentObject と同手法）。
-        uint64_t parsedId = 0;
-        bool bParsed = false;
-        {
-            errno = 0;
-            char* end = nullptr;
-            const unsigned long long v = std::strtoull(objectId.c_str(), &end, 10);
-            if (end != nullptr && *end == '\0' && end != objectId.c_str() && errno == 0)
-            {
-                parsedId = static_cast<uint64_t>(v);
-                bParsed = true;
-            }
-        }
-        if (!bParsed)
-        {
-            return OkLiteral(kRejected);
-        }
-
-        // World から複製元 Entity を逆引き（GEngine null / 該当なしは reject）。
         auto* engine = NorvesLib::Core::Engine::GEngine;
         if (engine == nullptr)
         {
             return OkLiteral(kRejected);
         }
         NorvesLib::Core::World& world = engine->GetWorld();
-        NorvesLib::Core::Entity* src = FindEntityByObjectId(world, parsedId);
-        if (src == nullptr)
+        const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
+        if (target.Kind != EBridgeObjectTargetKind::Entity || target.EntityValue == nullptr)
         {
             return OkLiteral(kRejected);
         }
+        NorvesLib::Core::Entity* src = target.EntityValue;
 
         // 複製先の親を決める。newParentId が指定されていれば逆引き必須（できなければ reject）。
         // 無ければ複製元の親（同胞複製）＝GetParentEntity()。複製元がルートなら nullptr で World 直下へ。
@@ -2640,28 +2730,14 @@ namespace Game::Bridge
                 return OkLiteral(kRejected);
             }
 
-            uint64_t parsedParentId = 0;
-            bool bParentParsed = false;
-            {
-                errno = 0;
-                char* end = nullptr;
-                const unsigned long long v = std::strtoull(newParentId.c_str(), &end, 10);
-                if (end != nullptr && *end == '\0' && end != newParentId.c_str() && errno == 0)
-                {
-                    parsedParentId = static_cast<uint64_t>(v);
-                    bParentParsed = true;
-                }
-            }
-            if (!bParentParsed)
-            {
-                return OkLiteral(kRejected);
-            }
-
-            newParent = FindEntityByObjectId(world, parsedParentId);
-            if (newParent == nullptr)
+            const BridgeObjectTarget resolvedParent =
+                ResolveBridgeObjectTarget(world, newParentId);
+            if (resolvedParent.Kind != EBridgeObjectTargetKind::Entity ||
+                resolvedParent.EntityValue == nullptr)
             {
                 return OkLiteral(kRejected);  // 指定新親が見つからない。
             }
+            newParent = resolvedParent.EntityValue;
         }
         else
         {
