@@ -196,6 +196,11 @@ namespace NorvesLib::Core::Scripting
         m_Diagnostics.ActiveBindingCount = count;
     }
 
+    void AngelScriptEngineOwner::SetReloadGeneration(uint64_t generation)
+    {
+        m_Diagnostics.ReloadGeneration = generation;
+    }
+
     void AngelScriptEngineOwner::IncrementGcStepCount()
     {
         ++m_Diagnostics.GcStepCount;
