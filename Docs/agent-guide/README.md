@@ -8,6 +8,6 @@
 - [coding-style.md](./coding-style.md) — 必ず守る独自型ルール、スタイル・命名、行末コード/BOM の扱い。
 - [build-and-verify.md](./build-and-verify.md) — ビルドとテストの標準コマンド、テスト追加の規約。
 - [orchestration.md](./orchestration.md) — 役割分担、実装委譲とレビューのダブルチェック、デュアルメイン運用、ハーネスによる強制、工程（フェーズ）の流れ。
-- [branching-and-commits.md](./branching-and-commits.md) — コミットメッセージの規約、プッシュ承認制、マージ後の片付け。
+- [branching-and-commits.md](./branching-and-commits.md) — コミットメッセージの規約、プッシュしない方針、マージ後の片付け。
 - [model-playbook.md](./model-playbook.md) — 役割ごとのモデル選定（相対ティア）と難易度ベースの昇格ルール。
 - [model-evals.md](./model-evals.md) — モデル eval fixture の回し方。
