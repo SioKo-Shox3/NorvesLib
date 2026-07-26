@@ -7,6 +7,7 @@
 #include "Bridge/BridgeRuntimeState.h"
 #include "Bridge/BridgeServerHost.h"
 #include "Bridge/NorvesLibBridgeAdapter.h"
+#include "Scripting/M6ScriptSmokeController.h"
 
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Debug/EngineStatsImGuiView.h"
@@ -116,6 +117,7 @@ namespace Game
         NorvesLib::Core::Container::String m_TextureAssetManifestPath;
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem> m_AssetSystemSnapshot;
         NorvesLib::Core::Container::String m_Rendering3DTestModelPath;
+        Game::Scripting::M6ScriptSmokeController m_M6ScriptSmokeController;
 
         // Bridge（NorvesEditor 連携）。adapter は host より長生きする必要があるため、
         // 宣言順を adapter → host にしてデストラクト順（host → adapter）を保証する。

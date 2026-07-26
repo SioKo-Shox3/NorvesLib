@@ -268,6 +268,8 @@ namespace Game
     {
         LOG_INFO("GameApplicationHandler::OnPreInitialize()");
 
+        m_M6ScriptSmokeController.Configure(args);
+
         m_bHasTextureAssetRuntimeConfig = false;
         m_bRendering3DTestUseCookedModel = false;
 #if defined(NORVES_ENABLE_IMGUI)
@@ -758,6 +760,7 @@ namespace Game
 #endif
         }
 
+        m_M6ScriptSmokeController.Initialize();
         return true;
     }
 
@@ -972,6 +975,7 @@ namespace Game
         {
             m_BridgeHost.DrainInbound();
         }
+        m_M6ScriptSmokeController.Update();
     }
 
     bool GameApplicationHandler::ShouldAdvanceSimulation() const
@@ -989,6 +993,7 @@ namespace Game
 
     void GameApplicationHandler::OnPreShutdown()
     {
+        m_M6ScriptSmokeController.Shutdown();
         LOG_INFO("GameApplicationHandler::OnPreShutdown()");
 
 #if defined(NORVES_ENABLE_IMGUI)

@@ -804,6 +804,7 @@ if(NORVES_BRIDGE_SDK_DIR)
     add_executable(AssetManifestReloadBridgeLoopbackTest
         AssetManifestReloadBridgeLoopbackTest.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameApplicationHandler.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Scripting/M6ScriptSmokeController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/NorvesLibBridgeAdapter.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeBase64.cpp
