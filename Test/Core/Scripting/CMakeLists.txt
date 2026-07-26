@@ -80,6 +80,20 @@ target_compile_definitions(ScriptPathResolutionTest PRIVATE
 )
 set_target_properties(ScriptPathResolutionTest PROPERTIES FOLDER "Test/Core/Scripting")
 
+add_executable(ScriptHotReloadTest
+    ScriptHotReloadTest.cpp
+)
+target_link_libraries(ScriptHotReloadTest PRIVATE Core)
+target_include_directories(ScriptHotReloadTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/angelscript/upstream/sdk/angelscript/include
+)
+target_compile_definitions(ScriptHotReloadTest PRIVATE
+    NORVES_ASSET_DIR="${CMAKE_SOURCE_DIR}/Assets"
+)
+set_target_properties(ScriptHotReloadTest PROPERTIES FOLDER "Test/Core/Scripting")
+
 include(CTest)
 add_test(NAME AngelScriptVendorContractTest COMMAND AngelScriptVendorContractTest)
 add_test(NAME AngelScriptBootstrapTest COMMAND AngelScriptBootstrapTest)
@@ -93,3 +107,10 @@ set_tests_properties(
 add_test(NAME ScriptComponentTickTest COMMAND ScriptComponentTickTest)
 add_test(NAME ScriptComponentSceneRoundTripTest COMMAND ScriptComponentSceneRoundTripTest)
 add_test(NAME ScriptPathResolutionTest COMMAND ScriptPathResolutionTest)
+add_test(NAME ScriptHotReloadTest COMMAND ScriptHotReloadTest)
+add_test(NAME ScriptSourceTrackerContractTest COMMAND ScriptHotReloadTest --tracker-contract)
+set_tests_properties(
+    ScriptHotReloadTest
+    ScriptSourceTrackerContractTest
+    PROPERTIES TIMEOUT 300
+)

@@ -1,18 +1,16 @@
 ﻿#include "Scripting/ScriptRuntime.h"
 
-#include "Asset/AssetPath.h"
 #include "Component/ScriptComponent.h"
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
 #include "Scripting/AngelScriptEngineOwner.h"
+#include "Scripting/ScriptSourceTracker.h"
 #include "Thread/Thread.h"
 #include "Debug/Stats.h"
 
 #include <angelscript.h>
 
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <new>
 
 namespace NorvesLib::Core
@@ -41,138 +39,6 @@ namespace NorvesLib::Core
         Math::Vector3 MakeMathVector3(const ScriptVector3& vector)
         {
             return Math::Vector3(vector.x, vector.y, vector.z);
-        }
-
-        bool HasRejectedSegment(const Container::String& path)
-        {
-            if (path.empty())
-            {
-                return true;
-            }
-
-            size_t segmentStart = 0;
-            for (size_t index = 0; index <= path.size(); ++index)
-            {
-                const bool bAtEnd = index == path.size();
-                const bool bSeparator = !bAtEnd && (path[index] == '/' || path[index] == '\\');
-                if (!bAtEnd && !bSeparator)
-                {
-                    continue;
-                }
-
-                const size_t segmentLength = index - segmentStart;
-                if (segmentLength == 2 && path[segmentStart] == '.' && path[segmentStart + 1] == '.')
-                {
-                    return true;
-                }
-
-                segmentStart = index + 1;
-            }
-            return false;
-        }
-
-        bool IsDriveLetter(TCHAR character)
-        {
-            return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z');
-        }
-
-        bool IsRootedOrDriveRelative(const Container::String& path)
-        {
-            if (path.empty())
-            {
-                return true;
-            }
-
-            if (path[0] == '/' || path[0] == '\\')
-            {
-                return true;
-            }
-
-            return path.size() >= 2 && IsDriveLetter(path[0]) && path[1] == ':';
-        }
-
-        bool IsPathContainedBy(const std::filesystem::path& root, const std::filesystem::path& candidate)
-        {
-            std::filesystem::path::const_iterator rootIt = root.begin();
-            std::filesystem::path::const_iterator candidateIt = candidate.begin();
-            while (rootIt != root.end())
-            {
-                if (candidateIt == candidate.end() || *rootIt != *candidateIt)
-                {
-                    return false;
-                }
-
-                ++rootIt;
-                ++candidateIt;
-            }
-            return true;
-        }
-
-        bool ResolveScriptPath(
-            const Container::String& requestedPath,
-            Container::String& outLogicalPath,
-            std::filesystem::path& outResolvedPath)
-        {
-            outLogicalPath.clear();
-            outResolvedPath.clear();
-            if (HasRejectedSegment(requestedPath) || IsRootedOrDriveRelative(requestedPath))
-            {
-                return false;
-            }
-
-            const Asset::AssetPath normalized = Asset::AssetPath::Normalize(requestedPath.c_str(), NORVES_ASSET_DIR);
-            if (!normalized.IsValid() || normalized.IsAbsolute() || !normalized.HasLogicalPath())
-            {
-                return false;
-            }
-
-            std::error_code error;
-            const std::filesystem::path canonicalRoot = std::filesystem::weakly_canonical(
-                std::filesystem::path(NORVES_ASSET_DIR),
-                error);
-            if (error)
-            {
-                return false;
-            }
-
-            const std::filesystem::path canonicalCandidate = std::filesystem::weakly_canonical(
-                canonicalRoot / normalized.GetLogicalPath().c_str(),
-                error);
-            if (error || !IsPathContainedBy(canonicalRoot, canonicalCandidate))
-            {
-                return false;
-            }
-
-            if (!std::filesystem::is_regular_file(canonicalCandidate, error) || error)
-            {
-                return false;
-            }
-
-            outLogicalPath = Container::String(normalized.GetLogicalPath().c_str());
-            outResolvedPath = canonicalCandidate;
-            return true;
-        }
-
-        bool ReadScriptFile(const std::filesystem::path& path, Container::AnsiString& outSource)
-        {
-            outSource.clear();
-            std::ifstream stream(path, std::ios::binary);
-            if (!stream)
-            {
-                return false;
-            }
-
-            char buffer[4096];
-            while (stream)
-            {
-                stream.read(buffer, sizeof(buffer));
-                const std::streamsize count = stream.gcount();
-                if (count > 0)
-                {
-                    outSource.append(buffer, static_cast<size_t>(count));
-                }
-            }
-            return !outSource.empty() && !stream.bad();
         }
 
         Container::AnsiString MakeModuleName(uint32_t slotIndex, uint32_t generation)
@@ -225,6 +91,23 @@ namespace NorvesLib::Core
             Container::VariableArray<uint32_t> FreeSlots;
         };
 
+        struct CompiledBindingCandidate
+        {
+            Impl* Runtime = nullptr;
+            uint32_t SlotIndex = ScriptBindingHandle::InvalidSlotIndex;
+            uint32_t PreviousGeneration = 0;
+            uint32_t FreshGeneration = 0;
+            asIScriptObject* Object = nullptr;
+            asITypeInfo* Type = nullptr;
+            asIScriptFunction* BeginPlay = nullptr;
+            asIScriptFunction* Tick = nullptr;
+            asIScriptFunction* EndPlay = nullptr;
+            Container::AnsiString ModuleName;
+            Container::String NormalizedComponentPath;
+            Scripting::ScriptSourceApproval TrackerApproval;
+            bool bTransferred = false;
+        };
+
         static void* operator new(size_t size)
         {
             void* memory = std::malloc(size);
@@ -274,14 +157,43 @@ namespace NorvesLib::Core
         {
             if (m_BindingStorage != nullptr)
             {
+                uint32_t liveCount = 0;
+                for (const BindingSlot& slot : m_BindingStorage->Slots)
+                {
+                    if (slot.Component != nullptr)
+                    {
+                        ++liveCount;
+                    }
+                }
+
+                m_BindingStorage->FreeSlots.reserve(m_BindingStorage->FreeSlots.size() + liveCount);
+                bool bPhysicalCleanupFailed = false;
                 for (uint32_t index = 0; index < m_BindingStorage->Slots.size(); ++index)
                 {
                     if (m_BindingStorage->Slots[index].Component != nullptr)
                     {
-                        ReleaseSlot(index, true, false);
+                        const uint32_t generation = m_BindingStorage->Slots[index].Generation;
+                        bPhysicalCleanupFailed = !ReleaseSlot(index, true, true) || bPhysicalCleanupFailed;
+                        m_SourceTracker.UnregisterBinding(index, generation);
                     }
                 }
                 m_BindingStorage.reset();
+                m_SourceTracker.Reset();
+
+                if (m_bCleanupPending && !m_EngineOwner.Shutdown())
+                {
+                    SetResult(EScriptRuntimeResult::ExecutionFailed);
+                    return EScriptRuntimeResult::ExecutionFailed;
+                }
+
+                ClearLifecycleState();
+                if (bPhysicalCleanupFailed)
+                {
+                    SetResult(EScriptRuntimeResult::ExecutionFailed);
+                    return EScriptRuntimeResult::ExecutionFailed;
+                }
+                SetResult(EScriptRuntimeResult::Success);
+                return EScriptRuntimeResult::Success;
             }
 
             if (m_bCleanupPending && !m_EngineOwner.Shutdown())
@@ -525,42 +437,35 @@ namespace NorvesLib::Core
             }
         }
 
-        void ReleaseSlot(uint32_t slotIndex, bool bInvokeEndPlay, bool bRecycleSlot = true)
+        bool ReleaseSlot(uint32_t slotIndex, bool bInvokeEndPlay, bool bRecycleSlot = true)
         {
             BindingSlot& slot = m_BindingStorage->Slots[slotIndex];
             if (slot.Component == nullptr)
             {
-                return;
+                return true;
             }
 
-            if (bInvokeEndPlay && slot.EndPlay != nullptr && !slot.bFaulted && slot.Component->bBegunPlay)
+            if (bInvokeEndPlay && slot.Object != nullptr && slot.EndPlay != nullptr &&
+                !slot.bFaulted && slot.Component->bBegunPlay)
             {
                 Invoke(slot, slotIndex, slot.EndPlay, 0.0f, false);
             }
 
-            if (slot.Object != nullptr)
-            {
-                slot.Object->Release();
-            }
-
-            if (!slot.ModuleName.empty() && m_EngineOwner.GetEngine() != nullptr)
-            {
-                m_EngineOwner.GetEngine()->DiscardModule(slot.ModuleName.c_str());
-            }
-
-            if (slot.Component->m_BindingHandle.SlotIndex == slotIndex &&
-                slot.Component->m_BindingHandle.Generation == slot.Generation)
-            {
-                slot.Component->m_BindingHandle.Reset();
-            }
-
-            slot.Component = nullptr;
+            Component::ScriptComponent* component = slot.Component;
+            asIScriptObject* object = slot.Object;
+            Container::AnsiString moduleName = std::move(slot.ModuleName);
             slot.Object = nullptr;
             slot.Type = nullptr;
             slot.BeginPlay = nullptr;
             slot.Tick = nullptr;
             slot.EndPlay = nullptr;
-            slot.ModuleName.clear();
+
+            if (component->m_BindingHandle.SlotIndex == slotIndex &&
+                component->m_BindingHandle.Generation == slot.Generation)
+            {
+                component->m_BindingHandle.Reset();
+            }
+            slot.Component = nullptr;
             slot.bFaulted = false;
             if (bRecycleSlot)
             {
@@ -568,6 +473,343 @@ namespace NorvesLib::Core
             }
             const uint32_t activeBindingCount = m_EngineOwner.GetDiagnostics().ActiveBindingCount;
             m_EngineOwner.SetActiveBindingCount(activeBindingCount > 0 ? activeBindingCount - 1 : 0);
+
+            bool bPhysicalCleanupSucceeded = true;
+            if (object != nullptr)
+            {
+                try
+                {
+                    object->Release();
+                }
+                catch (...)
+                {
+                    NORVES_LOG_ERROR("Scripting", "ScriptRuntime binding object release failed");
+                    bPhysicalCleanupSucceeded = false;
+                }
+            }
+            if (!moduleName.empty())
+            {
+                try
+                {
+                    asIScriptEngine* engine = m_EngineOwner.GetEngine();
+                    if (engine == nullptr || engine->DiscardModule(moduleName.c_str()) < 0)
+                    {
+                        NORVES_LOG_ERROR("Scripting", "ScriptRuntime binding module discard failed");
+                        bPhysicalCleanupSucceeded = false;
+                    }
+                }
+                catch (...)
+                {
+                    NORVES_LOG_ERROR("Scripting", "ScriptRuntime binding module discard failed");
+                    bPhysicalCleanupSucceeded = false;
+                }
+            }
+            return bPhysicalCleanupSucceeded;
+        }
+
+        EScriptRuntimeResult InvokeReloadLifecycle(
+            BindingSlot& slot,
+            uint32_t slotIndex,
+            asIScriptFunction* function) noexcept
+        {
+            if (function == nullptr)
+            {
+                return EScriptRuntimeResult::Success;
+            }
+
+            asIScriptContext* context = nullptr;
+            try
+            {
+                asIScriptEngine* engine = m_EngineOwner.GetEngine();
+                context = engine != nullptr ? engine->CreateContext() : nullptr;
+                if (context == nullptr)
+                {
+                    return EScriptRuntimeResult::ExecutionFailed;
+                }
+
+                EntityRef ownerReference;
+                ownerReference.Runtime = this;
+                ownerReference.SlotIndex = slotIndex;
+                ownerReference.Generation = slot.Generation;
+                const bool bPrepared = context->Prepare(function) >= 0;
+                const bool bBoundObject = bPrepared && context->SetObject(slot.Object) >= 0;
+                const bool bBoundOwner = bBoundObject && context->SetArgObject(0, &ownerReference) >= 0;
+                const int executionResult = bBoundOwner ? context->Execute() : asEXECUTION_ERROR;
+                asIScriptContext* contextToRelease = context;
+                context = nullptr;
+                contextToRelease->Release();
+                return executionResult == asEXECUTION_FINISHED
+                    ? EScriptRuntimeResult::Success
+                    : EScriptRuntimeResult::ExecutionFailed;
+            }
+            catch (...)
+            {
+                if (context != nullptr)
+                {
+                    asIScriptContext* contextToRelease = context;
+                    context = nullptr;
+                    try
+                    {
+                        contextToRelease->Release();
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+                return EScriptRuntimeResult::ExecutionFailed;
+            }
+        }
+
+        bool ReleaseReloadObject(BindingSlot& slot) noexcept
+        {
+            if (slot.Object == nullptr)
+            {
+                return true;
+            }
+
+            try
+            {
+                slot.Object->Release();
+                slot.Object = nullptr;
+                return true;
+            }
+            catch (...)
+            {
+                NORVES_LOG_ERROR("Scripting", "ScriptRuntime reload object release failed");
+                slot.Object = nullptr;
+                return false;
+            }
+        }
+
+        bool DiscardReloadModule(BindingSlot& slot) noexcept
+        {
+            if (slot.ModuleName.empty())
+            {
+                return true;
+            }
+
+            bool bDiscarded = true;
+            try
+            {
+                asIScriptEngine* engine = m_EngineOwner.GetEngine();
+                if (engine == nullptr || engine->DiscardModule(slot.ModuleName.c_str()) < 0)
+                {
+                    NORVES_LOG_ERROR("Scripting", "ScriptRuntime reload module discard failed");
+                    bDiscarded = false;
+                }
+            }
+            catch (...)
+            {
+                NORVES_LOG_ERROR("Scripting", "ScriptRuntime reload module discard failed");
+                bDiscarded = false;
+            }
+
+            slot.Type = nullptr;
+            slot.BeginPlay = nullptr;
+            slot.Tick = nullptr;
+            slot.EndPlay = nullptr;
+            slot.ModuleName.clear();
+            return bDiscarded;
+        }
+
+        bool ReleaseCompiledCandidate(CompiledBindingCandidate& candidate) noexcept
+        {
+            if (candidate.bTransferred)
+            {
+                return true;
+            }
+
+            asIScriptObject* object = candidate.Object;
+            Container::AnsiString moduleName = std::move(candidate.ModuleName);
+            candidate.Object = nullptr;
+            candidate.Type = nullptr;
+            candidate.BeginPlay = nullptr;
+            candidate.Tick = nullptr;
+            candidate.EndPlay = nullptr;
+
+            bool bCleanupSucceeded = true;
+            if (object != nullptr)
+            {
+                try
+                {
+                    object->Release();
+                }
+                catch (...)
+                {
+                    NORVES_LOG_ERROR("Scripting", "ScriptRuntime reload candidate object release failed");
+                    bCleanupSucceeded = false;
+                }
+            }
+
+            if (!moduleName.empty())
+            {
+                try
+                {
+                    asIScriptEngine* engine = m_EngineOwner.GetEngine();
+                    if (engine == nullptr || engine->DiscardModule(moduleName.c_str()) < 0)
+                    {
+                        NORVES_LOG_ERROR("Scripting", "ScriptRuntime reload candidate module discard failed");
+                        bCleanupSucceeded = false;
+                    }
+                }
+                catch (...)
+                {
+                    NORVES_LOG_ERROR("Scripting", "ScriptRuntime reload candidate module discard failed");
+                    bCleanupSucceeded = false;
+                }
+            }
+            return bCleanupSucceeded;
+        }
+
+        class ReloadCandidateTransaction final
+        {
+        public:
+            ReloadCandidateTransaction(
+                Impl& runtime,
+                Container::VariableArray<Container::TUniquePtr<CompiledBindingCandidate>>& candidates)
+                : m_Runtime(runtime)
+                , m_Candidates(candidates)
+            {
+            }
+
+            ~ReloadCandidateTransaction()
+            {
+                if (!m_bCommitted)
+                {
+                    Rollback();
+                }
+            }
+
+            bool Rollback() noexcept
+            {
+                if (m_bRollbackCompleted)
+                {
+                    return m_bRollbackSucceeded;
+                }
+
+                m_bRollbackCompleted = true;
+                for (const Container::TUniquePtr<CompiledBindingCandidate>& candidate : m_Candidates)
+                {
+                    if (candidate != nullptr && !m_Runtime.ReleaseCompiledCandidate(*candidate))
+                    {
+                        NORVES_LOG_ERROR("Scripting", "ScriptRuntime reload candidate cleanup failed");
+                        m_bRollbackSucceeded = false;
+                    }
+                }
+                return m_bRollbackSucceeded;
+            }
+
+            void Commit()
+            {
+                m_bCommitted = true;
+            }
+
+        private:
+            Impl& m_Runtime;
+            Container::VariableArray<Container::TUniquePtr<CompiledBindingCandidate>>& m_Candidates;
+            bool m_bCommitted = false;
+            bool m_bRollbackCompleted = false;
+            bool m_bRollbackSucceeded = true;
+        };
+
+        EScriptRuntimeResult StageReloadCandidate(
+            const Scripting::ScriptSourceChange& change,
+            const Scripting::ScriptSourceSnapshot& source,
+            uint32_t freshGeneration,
+            CompiledBindingCandidate& outCandidate)
+        {
+            if (m_BindingStorage == nullptr || change.SlotIndex >= m_BindingStorage->Slots.size())
+            {
+                return EScriptRuntimeResult::BindFailed;
+            }
+
+            BindingSlot& liveSlot = m_BindingStorage->Slots[change.SlotIndex];
+            if (liveSlot.Component == nullptr || liveSlot.Object == nullptr || liveSlot.Generation != change.Generation)
+            {
+                return EScriptRuntimeResult::BindFailed;
+            }
+
+            asIScriptEngine* engine = m_EngineOwner.GetEngine();
+            if (engine == nullptr)
+            {
+                return EScriptRuntimeResult::ExecutionFailed;
+            }
+
+            outCandidate.Runtime = this;
+            outCandidate.SlotIndex = change.SlotIndex;
+            outCandidate.PreviousGeneration = liveSlot.Generation;
+            outCandidate.FreshGeneration = freshGeneration;
+            const Container::AnsiString moduleName = MakeModuleName(change.SlotIndex, freshGeneration);
+            asIScriptModule* module = engine->GetModule(moduleName.c_str(), asGM_ALWAYS_CREATE);
+            if (module == nullptr)
+            {
+                return EScriptRuntimeResult::ExecutionFailed;
+            }
+            try
+            {
+                outCandidate.ModuleName = moduleName;
+            }
+            catch (...)
+            {
+                try
+                {
+                    engine->DiscardModule(moduleName.c_str());
+                }
+                catch (...)
+                {
+                    NORVES_LOG_ERROR("Scripting", "ScriptRuntime candidate module arm cleanup failed");
+                }
+                throw;
+            }
+
+            const int sectionResult = module->AddScriptSection(
+                source.LogicalPath.c_str(), source.Bytes.c_str(), source.Bytes.size());
+            if (sectionResult < 0)
+            {
+                return sectionResult == asOUT_OF_MEMORY
+                    ? EScriptRuntimeResult::ExecutionFailed
+                    : EScriptRuntimeResult::CompileFailed;
+            }
+
+            const int buildResult = module->Build();
+            if (buildResult < 0)
+            {
+                return buildResult == asOUT_OF_MEMORY
+                    ? EScriptRuntimeResult::ExecutionFailed
+                    : EScriptRuntimeResult::CompileFailed;
+            }
+
+            outCandidate.Type = module->GetTypeInfoByName(change.ScriptClassName.c_str());
+            outCandidate.Tick = outCandidate.Type != nullptr
+                ? outCandidate.Type->GetMethodByDecl("void Tick(EntityRef, float)")
+                : nullptr;
+            outCandidate.BeginPlay = outCandidate.Type != nullptr
+                ? outCandidate.Type->GetMethodByDecl("void BeginPlay(EntityRef)")
+                : nullptr;
+            outCandidate.EndPlay = outCandidate.Type != nullptr
+                ? outCandidate.Type->GetMethodByDecl("void EndPlay(EntityRef)")
+                : nullptr;
+            if (outCandidate.Type == nullptr || outCandidate.Tick == nullptr ||
+                !HasPublicDefaultConstructor(outCandidate.Type))
+            {
+                return EScriptRuntimeResult::BindFailed;
+            }
+
+            outCandidate.Object = static_cast<asIScriptObject*>(engine->CreateScriptObject(outCandidate.Type));
+            if (outCandidate.Object == nullptr)
+            {
+                return EScriptRuntimeResult::ExecutionFailed;
+            }
+
+            outCandidate.NormalizedComponentPath = source.LogicalPath;
+            outCandidate.TrackerApproval.SlotIndex = change.SlotIndex;
+            outCandidate.TrackerApproval.PreviousGeneration = liveSlot.Generation;
+            outCandidate.TrackerApproval.Generation = freshGeneration;
+            outCandidate.TrackerApproval.ApprovedPropertyPath = source.LogicalPath;
+            outCandidate.TrackerApproval.ApprovedClassName = change.ScriptClassName;
+            outCandidate.TrackerApproval.ApprovedLogicalPath = source.LogicalPath;
+            outCandidate.TrackerApproval.ApprovedContentHash = source.ContentHash;
+            return EScriptRuntimeResult::Success;
         }
 
         class BindingCandidateTransaction final
@@ -631,15 +873,32 @@ namespace NorvesLib::Core
                     }
                     else
                     {
-                        if (m_Object != nullptr)
+                        asIScriptObject* object = m_Object;
+                        Container::AnsiString moduleName = std::move(m_ModuleName);
+                        m_Object = nullptr;
+                        if (object != nullptr)
                         {
-                            m_Object->Release();
-                        }
-                        if (!m_ModuleName.empty())
-                        {
-                            if (asIScriptEngine* engine = m_Runtime.m_EngineOwner.GetEngine())
+                            try
                             {
-                                engine->DiscardModule(m_ModuleName.c_str());
+                                object->Release();
+                            }
+                            catch (...)
+                            {
+                                NORVES_LOG_ERROR("Scripting", "ScriptRuntime initial candidate object rollback failed");
+                            }
+                        }
+                        if (!moduleName.empty())
+                        {
+                            try
+                            {
+                                if (asIScriptEngine* engine = m_Runtime.m_EngineOwner.GetEngine())
+                                {
+                                    engine->DiscardModule(moduleName.c_str());
+                                }
+                            }
+                            catch (...)
+                            {
+                                NORVES_LOG_ERROR("Scripting", "ScriptRuntime initial candidate module rollback failed");
                             }
                         }
                         if (m_bSlotReserved)
@@ -654,7 +913,6 @@ namespace NorvesLib::Core
                 catch (...)
                 {
                     NORVES_LOG_ERROR("Scripting", "ScriptRuntime binding candidate rollback failed");
-                    std::abort();
                 }
             }
 
@@ -674,6 +932,9 @@ namespace NorvesLib::Core
         Scripting::AngelScriptEngineOwner m_EngineOwner;
         World* m_World = nullptr;
         Container::TUniquePtr<BindingStorage> m_BindingStorage;
+        Scripting::ScriptSourceTracker m_SourceTracker;
+        Scripting::ScriptSourcePollBatch m_PollBatch;
+        Container::VariableArray<Scripting::ScriptSourceBindingView> m_BindingViews;
         uint32_t m_LastIssuedBindingGeneration = 0;
         Thread::Thread::ThreadId m_OwnerThreadId;
         bool m_bOwnerThreadCaptured = false;
@@ -744,6 +1005,9 @@ namespace NorvesLib::Core
                 return EScriptRuntimeResult::ExecutionFailed;
             }
 
+            m_Impl->m_SourceTracker.Reset();
+            m_Impl->m_PollBatch.Reset();
+            m_Impl->m_BindingViews.clear();
             m_Impl->m_World = &world;
             m_Impl->m_bInitialized = true;
             m_Impl->SetResult(EScriptRuntimeResult::Success);
@@ -801,13 +1065,204 @@ namespace NorvesLib::Core
         }
         try
         {
-            (void)deltaSeconds;
             if (!m_Impl->m_bInitialized)
             {
                 return EScriptRuntimeResult::NotInitialized;
             }
-            m_Impl->SetResult(EScriptRuntimeResult::Success);
-            return EScriptRuntimeResult::Success;
+
+            if (m_Impl->m_BindingStorage == nullptr)
+            {
+                m_Impl->SetResult(EScriptRuntimeResult::Success);
+                return EScriptRuntimeResult::Success;
+            }
+
+            m_Impl->m_BindingViews.clear();
+            uint32_t liveCount = 0;
+            for (const Impl::BindingSlot& slot : m_Impl->m_BindingStorage->Slots)
+            {
+                if (slot.Component != nullptr && slot.Object != nullptr)
+                {
+                    ++liveCount;
+                }
+            }
+            if (liveCount == 0)
+            {
+                m_Impl->SetResult(EScriptRuntimeResult::Success);
+                return EScriptRuntimeResult::Success;
+            }
+
+            m_Impl->m_BindingViews.reserve(liveCount);
+            for (uint32_t slotIndex = 0; slotIndex < m_Impl->m_BindingStorage->Slots.size(); ++slotIndex)
+            {
+                const Impl::BindingSlot& slot = m_Impl->m_BindingStorage->Slots[slotIndex];
+                if (slot.Component == nullptr || slot.Object == nullptr)
+                {
+                    continue;
+                }
+
+                Scripting::ScriptSourceBindingView view;
+                view.SlotIndex = slotIndex;
+                view.Generation = slot.Generation;
+                view.ScriptPath = Container::StringView(slot.Component->ScriptPath.Get());
+                view.ScriptClassName = Container::StringView(slot.Component->ScriptClassName.Get());
+                m_Impl->m_BindingViews.push_back(view);
+            }
+
+            const Scripting::EScriptSourcePollResult pollResult = m_Impl->m_SourceTracker.Poll(
+                deltaSeconds,
+                Container::Span<const Scripting::ScriptSourceBindingView>(
+                    m_Impl->m_BindingViews.data(), m_Impl->m_BindingViews.size()),
+                m_Impl->m_PollBatch);
+            if (pollResult == Scripting::EScriptSourcePollResult::NotDue ||
+                pollResult == Scripting::EScriptSourcePollResult::NoChanges)
+            {
+                m_Impl->SetResult(EScriptRuntimeResult::Success);
+                return EScriptRuntimeResult::Success;
+            }
+
+            const uint32_t dirtyCount = static_cast<uint32_t>(m_Impl->m_PollBatch.Changes.size());
+            for (const Scripting::ScriptSourceChange& change : m_Impl->m_PollBatch.Changes)
+            {
+                if (change.SourceIndex >= m_Impl->m_PollBatch.Sources.size() ||
+                    m_Impl->m_PollBatch.Sources[change.SourceIndex].Result !=
+                        Scripting::EScriptSourceReadResult::Success)
+                {
+                    m_Impl->m_SourceTracker.RejectBatch(m_Impl->m_PollBatch.Fingerprint);
+                    m_Impl->SetResult(EScriptRuntimeResult::LoadFailed);
+                    return EScriptRuntimeResult::LoadFailed;
+                }
+            }
+
+            if (dirtyCount > ~uint32_t{0} - m_Impl->m_LastIssuedBindingGeneration ||
+                m_Impl->m_EngineOwner.GetDiagnostics().ReloadGeneration == ~uint64_t{0})
+            {
+                m_Impl->m_SourceTracker.RejectBatch(m_Impl->m_PollBatch.Fingerprint);
+                m_Impl->SetResult(EScriptRuntimeResult::BindFailed);
+                return EScriptRuntimeResult::BindFailed;
+            }
+
+            Container::VariableArray<Container::TUniquePtr<Impl::CompiledBindingCandidate>> candidates;
+            Container::VariableArray<Scripting::ScriptSourceApproval> approvals;
+            Container::VariableArray<EScriptRuntimeResult> lifecycleResults;
+            candidates.reserve(dirtyCount);
+            approvals.reserve(dirtyCount);
+            lifecycleResults.reserve(dirtyCount);
+            Impl::ReloadCandidateTransaction transaction(*m_Impl, candidates);
+
+            for (uint32_t candidateIndex = 0; candidateIndex < dirtyCount; ++candidateIndex)
+            {
+                const Scripting::ScriptSourceChange& change = m_Impl->m_PollBatch.Changes[candidateIndex];
+                const Scripting::ScriptSourceSnapshot& source = m_Impl->m_PollBatch.Sources[change.SourceIndex];
+                Container::TUniquePtr<Impl::CompiledBindingCandidate> candidate =
+                    Container::MakeUnique<Impl::CompiledBindingCandidate>();
+                candidates.push_back(std::move(candidate));
+                const EScriptRuntimeResult stageResult = m_Impl->StageReloadCandidate(
+                    change,
+                    source,
+                    m_Impl->m_LastIssuedBindingGeneration + candidateIndex + 1,
+                    *candidates.back());
+                if (stageResult != EScriptRuntimeResult::Success)
+                {
+                    if (!transaction.Rollback())
+                    {
+                        m_Impl->SetResult(EScriptRuntimeResult::ExecutionFailed);
+                        return EScriptRuntimeResult::ExecutionFailed;
+                    }
+                    if (stageResult == EScriptRuntimeResult::LoadFailed ||
+                        stageResult == EScriptRuntimeResult::CompileFailed ||
+                        stageResult == EScriptRuntimeResult::BindFailed)
+                    {
+                        m_Impl->m_SourceTracker.RejectBatch(m_Impl->m_PollBatch.Fingerprint);
+                    }
+                    m_Impl->SetResult(stageResult);
+                    return stageResult;
+                }
+
+                approvals.push_back(candidates.back()->TrackerApproval);
+            }
+
+            if (!m_Impl->m_SourceTracker.CanApproveBatch(
+                    Container::Span<const Scripting::ScriptSourceApproval>(approvals.data(), approvals.size())))
+            {
+                m_Impl->SetResult(EScriptRuntimeResult::ExecutionFailed);
+                return EScriptRuntimeResult::ExecutionFailed;
+            }
+
+            bool bLifecycleFailed = false;
+            for (const Container::TUniquePtr<Impl::CompiledBindingCandidate>& candidate : candidates)
+            {
+                Impl::BindingSlot& slot = m_Impl->m_BindingStorage->Slots[candidate->SlotIndex];
+                const EScriptRuntimeResult lifecycleResult =
+                    slot.EndPlay != nullptr && !slot.bFaulted && slot.Component->bBegunPlay
+                    ? m_Impl->InvokeReloadLifecycle(slot, candidate->SlotIndex, slot.EndPlay)
+                    : EScriptRuntimeResult::Success;
+                lifecycleResults.push_back(lifecycleResult);
+                bLifecycleFailed = bLifecycleFailed || lifecycleResult != EScriptRuntimeResult::Success;
+            }
+
+            bool bRetireFailed = false;
+            for (const Container::TUniquePtr<Impl::CompiledBindingCandidate>& candidate : candidates)
+            {
+                bRetireFailed = !m_Impl->ReleaseReloadObject(
+                    m_Impl->m_BindingStorage->Slots[candidate->SlotIndex]) || bRetireFailed;
+            }
+            for (const Container::TUniquePtr<Impl::CompiledBindingCandidate>& candidate : candidates)
+            {
+                bRetireFailed = !m_Impl->DiscardReloadModule(
+                    m_Impl->m_BindingStorage->Slots[candidate->SlotIndex]) || bRetireFailed;
+            }
+
+            for (const Container::TUniquePtr<Impl::CompiledBindingCandidate>& candidate : candidates)
+            {
+                Impl::BindingSlot& slot = m_Impl->m_BindingStorage->Slots[candidate->SlotIndex];
+                slot.Object = candidate->Object;
+                slot.Type = candidate->Type;
+                slot.BeginPlay = candidate->BeginPlay;
+                slot.Tick = candidate->Tick;
+                slot.EndPlay = candidate->EndPlay;
+                slot.ModuleName = std::move(candidate->ModuleName);
+                slot.Generation = candidate->FreshGeneration;
+                slot.bFaulted = false;
+                slot.Component->m_BindingHandle.SlotIndex = candidate->SlotIndex;
+                slot.Component->m_BindingHandle.Generation = candidate->FreshGeneration;
+                candidate->Object = nullptr;
+                candidate->Type = nullptr;
+                candidate->BeginPlay = nullptr;
+                candidate->Tick = nullptr;
+                candidate->EndPlay = nullptr;
+                candidate->ModuleName.clear();
+                candidate->bTransferred = true;
+            }
+
+            for (const Container::TUniquePtr<Impl::CompiledBindingCandidate>& candidate : candidates)
+            {
+                m_Impl->m_BindingStorage->Slots[candidate->SlotIndex].Component->ScriptPath =
+                    std::move(candidate->NormalizedComponentPath);
+            }
+            m_Impl->m_LastIssuedBindingGeneration += dirtyCount;
+            m_Impl->m_SourceTracker.ApproveBatch(
+                Container::Span<Scripting::ScriptSourceApproval>(approvals.data(), approvals.size()));
+            m_Impl->m_EngineOwner.SetReloadGeneration(
+                m_Impl->m_EngineOwner.GetDiagnostics().ReloadGeneration + 1);
+
+            for (const Container::TUniquePtr<Impl::CompiledBindingCandidate>& candidate : candidates)
+            {
+                Impl::BindingSlot& slot = m_Impl->m_BindingStorage->Slots[candidate->SlotIndex];
+                const EScriptRuntimeResult lifecycleResult =
+                    m_Impl->InvokeReloadLifecycle(slot, candidate->SlotIndex, slot.BeginPlay);
+                if (lifecycleResult != EScriptRuntimeResult::Success)
+                {
+                    slot.bFaulted = true;
+                    bLifecycleFailed = true;
+                }
+            }
+
+            transaction.Commit();
+            const EScriptRuntimeResult result = bLifecycleFailed || bRetireFailed
+                ? EScriptRuntimeResult::ExecutionFailed
+                : EScriptRuntimeResult::Success;
+            m_Impl->SetResult(result);
+            return result;
         }
         catch (...)
         {
@@ -867,16 +1322,10 @@ namespace NorvesLib::Core
                 return EScriptRuntimeResult::InvalidArgument;
             }
 
-            Container::String logicalPath;
-            std::filesystem::path resolvedPath;
-            if (!ResolveScriptPath(component.ScriptPath.Get(), logicalPath, resolvedPath))
-            {
-                m_Impl->SetResult(EScriptRuntimeResult::LoadFailed);
-                return EScriptRuntimeResult::LoadFailed;
-            }
-
-            Container::AnsiString source;
-            if (!ReadScriptFile(resolvedPath, source))
+            Scripting::ScriptSourceSnapshot sourceSnapshot;
+            if (m_Impl->m_SourceTracker.ReadSource(
+                    Container::StringView(component.ScriptPath.Get()), sourceSnapshot) !=
+                Scripting::EScriptSourceReadResult::Success)
             {
                 m_Impl->SetResult(EScriptRuntimeResult::LoadFailed);
                 return EScriptRuntimeResult::LoadFailed;
@@ -887,7 +1336,7 @@ namespace NorvesLib::Core
                 m_Impl->SetResult(EScriptRuntimeResult::BindFailed);
                 return EScriptRuntimeResult::BindFailed;
             }
-            const uint32_t nextGeneration = ++m_Impl->m_LastIssuedBindingGeneration;
+            const uint32_t nextGeneration = m_Impl->m_LastIssuedBindingGeneration + 1;
             if (m_Impl->m_BindingStorage == nullptr)
             {
                 m_Impl->m_BindingStorage = Container::MakeUnique<Impl::BindingStorage>();
@@ -898,7 +1347,6 @@ namespace NorvesLib::Core
             if (!bindingStorage.FreeSlots.empty())
             {
                 slotIndex = bindingStorage.FreeSlots.back();
-                bindingStorage.FreeSlots.pop_back();
             }
             else
             {
@@ -908,6 +1356,18 @@ namespace NorvesLib::Core
                     return EScriptRuntimeResult::BindFailed;
                 }
                 slotIndex = static_cast<uint32_t>(bindingStorage.Slots.size());
+                bindingStorage.Slots.reserve(bindingStorage.Slots.size() + 1);
+            }
+
+            bindingStorage.FreeSlots.reserve(bindingStorage.FreeSlots.size() + 1);
+            m_Impl->m_SourceTracker.ReserveBindingCapacity(
+                m_Impl->m_EngineOwner.GetDiagnostics().ActiveBindingCount + 1);
+            if (!bindingStorage.FreeSlots.empty())
+            {
+                bindingStorage.FreeSlots.pop_back();
+            }
+            else
+            {
                 bindingStorage.Slots.push_back(Impl::BindingSlot());
             }
 
@@ -915,12 +1375,33 @@ namespace NorvesLib::Core
             candidate.ReserveSlot(slotIndex);
             Impl::BindingSlot& slot = bindingStorage.Slots[slotIndex];
             const Container::AnsiString moduleName = MakeModuleName(slotIndex, nextGeneration);
-            candidate.SetModuleName(moduleName);
             asIScriptEngine* engine = m_Impl->m_EngineOwner.GetEngine();
             asIScriptModule* module = engine != nullptr
                 ? engine->GetModule(moduleName.c_str(), asGM_ALWAYS_CREATE)
                 : nullptr;
-            if (module == nullptr || module->AddScriptSection(logicalPath.c_str(), source.c_str(), source.size()) < 0 ||
+            if (module == nullptr)
+            {
+                m_Impl->SetResult(EScriptRuntimeResult::CompileFailed);
+                return EScriptRuntimeResult::CompileFailed;
+            }
+            try
+            {
+                candidate.SetModuleName(moduleName);
+            }
+            catch (...)
+            {
+                try
+                {
+                    engine->DiscardModule(moduleName.c_str());
+                }
+                catch (...)
+                {
+                    NORVES_LOG_ERROR("Scripting", "ScriptRuntime initial candidate module arm cleanup failed");
+                }
+                throw;
+            }
+            if (module->AddScriptSection(
+                    sourceSnapshot.LogicalPath.c_str(), sourceSnapshot.Bytes.c_str(), sourceSnapshot.Bytes.size()) < 0 ||
                 module->Build() < 0)
             {
                 m_Impl->SetResult(EScriptRuntimeResult::CompileFailed);
@@ -964,9 +1445,19 @@ namespace NorvesLib::Core
                 return beginResult;
             }
 
-            component.ScriptPath = logicalPath;
+            Scripting::ScriptSourceApproval approval;
+            approval.SlotIndex = slotIndex;
+            approval.PreviousGeneration = nextGeneration;
+            approval.Generation = nextGeneration;
+            approval.ApprovedPropertyPath = sourceSnapshot.LogicalPath;
+            approval.ApprovedClassName = component.ScriptClassName.Get();
+            approval.ApprovedLogicalPath = sourceSnapshot.LogicalPath;
+            approval.ApprovedContentHash = sourceSnapshot.ContentHash;
+            m_Impl->m_SourceTracker.RegisterBinding(std::move(approval));
+            component.ScriptPath = std::move(sourceSnapshot.LogicalPath);
             outHandle = component.m_BindingHandle;
             candidate.Commit();
+            m_Impl->m_LastIssuedBindingGeneration = nextGeneration;
             m_Impl->SetResult(EScriptRuntimeResult::Success);
             return EScriptRuntimeResult::Success;
         }
@@ -1000,10 +1491,16 @@ namespace NorvesLib::Core
             }
 
             const uint32_t slotIndex = handle.SlotIndex;
-            m_Impl->ReleaseSlot(slotIndex, true);
+            const uint32_t generation = slot->Generation;
+            m_Impl->m_BindingStorage->FreeSlots.reserve(m_Impl->m_BindingStorage->FreeSlots.size() + 1);
+            const bool bPhysicalCleanupSucceeded = m_Impl->ReleaseSlot(slotIndex, true);
+            m_Impl->m_SourceTracker.UnregisterBinding(slotIndex, generation);
             handle.Reset();
-            m_Impl->SetResult(EScriptRuntimeResult::Success);
-            return EScriptRuntimeResult::Success;
+            const EScriptRuntimeResult result = bPhysicalCleanupSucceeded
+                ? EScriptRuntimeResult::Success
+                : EScriptRuntimeResult::ExecutionFailed;
+            m_Impl->SetResult(result);
+            return result;
         }
         catch (...)
         {
