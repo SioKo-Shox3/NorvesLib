@@ -1,5 +1,6 @@
 ﻿#include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
+#include "Engine/NorvesEngine.h"
 #include "Engine/ApplicationExitFramePolicy.h"
 #include "Asset/AssetFileReader.h"
 #include "Boot/BootConfig.h"
@@ -17,7 +18,9 @@
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Thread/JobSystem.h"
+#include "Scripting/ScriptRuntime.h"
 #include <chrono>
+#include <cstdlib>
 #include <limits>
 
 #ifdef _WIN32
@@ -37,6 +40,62 @@ namespace
     constexpr TCHAR kDisableBoardInstanceBatchingOption[] = TEXT("--disable-board-instance-batching");
     constexpr size_t kDisableBoardInstanceBatchingOptionLength =
         (sizeof(kDisableBoardInstanceBatchingOption) / sizeof(TCHAR)) - 1;
+
+    class ApplicationInitializeTransaction final
+    {
+    public:
+        explicit ApplicationInitializeTransaction(NorvesLib::Core::Engine::ApplicationProcessor& processor)
+            : m_Processor(processor)
+        {
+        }
+
+        ~ApplicationInitializeTransaction()
+        {
+            if (!m_bCommitted)
+            {
+                try
+                {
+                    m_Processor.Shutdown();
+                }
+                catch (...)
+                {
+                    LOG_ERROR("ApplicationInitializeTransaction cleanup threw an exception");
+                    std::abort();
+                }
+            }
+        }
+
+        void Commit()
+        {
+            m_bCommitted = true;
+        }
+
+    private:
+        NorvesLib::Core::Engine::ApplicationProcessor& m_Processor;
+        bool m_bCommitted = false;
+    };
+
+    struct ApplicationLifecycleState
+    {
+        NorvesLib::Core::Engine::ApplicationProcessor* Processor = nullptr;
+        bool bJobSystem = false;
+        bool bEngine = false;
+        bool bHandler = false;
+        bool bPlatform = false;
+        bool bWindow = false;
+        bool bDevice = false;
+        bool bRenderWorld = false;
+        bool bWorld = false;
+        bool bScriptRuntime = false;
+        bool bHandlerInitialized = false;
+        bool bPreShutdownPending = false;
+        bool bShutdownPending = false;
+        bool bGameMode = false;
+        bool bModules = false;
+        bool bRunning = false;
+    };
+
+    ApplicationLifecycleState GApplicationLifecycleState;
 
     uint64_t ParsePositiveFrameCount(const TCHAR *pValueText, bool &bValid)
     {
@@ -214,11 +273,15 @@ namespace NorvesLib::Core::Engine
         delete pInstance;
     }
 
-    bool ApplicationProcessor::Initialize(const Boot::BootConfig &config)
+    bool ApplicationProcessor::Initialize(const Boot::BootConfig &config) try
     {
         LOG_INFO("ApplicationProcessor::Initialize() - Starting initialization");
+        GApplicationLifecycleState = {};
+        GApplicationLifecycleState.Processor = this;
+        ApplicationInitializeTransaction transaction(*this);
 
         // JobSystemを初期化（ワーカースレッドの起動）
+        GApplicationLifecycleState.bJobSystem = true;
         Thread::JobSystem::Get().Initialize();
         LOG_INFO("JobSystem initialized");
 
@@ -228,6 +291,7 @@ namespace NorvesLib::Core::Engine
             LOG_ERROR("Failed to create engine");
             return false;
         }
+        GApplicationLifecycleState.bEngine = true;
 
         // ターゲットフレームレートを設定
         if (config.TargetFrameRate > 0.0f)
@@ -245,6 +309,7 @@ namespace NorvesLib::Core::Engine
                 return false;
             }
             GEngine->SetApplicationHandler(handler);
+            GApplicationLifecycleState.bHandler = true;
             LOG_INFO("Application handler created successfully");
         }
         else
@@ -342,6 +407,7 @@ namespace NorvesLib::Core::Engine
             LOG_ERROR("Failed to create platform application");
             return false;
         }
+        GApplicationLifecycleState.bPlatform = true;
 
         // メインウィンドウを作成
         if (!CreateMainWindow(config))
@@ -349,6 +415,7 @@ namespace NorvesLib::Core::Engine
             LOG_ERROR("Failed to create main window");
             return false;
         }
+        GApplicationLifecycleState.bWindow = true;
 
         // RHI初期化（エンジン層の責務）
         {
@@ -362,6 +429,7 @@ namespace NorvesLib::Core::Engine
                 LOG_ERROR("Failed to initialize RHI");
                 return false;
             }
+            GApplicationLifecycleState.bDevice = true;
         }
         LOG_INFO("RHI initialized successfully");
 
@@ -382,6 +450,7 @@ namespace NorvesLib::Core::Engine
                 LOG_ERROR("Failed to initialize RenderWorld");
                 return false;
             }
+            GApplicationLifecycleState.bRenderWorld = true;
             LOG_INFO("RenderWorld initialized successfully");
 
             auto &coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
@@ -408,8 +477,6 @@ namespace NorvesLib::Core::Engine
                 if (!atlas->Build(FontAtlasDesc{}, reader, GEngine->GetRenderResources().Textures()))
                 {
                     NORVES_LOG_ERROR("ApplicationProcessor", "Failed to build default Core text atlas");
-                    GEngine->GetRenderWorld().Shutdown();
-                    m_Device.reset();
                     return false;
                 }
                 GEngine->SetDefaultFontAtlas(atlas);
@@ -419,6 +486,7 @@ namespace NorvesLib::Core::Engine
 
         // ゲームワールドを初期化
         {
+            GApplicationLifecycleState.bWorld = true;
             GEngine->GetWorld().Initialize();
 
             // WorldにメインSceneViewを設定
@@ -437,11 +505,25 @@ namespace NorvesLib::Core::Engine
             LOG_INFO("World initialized successfully");
         }
 
+        GApplicationLifecycleState.bScriptRuntime = true;
+        if (NorvesLib::Core::GEngine.GetScriptRuntime().Initialize(GEngine->GetWorld()) !=
+            EScriptRuntimeResult::Success)
+        {
+            LOG_ERROR("Failed to initialize ScriptRuntime");
+            return false;
+        }
+
         // OnInitialize呼び出し
         if (handler && !handler->OnInitialize())
         {
             LOG_ERROR("OnInitialize failed");
             return false;
+        }
+        if (handler)
+        {
+            GApplicationLifecycleState.bHandlerInitialized = true;
+            GApplicationLifecycleState.bPreShutdownPending = true;
+            GApplicationLifecycleState.bShutdownPending = true;
         }
 
         // GameModeステートマシンを作成
@@ -451,6 +533,7 @@ namespace NorvesLib::Core::Engine
             if (stateMachine)
             {
                 GEngine->SetGameModeStateMachine(std::move(stateMachine));
+                GApplicationLifecycleState.bGameMode = true;
                 LOG_INFO("GameMode state machine created successfully");
             }
         }
@@ -467,6 +550,7 @@ namespace NorvesLib::Core::Engine
                 LOG_ERROR("Module InstallAll failed");
                 return false;
             }
+            GApplicationLifecycleState.bModules = true;
         }
 
         // OnPostInitialize呼び出し
@@ -476,9 +560,16 @@ namespace NorvesLib::Core::Engine
         }
 
         GEngine->SetRunning(true);
+        GApplicationLifecycleState.bRunning = true;
+        transaction.Commit();
         LOG_INFO("ApplicationProcessor::Initialize() - Initialization completed");
 
         return true;
+    }
+    catch (...)
+    {
+        LOG_ERROR("ApplicationProcessor::Initialize() - initialization threw an exception");
+        return false;
     }
 
     int ApplicationProcessor::Run()
@@ -517,33 +608,79 @@ namespace NorvesLib::Core::Engine
     {
         LOG_INFO("ApplicationProcessor::Shutdown() - Starting shutdown");
 
-        if (GEngine)
+        ApplicationLifecycleState& lifecycle = GApplicationLifecycleState;
+        if (lifecycle.Processor != this)
+        {
+            return;
+        }
+
+        if (GEngine && lifecycle.bEngine)
         {
             auto *handler = GEngine->GetApplicationHandler();
 
+            if (lifecycle.bRunning)
+            {
+                GEngine->SetRunning(false);
+                lifecycle.bRunning = false;
+            }
+
             // GameModeがResourceを解放する前に最後の描画とGPU使用を完了させる。
-            GEngine->GetRenderWorld().WaitForRender();
-            GEngine->GetRenderWorld().QuiesceAsyncAssetProducersAndWait();
-            Thread::JobSystem::Get().StopAcceptingTasks();
-            Thread::JobSystem::Get().DrainAcceptedFiniteTasks();
+            if (lifecycle.bRenderWorld)
+            {
+                GEngine->GetRenderWorld().WaitForRender();
+                GEngine->GetRenderWorld().QuiesceAsyncAssetProducersAndWait();
+            }
+            if (lifecycle.bJobSystem)
+            {
+                Thread::JobSystem::Get().StopAcceptingTasks();
+                Thread::JobSystem::Get().DrainAcceptedFiniteTasks();
+            }
 
             // OnPreShutdown呼び出し
-            if (handler)
+            if (handler && lifecycle.bPreShutdownPending)
             {
-                handler->OnPreShutdown();
+                lifecycle.bPreShutdownPending = false;
+                try
+                {
+                    handler->OnPreShutdown();
+                }
+                catch (...)
+                {
+                    LOG_ERROR("ApplicationProcessor::Shutdown() - OnPreShutdown threw an exception");
+                }
             }
             // GameModeステートマシンを明示シャットダウン（World/RenderWorld/RHI破棄より前）
             // Routine の Leave() が World/RenderResources へアクセスするため、それらが
             // 生存している間に Leave を実行させる必要がある。
-            if (auto *stateMachine = GEngine->GetGameModeStateMachine())
+            if (lifecycle.bGameMode)
             {
-                stateMachine->Shutdown();
+                if (auto *stateMachine = GEngine->GetGameModeStateMachine())
+                {
+                    stateMachine->Shutdown();
+                }
             }
 
             // ゲームワールドをFinalize
             // SceneQuery clear before World::Finalize() to avoid holding destroyed Entity*
-            GEngine->GetSceneQuery().Clear();
-            GEngine->GetWorld().Finalize();
+            if (lifecycle.bWorld)
+            {
+                GEngine->GetSceneQuery().Clear();
+                GEngine->GetWorld().Finalize();
+                lifecycle.bWorld = false;
+            }
+
+            if (lifecycle.bScriptRuntime)
+            {
+                const EScriptRuntimeResult runtimeShutdownResult =
+                    NorvesLib::Core::GEngine.GetScriptRuntime().Shutdown();
+                if (runtimeShutdownResult != EScriptRuntimeResult::Success &&
+                    runtimeShutdownResult != EScriptRuntimeResult::NotInitialized)
+                {
+                    LOG_ERROR("ApplicationProcessor::Shutdown() - ScriptRuntime cleanup failed");
+                    std::abort();
+                }
+                lifecycle.bScriptRuntime = false;
+            }
 
             if (auto atlas = GEngine->GetDefaultFontAtlas())
             {
@@ -552,41 +689,83 @@ namespace NorvesLib::Core::Engine
             }
 
             // レンダリングシステムをシャットダウン
-            GEngine->GetRenderWorld().Shutdown();
+            if (lifecycle.bRenderWorld)
+            {
+                GEngine->GetRenderWorld().Shutdown();
+                lifecycle.bRenderWorld = false;
+            }
 
             // RHI終了（エンジン層の責務）
-            m_Device.reset();
+            if (lifecycle.bDevice)
+            {
+                m_Device.reset();
+                lifecycle.bDevice = false;
+            }
             LOG_INFO("RHI shutdown completed");
 
             // GameModeステートマシンを解放
-            GEngine->SetGameModeStateMachine(nullptr);
+            if (lifecycle.bGameMode)
+            {
+                GEngine->SetGameModeStateMachine(nullptr);
+                lifecycle.bGameMode = false;
+            }
 
             // OnShutdown呼び出し
-            if (handler)
+            if (handler && lifecycle.bShutdownPending)
             {
-                handler->OnShutdown();
+                lifecycle.bShutdownPending = false;
+                try
+                {
+                    handler->OnShutdown();
+                }
+                catch (...)
+                {
+                    LOG_ERROR("ApplicationProcessor::Shutdown() - OnShutdown threw an exception");
+                }
             }
 
             // メインウィンドウを解放
-            GEngine->SetMainWindow(nullptr);
+            if (lifecycle.bWindow)
+            {
+                GEngine->SetMainWindow(nullptr);
+                lifecycle.bWindow = false;
+            }
 
             // プラットフォームアプリケーションを終了
             auto *platformApp = GEngine->GetPlatformApp();
-            if (platformApp)
+            if (lifecycle.bPlatform && platformApp)
             {
                 platformApp->Shutdown();
             }
-            GEngine->SetPlatformApp(nullptr);
+            if (lifecycle.bPlatform)
+            {
+                GEngine->SetPlatformApp(nullptr);
+                lifecycle.bPlatform = false;
+            }
 
             // ハンドラを解放
-            GEngine->SetApplicationHandler(nullptr);
+            if (lifecycle.bHandler)
+            {
+                GEngine->SetApplicationHandler(nullptr);
+                lifecycle.bHandler = false;
+            }
         }
 
         // GEngineを破棄
-        DestroyEngine();
+        if (lifecycle.bEngine)
+        {
+            DestroyEngine();
+            lifecycle.bEngine = false;
+        }
 
         // JobSystemをシャットダウン
-        Thread::JobSystem::Get().Shutdown();
+        if (lifecycle.bJobSystem)
+        {
+            Thread::JobSystem::Get().Shutdown();
+            lifecycle.bJobSystem = false;
+        }
+
+        lifecycle.Processor = nullptr;
 
         LOG_INFO("ApplicationProcessor::Shutdown() - Shutdown completed");
     }
@@ -626,6 +805,12 @@ namespace NorvesLib::Core::Engine
             handler->OnUpdate(deltaTime);
         }
 
+        if (NorvesLib::Core::GEngine.GetScriptRuntime().BeginFrameMaintenance(deltaTime) !=
+            EScriptRuntimeResult::Success)
+        {
+            LOG_ERROR("ScriptRuntime BeginFrameMaintenance failed");
+        }
+
         // シミュレーション進行ゲート。false の間は GameMode 更新と World Tick を止める
         // （ポーズ）。SyncToSceneView と描画は止めず、最後の画面を描き続ける。
         const bool bAdvanceSim = (handler != nullptr) ? handler->ShouldAdvanceSimulation() : true;
@@ -656,6 +841,12 @@ namespace NorvesLib::Core::Engine
         }
         // SceneQuery を当フレームの最新 world-AABB で再構築(SyncToSceneView が transform/bounds を確定済み)
         GEngine->GetSceneQuery().Rebuild(GEngine->GetWorld());
+
+        if (NorvesLib::Core::GEngine.GetScriptRuntime().EndFrameMaintenance() !=
+            EScriptRuntimeResult::Success)
+        {
+            LOG_ERROR("ScriptRuntime EndFrameMaintenance failed");
+        }
 
         // モジュールの毎フレーム Tick(GameThread・SyncToSceneView 後・描画前)。空 registry で no-op。
         Module::GetModuleRegistry().TickAll(deltaTime);

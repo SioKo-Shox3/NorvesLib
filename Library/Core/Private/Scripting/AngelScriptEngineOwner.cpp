@@ -88,36 +88,42 @@ namespace NorvesLib::Core::Scripting
         }
         m_bOwnsAllocator = true;
 
-        m_Engine = factory();
-        if (m_Engine == nullptr)
+        try
         {
-            asResetGlobalMemoryFunctions();
-            UpdateAllocationDiagnostics(m_Diagnostics);
-            GAngelScriptAllocatorState.bActive = false;
-            m_bOwnsAllocator = false;
-            return false;
-        }
-
-        GAngelScriptAllocatorState.Engine = m_Engine;
-        if (validator != nullptr && !validator(m_Engine))
-        {
-            const int remainingReferences = m_Engine->ShutDownAndRelease();
-            if (remainingReferences != 0)
+            m_Engine = factory();
+            if (m_Engine == nullptr)
             {
-                m_Engine->AddRef();
-                m_bShutdownPending = true;
-                UpdateAllocationDiagnostics(m_Diagnostics);
-                m_Diagnostics.LastResult = EScriptRuntimeResult::ExecutionFailed;
+                Shutdown();
                 return false;
             }
 
-            m_Engine = nullptr;
-            GAngelScriptAllocatorState.Engine = nullptr;
-            asResetGlobalMemoryFunctions();
-            UpdateAllocationDiagnostics(m_Diagnostics);
-            m_Diagnostics.LastResult = EScriptRuntimeResult::LoadFailed;
-            GAngelScriptAllocatorState.bActive = false;
-            m_bOwnsAllocator = false;
+            GAngelScriptAllocatorState.Engine = m_Engine;
+            if (validator != nullptr && !validator(m_Engine))
+            {
+                const int remainingReferences = m_Engine->ShutDownAndRelease();
+                if (remainingReferences != 0)
+                {
+                    m_Engine->AddRef();
+                    m_bShutdownPending = true;
+                    UpdateAllocationDiagnostics(m_Diagnostics);
+                    m_Diagnostics.LastResult = EScriptRuntimeResult::ExecutionFailed;
+                    return false;
+                }
+
+                m_Engine = nullptr;
+                GAngelScriptAllocatorState.Engine = nullptr;
+                asResetGlobalMemoryFunctions();
+                UpdateAllocationDiagnostics(m_Diagnostics);
+                m_Diagnostics.LastResult = EScriptRuntimeResult::LoadFailed;
+                GAngelScriptAllocatorState.bActive = false;
+                m_bOwnsAllocator = false;
+                return false;
+            }
+        }
+        catch (...)
+        {
+            Shutdown();
+            m_Diagnostics.LastResult = EScriptRuntimeResult::ExecutionFailed;
             return false;
         }
 
@@ -188,6 +194,11 @@ namespace NorvesLib::Core::Scripting
     void AngelScriptEngineOwner::SetActiveBindingCount(uint32_t count)
     {
         m_Diagnostics.ActiveBindingCount = count;
+    }
+
+    void AngelScriptEngineOwner::IncrementGcStepCount()
+    {
+        ++m_Diagnostics.GcStepCount;
     }
 
 } // namespace NorvesLib::Core::Scripting

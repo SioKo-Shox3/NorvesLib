@@ -169,9 +169,17 @@ namespace
         AddConfiguredComponent(*compileFailureOwner, CompileFailurePath, "ScriptComponentCompileFailure");
         AddConfiguredComponent(*privateConstructorOwner, PrivateConstructorPath, PrivateConstructorClassName);
         AddConfiguredComponent(*throwingOwner, ThrowingTickPath, ThrowingTickClassName);
+        assert(runtime.GetDiagnostics().ActiveBindingCount == 2);
         world.Tick(1.0f);
         assert(goodOwner->GetPosition().x == 1.0f);
-        assert(runtime.GetDiagnostics().ActiveBindingCount == 1);
+        assert(throwingOwner->GetPosition().x == 10.0f);
+        assert(runtime.GetDiagnostics().LastResult == EScriptRuntimeResult::ExecutionFailed);
+        assert(runtime.GetDiagnostics().ActiveBindingCount == 2);
+
+        world.Tick(1.0f);
+        assert(goodOwner->GetPosition().x == 2.0f);
+        assert(throwingOwner->GetPosition().x == 10.0f);
+        assert(runtime.GetDiagnostics().ActiveBindingCount == 2);
 
         ShutdownRuntimeAfterWorld(world);
     }
@@ -187,6 +195,7 @@ namespace
         assert(failedOwner != nullptr);
         const NorvesLib::Math::Vector3 originalPosition = failedOwner->GetPosition();
         AddConfiguredComponent(*failedOwner, BeginPlayThrowPath, BeginPlayThrowClassName);
+        assert(runtime.GetDiagnostics().LastResult == EScriptRuntimeResult::ExecutionFailed);
         assert(failedOwner->GetPosition() == originalPosition);
         assert(runtime.GetDiagnostics().ActiveBindingCount == 0);
 
@@ -194,6 +203,8 @@ namespace
         assert(liveOwner != nullptr);
         AddConfiguredComponent(*liveOwner);
         assert(runtime.GetDiagnostics().ActiveBindingCount == 1);
+        world.Tick(1.0f);
+        assert(liveOwner->GetPosition().x == 1.0f);
         assert(runtime.Shutdown() == EScriptRuntimeResult::Success);
         assert(runtime.GetDiagnostics().ActiveBindingCount == 0);
 

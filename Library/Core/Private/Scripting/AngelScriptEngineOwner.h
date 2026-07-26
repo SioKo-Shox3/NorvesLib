@@ -30,6 +30,7 @@ namespace NorvesLib::Core::Scripting
         const ScriptRuntimeDiagnostics& GetDiagnostics() const;
         void SetLastResult(EScriptRuntimeResult result);
         void SetActiveBindingCount(uint32_t count);
+        void IncrementGcStepCount();
 
     private:
         asIScriptEngine* m_Engine = nullptr;

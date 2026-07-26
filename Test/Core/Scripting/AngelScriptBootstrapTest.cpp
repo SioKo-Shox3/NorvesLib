@@ -53,6 +53,20 @@ namespace
         return engine == nullptr;
     }
 
+    bool ThrowingValidator(asIScriptEngine*)
+    {
+        throw 1;
+    }
+
+    asIScriptEngine* GRetainedExceptionEngine = nullptr;
+
+    bool RetainAndThrowValidator(asIScriptEngine* engine)
+    {
+        GRetainedExceptionEngine = engine;
+        engine->AddRef();
+        throw 1;
+    }
+
     void ProbeFree(void* memory)
     {
         NorvesLib::Memory::Free(memory);
@@ -221,7 +235,7 @@ namespace
         CHECK_EXPRESSION(runtime.Initialize(world) == NorvesLib::Core::EScriptRuntimeResult::Success);
         CHECK_EXPRESSION(runtime.BeginFrameMaintenance(0.016f) == NorvesLib::Core::EScriptRuntimeResult::Success);
         CHECK_EXPRESSION(runtime.EndFrameMaintenance() == NorvesLib::Core::EScriptRuntimeResult::Success);
-        CHECK_EXPRESSION(runtime.GetDiagnostics().GcStepCount == 0);
+        CHECK_EXPRESSION(runtime.GetDiagnostics().GcStepCount == 1);
 
         CHECK_EXPRESSION(runtime.BindComponent(component, handle) ==
             NorvesLib::Core::EScriptRuntimeResult::InvalidArgument);
@@ -320,6 +334,56 @@ namespace
         return true;
     }
 
+    bool VerifyValidatorExceptionCleanRollback()
+    {
+        NorvesLib::Core::Scripting::AngelScriptEngineOwner owner;
+        CHECK_EXPRESSION(!owner.Initialize(
+            &NorvesLib::Core::Scripting::CreateDefaultScriptEngine,
+            &ThrowingValidator));
+        CHECK_EXPRESSION(owner.GetDiagnostics().LastResult ==
+            NorvesLib::Core::EScriptRuntimeResult::ExecutionFailed);
+        CHECK_EXPRESSION(!owner.IsInitialized());
+        CHECK_EXPRESSION(!owner.OwnsGlobalAllocator());
+        CHECK_EXPRESSION(NorvesLib::Core::Scripting::GetActiveAngelScriptEngine() == nullptr);
+        CHECK_EXPRESSION(owner.GetDiagnostics().AllocationCount == owner.GetDiagnostics().FreeCount);
+        CHECK_EXPRESSION(owner.GetDiagnostics().LiveAllocationCount == 0);
+        CHECK_EXPRESSION(asSetGlobalMemoryFunctions(&ProbeAllocate, &ProbeFree) == 0);
+        CHECK_EXPRESSION(asResetGlobalMemoryFunctions() == 0);
+        CHECK_EXPRESSION(owner.Initialize());
+        CHECK_EXPRESSION(owner.Shutdown());
+        return true;
+    }
+
+    bool VerifyValidatorExceptionRetainedPendingShutdown()
+    {
+        GRetainedExceptionEngine = nullptr;
+        NorvesLib::Core::Scripting::AngelScriptEngineOwner owner;
+        CHECK_EXPRESSION(!owner.Initialize(
+            &NorvesLib::Core::Scripting::CreateDefaultScriptEngine,
+            &RetainAndThrowValidator));
+        CHECK_EXPRESSION(owner.GetDiagnostics().LastResult ==
+            NorvesLib::Core::EScriptRuntimeResult::ExecutionFailed);
+        CHECK_EXPRESSION(GRetainedExceptionEngine != nullptr);
+        CHECK_EXPRESSION(owner.IsInitialized());
+        CHECK_EXPRESSION(owner.OwnsGlobalAllocator());
+        CHECK_EXPRESSION(NorvesLib::Core::Scripting::GetActiveAngelScriptEngine() == GRetainedExceptionEngine);
+        {
+            NorvesLib::Core::Scripting::AngelScriptEngineOwner contender;
+            CHECK_EXPRESSION(!contender.Initialize());
+        }
+        CHECK_EXPRESSION(owner.GetDiagnostics().LiveAllocationCount > 0);
+        CHECK_EXPRESSION(GRetainedExceptionEngine->Release() > 0);
+        GRetainedExceptionEngine = nullptr;
+        CHECK_EXPRESSION(owner.Shutdown());
+        CHECK_EXPRESSION(owner.GetDiagnostics().AllocationCount == owner.GetDiagnostics().FreeCount);
+        CHECK_EXPRESSION(owner.GetDiagnostics().LiveAllocationCount == 0);
+        CHECK_EXPRESSION(NorvesLib::Core::Scripting::GetActiveAngelScriptEngine() == nullptr);
+        CHECK_EXPRESSION(asSetGlobalMemoryFunctions(&ProbeAllocate, &ProbeFree) == 0);
+        CHECK_EXPRESSION(asResetGlobalMemoryFunctions() == 0);
+        CHECK_EXPRESSION(VerifyCycle());
+        return true;
+    }
+
     bool VerifyHandleBasics()
     {
         NorvesLib::Core::ScriptBindingHandle handle;
@@ -348,6 +412,8 @@ namespace
     {
         CHECK_EXPRESSION(RunCase("VerifyPartialInitializeRollback", &VerifyPartialInitializeRollback));
         CHECK_EXPRESSION(RunCase("VerifyRejectedRealEngineRollback", &VerifyRejectedRealEngineRollback));
+        CHECK_EXPRESSION(RunCase("VerifyValidatorExceptionCleanRollback", &VerifyValidatorExceptionCleanRollback));
+        CHECK_EXPRESSION(RunCase("VerifyValidatorExceptionRetainedPendingShutdown", &VerifyValidatorExceptionRetainedPendingShutdown));
         CHECK_EXPRESSION(RunCase("VerifyCycle", &VerifyCycle));
         CHECK_EXPRESSION(RunCase("VerifyCycle", &VerifyCycle));
         CHECK_EXPRESSION(RunCase("VerifyRetainedResourcesDelayShutdown", &VerifyRetainedResourcesDelayShutdown));
