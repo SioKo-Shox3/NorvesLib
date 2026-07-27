@@ -1,4 +1,5 @@
 ﻿#include "Engine/ApplicationProcessor.h"
+#include "Engine/FixedStepScheduler.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "Engine/ApplicationExitFramePolicy.h"
@@ -256,6 +257,13 @@ namespace NorvesLib::Core::Engine
 
     // シングルトンインスタンス
     static ApplicationProcessor *s_Instance = nullptr;
+
+    ApplicationProcessor::ApplicationProcessor()
+        : m_FixedStepScheduler(Container::MakeUnique<FixedStepScheduler>())
+    {
+    }
+
+    ApplicationProcessor::~ApplicationProcessor() = default;
 
     ApplicationProcessor &ApplicationProcessor::GetInstance()
     {
@@ -576,11 +584,9 @@ namespace NorvesLib::Core::Engine
     {
         LOG_INFO("ApplicationProcessor::Run() - Starting main loop");
 
-        // 初期時間を設定
-        auto now = std::chrono::high_resolution_clock::now();
-        m_LastFrameTime = std::chrono::duration_cast<std::chrono::microseconds>(
-                              now.time_since_epoch())
-                              .count();
+        m_LastFrameTimeNanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        m_FixedStepScheduler->BeginRun();
 
         while (GEngine && GEngine->IsRunning() && !GEngine->IsExitRequested())
         {
@@ -599,6 +605,7 @@ namespace NorvesLib::Core::Engine
             Tick();
         }
 
+        m_FixedStepScheduler->EndRun();
         LOG_INFO("ApplicationProcessor::Run() - Main loop ended");
 
         return GEngine ? GEngine->GetExitCode() : 0;
@@ -782,8 +789,8 @@ namespace NorvesLib::Core::Engine
         }
 #endif
 
-        // デルタタイムを計算
-        float deltaTime = CalculateDeltaTime();
+        const int64_t rawDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
+        const float deltaTime = ClampVariableDeltaTime(rawDeltaNanoseconds);
         GEngine->SetDeltaTime(deltaTime);
 
 #if NORVES_ENABLE_STATS
@@ -827,6 +834,8 @@ namespace NorvesLib::Core::Engine
             GEngine->GetWorld().Tick(deltaTime);
             GEngine->GetParticleSystem().Tick(deltaTime);
         }
+
+        AdvanceFixedSimulation(rawDeltaNanoseconds, bAdvanceSim);
 
         // ワールドからSceneViewへProxy同期
         GEngine->GetWorld().SyncToSceneView(
@@ -980,23 +989,54 @@ namespace NorvesLib::Core::Engine
         return true;
     }
 
-    float ApplicationProcessor::CalculateDeltaTime()
+    int64_t ApplicationProcessor::CalculateRawDeltaTimeNanoseconds()
     {
-        auto now = std::chrono::high_resolution_clock::now();
-        uint64_t currentTime = std::chrono::duration_cast<std::chrono::microseconds>(
-                                   now.time_since_epoch())
-                                   .count();
+        const int64_t currentTimeNanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        const int64_t rawDeltaNanoseconds = currentTimeNanoseconds - m_LastFrameTimeNanoseconds;
+        m_LastFrameTimeNanoseconds = currentTimeNanoseconds;
+        return rawDeltaNanoseconds;
+    }
 
-        float deltaTime = static_cast<float>(currentTime - m_LastFrameTime) / 1000000.0f;
-        m_LastFrameTime = currentTime;
-
-        // 異常値の制限（最大0.1秒）
-        if (deltaTime > 0.1f)
+    float ApplicationProcessor::ClampVariableDeltaTime(int64_t rawDeltaNanoseconds) const
+    {
+        if (rawDeltaNanoseconds <= 0)
         {
-            deltaTime = 0.1f;
+            return 0.0f;
         }
 
-        return deltaTime;
+        constexpr int64_t MaximumVariableDeltaNanoseconds = 100'000'000;
+        const int64_t clampedNanoseconds = rawDeltaNanoseconds < MaximumVariableDeltaNanoseconds
+            ? rawDeltaNanoseconds
+            : MaximumVariableDeltaNanoseconds;
+        return static_cast<float>(clampedNanoseconds) / 1'000'000'000.0f;
+    }
+
+    FixedStepAdvanceResult ApplicationProcessor::AdvanceFixedSimulation(
+        int64_t rawDeltaNanoseconds,
+        bool bAdvanceSimulation)
+    {
+        FixedStepAdvanceResult result = m_FixedStepScheduler->Advance(
+            rawDeltaNanoseconds,
+            bAdvanceSimulation);
+        if (result.Status != EFixedStepAdvanceStatus::Advanced || result.ExecutedSteps == 0)
+        {
+            return result;
+        }
+
+        constexpr float FixedDeltaTime = 1.0f / 60.0f;
+        for (uint64_t step = 0; step < result.ExecutedSteps; ++step)
+        {
+            World& world = GEngine->GetWorld();
+            world.UpdateWorldTransforms();
+            Module::GetModuleRegistry().DispatchPreFixedTick(FixedDeltaTime);
+            world.DispatchFixedTick(FixedDeltaTime);
+            Module::GetModuleRegistry().DispatchFixedTick(FixedDeltaTime);
+            world.UpdateWorldTransforms();
+            world.CleanupAfterFixedStep();
+        }
+
+        return result;
     }
 
     bool ApplicationProcessor::CreateEngine()

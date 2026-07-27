@@ -1203,6 +1203,48 @@ namespace NorvesLib::Core
         }
     }
 
+    void World::DispatchFixedTick(float fixedDeltaTime)
+    {
+        if (!HasFlag(OF_Initialized))
+        {
+            return;
+        }
+
+        for (Entity* entity : GetRootEntities())
+        {
+            FixedTickEntityRecursive(*entity, fixedDeltaTime);
+        }
+    }
+
+    void World::CleanupAfterFixedStep()
+    {
+        CleanupDestroyedObjects();
+    }
+
+    void World::FixedTickEntityRecursive(Entity& entity, float fixedDeltaTime)
+    {
+        if (!entity.IsActive() || entity.IsPendingDestroy())
+        {
+            return;
+        }
+
+        if (entity.IsTickEnabled())
+        {
+            for (Component::Component* component : entity.GetComponents())
+            {
+                if (component && component->IsActive() && component->IsTickEnabled())
+                {
+                    component->FixedTick(fixedDeltaTime);
+                }
+            }
+        }
+
+        for (Entity* child : entity.GetChildEntities())
+        {
+            FixedTickEntityRecursive(*child, fixedDeltaTime);
+        }
+    }
+
     void World::CollectTransientBoardProxiesRecursive(
         Entity& entity,
         Container::VariableArray<Rendering::BoardProxy>& outProxies)

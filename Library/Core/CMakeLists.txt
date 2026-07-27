@@ -48,6 +48,7 @@ set(PRIVATE_SOURCES
     Private/Boot/AppLauncher.cpp
     Private/Engine/Engine.cpp
     Private/Engine/NorvesEngine.cpp
+    Private/Engine/FixedStepScheduler.cpp
     Private/Scripting/AngelScriptEngineOwner.cpp
     Private/Scripting/ScriptSourceTracker.h
     Private/Scripting/ScriptSourceTracker.cpp

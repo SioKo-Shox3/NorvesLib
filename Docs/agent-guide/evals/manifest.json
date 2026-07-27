@@ -21,6 +21,13 @@
       "prompt_file": "tasks/m6-hot-reload-movement-oracle.md",
       "check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../../fixtures/m6-hot-reload-movement-oracle/test.ps1 -ContractPath ./M6HotReloadMovementContract.ps1",
       "budget_ms": 600000
+    },
+    {
+      "id": "m7-rational-fixed-timestep",
+      "fixture": "fixtures/m7-rational-fixed-timestep",
+      "prompt_file": "tasks/m7-rational-fixed-timestep.md",
+      "check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../../fixtures/m7-rational-fixed-timestep/test.ps1 -SourcePath ./FixedStepScheduler.cpp",
+      "budget_ms": 600000
     }
   ]
 }
