@@ -107,15 +107,18 @@ namespace
         return result;
     }
 
-    bool ExtractTickBlock(const Container::String& source, Container::String& outBlock)
+    bool ExtractFunctionBlock(
+        const Container::String& source,
+        const Container::String& signature,
+        Container::String& outBlock)
     {
-        const size_t signature = source.find("void ApplicationProcessor::Tick()");
-        if (signature == Container::String::npos)
+        const size_t signatureOffset = source.find(signature);
+        if (signatureOffset == Container::String::npos)
         {
             return false;
         }
 
-        const size_t openingBrace = source.find('{', signature);
+        const size_t openingBrace = source.find('{', signatureOffset);
         if (openingBrace == Container::String::npos)
         {
             return false;
@@ -135,6 +138,11 @@ namespace
             }
         }
         return false;
+    }
+
+    bool ExtractTickBlock(const Container::String& source, Container::String& outBlock)
+    {
+        return ExtractFunctionBlock(source, "void ApplicationProcessor::Tick()", outBlock);
     }
 
     bool TestTickCallsShouldAdvanceSimulationExactlyOnce(const Container::String& tick)
@@ -182,6 +190,30 @@ namespace
             sync != Container::String::npos &&
             tick.find("for (", advance) > sync;
     }
+
+    bool TestFixedStepPipelineOrderMatchesTransformContract(const Container::String& advance)
+    {
+        const Container::VariableArray<Container::String> tokens =
+        {
+            Container::String("world.UpdateWorldTransforms()"),
+            Container::String("DispatchPreFixedTick"),
+            Container::String("world.DispatchFixedTick"),
+            Container::String("DispatchFixedTick"),
+            Container::String("world.UpdateWorldTransforms()"),
+            Container::String("world.CleanupAfterFixedStep()")
+        };
+        size_t previous = 0;
+        for (const Container::String& token : tokens)
+        {
+            const size_t current = advance.find(token, previous);
+            if (current == Container::String::npos)
+            {
+                return false;
+            }
+            previous = current + token.size();
+        }
+        return true;
+    }
 }
 
 int main()
@@ -190,11 +222,17 @@ int main()
         std::filesystem::path(NORVES_SOURCE_ROOT) / "Library/Core/Private/Engine/ApplicationProcessor.cpp";
     const Container::String source = ReadSourceFile(sourcePath);
     Container::String tick;
+    Container::String advance;
     const bool bPassed = !source.empty() &&
         ExtractTickBlock(StripCommentsAndLiterals(source), tick) &&
+        ExtractFunctionBlock(
+            source,
+            "FixedStepAdvanceResult ApplicationProcessor::AdvanceFixedSimulation(",
+            advance) &&
         TestTickCallsShouldAdvanceSimulationExactlyOnce(tick) &&
         TestTickPipelineOrderMatchesFixedTimeContract(tick) &&
-        TestPauseBranchExecutesZeroFixedLoops(tick);
+        TestPauseBranchExecutesZeroFixedLoops(tick) &&
+        TestFixedStepPipelineOrderMatchesTransformContract(advance);
     std::cout << (bPassed
         ? "ApplicationFixedStepTickSourceContractTest passed\n"
         : "ApplicationFixedStepTickSourceContractTest failed\n");

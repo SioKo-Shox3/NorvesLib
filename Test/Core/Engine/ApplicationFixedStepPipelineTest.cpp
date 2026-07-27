@@ -56,7 +56,10 @@ namespace
     struct DynamicFixture
     {
         Container::VariableArray<Container::String> Events;
+        Container::VariableArray<float> ModuleAPreObservedChildWorldX;
+        Container::VariableArray<float> ModuleAPostObservedChildWorldX;
         Entity* DestroyEntity = nullptr;
+        Entity* ObservedChild = nullptr;
         EntityHandle DestroyHandle;
         bool bPostObservedPending = false;
         uint32_t ParentFixedCount = 0;
@@ -138,6 +141,11 @@ namespace
             if (GFixture)
             {
                 GFixture->Events.push_back(Container::String(PreName));
+                if (bObserveChildWorldTransform && GFixture->ObservedChild)
+                {
+                    GFixture->ModuleAPreObservedChildWorldX.push_back(
+                        GFixture->ObservedChild->GetPosition().x);
+                }
             }
         }
 
@@ -155,6 +163,11 @@ namespace
             {
                 GFixture->bPostObservedPending = GFixture->DestroyEntity->IsPendingDestroy();
             }
+            if (bObserveChildWorldTransform && GFixture->ObservedChild)
+            {
+                GFixture->ModuleAPostObservedChildWorldX.push_back(
+                    GFixture->ObservedChild->GetPosition().x);
+            }
         }
 
         uint32_t PreFixedTickCount = 0;
@@ -163,6 +176,7 @@ namespace
         const char* Name = "";
         const char* PreName = "";
         const char* FixedName = "";
+        bool bObserveChildWorldTransform = false;
     };
 
     bool RegisterModules()
@@ -171,6 +185,7 @@ namespace
         moduleA->Name = "FixedProbeModuleA";
         moduleA->PreName = "ModuleA Pre";
         moduleA->FixedName = "ModuleA Fixed";
+        moduleA->bObserveChildWorldTransform = true;
         FixedProbeModule* moduleB = new FixedProbeModule();
         moduleB->Name = "FixedProbeModuleB";
         moduleB->PreName = "ModuleB Pre";
@@ -352,24 +367,35 @@ namespace
         return paused.RemainderScaledUnits == 0 && resumed.ExecutedSteps == 0;
     }
 
-    bool TestHeadlessChildTransformAdvancesAcrossThreeSteps(Engine::ApplicationProcessor& processor)
+    bool TestFixedStepTransformSynchronizationOrder(Engine::ApplicationProcessor& processor)
     {
         World& world = Engine::GEngine->GetWorld();
-        Entity* parent = world.SpawnEntity<Entity>();
-        Entity* child = parent ? world.SpawnEntity<Entity>(parent) : nullptr;
-        FixedProbeComponent* mover = parent ? world.CreateComponent<FixedProbeComponent>(parent) : nullptr;
-        FixedProbeComponent* reader = child ? world.CreateComponent<FixedProbeComponent>(child) : nullptr;
-        if (!parent || !child || !mover || !reader)
+        FixedProbeComponent* mover = nullptr;
+        FixedProbeComponent* unused = nullptr;
+        FixedProbeComponent* childComponent = nullptr;
+        if (!CreateOrderFixture(world, mover, unused, childComponent))
         {
             return false;
         }
 
+        Entity* parent = mover->GetOwner();
+        Entity* child = childComponent->GetOwner();
+        child->SetLocalPosition(1.0f, 0.0f, 0.0f);
+        world.UpdateWorldTransforms();
+        parent->SetLocalPosition(10.0f, 0.0f, 0.0f);
         mover->bMoveOwner = true;
-        reader->bReadParent = true;
+        GFixture->ObservedChild = child;
         const Engine::FixedStepAdvanceResult result =
-            Engine::ApplicationFixedStepTestAccess::Advance(processor, 51'000'000, true);
-        return result.ExecutedSteps == 3 &&
-            GFixture->ParentFixedCount == 3 && GFixture->ChildObservedLatestCount == 3;
+            Engine::ApplicationFixedStepTestAccess::Advance(processor, 34'000'000, true);
+        return result.ExecutedSteps == 2 &&
+            HasExpectedOrder(*GFixture, 2) &&
+            GFixture->ModuleAPreObservedChildWorldX.size() == 2 &&
+            GFixture->ModuleAPreObservedChildWorldX[0] == 11.0f &&
+            GFixture->ModuleAPreObservedChildWorldX[1] == 2.0f &&
+            GFixture->ModuleAPostObservedChildWorldX.size() == 2 &&
+            GFixture->ModuleAPostObservedChildWorldX[0] == 11.0f &&
+            GFixture->ModuleAPostObservedChildWorldX[1] == 2.0f &&
+            child->GetPosition().x == 3.0f;
     }
 
     bool TestSyncToSceneViewPublishesFinalFixedTransform(Engine::ApplicationProcessor& processor)
@@ -469,7 +495,7 @@ namespace
         case 5:
             return TestResumeDoesNotCatchUpPausedWallTime(processor);
         case 6:
-            return TestHeadlessChildTransformAdvancesAcrossThreeSteps(processor);
+            return TestFixedStepTransformSynchronizationOrder(processor);
         case 7:
             return TestSyncToSceneViewPublishesFinalFixedTransform(processor);
         case 8:
