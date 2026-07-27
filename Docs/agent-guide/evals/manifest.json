@@ -14,6 +14,13 @@
       "prompt_file": "tasks/m5-particle-emitter-identity.md",
       "check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../../fixtures/m5-particle-emitter-identity/test.ps1 -SourcePath ./ParticleEmitterIdentity.cpp",
       "budget_ms": 600000
+    },
+    {
+      "id": "m6-hot-reload-movement-oracle",
+      "fixture": "fixtures/m6-hot-reload-movement-oracle",
+      "prompt_file": "tasks/m6-hot-reload-movement-oracle.md",
+      "check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../../fixtures/m6-hot-reload-movement-oracle/test.ps1 -ContractPath ./M6HotReloadMovementContract.ps1",
+      "budget_ms": 600000
     }
   ]
 }
