@@ -145,6 +145,40 @@ namespace NorvesLib::Core::Module
         }
     }
 
+    void ModuleRegistry::DispatchPreFixedTick(float fixedDeltaTime)
+    {
+        if (m_Phase != EModulePhase::Running)
+        {
+            return;
+        }
+
+        for (size_t index = 0; index < m_Modules.size(); ++index)
+        {
+            IModule* module = m_Modules[index].get();
+            if (module)
+            {
+                module->PreFixedTick(fixedDeltaTime);
+            }
+        }
+    }
+
+    void ModuleRegistry::DispatchFixedTick(float fixedDeltaTime)
+    {
+        if (m_Phase != EModulePhase::Running)
+        {
+            return;
+        }
+
+        for (size_t index = 0; index < m_Modules.size(); ++index)
+        {
+            IModule* module = m_Modules[index].get();
+            if (module)
+            {
+                module->FixedTick(fixedDeltaTime);
+            }
+        }
+    }
+
     void ModuleRegistry::ShutdownAll(Engine::Engine &engine)
     {
         // 冪等ガード: 既に Shutdown 済みなら何もしない(二重呼び出し安全)。

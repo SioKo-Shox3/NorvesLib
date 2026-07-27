@@ -5,6 +5,8 @@
 #include "Container/VariableArray.h"
 #include "RHI/RHITypes.h"
 
+#include <cstdint>
+
 namespace NorvesLib::Core::Application
 {
     class IApplicationHandler;
@@ -17,6 +19,9 @@ namespace NorvesLib::Core::Boot
 
 namespace NorvesLib::Core::Engine
 {
+    class FixedStepScheduler;
+    struct FixedStepAdvanceResult;
+    struct ApplicationFixedStepTestAccess;
 
     /**
      * @brief アプリケーション処理クラス
@@ -30,8 +35,8 @@ namespace NorvesLib::Core::Engine
     class ApplicationProcessor
     {
     public:
-        ApplicationProcessor() = default;
-        ~ApplicationProcessor() = default;
+        ApplicationProcessor();
+        ~ApplicationProcessor();
 
         // コピー・ムーブ禁止
         ApplicationProcessor(const ApplicationProcessor &) = delete;
@@ -68,6 +73,8 @@ namespace NorvesLib::Core::Engine
         static void DestroyInstance();
 
     private:
+        friend struct ApplicationFixedStepTestAccess;
+
         /**
          * @brief 1フレームの処理を実行
          */
@@ -79,11 +86,11 @@ namespace NorvesLib::Core::Engine
          */
         bool ProcessPlatformMessages();
 
-        /**
-         * @brief デルタタイムを計算
-         * @return フレーム間隔（秒）
-         */
-        float CalculateDeltaTime();
+        int64_t CalculateRawDeltaTimeNanoseconds();
+        float ClampVariableDeltaTime(int64_t rawDeltaNanoseconds) const;
+        FixedStepAdvanceResult AdvanceFixedSimulation(
+            int64_t rawDeltaNanoseconds,
+            bool bAdvanceSimulation);
 
         /**
          * @brief GEngineを作成・初期化
@@ -113,8 +120,8 @@ namespace NorvesLib::Core::Engine
     private:
         // ApplicationProcessor がデバイス寿命を管理。RenderWorld 終了後に解放。
         RHI::DevicePtr m_Device;
-        // 時間計測用
-        uint64_t m_LastFrameTime = 0;
+        Container::TUniquePtr<FixedStepScheduler> m_FixedStepScheduler;
+        int64_t m_LastFrameTimeNanoseconds = 0;
         float m_TargetFrameTime = 1.0f / 60.0f; // デフォルト60FPS
         uint64_t m_ExitAfterFrames = 0;         // 0は無効
         uint64_t m_ExitAfterRenderedFrames = 0;

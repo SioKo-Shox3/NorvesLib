@@ -77,6 +77,11 @@ namespace NorvesLib::Core::Component
         (void)deltaTime;
     }
 
+    void Component::FixedTick(float fixedDeltaTime)
+    {
+        (void)fixedDeltaTime;
+    }
+
     // ========================================
     // オーナー管理（Outer経由）
     // ========================================

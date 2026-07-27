@@ -19,6 +19,10 @@ namespace NorvesLib::Core::Rendering
 
 namespace NorvesLib::Core
 {
+    namespace Engine
+    {
+        class ApplicationProcessor;
+    }
     class ComponentDataRegistry;
     class PrefabAsset;
     struct PrefabOverrideSet;
@@ -236,7 +240,12 @@ namespace NorvesLib::Core
         void UpdateWorldTransforms();
 
     private:
+        friend class Engine::ApplicationProcessor;
+
         void CleanupDestroyedObjects();
+        void DispatchFixedTick(float fixedDeltaTime);
+        void CleanupAfterFixedStep();
+        void FixedTickEntityRecursive(Entity& entity, float fixedDeltaTime);
         void UpdateEntityTransformRecursive(Entity& entity, const Math::Transform& parentWorld);
         void TickEntityRecursive(Entity& entity, float deltaTime);
         void SyncEntityRecursive(Entity& entity,
