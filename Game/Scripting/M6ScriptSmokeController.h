@@ -30,9 +30,17 @@ namespace Game::Scripting
             Failed
         };
 
+        enum class EScriptHashPollResult : uint8_t
+        {
+            Ready,
+            Pending,
+            Failed
+        };
+
         void Fail(const char* reason);
         void Complete(const NorvesLib::Math::Vector3& position);
         bool ReadScriptHash(uint64_t& outHash) const;
+        EScriptHashPollResult PollScriptHash(uint64_t& outHash);
         bool ResolveLoadedOwner(NorvesLib::Math::Vector3& outPosition) const;
 
         EState m_State = EState::Disabled;
@@ -42,6 +50,8 @@ namespace Game::Scripting
         uint64_t m_BaseRuntimeGeneration = 0;
         uint64_t m_GoodRuntimeGeneration = 0;
         uint64_t m_ReadyBadScriptHash = 0;
+        uint64_t m_NextScriptHashPollTick = 0;
+        uint64_t m_ScriptHashFailureDeadlineTick = 0;
         uint32_t m_BaseBindingCount = 0;
         uint32_t m_GoodBindingCount = 0;
         float m_InitialX = 0.0f;
