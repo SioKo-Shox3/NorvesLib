@@ -24,6 +24,8 @@ namespace Game::Scripting
     namespace
     {
         constexpr const char* kOptionPrefix = "--m6-script-smoke=";
+        constexpr uint64_t kScriptHashPollIntervalMilliseconds = 50;
+        constexpr uint64_t kScriptHashFailureTimeoutMilliseconds = 2000;
 
         bool StartsWith(const String& value, const char* prefix)
         {
@@ -284,7 +286,12 @@ namespace Game::Scripting
                     return;
                 }
                 uint64_t scriptHash = 0;
-                if (!ReadScriptHash(scriptHash))
+                const EScriptHashPollResult pollResult = PollScriptHash(scriptHash);
+                if (pollResult == EScriptHashPollResult::Pending)
+                {
+                    return;
+                }
+                if (pollResult == EScriptHashPollResult::Failed)
                 {
                     Fail("script_read");
                     return;
@@ -307,14 +314,19 @@ namespace Game::Scripting
 
         if (m_State == EState::AwaitBadCompile)
         {
-            uint64_t scriptHash = 0;
-            if (!ReadScriptHash(scriptHash))
-            {
-                Fail("script_read");
-                return;
-            }
             if (!m_bBadSourceObserved)
             {
+                uint64_t scriptHash = 0;
+                const EScriptHashPollResult pollResult = PollScriptHash(scriptHash);
+                if (pollResult == EScriptHashPollResult::Pending)
+                {
+                    return;
+                }
+                if (pollResult == EScriptHashPollResult::Failed)
+                {
+                    Fail("script_read");
+                    return;
+                }
                 if (scriptHash != m_ReadyBadScriptHash)
                 {
                     m_bBadSourceObserved = true;
@@ -389,6 +401,34 @@ namespace Game::Scripting
         }
         outHash = Fnv1a(result.Blob.GetData(), result.Blob.GetSize());
         return true;
+    }
+
+    M6ScriptSmokeController::EScriptHashPollResult M6ScriptSmokeController::PollScriptHash(uint64_t& outHash)
+    {
+        const uint64_t now = GetTickCount64();
+        if (m_ScriptHashFailureDeadlineTick != 0 && now >= m_ScriptHashFailureDeadlineTick)
+        {
+            return EScriptHashPollResult::Failed;
+        }
+        if (m_NextScriptHashPollTick != 0 && now < m_NextScriptHashPollTick)
+        {
+            return EScriptHashPollResult::Pending;
+        }
+
+        if (ReadScriptHash(outHash))
+        {
+            m_NextScriptHashPollTick = 0;
+            m_ScriptHashFailureDeadlineTick = 0;
+            return EScriptHashPollResult::Ready;
+        }
+
+        // ReplaceFile can briefly leave the target unavailable or shared; retry that window, but bound permanent failures.
+        if (m_ScriptHashFailureDeadlineTick == 0)
+        {
+            m_ScriptHashFailureDeadlineTick = now + kScriptHashFailureTimeoutMilliseconds;
+        }
+        m_NextScriptHashPollTick = now + kScriptHashPollIntervalMilliseconds;
+        return EScriptHashPollResult::Pending;
     }
 
     bool M6ScriptSmokeController::ResolveLoadedOwner(NorvesLib::Math::Vector3& outPosition) const
