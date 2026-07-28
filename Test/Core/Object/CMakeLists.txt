@@ -187,6 +187,15 @@ target_include_directories(SceneQueryOverlapTest PRIVATE
 )
 set_target_properties(SceneQueryOverlapTest PROPERTIES FOLDER "Test/Core/Object")
 
+add_executable(SceneQueryPhysicsFacadeTest
+    SceneQueryPhysicsFacadeTest.cpp
+)
+target_link_libraries(SceneQueryPhysicsFacadeTest PRIVATE Core)
+target_include_directories(SceneQueryPhysicsFacadeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SceneQueryPhysicsFacadeTest PROPERTIES FOLDER "Test/Core/Object")
+
 add_executable(EntityTreeTest
     EntityTreeTest.cpp
 )
@@ -234,6 +243,7 @@ add_test(NAME TransformHierarchyTest COMMAND TransformHierarchyTest)
 add_test(NAME EntityWorldAABBTest COMMAND EntityWorldAABBTest)
 add_test(NAME SceneQueryRaycastTest COMMAND SceneQueryRaycastTest)
 add_test(NAME SceneQueryOverlapTest COMMAND SceneQueryOverlapTest)
+add_test(NAME SceneQueryPhysicsFacadeTest COMMAND SceneQueryPhysicsFacadeTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
 add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
 add_test(NAME SceneFileRoundTripTest COMMAND SceneFileRoundTripTest)

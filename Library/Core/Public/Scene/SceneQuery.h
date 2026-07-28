@@ -3,6 +3,8 @@
 #include "Math/GeometryTypes.h"
 #include "Container/Containers.h"
 #include "Container/Span.h"
+#include "Object/EntityHandle.h"
+#include "Thread/Thread.h"
 #include <cstdint>
 #include <cstddef>
 
@@ -14,6 +16,106 @@ namespace NorvesLib::Core
 
 namespace NorvesLib::Core::Scene
 {
+    enum class EPhysicsSceneQueryResult : uint8_t
+    {
+        Success,
+        NoHit,
+        Unavailable,
+        NotReady,
+        InvalidArgument,
+        WrongThread,
+        AlreadyBound,
+        ProviderMismatch
+    };
+
+    struct ColliderHandle
+    {
+        static constexpr uint32_t InvalidIndex = UINT32_MAX;
+
+        uint32_t Index = InvalidIndex;
+        uint32_t Generation = 0;
+
+        constexpr bool IsValid() const
+        {
+            return Index != InvalidIndex && Generation != 0;
+        }
+
+        constexpr bool operator==(const ColliderHandle& other) const
+        {
+            return Index == other.Index && Generation == other.Generation;
+        }
+
+        constexpr bool operator<(const ColliderHandle& other) const
+        {
+            return Index < other.Index || (Index == other.Index && Generation < other.Generation);
+        }
+    };
+
+    struct BodyHandle
+    {
+        static constexpr uint32_t InvalidIndex = UINT32_MAX;
+
+        uint32_t Index = InvalidIndex;
+        uint32_t Generation = 0;
+
+        constexpr bool IsValid() const
+        {
+            return Index != InvalidIndex && Generation != 0;
+        }
+
+        constexpr bool operator==(const BodyHandle& other) const
+        {
+            return Index == other.Index && Generation == other.Generation;
+        }
+
+        constexpr bool operator<(const BodyHandle& other) const
+        {
+            return Index < other.Index || (Index == other.Index && Generation < other.Generation);
+        }
+    };
+
+    struct PhysicsRaycastHit
+    {
+        ColliderHandle Collider;
+        BodyHandle Body;
+        EntityHandle Entity;
+        bool bHasEntity = false;
+        Math::Vector3 Point;
+        Math::Vector3 Normal;
+        float Distance = 0.0f;
+    };
+
+    struct PhysicsOverlapHit
+    {
+        ColliderHandle Collider;
+        BodyHandle Body;
+        EntityHandle Entity;
+        bool bHasEntity = false;
+        Math::GeometryContact Contact;
+    };
+
+    class IPhysicsSceneQueryProvider
+    {
+    public:
+        virtual ~IPhysicsSceneQueryProvider() = default;
+
+        virtual EPhysicsSceneQueryResult Raycast(
+            const Math::Ray& ray,
+            float maxDistance,
+            PhysicsRaycastHit& outHit) const = 0;
+        virtual EPhysicsSceneQueryResult OverlapSphere(
+            const Math::Sphere& sphere,
+            Container::VariableArray<PhysicsOverlapHit>& outHits) const = 0;
+        virtual EPhysicsSceneQueryResult OverlapBox(
+            const Math::OBB& box,
+            Container::VariableArray<PhysicsOverlapHit>& outHits) const = 0;
+        virtual EPhysicsSceneQueryResult OverlapCapsule(
+            const Math::Capsule& capsule,
+            Container::VariableArray<PhysicsOverlapHit>& outHits) const = 0;
+        virtual EPhysicsSceneQueryResult IsAlive(ColliderHandle collider, bool& outAlive) const = 0;
+        virtual EPhysicsSceneQueryResult IsAlive(BodyHandle body, bool& outAlive) const = 0;
+    };
+
     /**
      * @brief Raycast の結果。
      *
@@ -35,6 +137,12 @@ namespace NorvesLib::Core::Scene
     class SceneQuery
     {
     public:
+        SceneQuery();
+        SceneQuery(const SceneQuery&) = delete;
+        SceneQuery(SceneQuery&&) = delete;
+        SceneQuery& operator=(const SceneQuery&) = delete;
+        SceneQuery& operator=(SceneQuery&&) = delete;
+
         void Rebuild(const World& world);
         void Rebuild(Container::Span<Entity* const> entities);
 
@@ -45,6 +153,24 @@ namespace NorvesLib::Core::Scene
         void OverlapBox(const Math::AABB& box, Container::VariableArray<Entity*>& outEntities) const;
         void QueryFrustum(const Math::Frustum& frustum, Container::VariableArray<Entity*>& outEntities) const;
         size_t GetEntryCount() const;
+
+        EPhysicsSceneQueryResult BindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
+        EPhysicsSceneQueryResult UnbindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
+        EPhysicsSceneQueryResult Raycast(
+            const Math::Ray& ray,
+            float maxDistance,
+            PhysicsRaycastHit& outHit) const;
+        EPhysicsSceneQueryResult OverlapSphere(
+            const Math::Sphere& sphere,
+            Container::VariableArray<PhysicsOverlapHit>& outHits) const;
+        EPhysicsSceneQueryResult OverlapBox(
+            const Math::OBB& box,
+            Container::VariableArray<PhysicsOverlapHit>& outHits) const;
+        EPhysicsSceneQueryResult OverlapCapsule(
+            const Math::Capsule& capsule,
+            Container::VariableArray<PhysicsOverlapHit>& outHits) const;
+        EPhysicsSceneQueryResult IsAlive(ColliderHandle collider, bool& outAlive) const;
+        EPhysicsSceneQueryResult IsAlive(BodyHandle body, bool& outAlive) const;
 
     private:
         struct Entry
@@ -87,9 +213,12 @@ namespace NorvesLib::Core::Scene
             uint32_t nodeIndex,
             const Math::Frustum& frustum,
             Container::VariableArray<Entity*>& outEntities) const;
+        bool IsOwnerThread() const;
 
         Container::VariableArray<BVHNode> m_Nodes;
         Container::VariableArray<Entry> m_Entries;
+        IPhysicsSceneQueryProvider* m_PhysicsProvider = nullptr;
+        Thread::Thread::ThreadId m_OwnerThreadId;
     };
 
 } // namespace NorvesLib::Core::Scene
