@@ -500,4 +500,11 @@ inline bool CapsuleIntersectsAABB(const Capsule& capsule, const AABB& aabb)
     return distanceSq <= capsule.Radius * capsule.Radius;
 }
 
+bool ComputeContact(const Sphere& a, const Sphere& b, GeometryContact& outContact);
+bool ComputeContact(const Sphere& a, const OBB& b, GeometryContact& outContact);
+bool ComputeContact(const OBB& a, const OBB& b, GeometryContact& outContact);
+bool ComputeContact(const Capsule& a, const Sphere& b, GeometryContact& outContact);
+bool ComputeContact(const Capsule& a, const OBB& b, GeometryContact& outContact);
+bool ComputeContact(const Capsule& a, const Capsule& b, GeometryContact& outContact);
+
 } // namespace NorvesLib::Math

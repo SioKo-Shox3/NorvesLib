@@ -234,6 +234,13 @@ struct Capsule
     }
 };
 
+struct GeometryContact
+{
+    Vector3 Normal = Vector3(0.0f, 0.0f, 0.0f); // shape A -> shape B
+    float Depth = 0.0f;                          // >= 0, touching is 0
+    Vector3 Point = Vector3(0.0f, 0.0f, 0.0f);  // witness midpoint
+};
+
 enum class FrustumPlane
 {
     Left,
