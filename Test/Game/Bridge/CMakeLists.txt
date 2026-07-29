@@ -32,6 +32,7 @@ add_executable(NorvesLibBridgeAdapterThumbnailTest
 target_link_libraries(NorvesLibBridgeAdapterThumbnailTest PRIVATE
     Core
     NorvesModule_Dummy
+    NorvesModule_Physics
     norves_bridge_engine_sdk
 )
 target_compile_definitions(NorvesLibBridgeAdapterThumbnailTest PRIVATE
@@ -72,6 +73,7 @@ add_executable(NorvesLibBridgeAdapterScriptComponentTest
 target_link_libraries(NorvesLibBridgeAdapterScriptComponentTest PRIVATE
     Core
     NorvesModule_Dummy
+    NorvesModule_Physics
     norves_bridge_engine_sdk
 )
 
