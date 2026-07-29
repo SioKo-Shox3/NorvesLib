@@ -2,8 +2,12 @@
 // SceneQuery binding の実際の観測結果を検証する。
 
 #include "Physics/IPhysicsModule.h"
+#include "Physics/ColliderComponent.h"
+#include "Physics/PhysicsModule.h"
+#include "Physics/RigidBodyComponent.h"
 #include "Engine/Engine.h"
 #include "Module/ModuleRegistry.h"
+#include "Object/World.h"
 #include "Scene/SceneQuery.h"
 #include "Thread/Thread.h"
 
@@ -13,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <type_traits>
 #include <Windows.h>
 #ifdef _MSC_VER
@@ -23,6 +28,164 @@ using namespace NorvesLib;
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Module;
 using namespace NorvesLib::Core::Scene;
+using PhysicsModule = NorvesLib::Modules::Physics::PhysicsModule;
+
+namespace NorvesLib::Modules::Physics
+{
+    class PhysicsModuleTestAccess
+    {
+    public:
+        static uint32_t GetColliderSlotCount(const IPhysicsModule& module)
+        {
+            return static_cast<uint32_t>(GetConcrete(module).m_ColliderSlots.size());
+        }
+
+        static uint32_t GetBodySlotCount(const IPhysicsModule& module)
+        {
+            return static_cast<uint32_t>(GetConcrete(module).m_BodySlots.size());
+        }
+
+        static uint32_t GetActiveColliderCount(const IPhysicsModule& module)
+        {
+            const PhysicsModule& concrete = GetConcrete(module);
+            uint32_t count = 0;
+            for (const PhysicsModule::ColliderSlot& slot : concrete.m_ColliderSlots)
+            {
+                if (slot.bOccupied && slot.bActive)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        static uint32_t GetRegisteredColliderCount(const IPhysicsModule& module)
+        {
+            const PhysicsModule& concrete = GetConcrete(module);
+            uint32_t count = 0;
+            for (const PhysicsModule::ColliderSlot& slot : concrete.m_ColliderSlots)
+            {
+                count += slot.bOccupied ? 1u : 0u;
+            }
+            return count;
+        }
+
+        static uint32_t GetRegisteredBodyCount(const IPhysicsModule& module)
+        {
+            const PhysicsModule& concrete = GetConcrete(module);
+            uint32_t count = 0;
+            for (const PhysicsModule::BodySlot& slot : concrete.m_BodySlots)
+            {
+                count += slot.bOccupied ? 1u : 0u;
+            }
+            return count;
+        }
+
+        static bool IsBodyActive(const IPhysicsModule& module, BodyHandle handle)
+        {
+            const PhysicsModule& concrete = GetConcrete(module);
+            return handle.IsValid() && handle.Index < concrete.m_BodySlots.size()
+                && concrete.m_BodySlots[handle.Index].bOccupied
+                && concrete.m_BodySlots[handle.Index].Generation == handle.Generation
+                && concrete.m_BodySlots[handle.Index].bActive;
+        }
+
+        static bool IsColliderAlive(const IPhysicsModule& module, ColliderHandle handle)
+        {
+            const PhysicsModule& concrete = GetConcrete(module);
+            return handle.IsValid() && handle.Index < concrete.m_ColliderSlots.size()
+                && concrete.m_ColliderSlots[handle.Index].bOccupied
+                && concrete.m_ColliderSlots[handle.Index].Generation == handle.Generation;
+        }
+
+        static bool IsBodyAlive(const IPhysicsModule& module, BodyHandle handle)
+        {
+            const PhysicsModule& concrete = GetConcrete(module);
+            return handle.IsValid() && handle.Index < concrete.m_BodySlots.size()
+                && concrete.m_BodySlots[handle.Index].bOccupied
+                && concrete.m_BodySlots[handle.Index].Generation == handle.Generation;
+        }
+
+        static uint32_t GetDuplicateDiagnosticCount(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_DuplicateDiagnosticCount;
+        }
+
+        static EPhysicsDiagnostic GetLastDiagnostic(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_LastDiagnostic;
+        }
+
+        static uint32_t GetCallbackCount(const IPhysicsModule& module, const ColliderComponent& component)
+        {
+            return GetConcrete(module).GetCallbackCount(component);
+        }
+
+        static EPhysicsResult GetLastRegistrationResult(
+            const IPhysicsModule& module,
+            const ColliderComponent& component)
+        {
+            return GetConcrete(module).GetColliderRegistrationResult(component);
+        }
+
+        static void PrepareColliderGenerationWrap(IPhysicsModule& module, ColliderComponent& component)
+        {
+            PhysicsModule& concrete = GetConcrete(module);
+            concrete.PrepareColliderGenerationWrap(component);
+        }
+
+        static void PrepareBodyGenerationWrap(IPhysicsModule& module, RigidBodyComponent& component)
+        {
+            GetConcrete(module).PrepareBodyGenerationWrap(component);
+        }
+
+        static void PrepareOverlapBeginGenerationWrap(
+            IPhysicsModule& module,
+            ColliderComponent& component,
+            PhysicsCallbackHandle& handle)
+        {
+            GetConcrete(module).PrepareOverlapBeginGenerationWrap(component, handle);
+        }
+
+        static float GetColliderRadius(const IPhysicsModule& module, const ColliderComponent& component)
+        {
+            return GetConcrete(module).GetColliderRadius(component);
+        }
+
+        static uint32_t GetDispatchedEventCount(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_DispatchedEventCount;
+        }
+
+        static uint32_t GetPendingEventCount(const IPhysicsModule& module)
+        {
+            return GetConcrete(module).m_PendingEventCount;
+        }
+
+        static uint32_t GetLifecycleStateCount(const IPhysicsModule& module)
+        {
+            const PhysicsModule& concrete = GetConcrete(module);
+            return (concrete.m_bBound ? 1u : 0u)
+                + (concrete.m_bInitialized ? 1u : 0u)
+                + (concrete.m_bHasPublishedSnapshot ? 1u : 0u);
+        }
+
+    private:
+        static const PhysicsModule& GetConcrete(const IPhysicsModule& module)
+        {
+            const auto* concrete = dynamic_cast<const PhysicsModule*>(&module);
+            assert(concrete != nullptr);
+            return *concrete;
+        }
+
+        static PhysicsModule& GetConcrete(IPhysicsModule& module)
+        {
+            auto* concrete = dynamic_cast<PhysicsModule*>(&module);
+            assert(concrete != nullptr);
+            return *concrete;
+        }
+    };
+} // namespace NorvesLib::Modules::Physics
 
 namespace
 {
@@ -455,6 +618,278 @@ namespace
 
         assert(HasRequiredPhysicsRegistrationPrefix(handlerSource));
     }
+
+    void TestPhaseThreeUnregisteredComponentsRemainInvalid()
+    {
+        std::cout << "[Test] phase 3 unregistered Components remain invalid\n";
+        NorvesLib::Modules::Physics::ColliderComponent collider;
+        NorvesLib::Modules::Physics::RigidBodyComponent body;
+        collider.Initialize();
+        body.Initialize();
+
+        assert(!collider.GetColliderHandle().IsValid());
+        assert(!body.GetBodyHandle().IsValid());
+        assert(collider.SetSphere(1.0f) == NorvesLib::Modules::Physics::EPhysicsResult::NotRegistered);
+        assert(body.SetMass(1.0f) == NorvesLib::Modules::Physics::EPhysicsResult::NotRegistered);
+        collider.Finalize();
+        body.Finalize();
+        std::cout << "[PASS] Phase 3 unregistered Component handles stay invalid\n";
+    }
+
+    void TestPhaseThreeComponentOwnershipAndSlots()
+    {
+        std::cout << "[Test] phase 3 Component ownership, slots, validation, callback tokens and reflection\n";
+        ModuleRegistry& registry = GetModuleRegistry();
+        Engine::Engine& engine = LeakedEngineRef();
+
+        World unregisteredWorld;
+        unregisteredWorld.Initialize();
+        Entity* unregisteredOwner = unregisteredWorld.SpawnEntity<Entity>();
+        assert(unregisteredOwner != nullptr);
+        auto* unregisteredCollider =
+            unregisteredWorld.CreateComponent<NorvesLib::Modules::Physics::ColliderComponent>(unregisteredOwner);
+        assert(unregisteredCollider != nullptr);
+        assert(!unregisteredCollider->GetColliderHandle().IsValid());
+
+        NorvesLib::Modules::Physics::IPhysicsModule* physics =
+            NorvesLib::Modules::Physics::RegisterPhysicsModule(registry);
+        assert(physics != nullptr);
+        assert(!unregisteredCollider->GetColliderHandle().IsValid());
+        unregisteredWorld.Finalize();
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetColliderSlotCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetBodySlotCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetActiveColliderCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetRegisteredColliderCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetRegisteredBodyCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetLifecycleStateCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetDispatchedEventCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetPendingEventCount(*physics) == 0);
+
+        const IClass* colliderClass = NorvesLib::Modules::Physics::ColliderComponent::StaticClass();
+        const IClass* bodyClass = NorvesLib::Modules::Physics::RigidBodyComponent::StaticClass();
+        assert(colliderClass != nullptr && bodyClass != nullptr);
+        assert(colliderClass->GetParentClass() == Core::Component::Component::StaticClass());
+        assert(bodyClass->GetParentClass() == Core::Component::Component::StaticClass());
+        assert(colliderClass->GetClassId() != 0 && bodyClass->GetClassId() != 0);
+        assert(colliderClass->GetClassId() != bodyClass->GetClassId());
+        assert(ClassRegistry::Get().FindClass(colliderClass->GetClassId()) == colliderClass);
+        assert(ClassRegistry::Get().FindClass(bodyClass->GetClassId()) == bodyClass);
+
+        World world;
+        world.Initialize();
+        Entity* root = world.SpawnEntity<Entity>();
+        assert(root != nullptr);
+        auto* collider = world.CreateComponent<NorvesLib::Modules::Physics::ColliderComponent>(root);
+        assert(collider != nullptr && collider->GetOuter() == root);
+        assert(collider->GetClass() == colliderClass);
+        const ColliderHandle firstHandle = collider->GetColliderHandle();
+        assert(firstHandle.IsValid());
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetRegisteredColliderCount(*physics) == 1);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetActiveColliderCount(*physics) == 0);
+        assert(registry.InstallAll(engine));
+
+        auto* duplicateCollider = world.CreateComponent<NorvesLib::Modules::Physics::ColliderComponent>(root);
+        assert(duplicateCollider != nullptr && duplicateCollider->GetOuter() == root);
+        assert(!duplicateCollider->GetColliderHandle().IsValid());
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetLastRegistrationResult(*physics, *duplicateCollider)
+            == NorvesLib::Modules::Physics::EPhysicsResult::Duplicate);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetLastDiagnostic(*physics)
+            == NorvesLib::Modules::Physics::EPhysicsDiagnostic::Duplicate);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetDuplicateDiagnosticCount(*physics) == 1);
+
+        assert(collider->SetSphere(0.0f) == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
+        assert(collider->SetSphere(std::numeric_limits<float>::infinity())
+            == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
+        assert(collider->SetBox(Math::Vector3(1.0f, 0.0f, 1.0f)) == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
+        assert(collider->SetCapsule(1.0f, 0.0f) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(collider->SetTrigger(true) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        physics->FixedTick(1.0f / 60.0f);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetActiveColliderCount(*physics) == 1);
+
+        auto* body = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(root);
+        assert(body != nullptr && body->GetBodyHandle().IsValid());
+        assert(body->GetClass() == bodyClass);
+        const BodyHandle bodyHandle = body->GetBodyHandle();
+        assert(body->SetMass(0.0f) == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
+        assert(body->SetMass(std::numeric_limits<float>::quiet_NaN())
+            == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
+        assert(body->SetMass(2.0f) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(body->SetGravityScale(-1.0f) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(body->SetGravityScale(0.0f) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(body->SetLinearVelocity(Math::Vector3(1.0f, 2.0f, 3.0f)) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(body->SetLinearVelocity(Math::Vector3(std::numeric_limits<float>::infinity(), 0.0f, 0.0f))
+            == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
+        assert(body->AddImpulse(Math::Vector3(1.0f, 0.0f, 0.0f)) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(body->GetLinearVelocity() == Math::Vector3(2.0f, 2.0f, 3.0f));
+        assert(body->SetBodyType(NorvesLib::Modules::Physics::EPhysicsBodyType::Dynamic)
+            == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(body->SetBodyType(static_cast<NorvesLib::Modules::Physics::EPhysicsBodyType>(255))
+            == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
+        assert(body->GetBodyType() == NorvesLib::Modules::Physics::EPhysicsBodyType::Dynamic);
+        physics->FixedTick(1.0f / 60.0f);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyHandle));
+
+        auto* duplicateBody = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(root);
+        assert(duplicateBody != nullptr && duplicateBody->GetOuter() == root);
+        assert(!duplicateBody->GetBodyHandle().IsValid());
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetDuplicateDiagnosticCount(*physics) == 2);
+
+        Core::Delegate<void, const NorvesLib::Modules::Physics::PhysicsContactEvent&> callback(
+            [](const NorvesLib::Modules::Physics::PhysicsContactEvent&) {});
+        NorvesLib::Modules::Physics::PhysicsCallbackHandle firstCallback;
+        NorvesLib::Modules::Physics::PhysicsCallbackHandle secondCallback;
+        NorvesLib::Modules::Physics::PhysicsCallbackHandle thirdCallback;
+        NorvesLib::Modules::Physics::PhysicsCallbackHandle endCallback;
+        NorvesLib::Modules::Physics::PhysicsCallbackHandle hitCallback;
+        Core::Delegate<void, const NorvesLib::Modules::Physics::PhysicsContactEvent&> unboundCallback;
+        assert(collider->AddOnOverlapBegin(unboundCallback, firstCallback)
+            == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
+        assert(collider->AddOnOverlapBegin(callback, firstCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(collider->AddOnOverlapBegin(callback, secondCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(collider->AddOnOverlapBegin(callback, thirdCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(collider->AddOnOverlapEnd(callback, endCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(collider->AddOnHit(callback, hitCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(!(firstCallback == secondCallback));
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetCallbackCount(*physics, *collider) == 5);
+        assert(collider->RemoveOnOverlapBegin(firstCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(collider->RemoveOnOverlapBegin(thirdCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(collider->RemoveOnOverlapBegin(firstCallback) == NorvesLib::Modules::Physics::EPhysicsResult::NotRegistered);
+        assert(collider->RemoveOnOverlapEnd(secondCallback) == NorvesLib::Modules::Physics::EPhysicsResult::NotRegistered);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetCallbackCount(*physics, *collider) == 3);
+        NorvesLib::Modules::Physics::PhysicsCallbackHandle replacementCallback;
+        assert(collider->AddOnOverlapBegin(callback, replacementCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(replacementCallback.Index == thirdCallback.Index);
+        NorvesLib::Modules::Physics::PhysicsModuleTestAccess::PrepareOverlapBeginGenerationWrap(
+            *physics,
+            *collider,
+            secondCallback);
+        assert(collider->RemoveOnOverlapBegin(secondCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        NorvesLib::Modules::Physics::PhysicsCallbackHandle wrappedCallback;
+        assert(collider->AddOnOverlapBegin(callback, wrappedCallback) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(wrappedCallback.Index == secondCallback.Index);
+        assert(wrappedCallback.Generation == 1);
+        assert(collider->RemoveOnOverlapBegin(secondCallback) == NorvesLib::Modules::Physics::EPhysicsResult::NotRegistered);
+
+        const Math::Vector3 velocityBeforeWrongThread = body->GetLinearVelocity();
+        const float colliderRadiusBeforeWrongThread =
+            NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetColliderRadius(*physics, *collider);
+        const uint32_t callbackCountBeforeWrongThread =
+            NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetCallbackCount(*physics, *collider);
+        NorvesLib::Modules::Physics::EPhysicsResult workerResult = NorvesLib::Modules::Physics::EPhysicsResult::Success;
+        NorvesLib::Modules::Physics::EPhysicsResult workerColliderResult = NorvesLib::Modules::Physics::EPhysicsResult::Success;
+        NorvesLib::Modules::Physics::EPhysicsResult workerCallbackResult = NorvesLib::Modules::Physics::EPhysicsResult::Success;
+        NorvesLib::Modules::Physics::PhysicsCallbackHandle workerCallbackHandle = hitCallback;
+        const ColliderHandle colliderHandleBeforeWrongThreadFinalize = collider->GetColliderHandle();
+        const BodyHandle bodyHandleBeforeWrongThreadFinalize = body->GetBodyHandle();
+        Thread::Thread worker([body, collider, &workerResult, &workerColliderResult, &workerCallbackResult, &workerCallbackHandle, callback]()
+        {
+            workerResult = body->AddImpulse(Math::Vector3(5.0f, 0.0f, 0.0f));
+            workerColliderResult = collider->SetSphere(2.0f);
+            workerCallbackResult = collider->AddOnHit(callback, workerCallbackHandle);
+            collider->Finalize();
+            body->Finalize();
+        });
+        worker.Join();
+        assert(workerResult == NorvesLib::Modules::Physics::EPhysicsResult::WrongThread);
+        assert(workerColliderResult == NorvesLib::Modules::Physics::EPhysicsResult::WrongThread);
+        assert(workerCallbackResult == NorvesLib::Modules::Physics::EPhysicsResult::WrongThread);
+        assert(workerCallbackHandle == hitCallback);
+        assert(collider->GetColliderHandle() == colliderHandleBeforeWrongThreadFinalize);
+        assert(body->GetBodyHandle() == bodyHandleBeforeWrongThreadFinalize);
+        assert(body->GetLinearVelocity() == velocityBeforeWrongThread);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetColliderRadius(*physics, *collider)
+            == colliderRadiusBeforeWrongThread);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetCallbackCount(*physics, *collider)
+            == callbackCountBeforeWrongThread);
+
+        Entity* reparentParent = world.SpawnEntity<Entity>();
+        assert(reparentParent != nullptr);
+        assert(world.ReparentEntity(root, reparentParent));
+        physics->FixedTick(1.0f / 60.0f);
+        assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyHandle));
+
+        Entity* child = world.SpawnEntity<Entity>(root);
+        assert(child != nullptr);
+        auto* childBody = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(child);
+        assert(childBody != nullptr);
+        assert(childBody->SetBodyType(NorvesLib::Modules::Physics::EPhysicsBodyType::Dynamic)
+            == NorvesLib::Modules::Physics::EPhysicsResult::InvalidState);
+        assert(childBody->SetBodyType(NorvesLib::Modules::Physics::EPhysicsBodyType::Kinematic)
+            == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+
+        Entity* bodyFirstOwner = world.SpawnEntity<Entity>();
+        assert(bodyFirstOwner != nullptr);
+        auto* bodyFirst = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(bodyFirstOwner);
+        assert(bodyFirst != nullptr && bodyFirst->GetBodyHandle().IsValid());
+        const BodyHandle bodyFirstHandle = bodyFirst->GetBodyHandle();
+        physics->FixedTick(1.0f / 60.0f);
+        assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyFirstHandle));
+        auto* lateCollider = world.CreateComponent<NorvesLib::Modules::Physics::ColliderComponent>(bodyFirstOwner);
+        assert(lateCollider != nullptr && lateCollider->SetSphere(1.0f)
+            == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        physics->FixedTick(1.0f / 60.0f);
+        assert(lateCollider->GetColliderHandle().IsValid());
+        assert(bodyFirst->GetBodyHandle() == bodyFirstHandle);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyFirstHandle));
+        bodyFirstOwner->RemoveComponent(lateCollider);
+        physics->FixedTick(1.0f / 60.0f);
+        assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyFirstHandle));
+
+        root->RemoveComponent(collider);
+        assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsColliderAlive(*physics, firstHandle));
+        physics->FixedTick(1.0f / 60.0f);
+        assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyHandle));
+
+        Entity* reuseOwner = world.SpawnEntity<Entity>();
+        assert(reuseOwner != nullptr);
+        auto* wrappingCollider = world.CreateComponent<NorvesLib::Modules::Physics::ColliderComponent>(reuseOwner);
+        assert(wrappingCollider != nullptr);
+        NorvesLib::Modules::Physics::PhysicsModuleTestAccess::PrepareColliderGenerationWrap(*physics, *wrappingCollider);
+        const ColliderHandle wrappingHandle = wrappingCollider->GetColliderHandle();
+        reuseOwner->RemoveComponent(wrappingCollider);
+        auto* reusedCollider = world.CreateComponent<NorvesLib::Modules::Physics::ColliderComponent>(reuseOwner);
+        assert(reusedCollider != nullptr);
+        assert(reusedCollider->GetColliderHandle().Index == wrappingHandle.Index);
+        assert(reusedCollider->GetColliderHandle().Generation == 1);
+        assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsColliderAlive(*physics, wrappingHandle));
+
+        Entity* bodyLifoOwnerA = world.SpawnEntity<Entity>();
+        Entity* bodyLifoOwnerB = world.SpawnEntity<Entity>();
+        Entity* bodyLifoOwnerC = world.SpawnEntity<Entity>();
+        assert(bodyLifoOwnerA != nullptr && bodyLifoOwnerB != nullptr && bodyLifoOwnerC != nullptr);
+        auto* bodyLifoA = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(bodyLifoOwnerA);
+        auto* bodyLifoB = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(bodyLifoOwnerB);
+        assert(bodyLifoA != nullptr && bodyLifoB != nullptr);
+        const BodyHandle bodyLifoAHandle = bodyLifoA->GetBodyHandle();
+        const BodyHandle bodyLifoBHandle = bodyLifoB->GetBodyHandle();
+        bodyLifoOwnerA->RemoveComponent(bodyLifoA);
+        bodyLifoOwnerB->RemoveComponent(bodyLifoB);
+        auto* bodyLifoC = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(bodyLifoOwnerC);
+        assert(bodyLifoC != nullptr);
+        assert(bodyLifoC->GetBodyHandle().Index == bodyLifoBHandle.Index);
+        assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyAlive(*physics, bodyLifoAHandle));
+        assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyAlive(*physics, bodyLifoBHandle));
+        NorvesLib::Modules::Physics::PhysicsModuleTestAccess::PrepareBodyGenerationWrap(*physics, *bodyLifoC);
+        const BodyHandle wrappingBodyHandle = bodyLifoC->GetBodyHandle();
+        bodyLifoOwnerC->RemoveComponent(bodyLifoC);
+        auto* reusedBody = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(bodyLifoOwnerC);
+        assert(reusedBody != nullptr);
+        assert(reusedBody->GetBodyHandle().Index == wrappingBodyHandle.Index);
+        assert(reusedBody->GetBodyHandle().Generation == 1);
+        assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyAlive(*physics, wrappingBodyHandle));
+
+        world.Finalize();
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetActiveColliderCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetRegisteredColliderCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetRegisteredBodyCount(*physics) == 0);
+        registry.ShutdownAll(engine);
+        assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetLifecycleStateCount(*physics) == 0);
+        assert(NorvesLib::Modules::Physics::ColliderComponent::StaticClass() == colliderClass);
+        assert(NorvesLib::Modules::Physics::RigidBodyComponent::StaticClass() == bodyClass);
+        assert(ClassRegistry::Get().FindClass(colliderClass->GetClassId()) == colliderClass);
+        assert(ClassRegistry::Get().FindClass(bodyClass->GetClassId()) == bodyClass);
+        std::cout << "[PASS] Phase 3 Entity Inner ownership, slots, callbacks, thread guard and reflection\n";
+    }
 } // namespace
 
 int main()
@@ -472,6 +907,8 @@ int main()
     TestWrongThreadTeardownPreservesReadyBinding();
     TestStrictGamePhysicsContractRejectsMutations();
     TestGamePhysicsRegistrationSourceContract();
+    TestPhaseThreeUnregisteredComponentsRemainInvalid();
+    TestPhaseThreeComponentOwnershipAndSlots();
     std::cout << "PhysicsModuleLinkTest passed\n";
     return 0;
 }

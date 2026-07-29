@@ -1,11 +1,16 @@
 set(MODULE_NAME NorvesModule_Physics)
 
 set(PRIVATE_SOURCES
+    Private/Physics/ColliderComponent.cpp
     Private/Physics/PhysicsModule.cpp
+    Private/Physics/RigidBodyComponent.cpp
 )
 
 set(PUBLIC_HEADERS
+    Public/Physics/ColliderComponent.h
     Public/Physics/IPhysicsModule.h
+    Public/Physics/PhysicsTypes.h
+    Public/Physics/RigidBodyComponent.h
 )
 
 add_library(${MODULE_NAME} STATIC ${PRIVATE_SOURCES} ${PUBLIC_HEADERS})

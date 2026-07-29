@@ -1,7 +1,11 @@
 ﻿#include "Physics/PhysicsModule.h"
 
+#include "Physics/ColliderComponent.h"
+#include "Physics/RigidBodyComponent.h"
 #include "CoreTypes.h"
 #include "Engine/Engine.h"
+
+#include <cmath>
 
 namespace NorvesLib::Modules::Physics
 {
@@ -74,6 +78,7 @@ namespace NorvesLib::Modules::Physics
             return;
         }
 
+        ReconcileActiveStates();
         m_bHasPublishedSnapshot = true;
     }
 
@@ -182,6 +187,432 @@ namespace NorvesLib::Modules::Physics
     {
         outAlive = false;
         return GetReadinessResult();
+    }
+
+    EPhysicsResult PhysicsModule::RegisterCollider(ColliderComponent& component)
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsResult::WrongThread;
+        }
+        if (component.m_ColliderHandle.IsValid())
+        {
+            return ValidateCollider(component);
+        }
+
+        Core::Entity* owner = component.GetOwner();
+        if (!owner)
+        {
+            return EPhysicsResult::InvalidState;
+        }
+        for (const ColliderSlot& slot : m_ColliderSlots)
+        {
+            if (slot.bOccupied && slot.Owner == owner)
+            {
+                m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
+                ++m_DuplicateDiagnosticCount;
+                return EPhysicsResult::Duplicate;
+            }
+        }
+
+        uint32_t index = 0;
+        if (!m_FreeColliderSlotIndices.empty())
+        {
+            index = m_FreeColliderSlotIndices.back();
+            m_FreeColliderSlotIndices.pop_back();
+        }
+        else
+        {
+            index = static_cast<uint32_t>(m_ColliderSlots.size());
+            m_ColliderSlots.emplace_back();
+        }
+
+        ColliderSlot& slot = m_ColliderSlots[index];
+        slot.Component = &component;
+        slot.Owner = owner;
+        slot.bOccupied = true;
+        slot.bActive = false;
+        component.m_ColliderHandle = Core::Scene::ColliderHandle{index, slot.Generation};
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::RegisterRigidBody(RigidBodyComponent& component)
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsResult::WrongThread;
+        }
+        if (component.m_BodyHandle.IsValid())
+        {
+            return ValidateRigidBody(component);
+        }
+
+        Core::Entity* owner = component.GetOwner();
+        if (!owner)
+        {
+            return EPhysicsResult::InvalidState;
+        }
+        for (const BodySlot& slot : m_BodySlots)
+        {
+            if (slot.bOccupied && slot.Owner == owner)
+            {
+                m_LastDiagnostic = EPhysicsDiagnostic::Duplicate;
+                ++m_DuplicateDiagnosticCount;
+                return EPhysicsResult::Duplicate;
+            }
+        }
+
+        uint32_t index = 0;
+        if (!m_FreeBodySlotIndices.empty())
+        {
+            index = m_FreeBodySlotIndices.back();
+            m_FreeBodySlotIndices.pop_back();
+        }
+        else
+        {
+            index = static_cast<uint32_t>(m_BodySlots.size());
+            m_BodySlots.emplace_back();
+        }
+
+        BodySlot& slot = m_BodySlots[index];
+        slot.Component = &component;
+        slot.Owner = owner;
+        slot.bOccupied = true;
+        slot.bActive = false;
+        component.m_BodyHandle = Core::Scene::BodyHandle{index, slot.Generation};
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::UnregisterCollider(ColliderComponent& component)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+
+        ReleaseColliderSlot(component.m_ColliderHandle.Index);
+        component.m_ColliderHandle = Core::Scene::ColliderHandle{};
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::UnregisterRigidBody(RigidBodyComponent& component)
+    {
+        const EPhysicsResult result = ValidateRigidBody(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+
+        ReleaseBodySlot(component.m_BodyHandle.Index);
+        component.m_BodyHandle = Core::Scene::BodyHandle{};
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderSphere(ColliderComponent& component, float radius)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (!std::isfinite(radius) || radius <= 0.0f)
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.m_Radius = radius;
+        component.m_Shape = ColliderComponent::EColliderShape::Sphere;
+        component.m_bHasShape = true;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderBox(ColliderComponent& component, const Math::Vector3& halfExtents)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (!std::isfinite(halfExtents.x) || !std::isfinite(halfExtents.y) || !std::isfinite(halfExtents.z)
+            || halfExtents.x <= 0.0f || halfExtents.y <= 0.0f || halfExtents.z <= 0.0f)
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.m_HalfExtents = halfExtents;
+        component.m_Shape = ColliderComponent::EColliderShape::Box;
+        component.m_bHasShape = true;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderCapsule(ColliderComponent& component, float radius, float halfHeight)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (!std::isfinite(radius) || !std::isfinite(halfHeight) || radius <= 0.0f || halfHeight < 0.0f)
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.m_Radius = radius;
+        component.m_CapsuleHalfHeight = halfHeight;
+        component.m_Shape = ColliderComponent::EColliderShape::Capsule;
+        component.m_bHasShape = true;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderTrigger(ColliderComponent& component, bool bTrigger)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+
+        component.m_bTrigger = bTrigger;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetBodyType(RigidBodyComponent& component, EPhysicsBodyType bodyType)
+    {
+        const EPhysicsResult result = ValidateRigidBody(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (bodyType != EPhysicsBodyType::Static && bodyType != EPhysicsBodyType::Dynamic
+            && bodyType != EPhysicsBodyType::Kinematic)
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+        if (bodyType == EPhysicsBodyType::Dynamic && component.GetOwner()->GetParentEntity() != nullptr)
+        {
+            return EPhysicsResult::InvalidState;
+        }
+
+        component.m_BodyType = bodyType;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetBodyMass(RigidBodyComponent& component, float mass)
+    {
+        const EPhysicsResult result = ValidateRigidBody(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (!std::isfinite(mass) || mass <= 0.0f)
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.m_Mass = mass;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetBodyGravityScale(RigidBodyComponent& component, float gravityScale)
+    {
+        const EPhysicsResult result = ValidateRigidBody(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (!std::isfinite(gravityScale))
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.m_GravityScale = gravityScale;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetBodyLinearVelocity(
+        RigidBodyComponent& component,
+        const Math::Vector3& velocity)
+    {
+        const EPhysicsResult result = ValidateRigidBody(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (!std::isfinite(velocity.x) || !std::isfinite(velocity.y) || !std::isfinite(velocity.z))
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.m_LinearVelocity = velocity;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::AddBodyImpulse(RigidBodyComponent& component, const Math::Vector3& impulse)
+    {
+        const EPhysicsResult result = ValidateRigidBody(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        if (!std::isfinite(impulse.x) || !std::isfinite(impulse.y) || !std::isfinite(impulse.z))
+        {
+            return EPhysicsResult::InvalidArgument;
+        }
+
+        component.m_LinearVelocity += impulse;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::ValidateCollider(const ColliderComponent& component) const
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsResult::WrongThread;
+        }
+        const Core::Scene::ColliderHandle handle = component.m_ColliderHandle;
+        if (!handle.IsValid() || handle.Index >= m_ColliderSlots.size())
+        {
+            return EPhysicsResult::NotRegistered;
+        }
+
+        const ColliderSlot& slot = m_ColliderSlots[handle.Index];
+        return slot.bOccupied && slot.Generation == handle.Generation && slot.Component == &component
+            ? EPhysicsResult::Success
+            : EPhysicsResult::NotRegistered;
+    }
+
+    EPhysicsResult PhysicsModule::ValidateRigidBody(const RigidBodyComponent& component) const
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsResult::WrongThread;
+        }
+        const Core::Scene::BodyHandle handle = component.m_BodyHandle;
+        if (!handle.IsValid() || handle.Index >= m_BodySlots.size())
+        {
+            return EPhysicsResult::NotRegistered;
+        }
+
+        const BodySlot& slot = m_BodySlots[handle.Index];
+        return slot.bOccupied && slot.Generation == handle.Generation && slot.Component == &component
+            ? EPhysicsResult::Success
+            : EPhysicsResult::NotRegistered;
+    }
+
+    uint32_t PhysicsModule::GetCallbackCount(const ColliderComponent& component) const
+    {
+        uint32_t count = 0;
+        for (const ColliderComponent::CallbackSlot& slot : component.m_OverlapBeginCallbacks)
+        {
+            count += slot.bOccupied ? 1u : 0u;
+        }
+        for (const ColliderComponent::CallbackSlot& slot : component.m_OverlapEndCallbacks)
+        {
+            count += slot.bOccupied ? 1u : 0u;
+        }
+        for (const ColliderComponent::CallbackSlot& slot : component.m_HitCallbacks)
+        {
+            count += slot.bOccupied ? 1u : 0u;
+        }
+        return count;
+    }
+
+    EPhysicsResult PhysicsModule::GetColliderRegistrationResult(const ColliderComponent& component) const
+    {
+        return component.m_LastRegistrationResult;
+    }
+
+    float PhysicsModule::GetColliderRadius(const ColliderComponent& component) const
+    {
+        return component.m_Radius;
+    }
+
+    void PhysicsModule::PrepareColliderGenerationWrap(ColliderComponent& component)
+    {
+        ColliderSlot& slot = m_ColliderSlots[component.m_ColliderHandle.Index];
+        slot.Generation = UINT32_MAX;
+        component.m_ColliderHandle.Generation = UINT32_MAX;
+    }
+
+    void PhysicsModule::PrepareBodyGenerationWrap(RigidBodyComponent& component)
+    {
+        BodySlot& slot = m_BodySlots[component.m_BodyHandle.Index];
+        slot.Generation = UINT32_MAX;
+        component.m_BodyHandle.Generation = UINT32_MAX;
+    }
+
+    void PhysicsModule::PrepareOverlapBeginGenerationWrap(
+        ColliderComponent& component,
+        PhysicsCallbackHandle& handle)
+    {
+        ColliderComponent::CallbackSlot& slot = component.m_OverlapBeginCallbacks[handle.Index];
+        slot.Generation = UINT32_MAX;
+        handle.Generation = UINT32_MAX;
+    }
+
+    void PhysicsModule::ReconcileActiveStates()
+    {
+        for (ColliderSlot& collider : m_ColliderSlots)
+        {
+            if (collider.bOccupied)
+            {
+                collider.bActive = collider.Component->m_bHasShape;
+            }
+        }
+
+        for (BodySlot& body : m_BodySlots)
+        {
+            if (!body.bOccupied)
+            {
+                continue;
+            }
+
+            body.bActive = false;
+            if (body.Component->m_BodyType == EPhysicsBodyType::Dynamic
+                && body.Owner->GetParentEntity() != nullptr)
+            {
+                continue;
+            }
+            for (const ColliderSlot& collider : m_ColliderSlots)
+            {
+                if (collider.bOccupied && collider.Owner == body.Owner && collider.bActive)
+                {
+                    body.bActive = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    void PhysicsModule::ReleaseColliderSlot(uint32_t index)
+    {
+        ColliderSlot& slot = m_ColliderSlots[index];
+        slot.Component = nullptr;
+        slot.Owner = nullptr;
+        slot.bOccupied = false;
+        slot.bActive = false;
+        ++slot.Generation;
+        if (slot.Generation == 0)
+        {
+            slot.Generation = 1;
+        }
+        m_FreeColliderSlotIndices.push_back(index);
+    }
+
+    void PhysicsModule::ReleaseBodySlot(uint32_t index)
+    {
+        BodySlot& slot = m_BodySlots[index];
+        slot.Component = nullptr;
+        slot.Owner = nullptr;
+        slot.bOccupied = false;
+        slot.bActive = false;
+        ++slot.Generation;
+        if (slot.Generation == 0)
+        {
+            slot.Generation = 1;
+        }
+        m_FreeBodySlotIndices.push_back(index);
     }
 
     bool PhysicsModule::IsOwnerThread() const

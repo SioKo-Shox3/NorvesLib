@@ -49,6 +49,7 @@ add_executable(PhysicsModuleLinkTest
 target_link_libraries(PhysicsModuleLinkTest PRIVATE Core NorvesModule_Physics)
 target_include_directories(PhysicsModuleLinkTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
 )
 target_compile_definitions(PhysicsModuleLinkTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
