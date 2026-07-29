@@ -58,3 +58,14 @@ set_target_properties(PhysicsModuleLinkTest PROPERTIES FOLDER "Test/Modules/Phys
 
 include(CTest)
 add_test(NAME PhysicsModuleLinkTest COMMAND PhysicsModuleLinkTest)
+
+add_executable(PhysicsBroadphaseQueryTest
+    PhysicsBroadphaseQueryTest.cpp
+)
+target_link_libraries(PhysicsBroadphaseQueryTest PRIVATE Core NorvesModule_Physics)
+target_include_directories(PhysicsBroadphaseQueryTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
+)
+set_target_properties(PhysicsBroadphaseQueryTest PROPERTIES FOLDER "Test/Modules/Physics")
+add_test(NAME PhysicsBroadphaseQueryTest COMMAND PhysicsBroadphaseQueryTest)

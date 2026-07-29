@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Physics/IPhysicsModule.h"
+#include "Physics/PhysicsBroadphase.h"
 #include "Physics/PhysicsTypes.h"
 #include "Container/Containers.h"
 #include "Scene/SceneQuery.h"
@@ -80,6 +81,8 @@ namespace NorvesLib::Modules::Physics
         void PrepareBodyGenerationWrap(RigidBodyComponent& component);
         void PrepareOverlapBeginGenerationWrap(ColliderComponent& component, PhysicsCallbackHandle& handle);
         void ReconcileActiveStates();
+        void PublishSnapshot();
+        Core::Scene::BodyHandle FindBodyHandle(const Core::Entity& owner) const;
         void ReleaseColliderSlot(uint32_t index);
         void ReleaseBodySlot(uint32_t index);
 
@@ -115,5 +118,6 @@ namespace NorvesLib::Modules::Physics
         uint32_t m_DuplicateDiagnosticCount = 0;
         uint32_t m_DispatchedEventCount = 0;
         uint32_t m_PendingEventCount = 0;
+        PhysicsBroadphase m_PublishedBroadphase;
     };
 } // namespace NorvesLib::Modules::Physics

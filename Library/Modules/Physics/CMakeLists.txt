@@ -2,6 +2,7 @@ set(MODULE_NAME NorvesModule_Physics)
 
 set(PRIVATE_SOURCES
     Private/Physics/ColliderComponent.cpp
+    Private/Physics/PhysicsBroadphase.cpp
     Private/Physics/PhysicsModule.cpp
     Private/Physics/RigidBodyComponent.cpp
 )
