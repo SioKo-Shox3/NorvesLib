@@ -27,6 +27,7 @@ target_link_libraries(${MODULE_NAME}
         # その自由関数を含む別 static lib をリンク引込する(PUBLIC include で
         # DummyModule/*.h も解決)。フラグ無しでは登録されず seam は no-op。
         NorvesModule_Dummy
+        NorvesModule_Physics
         # Memory # Core に統合されました
         # Random # Core に統合されました
         # FileStream # Core に統合されました
