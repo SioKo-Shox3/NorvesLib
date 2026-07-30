@@ -402,6 +402,61 @@ namespace NorvesLib::Modules::Physics
         return Math::AABB::FromCenterExtents(proxy.Box.Center, extents);
     }
 
+    bool PhysicsBroadphase::ComputeContact(
+        const PhysicsShapeProxy& first,
+        const PhysicsShapeProxy& second,
+        Math::GeometryContact& outContact)
+    {
+        if (first.Shape == EPhysicsProxyShape::Sphere)
+        {
+            if (second.Shape == EPhysicsProxyShape::Sphere)
+            {
+                return Math::ComputeContact(first.Sphere, second.Sphere, outContact);
+            }
+            if (second.Shape == EPhysicsProxyShape::Box)
+            {
+                return Math::ComputeContact(first.Sphere, second.Box, outContact);
+            }
+            if (!Math::ComputeContact(second.Capsule, first.Sphere, outContact))
+            {
+                return false;
+            }
+            ReverseContact(outContact);
+            return true;
+        }
+        if (first.Shape == EPhysicsProxyShape::Box)
+        {
+            if (second.Shape == EPhysicsProxyShape::Sphere)
+            {
+                if (!Math::ComputeContact(second.Sphere, first.Box, outContact))
+                {
+                    return false;
+                }
+                ReverseContact(outContact);
+                return true;
+            }
+            if (second.Shape == EPhysicsProxyShape::Box)
+            {
+                return Math::ComputeContact(first.Box, second.Box, outContact);
+            }
+            if (!Math::ComputeContact(second.Capsule, first.Box, outContact))
+            {
+                return false;
+            }
+            ReverseContact(outContact);
+            return true;
+        }
+        if (second.Shape == EPhysicsProxyShape::Sphere)
+        {
+            return Math::ComputeContact(first.Capsule, second.Sphere, outContact);
+        }
+        if (second.Shape == EPhysicsProxyShape::Box)
+        {
+            return Math::ComputeContact(first.Capsule, second.Box, outContact);
+        }
+        return Math::ComputeContact(first.Capsule, second.Capsule, outContact);
+    }
+
     void PhysicsBroadphase::BuildCandidatePairs()
     {
         Core::Container::VariableArray<SweepEndpoint> endpoints;

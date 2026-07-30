@@ -52,6 +52,10 @@ namespace NorvesLib::Modules::Physics
             Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const;
 
         static Math::AABB CalculateBounds(const PhysicsShapeProxy& proxy);
+        static bool ComputeContact(
+            const PhysicsShapeProxy& first,
+            const PhysicsShapeProxy& second,
+            Math::GeometryContact& outContact);
 
     private:
         void BuildCandidatePairs();

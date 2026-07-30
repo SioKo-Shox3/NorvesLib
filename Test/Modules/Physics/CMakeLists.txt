@@ -69,3 +69,25 @@ target_include_directories(PhysicsBroadphaseQueryTest PRIVATE
 )
 set_target_properties(PhysicsBroadphaseQueryTest PROPERTIES FOLDER "Test/Modules/Physics")
 add_test(NAME PhysicsBroadphaseQueryTest COMMAND PhysicsBroadphaseQueryTest)
+
+add_executable(PhysicsDynamicsTest
+    PhysicsDynamicsTest.cpp
+)
+target_link_libraries(PhysicsDynamicsTest PRIVATE Core NorvesModule_Physics)
+target_include_directories(PhysicsDynamicsTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
+)
+set_target_properties(PhysicsDynamicsTest PROPERTIES FOLDER "Test/Modules/Physics")
+add_test(NAME PhysicsDynamicsTest COMMAND PhysicsDynamicsTest)
+
+add_executable(PhysicsLifecycleEventTest
+    PhysicsLifecycleEventTest.cpp
+)
+target_link_libraries(PhysicsLifecycleEventTest PRIVATE Core NorvesModule_Physics)
+target_include_directories(PhysicsLifecycleEventTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
+)
+set_target_properties(PhysicsLifecycleEventTest PROPERTIES FOLDER "Test/Modules/Physics")
+add_test(NAME PhysicsLifecycleEventTest COMMAND PhysicsLifecycleEventTest)

@@ -128,8 +128,8 @@ namespace NorvesLib::Modules::Physics
             return false;
         }
 
+        ResetTransientState();
         m_bInitialized = true;
-        m_bHasPublishedSnapshot = false;
         return true;
     }
 
@@ -137,20 +137,39 @@ namespace NorvesLib::Modules::Physics
     {
     }
 
-    void PhysicsModule::PreFixedTick(float /*fixedDeltaTime*/)
+    void PhysicsModule::PreFixedTick(float fixedDeltaTime)
     {
+        if (!IsOwnerThread() || !m_bInitialized || !std::isfinite(fixedDeltaTime) || fixedDeltaTime <= 0.0f)
+        {
+            return;
+        }
+
+        for (BodySlot& body : m_BodySlots)
+        {
+            body.bHadPreStepSnapshot = false;
+            if (body.bOccupied && body.bActive && body.Owner != nullptr)
+            {
+                body.PreStepPosition = GetFreshWorldTransform(*body.Owner).position;
+                body.bHadPreStepSnapshot = true;
+            }
+        }
     }
 
-    void PhysicsModule::FixedTick(float /*fixedDeltaTime*/)
+    void PhysicsModule::FixedTick(float fixedDeltaTime)
     {
-        if (!IsOwnerThread() || !m_bInitialized)
+        if (!IsOwnerThread() || !m_bInitialized || !std::isfinite(fixedDeltaTime) || fixedDeltaTime <= 0.0f)
         {
             return;
         }
 
         ReconcileActiveStates();
+        IntegrateDynamics(fixedDeltaTime);
+        BuildBroadphase(m_WorkingBroadphase);
+        ResolveContacts(fixedDeltaTime);
+        BuildEventQueue();
         PublishSnapshot();
         m_bHasPublishedSnapshot = true;
+        DispatchEvents();
     }
 
     void PhysicsModule::Shutdown()
@@ -160,8 +179,8 @@ namespace NorvesLib::Modules::Physics
             return;
         }
 
+        ResetTransientState();
         m_bInitialized = false;
-        m_bHasPublishedSnapshot = false;
     }
 
     void PhysicsModule::Uninstall(Core::Engine::Engine& engine)
@@ -174,8 +193,8 @@ namespace NorvesLib::Modules::Physics
         if (!m_bBound)
         {
             m_Engine = nullptr;
+            ResetTransientState();
             m_bInitialized = false;
-            m_bHasPublishedSnapshot = false;
             return;
         }
 
@@ -195,8 +214,8 @@ namespace NorvesLib::Modules::Physics
         // Unavailable は provider が既に存在しないため dangling binding はない。
         m_Engine = nullptr;
         m_bBound = false;
+        ResetTransientState();
         m_bInitialized = false;
-        m_bHasPublishedSnapshot = false;
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::Raycast(
@@ -515,6 +534,13 @@ namespace NorvesLib::Modules::Physics
         }
 
         component.m_BodyType = bodyType;
+        if (bodyType != EPhysicsBodyType::Dynamic)
+        {
+            if (BodySlot* body = FindBodySlot(component.m_BodyHandle))
+            {
+                body->PendingImpulse = Math::Vector3();
+            }
+        }
         return EPhysicsResult::Success;
     }
 
@@ -580,7 +606,18 @@ namespace NorvesLib::Modules::Physics
             return EPhysicsResult::InvalidArgument;
         }
 
-        component.m_LinearVelocity += impulse;
+        BodySlot* body = FindBodySlot(component.m_BodyHandle);
+        if (!body)
+        {
+            return EPhysicsResult::NotRegistered;
+        }
+
+        if (component.m_BodyType != EPhysicsBodyType::Dynamic)
+        {
+            return EPhysicsResult::InvalidState;
+        }
+
+        body->PendingImpulse += impulse;
         return EPhysicsResult::Success;
     }
 
@@ -681,8 +718,8 @@ namespace NorvesLib::Modules::Physics
                     && collider.Component->IsActive()
                     && collider.Owner->IsActive()
                     && !collider.Component->HasFlag(Core::OF_PendingDestroy)
-                    && !collider.Owner->HasFlag(Core::OF_PendingDestroy)
-                    && IsFiniteTransform(collider.Owner->GetWorldTransform());
+                    && !collider.Owner->IsPendingDestroy()
+                    && IsFiniteTransform(GetFreshWorldTransform(*collider.Owner));
             }
         }
 
@@ -710,7 +747,289 @@ namespace NorvesLib::Modules::Physics
         }
     }
 
+    void PhysicsModule::IntegrateDynamics(float fixedDeltaTime)
+    {
+        const Math::Vector3 gravity(0.0f, -9.81f, 0.0f);
+        for (BodySlot& body : m_BodySlots)
+        {
+            if (!body.bOccupied)
+            {
+                continue;
+            }
+
+            if (!body.bActive)
+            {
+                body.PendingImpulse = Math::Vector3();
+                body.bHadPreStepSnapshot = false;
+                continue;
+            }
+
+            if (body.Component->m_BodyType == EPhysicsBodyType::Kinematic)
+            {
+                if (body.bHadPreStepSnapshot)
+                {
+                    body.Component->m_LinearVelocity =
+                        (GetFreshWorldTransform(*body.Owner).position - body.PreStepPosition) / fixedDeltaTime;
+                }
+                else
+                {
+                    body.Component->m_LinearVelocity = Math::Vector3();
+                }
+                body.PendingImpulse = Math::Vector3();
+                body.bHadPreStepSnapshot = false;
+                continue;
+            }
+
+            if (body.Component->m_BodyType != EPhysicsBodyType::Dynamic)
+            {
+                body.PendingImpulse = Math::Vector3();
+                body.bHadPreStepSnapshot = false;
+                continue;
+            }
+
+            body.Component->m_LinearVelocity += body.PendingImpulse / body.Component->m_Mass;
+            body.PendingImpulse = Math::Vector3();
+            body.bHadPreStepSnapshot = false;
+            body.Component->m_LinearVelocity += gravity * (body.Component->m_GravityScale * fixedDeltaTime);
+            MoveDynamicBody(body, body.Component->m_LinearVelocity * fixedDeltaTime);
+        }
+    }
+
+    void PhysicsModule::ResolveContacts(float /*fixedDeltaTime*/)
+    {
+        m_CurrentTriggerPairs.clear();
+        const Core::Container::VariableArray<PhysicsShapeProxy>& proxies = m_WorkingBroadphase.GetProxies();
+        for (const PhysicsCandidatePair& candidate : m_WorkingBroadphase.GetCandidatePairs())
+        {
+            const PhysicsShapeProxy* firstProxy = nullptr;
+            const PhysicsShapeProxy* secondProxy = nullptr;
+            for (const PhysicsShapeProxy& proxy : proxies)
+            {
+                if (proxy.Collider == candidate.First)
+                {
+                    firstProxy = &proxy;
+                }
+                else if (proxy.Collider == candidate.Second)
+                {
+                    secondProxy = &proxy;
+                }
+            }
+            if (!firstProxy || !secondProxy)
+            {
+                continue;
+            }
+
+            Math::GeometryContact contact;
+            if (!PhysicsBroadphase::ComputeContact(*firstProxy, *secondProxy, contact))
+            {
+                continue;
+            }
+
+            ColliderSlot* firstCollider = FindColliderSlot(candidate.First);
+            ColliderSlot* secondCollider = FindColliderSlot(candidate.Second);
+            if (!firstCollider || !secondCollider)
+            {
+                continue;
+            }
+            if (firstCollider->Component->m_bTrigger || secondCollider->Component->m_bTrigger)
+            {
+                m_CurrentTriggerPairs.push_back(TriggerPairState{candidate.First, candidate.Second, contact});
+                continue;
+            }
+
+            BodySlot* firstBody = FindBodySlot(firstProxy->Body);
+            BodySlot* secondBody = FindBodySlot(secondProxy->Body);
+            const bool bFirstDynamic = firstBody && firstBody->bActive
+                && firstBody->Component->m_BodyType == EPhysicsBodyType::Dynamic;
+            const bool bSecondDynamic = secondBody && secondBody->bActive
+                && secondBody->Component->m_BodyType == EPhysicsBodyType::Dynamic;
+            const bool bFirstKinematic = firstBody && firstBody->bActive
+                && firstBody->Component->m_BodyType == EPhysicsBodyType::Kinematic;
+            const bool bSecondKinematic = secondBody && secondBody->bActive
+                && secondBody->Component->m_BodyType == EPhysicsBodyType::Kinematic;
+            const float firstInverseMass = bFirstDynamic ? 1.0f / firstBody->Component->m_Mass : 0.0f;
+            const float secondInverseMass = bSecondDynamic ? 1.0f / secondBody->Component->m_Mass : 0.0f;
+            const float inverseMassSum = firstInverseMass + secondInverseMass;
+            if (inverseMassSum <= 0.0f)
+            {
+                continue;
+            }
+
+            const Math::Vector3 firstVelocity = (bFirstDynamic || bFirstKinematic)
+                ? firstBody->Component->m_LinearVelocity
+                : Math::Vector3();
+            const Math::Vector3 secondVelocity = (bSecondDynamic || bSecondKinematic)
+                ? secondBody->Component->m_LinearVelocity
+                : Math::Vector3();
+            const float normalVelocity = Math::VectorUtils::Dot(secondVelocity - firstVelocity, contact.Normal);
+            float normalImpulse = 0.0f;
+            if (normalVelocity < 0.0f)
+            {
+                normalImpulse = -normalVelocity / inverseMassSum;
+                if (bFirstDynamic)
+                {
+                    firstBody->Component->m_LinearVelocity -= contact.Normal * (normalImpulse * firstInverseMass);
+                }
+                if (bSecondDynamic)
+                {
+                    secondBody->Component->m_LinearVelocity += contact.Normal * (normalImpulse * secondInverseMass);
+                }
+            }
+
+            if (contact.Depth > 0.0f)
+            {
+                const Math::Vector3 correction = contact.Normal * (contact.Depth / inverseMassSum);
+                if (bFirstDynamic)
+                {
+                    MoveDynamicBody(*firstBody, correction * -firstInverseMass);
+                }
+                if (bSecondDynamic)
+                {
+                    MoveDynamicBody(*secondBody, correction * secondInverseMass);
+                }
+            }
+            if (normalImpulse > 0.0f)
+            {
+                m_PendingEvents.push_back(PendingPhysicsEvent{
+                    EPhysicsEventType::Hit,
+                    candidate.First,
+                    candidate.Second,
+                    contact,
+                    normalImpulse});
+            }
+        }
+    }
+
+    void PhysicsModule::BuildEventQueue()
+    {
+        for (const TriggerPairState& current : m_CurrentTriggerPairs)
+        {
+            bool bWasPresent = false;
+            for (const TriggerPairState& previous : m_PreviousTriggerPairs)
+            {
+                if (previous.First == current.First && previous.Second == current.Second)
+                {
+                    bWasPresent = true;
+                    break;
+                }
+            }
+            if (!bWasPresent)
+            {
+                m_PendingEvents.push_back(PendingPhysicsEvent{
+                    EPhysicsEventType::OverlapBegin,
+                    current.First,
+                    current.Second,
+                    current.Contact,
+                    0.0f});
+            }
+        }
+        for (const TriggerPairState& previous : m_PreviousTriggerPairs)
+        {
+            bool bIsPresent = false;
+            for (const TriggerPairState& current : m_CurrentTriggerPairs)
+            {
+                if (current.First == previous.First && current.Second == previous.Second)
+                {
+                    bIsPresent = true;
+                    break;
+                }
+            }
+            if (!bIsPresent)
+            {
+                Math::GeometryContact contact = previous.Contact;
+                contact.Depth = 0.0f;
+                m_PendingEvents.push_back(PendingPhysicsEvent{
+                    EPhysicsEventType::OverlapEnd,
+                    previous.First,
+                    previous.Second,
+                    contact,
+                    0.0f});
+            }
+        }
+        m_PreviousTriggerPairs = m_CurrentTriggerPairs;
+        m_PendingEventCount = static_cast<uint32_t>(m_PendingEvents.size());
+    }
+
+    void PhysicsModule::DispatchEvents()
+    {
+        for (const PendingPhysicsEvent& pending : m_PendingEvents)
+        {
+            for (uint32_t receiverIndex = 0; receiverIndex < 2; ++receiverIndex)
+            {
+                const Core::Scene::ColliderHandle selfHandle = receiverIndex == 0 ? pending.First : pending.Second;
+                const Core::Scene::ColliderHandle otherHandle = receiverIndex == 0 ? pending.Second : pending.First;
+                ColliderSlot* self = FindColliderSlot(selfHandle);
+                ColliderSlot* other = FindColliderSlot(otherHandle);
+                if (!self || !self->bActive || self->Owner->IsPendingDestroy())
+                {
+                    continue;
+                }
+                if (pending.Type != EPhysicsEventType::OverlapEnd
+                    && (!other || !other->bActive || other->Owner->IsPendingDestroy()))
+                {
+                    continue;
+                }
+
+                const Core::Container::VariableArray<ColliderComponent::CallbackSlot>* callbacks = nullptr;
+                if (pending.Type == EPhysicsEventType::OverlapBegin)
+                {
+                    callbacks = &self->Component->m_OverlapBeginCallbacks;
+                }
+                else if (pending.Type == EPhysicsEventType::OverlapEnd)
+                {
+                    callbacks = &self->Component->m_OverlapEndCallbacks;
+                }
+                else
+                {
+                    callbacks = &self->Component->m_HitCallbacks;
+                }
+
+                Core::Container::VariableArray<Core::Delegate<void, const PhysicsContactEvent&>> snapshot;
+                for (const ColliderComponent::CallbackSlot& callback : *callbacks)
+                {
+                    if (callback.bOccupied && callback.Callback.IsBound())
+                    {
+                        snapshot.push_back(callback.Callback);
+                    }
+                }
+
+                PhysicsContactEvent event;
+                event.Self = selfHandle;
+                event.Other = otherHandle;
+                event.Contact = pending.Contact;
+                event.NormalImpulse = pending.NormalImpulse;
+                if (receiverIndex != 0)
+                {
+                    event.Contact.Normal *= -1.0f;
+                }
+                for (const Core::Delegate<void, const PhysicsContactEvent>& callback : snapshot)
+                {
+                    self = FindColliderSlot(selfHandle);
+                    other = FindColliderSlot(otherHandle);
+                    if (!self || !self->bActive || self->Owner->IsPendingDestroy())
+                    {
+                        break;
+                    }
+                    if (pending.Type != EPhysicsEventType::OverlapEnd
+                        && (!other || !other->bActive || other->Owner->IsPendingDestroy()))
+                    {
+                        break;
+                    }
+                    callback(event);
+                    ++m_DispatchedEventCount;
+                }
+            }
+        }
+        m_PendingEvents.clear();
+        m_PendingEventCount = 0;
+    }
+
     void PhysicsModule::PublishSnapshot()
+    {
+        BuildBroadphase(m_PublishedBroadphase);
+    }
+
+    void PhysicsModule::BuildBroadphase(PhysicsBroadphase& outBroadphase) const
     {
         Core::Container::VariableArray<PhysicsShapeProxy> proxies;
         for (const ColliderSlot& slot : m_ColliderSlots)
@@ -720,7 +1039,7 @@ namespace NorvesLib::Modules::Physics
                 continue;
             }
 
-            const Math::Transform& transform = slot.Owner->GetWorldTransform();
+            const Math::Transform transform = GetFreshWorldTransform(*slot.Owner);
             PhysicsShapeProxy proxy;
             proxy.Collider = slot.Component->m_ColliderHandle;
             proxy.Body = FindBodyHandle(*slot.Owner);
@@ -764,7 +1083,39 @@ namespace NorvesLib::Modules::Physics
             }
             proxies.push_back(proxy);
         }
-        m_PublishedBroadphase.SetProxies(std::move(proxies));
+        outBroadphase.SetProxies(std::move(proxies));
+    }
+
+    void PhysicsModule::ResetTransientState()
+    {
+        for (BodySlot& body : m_BodySlots)
+        {
+            body.PendingImpulse = Math::Vector3();
+            body.PreStepPosition = Math::Vector3();
+            body.bHadPreStepSnapshot = false;
+        }
+
+        m_PreviousTriggerPairs.clear();
+        m_CurrentTriggerPairs.clear();
+        m_PendingEvents.clear();
+        m_WorkingBroadphase.SetProxies(Core::Container::VariableArray<PhysicsShapeProxy>());
+        m_PublishedBroadphase.SetProxies(Core::Container::VariableArray<PhysicsShapeProxy>());
+        m_DuplicateDiagnosticCount = 0;
+        m_DispatchedEventCount = 0;
+        m_PendingEventCount = 0;
+        m_LastDiagnostic = EPhysicsDiagnostic::None;
+        m_bHasPublishedSnapshot = false;
+    }
+
+    Math::Transform PhysicsModule::GetFreshWorldTransform(const Core::Entity& entity) const
+    {
+        const Math::Transform localTransform = entity.GetLocalTransform();
+        const Core::Entity* parent = entity.GetParentEntity();
+        if (parent == nullptr)
+        {
+            return localTransform;
+        }
+        return GetFreshWorldTransform(*parent) * localTransform;
     }
 
     Core::Scene::BodyHandle PhysicsModule::FindBodyHandle(const Core::Entity& owner) const
@@ -777,6 +1128,46 @@ namespace NorvesLib::Modules::Physics
             }
         }
         return Core::Scene::BodyHandle{};
+    }
+
+    PhysicsModule::ColliderSlot* PhysicsModule::FindColliderSlot(Core::Scene::ColliderHandle handle)
+    {
+        if (!handle.IsValid() || handle.Index >= m_ColliderSlots.size())
+        {
+            return nullptr;
+        }
+        ColliderSlot& slot = m_ColliderSlots[handle.Index];
+        return slot.bOccupied && slot.Generation == handle.Generation ? &slot : nullptr;
+    }
+
+    const PhysicsModule::ColliderSlot* PhysicsModule::FindColliderSlot(Core::Scene::ColliderHandle handle) const
+    {
+        if (!handle.IsValid() || handle.Index >= m_ColliderSlots.size())
+        {
+            return nullptr;
+        }
+        const ColliderSlot& slot = m_ColliderSlots[handle.Index];
+        return slot.bOccupied && slot.Generation == handle.Generation ? &slot : nullptr;
+    }
+
+    PhysicsModule::BodySlot* PhysicsModule::FindBodySlot(Core::Scene::BodyHandle handle)
+    {
+        if (!handle.IsValid() || handle.Index >= m_BodySlots.size())
+        {
+            return nullptr;
+        }
+        BodySlot& slot = m_BodySlots[handle.Index];
+        return slot.bOccupied && slot.Generation == handle.Generation ? &slot : nullptr;
+    }
+
+    void PhysicsModule::MoveDynamicBody(BodySlot& body, const Math::Vector3& displacement)
+    {
+        if (!body.bActive || body.Component->m_BodyType != EPhysicsBodyType::Dynamic
+            || body.Owner->GetParentEntity() != nullptr)
+        {
+            return;
+        }
+        body.Owner->SetLocalPosition(body.Owner->GetLocalTransform().position + displacement);
     }
 
     void PhysicsModule::ReleaseColliderSlot(uint32_t index)
@@ -801,6 +1192,9 @@ namespace NorvesLib::Modules::Physics
         slot.Owner = nullptr;
         slot.bOccupied = false;
         slot.bActive = false;
+        slot.PendingImpulse = Math::Vector3();
+        slot.PreStepPosition = Math::Vector3();
+        slot.bHadPreStepSnapshot = false;
         ++slot.Generation;
         if (slot.Generation == 0)
         {

@@ -719,13 +719,15 @@ namespace
         assert(body->SetLinearVelocity(Math::Vector3(1.0f, 2.0f, 3.0f)) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
         assert(body->SetLinearVelocity(Math::Vector3(std::numeric_limits<float>::infinity(), 0.0f, 0.0f))
             == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
-        assert(body->AddImpulse(Math::Vector3(1.0f, 0.0f, 0.0f)) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
-        assert(body->GetLinearVelocity() == Math::Vector3(2.0f, 2.0f, 3.0f));
+        assert(body->AddImpulse(Math::Vector3(1.0f, 0.0f, 0.0f)) == NorvesLib::Modules::Physics::EPhysicsResult::InvalidState);
+        assert(body->GetLinearVelocity() == Math::Vector3(1.0f, 2.0f, 3.0f));
         assert(body->SetBodyType(NorvesLib::Modules::Physics::EPhysicsBodyType::Dynamic)
             == NorvesLib::Modules::Physics::EPhysicsResult::Success);
         assert(body->SetBodyType(static_cast<NorvesLib::Modules::Physics::EPhysicsBodyType>(255))
             == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
         assert(body->GetBodyType() == NorvesLib::Modules::Physics::EPhysicsBodyType::Dynamic);
+        assert(body->AddImpulse(Math::Vector3(1.0f, 0.0f, 0.0f)) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
+        assert(body->GetLinearVelocity() == Math::Vector3(1.0f, 2.0f, 3.0f));
         physics->FixedTick(1.0f / 60.0f);
         assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyHandle));
 

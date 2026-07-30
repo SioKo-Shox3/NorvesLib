@@ -53,6 +53,32 @@ namespace NorvesLib::Modules::Physics
             uint32_t Generation = 1;
             bool bOccupied = false;
             bool bActive = false;
+            Math::Vector3 PendingImpulse;
+            Math::Vector3 PreStepPosition;
+            bool bHadPreStepSnapshot = false;
+        };
+
+        struct TriggerPairState
+        {
+            Core::Scene::ColliderHandle First;
+            Core::Scene::ColliderHandle Second;
+            Math::GeometryContact Contact;
+        };
+
+        enum class EPhysicsEventType : uint8_t
+        {
+            OverlapBegin,
+            OverlapEnd,
+            Hit,
+        };
+
+        struct PendingPhysicsEvent
+        {
+            EPhysicsEventType Type = EPhysicsEventType::OverlapBegin;
+            Core::Scene::ColliderHandle First;
+            Core::Scene::ColliderHandle Second;
+            Math::GeometryContact Contact;
+            float NormalImpulse = 0.0f;
         };
 
         friend class ColliderComponent;
@@ -81,8 +107,19 @@ namespace NorvesLib::Modules::Physics
         void PrepareBodyGenerationWrap(RigidBodyComponent& component);
         void PrepareOverlapBeginGenerationWrap(ColliderComponent& component, PhysicsCallbackHandle& handle);
         void ReconcileActiveStates();
+        void IntegrateDynamics(float fixedDeltaTime);
+        void ResolveContacts(float fixedDeltaTime);
+        void BuildEventQueue();
+        void DispatchEvents();
         void PublishSnapshot();
+        void BuildBroadphase(PhysicsBroadphase& outBroadphase) const;
+        void ResetTransientState();
+        Math::Transform GetFreshWorldTransform(const Core::Entity& entity) const;
         Core::Scene::BodyHandle FindBodyHandle(const Core::Entity& owner) const;
+        ColliderSlot* FindColliderSlot(Core::Scene::ColliderHandle handle);
+        const ColliderSlot* FindColliderSlot(Core::Scene::ColliderHandle handle) const;
+        BodySlot* FindBodySlot(Core::Scene::BodyHandle handle);
+        void MoveDynamicBody(BodySlot& body, const Math::Vector3& displacement);
         void ReleaseColliderSlot(uint32_t index);
         void ReleaseBodySlot(uint32_t index);
 
@@ -118,6 +155,10 @@ namespace NorvesLib::Modules::Physics
         uint32_t m_DuplicateDiagnosticCount = 0;
         uint32_t m_DispatchedEventCount = 0;
         uint32_t m_PendingEventCount = 0;
+        Core::Container::VariableArray<TriggerPairState> m_PreviousTriggerPairs;
+        Core::Container::VariableArray<TriggerPairState> m_CurrentTriggerPairs;
+        Core::Container::VariableArray<PendingPhysicsEvent> m_PendingEvents;
+        PhysicsBroadphase m_WorkingBroadphase;
         PhysicsBroadphase m_PublishedBroadphase;
     };
 } // namespace NorvesLib::Modules::Physics
