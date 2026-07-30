@@ -91,3 +91,16 @@ target_include_directories(PhysicsLifecycleEventTest PRIVATE
 )
 set_target_properties(PhysicsLifecycleEventTest PROPERTIES FOLDER "Test/Modules/Physics")
 add_test(NAME PhysicsLifecycleEventTest COMMAND PhysicsLifecycleEventTest)
+
+add_executable(PhysicsFixedStepPipelineTest
+    PhysicsFixedStepPipelineTest.cpp
+)
+target_link_libraries(PhysicsFixedStepPipelineTest PRIVATE Core NorvesModule_Physics)
+target_include_directories(PhysicsFixedStepPipelineTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
+)
+set_target_properties(PhysicsFixedStepPipelineTest PROPERTIES FOLDER "Test/Modules/Physics")
+add_test(NAME PhysicsFixedStepPipelineTest COMMAND PhysicsFixedStepPipelineTest)
+set_tests_properties(PhysicsFixedStepPipelineTest PROPERTIES TIMEOUT 90)
