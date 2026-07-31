@@ -28,6 +28,13 @@
       "prompt_file": "tasks/m7-rational-fixed-timestep.md",
       "check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../../fixtures/m7-rational-fixed-timestep/test.ps1 -SourcePath ./FixedStepScheduler.cpp",
       "budget_ms": 600000
+    },
+    {
+      "id": "m8-minimal-physics",
+      "fixture": "fixtures/m8-minimal-physics",
+      "prompt_file": "tasks/m8-minimal-physics.md",
+      "check": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../../fixtures/m8-minimal-physics/test.ps1 -SourcePath ./PhysicsSceneQueryFacade.cpp",
+      "budget_ms": 600000
     }
   ]
 }
