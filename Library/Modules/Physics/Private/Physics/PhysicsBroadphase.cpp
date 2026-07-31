@@ -263,6 +263,22 @@ namespace NorvesLib::Modules::Physics
             hit.Contact = contact;
             outHits.push_back(hit);
         }
+
+        template<typename TQuery>
+        void AppendOverlapHits(
+            const TQuery& query,
+            const Core::Container::VariableArray<PhysicsShapeProxy>& proxies,
+            Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits)
+        {
+            for (const PhysicsShapeProxy& proxy : proxies)
+            {
+                Math::GeometryContact contact;
+                if (ComputeOverlap(query, proxy, contact))
+                {
+                    AppendOverlapHit(proxy, contact, outHits);
+                }
+            }
+        }
     } // namespace
 
     void PhysicsBroadphase::SetProxies(Core::Container::VariableArray<PhysicsShapeProxy> proxies)
@@ -334,42 +350,21 @@ namespace NorvesLib::Modules::Physics
         const Math::Sphere& sphere,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
-        for (const PhysicsShapeProxy& proxy : m_Proxies)
-        {
-            Math::GeometryContact contact;
-            if (ComputeOverlap(sphere, proxy, contact))
-            {
-                AppendOverlapHit(proxy, contact, outHits);
-            }
-        }
+        AppendOverlapHits(sphere, m_Proxies, outHits);
     }
 
     void PhysicsBroadphase::OverlapBox(
         const Math::OBB& box,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
-        for (const PhysicsShapeProxy& proxy : m_Proxies)
-        {
-            Math::GeometryContact contact;
-            if (ComputeOverlap(box, proxy, contact))
-            {
-                AppendOverlapHit(proxy, contact, outHits);
-            }
-        }
+        AppendOverlapHits(box, m_Proxies, outHits);
     }
 
     void PhysicsBroadphase::OverlapCapsule(
         const Math::Capsule& capsule,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
-        for (const PhysicsShapeProxy& proxy : m_Proxies)
-        {
-            Math::GeometryContact contact;
-            if (ComputeOverlap(capsule, proxy, contact))
-            {
-                AppendOverlapHit(proxy, contact, outHits);
-            }
-        }
+        AppendOverlapHits(capsule, m_Proxies, outHits);
     }
 
     Math::AABB PhysicsBroadphase::CalculateBounds(const PhysicsShapeProxy& proxy)
