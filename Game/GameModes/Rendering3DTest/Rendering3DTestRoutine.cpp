@@ -986,11 +986,21 @@ namespace Game::GameModes
             }
         }
 
+        if (data.m_bPhysicsSmoke && !data.m_M8MinimalPhysicsSmoke.Enter(ctx))
+        {
+            return GameModeEnterResult::Failed;
+        }
+
         return GameModeEnterResult::Succeeded;
     }
 
     void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
+        if (data.m_bPhysicsSmoke)
+        {
+            data.m_M8MinimalPhysicsSmoke.Update(ctx);
+        }
+
         // ========================================
         // 入力に基づくカメラ更新（シーン所有）
         // ========================================
@@ -1103,6 +1113,11 @@ namespace Game::GameModes
     void Rendering3DTestRoutine::Leave(GameModeContext &ctx, Rendering3DTestData &data, GameModeExitReason reason)
     {
         (void)reason;
+
+        if (data.m_bPhysicsSmoke)
+        {
+            data.m_M8MinimalPhysicsSmoke.Leave(ctx);
+        }
 
         LOG_INFO("=================================================");
         LOG_INFO("3Dレンダリングテスト終了");
