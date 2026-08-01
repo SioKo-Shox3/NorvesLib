@@ -1,4 +1,4 @@
-#include "Scene/SceneQuery.h"
+﻿#include "Scene/SceneQuery.h"
 #include "Object/World.h"
 #include "Object/Entity.h"
 #include "Math/GeometryIntersection.h"
