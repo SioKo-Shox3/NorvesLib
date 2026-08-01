@@ -11,6 +11,10 @@
 
 #include <cassert>
 #include <iostream>
+#include <Windows.h>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 
 using namespace NorvesLib;
 using namespace NorvesLib::Core;
@@ -56,11 +60,26 @@ namespace NorvesLib::Modules::Physics
 
 namespace
 {
+    void ConfigureFailureReporting()
+    {
+#ifdef _MSC_VER
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+        _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
     void TestTriggerDoesNotResolveSolid(IPhysicsModule& physics);
     void TestDispatchRevalidation(IPhysicsModule& physics);
     void TestUninstallClearsTransientState(IPhysicsModule& physics);
     void TestMarkOtherForDestroyDuringDispatch(IPhysicsModule& physics);
     void TestCallbackSnapshotAfterRemoval(IPhysicsModule& physics);
+    void TestReceiverCallbacksSnapshotBeforeDispatch(IPhysicsModule& physics);
+    void TestReceiverAddedCallbackWaitsForNextEvent(IPhysicsModule& physics);
+    void TestNestedFixedTickDoesNotRedispatchPendingEvents(IPhysicsModule& physics);
     void TestColliderReuseDuringDispatch(IPhysicsModule& physics);
     void TestWrongThreadTicksDoNotMutate(IPhysicsModule& physics);
 
@@ -158,6 +177,9 @@ namespace
         TestUninstallClearsTransientState(*physics);
         TestMarkOtherForDestroyDuringDispatch(*physics);
         TestCallbackSnapshotAfterRemoval(*physics);
+        TestReceiverCallbacksSnapshotBeforeDispatch(*physics);
+        TestReceiverAddedCallbackWaitsForNextEvent(*physics);
+        TestNestedFixedTickDoesNotRedispatchPendingEvents(*physics);
         TestColliderReuseDuringDispatch(*physics);
         TestWrongThreadTicksDoNotMutate(*physics);
         registry.ShutdownAll(GetEngine());
@@ -365,6 +387,152 @@ namespace
         world.Finalize();
     }
 
+    void TestReceiverCallbacksSnapshotBeforeDispatch(IPhysicsModule& physics)
+    {
+        physics.Shutdown();
+        assert(physics.Initialize());
+        World world;
+        world.Initialize();
+        Entity* firstEntity = world.SpawnEntity<Entity>();
+        Entity* secondEntity = world.SpawnEntity<Entity>();
+        assert(firstEntity != nullptr && secondEntity != nullptr);
+        ColliderComponent* first = world.CreateComponent<ColliderComponent>(firstEntity);
+        ColliderComponent* second = world.CreateComponent<ColliderComponent>(secondEntity);
+        assert(first != nullptr && second != nullptr);
+        assert(first->SetSphere(1.0f) == EPhysicsResult::Success);
+        assert(second->SetSphere(1.0f) == EPhysicsResult::Success);
+        assert(first->SetTrigger(true) == EPhysicsResult::Success);
+        ColliderComponent* dispatcher = first->GetColliderHandle() < second->GetColliderHandle() ? first : second;
+        ColliderComponent* target = dispatcher == first ? second : first;
+
+        uint32_t firstCount = 0;
+        uint32_t secondCount = 0;
+        EPhysicsResult removalResult = EPhysicsResult::NotRegistered;
+        PhysicsCallbackHandle firstHandle;
+        PhysicsCallbackHandle secondHandle;
+        assert(dispatcher->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
+            [&firstCount, &removalResult, target, &secondHandle](const PhysicsContactEvent&)
+            {
+                ++firstCount;
+                removalResult = target->RemoveOnOverlapBegin(secondHandle);
+            }), firstHandle) == EPhysicsResult::Success);
+        assert(target->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
+            [&secondCount](const PhysicsContactEvent&) { ++secondCount; }), secondHandle) == EPhysicsResult::Success);
+
+        physics.FixedTick(1.0f / 60.0f);
+        assert(firstCount == 1);
+        assert(removalResult == EPhysicsResult::Success);
+        assert(secondCount == 1);
+
+        secondEntity->SetLocalPosition(4.0f, 0.0f, 0.0f);
+        physics.FixedTick(1.0f / 60.0f);
+        firstEntity->SetLocalPosition(0.0f, 0.0f, 0.0f);
+        secondEntity->SetLocalPosition(0.0f, 0.0f, 0.0f);
+        physics.FixedTick(1.0f / 60.0f);
+        assert(firstCount == 2);
+        assert(secondCount == 1);
+        world.Finalize();
+    }
+
+    void TestReceiverAddedCallbackWaitsForNextEvent(IPhysicsModule& physics)
+    {
+        physics.Shutdown();
+        assert(physics.Initialize());
+        World world;
+        world.Initialize();
+        Entity* firstEntity = world.SpawnEntity<Entity>();
+        Entity* secondEntity = world.SpawnEntity<Entity>();
+        assert(firstEntity != nullptr && secondEntity != nullptr);
+        ColliderComponent* first = world.CreateComponent<ColliderComponent>(firstEntity);
+        ColliderComponent* second = world.CreateComponent<ColliderComponent>(secondEntity);
+        assert(first != nullptr && second != nullptr);
+        assert(first->SetSphere(1.0f) == EPhysicsResult::Success);
+        assert(second->SetSphere(1.0f) == EPhysicsResult::Success);
+        assert(first->SetTrigger(true) == EPhysicsResult::Success);
+        ColliderComponent* dispatcher = first->GetColliderHandle() < second->GetColliderHandle() ? first : second;
+        ColliderComponent* target = dispatcher == first ? second : first;
+
+        uint32_t firstCount = 0;
+        uint32_t existingSecondCount = 0;
+        uint32_t addedSecondCount = 0;
+        bool bAdded = false;
+        PhysicsCallbackHandle firstHandle;
+        PhysicsCallbackHandle existingSecondHandle;
+        PhysicsCallbackHandle addedSecondHandle;
+        assert(dispatcher->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
+            [&firstCount, &bAdded, target, &addedSecondCount, &addedSecondHandle](const PhysicsContactEvent&)
+            {
+                ++firstCount;
+                if (!bAdded)
+                {
+                    bAdded = true;
+                    assert(target->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
+                        [&addedSecondCount](const PhysicsContactEvent&) { ++addedSecondCount; }), addedSecondHandle)
+                        == EPhysicsResult::Success);
+                }
+            }), firstHandle) == EPhysicsResult::Success);
+        assert(target->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
+            [&existingSecondCount](const PhysicsContactEvent&) { ++existingSecondCount; }), existingSecondHandle)
+            == EPhysicsResult::Success);
+
+        physics.FixedTick(1.0f / 60.0f);
+        assert(firstCount == 1);
+        assert(existingSecondCount == 1);
+        assert(addedSecondCount == 0);
+
+        secondEntity->SetLocalPosition(4.0f, 0.0f, 0.0f);
+        physics.FixedTick(1.0f / 60.0f);
+        secondEntity->SetLocalPosition(0.0f, 0.0f, 0.0f);
+        physics.FixedTick(1.0f / 60.0f);
+        assert(firstCount == 2);
+        assert(existingSecondCount == 2);
+        assert(addedSecondCount == 1);
+        world.Finalize();
+    }
+
+    void TestNestedFixedTickDoesNotRedispatchPendingEvents(IPhysicsModule& physics)
+    {
+        physics.Shutdown();
+        assert(physics.Initialize());
+        World world;
+        world.Initialize();
+        Entity* firstEntity = world.SpawnEntity<Entity>();
+        Entity* secondEntity = world.SpawnEntity<Entity>();
+        assert(firstEntity != nullptr && secondEntity != nullptr);
+        ColliderComponent* first = world.CreateComponent<ColliderComponent>(firstEntity);
+        ColliderComponent* second = world.CreateComponent<ColliderComponent>(secondEntity);
+        assert(first != nullptr && second != nullptr);
+        assert(first->SetSphere(1.0f) == EPhysicsResult::Success);
+        assert(second->SetSphere(1.0f) == EPhysicsResult::Success);
+        assert(first->SetTrigger(true) == EPhysicsResult::Success);
+        ColliderComponent* dispatcher = first->GetColliderHandle() < second->GetColliderHandle() ? first : second;
+        ColliderComponent* target = dispatcher == first ? second : first;
+
+        uint32_t firstCount = 0;
+        uint32_t secondCount = 0;
+        bool bNestedCalled = false;
+        PhysicsCallbackHandle firstHandle;
+        PhysicsCallbackHandle secondHandle;
+        assert(dispatcher->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
+            [&physics, &firstCount, &bNestedCalled](const PhysicsContactEvent&)
+            {
+                ++firstCount;
+                if (!bNestedCalled)
+                {
+                    bNestedCalled = true;
+                    physics.FixedTick(1.0f / 60.0f);
+                }
+            }), firstHandle) == EPhysicsResult::Success);
+        assert(target->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
+            [&secondCount](const PhysicsContactEvent&) { ++secondCount; }), secondHandle) == EPhysicsResult::Success);
+
+        physics.FixedTick(1.0f / 60.0f);
+        assert(bNestedCalled);
+        assert(firstCount == 1);
+        assert(secondCount == 1);
+        world.Finalize();
+    }
+
     void TestColliderReuseDuringDispatch(IPhysicsModule& physics)
     {
         physics.Shutdown();
@@ -472,6 +640,8 @@ namespace
 
 int main()
 {
+    ConfigureFailureReporting();
+
     std::cout << "PhysicsLifecycleEventTest start\n";
     TestTriggerBeginAndEnd();
     std::cout << "PhysicsLifecycleEventTest passed\n";

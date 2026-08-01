@@ -161,7 +161,12 @@ namespace NorvesLib::Modules::Physics
         {
             return;
         }
+        if (m_bFixedTickInProgress)
+        {
+            return;
+        }
 
+        m_bFixedTickInProgress = true;
         ReconcileActiveStates();
         IntegrateDynamics(fixedDeltaTime);
         BuildBroadphase(m_WorkingBroadphase);
@@ -170,6 +175,7 @@ namespace NorvesLib::Modules::Physics
         PublishSnapshot();
         m_bHasPublishedSnapshot = true;
         DispatchEvents();
+        m_bFixedTickInProgress = false;
     }
 
     void PhysicsModule::Shutdown()
@@ -952,8 +958,18 @@ namespace NorvesLib::Modules::Physics
 
     void PhysicsModule::DispatchEvents()
     {
+        struct DispatchReceiver
+        {
+            Core::Scene::ColliderHandle SelfHandle;
+            Core::Scene::ColliderHandle OtherHandle;
+            PhysicsContactEvent Event;
+            Core::Container::VariableArray<Core::Delegate<void, const PhysicsContactEvent&>> Callbacks;
+        };
+
         for (const PendingPhysicsEvent& pending : m_PendingEvents)
         {
+            Core::Container::VariableArray<DispatchReceiver> receivers;
+            receivers.reserve(2);
             for (uint32_t receiverIndex = 0; receiverIndex < 2; ++receiverIndex)
             {
                 const Core::Scene::ColliderHandle selfHandle = receiverIndex == 0 ? pending.First : pending.Second;
@@ -970,6 +986,18 @@ namespace NorvesLib::Modules::Physics
                     continue;
                 }
 
+                DispatchReceiver receiver;
+                receiver.SelfHandle = selfHandle;
+                receiver.OtherHandle = otherHandle;
+                receiver.Event.Self = selfHandle;
+                receiver.Event.Other = otherHandle;
+                receiver.Event.Contact = pending.Contact;
+                receiver.Event.NormalImpulse = pending.NormalImpulse;
+                if (receiverIndex != 0)
+                {
+                    receiver.Event.Contact.Normal *= -1.0f;
+                }
+
                 const Core::Container::VariableArray<ColliderComponent::CallbackSlot>* callbacks = nullptr;
                 if (pending.Type == EPhysicsEventType::OverlapBegin)
                 {
@@ -984,28 +1012,22 @@ namespace NorvesLib::Modules::Physics
                     callbacks = &self->Component->m_HitCallbacks;
                 }
 
-                Core::Container::VariableArray<Core::Delegate<void, const PhysicsContactEvent&>> snapshot;
                 for (const ColliderComponent::CallbackSlot& callback : *callbacks)
                 {
                     if (callback.bOccupied && callback.Callback.IsBound())
                     {
-                        snapshot.push_back(callback.Callback);
+                        receiver.Callbacks.push_back(callback.Callback);
                     }
                 }
+                receivers.push_back(std::move(receiver));
+            }
 
-                PhysicsContactEvent event;
-                event.Self = selfHandle;
-                event.Other = otherHandle;
-                event.Contact = pending.Contact;
-                event.NormalImpulse = pending.NormalImpulse;
-                if (receiverIndex != 0)
+            for (const DispatchReceiver& receiver : receivers)
+            {
+                for (const Core::Delegate<void, const PhysicsContactEvent>& callback : receiver.Callbacks)
                 {
-                    event.Contact.Normal *= -1.0f;
-                }
-                for (const Core::Delegate<void, const PhysicsContactEvent>& callback : snapshot)
-                {
-                    self = FindColliderSlot(selfHandle);
-                    other = FindColliderSlot(otherHandle);
+                    ColliderSlot* self = FindColliderSlot(receiver.SelfHandle);
+                    ColliderSlot* other = FindColliderSlot(receiver.OtherHandle);
                     if (!self || !self->bActive || self->Owner->IsPendingDestroy())
                     {
                         break;
@@ -1015,7 +1037,7 @@ namespace NorvesLib::Modules::Physics
                     {
                         break;
                     }
-                    callback(event);
+                    callback(receiver.Event);
                     ++m_DispatchedEventCount;
                 }
             }

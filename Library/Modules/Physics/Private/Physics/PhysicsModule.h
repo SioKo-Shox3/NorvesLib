@@ -146,6 +146,7 @@ namespace NorvesLib::Modules::Physics
         Thread::Thread::ThreadId m_OwnerThreadId;
         bool m_bBound = false;
         bool m_bInitialized = false;
+        bool m_bFixedTickInProgress = false;
         bool m_bHasPublishedSnapshot = false;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;
         Core::Container::VariableArray<BodySlot> m_BodySlots;

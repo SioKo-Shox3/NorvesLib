@@ -619,6 +619,30 @@ namespace
         assert(HasRequiredPhysicsRegistrationPrefix(handlerSource));
     }
 
+    void TestPhysicsModuleCMakeContract()
+    {
+        std::cout << "[Test] Physics module keeps private Core dependencies and C++23 requirements private\n";
+        const std::filesystem::path sourceRoot(NORVES_SOURCE_ROOT);
+        const Container::String cmakeSource = RemoveAsciiWhitespace(ReadSourceFile(
+            sourceRoot / "Library/Modules/Physics/CMakeLists.txt"));
+
+        assert(cmakeSource.find(
+            "add_library(${MODULE_NAME}STATIC${PHYSICS_PUBLIC_HEADERS}${PHYSICS_PRIVATE_SOURCES})")
+            != Container::String::npos);
+        assert(cmakeSource.find(
+            "target_include_directories(${MODULE_NAME}PUBLIC${CMAKE_CURRENT_SOURCE_DIR}/PublicPRIVATE"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Private${CMAKE_SOURCE_DIR})") != Container::String::npos);
+        assert(cmakeSource.find("target_compile_features(${MODULE_NAME}PRIVATEcxx_std_23)")
+            != Container::String::npos);
+        assert(cmakeSource.find("target_compile_features(${MODULE_NAME}PUBLICcxx_std_23)")
+            == Container::String::npos);
+        assert(cmakeSource.find("target_compile_features(${MODULE_NAME}INTERFACEcxx_std_23)")
+            == Container::String::npos);
+        assert(cmakeSource.find(
+            "source_group(TREE${CMAKE_CURRENT_SOURCE_DIR}FILES${PHYSICS_PUBLIC_HEADERS}${PHYSICS_PRIVATE_SOURCES})")
+            != Container::String::npos);
+    }
+
     void TestPhaseThreeUnregisteredComponentsRemainInvalid()
     {
         std::cout << "[Test] phase 3 unregistered Components remain invalid\n";
@@ -909,6 +933,7 @@ int main()
     TestWrongThreadTeardownPreservesReadyBinding();
     TestStrictGamePhysicsContractRejectsMutations();
     TestGamePhysicsRegistrationSourceContract();
+    TestPhysicsModuleCMakeContract();
     TestPhaseThreeUnregisteredComponentsRemainInvalid();
     TestPhaseThreeComponentOwnershipAndSlots();
     std::cout << "PhysicsModuleLinkTest passed\n";
