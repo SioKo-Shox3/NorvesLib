@@ -247,3 +247,13 @@ add_test(NAME SceneQueryPhysicsFacadeTest COMMAND SceneQueryPhysicsFacadeTest)
 add_test(NAME EntityTreeTest COMMAND EntityTreeTest)
 add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
 add_test(NAME SceneFileRoundTripTest COMMAND SceneFileRoundTripTest)
+
+add_executable(SkeletalResourceLifetimeTest
+    SkeletalResourceLifetimeTest.cpp
+)
+target_link_libraries(SkeletalResourceLifetimeTest PRIVATE Core)
+target_include_directories(SkeletalResourceLifetimeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SkeletalResourceLifetimeTest PROPERTIES FOLDER "Test/Core/Object")
+add_test(NAME SkeletalResourceLifetimeTest COMMAND SkeletalResourceLifetimeTest)

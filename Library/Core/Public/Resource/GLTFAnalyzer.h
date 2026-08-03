@@ -4,6 +4,7 @@
 #include "Delegate/Delegate.h"
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderTypes.h"
+#include "Resource/SkeletalGltfData.h"
 
 namespace NorvesLib::Core::Rendering
 {
@@ -27,6 +28,11 @@ namespace NorvesLib::Core::Resource
          */
         static Rendering::ModelHandle LoadModel(const Container::String& gltfPath,
                                                 Rendering::ModelLoadResourceContext resources);
+
+        /**
+         * @brief Decodes the minimal v0 skeletal glTF subset without creating GPU resources.
+         */
+        static Skeletal::SkeletalGltfDecodeResult AnalyzeSkeletal(const Container::String& gltfPath);
 
         /**
          * @brief Loads a glTF file asynchronously and builds the GPU resources on the main thread later.

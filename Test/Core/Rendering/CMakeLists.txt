@@ -1077,3 +1077,13 @@ add_test(NAME CookedModelGameProfileScriptContractTest
         -File "${CMAKE_CURRENT_SOURCE_DIR}/CookedModelGameProfileScriptContractTest.ps1"
         -RepoRoot "${CMAKE_SOURCE_DIR}"
 )
+
+add_executable(GLTFSkeletalAnalyzerTest
+    GLTFSkeletalAnalyzerTest.cpp
+)
+target_link_libraries(GLTFSkeletalAnalyzerTest PRIVATE Core)
+target_include_directories(GLTFSkeletalAnalyzerTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(GLTFSkeletalAnalyzerTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
