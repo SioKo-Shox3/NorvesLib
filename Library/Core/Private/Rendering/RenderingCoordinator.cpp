@@ -954,9 +954,7 @@ namespace NorvesLib::Core::Rendering
 
             if (m_MainSceneView)
             {
-                m_CurrentPacket->Scene.MeshProxies = m_MainSceneView->GetMeshProxies();
-                m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
-                m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
+                m_MainSceneView->CopyProxiesTo(m_CurrentPacket->Scene);
             }
 
             m_CurrentPacket->DrawCommands.clear();

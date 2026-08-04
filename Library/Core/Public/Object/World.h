@@ -252,6 +252,7 @@ namespace NorvesLib::Core
                                  const Rendering::MaterialResources* materials,
                                  const Rendering::MeshResources* meshes,
                                  Container::UnorderedSet<uint64_t>& liveMeshComponentIds,
+                                 Container::UnorderedSet<uint64_t>& liveSkinnedMeshComponentIds,
                                  Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
                                  Container::UnorderedSet<uint64_t>& liveLightIds,
                                  Container::UnorderedSet<uint64_t>& liveScreenBoardComponentIds,

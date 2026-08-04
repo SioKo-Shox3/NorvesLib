@@ -98,6 +98,11 @@ namespace NorvesLib::Core::Rendering
          */
         void RemoveStaleMeshProxies(const Container::UnorderedSet<uint64_t> &liveComponentIds);
 
+        void AddSkinnedMeshProxy(const SkinnedMeshProxy& proxy);
+        void RemoveSkinnedMeshProxy(uint64_t componentId);
+        void RemoveStaleSkinnedMeshProxies(const Container::UnorderedSet<uint64_t>& liveComponentIds);
+        void UpdateSkinnedMeshProxy(const SkinnedMeshProxy& proxy);
+
         /**
          * @brief LightProxyを追加
          * @param proxy 追加するProxy
@@ -285,6 +290,13 @@ namespace NorvesLib::Core::Rendering
          */
         const Container::VariableArray<MeshProxy> &GetMeshProxies() const { return m_MeshProxies; }
 
+        const Container::VariableArray<SkinnedMeshProxy>& GetSkinnedMeshProxies() const
+        {
+            return m_SkinnedMeshProxies;
+        }
+
+        void CopyProxiesTo(SceneProxy& outScene) const;
+
         /**
          * @brief 収集されたLightProxyを取得
          */
@@ -389,10 +401,12 @@ namespace NorvesLib::Core::Rendering
         // MeshProxy（WorldからSceneViewに直接渡される）
         // MeshProxyの索引はComponentIdで管理し、ObjectIdはソートや所有元の文脈に使います。
         Container::VariableArray<MeshProxy> m_MeshProxies;
+        Container::VariableArray<SkinnedMeshProxy> m_SkinnedMeshProxies;
         Container::VariableArray<BoardProxy> m_BoardProxies;
         Container::VariableArray<MegaGeometryProxy> m_MegaGeometryProxies;
         Container::VariableArray<LightProxy> m_LightProxies;
         Container::UnorderedMap<uint64_t, uint32_t> m_MeshProxyIndex;
+        Container::UnorderedMap<uint64_t, uint32_t> m_SkinnedMeshProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_BoardProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_LightProxyIndex;
         Container::UnorderedMap<uint64_t, uint32_t> m_MegaGeometryProxyIndex;
