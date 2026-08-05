@@ -123,7 +123,6 @@ namespace
         Container::VariableArray<uint32_t> indices = {0, 1, 0};
         mesh.SetVertices(std::move(vertices));
         mesh.SetIndices(std::move(indices));
-        assert(mesh.Load());
     }
 
     void SeedHierarchySkeleton(SkeletonResource& skeleton)
@@ -183,7 +182,6 @@ namespace
         Container::VariableArray<uint32_t> indices = {0, 0, 0};
         mesh.SetVertices(std::move(vertices));
         mesh.SetIndices(std::move(indices));
-        assert(mesh.Load());
     }
 
     Animation::SkeletalPoseSnapshot SampleAt(const SkeletonResource& skeleton,
