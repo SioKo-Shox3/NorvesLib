@@ -1099,5 +1099,16 @@ add_executable(SkeletalFramePacketSnapshotTest
     SkeletalFramePacketSnapshotTest.cpp
 )
 target_link_libraries(SkeletalFramePacketSnapshotTest PRIVATE Core)
+
+add_executable(SkinnedRenderPathContractTest
+    SkinnedRenderPathContractTest.cpp
+)
+target_link_libraries(SkinnedRenderPathContractTest PRIVATE Core)
+target_include_directories(SkinnedRenderPathContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(SkinnedRenderPathContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SkinnedRenderPathContractTest COMMAND SkinnedRenderPathContractTest)
 set_target_properties(SkeletalFramePacketSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkeletalFramePacketSnapshotTest COMMAND SkeletalFramePacketSnapshotTest)

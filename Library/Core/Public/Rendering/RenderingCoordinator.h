@@ -67,6 +67,8 @@ namespace NorvesLib::Core::Rendering
 
     struct RenderingCoordinatorStatsSnapshot
     {
+        uint32_t SkinnedGBufferRecordedDraws = 0;
+        uint32_t SkinnedShadowRecordedDraws = 0;
         Debug::RenderingStats Stats;
         uint32_t GeneratedDrawCommandCount = 0;
         uint64_t PublicationSequence = 0;

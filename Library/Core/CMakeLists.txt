@@ -104,6 +104,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ImpostorBake.cpp
     Private/Rendering/ImpostorMath.cpp
     Private/Rendering/TextureAssetRuntime.cpp
+    Private/Rendering/SkinnedMeshGpuStore.cpp
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp

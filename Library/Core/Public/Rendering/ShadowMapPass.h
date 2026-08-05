@@ -14,6 +14,7 @@ using namespace NorvesLib::Core::Container;
 namespace NorvesLib::Core::Rendering
 {
     class SceneView;
+    struct SkinnedRenderPathContractTestAccess;
 
     /**
      * @brief シャドウマップパス設定
@@ -111,6 +112,12 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetShadowMapHandle() const { return m_ShadowMapHandle; }
 
     private:
+        friend struct SkinnedRenderPathContractTestAccess;
+
+        bool TryPrepareSkinnedCommand(ViewRenderContext& context,
+                                      const DrawCommand& source,
+                                      DrawCommand& outCommand) const;
+
         // 設定
         ShadowMapPassSettings m_Settings;
 
@@ -126,7 +133,9 @@ namespace NorvesLib::Core::Rendering
         RHI::RenderPassPtr m_ShadowRenderPass;
         RHI::FramebufferPtr m_ShadowFramebuffer;
 
+        RHI::PipelinePtr m_SkinnedShadowPipeline;
         // パイプライン・シェーダー
+        RHI::ShaderPtr m_SkinnedShadowVertexShader;
         RHI::PipelinePtr m_ShadowPipeline;
         RHI::ShaderPtr m_ShadowVertexShader;
         RHI::ShaderPtr m_ShadowFragmentShader;

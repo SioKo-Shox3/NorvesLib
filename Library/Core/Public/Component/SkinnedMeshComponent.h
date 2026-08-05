@@ -36,6 +36,10 @@ namespace NorvesLib::Core::Component
         bool IsLooping() const;
         void SetPlaybackRate(float playbackRate);
         float GetPlaybackRate() const;
+        void SetMaterial(Rendering::MaterialHandle material);
+        Rendering::MaterialHandle GetMaterial() const;
+        void SetCastShadow(bool bCastShadow);
+        bool CastsShadow() const;
         void SetVisible(bool bVisible);
         bool IsVisible() const;
 
@@ -48,9 +52,11 @@ namespace NorvesLib::Core::Component
         Container::TSharedPtr<SkeletalAssetResource> m_SkeletalAsset;
         Math::Matrix4x4 m_MeshNodeGlobalTransform;
         Animation::SkeletalPoseSnapshot m_Pose;
+        Rendering::MaterialHandle m_Material;
         float m_AnimationTimeSeconds = 0.0f;
         float m_PlaybackRate = 1.0f;
         bool m_bPlaying = true;
+        bool m_bCastShadow = true;
         bool m_bLooping = true;
         bool m_bVisible = true;
         bool m_bPoseDirty = true;

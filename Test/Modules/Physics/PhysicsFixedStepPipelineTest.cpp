@@ -13,6 +13,7 @@
 #include "Physics/PhysicsModule.h"
 #include "Physics/RigidBodyComponent.h"
 #include "Rendering/FramePacket.h"
+#include "Object/Resource.h"
 #include "Rendering/SceneView.h"
 #include "Scene/SceneQuery.h"
 #include "Thread/Thread.h"
@@ -187,6 +188,13 @@ namespace
     static_assert(!std::is_pointer_v<decltype(FramePacketType::DebugLineVertices)>);
     static_assert(!std::is_pointer_v<decltype(FramePacketType::Stats)>);
     static_assert(!std::is_pointer_v<decltype(FramePacketType::Views)>);
+    using SkinnedMeshFrameLeaseElement = TPacketElement<decltype(FramePacketType::SkinnedMeshFrameLeases)>;
+    static_assert(std::is_same_v<
+        SkinnedMeshFrameLeaseElement,
+        Container::TSharedPtr<const Rendering::SkinnedMeshFrameLease>>);
+    static_assert(!std::is_pointer_v<SkinnedMeshFrameLeaseElement>);
+    static_assert(!std::is_same_v<SkinnedMeshFrameLeaseElement, Object*>);
+    static_assert(!std::is_same_v<SkinnedMeshFrameLeaseElement, Resource*>);
     static_assert(!bPhysicsFramePacketType<decltype(FramePacketType::Scene)>);
     static_assert(!bPhysicsFramePacketType<TPacketElement<decltype(FramePacketType::DrawCommands)>>);
     static_assert(!bPhysicsFramePacketType<TPacketElement<decltype(FramePacketType::InstanceData)>>);
@@ -248,7 +256,7 @@ namespace
     // sizeof/alignof は ABI 変更を検出するが、末尾パディングだけの変更は検出できない。
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
-    static_assert(sizeof(FramePacketType) == 680);
+    static_assert(sizeof(FramePacketType) == 720);
     static_assert(alignof(FramePacketType) == 8);
     static_assert(sizeof(SceneProxyType) == 320);
     static_assert(alignof(SceneProxyType) == 8);
@@ -784,7 +792,7 @@ namespace
     bool TestFramePacketBoundaryHasNoLivePhysicsPointers()
     {
         return !std::is_standard_layout_v<FramePacketType> && !std::is_standard_layout_v<SceneProxyType>
-            && sizeof(FramePacketType) == 680 && alignof(FramePacketType) == 8
+            && sizeof(FramePacketType) == 720 && alignof(FramePacketType) == 8
             && sizeof(SceneProxyType) == 320 && alignof(SceneProxyType) == 8;
     }
 

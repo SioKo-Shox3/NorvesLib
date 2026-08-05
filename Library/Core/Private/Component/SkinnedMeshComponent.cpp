@@ -143,18 +143,45 @@ namespace NorvesLib::Core::Component
         return m_bVisible && IsActive();
     }
 
+    void SkinnedMeshComponent::SetMaterial(Rendering::MaterialHandle material)
+    {
+        m_Material = material;
+        MarkRenderStateDirty();
+    }
+
+    Rendering::MaterialHandle SkinnedMeshComponent::GetMaterial() const
+    {
+        return m_Material;
+    }
+
+    void SkinnedMeshComponent::SetCastShadow(bool bCastShadow)
+    {
+        m_bCastShadow = bCastShadow;
+        MarkRenderStateDirty();
+    }
+
+    bool SkinnedMeshComponent::CastsShadow() const
+    {
+        return m_bCastShadow;
+    }
+
     bool SkinnedMeshComponent::BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy)
     {
         if (!IsVisible() || !RefreshPose())
         {
             return false;
         }
-
         outProxy = {};
+        outProxy.ObjectId = GetOwnerId();
         outProxy.ComponentId = GetComponentId();
+        const Container::TSharedPtr<SkinnedMeshResource>& mesh = m_SkeletalAsset->GetMesh();
+        outProxy.MeshHandle = mesh->GetRenderMeshHandle();
+        outProxy.Material = m_Material;
+        outProxy.AssetLease = mesh->GetRenderAssetLease();
         outProxy.WorldTransform = BuildOwnerWorldTransform();
         outProxy.BonePalette = m_Pose.BonePalette;
         outProxy.AnimatedBounds = m_Pose.AnimatedBounds;
+        outProxy.bCastShadow = m_bCastShadow;
         outProxy.bHasAnimatedBounds = m_Pose.bHasAnimatedBounds;
         outProxy.bVisible = true;
         return outProxy.IsValid();

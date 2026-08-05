@@ -36,6 +36,53 @@ namespace NorvesLib::Core::Rendering
                 std::isfinite(bounds.Radius);
         }
 
+        bool BuildSkinnedCasterWorldBounds(const SkinnedMeshProxy& proxy, BoundingSphere& outBounds)
+        {
+            if (!proxy.MeshHandle.IsValid() || proxy.ComponentId == 0 || !proxy.bVisible ||
+                !proxy.bCastShadow || !proxy.bHasAnimatedBounds)
+            {
+                return false;
+            }
+            const Math::Vector3 localMin = proxy.AnimatedBounds.Min;
+            const Math::Vector3 localMax = proxy.AnimatedBounds.Max;
+            if (!std::isfinite(localMin.x) || !std::isfinite(localMin.y) || !std::isfinite(localMin.z) ||
+                !std::isfinite(localMax.x) || !std::isfinite(localMax.y) || !std::isfinite(localMax.z) ||
+                localMin.x > localMax.x || localMin.y > localMax.y || localMin.z > localMax.z)
+            {
+                return false;
+            }
+            for (float value : proxy.WorldTransform.values)
+            {
+                if (!std::isfinite(value))
+                {
+                    return false;
+                }
+            }
+
+            const Math::Vector3 localCenter = proxy.AnimatedBounds.Center();
+            const Math::Vector3 localHalfExtents = proxy.AnimatedBounds.HalfExtents();
+            const Math::Matrix4x4& world = proxy.WorldTransform;
+            const Math::Vector3 worldCenter(
+                localCenter.x * world.m00 + localCenter.y * world.m10 + localCenter.z * world.m20 + world.m30,
+                localCenter.x * world.m01 + localCenter.y * world.m11 + localCenter.z * world.m21 + world.m31,
+                localCenter.x * world.m02 + localCenter.y * world.m12 + localCenter.z * world.m22 + world.m32);
+            const Math::Vector3 worldHalfExtents(
+                std::abs(world.m00) * localHalfExtents.x +
+                    std::abs(world.m10) * localHalfExtents.y +
+                    std::abs(world.m20) * localHalfExtents.z,
+                std::abs(world.m01) * localHalfExtents.x +
+                    std::abs(world.m11) * localHalfExtents.y +
+                    std::abs(world.m21) * localHalfExtents.z,
+                std::abs(world.m02) * localHalfExtents.x +
+                    std::abs(world.m12) * localHalfExtents.y +
+                    std::abs(world.m22) * localHalfExtents.z);
+            outBounds.CenterX = worldCenter.x;
+            outBounds.CenterY = worldCenter.y;
+            outBounds.CenterZ = worldCenter.z;
+            outBounds.Radius = Math::VectorUtils::Length(worldHalfExtents);
+            return outBounds.IsValid() && IsFiniteBounds(outBounds);
+        }
+
         Math::Vector3 MakeBoundsCenter(const BoundingSphere& bounds)
         {
             return Math::Vector3(bounds.CenterX, bounds.CenterY, bounds.CenterZ);
@@ -219,6 +266,7 @@ namespace NorvesLib::Core::Rendering
     DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(
         const DirectionalShadowMatrixSettings& baseSettings,
         const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<SkinnedMeshProxy>* skinnedMeshProxies,
         const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies)
     {
         DirectionalShadowMatrixSettings result = baseSettings;
@@ -244,6 +292,18 @@ namespace NorvesLib::Core::Rendering
                 if (IsEligibleDirectionalShadowMegaGeometryCaster(proxy))
                 {
                     IncludeCasterBounds(proxy.WorldBounds, minBounds, maxBounds, bHasCaster);
+                }
+            }
+        }
+
+        if (skinnedMeshProxies != nullptr)
+        {
+            for (const SkinnedMeshProxy& proxy : *skinnedMeshProxies)
+            {
+                BoundingSphere worldBounds;
+                if (BuildSkinnedCasterWorldBounds(proxy, worldBounds))
+                {
+                    IncludeCasterBounds(worldBounds, minBounds, maxBounds, bHasCaster);
                 }
             }
         }
@@ -278,11 +338,45 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        if (skinnedMeshProxies != nullptr)
+        {
+            for (const SkinnedMeshProxy& proxy : *skinnedMeshProxies)
+            {
+                BoundingSphere worldBounds;
+                if (BuildSkinnedCasterWorldBounds(proxy, worldBounds))
+                {
+                    fitRadius = MaxFloat(fitRadius, CalculateCasterFitRadius(worldBounds, target));
+                }
+            }
+        }
+
         result.Target = target;
         result.OrthoSize = MaxFloat(baseSettings.OrthoSize, fitRadius);
         result.LightDistance = MaxFloat(baseSettings.LightDistance, fitRadius + baseSettings.NearPlane);
         result.FarPlane = MaxFloat(baseSettings.FarPlane, result.LightDistance + fitRadius);
         return result;
+    }
+
+    DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(
+        const DirectionalShadowMatrixSettings& baseSettings,
+        const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies)
+    {
+        return FitDirectionalShadowMatrixSettingsToCasters(
+            baseSettings, meshProxies, nullptr, megaGeometryProxies);
+    }
+
+    DirectionalShadowMatrixResult BuildFittedDirectionalShadowLightMatrices(
+        const Container::VariableArray<LightProxy>* lightProxies,
+        const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<SkinnedMeshProxy>* skinnedMeshProxies,
+        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
+        const DirectionalShadowMatrixSettings& baseSettings)
+    {
+        const DirectionalShadowMatrixSettings fittedSettings =
+            FitDirectionalShadowMatrixSettingsToCasters(
+                baseSettings, meshProxies, skinnedMeshProxies, megaGeometryProxies);
+        return BuildDirectionalShadowLightMatrices(lightProxies, fittedSettings);
     }
 
     DirectionalShadowMatrixResult BuildFittedDirectionalShadowLightMatrices(
@@ -291,9 +385,8 @@ namespace NorvesLib::Core::Rendering
         const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
         const DirectionalShadowMatrixSettings& baseSettings)
     {
-        const DirectionalShadowMatrixSettings fittedSettings =
-            FitDirectionalShadowMatrixSettingsToCasters(baseSettings, meshProxies, megaGeometryProxies);
-        return BuildDirectionalShadowLightMatrices(lightProxies, fittedSettings);
+        return BuildFittedDirectionalShadowLightMatrices(
+            lightProxies, meshProxies, nullptr, megaGeometryProxies, baseSettings);
     }
 
     void CopyShadowMatrixToShaderData(const Math::Matrix4x4& matrix, float* outData)

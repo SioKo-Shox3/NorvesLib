@@ -15,6 +15,7 @@ namespace NorvesLib::RHI
     class ICommandList;
     class IRenderTarget;
     class ITexture2D;
+    struct SwapChainEndFrameResult;
 }
 
 namespace NorvesLib::Core::Rendering
@@ -157,7 +158,7 @@ namespace NorvesLib::Core::Rendering
          * コマンドリストをサブミットし、合成結果を画面に表示します。
          * @param commandList サブミットするコマンドリスト
          */
-        void EndFrame(Container::TSharedPtr<RHI::ICommandList> commandList);
+        RHI::SwapChainEndFrameResult EndFrame(Container::TSharedPtr<RHI::ICommandList> commandList);
 
         // ========================================
         // RHIアクセス

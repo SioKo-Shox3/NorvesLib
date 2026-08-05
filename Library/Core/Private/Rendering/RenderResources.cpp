@@ -1,6 +1,7 @@
 #include "Rendering/RenderResources.h"
 
 #include "Rendering/GpuResourceStore.h"
+#include "Rendering/SkinnedMeshGpuStore.h"
 #include "Rendering/MegaGeometryResourceStore.h"
 #include "Rendering/ProceduralMeshGpuStore.h"
 #include "Rendering/RenderMaterialStore.h"
@@ -78,6 +79,7 @@ namespace NorvesLib::Core::Rendering
 
         Thread::Atomic<uint64_t> NextHandleId{1};
         Container::TSharedPtr<RHI::IDevice> Device;
+        Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
         Container::TUniquePtr<RenderMaterialStore> MaterialStore;
@@ -543,6 +545,75 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    SkinnedMeshResources::SkinnedMeshResources(RenderResources* pOwner)
+        : m_pOwner(pOwner)
+    {
+    }
+
+    void SkinnedMeshResources::BeginFrame(uint64_t completedSubmissionSerial)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->SkinnedMeshes)
+        {
+            impl->SkinnedMeshes->BeginFrame(completedSubmissionSerial);
+        }
+    }
+
+    bool SkinnedMeshResources::PrepareDraw(
+        const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease,
+        const Container::VariableArray<Math::Matrix4x4>& bonePalette,
+        const Math::Matrix4x4& worldTransform,
+        SkinnedMeshPreparedDraw& outPrepared)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->SkinnedMeshes
+                   ? impl->SkinnedMeshes->PrepareDraw(frameLease, bonePalette, worldTransform, outPrepared)
+                   : false;
+    }
+
+    bool SkinnedMeshResources::MarkLastUse(
+        const SkinnedMeshPreparedDraw& prepared,
+        const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->SkinnedMeshes
+                   ? impl->SkinnedMeshes->MarkLastUse(prepared, frameLease)
+                   : false;
+    }
+
+    bool SkinnedMeshResources::CommitSubmittedFrame(uint64_t submissionSerial)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->SkinnedMeshes
+                   ? impl->SkinnedMeshes->CommitSubmittedFrame(submissionSerial)
+                   : false;
+    }
+
+    void SkinnedMeshResources::AbortFrame()
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->SkinnedMeshes)
+        {
+            impl->SkinnedMeshes->AbortFrame();
+        }
+    }
+
+    bool SkinnedMeshResources::GetLifetimeSnapshot(
+        SkinnedMeshHandle handle,
+        SkinnedMeshGpuLifetimeSnapshot& outSnapshot) const
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->SkinnedMeshes
+                   ? impl->SkinnedMeshes->GetLifetimeSnapshot(handle, outSnapshot)
+                   : false;
+    }
+
+    bool SkinnedMeshResources::IsResident(SkinnedMeshHandle handle) const
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->SkinnedMeshes && impl->SkinnedMeshes->IsResident(handle);
+    }
+
     MegaGeometryResources::MegaGeometryResources(RenderResources *pOwner)
         : m_pOwner(pOwner)
     {
@@ -702,6 +773,7 @@ namespace NorvesLib::Core::Rendering
         : m_Impl(Container::MakeUnique<Impl>()),
           m_Gpu(this),
           m_Textures(this),
+          m_SkinnedMeshes(this),
           m_Materials(this),
           m_Meshes(this),
           m_MegaGeometry(this)
@@ -729,6 +801,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_Impl->GpuResources = Container::MakeUnique<GpuResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
+        m_Impl->SkinnedMeshes = Container::MakeUnique<SkinnedMeshGpuStore>(m_Impl->Device);
         m_Impl->MegaGeometryResources =
             Container::MakeUnique<MegaGeometryResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
         m_Impl->ProceduralMeshes = Container::MakeUnique<ProceduralMeshGpuStore>(m_Impl->Device);
@@ -756,6 +829,14 @@ namespace NorvesLib::Core::Rendering
         m_Impl->bShuttingDown = true;
         CloseAsyncAssetLoadAdmissionAndWait();
         ClearAllResources();
+        if (m_Impl->Device)
+        {
+            m_Impl->Device->WaitIdle();
+        }
+        if (m_Impl->SkinnedMeshes)
+        {
+            m_Impl->SkinnedMeshes->ForceClearAfterWaitIdle();
+        }
         if (m_Impl->ModelAssets)
         {
             m_Impl->ModelAssets->Unbind();
@@ -764,6 +845,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_Impl->TextureAssets->Unbind();
         }
+        m_Impl->SkinnedMeshes.reset();
 
         m_Impl->ProceduralMeshes.reset();
         m_Impl->MegaGeometryResources.reset();
@@ -909,6 +991,11 @@ namespace NorvesLib::Core::Rendering
         if (m_Impl->ProceduralMeshes)
         {
             m_Impl->ProceduralMeshes->Clear();
+        }
+
+        if (m_Impl->SkinnedMeshes)
+        {
+            m_Impl->SkinnedMeshes->CollectReleasedResources();
         }
 
         if (m_Impl->MegaGeometryResources)
