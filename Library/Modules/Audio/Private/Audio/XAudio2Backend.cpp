@@ -15,8 +15,10 @@ namespace NorvesLib::Modules::Audio::Private
         class XAudio2VoiceCallback final : public IXAudio2VoiceCallback
         {
         public:
-            XAudio2VoiceCallback(XAudio2Backend& owner, VoiceHandle handle)
-                : m_Owner(owner), m_Handle(handle)
+            XAudio2VoiceCallback(XAudio2Backend& owner,
+                                 VoiceHandle handle,
+                                 AudioBackendEventMailbox& mailbox)
+                : m_Owner(owner), m_Handle(handle), m_Mailbox(mailbox)
             {
             }
 
@@ -31,6 +33,7 @@ namespace NorvesLib::Modules::Audio::Private
         private:
             XAudio2Backend& m_Owner;
             VoiceHandle m_Handle;
+            AudioBackendEventMailbox& m_Mailbox;
         };
 
         struct XAudio2VoiceRecord
@@ -73,7 +76,9 @@ namespace NorvesLib::Modules::Audio::Private
                 return AudioResult::Success;
             }
 
-            AudioResult CreateVoice(VoiceHandle handle, const AudioPcmFormat& format) override
+            AudioResult CreateVoice(VoiceHandle handle,
+                                    const AudioPcmFormat& format,
+                                    AudioBackendEventMailbox& mailbox) override
             {
                 if (m_Engine == nullptr || !format.IsSupported() || !handle.IsValid())
                 {
@@ -89,7 +94,7 @@ namespace NorvesLib::Modules::Audio::Private
                     return AudioResult::BackendFailure;
                 }
 
-                auto callback = Core::Container::MakeUnique<XAudio2VoiceCallback>(*this, handle);
+                auto callback = Core::Container::MakeUnique<XAudio2VoiceCallback>(*this, handle, mailbox);
                 WAVEFORMATEX waveFormat{};
                 waveFormat.wFormatTag = WAVE_FORMAT_PCM;
                 waveFormat.nChannels = format.ChannelCount;
@@ -211,7 +216,9 @@ namespace NorvesLib::Modules::Audio::Private
                 m_ShutdownEpoch.Store(0);
             }
 
-            void Emit(VoiceHandle handle, AudioBackendEventKind kind) noexcept
+            void Emit(AudioBackendEventMailbox& mailbox,
+                      VoiceHandle handle,
+                      AudioBackendEventKind kind) noexcept
             {
                 ++m_InFlightCallbacks;
                 if (!m_bAcceptingCallbacks.Load())
@@ -222,7 +229,7 @@ namespace NorvesLib::Modules::Audio::Private
                 IAudioBackendEventSink* sink = m_EventSink.Load();
                 if (sink != nullptr)
                 {
-                    sink->EnqueueBackendEvent(handle, m_ShutdownEpoch.Load(), kind);
+                    sink->EnqueueBackendEvent(mailbox, handle, m_ShutdownEpoch.Load(), kind);
                 }
                 --m_InFlightCallbacks;
             }
@@ -249,17 +256,17 @@ namespace NorvesLib::Modules::Audio::Private
 
         void XAudio2VoiceCallback::OnStreamEnd()
         {
-            m_Owner.Emit(m_Handle, AudioBackendEventKind::Drained);
+            m_Owner.Emit(m_Mailbox, m_Handle, AudioBackendEventKind::Drained);
         }
 
         void XAudio2VoiceCallback::OnBufferEnd(void*)
         {
-            m_Owner.Emit(m_Handle, AudioBackendEventKind::Drained);
+            m_Owner.Emit(m_Mailbox, m_Handle, AudioBackendEventKind::Drained);
         }
 
         void XAudio2VoiceCallback::OnVoiceError(void*, HRESULT)
         {
-            m_Owner.Emit(m_Handle, AudioBackendEventKind::VoiceError);
+            m_Owner.Emit(m_Mailbox, m_Handle, AudioBackendEventKind::VoiceError);
         }
     } // namespace
 

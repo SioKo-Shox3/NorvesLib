@@ -7,6 +7,18 @@
 
 namespace NorvesLib::Core::Component
 {
+    namespace
+    {
+        Math::Matrix4x4 LoadMeshNodeGlobalTransform(const Container::FixedArray<float, 16>& values)
+        {
+            return Math::Matrix4x4(
+                values[0], values[1], values[2], values[3],
+                values[4], values[5], values[6], values[7],
+                values[8], values[9], values[10], values[11],
+                values[12], values[13], values[14], values[15]);
+        }
+    } // namespace
+
     IMPLEMENT_CLASS(SkinnedMeshComponent, Component)
 
     SkinnedMeshComponent::SkinnedMeshComponent() = default;
@@ -69,6 +81,9 @@ namespace NorvesLib::Core::Component
     void SkinnedMeshComponent::SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset)
     {
         m_SkeletalAsset = asset;
+        m_MeshNodeGlobalTransform = asset && asset->GetMesh()
+            ? LoadMeshNodeGlobalTransform(asset->GetMesh()->GetMeshNodeGlobalTransform())
+            : Math::Matrix4x4::Identity;
         m_bPoseDirty = true;
         MarkRenderStateDirty();
     }

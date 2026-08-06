@@ -28,6 +28,11 @@
     },
     {
       "name": "Mesh",
+      "translation": [
+        5,
+        0,
+        0
+      ],
       "mesh": 0,
       "skin": 0
     }

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <utility>
 
 using namespace NorvesLib::Core::Rendering;
 
@@ -589,6 +590,46 @@ namespace
                                 "converter preserves default Target");
     }
 
+    void TestSkinnedCasterBoundsUseRowVectorPointAndExtentTransforms()
+    {
+        const SkinnedMeshHandle handle{1, 1};
+        CoreContainer::VariableArray<SkinnedMeshVertex> vertices(1);
+        CoreContainer::VariableArray<uint32_t> indices = {0, 0, 0};
+        auto assetLease = CoreContainer::MakeShared<SkinnedMeshAssetLease>(
+            handle, std::move(vertices), std::move(indices));
+
+        SkinnedMeshProxy proxy;
+        proxy.MeshHandle = handle;
+        proxy.AssetLease = assetLease;
+        proxy.ComponentId = 1;
+        proxy.BonePalette.push_back(NorvesLib::Math::Matrix4x4::Identity);
+        proxy.bHasAnimatedBounds = true;
+        proxy.AnimatedBounds.Min = NorvesLib::Math::Vector3(0.5f, 1.0f, 1.0f);
+        proxy.AnimatedBounds.Max = NorvesLib::Math::Vector3(1.5f, 3.0f, 5.0f);
+        proxy.WorldTransform = NorvesLib::Math::Matrix4x4(
+            2.0f, 3.0f, 5.0f, 0.0f,
+            7.0f, 11.0f, 13.0f, 0.0f,
+            17.0f, 19.0f, 23.0f, 0.0f,
+            29.0f, 31.0f, 37.0f, 1.0f);
+
+        CoreContainer::VariableArray<SkinnedMeshProxy> skinnedCasters = {proxy};
+        DirectionalShadowMatrixSettings baseSettings;
+        baseSettings.OrthoSize = 0.0f;
+        baseSettings.LightDistance = 0.0f;
+        baseSettings.FarPlane = 0.0f;
+        const DirectionalShadowMatrixSettings fitted =
+            FitDirectionalShadowMatrixSettingsToCasters(
+                baseSettings, nullptr, &skinnedCasters, nullptr);
+
+        ExpectVectorNearlyEqual(
+            fitted.Target,
+            NorvesLib::Math::Vector3(96.0f, 113.0f, 137.0f),
+            "skinned caster center uses row-vector point transform including translation");
+        const float expectedRadius = std::sqrt(42.0f * 42.0f + 50.5f * 50.5f + 61.5f * 61.5f);
+        ExpectNearlyEqual(fitted.OrthoSize, expectedRadius,
+                          "skinned caster radius uses absolute row-vector upper3x3 extents");
+    }
+
     void TestShaderMatrixCopies()
     {
         const NorvesLib::Math::Matrix4x4 matrix(
@@ -638,6 +679,7 @@ int main()
     TestMultiCasterFitUsesAllValidCasters();
     TestNonFiniteCasterBoundsIgnored();
     TestShadowMapSettingsConverter();
+    TestSkinnedCasterBoundsUseRowVectorPointAndExtentTransforms();
     TestShaderMatrixCopies();
 
     if (g_FailureCount != 0)

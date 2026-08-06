@@ -88,6 +88,11 @@ namespace NorvesLib::Modules::Audio
         return m_FrameCount;
     }
 
+    Core::Asset::AssetBlob AudioClipResource::GetPcmBlob() const
+    {
+        return m_PcmBlob;
+    }
+
     Core::Container::Span<const uint8_t> AudioClipResource::GetPcmBytes() const noexcept
     {
         return m_PcmBlob.GetSpan();

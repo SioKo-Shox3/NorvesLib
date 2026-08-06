@@ -4,6 +4,7 @@
 #include "Core/Public/Component/SkinnedMeshComponent.h"
 #include "Core/Public/GameMode/GameModeContext.h"
 #include "Core/Public/GameMode/GameModeScope.h"
+#include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
 
 #include <bit>
@@ -26,6 +27,22 @@ namespace Game::GameModes
         data.m_pM9SkinnedMeshComponent =
             ctx.WorldRef.CreateComponent<NorvesLib::Core::Component::SkinnedMeshComponent>(data.m_pM9SkinnedObject);
         data.m_pM9SkinnedMeshComponent->SetSkeletalAsset(data.m_M9WorldAcceptance->SkeletalAsset);
+        const auto& mesh = data.m_M9WorldAcceptance->SkeletalAsset->GetMesh();
+        if (!mesh)
+        {
+            return false;
+        }
+
+        const float resourceTranslationX = mesh->GetMeshNodeGlobalTransform()[12];
+        const float componentTranslationX =
+            data.m_pM9SkinnedMeshComponent->GetMeshNodeGlobalTransform().GetTranslationRow().x;
+        LOG_INFO("M9_WORLD_SMOKE stage=skeletal_binding resource_translation_x=%f component_translation_x=%f",
+                 resourceTranslationX,
+                 componentTranslationX);
+        EmitM9WorldSmokeMarker(
+            "M9_WORLD_SMOKE stage=skeletal_binding resource_translation_x=%f component_translation_x=%f",
+            resourceTranslationX,
+            componentTranslationX);
         data.m_pM9SkinnedMeshComponent->SetPlaying(false);
         data.m_pM9SkinnedMeshComponent->SetAnimationTimeSeconds(0.0f);
         return true;

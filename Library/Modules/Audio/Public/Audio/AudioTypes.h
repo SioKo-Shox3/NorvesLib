@@ -66,6 +66,8 @@ namespace NorvesLib::Modules::Audio
         uint32_t InFlightCallbackCount = 0;
         uint64_t StaleEventCount = 0;
         uint64_t LateEventCount = 0;
+        // Duplicate terminal callbacks coalesced behind a pending event for the same voice.
+        uint64_t DroppedEventCount = 0;
         uint32_t QuarantinedVoiceCount = 0;
     };
 } // namespace NorvesLib::Modules::Audio

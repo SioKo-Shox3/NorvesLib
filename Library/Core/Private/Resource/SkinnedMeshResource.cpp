@@ -70,6 +70,11 @@ namespace NorvesLib::Core
         m_Indices = std::move(indices);
     }
 
+    void SkinnedMeshResource::SetMeshNodeGlobalTransform(const Container::FixedArray<float, 16>& transform)
+    {
+        m_MeshNodeGlobalTransform = transform;
+    }
+
     const Container::VariableArray<Skeletal::SkeletalVertex>& SkinnedMeshResource::GetVertices() const
     {
         return m_Vertices;
@@ -78,6 +83,11 @@ namespace NorvesLib::Core
     const Container::VariableArray<uint32_t>& SkinnedMeshResource::GetIndices() const
     {
         return m_Indices;
+    }
+
+    const Container::FixedArray<float, 16>& SkinnedMeshResource::GetMeshNodeGlobalTransform() const
+    {
+        return m_MeshNodeGlobalTransform;
     }
 
     Rendering::SkinnedMeshHandle SkinnedMeshResource::GetRenderMeshHandle() const

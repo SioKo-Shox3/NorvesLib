@@ -63,6 +63,175 @@ namespace NorvesLib::Core::Skeletal
             uint32_t Indices = InvalidIndex;
         };
 
+        using MatrixValues = Container::FixedArray<float, 16>;
+
+        struct NodeContract
+        {
+            Container::VariableArray<int32_t> Parents;
+            MatrixValues MeshNodeGlobal{
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f};
+            uint32_t MeshNodeIndex = InvalidIndex;
+        };
+
+        MatrixValues IdentityMatrix()
+        {
+            return {
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f};
+        }
+
+        bool IsFiniteMatrix(const MatrixValues& matrix)
+        {
+            for (float value : matrix)
+            {
+                if (!std::isfinite(value))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool IsInvertibleMatrix(const MatrixValues& matrix)
+        {
+            MatrixValues reduced = matrix;
+            for (size_t column = 0; column < 4; ++column)
+            {
+                size_t pivotRow = column;
+                float pivotMagnitude = std::fabs(reduced[pivotRow * 4 + column]);
+                for (size_t row = column + 1; row < 4; ++row)
+                {
+                    const float magnitude = std::fabs(reduced[row * 4 + column]);
+                    if (magnitude > pivotMagnitude)
+                    {
+                        pivotRow = row;
+                        pivotMagnitude = magnitude;
+                    }
+                }
+                if (!std::isfinite(pivotMagnitude) || pivotMagnitude <= 0.000001f)
+                {
+                    return false;
+                }
+                if (pivotRow != column)
+                {
+                    for (size_t element = 0; element < 4; ++element)
+                    {
+                        std::swap(reduced[column * 4 + element], reduced[pivotRow * 4 + element]);
+                    }
+                }
+                const float pivot = reduced[column * 4 + column];
+                for (size_t row = column + 1; row < 4; ++row)
+                {
+                    const float factor = reduced[row * 4 + column] / pivot;
+                    for (size_t element = column; element < 4; ++element)
+                    {
+                        reduced[row * 4 + element] -= factor * reduced[column * 4 + element];
+                    }
+                }
+            }
+            return true;
+        }
+
+        MatrixValues MultiplyMatrix(const MatrixValues& left, const MatrixValues& right)
+        {
+            MatrixValues result{};
+            for (size_t row = 0; row < 4; ++row)
+            {
+                for (size_t column = 0; column < 4; ++column)
+                {
+                    for (size_t inner = 0; inner < 4; ++inner)
+                    {
+                        result[row * 4 + column] +=
+                            left[row * 4 + inner] * right[inner * 4 + column];
+                    }
+                }
+            }
+            return result;
+        }
+
+        bool ReadFloatArray(const JsonValue& value, size_t expectedCount, float* outValues)
+        {
+            if (!value.IsArray() || value.GetArraySize() != expectedCount)
+            {
+                return false;
+            }
+            for (size_t index = 0; index < expectedCount; ++index)
+            {
+                const JsonValue element = value.GetArrayElement(index);
+                if (!element.IsNumber())
+                {
+                    return false;
+                }
+                const double number = element.AsNumber(0.0);
+                if (!std::isfinite(number) || number < -std::numeric_limits<float>::max() ||
+                    number > std::numeric_limits<float>::max())
+                {
+                    return false;
+                }
+                outValues[index] = static_cast<float>(number);
+            }
+            return true;
+        }
+
+        bool ParseNodeLocalTransform(const JsonValue& node, MatrixValues& outMatrix)
+        {
+            if (!node.IsObject())
+            {
+                return false;
+            }
+            const JsonValue matrix = node.FindMember("matrix");
+            const bool bHasTrs = node.HasMember("translation") || node.HasMember("rotation") || node.HasMember("scale");
+            if (matrix.IsValid())
+            {
+                return !bHasTrs && ReadFloatArray(matrix, 16, outMatrix.data()) && IsFiniteMatrix(outMatrix);
+            }
+
+            float translation[3] = {0.0f, 0.0f, 0.0f};
+            float rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            float scale[3] = {1.0f, 1.0f, 1.0f};
+            const JsonValue translationValue = node.FindMember("translation");
+            const JsonValue rotationValue = node.FindMember("rotation");
+            const JsonValue scaleValue = node.FindMember("scale");
+            if ((translationValue.IsValid() && !ReadFloatArray(translationValue, 3, translation)) ||
+                (rotationValue.IsValid() && !ReadFloatArray(rotationValue, 4, rotation)) ||
+                (scaleValue.IsValid() && !ReadFloatArray(scaleValue, 3, scale)))
+            {
+                return false;
+            }
+
+            const float quaternionLengthSquared = rotation[0] * rotation[0] + rotation[1] * rotation[1] +
+                                                  rotation[2] * rotation[2] + rotation[3] * rotation[3];
+            if (!std::isfinite(quaternionLengthSquared) || quaternionLengthSquared <= 0.000001f)
+            {
+                return false;
+            }
+            const float inverseLength = 1.0f / std::sqrt(quaternionLengthSquared);
+            const float x = rotation[0] * inverseLength;
+            const float y = rotation[1] * inverseLength;
+            const float z = rotation[2] * inverseLength;
+            const float w = rotation[3] * inverseLength;
+
+            outMatrix = IdentityMatrix();
+            outMatrix[0] = scale[0] * (1.0f - 2.0f * (y * y + z * z));
+            outMatrix[1] = scale[0] * (2.0f * (x * y + z * w));
+            outMatrix[2] = scale[0] * (2.0f * (x * z - y * w));
+            outMatrix[4] = scale[1] * (2.0f * (x * y - z * w));
+            outMatrix[5] = scale[1] * (1.0f - 2.0f * (x * x + z * z));
+            outMatrix[6] = scale[1] * (2.0f * (y * z + x * w));
+            outMatrix[8] = scale[2] * (2.0f * (x * z + y * w));
+            outMatrix[9] = scale[2] * (2.0f * (y * z - x * w));
+            outMatrix[10] = scale[2] * (1.0f - 2.0f * (x * x + y * y));
+            outMatrix[12] = translation[0];
+            outMatrix[13] = translation[1];
+            outMatrix[14] = translation[2];
+            return IsFiniteMatrix(outMatrix);
+        }
+
         bool CheckedAdd(size_t a, size_t b, size_t& out)
         {
             if (a > std::numeric_limits<size_t>::max() - b)
@@ -169,6 +338,170 @@ namespace NorvesLib::Core::Skeletal
             }
             outValue = static_cast<size_t>(converted);
             return true;
+        }
+
+        bool BuildNodeGlobal(size_t nodeIndex,
+                             const Container::VariableArray<int32_t>& parents,
+                             const Container::VariableArray<MatrixValues>& locals,
+                             Container::VariableArray<MatrixValues>& globals,
+                             Container::VariableArray<uint8_t>& states)
+        {
+            if (states[nodeIndex] == 2)
+            {
+                return true;
+            }
+            if (states[nodeIndex] == 1)
+            {
+                return false;
+            }
+            states[nodeIndex] = 1;
+            const int32_t parent = parents[nodeIndex];
+            if (parent >= 0)
+            {
+                if (!BuildNodeGlobal(static_cast<size_t>(parent), parents, locals, globals, states))
+                {
+                    return false;
+                }
+                globals[nodeIndex] = MultiplyMatrix(locals[nodeIndex], globals[static_cast<size_t>(parent)]);
+            }
+            else
+            {
+                globals[nodeIndex] = locals[nodeIndex];
+            }
+            states[nodeIndex] = 2;
+            return IsFiniteMatrix(globals[nodeIndex]);
+        }
+
+        bool MarkReachableNode(uint32_t nodeIndex,
+                               const JsonValue& nodes,
+                               Container::VariableArray<uint8_t>& reachable)
+        {
+            if (nodeIndex >= nodes.GetArraySize())
+            {
+                return false;
+            }
+            if (reachable[nodeIndex] != 0)
+            {
+                return true;
+            }
+            reachable[nodeIndex] = 1;
+            const JsonValue children = nodes.GetArrayElement(nodeIndex).FindMember("children");
+            if (!children.IsValid())
+            {
+                return true;
+            }
+            if (!children.IsArray())
+            {
+                return false;
+            }
+            for (size_t childIndex = 0; childIndex < children.GetArraySize(); ++childIndex)
+            {
+                uint32_t childNodeIndex = InvalidIndex;
+                if (!TryReadUInt32(children.GetArrayElement(childIndex), childNodeIndex) ||
+                    !MarkReachableNode(childNodeIndex, nodes, reachable))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ParseNodeContract(const JsonValue& root, NodeContract& outContract)
+        {
+            const JsonValue nodes = root.FindMember("nodes");
+            const JsonValue scenes = root.FindMember("scenes");
+            uint32_t sceneIndex = InvalidIndex;
+            if (!nodes.IsArray() || nodes.GetArraySize() == 0 || !scenes.IsArray() ||
+                !TryReadRequiredUInt32(root, "scene", sceneIndex) || sceneIndex >= scenes.GetArraySize())
+            {
+                return false;
+            }
+            const JsonValue sceneRoots = scenes.GetArrayElement(sceneIndex).FindMember("nodes");
+            if (!sceneRoots.IsArray() || sceneRoots.GetArraySize() == 0)
+            {
+                return false;
+            }
+
+            const size_t nodeCount = nodes.GetArraySize();
+            outContract.Parents.assign(nodeCount, -1);
+            Container::VariableArray<MatrixValues> locals(nodeCount);
+            Container::VariableArray<MatrixValues> globals(nodeCount);
+            for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex)
+            {
+                const JsonValue node = nodes.GetArrayElement(nodeIndex);
+                if (!ParseNodeLocalTransform(node, locals[nodeIndex]))
+                {
+                    return false;
+                }
+                const JsonValue children = node.FindMember("children");
+                if (!children.IsValid())
+                {
+                    continue;
+                }
+                if (!children.IsArray())
+                {
+                    return false;
+                }
+                for (size_t childIndex = 0; childIndex < children.GetArraySize(); ++childIndex)
+                {
+                    uint32_t childNodeIndex = InvalidIndex;
+                    if (!TryReadUInt32(children.GetArrayElement(childIndex), childNodeIndex) ||
+                        childNodeIndex >= nodeCount || outContract.Parents[childNodeIndex] >= 0)
+                    {
+                        return false;
+                    }
+                    outContract.Parents[childNodeIndex] = static_cast<int32_t>(nodeIndex);
+                }
+            }
+
+            Container::VariableArray<uint8_t> globalStates(nodeCount, 0);
+            for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex)
+            {
+                if (!BuildNodeGlobal(nodeIndex, outContract.Parents, locals, globals, globalStates))
+                {
+                    return false;
+                }
+            }
+
+            Container::VariableArray<uint8_t> reachable(nodeCount, 0);
+            for (size_t rootIndex = 0; rootIndex < sceneRoots.GetArraySize(); ++rootIndex)
+            {
+                uint32_t rootNodeIndex = InvalidIndex;
+                if (!TryReadUInt32(sceneRoots.GetArrayElement(rootIndex), rootNodeIndex) ||
+                    rootNodeIndex >= nodeCount || outContract.Parents[rootNodeIndex] >= 0 ||
+                    !MarkReachableNode(rootNodeIndex, nodes, reachable))
+                {
+                    return false;
+                }
+            }
+
+            size_t bindingCount = 0;
+            for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex)
+            {
+                const JsonValue node = nodes.GetArrayElement(nodeIndex);
+                const JsonValue meshValue = node.FindMember("mesh");
+                const JsonValue skinValue = node.FindMember("skin");
+                if (!meshValue.IsValid() && !skinValue.IsValid())
+                {
+                    continue;
+                }
+                uint32_t meshIndex = InvalidIndex;
+                uint32_t skinIndex = InvalidIndex;
+                if (!TryReadUInt32(meshValue, meshIndex) || !TryReadUInt32(skinValue, skinIndex) ||
+                    meshIndex != 0 || skinIndex != 0)
+                {
+                    return false;
+                }
+                ++bindingCount;
+                outContract.MeshNodeIndex = static_cast<uint32_t>(nodeIndex);
+            }
+            if (bindingCount != 1 || outContract.MeshNodeIndex == InvalidIndex ||
+                reachable[outContract.MeshNodeIndex] == 0)
+            {
+                return false;
+            }
+            outContract.MeshNodeGlobal = globals[outContract.MeshNodeIndex];
+            return IsInvertibleMatrix(outContract.MeshNodeGlobal);
         }
 
         size_t GetComponentSize(uint32_t componentType)
@@ -340,6 +673,11 @@ namespace NorvesLib::Core::Skeletal
                     return false;
                 }
                 accessor.bNormalized = normalized.AsBool(false);
+                if (accessor.ComponentType == FloatComponent && accessor.bNormalized)
+                {
+                    outStatus = SkeletalGltfDecodeStatus::InvalidAccessor;
+                    return false;
+                }
                 outAccessors.push_back(std::move(accessor));
             }
             return true;
@@ -367,6 +705,11 @@ namespace NorvesLib::Core::Skeletal
                     !TryReadOptionalSize(value, "byteOffset", 0, bufferView.ByteOffset) ||
                     !TryReadRequiredSize(value, "byteLength", bufferView.ByteLength) ||
                     !TryReadOptionalSize(value, "byteStride", 0, bufferView.ByteStride))
+                {
+                    return false;
+                }
+                if (bufferView.ByteStride != 0 &&
+                    (bufferView.ByteStride < 4 || bufferView.ByteStride > 252 || bufferView.ByteStride % 4 != 0))
                 {
                     return false;
                 }
@@ -452,7 +795,9 @@ namespace NorvesLib::Core::Skeletal
             }
 
             const size_t stride = view.ByteStride == 0 ? elementSize : view.ByteStride;
-            if (stride < elementSize)
+            const size_t componentSize = GetComponentSize(accessor.ComponentType);
+            if (stride < elementSize || componentSize == 0 || stride % componentSize != 0 ||
+                accessor.ByteOffset % componentSize != 0 || view.ByteOffset % componentSize != 0)
             {
                 return false;
             }
@@ -595,7 +940,8 @@ namespace NorvesLib::Core::Skeletal
             outAnimation = animations.GetArrayElement(0);
             const JsonValue samplers = outAnimation.FindMember("samplers");
             const JsonValue channels = outAnimation.FindMember("channels");
-            if (!outAnimation.IsObject() || !samplers.IsArray() || !channels.IsArray())
+            if (!outAnimation.IsObject() || !samplers.IsArray() || samplers.GetArraySize() == 0 ||
+                !channels.IsArray() || channels.GetArraySize() == 0)
             {
                 outStatus = SkeletalGltfDecodeStatus::InvalidAnimation;
                 return false;
@@ -667,7 +1013,8 @@ namespace NorvesLib::Core::Skeletal
                 !BuildAccessorLayout(*weights, bufferViews, buffers, bufferBytes, weightsLayout) ||
                 !BuildAccessorLayout(*indices, bufferViews, buffers, bufferBytes, indexLayout) ||
                 position->Count == 0 || normal->Count != position->Count || texCoord->Count != position->Count ||
-                joints->Count != position->Count || weights->Count != position->Count)
+                joints->Count != position->Count || weights->Count != position->Count ||
+                indices->Count == 0 || indices->Count % 3 != 0)
             {
                 return false;
             }
@@ -693,6 +1040,26 @@ namespace NorvesLib::Core::Skeletal
                     vertex.JointWeights[influence] = ReadWeightComponent(
                         weightData + influence * weightComponentSize, weights->ComponentType, weights->bNormalized);
                 }
+                float weightSum = 0.0f;
+                if (!std::isfinite(vertex.Position.X) || !std::isfinite(vertex.Position.Y) ||
+                    !std::isfinite(vertex.Position.Z) || !std::isfinite(vertex.Normal.X) ||
+                    !std::isfinite(vertex.Normal.Y) || !std::isfinite(vertex.Normal.Z) ||
+                    !std::isfinite(vertex.TexCoord.U) || !std::isfinite(vertex.TexCoord.V))
+                {
+                    return false;
+                }
+                for (float weight : vertex.JointWeights)
+                {
+                    if (!std::isfinite(weight) || weight < 0.0f)
+                    {
+                        return false;
+                    }
+                    weightSum += weight;
+                }
+                if (!std::isfinite(weightSum) || std::fabs(weightSum - 1.0f) > 0.001f)
+                {
+                    return false;
+                }
             }
 
             outData.Indices.resize(indices->Count);
@@ -706,11 +1073,16 @@ namespace NorvesLib::Core::Skeletal
                     return false;
                 }
             }
+            for (size_t index = 0; index < outData.Indices.size(); index += 3)
+            {
+                std::swap(outData.Indices[index + 1], outData.Indices[index + 2]);
+            }
             return indexComponentSize != 0;
         }
 
         bool ExtractSkeleton(const JsonValue& root,
                              const JsonValue& skin,
+                             const NodeContract& nodeContract,
                              const Container::VariableArray<AccessorInfo>& accessors,
                              const Container::VariableArray<BufferViewInfo>& bufferViews,
                              const Container::VariableArray<BufferInfo>& buffers,
@@ -753,38 +1125,42 @@ namespace NorvesLib::Core::Skeletal
                 for (size_t element = 0; element < 16; ++element)
                 {
                     joint.InverseBindMatrix[element] = ReadFloat(matrixData + element * sizeof(float));
-                }
-            }
-
-            for (size_t parentNodeIndex = 0; parentNodeIndex < nodes.GetArraySize(); ++parentNodeIndex)
-            {
-                const JsonValue children = nodes.GetArrayElement(parentNodeIndex).FindMember("children");
-                if (!children.IsValid())
-                {
-                    continue;
-                }
-                if (!children.IsArray())
-                {
-                    return false;
-                }
-                for (size_t childIndex = 0; childIndex < children.GetArraySize(); ++childIndex)
-                {
-                    uint32_t childNodeIndex = InvalidIndex;
-                    if (!TryReadUInt32(children.GetArrayElement(childIndex), childNodeIndex) ||
-                        childNodeIndex >= nodes.GetArraySize())
+                    if (!std::isfinite(joint.InverseBindMatrix[element]))
                     {
                         return false;
                     }
-                    if (outNodeToJoint[childNodeIndex] >= 0 && outNodeToJoint[parentNodeIndex] >= 0)
+                }
+            }
+
+            uint32_t skeletonNodeIndex = InvalidIndex;
+            if (!TryReadRequiredUInt32(skin, "skeleton", skeletonNodeIndex) ||
+                skeletonNodeIndex >= nodes.GetArraySize() || outNodeToJoint[skeletonNodeIndex] < 0)
+            {
+                return false;
+            }
+            for (size_t nodeIndex = 0; nodeIndex < nodes.GetArraySize(); ++nodeIndex)
+            {
+                if (outNodeToJoint[nodeIndex] < 0)
+                {
+                    continue;
+                }
+                const int32_t parentNodeIndex = nodeContract.Parents[nodeIndex];
+                if (parentNodeIndex >= 0)
+                {
+                    const int32_t parentJointIndex = outNodeToJoint[static_cast<size_t>(parentNodeIndex)];
+                    if (parentJointIndex < 0)
                     {
-                        SkeletalJoint& child = outData.Joints[static_cast<size_t>(outNodeToJoint[childNodeIndex])];
-                        if (child.ParentIndex >= 0)
-                        {
-                            return false;
-                        }
-                        child.ParentIndex = outNodeToJoint[parentNodeIndex];
+                        return false;
+                    }
+                    else
+                    {
+                        outData.Joints[static_cast<size_t>(outNodeToJoint[nodeIndex])].ParentIndex = parentJointIndex;
                     }
                 }
+            }
+            if (outData.Joints[static_cast<size_t>(outNodeToJoint[skeletonNodeIndex])].ParentIndex >= 0)
+            {
+                return false;
             }
             return true;
         }
@@ -802,6 +1178,7 @@ namespace NorvesLib::Core::Skeletal
             SkeletalAnimationClip clip;
             clip.Name = animation.FindMember("name").AsString();
             clip.Channels.reserve(channels.GetArraySize());
+            Container::VariableArray<uint8_t> animatedPaths(nodeToJoint.size() * 3, 0);
 
             for (size_t channelIndex = 0; channelIndex < channels.GetArraySize(); ++channelIndex)
             {
@@ -859,6 +1236,14 @@ namespace NorvesLib::Core::Skeletal
                     return false;
                 }
 
+                const size_t uniquePathIndex = static_cast<size_t>(channel.JointIndex) * 3 +
+                                               static_cast<size_t>(channel.Path);
+                if (uniquePathIndex >= animatedPaths.size() || animatedPaths[uniquePathIndex] != 0)
+                {
+                    return false;
+                }
+                animatedPaths[uniquePathIndex] = 1;
+
                 const Container::String& interpolation = sampler.FindMember("interpolation").AsString();
                 channel.Interpolation = interpolation == "STEP" ? SkeletalAnimationInterpolation::Step
                                                                 : SkeletalAnimationInterpolation::Linear;
@@ -866,7 +1251,7 @@ namespace NorvesLib::Core::Skeletal
                 AccessorLayout outputLayout;
                 if (!GetAccessor(accessors, outputIndex, outputType, FloatComponent, bufferViews, buffers, bufferBytes,
                                  output, outputLayout) ||
-                    output->Count != input->Count)
+                    input->Count == 0 || output->Count != input->Count)
                 {
                     return false;
                 }
@@ -890,11 +1275,22 @@ namespace NorvesLib::Core::Skeletal
                     {
                         sample.Value.W = ReadFloat(valueData + 12);
                     }
+                    if (!std::isfinite(sample.TimeSeconds) || sample.TimeSeconds < 0.0f ||
+                        (sampleIndex > 0 && sample.TimeSeconds <= channel.Samples[sampleIndex - 1].TimeSeconds) ||
+                        !std::isfinite(sample.Value.X) || !std::isfinite(sample.Value.Y) ||
+                        !std::isfinite(sample.Value.Z) || !std::isfinite(sample.Value.W))
+                    {
+                        return false;
+                    }
                     clip.DurationSeconds = std::max(clip.DurationSeconds, sample.TimeSeconds);
                 }
                 clip.Channels.push_back(std::move(channel));
             }
 
+            if (clip.Channels.empty() || !std::isfinite(clip.DurationSeconds))
+            {
+                return false;
+            }
             outData.Clips.push_back(std::move(clip));
             return true;
         }
@@ -964,6 +1360,12 @@ namespace NorvesLib::Core::Skeletal
 
         SkeletalGltfData data;
         Container::VariableArray<int32_t> nodeToJoint;
+        NodeContract nodeContract;
+        if (!ParseNodeContract(root, nodeContract))
+        {
+            return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
+        }
+        data.MeshNodeGlobalTransform = nodeContract.MeshNodeGlobal;
         if (!ExtractMesh(primitive, accessors, bufferViews, buffers, bufferBytes, data))
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
@@ -979,7 +1381,7 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
         }
-        if (!ExtractSkeleton(root, skin, accessors, bufferViews, buffers, bufferBytes, data, nodeToJoint))
+        if (!ExtractSkeleton(root, skin, nodeContract, accessors, bufferViews, buffers, bufferBytes, data, nodeToJoint))
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
         }

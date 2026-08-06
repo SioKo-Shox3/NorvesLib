@@ -49,8 +49,6 @@ namespace NorvesLib::Core::Rendering
         {
             switch (status)
             {
-            case RHI::SwapChainEndFrameStatus::InvalidCommandList:
-                throw std::runtime_error("SwapChain EndFrame rejected the command list");
             case RHI::SwapChainEndFrameStatus::FenceResetFailed:
                 throw std::runtime_error("SwapChain frame fence reset failed");
             case RHI::SwapChainEndFrameStatus::SubmitFailed:
@@ -1444,6 +1442,13 @@ namespace NorvesLib::Core::Rendering
             }
             if (endFrameResult.HasError())
             {
+                if (endFrameResult.Status == RHI::SwapChainEndFrameStatus::InvalidCommandList)
+                {
+                    NORVES_LOG_ERROR("RenderingCoordinator",
+                                     "SwapChain EndFrame rejected the command list; discarding frame");
+                    publishIncompleteStats();
+                    return;
+                }
                 ThrowSwapChainEndFrameError(endFrameResult.Status);
             }
             publishIncompleteStats();
@@ -1716,6 +1721,13 @@ namespace NorvesLib::Core::Rendering
         }
         if (endFrameResult.HasError())
         {
+            if (endFrameResult.Status == RHI::SwapChainEndFrameStatus::InvalidCommandList)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator",
+                                 "SwapChain EndFrame rejected the command list; discarding frame");
+                publishIncompleteStats();
+                return;
+            }
             ThrowSwapChainEndFrameError(endFrameResult.Status);
         }
 

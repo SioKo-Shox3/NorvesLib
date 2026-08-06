@@ -1885,6 +1885,12 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe32(outBytes, SkeletalHeader::ClipCount, static_cast<uint32_t>(skeletal.Clips.size()));
             WriteLe32(outBytes, SkeletalHeader::ChannelCount, static_cast<uint32_t>(channelCount));
             WriteLe32(outBytes, SkeletalHeader::SampleCount, static_cast<uint32_t>(sampleCount));
+            for (size_t element = 0; element < 16; ++element)
+            {
+                WriteFloat32(outBytes,
+                             SkeletalHeader::MeshNodeGlobalTransform + element * sizeof(float),
+                             skeletal.MeshNodeGlobalTransform[element]);
+            }
 
             for (size_t vertexIndex = 0; vertexIndex < skeletal.Vertices.size(); ++vertexIndex)
             {
@@ -1973,8 +1979,10 @@ namespace NorvesLib::Tools::AssetCook
                 std::memcpy(outBytes.data() + stringOffset, stringTable.data(), stringTable.size());
             }
 
-            const uint64_t payloadHash = NorvesLib::Core::Asset::ComputeCookedSkeletalPayloadHash(
-                outBytes.data() + SkeletalFormat::HeaderSize, outBytes.size() - SkeletalFormat::HeaderSize);
+            const uint64_t payloadHash = NorvesLib::Core::Asset::ComputeCookedSkeletalV01Hash(
+                outBytes.data() + SkeletalHeader::MeshNodeGlobalTransform,
+                outBytes.data() + SkeletalFormat::HeaderSize,
+                outBytes.size() - SkeletalFormat::HeaderSize);
             WriteLe64(outBytes, SkeletalHeader::PayloadHash, payloadHash);
             return true;
         }

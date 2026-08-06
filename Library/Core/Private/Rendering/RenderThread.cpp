@@ -1,9 +1,11 @@
 ﻿#include "Rendering/RenderThread.h"
 #include "Rendering/RenderingCoordinator.h"
+#include "Engine/Engine.h"
 #include "RHI/IDevice.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <chrono>
+#include <exception>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -288,62 +290,115 @@ namespace NorvesLib::Core::Rendering
             // レンダリング実行
             if (m_Coordinator && packet)
             {
-#if NORVES_ENABLE_STATS
-                auto& statsManager = NorvesLib::Debug::StatsManager::Get();
-                const bool bTraceActive = statsManager.IsTraceActive();
-                std::chrono::high_resolution_clock::time_point startTime;
-                if (bTraceActive)
+                auto recyclePacket = [this](FramePacket* packetToRecycle)
                 {
-                    startTime = std::chrono::high_resolution_clock::now();
-                }
+                    if (!packetToRecycle)
+                    {
+                        return;
+                    }
+                    if (packetToRecycle->CompareExchangeState(FramePacketState::Queued,
+                                                               FramePacketState::Recycling) ||
+                        packetToRecycle->CompareExchangeState(FramePacketState::Ready,
+                                                               FramePacketState::Recycling))
+                    {
+                        packetToRecycle->Clear();
+                        packetToRecycle->SetState(FramePacketState::Empty);
+                        return;
+                    }
+                    m_Coordinator->ReleasePacket(packetToRecycle);
+                };
+                auto handleFatalRenderThreadFailure = [this, packet, &recyclePacket](const char* message)
+                {
+                    NORVES_LOG_ERROR("Rendering",
+                                     "RenderThread stopped after an unhandled exception: %s",
+                                     message);
+                    m_bShouldExit.Store(true, std::memory_order_release);
+                    recyclePacket(packet);
+
+                    m_FrameMutex.Lock();
+                    FramePacket* pendingPacket = m_CurrentPacket;
+                    m_CurrentPacket = nullptr;
+                    m_bNewFrameReady.Store(false, std::memory_order_release);
+                    m_bFrameComplete.Store(true, std::memory_order_release);
+                    m_bAssetGpuFlushWindowRequested = false;
+                    m_bAssetGpuFlushWindowReady = false;
+                    m_FrameMutex.Unlock();
+                    recyclePacket(pendingPacket);
+
+                    if (Engine::GEngine)
+                    {
+                        Engine::GEngine->RequestExit(1);
+                    }
+                    m_IdleCondition.NotifyAll();
+                };
+
+                try
+                {
+#if NORVES_ENABLE_STATS
+                    auto& statsManager = NorvesLib::Debug::StatsManager::Get();
+                    const bool bTraceActive = statsManager.IsTraceActive();
+                    std::chrono::high_resolution_clock::time_point startTime;
+                    if (bTraceActive)
+                    {
+                        startTime = std::chrono::high_resolution_clock::now();
+                    }
 #endif
 
-                if (m_RenderFrameTestHook)
-                {
-                    m_RenderFrameTestHook(packet);
-                }
+                    if (m_RenderFrameTestHook)
+                    {
+                        m_RenderFrameTestHook(packet);
+                    }
 
-                m_Coordinator->RenderFrame(packet);
-                // 描画完了後にパケットをEmpty状態に戻して再利用可能にする
-                m_Coordinator->ReleasePacket(packet);
+                    m_Coordinator->RenderFrame(packet);
+                    // 描画完了後にパケットをEmpty状態に戻して再利用可能にする
+                    m_Coordinator->ReleasePacket(packet);
 
 #if NORVES_ENABLE_STATS
-                // 統計を更新
-                m_Stats.FramesRendered++;
-                m_PublishedFramesRendered.Store(m_Stats.FramesRendered, std::memory_order_release);
-                if (bTraceActive)
-                {
-                    auto endTime = std::chrono::high_resolution_clock::now();
-                    float frameTime = std::chrono::duration<float, std::milli>(endTime - startTime).count();
-                    m_Stats.FrameTimeMs = frameTime;
-                    statsManager.SetRenderThreadTimeMs(frameTime);
-                }
+                    // 統計を更新
+                    m_Stats.FramesRendered++;
+                    m_PublishedFramesRendered.Store(m_Stats.FramesRendered, std::memory_order_release);
+                    if (bTraceActive)
+                    {
+                        auto endTime = std::chrono::high_resolution_clock::now();
+                        float frameTime = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+                        m_Stats.FrameTimeMs = frameTime;
+                        statsManager.SetRenderThreadTimeMs(frameTime);
+                    }
 #else
-                m_Stats.FramesRendered++;
-                m_PublishedFramesRendered.Store(m_Stats.FramesRendered, std::memory_order_release);
+                    m_Stats.FramesRendered++;
+                    m_PublishedFramesRendered.Store(m_Stats.FramesRendered, std::memory_order_release);
 #endif
 
-                bool bReportResume = false;
-                uint64_t resumeWindowId = 0;
-                uint64_t resumeReadyFrames = 0;
-                m_FrameMutex.Lock();
-                if (m_bReportAssetGpuFlushWindowResume)
-                {
-                    m_bReportAssetGpuFlushWindowResume = false;
-                    resumeWindowId = m_AssetGpuFlushWindowResumeId;
-                    resumeReadyFrames = m_AssetGpuFlushWindowResumeReadyFrames;
-                    bReportResume = true;
-                }
-                m_FrameMutex.Unlock();
+                    bool bReportResume = false;
+                    uint64_t resumeWindowId = 0;
+                    uint64_t resumeReadyFrames = 0;
+                    m_FrameMutex.Lock();
+                    if (m_bReportAssetGpuFlushWindowResume)
+                    {
+                        m_bReportAssetGpuFlushWindowResume = false;
+                        resumeWindowId = m_AssetGpuFlushWindowResumeId;
+                        resumeReadyFrames = m_AssetGpuFlushWindowResumeReadyFrames;
+                        bReportResume = true;
+                    }
+                    m_FrameMutex.Unlock();
 
-                if (bReportResume)
+                    if (bReportResume)
+                    {
+                        NORVES_LOG_INFO(
+                            "Rendering",
+                            "stage=asset_gpu_flush_window_resumed role=render_thread window_id=%llu ready_frames=%llu frames_rendered=%llu success=1",
+                            static_cast<unsigned long long>(resumeWindowId),
+                            static_cast<unsigned long long>(resumeReadyFrames),
+                            static_cast<unsigned long long>(m_Stats.FramesRendered));
+                    }
+                }
+                catch (const std::exception& exception)
                 {
-                    NORVES_LOG_INFO(
-                        "Rendering",
-                        "stage=asset_gpu_flush_window_resumed role=render_thread window_id=%llu ready_frames=%llu frames_rendered=%llu success=1",
-                        static_cast<unsigned long long>(resumeWindowId),
-                        static_cast<unsigned long long>(resumeReadyFrames),
-                        static_cast<unsigned long long>(m_Stats.FramesRendered));
+                    handleFatalRenderThreadFailure(exception.what());
+                }
+                catch (...)
+                {
+                    handleFatalRenderThreadFailure("unknown exception");
                 }
             }
 

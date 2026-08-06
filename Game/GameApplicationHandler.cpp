@@ -1031,6 +1031,7 @@ namespace Game
         {
             return false;
         }
+        mesh->SetMeshNodeGlobalTransform(skeletal.Data.Skeletal.MeshNodeGlobalTransform);
         mesh->SetVertices(std::move(skeletal.Data.Skeletal.Vertices));
         mesh->SetIndices(std::move(skeletal.Data.Skeletal.Indices));
         skeleton->SetJoints(std::move(skeletal.Data.Skeletal.Joints));

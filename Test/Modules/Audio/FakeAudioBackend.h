@@ -9,6 +9,12 @@
 
 namespace NorvesLib::Test::Audio
 {
+    struct FakeAudioMailboxBinding
+    {
+        Modules::Audio::VoiceHandle Handle;
+        Modules::Audio::Private::AudioBackendEventMailbox* Mailbox = nullptr;
+    };
+
     enum class FakeAudioOperation : uint8_t
     {
         Initialize,
@@ -36,10 +42,12 @@ namespace NorvesLib::Test::Audio
 
         Modules::Audio::AudioResult CreateVoice(
             Modules::Audio::VoiceHandle handle,
-            const Modules::Audio::AudioPcmFormat&) override
+            const Modules::Audio::AudioPcmFormat&,
+            Modules::Audio::Private::AudioBackendEventMailbox& mailbox) override
         {
             Operations.push_back(FakeAudioOperation::Create);
             LastHandle = handle;
+            Mailboxes.push_back(FakeAudioMailboxBinding{handle, &mailbox});
             ++CreateCount;
             return bFailCreate ? Modules::Audio::AudioResult::BackendFailure : Modules::Audio::AudioResult::Success;
         }
@@ -92,10 +100,7 @@ namespace NorvesLib::Test::Audio
             }
             if (bEmitDrainedDuringQuiesce && EventSink != nullptr)
             {
-                EventSink->EnqueueBackendEvent(
-                    LastHandle,
-                    ShutdownEpoch,
-                    Modules::Audio::Private::AudioBackendEventKind::Drained);
+                Emit(LastHandle, ShutdownEpoch, Modules::Audio::Private::AudioBackendEventKind::Drained);
             }
         }
 
@@ -116,9 +121,17 @@ namespace NorvesLib::Test::Audio
                   uint64_t epoch,
                   Modules::Audio::Private::AudioBackendEventKind kind)
         {
-            if (EventSink != nullptr)
+            if (EventSink == nullptr)
             {
-                EventSink->EnqueueBackendEvent(handle, epoch, kind);
+                return;
+            }
+            for (auto binding = Mailboxes.rbegin(); binding != Mailboxes.rend(); ++binding)
+            {
+                if (binding->Handle == handle && binding->Mailbox != nullptr)
+                {
+                    EventSink->EnqueueBackendEvent(*binding->Mailbox, handle, epoch, kind);
+                    return;
+                }
             }
         }
 
@@ -144,6 +157,7 @@ namespace NorvesLib::Test::Audio
         Modules::Audio::Private::IAudioBackendEventSink* EventSink = nullptr;
         Thread::Atomic<bool>* pReleaseDelayedCallback = nullptr;
         Thread::Atomic<bool>* pDelayedCallbackComplete = nullptr;
+        Core::Container::VariableArray<FakeAudioMailboxBinding> Mailboxes;
         Core::Container::VariableArray<FakeAudioOperation> Operations;
     };
 } // namespace NorvesLib::Test::Audio

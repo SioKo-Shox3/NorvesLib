@@ -25,11 +25,13 @@ namespace NorvesLib::Core
 
         void SetVertices(Container::VariableArray<Skeletal::SkeletalVertex>&& vertices);
         void SetIndices(Container::VariableArray<uint32_t>&& indices);
+        void SetMeshNodeGlobalTransform(const Container::FixedArray<float, 16>& transform);
 
         Rendering::SkinnedMeshHandle GetRenderMeshHandle() const;
         const Container::TSharedPtr<Rendering::SkinnedMeshAssetLease>& GetRenderAssetLease() const;
         const Container::VariableArray<Skeletal::SkeletalVertex>& GetVertices() const;
         const Container::VariableArray<uint32_t>& GetIndices() const;
+        const Container::FixedArray<float, 16>& GetMeshNodeGlobalTransform() const;
         void RefreshRenderAssetLease();
         void ReleaseRenderAssetLease();
 
@@ -39,5 +41,10 @@ namespace NorvesLib::Core
         uint64_t m_RenderAssetGeneration = 0;
         Container::VariableArray<Skeletal::SkeletalVertex> m_Vertices;
         Container::VariableArray<uint32_t> m_Indices;
+        Container::FixedArray<float, 16> m_MeshNodeGlobalTransform{
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f};
     };
 } // namespace NorvesLib::Core

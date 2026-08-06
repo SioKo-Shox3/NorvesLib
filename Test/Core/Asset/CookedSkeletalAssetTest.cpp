@@ -57,7 +57,6 @@ namespace
         constexpr size_t StringOffset = 848;
         constexpr size_t StringSize = 13;
         constexpr size_t FileSize = 861;
-        constexpr uint64_t PayloadHash = 0x760d7f158a144408ull;
         constexpr uint8_t Magic[8] = {'N', 'V', 'S', 'K', 'E', 'L', 'v', '0'};
     } // namespace GoldenWire
 
@@ -178,7 +177,7 @@ namespace
         std::memcpy(bytes.data(), GoldenWire::Magic, sizeof(GoldenWire::Magic));
         WriteLe32(bytes, 8, static_cast<uint32_t>(GoldenWire::HeaderSize));
         WriteLe16(bytes, 12, 0);
-        WriteLe16(bytes, 14, 0);
+        WriteLe16(bytes, 14, 1);
         WriteLe32(bytes, 16, 0x01020304u);
         WriteLe32(bytes, 20, 64);
         WriteLe32(bytes, 24, 80);
@@ -200,20 +199,21 @@ namespace
         WriteLe64(bytes, 136, GoldenWire::SampleSize);
         WriteLe64(bytes, 144, GoldenWire::StringOffset);
         WriteLe64(bytes, 152, GoldenWire::StringSize);
-        WriteLe64(bytes, 160, GoldenWire::PayloadHash);
         WriteLe32(bytes, 168, 3);
         WriteLe32(bytes, 172, 3);
         WriteLe32(bytes, 176, 2);
         WriteLe32(bytes, 180, 1);
         WriteLe32(bytes, 184, 2);
         WriteLe32(bytes, 188, 4);
+        WriteMatrix(bytes, 192, 0.0f);
+        WriteFloat(bytes, 192 + 12 * sizeof(float), 5.0f);
 
         WriteVertex(bytes, 256, 0.0f, 0.0f, 0.0f, 0.0f, 0, 1, 0.75f, 0.25f);
         WriteVertex(bytes, 320, 1.0f, 0.0f, 1.0f, 0.0f, 0, 1, 0.5f, 0.5f);
         WriteVertex(bytes, 384, 0.0f, 1.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f);
         WriteLe32(bytes, 448, 0);
-        WriteLe32(bytes, 452, 1);
-        WriteLe32(bytes, 456, 2);
+        WriteLe32(bytes, 452, 2);
+        WriteLe32(bytes, 456, 1);
 
         WriteLe32(bytes, 464, 0xffffffffu);
         WriteLe32(bytes, 468, 0);
@@ -246,7 +246,18 @@ namespace
 
         constexpr char names[] = "RootChildWave";
         std::memcpy(bytes.data() + 848, names, sizeof(names) - 1);
+        WriteLe64(bytes,
+                  160,
+                  Asset::ComputeCookedSkeletalV01Hash(bytes.data() + 192, bytes.data() + 256, bytes.size() - 256));
         return bytes;
+    }
+
+    void RecomputeSkeletalHash(ByteArray& bytes)
+    {
+        const uint64_t hash = bytes[14] == 0
+            ? Asset::ComputeCookedSkeletalPayloadHash(bytes.data() + 256, bytes.size() - 256)
+            : Asset::ComputeCookedSkeletalV01Hash(bytes.data() + 192, bytes.data() + 256, bytes.size() - 256);
+        WriteLe64(bytes, 160, hash);
     }
 
     Asset::AssetBlob MakeBlob(const ByteArray& bytes)
@@ -349,8 +360,9 @@ namespace
         assert(cooked.Skeletal.Vertices[0].JointIndices[1] == 1);
         assert(cooked.Skeletal.Vertices[0].JointWeights[0] == 0.75f);
         assert(cooked.Skeletal.Indices[0] == 0);
-        assert(cooked.Skeletal.Indices[1] == 1);
-        assert(cooked.Skeletal.Indices[2] == 2);
+        assert(cooked.Skeletal.Indices[1] == 2);
+        assert(cooked.Skeletal.Indices[2] == 1);
+        assert(cooked.Skeletal.MeshNodeGlobalTransform[12] == 5.0f);
         assert(cooked.Skeletal.Joints[0].Name == "Root");
         assert(cooked.Skeletal.Joints[0].ParentIndex == -1);
         assert(cooked.Skeletal.Joints[1].Name == "Child");
@@ -369,6 +381,10 @@ namespace
 
     void AssertEquivalent(const Skeletal::SkeletalGltfData& loose, const Skeletal::SkeletalGltfData& cooked)
     {
+        for (size_t element = 0; element < 16; ++element)
+        {
+            assert(loose.MeshNodeGlobalTransform[element] == cooked.MeshNodeGlobalTransform[element]);
+        }
         assert(loose.Vertices.size() == cooked.Vertices.size());
         assert(loose.Indices == cooked.Indices);
         assert(loose.Joints.size() == cooked.Joints.size());
@@ -455,8 +471,9 @@ namespace
 
         const ByteArray goldenBytes = BuildGoldenSkeletal();
         assert(goldenBytes.size() == 861);
-        assert(Asset::ComputeCookedSkeletalPayloadHash(goldenBytes.data() + 256, goldenBytes.size() - 256) ==
-               GoldenWire::PayloadHash);
+        const uint64_t goldenHash =
+            Asset::ComputeCookedSkeletalV01Hash(goldenBytes.data() + 192, goldenBytes.data() + 256,
+                                                goldenBytes.size() - 256);
 
         Asset::CookedSkeletalParseResult retainedResult;
         {
@@ -466,7 +483,24 @@ namespace
         }
         assert(retainedResult.Succeeded());
         assert(retainedResult.Status == Asset::CookedSkeletalParseStatus::Success);
-        AssertLiteralCookedData(retainedResult.Data, GoldenWire::PayloadHash);
+        AssertLiteralCookedData(retainedResult.Data, goldenHash);
+
+        {
+            ByteArray legacyBytes = goldenBytes;
+            WriteLe16(legacyBytes, 14, 0);
+            for (size_t byteIndex = 192; byteIndex < 256; ++byteIndex)
+            {
+                legacyBytes[byteIndex] = 0;
+            }
+            RecomputeSkeletalHash(legacyBytes);
+            const Asset::CookedSkeletalParseResult legacy = Asset::ParseCookedSkeletal(MakeBlob(legacyBytes));
+            assert(legacy.Succeeded());
+            assert(legacy.Data.Skeletal.MeshNodeGlobalTransform[0] == 1.0f);
+            assert(legacy.Data.Skeletal.MeshNodeGlobalTransform[5] == 1.0f);
+            assert(legacy.Data.Skeletal.MeshNodeGlobalTransform[10] == 1.0f);
+            assert(legacy.Data.Skeletal.MeshNodeGlobalTransform[15] == 1.0f);
+            assert(legacy.Data.Skeletal.MeshNodeGlobalTransform[12] == 0.0f);
+        }
 
         {
             LooseFixture fixture;
@@ -505,8 +539,71 @@ namespace
         }
         {
             ByteArray bytes = goldenBytes;
+            bytes[GoldenWire::IndexOffset + GoldenWire::IndexSize] = 1;
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
+        }
+        {
+            ByteArray bytes = goldenBytes;
             bytes.pop_back();
             ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::FileSizeMismatch);
+        }
+        {
+            ByteArray bytes = goldenBytes;
+            WriteLe32(bytes, GoldenWire::VertexOffset, 0x7fc00000u);
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
+        }
+        {
+            ByteArray bytes = goldenBytes;
+            WriteFloat(bytes, GoldenWire::VertexOffset + 48, -0.25f);
+            WriteFloat(bytes, GoldenWire::VertexOffset + 52, 1.25f);
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
+        }
+        {
+            ByteArray bytes = goldenBytes;
+            WriteLe32(bytes, GoldenWire::JointOffset + 0, 1);
+            WriteLe32(bytes, GoldenWire::JointOffset + GoldenWire::JointSize / 2, 0);
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
+        }
+        {
+            ByteArray bytes = goldenBytes;
+            WriteLe32(bytes, GoldenWire::ChannelOffset + GoldenWire::ChannelSize / 2 + 0, 1);
+            WriteLe32(bytes, GoldenWire::ChannelOffset + GoldenWire::ChannelSize / 2 + 4, 0);
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
+        }
+        {
+            ByteArray bytes = goldenBytes;
+            WriteFloat(bytes, GoldenWire::SampleOffset + 32, 0.0f);
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
+        }
+        {
+            ByteArray bytes = goldenBytes;
+            WriteFloat(bytes, GoldenWire::ClipOffset + 12, 3.0f);
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
+        }
+        {
+            ByteArray bytes = goldenBytes;
+            WriteLe32(bytes, GoldenWire::ChannelOffset + GoldenWire::ChannelSize / 2 + 12, 1);
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
+        }
+        {
+            ByteArray bytes = goldenBytes;
+            WriteLe32(bytes, 192, 0x7fc00000u);
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
+        }
+        {
+            ByteArray bytes = goldenBytes;
+            WriteFloat(bytes, 192, 0.0f);
+            RecomputeSkeletalHash(bytes);
+            ExpectStatus(std::move(bytes), Asset::CookedSkeletalParseStatus::InvalidRecord);
         }
     }
 

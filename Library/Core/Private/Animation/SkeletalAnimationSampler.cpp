@@ -30,22 +30,6 @@ namespace NorvesLib::Core::Animation
                 values[12], values[13], values[14], values[15]);
         }
 
-        Math::Vector3 TransformPointRow(const Math::Matrix4x4& matrix, const Math::Vector3& point)
-        {
-            return Math::Vector3(
-                point.x * matrix.m00 + point.y * matrix.m10 + point.z * matrix.m20 + matrix.m30,
-                point.x * matrix.m01 + point.y * matrix.m11 + point.z * matrix.m21 + matrix.m31,
-                point.x * matrix.m02 + point.y * matrix.m12 + point.z * matrix.m22 + matrix.m32);
-        }
-
-        Math::Vector3 TransformVectorRow(const Math::Matrix4x4& matrix, const Math::Vector3& vector)
-        {
-            return Math::Vector3(
-                vector.x * matrix.m00 + vector.y * matrix.m10 + vector.z * matrix.m20,
-                vector.x * matrix.m01 + vector.y * matrix.m11 + vector.z * matrix.m21,
-                vector.x * matrix.m02 + vector.y * matrix.m12 + vector.z * matrix.m22);
-        }
-
         Math::Quaternion NormalizeQuaternion(const Math::Quaternion& value)
         {
             const float lengthSquared = value.x * value.x + value.y * value.y + value.z * value.z + value.w * value.w;
@@ -148,31 +132,8 @@ namespace NorvesLib::Core::Animation
             JointTransform result;
             result.Translation = matrix.GetTranslationRow();
             result.Scale = Math::MatrixUtils::ExtractScale(matrix);
-
-            Math::Matrix4x4 rotation = matrix;
-            rotation.SetTranslationRow(Math::Vector3::Zero);
-            rotation.m03 = 0.0f;
-            rotation.m13 = 0.0f;
-            rotation.m23 = 0.0f;
-            rotation.m33 = 1.0f;
-            if (result.Scale.x > Math::Constants::EPSILON)
-            {
-                rotation.m00 /= result.Scale.x;
-                rotation.m01 /= result.Scale.x;
-                rotation.m02 /= result.Scale.x;
-            }
-            if (result.Scale.y > Math::Constants::EPSILON)
-            {
-                rotation.m10 /= result.Scale.y;
-                rotation.m11 /= result.Scale.y;
-                rotation.m12 /= result.Scale.y;
-            }
-            if (result.Scale.z > Math::Constants::EPSILON)
-            {
-                rotation.m20 /= result.Scale.z;
-                rotation.m21 /= result.Scale.z;
-                rotation.m22 /= result.Scale.z;
-            }
+            const Math::Matrix4x4 rotation =
+                Math::MatrixUtils::ExtractRotationRowVector(matrix, result.Scale);
             result.Rotation = NormalizeQuaternion(Math::QuaternionUtils::FromRotationMatrix(rotation));
             return result;
         }
@@ -377,9 +338,9 @@ namespace NorvesLib::Core::Animation
                 continue;
             }
             const Math::Matrix4x4& palette = bonePalette[jointIndex];
-            position += TransformPointRow(palette, sourcePosition) * weight;
+            position += Math::MatrixUtils::TransformPointRowVector(palette, sourcePosition) * weight;
             const Math::Matrix4x4 normalMatrix = Math::MatrixUtils::CreateNormalMatrix(palette);
-            normal += TransformVectorRow(normalMatrix, sourceNormal) * weight;
+            normal += Math::MatrixUtils::TransformVectorRowVector(normalMatrix, sourceNormal) * weight;
             totalWeight += weight;
         }
         if (totalWeight <= Math::Constants::EPSILON)

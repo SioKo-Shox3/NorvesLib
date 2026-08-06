@@ -184,6 +184,28 @@ namespace
         return bytes;
     }
 
+    ByteArray BuildNonFinitePositionBuffer()
+    {
+        ByteArray bytes = BuildFixtureBuffer();
+        WriteLe32(bytes, 0, 0x7fc00000u);
+        return bytes;
+    }
+
+    ByteArray BuildNegativeWeightBuffer()
+    {
+        ByteArray bytes = BuildFixtureBuffer();
+        WriteFloat(bytes, 132, -0.25f);
+        WriteFloat(bytes, 136, 1.25f);
+        return bytes;
+    }
+
+    ByteArray BuildNonIncreasingTimeBuffer()
+    {
+        ByteArray bytes = BuildFixtureBuffer();
+        WriteFloat(bytes, 356, 0.0f);
+        return bytes;
+    }
+
     ByteArray BuildTooManyJointsBuffer()
     {
         const ByteArray base = BuildFixtureBuffer();
@@ -452,6 +474,90 @@ namespace
             ReplaceArrayAfter(tooManyJoints, "\"skins\": [", "\"joints\": [", BuildTooManyJointArray());
             WriteText(Root / "TooManyJoints.gltf", tooManyJoints);
             WriteBytes(Root / "too_many.bin", BuildTooManyJointsBuffer());
+
+            Container::String meshOutsideScene = valid;
+            ReplaceAfter(meshOutsideScene, "\"scenes\": [", "2", "1");
+            WriteText(Root / "MeshOutsideScene.gltf", meshOutsideScene);
+
+            Container::String wrongSkinBinding = valid;
+            ReplaceAfter(wrongSkinBinding, "\"name\": \"Mesh\"", "\"skin\": 0", "\"skin\": 1");
+            WriteText(Root / "WrongSkinBinding.gltf", wrongSkinBinding);
+
+            Container::String missingMeshBinding = valid;
+            ReplaceAfter(missingMeshBinding, "\"name\": \"Mesh\"", "\"mesh\": 0", "\"mesh_missing\": 0");
+            WriteText(Root / "MissingMeshBinding.gltf", missingMeshBinding);
+
+            Container::String missingSkinBinding = valid;
+            ReplaceAfter(missingSkinBinding, "\"name\": \"Mesh\"", "\"skin\": 0", "\"skin_missing\": 0");
+            WriteText(Root / "MissingSkinBinding.gltf", missingSkinBinding);
+
+            Container::String ambiguousBinding = valid;
+            ReplaceAfter(ambiguousBinding, "\"scenes\": [", "2", "2,\r\n        3");
+            ReplaceOnce(ambiguousBinding,
+                        "\"skin\": 0\r\n    }\r\n  ],\r\n  \"buffers\"",
+                        "\"skin\": 0\r\n    },\r\n    {\"name\":\"DuplicateMesh\",\"mesh\":0,\"skin\":0}\r\n  ],\r\n  \"buffers\"");
+            WriteText(Root / "AmbiguousBinding.gltf", ambiguousBinding);
+
+            Container::String singularMeshTransform = valid;
+            ReplaceAfter(singularMeshTransform,
+                         "\"name\": \"Mesh\"",
+                         "\"mesh\": 0",
+                         "\"scale\": [0, 1, 1], \"mesh\": 0");
+            WriteText(Root / "SingularMeshTransform.gltf", singularMeshTransform);
+
+            Container::String intermediateNode = valid;
+            ReplaceAfter(intermediateNode, "\"name\": \"Root\"", "1", "2");
+            ReplaceAfter(intermediateNode, "\"scenes\": [", "2", "3");
+            ReplaceOnce(intermediateNode,
+                        "\"name\": \"Mesh\",",
+                        "\"name\": \"Intermediate\", \"children\": [1]\r\n    },\r\n    {\r\n      \"name\": \"Mesh\",");
+            WriteText(Root / "IntermediateNode.gltf", intermediateNode);
+
+            Container::String nodeCycle = valid;
+            ReplaceOnce(nodeCycle,
+                        "\"translation\": [\r\n        0,\r\n        1,\r\n        0\r\n      ]",
+                        "\"translation\": [0, 1, 0], \"children\": [0]");
+            WriteText(Root / "NodeCycle.gltf", nodeCycle);
+
+            Container::String duplicateChannel = valid;
+            ReplaceAfter(duplicateChannel,
+                         "\"interpolation\": \"STEP\"",
+                         "\"node\": 0,\r\n            \"path\": \"rotation\"",
+                         "\"node\": 1,\r\n            \"path\": \"translation\"");
+            WriteText(Root / "DuplicateChannel.gltf", duplicateChannel);
+
+            Container::String nonTriangleIndices = valid;
+            ReplaceAfter(nonTriangleIndices, "\"bufferView\": 8", "\"count\": 3", "\"count\": 2");
+            WriteText(Root / "NonTriangleIndices.gltf", nonTriangleIndices);
+
+            Container::String normalizedFloat = valid;
+            ReplaceAfter(normalizedFloat,
+                         "\"bufferView\": 0",
+                         "\"componentType\": 5126,",
+                         "\"componentType\": 5126, \"normalized\": true,");
+            WriteText(Root / "NormalizedFloat.gltf", normalizedFloat);
+
+            Container::String invalidStride = valid;
+            ReplaceAfter(invalidStride,
+                         "\"buffer\": 0,",
+                         "\"byteOffset\": 0,",
+                         "\"byteOffset\": 0, \"byteStride\": 14,");
+            WriteText(Root / "InvalidStride.gltf", invalidStride);
+
+            Container::String nonFinitePosition = valid;
+            ReplaceOnce(nonFinitePosition, "\"uri\": \"fixture.bin\"", "\"uri\": \"non_finite.bin\"");
+            WriteText(Root / "NonFinitePosition.gltf", nonFinitePosition);
+            WriteBytes(Root / "non_finite.bin", BuildNonFinitePositionBuffer());
+
+            Container::String negativeWeight = valid;
+            ReplaceOnce(negativeWeight, "\"uri\": \"fixture.bin\"", "\"uri\": \"negative_weight.bin\"");
+            WriteText(Root / "NegativeWeight.gltf", negativeWeight);
+            WriteBytes(Root / "negative_weight.bin", BuildNegativeWeightBuffer());
+
+            Container::String nonIncreasingTime = valid;
+            ReplaceOnce(nonIncreasingTime, "\"uri\": \"fixture.bin\"", "\"uri\": \"bad_time.bin\"");
+            WriteText(Root / "NonIncreasingTime.gltf", nonIncreasingTime);
+            WriteBytes(Root / "bad_time.bin", BuildNonIncreasingTimeBuffer());
         }
 
         ~SkeletalFixtureDirectory()
@@ -484,8 +590,8 @@ namespace
         assert(data.Vertices.size() == 3);
         assert(data.Indices.size() == 3);
         assert(data.Indices[0] == 0);
-        assert(data.Indices[1] == 1);
-        assert(data.Indices[2] == 2);
+        assert(data.Indices[1] == 2);
+        assert(data.Indices[2] == 1);
         assert(data.Vertices[1].Position.X == 1.0f);
         assert(data.Vertices[2].Position.Y == 1.0f);
         assert(data.Vertices[0].Normal.Z == 1.0f);
@@ -562,6 +668,7 @@ int main()
         AssertNear(result.Data.Vertices[0].JointWeights[1], 0.25f);
         AssertNear(result.Data.Vertices[1].JointWeights[0], 0.5f);
         AssertNear(result.Data.Vertices[1].JointWeights[1], 0.5f);
+        assert(result.Data.MeshNodeGlobalTransform[12] == 5.0f);
     }
 
     {
@@ -597,6 +704,21 @@ int main()
     ExpectReject(fixture, "CubicSpline.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedInterpolation);
     ExpectReject(fixture, "MorphTarget.gltf", Skeletal::SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
     ExpectReject(fixture, "TooManyJoints.gltf", Skeletal::SkeletalGltfDecodeStatus::JointLimitExceeded);
+    ExpectReject(fixture, "MeshOutsideScene.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
+    ExpectReject(fixture, "WrongSkinBinding.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
+    ExpectReject(fixture, "MissingMeshBinding.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
+    ExpectReject(fixture, "MissingSkinBinding.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
+    ExpectReject(fixture, "AmbiguousBinding.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
+    ExpectReject(fixture, "SingularMeshTransform.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
+    ExpectReject(fixture, "IntermediateNode.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
+    ExpectReject(fixture, "NodeCycle.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidSkeleton);
+    ExpectReject(fixture, "DuplicateChannel.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidAnimation);
+    ExpectReject(fixture, "NonTriangleIndices.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidAccessor);
+    ExpectReject(fixture, "NormalizedFloat.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidAccessor);
+    ExpectReject(fixture, "InvalidStride.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidAccessor);
+    ExpectReject(fixture, "NonFinitePosition.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidAccessor);
+    ExpectReject(fixture, "NegativeWeight.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidAccessor);
+    ExpectReject(fixture, "NonIncreasingTime.gltf", Skeletal::SkeletalGltfDecodeStatus::InvalidAnimation);
 
     std::cout << "GLTFSkeletalAnalyzerTest passed\n";
     return 0;

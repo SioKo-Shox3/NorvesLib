@@ -29,6 +29,7 @@ namespace NorvesLib::Modules::Audio
         [[nodiscard]] size_t GetMemorySize() const override;
         [[nodiscard]] const AudioPcmFormat& GetFormat() const noexcept;
         [[nodiscard]] uint64_t GetFrameCount() const noexcept;
+        [[nodiscard]] Core::Asset::AssetBlob GetPcmBlob() const;
         [[nodiscard]] Core::Container::Span<const uint8_t> GetPcmBytes() const noexcept;
 
     private:

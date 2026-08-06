@@ -63,6 +63,7 @@ add_executable(AudioXAudio2AdapterContractTest AudioXAudio2AdapterContractTest.c
 target_link_libraries(AudioXAudio2AdapterContractTest PRIVATE Core)
 target_compile_definitions(AudioXAudio2AdapterContractTest PRIVATE
     AUDIO_XAUDIO2_SOURCE_PATH="${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/XAudio2Backend.cpp"
+    AUDIO_DOMAIN_SOURCE_PATH="${CMAKE_SOURCE_DIR}/Library/Modules/Audio/Private/Audio/AudioDomain.cpp"
 )
 set_target_properties(AudioXAudio2AdapterContractTest PROPERTIES FOLDER "Test/Modules/Audio")
 add_test(NAME AudioXAudio2AdapterContractTest COMMAND AudioXAudio2AdapterContractTest)

@@ -1,6 +1,7 @@
 ﻿#include "Animation/AnimationClipResource.h"
 #include "Animation/SkeletalAssetResource.h"
 #include "Animation/SkeletonResource.h"
+#include "Component/SkinnedMeshComponent.h"
 #include "Object/ResourceRegistry.h"
 #include "Resource/SkeletalGltfData.h"
 #include "Resource/SkinnedMeshResource.h"
@@ -40,6 +41,12 @@ namespace
         Container::VariableArray<uint32_t> indices = {0, 0, 0};
         mesh->SetVertices(std::move(vertices));
         mesh->SetIndices(std::move(indices));
+        Container::FixedArray<float, 16> meshNodeGlobal{
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            5.0f, 0.0f, 0.0f, 1.0f};
+        mesh->SetMeshNodeGlobalTransform(meshNodeGlobal);
     }
 
     void SeedSkeleton(const Container::TSharedPtr<SkeletonResource>& skeleton)
@@ -79,6 +86,7 @@ namespace
         assert(asset.GetMesh()->GetVertices().size() == 1);
         assert(asset.GetMesh()->GetVertices()[0].Position.X == 7.0f);
         assert(asset.GetMesh()->GetIndices().size() == 3);
+        assert(asset.GetMesh()->GetMeshNodeGlobalTransform()[12] == 5.0f);
         assert(asset.GetSkeleton()->GetJoints().size() == 1);
         assert(asset.GetSkeleton()->GetJoints()[0].Name == "Root");
         assert(asset.GetAnimationClip()->GetClip().Name == "Idle");
@@ -122,6 +130,13 @@ int main()
     asset->SetResources(mesh, skeleton, clip);
     assert(asset->IsLoaded());
     assert(asset->IsValid());
+    {
+        Component::SkinnedMeshComponent component;
+        component.Initialize();
+        component.SetSkeletalAsset(asset);
+        assert(component.GetMeshNodeGlobalTransform().GetTranslationRow().x == 5.0f);
+        component.Finalize();
+    }
 
     clip->Unload();
     assert(!clip->IsValid());

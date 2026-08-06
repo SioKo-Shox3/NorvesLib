@@ -3,7 +3,6 @@
 #include "Audio/AudioClipResource.h"
 #include "Container/VariableArray.h"
 #include "Thread/Atomic.h"
-#include "Thread/Mutex.h"
 
 #include <utility>
 
@@ -23,6 +22,8 @@ namespace NorvesLib::Modules::Audio::Private
             uint32_t Generation = 0;
             AudioVoiceState State = AudioVoiceState::Destroyed;
             Core::Container::TSharedPtr<AudioClipResource> Clip;
+            Core::Asset::AssetBlob PcmPayload;
+            Core::Container::TUniquePtr<AudioBackendEventMailbox> Mailbox;
             bool bBackendVoiceCreated = false;
             bool bCountedActive = false;
         };
@@ -61,10 +62,7 @@ namespace NorvesLib::Modules::Audio::Private
                 {
                     return AudioResult::BackendFailure;
                 }
-                {
-                    Thread::ScopedLock lock(m_EventMutex);
-                    m_bAcceptingEvents = true;
-                }
+                m_bAcceptingEvents.Store(true, std::memory_order_release);
                 m_bInitialized = true;
                 return AudioResult::Success;
             }
@@ -81,17 +79,18 @@ namespace NorvesLib::Modules::Audio::Private
                 const uint32_t index = AcquireSlot();
                 ActiveVoiceRecord& record = m_Voices[index];
                 record.Clip = clip;
+                record.PcmPayload = clip->GetPcmBlob();
                 record.State = AudioVoiceState::Created;
                 const VoiceHandle handle{index, record.Generation};
 
-                if (m_Backend->CreateVoice(handle, clip->GetFormat()) != AudioResult::Success)
+                if (m_Backend->CreateVoice(handle, clip->GetFormat(), *record.Mailbox) != AudioResult::Success)
                 {
                     ReleaseSlot(index);
                     return AudioResult::BackendFailure;
                 }
                 record.bBackendVoiceCreated = true;
 
-                if (m_Backend->SubmitVoice(handle, clip->GetPcmBytes()) != AudioResult::Success)
+                if (m_Backend->SubmitVoice(handle, record.PcmPayload.GetSpan()) != AudioResult::Success)
                 {
                     if (m_Backend->DestroyVoice(handle) == AudioResult::Success)
                     {
@@ -207,14 +206,17 @@ namespace NorvesLib::Modules::Audio::Private
 
             void Tick() override
             {
-                Core::Container::VariableArray<BackendEvent> events;
+                for (ActiveVoiceRecord& voice : m_Voices)
                 {
-                    Thread::ScopedLock lock(m_EventMutex);
-                    events.swap(m_PendingEvents);
-                }
-
-                for (const BackendEvent& event : events)
-                {
+                    if (!voice.Mailbox)
+                    {
+                        continue;
+                    }
+                    BackendEvent event;
+                    if (!voice.Mailbox->TryConsume(event.Handle, event.ShutdownEpoch, event.Kind))
+                    {
+                        continue;
+                    }
                     if (event.ShutdownEpoch != m_ShutdownEpoch || m_bShutdown)
                     {
                         ++m_LateEventCount;
@@ -262,10 +264,7 @@ namespace NorvesLib::Modules::Audio::Private
                     return AudioResult::BackendFailure;
                 }
 
-                {
-                    Thread::ScopedLock lock(m_EventMutex);
-                    m_bAcceptingEvents = false;
-                }
+                m_bAcceptingEvents.Store(false, std::memory_order_release);
 
                 bool bBackendFailure = false;
                 if (m_bInitialized)
@@ -327,31 +326,43 @@ namespace NorvesLib::Modules::Audio::Private
                 AudioDiagnostics diagnostics;
                 diagnostics.ActiveVoiceCount = m_ActiveVoiceCount;
                 diagnostics.InFlightCallbackCount = m_InFlightCallbacks.Load();
-                diagnostics.StaleEventCount = m_StaleEventCount;
+                diagnostics.StaleEventCount = m_StaleEventCount.Load();
                 diagnostics.LateEventCount = m_LateEventCount.Load();
+                diagnostics.DroppedEventCount = m_DroppedEventCount.Load();
                 diagnostics.QuarantinedVoiceCount = m_QuarantinedVoiceCount;
-                {
-                    Thread::ScopedLock lock(m_EventMutex);
-                    diagnostics.PendingEventCount = m_PendingEvents.size();
-                }
+                diagnostics.PendingEventCount = GetPendingEventCount();
                 return diagnostics;
             }
 
         private:
-            void EnqueueBackendEvent(VoiceHandle handle,
+            void EnqueueBackendEvent(AudioBackendEventMailbox& mailbox,
+                                     VoiceHandle handle,
                                      uint64_t shutdownEpoch,
                                      AudioBackendEventKind kind) noexcept override
             {
                 ++m_InFlightCallbacks;
+                if (!m_bAcceptingEvents.Load(std::memory_order_acquire))
                 {
-                    Thread::ScopedLock lock(m_EventMutex);
-                    if (!m_bAcceptingEvents)
+                    ++m_LateEventCount;
+                }
+                else
+                {
+                    switch (mailbox.TryPublish(handle, shutdownEpoch, kind))
                     {
+                    case AudioBackendEventPublishResult::Published:
+                        break;
+                    case AudioBackendEventPublishResult::Coalesced:
+                        ++m_DroppedEventCount;
+                        break;
+                    case AudioBackendEventPublishResult::StaleHandle:
+                        ++m_StaleEventCount;
+                        break;
+                    case AudioBackendEventPublishResult::StaleEpoch:
                         ++m_LateEventCount;
-                    }
-                    else
-                    {
-                        m_PendingEvents.push_back(BackendEvent{handle, shutdownEpoch, kind});
+                        break;
+                    case AudioBackendEventPublishResult::Closed:
+                        ++m_StaleEventCount;
+                        break;
                     }
                 }
                 --m_InFlightCallbacks;
@@ -372,11 +383,18 @@ namespace NorvesLib::Modules::Audio::Private
                 }
 
                 ActiveVoiceRecord& record = m_Voices[index];
+                if (record.Mailbox)
+                {
+                    record.Mailbox->Close();
+                    m_RetiredMailboxes.push_back(std::move(record.Mailbox));
+                }
+                record.Mailbox = Core::Container::MakeUnique<AudioBackendEventMailbox>();
                 ++record.Generation;
                 if (record.Generation == 0)
                 {
                     ++record.Generation;
                 }
+                record.Mailbox->Configure(VoiceHandle{index, record.Generation}, m_ShutdownEpoch);
                 return index;
             }
 
@@ -384,8 +402,10 @@ namespace NorvesLib::Modules::Audio::Private
             {
                 ActiveVoiceRecord& record = m_Voices[index];
                 const bool bWasQuarantined = record.State == AudioVoiceState::Quarantined;
+                record.Mailbox->Close();
                 record.State = AudioVoiceState::Destroyed;
                 record.Clip.reset();
+                record.PcmPayload = Core::Asset::AssetBlob::Invalid();
                 record.bBackendVoiceCreated = false;
                 if (record.bCountedActive && m_ActiveVoiceCount > 0)
                 {
@@ -444,20 +464,38 @@ namespace NorvesLib::Modules::Audio::Private
 
             void DrainEventsForShutdown()
             {
-                Thread::ScopedLock lock(m_EventMutex);
-                m_PendingEvents.clear();
+                for (ActiveVoiceRecord& record : m_Voices)
+                {
+                    if (record.Mailbox)
+                    {
+                        record.Mailbox->Close();
+                    }
+                }
+            }
+
+            [[nodiscard]] size_t GetPendingEventCount() const noexcept
+            {
+                size_t pendingEventCount = 0;
+                for (const ActiveVoiceRecord& record : m_Voices)
+                {
+                    if (record.Mailbox && record.Mailbox->HasPendingEvent())
+                    {
+                        ++pendingEventCount;
+                    }
+                }
+                return pendingEventCount;
             }
 
             Core::Container::TUniquePtr<IAudioBackend> m_Backend;
             Core::Container::VariableArray<ActiveVoiceRecord> m_Voices;
             Core::Container::VariableArray<uint32_t> m_FreeIndices;
-            mutable Thread::Mutex m_EventMutex;
-            Core::Container::VariableArray<BackendEvent> m_PendingEvents;
+            Core::Container::VariableArray<Core::Container::TUniquePtr<AudioBackendEventMailbox>> m_RetiredMailboxes;
             Thread::Atomic<uint32_t> m_InFlightCallbacks{0};
             Thread::Atomic<uint64_t> m_LateEventCount{0};
-            bool m_bAcceptingEvents = false;
+            Thread::Atomic<uint64_t> m_DroppedEventCount{0};
+            Thread::Atomic<bool> m_bAcceptingEvents{false};
             uint64_t m_ShutdownEpoch = 0;
-            uint64_t m_StaleEventCount = 0;
+            Thread::Atomic<uint64_t> m_StaleEventCount{0};
             uint32_t m_ActiveVoiceCount = 0;
             uint32_t m_QuarantinedVoiceCount = 0;
             bool m_bInitialized = false;

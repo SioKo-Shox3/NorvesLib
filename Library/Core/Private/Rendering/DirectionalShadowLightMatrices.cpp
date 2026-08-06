@@ -62,20 +62,10 @@ namespace NorvesLib::Core::Rendering
             const Math::Vector3 localCenter = proxy.AnimatedBounds.Center();
             const Math::Vector3 localHalfExtents = proxy.AnimatedBounds.HalfExtents();
             const Math::Matrix4x4& world = proxy.WorldTransform;
-            const Math::Vector3 worldCenter(
-                localCenter.x * world.m00 + localCenter.y * world.m10 + localCenter.z * world.m20 + world.m30,
-                localCenter.x * world.m01 + localCenter.y * world.m11 + localCenter.z * world.m21 + world.m31,
-                localCenter.x * world.m02 + localCenter.y * world.m12 + localCenter.z * world.m22 + world.m32);
-            const Math::Vector3 worldHalfExtents(
-                std::abs(world.m00) * localHalfExtents.x +
-                    std::abs(world.m10) * localHalfExtents.y +
-                    std::abs(world.m20) * localHalfExtents.z,
-                std::abs(world.m01) * localHalfExtents.x +
-                    std::abs(world.m11) * localHalfExtents.y +
-                    std::abs(world.m21) * localHalfExtents.z,
-                std::abs(world.m02) * localHalfExtents.x +
-                    std::abs(world.m12) * localHalfExtents.y +
-                    std::abs(world.m22) * localHalfExtents.z);
+            const Math::Vector3 worldCenter =
+                Math::MatrixUtils::TransformPointRowVector(world, localCenter);
+            const Math::Vector3 worldHalfExtents =
+                Math::MatrixUtils::AbsUpper3x3TransformExtentsRowVector(world, localHalfExtents);
             outBounds.CenterX = worldCenter.x;
             outBounds.CenterY = worldCenter.y;
             outBounds.CenterZ = worldCenter.z;

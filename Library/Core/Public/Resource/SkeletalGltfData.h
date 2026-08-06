@@ -79,6 +79,11 @@ namespace NorvesLib::Core::Skeletal
 
     struct SkeletalGltfData
     {
+        Container::FixedArray<float, 16> MeshNodeGlobalTransform{
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f};
         Container::VariableArray<SkeletalVertex> Vertices;
         Container::VariableArray<uint32_t> Indices;
         Container::VariableArray<SkeletalJoint> Joints;

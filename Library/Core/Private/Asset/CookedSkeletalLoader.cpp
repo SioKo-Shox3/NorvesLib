@@ -1,5 +1,6 @@
 ﻿#include "Asset/CookedSkeletalFormat.h"
 
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -34,6 +35,59 @@ namespace NorvesLib::Core::Asset
                 return false;
             }
             out = a * b;
+            return true;
+        }
+
+        bool AlignUp(size_t value, size_t alignment, size_t& out)
+        {
+            size_t adjusted = 0;
+            if (alignment == 0 || !CheckedAdd(value, alignment - 1, adjusted))
+            {
+                return false;
+            }
+            out = adjusted / alignment * alignment;
+            return true;
+        }
+
+        bool IsInvertibleMatrix(const Container::FixedArray<float, 16>& matrix)
+        {
+            Container::FixedArray<float, 16> reduced = matrix;
+            for (size_t column = 0; column < 4; ++column)
+            {
+                size_t pivotRow = column;
+                float pivotMagnitude = std::fabs(reduced[pivotRow * 4 + column]);
+                for (size_t row = column + 1; row < 4; ++row)
+                {
+                    const float magnitude = std::fabs(reduced[row * 4 + column]);
+                    if (magnitude > pivotMagnitude)
+                    {
+                        pivotRow = row;
+                        pivotMagnitude = magnitude;
+                    }
+                }
+                if (!std::isfinite(pivotMagnitude) || pivotMagnitude <= 0.000001f)
+                {
+                    return false;
+                }
+                if (pivotRow != column)
+                {
+                    for (size_t element = 0; element < 4; ++element)
+                    {
+                        const float temporary = reduced[column * 4 + element];
+                        reduced[column * 4 + element] = reduced[pivotRow * 4 + element];
+                        reduced[pivotRow * 4 + element] = temporary;
+                    }
+                }
+                const float pivot = reduced[column * 4 + column];
+                for (size_t row = column + 1; row < 4; ++row)
+                {
+                    const float factor = reduced[row * 4 + column] / pivot;
+                    for (size_t element = column; element < 4; ++element)
+                    {
+                        reduced[row * 4 + element] -= factor * reduced[column * 4 + element];
+                    }
+                }
+            }
             return true;
         }
 
@@ -153,8 +207,9 @@ namespace NorvesLib::Core::Asset
         {
             return Fail(CookedSkeletalParseStatus::BadMagic);
         }
+        const uint16_t versionMinor = ReadLe16(data, HeaderOffset::VersionMinor);
         if (ReadLe16(data, HeaderOffset::VersionMajor) != Format::VersionMajor ||
-            ReadLe16(data, HeaderOffset::VersionMinor) != Format::VersionMinor)
+            (versionMinor != Format::LegacyVersionMinor && versionMinor != Format::VersionMinor))
         {
             return Fail(CookedSkeletalParseStatus::UnsupportedVersion);
         }
@@ -233,14 +288,46 @@ namespace NorvesLib::Core::Asset
             !ValidateRecordSection(clipSection, clipCount, Format::ClipRecordSize) ||
             !ValidateRecordSection(channelSection, channelCount, Format::ChannelRecordSize) ||
             !ValidateRecordSection(sampleSection, sampleCount, Format::SampleRecordSize) || clipCount != 1 ||
-            jointCount == 0 || jointCount > 128)
+            vertexCount == 0 || indexCount == 0 || indexCount % 3 != 0 || jointCount == 0 || jointCount > 128 ||
+            channelCount == 0 || sampleCount == 0)
         {
             return Fail(CookedSkeletalParseStatus::InvalidRecord);
         }
 
+        size_t expectedSectionOffset = Format::HeaderSize;
+        const Section sections[] = {
+            vertexSection, indexSection, jointSection, clipSection, channelSection, sampleSection, stringSection};
+        for (size_t sectionIndex = 0; sectionIndex < sizeof(sections) / sizeof(sections[0]); ++sectionIndex)
+        {
+            const Section& section = sections[sectionIndex];
+            if (section.Offset != expectedSectionOffset ||
+                !CheckedAdd(section.Offset, section.Size, expectedSectionOffset))
+            {
+                return Fail(CookedSkeletalParseStatus::InvalidRecord);
+            }
+            if (sectionIndex + 1 < sizeof(sections) / sizeof(sections[0]))
+            {
+                const size_t sectionEnd = expectedSectionOffset;
+                if (!AlignUp(sectionEnd, Format::SectionAlignment, expectedSectionOffset))
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
+                for (size_t paddingOffset = sectionEnd; paddingOffset < expectedSectionOffset; ++paddingOffset)
+                {
+                    if (data[paddingOffset] != 0)
+                    {
+                        return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                    }
+                }
+            }
+        }
+
         const uint64_t expectedHash = ReadLe64(data, HeaderOffset::PayloadHash);
-        const uint64_t actualHash =
-            ComputeCookedSkeletalPayloadHash(data + Format::HeaderSize, declaredFileSize - Format::HeaderSize);
+        const uint64_t actualHash = versionMinor == Format::LegacyVersionMinor
+            ? ComputeCookedSkeletalPayloadHash(data + Format::HeaderSize, declaredFileSize - Format::HeaderSize)
+            : ComputeCookedSkeletalV01Hash(data + HeaderOffset::MeshNodeGlobalTransform,
+                                           data + Format::HeaderSize,
+                                           declaredFileSize - Format::HeaderSize);
         if (expectedHash != actualHash)
         {
             return Fail(CookedSkeletalParseStatus::PayloadHashMismatch);
@@ -251,6 +338,32 @@ namespace NorvesLib::Core::Asset
         skeletal.Indices.resize(indexCount);
         skeletal.Joints.resize(jointCount);
         skeletal.Clips.resize(clipCount);
+        if (versionMinor == Format::LegacyVersionMinor)
+        {
+            for (size_t byteIndex = HeaderOffset::MeshNodeGlobalTransform; byteIndex < Format::HeaderSize; ++byteIndex)
+            {
+                if (data[byteIndex] != 0)
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidHeader);
+                }
+            }
+        }
+        else
+        {
+            for (size_t element = 0; element < 16; ++element)
+            {
+                skeletal.MeshNodeGlobalTransform[element] =
+                    ReadFloat(data, HeaderOffset::MeshNodeGlobalTransform + element * sizeof(float));
+                if (!std::isfinite(skeletal.MeshNodeGlobalTransform[element]))
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
+            }
+            if (!IsInvertibleMatrix(skeletal.MeshNodeGlobalTransform))
+            {
+                return Fail(CookedSkeletalParseStatus::InvalidRecord);
+            }
+        }
 
         for (size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
         {
@@ -274,6 +387,26 @@ namespace NorvesLib::Core::Asset
                 {
                     return Fail(CookedSkeletalParseStatus::InvalidRecord);
                 }
+            }
+            float weightSum = 0.0f;
+            if (!std::isfinite(vertex.Position.X) || !std::isfinite(vertex.Position.Y) ||
+                !std::isfinite(vertex.Position.Z) || !std::isfinite(vertex.Normal.X) ||
+                !std::isfinite(vertex.Normal.Y) || !std::isfinite(vertex.Normal.Z) ||
+                !std::isfinite(vertex.TexCoord.U) || !std::isfinite(vertex.TexCoord.V))
+            {
+                return Fail(CookedSkeletalParseStatus::InvalidRecord);
+            }
+            for (float weight : vertex.JointWeights)
+            {
+                if (!std::isfinite(weight) || weight < 0.0f)
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
+                weightSum += weight;
+            }
+            if (!std::isfinite(weightSum) || std::fabs(weightSum - 1.0f) > 0.001f)
+            {
+                return Fail(CookedSkeletalParseStatus::InvalidRecord);
             }
         }
 
@@ -302,10 +435,31 @@ namespace NorvesLib::Core::Asset
             {
                 joint.InverseBindMatrix[element] = ReadFloat(
                     data, record + Format::JointOffset::InverseBindMatrix + element * sizeof(float));
+                if (!std::isfinite(joint.InverseBindMatrix[element]))
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
+            }
+        }
+
+        for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+        {
+            int32_t ancestor = static_cast<int32_t>(jointIndex);
+            size_t depth = 0;
+            while (ancestor >= 0)
+            {
+                if (depth++ >= jointCount)
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
+                ancestor = skeletal.Joints[static_cast<size_t>(ancestor)].ParentIndex;
             }
         }
 
         Container::VariableArray<Skeletal::SkeletalAnimationChannel> channels(channelCount);
+        Container::VariableArray<uint8_t> animatedPaths(jointCount * 3, 0);
+        size_t expectedFirstSample = 0;
+        float maximumSampleTime = 0.0f;
         for (size_t channelIndex = 0; channelIndex < channelCount; ++channelIndex)
         {
             const size_t record = channelSection.Offset + channelIndex * Format::ChannelRecordSize;
@@ -317,12 +471,19 @@ namespace NorvesLib::Core::Asset
             const size_t channelSampleCount = ReadLe32(data, record + Format::ChannelOffset::SampleCount);
             if (channel.JointIndex >= jointCount || path > static_cast<uint32_t>(Skeletal::SkeletalAnimationPath::Scale) ||
                 interpolation > static_cast<uint32_t>(Skeletal::SkeletalAnimationInterpolation::Step) ||
+                channelSampleCount == 0 || firstSample != expectedFirstSample ||
                 !ValidateRange(firstSample, channelSampleCount, sampleCount))
             {
                 return Fail(CookedSkeletalParseStatus::InvalidRecord);
             }
             channel.Path = static_cast<Skeletal::SkeletalAnimationPath>(path);
             channel.Interpolation = static_cast<Skeletal::SkeletalAnimationInterpolation>(interpolation);
+            const size_t uniquePathIndex = static_cast<size_t>(channel.JointIndex) * 3 + path;
+            if (animatedPaths[uniquePathIndex] != 0)
+            {
+                return Fail(CookedSkeletalParseStatus::InvalidRecord);
+            }
+            animatedPaths[uniquePathIndex] = 1;
             channel.Samples.resize(channelSampleCount);
             for (size_t sampleIndex = 0; sampleIndex < channelSampleCount; ++sampleIndex)
             {
@@ -334,7 +495,20 @@ namespace NorvesLib::Core::Asset
                                 ReadFloat(data, sampleRecord + Format::SampleOffset::Value + 4),
                                 ReadFloat(data, sampleRecord + Format::SampleOffset::Value + 8),
                                 ReadFloat(data, sampleRecord + Format::SampleOffset::Value + 12)};
+                if (!std::isfinite(sample.TimeSeconds) || sample.TimeSeconds < 0.0f ||
+                    (sampleIndex > 0 && sample.TimeSeconds <= channel.Samples[sampleIndex - 1].TimeSeconds) ||
+                    !std::isfinite(sample.Value.X) || !std::isfinite(sample.Value.Y) ||
+                    !std::isfinite(sample.Value.Z) || !std::isfinite(sample.Value.W))
+                {
+                    return Fail(CookedSkeletalParseStatus::InvalidRecord);
+                }
+                maximumSampleTime = std::fmax(maximumSampleTime, sample.TimeSeconds);
             }
+            expectedFirstSample += channelSampleCount;
+        }
+        if (expectedFirstSample != sampleCount)
+        {
+            return Fail(CookedSkeletalParseStatus::InvalidRecord);
         }
 
         for (size_t clipIndex = 0; clipIndex < clipCount; ++clipIndex)
@@ -351,7 +525,9 @@ namespace NorvesLib::Core::Asset
             clip.DurationSeconds = ReadFloat(data, record + Format::ClipOffset::Duration);
             const size_t firstChannel = ReadLe32(data, record + Format::ClipOffset::ChannelOffset);
             const size_t clipChannelCount = ReadLe32(data, record + Format::ClipOffset::ChannelCount);
-            if (!ValidateRange(firstChannel, clipChannelCount, channelCount))
+            if (!std::isfinite(clip.DurationSeconds) || clip.DurationSeconds < 0.0f || firstChannel != 0 ||
+                clipChannelCount != channelCount || !ValidateRange(firstChannel, clipChannelCount, channelCount) ||
+                std::fabs(clip.DurationSeconds - maximumSampleTime) > 0.000001f)
             {
                 return Fail(CookedSkeletalParseStatus::InvalidRecord);
             }

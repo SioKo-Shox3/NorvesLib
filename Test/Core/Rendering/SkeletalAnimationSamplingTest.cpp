@@ -2,6 +2,7 @@
 #include "Animation/AnimationClipResource.h"
 #include "Animation/SkeletonResource.h"
 #include "Math/Matrix4x4.h"
+#include "Math/MatrixUtils.h"
 #include "Resource/SkinnedMeshResource.h"
 
 #include <cassert>
@@ -34,6 +35,40 @@ namespace
     void AssertNear(float actual, float expected)
     {
         assert(std::fabs(actual - expected) <= Epsilon);
+    }
+
+    void AssertRowVectorTransformHelpersAreDistinctFromColumnVectorTransforms()
+    {
+        const Math::Matrix4x4 matrix(
+            2.0f, 3.0f, 5.0f, 0.0f,
+            7.0f, 11.0f, 13.0f, 0.0f,
+            17.0f, 19.0f, 23.0f, 0.0f,
+            29.0f, 31.0f, 37.0f, 1.0f);
+        const Math::Vector3 input(1.0f, 2.0f, 3.0f);
+
+        const Math::Vector3 transformedPoint =
+            Math::MatrixUtils::TransformPointRowVector(matrix, input);
+        AssertNear(transformedPoint.x, 96.0f);
+        AssertNear(transformedPoint.y, 113.0f);
+        AssertNear(transformedPoint.z, 137.0f);
+
+        const Math::Vector3 transformedVector =
+            Math::MatrixUtils::TransformVectorRowVector(matrix, input);
+        AssertNear(transformedVector.x, 67.0f);
+        AssertNear(transformedVector.y, 82.0f);
+        AssertNear(transformedVector.z, 100.0f);
+
+        const Math::Vector3 transformedExtents =
+            Math::MatrixUtils::AbsUpper3x3TransformExtentsRowVector(
+                matrix, Math::Vector3(0.5f, 1.0f, 2.0f));
+        AssertNear(transformedExtents.x, 42.0f);
+        AssertNear(transformedExtents.y, 50.5f);
+        AssertNear(transformedExtents.z, 61.5f);
+
+        const Math::Vector4 columnVectorPoint = Math::MatrixUtils::TransformPoint(matrix, input);
+        assert(std::fabs(columnVectorPoint.x - transformedPoint.x) > Epsilon);
+        assert(std::fabs(columnVectorPoint.y - transformedPoint.y) > Epsilon);
+        assert(std::fabs(columnVectorPoint.z - transformedPoint.z) > Epsilon);
     }
 
     void SetIdentity(Container::FixedArray<float, 16>& matrix)
@@ -245,6 +280,8 @@ namespace
 int main()
 {
     std::cout << "SkeletalAnimationSamplingTest start\n";
+
+    AssertRowVectorTransformHelpersAreDistinctFromColumnVectorTransforms();
 
     SkeletonResource skeleton;
     AnimationClipResource clip;

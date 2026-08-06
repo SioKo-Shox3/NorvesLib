@@ -153,7 +153,7 @@ try
     $smokeDir = Join-Path $runRoot "smoke"; New-Item -ItemType Directory -Path $smokeDir | Out-Null
     $smoke = Invoke-M9Game $gamePath @("--m9-world-smoke", "--texture-asset-root", $runtimeRoot, "--texture-asset-manifest", $manifest, "--render-thread=st") $smokeDir
     Assert-M9 ($smoke.ExitCode -eq 0) "M9 Game exit=$($smoke.ExitCode) transcript=$($smoke.Transcript)"
-    foreach ($stage in @("registered", "assets_ready", "audio_play", "visual", "audio", "complete"))
+    foreach ($stage in @("registered", "assets_ready", "skeletal_binding", "audio_play", "visual", "audio", "complete"))
     {
         Assert-M9 ([regex]::Matches($smoke.Transcript, "M9_WORLD_SMOKE stage=$stage(?=\s|$)").Count -eq 1) "marker count stage=$stage"
     }
@@ -163,6 +163,12 @@ try
     Assert-M9 ($visualMarker.Groups['pose'].Value -eq "1") "skeletal pose did not change"
     Assert-M9 ($visualMarker.Groups['t1'].Value -eq $visualMarker.Groups['stats'].Value) "t1 capture and stats frame mismatch"
     Assert-M9 ($smoke.Transcript -match "gbuffer=[1-9]\d* shadow=[1-9]\d*") "skinned GBuffer/shadow witness missing"
+    $skeletalBindingMarker = [regex]::Match(
+        $smoke.Transcript,
+        "M9_WORLD_SMOKE stage=skeletal_binding resource_translation_x=(?<resource>-?\d+(?:\.\d+)?) component_translation_x=(?<component>-?\d+(?:\.\d+)?)")
+    Assert-M9 $skeletalBindingMarker.Success "runtime skeletal binding witness missing"
+    Assert-M9 ([single]$skeletalBindingMarker.Groups['resource'].Value -eq 5.0) "resource mesh-node translation was not preserved"
+    Assert-M9 ([single]$skeletalBindingMarker.Groups['component'].Value -eq 5.0) "component mesh-node translation was not preserved"
     Assert-M9 ($smoke.Transcript -match "backend=XAudio2") "XAudio2 play witness missing"
     Assert-M9 ($smoke.Transcript -match "effect_stop=1 effect_callback=1 loop_play=1 loop_stop=1 loop_callback=1 voices=0 callbacks=0 shutdown_complete=1") "audio drain witness missing"
     Assert-M9 (-not ($smoke.Transcript -match "M9_WORLD_SMOKE stage=failure")) "M9 failure marker emitted"

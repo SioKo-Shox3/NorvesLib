@@ -14,7 +14,8 @@ namespace NorvesLib::Core::Asset
         inline constexpr uint8_t Magic[8] = {'N', 'V', 'S', 'K', 'E', 'L', 'v', '0'};
         inline constexpr size_t MagicSize = sizeof(Magic);
         inline constexpr uint16_t VersionMajor = 0;
-        inline constexpr uint16_t VersionMinor = 0;
+        inline constexpr uint16_t LegacyVersionMinor = 0;
+        inline constexpr uint16_t VersionMinor = 1;
         inline constexpr uint32_t EndianMarker = 0x01020304u;
         inline constexpr size_t HeaderSize = 256;
         inline constexpr size_t VertexRecordSize = 64;
@@ -60,6 +61,7 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t ClipCount = 180;
             inline constexpr size_t ChannelCount = 184;
             inline constexpr size_t SampleCount = 188;
+            inline constexpr size_t MeshNodeGlobalTransform = 192;
         } // namespace HeaderOffset
 
         namespace VertexOffset
@@ -107,6 +109,24 @@ namespace NorvesLib::Core::Asset
     [[nodiscard]] constexpr uint64_t ComputeCookedSkeletalPayloadHash(const uint8_t* data, size_t size) noexcept
     {
         return ComputeAssetPackagePayloadHash(data, size);
+    }
+
+    [[nodiscard]] constexpr uint64_t ComputeCookedSkeletalV01Hash(const uint8_t* meshNodeGlobalTransform,
+                                                                  const uint8_t* payload,
+                                                                  size_t payloadSize) noexcept
+    {
+        uint64_t hash = AssetPackageFormatV1::Fnv1a64OffsetBasis;
+        for (size_t index = 0; index < sizeof(float) * 16; ++index)
+        {
+            hash ^= static_cast<uint64_t>(meshNodeGlobalTransform[index]);
+            hash *= AssetPackageFormatV1::Fnv1a64Prime;
+        }
+        for (size_t index = 0; index < payloadSize; ++index)
+        {
+            hash ^= static_cast<uint64_t>(payload[index]);
+            hash *= AssetPackageFormatV1::Fnv1a64Prime;
+        }
+        return hash;
     }
 
     enum class CookedSkeletalParseStatus : uint8_t
