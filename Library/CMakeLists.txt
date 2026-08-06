@@ -46,6 +46,7 @@ add_subdirectory(Core)
 # 別 static lib モジュール(Core 依存・明示 Register 駆動)。INTERFACE NorvesLib には足さない。
 add_subdirectory(Modules/Dummy)
 add_subdirectory(Modules/Physics)
+add_subdirectory(Modules/Audio)
 
 # ImGui モジュール本体(第2段 B-i)。NORVES_ENABLE_IMGUI ON 時のみ構築する
 # (imgui core lib NorvesThirdParty_ImGui に PRIVATE 依存)。OFF 時は構築せず

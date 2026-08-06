@@ -11,6 +11,7 @@ set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Asset/AssetBlob.cpp
+    Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
     Private/Asset/CookedSkeletalLoader.cpp
     Private/Asset/CookedTextureLoader.cpp
@@ -224,6 +225,7 @@ set(PRIVATE_SOURCES
 set(PUBLIC_HEADERS
     Public/CoreModule.h
     Public/Asset/AssetBlob.h
+    Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
     Public/Asset/CookedSkeletalFormat.h
     Public/Asset/CookedTextureFormat.h
