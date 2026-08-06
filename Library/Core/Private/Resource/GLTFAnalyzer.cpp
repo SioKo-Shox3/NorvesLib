@@ -1,5 +1,6 @@
 #include "Resource/GLTFAnalyzer.h"
 #include "Resource/ModelStaging.h"
+#include "Resource/SkeletalGltfDecode.h"
 
 #include "FileStream/FileStream.h"
 #include "Logging/LogMacros.h"
@@ -1049,6 +1050,19 @@ namespace NorvesLib::Core::Resource
             return true;
         }
     } // anonymous namespace
+
+    Skeletal::SkeletalGltfDecodeResult GLTFAnalyzer::AnalyzeSkeletal(const String& gltfPath)
+    {
+        const String resolvedPath = ResolveAssetPath(gltfPath);
+        String jsonText;
+        if (!ReadTextFile(resolvedPath, jsonText, "skeletal", 0, "gltf_skeletal_json_read"))
+        {
+            Skeletal::SkeletalGltfDecodeResult result;
+            result.Status = Skeletal::SkeletalGltfDecodeStatus::FileReadFailed;
+            return result;
+        }
+        return Skeletal::DecodeSkeletalGltf(jsonText, resolvedPath);
+    }
 
     Rendering::ModelHandle GLTFAnalyzer::LoadModel(const String& gltfPath,
                                                    Rendering::ModelLoadResourceContext resources)

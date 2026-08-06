@@ -55,7 +55,20 @@ namespace NorvesLib::Core::Rendering
     DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(
         const DirectionalShadowMatrixSettings& baseSettings,
         const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<SkinnedMeshProxy>* skinnedMeshProxies,
         const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies);
+
+    DirectionalShadowMatrixSettings FitDirectionalShadowMatrixSettingsToCasters(
+        const DirectionalShadowMatrixSettings& baseSettings,
+        const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies);
+
+    DirectionalShadowMatrixResult BuildFittedDirectionalShadowLightMatrices(
+        const Container::VariableArray<LightProxy>* lightProxies,
+        const Container::VariableArray<MeshProxy>* meshProxies,
+        const Container::VariableArray<SkinnedMeshProxy>* skinnedMeshProxies,
+        const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
+        const DirectionalShadowMatrixSettings& baseSettings);
 
     DirectionalShadowMatrixResult BuildFittedDirectionalShadowLightMatrices(
         const Container::VariableArray<LightProxy>* lightProxies,

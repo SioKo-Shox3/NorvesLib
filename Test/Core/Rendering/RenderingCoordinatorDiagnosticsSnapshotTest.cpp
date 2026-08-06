@@ -148,7 +148,29 @@ namespace
         assert(acceptedReadingPosition < incompletePublisherPosition);
         assert(incompletePublisherPosition < normalCompletedPosition);
         assert(normalCompletedPosition < normalPublisherPosition);
-        assert(CountOccurrences(renderFrameBlock, "publishIncompleteStats();") == 4);
+        assert(CountOccurrences(renderFrameBlock, "publishIncompleteStats();") == 6);
+
+        const std::size_t endFrameErrorPosition =
+            coordinator.find("[[noreturn]] void ThrowSwapChainEndFrameError(");
+        assert(endFrameErrorPosition != coordinator.npos);
+        const std::size_t endFrameErrorOpenBrace = coordinator.find('{', endFrameErrorPosition);
+        assert(endFrameErrorOpenBrace != coordinator.npos);
+        const std::size_t endFrameErrorCloseBrace = FindMatchingBrace(coordinator, endFrameErrorOpenBrace);
+        const auto endFrameErrorContains =
+            [&coordinator, endFrameErrorPosition, endFrameErrorCloseBrace](const char* text)
+        {
+            const std::size_t position = coordinator.find(text, endFrameErrorPosition);
+            return position != coordinator.npos && position < endFrameErrorCloseBrace;
+        };
+        assert(!endFrameErrorContains("SwapChainEndFrameStatus::InvalidCommandList"));
+        assert(endFrameErrorContains("SwapChainEndFrameStatus::FenceResetFailed"));
+        assert(endFrameErrorContains("SwapChainEndFrameStatus::SubmitFailed"));
+        assert(endFrameErrorContains("SwapChainEndFrameStatus::PresentationFailed"));
+        assert(CountOccurrences(
+                   renderFrameBlock,
+                   "endFrameResult.Status == RHI::SwapChainEndFrameStatus::InvalidCommandList") == 2);
+        assert(CountOccurrences(renderFrameBlock,
+                                "SwapChain EndFrame rejected the command list; discarding frame") == 2);
 
         const std::size_t generatedCounterPosition =
             renderFrameBlock.find("statsSnapshot.GeneratedDrawCommandCount = packet->GeneratedDrawCommandCount;");

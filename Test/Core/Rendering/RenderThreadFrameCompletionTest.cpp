@@ -1,5 +1,6 @@
 ﻿#include "Rendering/FramePacket.h"
 #include "Rendering/RenderThread.h"
+#include "Engine/Engine.h"
 #include "Rendering/RenderingCoordinator.h"
 
 #include <atomic>
@@ -7,6 +8,7 @@
 #include <condition_variable>
 #include <iostream>
 #include <mutex>
+#include <stdexcept>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -24,6 +26,11 @@ namespace NorvesLib::Core::Rendering
                    !renderThread.m_bNewFrameReady.Load(std::memory_order_acquire) &&
                    renderThread.m_CurrentPacket == nullptr &&
                    !renderThread.m_bAssetGpuFlushWindowRequested;
+        }
+
+        static bool IsExitRequested(RenderThread& renderThread)
+        {
+            return renderThread.m_bShouldExit.Load(std::memory_order_acquire);
         }
     };
 } // namespace NorvesLib::Core::Rendering
@@ -94,6 +101,11 @@ namespace
             g_bRenderFrameHookContextMissing.store(true, std::memory_order_release);
         }
     }
+
+    void ThrowImmediatelyBeforeRenderFrame(Rendering::FramePacket*)
+    {
+        throw std::runtime_error("render frame test failure");
+    }
 }
 
 int main()
@@ -155,6 +167,54 @@ int main()
                   << " hook_context_missing=" << bHookContextMissing
                   << " idle_predicate_while_second_latched="
                   << bIdlePredicateSatisfiedWhileSecondFrameLatched << "\n";
+        return 1;
+    }
+
+    NorvesLib::Core::Engine::Engine engine;
+    NorvesLib::Core::Engine::Engine* previousEngine = NorvesLib::Core::Engine::GEngine;
+    NorvesLib::Core::Engine::GEngine = &engine;
+
+    Rendering::RenderingCoordinator failingCoordinator;
+    Rendering::RenderThread failingRenderThread;
+    Rendering::FramePacket failingPacket;
+    failingPacket.SetState(Rendering::FramePacketState::Ready);
+    Rendering::RenderThreadFrameCompletionTestAccess::SetRenderFrameTestHook(
+        failingRenderThread, ThrowImmediatelyBeforeRenderFrame);
+
+    const bool bFailingThreadInitialized = failingRenderThread.Initialize(&failingCoordinator);
+    if (bFailingThreadInitialized)
+    {
+        failingRenderThread.Start();
+        failingRenderThread.NotifyNewFrame(&failingPacket);
+        failingRenderThread.WaitForFrame();
+    }
+
+    const bool bExceptionRequestedThreadExit =
+        Rendering::RenderThreadFrameCompletionTestAccess::IsExitRequested(failingRenderThread);
+    const bool bExceptionRestoredIdleState =
+        Rendering::RenderThreadFrameCompletionTestAccess::IsFrameIdlePredicateSatisfied(failingRenderThread);
+    const bool bExceptionRecycledPacket = failingPacket.GetState() == Rendering::FramePacketState::Empty;
+    const bool bExceptionRequestedApplicationExit = engine.IsExitRequested() && engine.GetExitCode() != 0;
+    const bool bExceptionDidNotPublishCompletedFrame = failingRenderThread.GetStats().FramesRendered == 0;
+
+    failingRenderThread.Shutdown();
+    Rendering::RenderThreadFrameCompletionTestAccess::SetRenderFrameTestHook(failingRenderThread, nullptr);
+    NorvesLib::Core::Engine::GEngine = previousEngine;
+
+    if (!bFailingThreadInitialized ||
+        !bExceptionRequestedThreadExit ||
+        !bExceptionRestoredIdleState ||
+        !bExceptionRecycledPacket ||
+        !bExceptionRequestedApplicationExit ||
+        !bExceptionDidNotPublishCompletedFrame)
+    {
+        std::cerr << "RenderThreadFrameCompletionTest exception failure: initialized="
+                  << bFailingThreadInitialized
+                  << " thread_exit=" << bExceptionRequestedThreadExit
+                  << " idle=" << bExceptionRestoredIdleState
+                  << " packet_recycled=" << bExceptionRecycledPacket
+                  << " application_exit=" << bExceptionRequestedApplicationExit
+                  << " completed_frame_published=" << !bExceptionDidNotPublishCompletedFrame << "\n";
         return 1;
     }
 

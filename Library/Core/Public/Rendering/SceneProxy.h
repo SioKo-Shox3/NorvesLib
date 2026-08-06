@@ -3,6 +3,7 @@
 #include "RenderTypes.h"
 #include "MeshTypes.h"
 #include "MaterialTypes.h"
+#include "SkinnedMeshTypes.h"
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
@@ -356,6 +357,9 @@ namespace NorvesLib::Core::Rendering
         // メッシュプロキシリスト
         Container::VariableArray<MeshProxy> MeshProxies;
 
+        // スキンメッシュプロキシリスト
+        Container::VariableArray<SkinnedMeshProxy> SkinnedMeshProxies;
+
         // MegaGeometryプロキシリスト
         Container::VariableArray<MegaGeometryProxy> MegaGeometryProxies;
 
@@ -379,6 +383,7 @@ namespace NorvesLib::Core::Rendering
         void Clear()
         {
             MeshProxies.clear();
+            SkinnedMeshProxies.clear();
             MegaGeometryProxies.clear();
             LightProxies.clear();
             AdditionalCameras.clear();

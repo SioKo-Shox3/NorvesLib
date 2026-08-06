@@ -1,0 +1,277 @@
+﻿if(NOT DEFINED ASSET_COOK_EXE)
+    message(FATAL_ERROR "ASSET_COOK_EXE is required")
+endif()
+
+if(NOT DEFINED UNIT_TEST_EXE)
+    message(FATAL_ERROR "UNIT_TEST_EXE is required")
+endif()
+
+if(NOT DEFINED FIXTURE_GLTF)
+    message(FATAL_ERROR "FIXTURE_GLTF is required")
+endif()
+
+if(NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "SMOKE_DIR is required")
+endif()
+
+file(REMOVE_RECURSE "${SMOKE_DIR}")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/Source")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/RuntimeRoot/Cooked")
+
+set(SOURCE_GLTF "${SMOKE_DIR}/Source/ValidU8Float.gltf")
+set(SOURCE_BIN "${SMOKE_DIR}/Source/fixture.bin")
+set(FIXTURE_SCRIPT "${SMOKE_DIR}/Source/write_fixture.ps1")
+set(MUTATE_SCRIPT "${SMOKE_DIR}/Source/mutate_fixture.ps1")
+set(OUTPUT_PACKAGE "${SMOKE_DIR}/RuntimeRoot/Cooked/ValidU8Float.nvpkg")
+set(OUTPUT_MANIFEST "${SMOKE_DIR}/RuntimeRoot/manifest.json")
+set(SECOND_PACKAGE "${SMOKE_DIR}/RuntimeRoot/Cooked/ValidU8Float-mutated.nvpkg")
+set(SECOND_MANIFEST "${SMOKE_DIR}/RuntimeRoot/manifest-mutated.json")
+set(INVALID_GLTF "${SMOKE_DIR}/Source/OutOfRangeJoint.gltf")
+set(INVALID_BIN "${SMOKE_DIR}/Source/out_of_range_joint.bin")
+set(INVALID_PACKAGE "${SMOKE_DIR}/RuntimeRoot/Cooked/OutOfRangeJoint.nvpkg")
+set(INVALID_MANIFEST "${SMOKE_DIR}/RuntimeRoot/manifest-invalid.json")
+set(LOGICAL_PATH "Models/ValidU8Float.gltf")
+set(ENTRY_NAME "Models/ValidU8Float.nvskel")
+
+file(COPY_FILE "${FIXTURE_GLTF}" "${SOURCE_GLTF}" ONLY_IF_DIFFERENT)
+file(WRITE "${FIXTURE_SCRIPT}" [=[
+param([Parameter(Mandatory = $true)][string]$OutputPath)
+
+$bytes = [byte[]]::new(416)
+function Write-Single([int]$Offset, [single]$Value)
+{
+    [BitConverter]::GetBytes($Value).CopyTo($bytes, $Offset)
+}
+function Write-U16([int]$Offset, [uint16]$Value)
+{
+    [BitConverter]::GetBytes($Value).CopyTo($bytes, $Offset)
+}
+
+$positions = [single[]](0,0,0, 1,0,0, 0,1,0)
+$normals = [single[]](0,0,1, 0,0,1, 0,0,1)
+$texCoords = [single[]](0,0, 1,0, 0,1)
+for ($index = 0; $index -lt 9; ++$index)
+{
+    Write-Single ($index * 4) $positions[$index]
+    Write-Single (36 + $index * 4) $normals[$index]
+}
+for ($index = 0; $index -lt 6; ++$index)
+{
+    Write-Single (72 + $index * 4) $texCoords[$index]
+}
+
+$jointsU8 = [byte[]](0,1,0,0, 0,1,0,0, 1,0,0,0)
+$jointsU16 = [uint16[]](0,1,0,0, 0,1,0,0, 1,0,0,0)
+$weightsFloat = [single[]](0.75,0.25,0,0, 0.5,0.5,0,0, 1,0,0,0)
+$weightsU8 = [byte[]](191,64,0,0, 128,127,0,0, 255,0,0,0)
+$weightsU16 = [uint16[]](49151,16384,0,0, 32768,32767,0,0, 65535,0,0,0)
+for ($index = 0; $index -lt 12; ++$index)
+{
+    $bytes[96 + $index] = $jointsU8[$index]
+    Write-U16 (108 + $index * 2) $jointsU16[$index]
+    Write-Single (132 + $index * 4) $weightsFloat[$index]
+    $bytes[180 + $index] = $weightsU8[$index]
+    Write-U16 (192 + $index * 2) $weightsU16[$index]
+}
+
+Write-U16 216 0
+Write-U16 218 1
+Write-U16 220 2
+foreach ($element in [int[]](0,5,10,15))
+{
+    Write-Single (224 + $element * 4) 1
+    Write-Single (288 + $element * 4) 1
+}
+Write-Single (288 + 13 * 4) -1
+Write-Single 352 0
+Write-Single 356 2
+
+$translations = [single[]](0,1,0, 0,3,0)
+$rotations = [single[]](0,0,0,1, 0,0,1,0)
+for ($index = 0; $index -lt 6; ++$index)
+{
+    Write-Single (360 + $index * 4) $translations[$index]
+}
+for ($index = 0; $index -lt 8; ++$index)
+{
+    Write-Single (384 + $index * 4) $rotations[$index]
+}
+
+[IO.File]::WriteAllBytes($OutputPath, $bytes)
+]=])
+file(WRITE "${MUTATE_SCRIPT}" [=[
+param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][ValidateSet("position", "joint")][string]$Mode)
+
+$bytes = [IO.File]::ReadAllBytes($Path)
+if ($Mode -eq "position")
+{
+    [BitConverter]::GetBytes([single]0.25).CopyTo($bytes, 0)
+}
+else
+{
+    $bytes[96] = 2
+}
+[IO.File]::WriteAllBytes($Path, $bytes)
+]=])
+
+execute_process(
+    COMMAND "${UNIT_TEST_EXE}"
+    RESULT_VARIABLE unit_result
+    OUTPUT_VARIABLE unit_stdout
+    ERROR_VARIABLE unit_stderr
+)
+if(NOT unit_result EQUAL 0)
+    message(STATUS "${unit_stdout}")
+    message(STATUS "${unit_stderr}")
+    message(FATAL_ERROR "CookedSkeletal unit contract failed with exit code ${unit_result}")
+endif()
+
+execute_process(
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${FIXTURE_SCRIPT}" "${SOURCE_BIN}"
+    RESULT_VARIABLE fixture_result
+    OUTPUT_VARIABLE fixture_stdout
+    ERROR_VARIABLE fixture_stderr
+)
+if(NOT fixture_result EQUAL 0)
+    message(STATUS "${fixture_stdout}")
+    message(STATUS "${fixture_stderr}")
+    message(FATAL_ERROR "CookedSkeletal fixture generation failed with exit code ${fixture_result}")
+endif()
+
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}"
+        --input "${SOURCE_GLTF}"
+        --out "${OUTPUT_PACKAGE}"
+        --manifest "${OUTPUT_MANIFEST}"
+        --logical "${LOGICAL_PATH}"
+        --kind model
+        --entry "${ENTRY_NAME}"
+        --entry-type Skl0
+        --format nvskel.v0.skinned.pnujiw.u32
+        --variant default
+    RESULT_VARIABLE cook_result
+    OUTPUT_VARIABLE cook_stdout
+    ERROR_VARIABLE cook_stderr
+)
+if(NOT cook_result EQUAL 0)
+    message(STATUS "${cook_stdout}")
+    message(STATUS "${cook_stderr}")
+    message(FATAL_ERROR "AssetCook skeletal cook step failed with exit code ${cook_result}")
+endif()
+
+execute_process(
+    COMMAND "${UNIT_TEST_EXE}"
+        --package "${OUTPUT_PACKAGE}"
+        --gltf "${SOURCE_GLTF}"
+        --entry "${ENTRY_NAME}"
+    RESULT_VARIABLE package_result
+    OUTPUT_VARIABLE package_stdout
+    ERROR_VARIABLE package_stderr
+)
+if(NOT package_result EQUAL 0)
+    message(STATUS "${unit_stdout}")
+    message(STATUS "${cook_stdout}")
+    message(STATUS "${cook_stderr}")
+    message(STATUS "${package_stdout}")
+    message(STATUS "${package_stderr}")
+    message(FATAL_ERROR "CookedSkeletal AssetCook package contract failed with exit code ${package_result}")
+endif()
+
+file(READ "${OUTPUT_MANIFEST}" first_manifest_json)
+string(JSON first_source_hash GET "${first_manifest_json}" assets 0 source_hash)
+
+execute_process(
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${MUTATE_SCRIPT}" "${SOURCE_BIN}" position
+    RESULT_VARIABLE mutate_result
+    OUTPUT_VARIABLE mutate_stdout
+    ERROR_VARIABLE mutate_stderr
+)
+if(NOT mutate_result EQUAL 0)
+    message(STATUS "${mutate_stdout}")
+    message(STATUS "${mutate_stderr}")
+    message(FATAL_ERROR "CookedSkeletal source buffer mutation failed with exit code ${mutate_result}")
+endif()
+
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}"
+        --input "${SOURCE_GLTF}"
+        --out "${SECOND_PACKAGE}"
+        --manifest "${SECOND_MANIFEST}"
+        --logical "${LOGICAL_PATH}"
+        --kind model
+        --entry "${ENTRY_NAME}"
+        --entry-type Skl0
+        --format nvskel.v0.skinned.pnujiw.u32
+        --variant default
+    RESULT_VARIABLE second_cook_result
+    OUTPUT_VARIABLE second_cook_stdout
+    ERROR_VARIABLE second_cook_stderr
+)
+if(NOT second_cook_result EQUAL 0)
+    message(STATUS "${second_cook_stdout}")
+    message(STATUS "${second_cook_stderr}")
+    message(FATAL_ERROR "AssetCook mutated skeletal cook failed with exit code ${second_cook_result}")
+endif()
+
+file(READ "${SECOND_MANIFEST}" second_manifest_json)
+string(JSON second_source_hash GET "${second_manifest_json}" assets 0 source_hash)
+if(first_source_hash STREQUAL second_source_hash)
+    message(FATAL_ERROR
+        "skeletal source_hash did not change after external buffer mutation: ${first_source_hash}")
+endif()
+
+execute_process(
+    COMMAND "${UNIT_TEST_EXE}"
+        --package "${SECOND_PACKAGE}"
+        --gltf "${SOURCE_GLTF}"
+        --entry "${ENTRY_NAME}"
+    RESULT_VARIABLE second_package_result
+    OUTPUT_VARIABLE second_package_stdout
+    ERROR_VARIABLE second_package_stderr
+)
+if(NOT second_package_result EQUAL 0)
+    message(STATUS "${second_cook_stdout}")
+    message(STATUS "${second_cook_stderr}")
+    message(STATUS "${second_package_stdout}")
+    message(STATUS "${second_package_stderr}")
+    message(FATAL_ERROR "mutated CookedSkeletal package contract failed with exit code ${second_package_result}")
+endif()
+
+file(COPY_FILE "${SOURCE_BIN}" "${INVALID_BIN}" ONLY_IF_DIFFERENT)
+execute_process(
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File "${MUTATE_SCRIPT}" "${INVALID_BIN}" joint
+    RESULT_VARIABLE invalid_mutate_result
+)
+if(NOT invalid_mutate_result EQUAL 0)
+    message(FATAL_ERROR "CookedSkeletal invalid joint fixture mutation failed")
+endif()
+file(READ "${SOURCE_GLTF}" invalid_gltf_json)
+string(REPLACE "fixture.bin" "out_of_range_joint.bin" invalid_gltf_json "${invalid_gltf_json}")
+file(WRITE "${INVALID_GLTF}" "${invalid_gltf_json}")
+
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}"
+        --input "${INVALID_GLTF}"
+        --out "${INVALID_PACKAGE}"
+        --manifest "${INVALID_MANIFEST}"
+        --logical "Models/OutOfRangeJoint.gltf"
+        --kind model
+        --entry "Models/OutOfRangeJoint.nvskel"
+        --entry-type Skl0
+        --format nvskel.v0.skinned.pnujiw.u32
+        --variant default
+    RESULT_VARIABLE invalid_cook_result
+    OUTPUT_VARIABLE invalid_cook_stdout
+    ERROR_VARIABLE invalid_cook_stderr
+)
+if(invalid_cook_result EQUAL 0)
+    message(FATAL_ERROR "AssetCook accepted a JOINTS_0 index outside the skin joint table")
+endif()
+
+message(STATUS "${unit_stdout}")
+message(STATUS "${cook_stdout}")
+message(STATUS "${package_stdout}")
+message(STATUS "${second_cook_stdout}")
+message(STATUS "${second_package_stdout}")

@@ -1,4 +1,6 @@
 add_executable(AssetCook
+    AudioCooker.cpp
+    AudioCooker.h
     Main.cpp
     MeshCooker.cpp
     MeshCooker.h
@@ -8,6 +10,7 @@ add_executable(AssetCook
 
 target_link_libraries(AssetCook PRIVATE Core)
 target_include_directories(AssetCook PRIVATE
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
 )
 
@@ -42,4 +45,13 @@ add_test(NAME AssetCookMeshSmoke
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -DSMOKE_DIR=${ASSET_COOK_MESH_SMOKE_DIR}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookMeshSmoke.cmake.in"
+)
+
+add_custom_target(AssetCookAudioSmoke DEPENDS AssetCook)
+set(ASSET_COOK_AUDIO_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Audio")
+add_test(NAME AssetCookAudioSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSMOKE_DIR=${ASSET_COOK_AUDIO_SMOKE_DIR}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookAudioSmoke.cmake.in"
 )

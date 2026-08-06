@@ -68,6 +68,13 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_SkinnedGBufferVertexShader =
+            context.ShaderMgr->LoadShader("skinned_gbuffer.vert", RHI::ShaderStage::Vertex);
+        if (!m_SkinnedGBufferVertexShader)
+        {
+            NORVES_LOG_ERROR("GBufferPass", "Failed to create skinned GBuffer vertex shader");
+            return false;
+        }
         m_GBufferFragmentShader = context.ShaderMgr->LoadShader("gbuffer.frag", RHI::ShaderStage::Pixel);
         if (!m_GBufferFragmentShader)
         {
@@ -107,6 +114,18 @@ namespace NorvesLib::Core::Rendering
             instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
             instanceBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(instanceBinding);
+
+            RHI::DescriptorBinding paletteBinding;
+            paletteBinding.binding = 8;
+            paletteBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            paletteBinding.stages = RHI::ShaderStage::Vertex;
+            uboDescSetDesc.bindings.push_back(paletteBinding);
+
+            RHI::DescriptorBinding skinVertexBinding;
+            skinVertexBinding.binding = 9;
+            skinVertexBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            skinVertexBinding.stages = RHI::ShaderStage::Vertex;
+            uboDescSetDesc.bindings.push_back(skinVertexBinding);
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
@@ -210,7 +229,10 @@ namespace NorvesLib::Core::Rendering
         m_DepthHandle = {};
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
+        m_SkinnedGBufferPipeline.reset();
+        m_SkinnedGBufferWireframePipeline.reset();
         m_GBufferPipeline.reset();
+        m_SkinnedGBufferVertexShader.reset();
         m_GBufferWireframePipeline.reset();
         m_GBufferVertexShader.reset();
         m_GBufferFragmentShader.reset();
@@ -251,9 +273,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         // サイズ変更があればGBufferリソースを再作成
-        bool bGBufferPipelinesReady = m_GBufferPipeline != nullptr;
+        bool bGBufferPipelinesReady = m_GBufferPipeline != nullptr &&
+                                      m_SkinnedGBufferPipeline != nullptr;
 #if NORVES_BUILD_DEVELOPMENT
-        bGBufferPipelinesReady = bGBufferPipelinesReady && m_GBufferWireframePipeline != nullptr;
+        bGBufferPipelinesReady = bGBufferPipelinesReady &&
+                                 m_GBufferWireframePipeline != nullptr &&
+                                 m_SkinnedGBufferWireframePipeline != nullptr;
 #endif
 
         if (width != m_CurrentWidth ||
@@ -387,9 +412,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        bool bGBufferPipelinesReady = m_GBufferPipeline != nullptr;
+        bool bGBufferPipelinesReady = m_GBufferPipeline != nullptr &&
+                                      m_SkinnedGBufferPipeline != nullptr;
 #if NORVES_BUILD_DEVELOPMENT
-        bGBufferPipelinesReady = bGBufferPipelinesReady && m_GBufferWireframePipeline != nullptr;
+        bGBufferPipelinesReady = bGBufferPipelinesReady &&
+                                 m_GBufferWireframePipeline != nullptr &&
+                                 m_SkinnedGBufferWireframePipeline != nullptr;
 #endif
 
         if (!m_GBufferRenderPass || !m_GBufferFramebuffer || !bGBufferPipelinesReady)
@@ -418,7 +446,7 @@ namespace NorvesLib::Core::Rendering
         auto *materials = context.Resources.Materials;
         auto *textures = context.Resources.Textures;
         auto *meshes = context.Resources.Meshes;
-        if (!m_SceneRenderer || !materials || !textures || !meshes)
+        if (!m_SceneRenderer || !materials || !textures || (!meshes && !context.SkinnedMeshes))
         {
             TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
             return;
@@ -432,20 +460,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!context.InstanceDataBuffer)
-        {
-            NORVES_LOG_WARNING("GBufferPass", "Instance data buffer is null, skipping GBuffer geometry");
-            TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
-            return;
-        }
-
-        const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
-        if (instanceDataSize64 == 0)
-        {
-            NORVES_LOG_WARNING("GBufferPass", "Instance data buffer is empty, skipping GBuffer geometry");
-            TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
-            return;
-        }
+        const uint64_t instanceDataSize64 = context.InstanceDataBuffer
+                                                ? context.InstanceDataBuffer->GetSize()
+                                                : 0;
 
         const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
                                               ? 0xFFFFFFFFu
@@ -509,8 +526,9 @@ namespace NorvesLib::Core::Rendering
             return defaultTex;
         };
 
-        auto BuildMaterialDescriptor = [&](uint64_t materialKey) -> RHI::DescriptorSetPtr
+        auto BuildMaterialDescriptor = [&](const DrawCommand& command) -> RHI::DescriptorSetPtr
         {
+            const uint64_t materialKey = command.Draw.MaterialHandle.Id;
             auto allocation = m_UniformAllocator.Allocate();
             if (!allocation.UniformBuffer)
             {
@@ -581,10 +599,28 @@ namespace NorvesLib::Core::Rendering
             allocation.DescriptorSet->BindSampler(5, m_DefaultLinearSampler);
             allocation.DescriptorSet->BindTexture(6, heightTex);
             allocation.DescriptorSet->BindSampler(6, m_DefaultLinearSampler);
-            allocation.DescriptorSet->BindStorageBuffer(7,
-                                                        context.InstanceDataBuffer,
-                                                        0,
-                                                        instanceDataSize);
+            if (command.Draw.PayloadKind == DrawPayloadKind::Skinned)
+            {
+                allocation.DescriptorSet->BindStorageBuffer(8,
+                                                            command.Skinned.Prepared.PaletteBuffer,
+                                                            0,
+                                                            static_cast<uint32_t>(command.Skinned.Prepared.PaletteBuffer->GetSize()));
+                allocation.DescriptorSet->BindStorageBuffer(9,
+                                                            command.Skinned.Prepared.VertexBuffer,
+                                                            0,
+                                                            static_cast<uint32_t>(command.Skinned.Prepared.VertexBuffer->GetSize()));
+            }
+            else if (context.InstanceDataBuffer && instanceDataSize > 0)
+            {
+                allocation.DescriptorSet->BindStorageBuffer(7,
+                                                            context.InstanceDataBuffer,
+                                                            0,
+                                                            instanceDataSize);
+            }
+            else
+            {
+                return nullptr;
+            }
             allocation.DescriptorSet->Update();
 
             return allocation.DescriptorSet;
@@ -592,19 +628,33 @@ namespace NorvesLib::Core::Rendering
 
         for (const auto& cmd : opaqueCommands)
         {
-            const uint64_t materialKey = cmd.Draw.MaterialHandle.Id;
+            DrawCommand drawCommand = cmd;
+            const bool bSkinned = cmd.Draw.PayloadKind == DrawPayloadKind::Skinned;
+            if (bSkinned)
+            {
+                if (!TryPrepareSkinnedCommand(context, cmd, drawCommand))
+                {
+                    continue;
+                }
+            }
+            else if (!context.InstanceDataBuffer || instanceDataSize == 0)
+            {
+                continue;
+            }
+
+            const uint64_t materialKey = drawCommand.Draw.MaterialHandle.Id;
 
             RHI::DescriptorSetPtr descriptorSet;
-            if (bMaterialDescriptorCacheEnabled)
+            if (!bSkinned && bMaterialDescriptorCacheEnabled)
             {
                 descriptorSet = ResolveMaterialDescriptor<decltype(materialDescriptorCache), RHI::DescriptorSetPtr>(
                     materialDescriptorCache,
                     materialKey,
-                    BuildMaterialDescriptor);
+                    [&](uint64_t) { return BuildMaterialDescriptor(drawCommand); });
             }
             else
             {
-                descriptorSet = BuildMaterialDescriptor(materialKey);
+                descriptorSet = BuildMaterialDescriptor(drawCommand);
             }
 
             if (!descriptorSet)
@@ -613,8 +663,10 @@ namespace NorvesLib::Core::Rendering
                 break;
             }
 
-            DrawCommand drawCommand = cmd;
-            drawCommand.Pipeline = SelectGBufferPipeline(context.GetActiveDebugMode());
+            if (!bSkinned)
+            {
+                drawCommand.Pipeline = SelectGBufferPipeline(context.GetActiveDebugMode());
+            }
             drawCommand.DescriptorSet = descriptorSet;
             drawCommand.DescriptorSetSlot = 0;
             gBufferCommands->push_back(drawCommand);
@@ -900,6 +952,8 @@ namespace NorvesLib::Core::Rendering
 
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
+        m_SkinnedGBufferPipeline.reset();
+        m_SkinnedGBufferWireframePipeline.reset();
         m_GBufferPipeline.reset();
         m_GBufferWireframePipeline.reset();
         m_FramebufferAlbedoTexture = nullptr;
@@ -1054,29 +1108,32 @@ namespace NorvesLib::Core::Rendering
 
     bool GBufferPass::EnsureGBufferPipeline()
     {
-        if (m_GBufferPipeline)
-        {
-#if NORVES_BUILD_DEVELOPMENT
-            if (!m_GBufferWireframePipeline)
-            {
-                return CreateGBufferPipelineVariant(RHI::PolygonMode::Line, m_GBufferWireframePipeline);
-            }
-#endif
-            return true;
-        }
-
-        if (!m_Device || !m_GBufferRenderPass || !m_GBufferVertexShader || !m_GBufferFragmentShader)
+        if (!m_Device || !m_GBufferRenderPass || !m_GBufferVertexShader ||
+            !m_SkinnedGBufferVertexShader || !m_GBufferFragmentShader)
         {
             return false;
         }
 
-        if (!CreateGBufferPipelineVariant(RHI::PolygonMode::Fill, m_GBufferPipeline))
+        if (!m_GBufferPipeline &&
+            !CreateGBufferPipelineVariant(RHI::PolygonMode::Fill, m_GBufferPipeline))
+        {
+            return false;
+        }
+        if (!m_SkinnedGBufferPipeline &&
+            !CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode::Fill, m_SkinnedGBufferPipeline))
         {
             return false;
         }
 
 #if NORVES_BUILD_DEVELOPMENT
-        if (!CreateGBufferPipelineVariant(RHI::PolygonMode::Line, m_GBufferWireframePipeline))
+        if (!m_GBufferWireframePipeline &&
+            !CreateGBufferPipelineVariant(RHI::PolygonMode::Line, m_GBufferWireframePipeline))
+        {
+            return false;
+        }
+        if (!m_SkinnedGBufferWireframePipeline &&
+            !CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode::Line,
+                                                 m_SkinnedGBufferWireframePipeline))
         {
             return false;
         }
@@ -1178,6 +1235,14 @@ namespace NorvesLib::Core::Rendering
         instanceBinding.stages = RHI::ShaderStage::Vertex;
         dsDesc.bindings.push_back(instanceBinding);
 
+        for (uint32_t bindingIndex = 8; bindingIndex <= 9; ++bindingIndex)
+        {
+            RHI::DescriptorBinding storageBinding;
+            storageBinding.binding = bindingIndex;
+            storageBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            storageBinding.stages = RHI::ShaderStage::Vertex;
+            dsDesc.bindings.push_back(storageBinding);
+        }
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
@@ -1190,6 +1255,96 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool GBufferPass::CreateSkinnedGBufferPipelineVariant(
+        RHI::PolygonMode polygonMode,
+        RHI::PipelinePtr& outPipeline)
+    {
+        if (!m_Device || !m_GBufferRenderPass || !m_SkinnedGBufferVertexShader || !m_GBufferFragmentShader)
+        {
+            return false;
+        }
+
+        RHI::GraphicsPipelineDesc pipelineDesc;
+        pipelineDesc.vertexShader = m_SkinnedGBufferVertexShader;
+        pipelineDesc.pixelShader = m_GBufferFragmentShader;
+        pipelineDesc.primitiveTopology = RHI::PrimitiveTopology::TriangleList;
+
+        RHI::VertexBindingDesc vertexBinding;
+        vertexBinding.binding = 0;
+        vertexBinding.stride = sizeof(SkinnedMeshVertex);
+        vertexBinding.inputRate = RHI::VertexInputRate::Vertex;
+        pipelineDesc.vertexBindings.push_back(vertexBinding);
+
+        RHI::VertexAttributeDesc position;
+        position.location = 0;
+        position.binding = 0;
+        position.format = RHI::Format::R32G32B32_FLOAT;
+        position.offset = 0;
+        pipelineDesc.vertexAttributes.push_back(position);
+
+        RHI::VertexAttributeDesc normal;
+        normal.location = 1;
+        normal.binding = 0;
+        normal.format = RHI::Format::R32G32B32_FLOAT;
+        normal.offset = 12;
+        pipelineDesc.vertexAttributes.push_back(normal);
+
+        RHI::VertexAttributeDesc texCoord;
+        texCoord.location = 2;
+        texCoord.binding = 0;
+        texCoord.format = RHI::Format::R32G32_FLOAT;
+        texCoord.offset = 24;
+        pipelineDesc.vertexAttributes.push_back(texCoord);
+
+        pipelineDesc.rasterState.polygonMode = polygonMode;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
+        pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
+        pipelineDesc.rasterState.lineWidth = 1.0f;
+        pipelineDesc.depthStencilState.depthTestEnable = true;
+        pipelineDesc.depthStencilState.depthWriteEnable = true;
+        pipelineDesc.depthStencilState.depthCompareOp = RHI::CompareOp::Less;
+        for (int attachmentIndex = 0; attachmentIndex < 4; ++attachmentIndex)
+        {
+            RHI::BlendAttachmentDesc blendAttachment;
+            blendAttachment.blendEnable = false;
+            blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+            pipelineDesc.blendState.attachments.push_back(blendAttachment);
+        }
+        pipelineDesc.renderPass = m_GBufferRenderPass;
+
+        RHI::DescriptorSetDesc descriptorSet;
+        RHI::DescriptorBinding uniformBinding;
+        uniformBinding.binding = 0;
+        uniformBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        uniformBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+        descriptorSet.bindings.push_back(uniformBinding);
+        for (uint32_t bindingIndex = 1; bindingIndex <= 6; ++bindingIndex)
+        {
+            RHI::DescriptorBinding textureBinding;
+            textureBinding.binding = bindingIndex;
+            textureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            textureBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSet.bindings.push_back(textureBinding);
+        }
+        RHI::DescriptorBinding instanceBinding;
+        instanceBinding.binding = 7;
+        instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        instanceBinding.stages = RHI::ShaderStage::Vertex;
+        descriptorSet.bindings.push_back(instanceBinding);
+        for (uint32_t bindingIndex = 8; bindingIndex <= 9; ++bindingIndex)
+        {
+            RHI::DescriptorBinding storageBinding;
+            storageBinding.binding = bindingIndex;
+            storageBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            storageBinding.stages = RHI::ShaderStage::Vertex;
+            descriptorSet.bindings.push_back(storageBinding);
+        }
+        pipelineDesc.descriptorSetLayouts.push_back(descriptorSet);
+
+        outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
+        return outPipeline != nullptr;
+    }
+
     RHI::PipelinePtr GBufferPass::SelectGBufferPipeline(DebugViewMode mode) const
     {
 #if NORVES_BUILD_DEVELOPMENT
@@ -1200,6 +1355,53 @@ namespace NorvesLib::Core::Rendering
 #endif
 
         return m_GBufferPipeline;
+    }
+
+    RHI::PipelinePtr GBufferPass::SelectSkinnedGBufferPipeline(DebugViewMode mode) const
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        if (mode == DebugViewMode::Wireframe && m_SkinnedGBufferWireframePipeline)
+        {
+            return m_SkinnedGBufferWireframePipeline;
+        }
+#else
+        (void)mode;
+#endif
+        return m_SkinnedGBufferPipeline;
+    }
+
+    bool GBufferPass::TryPrepareSkinnedCommand(
+        ViewRenderContext& context,
+        const DrawCommand& source,
+        DrawCommand& outCommand) const
+    {
+        if (source.Draw.PayloadKind != DrawPayloadKind::Skinned ||
+            source.Draw.bInstanced || source.Draw.InstanceCount != 1 ||
+            !context.SkinnedMeshes || !context.SnapshotSkinnedMeshFrameLeases ||
+            source.Skinned.FrameLeaseIndex >= context.SnapshotSkinnedMeshFrameLeases->size())
+        {
+            return false;
+        }
+
+        const auto& frameLease =
+            (*context.SnapshotSkinnedMeshFrameLeases)[source.Skinned.FrameLeaseIndex];
+        SkinnedMeshPreparedDraw prepared;
+        if (!context.SkinnedMeshes->PrepareDraw(frameLease,
+                                                source.Skinned.BonePalette,
+                                                source.Draw.WorldMatrix,
+                                                prepared))
+        {
+            return false;
+        }
+
+        outCommand = source;
+        outCommand.Draw.InstanceCount = 1;
+        outCommand.Draw.bInstanced = false;
+        outCommand.Skinned.PassKind = SkinnedMeshPassKind::GBuffer;
+        outCommand.Skinned.FrameLease = frameLease;
+        outCommand.Skinned.Prepared = prepared;
+        outCommand.Pipeline = SelectSkinnedGBufferPipeline(context.GetActiveDebugMode());
+        return true;
     }
 
 } // namespace NorvesLib::Core::Rendering

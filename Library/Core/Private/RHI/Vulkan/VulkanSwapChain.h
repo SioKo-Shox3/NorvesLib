@@ -90,7 +90,8 @@ namespace NorvesLib::RHI::Vulkan
          * @brief フレーム終了（セマフォ同期付きサブミット＋プレゼント）
          * @param commandList 実行するコマンドリスト
          */
-        void EndFrame(CommandListPtr commandList) override;
+        SwapChainEndFrameResult EndFrame(CommandListPtr commandList) override;
+        uint64_t GetCompletedSubmissionSerial() const override { return m_completedSubmissionSerial; }
 
         /**
          * @brief スワップチェーンの幅を取得
@@ -143,7 +144,10 @@ namespace NorvesLib::RHI::Vulkan
         VariableArray<vk::Semaphore> m_imageAvailableSemaphores;
         VariableArray<vk::Semaphore> m_renderFinishedSemaphores;
         VariableArray<vk::Fence> m_inFlightFences;
+        VariableArray<uint64_t> m_frameSlotSubmissionSerials;
         uint32_t m_currentFrame = 0;
+        uint64_t m_nextSubmissionSerial = 0;
+        uint64_t m_completedSubmissionSerial = 0;
         static constexpr int MAX_FRAMES_IN_FLIGHT = 1;
         bool m_bPresentationDirty = false;
 

@@ -1077,3 +1077,38 @@ add_test(NAME CookedModelGameProfileScriptContractTest
         -File "${CMAKE_CURRENT_SOURCE_DIR}/CookedModelGameProfileScriptContractTest.ps1"
         -RepoRoot "${CMAKE_SOURCE_DIR}"
 )
+
+add_executable(GLTFSkeletalAnalyzerTest
+    GLTFSkeletalAnalyzerTest.cpp
+)
+target_link_libraries(GLTFSkeletalAnalyzerTest PRIVATE Core)
+target_include_directories(GLTFSkeletalAnalyzerTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(GLTFSkeletalAnalyzerTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
+
+add_executable(SkeletalAnimationSamplingTest
+    SkeletalAnimationSamplingTest.cpp
+)
+target_link_libraries(SkeletalAnimationSamplingTest PRIVATE Core)
+set_target_properties(SkeletalAnimationSamplingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SkeletalAnimationSamplingTest COMMAND SkeletalAnimationSamplingTest)
+
+add_executable(SkeletalFramePacketSnapshotTest
+    SkeletalFramePacketSnapshotTest.cpp
+)
+target_link_libraries(SkeletalFramePacketSnapshotTest PRIVATE Core)
+
+add_executable(SkinnedRenderPathContractTest
+    SkinnedRenderPathContractTest.cpp
+)
+target_link_libraries(SkinnedRenderPathContractTest PRIVATE Core)
+target_include_directories(SkinnedRenderPathContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(SkinnedRenderPathContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SkinnedRenderPathContractTest COMMAND SkinnedRenderPathContractTest)
+set_target_properties(SkeletalFramePacketSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SkeletalFramePacketSnapshotTest COMMAND SkeletalFramePacketSnapshotTest)

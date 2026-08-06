@@ -160,6 +160,12 @@ namespace NorvesLib::Core::Asset
             return true;
         }
 
+        if (text == Container::AnsiStringView("audio"))
+        {
+            outKind = AssetKind::Audio;
+            return true;
+        }
+
         if (text == Container::AnsiStringView("raw"))
         {
             outKind = AssetKind::Raw;
@@ -178,6 +184,8 @@ namespace NorvesLib::Core::Asset
             return Container::AnsiString("texture");
         case AssetKind::Model:
             return Container::AnsiString("model");
+        case AssetKind::Audio:
+            return Container::AnsiString("audio");
         case AssetKind::Raw:
             return Container::AnsiString("raw");
         default:
@@ -434,6 +442,22 @@ namespace NorvesLib::Core::Asset
             {
                 SetParseFailure(AssetManifestParseStatus::InvalidField, Container::AnsiStringView("asset entry has an invalid entry_type"));
                 return false;
+            }
+
+            const JsonValue metadata = assetValue.FindMember("metadata");
+            if (reference.Kind == AssetKind::Model && metadata.IsValid())
+            {
+                if (!metadata.IsObject() ||
+                    !TryReadUInt32Member(metadata, "vertex_count", reference.SkeletalMetadata.VertexCount) ||
+                    !TryReadUInt32Member(metadata, "index_count", reference.SkeletalMetadata.IndexCount) ||
+                    !TryReadUInt32Member(metadata, "joint_count", reference.SkeletalMetadata.JointCount) ||
+                    !TryReadUInt32Member(metadata, "clip_count", reference.SkeletalMetadata.ClipCount))
+                {
+                    SetParseFailure(AssetManifestParseStatus::InvalidField,
+                                    Container::AnsiStringView("skeletal metadata is incomplete or invalid"));
+                    return false;
+                }
+                reference.bHasSkeletalMetadata = true;
             }
 
             reference.SourceHashHex = sourceHashText;

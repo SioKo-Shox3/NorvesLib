@@ -15,10 +15,11 @@ namespace NorvesLib::Core::Asset
 {
     enum class AssetKind : uint8_t
     {
-        Unknown,
-        Texture,
-        Model,
-        Raw
+        Unknown = 0,
+        Texture = 1,
+        Model = 2,
+        Raw = 3,
+        Audio = 4
     };
 
     enum class AssetManifestParseStatus : uint8_t
@@ -65,6 +66,14 @@ namespace NorvesLib::Core::Asset
         Fail
     };
 
+    struct AssetSkeletalMetadata
+    {
+        uint32_t VertexCount = 0;
+        uint32_t IndexCount = 0;
+        uint32_t JointCount = 0;
+        uint32_t ClipCount = 0;
+    };
+
     struct AssetCookedReference
     {
         Container::AnsiString LogicalPath;
@@ -80,6 +89,8 @@ namespace NorvesLib::Core::Asset
         uint64_t CookedHash = 0;
         Container::AnsiString CookedHashHex;
         uint32_t CookedVersion = 0;
+        bool bHasSkeletalMetadata = false;
+        AssetSkeletalMetadata SkeletalMetadata;
     };
 
     struct AssetManifestResolveResult

@@ -1,0 +1,100 @@
+﻿if(NOT DEFINED ASSET_COOK_EXE OR NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "AssetCookAudioSmoke requires ASSET_COOK_EXE and SMOKE_DIR")
+endif()
+
+file(REMOVE_RECURSE "${SMOKE_DIR}")
+file(MAKE_DIRECTORY "${SMOKE_DIR}/AB/Cooked" "${SMOKE_DIR}/BA/Cooked")
+
+set(skeletal_manifest [=[{
+  "version":1,
+  "assets":[
+    {
+      "logical_path":"Models/M9.glb",
+      "kind":"model",
+      "source_hash":"0000000000000001",
+      "variant":"default",
+      "format":"nvskel.v0",
+      "cooked_package":"Cooked/m9.nvpkg",
+      "entry_name":"m9.nvskel",
+      "entry_type":"Skl0",
+      "cooked_hash":"0000000000000002",
+      "metadata":{
+        "vertex_count":24,
+        "index_count":36,
+        "joint_count":4,
+        "clip_count":2
+      },
+      "cooked_version":0
+    }
+  ]
+}
+]=])
+file(WRITE "${SMOKE_DIR}/AB/manifest.json" "${skeletal_manifest}")
+file(WRITE "${SMOKE_DIR}/BA/manifest.json" "${skeletal_manifest}")
+
+set(WAV_A "${SMOKE_DIR}/tone_a.wav")
+set(WAV_B "${SMOKE_DIR}/tone_b.wav")
+set(WAV_A_HEX "524946462C00000057415645666D7420100000000100010044AC0000885801000200100064617461080000000000010002000300")
+set(WAV_B_HEX "524946462C00000057415645666D7420100000000100020080BB000000EE0200040010006461746108000000000000000100FFFF")
+execute_process(
+    COMMAND powershell -NoProfile -Command "$hex='${WAV_A_HEX}'; [byte[]]$bytes = for ($index=0; $index -lt $hex.Length; $index+=2) { [Convert]::ToByte($hex.Substring($index,2),16) }; [IO.File]::WriteAllBytes('${WAV_A}',$bytes)"
+    RESULT_VARIABLE write_a_result)
+execute_process(
+    COMMAND powershell -NoProfile -Command "$hex='${WAV_B_HEX}'; [byte[]]$bytes = for ($index=0; $index -lt $hex.Length; $index+=2) { [Convert]::ToByte($hex.Substring($index,2),16) }; [IO.File]::WriteAllBytes('${WAV_B}',$bytes)"
+    RESULT_VARIABLE write_b_result)
+if(NOT write_a_result EQUAL 0 OR NOT write_b_result EQUAL 0)
+    message(FATAL_ERROR "failed to create WAV fixtures")
+endif()
+
+function(cook_audio input root logical entry)
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${input}"
+            --out "${SMOKE_DIR}/${root}/Cooked/${entry}.nvpkg"
+            --manifest "${SMOKE_DIR}/${root}/manifest.json"
+            --logical "${logical}"
+            --kind audio
+            --entry "${entry}.nvaud"
+            --entry-type Aud0
+            --format nvaud.v0.pcm16
+            --variant default
+        RESULT_VARIABLE cook_result
+        OUTPUT_VARIABLE cook_output
+        ERROR_VARIABLE cook_error)
+    if(NOT cook_result EQUAL 0)
+        message(FATAL_ERROR "audio cook failed: ${cook_output}${cook_error}")
+    endif()
+endfunction()
+
+cook_audio("${WAV_A}" AB "Audio/A.wav" a)
+cook_audio("${WAV_B}" AB "Audio/A.wav" a)
+cook_audio("${WAV_B}" AB "Audio/B.wav" b)
+cook_audio("${WAV_B}" BA "Audio/B.wav" b)
+cook_audio("${WAV_A}" BA "Audio/A.wav" a)
+cook_audio("${WAV_B}" BA "Audio/A.wav" a)
+
+file(READ "${SMOKE_DIR}/AB/manifest.json" manifest_ab)
+file(READ "${SMOKE_DIR}/BA/manifest.json" manifest_ba)
+if(NOT manifest_ab STREQUAL manifest_ba)
+    message(FATAL_ERROR "audio manifest merge is not deterministic")
+endif()
+string(REGEX MATCHALL "\"kind\"[ \t]*:[ \t]*\"audio\"" audio_kinds "${manifest_ab}")
+list(LENGTH audio_kinds audio_kind_count)
+if(NOT audio_kind_count EQUAL 2)
+    message(FATAL_ERROR "merged manifest must contain two audio entries")
+endif()
+foreach(metadata_field IN ITEMS
+        "\"vertex_count\":24"
+        "\"index_count\":36"
+        "\"joint_count\":4"
+        "\"clip_count\":2")
+    string(FIND "${manifest_ab}" "${metadata_field}" metadata_position)
+    if(metadata_position EQUAL -1)
+        message(FATAL_ERROR "audio manifest merge discarded skeletal metadata: ${metadata_field}")
+    endif()
+endforeach()
+string(REGEX MATCHALL "\"logical_path\"[ \t]*:[ \t]*\"Audio/A.wav\"" replaced_audio_entries "${manifest_ab}")
+list(LENGTH replaced_audio_entries replaced_audio_count)
+if(NOT replaced_audio_count EQUAL 1)
+    message(FATAL_ERROR "audio manifest merge must replace an existing logical_path/kind/variant key")
+endif()

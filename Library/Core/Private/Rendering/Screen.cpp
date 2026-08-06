@@ -162,13 +162,17 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void Screen::EndFrame(Container::TSharedPtr<RHI::ICommandList> commandList)
+    RHI::SwapChainEndFrameResult Screen::EndFrame(
+        Container::TSharedPtr<RHI::ICommandList> commandList)
     {
         // コマンドリストをサブミットしてPresent
         if (m_SwapChain && commandList)
         {
-            m_SwapChain->EndFrame(commandList);
+            return m_SwapChain->EndFrame(commandList);
         }
+        RHI::SwapChainEndFrameResult result;
+        result.Status = RHI::SwapChainEndFrameStatus::InvalidCommandList;
+        return result;
     }
 
     void Screen::SetVSync(bool bEnabled)

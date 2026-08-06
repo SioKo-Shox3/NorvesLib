@@ -11,7 +11,9 @@ set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Math/GeometryIntersection.cpp
     Private/Asset/AssetBlob.cpp
+    Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
+    Private/Asset/CookedSkeletalLoader.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
@@ -31,6 +33,11 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    # Animation
+    Private/Animation/AnimationClipResource.cpp
+    Private/Animation/SkeletalAnimationSampler.cpp
+    Private/Animation/SkeletalAssetResource.cpp
+    Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
     Private/Text/JsonDocument.cpp
     Private/Text/JsonWriter.cpp
@@ -98,6 +105,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ImpostorBake.cpp
     Private/Rendering/ImpostorMath.cpp
     Private/Rendering/TextureAssetRuntime.cpp
+    Private/Rendering/SkinnedMeshGpuStore.cpp
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
@@ -138,6 +146,8 @@ set(PRIVATE_SOURCES
     Private/Resource/MeshResource.cpp
     Private/Resource/MaterialResource.cpp
     Private/Resource/GLTFAnalyzer.cpp
+    Private/Resource/SkeletalGltfDecode.cpp
+    Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
     Private/Resource/ModelAssetLoader.cpp
     Private/Resource/ModelAssetRuntime.cpp
@@ -152,6 +162,7 @@ set(PRIVATE_SOURCES
     Private/Component/BillboardComponent.cpp
     Private/Component/ImpostorComponent.cpp
     Private/Component/MeshComponent.cpp
+    Private/Component/SkinnedMeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -214,7 +225,9 @@ set(PRIVATE_SOURCES
 set(PUBLIC_HEADERS
     Public/CoreModule.h
     Public/Asset/AssetBlob.h
+    Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
+    Public/Asset/CookedSkeletalFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/AssetManifest.h
@@ -261,6 +274,11 @@ set(PUBLIC_HEADERS
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
     Public/Engine/ApplicationProcessor.h
+    # Animation
+    Public/Animation/AnimationClipResource.h
+    Public/Animation/SkeletalAnimationSampler.h
+    Public/Animation/SkeletalAssetResource.h
+    Public/Animation/SkeletonResource.h
     # Scene
     Public/Scene/SceneQuery.h
     Public/Scene/SceneSerializer.h
@@ -289,6 +307,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h
     Public/Rendering/MeshTypes.h
+    Public/Rendering/SkinnedMeshTypes.h
     Public/Rendering/MaterialTypes.h
     Public/Rendering/ITextureHandleRegistrar.h
     Public/Rendering/ProceduralMeshGPUData.h
@@ -389,6 +408,8 @@ set(PUBLIC_HEADERS
     Public/Resource/MeshResource.h
     Public/Resource/MaterialResource.h
     Public/Resource/GLTFAnalyzer.h
+    Public/Resource/SkeletalGltfData.h
+    Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h
     # Component
     Public/Component/Component.h
@@ -397,6 +418,7 @@ set(PUBLIC_HEADERS
     Public/Component/BillboardComponent.h
     Public/Component/ImpostorComponent.h
     Public/Component/MeshComponent.h
+    Public/Component/SkinnedMeshComponent.h
     Public/Component/MegaGeometryComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h

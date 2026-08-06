@@ -622,6 +622,92 @@ namespace NorvesLib::Math
             return Vector3(scaleX, scaleY, scaleZ);
         }
 
+        // 行ベクトル規約の点変換(point * matrix)。既存TransformPoint(matrix, point)は
+        // 列ベクトル規約(matrix * point)なので、呼び分けを名前で明示する。
+        static Vector3 TransformPointRowVector(const MatrixType& matrix, const Vector3& point)
+        {
+            static_assert(Layout == MatrixLayout::RowMajor,
+                "TransformPointRowVector assumes row-vector (RowMajor physical) layout");
+
+            const Vector4 column0 = matrix.GetColumn(0);
+            const Vector4 column1 = matrix.GetColumn(1);
+            const Vector4 column2 = matrix.GetColumn(2);
+            const Vector3 translation = matrix.GetTranslationRow();
+            return Vector3(
+                point.x * column0.x + point.y * column0.y + point.z * column0.z + translation.x,
+                point.x * column1.x + point.y * column1.y + point.z * column1.z + translation.y,
+                point.x * column2.x + point.y * column2.y + point.z * column2.z + translation.z);
+        }
+
+        // 行ベクトル規約の方向変換(vector * upper3x3)。並進は適用しない。
+        static Vector3 TransformVectorRowVector(const MatrixType& matrix, const Vector3& vector)
+        {
+            static_assert(Layout == MatrixLayout::RowMajor,
+                "TransformVectorRowVector assumes row-vector (RowMajor physical) layout");
+
+            const Vector4 column0 = matrix.GetColumn(0);
+            const Vector4 column1 = matrix.GetColumn(1);
+            const Vector4 column2 = matrix.GetColumn(2);
+            return Vector3(
+                vector.x * column0.x + vector.y * column0.y + vector.z * column0.z,
+                vector.x * column1.x + vector.y * column1.y + vector.z * column1.z,
+                vector.x * column2.x + vector.y * column2.y + vector.z * column2.z);
+        }
+
+        // 行ベクトル規約の上3x3の絶対値でAABB half extentsを変換する。
+        static Vector3 AbsUpper3x3TransformExtentsRowVector(const MatrixType& matrix,
+                                                            const Vector3& extents)
+        {
+            static_assert(Layout == MatrixLayout::RowMajor,
+                "AbsUpper3x3TransformExtentsRowVector assumes row-vector (RowMajor physical) layout");
+
+            const Vector4 column0 = matrix.GetColumn(0);
+            const Vector4 column1 = matrix.GetColumn(1);
+            const Vector4 column2 = matrix.GetColumn(2);
+            return Vector3(
+                std::abs(column0.x) * extents.x + std::abs(column0.y) * extents.y +
+                    std::abs(column0.z) * extents.z,
+                std::abs(column1.x) * extents.x + std::abs(column1.y) * extents.y +
+                    std::abs(column1.z) * extents.z,
+                std::abs(column2.x) * extents.x + std::abs(column2.y) * extents.y +
+                    std::abs(column2.z) * extents.z);
+        }
+
+        // 行ベクトル規約ワールド行列から既知の各行スケールを除き、回転行列を返す。
+        static MatrixType ExtractRotationRowVector(const MatrixType& matrix, const Vector3& scale)
+        {
+            static_assert(Layout == MatrixLayout::RowMajor,
+                "ExtractRotationRowVector assumes row-vector (RowMajor physical) layout");
+
+            Vector4 row0 = matrix.GetRow(0);
+            Vector4 row1 = matrix.GetRow(1);
+            Vector4 row2 = matrix.GetRow(2);
+            if (scale.x > Constants::EPSILON)
+            {
+                row0.x /= scale.x;
+                row0.y /= scale.x;
+                row0.z /= scale.x;
+            }
+            if (scale.y > Constants::EPSILON)
+            {
+                row1.x /= scale.y;
+                row1.y /= scale.y;
+                row1.z /= scale.y;
+            }
+            if (scale.z > Constants::EPSILON)
+            {
+                row2.x /= scale.z;
+                row2.y /= scale.z;
+                row2.z /= scale.z;
+            }
+
+            return MatrixType(
+                row0.x, row0.y, row0.z, 0.0f,
+                row1.x, row1.y, row1.z, 0.0f,
+                row2.x, row2.y, row2.z, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f);
+        }
+
         // 行ベクトル規約ワールド行列を構築する(並進=論理行3, 列3=0, m33=1)。
         // Transform::ToMatrix()と同一の非正規化クォータニオン展開を用いる(正規化しない)。
         // 既存3サイト(MeshComponent/BoardComponent/ComponentDataRegistryのCalculateWorldMatrix)と数値一致。

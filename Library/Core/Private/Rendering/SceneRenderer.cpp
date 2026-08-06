@@ -61,6 +61,7 @@ namespace NorvesLib::Core::Rendering
         m_Device = nullptr;
         m_ResourceCache = nullptr;
         m_TransientPool = nullptr;
+        m_SkinnedMeshResources = nullptr;
         m_bInitialized = false;
 
         NORVES_LOG_INFO("SceneRenderer", "SceneRenderer shutdown");
@@ -301,6 +302,16 @@ namespace NorvesLib::Core::Rendering
                     m_BoundPipeline = pipeline;
                 }
 
+                if (drawCommand.Draw.PayloadKind == DrawPayloadKind::Skinned)
+                {
+                    RecordSkinnedDrawCall(drawCommand,
+                                          commandList,
+                                          m_SkinnedMeshResources,
+                                          drawCommand.DescriptorSet,
+                                          drawCommand.DescriptorSetSlot);
+                    continue;
+                }
+
                 if (drawCommand.Draw.MeshHandle.IsValid() && geometryPass.Meshes)
                 {
                     RecordMeshDrawCall(drawCommand,
@@ -478,6 +489,46 @@ namespace NorvesLib::Core::Rendering
         ++m_Stats.DrawCallCount;
         m_Stats.TriangleCount += indexCount / 3;
 
+        return true;
+    }
+
+    bool SceneRenderer::RecordSkinnedDrawCall(
+        const DrawCommand& command,
+        RHI::ICommandList* commandList,
+        SkinnedMeshResources* skinnedMeshResources,
+        RHI::DescriptorSetPtr descriptorSet,
+        uint32_t descriptorSetSlot)
+    {
+        if (!commandList || !skinnedMeshResources ||
+            command.Draw.PayloadKind != DrawPayloadKind::Skinned ||
+            command.Draw.bInstanced || command.Draw.InstanceCount != 1 ||
+            command.Skinned.PassKind == SkinnedMeshPassKind::None ||
+            !command.Pipeline || !descriptorSet ||
+            !command.Skinned.FrameLease || !command.Skinned.FrameLease->IsValid() ||
+            !command.Skinned.Prepared.IsValid())
+        {
+            return false;
+        }
+
+        commandList->SetDescriptorSet(descriptorSet, descriptorSetSlot);
+        commandList->SetVertexBuffer(command.Skinned.Prepared.VertexBuffer, 0, 0);
+        commandList->SetIndexBuffer(command.Skinned.Prepared.IndexBuffer, 0, RHI::IndexType::Uint32);
+        commandList->DrawIndexed(command.Skinned.Prepared.IndexCount, 0, 0);
+        if (!skinnedMeshResources->MarkLastUse(command.Skinned.Prepared, command.Skinned.FrameLease))
+        {
+            return false;
+        }
+
+        ++m_Stats.DrawCallCount;
+        m_Stats.TriangleCount += command.Skinned.Prepared.IndexCount / 3;
+        if (command.Skinned.PassKind == SkinnedMeshPassKind::GBuffer)
+        {
+            ++m_Stats.SkinnedGBufferDrawCallCount;
+        }
+        else if (command.Skinned.PassKind == SkinnedMeshPassKind::Shadow)
+        {
+            ++m_Stats.SkinnedShadowDrawCallCount;
+        }
         return true;
     }
 

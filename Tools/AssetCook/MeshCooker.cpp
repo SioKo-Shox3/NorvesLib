@@ -1,8 +1,10 @@
 ﻿#include "MeshCooker.h"
 
 #include "Asset/CookedMeshFormat.h"
+#include "Asset/CookedSkeletalFormat.h"
 #include "Container/FixedArray.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
+#include "Resource/SkeletalGltfDecode.h"
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
@@ -49,6 +51,7 @@ namespace NorvesLib::Tools::AssetCook
         constexpr size_t GltfMinimumByteStride = 4;
         constexpr size_t GltfMaximumByteStride = 252;
         constexpr AnsiStringView SupportedMeshFormat = "nvmesh.v0.mesh3d.pnt.u32.clustered";
+        constexpr AnsiStringView SupportedSkeletalFormat = "nvskel.v0.skinned.pnujiw.u32";
 
         using MeshByteArray = NorvesLib::Core::Container::VariableArray<uint8_t>;
 
@@ -1713,6 +1716,337 @@ namespace NorvesLib::Tools::AssetCook
             outResult = std::move(result);
             return true;
         }
+
+        struct SkeletalStringReference
+        {
+            uint64_t Offset = 0;
+            uint32_t Length = 0;
+        };
+
+        bool AppendSkeletalString(const String& value,
+                                  VariableArray<uint8_t>& stringTable,
+                                  SkeletalStringReference& outReference,
+                                  AnsiString& error)
+        {
+            if (value.size() > UINT32_MAX || stringTable.size() > UINT32_MAX - value.size())
+            {
+                error = "skeletal string table exceeds the NVSKEL v0 32-bit limit";
+                return false;
+            }
+            outReference.Offset = stringTable.size();
+            outReference.Length = static_cast<uint32_t>(value.size());
+            for (const auto character : value)
+            {
+                const uint32_t codePoint = static_cast<uint32_t>(character);
+                if (codePoint < 0x20u || codePoint > 0x7eu)
+                {
+                    error = "NVSKEL v0 names must contain printable ASCII only";
+                    return false;
+                }
+                stringTable.push_back(static_cast<uint8_t>(codePoint));
+            }
+            return true;
+        }
+
+        bool BuildNvskelBytes(const NorvesLib::Core::Skeletal::SkeletalGltfData& skeletal,
+                              MeshByteArray& outBytes,
+                              AnsiString& error)
+        {
+            namespace SkeletalFormat = NorvesLib::Core::Asset::CookedSkeletalFormatV0;
+            namespace SkeletalHeader = SkeletalFormat::HeaderOffset;
+            if (skeletal.Vertices.empty() || skeletal.Indices.empty() || skeletal.Joints.empty() ||
+                skeletal.Clips.size() != 1 || skeletal.Joints.size() > 128 ||
+                skeletal.Vertices.size() > UINT32_MAX || skeletal.Indices.size() > UINT32_MAX)
+            {
+                error = "skeletal data exceeds the NVSKEL v0 count contract";
+                return false;
+            }
+
+            size_t channelCount = 0;
+            size_t sampleCount = 0;
+            for (const NorvesLib::Core::Skeletal::SkeletalAnimationClip& clip : skeletal.Clips)
+            {
+                if (!CheckedAdd(channelCount, clip.Channels.size(), channelCount))
+                {
+                    error = "skeletal channel count overflow";
+                    return false;
+                }
+                for (const NorvesLib::Core::Skeletal::SkeletalAnimationChannel& channel : clip.Channels)
+                {
+                    if (!CheckedAdd(sampleCount, channel.Samples.size(), sampleCount))
+                    {
+                        error = "skeletal sample count overflow";
+                        return false;
+                    }
+                }
+            }
+            if (channelCount > UINT32_MAX || sampleCount > UINT32_MAX)
+            {
+                error = "skeletal animation counts exceed the NVSKEL v0 32-bit limit";
+                return false;
+            }
+
+            VariableArray<uint8_t> stringTable;
+            VariableArray<SkeletalStringReference> jointNames(skeletal.Joints.size());
+            VariableArray<SkeletalStringReference> clipNames(skeletal.Clips.size());
+            for (size_t jointIndex = 0; jointIndex < skeletal.Joints.size(); ++jointIndex)
+            {
+                if (!AppendSkeletalString(skeletal.Joints[jointIndex].Name, stringTable, jointNames[jointIndex], error))
+                {
+                    return false;
+                }
+            }
+            for (size_t clipIndex = 0; clipIndex < skeletal.Clips.size(); ++clipIndex)
+            {
+                if (!AppendSkeletalString(skeletal.Clips[clipIndex].Name, stringTable, clipNames[clipIndex], error))
+                {
+                    return false;
+                }
+            }
+
+            size_t vertexSize = 0;
+            size_t indexSize = 0;
+            size_t jointSize = 0;
+            size_t clipSize = 0;
+            size_t channelSize = 0;
+            size_t sampleSize = 0;
+            if (!CheckedMultiply(skeletal.Vertices.size(), SkeletalFormat::VertexRecordSize, vertexSize) ||
+                !CheckedMultiply(skeletal.Indices.size(), sizeof(uint32_t), indexSize) ||
+                !CheckedMultiply(skeletal.Joints.size(), SkeletalFormat::JointRecordSize, jointSize) ||
+                !CheckedMultiply(skeletal.Clips.size(), SkeletalFormat::ClipRecordSize, clipSize) ||
+                !CheckedMultiply(channelCount, SkeletalFormat::ChannelRecordSize, channelSize) ||
+                !CheckedMultiply(sampleCount, SkeletalFormat::SampleRecordSize, sampleSize))
+            {
+                error = "skeletal section size overflow";
+                return false;
+            }
+
+            const size_t vertexOffset = SkeletalFormat::HeaderSize;
+            size_t sectionEnd = 0;
+            size_t indexOffset = 0;
+            size_t jointOffset = 0;
+            size_t clipOffset = 0;
+            size_t channelOffset = 0;
+            size_t sampleOffset = 0;
+            size_t stringOffset = 0;
+            size_t fileSize = 0;
+            if (!CheckedAdd(vertexOffset, vertexSize, sectionEnd) ||
+                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, indexOffset) ||
+                !CheckedAdd(indexOffset, indexSize, sectionEnd) ||
+                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, jointOffset) ||
+                !CheckedAdd(jointOffset, jointSize, sectionEnd) ||
+                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, clipOffset) ||
+                !CheckedAdd(clipOffset, clipSize, sectionEnd) ||
+                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, channelOffset) ||
+                !CheckedAdd(channelOffset, channelSize, sectionEnd) ||
+                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, sampleOffset) ||
+                !CheckedAdd(sampleOffset, sampleSize, sectionEnd) ||
+                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, stringOffset) ||
+                !CheckedAdd(stringOffset, stringTable.size(), fileSize))
+            {
+                error = "skeletal section offset overflow";
+                return false;
+            }
+
+            outBytes.assign(fileSize, 0);
+            std::memcpy(outBytes.data() + SkeletalHeader::Magic, SkeletalFormat::Magic, SkeletalFormat::MagicSize);
+            WriteLe32(outBytes, SkeletalHeader::HeaderSize, static_cast<uint32_t>(SkeletalFormat::HeaderSize));
+            WriteLe16(outBytes, SkeletalHeader::VersionMajor, SkeletalFormat::VersionMajor);
+            WriteLe16(outBytes, SkeletalHeader::VersionMinor, SkeletalFormat::VersionMinor);
+            WriteLe32(outBytes, SkeletalHeader::EndianMarker, SkeletalFormat::EndianMarker);
+            WriteLe32(outBytes, SkeletalHeader::VertexRecordSize,
+                      static_cast<uint32_t>(SkeletalFormat::VertexRecordSize));
+            WriteLe32(outBytes, SkeletalHeader::JointRecordSize,
+                      static_cast<uint32_t>(SkeletalFormat::JointRecordSize));
+            WriteLe32(outBytes, SkeletalHeader::ClipRecordSize,
+                      static_cast<uint32_t>(SkeletalFormat::ClipRecordSize));
+            WriteLe32(outBytes, SkeletalHeader::ChannelRecordSize,
+                      static_cast<uint32_t>(SkeletalFormat::ChannelRecordSize));
+            WriteLe32(outBytes, SkeletalHeader::SampleRecordSize,
+                      static_cast<uint32_t>(SkeletalFormat::SampleRecordSize));
+            WriteLe64(outBytes, SkeletalHeader::FileSize, fileSize);
+            WriteLe64(outBytes, SkeletalHeader::VertexOffset, vertexOffset);
+            WriteLe64(outBytes, SkeletalHeader::VertexSize, vertexSize);
+            WriteLe64(outBytes, SkeletalHeader::IndexOffset, indexOffset);
+            WriteLe64(outBytes, SkeletalHeader::IndexSize, indexSize);
+            WriteLe64(outBytes, SkeletalHeader::JointOffset, jointOffset);
+            WriteLe64(outBytes, SkeletalHeader::JointSize, jointSize);
+            WriteLe64(outBytes, SkeletalHeader::ClipOffset, clipOffset);
+            WriteLe64(outBytes, SkeletalHeader::ClipSize, clipSize);
+            WriteLe64(outBytes, SkeletalHeader::ChannelOffset, channelOffset);
+            WriteLe64(outBytes, SkeletalHeader::ChannelSize, channelSize);
+            WriteLe64(outBytes, SkeletalHeader::SampleOffset, sampleOffset);
+            WriteLe64(outBytes, SkeletalHeader::SampleSize, sampleSize);
+            WriteLe64(outBytes, SkeletalHeader::StringOffset, stringOffset);
+            WriteLe64(outBytes, SkeletalHeader::StringSize, stringTable.size());
+            WriteLe32(outBytes, SkeletalHeader::VertexCount, static_cast<uint32_t>(skeletal.Vertices.size()));
+            WriteLe32(outBytes, SkeletalHeader::IndexCount, static_cast<uint32_t>(skeletal.Indices.size()));
+            WriteLe32(outBytes, SkeletalHeader::JointCount, static_cast<uint32_t>(skeletal.Joints.size()));
+            WriteLe32(outBytes, SkeletalHeader::ClipCount, static_cast<uint32_t>(skeletal.Clips.size()));
+            WriteLe32(outBytes, SkeletalHeader::ChannelCount, static_cast<uint32_t>(channelCount));
+            WriteLe32(outBytes, SkeletalHeader::SampleCount, static_cast<uint32_t>(sampleCount));
+            for (size_t element = 0; element < 16; ++element)
+            {
+                WriteFloat32(outBytes,
+                             SkeletalHeader::MeshNodeGlobalTransform + element * sizeof(float),
+                             skeletal.MeshNodeGlobalTransform[element]);
+            }
+
+            for (size_t vertexIndex = 0; vertexIndex < skeletal.Vertices.size(); ++vertexIndex)
+            {
+                const auto& vertex = skeletal.Vertices[vertexIndex];
+                const size_t record = vertexOffset + vertexIndex * SkeletalFormat::VertexRecordSize;
+                WriteFloat32(outBytes, record + SkeletalFormat::VertexOffset::Position + 0, vertex.Position.X);
+                WriteFloat32(outBytes, record + SkeletalFormat::VertexOffset::Position + 4, vertex.Position.Y);
+                WriteFloat32(outBytes, record + SkeletalFormat::VertexOffset::Position + 8, vertex.Position.Z);
+                WriteFloat32(outBytes, record + SkeletalFormat::VertexOffset::Normal + 0, vertex.Normal.X);
+                WriteFloat32(outBytes, record + SkeletalFormat::VertexOffset::Normal + 4, vertex.Normal.Y);
+                WriteFloat32(outBytes, record + SkeletalFormat::VertexOffset::Normal + 8, vertex.Normal.Z);
+                WriteFloat32(outBytes, record + SkeletalFormat::VertexOffset::TexCoord + 0, vertex.TexCoord.U);
+                WriteFloat32(outBytes, record + SkeletalFormat::VertexOffset::TexCoord + 4, vertex.TexCoord.V);
+                for (size_t influence = 0; influence < 4; ++influence)
+                {
+                    WriteLe32(outBytes,
+                              record + SkeletalFormat::VertexOffset::JointIndices + influence * sizeof(uint32_t),
+                              vertex.JointIndices[influence]);
+                    WriteFloat32(outBytes,
+                                 record + SkeletalFormat::VertexOffset::JointWeights + influence * sizeof(float),
+                                 vertex.JointWeights[influence]);
+                }
+            }
+            for (size_t index = 0; index < skeletal.Indices.size(); ++index)
+            {
+                WriteLe32(outBytes, indexOffset + index * sizeof(uint32_t), skeletal.Indices[index]);
+            }
+            for (size_t jointIndex = 0; jointIndex < skeletal.Joints.size(); ++jointIndex)
+            {
+                const auto& joint = skeletal.Joints[jointIndex];
+                const size_t record = jointOffset + jointIndex * SkeletalFormat::JointRecordSize;
+                WriteLe32(outBytes, record + SkeletalFormat::JointOffset::ParentIndex,
+                          static_cast<uint32_t>(joint.ParentIndex));
+                WriteLe32(outBytes, record + SkeletalFormat::JointOffset::NameOffset,
+                          static_cast<uint32_t>(jointNames[jointIndex].Offset));
+                WriteLe32(outBytes, record + SkeletalFormat::JointOffset::NameSize, jointNames[jointIndex].Length);
+                for (size_t element = 0; element < 16; ++element)
+                {
+                    WriteFloat32(outBytes,
+                                 record + SkeletalFormat::JointOffset::InverseBindMatrix + element * sizeof(float),
+                                 joint.InverseBindMatrix[element]);
+                }
+            }
+
+            size_t channelCursor = 0;
+            size_t sampleCursor = 0;
+            for (size_t clipIndex = 0; clipIndex < skeletal.Clips.size(); ++clipIndex)
+            {
+                const auto& clip = skeletal.Clips[clipIndex];
+                const size_t clipRecord = clipOffset + clipIndex * SkeletalFormat::ClipRecordSize;
+                WriteLe64(outBytes, clipRecord + SkeletalFormat::ClipOffset::NameOffset,
+                          clipNames[clipIndex].Offset);
+                WriteLe32(outBytes, clipRecord + SkeletalFormat::ClipOffset::NameSize, clipNames[clipIndex].Length);
+                WriteFloat32(outBytes, clipRecord + SkeletalFormat::ClipOffset::Duration, clip.DurationSeconds);
+                WriteLe32(outBytes, clipRecord + SkeletalFormat::ClipOffset::ChannelOffset,
+                          static_cast<uint32_t>(channelCursor));
+                WriteLe32(outBytes, clipRecord + SkeletalFormat::ClipOffset::ChannelCount,
+                          static_cast<uint32_t>(clip.Channels.size()));
+                for (const auto& channel : clip.Channels)
+                {
+                    const size_t channelRecord = channelOffset + channelCursor * SkeletalFormat::ChannelRecordSize;
+                    WriteLe32(outBytes, channelRecord + SkeletalFormat::ChannelOffset::JointIndex, channel.JointIndex);
+                    WriteLe32(outBytes, channelRecord + SkeletalFormat::ChannelOffset::Path,
+                              static_cast<uint32_t>(channel.Path));
+                    WriteLe32(outBytes, channelRecord + SkeletalFormat::ChannelOffset::Interpolation,
+                              static_cast<uint32_t>(channel.Interpolation));
+                    WriteLe32(outBytes, channelRecord + SkeletalFormat::ChannelOffset::SampleOffset,
+                              static_cast<uint32_t>(sampleCursor));
+                    WriteLe32(outBytes, channelRecord + SkeletalFormat::ChannelOffset::SampleCount,
+                              static_cast<uint32_t>(channel.Samples.size()));
+                    for (const auto& sample : channel.Samples)
+                    {
+                        const size_t sampleRecord = sampleOffset + sampleCursor * SkeletalFormat::SampleRecordSize;
+                        WriteFloat32(outBytes, sampleRecord + SkeletalFormat::SampleOffset::Time, sample.TimeSeconds);
+                        WriteFloat32(outBytes, sampleRecord + SkeletalFormat::SampleOffset::Value + 0, sample.Value.X);
+                        WriteFloat32(outBytes, sampleRecord + SkeletalFormat::SampleOffset::Value + 4, sample.Value.Y);
+                        WriteFloat32(outBytes, sampleRecord + SkeletalFormat::SampleOffset::Value + 8, sample.Value.Z);
+                        WriteFloat32(outBytes, sampleRecord + SkeletalFormat::SampleOffset::Value + 12, sample.Value.W);
+                        ++sampleCursor;
+                    }
+                    ++channelCursor;
+                }
+            }
+            if (!stringTable.empty())
+            {
+                std::memcpy(outBytes.data() + stringOffset, stringTable.data(), stringTable.size());
+            }
+
+            const uint64_t payloadHash = NorvesLib::Core::Asset::ComputeCookedSkeletalV01Hash(
+                outBytes.data() + SkeletalHeader::MeshNodeGlobalTransform,
+                outBytes.data() + SkeletalFormat::HeaderSize,
+                outBytes.size() - SkeletalFormat::HeaderSize);
+            WriteLe64(outBytes, SkeletalHeader::PayloadHash, payloadHash);
+            return true;
+        }
+
+        bool CookGltfToNvskelInternal(const uint8_t* sourceBytes,
+                                      size_t sourceSize,
+                                      AnsiStringView format,
+                                      AnsiStringView sourcePath,
+                                      SkeletalCookResult& outResult,
+                                      AnsiString& error)
+        {
+            if (format != SupportedSkeletalFormat)
+            {
+                error = AnsiString("unsupported skeletal format: ") + AnsiString(format);
+                return false;
+            }
+            if (sourceBytes == nullptr || sourceSize == 0 ||
+                std::find(sourceBytes, sourceBytes + sourceSize, uint8_t{0}) != sourceBytes + sourceSize)
+            {
+                error = "glTF JSON input is empty or contains an embedded NUL byte";
+                return false;
+            }
+
+            size_t jsonOffset = 0;
+            if (sourceSize >= 3 && sourceBytes[0] == 0xefu && sourceBytes[1] == 0xbbu && sourceBytes[2] == 0xbfu)
+            {
+                jsonOffset = 3;
+            }
+            const String jsonText = ToCoreString(
+                AnsiStringView(reinterpret_cast<const char*>(sourceBytes) + jsonOffset, sourceSize - jsonOffset));
+            NorvesLib::Core::Skeletal::SkeletalGltfSourceBuffers sourceBuffers;
+            const auto decoded = NorvesLib::Core::Skeletal::DecodeSkeletalGltf(
+                jsonText, ToCoreString(sourcePath), &sourceBuffers);
+            if (!decoded.Succeeded())
+            {
+                error = AnsiString("skeletal glTF decode failed: status=") +
+                        FormatInteger(static_cast<int>(decoded.Status));
+                return false;
+            }
+
+            SkeletalCookResult result;
+            if (!BuildNvskelBytes(decoded.Data, result.NvskelBytes, error))
+            {
+                return false;
+            }
+            const NorvesLib::Core::Container::Span<const uint8_t> span(result.NvskelBytes.data(),
+                                                                        result.NvskelBytes.size());
+            const auto parsed = NorvesLib::Core::Asset::ParseCookedSkeletal(
+                AssetBlob::CopyBytes(span, "AssetCook skeletal self-validation"));
+            if (!parsed.Succeeded())
+            {
+                error = AnsiString("generated NVSKEL failed self-validation: status=") +
+                        FormatInteger(static_cast<int>(parsed.Status));
+                return false;
+            }
+
+            result.SourceHash = ComputeGltfSourceHash(sourceBytes, sourceSize, sourceBuffers);
+            result.VertexCount = static_cast<uint32_t>(decoded.Data.Vertices.size());
+            result.IndexCount = static_cast<uint32_t>(decoded.Data.Indices.size());
+            result.JointCount = static_cast<uint32_t>(decoded.Data.Joints.size());
+            result.ClipCount = static_cast<uint32_t>(decoded.Data.Clips.size());
+            outResult = std::move(result);
+            return true;
+        }
     } // namespace
 
     bool IsSupportedMeshCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept
@@ -1730,6 +2064,27 @@ namespace NorvesLib::Tools::AssetCook
         if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult, internalError))
         {
             error = internalError.c_str();
+            return false;
+        }
+        return true;
+    }
+
+    bool IsSupportedSkeletalCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept
+    {
+        return format == SupportedSkeletalFormat;
+    }
+
+    bool CookGltfToNvskel(const uint8_t* sourceBytes,
+                          size_t sourceSize,
+                          NorvesLib::Core::Container::AnsiStringView format,
+                          NorvesLib::Core::Container::AnsiStringView sourcePath,
+                          SkeletalCookResult& outResult,
+                          NorvesLib::Core::Container::AnsiString& error)
+    {
+        AnsiString internalError;
+        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError))
+        {
+            error = internalError;
             return false;
         }
         return true;
