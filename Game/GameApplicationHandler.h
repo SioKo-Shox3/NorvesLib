@@ -8,6 +8,7 @@
 #include "Bridge/BridgeServerHost.h"
 #include "Bridge/NorvesLibBridgeAdapter.h"
 #include "Scripting/M6ScriptSmokeController.h"
+#include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Debug/EngineStatsImGuiView.h"
@@ -91,6 +92,8 @@ namespace Game
          */
         bool ReloadConfiguredAssetManifest();
 
+        bool PrepareM9WorldAssets();
+
         /**
          * @brief Bridge 読み取り用の immutable asset snapshot を取得する。
          * @return 現在保持中の snapshot。未構成または未受理なら null。
@@ -118,6 +121,7 @@ namespace Game
         NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem> m_AssetSystemSnapshot;
         NorvesLib::Core::Container::String m_Rendering3DTestModelPath;
         Game::Scripting::M6ScriptSmokeController m_M6ScriptSmokeController;
+        NorvesLib::Core::Container::TSharedPtr<Game::GameModes::M9WorldAcceptanceConfig> m_M9WorldAcceptance;
 
         // Bridge（NorvesEditor 連携）。adapter は host より長生きする必要があるため、
         // 宣言順を adapter → host にしてデストラクト順（host → adapter）を保証する。

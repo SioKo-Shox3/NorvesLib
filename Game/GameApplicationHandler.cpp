@@ -1,9 +1,16 @@
 ﻿#include "GameApplicationHandler.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Asset/AssetSystem.h"
+#include "Core/Public/Asset/CookedAudioFormat.h"
+#include "Core/Public/Asset/CookedSkeletalFormat.h"
 #include "Core/Public/Engine/Engine.h"
+#include "Core/Public/Engine/NorvesEngine.h"
+#include "Core/Public/Animation/AnimationClipResource.h"
+#include "Core/Public/Animation/SkeletonResource.h"
+#include "Core/Public/Animation/SkeletalAssetResource.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/Entity.h"
+#include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/RenderWorld.h"
@@ -31,6 +38,11 @@
 #include "Core/Public/Module/ModuleRegistry.h"
 #include "DummyModule/DummyRenderModule.h"
 #include "Physics/IPhysicsModule.h"
+
+#if defined(NORVES_GAME_AUDIO)
+#include "Audio/AudioClipResource.h"
+#include "Audio/IAudioModule.h"
+#endif
 
 // モジュールシステム第2段 B-i: --imgui ゲートで ImGui モジュールを登録する。
 // 別 static lib(NorvesModule_ImGui)の自由関数を明示参照し、Core 在駐の ModuleRegistry
@@ -60,6 +72,7 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestInstancedMeshCountOption = TEXT("--rendering3dtest-instanced-mesh-count");
         constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
         constexpr const TCHAR* kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
+        constexpr const TCHAR* kM9WorldSmokeOption = TEXT("--m9-world-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         // 値を取らない bare フラグ(--enable-canvas-view と同類)。指定時のみ描画ダミー
         // モジュールを登録する不変条件ゲート。
@@ -723,6 +736,36 @@ namespace Game
             LOG_INFO("Module runtime option --dummy-overlay: DummyRenderModule registered");
         }
 
+        bool bM9WorldSmoke = false;
+        for (size_t i = 0; i < args.size(); ++i)
+        {
+            if (args[i] == kM9WorldSmokeOption)
+            {
+                bM9WorldSmoke = true;
+                break;
+            }
+        }
+        if (bM9WorldSmoke)
+        {
+            m_M9WorldAcceptance = MakeShared<Game::GameModes::M9WorldAcceptanceConfig>();
+            m_M9WorldAcceptance->bRequested = true;
+#if defined(NORVES_GAME_AUDIO)
+            if (NorvesLib::Modules::Audio::RegisterAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
+            {
+                LOG_ERROR("M9 world smoke failed to register the XAudio2 module");
+                return false;
+            }
+#else
+            LOG_ERROR("M9 world smoke is unavailable because Game was built without audio support");
+            return false;
+#endif
+            LOG_INFO("M9_WORLD_SMOKE stage=registered");
+#if defined(NORVES_GAME_AUDIO)
+            Game::GameModes::EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=registered");
+#endif
+        }
+
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
         // NORVES_ENABLE_IMGUI ビルドで指定された場合のみ ImGui モジュールを登録する。
         // フラグ無し or OFF ビルドでは一切登録せず、overlay seam は完全 no-op を保つ。
@@ -799,9 +842,22 @@ namespace Game
 
         if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())
         {
-            if (GEngine)
+            if (NorvesLib::Core::Engine::GEngine)
             {
-                GEngine->RequestExit(1);
+                NorvesLib::Core::Engine::GEngine->RequestExit(1);
+            }
+            return;
+        }
+
+        if (m_M9WorldAcceptance && !PrepareM9WorldAssets())
+        {
+            LOG_ERROR("M9_WORLD_SMOKE stage=failure reason=asset_prepare");
+#if defined(NORVES_GAME_AUDIO)
+            Game::GameModes::EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=failure reason=asset_prepare");
+#endif
+            if (NorvesLib::Core::Engine::GEngine)
+            {
+                NorvesLib::Core::Engine::GEngine->RequestExit(1);
             }
             return;
         }
@@ -842,7 +898,7 @@ namespace Game
             return false;
         }
 
-        if (!GEngine)
+        if (!NorvesLib::Core::Engine::GEngine)
         {
             LOG_ERROR("Asset runtime snapshot reload failed: GEngine is null");
             return false;
@@ -912,7 +968,7 @@ namespace Game
         }
 
         TSharedPtr<const Asset::AssetSystem> immutableCandidate = candidate;
-        if (!GEngine->GetRenderResources().ReloadAssetRuntimeSnapshot(
+        if (!NorvesLib::Core::Engine::GEngine->GetRenderResources().ReloadAssetRuntimeSnapshot(
                 m_TextureAssetRoot,
                 immutableCandidate))
         {
@@ -932,6 +988,92 @@ namespace Game
     TSharedPtr<const Asset::AssetSystem> GameApplicationHandler::GetAssetSystemSnapshot() const
     {
         return m_AssetSystemSnapshot;
+    }
+
+    bool GameApplicationHandler::PrepareM9WorldAssets()
+    {
+        if (!m_M9WorldAcceptance || !m_M9WorldAcceptance->bRequested || !m_AssetSystemSnapshot ||
+            !NorvesLib::Core::Engine::GEngine)
+        {
+            return false;
+        }
+
+#if !defined(NORVES_GAME_AUDIO)
+        return false;
+#else
+        const Asset::AssetResolveResult skeletalResult = m_AssetSystemSnapshot->ResolveAsset(
+            "Models/M9Skinned/ValidU8Float.gltf", Asset::AssetKind::Model);
+        const Asset::AssetResolveResult effectResult = m_AssetSystemSnapshot->ResolveAsset(
+            "Audio/M9/effect.wav", Asset::AssetKind::Audio);
+        const Asset::AssetResolveResult loopResult = m_AssetSystemSnapshot->ResolveAsset(
+            "Audio/M9/loop.wav", Asset::AssetKind::Audio);
+        if (!skeletalResult.UsedCooked() || !effectResult.UsedCooked() || !loopResult.UsedCooked())
+        {
+            LOG_ERROR("M9_WORLD_SMOKE asset resolution requires all three cooked assets");
+            return false;
+        }
+
+        Asset::CookedSkeletalParseResult skeletal = Asset::ParseCookedSkeletal(skeletalResult.Blob);
+        Asset::CookedAudioParseResult effect = Asset::ParseCookedAudio(effectResult.Blob);
+        Asset::CookedAudioParseResult loop = Asset::ParseCookedAudio(loopResult.Blob);
+        if (!skeletal.Succeeded() || !effect.Succeeded() || !loop.Succeeded() || skeletal.Data.Skeletal.Clips.empty())
+        {
+            LOG_ERROR("M9_WORLD_SMOKE cooked asset parsing failed");
+            return false;
+        }
+
+        auto& resources = NorvesLib::Core::GEngine.GetResourceRegistry();
+        auto mesh = resources.CreateTransient<SkinnedMeshResource>("M9WorldSkinnedMesh");
+        auto skeleton = resources.CreateTransient<SkeletonResource>("M9WorldSkeleton");
+        auto clip = resources.CreateTransient<AnimationClipResource>("M9WorldClip");
+        auto skeletalAsset = resources.CreateTransient<SkeletalAssetResource>("M9WorldAsset");
+        if (!mesh || !skeleton || !clip || !skeletalAsset)
+        {
+            return false;
+        }
+        mesh->SetVertices(std::move(skeletal.Data.Skeletal.Vertices));
+        mesh->SetIndices(std::move(skeletal.Data.Skeletal.Indices));
+        skeleton->SetJoints(std::move(skeletal.Data.Skeletal.Joints));
+        clip->SetClip(std::move(skeletal.Data.Skeletal.Clips[0]));
+        if (!mesh->Load() || !skeleton->Load() || !clip->Load())
+        {
+            return false;
+        }
+        skeletalAsset->SetResources(mesh, skeleton, clip);
+        if (!skeletalAsset->IsLoaded())
+        {
+            return false;
+        }
+
+        const NorvesLib::Modules::Audio::AudioPcmFormat effectFormat{
+            effect.Audio.SampleRate, effect.Audio.ChannelCount, effect.Audio.BitsPerSample, effect.Audio.BlockAlignment};
+        const NorvesLib::Modules::Audio::AudioPcmFormat loopFormat{
+            loop.Audio.SampleRate, loop.Audio.ChannelCount, loop.Audio.BitsPerSample, loop.Audio.BlockAlignment};
+        Asset::AssetBlob effectPcm = effect.Audio.SourceBlob.TryCreateSubBlob(
+            static_cast<size_t>(effect.Audio.PayloadOffset), static_cast<size_t>(effect.Audio.PayloadSize));
+        Asset::AssetBlob loopPcm = loop.Audio.SourceBlob.TryCreateSubBlob(
+            static_cast<size_t>(loop.Audio.PayloadOffset), static_cast<size_t>(loop.Audio.PayloadSize));
+        if (!effectPcm.IsValid() || effectPcm.IsEmpty() || !loopPcm.IsValid() || loopPcm.IsEmpty())
+        {
+            return false;
+        }
+        auto effectClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
+            effectPcm, effectFormat, effect.Audio.FrameCount);
+        auto loopClip = MakeShared<NorvesLib::Modules::Audio::AudioClipResource>(
+            loopPcm, loopFormat, loop.Audio.FrameCount);
+        if (!effectClip || !loopClip || !effectClip->IsValid() || !loopClip->IsValid())
+        {
+            return false;
+        }
+
+        m_M9WorldAcceptance->SkeletalAsset = skeletalAsset;
+        m_M9WorldAcceptance->EffectClip = effectClip;
+        m_M9WorldAcceptance->LoopClip = loopClip;
+        m_M9WorldAcceptance->bAssetsReady = true;
+        LOG_INFO("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
+        Game::GameModes::EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
+        return true;
+#endif
     }
 
     void GameApplicationHandler::ParseBridgePortOption(const VariableArray<String>& args)
@@ -1078,9 +1220,10 @@ namespace Game
         auto stateMachine = MakeUnique<GameModeStateMachine>();
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
+        const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         stateMachine->Registry().Register(
             Rendering3DTest,
-            [bUseCookedModel, bPhysicsSmoke](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
+            [bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
                 mode->GetData().m_ModelPath = params.ModelPath;
@@ -1091,6 +1234,7 @@ namespace Game
                 mode->GetData().m_InstancedMeshCount = s_Rendering3DTestInstancedMeshCount;
                 mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
                 mode->GetData().m_bPhysicsSmoke = bPhysicsSmoke;
+                mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
                 return mode;
             });
         stateMachine->Registry().Register(

@@ -1,7 +1,7 @@
 ﻿set(MODULE_NAME Game)
 
 # ソースファイルの収集
-file(GLOB_RECURSE SOURCE_FILES 
+file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS
     *.cpp
     *.h
 )
@@ -22,6 +22,7 @@ target_include_directories(${MODULE_NAME}
 target_link_libraries(${MODULE_NAME}
     PRIVATE
         Core
+        NorvesModule_Audio
         # モジュールシステム第1段1C-ii: 描画ダミーモジュール lib。--dummy-overlay 時に
         # GameApplicationHandler が RegisterDummyRenderModule を明示参照するため、
         # その自由関数を含む別 static lib をリンク引込する(PUBLIC include で
@@ -35,6 +36,7 @@ target_link_libraries(${MODULE_NAME}
         # Thread # Core に統合されました
         # RHI # TODO: RHIモジュールはリファクタリング中のため一時的に無効化
 )
+target_compile_definitions(${MODULE_NAME} PRIVATE NORVES_GAME_AUDIO)
 
 # NorvesEditor Bridge engine SDK link (Workstream L-P1). Only when the parent
 # build opts in via -DNORVES_BRIDGE_SDK_DIR; a plain NorvesLib build skips it.
