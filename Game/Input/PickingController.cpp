@@ -3,7 +3,6 @@
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Engine/ComponentDataRegistry.h"
 #include "Core/Public/Engine/NorvesEngine.h"
-#include "Core/Public/Input/MayaCameraController.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Scene/SceneQuery.h"
 #include "Core/Public/Rendering/CameraPicking.h"
@@ -17,7 +16,6 @@ namespace
 {
     constexpr float ClickThresholdPixels = 4.0f;
     constexpr float RayLength = 1000.0f;
-    constexpr float kFallbackSelectionDepth = 5.0f;
     const NorvesLib::Math::Vector4 SelectionColor(0.1f, 0.85f, 1.0f, 1.0f);
     const NorvesLib::Math::Vector4 SelectionSphereColor(0.1f, 0.85f, 1.0f, 1.0f);
     const NorvesLib::Math::Vector4 RayColor(1.0f, 0.25f, 0.1f, 0.75f);
@@ -26,9 +24,9 @@ namespace
 namespace Game::Input
 {
 
-    void PickingController::SetCameraController(NorvesLib::Core::Input::MayaCameraController* controller)
+    void PickingController::SetFallbackSelectionDepth(float depth)
     {
-        m_pCameraController = controller;
+        m_FallbackSelectionDepth = depth;
     }
 
     bool PickingController::OnMouseButton(const NorvesLib::Core::Input::MouseButtonEvent& event)
@@ -341,12 +339,7 @@ namespace Game::Input
 
         // 入力 dispatch は BeginFrame 後・Tick 前に走るため、click/box と同じ
         // 前フレームの SceneQuery キャッシュを見る。HitEntity は深度決定に使わず保持しない。
-        const float depth =
-            bHit
-                ? hit.Distance
-                : (m_pCameraController != nullptr
-                       ? m_pCameraController->GetDistance()
-                       : kFallbackSelectionDepth);
+        const float depth = bHit ? hit.Distance : m_FallbackSelectionDepth;
         // カメラが AABB 内部にある場合は hit.Distance が 0 になりうる。
         return NorvesLib::Core::Rendering::BuildSelectionSphere(
             camera,

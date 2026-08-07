@@ -40,6 +40,16 @@ Single-threaded path では `Ready -> Reading -> Empty` を GameThread 内で完
 - Component が disabled または owner が inactive の場合、その frame の proxy には残らない。
 - DrawCommand は `GenerateDrawCommands()` で `SceneView` から生成され、`FramePacket` にコピーされる。
 
+## カメラ供給経路
+
+`Rendering3DTest` のカメラは入力、姿勢、描画 snapshot を3層に分けます。
+
+1. `CameraInputCollector` は `InputRouter` で上位 controller に consume されず到達したマウスと左右 Alt の状態だけを、フレーム限定 `InputState` へ集約します。Alt なしの drag はカメラ intent にならず、scroll は Alt に依存しません。
+2. `MayaCameraController::BuildIntent()` は値 `InputState` を値 `SpringArmIntent` へ変換します。`SpringArmComponent` は World 所有 pivot の `ObjectId` を安全に再解決し、camera Entity の world transform を更新します。
+3. camera Entity が Inner 所有する `CameraComponent` は `BuildCameraProxy()` で値 `CameraProxy` を構築し、GameThread が `RenderWorld::SetMainCamera()` へ渡します。
+
+GameThread から RenderThread へ渡るのは `FramePacket` に複製された `CameraProxy` snapshot だけです。`Entity`、`CameraComponent`、`SpringArmComponent` などの live `Object` pointer は RenderThread へ渡しません。Enter 失敗と Leave では `InputRouter` の借用登録を先に解除して公開 pointer を null 化し、Entity と Inner Component の実所有解放は `GameModeScope` が行います。
+
 ## DebugViewMode
 
 - `Rendering3DTest` の入力は `F1=Normal`、`F2=Unlit`、`F3=Wireframe`、`F4=MegaGeometryClusters`、`F5=循環`。

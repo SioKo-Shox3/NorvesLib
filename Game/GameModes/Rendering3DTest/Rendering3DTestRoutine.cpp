@@ -12,6 +12,8 @@
 #include "Core/Public/Component/MegaGeometryComponent.h"
 #include "Core/Public/Component/LightComponent.h"
 #include "Core/Public/Component/PointLightComponent.h"
+#include "Core/Public/Component/CameraComponent.h"
+#include "Core/Public/Component/SpringArmComponent.h"
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/RenderResourceContexts.h"
 #include "Core/Public/Rendering/RenderResources.h"
@@ -63,6 +65,86 @@ namespace Game::GameModes
 {
     namespace
     {
+        void UnregisterRendering3DInput(GameModeContext& ctx, Rendering3DTestData& data)
+        {
+            auto& inputRouter = ctx.EngineRef.GetInputRouter();
+            inputRouter.UnregisterController(&data.m_CameraController);
+            inputRouter.UnregisterController(&data.m_CameraInputCollector);
+            inputRouter.UnregisterController(&data.m_PickingController);
+            inputRouter.UnregisterController(&data.m_LightController);
+            inputRouter.UnregisterController(&data.m_DebugInput);
+            data.m_CameraInputCollector.ResetAll();
+        }
+
+        void ClearCameraReferences(Rendering3DTestData& data)
+        {
+            data.m_pCameraPivotObject = nullptr;
+            data.m_pCameraObject = nullptr;
+            data.m_pSpringArmComponent = nullptr;
+            data.m_pCameraComponent = nullptr;
+            data.m_bCameraSmokeSyncEmitted = false;
+            data.m_bCameraSmokeCompleteEmitted = false;
+        }
+
+        bool InitializeCameraPath(GameModeContext& ctx, Rendering3DTestData& data)
+        {
+            data.m_CameraController.Initialize(Math::Vector3(0.0f, 0.0f, 0.0f), 5.0f, 0.0f, 30.0f);
+            data.m_CameraInputCollector.ResetAll();
+            data.m_bCameraSmokeSyncEmitted = false;
+            data.m_bCameraSmokeCompleteEmitted = false;
+
+            auto& inputRouter = ctx.EngineRef.GetInputRouter();
+            inputRouter.RegisterController(
+                &data.m_CameraInputCollector,
+                NorvesLib::Core::Input::InputRouter::PriorityGame);
+            inputRouter.RegisterController(
+                &data.m_PickingController,
+                NorvesLib::Core::Input::InputRouter::PriorityGame + 10);
+
+            data.m_pCameraPivotObject = ctx.ScopeRef.SpawnObject<Entity>();
+            data.m_pCameraObject = ctx.ScopeRef.SpawnObject<Entity>();
+            if (data.m_pCameraPivotObject == nullptr || data.m_pCameraObject == nullptr)
+            {
+                UnregisterRendering3DInput(ctx, data);
+                ClearCameraReferences(data);
+                return false;
+            }
+
+            data.m_pCameraPivotObject->SetPosition(0.0f, 0.0f, 0.0f);
+            data.m_pSpringArmComponent =
+                ctx.WorldRef.CreateComponent<Component::SpringArmComponent>(data.m_pCameraObject);
+            data.m_pCameraComponent =
+                ctx.WorldRef.CreateComponent<Component::CameraComponent>(data.m_pCameraObject);
+            if (data.m_pSpringArmComponent == nullptr || data.m_pCameraComponent == nullptr ||
+                !data.m_pSpringArmComponent->SetPivot(data.m_pCameraPivotObject))
+            {
+                UnregisterRendering3DInput(ctx, data);
+                ClearCameraReferences(data);
+                return false;
+            }
+
+            data.m_pSpringArmComponent->SetArmLength(5.0f);
+            data.m_pSpringArmComponent->SetYaw(0.0f);
+            data.m_pSpringArmComponent->SetPitch(30.0f);
+            data.m_pCameraComponent->SetActiveCamera(true);
+            data.m_pSpringArmComponent->RefreshOwnerTransform();
+
+            CameraProxy initialCamera;
+            if (!data.m_pCameraComponent->BuildCameraProxy(initialCamera))
+            {
+                UnregisterRendering3DInput(ctx, data);
+                ClearCameraReferences(data);
+                return false;
+            }
+
+            ctx.EngineRef.GetRenderWorld().SetMainCamera(initialCamera);
+            data.m_PickingController.SetFallbackSelectionDepth(
+                data.m_pSpringArmComponent->GetArmLength());
+            LOG_INFO("CAMERA_COMPONENT_SMOKE stage=registered");
+            EmitM9WorldSmokeMarker("CAMERA_COMPONENT_SMOKE stage=registered");
+            return true;
+        }
+
         void FailM9WorldSmoke(GameModeContext& ctx, const char* reason)
         {
             LOG_ERROR("M9_WORLD_SMOKE stage=failure reason=%s", reason);
@@ -74,11 +156,8 @@ namespace Game::GameModes
 
         void CleanupM9WorldAcceptance(GameModeContext& ctx, Rendering3DTestData& data)
         {
-            auto& inputRouter = ctx.EngineRef.GetInputRouter();
-            inputRouter.UnregisterController(&data.m_CameraController);
-            inputRouter.UnregisterController(&data.m_PickingController);
-            inputRouter.UnregisterController(&data.m_LightController);
-            inputRouter.UnregisterController(&data.m_DebugInput);
+            UnregisterRendering3DInput(ctx, data);
+            ClearCameraReferences(data);
 
 #if defined(NORVES_GAME_AUDIO)
             if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested)
@@ -263,26 +342,14 @@ namespace Game::GameModes
             LOG_INFO("Rendering3DTest particle emitter created valid=%d", data.m_ParticleEmitter.IsValid());
         }
 
-        // ========================================
-        // カメラコントローラーの初期化（シーン所有）
-        // ========================================
-        // 原点を注視点とし、距離5.0、Yaw=0°、Pitch=30°で初期化
-        data.m_CameraController.Initialize(
-            NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), // target
-            5.0f,                                       // distance
-            0.0f,                                       // yaw
-            30.0f);                                     // pitch
-        LOG_INFO("MayaCameraController initialized");
-
-        // カメラを入力ルーターへ登録（ゲーム優先度）。以降マウス入力は
-        // イベント駆動でカメラへ配送される。
-        ctx.EngineRef.GetInputRouter().RegisterController(
-            &data.m_CameraController,
-            NorvesLib::Core::Input::InputRouter::PriorityGame);
-        ctx.EngineRef.GetInputRouter().RegisterController(
-            &data.m_PickingController,
-            NorvesLib::Core::Input::InputRouter::PriorityGame + 10);
-        data.m_PickingController.SetCameraController(&data.m_CameraController);
+        // Maya の値 intent を SpringArm へ適用し、CameraComponent の値 proxy を
+        // RenderWorld へ渡す3層カメラ経路を構築する。失敗時は借用登録と公開参照を
+        // 即時に戻し、StateMachine の Scope cleanup に Entity 解放を委ねる。
+        if (!InitializeCameraPath(ctx, data))
+        {
+            LOG_ERROR("Rendering3DTest camera path initialization failed");
+            return GameModeEnterResult::Failed;
+        }
 
         // ========================================
         // 1. プロシージャルメッシュの生成とGPU登録
@@ -1205,37 +1272,56 @@ namespace Game::GameModes
             data.m_M8MinimalPhysicsSmoke.Update(ctx);
         }
 
-        // ========================================
-        // 入力に基づくカメラ更新（シーン所有）
-        // ========================================
-        const auto &inputState = ctx.InputRef.GetState();
-
-        // カメラは InputRouter 経由でイベント駆動更新済み（Update 呼び出し不要）。
-        // F1-F5 デバッグビュー切替も Rendering3DTestDebugInput が
-        // InputRouter 経由で処理する（旧 inline poll は撤去済み）。
-
         // 方向ライトの連続 hold 適用。held フラグは LightController::OnKey が
         // InputRouter 経由で更新する。ImGui がキーボードを掴んでいる間は
         // 上位で consume されるため held は積まれず、ここでも動かない（排他）。
         data.m_LightController.Update(deltaTime);
 
-        // デバッグ: スクロール値とカメラ距離を出力
+        // InputRouter で上位 controller に consume されなかった値状態だけを Maya
+        // の変換層へ渡し、SpringArm を単一のカメラ姿勢正本として更新する。
+        // CameraProxy は値 snapshot なので RenderThread に live Object は渡らない。
+        if (data.m_pSpringArmComponent != nullptr && data.m_pCameraComponent != nullptr)
         {
-            float scroll = inputState.GetMouseState().ScrollDelta;
+            const NorvesLib::Core::Input::InputState cameraInput =
+                data.m_CameraInputCollector.BuildFrameInputState();
+            const Component::SpringArmIntent intent = data.m_CameraController.BuildIntent(
+                cameraInput,
+                deltaTime,
+                data.m_pSpringArmComponent->GetArmLength());
+            data.m_pSpringArmComponent->ApplyIntent(intent);
+            data.m_CameraInputCollector.ResetFrame();
+            data.m_pSpringArmComponent->RefreshOwnerTransform();
+            data.m_PickingController.SetFallbackSelectionDepth(
+                data.m_pSpringArmComponent->GetArmLength());
+
+            const float scroll = cameraInput.GetMouseState().ScrollDelta;
             if (std::abs(scroll) > 0.0f)
             {
-                float dist = data.m_CameraController.GetDistance();
-                auto pos = data.m_CameraController.GetPosition();
-                NORVES_LOG_DEBUG("Input", "ScrollDelta={:.3f}, CamDist={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
-                                 scroll, dist, pos.x, pos.y, pos.z);
+                const float armLength = data.m_pSpringArmComponent->GetArmLength();
+                const Math::Vector3 cameraPosition = data.m_pCameraObject != nullptr
+                    ? data.m_pCameraObject->GetPosition()
+                    : Math::Vector3(0.0f, 0.0f, 0.0f);
+                NORVES_LOG_DEBUG(
+                    "Input",
+                    "ScrollDelta={:.3f}, ArmLength={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
+                    scroll,
+                    armLength,
+                    cameraPosition.x,
+                    cameraPosition.y,
+                    cameraPosition.z);
             }
-        }
 
-        // カメラ状態をRenderWorldに反映
-        {
-            NorvesLib::Core::Rendering::CameraProxy cameraProxy;
-            data.m_CameraController.ApplyTo(cameraProxy);
-            ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
+            CameraProxy cameraProxy;
+            if (data.m_pCameraComponent->BuildCameraProxy(cameraProxy))
+            {
+                ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
+                if (!data.m_bCameraSmokeSyncEmitted)
+                {
+                    LOG_INFO("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
+                    EmitM9WorldSmokeMarker("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
+                    data.m_bCameraSmokeSyncEmitted = true;
+                }
+            }
         }
 
         SubmitRendering3DTestDebugDraw();
@@ -1549,6 +1635,23 @@ namespace Game::GameModes
         LOG_INFO("=================================================");
         LOG_INFO("3Dレンダリングテスト終了");
         LOG_INFO("=================================================");
+        const uint64_t finalRenderedFrameCount = ctx.EngineRef.GetRenderWorld().GetRenderedFrameCount();
+        if (!data.m_bCameraSmokeCompleteEmitted)
+        {
+            LOG_INFO(
+                "CAMERA_COMPONENT_SMOKE stage=complete snapshot=1 live_pointer=0 rendered=%llu",
+                static_cast<unsigned long long>(finalRenderedFrameCount));
+            EmitM9WorldSmokeMarker(
+                "CAMERA_COMPONENT_SMOKE stage=complete snapshot=1 live_pointer=0 rendered=%llu",
+                static_cast<unsigned long long>(finalRenderedFrameCount));
+            data.m_bCameraSmokeCompleteEmitted = true;
+        }
+        LOG_INFO(
+            "CAMERA_COMPONENT_SMOKE stage=exit rendered=%llu",
+            static_cast<unsigned long long>(finalRenderedFrameCount));
+        EmitM9WorldSmokeMarker(
+            "CAMERA_COMPONENT_SMOKE stage=exit rendered=%llu",
+            static_cast<unsigned long long>(finalRenderedFrameCount));
 
         // failed Enter と通常 Leave が同じ冪等cleanupを使い、借用登録・module service・
         // Scope外texture・M9 snapshot memberを先に閉じる。

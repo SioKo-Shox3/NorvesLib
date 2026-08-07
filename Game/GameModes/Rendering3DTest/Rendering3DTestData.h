@@ -4,6 +4,7 @@
 #include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Input/LightController.h"
 #include "Core/Public/Input/MayaCameraController.h"
+#include "Input/CameraInputCollector.h"
 #include "Input/PickingController.h"
 #include "Core/Public/Object/Entity.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestDebugInput.h"
@@ -34,6 +35,8 @@ namespace NorvesLib::Core
         class SkinnedMeshComponent;
         class LightComponent;
         class PointLightComponent;
+        class CameraComponent;
+        class SpringArmComponent;
     } // namespace Component
 } // namespace NorvesLib::Core
 
@@ -120,14 +123,23 @@ namespace Game::GameModes
         // ディレクショナルライト用Entity（位置は不要だがComponentホスト用）
         NorvesLib::Core::Entity *m_pDirectionalLightObject = nullptr;
 
+        // World 所有の pivot/camera Entity と、その camera Entity が Inner 所有する Component。
+        NorvesLib::Core::Entity *m_pCameraPivotObject = nullptr;
+        NorvesLib::Core::Entity *m_pCameraObject = nullptr;
+        NorvesLib::Core::Component::SpringArmComponent *m_pSpringArmComponent = nullptr;
+        NorvesLib::Core::Component::CameraComponent *m_pCameraComponent = nullptr;
+
         // 経過時間
         float m_ElapsedTime = 0.0f;
 
         // 球体回転速度（rad/s）
         float m_RotationSpeed = 0.5f;
 
-        // Maya準拠カメラコントローラー（シーン所有）
+        // 入力値を SpringArmIntent へ変換する感度換算層。Router へ直接登録しない。
         NorvesLib::Core::Input::MayaCameraController m_CameraController;
+
+        // InputRouter の consume 順序を維持して値 InputState を構築する収集層。
+        Game::Input::CameraInputCollector m_CameraInputCollector;
 
         // 左クリック選択コントローラー（シーン所有・イベント駆動）
         Game::Input::PickingController m_PickingController;
@@ -140,6 +152,8 @@ namespace Game::GameModes
 
         // メッシュ登録済みフラグ
         bool m_bMeshesRegistered = false;
+        bool m_bCameraSmokeSyncEmitted = false;
+        bool m_bCameraSmokeCompleteEmitted = false;
 
         // ========================================
         // glTF Model（Boulder）

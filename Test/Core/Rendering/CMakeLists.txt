@@ -1122,3 +1122,15 @@ add_executable(CameraComponentProxyTest
 target_link_libraries(CameraComponentProxyTest PRIVATE Core)
 set_target_properties(CameraComponentProxyTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME CameraComponentProxyTest COMMAND CameraComponentProxyTest)
+
+add_executable(WorldCameraSyncTest
+    WorldCameraSyncTest.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Input/CameraInputCollector.cpp
+)
+target_link_libraries(WorldCameraSyncTest PRIVATE Core)
+target_include_directories(WorldCameraSyncTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
+)
+set_target_properties(WorldCameraSyncTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME WorldCameraSyncTest COMMAND WorldCameraSyncTest)

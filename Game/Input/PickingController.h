@@ -5,11 +5,6 @@
 #include "Core/Public/Math/GeometryTypes.h"
 #include "Core/Public/Object/EntityHandle.h"
 
-namespace NorvesLib::Core::Input
-{
-    class MayaCameraController;
-}
-
 namespace Game::Input
 {
 
@@ -18,7 +13,7 @@ namespace Game::Input
     public:
         bool OnMouseButton(const NorvesLib::Core::Input::MouseButtonEvent& event) override;
         bool OnMouseMove(const NorvesLib::Core::Input::MouseMoveEvent& event) override;
-        void SetCameraController(NorvesLib::Core::Input::MayaCameraController* controller);
+        void SetFallbackSelectionDepth(float depth);
         void DrawSelection();
         void ClearSelection();
 
@@ -50,7 +45,7 @@ namespace Game::Input
         float m_SphereCenterY = 0.0f;
         NorvesLib::Math::Sphere m_SelectionSphere;
         bool m_bHasSelectionSphere = false;
-        NorvesLib::Core::Input::MayaCameraController* m_pCameraController = nullptr;
+        float m_FallbackSelectionDepth = 5.0f;
     };
 
 } // namespace Game::Input
