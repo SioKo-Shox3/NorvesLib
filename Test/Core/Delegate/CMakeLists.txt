@@ -1,4 +1,4 @@
-add_executable(DelegateCopyTest
+﻿add_executable(DelegateCopyTest
     DelegateCopyTest.cpp
 )
 target_link_libraries(DelegateCopyTest PRIVATE Core)
