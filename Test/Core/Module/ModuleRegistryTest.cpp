@@ -41,8 +41,14 @@ namespace
         {
         }
 
-        Identity GetModuleId() const override { return m_Id; }
-        const char *GetName() const override { return m_Name; }
+        Identity GetModuleId() const override
+        {
+            return m_Id;
+        }
+        const char *GetName() const override
+        {
+            return m_Name;
+        }
 
         bool Install(Engine::Engine & /*engine*/) override
         {
@@ -56,11 +62,20 @@ namespace
             return m_bInitOk;
         }
 
-        void Tick(float /*deltaTime*/) override { Log(m_Name, "Tick"); }
+        void Tick(float /*deltaTime*/) override
+        {
+            Log(m_Name, "Tick");
+        }
 
-        void Shutdown() override { Log(m_Name, "Shutdown"); }
+        void Shutdown() override
+        {
+            Log(m_Name, "Shutdown");
+        }
 
-        void Uninstall(Engine::Engine & /*engine*/) override { Log(m_Name, "Uninstall"); }
+        void Uninstall(Engine::Engine & /*engine*/) override
+        {
+            Log(m_Name, "Uninstall");
+        }
 
     private:
         const char *m_Name;
@@ -75,14 +90,31 @@ namespace
     public:
         explicit TestRenderModule(const char *name) : m_Name(name), m_Id(name) {}
 
-        Identity GetModuleId() const override { return m_Id; }
-        const char *GetName() const override { return m_Name; }
-        bool Install(Engine::Engine & /*engine*/) override { return true; }
-        bool Initialize() override { return true; }
-        void Shutdown() override {}
+        Identity GetModuleId() const override
+        {
+            return m_Id;
+        }
+        const char *GetName() const override
+        {
+            return m_Name;
+        }
+        bool Install(Engine::Engine & /*engine*/) override
+        {
+            return true;
+        }
+        bool Initialize() override
+        {
+            return true;
+        }
+        void Shutdown() override
+        {
+        }
 
         // 描画なしのダミー(GetOverlayPass は null を返してよい契約)。
-        Rendering::IViewPass *GetOverlayPass() override { return nullptr; }
+        Rendering::IViewPass *GetOverlayPass() override
+        {
+            return nullptr;
+        }
 
     private:
         const char *m_Name;

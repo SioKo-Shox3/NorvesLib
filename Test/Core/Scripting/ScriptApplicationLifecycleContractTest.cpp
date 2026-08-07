@@ -5,6 +5,7 @@
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "Logging/LoggingModule.h"
+#include "Module/ModuleRegistry.h"
 #include "Thread/JobSystem.h"
 
 #include <Windows.h>
@@ -13,6 +14,7 @@
 
 #include <crtdbg.h>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -20,6 +22,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 class asIScriptEngine;
@@ -59,6 +62,8 @@ namespace
         uint32_t InitialBindingCount = 0;
         uint32_t FinalBindingCount = 0;
         uint32_t UpdateCount = 0;
+        uint32_t FixedTickCount = 0;
+        uint32_t FirstFixedUpdate = 0;
         uint32_t PreRenderCount = 0;
         uint32_t PostRenderCount = 0;
         uint32_t PreShutdownCount = 0;
@@ -71,6 +76,8 @@ namespace
         bool bActiveEngineCleaned = false;
         bool bEngineCleaned = false;
         bool bJobSystemCleaned = false;
+        bool bSleepObserved = false;
+        bool bFixedAfterSleep = false;
         bool bPassed = true;
         std::string Failure;
     };
@@ -426,6 +433,11 @@ namespace
                << "\ngc_initial=" << GChildState.InitialGcStepCount
                << "\ngc_final=" << GChildState.FinalGcStepCount
                << "\nupdate_count=" << GChildState.UpdateCount
+               << "\nsleep_ms=" << (GChildState.bSleepObserved ? 25 : 0)
+               << "\nsleep_update=" << (GChildState.bSleepObserved ? 1 : 0)
+               << "\nfirst_fixed_update=" << GChildState.FirstFixedUpdate
+               << "\nfixed_after_sleep=" << (GChildState.bFixedAfterSleep ? 1 : 0)
+               << "\nfixed_total=" << GChildState.FixedTickCount
                << "\npre_render_count=" << GChildState.PreRenderCount
                << "\npost_render_count=" << GChildState.PostRenderCount
                << "\npre_shutdown_count=" << GChildState.PreShutdownCount
@@ -464,6 +476,48 @@ namespace
                << "engine_ref_retained=1\n";
         marker.flush();
     }
+
+    class LifecycleFixedModule final : public NorvesLib::Core::Module::IModule
+    {
+    public:
+        NorvesLib::Core::Identity GetModuleId() const override
+        {
+            return NorvesLib::Core::Identity("ScriptApplicationLifecycleFixedModule");
+        }
+
+        const char* GetName() const override
+        {
+            return "ScriptApplicationLifecycleFixedModule";
+        }
+
+        bool Install(NorvesLib::Core::Engine::Engine&) override
+        {
+            return true;
+        }
+
+        bool Initialize() override
+        {
+            return true;
+        }
+
+        void Shutdown() override
+        {
+        }
+
+        void FixedTick(float fixedDeltaTime) override
+        {
+            (void)fixedDeltaTime;
+            ++GChildState.FixedTickCount;
+            if (GChildState.FirstFixedUpdate == 0)
+            {
+                GChildState.FirstFixedUpdate = GChildState.UpdateCount;
+            }
+            if (GChildState.UpdateCount == 2)
+            {
+                GChildState.bFixedAfterSleep = true;
+            }
+        }
+    };
 
     class LifecycleHandler final : public NorvesLib::Core::Application::ApplicationHandlerBase
     {
@@ -510,6 +564,14 @@ namespace
                     return false;
                 }
                 WriteRetainedFailFastMarker();
+            }
+
+            if (GChildState.Mode == ChildMode::Advance || GChildState.Mode == ChildMode::Pause)
+            {
+                if (Module::GetModuleRegistry().Register(Container::MakeUnique<LifecycleFixedModule>()) == nullptr)
+                {
+                    Fail("fixed lifecycle test module registration failed");
+                }
             }
 
             World& world = Engine::GEngine->GetWorld();
@@ -561,6 +623,12 @@ namespace
             (void)deltaTime;
             RecordCallback("OnUpdate");
             ++GChildState.UpdateCount;
+            if ((GChildState.Mode == ChildMode::Advance || GChildState.Mode == ChildMode::Pause) &&
+                GChildState.UpdateCount == 1)
+            {
+                GChildState.bSleepObserved = true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            }
         }
 
         bool ShouldAdvanceSimulation() const override
@@ -622,6 +690,20 @@ namespace
             {
                 Fail("pause mode advanced ScriptComponentMover entity");
             }
+            if ((GChildState.Mode == ChildMode::Advance || GChildState.Mode == ChildMode::Pause) &&
+                (!GChildState.bSleepObserved || GChildState.UpdateCount < 3))
+            {
+                Fail("fixed lifecycle child did not run the required sleep barrier and three frames");
+            }
+            if (GChildState.Mode == ChildMode::Advance &&
+                (GChildState.FixedTickCount == 0 || GChildState.FirstFixedUpdate != 2 || !GChildState.bFixedAfterSleep))
+            {
+                Fail("advance mode did not execute fixed module tick after the sleep barrier");
+            }
+            if (GChildState.Mode == ChildMode::Pause && GChildState.FixedTickCount != 0)
+            {
+                Fail("pause mode executed fixed module tick");
+            }
             if (GChildState.Owner != nullptr)
             {
                 GChildState.FinalPosition = GChildState.Owner->GetPosition();
@@ -673,7 +755,7 @@ namespace
         config.bEnableRHIValidation = false;
         config.bLogToStdout = false;
         config.TargetFrameRate = 0.0f;
-        config.Arguments.push_back(NorvesLib::Core::Container::String("--exit-after-frames=2"));
+        config.Arguments.push_back(NorvesLib::Core::Container::String("--exit-after-frames=3"));
         config.CreateHandler = &CreateHandler;
         return config;
     }
@@ -955,8 +1037,11 @@ int main(int argumentCount, char** arguments)
     }
 
     bool bBehaviorPassed = true;
-    bBehaviorPassed &= RunChildProcess("advance", "advance");
-    bBehaviorPassed &= RunChildProcess("pause", "pause");
+    for (uint32_t iteration = 0; iteration < 3; ++iteration)
+    {
+        bBehaviorPassed &= RunChildProcess("advance", "advance");
+        bBehaviorPassed &= RunChildProcess("pause", "pause");
+    }
     bBehaviorPassed &= RunChildProcess("double-shutdown", "double-shutdown");
     bBehaviorPassed &= RunChildProcess("initialize-false", "initialize-false");
     bBehaviorPassed &= RunChildProcess("pre-initialize-throws", "pre-initialize-throws");

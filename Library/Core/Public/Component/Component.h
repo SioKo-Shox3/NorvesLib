@@ -79,6 +79,14 @@ namespace NorvesLib::Core::Component
          */
         virtual void Tick(float deltaTime);
 
+        /**
+         * @brief 固定ステップ更新(GameThread限定)
+         *
+         * Module PreFixedTick(Transform読み・準備専用)の後、登録順・Entity深さ優先で
+         * 呼ばれる。RenderThreadへはこの更新後のFramePacket snapshotだけを渡す。
+         */
+        virtual void FixedTick(float fixedDeltaTime);
+
         // ========================================
         // オーナー管理（Outer経由）
         // ========================================

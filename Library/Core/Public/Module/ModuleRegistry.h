@@ -5,6 +5,11 @@
 #include "Module/IRenderModule.h"
 #include "CoreTypes.h"
 
+namespace NorvesLib::Core::Engine
+{
+    class ApplicationProcessor;
+}
+
 namespace NorvesLib::Core::Module
 {
     /**
@@ -73,8 +78,12 @@ namespace NorvesLib::Core::Module
         //   bool Unregister(const Identity &id);
 
     private:
+        friend class ::NorvesLib::Core::Engine::ApplicationProcessor;
+
         // ロールバック共通処理(到達フェーズに応じ逆順で後退させる)。
         void RollbackInstalled(Engine::Engine &engine, size_t count);
+        void DispatchPreFixedTick(float fixedDeltaTime);
+        void DispatchFixedTick(float fixedDeltaTime);
 
         Container::VariableArray<Container::TUniquePtr<IModule>> m_Modules; // 登録順=所有
         Container::VariableArray<IRenderModule *> m_RenderModules;          // 非所有ビュー

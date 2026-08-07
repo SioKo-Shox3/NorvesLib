@@ -56,6 +56,11 @@ namespace NorvesLib::Core::Module
         virtual bool Initialize() = 0;
         // 毎フレーム GameThread で呼ばれる。snapshot 主義(ライブ状態を直接読まない)。
         virtual void Tick(float deltaTime) {}
+        // 固定更新はGameThread限定。Transformを読む・準備するだけで書き戻さず、
+        // Component FixedTickの前に登録順で呼ぶ。RenderThreadへはFramePacket snapshotだけを渡す。
+        virtual void PreFixedTick(float fixedDeltaTime) {}
+        // Component FixedTick後に登録順で呼ぶ固定更新。Transform書き戻しはここで可能。
+        virtual void FixedTick(float fixedDeltaTime) {}
         // Initialize の逆。RenderThread 静止後に駆動される(寿命順序は Registry が保証)。
         virtual void Shutdown() = 0;
         // Install の逆。最小実装では空で良い。
