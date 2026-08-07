@@ -805,6 +805,7 @@ if(NORVES_BRIDGE_SDK_DIR)
         AssetManifestReloadBridgeLoopbackTest.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameApplicationHandler.cpp
     ${CMAKE_SOURCE_DIR}/Game/Scripting/M6ScriptSmokeController.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Input/CameraInputCollector.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/NorvesLibBridgeAdapter.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeBase64.cpp
@@ -817,6 +818,7 @@ if(NORVES_BRIDGE_SDK_DIR)
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugInput.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp
     )
     target_link_libraries(AssetManifestReloadBridgeLoopbackTest PRIVATE
         Core
