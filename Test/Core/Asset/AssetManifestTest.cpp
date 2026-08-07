@@ -50,6 +50,28 @@ namespace
                  _T("}"));
     }
 
+    NorvesLib::Core::Container::String SkeletalManifest()
+    {
+        return T(_T("{")
+                 _T("\"version\":1,")
+                 _T("\"assets\":[{")
+                 _T("\"logical_path\":\"Models/M9.glb\",")
+                 _T("\"kind\":\"model\",")
+                 _T("\"source_hash\":\"0000000000000001\",")
+                 _T("\"variant\":\"default\",")
+                 _T("\"format\":\"nvskel.v0\",")
+                 _T("\"cooked_package\":\"Cooked/m9.nvpkg\",")
+                 _T("\"entry_name\":\"m9.nvskel\",")
+                 _T("\"entry_type\":\"Skl0\",")
+                 _T("\"cooked_hash\":\"0000000000000002\",")
+                 _T("\"metadata\":{")
+                 _T("\"vertex_count\":24,")
+                 _T("\"index_count\":36,")
+                 _T("\"joint_count\":4,")
+                 _T("\"clip_count\":2")
+                 _T("},\"cooked_version\":0}]}"));
+    }
+
     bool LoadManifestText(const NorvesLib::Core::Container::String &text, AssetManifest &manifest)
     {
         return manifest.LoadFromJsonText(text, "test.manifest.json");
@@ -122,6 +144,17 @@ int main()
         assert(result.Status == AssetManifestResolveStatus::CookedReferenceFound);
         assert(result.ShouldUseCooked());
         assert(result.Reference.CookedPackage == "Cooked/Textures.nvpkg");
+    }
+
+    {
+        AssetManifest manifest;
+        assert(LoadManifestText(SkeletalManifest(), manifest));
+        const AssetCookedReference &reference = manifest.GetReference(0);
+        assert(reference.bHasSkeletalMetadata);
+        assert(reference.SkeletalMetadata.VertexCount == 24);
+        assert(reference.SkeletalMetadata.IndexCount == 36);
+        assert(reference.SkeletalMetadata.JointCount == 4);
+        assert(reference.SkeletalMetadata.ClipCount == 2);
     }
 
     {

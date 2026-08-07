@@ -80,6 +80,16 @@ add_test(NAME AssetSystemTest COMMAND AssetSystemTest)
 add_test(NAME CookedTextureTest COMMAND CookedTextureTest)
 add_test(NAME CookedMeshTest COMMAND CookedMeshTest)
 
+add_executable(AudioCookedAssetTest
+    AudioCookedAssetTest.cpp
+)
+target_link_libraries(AudioCookedAssetTest PRIVATE Core)
+target_include_directories(AudioCookedAssetTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(AudioCookedAssetTest PROPERTIES FOLDER "Test/Core/Asset")
+add_test(NAME AudioCookedAssetTest COMMAND AudioCookedAssetTest)
+
 add_executable(CookedSkeletalAssetTest
     CookedSkeletalAssetTest.cpp
 )

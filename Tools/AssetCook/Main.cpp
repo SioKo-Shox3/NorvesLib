@@ -1,7 +1,9 @@
 #include "MeshCooker.h"
+#include "AudioCooker.h"
 #include "TextureCooker.h"
 
 #include "Asset/CookedMeshFormat.h"
+#include "Asset/CookedAudioFormat.h"
 #include "Asset/CookedSkeletalFormat.h"
 #include "Asset/CookedTextureFormat.h"
 #include "Asset/AssetManifest.h"
@@ -39,6 +41,7 @@ namespace
     using NorvesLib::Core::Asset::FormatAssetPackageFourCCText;
     using NorvesLib::Core::Asset::MakeAssetPackageFourCC;
     using NorvesLib::Core::Asset::ParseCookedMesh;
+    using NorvesLib::Core::Asset::ParseCookedAudio;
     using NorvesLib::Core::Asset::ParseCookedSkeletal;
     using NorvesLib::Core::Asset::ParseCookedTexture;
     using NorvesLib::Core::Asset::AssetPackageFormatV1::EndianMarker;
@@ -974,6 +977,117 @@ namespace
         return true;
     }
 
+    bool HasSameManifestKey(const NorvesLib::Core::Asset::AssetCookedReference& left,
+                            const NorvesLib::Core::Asset::AssetCookedReference& right)
+    {
+        return left.LogicalPath == right.LogicalPath &&
+               left.Kind == right.Kind &&
+               left.Variant == right.Variant;
+    }
+
+    bool BuildMergedAudioManifestJson(
+        const std::filesystem::path& manifestPath,
+        const NorvesLib::Core::Asset::AssetCookedReference& audioReference,
+        NorvesLib::Core::Container::AnsiString& outJson,
+        auto& error)
+    {
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Asset::AssetCookedReference> references;
+        std::error_code existsError;
+        const bool bManifestExists = std::filesystem::exists(manifestPath, existsError);
+        if (existsError)
+        {
+            error = "failed to inspect existing manifest";
+            return false;
+        }
+        if (bManifestExists)
+        {
+            NorvesLib::Core::Container::VariableArray<uint8_t> manifestBytes;
+            if (!ReadSkeletalBinaryFile(manifestPath, manifestBytes, error))
+            {
+                return false;
+            }
+            NorvesLib::Core::Container::AnsiString manifestText;
+            manifestText.append(reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size());
+            NorvesLib::Core::Asset::AssetManifest manifest;
+            const NorvesLib::Core::Container::AnsiString sourceName(manifestPath.generic_string().c_str());
+            if (!manifest.LoadFromJsonText(ToCoreString(manifestText), sourceName))
+            {
+                error = "existing manifest is invalid: " + ToStdString(manifest.GetParseError());
+                return false;
+            }
+            references.reserve(manifest.GetReferenceCount() + 1);
+            for (size_t index = 0; index < manifest.GetReferenceCount(); ++index)
+            {
+                const auto& reference = manifest.GetReference(index);
+                if (!HasSameManifestKey(reference, audioReference))
+                {
+                    references.push_back(reference);
+                }
+            }
+        }
+        references.push_back(audioReference);
+        std::sort(references.begin(), references.end(), [](const auto& left, const auto& right)
+        {
+            if (left.LogicalPath != right.LogicalPath)
+            {
+                return left.LogicalPath < right.LogicalPath;
+            }
+            const auto leftKind = NorvesLib::Core::Asset::GetAssetKindName(left.Kind);
+            const auto rightKind = NorvesLib::Core::Asset::GetAssetKindName(right.Kind);
+            if (leftKind != rightKind)
+            {
+                return leftKind < rightKind;
+            }
+            return left.Variant < right.Variant;
+        });
+
+        outJson = "{\n  \"version\":1,\n  \"assets\":[\n";
+        for (size_t index = 0; index < references.size(); ++index)
+        {
+            const auto& reference = references[index];
+            outJson += "    {\n      ";
+            AppendSkeletalJsonStringField(outJson, "logical_path", reference.LogicalPath, true);
+            outJson += "\n      ";
+            AppendSkeletalJsonStringField(outJson, "kind", NorvesLib::Core::Asset::GetAssetKindName(reference.Kind), true);
+            outJson += "\n      ";
+            AppendSkeletalJsonStringField(outJson, "source_hash", reference.SourceHashHex, true);
+            outJson += "\n      ";
+            AppendSkeletalJsonStringField(outJson, "variant", reference.Variant, true);
+            outJson += "\n      ";
+            AppendSkeletalJsonStringField(outJson, "format", reference.Format, true);
+            outJson += "\n      ";
+            AppendSkeletalJsonStringField(outJson, "cooked_package", reference.CookedPackage, true);
+            outJson += "\n      ";
+            AppendSkeletalJsonStringField(outJson, "entry_name", reference.EntryName, true);
+            outJson += "\n      ";
+            AppendSkeletalJsonStringField(outJson, "entry_type", reference.EntryTypeText, true);
+            outJson += "\n      ";
+            AppendSkeletalJsonStringField(outJson, "cooked_hash", reference.CookedHashHex, true);
+            outJson += "\n      ";
+            if (reference.bHasSkeletalMetadata)
+            {
+                outJson += "\"metadata\":{\n        ";
+                AppendSkeletalJsonUInt32Field(
+                    outJson, "vertex_count", reference.SkeletalMetadata.VertexCount, true);
+                outJson += "\n        ";
+                AppendSkeletalJsonUInt32Field(
+                    outJson, "index_count", reference.SkeletalMetadata.IndexCount, true);
+                outJson += "\n        ";
+                AppendSkeletalJsonUInt32Field(
+                    outJson, "joint_count", reference.SkeletalMetadata.JointCount, true);
+                outJson += "\n        ";
+                AppendSkeletalJsonUInt32Field(
+                    outJson, "clip_count", reference.SkeletalMetadata.ClipCount, false);
+                outJson += "\n      },\n      ";
+            }
+            AppendSkeletalJsonUInt32Field(outJson, "cooked_version", reference.CookedVersion, false);
+            outJson += "\n    }";
+            outJson += index + 1 < references.size() ? ",\n" : "\n";
+        }
+        outJson += "  ]\n}\n";
+        return true;
+    }
+
     bool CompareBytes(const uint8_t *actualData, size_t actualSize, const std::vector<uint8_t> &expected)
     {
         if (actualSize != expected.size())
@@ -1347,6 +1461,42 @@ namespace
         return true;
     }
 
+    bool ValidateAudioAssetSystemOutput(
+        const std::filesystem::path& manifestPath,
+        const NorvesLib::Core::Container::AnsiString& manifestJson,
+        const NorvesLib::Core::Container::AnsiString& logicalPath,
+        const NorvesLib::Core::Container::AnsiString& variant,
+        const NorvesLib::Core::Container::VariableArray<uint8_t>& expectedPayload,
+        auto& error)
+    {
+        const std::filesystem::path manifestParent = manifestPath.parent_path();
+        AssetSystem system{NorvesLib::Core::Container::AnsiString(manifestParent.generic_string().c_str())};
+        const NorvesLib::Core::Container::AnsiString sourceName(manifestPath.generic_string().c_str());
+        if (!system.LoadManifestFromJsonText(ToCoreString(manifestJson), sourceName))
+        {
+            error = "self-validation failed: audio AssetSystem manifest load failed";
+            return false;
+        }
+        const auto result = system.ResolveAsset(logicalPath, AssetKind::Audio, variant);
+        if (!result.Succeeded() || result.Status != AssetResolveStatus::SuccessCooked || !result.UsedCooked())
+        {
+            error = "self-validation failed: audio AssetSystem cooked resolve failed";
+            return false;
+        }
+        if (!CompareSkeletalBytes(result.Blob.GetData(), result.Blob.GetSize(), expectedPayload))
+        {
+            error = "self-validation failed: audio AssetSystem resolved bytes mismatch";
+            return false;
+        }
+        const auto parsed = ParseCookedAudio(result.Blob);
+        if (!parsed.Succeeded())
+        {
+            error = "self-validation failed: resolved cooked audio parse failed";
+            return false;
+        }
+        return true;
+    }
+
     bool ReadNextValue(int argc, char **argv, int &index, std::string &outValue, std::string &error)
     {
         if (index + 1 >= argc)
@@ -1526,9 +1676,22 @@ namespace
                 return false;
             }
         }
+        else if (outOptions.Kind == "audio")
+        {
+            if (!NorvesLib::Tools::AssetCook::IsSupportedAudioCookFormat(outOptions.Format))
+            {
+                error = "unsupported audio --format";
+                return false;
+            }
+            if (outOptions.EntryTypeText != "Aud0")
+            {
+                error = "--kind audio requires --entry-type Aud0";
+                return false;
+            }
+        }
         else
         {
-            error = "--kind must be raw, texture, or model";
+            error = "--kind must be raw, texture, model, or audio";
             return false;
         }
 
@@ -1552,7 +1715,10 @@ namespace
             << "       AssetCook --input <model.gltf> --out <package> --manifest <manifest.json> "
             << "--logical <path> --kind model --entry <entry.nvskel> --entry-type Skl0 "
             << "--format nvskel.v0.skinned.pnujiw.u32 "
-            << "--variant default\n";
+            << "--variant default\n"
+            << "       AssetCook --input <audio.wav> --out <package> --manifest <manifest.json> "
+            << "--logical <path> --kind audio --entry <entry.nvaud> --entry-type Aud0 "
+            << "--format nvaud.v0.pcm16 --variant default\n";
     }
 
     bool CookRawAsset(const CookOptions &options, std::string &error)
@@ -2023,6 +2189,110 @@ namespace
                   << "\n";
         return true;
     }
+
+    bool CookAudioAsset(const CookOptions& options, auto& error)
+    {
+        std::filesystem::path inputPath;
+        std::filesystem::path packagePath;
+        std::filesystem::path manifestPath;
+        if (!MakeAbsolutePath(options.InputPath, inputPath, error) ||
+            !MakeAbsolutePath(options.PackagePath, packagePath, error) ||
+            !MakeAbsolutePath(options.ManifestPath, manifestPath, error))
+        {
+            return false;
+        }
+
+        NorvesLib::Core::Container::VariableArray<uint8_t> inputBytes;
+        if (!ReadSkeletalBinaryFile(inputPath, inputBytes, error))
+        {
+            return false;
+        }
+
+        const NorvesLib::Core::Container::AnsiString sourceLogicalPath(options.LogicalPath.c_str());
+        const NorvesLib::Core::Container::AnsiString sourceEntryName(options.EntryName.c_str());
+        const NorvesLib::Core::Container::AnsiString variant(options.Variant.c_str());
+        const NorvesLib::Core::Container::AnsiString format(options.Format.c_str());
+        NorvesLib::Core::Container::AnsiString logicalPath;
+        NorvesLib::Core::Container::AnsiString entryName;
+        if (!NormalizeSkeletalManifestPath(sourceLogicalPath, logicalPath, error) ||
+            !NormalizeSkeletalManifestPath(sourceEntryName, entryName, error) ||
+            !ValidateSkeletalAsciiField(variant, error) ||
+            !ValidateSkeletalAsciiField(format, error))
+        {
+            return false;
+        }
+
+        NorvesLib::Tools::AssetCook::AudioCookResult audioResult;
+        NorvesLib::Core::Container::AnsiString audioError;
+        if (!NorvesLib::Tools::AssetCook::CookWaveToNvaud(
+                inputBytes.data(), inputBytes.size(), format, audioResult, audioError))
+        {
+            error.assign(audioError.data(), audioError.size());
+            return false;
+        }
+
+        const std::filesystem::path manifestParent = manifestPath.parent_path();
+        NorvesLib::Core::Container::AnsiString cookedPackagePath;
+        if (!MakeSkeletalCookedPackageManifestPath(packagePath, manifestParent, cookedPackagePath, error))
+        {
+            return false;
+        }
+
+        uint64_t cookedHash = 0;
+        NorvesLib::Core::Container::VariableArray<uint8_t> packageBytes;
+        if (!BuildSingleSkeletalEntryPackage(
+                entryName,
+                NorvesLib::Core::Asset::CookedAudioFormatV0::EntryType,
+                audioResult.NvaudBytes,
+                packageBytes,
+                cookedHash,
+                error))
+        {
+            return false;
+        }
+
+        NorvesLib::Core::Asset::AssetCookedReference reference;
+        reference.LogicalPath = logicalPath;
+        reference.Kind = AssetKind::Audio;
+        reference.SourceHash = audioResult.SourceHash;
+        reference.SourceHashHex = FormatAssetHashHex(reference.SourceHash);
+        reference.Variant = variant;
+        reference.Format = format;
+        reference.CookedPackage = cookedPackagePath;
+        reference.EntryName = entryName;
+        reference.EntryType = NorvesLib::Core::Asset::CookedAudioFormatV0::EntryType;
+        reference.EntryTypeText = "Aud0";
+        reference.CookedHash = cookedHash;
+        reference.CookedHashHex = FormatAssetHashHex(cookedHash);
+        reference.CookedVersion = 0;
+
+        NorvesLib::Core::Container::AnsiString manifestJson;
+        if (!BuildMergedAudioManifestJson(manifestPath, reference, manifestJson, error))
+        {
+            return false;
+        }
+        if (!WriteSkeletalBinaryFile(packagePath, packageBytes, error) ||
+            !WriteSkeletalTextFile(manifestPath, manifestJson, error))
+        {
+            return false;
+        }
+        if (!ValidateSkeletalManifestOutput(manifestPath, manifestJson, error) ||
+            !ValidateAudioAssetSystemOutput(
+                manifestPath, manifestJson, logicalPath, variant, audioResult.NvaudBytes, error))
+        {
+            return false;
+        }
+
+        std::cerr << "AssetCook wrote audio package=\"" << packagePath.generic_string()
+                  << "\" manifest=\"" << manifestPath.generic_string()
+                  << "\" source_bytes=" << inputBytes.size()
+                  << " nvaud_bytes=" << audioResult.NvaudBytes.size()
+                  << " sample_rate=" << audioResult.SampleRate
+                  << " channels=" << audioResult.ChannelCount
+                  << " frames=" << audioResult.FrameCount
+                  << "\n";
+        return true;
+    }
 }
 
 int main(int argc, char **argv)
@@ -2058,6 +2328,10 @@ int main(int argc, char **argv)
         {
             bSucceeded = CookModelAsset(options, error);
         }
+    }
+    else if (options.Kind == "audio")
+    {
+        bSucceeded = CookAudioAsset(options, error);
     }
     if (!bSucceeded)
     {
