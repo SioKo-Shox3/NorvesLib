@@ -1087,3 +1087,17 @@ target_include_directories(GLTFSkeletalAnalyzerTest PRIVATE
 )
 set_target_properties(GLTFSkeletalAnalyzerTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
+
+add_executable(SkeletalAnimationSamplingTest
+    SkeletalAnimationSamplingTest.cpp
+)
+target_link_libraries(SkeletalAnimationSamplingTest PRIVATE Core)
+set_target_properties(SkeletalAnimationSamplingTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SkeletalAnimationSamplingTest COMMAND SkeletalAnimationSamplingTest)
+
+add_executable(SkeletalFramePacketSnapshotTest
+    SkeletalFramePacketSnapshotTest.cpp
+)
+target_link_libraries(SkeletalFramePacketSnapshotTest PRIVATE Core)
+set_target_properties(SkeletalFramePacketSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SkeletalFramePacketSnapshotTest COMMAND SkeletalFramePacketSnapshotTest)

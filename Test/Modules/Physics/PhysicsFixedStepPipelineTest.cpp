@@ -215,8 +215,10 @@ namespace
     static_assert(!std::is_pointer_v<decltype(SceneProxyType::MainCamera)>);
     static_assert(!std::is_pointer_v<decltype(SceneProxyType::AdditionalCameras)>);
     static_assert(!std::is_pointer_v<decltype(SceneProxyType::MeshProxies)>);
+    static_assert(!std::is_pointer_v<decltype(SceneProxyType::SkinnedMeshProxies)>);
     static_assert(!std::is_pointer_v<decltype(SceneProxyType::MegaGeometryProxies)>);
     static_assert(!std::is_pointer_v<decltype(SceneProxyType::LightProxies)>);
+    static_assert(!std::is_pointer_v<decltype(Rendering::SkinnedMeshProxy::BonePalette)>);
     static_assert(!bPhysicsFramePacketType<decltype(SceneProxyType::MainCamera)>);
     static_assert(!bPhysicsFramePacketType<TPacketElement<decltype(SceneProxyType::AdditionalCameras)>>);
     static_assert(!bPhysicsFramePacketType<TPacketElement<decltype(SceneProxyType::MeshProxies)>>);
@@ -225,8 +227,11 @@ namespace
     static_assert(std::is_same_v<decltype(SceneProxyType::MainCamera), Rendering::CameraProxy>);
     static_assert(std::is_same_v<decltype(SceneProxyType::AdditionalCameras), Container::VariableArray<Rendering::CameraProxy>>);
     static_assert(std::is_same_v<decltype(SceneProxyType::MeshProxies), Container::VariableArray<Rendering::MeshProxy>>);
+    static_assert(std::is_same_v<decltype(SceneProxyType::SkinnedMeshProxies), Container::VariableArray<Rendering::SkinnedMeshProxy>>);
     static_assert(std::is_same_v<decltype(SceneProxyType::MegaGeometryProxies), Container::VariableArray<Rendering::MegaGeometryProxy>>);
     static_assert(std::is_same_v<decltype(SceneProxyType::LightProxies), Container::VariableArray<Rendering::LightProxy>>);
+    static_assert(std::is_same_v<TPacketElement<decltype(SceneProxyType::SkinnedMeshProxies)>, Rendering::SkinnedMeshProxy>);
+    static_assert(std::is_same_v<TPacketElement<decltype(Rendering::SkinnedMeshProxy::BonePalette)>, Math::Matrix4x4>);
     static_assert(std::is_same_v<decltype(SceneProxyType::AmbientColorR), float>);
     static_assert(std::is_same_v<decltype(SceneProxyType::AmbientColorG), float>);
     static_assert(std::is_same_v<decltype(SceneProxyType::AmbientColorB), float>);
@@ -243,9 +248,9 @@ namespace
     // sizeof/alignof は ABI 変更を検出するが、末尾パディングだけの変更は検出できない。
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
-    static_assert(sizeof(FramePacketType) == 648);
+    static_assert(sizeof(FramePacketType) == 680);
     static_assert(alignof(FramePacketType) == 8);
-    static_assert(sizeof(SceneProxyType) == 288);
+    static_assert(sizeof(SceneProxyType) == 320);
     static_assert(alignof(SceneProxyType) == 8);
 
     constexpr uint32_t kCaseCount = 8;
@@ -779,8 +784,8 @@ namespace
     bool TestFramePacketBoundaryHasNoLivePhysicsPointers()
     {
         return !std::is_standard_layout_v<FramePacketType> && !std::is_standard_layout_v<SceneProxyType>
-            && sizeof(FramePacketType) == 648 && alignof(FramePacketType) == 8
-            && sizeof(SceneProxyType) == 288 && alignof(SceneProxyType) == 8;
+            && sizeof(FramePacketType) == 680 && alignof(FramePacketType) == 8
+            && sizeof(SceneProxyType) == 320 && alignof(SceneProxyType) == 8;
     }
 
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)

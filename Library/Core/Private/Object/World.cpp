@@ -5,6 +5,7 @@
 #include "Component/TextComponent.h"
 #include "Component/BillboardComponent.h"
 #include "Component/MeshComponent.h"
+#include "Component/SkinnedMeshComponent.h"
 #include "Component/MegaGeometryComponent.h"
 #include "Component/LightComponent.h"
 #include "Engine/NorvesEngine.h"
@@ -874,11 +875,13 @@ namespace NorvesLib::Core
         UpdateWorldTransforms();
 
         Container::UnorderedSet<uint64_t> liveMeshComponentIds;
+        Container::UnorderedSet<uint64_t> liveSkinnedMeshComponentIds;
         Container::UnorderedSet<uint64_t> liveMegaGeometryObjectIds;
         Container::UnorderedSet<uint64_t> liveLightIds;
         Container::UnorderedSet<uint64_t> liveScreenBoardComponentIds;
         Container::UnorderedSet<uint64_t> liveWorldBoardComponentIds;
         liveMeshComponentIds.reserve(m_Inners.size());
+        liveSkinnedMeshComponentIds.reserve(m_Inners.size());
         liveMegaGeometryObjectIds.reserve(m_Inners.size());
         liveLightIds.reserve(m_Inners.size());
         liveScreenBoardComponentIds.reserve(m_Inners.size());
@@ -892,6 +895,7 @@ namespace NorvesLib::Core
                 materials,
                 meshes,
                 liveMeshComponentIds,
+                liveSkinnedMeshComponentIds,
                 liveMegaGeometryObjectIds,
                 liveLightIds,
                 liveScreenBoardComponentIds,
@@ -902,6 +906,7 @@ namespace NorvesLib::Core
         if (m_SceneView)
         {
             m_SceneView->RemoveStaleMeshProxies(liveMeshComponentIds);
+            m_SceneView->RemoveStaleSkinnedMeshProxies(liveSkinnedMeshComponentIds);
             m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
             m_SceneView->RemoveStaleLightProxies(liveLightIds);
             m_SceneView->RemoveStaleBoardProxies(liveWorldBoardComponentIds);
@@ -979,6 +984,7 @@ namespace NorvesLib::Core
         const Rendering::MaterialResources* materials,
         const Rendering::MeshResources* meshes,
         Container::UnorderedSet<uint64_t>& liveMeshComponentIds,
+        Container::UnorderedSet<uint64_t>& liveSkinnedMeshComponentIds,
         Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
         Container::UnorderedSet<uint64_t>& liveLightIds,
         Container::UnorderedSet<uint64_t>& liveScreenBoardComponentIds,
@@ -999,6 +1005,39 @@ namespace NorvesLib::Core
         auto components = entity.GetComponents();
         for (auto* comp : components)
         {
+            auto* skinnedMeshComp = CastTo<Component::SkinnedMeshComponent>(comp);
+            if (m_SceneView && skinnedMeshComp)
+            {
+                const bool bNeedsSync = skinnedMeshComp->IsRenderStateDirty() ||
+                                        skinnedMeshComp->GetLastSyncedTransformVersion() != ownerVersion;
+                if (!bNeedsSync)
+                {
+                    if (skinnedMeshComp->IsVisible())
+                    {
+                        liveSkinnedMeshComponentIds.insert(skinnedMeshComp->GetComponentId());
+                    }
+                }
+                else if (!skinnedMeshComp->IsVisible())
+                {
+                    // Hidden is an acknowledged non-publishing state, not a retryable failure.
+                    skinnedMeshComp->ClearRenderStateDirty();
+                    skinnedMeshComp->SetLastSyncedTransformVersion(ownerVersion);
+                }
+                else
+                {
+                    Rendering::SkinnedMeshProxy skinnedMeshProxy;
+                    if (skinnedMeshComp->BuildSkinnedMeshProxy(skinnedMeshProxy))
+                    {
+                        skinnedMeshProxy.ObjectId = entity.GetObjectId();
+                        skinnedMeshProxy.ComponentId = skinnedMeshComp->GetComponentId();
+                        m_SceneView->UpdateSkinnedMeshProxy(skinnedMeshProxy);
+                        liveSkinnedMeshComponentIds.insert(skinnedMeshProxy.ComponentId);
+                        skinnedMeshComp->ClearRenderStateDirty();
+                        skinnedMeshComp->SetLastSyncedTransformVersion(ownerVersion);
+                    }
+                }
+            }
+
             auto* megaComp = CastTo<Component::MegaGeometryComponent>(comp);
 
             auto* meshComp = CastTo<Component::MeshComponent>(comp);
@@ -1195,6 +1234,7 @@ namespace NorvesLib::Core
                 materials,
                 meshes,
                 liveMeshComponentIds,
+                liveSkinnedMeshComponentIds,
                 liveMegaGeometryObjectIds,
                 liveLightIds,
                 liveScreenBoardComponentIds,
@@ -1523,6 +1563,10 @@ namespace NorvesLib::Core
 
             for (auto* comp : components)
             {
+                if (auto* skinnedMeshComp = CastTo<Component::SkinnedMeshComponent>(comp))
+                {
+                    m_SceneView->RemoveSkinnedMeshProxy(skinnedMeshComp->GetComponentId());
+                }
                 if (auto* meshComp = CastTo<Component::MeshComponent>(comp))
                 {
                     if (CastTo<Component::MegaGeometryComponent>(meshComp) == nullptr)

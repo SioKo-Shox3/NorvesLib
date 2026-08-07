@@ -34,6 +34,7 @@ set(PRIVATE_SOURCES
     Private/Particle/ParticleSystem.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
+    Private/Animation/SkeletalAnimationSampler.cpp
     Private/Animation/SkeletalAssetResource.cpp
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
@@ -159,6 +160,7 @@ set(PRIVATE_SOURCES
     Private/Component/BillboardComponent.cpp
     Private/Component/ImpostorComponent.cpp
     Private/Component/MeshComponent.cpp
+    Private/Component/SkinnedMeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
@@ -271,6 +273,7 @@ set(PUBLIC_HEADERS
     Public/Engine/ApplicationProcessor.h
     # Animation
     Public/Animation/AnimationClipResource.h
+    Public/Animation/SkeletalAnimationSampler.h
     Public/Animation/SkeletalAssetResource.h
     Public/Animation/SkeletonResource.h
     # Scene
@@ -301,6 +304,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/TextureAsyncTypes.h
     Public/Rendering/VertexLayout.h
     Public/Rendering/MeshTypes.h
+    Public/Rendering/SkinnedMeshTypes.h
     Public/Rendering/MaterialTypes.h
     Public/Rendering/ITextureHandleRegistrar.h
     Public/Rendering/ProceduralMeshGPUData.h
@@ -411,6 +415,7 @@ set(PUBLIC_HEADERS
     Public/Component/BillboardComponent.h
     Public/Component/ImpostorComponent.h
     Public/Component/MeshComponent.h
+    Public/Component/SkinnedMeshComponent.h
     Public/Component/MegaGeometryComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h

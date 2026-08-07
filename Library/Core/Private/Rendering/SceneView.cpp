@@ -276,6 +276,74 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void SceneView::AddSkinnedMeshProxy(const SkinnedMeshProxy& proxy)
+    {
+        if (!proxy.IsValid())
+        {
+            return;
+        }
+        auto indexIt = m_SkinnedMeshProxyIndex.find(proxy.ComponentId);
+        if (indexIt != m_SkinnedMeshProxyIndex.end())
+        {
+            m_SkinnedMeshProxies[indexIt->second] = proxy;
+            return;
+        }
+        const uint32_t index = static_cast<uint32_t>(m_SkinnedMeshProxies.size());
+        m_SkinnedMeshProxies.push_back(proxy);
+        m_SkinnedMeshProxyIndex[proxy.ComponentId] = index;
+    }
+
+    void SceneView::RemoveSkinnedMeshProxy(uint64_t componentId)
+    {
+        auto indexIt = m_SkinnedMeshProxyIndex.find(componentId);
+        if (indexIt == m_SkinnedMeshProxyIndex.end())
+        {
+            return;
+        }
+        const uint32_t removeIndex = indexIt->second;
+        const uint32_t lastIndex = static_cast<uint32_t>(m_SkinnedMeshProxies.size() - 1);
+        m_SkinnedMeshProxyIndex.erase(indexIt);
+        if (removeIndex != lastIndex)
+        {
+            m_SkinnedMeshProxies[removeIndex] = m_SkinnedMeshProxies[lastIndex];
+            m_SkinnedMeshProxyIndex[m_SkinnedMeshProxies[removeIndex].ComponentId] = removeIndex;
+        }
+        m_SkinnedMeshProxies.pop_back();
+    }
+
+    void SceneView::RemoveStaleSkinnedMeshProxies(const Container::UnorderedSet<uint64_t>& liveComponentIds)
+    {
+        uint32_t index = 0;
+        while (index < m_SkinnedMeshProxies.size())
+        {
+            const uint64_t componentId = m_SkinnedMeshProxies[index].ComponentId;
+            if (liveComponentIds.find(componentId) != liveComponentIds.end())
+            {
+                ++index;
+                continue;
+            }
+            const uint32_t lastIndex = static_cast<uint32_t>(m_SkinnedMeshProxies.size() - 1);
+            m_SkinnedMeshProxyIndex.erase(componentId);
+            if (index != lastIndex)
+            {
+                m_SkinnedMeshProxies[index] = m_SkinnedMeshProxies[lastIndex];
+                m_SkinnedMeshProxyIndex[m_SkinnedMeshProxies[index].ComponentId] = index;
+            }
+            m_SkinnedMeshProxies.pop_back();
+        }
+    }
+
+    void SceneView::UpdateSkinnedMeshProxy(const SkinnedMeshProxy& proxy)
+    {
+        auto indexIt = m_SkinnedMeshProxyIndex.find(proxy.ComponentId);
+        if (indexIt != m_SkinnedMeshProxyIndex.end())
+        {
+            m_SkinnedMeshProxies[indexIt->second] = proxy;
+            return;
+        }
+        AddSkinnedMeshProxy(proxy);
+    }
+
     void SceneView::AddLightProxy(const LightProxy &proxy)
     {
         if (!proxy.IsValid())
@@ -443,10 +511,12 @@ namespace NorvesLib::Core::Rendering
     void SceneView::ClearAllProxies()
     {
         m_MeshProxies.clear();
+        m_SkinnedMeshProxies.clear();
         m_BoardProxies.clear();
         m_MegaGeometryProxies.clear();
         m_LightProxies.clear();
         m_MeshProxyIndex.clear();
+        m_SkinnedMeshProxyIndex.clear();
         m_BoardProxyIndex.clear();
         m_MegaGeometryProxyIndex.clear();
         m_LightProxyIndex.clear();
