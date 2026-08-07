@@ -1115,3 +1115,10 @@ set_target_properties(SkinnedRenderPathContractTest PROPERTIES FOLDER "Test/Core
 add_test(NAME SkinnedRenderPathContractTest COMMAND SkinnedRenderPathContractTest)
 set_target_properties(SkeletalFramePacketSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkeletalFramePacketSnapshotTest COMMAND SkeletalFramePacketSnapshotTest)
+
+add_executable(CameraComponentProxyTest
+    CameraComponentProxyTest.cpp
+)
+target_link_libraries(CameraComponentProxyTest PRIVATE Core)
+set_target_properties(CameraComponentProxyTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CameraComponentProxyTest COMMAND CameraComponentProxyTest)
