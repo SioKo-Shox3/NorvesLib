@@ -104,3 +104,18 @@ target_include_directories(PhysicsFixedStepPipelineTest PRIVATE
 set_target_properties(PhysicsFixedStepPipelineTest PROPERTIES FOLDER "Test/Modules/Physics")
 add_test(NAME PhysicsFixedStepPipelineTest COMMAND PhysicsFixedStepPipelineTest)
 set_tests_properties(PhysicsFixedStepPipelineTest PROPERTIES TIMEOUT 90)
+
+add_executable(PhysicsArchitectureContractTest
+    PhysicsArchitectureContractTest.cpp
+)
+target_link_libraries(PhysicsArchitectureContractTest PRIVATE Core NorvesModule_Physics)
+target_include_directories(PhysicsArchitectureContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
+)
+target_compile_definitions(PhysicsArchitectureContractTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(PhysicsArchitectureContractTest PROPERTIES FOLDER "Test/Modules/Physics")
+add_test(NAME PhysicsArchitectureContractTest COMMAND PhysicsArchitectureContractTest)

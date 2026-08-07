@@ -114,6 +114,7 @@ namespace NorvesLib::Core::Scene
             Container::VariableArray<PhysicsOverlapHit>& outHits) const = 0;
         virtual EPhysicsSceneQueryResult IsAlive(ColliderHandle collider, bool& outAlive) const = 0;
         virtual EPhysicsSceneQueryResult IsAlive(BodyHandle body, bool& outAlive) const = 0;
+        virtual EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const = 0;
     };
 
     /**
@@ -171,6 +172,11 @@ namespace NorvesLib::Core::Scene
             Container::VariableArray<PhysicsOverlapHit>& outHits) const;
         EPhysicsSceneQueryResult IsAlive(ColliderHandle collider, bool& outAlive) const;
         EPhysicsSceneQueryResult IsAlive(BodyHandle body, bool& outAlive) const;
+        /**
+         * @brief 最後に公開された physics query snapshot の単調増加 sequence を取得する。
+         * @param outSequence Success 時は 1 以上。失敗時は 0 に初期化される。
+         */
+        EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const;
 
     private:
         struct Entry

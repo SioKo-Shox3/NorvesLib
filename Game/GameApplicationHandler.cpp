@@ -59,6 +59,7 @@ namespace Game
         constexpr const TCHAR *kRendering3DTestImpostorSmokeCountOption = TEXT("--rendering3dtest-impostor-smoke-count");
         constexpr const TCHAR *kRendering3DTestInstancedMeshCountOption = TEXT("--rendering3dtest-instanced-mesh-count");
         constexpr const TCHAR *kRendering3DTestLayerCompositeSmokeOption = TEXT("--rendering3dtest-layer-composite-smoke");
+        constexpr const TCHAR *kRendering3DTestPhysicsSmokeOption = TEXT("--rendering3dtest-physics-smoke");
         constexpr const TCHAR* kBridgePortOption = TEXT("--bridge-port");
         // 値を取らない bare フラグ(--enable-canvas-view と同類)。指定時のみ描画ダミー
         // モジュールを登録する不変条件ゲート。
@@ -73,6 +74,7 @@ namespace Game
         uint32_t s_Rendering3DTestImpostorSmokeCount = 0;
         uint32_t s_Rendering3DTestInstancedMeshCount = 0;
         bool s_bRendering3DTestLayerCompositeSmoke = false;
+        bool s_bRendering3DTestPhysicsSmoke = false;
 
         /**
          * @brief 文字列を符号なし 16bit ポートとして解析する。先頭末尾に空白がない 10 進数のみ
@@ -291,10 +293,12 @@ namespace Game
         s_Rendering3DTestImpostorSmokeCount = 0;
         s_Rendering3DTestInstancedMeshCount = 0;
         s_bRendering3DTestLayerCompositeSmoke = false;
+        s_bRendering3DTestPhysicsSmoke = false;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;
         bool bHasRendering3DTestInstancedMeshCount = false;
+        bool bHasRendering3DTestPhysicsSmoke = false;
 
         // Bridge（NorvesEditor 連携）の起動オプションを解析する。無効値は Bridge 無効の
         // まま警告を出すだけでクラッシュさせない（通常の NorvesLib 起動を妨げない）。
@@ -305,6 +309,19 @@ namespace Game
         {
             // コマンドライン引数のログ出力
             LOG_INFO_F("Arg[%zu]=%s", i, args[i].c_str());
+
+            if (args[i] == kRendering3DTestPhysicsSmokeOption)
+            {
+                if (bHasRendering3DTestPhysicsSmoke)
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: duplicate --rendering3dtest-physics-smoke");
+                    return false;
+                }
+
+                s_bRendering3DTestPhysicsSmoke = true;
+                bHasRendering3DTestPhysicsSmoke = true;
+                continue;
+            }
 
             if (ToStdString(args[i]) == std::basic_string<TCHAR>(kRendering3DTestLayerCompositeSmokeOption))
             {
@@ -679,6 +696,10 @@ namespace Game
         if (s_bRendering3DTestLayerCompositeSmoke)
         {
             LOG_INFO("Rendering3DTest layer composite smoke parsed enabled=true");
+        }
+        if (bHasRendering3DTestPhysicsSmoke)
+        {
+            LOG_INFO("Rendering3DTest physics smoke parsed enabled=true");
         }
 
         // モジュールシステム第1段1C-ii: --dummy-overlay 不変条件ゲート。
@@ -1056,9 +1077,10 @@ namespace Game
 
         auto stateMachine = MakeUnique<GameModeStateMachine>();
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
+        const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
         stateMachine->Registry().Register(
             Rendering3DTest,
-            [bUseCookedModel](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
+            [bUseCookedModel, bPhysicsSmoke](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
                 mode->GetData().m_ModelPath = params.ModelPath;
@@ -1068,6 +1090,7 @@ namespace Game
                 mode->GetData().m_ImpostorSmokeCount = s_Rendering3DTestImpostorSmokeCount;
                 mode->GetData().m_InstancedMeshCount = s_Rendering3DTestInstancedMeshCount;
                 mode->GetData().m_bLayerCompositeSmoke = s_bRendering3DTestLayerCompositeSmoke;
+                mode->GetData().m_bPhysicsSmoke = bPhysicsSmoke;
                 return mode;
             });
         stateMachine->Registry().Register(

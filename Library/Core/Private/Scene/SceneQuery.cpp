@@ -305,6 +305,27 @@ namespace NorvesLib::Core::Scene
         return result;
     }
 
+    EPhysicsSceneQueryResult SceneQuery::GetPublishedSnapshotSequence(uint64_t& outSequence) const
+    {
+        outSequence = 0;
+        if (!IsOwnerThread())
+        {
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        const EPhysicsSceneQueryResult result = m_PhysicsProvider->GetPublishedSnapshotSequence(outSequence);
+        if (result != EPhysicsSceneQueryResult::Success)
+        {
+            outSequence = 0;
+        }
+        return result;
+    }
+
     bool SceneQuery::IsOwnerThread() const
     {
         return m_OwnerThreadId == Thread::Thread::GetCurrentThreadId();

@@ -13,6 +13,7 @@
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
 #include "Core/Public/Particle/ParticleSystem.h"
+#include "GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.h"
 
 namespace NorvesLib::Core
 {
@@ -142,6 +143,8 @@ namespace Game::GameModes
         uint32_t m_ImpostorSmokeCount = 0;
         uint32_t m_InstancedMeshCount = 0;
         bool m_bLayerCompositeSmoke = false;
+        bool m_bPhysicsSmoke = false;
+        M8MinimalPhysicsSmoke m_M8MinimalPhysicsSmoke;
         VariableArray<NorvesLib::Core::Rendering::TextureHandle> m_F11ImpostorSmokeAtlasHandles;
         NorvesLib::Core::Rendering::ModelHandle m_BoulderModelHandle;
         uint32_t m_BoulderLoadRequestId = 0;

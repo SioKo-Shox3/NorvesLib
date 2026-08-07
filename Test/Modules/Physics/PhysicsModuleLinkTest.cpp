@@ -298,6 +298,12 @@ namespace
             return EPhysicsSceneQueryResult::Success;
         }
 
+        EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const override
+        {
+            outSequence = 211;
+            return EPhysicsSceneQueryResult::Success;
+        }
+
         mutable uint32_t RaycastCallCount = 0;
     };
 
@@ -391,12 +397,47 @@ namespace
 
         assert(registry.InstallAll(engine));
         assert(QueryRaycast(engine.GetSceneQuery()) == EPhysicsSceneQueryResult::NotReady);
+        uint64_t publishedSnapshotSequence = 223;
+        assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(publishedSnapshotSequence)
+            == EPhysicsSceneQueryResult::NotReady);
+        assert(publishedSnapshotSequence == 0);
+
+        physics->FixedTick(0.0f);
+        publishedSnapshotSequence = 227;
+        assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(publishedSnapshotSequence)
+            == EPhysicsSceneQueryResult::NotReady);
+        assert(publishedSnapshotSequence == 0);
+        physics->FixedTick(std::numeric_limits<float>::quiet_NaN());
+        publishedSnapshotSequence = 229;
+        assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(publishedSnapshotSequence)
+            == EPhysicsSceneQueryResult::NotReady);
+        assert(publishedSnapshotSequence == 0);
 
         physics->FixedTick(1.0f / 60.0f);
         AssertEmptySnapshotReady(engine.GetSceneQuery());
+        assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(publishedSnapshotSequence)
+            == EPhysicsSceneQueryResult::Success);
+        assert(publishedSnapshotSequence == 1);
+
+        physics->FixedTick(0.0f);
+        physics->FixedTick(std::numeric_limits<float>::quiet_NaN());
+        uint64_t unchangedSnapshotSequence = 0;
+        assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(unchangedSnapshotSequence)
+            == EPhysicsSceneQueryResult::Success);
+        assert(unchangedSnapshotSequence == publishedSnapshotSequence);
+
+        physics->FixedTick(1.0f / 60.0f);
+        uint64_t nextSnapshotSequence = 0;
+        assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(nextSnapshotSequence)
+            == EPhysicsSceneQueryResult::Success);
+        assert(nextSnapshotSequence == publishedSnapshotSequence + 1);
 
         registry.ShutdownAll(engine);
         assert(QueryRaycast(engine.GetSceneQuery()) == EPhysicsSceneQueryResult::Unavailable);
+        nextSnapshotSequence = 233;
+        assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(nextSnapshotSequence)
+            == EPhysicsSceneQueryResult::Unavailable);
+        assert(nextSnapshotSequence == 0);
         registry.ShutdownAll(engine);
         assert(QueryRaycast(engine.GetSceneQuery()) == EPhysicsSceneQueryResult::Unavailable);
     }

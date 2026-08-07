@@ -143,6 +143,7 @@ namespace NorvesLib::Modules::Physics
             Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const override;
         Core::Scene::EPhysicsSceneQueryResult IsAlive(Core::Scene::ColliderHandle collider, bool& outAlive) const override;
         Core::Scene::EPhysicsSceneQueryResult IsAlive(Core::Scene::BodyHandle body, bool& outAlive) const override;
+        Core::Scene::EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const override;
 
         bool IsOwnerThread() const;
         Core::Scene::EPhysicsSceneQueryResult GetReadinessResult() const;
@@ -153,6 +154,7 @@ namespace NorvesLib::Modules::Physics
         bool m_bInitialized = false;
         bool m_bFixedTickInProgress = false;
         bool m_bHasPublishedSnapshot = false;
+        uint64_t m_PublishedSnapshotSequence = 0;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;
         Core::Container::VariableArray<BodySlot> m_BodySlots;
         Core::Container::VariableArray<uint32_t> m_FreeColliderSlotIndices;

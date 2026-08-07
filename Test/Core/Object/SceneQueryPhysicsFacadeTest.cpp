@@ -94,6 +94,7 @@ namespace
         Container::VariableArray<PhysicsOverlapHit> OverlapOutput;
         bool ColliderAliveOutput = true;
         bool BodyAliveOutput = true;
+        uint64_t PublishedSnapshotSequenceOutput = 173;
 
         mutable uint32_t RaycastCallCount = 0;
         mutable uint32_t SphereCallCount = 0;
@@ -101,6 +102,7 @@ namespace
         mutable uint32_t CapsuleCallCount = 0;
         mutable uint32_t ColliderAliveCallCount = 0;
         mutable uint32_t BodyAliveCallCount = 0;
+        mutable uint32_t PublishedSnapshotSequenceCallCount = 0;
 
         mutable Math::Ray LastRay;
         mutable float LastMaxDistance = 0.0f;
@@ -167,6 +169,13 @@ namespace
             outAlive = BodyAliveOutput;
             return Result;
         }
+
+        EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const override
+        {
+            ++PublishedSnapshotSequenceCallCount;
+            outSequence = PublishedSnapshotSequenceOutput;
+            return Result;
+        }
     };
 
     void SetSentinel(PhysicsRaycastHit& hit)
@@ -220,6 +229,11 @@ namespace
         PhysicsRaycastHit raycastHit;
         Container::VariableArray<PhysicsOverlapHit> overlapHits;
         bool bAlive = true;
+        uint64_t publishedSnapshotSequence = 181;
+
+        assert(sceneQuery.GetPublishedSnapshotSequence(publishedSnapshotSequence)
+            == EPhysicsSceneQueryResult::Unavailable);
+        assert(publishedSnapshotSequence == 0);
 
         SetSentinel(raycastHit);
         assert(sceneQuery.Raycast(ray, 43.0f, raycastHit) == EPhysicsSceneQueryResult::Unavailable);
@@ -267,6 +281,12 @@ namespace
         PhysicsRaycastHit raycastHit;
         Container::VariableArray<PhysicsOverlapHit> overlapHits;
         bool bAlive = false;
+        uint64_t publishedSnapshotSequence = 0;
+
+        assert(sceneQuery.GetPublishedSnapshotSequence(publishedSnapshotSequence)
+            == EPhysicsSceneQueryResult::Success);
+        assert(provider.PublishedSnapshotSequenceCallCount == 1);
+        assert(publishedSnapshotSequence == 173);
 
         assert(sceneQuery.Raycast(ray, 89.0f, raycastHit) == EPhysicsSceneQueryResult::Success);
         assert(provider.RaycastCallCount == 1);
@@ -349,10 +369,15 @@ namespace
         PhysicsRaycastHit raycastHit;
         Container::VariableArray<PhysicsOverlapHit> overlapHits;
         bool bAlive = true;
+        uint64_t publishedSnapshotSequence = 191;
 
         for (EPhysicsSceneQueryResult result : nonSuccessResults)
         {
             provider.Result = result;
+
+            publishedSnapshotSequence = 191;
+            assert(sceneQuery.GetPublishedSnapshotSequence(publishedSnapshotSequence) == result);
+            assert(publishedSnapshotSequence == 0);
 
             SetSentinel(raycastHit);
             assert(sceneQuery.Raycast(ray, 167.0f, raycastHit) == result);
@@ -382,6 +407,7 @@ namespace
         assert(provider.CapsuleCallCount == 7);
         assert(provider.ColliderAliveCallCount == 7);
         assert(provider.BodyAliveCallCount == 7);
+        assert(provider.PublishedSnapshotSequenceCallCount == 7);
     }
 
     void TestWrongThreadDoesNotCallProvider()
@@ -398,6 +424,7 @@ namespace
             PhysicsRaycastHit raycastHit;
             Container::VariableArray<PhysicsOverlapHit> overlapHits;
             bool bAlive = true;
+            uint64_t publishedSnapshotSequence = 193;
 
             SetSentinel(raycastHit);
             assert(sceneQuery.BindPhysicsProvider(provider) == EPhysicsSceneQueryResult::WrongThread);
@@ -418,6 +445,9 @@ namespace
             bAlive = true;
             assert(sceneQuery.IsAlive(TestBody, bAlive) == EPhysicsSceneQueryResult::WrongThread);
             assert(!bAlive);
+            assert(sceneQuery.GetPublishedSnapshotSequence(publishedSnapshotSequence)
+                == EPhysicsSceneQueryResult::WrongThread);
+            assert(publishedSnapshotSequence == 0);
         });
         worker.Join();
 
@@ -427,6 +457,7 @@ namespace
         assert(provider.CapsuleCallCount == 0);
         assert(provider.ColliderAliveCallCount == 0);
         assert(provider.BodyAliveCallCount == 0);
+        assert(provider.PublishedSnapshotSequenceCallCount == 0);
     }
 }
 

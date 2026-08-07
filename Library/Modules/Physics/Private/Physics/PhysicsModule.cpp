@@ -1089,6 +1089,10 @@ namespace NorvesLib::Modules::Physics
     void PhysicsModule::PublishSnapshot()
     {
         BuildBroadphase(m_PublishedBroadphase);
+        if (m_PublishedSnapshotSequence != UINT64_MAX)
+        {
+            ++m_PublishedSnapshotSequence;
+        }
     }
 
     void PhysicsModule::BuildBroadphase(PhysicsBroadphase& outBroadphase) const
@@ -1167,6 +1171,7 @@ namespace NorvesLib::Modules::Physics
         m_PendingEventCount = 0;
         m_LastDiagnostic = EPhysicsDiagnostic::None;
         m_bHasPublishedSnapshot = false;
+        m_PublishedSnapshotSequence = 0;
     }
 
     Math::Transform PhysicsModule::GetFreshWorldTransform(const Core::Entity& entity) const
@@ -1271,6 +1276,19 @@ namespace NorvesLib::Modules::Physics
     bool PhysicsModule::IsOwnerThread() const
     {
         return m_OwnerThreadId == Thread::Thread::GetCurrentThreadId();
+    }
+
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::GetPublishedSnapshotSequence(uint64_t& outSequence) const
+    {
+        outSequence = 0;
+        const Core::Scene::EPhysicsSceneQueryResult readiness = GetReadinessResult();
+        if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
+        {
+            return readiness;
+        }
+
+        outSequence = m_PublishedSnapshotSequence;
+        return Core::Scene::EPhysicsSceneQueryResult::Success;
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::GetReadinessResult() const
