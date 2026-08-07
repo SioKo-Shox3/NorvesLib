@@ -12,6 +12,7 @@ set(PRIVATE_SOURCES
     Private/Math/GeometryIntersection.cpp
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedMeshLoader.cpp
+    Private/Asset/CookedSkeletalLoader.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
@@ -31,6 +32,10 @@ set(PRIVATE_SOURCES
     Private/Object/ResourceRegistry.cpp
     Private/Object/World.cpp
     Private/Particle/ParticleSystem.cpp
+    # Animation
+    Private/Animation/AnimationClipResource.cpp
+    Private/Animation/SkeletalAssetResource.cpp
+    Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
     Private/Text/JsonDocument.cpp
     Private/Text/JsonWriter.cpp
@@ -138,6 +143,8 @@ set(PRIVATE_SOURCES
     Private/Resource/MeshResource.cpp
     Private/Resource/MaterialResource.cpp
     Private/Resource/GLTFAnalyzer.cpp
+    Private/Resource/SkeletalGltfDecode.cpp
+    Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
     Private/Resource/ModelAssetLoader.cpp
     Private/Resource/ModelAssetRuntime.cpp
@@ -215,6 +222,7 @@ set(PUBLIC_HEADERS
     Public/CoreModule.h
     Public/Asset/AssetBlob.h
     Public/Asset/CookedMeshFormat.h
+    Public/Asset/CookedSkeletalFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/AssetManifest.h
@@ -261,6 +269,10 @@ set(PUBLIC_HEADERS
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
     Public/Engine/ApplicationProcessor.h
+    # Animation
+    Public/Animation/AnimationClipResource.h
+    Public/Animation/SkeletalAssetResource.h
+    Public/Animation/SkeletonResource.h
     # Scene
     Public/Scene/SceneQuery.h
     Public/Scene/SceneSerializer.h
@@ -389,6 +401,8 @@ set(PUBLIC_HEADERS
     Public/Resource/MeshResource.h
     Public/Resource/MaterialResource.h
     Public/Resource/GLTFAnalyzer.h
+    Public/Resource/SkeletalGltfData.h
+    Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h
     # Component
     Public/Component/Component.h

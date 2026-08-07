@@ -79,3 +79,25 @@ add_test(NAME AssetManifestTest COMMAND AssetManifestTest)
 add_test(NAME AssetSystemTest COMMAND AssetSystemTest)
 add_test(NAME CookedTextureTest COMMAND CookedTextureTest)
 add_test(NAME CookedMeshTest COMMAND CookedMeshTest)
+
+add_executable(CookedSkeletalAssetTest
+    CookedSkeletalAssetTest.cpp
+)
+target_link_libraries(CookedSkeletalAssetTest PRIVATE Core)
+target_include_directories(CookedSkeletalAssetTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+add_dependencies(CookedSkeletalAssetTest AssetCook)
+set_target_properties(CookedSkeletalAssetTest PROPERTIES FOLDER "Test/Core/Asset")
+
+set(COOKED_SKELETAL_ASSET_SMOKE_DIR
+    "${CMAKE_BINARY_DIR}/CookedSkeletalAssetTest/$<CONFIG>")
+add_test(NAME CookedSkeletalAssetTest
+    COMMAND ${CMAKE_COMMAND}
+        "-DUNIT_TEST_EXE=$<TARGET_FILE:CookedSkeletalAssetTest>"
+        "-DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>"
+        "-DSOURCE_ROOT=${CMAKE_SOURCE_DIR}"
+        "-DFIXTURE_GLTF=${CMAKE_SOURCE_DIR}/Assets/Models/M9Skinned/ValidU8Float.gltf"
+        "-DSMOKE_DIR=${COOKED_SKELETAL_ASSET_SMOKE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/CookedSkeletalAssetTest.cmake.in"
+)
