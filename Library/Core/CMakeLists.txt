@@ -158,6 +158,7 @@ set(PRIVATE_SOURCES
     # Component
     Private/Component/Component.cpp
     Private/Component/BoardComponent.cpp
+    Private/Component/SpringArmComponent.cpp
     Private/Component/TextComponent.cpp
     Private/Component/BillboardComponent.cpp
     Private/Component/ImpostorComponent.cpp
@@ -398,6 +399,8 @@ set(PUBLIC_HEADERS
     Public/Object/Entity.h
     Public/Object/ResourceRegistry.h
     Public/Object/World.h
+    Public/Component/SpringArmComponent.h
+    Public/Component/SpringArmTypes.h
     # Engine
     Public/Engine/NorvesEngine.h
     Public/Scripting/ScriptRuntime.h

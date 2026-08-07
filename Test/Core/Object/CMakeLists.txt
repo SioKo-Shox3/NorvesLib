@@ -257,3 +257,13 @@ target_include_directories(SkeletalResourceLifetimeTest PRIVATE
 )
 set_target_properties(SkeletalResourceLifetimeTest PROPERTIES FOLDER "Test/Core/Object")
 add_test(NAME SkeletalResourceLifetimeTest COMMAND SkeletalResourceLifetimeTest)
+
+add_executable(SpringArmComponentTest
+    SpringArmComponentTest.cpp
+)
+target_link_libraries(SpringArmComponentTest PRIVATE Core)
+target_include_directories(SpringArmComponentTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(SpringArmComponentTest PROPERTIES FOLDER "Test/Core/Object")
+add_test(NAME SpringArmComponentTest COMMAND SpringArmComponentTest)

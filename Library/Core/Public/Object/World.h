@@ -194,6 +194,14 @@ namespace NorvesLib::Core
         Container::VariableArray<Entity *> GetRootEntities() const;
 
         /**
+         * @brief World ツリー内の有効な Entity を ObjectId で検索します。
+         *
+         * root と child の両方を対象にし、破棄予約済み Entity とその subtree は
+         * 返しません。ObjectId は同一 World ライフサイクル内だけで有効です。
+         */
+        Entity* FindEntityByObjectId(uint64_t id) const;
+
+        /**
          * @brief World直下のルートEntity数を取得
          */
         size_t GetObjectCount() const;

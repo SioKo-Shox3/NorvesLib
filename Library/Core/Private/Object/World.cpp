@@ -44,6 +44,29 @@ namespace NorvesLib::Core
 
         using PrefabAliasMap = Container::UnorderedMap<SubtreeSnapshotAliasId, PrefabLiveObject>;
 
+        Entity* FindEntityByObjectIdRecursive(Entity* entity, uint64_t id)
+        {
+            if (!entity || entity->IsPendingDestroy())
+            {
+                return nullptr;
+            }
+
+            if (entity->GetObjectId() == id)
+            {
+                return entity;
+            }
+
+            for (Entity* child : entity->GetChildEntities())
+            {
+                if (Entity* found = FindEntityByObjectIdRecursive(child, id))
+                {
+                    return found;
+                }
+            }
+
+            return nullptr;
+        }
+
         template <typename T>
         class TRawObjectGuard
         {
@@ -796,6 +819,24 @@ namespace NorvesLib::Core
             }
         }
         return result;
+    }
+
+    Entity* World::FindEntityByObjectId(uint64_t id) const
+    {
+        if (id == 0)
+        {
+            return nullptr;
+        }
+
+        for (Entity* root : GetRootEntities())
+        {
+            if (Entity* found = FindEntityByObjectIdRecursive(root, id))
+            {
+                return found;
+            }
+        }
+
+        return nullptr;
     }
 
     size_t World::GetObjectCount() const
