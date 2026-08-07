@@ -156,7 +156,13 @@ namespace Game::GameModes
 
         void CleanupM9WorldAcceptance(GameModeContext& ctx, Rendering3DTestData& data)
         {
-            UnregisterRendering3DInput(ctx, data);
+            auto& inputRouter = ctx.EngineRef.GetInputRouter();
+            inputRouter.UnregisterController(&data.m_CameraController);
+            inputRouter.UnregisterController(&data.m_CameraInputCollector);
+            inputRouter.UnregisterController(&data.m_PickingController);
+            inputRouter.UnregisterController(&data.m_LightController);
+            inputRouter.UnregisterController(&data.m_DebugInput);
+            data.m_CameraInputCollector.ResetAll();
             ClearCameraReferences(data);
 
 #if defined(NORVES_GAME_AUDIO)
@@ -326,6 +332,15 @@ namespace Game::GameModes
         }
 #endif
 
+        // Maya の値 intent を SpringArm へ適用し、CameraComponent の値 proxy を
+        // RenderWorld へ渡す3層カメラ経路を構築する。失敗時は借用登録と公開参照を
+        // 即時に戻し、StateMachine の Scope cleanup に Entity 解放を委ねる。
+        if (!InitializeCameraPath(ctx, data))
+        {
+            LOG_ERROR("Rendering3DTest camera path initialization failed");
+            return GameModeEnterResult::Failed;
+        }
+
         if (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested)
         {
             NorvesLib::Core::Particle::ParticleEmitterDesc particleDesc;
@@ -340,15 +355,6 @@ namespace Game::GameModes
             particleDesc.SizePx = Math::Vector2(14.0f, 14.0f);
             data.m_ParticleEmitter = ctx.EngineRef.GetParticleSystem().CreateEmitter(particleDesc);
             LOG_INFO("Rendering3DTest particle emitter created valid=%d", data.m_ParticleEmitter.IsValid());
-        }
-
-        // Maya の値 intent を SpringArm へ適用し、CameraComponent の値 proxy を
-        // RenderWorld へ渡す3層カメラ経路を構築する。失敗時は借用登録と公開参照を
-        // 即時に戻し、StateMachine の Scope cleanup に Entity 解放を委ねる。
-        if (!InitializeCameraPath(ctx, data))
-        {
-            LOG_ERROR("Rendering3DTest camera path initialization failed");
-            return GameModeEnterResult::Failed;
         }
 
         // ========================================

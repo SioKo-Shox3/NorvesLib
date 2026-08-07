@@ -4,7 +4,8 @@ param(
     [string]$Configuration = "All",
     [string]$BuildDirectory = "build",
     [ValidateRange(1, 300)]
-    [int]$TimeoutSeconds = 120
+    [int]$TimeoutSeconds = 120,
+    [switch]$ContractOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,22 @@ function Assert-CameraWorld([bool]$Condition, [string]$Message)
     {
         throw "Camera world smoke failed: $Message"
     }
+}
+
+function Test-CameraInitializationOrderContract([string]$RepositoryRoot)
+{
+    $routinePath = Join-Path $RepositoryRoot "Game\GameModes\Rendering3DTest\Rendering3DTestRoutine.cpp"
+    $source = [IO.File]::ReadAllText($routinePath)
+    $enterStart = $source.IndexOf("GameModeEnterResult Rendering3DTestRoutine::Enter(", [StringComparison]::Ordinal)
+    Assert-CameraWorld ($enterStart -ge 0) "Rendering3DTestRoutine::Enter not found"
+    $tickStart = $source.IndexOf("void Rendering3DTestRoutine::Tick(", $enterStart, [StringComparison]::Ordinal)
+    Assert-CameraWorld ($tickStart -gt $enterStart) "Rendering3DTestRoutine::Tick boundary not found"
+    $enterSource = $source.Substring($enterStart, $tickStart - $enterStart)
+    $cameraInitialization = $enterSource.IndexOf("if (!InitializeCameraPath(ctx, data))", [StringComparison]::Ordinal)
+    $emitterCreation = $enterSource.IndexOf("GetParticleSystem().CreateEmitter(", [StringComparison]::Ordinal)
+    Assert-CameraWorld ($cameraInitialization -ge 0) "camera initialization call not found in Enter"
+    Assert-CameraWorld ($emitterCreation -ge 0) "particle emitter creation call not found in Enter"
+    Assert-CameraWorld ($cameraInitialization -lt $emitterCreation) "camera initialization must precede particle emitter creation"
 }
 
 function Get-CameraWorldDescendantProcessIds([int]$RootProcessId)
@@ -97,6 +114,12 @@ function Invoke-CameraWorldGame(
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+Test-CameraInitializationOrderContract $repoRoot
+if ($ContractOnly)
+{
+    Write-Output "CAMERA_WORLD_CONTRACT result=pass camera_initialization_before_emitter=1"
+    return
+}
 $resolvedBuild = if ([IO.Path]::IsPathRooted($BuildDirectory))
 {
     [IO.Path]::GetFullPath($BuildDirectory)
