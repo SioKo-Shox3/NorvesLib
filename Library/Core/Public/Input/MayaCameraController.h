@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Component/SpringArmTypes.h"
 #include "Input/IInputController.h"
 #include "Input/InputState.h"
 #include "Math/Vector3.h"
@@ -68,6 +69,23 @@ namespace NorvesLib::Core::Input
          * @brief スクロール量に応じて Dolly を適用する（常に consume）
          */
         bool OnMouseScroll(const MouseScrollEvent &event) override;
+
+        /**
+         * @brief 1フレーム分のポーリング入力を SpringArm の値 intent へ変換する
+         * @param input 現在の入力状態
+         * @param deltaTime フレーム間隔（マウス delta は既にフレーム集約済みのため未使用）
+         * @param currentArmLength Pan/Dolly の距離スケールに使う現在のアーム長
+         * @return Controller や Entity/Component を変更しない値 intent
+         *
+         * Alt+LMB/MMB/RMB のドラッグを既存イベント経路と同じ感度・符号で
+         * 換算します。スクロールは Alt 状態に依存しません。距離の正本は
+         * SpringArmComponent 側なので、内部 m_Distance ではなく
+         * currentArmLength を距離依存量へ使います。
+         */
+        Component::SpringArmIntent BuildIntent(
+            const InputState &input,
+            float deltaTime,
+            float currentArmLength) const;
 
         /**
          * @brief デバッグ用のコントローラ名

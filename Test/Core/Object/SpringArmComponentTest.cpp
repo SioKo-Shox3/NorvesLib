@@ -1,5 +1,7 @@
 ﻿#include "Component/SpringArmComponent.h"
 #include "Component/SpringArmTypes.h"
+#include "Input/InputState.h"
+#include "Input/MayaCameraController.h"
 #include "Math/Quaternion.h"
 #include "Math/Vector3.h"
 #include "Object/Entity.h"
@@ -10,6 +12,7 @@
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Component;
+using namespace NorvesLib::Core::Input;
 
 namespace
 {
@@ -232,6 +235,100 @@ namespace
 
         world.Finalize();
     }
+
+    void TestBuildIntentConvertsPolledInputByValue()
+    {
+        MayaCameraController controller;
+        controller.Initialize(NorvesLib::Math::Vector3(2.0f, 3.0f, 4.0f), 100.0f, 20.0f, -10.0f);
+
+        InputState input;
+        input.SetKeyState(KeyCode::LeftAlt, true);
+        input.SetMouseButtonState(MouseButton::Left, true);
+        input.SetMouseButtonState(MouseButton::Middle, true);
+        input.SetMouseButtonState(MouseButton::Right, true);
+        input.SetMousePosition(0.0f, 0.0f);
+        input.SetMousePosition(4.0f, -6.0f);
+        input.AddMouseScroll(3.0f);
+
+        const SpringArmIntent intent = controller.BuildIntent(input, 0.25f, 8.0f);
+
+        assert(intent.bHasInput);
+        assert(IsNearlyEqual(intent.YawDelta, -1.2f));
+        assert(IsNearlyEqual(intent.PitchDelta, 1.8f));
+        assert(IsNearlyEqual(intent.PanDelta, NorvesLib::Math::Vector3(-0.16f, -0.24f, 0.0f)));
+        assert(IsNearlyEqual(intent.DollyDelta, 2.08f));
+        assert(IsNearlyEqual(controller.GetTarget(), NorvesLib::Math::Vector3(2.0f, 3.0f, 4.0f)));
+        assert(IsNearlyEqual(controller.GetDistance(), 100.0f));
+        assert(IsNearlyEqual(controller.GetYaw(), 20.0f));
+        assert(IsNearlyEqual(controller.GetPitch(), -10.0f));
+    }
+
+    void TestBuildIntentRequiresAltForDrag()
+    {
+        MayaCameraController controller;
+        controller.Initialize(NorvesLib::Math::Vector3::Zero, 6.0f, 0.0f, 30.0f);
+
+        InputState idleInput;
+        const SpringArmIntent idleIntent = controller.BuildIntent(idleInput, 0.0f, 6.0f);
+        assert(!idleIntent.bHasInput);
+        assert(IsNearlyEqual(idleIntent.YawDelta, 0.0f));
+        assert(IsNearlyEqual(idleIntent.PitchDelta, 0.0f));
+        assert(IsNearlyEqual(idleIntent.DollyDelta, 0.0f));
+        assert(IsNearlyEqual(idleIntent.PanDelta, NorvesLib::Math::Vector3::Zero));
+
+        InputState dragWithoutAlt;
+        dragWithoutAlt.SetMouseButtonState(MouseButton::Left, true);
+        dragWithoutAlt.SetMouseButtonState(MouseButton::Middle, true);
+        dragWithoutAlt.SetMouseButtonState(MouseButton::Right, true);
+        dragWithoutAlt.SetMousePosition(0.0f, 0.0f);
+        dragWithoutAlt.SetMousePosition(-5.0f, 2.0f);
+        const SpringArmIntent dragIntent = controller.BuildIntent(dragWithoutAlt, 0.016f, 6.0f);
+        assert(!dragIntent.bHasInput);
+        assert(IsNearlyEqual(dragIntent.YawDelta, 0.0f));
+        assert(IsNearlyEqual(dragIntent.PitchDelta, 0.0f));
+        assert(IsNearlyEqual(dragIntent.DollyDelta, 0.0f));
+        assert(IsNearlyEqual(dragIntent.PanDelta, NorvesLib::Math::Vector3::Zero));
+    }
+
+    void TestBuildIntentAcceptsRightAltAndIgnoresFrameDelta()
+    {
+        MayaCameraController controller;
+        controller.Initialize(NorvesLib::Math::Vector3::Zero, 6.0f, 0.0f, 30.0f);
+
+        InputState input;
+        input.SetKeyState(KeyCode::RightAlt, true);
+        input.SetMouseButtonState(MouseButton::Left, true);
+        input.SetMousePosition(0.0f, 0.0f);
+        input.SetMousePosition(-5.0f, 2.0f);
+
+        const SpringArmIntent shortFrame = controller.BuildIntent(input, 0.001f, 6.0f);
+        const SpringArmIntent longFrame = controller.BuildIntent(input, 1.0f, 6.0f);
+        assert(shortFrame.bHasInput);
+        assert(IsNearlyEqual(shortFrame.YawDelta, 1.5f));
+        assert(IsNearlyEqual(shortFrame.PitchDelta, -0.6f));
+        assert(IsNearlyEqual(shortFrame.YawDelta, longFrame.YawDelta));
+        assert(IsNearlyEqual(shortFrame.PitchDelta, longFrame.PitchDelta));
+    }
+
+    void TestBuildIntentKeepsScrollIndependentFromAlt()
+    {
+        MayaCameraController controller;
+        controller.Initialize(NorvesLib::Math::Vector3::Zero, 6.0f, 0.0f, 30.0f);
+
+        InputState input;
+        input.SetMouseButtonState(MouseButton::Left, true);
+        input.SetMouseButtonState(MouseButton::Right, true);
+        input.SetMousePosition(0.0f, 0.0f);
+        input.SetMousePosition(4.0f, -2.0f);
+        input.AddMouseScroll(2.0f);
+
+        const SpringArmIntent intent = controller.BuildIntent(input, 0.016f, 6.0f);
+        assert(intent.bHasInput);
+        assert(IsNearlyEqual(intent.YawDelta, 0.0f));
+        assert(IsNearlyEqual(intent.PitchDelta, 0.0f));
+        assert(IsNearlyEqual(intent.PanDelta, NorvesLib::Math::Vector3::Zero));
+        assert(IsNearlyEqual(intent.DollyDelta, 1.2f));
+    }
 }
 
 int main()
@@ -242,6 +339,10 @@ int main()
     TestOwnerWorldTransformAndIntentAreAppliedByValue();
     TestMissingPivotPreservesOwnerTransform();
     TestLimitsAvoidSingularTransforms();
+    TestBuildIntentConvertsPolledInputByValue();
+    TestBuildIntentRequiresAltForDrag();
+    TestBuildIntentAcceptsRightAltAndIgnoresFrameDelta();
+    TestBuildIntentKeepsScrollIndependentFromAlt();
     std::cout << "SpringArmComponentTest passed\n";
     return 0;
 }

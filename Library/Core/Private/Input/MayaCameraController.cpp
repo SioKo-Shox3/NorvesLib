@@ -77,6 +77,49 @@ namespace NorvesLib::Core::Input
         return true;
     }
 
+    Component::SpringArmIntent MayaCameraController::BuildIntent(
+        const InputState &input,
+        float deltaTime,
+        float currentArmLength) const
+    {
+        (void)deltaTime;
+
+        Component::SpringArmIntent intent;
+        const MouseState &mouse = input.GetMouseState();
+        const bool bDragEnabled = input.IsAltDown();
+
+        if (bDragEnabled && input.IsMouseButtonDown(MouseButton::Left) &&
+            (mouse.DeltaX != 0.0f || mouse.DeltaY != 0.0f))
+        {
+            intent.YawDelta -= mouse.DeltaX * m_OrbitSpeed;
+            intent.PitchDelta -= mouse.DeltaY * m_OrbitSpeed;
+            intent.bHasInput = true;
+        }
+
+        if (bDragEnabled && input.IsMouseButtonDown(MouseButton::Middle) &&
+            (mouse.DeltaX != 0.0f || mouse.DeltaY != 0.0f))
+        {
+            const float panAmount = m_PanSpeed * currentArmLength;
+            intent.PanDelta.x -= mouse.DeltaX * panAmount;
+            intent.PanDelta.y += mouse.DeltaY * panAmount;
+            intent.bHasInput = true;
+        }
+
+        if (bDragEnabled && input.IsMouseButtonDown(MouseButton::Right) && mouse.DeltaX != 0.0f)
+        {
+            intent.DollyDelta -= mouse.DeltaX * m_DollySpeed * currentArmLength;
+            intent.bHasInput = true;
+        }
+
+        if (mouse.ScrollDelta != 0.0f)
+        {
+            intent.DollyDelta += mouse.ScrollDelta * m_ScrollDollySpeed * currentArmLength;
+            intent.bHasInput = true;
+        }
+
+        return intent;
+    }
+
     Math::Vector3 MayaCameraController::GetPosition() const
     {
         return m_Position;
