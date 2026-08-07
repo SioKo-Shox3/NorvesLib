@@ -9,6 +9,7 @@ find_package(Vulkan REQUIRED)
 # ソースファイルの定義
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
+    Private/Math/GeometryIntersection.cpp
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedMeshLoader.cpp
     Private/Asset/CookedTextureLoader.cpp

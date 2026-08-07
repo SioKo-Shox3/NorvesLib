@@ -11,6 +11,11 @@ namespace NorvesLib::Core::Scene
         constexpr uint32_t BVHLeafEntryThreshold = 4;
     } // namespace
 
+    SceneQuery::SceneQuery()
+        : m_OwnerThreadId(Thread::Thread::GetCurrentThreadId())
+    {
+    }
+
     void SceneQuery::Rebuild(const World& world)
     {
         m_Entries.clear();
@@ -108,6 +113,201 @@ namespace NorvesLib::Core::Scene
     size_t SceneQuery::GetEntryCount() const
     {
         return m_Entries.size();
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::BindPhysicsProvider(IPhysicsSceneQueryProvider& provider)
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        if (m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::AlreadyBound;
+        }
+
+        m_PhysicsProvider = &provider;
+        return EPhysicsSceneQueryResult::Success;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::UnbindPhysicsProvider(IPhysicsSceneQueryProvider& provider)
+    {
+        if (!IsOwnerThread())
+        {
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        if (m_PhysicsProvider != &provider)
+        {
+            return EPhysicsSceneQueryResult::ProviderMismatch;
+        }
+
+        m_PhysicsProvider = nullptr;
+        return EPhysicsSceneQueryResult::Success;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::Raycast(
+        const Math::Ray& ray,
+        float maxDistance,
+        PhysicsRaycastHit& outHit) const
+    {
+        if (!IsOwnerThread())
+        {
+            outHit = PhysicsRaycastHit{};
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        outHit = PhysicsRaycastHit{};
+
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        const EPhysicsSceneQueryResult result = m_PhysicsProvider->Raycast(ray, maxDistance, outHit);
+        if (result != EPhysicsSceneQueryResult::Success)
+        {
+            outHit = PhysicsRaycastHit{};
+        }
+
+        return result;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::OverlapSphere(
+        const Math::Sphere& sphere,
+        Container::VariableArray<PhysicsOverlapHit>& outHits) const
+    {
+        if (!IsOwnerThread())
+        {
+            outHits.clear();
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        outHits.clear();
+
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        const EPhysicsSceneQueryResult result = m_PhysicsProvider->OverlapSphere(sphere, outHits);
+        if (result != EPhysicsSceneQueryResult::Success)
+        {
+            outHits.clear();
+        }
+
+        return result;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::OverlapBox(
+        const Math::OBB& box,
+        Container::VariableArray<PhysicsOverlapHit>& outHits) const
+    {
+        if (!IsOwnerThread())
+        {
+            outHits.clear();
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        outHits.clear();
+
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        const EPhysicsSceneQueryResult result = m_PhysicsProvider->OverlapBox(box, outHits);
+        if (result != EPhysicsSceneQueryResult::Success)
+        {
+            outHits.clear();
+        }
+
+        return result;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::OverlapCapsule(
+        const Math::Capsule& capsule,
+        Container::VariableArray<PhysicsOverlapHit>& outHits) const
+    {
+        if (!IsOwnerThread())
+        {
+            outHits.clear();
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        outHits.clear();
+
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        const EPhysicsSceneQueryResult result = m_PhysicsProvider->OverlapCapsule(capsule, outHits);
+        if (result != EPhysicsSceneQueryResult::Success)
+        {
+            outHits.clear();
+        }
+
+        return result;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::IsAlive(ColliderHandle collider, bool& outAlive) const
+    {
+        if (!IsOwnerThread())
+        {
+            outAlive = false;
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        outAlive = false;
+
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        const EPhysicsSceneQueryResult result = m_PhysicsProvider->IsAlive(collider, outAlive);
+        if (result != EPhysicsSceneQueryResult::Success)
+        {
+            outAlive = false;
+        }
+
+        return result;
+    }
+
+    EPhysicsSceneQueryResult SceneQuery::IsAlive(BodyHandle body, bool& outAlive) const
+    {
+        if (!IsOwnerThread())
+        {
+            outAlive = false;
+            return EPhysicsSceneQueryResult::WrongThread;
+        }
+
+        outAlive = false;
+
+        if (!m_PhysicsProvider)
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        const EPhysicsSceneQueryResult result = m_PhysicsProvider->IsAlive(body, outAlive);
+        if (result != EPhysicsSceneQueryResult::Success)
+        {
+            outAlive = false;
+        }
+
+        return result;
+    }
+
+    bool SceneQuery::IsOwnerThread() const
+    {
+        return m_OwnerThreadId == Thread::Thread::GetCurrentThreadId();
     }
 
     void SceneQuery::BuildBVH()

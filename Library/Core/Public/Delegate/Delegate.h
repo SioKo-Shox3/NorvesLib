@@ -1,8 +1,11 @@
 ﻿#pragma once
 
+#include <concepts>
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 
 namespace NorvesLib::Core
 {
@@ -28,6 +31,12 @@ namespace NorvesLib::Core
          */
         Delegate() = default;
 
+        ~Delegate() = default;
+        Delegate(const Delegate &) = default;
+        Delegate(Delegate &&) noexcept = default;
+        Delegate &operator=(const Delegate &) = default;
+        Delegate &operator=(Delegate &&) noexcept = default;
+
         /**
          * @brief 関数ポインタからデリゲートを作成
          * @param function 登録する関数ポインタ
@@ -52,6 +61,7 @@ namespace NorvesLib::Core
          * @param functor 登録する関数オブジェクト
          */
         template <typename F>
+        requires (!std::same_as<std::decay_t<F>, Delegate<RetType, Args...>>)
         Delegate(F &&functor)
             : m_Function(std::forward<F>(functor))
         {
@@ -114,6 +124,7 @@ namespace NorvesLib::Core
          * @param functor 設定する関数オブジェクト
          */
         template <typename F>
+        requires (!std::same_as<std::decay_t<F>, Delegate<RetType, Args...>>)
         void Bind(F &&functor)
         {
             m_Function = std::forward<F>(functor);
@@ -202,6 +213,12 @@ namespace NorvesLib::Core
     public:
         Delegate() = default;
 
+        ~Delegate() = default;
+        Delegate(const Delegate &) = default;
+        Delegate(Delegate &&) noexcept = default;
+        Delegate &operator=(const Delegate &) = default;
+        Delegate &operator=(Delegate &&) noexcept = default;
+
         Delegate(void (*function)(Args...))
             : m_Function(function)
         {
@@ -213,6 +230,7 @@ namespace NorvesLib::Core
         }
 
         template <typename F>
+        requires (!std::same_as<std::decay_t<F>, Delegate<void, Args...>>)
         Delegate(F &&functor)
             : m_Function(std::forward<F>(functor))
         {
@@ -248,6 +266,7 @@ namespace NorvesLib::Core
         }
 
         template <typename F>
+        requires (!std::same_as<std::decay_t<F>, Delegate<void, Args...>>)
         void Bind(F &&functor)
         {
             m_Function = std::forward<F>(functor);

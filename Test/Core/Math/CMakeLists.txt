@@ -20,6 +20,16 @@ target_include_directories(GeometryIntersectionExtraTest PRIVATE
 set_target_properties(GeometryIntersectionExtraTest PROPERTIES FOLDER "Test/Core/Math")
 add_test(NAME GeometryIntersectionExtraTest COMMAND GeometryIntersectionExtraTest)
 
+add_executable(GeometryContactTest
+    GeometryContactTest.cpp
+)
+target_link_libraries(GeometryContactTest PRIVATE Core)
+target_include_directories(GeometryContactTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(GeometryContactTest PROPERTIES FOLDER "Test/Core/Math")
+add_test(NAME GeometryContactTest COMMAND GeometryContactTest)
+
 add_executable(MatrixAbstractionTest
     MatrixAbstractionTest.cpp
 )
