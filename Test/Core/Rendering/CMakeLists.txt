@@ -820,6 +820,7 @@ if(NORVES_BRIDGE_SDK_DIR)
     target_link_libraries(AssetManifestReloadBridgeLoopbackTest PRIVATE
         Core
         NorvesModule_Dummy
+        NorvesModule_Physics
         norves_bridge_engine_sdk
     )
     target_compile_definitions(AssetManifestReloadBridgeLoopbackTest PRIVATE

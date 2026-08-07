@@ -30,6 +30,7 @@
 // 登録する(リンク引込も兼ねる)。フラグ無しでは一切登録せず seam は完全 no-op。
 #include "Core/Public/Module/ModuleRegistry.h"
 #include "DummyModule/DummyRenderModule.h"
+#include "Physics/IPhysicsModule.h"
 
 // モジュールシステム第2段 B-i: --imgui ゲートで ImGui モジュールを登録する。
 // 別 static lib(NorvesModule_ImGui)の自由関数を明示参照し、Core 在駐の ModuleRegistry
@@ -267,6 +268,13 @@ namespace Game
     bool GameApplicationHandler::OnPreInitialize(const VariableArray<String>& args)
     {
         LOG_INFO("GameApplicationHandler::OnPreInitialize()");
+
+        if (NorvesLib::Modules::Physics::RegisterPhysicsModule(
+                NorvesLib::Core::Module::GetModuleRegistry()) == nullptr)
+        {
+            LOG_ERROR("Physics module registration failed");
+            return false;
+        }
 
         m_M6ScriptSmokeController.Configure(args);
 
