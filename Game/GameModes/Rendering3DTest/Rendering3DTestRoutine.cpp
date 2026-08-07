@@ -29,6 +29,13 @@
 #include "Core/Public/Rendering/MegaGeometryPass.h"
 #include "Core/Public/Resource/GLTFAnalyzer.h"
 #include "Core/Public/Particle/ParticleSystem.h"
+#include "Core/Public/Module/ModuleRegistry.h"
+#include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
+#include "GameModes/Rendering3DTest/M9WorldSkeletal.h"
+
+#if defined(NORVES_GAME_AUDIO)
+#include "Audio/IAudioModule.h"
+#endif
 
 #include "Core/Public/Math/Matrix4x4.h"
 #include "Core/Public/Math/Quaternion.h"
@@ -54,6 +61,166 @@ namespace Math = NorvesLib::Math;
 
 namespace Game::GameModes
 {
+    namespace
+    {
+        void FailM9WorldSmoke(GameModeContext& ctx, const char* reason)
+        {
+            LOG_ERROR("M9_WORLD_SMOKE stage=failure reason=%s", reason);
+#if defined(NORVES_GAME_AUDIO)
+            EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=failure reason=%s", reason);
+#endif
+            ctx.EngineRef.RequestExit(1);
+        }
+
+        void CleanupM9WorldAcceptance(GameModeContext& ctx, Rendering3DTestData& data)
+        {
+            auto& inputRouter = ctx.EngineRef.GetInputRouter();
+            inputRouter.UnregisterController(&data.m_CameraController);
+            inputRouter.UnregisterController(&data.m_PickingController);
+            inputRouter.UnregisterController(&data.m_LightController);
+            inputRouter.UnregisterController(&data.m_DebugInput);
+
+#if defined(NORVES_GAME_AUDIO)
+            if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested)
+            {
+                auto* audioModule = NorvesLib::Modules::Audio::FindAudioModule(
+                    NorvesLib::Core::Module::GetModuleRegistry());
+                if (audioModule != nullptr)
+                {
+                    auto& audio = audioModule->GetAudioService();
+                    (void)audio.Shutdown();
+                }
+            }
+#endif
+
+            if (!data.m_F11ImpostorComponents.empty())
+            {
+                ctx.EngineRef.GetRenderWorld().WaitForRender();
+                for (uint32_t index = 0; index < data.m_F11ImpostorComponents.size(); ++index)
+                {
+                    auto* impostorComponent = data.m_F11ImpostorComponents[index];
+                    if (impostorComponent)
+                    {
+                        impostorComponent->ReleaseBakedAtlas(ctx.RenderResourcesRef.Textures());
+                        if (index < data.m_F11ImpostorSmokeAtlasHandles.size())
+                        {
+                            data.m_F11ImpostorSmokeAtlasHandles[index] = TextureHandle::Invalid();
+                        }
+                    }
+                }
+            }
+            for (TextureHandle atlasHandle : data.m_F11ImpostorSmokeAtlasHandles)
+            {
+                if (atlasHandle.IsValid())
+                {
+                    ctx.RenderResourcesRef.Textures().ReleaseTexture(atlasHandle);
+                }
+            }
+            data.m_F11ImpostorSmokeAtlasHandles.clear();
+
+            if (data.m_F6AtlasTextureHandle.IsValid())
+            {
+                ctx.RenderResourcesRef.Textures().ReleaseTexture(data.m_F6AtlasTextureHandle);
+                data.m_F6AtlasTextureHandle = TextureHandle::Invalid();
+            }
+
+            data.m_pM9SkinnedObject = nullptr;
+            data.m_pM9SkinnedMeshComponent = nullptr;
+            if (data.m_M9WorldAcceptance)
+            {
+                data.m_M9WorldAcceptance->SkeletalAsset.reset();
+#if defined(NORVES_GAME_AUDIO)
+                data.m_M9WorldAcceptance->EffectClip.reset();
+                data.m_M9WorldAcceptance->LoopClip.reset();
+#endif
+                data.m_M9WorldAcceptance->bAssetsReady = false;
+            }
+#if defined(NORVES_GAME_AUDIO)
+            data.m_M9EffectVoice = {};
+            data.m_M9LoopVoice = {};
+            data.m_bM9AudioStarted = false;
+            data.m_bM9AudioStopIssued = false;
+#endif
+            data.m_M9FirstCapture = {};
+            data.m_M9NegativeCapture = {};
+            data.m_M9SecondCapture = {};
+            data.m_M9T0PoseFingerprint = 0;
+            data.m_M9T1PoseFingerprint = 0;
+            data.m_M9StatsHistory.clear();
+            data.m_M9TickCount = 0;
+            data.m_M9CapturePhase = 0;
+            data.m_M9StatsWaitTicks = 0;
+            data.m_bM9NegativeCaptureRequested = false;
+            data.m_bM9VisualComplete = false;
+            data.m_bM9AudioComplete = false;
+            data.m_bM9Completed = false;
+        }
+
+        bool EvaluateM9PixelDelta(const NorvesLib::Core::Rendering::CapturedFrame& first,
+                                  const NorvesLib::Core::Rendering::CapturedFrame& second,
+                                  uint32_t& outChangedPixels,
+                                  float& outCentroidX,
+                                  float& outCentroidY,
+                                  uint32_t& outWidth,
+                                  uint32_t& outHeight)
+        {
+            outChangedPixels = 0;
+            outCentroidX = 0.0f;
+            outCentroidY = 0.0f;
+            outWidth = 0;
+            outHeight = 0;
+            if (!first.IsSuccess() || !second.IsSuccess() || first.Width != second.Width ||
+                first.Height != second.Height || first.BytesPerPixel == 0 ||
+                first.BytesPerPixel != second.BytesPerPixel || first.RowPitchBytes != second.RowPitchBytes)
+            {
+                return false;
+            }
+
+            uint32_t minX = first.Width;
+            uint32_t minY = first.Height;
+            uint32_t maxX = 0;
+            uint32_t maxY = 0;
+            uint64_t totalX = 0;
+            uint64_t totalY = 0;
+            for (uint32_t y = 0; y < first.Height; ++y)
+            {
+                for (uint32_t x = 0; x < first.Width; ++x)
+                {
+                    const size_t pixelOffset = static_cast<size_t>(y) * first.RowPitchBytes +
+                                               static_cast<size_t>(x) * first.BytesPerPixel;
+                    bool bDifferent = false;
+                    for (uint32_t channel = 0; channel < first.BytesPerPixel; ++channel)
+                    {
+                        if (first.Pixels[pixelOffset + channel] != second.Pixels[pixelOffset + channel])
+                        {
+                            bDifferent = true;
+                            break;
+                        }
+                    }
+                    if (!bDifferent)
+                    {
+                        continue;
+                    }
+                    ++outChangedPixels;
+                    totalX += x;
+                    totalY += y;
+                    minX = x < minX ? x : minX;
+                    minY = y < minY ? y : minY;
+                    maxX = x > maxX ? x : maxX;
+                    maxY = y > maxY ? y : maxY;
+                }
+            }
+            if (outChangedPixels == 0)
+            {
+                return true;
+            }
+            outCentroidX = static_cast<float>(totalX) / static_cast<float>(outChangedPixels);
+            outCentroidY = static_cast<float>(totalY) / static_cast<float>(outChangedPixels);
+            outWidth = maxX - minX + 1;
+            outHeight = maxY - minY + 1;
+            return outWidth > 0 && outHeight > 0;
+        }
+    } // namespace
 
     GameModeEnterResult Rendering3DTestRoutine::Enter(GameModeContext &ctx, Rendering3DTestData &data)
     {
@@ -80,18 +247,21 @@ namespace Game::GameModes
         }
 #endif
 
-        NorvesLib::Core::Particle::ParticleEmitterDesc particleDesc;
-        particleDesc.Position = Math::Vector3(96.0f, 72.0f, 0.0f);
-        particleDesc.VelocityMin = Math::Vector3(-16.0f, -28.0f, 0.0f);
-        particleDesc.VelocityMax = Math::Vector3(16.0f, -12.0f, 0.0f);
-        particleDesc.Gravity = Math::Vector3(0.0f, 16.0f, 0.0f);
-        particleDesc.SpawnRate = 12.0f;
-        particleDesc.Lifetime = 1.5f;
-        particleDesc.MaxCount = 24u;
-        particleDesc.Color = Math::Vector4(1.0f, 0.45f, 0.1f, 0.85f);
-        particleDesc.SizePx = Math::Vector2(14.0f, 14.0f);
-        data.m_ParticleEmitter = ctx.EngineRef.GetParticleSystem().CreateEmitter(particleDesc);
-        LOG_INFO("Rendering3DTest particle emitter created valid=%d", data.m_ParticleEmitter.IsValid());
+        if (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested)
+        {
+            NorvesLib::Core::Particle::ParticleEmitterDesc particleDesc;
+            particleDesc.Position = Math::Vector3(96.0f, 72.0f, 0.0f);
+            particleDesc.VelocityMin = Math::Vector3(-16.0f, -28.0f, 0.0f);
+            particleDesc.VelocityMax = Math::Vector3(16.0f, -12.0f, 0.0f);
+            particleDesc.Gravity = Math::Vector3(0.0f, 16.0f, 0.0f);
+            particleDesc.SpawnRate = 12.0f;
+            particleDesc.Lifetime = 1.5f;
+            particleDesc.MaxCount = 24u;
+            particleDesc.Color = Math::Vector4(1.0f, 0.45f, 0.1f, 0.85f);
+            particleDesc.SizePx = Math::Vector2(14.0f, 14.0f);
+            data.m_ParticleEmitter = ctx.EngineRef.GetParticleSystem().CreateEmitter(particleDesc);
+            LOG_INFO("Rendering3DTest particle emitter created valid=%d", data.m_ParticleEmitter.IsValid());
+        }
 
         // ========================================
         // カメラコントローラーの初期化（シーン所有）
@@ -927,6 +1097,7 @@ namespace Game::GameModes
         // ========================================
         // 3. glTFモデルのロード
         // ========================================
+        if (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested)
         {
             auto& world = ctx.WorldRef;
             auto &renderResources = ctx.RenderResourcesRef;
@@ -991,6 +1162,39 @@ namespace Game::GameModes
             }
         }
 
+#if defined(NORVES_GAME_AUDIO)
+        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested)
+        {
+            if (!InitializeM9WorldSkeletal(ctx, data))
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "skeletal_assets_not_ready");
+                return GameModeEnterResult::Failed;
+            }
+            auto* audioModule = NorvesLib::Modules::Audio::FindAudioModule(
+                NorvesLib::Core::Module::GetModuleRegistry());
+            if (audioModule == nullptr || !data.m_M9WorldAcceptance->EffectClip || !data.m_M9WorldAcceptance->LoopClip)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "xaudio2_module_or_clip_unavailable");
+                return GameModeEnterResult::Failed;
+            }
+            auto& audio = audioModule->GetAudioService();
+            if (audio.CreateVoice(data.m_M9WorldAcceptance->EffectClip, data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
+                audio.CreateVoice(data.m_M9WorldAcceptance->LoopClip, data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
+                audio.StartVoice(data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
+                audio.StartVoice(data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "xaudio2_play_failed");
+                return GameModeEnterResult::Failed;
+            }
+            data.m_bM9AudioStarted = true;
+            LOG_INFO("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
+            EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
+        }
+#endif
+
         return GameModeEnterResult::Succeeded;
     }
 
@@ -1038,6 +1242,229 @@ namespace Game::GameModes
         data.m_PickingController.DrawSelection();
 
         data.m_ElapsedTime += deltaTime;
+
+#if defined(NORVES_GAME_AUDIO)
+        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested && !data.m_bM9Completed)
+        {
+            ++data.m_M9TickCount;
+            auto& renderWorld = ctx.EngineRef.GetRenderWorld();
+            const RenderingCoordinatorStatsSnapshot statsSnapshot =
+                renderWorld.GetRenderingCoordinator().GetStatsSnapshot();
+            if (statsSnapshot.bRenderFrameCompleted && statsSnapshot.Stats.FrameNumber != 0 &&
+                (data.m_M9StatsHistory.empty() ||
+                 data.m_M9StatsHistory.back().Stats.FrameNumber != statsSnapshot.Stats.FrameNumber))
+            {
+                if (data.m_M9StatsHistory.size() == 8)
+                {
+                    data.m_M9StatsHistory.erase(data.m_M9StatsHistory.begin());
+                }
+                data.m_M9StatsHistory.push_back(statsSnapshot);
+            }
+            if (data.m_M9CapturePhase == 0)
+            {
+                if (!renderWorld.RequestFrameCapture().IsAccepted())
+                {
+                    FailM9WorldSmoke(ctx, "t0_capture_request_rejected");
+                    return;
+                }
+                data.m_M9CapturePhase = 1;
+            }
+            else if (data.m_M9CapturePhase == 1)
+            {
+                NorvesLib::Core::Rendering::CapturedFrame frame;
+                if (renderWorld.TryConsumeCapturedFrame(frame))
+                {
+                    if (!frame.IsSuccess())
+                    {
+                        FailM9WorldSmoke(ctx, data.m_bM9NegativeCaptureRequested ? "negative_capture_failed" : "t0_capture_failed");
+                        return;
+                    }
+                    if (!data.m_bM9NegativeCaptureRequested)
+                    {
+                        data.m_M9FirstCapture = std::move(frame);
+                        if (!BuildM9WorldSkeletalPoseFingerprint(data, data.m_M9T0PoseFingerprint))
+                        {
+                            FailM9WorldSmoke(ctx, "t0_pose_fingerprint_unavailable");
+                            return;
+                        }
+                        if (!renderWorld.RequestFrameCapture().IsAccepted())
+                        {
+                            FailM9WorldSmoke(ctx, "negative_capture_request_rejected");
+                            return;
+                        }
+                        data.m_bM9NegativeCaptureRequested = true;
+                    }
+                    else
+                    {
+                        data.m_M9NegativeCapture = std::move(frame);
+                        uint32_t negativeChangedPixels = 0;
+                        uint32_t unusedWidth = 0;
+                        uint32_t unusedHeight = 0;
+                        float unusedCentroidX = 0.0f;
+                        float unusedCentroidY = 0.0f;
+                        if (!EvaluateM9PixelDelta(data.m_M9FirstCapture, data.m_M9NegativeCapture,
+                                                  negativeChangedPixels, unusedCentroidX, unusedCentroidY,
+                                                  unusedWidth, unusedHeight) || negativeChangedPixels > 32)
+                        {
+                            FailM9WorldSmoke(ctx, "negative_control_pixel_delta");
+                            return;
+                        }
+                        SetM9WorldSkeletalAnimationTime(data, 1.0f);
+                        if (!BuildM9WorldSkeletalPoseFingerprint(data, data.m_M9T1PoseFingerprint))
+                        {
+                            FailM9WorldSmoke(ctx, "t1_pose_fingerprint_unavailable");
+                            return;
+                        }
+                        if (data.m_M9T0PoseFingerprint == data.m_M9T1PoseFingerprint)
+                        {
+                            FailM9WorldSmoke(ctx, "pose_time_noop");
+                            return;
+                        }
+                        if (!renderWorld.RequestFrameCapture().IsAccepted())
+                        {
+                            FailM9WorldSmoke(ctx, "t1_capture_request_rejected");
+                            return;
+                        }
+                        data.m_M9CapturePhase = 2;
+                    }
+                }
+            }
+            else if (data.m_M9CapturePhase == 2)
+            {
+                if (!data.m_M9SecondCapture.IsSuccess())
+                {
+                    NorvesLib::Core::Rendering::CapturedFrame frame;
+                    if (renderWorld.TryConsumeCapturedFrame(frame))
+                    {
+                        if (!frame.IsSuccess())
+                        {
+                            FailM9WorldSmoke(ctx, "t1_capture_failed");
+                            return;
+                        }
+                        data.m_M9SecondCapture = std::move(frame);
+                        data.m_M9StatsWaitTicks = 0;
+                    }
+                }
+
+                if (data.m_M9SecondCapture.IsSuccess())
+                {
+                    const RenderingCoordinatorStatsSnapshot* matchingStats = nullptr;
+                    for (const RenderingCoordinatorStatsSnapshot& candidate : data.m_M9StatsHistory)
+                    {
+                        if (candidate.Stats.FrameNumber == data.m_M9SecondCapture.FrameNumber)
+                        {
+                            matchingStats = &candidate;
+                            break;
+                        }
+                    }
+                    if (matchingStats == nullptr)
+                    {
+                        if (++data.m_M9StatsWaitTicks > 16)
+                        {
+                            FailM9WorldSmoke(ctx, "t1_stats_frame_unmatched");
+                        }
+                        return;
+                    }
+
+                    uint32_t changedPixels = 0;
+                    uint32_t bboxWidth = 0;
+                    uint32_t bboxHeight = 0;
+                    float centroidX = 0.0f;
+                    float centroidY = 0.0f;
+                    uint32_t negativeChangedPixels = 0;
+                    uint32_t unusedWidth = 0;
+                    uint32_t unusedHeight = 0;
+                    float unusedCentroidX = 0.0f;
+                    float unusedCentroidY = 0.0f;
+                    if (!EvaluateM9PixelDelta(data.m_M9FirstCapture, data.m_M9SecondCapture,
+                                              changedPixels, centroidX, centroidY, bboxWidth, bboxHeight) ||
+                        changedPixels == 0 ||
+                        !EvaluateM9PixelDelta(data.m_M9FirstCapture, data.m_M9NegativeCapture,
+                                              negativeChangedPixels, unusedCentroidX, unusedCentroidY,
+                                              unusedWidth, unusedHeight) ||
+                        negativeChangedPixels > 32 ||
+                        data.m_M9T0PoseFingerprint == data.m_M9T1PoseFingerprint ||
+                        matchingStats->SkinnedGBufferRecordedDraws == 0 ||
+                        matchingStats->SkinnedShadowRecordedDraws == 0)
+                    {
+                        FailM9WorldSmoke(ctx, "pixel_or_skinned_submit_validation");
+                        return;
+                    }
+                    data.m_bM9VisualComplete = true;
+                    data.m_M9CapturePhase = 3;
+                    LOG_INFO("M9_WORLD_SMOKE stage=visual t0_frame=%llu t1_frame=%llu stats_frame=%llu changed_pixels=%u negative_changed_pixels=%u pose_changed=1 bbox_width=%u bbox_height=%u centroid_x=%f centroid_y=%f gbuffer=%u shadow=%u",
+                             static_cast<unsigned long long>(data.m_M9FirstCapture.FrameNumber),
+                             static_cast<unsigned long long>(data.m_M9SecondCapture.FrameNumber),
+                             static_cast<unsigned long long>(matchingStats->Stats.FrameNumber), changedPixels,
+                             negativeChangedPixels, bboxWidth, bboxHeight, centroidX, centroidY,
+                             matchingStats->SkinnedGBufferRecordedDraws,
+                             matchingStats->SkinnedShadowRecordedDraws);
+                    EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=visual t0_frame=%llu t1_frame=%llu stats_frame=%llu changed_pixels=%u negative_changed_pixels=%u pose_changed=1 bbox_width=%u bbox_height=%u centroid_x=%f centroid_y=%f gbuffer=%u shadow=%u",
+                                           static_cast<unsigned long long>(data.m_M9FirstCapture.FrameNumber),
+                                           static_cast<unsigned long long>(data.m_M9SecondCapture.FrameNumber),
+                                           static_cast<unsigned long long>(matchingStats->Stats.FrameNumber), changedPixels,
+                                           negativeChangedPixels, bboxWidth, bboxHeight, centroidX, centroidY,
+                                           matchingStats->SkinnedGBufferRecordedDraws,
+                                           matchingStats->SkinnedShadowRecordedDraws);
+                }
+            }
+
+            auto* audioModule = NorvesLib::Modules::Audio::FindAudioModule(
+                NorvesLib::Core::Module::GetModuleRegistry());
+            if (audioModule == nullptr)
+            {
+                FailM9WorldSmoke(ctx, "xaudio2_module_lost");
+                return;
+            }
+            auto& audio = audioModule->GetAudioService();
+            if (data.m_bM9AudioStarted && !data.m_bM9AudioStopIssued && data.m_M9TickCount >= 4)
+            {
+                if (audio.StopVoice(data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
+                    audio.StopVoice(data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success)
+                {
+                    FailM9WorldSmoke(ctx, "xaudio2_stop_failed");
+                    return;
+                }
+                data.m_bM9AudioStopIssued = true;
+            }
+            if (data.m_bM9AudioStopIssued && !data.m_bM9AudioComplete)
+            {
+                NorvesLib::Modules::Audio::AudioVoiceState effectState;
+                NorvesLib::Modules::Audio::AudioVoiceState loopState;
+                if (audio.GetVoiceState(data.m_M9EffectVoice, effectState) == NorvesLib::Modules::Audio::AudioResult::Success &&
+                    audio.GetVoiceState(data.m_M9LoopVoice, loopState) == NorvesLib::Modules::Audio::AudioResult::Success &&
+                    effectState == NorvesLib::Modules::Audio::AudioVoiceState::Drained &&
+                    loopState == NorvesLib::Modules::Audio::AudioVoiceState::Drained)
+                {
+                    if (audio.DestroyVoice(data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
+                        audio.DestroyVoice(data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
+                        audio.Shutdown() != NorvesLib::Modules::Audio::AudioResult::Success)
+                    {
+                        FailM9WorldSmoke(ctx, "xaudio2_destroy_or_shutdown_failed");
+                        return;
+                    }
+                    const auto diagnostics = audio.GetDiagnostics();
+                    if (diagnostics.ActiveVoiceCount != 0 || diagnostics.PendingEventCount != 0 ||
+                        diagnostics.InFlightCallbackCount != 0)
+                    {
+                        FailM9WorldSmoke(ctx, "xaudio2_shutdown_not_drained");
+                        return;
+                    }
+                    data.m_bM9AudioComplete = true;
+                    LOG_INFO("M9_WORLD_SMOKE stage=audio effect_play=1 effect_stop=1 effect_callback=1 loop_play=1 loop_stop=1 loop_callback=1 voices=0 callbacks=0 shutdown_complete=1");
+                    EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=audio effect_play=1 effect_stop=1 effect_callback=1 loop_play=1 loop_stop=1 loop_callback=1 voices=0 callbacks=0 shutdown_complete=1");
+                }
+            }
+
+            if (data.m_bM9VisualComplete && data.m_bM9AudioComplete)
+            {
+                data.m_bM9Completed = true;
+                LOG_INFO("M9_WORLD_SMOKE stage=complete exit_code=0");
+                EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=complete exit_code=0");
+                ctx.EngineRef.RequestExit(0);
+            }
+        }
+#endif
 
         if (data.m_BoulderAsyncState &&
             data.m_BoulderAsyncState->m_bCompleted.Load() &&
@@ -1100,7 +1527,7 @@ namespace Game::GameModes
         }
 
         // 球体をY軸回転させる
-        if (data.m_pSphereObject)
+        if (data.m_pSphereObject && (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested))
         {
             float angle = data.m_ElapsedTime * data.m_RotationSpeed;
             NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
@@ -1123,12 +1550,9 @@ namespace Game::GameModes
         LOG_INFO("3Dレンダリングテスト終了");
         LOG_INFO("=================================================");
 
-        // 入力ルーター登録を解除する（借用ポインタの寿命管理）。以降イベントが
-        // 来てもカメラ/ライト/デバッグ各コントローラへは配送されない。
-        ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_CameraController);
-        ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_PickingController);
-        ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_LightController);
-        ctx.EngineRef.GetInputRouter().UnregisterController(&data.m_DebugInput);
+        // failed Enter と通常 Leave が同じ冪等cleanupを使い、借用登録・module service・
+        // Scope外texture・M9 snapshot memberを先に閉じる。
+        CleanupM9WorldAcceptance(ctx, data);
 
         // 1) 非同期ロードの後始末（World/RenderResources 生存中に行う）。
         //    GameModeScope::Cleanup は Leave 直後に呼ばれるため、ここでは
@@ -1169,38 +1593,6 @@ namespace Game::GameModes
         //    boulder の各オブジェクト・3 メッシュ・boulder モデル）の解放は
         //    GameModeScope::Cleanup（Leave 直後に StateMachine が呼ぶ）が
         //    正しい順序で行う。ここでは手動解放しない。
-        if (!data.m_F11ImpostorComponents.empty())
-        {
-            ctx.EngineRef.GetRenderWorld().WaitForRender();
-            for (uint32_t index = 0; index < data.m_F11ImpostorComponents.size(); ++index)
-            {
-                auto *impostorComponent = data.m_F11ImpostorComponents[index];
-                if (impostorComponent)
-                {
-                    impostorComponent->ReleaseBakedAtlas(ctx.RenderResourcesRef.Textures());
-                    if (index < data.m_F11ImpostorSmokeAtlasHandles.size())
-                    {
-                        data.m_F11ImpostorSmokeAtlasHandles[index] = TextureHandle::Invalid();
-                    }
-                }
-            }
-        }
-
-        for (TextureHandle atlasHandle : data.m_F11ImpostorSmokeAtlasHandles)
-        {
-            if (atlasHandle.IsValid())
-            {
-                ctx.RenderResourcesRef.Textures().ReleaseTexture(atlasHandle);
-            }
-        }
-        data.m_F11ImpostorSmokeAtlasHandles.clear();
-
-        if (data.m_F6AtlasTextureHandle.IsValid())
-        {
-            ctx.RenderResourcesRef.Textures().ReleaseTexture(data.m_F6AtlasTextureHandle);
-            data.m_F6AtlasTextureHandle = TextureHandle::Invalid();
-        }
-
         // 3) 再 Enter（Change 往復）に備えてキャッシュをクリアする。
         //    スコープは独自の追跡リストを使うため、ここでの null 化は安全。
         data.m_pSphereObject = nullptr;

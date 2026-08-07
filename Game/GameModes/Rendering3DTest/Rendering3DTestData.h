@@ -14,6 +14,13 @@
 #include "Core/Public/Thread/Mutex.h"
 #include "Core/Public/Particle/ParticleSystem.h"
 #include "GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.h"
+#include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
+#include "Core/Public/Rendering/FrameCaptureTypes.h"
+#include "Core/Public/Rendering/RenderingCoordinator.h"
+
+#if defined(NORVES_GAME_AUDIO)
+#include "Audio/AudioTypes.h"
+#endif
 
 namespace NorvesLib::Core
 {
@@ -24,6 +31,7 @@ namespace NorvesLib::Core
         class BillboardComponent;
         class ImpostorComponent;
         class MegaGeometryComponent;
+        class SkinnedMeshComponent;
         class LightComponent;
         class PointLightComponent;
     } // namespace Component
@@ -145,6 +153,28 @@ namespace Game::GameModes
         bool m_bLayerCompositeSmoke = false;
         bool m_bPhysicsSmoke = false;
         M8MinimalPhysicsSmoke m_M8MinimalPhysicsSmoke;
+        TSharedPtr<M9WorldAcceptanceConfig> m_M9WorldAcceptance;
+        NorvesLib::Core::Entity *m_pM9SkinnedObject = nullptr;
+        NorvesLib::Core::Component::SkinnedMeshComponent *m_pM9SkinnedMeshComponent = nullptr;
+        uint32_t m_M9TickCount = 0;
+        uint32_t m_M9CapturePhase = 0;
+        uint32_t m_M9StatsWaitTicks = 0;
+        bool m_bM9NegativeCaptureRequested = false;
+        bool m_bM9VisualComplete = false;
+        bool m_bM9AudioComplete = false;
+        bool m_bM9Completed = false;
+        NorvesLib::Core::Rendering::CapturedFrame m_M9FirstCapture;
+        NorvesLib::Core::Rendering::CapturedFrame m_M9NegativeCapture;
+        NorvesLib::Core::Rendering::CapturedFrame m_M9SecondCapture;
+        uint64_t m_M9T0PoseFingerprint = 0;
+        uint64_t m_M9T1PoseFingerprint = 0;
+        VariableArray<NorvesLib::Core::Rendering::RenderingCoordinatorStatsSnapshot> m_M9StatsHistory;
+#if defined(NORVES_GAME_AUDIO)
+        NorvesLib::Modules::Audio::VoiceHandle m_M9EffectVoice;
+        NorvesLib::Modules::Audio::VoiceHandle m_M9LoopVoice;
+        bool m_bM9AudioStarted = false;
+        bool m_bM9AudioStopIssued = false;
+#endif
         VariableArray<NorvesLib::Core::Rendering::TextureHandle> m_F11ImpostorSmokeAtlasHandles;
         NorvesLib::Core::Rendering::ModelHandle m_BoulderModelHandle;
         uint32_t m_BoulderLoadRequestId = 0;
