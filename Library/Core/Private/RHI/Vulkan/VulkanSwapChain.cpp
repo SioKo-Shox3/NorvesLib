@@ -2,6 +2,7 @@
 #include "VulkanDevice.h"
 #include "VulkanTexture.h"
 #include "VulkanCommandList.h"
+#include "RHI/SubmissionSerialAllocator.h"
 #include <stdexcept>
 #include <algorithm>
 #include "Container/Containers.h"
@@ -141,6 +142,8 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (width == 0 || height == 0)
         {
+            m_width = width;
+            m_height = height;
             return; // ウィンドウが最小化されている場合は何もしない
         }
 
@@ -166,17 +169,35 @@ namespace NorvesLib::RHI::Vulkan
     }
 
     // フレーム開始（フェンス待機＋イメージ取得）
-    bool VulkanSwapChain::BeginFrame()
+    SwapChainBeginFrameStatus VulkanSwapChain::BeginFrame()
     {
+        const bool bHasFrameSync =
+            m_currentFrame < m_inFlightFences.size() &&
+            m_currentFrame < m_imageAvailableSemaphores.size() &&
+            m_currentFrame < m_renderFinishedSemaphores.size() &&
+            m_currentFrame < m_frameSlotSubmissionSerials.size();
+        if (!Detail::IsAcquireStateReady(m_width,
+                                         m_height,
+                                         m_device && static_cast<bool>(m_swapChain),
+                                         bHasFrameSync))
+        {
+            return SwapChainBeginFrameStatus::NotReady;
+        }
+
         // 現在のフレームのフェンスが完了するまで待機
         auto waitResult = m_device->GetVkDevice().waitForFences(
             m_inFlightFences[m_currentFrame],
             VK_TRUE,
             UINT64_MAX);
 
-        if (waitResult != vk::Result::eSuccess)
+        const SwapChainBeginFrameStatus fenceStatus = Detail::ClassifyFenceWaitResult(waitResult);
+        if (fenceStatus != SwapChainBeginFrameStatus::Success)
         {
-            return false;
+            return fenceStatus;
+        }
+        if (m_frameSlotSubmissionSerials[m_currentFrame] > m_completedSubmissionSerial)
+        {
+            m_completedSubmissionSerial = m_frameSlotSubmissionSerials[m_currentFrame];
         }
 
         // 次の画像を取得
@@ -186,35 +207,41 @@ namespace NorvesLib::RHI::Vulkan
             m_imageAvailableSemaphores[m_currentFrame],
             nullptr);
 
-        // スワップチェーンの再作成が必要な場合
-        if (acquireResult.result == vk::Result::eErrorOutOfDateKHR)
+        const SwapChainBeginFrameStatus acquireStatus = Detail::ClassifyAcquireResult(acquireResult.result);
+        if (acquireStatus == SwapChainBeginFrameStatus::OutOfDate)
         {
             Resize(m_width, m_height);
-            return false;
+            return acquireStatus;
         }
-        else if (acquireResult.result != vk::Result::eSuccess && acquireResult.result != vk::Result::eSuboptimalKHR)
+        if (acquireStatus != SwapChainBeginFrameStatus::Success)
         {
-            return false;
+            return acquireStatus;
         }
 
         m_currentImageIndex = acquireResult.value;
 
-        // フェンスをリセット（イメージ取得成功後にリセット）
-        m_device->GetVkDevice().resetFences(m_inFlightFences[m_currentFrame]);
-
-        return true;
+        return SwapChainBeginFrameStatus::Success;
     }
 
     // フレーム終了（セマフォ同期付きサブミット＋プレゼント）
-    void VulkanSwapChain::EndFrame(CommandListPtr commandList)
+    SwapChainEndFrameResult VulkanSwapChain::EndFrame(CommandListPtr commandList)
     {
+        SwapChainEndFrameResult result;
         auto vulkanCmdList = DynamicPointerCast<VulkanCommandList>(commandList);
         if (!vulkanCmdList)
         {
-            return;
+            result.Status = SwapChainEndFrameStatus::InvalidCommandList;
+            return result;
         }
 
         vk::CommandBuffer cmdBuffer = vulkanCmdList->GetVkCommandBuffer();
+
+        uint64_t submittedSerial = 0;
+        if (!RHI::Detail::TryAllocateSubmissionSerial(m_nextSubmissionSerial, submittedSerial))
+        {
+            result.Status = SwapChainEndFrameStatus::SubmissionSerialExhausted;
+            return result;
+        }
 
         // セマフォ同期付きでサブミット
         vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -227,11 +254,23 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
 
+        const auto resetResult = m_device->GetVkDevice().resetFences(m_inFlightFences[m_currentFrame]);
+        if (resetResult != vk::Result::eSuccess)
+        {
+            result.Status = SwapChainEndFrameStatus::FenceResetFailed;
+            return result;
+        }
+
         auto submitResult = m_device->GetGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
         if (submitResult != vk::Result::eSuccess)
         {
-            throw std::runtime_error("コマンドバッファのサブミットに失敗しました");
+            // reset済みfenceは未signalのため、このswapchainでの継続利用はfatal扱い。
+            result.Status = SwapChainEndFrameStatus::SubmitFailed;
+            return result;
         }
+        m_nextSubmissionSerial = submittedSerial;
+        m_frameSlotSubmissionSerials[m_currentFrame] = submittedSerial;
+        result.SubmissionSerial = submittedSerial;
 
         // プレゼント
         vk::PresentInfoKHR presentInfo = {};
@@ -249,11 +288,14 @@ namespace NorvesLib::RHI::Vulkan
         }
         else if (presentResult != vk::Result::eSuccess)
         {
-            throw std::runtime_error("画像のプレゼントに失敗しました");
+            result.Status = SwapChainEndFrameStatus::PresentationFailed;
+            return result;
         }
 
         // 次のフレームに進む
         m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+        result.Status = SwapChainEndFrameStatus::Success;
+        return result;
     }
 
     // サーフェスの作成
@@ -394,6 +436,7 @@ namespace NorvesLib::RHI::Vulkan
         m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+        m_frameSlotSubmissionSerials.resize(MAX_FRAMES_IN_FLIGHT, 0);
 
         vk::SemaphoreCreateInfo semaphoreInfo = {};
 

@@ -40,6 +40,8 @@ namespace NorvesLib::Core::Rendering
         Debug::RenderingStats GameThreadStats;
         uint32_t VisibleObjects = 0;
         uint32_t BatchCount = 0;
+        uint32_t SkinnedGBufferRecordedDraws = 0;
+        uint32_t SkinnedShadowRecordedDraws = 0;
         uint32_t InstancedDrawCalls = 0;
         uint32_t SavedDrawCalls = 0;
         float CullingTimeMs = 0.0f;
@@ -88,6 +90,9 @@ namespace NorvesLib::Core::Rendering
         CommandRange TransparentCommandRange;
 
         /** @brief DrawCommandから参照するGPUシーンインスタンスデータ */
+        /** @brief skinned drawが参照するFramePacket所有のmesh asset lease */
+        Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedMeshFrameLeases;
+
         Container::VariableArray<GPUSceneInstanceData> InstanceData;
 
         /** @brief デバッグライン頂点スナップショット（GameThreadで生成、RenderThreadで読み取り専用） */
@@ -142,6 +147,7 @@ namespace NorvesLib::Core::Rendering
             DrawCommands.clear();
             DrawCommandRange = CommandRange{};
             OpaqueCommandRange = CommandRange{};
+            SkinnedMeshFrameLeases.clear();
             TransparentCommandRange = CommandRange{};
             InstanceData.clear();
             DebugLineVertices.clear();

@@ -2,6 +2,7 @@
 #include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ProceduralMeshGenerator.h"
@@ -64,6 +65,13 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_SkinnedShadowVertexShader =
+            context.ShaderMgr->LoadShader("skinned_shadow.vert", RHI::ShaderStage::Vertex);
+        if (!m_SkinnedShadowVertexShader)
+        {
+            NORVES_LOG_ERROR("ShadowMapPass", "Failed to create skinned shadow vertex shader");
+            return false;
+        }
         m_ShadowFragmentShader = context.ShaderMgr->LoadShader("shadow.frag", RHI::ShaderStage::Pixel);
         if (!m_ShadowFragmentShader)
         {
@@ -144,6 +152,14 @@ namespace NorvesLib::Core::Rendering
             instanceBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(instanceBinding);
 
+            for (uint32_t bindingIndex = 8; bindingIndex <= 9; ++bindingIndex)
+            {
+                RHI::DescriptorBinding storageBinding;
+                storageBinding.binding = bindingIndex;
+                storageBinding.type = RHI::ResourceBindType::StructuredBuffer;
+                storageBinding.stages = RHI::ShaderStage::Vertex;
+                uboDescSetDesc.bindings.push_back(storageBinding);
+            }
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
                 NORVES_LOG_ERROR("ShadowMapPass", "Failed to initialize DynamicUniformAllocator");
@@ -210,6 +226,15 @@ namespace NorvesLib::Core::Rendering
         instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
         instanceBinding.stages = RHI::ShaderStage::Vertex;
         dsDesc.bindings.push_back(instanceBinding);
+
+        for (uint32_t bindingIndex = 8; bindingIndex <= 9; ++bindingIndex)
+        {
+            RHI::DescriptorBinding storageBinding;
+            storageBinding.binding = bindingIndex;
+            storageBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            storageBinding.stages = RHI::ShaderStage::Vertex;
+            dsDesc.bindings.push_back(storageBinding);
+        }
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         m_ShadowPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
@@ -219,6 +244,30 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        RHI::GraphicsPipelineDesc skinnedPipelineDesc = pipelineDesc;
+        skinnedPipelineDesc.vertexShader = m_SkinnedShadowVertexShader;
+        skinnedPipelineDesc.vertexBindings.clear();
+        skinnedPipelineDesc.vertexAttributes.clear();
+
+        RHI::VertexBindingDesc skinnedVertexBinding;
+        skinnedVertexBinding.binding = 0;
+        skinnedVertexBinding.stride = sizeof(SkinnedMeshVertex);
+        skinnedVertexBinding.inputRate = RHI::VertexInputRate::Vertex;
+        skinnedPipelineDesc.vertexBindings.push_back(skinnedVertexBinding);
+
+        RHI::VertexAttributeDesc skinnedPosition;
+        skinnedPosition.location = 0;
+        skinnedPosition.binding = 0;
+        skinnedPosition.format = RHI::Format::R32G32B32_FLOAT;
+        skinnedPosition.offset = 0;
+        skinnedPipelineDesc.vertexAttributes.push_back(skinnedPosition);
+
+        m_SkinnedShadowPipeline = m_Device->CreateGraphicsPipeline(skinnedPipelineDesc);
+        if (!m_SkinnedShadowPipeline)
+        {
+            NORVES_LOG_ERROR("ShadowMapPass", "Failed to create skinned shadow pipeline");
+            return false;
+        }
         m_bInitialized = true;
         NORVES_LOG_INFO("ShadowMapPass", "ShadowMapPass initialized");
         return true;
@@ -234,7 +283,9 @@ namespace NorvesLib::Core::Rendering
         m_ShadowMapTexture.reset();
         m_ShadowMapHandle = {};
         m_ShadowRenderPass.reset();
+        m_SkinnedShadowPipeline.reset();
         m_ShadowFramebuffer.reset();
+        m_SkinnedShadowVertexShader.reset();
         m_ShadowPipeline.reset();
         m_ShadowVertexShader.reset();
         m_ShadowFragmentShader.reset();
@@ -286,7 +337,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!m_ShadowRenderPass || !m_ShadowFramebuffer || !m_ShadowPipeline)
+        if (!m_ShadowRenderPass || !m_ShadowFramebuffer ||
+            !m_ShadowPipeline || !m_SkinnedShadowPipeline)
         {
             NORVES_LOG_WARNING("ShadowMapPass", "Shadow resources not ready, skipping");
             return;
@@ -297,6 +349,7 @@ namespace NorvesLib::Core::Rendering
         const DirectionalShadowMatrixResult shadowMatrices =
             BuildFittedDirectionalShadowLightMatrices(context.SnapshotLightProxies,
                                                      context.SnapshotMeshProxies,
+                                                     context.SnapshotSkinnedMeshProxies,
                                                      context.SnapshotMegaGeometryProxies,
                                                      shadowSettings);
 
@@ -339,25 +392,16 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         const DrawCommandView drawCommands = context.GetActiveDrawCommands();
         auto *meshes = context.Resources.Meshes;
-        if (m_SceneRenderer && meshes)
+        if (m_SceneRenderer && (meshes || context.SkinnedMeshes))
         {
             if (drawCommands.empty())
             {
                 return;
             }
 
-            if (!context.InstanceDataBuffer)
-            {
-                NORVES_LOG_WARNING("ShadowMapPass", "Instance data buffer is null, skipping shadow geometry");
-                return;
-            }
-
-            const uint64_t instanceDataSize64 = context.InstanceDataBuffer->GetSize();
-            if (instanceDataSize64 == 0)
-            {
-                NORVES_LOG_WARNING("ShadowMapPass", "Instance data buffer is empty, skipping shadow geometry");
-                return;
-            }
+            const uint64_t instanceDataSize64 = context.InstanceDataBuffer
+                                                    ? context.InstanceDataBuffer->GetSize()
+                                                    : 0;
 
             const uint32_t instanceDataSize = instanceDataSize64 > 0xFFFFFFFFull
                                                   ? 0xFFFFFFFFu
@@ -383,6 +427,19 @@ namespace NorvesLib::Core::Rendering
                     continue;
                 }
 
+                DrawCommand drawCommand = cmd;
+                const bool bSkinned = cmd.Draw.PayloadKind == DrawPayloadKind::Skinned;
+                if (bSkinned)
+                {
+                    if (!TryPrepareSkinnedCommand(context, cmd, drawCommand))
+                    {
+                        continue;
+                    }
+                }
+                else if (!context.InstanceDataBuffer || instanceDataSize == 0)
+                {
+                    continue;
+                }
                 // UBOスロット確保
                 auto allocation = m_UniformAllocator.Allocate();
                 if (!allocation.UniformBuffer)
@@ -398,14 +455,32 @@ namespace NorvesLib::Core::Rendering
 
                 // UBO更新
                 allocation.UniformBuffer->Update(&uboData, sizeof(ShadowPerObjectUBO));
-                allocation.DescriptorSet->BindStorageBuffer(7,
-                                                            context.InstanceDataBuffer,
-                                                            0,
-                                                            instanceDataSize);
+                if (bSkinned)
+                {
+                    allocation.DescriptorSet->BindStorageBuffer(
+                        8,
+                        drawCommand.Skinned.Prepared.PaletteBuffer,
+                        0,
+                        static_cast<uint32_t>(drawCommand.Skinned.Prepared.PaletteBuffer->GetSize()));
+                    allocation.DescriptorSet->BindStorageBuffer(
+                        9,
+                        drawCommand.Skinned.Prepared.VertexBuffer,
+                        0,
+                        static_cast<uint32_t>(drawCommand.Skinned.Prepared.VertexBuffer->GetSize()));
+                }
+                else
+                {
+                    allocation.DescriptorSet->BindStorageBuffer(7,
+                                                                context.InstanceDataBuffer,
+                                                                0,
+                                                                instanceDataSize);
+                }
                 allocation.DescriptorSet->Update();
 
-                DrawCommand drawCommand = cmd;
-                drawCommand.Pipeline = m_ShadowPipeline;
+                if (!bSkinned)
+                {
+                    drawCommand.Pipeline = m_ShadowPipeline;
+                }
                 drawCommand.DescriptorSet = allocation.DescriptorSet;
                 drawCommand.DescriptorSetSlot = 0;
                 shadowCommands->push_back(drawCommand);
@@ -418,6 +493,40 @@ namespace NorvesLib::Core::Rendering
                                                                          scissor,
                                                                          meshes));
         }
+    }
+
+    bool ShadowMapPass::TryPrepareSkinnedCommand(
+        ViewRenderContext& context,
+        const DrawCommand& source,
+        DrawCommand& outCommand) const
+    {
+        if (source.Draw.PayloadKind != DrawPayloadKind::Skinned ||
+            source.Draw.bInstanced || source.Draw.InstanceCount != 1 ||
+            !context.SkinnedMeshes || !context.SnapshotSkinnedMeshFrameLeases ||
+            source.Skinned.FrameLeaseIndex >= context.SnapshotSkinnedMeshFrameLeases->size())
+        {
+            return false;
+        }
+
+        const auto& frameLease =
+            (*context.SnapshotSkinnedMeshFrameLeases)[source.Skinned.FrameLeaseIndex];
+        SkinnedMeshPreparedDraw prepared;
+        if (!context.SkinnedMeshes->PrepareDraw(frameLease,
+                                                source.Skinned.BonePalette,
+                                                source.Draw.WorldMatrix,
+                                                prepared))
+        {
+            return false;
+        }
+
+        outCommand = source;
+        outCommand.Draw.InstanceCount = 1;
+        outCommand.Draw.bInstanced = false;
+        outCommand.Skinned.PassKind = SkinnedMeshPassKind::Shadow;
+        outCommand.Skinned.FrameLease = frameLease;
+        outCommand.Skinned.Prepared = prepared;
+        outCommand.Pipeline = m_SkinnedShadowPipeline;
+        return true;
     }
 
 } // namespace NorvesLib::Core::Rendering

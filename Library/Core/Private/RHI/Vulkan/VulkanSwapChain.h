@@ -24,6 +24,41 @@ namespace NorvesLib::RHI::Vulkan
     class VulkanDevice;
     class VulkanTexture;
 
+    namespace Detail
+    {
+        inline bool IsAcquireStateReady(uint32_t width,
+                                        uint32_t height,
+                                        bool bHasSwapChain,
+                                        bool bHasFrameSync)
+        {
+            return width > 0 && height > 0 && bHasSwapChain && bHasFrameSync;
+        }
+
+        inline SwapChainBeginFrameStatus ClassifyFenceWaitResult(vk::Result result)
+        {
+            return result == vk::Result::eSuccess
+                       ? SwapChainBeginFrameStatus::Success
+                       : SwapChainBeginFrameStatus::Fatal;
+        }
+
+        inline SwapChainBeginFrameStatus ClassifyAcquireResult(vk::Result result)
+        {
+            switch (result)
+            {
+            case vk::Result::eSuccess:
+            case vk::Result::eSuboptimalKHR:
+                return SwapChainBeginFrameStatus::Success;
+            case vk::Result::eErrorOutOfDateKHR:
+                return SwapChainBeginFrameStatus::OutOfDate;
+            case vk::Result::eNotReady:
+            case vk::Result::eTimeout:
+                return SwapChainBeginFrameStatus::NotReady;
+            default:
+                return SwapChainBeginFrameStatus::Fatal;
+            }
+        }
+    } // namespace Detail
+
     /**
      * @brief Vulkanスワップチェーン実装クラス
      */
@@ -82,15 +117,16 @@ namespace NorvesLib::RHI::Vulkan
 
         /**
          * @brief フレーム開始（フェンス待機＋イメージ取得）
-         * @return 成功時true
+         * @return image acquire の構造化結果
          */
-        bool BeginFrame() override;
+        SwapChainBeginFrameStatus BeginFrame() override;
 
         /**
          * @brief フレーム終了（セマフォ同期付きサブミット＋プレゼント）
          * @param commandList 実行するコマンドリスト
          */
-        void EndFrame(CommandListPtr commandList) override;
+        SwapChainEndFrameResult EndFrame(CommandListPtr commandList) override;
+        uint64_t GetCompletedSubmissionSerial() const override { return m_completedSubmissionSerial; }
 
         /**
          * @brief スワップチェーンの幅を取得
@@ -143,7 +179,10 @@ namespace NorvesLib::RHI::Vulkan
         VariableArray<vk::Semaphore> m_imageAvailableSemaphores;
         VariableArray<vk::Semaphore> m_renderFinishedSemaphores;
         VariableArray<vk::Fence> m_inFlightFences;
+        VariableArray<uint64_t> m_frameSlotSubmissionSerials;
         uint32_t m_currentFrame = 0;
+        uint64_t m_nextSubmissionSerial = 0;
+        uint64_t m_completedSubmissionSerial = 0;
         static constexpr int MAX_FRAMES_IN_FLIGHT = 1;
         bool m_bPresentationDirty = false;
 

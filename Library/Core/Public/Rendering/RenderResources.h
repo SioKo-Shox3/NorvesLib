@@ -6,6 +6,7 @@
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/NeuralMaterialResource.h"
 #include "Rendering/ProceduralMeshGPUData.h"
+#include "Rendering/SkinnedMeshTypes.h"
 #include "Rendering/RenderResourcesFwd.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/TextureAssetTypes.h"
@@ -178,6 +179,28 @@ namespace NorvesLib::Core::Rendering
         RenderResources *m_pOwner = nullptr;
     };
 
+    class SkinnedMeshResources
+    {
+    public:
+        void BeginFrame(uint64_t completedSubmissionSerial);
+        bool PrepareDraw(const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease,
+                         const Container::VariableArray<Math::Matrix4x4>& bonePalette,
+                         const Math::Matrix4x4& worldTransform,
+                         SkinnedMeshPreparedDraw& outPrepared);
+        bool MarkLastUse(const SkinnedMeshPreparedDraw& prepared,
+                         const Container::TSharedPtr<const SkinnedMeshFrameLease>& frameLease);
+        bool CommitSubmittedFrame(uint64_t submissionSerial);
+        void AbortFrame();
+        bool GetLifetimeSnapshot(SkinnedMeshHandle handle, SkinnedMeshGpuLifetimeSnapshot& outSnapshot) const;
+        bool IsResident(SkinnedMeshHandle handle) const;
+
+    private:
+        friend class RenderResources;
+        explicit SkinnedMeshResources(RenderResources* pOwner);
+
+        RenderResources* m_pOwner = nullptr;
+    };
+
     class MegaGeometryResources
     {
     public:
@@ -241,6 +264,9 @@ namespace NorvesLib::Core::Rendering
         const MaterialResources &Materials() const { return m_Materials; }
 
         MeshResources &Meshes() { return m_Meshes; }
+        SkinnedMeshResources& SkinnedMeshes() { return m_SkinnedMeshes; }
+        const SkinnedMeshResources& SkinnedMeshes() const { return m_SkinnedMeshes; }
+
         const MeshResources &Meshes() const { return m_Meshes; }
 
         MegaGeometryResources &MegaGeometry() { return m_MegaGeometry; }
@@ -249,6 +275,7 @@ namespace NorvesLib::Core::Rendering
     private:
         friend class GpuResources;
         friend class TextureResources;
+        friend class SkinnedMeshResources;
         friend class MaterialResources;
         friend class MeshResources;
         friend class MegaGeometryResources;
@@ -265,6 +292,7 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<Impl> m_Impl;
         GpuResources m_Gpu;
         TextureResources m_Textures;
+        SkinnedMeshResources m_SkinnedMeshes;
         MaterialResources m_Materials;
         MeshResources m_Meshes;
         MegaGeometryResources m_MegaGeometry;

@@ -14,6 +14,7 @@ using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core::Rendering
 {
+    struct SkinnedRenderPathContractTestAccess;
     // 前方宣言
     class SceneView;
 
@@ -141,6 +142,8 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetMaterialHandle() const { return m_MaterialHandle.ToResourceHandle(); }
         RGResourceHandle GetEmissiveHandle() const { return m_EmissiveHandle.ToResourceHandle(); }
         RGResourceHandle GetDepthHandle() const { return m_DepthHandle.ToResourceHandle(); }
+        friend struct SkinnedRenderPathContractTestAccess;
+
 
     private:
         /**
@@ -168,7 +171,12 @@ namespace NorvesLib::Core::Rendering
                                       const RHI::TexturePtr& material,
                                       const RHI::TexturePtr& emissive,
                                       const RHI::TexturePtr& depth);
+        bool CreateSkinnedGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline);
         bool EnsureGBufferPipeline();
+        RHI::PipelinePtr SelectSkinnedGBufferPipeline(DebugViewMode mode) const;
+        bool TryPrepareSkinnedCommand(ViewRenderContext& context,
+                                      const DrawCommand& source,
+                                      DrawCommand& outCommand) const;
         bool CreateGBufferPipelineVariant(RHI::PolygonMode polygonMode, RHI::PipelinePtr& outPipeline);
         RHI::PipelinePtr SelectGBufferPipeline(DebugViewMode mode) const;
         bool IsMaterialDescriptorCacheEnabled();
@@ -245,7 +253,10 @@ namespace NorvesLib::Core::Rendering
         RHI::FramebufferPtr m_GBufferFramebuffer;
 
         // GBuffer用パイプライン
+        RHI::PipelinePtr m_SkinnedGBufferPipeline;
+        RHI::PipelinePtr m_SkinnedGBufferWireframePipeline;
         RHI::PipelinePtr m_GBufferPipeline;
+        RHI::ShaderPtr m_SkinnedGBufferVertexShader;
         RHI::PipelinePtr m_GBufferWireframePipeline;
         RHI::ShaderPtr m_GBufferVertexShader;
         RHI::ShaderPtr m_GBufferFragmentShader;

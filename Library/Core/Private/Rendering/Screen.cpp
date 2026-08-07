@@ -131,7 +131,7 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    bool Screen::BeginFrame()
+    RHI::SwapChainBeginFrameStatus Screen::BeginFrame()
     {
         // フレーム開始時にView間共有リソースをクリア
         m_SharedResourceRegistry.BeginFrame();
@@ -139,15 +139,14 @@ namespace NorvesLib::Core::Rendering
         // SwapChainから次のバックバッファを取得
         if (m_SwapChain)
         {
-            if (!m_SwapChain->BeginFrame())
+            const RHI::SwapChainBeginFrameStatus status = m_SwapChain->BeginFrame();
+            if (status != RHI::SwapChainBeginFrameStatus::Success)
             {
-                // SwapChainのリクリエーションが必要な場合がある（ウィンドウリサイズ等）
-                NORVES_LOG_WARNING("Screen", "SwapChain::BeginFrame() failed - may need recreation");
-                return false;
+                return status;
             }
         }
 
-        return true;
+        return RHI::SwapChainBeginFrameStatus::Success;
     }
 
     void Screen::CompositeViews()
@@ -162,13 +161,17 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void Screen::EndFrame(Container::TSharedPtr<RHI::ICommandList> commandList)
+    RHI::SwapChainEndFrameResult Screen::EndFrame(
+        Container::TSharedPtr<RHI::ICommandList> commandList)
     {
         // コマンドリストをサブミットしてPresent
         if (m_SwapChain && commandList)
         {
-            m_SwapChain->EndFrame(commandList);
+            return m_SwapChain->EndFrame(commandList);
         }
+        RHI::SwapChainEndFrameResult result;
+        result.Status = RHI::SwapChainEndFrameStatus::InvalidCommandList;
+        return result;
     }
 
     void Screen::SetVSync(bool bEnabled)

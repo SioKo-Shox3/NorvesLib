@@ -10,6 +10,7 @@
 #include "Input/InputSystem.h"
 #include "Input/InputRouter.h"
 #include "Particle/ParticleSystem.h"
+#include "Thread/Atomic.h"
 
 namespace NorvesLib::Core::Application
 {
@@ -181,7 +182,19 @@ namespace NorvesLib::Core::Engine
          */
         void SetExitCode(int exitCode)
         {
-            m_ExitCode = exitCode;
+            uint64_t expectedState = m_ExitState.Load(std::memory_order_acquire);
+            while (!DecodeExitRequested(expectedState))
+            {
+                const uint64_t desiredState = EncodeExitState(false, exitCode);
+                if (m_ExitState.CompareExchangeWeak(expectedState,
+                                                    desiredState,
+                                                    std::memory_order_release,
+                                                    std::memory_order_acquire))
+                {
+                    return;
+                }
+            }
+            // 終了要求後は first-writer-wins の終了コードを変更しない。
         }
 
         /**
@@ -189,7 +202,8 @@ namespace NorvesLib::Core::Engine
          */
         int GetExitCode() const
         {
-            return m_ExitCode;
+            const uint64_t exitState = m_ExitState.Load(std::memory_order_acquire);
+            return DecodeExitCode(exitState);
         }
 
         // ========== フレーム情報 ==========
@@ -234,8 +248,18 @@ namespace NorvesLib::Core::Engine
          */
         void RequestExit(int exitCode = 0)
         {
-            m_bExitRequested = true;
-            m_ExitCode = exitCode;
+            uint64_t expectedState = m_ExitState.Load(std::memory_order_acquire);
+            while (!DecodeExitRequested(expectedState))
+            {
+                const uint64_t desiredState = EncodeExitState(true, exitCode);
+                if (m_ExitState.CompareExchangeWeak(expectedState,
+                                                    desiredState,
+                                                    std::memory_order_release,
+                                                    std::memory_order_acquire))
+                {
+                    return;
+                }
+            }
         }
 
         /**
@@ -243,7 +267,8 @@ namespace NorvesLib::Core::Engine
          */
         bool IsExitRequested() const
         {
-            return m_bExitRequested;
+            const uint64_t exitState = m_ExitState.Load(std::memory_order_acquire);
+            return DecodeExitRequested(exitState);
         }
 
         // ========== レンダリングシステム ==========
@@ -365,6 +390,26 @@ namespace NorvesLib::Core::Engine
         }
 
     private:
+        static constexpr uint64_t ExitRequestedMask = uint64_t{1} << 63;
+        static constexpr uint64_t ExitCodeMask = 0xFFFFFFFFull;
+
+        static constexpr uint64_t EncodeExitState(bool bRequested, int exitCode)
+        {
+            const uint64_t requestedBits = bRequested ? ExitRequestedMask : 0;
+            const uint64_t exitCodeBits = static_cast<uint32_t>(static_cast<int32_t>(exitCode));
+            return requestedBits | exitCodeBits;
+        }
+
+        static constexpr bool DecodeExitRequested(uint64_t exitState)
+        {
+            return (exitState & ExitRequestedMask) != 0;
+        }
+
+        static constexpr int DecodeExitCode(uint64_t exitState)
+        {
+            return static_cast<int>(static_cast<int32_t>(static_cast<uint32_t>(exitState & ExitCodeMask)));
+        }
+
         // サブシステムへの参照
         Container::TUniquePtr<NorvesLib::IApplication> m_PlatformApp;
         Container::TSharedPtr<Application::IApplicationHandler> m_Handler;
@@ -391,8 +436,7 @@ namespace NorvesLib::Core::Engine
 
         // 実行状態
         bool m_bIsRunning = false;
-        bool m_bExitRequested = false;
-        int m_ExitCode = 0;
+        Thread::Atomic<uint64_t> m_ExitState{EncodeExitState(false, 0)};
 
         // フレーム情報
         float m_DeltaTime = 0.0f;

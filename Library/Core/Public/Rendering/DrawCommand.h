@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RenderTypes.h"
+#include "SkinnedMeshTypes.h"
 #include "MaterialTypes.h"
 #include "MeshTypes.h"
 #include "Container/Containers.h"
@@ -31,7 +32,8 @@ namespace NorvesLib::Core::Rendering
     {
         Mesh,
         Board,
-        Mesh2D
+        Mesh2D,
+        Skinned
     };
 
     // ========================================
@@ -54,6 +56,17 @@ namespace NorvesLib::Core::Rendering
         uint32_t IndexOffset = 0;                           // 開始インデックス位置
         int32_t VertexOffset = 0;                           // ベース頂点位置
         RHI::IndexType IndexType = RHI::IndexType::Uint16;  // インデックス要素型
+    };
+
+    struct SkinnedDrawParams
+    {
+        static constexpr uint32_t InvalidFrameLeaseIndex = UINT32_MAX;
+
+        uint32_t FrameLeaseIndex = InvalidFrameLeaseIndex;
+        SkinnedMeshPassKind PassKind = SkinnedMeshPassKind::None;
+        Container::TSharedPtr<const SkinnedMeshFrameLease> FrameLease;
+        Container::VariableArray<Math::Matrix4x4> BonePalette;
+        SkinnedMeshPreparedDraw Prepared;
     };
 
     // ========================================
@@ -150,6 +163,7 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         DrawParams Draw;             // グラフィックス描画パラメータ
+        SkinnedDrawParams Skinned;   // GPU skinning描画パラメータ（PayloadKind==Skinned時）
         DispatchParams Compute;      // コンピュートパラメータ
         Mesh2DDrawParams Mesh2D;     // 汎用2Dメッシュ描画パラメータ（PayloadKind==Mesh2D時）
 

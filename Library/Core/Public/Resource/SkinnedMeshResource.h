@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Rendering/SkinnedMeshTypes.h"
 #include "Object/Reflection.h"
 #include "Object/Resource.h"
 #include "Resource/SkeletalGltfData.h"
@@ -26,11 +27,17 @@ namespace NorvesLib::Core
         void SetIndices(Container::VariableArray<uint32_t>&& indices);
         void SetMeshNodeGlobalTransform(const Container::FixedArray<float, 16>& transform);
 
+        Rendering::SkinnedMeshHandle GetRenderMeshHandle() const;
+        const Container::TSharedPtr<Rendering::SkinnedMeshAssetLease>& GetRenderAssetLease() const;
         const Container::VariableArray<Skeletal::SkeletalVertex>& GetVertices() const;
         const Container::VariableArray<uint32_t>& GetIndices() const;
         const Container::FixedArray<float, 16>& GetMeshNodeGlobalTransform() const;
+        void RefreshRenderAssetLease();
+        void ReleaseRenderAssetLease();
 
     private:
+        Container::TSharedPtr<Rendering::SkinnedMeshAssetLease> m_RenderAssetLease;
+        uint64_t m_RenderAssetGeneration = 0;
         Container::VariableArray<Skeletal::SkeletalVertex> m_Vertices;
         Container::VariableArray<uint32_t> m_Indices;
         Container::FixedArray<float, 16> m_MeshNodeGlobalTransform{

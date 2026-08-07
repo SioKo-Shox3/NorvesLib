@@ -4,6 +4,36 @@
 
 namespace NorvesLib::RHI
 {
+    /** @brief swapchain image acquire の結果。Success 以外では image は未取得。 */
+    enum class SwapChainBeginFrameStatus : uint8_t
+    {
+        Success,
+        OutOfDate,
+        NotReady,
+        Fatal
+    };
+
+    /** @brief queue submission と presentation を分離したフレーム終了状態 */
+    enum class SwapChainEndFrameStatus : uint8_t
+    {
+        Success,
+        InvalidCommandList,
+        SubmissionSerialExhausted,
+        FenceResetFailed,
+        SubmitFailed, // fence reset後の失敗。swapchainを再利用せずfatalとして扱う。
+        PresentationFailed
+    };
+
+    struct SwapChainEndFrameResult
+    {
+        uint64_t SubmissionSerial = 0;
+        SwapChainEndFrameStatus Status = SwapChainEndFrameStatus::InvalidCommandList;
+
+        [[nodiscard]] bool HasError() const
+        {
+            return Status != SwapChainEndFrameStatus::Success;
+        }
+    };
 
     /**
      * @brief スワップチェーンインターフェース
@@ -67,18 +97,28 @@ namespace NorvesLib::RHI
         /**
          * @brief フレーム開始（次のバックバッファを取得）
          *
-         * フェンス待機 → イメージ取得 → フェンスリセットを行います。
-         * @return 成功時true
+         * フェンス待機 → イメージ取得を行います。
+         * @return image acquire の構造化結果。Success 以外では image は未取得。
          */
-        virtual bool BeginFrame() = 0;
+        virtual SwapChainBeginFrameStatus BeginFrame() = 0;
 
         /**
          * @brief フレーム終了（コマンドリストをサブミット＆プレゼント）
          *
          * セマフォを使用した同期付きでコマンドを送信し、Presentを実行します。
          * @param commandList 実行するコマンドリスト
+         * @return submit成功時のserialとpresentationを含む結果。errorでもserialは失われない。
+         *
+         * SubmissionSerialExhausted はfence reset/submitより前に検出される。
+         * SubmitFailed はreset済みfenceが未signalの可能性があるため、呼び出し側は
+         * errorを伝播し、このswapchainをBeginFrameで再利用してはならない。
          */
-        virtual void EndFrame(CommandListPtr commandList) = 0;
+        virtual SwapChainEndFrameResult EndFrame(CommandListPtr commandList) = 0;
+
+        /**
+         * @brief BeginFrameで実際のGPU fence完了を確認済みのsubmission serialを取得
+         */
+        virtual uint64_t GetCompletedSubmissionSerial() const = 0;
 
         /**
          * @brief スワップチェーンのリサイズ

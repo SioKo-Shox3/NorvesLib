@@ -4,6 +4,7 @@ namespace NorvesLib::Core::Rendering
 {
     class GpuResources;
     class TextureResources;
+    class SkinnedMeshResources;
     class MaterialResources;
     class MeshResources;
     class MegaGeometryResources;

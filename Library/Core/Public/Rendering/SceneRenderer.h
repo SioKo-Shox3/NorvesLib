@@ -28,6 +28,8 @@ namespace NorvesLib::Core::Rendering
     struct SceneRendererStats
     {
         uint32_t DrawCallCount = 0; ///< ドローコール数
+        uint32_t SkinnedGBufferDrawCallCount = 0;
+        uint32_t SkinnedShadowDrawCallCount = 0;
         uint32_t DispatchCount = 0; ///< ディスパッチ数
         uint32_t TriangleCount = 0; ///< 三角形数
         float RenderTimeMs = 0.0f;  ///< レンダリング時間（ミリ秒）
@@ -166,6 +168,17 @@ namespace NorvesLib::Core::Rendering
                                 RHI::DescriptorSetPtr descriptorSet,
                                 uint32_t descriptorSetSlot = 0);
 
+        bool RecordSkinnedDrawCall(const DrawCommand& command,
+                                   RHI::ICommandList* commandList,
+                                   SkinnedMeshResources* skinnedMeshResources,
+                                   RHI::DescriptorSetPtr descriptorSet,
+                                   uint32_t descriptorSetSlot = 0);
+
+        void SetSkinnedMeshResources(SkinnedMeshResources* resources)
+        {
+            m_SkinnedMeshResources = resources;
+        }
+
         // ========================================
         // 統計情報
         // ========================================
@@ -216,6 +229,7 @@ namespace NorvesLib::Core::Rendering
 
         // 前回バインドしたパイプライン（冗長なバインドを避けるため）
         RHI::PipelinePtr m_BoundPipeline;
+        SkinnedMeshResources* m_SkinnedMeshResources = nullptr;
 
         SceneRendererStats m_Stats;
         uint64_t m_CurrentFrame = 0;

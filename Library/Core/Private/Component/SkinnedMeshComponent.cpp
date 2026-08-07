@@ -190,7 +190,10 @@ namespace NorvesLib::Core::Component
         outProxy = {};
         outProxy.ObjectId = GetOwnerId();
         outProxy.ComponentId = GetComponentId();
+        const Container::TSharedPtr<SkinnedMeshResource>& mesh = m_SkeletalAsset->GetMesh();
+        outProxy.MeshHandle = mesh->GetRenderMeshHandle();
         outProxy.Material = m_Material;
+        outProxy.AssetLease = mesh->GetRenderAssetLease();
         outProxy.WorldTransform = BuildOwnerWorldTransform();
         outProxy.BonePalette = m_Pose.BonePalette;
         outProxy.AnimatedBounds = m_Pose.AnimatedBounds;

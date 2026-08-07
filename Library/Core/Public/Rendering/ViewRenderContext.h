@@ -82,6 +82,9 @@ namespace NorvesLib::Core::Rendering
         SharedResourceRegistry *SharedResources = nullptr;
 
         /** @brief フレーム実行中だけ有効なレンダリングリソースドメイン */
+        /** @brief RenderThread-owned GPU skinned mesh store */
+        SkinnedMeshResources* SkinnedMeshes = nullptr;
+
         RenderResourceFrameContext Resources;
 
         /** @brief シェーダーアセットの読み込み・コンパイル・キャッシュ管理 */
@@ -128,7 +131,14 @@ namespace NorvesLib::Core::Rendering
         DrawCommandView CurrentTransparentCommands;
 
         /** @brief MeshProxyスナップショット（FramePacket::Scene.MeshProxiesを指す） */
+        /** @brief FramePacket所有のskinned mesh frame lease */
+        const Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>>*
+            SnapshotSkinnedMeshFrameLeases = nullptr;
+
         const Container::VariableArray<MeshProxy>* SnapshotMeshProxies = nullptr;
+
+        /** @brief FramePacket::Scene.SkinnedMeshProxies のanimated boundsスナップショット */
+        const Container::VariableArray<SkinnedMeshProxy>* SnapshotSkinnedMeshProxies = nullptr;
 
         /** @brief LightProxyスナップショット（FramePacket::Scene.LightProxiesを指す） */
         const Container::VariableArray<LightProxy> *SnapshotLightProxies = nullptr;

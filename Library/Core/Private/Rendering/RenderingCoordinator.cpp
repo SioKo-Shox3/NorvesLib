@@ -39,11 +39,41 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <stdexcept>
 
 namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        [[noreturn]] void ThrowSwapChainBeginFrameError(RHI::SwapChainBeginFrameStatus status)
+        {
+            if (status == RHI::SwapChainBeginFrameStatus::Fatal)
+            {
+                throw std::runtime_error("SwapChain image acquisition failed fatally");
+            }
+            throw std::runtime_error("SwapChain BeginFrame failed with an invalid status");
+        }
+
+        [[noreturn]] void ThrowSwapChainEndFrameError(RHI::SwapChainEndFrameStatus status)
+        {
+            switch (status)
+            {
+            case RHI::SwapChainEndFrameStatus::InvalidCommandList:
+                throw std::runtime_error("SwapChain rejected the command list after image acquisition");
+            case RHI::SwapChainEndFrameStatus::SubmissionSerialExhausted:
+                throw std::runtime_error("SwapChain submission serial exhausted before fence reset");
+            case RHI::SwapChainEndFrameStatus::FenceResetFailed:
+                throw std::runtime_error("SwapChain frame fence reset failed");
+            case RHI::SwapChainEndFrameStatus::SubmitFailed:
+                throw std::runtime_error("SwapChain queue submission failed after fence reset");
+            case RHI::SwapChainEndFrameStatus::PresentationFailed:
+                throw std::runtime_error("SwapChain presentation failed after queue submission");
+            case RHI::SwapChainEndFrameStatus::Success:
+                break;
+            }
+            throw std::runtime_error("SwapChain EndFrame failed with an unknown status");
+        }
+
         template<typename CameraResolver>
         ViewportRenderPlan BuildViewportRenderPlan(const Viewport &viewport,
                                                    uint32_t viewId,
@@ -186,6 +216,58 @@ namespace NorvesLib::Core::Rendering
                 command.Draw.InstanceDataOffset += baseInstance;
             }
 
+            return range;
+        }
+
+        CommandRange AppendSkinnedDrawCommands(
+            FramePacket* packet,
+            const Container::VariableArray<SkinnedMeshProxy>& proxies)
+        {
+            CommandRange range;
+            if (!packet || proxies.empty())
+            {
+                return range;
+            }
+
+            range.First = static_cast<uint32_t>(packet->DrawCommands.size());
+            for (const SkinnedMeshProxy& proxy : proxies)
+            {
+                if (!proxy.IsValid())
+                {
+                    continue;
+                }
+
+                Container::TSharedPtr<const SkinnedMeshAssetLease> assetLease = proxy.AssetLease.lock();
+                if (!assetLease)
+                {
+                    continue;
+                }
+                auto frameLease = Container::MakeShared<SkinnedMeshFrameLease>(assetLease);
+                if (!frameLease || !frameLease->IsValid())
+                {
+                    continue;
+                }
+
+                const uint32_t frameLeaseIndex =
+                    static_cast<uint32_t>(packet->SkinnedMeshFrameLeases.size());
+                packet->SkinnedMeshFrameLeases.push_back(frameLease);
+
+                DrawCommand command = DrawCommand::CreateDrawIndexed();
+                command.Draw.PayloadKind = DrawPayloadKind::Skinned;
+                command.Draw.MaterialHandle = proxy.Material;
+                command.Draw.MaterialBlendMode = BlendMode::Opaque;
+                command.Draw.ObjectId = proxy.ObjectId;
+                command.Draw.SourceMeshComponentId = proxy.ComponentId;
+                command.Draw.WorldMatrix = proxy.WorldTransform;
+                command.Draw.InstanceCount = 1;
+                command.Draw.FirstInstance = 0;
+                command.Draw.bInstanced = false;
+                command.Draw.bCastShadow = proxy.bCastShadow;
+                command.Skinned.FrameLeaseIndex = frameLeaseIndex;
+                command.Skinned.BonePalette = proxy.BonePalette;
+                packet->DrawCommands.push_back(command);
+                ++range.Count;
+            }
             return range;
         }
 
@@ -964,6 +1046,7 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->DrawCommands.reserve(m_MaxDrawCallsPerFrame);
             m_CurrentPacket->DrawCommandRange = CommandRange{};
             m_CurrentPacket->OpaqueCommandRange = CommandRange{};
+            m_CurrentPacket->SkinnedMeshFrameLeases.clear();
             m_CurrentPacket->TransparentCommandRange = CommandRange{};
             m_CurrentPacket->InstanceData.clear();
             m_CurrentPacket->Views.clear();
@@ -1020,6 +1103,9 @@ namespace NorvesLib::Core::Rendering
                         AppendRebasedDrawCommands(sceneView->GetOpaqueCommands(),
                                                   instanceBase,
                                                   m_CurrentPacket->DrawCommands);
+                    const CommandRange skinnedCommandRange =
+                        AppendSkinnedDrawCommands(m_CurrentPacket, sceneView->GetSkinnedMeshProxies());
+                    opaqueCommandRange = CombineCommandRanges(opaqueCommandRange, skinnedCommandRange);
                     transparentCommandRange =
                         AppendRebasedDrawCommands(sceneView->GetTransparentCommands(),
                                                   instanceBase,
@@ -1071,6 +1157,10 @@ namespace NorvesLib::Core::Rendering
                             AppendRebasedDrawCommands(sceneView->GetOpaqueCommands(),
                                                       instanceBase,
                                                       m_CurrentPacket->DrawCommands);
+                        const CommandRange skinnedCommandRange =
+                            AppendSkinnedDrawCommands(m_CurrentPacket, sceneView->GetSkinnedMeshProxies());
+                        viewportPlan.OpaqueCommandRange =
+                            CombineCommandRanges(viewportPlan.OpaqueCommandRange, skinnedCommandRange);
                         viewportPlan.TransparentCommandRange =
                             AppendRebasedDrawCommands(sceneView->GetTransparentCommands(),
                                                       instanceBase,
@@ -1266,6 +1356,8 @@ namespace NorvesLib::Core::Rendering
             }
 
             RenderingCoordinatorStatsSnapshot statsSnapshot;
+            statsSnapshot.SkinnedGBufferRecordedDraws = packet->Stats.SkinnedGBufferRecordedDraws;
+            statsSnapshot.SkinnedShadowRecordedDraws = packet->Stats.SkinnedShadowRecordedDraws;
             statsSnapshot.Stats = renderStats;
             statsSnapshot.GeneratedDrawCommandCount = packet->GeneratedDrawCommandCount;
             statsSnapshot.bGameThreadTimingsAvailable = bGameThreadTimingsAvailable;
@@ -1279,9 +1371,34 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        const uint32_t presentationBufferCount = swapChain->GetBufferCount();
+        const bool bPresentationResourcesMatchSwapChain =
+            m_bSwapChainFramebuffersReady &&
+            m_SwapChainFramebuffers.size() == presentationBufferCount &&
+            m_PresentationLoadFramebuffers.size() == presentationBufferCount &&
+            m_GraphPresentationClearFramebuffers.size() == presentationBufferCount &&
+            m_GraphPresentationLoadFramebuffers.size() == presentationBufferCount;
+        if (!bPresentationResourcesMatchSwapChain && !RecreateSwapChainPresentationResources())
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator",
+                             "Swapchain presentation resources are not ready before acquire");
+            publishIncompleteStats();
+            return;
+        }
+
         // swapchain acquire（旧BeginFrame経路から移動）
         // RenderThreadまたはSTインライン経路でここを呼ぶ。
-        if (!m_Screen.BeginFrame())
+        const RHI::SwapChainBeginFrameStatus beginFrameStatus = m_Screen.BeginFrame();
+        if (beginFrameStatus == RHI::SwapChainBeginFrameStatus::Fatal)
+        {
+            ThrowSwapChainBeginFrameError(beginFrameStatus);
+        }
+        if (beginFrameStatus == RHI::SwapChainBeginFrameStatus::NotReady)
+        {
+            publishIncompleteStats();
+            return;
+        }
+        if (beginFrameStatus == RHI::SwapChainBeginFrameStatus::OutOfDate)
         {
             const uint32_t swapChainWidth = swapChain->GetWidth();
             const uint32_t swapChainHeight = swapChain->GetHeight();
@@ -1308,25 +1425,18 @@ namespace NorvesLib::Core::Rendering
             publishIncompleteStats();
             return;
         }
-
         const uint32_t frameIndex = ResolveFrameIndex(*swapChain);
+        if (m_RenderResources)
+        {
+            m_RenderResources->SkinnedMeshes().BeginFrame(
+                swapChain->GetCompletedSubmissionSerial());
+            m_SceneRenderer.SetSkinnedMeshResources(&m_RenderResources->SkinnedMeshes());
+        }
         if (m_FrameCaptureReadbackHelper)
         {
             m_FrameCaptureReadbackHelper->PublishCompletedFrameSlot(frameIndex);
         }
-        m_TransientPool.BeginFrame(frameIndex);
-        m_RenderGraph.BeginFrame(frameIndex);
-        RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
-
         uint32_t imageIndex = swapChain->GetCurrentBackBufferIndex();
-
-        if (!m_bSwapChainFramebuffersReady && !RecreateSwapChainPresentationResources())
-        {
-            NORVES_LOG_ERROR("RenderingCoordinator", "Swapchain presentation resources are not ready");
-            m_TransientPool.EndFrame();
-            publishIncompleteStats();
-            return;
-        }
 
         if (imageIndex >= m_SwapChainFramebuffers.size() ||
             imageIndex >= m_PresentationLoadFramebuffers.size() ||
@@ -1338,12 +1448,35 @@ namespace NorvesLib::Core::Rendering
                              imageIndex,
                              m_SwapChainFramebuffers.size(),
                              m_PresentationLoadFramebuffers.size(),
-                             m_GraphPresentationClearFramebuffers.size(),
-                             m_GraphPresentationLoadFramebuffers.size());
-            m_TransientPool.EndFrame();
+                              m_GraphPresentationClearFramebuffers.size(),
+                              m_GraphPresentationLoadFramebuffers.size());
+            m_CommandList->SetFrameIndex(frameIndex);
+            m_CommandList->BeginRecording();
+            m_CommandList->End();
+            const RHI::SwapChainEndFrameResult endFrameResult = m_Screen.EndFrame(m_CommandList);
+            if (m_RenderResources)
+            {
+                if (endFrameResult.SubmissionSerial != 0)
+                {
+                    m_RenderResources->SkinnedMeshes().CommitSubmittedFrame(
+                        endFrameResult.SubmissionSerial);
+                }
+                else
+                {
+                    m_RenderResources->SkinnedMeshes().AbortFrame();
+                }
+            }
+            if (endFrameResult.HasError())
+            {
+                ThrowSwapChainEndFrameError(endFrameResult.Status);
+            }
             publishIncompleteStats();
             return;
         }
+
+        m_TransientPool.BeginFrame(frameIndex);
+        m_RenderGraph.BeginFrame(frameIndex);
+        RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
 
         // フレーム別コマンドバッファを選択（ダブルバッファリングでの同期問題を回避）
         m_CommandList->SetFrameIndex(frameIndex);
@@ -1406,6 +1539,7 @@ namespace NorvesLib::Core::Rendering
             viewContext.Resources.Gpu = &m_RenderResources->Gpu();
             viewContext.Resources.Textures = &m_RenderResources->Textures();
             viewContext.Resources.Materials = &m_RenderResources->Materials();
+            viewContext.SkinnedMeshes = &m_RenderResources->SkinnedMeshes();
             viewContext.Resources.Meshes = &m_RenderResources->Meshes();
             viewContext.Resources.MegaGeometry = &m_RenderResources->MegaGeometry();
         }
@@ -1425,7 +1559,9 @@ namespace NorvesLib::Core::Rendering
                                                                         packet->OpaqueCommandRange);
         viewContext.SnapshotTransparentCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                              packet->TransparentCommandRange);
+        viewContext.SnapshotSkinnedMeshFrameLeases = &packet->SkinnedMeshFrameLeases;
         viewContext.SnapshotMeshProxies = &packet->Scene.MeshProxies;
+        viewContext.SnapshotSkinnedMeshProxies = &packet->Scene.SkinnedMeshProxies;
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
 
@@ -1583,11 +1719,29 @@ namespace NorvesLib::Core::Rendering
 
         // 統計更新
         const auto &rendererStats = m_SceneRenderer.GetStats();
+        packet->Stats.SkinnedGBufferRecordedDraws = rendererStats.SkinnedGBufferDrawCallCount;
+        packet->Stats.SkinnedShadowRecordedDraws = rendererStats.SkinnedShadowDrawCallCount;
         renderStats.DrawCalls = rendererStats.DrawCallCount;
         renderStats.TrianglesRendered = rendererStats.TriangleCount;
 
         // コマンドリストをサブミット＆Present（旧EndFrame経路から移動）
-        m_Screen.EndFrame(m_CommandList);
+        const RHI::SwapChainEndFrameResult endFrameResult = m_Screen.EndFrame(m_CommandList);
+        if (m_RenderResources)
+        {
+            if (endFrameResult.SubmissionSerial != 0)
+            {
+                m_RenderResources->SkinnedMeshes().CommitSubmittedFrame(
+                    endFrameResult.SubmissionSerial);
+            }
+            else
+            {
+                m_RenderResources->SkinnedMeshes().AbortFrame();
+            }
+        }
+        if (endFrameResult.HasError())
+        {
+            ThrowSwapChainEndFrameError(endFrameResult.Status);
+        }
 
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
@@ -1637,6 +1791,8 @@ namespace NorvesLib::Core::Rendering
         if (m_Diagnostics)
         {
             RenderingCoordinatorStatsSnapshot statsSnapshot;
+            statsSnapshot.SkinnedGBufferRecordedDraws = packet->Stats.SkinnedGBufferRecordedDraws;
+            statsSnapshot.SkinnedShadowRecordedDraws = packet->Stats.SkinnedShadowRecordedDraws;
             statsSnapshot.Stats = renderStats;
             statsSnapshot.GeneratedDrawCommandCount = packet->GeneratedDrawCommandCount;
             statsSnapshot.bRenderFrameCompleted = true;

@@ -3,6 +3,7 @@
 #include "Container/Containers.h"
 #include "GameMode/GameModeScope.h"
 #include "Module/IModule.h"
+#include "Object/Resource.h"
 #include "Object/World.h"
 #include "Physics/ColliderComponent.h"
 #include "Physics/IPhysicsModule.h"
@@ -57,6 +58,13 @@ namespace
     static_assert(!std::is_pointer_v<decltype(Rendering::FramePacket::InstanceData)>);
     static_assert(!std::is_pointer_v<decltype(Rendering::FramePacket::DebugLineVertices)>);
     static_assert(!std::is_pointer_v<decltype(Rendering::FramePacket::Views)>);
+    using SkinnedMeshFrameLeaseElement = TArrayElement<decltype(Rendering::FramePacket::SkinnedMeshFrameLeases)>;
+    static_assert(std::is_same_v<
+        SkinnedMeshFrameLeaseElement,
+        Container::TSharedPtr<const Rendering::SkinnedMeshFrameLease>>);
+    static_assert(!std::is_pointer_v<SkinnedMeshFrameLeaseElement>);
+    static_assert(!std::is_same_v<SkinnedMeshFrameLeaseElement, Object*>);
+    static_assert(!std::is_same_v<SkinnedMeshFrameLeaseElement, Resource*>);
     static_assert(!std::is_pointer_v<decltype(Rendering::SceneProxy::MainCamera)>);
     static_assert(!std::is_pointer_v<decltype(Rendering::SceneProxy::MeshProxies)>);
     static_assert(!std::is_pointer_v<decltype(Rendering::SceneProxy::SkinnedMeshProxies)>);
@@ -69,7 +77,7 @@ namespace
     static_assert(!std::is_same_v<TArrayElement<decltype(Rendering::SceneProxy::LightProxies)>, Entity>);
     static_assert(std::is_same_v<TArrayElement<decltype(Rendering::SceneProxy::SkinnedMeshProxies)>, Rendering::SkinnedMeshProxy>);
     static_assert(std::is_same_v<TArrayElement<decltype(Rendering::SkinnedMeshProxy::BonePalette)>, Math::Matrix4x4>);
-    static_assert(sizeof(Rendering::FramePacket) == 680);
+    static_assert(sizeof(Rendering::FramePacket) == 720);
     static_assert(alignof(Rendering::FramePacket) == 8);
     static_assert(sizeof(Rendering::SceneProxy) == 320);
     static_assert(alignof(Rendering::SceneProxy) == 8);
