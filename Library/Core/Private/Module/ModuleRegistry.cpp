@@ -189,29 +189,8 @@ namespace NorvesLib::Core::Module
         // Running になっていなくても(Install 途中で停止した等)安全に後退させる。
         m_Phase = EModulePhase::ShuttingDown;
 
-        // 逆順に UnregisterReflectedTypes→Shutdown→Uninstall。
-        for (size_t i = m_Modules.size(); i > 0; --i)
-        {
-            IModule *module = m_Modules[i - 1].get();
-            if (!module)
-            {
-                continue;
-            }
-
-            if (module->m_Phase == EModulePhase::Initialized ||
-                module->m_Phase == EModulePhase::Running)
-            {
-                module->Shutdown();
-                module->m_Phase = EModulePhase::Installed;
-            }
-
-            if (module->m_Phase == EModulePhase::Installed)
-            {
-                module->UnregisterReflectedTypes();
-                module->Uninstall(engine);
-                module->m_Phase = EModulePhase::Uninstalled;
-            }
-        }
+        // 通常終了と失敗時ロールバックで後退規則を一致させる。
+        RollbackInstalled(engine, m_Modules.size());
 
         m_Phase = EModulePhase::Uninstalled;
         NORVES_LOG_INFO(kLogCategory, "ShutdownAll complete");
