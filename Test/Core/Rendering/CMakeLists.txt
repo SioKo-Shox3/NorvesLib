@@ -29,6 +29,17 @@ target_include_directories(RHITextureToBufferReadbackVulkanTest PRIVATE
 )
 set_target_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureToBufferReadbackVulkanTest)
+set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
+    LABELS GPU
+    SKIP_RETURN_CODE 125
+)
+
+add_test(NAME RHITextureToBufferReadbackVulkanSkipContractTest COMMAND RHITextureToBufferReadbackVulkanTest)
+set_tests_properties(RHITextureToBufferReadbackVulkanSkipContractTest PROPERTIES
+    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1"
+    LABELS GPU
+    SKIP_RETURN_CODE 125
+)
 
 add_executable(FrameCaptureReadbackHelperTest
     FrameCaptureReadbackHelperTest.cpp
