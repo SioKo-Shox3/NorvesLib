@@ -132,6 +132,61 @@ target_include_directories(FrameCaptureThumbnailEncoderTest PRIVATE
 set_target_properties(FrameCaptureThumbnailEncoderTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME FrameCaptureThumbnailEncoderTest COMMAND FrameCaptureThumbnailEncoderTest)
 
+add_library(RenderingGoldenImageSupport STATIC
+    RenderingValidation/RenderingGoldenImage.cpp
+)
+target_link_libraries(RenderingGoldenImageSupport PUBLIC Core)
+target_include_directories(RenderingGoldenImageSupport
+    PUBLIC ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+    PRIVATE ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+)
+set_target_properties(RenderingGoldenImageSupport PROPERTIES FOLDER "Test/Core/Rendering")
+
+add_executable(RenderingGoldenImageComparatorTest
+    RenderingGoldenImageComparatorTest.cpp
+)
+target_link_libraries(RenderingGoldenImageComparatorTest PRIVATE RenderingGoldenImageSupport)
+target_include_directories(RenderingGoldenImageComparatorTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(RenderingGoldenImageComparatorTest PRIVATE
+    NORVES_BINARY_ROOT="${CMAKE_BINARY_DIR}"
+)
+set_target_properties(RenderingGoldenImageComparatorTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderingGoldenImageComparatorTest COMMAND RenderingGoldenImageComparatorTest)
+
+add_executable(RenderingGoldenImageTest
+    RenderingGoldenImageTest.cpp
+)
+target_link_libraries(RenderingGoldenImageTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    RenderingGoldenImageSupport
+)
+target_include_directories(RenderingGoldenImageTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(RenderingGoldenImageTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+    NORVES_BINARY_ROOT="${CMAKE_BINARY_DIR}"
+)
+set_target_properties(RenderingGoldenImageTest PROPERTIES FOLDER "Test/Core/Rendering")
+
+register_rendering_gpu_test(
+    RenderingGoldenIndoorVulkanTest
+    RenderingGoldenImageTest
+    --scene=indoor)
+register_rendering_gpu_test(
+    RenderingGoldenOutdoorVulkanTest
+    RenderingGoldenImageTest
+    --scene=outdoor)
+register_rendering_gpu_test(
+    RenderingGoldenVulkanSkipContractTest
+    RenderingGoldenImageTest
+    --scene=indoor)
+set_tests_properties(RenderingGoldenVulkanSkipContractTest PROPERTIES
+    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
+
 add_executable(RenderingCoordinatorStatsPropagationTest
     RenderingCoordinatorStatsPropagationTest.cpp
 )
