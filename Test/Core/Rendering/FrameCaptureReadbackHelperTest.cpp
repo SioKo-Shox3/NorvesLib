@@ -1,5 +1,6 @@
 ﻿#include "CoreTypes.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
+#include "Rendering/FrameCaptureAssignmentGuard.h"
 #define private public
 #include "Rendering/RenderWorld.h"
 #include "Rendering/RenderingCoordinator.h"
@@ -538,6 +539,38 @@ namespace
         return source;
     }
 
+    FrameCaptureRecordStatus RecordPendingCopy(
+        FrameCaptureReadbackHelper& helper,
+        uint32_t frameSlotIndex,
+        RHI::ICommandList* commandList,
+        const FrameCaptureSource& source)
+    {
+        FrameCaptureRequestSnapshot packetSnapshot;
+        FrameCaptureRequestSnapshot claimedSnapshot;
+        helper.TrySnapshotPendingRequest(packetSnapshot);
+        helper.TryClaimPendingRequest(packetSnapshot, claimedSnapshot);
+
+        FrameCaptureSourceSet sources;
+        sources.PresentationColor = source;
+        const FrameCaptureRecordStatus status =
+            helper.TryRecordCopy(frameSlotIndex, commandList, claimedSnapshot, sources);
+        sources.Reset();
+        if (status == FrameCaptureRecordStatus::Recorded)
+        {
+            assert(helper.CommitRecordedCopy(claimedSnapshot));
+        }
+        return status;
+    }
+
+    FrameCaptureRequestSnapshot ClaimPendingRequest(FrameCaptureReadbackHelper& helper)
+    {
+        FrameCaptureRequestSnapshot packetSnapshot;
+        FrameCaptureRequestSnapshot claimedSnapshot;
+        assert(helper.TrySnapshotPendingRequest(packetSnapshot));
+        assert(helper.TryClaimPendingRequest(packetSnapshot, claimedSnapshot));
+        return claimedSnapshot;
+    }
+
     void AssertConsumeStatus(FrameCaptureReadbackHelper& helper, FrameCaptureResultStatus status)
     {
         CapturedFrame frame;
@@ -584,6 +617,334 @@ namespace
         assert(frame.RequestId == 0);
     }
 
+    void TestRequestSourceAndDefaultCompatibility()
+    {
+        FrameCaptureRequest defaultRequest;
+        assert(defaultRequest.SourceKind == FrameCaptureSourceKind::PresentationColor);
+
+        FakeDevice defaultDevice;
+        FrameCaptureReadbackHelper defaultHelper;
+        assert(defaultHelper.Initialize(&defaultDevice, 2));
+        const FrameCaptureRequestResult defaultResult = defaultHelper.RequestFrameCapture();
+        assert(defaultResult.IsAccepted());
+
+        FrameCaptureRequestSnapshot defaultSnapshot;
+        assert(defaultHelper.TrySnapshotPendingRequest(defaultSnapshot));
+        assert(defaultSnapshot.RequestId == defaultResult.RequestId);
+        assert(defaultSnapshot.SourceKind == FrameCaptureSourceKind::PresentationColor);
+
+        FakeDevice sceneDevice;
+        FrameCaptureReadbackHelper sceneHelper;
+        assert(sceneHelper.Initialize(&sceneDevice, 2));
+        const FrameCaptureRequestResult sceneResult =
+            sceneHelper.RequestFrameCapture({FrameCaptureSourceKind::SceneColor});
+        assert(sceneResult.IsAccepted());
+
+        FrameCaptureRequestSnapshot sceneSnapshot;
+        assert(sceneHelper.TrySnapshotPendingRequest(sceneSnapshot));
+        assert(sceneSnapshot.RequestId == sceneResult.RequestId);
+        assert(sceneSnapshot.SourceKind == FrameCaptureSourceKind::SceneColor);
+    }
+
+    void TestSnapshotAndClaimStateMachine()
+    {
+        FakeDevice device;
+        FrameCaptureReadbackHelper helper;
+        assert(helper.Initialize(&device, 2));
+        assert(helper.RequestFrameCapture({FrameCaptureSourceKind::SceneColor}).IsAccepted());
+
+        FrameCaptureRequestSnapshot droppedPacketSnapshot;
+        FrameCaptureRequestSnapshot replacementPacketSnapshot;
+        assert(helper.TrySnapshotPendingRequest(droppedPacketSnapshot));
+        assert(helper.TrySnapshotPendingRequest(replacementPacketSnapshot));
+        assert(droppedPacketSnapshot.RequestId == replacementPacketSnapshot.RequestId);
+        assert(replacementPacketSnapshot.SourceKind == FrameCaptureSourceKind::SceneColor);
+
+        FramePacket droppedPacket;
+        droppedPacket.CaptureRequest = droppedPacketSnapshot;
+        droppedPacket.Clear();
+        assert(!droppedPacket.CaptureRequest.IsValid());
+
+        FrameCaptureRequestSnapshot wrongSnapshot = replacementPacketSnapshot;
+        ++wrongSnapshot.RequestId;
+        FrameCaptureRequestSnapshot rejectedClaim;
+        assert(!helper.TryClaimPendingRequest(wrongSnapshot, rejectedClaim));
+        assert(!rejectedClaim.IsValid());
+
+        wrongSnapshot = replacementPacketSnapshot;
+        wrongSnapshot.SourceKind = FrameCaptureSourceKind::PresentationColor;
+        assert(!helper.TryClaimPendingRequest(wrongSnapshot, rejectedClaim));
+        assert(!rejectedClaim.IsValid());
+
+        FrameCaptureRequestSnapshot claimedSnapshot;
+        assert(helper.TryClaimPendingRequest(replacementPacketSnapshot, claimedSnapshot));
+        assert(claimedSnapshot.RequestId == replacementPacketSnapshot.RequestId);
+        assert(claimedSnapshot.SourceKind == FrameCaptureSourceKind::SceneColor);
+
+        FrameCaptureRequestSnapshot secondClaim;
+        assert(!helper.TryClaimPendingRequest(droppedPacketSnapshot, secondClaim));
+        assert(!secondClaim.IsValid());
+        assert(helper.RequestFrameCapture().Status == FrameCaptureRequestStatus::AlreadyPending);
+    }
+
+    void TestMissingRequestedSourcePublishesFailureAndReturnsToIdleAfterConsume()
+    {
+        FakeDevice device;
+        FakeCommandList commandList;
+        FrameCaptureReadbackHelper helper;
+        assert(helper.Initialize(&device, 2));
+        const FrameCaptureRequestResult request =
+            helper.RequestFrameCapture({FrameCaptureSourceKind::SceneColor});
+        assert(request.IsAccepted());
+
+        FrameCaptureRequestSnapshot packetSnapshot;
+        FrameCaptureRequestSnapshot claimedSnapshot;
+        assert(helper.TrySnapshotPendingRequest(packetSnapshot));
+        assert(helper.TryClaimPendingRequest(packetSnapshot, claimedSnapshot));
+
+        FrameCaptureSourceSet sources;
+        assert(helper.TryRecordCopy(0u, &commandList, claimedSnapshot, sources) ==
+               FrameCaptureRecordStatus::PublishedFailure);
+
+        CapturedFrame failed;
+        assert(helper.TryConsumeCapturedFrame(failed));
+        assert(failed.Status == FrameCaptureResultStatus::SourceUnavailable);
+        assert(failed.RequestId == request.RequestId);
+        assert(helper.RequestFrameCapture().IsAccepted());
+    }
+
+    void TestAssignmentGuardAbandonsClaimedAndRecordedRequests()
+    {
+        {
+            FakeDevice device;
+            FrameCaptureReadbackHelper helper;
+            assert(helper.Initialize(&device, 1));
+            const FrameCaptureRequestResult request =
+                helper.RequestFrameCapture({FrameCaptureSourceKind::SceneColor});
+            assert(request.IsAccepted());
+
+            FrameCaptureRequestSnapshot droppedPacketSnapshot;
+            FrameCaptureRequestSnapshot replacementPacketSnapshot;
+            assert(helper.TrySnapshotPendingRequest(droppedPacketSnapshot));
+            assert(helper.TrySnapshotPendingRequest(replacementPacketSnapshot));
+            assert(droppedPacketSnapshot.RequestId == replacementPacketSnapshot.RequestId);
+
+            FrameCaptureRequestSnapshot claimedSnapshot;
+            assert(helper.TryClaimPendingRequest(replacementPacketSnapshot, claimedSnapshot));
+            {
+                FrameCaptureAssignmentGuard guard(&helper, claimedSnapshot, 77u);
+            }
+
+            CapturedFrame failed;
+            assert(helper.TryConsumeCapturedFrame(failed));
+            assert(failed.Status == FrameCaptureResultStatus::SourceUnavailable);
+            assert(failed.RequestId == claimedSnapshot.RequestId);
+            assert(failed.FrameNumber == 77u);
+            assert(!helper.TryConsumeCapturedFrame(failed));
+            assert(helper.RequestFrameCapture().IsAccepted());
+        }
+
+        {
+            FakeDevice device;
+            FakeCommandList commandList;
+            FrameCaptureReadbackHelper helper;
+            assert(helper.Initialize(&device, 1));
+            assert(helper.RequestFrameCapture({FrameCaptureSourceKind::SceneColor}).IsAccepted());
+            const FrameCaptureRequestSnapshot claimedSnapshot = ClaimPendingRequest(helper);
+
+            {
+                FrameCaptureAssignmentGuard guard(&helper, claimedSnapshot, 91u);
+                FrameCaptureSourceSet sources;
+                sources.SceneColor = MakeSource(MakeTexture(), 91u);
+                assert(helper.TryRecordCopy(0u, &commandList, claimedSnapshot, sources) ==
+                       FrameCaptureRecordStatus::Recorded);
+                sources.Reset();
+            }
+
+            CapturedFrame failed;
+            assert(helper.TryConsumeCapturedFrame(failed));
+            assert(failed.Status == FrameCaptureResultStatus::SourceUnavailable);
+            assert(failed.RequestId == claimedSnapshot.RequestId);
+            assert(failed.FrameNumber == 91u);
+            assert(helper.RequestFrameCapture().IsAccepted());
+        }
+    }
+
+    void TestAssignmentGuardRejectsWrongIdentityAndResolvesOnlyAfterCommit()
+    {
+        FakeDevice device;
+        FakeCommandList commandList;
+        FrameCaptureReadbackHelper helper;
+        assert(helper.Initialize(&device, 1));
+        assert(helper.RequestFrameCapture({FrameCaptureSourceKind::SceneColor}).IsAccepted());
+        const FrameCaptureRequestSnapshot claimedSnapshot = ClaimPendingRequest(helper);
+
+        assert(!helper.AbandonAssignedRequest(
+            claimedSnapshot,
+            45u,
+            FrameCaptureResultStatus::Success));
+
+        FrameCaptureRequestSnapshot wrongSnapshot = claimedSnapshot;
+        ++wrongSnapshot.RequestId;
+        assert(!helper.AbandonAssignedRequest(
+            wrongSnapshot,
+            45u,
+            FrameCaptureResultStatus::SourceUnavailable));
+
+        {
+            FrameCaptureAssignmentGuard guard(&helper, claimedSnapshot, 45u);
+            FrameCaptureSourceSet sources;
+            sources.SceneColor = MakeSource(MakeTexture(), 45u);
+            assert(helper.TryRecordCopy(0u, &commandList, claimedSnapshot, sources) ==
+                   FrameCaptureRecordStatus::Recorded);
+            sources.Reset();
+
+            assert(!helper.CommitRecordedCopy(wrongSnapshot));
+            CapturedFrame beforeCommit;
+            assert(!helper.TryConsumeCapturedFrame(beforeCommit));
+            assert(helper.CommitRecordedCopy(claimedSnapshot));
+            assert(!helper.AbandonAssignedRequest(
+                claimedSnapshot,
+                45u,
+                FrameCaptureResultStatus::SourceUnavailable));
+            guard.MarkResolved();
+        }
+
+        CapturedFrame beforePublish;
+        assert(!helper.TryConsumeCapturedFrame(beforePublish));
+        helper.PublishCompletedFrameSlot(0u);
+
+        CapturedFrame completed;
+        assert(helper.TryConsumeCapturedFrame(completed));
+        assert(completed.Status == FrameCaptureResultStatus::Success);
+        assert(completed.RequestId == claimedSnapshot.RequestId);
+        assert(completed.FrameNumber == 45u);
+    }
+
+    enum class FakeCoordinatorOutcome : uint8_t
+    {
+        AfterClaimEarlyReturn,
+        ExecuteThrow,
+        RecordedWithoutSubmit,
+        SubmitFailure,
+        PublishedFailure,
+        SubmittedSuccess
+    };
+
+    void RunFakeCoordinatorFlow(
+        FrameCaptureReadbackHelper& helper,
+        FakeCommandList& commandList,
+        FakeCoordinatorOutcome outcome)
+    {
+        assert(helper.RequestFrameCapture({FrameCaptureSourceKind::SceneColor}).IsAccepted());
+        const FrameCaptureRequestSnapshot claimedSnapshot = ClaimPendingRequest(helper);
+        FrameCaptureAssignmentGuard guard(&helper, claimedSnapshot, 123u);
+
+        if (outcome == FakeCoordinatorOutcome::AfterClaimEarlyReturn)
+        {
+            return;
+        }
+        if (outcome == FakeCoordinatorOutcome::ExecuteThrow)
+        {
+            throw std::runtime_error("fake executor failure");
+        }
+
+        FrameCaptureSourceSet sources;
+        sources.SceneColor = MakeSource(
+            MakeTexture(
+                3u,
+                2u,
+                RHI::Format::R8G8B8A8_UNORM,
+                outcome == FakeCoordinatorOutcome::PublishedFailure
+                    ? RHI::ResourceUsage::ShaderRead
+                    : RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferSrc),
+            123u);
+        const FrameCaptureRecordStatus recordStatus =
+            helper.TryRecordCopy(0u, &commandList, claimedSnapshot, sources);
+        sources.Reset();
+
+        if (outcome == FakeCoordinatorOutcome::PublishedFailure)
+        {
+            assert(recordStatus == FrameCaptureRecordStatus::PublishedFailure);
+            guard.MarkResolved();
+            return;
+        }
+
+        assert(recordStatus == FrameCaptureRecordStatus::Recorded);
+        if (outcome == FakeCoordinatorOutcome::RecordedWithoutSubmit ||
+            outcome == FakeCoordinatorOutcome::SubmitFailure)
+        {
+            return;
+        }
+
+        assert(outcome == FakeCoordinatorOutcome::SubmittedSuccess);
+        assert(helper.CommitRecordedCopy(claimedSnapshot));
+        guard.MarkResolved();
+    }
+
+    void TestFakeCoordinatorOutcomesCloseRequestsExactlyOnce()
+    {
+        const FakeCoordinatorOutcome abandonedOutcomes[] = {
+            FakeCoordinatorOutcome::AfterClaimEarlyReturn,
+            FakeCoordinatorOutcome::ExecuteThrow,
+            FakeCoordinatorOutcome::RecordedWithoutSubmit,
+            FakeCoordinatorOutcome::SubmitFailure};
+
+        for (FakeCoordinatorOutcome outcome : abandonedOutcomes)
+        {
+            FakeDevice device;
+            FakeCommandList commandList;
+            FrameCaptureReadbackHelper helper;
+            assert(helper.Initialize(&device, 1));
+            try
+            {
+                RunFakeCoordinatorFlow(helper, commandList, outcome);
+            }
+            catch (const std::runtime_error&)
+            {
+                assert(outcome == FakeCoordinatorOutcome::ExecuteThrow);
+            }
+
+            CapturedFrame failed;
+            assert(helper.TryConsumeCapturedFrame(failed));
+            assert(failed.Status == FrameCaptureResultStatus::SourceUnavailable);
+            assert(failed.FrameNumber == 123u);
+            assert(!helper.TryConsumeCapturedFrame(failed));
+            assert(helper.RequestFrameCapture().IsAccepted());
+        }
+
+        {
+            FakeDevice device;
+            FakeCommandList commandList;
+            FrameCaptureReadbackHelper helper;
+            assert(helper.Initialize(&device, 1));
+            RunFakeCoordinatorFlow(helper, commandList, FakeCoordinatorOutcome::PublishedFailure);
+
+            CapturedFrame failed;
+            assert(helper.TryConsumeCapturedFrame(failed));
+            assert(failed.Status == FrameCaptureResultStatus::SourceMissingTransferSrc);
+            assert(!helper.TryConsumeCapturedFrame(failed));
+            assert(helper.RequestFrameCapture().IsAccepted());
+        }
+
+        {
+            FakeDevice device;
+            FakeCommandList commandList;
+            FrameCaptureReadbackHelper helper;
+            assert(helper.Initialize(&device, 1));
+            RunFakeCoordinatorFlow(helper, commandList, FakeCoordinatorOutcome::SubmittedSuccess);
+
+            CapturedFrame beforePublish;
+            assert(!helper.TryConsumeCapturedFrame(beforePublish));
+            helper.PublishCompletedFrameSlot(0u);
+
+            CapturedFrame completed;
+            assert(helper.TryConsumeCapturedFrame(completed));
+            assert(completed.Status == FrameCaptureResultStatus::Success);
+            assert(completed.FrameNumber == 123u);
+        }
+    }
+
     void TestNoRequestNoOp()
     {
         FakeDevice device;
@@ -591,7 +952,7 @@ namespace
         FrameCaptureReadbackHelper helper;
         assert(helper.Initialize(&device, 2));
 
-        assert(helper.TryRecordCopy(0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::NoRequest);
+        assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::NoRequest);
         assert(device.CreatedBufferDescs.empty());
         assert(commandList.Events.empty());
 
@@ -609,7 +970,7 @@ namespace
         auto texture = MakeTexture();
         auto fakeTexture = DynamicPointerCast<FakeTexture>(texture);
 
-        assert(helper.TryRecordCopy(1, &commandList, MakeSource(texture, 37)) == FrameCaptureRecordStatus::Recorded);
+        assert(RecordPendingCopy(helper, 1, &commandList, MakeSource(texture, 37)) == FrameCaptureRecordStatus::Recorded);
         assert(commandList.Events.size() == 3);
         assert(commandList.Events[0].Type == FakeCommandEventType::TextureBarrier);
         assert(commandList.Events[0].BeforeState == RHI::ResourceState::ShaderResource);
@@ -661,7 +1022,7 @@ namespace
             RHI::Format::R16G16B16A16_FLOAT,
             RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferSrc);
         const FrameCaptureRecordStatus recordStatus =
-            helper.TryRecordCopy(0u, &commandList, MakeSource(texture));
+            RecordPendingCopy(helper, 0u, &commandList, MakeSource(texture));
         if (recordStatus != FrameCaptureRecordStatus::Recorded)
         {
             std::cerr << "RGBA16F record must be supported" << std::endl;
@@ -691,7 +1052,7 @@ namespace
         assert(helper.Initialize(&device, 2));
         assert(helper.RequestFrameCapture().IsAccepted());
 
-        assert(helper.TryRecordCopy(0, &commandList, MakeSource(texture)) == FrameCaptureRecordStatus::PublishedFailure);
+        assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(texture)) == FrameCaptureRecordStatus::PublishedFailure);
         assert(device.CreatedBufferDescs.empty());
         assert(commandList.Events.empty());
         AssertConsumeStatus(helper, expectedStatus);
@@ -731,7 +1092,7 @@ namespace
             FrameCaptureReadbackHelper helper;
             assert(helper.Initialize(&device, 2));
             assert(helper.RequestFrameCapture().IsAccepted());
-            assert(helper.TryRecordCopy(0, nullptr, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::PublishedFailure);
+            assert(RecordPendingCopy(helper, 0, nullptr, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::PublishedFailure);
             assert(device.CreatedBufferDescs.empty());
             AssertConsumeStatus(helper, FrameCaptureResultStatus::SourceUnavailable);
         }
@@ -742,7 +1103,7 @@ namespace
             FrameCaptureReadbackHelper helper;
             assert(helper.Initialize(&device, 2));
             assert(helper.RequestFrameCapture().IsAccepted());
-            assert(helper.TryRecordCopy(0, &commandList, MakeSource(nullptr)) == FrameCaptureRecordStatus::PublishedFailure);
+            assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(nullptr)) == FrameCaptureRecordStatus::PublishedFailure);
             assert(device.CreatedBufferDescs.empty());
             assert(commandList.Events.empty());
             AssertConsumeStatus(helper, FrameCaptureResultStatus::SourceUnavailable);
@@ -754,7 +1115,7 @@ namespace
             FrameCaptureReadbackHelper helper;
             assert(helper.Initialize(&device, 2));
             assert(helper.RequestFrameCapture().IsAccepted());
-            assert(helper.TryRecordCopy(2, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::PublishedFailure);
+            assert(RecordPendingCopy(helper, 2, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::PublishedFailure);
             assert(device.CreatedBufferDescs.empty());
             assert(commandList.Events.empty());
             AssertConsumeStatus(helper, FrameCaptureResultStatus::SourceUnavailable);
@@ -771,7 +1132,7 @@ namespace
             assert(helper.RequestFrameCapture().IsAccepted());
             device.bThrowCreateBuffer = true;
 
-            assert(helper.TryRecordCopy(0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::PublishedFailure);
+            assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::PublishedFailure);
             assert(commandList.Events.empty());
             AssertConsumeStatus(helper, FrameCaptureResultStatus::ReadbackBufferCreateFailed);
         }
@@ -784,7 +1145,7 @@ namespace
             assert(helper.RequestFrameCapture().IsAccepted());
             device.bReturnNullCreateBuffer = true;
 
-            assert(helper.TryRecordCopy(0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::PublishedFailure);
+            assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::PublishedFailure);
             assert(commandList.Events.empty());
             AssertConsumeStatus(helper, FrameCaptureResultStatus::ReadbackBufferCreateFailed);
         }
@@ -798,7 +1159,7 @@ namespace
             FrameCaptureReadbackHelper helper;
             assert(helper.Initialize(&device, 2));
             assert(helper.RequestFrameCapture().IsAccepted());
-            assert(helper.TryRecordCopy(0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::Recorded);
+            assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::Recorded);
             device.CreatedBuffers[0]->MapMode = FakeMapMode::Throw;
 
             helper.PublishCompletedFrameSlot(0);
@@ -813,7 +1174,7 @@ namespace
             FrameCaptureReadbackHelper helper;
             assert(helper.Initialize(&device, 2));
             assert(helper.RequestFrameCapture().IsAccepted());
-            assert(helper.TryRecordCopy(0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::Recorded);
+            assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::Recorded);
             device.CreatedBuffers[0]->MapMode = FakeMapMode::ReturnNull;
 
             helper.PublishCompletedFrameSlot(0);
@@ -830,7 +1191,7 @@ namespace
         FrameCaptureReadbackHelper helper;
         assert(helper.Initialize(&device, 2));
         assert(helper.RequestFrameCapture().IsAccepted());
-        assert(helper.TryRecordCopy(0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::Recorded);
+        assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(MakeTexture())) == FrameCaptureRecordStatus::Recorded);
         helper.PublishCompletedFrameSlot(0);
 
         CapturedFrame frame;
@@ -849,21 +1210,21 @@ namespace
         assert(helper.Initialize(&device, 2));
 
         assert(helper.RequestFrameCapture().IsAccepted());
-        assert(helper.TryRecordCopy(0, &commandList, MakeSource(MakeTexture(2, 2))) == FrameCaptureRecordStatus::Recorded);
+        assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(MakeTexture(2, 2))) == FrameCaptureRecordStatus::Recorded);
         TSharedPtr<FakeBuffer> firstSlotBuffer = device.CreatedBuffers[0];
         helper.PublishCompletedFrameSlot(0);
         CapturedFrame frame;
         assert(helper.TryConsumeCapturedFrame(frame));
 
         assert(helper.RequestFrameCapture().IsAccepted());
-        assert(helper.TryRecordCopy(0, &commandList, MakeSource(MakeTexture(1, 1))) == FrameCaptureRecordStatus::Recorded);
+        assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(MakeTexture(1, 1))) == FrameCaptureRecordStatus::Recorded);
         assert(device.CreatedBuffers.size() == 1);
         assert(device.CreatedBuffers[0] == firstSlotBuffer);
         helper.PublishCompletedFrameSlot(0);
         assert(helper.TryConsumeCapturedFrame(frame));
 
         assert(helper.RequestFrameCapture().IsAccepted());
-        assert(helper.TryRecordCopy(0, &commandList, MakeSource(MakeTexture(3, 2))) == FrameCaptureRecordStatus::Recorded);
+        assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(MakeTexture(3, 2))) == FrameCaptureRecordStatus::Recorded);
         assert(device.CreatedBuffers.size() == 2);
         TSharedPtr<FakeBuffer> largerSlotBuffer = device.CreatedBuffers[1];
         assert(largerSlotBuffer != firstSlotBuffer);
@@ -871,7 +1232,7 @@ namespace
         assert(helper.TryConsumeCapturedFrame(frame));
 
         assert(helper.RequestFrameCapture().IsAccepted());
-        assert(helper.TryRecordCopy(1, &commandList, MakeSource(MakeTexture(3, 2))) == FrameCaptureRecordStatus::Recorded);
+        assert(RecordPendingCopy(helper, 1, &commandList, MakeSource(MakeTexture(3, 2))) == FrameCaptureRecordStatus::Recorded);
         assert(device.CreatedBuffers.size() == 3);
         assert(device.CreatedBuffers[2] != largerSlotBuffer);
         helper.PublishCompletedFrameSlot(1);
@@ -891,7 +1252,7 @@ namespace
         TWeakPtr<FakeTexture> weakTexture = fakeTexture;
         VariableArray<uint8_t> expectedPixels = fakeTexture->Bytes;
 
-        assert(helper.TryRecordCopy(0, &commandList, MakeSource(texture, 91)) == FrameCaptureRecordStatus::Recorded);
+        assert(RecordPendingCopy(helper, 0, &commandList, MakeSource(texture, 91)) == FrameCaptureRecordStatus::Recorded);
         texture.reset();
         fakeTexture.reset();
         assert(weakTexture.expired());
@@ -919,6 +1280,10 @@ namespace
         FrameCaptureRequestResult coordinatorRequest = coordinator.RequestFrameCapture();
         assert(coordinatorRequest.Status == FrameCaptureRequestStatus::NotInitialized);
         assert(coordinatorRequest.RequestId == 0);
+        FrameCaptureRequestResult coordinatorSceneRequest =
+            coordinator.RequestFrameCapture({FrameCaptureSourceKind::SceneColor});
+        assert(coordinatorSceneRequest.Status == FrameCaptureRequestStatus::NotInitialized);
+        assert(coordinatorSceneRequest.RequestId == 0);
         assert(!coordinator.TryConsumeCapturedFrame(frame));
         assert(frame.Status == FrameCaptureResultStatus::SourceUnavailable);
         assert(frame.RequestId == 0);
@@ -930,6 +1295,10 @@ namespace
         FrameCaptureRequestResult worldRequest = renderWorld.RequestFrameCapture();
         assert(worldRequest.Status == FrameCaptureRequestStatus::NotInitialized);
         assert(worldRequest.RequestId == 0);
+        FrameCaptureRequestResult worldSceneRequest =
+            renderWorld.RequestFrameCapture({FrameCaptureSourceKind::SceneColor});
+        assert(worldSceneRequest.Status == FrameCaptureRequestStatus::NotInitialized);
+        assert(worldSceneRequest.RequestId == 0);
         assert(!renderWorld.TryConsumeCapturedFrame(frame));
         assert(frame.Status == FrameCaptureResultStatus::SourceUnavailable);
         assert(frame.RequestId == 0);
@@ -945,9 +1314,13 @@ namespace
         coordinator.m_FrameCaptureReadbackHelper = Container::MakeUnique<FrameCaptureReadbackHelper>();
         assert(coordinator.m_FrameCaptureReadbackHelper->Initialize(&device, 2));
 
-        FrameCaptureRequestResult coordinatorRequest = coordinator.RequestFrameCapture();
+        FrameCaptureRequestResult coordinatorRequest =
+            coordinator.RequestFrameCapture({FrameCaptureSourceKind::SceneColor});
         assert(coordinatorRequest.Status == FrameCaptureRequestStatus::Accepted);
         assert(coordinatorRequest.RequestId != 0);
+        FrameCaptureRequestSnapshot coordinatorSnapshot;
+        assert(coordinator.m_FrameCaptureReadbackHelper->TrySnapshotPendingRequest(coordinatorSnapshot));
+        assert(coordinatorSnapshot.SourceKind == FrameCaptureSourceKind::SceneColor);
         FrameCaptureRequestResult coordinatorSecondRequest = coordinator.RequestFrameCapture();
         assert(coordinatorSecondRequest.Status == FrameCaptureRequestStatus::AlreadyPending);
         assert(coordinatorSecondRequest.RequestId == coordinatorRequest.RequestId);
@@ -962,9 +1335,24 @@ namespace
         FrameCaptureRequestResult worldRequest = renderWorld.RequestFrameCapture();
         assert(worldRequest.Status == FrameCaptureRequestStatus::Accepted);
         assert(worldRequest.RequestId != 0);
+        FrameCaptureRequestSnapshot worldSnapshot;
+        assert(renderWorld.m_RenderingCoordinator.m_FrameCaptureReadbackHelper->TrySnapshotPendingRequest(
+            worldSnapshot));
+        assert(worldSnapshot.SourceKind == FrameCaptureSourceKind::PresentationColor);
         FrameCaptureRequestResult worldSecondRequest = renderWorld.RequestFrameCapture();
         assert(worldSecondRequest.Status == FrameCaptureRequestStatus::AlreadyPending);
         assert(worldSecondRequest.RequestId == worldRequest.RequestId);
+    }
+
+    int RunAssignmentGuardTestSuite()
+    {
+        TestSnapshotAndClaimStateMachine();
+        TestAssignmentGuardAbandonsClaimedAndRecordedRequests();
+        TestAssignmentGuardRejectsWrongIdentityAndResolvesOnlyAfterCommit();
+        TestFakeCoordinatorOutcomesCloseRequestsExactlyOnce();
+
+        std::cout << "FrameCaptureAssignmentGuardTest passed" << std::endl;
+        return 0;
     }
 
     int RunTest()
@@ -972,6 +1360,12 @@ namespace
         TestCapturedFrameType();
         TestInitializeRejectsInvalidInputs();
         TestRequestCoalescing();
+        TestRequestSourceAndDefaultCompatibility();
+        TestSnapshotAndClaimStateMachine();
+        TestMissingRequestedSourcePublishesFailureAndReturnsToIdleAfterConsume();
+        TestAssignmentGuardAbandonsClaimedAndRecordedRequests();
+        TestAssignmentGuardRejectsWrongIdentityAndResolvesOnlyAfterCommit();
+        TestFakeCoordinatorOutcomesCloseRequestsExactlyOnce();
         TestNoRequestNoOp();
         TestValidRecordAndPublish();
         TestRgba16FloatRecordLayout();
@@ -990,9 +1384,17 @@ namespace
     }
 
 } // namespace
+
+int RunFrameCaptureAssignmentGuardTestSuite()
+{
+    return RunAssignmentGuardTestSuite();
+}
+
 } // namespace NorvesLib::Core::Rendering
 
+#if !defined(NORVES_FRAME_CAPTURE_ASSIGNMENT_GUARD_TEST_TARGET)
 int main()
 {
     return NorvesLib::Core::Rendering::RunTest();
 }
+#endif

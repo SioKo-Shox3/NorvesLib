@@ -323,6 +323,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         const RenderGraphExecutionResult& lastResult = context.Graph->GetLastExecutionResult();
+        RHI::TexturePtr sceneColorTexture;
+        if (lastResult.TryGetTexture(RenderGraphResourceNames::SceneColor, sceneColorTexture))
+        {
+            m_FrameSceneColorTexture = sceneColorTexture;
+        }
+
         RHI::TexturePtr outputTexture;
         if (lastResult.TryGetTexture(RenderGraphResourceNames::PresentationColor, outputTexture) ||
             lastResult.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, outputTexture) ||
@@ -337,11 +343,17 @@ namespace NorvesLib::Core::Rendering
     void View::ResetFrameOutput()
     {
         m_FrameOutputTexture.reset();
+        m_FrameSceneColorTexture.reset();
     }
 
     void View::SetFrameOutputTexture(RHI::TexturePtr texture)
     {
         m_FrameOutputTexture = texture;
+    }
+
+    const RHI::TexturePtr& View::GetFrameSceneColorTexture() const
+    {
+        return m_FrameSceneColorTexture;
     }
 
     // ========================================

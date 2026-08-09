@@ -193,6 +193,7 @@ namespace NorvesLib::Core::Rendering
         void SetOverlayPassesForNextFrame(Container::Span<IViewPass *> passes);
 
         FrameCaptureRequestResult RequestFrameCapture();
+        FrameCaptureRequestResult RequestFrameCapture(const FrameCaptureRequest& request);
         bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
 
         // ========================================

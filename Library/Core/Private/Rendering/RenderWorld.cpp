@@ -371,12 +371,18 @@ namespace NorvesLib::Core::Rendering
 
     FrameCaptureRequestResult RenderWorld::RequestFrameCapture()
     {
+        return RequestFrameCapture(FrameCaptureRequest{});
+    }
+
+    FrameCaptureRequestResult RenderWorld::RequestFrameCapture(
+        const FrameCaptureRequest& request)
+    {
         if (!m_bInitialized)
         {
             return {};
         }
 
-        return m_RenderingCoordinator.RequestFrameCapture();
+        return m_RenderingCoordinator.RequestFrameCapture(request);
     }
 
     bool RenderWorld::TryConsumeCapturedFrame(CapturedFrame& outFrame)

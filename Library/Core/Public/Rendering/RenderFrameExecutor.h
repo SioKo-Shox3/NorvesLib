@@ -51,8 +51,7 @@ namespace NorvesLib::Core::Rendering
         // Which presentation path actually ran. true = composite(graph) path, false = legacy path.
         // The overlay seam reads this to pick the path-dependent presentation load family (backward compatible: default false).
         bool bComposite = false;
-        bool bHasFrameCaptureSource = false;
-        FrameCaptureSource CaptureSource;
+        FrameCaptureSourceSet CaptureSources;
     };
 
     class RenderFrameExecutor

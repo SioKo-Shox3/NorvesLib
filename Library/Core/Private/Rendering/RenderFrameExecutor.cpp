@@ -13,7 +13,7 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        void SetFrameCaptureSource(RenderFrameExecutionResult& result,
+        void SetFrameCaptureSource(FrameCaptureSource& source,
                                    const RHI::TexturePtr& texture,
                                    uint64_t frameNumber)
         {
@@ -22,11 +22,39 @@ namespace NorvesLib::Core::Rendering
                 return;
             }
 
-            result.CaptureSource.Texture = texture;
-            result.CaptureSource.CurrentState = RHI::ResourceState::ShaderResource;
-            result.CaptureSource.RestoreState = RHI::ResourceState::ShaderResource;
-            result.CaptureSource.FrameNumber = frameNumber;
-            result.bHasFrameCaptureSource = true;
+            source.Texture = texture;
+            source.CurrentState = RHI::ResourceState::ShaderResource;
+            source.RestoreState = RHI::ResourceState::ShaderResource;
+            source.FrameNumber = frameNumber;
+        }
+
+        void SetPrimarySceneFrameCaptureSource(
+            const RenderFrameExecutionRequest& request,
+            RenderFrameExecutionResult& result)
+        {
+            if (!request.Packet || !request.Views)
+            {
+                return;
+            }
+
+            const ViewportRenderPlan* primarySceneViewport =
+                RenderFrameExecutor::FindPrimarySceneViewportRenderPlan(*request.Packet);
+            if (!primarySceneViewport || primarySceneViewport->ViewId >= request.Views->size())
+            {
+                return;
+            }
+
+            const Container::TSharedPtr<View>& primarySceneView =
+                (*request.Views)[primarySceneViewport->ViewId];
+            if (!primarySceneView)
+            {
+                return;
+            }
+
+            SetFrameCaptureSource(
+                result.CaptureSources.SceneColor,
+                primarySceneView->GetFrameSceneColorTexture(),
+                request.Packet->FrameNumber);
         }
     } // namespace
 
@@ -52,10 +80,14 @@ namespace NorvesLib::Core::Rendering
         ResetFrameOutputs(request);
         if (ShouldCompose(*request.Packet, *request.Views))
         {
-            return ExecuteCompositePath(request);
+            result = ExecuteCompositePath(request);
         }
-
-        return ExecuteLegacyPath(request);
+        else
+        {
+            result = ExecuteLegacyPath(request);
+        }
+        SetPrimarySceneFrameCaptureSource(request, result);
+        return result;
     }
 
     RenderFrameExecutionResult RenderFrameExecutor::ExecuteLegacyPath(const RenderFrameExecutionRequest &request)
@@ -553,7 +585,10 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        SetFrameCaptureSource(result, presentationResult.InputTexture, request.Packet->FrameNumber);
+        SetFrameCaptureSource(
+            result.CaptureSources.PresentationColor,
+            presentationResult.InputTexture,
+            request.Packet->FrameNumber);
         return true;
     }
 
@@ -577,13 +612,11 @@ namespace NorvesLib::Core::Rendering
         if (bComposed && captureSource.Texture)
         {
             captureSource.FrameNumber = request.Packet->FrameNumber;
-            result.CaptureSource = captureSource;
-            result.bHasFrameCaptureSource = true;
+            result.CaptureSources.PresentationColor = captureSource;
         }
         else if (bComposed)
         {
-            result.CaptureSource = FrameCaptureSource{};
-            result.bHasFrameCaptureSource = false;
+            result.CaptureSources.PresentationColor = FrameCaptureSource{};
         }
         return bComposed;
     }

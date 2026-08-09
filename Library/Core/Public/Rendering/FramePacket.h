@@ -5,6 +5,7 @@
 #include "DrawCommand.h"
 #include "Rendering/DebugDrawQueue.h"
 #include "ViewportSnapshot.h"
+#include "Rendering/FrameCaptureTypes.h"
 #include "Debug/Stats.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
@@ -65,6 +66,9 @@ namespace NorvesLib::Core::Rendering
         uint64_t FrameNumber = 0; // フレーム番号
         float DeltaTime = 0.0f;   // 前フレームからの経過時間
         double TotalTime = 0.0;   // アプリケーション開始からの経過時間
+
+        /** @brief GameThread が非破壊 snapshot した capture request 値。 */
+        FrameCaptureRequestSnapshot CaptureRequest;
 
         // ========================================
         // シーンデータ
@@ -142,6 +146,7 @@ namespace NorvesLib::Core::Rendering
             FrameNumber = 0;
             DeltaTime = 0.0f;
             TotalTime = 0.0;
+            CaptureRequest = FrameCaptureRequestSnapshot{};
             bHasMainCamera = false;
             Scene.Clear();
             DrawCommands.clear();

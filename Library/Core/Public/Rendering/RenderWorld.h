@@ -167,6 +167,7 @@ namespace NorvesLib::Core::Rendering
         [[nodiscard]] uint64_t GetRenderedFrameCount() const;
 
         FrameCaptureRequestResult RequestFrameCapture();
+        FrameCaptureRequestResult RequestFrameCapture(const FrameCaptureRequest& request);
         bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
 
         // ========================================

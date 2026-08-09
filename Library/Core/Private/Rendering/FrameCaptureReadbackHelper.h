@@ -27,10 +27,21 @@ namespace NorvesLib::Core::Rendering
         void Shutdown();
 
         FrameCaptureRequestResult RequestFrameCapture();
+        FrameCaptureRequestResult RequestFrameCapture(const FrameCaptureRequest& request);
+        bool TrySnapshotPendingRequest(FrameCaptureRequestSnapshot& outSnapshot);
+        bool TryClaimPendingRequest(
+            const FrameCaptureRequestSnapshot& packetSnapshot,
+            FrameCaptureRequestSnapshot& outClaimedSnapshot);
+        bool AbandonAssignedRequest(
+            const FrameCaptureRequestSnapshot& snapshot,
+            uint64_t frameNumber,
+            FrameCaptureResultStatus failureStatus) noexcept;
+        bool CommitRecordedCopy(const FrameCaptureRequestSnapshot& snapshot) noexcept;
         FrameCaptureRecordStatus TryRecordCopy(
             uint32_t frameSlotIndex,
             RHI::ICommandList* commandList,
-            const FrameCaptureSource& source);
+            const FrameCaptureRequestSnapshot& snapshot,
+            const FrameCaptureSourceSet& sources);
         void PublishCompletedFrameSlot(uint32_t frameSlotIndex);
         bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
 
@@ -40,6 +51,8 @@ namespace NorvesLib::Core::Rendering
             Uninitialized,
             Idle,
             Requested,
+            AssignedToFrame,
+            RecordedAwaitingSubmit,
             PendingGpu,
             CompletedUnconsumed
         };
@@ -78,7 +91,7 @@ namespace NorvesLib::Core::Rendering
         State m_State = State::Uninitialized;
         uint32_t m_FrameSlotCount = 0;
         uint64_t m_NextRequestId = 1;
-        uint64_t m_ActiveRequestId = 0;
+        FrameCaptureRequestSnapshot m_ActiveRequest;
         PendingReadback m_PendingReadback;
         CapturedFrame m_CompletedFrame;
         Container::VariableArray<ReadbackSlot> m_ReadbackSlots;

@@ -19,6 +19,7 @@ namespace NorvesLib::Test::RenderingValidation
         const Core::Container::VariableArray<Core::Container::String>& args)
     {
         bool bSceneSpecified = false;
+        bool bCaptureSourceSpecified = false;
         for (const Core::Container::String& argument : args)
         {
             if (argument == TEXT("--trace") || StartsWith(argument, TEXT("--trace-file=")))
@@ -45,6 +46,32 @@ namespace NorvesLib::Test::RenderingValidation
                 else
                 {
                     LOG_ERROR("描画検証の scene 値が不正です");
+                    return false;
+                }
+                continue;
+            }
+            if (StartsWith(argument, TEXT("--capture-source=")))
+            {
+                if (bCaptureSourceSpecified)
+                {
+                    LOG_ERROR("描画検証の capture-source 引数が重複しています");
+                    return false;
+                }
+                bCaptureSourceSpecified = true;
+                const Core::Container::String value =
+                    argument.substr(Core::Container::String(TEXT("--capture-source=")).size());
+                if (value == TEXT("presentation"))
+                {
+                    m_RunConfig.CaptureSource =
+                        Core::Rendering::FrameCaptureSourceKind::PresentationColor;
+                }
+                else if (value == TEXT("scene-color"))
+                {
+                    m_RunConfig.CaptureSource = Core::Rendering::FrameCaptureSourceKind::SceneColor;
+                }
+                else
+                {
+                    LOG_ERROR("描画検証の capture-source 値が不正です");
                     return false;
                 }
                 continue;
@@ -95,7 +122,8 @@ namespace NorvesLib::Test::RenderingValidation
         if (!m_bCaptureRequested && m_Fixture.IsCaptureStateStable() &&
             !renderWorld.HasPendingAsyncAssets())
         {
-            const Core::Rendering::FrameCaptureRequestResult request = renderWorld.RequestFrameCapture();
+            const Core::Rendering::FrameCaptureRequestResult request = renderWorld.RequestFrameCapture(
+                {m_RunConfig.CaptureSource});
             if (!request.IsAccepted())
             {
                 Fail(request.Status == Core::Rendering::FrameCaptureRequestStatus::AlreadyPending

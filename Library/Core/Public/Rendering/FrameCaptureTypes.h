@@ -6,6 +6,28 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    enum class FrameCaptureSourceKind : uint8_t
+    {
+        PresentationColor,
+        SceneColor
+    };
+
+    struct FrameCaptureRequest
+    {
+        FrameCaptureSourceKind SourceKind = FrameCaptureSourceKind::PresentationColor;
+    };
+
+    struct FrameCaptureRequestSnapshot
+    {
+        uint64_t RequestId = 0;
+        FrameCaptureSourceKind SourceKind = FrameCaptureSourceKind::PresentationColor;
+
+        bool IsValid() const
+        {
+            return RequestId != 0;
+        }
+    };
+
     enum class FrameCaptureRequestStatus : uint8_t
     {
         Accepted,
@@ -41,6 +63,31 @@ namespace NorvesLib::Core::Rendering
         RHI::ResourceState CurrentState = RHI::ResourceState::ShaderResource;
         RHI::ResourceState RestoreState = RHI::ResourceState::ShaderResource;
         uint64_t FrameNumber = 0;
+    };
+
+    struct FrameCaptureSourceSet
+    {
+        FrameCaptureSource PresentationColor;
+        FrameCaptureSource SceneColor;
+
+        const FrameCaptureSource* Find(FrameCaptureSourceKind kind) const
+        {
+            switch (kind)
+            {
+            case FrameCaptureSourceKind::PresentationColor:
+                return &PresentationColor;
+            case FrameCaptureSourceKind::SceneColor:
+                return &SceneColor;
+            default:
+                return nullptr;
+            }
+        }
+
+        void Reset()
+        {
+            PresentationColor = FrameCaptureSource{};
+            SceneColor = FrameCaptureSource{};
+        }
     };
 
     struct CapturedFrame

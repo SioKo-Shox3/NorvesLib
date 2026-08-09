@@ -2,6 +2,7 @@
 #include "RenderingValidation/RenderingFloatImage.h"
 
 #include "CoreTypes.h"
+#include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -56,17 +57,32 @@ namespace
         const uint32_t rowPitch = width * Rgba16BytesPerPixel;
         texture->Update(pixels, rowPitch, rowPitch);
 
-        const Core::Rendering::FrameCaptureRequestResult request = helper.RequestFrameCapture();
-        if (!Require(request.IsAccepted(), "capture request must be accepted"))
-        {
-            return false;
-        }
-
         RHI::CommandListPtr commandList = device->CreateCommandList();
         if (!Require(IsValid(commandList), "command list creation must succeed"))
         {
             return false;
         }
+
+        const Core::Rendering::FrameCaptureRequestResult request = helper.RequestFrameCapture(
+            {Core::Rendering::FrameCaptureSourceKind::SceneColor});
+        if (!Require(request.IsAccepted(), "capture request must be accepted"))
+        {
+            return false;
+        }
+
+        Core::Rendering::FrameCaptureRequestSnapshot packetSnapshot;
+        Core::Rendering::FrameCaptureRequestSnapshot claimedSnapshot;
+        if (!Require(helper.TrySnapshotPendingRequest(packetSnapshot),
+                     "capture request must snapshot") ||
+            !Require(helper.TryClaimPendingRequest(packetSnapshot, claimedSnapshot),
+                     "packet snapshot must claim"))
+        {
+            return false;
+        }
+        Core::Rendering::FrameCaptureAssignmentGuard assignmentGuard(
+            &helper,
+            claimedSnapshot,
+            frameNumber);
 
         Core::Rendering::FrameCaptureSource source;
         source.Texture = texture;
@@ -74,17 +90,46 @@ namespace
         source.RestoreState = RHI::ResourceState::ShaderResource;
         source.FrameNumber = frameNumber;
 
-        commandList->Begin();
-        const Core::Rendering::FrameCaptureRecordStatus recordStatus =
-            helper.TryRecordCopy(0u, commandList.get(), source);
-        commandList->End();
+        Core::Rendering::FrameCaptureSourceSet sources;
+        sources.SceneColor = source;
+        Core::Rendering::FrameCaptureRecordStatus recordStatus =
+            Core::Rendering::FrameCaptureRecordStatus::NoRequest;
+        try
+        {
+            commandList->Begin();
+            recordStatus = helper.TryRecordCopy(
+                0u,
+                commandList.get(),
+                claimedSnapshot,
+                sources);
+            sources.Reset();
+            commandList->End();
+        }
+        catch (...)
+        {
+            sources.Reset();
+            return false;
+        }
         if (!Require(recordStatus == Core::Rendering::FrameCaptureRecordStatus::Recorded,
                      "RGBA16F copy must record"))
         {
             return false;
         }
 
-        commandList->Submit(true);
+        try
+        {
+            commandList->Submit(true);
+        }
+        catch (...)
+        {
+            return false;
+        }
+        if (!Require(helper.CommitRecordedCopy(claimedSnapshot),
+                     "submitted RGBA16F copy must commit"))
+        {
+            return false;
+        }
+        assignmentGuard.MarkResolved();
         device->WaitIdle();
         helper.PublishCompletedFrameSlot(0u);
 

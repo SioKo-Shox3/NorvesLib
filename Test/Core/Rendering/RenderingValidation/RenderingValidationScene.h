@@ -4,6 +4,7 @@
 #include "Component/Component.h"
 #include "Container/Containers.h"
 #include "Math/Vector3.h"
+#include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/SceneProxy.h"
 
@@ -72,6 +73,7 @@ namespace NorvesLib::Test::RenderingValidation
     {
         SceneKind Scene = SceneKind::Indoor;
         uint32_t Seed = ValidationSeed;
+        Core::Rendering::FrameCaptureSourceKind CaptureSource = Core::Rendering::FrameCaptureSourceKind::PresentationColor;
     };
 
     bool BuildSceneLayout(SceneKind kind, uint32_t seed, SceneLayout& outLayout);

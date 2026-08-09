@@ -1,6 +1,7 @@
 ﻿#include "Rendering/CompositePass.h"
 #define private public
 #include "Rendering/FXAAPass.h"
+#include "Rendering/LightingPass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -898,6 +899,15 @@ namespace
         }
     };
 
+    class TestLightingPass final : public LightingPass
+    {
+    public:
+        void MarkInitializedForGraphTest()
+        {
+            m_bInitialized = true;
+        }
+    };
+
     void TestRenderTargetDescDoesNotIncludeTransferSrc()
     {
         RGTextureDesc desc = RGTextureDesc::RenderTarget(64,
@@ -920,6 +930,40 @@ namespace
         RHI::TexturePtr outputTexture = resources.GetTexture(pass.GetToneMappedColorHandle());
         AssertTextureHasTransferSrc(outputTexture);
         std::cout << "TestToneMappingGraphOutputIncludesTransferSrc passed\n";
+    }
+
+    void TestLightingSceneColorIncludesTransferSrcAndIsExported()
+    {
+        GraphFixture fixture;
+        TestLightingPass pass;
+        pass.MarkInitializedForGraphTest();
+        fixture.Graph.AddPass(&pass);
+
+        assert(fixture.Graph.Compile(fixture.Context));
+
+        RenderGraphResources resources(&fixture.Graph);
+        RHI::TexturePtr sceneColorTexture = resources.GetTexture(pass.GetSceneColorHandle());
+        AssertTextureHasTransferSrc(sceneColorTexture);
+
+        const RenderGraphExecutionResult result = fixture.Graph.ExecuteWithResult(fixture.Context);
+        assert(result.bSuccess);
+        RHI::TexturePtr exportedSceneColor;
+        assert(result.TryGetTexture(RenderGraphResourceNames::SceneColor, exportedSceneColor));
+        assert(exportedSceneColor.get() == sceneColorTexture.get());
+        std::cout << "TestLightingSceneColorIncludesTransferSrcAndIsExported passed\n";
+    }
+
+    void TestLightingPersistentSceneColorIncludesTransferSrc()
+    {
+        GraphFixture fixture;
+        LightingPass pass;
+        pass.m_Device = &fixture.Device;
+        pass.Setup(fixture.Context);
+
+        const RHI::TextureDesc* desc = FindCreatedTextureDesc(fixture.Device, "SceneColor");
+        assert(desc);
+        assert(HasUsage(desc->Usage, RHI::ResourceUsage::TransferSrc));
+        std::cout << "TestLightingPersistentSceneColorIncludesTransferSrc passed\n";
     }
 
     void TestToneMappingPersistentOutputIncludesTransferSrc()
@@ -1080,6 +1124,8 @@ int main()
 
     TestRenderTargetDescDoesNotIncludeTransferSrc();
     TestToneMappingGraphOutputIncludesTransferSrc();
+    TestLightingSceneColorIncludesTransferSrcAndIsExported();
+    TestLightingPersistentSceneColorIncludesTransferSrc();
     TestToneMappingPersistentOutputIncludesTransferSrc();
     TestFXAAGraphOutputIncludesTransferSrc();
     TestFXAAPersistentOutputIncludesTransferSrc();

@@ -17,6 +17,7 @@
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderFrameExecutor.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
+#include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/IViewPass.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
@@ -1234,6 +1235,11 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->Stats.bGameThreadTimingsAvailable =
                 NorvesLib::Debug::StatsManager::Get().IsTraceActive();
 #endif
+            if (m_FrameCaptureReadbackHelper)
+            {
+                m_FrameCaptureReadbackHelper->TrySnapshotPendingRequest(
+                    m_CurrentPacket->CaptureRequest);
+            }
             m_PacketManager.FinishWrite(m_CurrentPacket);
             m_CurrentPacket = nullptr;
         }
@@ -1273,12 +1279,18 @@ namespace NorvesLib::Core::Rendering
 
     FrameCaptureRequestResult RenderingCoordinator::RequestFrameCapture()
     {
+        return RequestFrameCapture(FrameCaptureRequest{});
+    }
+
+    FrameCaptureRequestResult RenderingCoordinator::RequestFrameCapture(
+        const FrameCaptureRequest& request)
+    {
         if (!m_bInitialized || !m_FrameCaptureReadbackHelper)
         {
             return {};
         }
 
-        return m_FrameCaptureReadbackHelper->RequestFrameCapture();
+        return m_FrameCaptureReadbackHelper->RequestFrameCapture(request);
     }
 
     bool RenderingCoordinator::TryConsumeCapturedFrame(CapturedFrame& outFrame)
@@ -1319,6 +1331,19 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+
+        FrameCaptureRequestSnapshot claimedCaptureRequest;
+        if (m_FrameCaptureReadbackHelper)
+        {
+            m_FrameCaptureReadbackHelper->TryClaimPendingRequest(
+                packet->CaptureRequest,
+                claimedCaptureRequest);
+        }
+        FrameCaptureAssignmentGuard captureAssignment(
+            m_FrameCaptureReadbackHelper.get(),
+            claimedCaptureRequest,
+            packet->FrameNumber);
+        FrameCaptureRecordStatus captureRecordStatus = FrameCaptureRecordStatus::NoRequest;
 
         Debug::RenderingStats renderStats = packet->Stats.GameThreadStats;
         renderStats.VisibleObjects = packet->Stats.VisibleObjects;
@@ -1643,20 +1668,17 @@ namespace NorvesLib::Core::Rendering
 
         if (m_FrameCaptureReadbackHelper)
         {
-            FrameCaptureSource captureSource;
-            if (executionResult.bHasFrameCaptureSource)
+            captureRecordStatus = m_FrameCaptureReadbackHelper->TryRecordCopy(
+                frameIndex,
+                m_CommandList.get(),
+                claimedCaptureRequest,
+                executionResult.CaptureSources);
+            if (captureRecordStatus == FrameCaptureRecordStatus::PublishedFailure)
             {
-                captureSource = executionResult.CaptureSource;
+                captureAssignment.MarkResolved();
             }
-            else
-            {
-                captureSource.FrameNumber = packet->FrameNumber;
-            }
-
-            m_FrameCaptureReadbackHelper->TryRecordCopy(frameIndex, m_CommandList.get(), captureSource);
-            executionResult.CaptureSource = FrameCaptureSource{};
-            executionResult.bHasFrameCaptureSource = false;
         }
+        executionResult.CaptureSources.Reset();
 
         // ========================================
         // overlay seam(モジュール描画の最終段。録画窓内・executor 外側)
@@ -1726,6 +1748,13 @@ namespace NorvesLib::Core::Rendering
 
         // コマンドリストをサブミット＆Present（旧EndFrame経路から移動）
         const RHI::SwapChainEndFrameResult endFrameResult = m_Screen.EndFrame(m_CommandList);
+        if (captureRecordStatus == FrameCaptureRecordStatus::Recorded &&
+            endFrameResult.SubmissionSerial != 0 &&
+            m_FrameCaptureReadbackHelper &&
+            m_FrameCaptureReadbackHelper->CommitRecordedCopy(claimedCaptureRequest))
+        {
+            captureAssignment.MarkResolved();
+        }
         if (m_RenderResources)
         {
             if (endFrameResult.SubmissionSerial != 0)

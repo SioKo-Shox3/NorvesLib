@@ -401,8 +401,11 @@ namespace NorvesLib::Core::Rendering
 
         if (bResourcesChanged)
         {
+            RHI::TextureDesc sceneColorDesc =
+                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
+            sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
             RHI::TexturePtr sceneColorTexture = m_Device->CreateTexture(
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
+                sceneColorDesc);
             if (!sceneColorTexture)
             {
                 NORVES_LOG_ERROR("LightingPass", "Failed to create SceneColor texture");
@@ -571,14 +574,18 @@ namespace NorvesLib::Core::Rendering
             m_ShadowMapHandle = shadowMapHandle.ToResourceHandle();
         }
 
+        RGTextureDesc sceneColorDesc =
+            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
+        sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
         m_SceneColorHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::SceneColor,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"),
+            sceneColorDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
+        builder.ExportTexture(RenderGraphResourceNames::SceneColor, m_SceneColorHandle);
 
         builder.PreserveInsertionOrder();
     }
@@ -780,8 +787,10 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::TexturePtr sceneColorTexture = m_Device->CreateTexture(
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor"));
+        RHI::TextureDesc sceneColorDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
+        sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        RHI::TexturePtr sceneColorTexture = m_Device->CreateTexture(sceneColorDesc);
         if (!sceneColorTexture)
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to create SceneColor texture");

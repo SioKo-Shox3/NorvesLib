@@ -21,7 +21,7 @@ namespace NorvesLib::Core::Rendering
         m_Device = device;
         m_FrameSlotCount = frameSlotCount;
         m_State = State::Idle;
-        m_ActiveRequestId = 0;
+        m_ActiveRequest = FrameCaptureRequestSnapshot{};
         m_PendingReadback = PendingReadback{};
         m_CompletedFrame = CapturedFrame{};
         m_ReadbackSlots.clear();
@@ -36,13 +36,19 @@ namespace NorvesLib::Core::Rendering
         m_Device = nullptr;
         m_FrameSlotCount = 0;
         m_State = State::Uninitialized;
-        m_ActiveRequestId = 0;
+        m_ActiveRequest = FrameCaptureRequestSnapshot{};
         m_PendingReadback = PendingReadback{};
         m_CompletedFrame = CapturedFrame{};
         m_ReadbackSlots.clear();
     }
 
     FrameCaptureRequestResult FrameCaptureReadbackHelper::RequestFrameCapture()
+    {
+        return RequestFrameCapture(FrameCaptureRequest{});
+    }
+
+    FrameCaptureRequestResult FrameCaptureReadbackHelper::RequestFrameCapture(
+        const FrameCaptureRequest& request)
     {
         Thread::ScopedLock lock(m_Mutex);
 
@@ -53,40 +59,121 @@ namespace NorvesLib::Core::Rendering
 
         if (m_State != State::Idle)
         {
-            return {FrameCaptureRequestStatus::AlreadyPending, m_ActiveRequestId};
+            return {FrameCaptureRequestStatus::AlreadyPending, m_ActiveRequest.RequestId};
         }
 
-        m_ActiveRequestId = m_NextRequestId++;
+        m_ActiveRequest.RequestId = m_NextRequestId++;
+        m_ActiveRequest.SourceKind = request.SourceKind;
         m_State = State::Requested;
-        return {FrameCaptureRequestStatus::Accepted, m_ActiveRequestId};
+        return {FrameCaptureRequestStatus::Accepted, m_ActiveRequest.RequestId};
+    }
+
+    bool FrameCaptureReadbackHelper::TrySnapshotPendingRequest(
+        FrameCaptureRequestSnapshot& outSnapshot)
+    {
+        outSnapshot = FrameCaptureRequestSnapshot{};
+        Thread::ScopedLock lock(m_Mutex);
+
+        if (m_State != State::Requested || !m_ActiveRequest.IsValid())
+        {
+            return false;
+        }
+
+        outSnapshot = m_ActiveRequest;
+        return true;
+    }
+
+    bool FrameCaptureReadbackHelper::TryClaimPendingRequest(
+        const FrameCaptureRequestSnapshot& packetSnapshot,
+        FrameCaptureRequestSnapshot& outClaimedSnapshot)
+    {
+        outClaimedSnapshot = FrameCaptureRequestSnapshot{};
+        Thread::ScopedLock lock(m_Mutex);
+
+        if (m_State != State::Requested ||
+            !packetSnapshot.IsValid() ||
+            packetSnapshot.RequestId != m_ActiveRequest.RequestId ||
+            packetSnapshot.SourceKind != m_ActiveRequest.SourceKind)
+        {
+            return false;
+        }
+
+        outClaimedSnapshot = m_ActiveRequest;
+        m_State = State::AssignedToFrame;
+        return true;
+    }
+
+    bool FrameCaptureReadbackHelper::AbandonAssignedRequest(
+        const FrameCaptureRequestSnapshot& snapshot,
+        uint64_t frameNumber,
+        FrameCaptureResultStatus failureStatus) noexcept
+    {
+        Thread::ScopedLock lock(m_Mutex);
+
+        if (failureStatus == FrameCaptureResultStatus::Success ||
+            !snapshot.IsValid() ||
+            snapshot.RequestId != m_ActiveRequest.RequestId ||
+            snapshot.SourceKind != m_ActiveRequest.SourceKind ||
+            (m_State != State::AssignedToFrame && m_State != State::RecordedAwaitingSubmit))
+        {
+            return false;
+        }
+
+        PublishFailure(failureStatus, frameNumber);
+        return true;
+    }
+
+    bool FrameCaptureReadbackHelper::CommitRecordedCopy(
+        const FrameCaptureRequestSnapshot& snapshot) noexcept
+    {
+        Thread::ScopedLock lock(m_Mutex);
+
+        if (m_State != State::RecordedAwaitingSubmit ||
+            !snapshot.IsValid() ||
+            snapshot.RequestId != m_ActiveRequest.RequestId ||
+            snapshot.SourceKind != m_ActiveRequest.SourceKind)
+        {
+            return false;
+        }
+
+        m_State = State::PendingGpu;
+        return true;
     }
 
     FrameCaptureRecordStatus FrameCaptureReadbackHelper::TryRecordCopy(
         uint32_t frameSlotIndex,
         RHI::ICommandList* commandList,
-        const FrameCaptureSource& source)
+        const FrameCaptureRequestSnapshot& snapshot,
+        const FrameCaptureSourceSet& sources)
     {
         Thread::ScopedLock lock(m_Mutex);
 
-        if (m_State != State::Requested)
+        if (m_State != State::AssignedToFrame ||
+            !snapshot.IsValid() ||
+            snapshot.RequestId != m_ActiveRequest.RequestId ||
+            snapshot.SourceKind != m_ActiveRequest.SourceKind)
         {
             return FrameCaptureRecordStatus::NoRequest;
         }
 
-        if (!commandList || !source.Texture || frameSlotIndex >= m_FrameSlotCount)
+        const FrameCaptureSource* source = sources.Find(snapshot.SourceKind);
+
+        if (!commandList || !source || !source->Texture || frameSlotIndex >= m_FrameSlotCount)
         {
-            PublishFailure(FrameCaptureResultStatus::SourceUnavailable, source.FrameNumber);
+            PublishFailure(
+                FrameCaptureResultStatus::SourceUnavailable,
+                source ? source->FrameNumber : 0);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
-        const uint32_t width = source.Texture->GetWidth();
-        const uint32_t height = source.Texture->GetHeight();
-        const RHI::Format format = source.Texture->GetFormat();
+        const uint32_t width = source->Texture->GetWidth();
+        const uint32_t height = source->Texture->GetHeight();
+        const RHI::Format format = source->Texture->GetFormat();
 
         uint32_t bytesPerPixel = 0;
         if (!TryGetBytesPerPixel(format, bytesPerPixel))
         {
-            PublishFailure(FrameCaptureResultStatus::UnsupportedFormat, source.FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::UnsupportedFormat, source->FrameNumber);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
@@ -94,13 +181,13 @@ namespace NorvesLib::Core::Rendering
         uint64_t byteCount = 0;
         if (!TryCalculateLayout(width, height, bytesPerPixel, rowPitchBytes, byteCount))
         {
-            PublishFailure(FrameCaptureResultStatus::InvalidDimensions, source.FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::InvalidDimensions, source->FrameNumber);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
-        if ((source.Texture->GetUsage() & RHI::ResourceUsage::TransferSrc) == RHI::ResourceUsage::None)
+        if ((source->Texture->GetUsage() & RHI::ResourceUsage::TransferSrc) == RHI::ResourceUsage::None)
         {
-            PublishFailure(FrameCaptureResultStatus::SourceMissingTransferSrc, source.FrameNumber);
+            PublishFailure(FrameCaptureResultStatus::SourceMissingTransferSrc, source->FrameNumber);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
 
@@ -120,18 +207,18 @@ namespace NorvesLib::Core::Rendering
             if (!slot.Buffer)
             {
                 slot.SizeBytes = 0;
-                PublishFailure(FrameCaptureResultStatus::ReadbackBufferCreateFailed, source.FrameNumber);
+                PublishFailure(FrameCaptureResultStatus::ReadbackBufferCreateFailed, source->FrameNumber);
                 return FrameCaptureRecordStatus::PublishedFailure;
             }
             slot.SizeBytes = byteCount;
         }
 
-        commandList->TextureBarrier(source.Texture, source.CurrentState, RHI::ResourceState::CopySource);
-        commandList->CopyTextureToBuffer(source.Texture, slot.Buffer, width, height, 0);
-        commandList->TextureBarrier(source.Texture, RHI::ResourceState::CopySource, source.RestoreState);
+        commandList->TextureBarrier(source->Texture, source->CurrentState, RHI::ResourceState::CopySource);
+        commandList->CopyTextureToBuffer(source->Texture, slot.Buffer, width, height, 0);
+        commandList->TextureBarrier(source->Texture, RHI::ResourceState::CopySource, source->RestoreState);
 
-        m_PendingReadback.RequestId = m_ActiveRequestId;
-        m_PendingReadback.FrameNumber = source.FrameNumber;
+        m_PendingReadback.RequestId = m_ActiveRequest.RequestId;
+        m_PendingReadback.FrameNumber = source->FrameNumber;
         m_PendingReadback.SlotIndex = frameSlotIndex;
         m_PendingReadback.Width = width;
         m_PendingReadback.Height = height;
@@ -139,7 +226,7 @@ namespace NorvesLib::Core::Rendering
         m_PendingReadback.BytesPerPixel = bytesPerPixel;
         m_PendingReadback.RowPitchBytes = rowPitchBytes;
         m_PendingReadback.ByteCount = byteCount;
-        m_State = State::PendingGpu;
+        m_State = State::RecordedAwaitingSubmit;
         return FrameCaptureRecordStatus::Recorded;
     }
 
@@ -210,7 +297,7 @@ namespace NorvesLib::Core::Rendering
         outFrame = m_CompletedFrame;
         m_CompletedFrame = CapturedFrame{};
         m_PendingReadback = PendingReadback{};
-        m_ActiveRequestId = 0;
+        m_ActiveRequest = FrameCaptureRequestSnapshot{};
         m_State = State::Idle;
         return true;
     }
@@ -271,7 +358,7 @@ namespace NorvesLib::Core::Rendering
     {
         CapturedFrame frame;
         frame.Status = status;
-        frame.RequestId = m_ActiveRequestId;
+        frame.RequestId = m_ActiveRequest.RequestId;
         frame.FrameNumber = frameNumber;
 
         m_CompletedFrame = frame;

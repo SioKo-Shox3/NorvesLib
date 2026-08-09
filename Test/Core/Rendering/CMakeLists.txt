@@ -121,6 +121,21 @@ target_include_directories(FrameCaptureReadbackHelperTest PRIVATE
 set_target_properties(FrameCaptureReadbackHelperTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME FrameCaptureReadbackHelperTest COMMAND FrameCaptureReadbackHelperTest)
 
+add_executable(FrameCaptureAssignmentGuardTest
+    FrameCaptureAssignmentGuardTest.cpp
+    FrameCaptureReadbackHelperTest.cpp
+)
+target_link_libraries(FrameCaptureAssignmentGuardTest PRIVATE Core)
+target_compile_definitions(FrameCaptureAssignmentGuardTest PRIVATE
+    NORVES_FRAME_CAPTURE_ASSIGNMENT_GUARD_TEST_TARGET=1
+)
+target_include_directories(FrameCaptureAssignmentGuardTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(FrameCaptureAssignmentGuardTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME FrameCaptureAssignmentGuardTest COMMAND FrameCaptureAssignmentGuardTest)
+
 add_library(RenderingFloatImageSupport STATIC
     RenderingValidation/RenderingFloatImage.cpp
 )
@@ -160,6 +175,36 @@ register_rendering_gpu_test(
     FrameCaptureFloatReadbackVulkanSkipContractTest
     FrameCaptureFloatReadbackVulkanTest)
 set_tests_properties(FrameCaptureFloatReadbackVulkanSkipContractTest PROPERTIES
+    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
+
+add_executable(RenderingHdrSceneCaptureTest
+    RenderingHdrSceneCaptureTest.cpp
+)
+target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    RenderingFloatImageSupport
+)
+target_include_directories(RenderingHdrSceneCaptureTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingHdrSceneCaptureTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RenderingHdrIndoorSceneVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=indoor
+    --capture-source=scene-color)
+register_rendering_gpu_test(
+    RenderingHdrOutdoorSceneVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=outdoor
+    --capture-source=scene-color)
+register_rendering_gpu_test(
+    RenderingHdrSceneVulkanSkipContractTest
+    RenderingHdrSceneCaptureTest
+    --scene=indoor
+    --capture-source=scene-color)
+set_tests_properties(RenderingHdrSceneVulkanSkipContractTest PROPERTIES
     ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_executable(FrameCaptureThumbnailEncoderTest
