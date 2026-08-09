@@ -12,6 +12,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -29,6 +30,11 @@ namespace
     using Container::VariableArray;
 
     constexpr uint32_t BytesPerPixel = 4;
+
+    uint32_t BytesPerPixelForFormat(RHI::Format format)
+    {
+        return format == RHI::Format::R16G16B16A16_FLOAT ? 8u : BytesPerPixel;
+    }
 
     enum class FakeCommandEventType : uint8_t
     {
@@ -134,7 +140,8 @@ namespace
                 return;
             }
 
-            Bytes.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * BytesPerPixel);
+            Bytes.resize(
+                static_cast<size_t>(width) * static_cast<size_t>(height) * BytesPerPixelForFormat(format));
             for (size_t index = 0; index < Bytes.size(); ++index)
             {
                 Bytes[index] = static_cast<uint8_t>((index * 7u + 3u) & 0xFFu);
@@ -344,7 +351,9 @@ namespace
             auto fakeBuffer = DynamicPointerCast<FakeBuffer>(dst);
             assert(fakeTexture);
             assert(fakeBuffer);
-            const uint64_t byteCount = static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * BytesPerPixel;
+            const uint64_t byteCount = static_cast<uint64_t>(width) * static_cast<uint64_t>(height) *
+                BytesPerPixelForFormat(src->GetFormat());
+            LastCopyByteCount = byteCount;
             assert(bufferOffset + byteCount <= fakeBuffer->Bytes.size());
             assert(byteCount <= fakeTexture->Bytes.size());
             std::memcpy(fakeBuffer->Bytes.data() + bufferOffset, fakeTexture->Bytes.data(), static_cast<size_t>(byteCount));
@@ -389,6 +398,7 @@ namespace
         }
 
         VariableArray<FakeCommandEvent> Events;
+        uint64_t LastCopyByteCount = 0;
     };
 
     class FakeDevice final : public RHI::IDevice
@@ -633,6 +643,44 @@ namespace
         assert(std::memcmp(frame.Pixels.data(), fakeTexture->Bytes.data(), frame.Pixels.size()) == 0);
     }
 
+    void TestRgba16FloatRecordLayout()
+    {
+        constexpr uint32_t Width = 2u;
+        constexpr uint32_t Height = 3u;
+        constexpr uint32_t FloatBytesPerPixel = 8u;
+
+        FakeDevice device;
+        FakeCommandList commandList;
+        FrameCaptureReadbackHelper helper;
+        assert(helper.Initialize(&device, 1));
+        assert(helper.RequestFrameCapture().IsAccepted());
+
+        RHI::TexturePtr texture = MakeTexture(
+            Width,
+            Height,
+            RHI::Format::R16G16B16A16_FLOAT,
+            RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferSrc);
+        const FrameCaptureRecordStatus recordStatus =
+            helper.TryRecordCopy(0u, &commandList, MakeSource(texture));
+        if (recordStatus != FrameCaptureRecordStatus::Recorded)
+        {
+            std::cerr << "RGBA16F record must be supported" << std::endl;
+            std::exit(1);
+        }
+        assert(commandList.LastCopyByteCount == Width * Height * FloatBytesPerPixel);
+        assert(device.CreatedBufferDescs.size() == 1u);
+        assert(device.CreatedBufferDescs[0].Size == Width * Height * FloatBytesPerPixel);
+
+        helper.PublishCompletedFrameSlot(0u);
+        CapturedFrame frame;
+        assert(helper.TryConsumeCapturedFrame(frame));
+        assert(frame.IsSuccess());
+        assert(frame.Format == RHI::Format::R16G16B16A16_FLOAT);
+        assert(frame.BytesPerPixel == FloatBytesPerPixel);
+        assert(frame.RowPitchBytes == Width * FloatBytesPerPixel);
+        assert(frame.Pixels.size() == Width * Height * FloatBytesPerPixel);
+    }
+
     void TestFailureBeforeAllocation(
         RHI::TexturePtr texture,
         FrameCaptureResultStatus expectedStatus)
@@ -656,6 +704,9 @@ namespace
             FrameCaptureResultStatus::SourceMissingTransferSrc);
         TestFailureBeforeAllocation(
             MakeTexture(3, 2, RHI::Format::R32_FLOAT, RHI::ResourceUsage::TransferSrc),
+            FrameCaptureResultStatus::UnsupportedFormat);
+        TestFailureBeforeAllocation(
+            MakeTexture(3, 2, RHI::Format::R32G32B32A32_FLOAT, RHI::ResourceUsage::TransferSrc),
             FrameCaptureResultStatus::UnsupportedFormat);
         TestFailureBeforeAllocation(
             MakeTexture(0, 2, RHI::Format::R8G8B8A8_UNORM, RHI::ResourceUsage::TransferSrc),
@@ -923,6 +974,7 @@ namespace
         TestRequestCoalescing();
         TestNoRequestNoOp();
         TestValidRecordAndPublish();
+        TestRgba16FloatRecordLayout();
         TestSourceValidationFailures();
         TestSourceUnavailableFailures();
         TestCreateBufferFailures();

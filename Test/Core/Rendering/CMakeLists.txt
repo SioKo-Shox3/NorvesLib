@@ -121,6 +121,47 @@ target_include_directories(FrameCaptureReadbackHelperTest PRIVATE
 set_target_properties(FrameCaptureReadbackHelperTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME FrameCaptureReadbackHelperTest COMMAND FrameCaptureReadbackHelperTest)
 
+add_library(RenderingFloatImageSupport STATIC
+    RenderingValidation/RenderingFloatImage.cpp
+)
+target_link_libraries(RenderingFloatImageSupport PUBLIC Core)
+target_include_directories(RenderingFloatImageSupport PUBLIC
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingFloatImageSupport PROPERTIES FOLDER "Test/Core/Rendering")
+
+add_executable(RenderingFloatImageTest
+    RenderingFloatImageTest.cpp
+)
+target_link_libraries(RenderingFloatImageTest PRIVATE RenderingFloatImageSupport)
+target_include_directories(RenderingFloatImageTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingFloatImageTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderingFloatImageTest COMMAND RenderingFloatImageTest)
+
+add_executable(FrameCaptureFloatReadbackVulkanTest
+    FrameCaptureFloatReadbackVulkanTest.cpp
+)
+target_link_libraries(FrameCaptureFloatReadbackVulkanTest PRIVATE
+    RenderingFloatImageSupport
+    RenderingGpuTestSupport
+)
+target_include_directories(FrameCaptureFloatReadbackVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(FrameCaptureFloatReadbackVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    FrameCaptureFloatReadbackVulkanTest
+    FrameCaptureFloatReadbackVulkanTest)
+register_rendering_gpu_test(
+    FrameCaptureFloatReadbackVulkanSkipContractTest
+    FrameCaptureFloatReadbackVulkanTest)
+set_tests_properties(FrameCaptureFloatReadbackVulkanSkipContractTest PROPERTIES
+    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
+
 add_executable(FrameCaptureThumbnailEncoderTest
     FrameCaptureThumbnailEncoderTest.cpp
 )
