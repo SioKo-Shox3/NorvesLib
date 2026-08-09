@@ -10,6 +10,44 @@ set_target_properties(FramePacketManagerTest PROPERTIES FOLDER "Test/Core/Render
 include(CTest)
 add_test(NAME FramePacketManagerTest COMMAND FramePacketManagerTest)
 
+add_library(RenderingGpuTestSupport STATIC
+    RenderingValidation/GpuTestEnvironment.cpp
+)
+target_link_libraries(RenderingGpuTestSupport PUBLIC Core)
+target_include_directories(RenderingGpuTestSupport PUBLIC
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingGpuTestSupport PROPERTIES FOLDER "Test/Core/Rendering")
+
+add_library(RenderingValidationFixtureSupport STATIC
+    RenderingValidation/RenderingValidationScene.cpp
+    RenderingValidation/RenderingValidationApplication.cpp
+)
+target_link_libraries(RenderingValidationFixtureSupport PUBLIC Core)
+target_include_directories(RenderingValidationFixtureSupport PUBLIC
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingValidationFixtureSupport PROPERTIES FOLDER "Test/Core/Rendering")
+
+function(register_rendering_gpu_test test_name target_name)
+    add_test(NAME ${test_name} COMMAND ${target_name} ${ARGN})
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "GPU;RenderingValidation"
+        RESOURCE_LOCK NorvesLibGPU
+        SKIP_RETURN_CODE 125
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+endfunction()
+
+add_executable(RenderingValidationSceneContractTest
+    RenderingValidationSceneContractTest.cpp
+)
+target_link_libraries(RenderingValidationSceneContractTest PRIVATE RenderingValidationFixtureSupport)
+target_include_directories(RenderingValidationSceneContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingValidationSceneContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderingValidationSceneContractTest COMMAND RenderingValidationSceneContractTest)
+
 add_executable(RenderThreadFrameCompletionTest
     RenderThreadFrameCompletionTest.cpp
 )
@@ -30,16 +68,47 @@ target_include_directories(RHITextureToBufferReadbackVulkanTest PRIVATE
 set_target_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RHITextureToBufferReadbackVulkanTest COMMAND RHITextureToBufferReadbackVulkanTest)
 set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
-    LABELS GPU
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
 add_test(NAME RHITextureToBufferReadbackVulkanSkipContractTest COMMAND RHITextureToBufferReadbackVulkanTest)
 set_tests_properties(RHITextureToBufferReadbackVulkanSkipContractTest PROPERTIES
     ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1"
-    LABELS GPU
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+add_executable(RenderingValidationFixtureVulkanTest
+    RenderingValidationFixtureVulkanTest.cpp
+)
+target_link_libraries(RenderingValidationFixtureVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+)
+target_include_directories(RenderingValidationFixtureVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingValidationFixtureVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+
+register_rendering_gpu_test(
+    RenderingValidationIndoorFixtureVulkanTest
+    RenderingValidationFixtureVulkanTest
+    --scene=indoor)
+register_rendering_gpu_test(
+    RenderingValidationOutdoorFixtureVulkanTest
+    RenderingValidationFixtureVulkanTest
+    --scene=outdoor)
+register_rendering_gpu_test(
+    RenderingValidationFixtureVulkanSkipContractTest
+    RenderingValidationFixtureVulkanTest
+    --scene=indoor)
+set_tests_properties(RenderingValidationFixtureVulkanSkipContractTest PROPERTIES
+    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
 add_executable(FrameCaptureReadbackHelperTest
     FrameCaptureReadbackHelperTest.cpp
