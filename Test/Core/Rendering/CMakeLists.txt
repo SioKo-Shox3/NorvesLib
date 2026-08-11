@@ -131,6 +131,26 @@ register_rendering_gpu_test(
     --scene=indoor
     --image-layout-case=micro)
 register_rendering_gpu_test(
+    RHIImageLayoutVulkanNoEligibleLightSceneTest
+    RHIImageLayoutVulkanValidationTest
+    --scene=indoor
+    --image-layout-case=no-eligible-light)
+register_rendering_gpu_test(
+    RHIImageLayoutVulkanNoCasterSceneTest
+    RHIImageLayoutVulkanValidationTest
+    --scene=outdoor
+    --image-layout-case=no-caster)
+register_rendering_gpu_test(
+    RHIImageLayoutVulkanDrawSceneTest
+    RHIImageLayoutVulkanValidationTest
+    --scene=outdoor
+    --image-layout-case=draw)
+register_rendering_gpu_test(
+    RHIImageLayoutVulkanDrawThenNoCasterSceneTest
+    RHIImageLayoutVulkanValidationTest
+    --scene=outdoor
+    --image-layout-case=draw-then-no-caster)
+register_rendering_gpu_test(
     RHIImageLayoutVulkanValidationSkipContractTest
     RHIImageLayoutVulkanValidationTest
     --scene=indoor

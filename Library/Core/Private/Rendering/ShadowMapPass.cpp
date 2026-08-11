@@ -368,11 +368,6 @@ namespace NorvesLib::Core::Rendering
             context.SharedResources->RegisterTexturePtr("ShadowMap", m_ShadowMapTexture);
         }
 
-        if (!shadowMatrices.bEnabled)
-        {
-            return;
-        }
-
         RHI::Viewport viewport;
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -392,13 +387,12 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         const DrawCommandView drawCommands = context.GetActiveDrawCommands();
         auto *meshes = context.Resources.Meshes;
-        if (m_SceneRenderer && (meshes || context.SkinnedMeshes))
+        auto shadowCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+        if (shadowMatrices.bEnabled &&
+            m_SceneRenderer &&
+            (meshes || context.SkinnedMeshes) &&
+            !drawCommands.empty())
         {
-            if (drawCommands.empty())
-            {
-                return;
-            }
-
             const uint64_t instanceDataSize64 = context.InstanceDataBuffer
                                                     ? context.InstanceDataBuffer->GetSize()
                                                     : 0;
@@ -416,8 +410,6 @@ namespace NorvesLib::Core::Rendering
 
             // フレーム開始時にアロケータリセット
             m_UniformAllocator.Reset();
-
-            auto shadowCommands = MakeShared<Container::VariableArray<DrawCommand>>();
 
             // DrawCommand配列を取得し、影を落とすコマンドのみ描画
             for (const auto &cmd : drawCommands)
@@ -485,14 +477,14 @@ namespace NorvesLib::Core::Rendering
                 drawCommand.DescriptorSetSlot = 0;
                 shadowCommands->push_back(drawCommand);
             }
-
-            context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_ShadowRenderPass,
-                                                                         m_ShadowFramebuffer,
-                                                                         shadowCommands,
-                                                                         viewport,
-                                                                         scissor,
-                                                                         meshes));
         }
+
+        context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass(m_ShadowRenderPass,
+                                                                     m_ShadowFramebuffer,
+                                                                     shadowCommands,
+                                                                     viewport,
+                                                                     scissor,
+                                                                     meshes));
     }
 
     bool ShadowMapPass::TryPrepareSkinnedCommand(

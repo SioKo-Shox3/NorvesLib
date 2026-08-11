@@ -3,8 +3,12 @@
 
 #include "Boot/AppLauncher.h"
 #include "Boot/BootConfig.h"
+#include "Component/DirectionalLightComponent.h"
+#include "Component/MeshComponent.h"
+#include "Component/SkinnedMeshComponent.h"
 #include "Container/PointerTypes.h"
 #include "Engine/Engine.h"
+#include "Object/World.h"
 #include "Rendering/RenderWorld.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -467,6 +471,111 @@ void main()
                bMixedMipCompleted;
     }
 
+    enum class ImageLayoutCase
+    {
+        Unspecified,
+        Micro,
+        NoEligibleLight,
+        NoCaster,
+        Draw,
+        DrawThenNoCaster,
+    };
+
+    const char* GetCaseName(ImageLayoutCase testCase)
+    {
+        switch (testCase)
+        {
+        case ImageLayoutCase::Micro:
+            return "micro";
+        case ImageLayoutCase::NoEligibleLight:
+            return "no-eligible-light";
+        case ImageLayoutCase::NoCaster:
+            return "no-caster";
+        case ImageLayoutCase::Draw:
+            return "draw";
+        case ImageLayoutCase::DrawThenNoCaster:
+            return "draw-then-no-caster";
+        default:
+            return "unspecified";
+        }
+    }
+
+    struct SceneScenarioStats
+    {
+        uint32_t EligibleDirectionalLights = 0u;
+        uint32_t VisibleShadowCasters = 0u;
+        uint32_t ModifiedCasterComponents = 0u;
+    };
+
+    void InspectEntityScenario(
+        Core::Entity* entity,
+        bool bDisableCasters,
+        SceneScenarioStats& stats)
+    {
+        if (entity == nullptr)
+        {
+            return;
+        }
+
+        for (Core::Component::Component* component : entity->GetComponents())
+        {
+            if (auto* directional =
+                    Core::CastTo<Core::Component::DirectionalLightComponent>(component))
+            {
+                if (directional->IsLightVisible() && directional->GetCastShadows())
+                {
+                    ++stats.EligibleDirectionalLights;
+                }
+                continue;
+            }
+
+            if (auto* mesh = Core::CastTo<Core::Component::MeshComponent>(component))
+            {
+                if (bDisableCasters)
+                {
+                    mesh->SetVisible(false);
+                    mesh->SetCastShadow(false);
+                    ++stats.ModifiedCasterComponents;
+                }
+                else if (mesh->IsVisible() && mesh->GetCastShadow())
+                {
+                    ++stats.VisibleShadowCasters;
+                }
+                continue;
+            }
+
+            if (auto* skinned =
+                    Core::CastTo<Core::Component::SkinnedMeshComponent>(component))
+            {
+                if (bDisableCasters)
+                {
+                    skinned->SetVisible(false);
+                    skinned->SetCastShadow(false);
+                    ++stats.ModifiedCasterComponents;
+                }
+                else if (skinned->IsVisible() && skinned->CastsShadow())
+                {
+                    ++stats.VisibleShadowCasters;
+                }
+            }
+        }
+
+        for (Core::Entity* child : entity->GetChildEntities())
+        {
+            InspectEntityScenario(child, bDisableCasters, stats);
+        }
+    }
+
+    SceneScenarioStats InspectWorldScenario(Core::World& world, bool bDisableCasters)
+    {
+        SceneScenarioStats stats;
+        for (Core::Entity* entity : world.GetRootEntities())
+        {
+            InspectEntityScenario(entity, bDisableCasters, stats);
+        }
+        return stats;
+    }
+
     class ImageLayoutValidationHandler final : public RenderingValidationApplicationHandler
     {
     public:
@@ -474,7 +583,7 @@ void main()
             const Core::Container::VariableArray<Core::Container::String>& args) override
         {
             return RenderingValidationApplicationHandler::OnPreInitialize(args) &&
-                   m_bMicroCaseSpecified;
+                   m_TestCase != ImageLayoutCase::Unspecified;
         }
 
         bool OnInitialize() override
@@ -494,12 +603,55 @@ void main()
                 return false;
             }
 
-            m_bDispatchCasesCompleted = RunImageLayoutDispatchCases(*m_Device);
-            return true;
+            GValidationErrorCount.store(0u, std::memory_order_relaxed);
+            GValidationCaseName.store(GetCaseName(m_TestCase), std::memory_order_relaxed);
+            if (m_TestCase == ImageLayoutCase::Micro)
+            {
+                m_bDispatchCasesCompleted = RunImageLayoutDispatchCases(*m_Device);
+                return true;
+            }
+
+            std::cout << "scene_case=" << GetCaseName(m_TestCase) << '\n';
+            Core::World& world = Core::Engine::GEngine->GetWorld();
+            const bool bDisableCasters = m_TestCase == ImageLayoutCase::NoCaster;
+            const SceneScenarioStats stats = InspectWorldScenario(world, bDisableCasters);
+            std::cout << "scenario_eligible_directional_lights="
+                      << stats.EligibleDirectionalLights << '\n';
+            std::cout << "scenario_visible_shadow_casters="
+                      << stats.VisibleShadowCasters << '\n';
+            std::cout << "scenario_modified_caster_components="
+                      << stats.ModifiedCasterComponents << '\n';
+
+            switch (m_TestCase)
+            {
+            case ImageLayoutCase::NoEligibleLight:
+                m_bScenarioConfigured = stats.EligibleDirectionalLights == 0u;
+                break;
+            case ImageLayoutCase::NoCaster:
+                m_bScenarioConfigured =
+                    stats.EligibleDirectionalLights >= 1u &&
+                    stats.ModifiedCasterComponents >= 1u;
+                break;
+            case ImageLayoutCase::Draw:
+            case ImageLayoutCase::DrawThenNoCaster:
+                m_bScenarioConfigured =
+                    stats.EligibleDirectionalLights >= 1u &&
+                    stats.VisibleShadowCasters >= 1u;
+                break;
+            default:
+                m_bScenarioConfigured = false;
+                break;
+            }
+            return m_bScenarioConfigured;
         }
 
         void OnPostInitialize() override
         {
+            if (m_TestCase != ImageLayoutCase::Micro)
+            {
+                return;
+            }
+
             m_Device->WaitIdle();
             const uint32_t validationErrors =
                 GValidationErrorCount.load(std::memory_order_relaxed);
@@ -509,6 +661,72 @@ void main()
                 Core::Engine::GEngine->RequestExit(
                     m_bDispatchCasesCompleted && validationErrors == 0u ? 0 : 1);
             }
+        }
+
+        void OnPreRender() override
+        {
+            if (m_TestCase != ImageLayoutCase::DrawThenNoCaster ||
+                Core::Engine::GEngine == nullptr)
+            {
+                RenderingValidationApplicationHandler::OnPreRender();
+                return;
+            }
+
+            Core::Rendering::RenderWorld& renderWorld =
+                Core::Engine::GEngine->GetRenderWorld();
+            if (renderWorld.HasPendingAsyncAssets())
+            {
+                RenderingValidationApplicationHandler::OnPreRender();
+                return;
+            }
+
+            const uint64_t renderedFrames = renderWorld.GetRenderedFrameCount();
+            if (!m_bReadyFrameSaved)
+            {
+                m_bReadyFrameSaved = true;
+                m_ReadyRenderedFrame = renderedFrames;
+                std::cout << "draw_then_no_caster_ready_frame="
+                          << m_ReadyRenderedFrame << '\n';
+                return;
+            }
+
+            if (!m_bCastersDisabled && renderedFrames > m_ReadyRenderedFrame)
+            {
+                const SceneScenarioStats stats = InspectWorldScenario(
+                    Core::Engine::GEngine->GetWorld(),
+                    true);
+                m_SwitchRenderedFrame = renderedFrames;
+                m_bCastersDisabled =
+                    stats.ModifiedCasterComponents >= 1u &&
+                    m_SwitchRenderedFrame > m_ReadyRenderedFrame;
+                std::cout << "draw_then_no_caster_modified_components="
+                          << stats.ModifiedCasterComponents << '\n';
+                std::cout << "draw_then_no_caster_switch_frame="
+                          << m_SwitchRenderedFrame << '\n';
+                if (!m_bCastersDisabled && Core::Engine::GEngine != nullptr)
+                {
+                    Core::Engine::GEngine->RequestExit(1);
+                    return;
+                }
+
+                return;
+            }
+
+            if (m_bCastersDisabled && !m_bResynchronizedFrameObserved)
+            {
+                m_ResynchronizedRenderedFrame = renderedFrames;
+                m_bResynchronizedFrameObserved =
+                    m_ResynchronizedRenderedFrame > m_SwitchRenderedFrame;
+                std::cout << "draw_then_no_caster_resynchronized_frame="
+                          << m_ResynchronizedRenderedFrame << '\n';
+                if (!m_bResynchronizedFrameObserved)
+                {
+                    Core::Engine::GEngine->RequestExit(1);
+                    return;
+                }
+            }
+
+            RenderingValidationApplicationHandler::OnPreRender();
         }
 
         void OnPreShutdown() override
@@ -535,23 +753,94 @@ void main()
             const Core::Container::String& argument,
             Core::Container::String& reason) override
         {
-            if (argument == "--image-layout-case=micro" && !m_bMicroCaseSpecified)
+            if (m_TestCase != ImageLayoutCase::Unspecified)
             {
-                m_bMicroCaseSpecified = true;
-                reason.clear();
-                return true;
+                reason = "duplicate image-layout case";
+                return false;
             }
 
-            reason = "unsupported or duplicate image-layout case";
-            return false;
+            if (argument == "--image-layout-case=micro")
+            {
+                m_TestCase = ImageLayoutCase::Micro;
+            }
+            else if (argument == "--image-layout-case=no-eligible-light")
+            {
+                m_TestCase = ImageLayoutCase::NoEligibleLight;
+            }
+            else if (argument == "--image-layout-case=no-caster")
+            {
+                m_TestCase = ImageLayoutCase::NoCaster;
+            }
+            else if (argument == "--image-layout-case=draw")
+            {
+                m_TestCase = ImageLayoutCase::Draw;
+            }
+            else if (argument == "--image-layout-case=draw-then-no-caster")
+            {
+                m_TestCase = ImageLayoutCase::DrawThenNoCaster;
+            }
+            else
+            {
+                reason = "unsupported image-layout case";
+                return false;
+            }
+
+            reason.clear();
+            return true;
         }
 
         bool EvaluateCapturedFrame(
-            const Core::Rendering::CapturedFrame&,
+            const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
-            reason = "frame capture is unreachable in micro mode";
-            return false;
+            if (m_TestCase == ImageLayoutCase::Micro ||
+                !m_Device ||
+                Core::Engine::GEngine == nullptr)
+            {
+                reason = "frame capture is unreachable in micro mode";
+                return false;
+            }
+
+            m_Device->WaitIdle();
+            const bool bAssetsReady =
+                !Core::Engine::GEngine->GetRenderWorld().HasPendingAsyncAssets();
+            const uint64_t capturedRenderedFrame =
+                Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount();
+            const bool bTransitionCompleted =
+                m_TestCase != ImageLayoutCase::DrawThenNoCaster ||
+                (m_bReadyFrameSaved &&
+                 m_bCastersDisabled &&
+                 m_bResynchronizedFrameObserved &&
+                 m_SwitchRenderedFrame > m_ReadyRenderedFrame &&
+                 m_ResynchronizedRenderedFrame > m_SwitchRenderedFrame &&
+                 capturedRenderedFrame >= m_ResynchronizedRenderedFrame);
+            const uint32_t validationErrors =
+                GValidationErrorCount.load(std::memory_order_relaxed);
+            const bool bFullSceneCompleted =
+                frame.IsSuccess() &&
+                m_bScenarioConfigured &&
+                bAssetsReady &&
+                bTransitionCompleted;
+            std::cout << "full_scene_completed=" << (bFullSceneCompleted ? 1 : 0) << '\n';
+            if (m_TestCase == ImageLayoutCase::DrawThenNoCaster)
+            {
+                std::cout << "draw_then_no_caster_captured_frame="
+                          << capturedRenderedFrame << '\n';
+            }
+            std::cout << "validation_errors=" << validationErrors << '\n';
+            if (!bFullSceneCompleted)
+            {
+                reason = "full scene preconditions were not completed";
+                return false;
+            }
+            if (validationErrors != 0u)
+            {
+                reason = "Vulkan validation reported image layout errors";
+                return false;
+            }
+
+            reason.clear();
+            return true;
         }
 
     private:
@@ -578,8 +867,15 @@ void main()
         Core::Container::TSharedPtr<RHI::Vulkan::VulkanDevice> m_Device;
         PFN_vkDestroyDebugUtilsMessengerEXT m_DestroyMessenger = nullptr;
         VkDebugUtilsMessengerEXT m_DebugMessenger = VK_NULL_HANDLE;
-        bool m_bMicroCaseSpecified = false;
+        ImageLayoutCase m_TestCase = ImageLayoutCase::Unspecified;
         bool m_bDispatchCasesCompleted = false;
+        bool m_bScenarioConfigured = false;
+        bool m_bReadyFrameSaved = false;
+        bool m_bCastersDisabled = false;
+        bool m_bResynchronizedFrameObserved = false;
+        uint64_t m_ReadyRenderedFrame = 0u;
+        uint64_t m_SwitchRenderedFrame = 0u;
+        uint64_t m_ResynchronizedRenderedFrame = 0u;
     };
 
     Core::Container::TSharedPtr<Core::Application::IApplicationHandler> CreateHandler()
