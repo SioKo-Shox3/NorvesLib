@@ -110,6 +110,34 @@ register_rendering_gpu_test(
 set_tests_properties(RenderingValidationFixtureVulkanSkipContractTest PROPERTIES
     ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
+add_executable(RHIImageLayoutVulkanValidationTest
+    RHIImageLayoutVulkanValidationTest.cpp
+)
+target_link_libraries(RHIImageLayoutVulkanValidationTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+)
+target_include_directories(RHIImageLayoutVulkanValidationTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(RHIImageLayoutVulkanValidationTest PRIVATE
+    NORVES_BINARY_ROOT="${CMAKE_BINARY_DIR}"
+)
+set_target_properties(RHIImageLayoutVulkanValidationTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RHIImageLayoutVulkanValidationTest
+    RHIImageLayoutVulkanValidationTest
+    --scene=indoor
+    --image-layout-case=micro)
+register_rendering_gpu_test(
+    RHIImageLayoutVulkanValidationSkipContractTest
+    RHIImageLayoutVulkanValidationTest
+    --scene=indoor
+    --image-layout-case=micro)
+set_tests_properties(RHIImageLayoutVulkanValidationSkipContractTest PROPERTIES
+    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
+
 add_executable(FrameCaptureReadbackHelperTest
     FrameCaptureReadbackHelperTest.cpp
 )

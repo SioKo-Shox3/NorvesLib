@@ -8,6 +8,29 @@
 namespace NorvesLib::RHI::Vulkan
 {
 
+    namespace
+    {
+        vk::ImageLayout ResolveDescriptorImageLayout(
+            vk::DescriptorType descriptorType,
+            vk::ImageLayout trackedLayout)
+        {
+            switch (descriptorType)
+            {
+            case vk::DescriptorType::eStorageImage:
+                return vk::ImageLayout::eGeneral;
+            case vk::DescriptorType::eSampledImage:
+            case vk::DescriptorType::eCombinedImageSampler:
+                return trackedLayout == vk::ImageLayout::eGeneral
+                           ? vk::ImageLayout::eGeneral
+                           : vk::ImageLayout::eShaderReadOnlyOptimal;
+            case vk::DescriptorType::eSampler:
+                return vk::ImageLayout::eUndefined;
+            default:
+                return trackedLayout;
+            }
+        }
+    } // namespace
+
     //===========================================================================================
     // VulkanDescriptorSetLayoutの実装
     //===========================================================================================
@@ -327,7 +350,9 @@ namespace NorvesLib::RHI::Vulkan
                 }
 
                 vk::DescriptorImageInfo imageInfo;
-                imageInfo.imageLayout = vkTexture->GetVkImageLayout();
+                imageInfo.imageLayout = ResolveDescriptorImageLayout(
+                    writeDesc.descriptorType,
+                    vkTexture->GetVkImageLayout());
 
                 // per-mip ImageView指定がある場合はそちらを使用
                 if (info.mipLevel >= 0)

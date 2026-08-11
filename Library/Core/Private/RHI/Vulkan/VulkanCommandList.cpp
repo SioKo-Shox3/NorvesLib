@@ -91,7 +91,8 @@ namespace NorvesLib::RHI::Vulkan
         case ResourceState::DepthRead:
             return vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests;
         case ResourceState::ShaderResource:
-            return vk::PipelineStageFlagBits::eFragmentShader;
+            return vk::PipelineStageFlagBits::eFragmentShader |
+                   vk::PipelineStageFlagBits::eComputeShader;
         case ResourceState::UnorderedAccess:
             return vk::PipelineStageFlagBits::eComputeShader;
         case ResourceState::IndirectArgument:
@@ -1044,6 +1045,35 @@ namespace NorvesLib::RHI::Vulkan
         barrier.dstAccessMask = m_barrierTracker.ResourceStateToAccessFlags(afterState);
         barrier.oldLayout = m_barrierTracker.ResourceStateToImageLayout(beforeState);
         barrier.newLayout = m_barrierTracker.ResourceStateToImageLayout(afterState);
+
+        const uint32_t totalMipLevels = vkTexture->GetMipLevels();
+        const uint32_t totalArrayLayers =
+            vkTexture->GetArraySize() * (vkTexture->IsCubemap() ? 6u : 1u);
+        const uint32_t resolvedMipCount =
+            mipCount == 0 && mipLevel <= totalMipLevels
+                ? totalMipLevels - mipLevel
+                : mipCount;
+        const uint32_t resolvedArrayCount =
+            arrayCount == 0 && arrayIndex <= totalArrayLayers
+                ? totalArrayLayers - arrayIndex
+                : arrayCount;
+        const bool bCoversWholeTexture =
+            mipLevel == 0u &&
+            arrayIndex == 0u &&
+            resolvedMipCount == totalMipLevels &&
+            resolvedArrayCount == totalArrayLayers;
+        const bool bPreserveGeneralLayout =
+            !bCoversWholeTexture &&
+            beforeState == ResourceState::UnorderedAccess &&
+            afterState == ResourceState::ShaderResource &&
+            (vkTexture->GetUsage() & ResourceUsage::UnorderedAccess) != ResourceUsage::None &&
+            vkTexture->GetVkImageLayout() == vk::ImageLayout::eGeneral;
+        if (bPreserveGeneralLayout)
+        {
+            barrier.oldLayout = vk::ImageLayout::eGeneral;
+            barrier.newLayout = vk::ImageLayout::eGeneral;
+        }
+
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = vkTexture->GetVkImage();
@@ -1060,6 +1090,11 @@ namespace NorvesLib::RHI::Vulkan
             0, nullptr,
             0, nullptr,
             1, &barrier);
+
+        if (bCoversWholeTexture)
+        {
+            vkTexture->SetVkImageLayout(barrier.newLayout);
+        }
     }
 
     void VulkanCommandList::OptimizedBufferBarrier(VulkanBuffer *buffer, ResourceState newState, uint64_t offset, uint64_t size)
