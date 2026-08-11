@@ -10,6 +10,58 @@ set_target_properties(FramePacketManagerTest PROPERTIES FOLDER "Test/Core/Render
 include(CTest)
 add_test(NAME FramePacketManagerTest COMMAND FramePacketManagerTest)
 
+add_executable(RenderGraphGPUTimestampScopeTest
+    RenderGraphGPUTimestampScopeTest.cpp
+)
+target_link_libraries(RenderGraphGPUTimestampScopeTest PRIVATE Core)
+target_include_directories(RenderGraphGPUTimestampScopeTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(RenderGraphGPUTimestampScopeTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderGraphGPUTimestampScopeTest COMMAND RenderGraphGPUTimestampScopeTest)
+
+add_executable(RenderingCoordinatorGPUTimestampPublicationTest
+    RenderingCoordinatorGPUTimestampPublicationTest.cpp
+)
+target_link_libraries(RenderingCoordinatorGPUTimestampPublicationTest PRIVATE Core)
+target_include_directories(RenderingCoordinatorGPUTimestampPublicationTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(RenderingCoordinatorGPUTimestampPublicationTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderingCoordinatorGPUTimestampPublicationTest COMMAND RenderingCoordinatorGPUTimestampPublicationTest)
+
+add_executable(RHIGPUTimestampVulkanTest
+    RHIGPUTimestampVulkanTest.cpp
+)
+target_link_libraries(RHIGPUTimestampVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+)
+target_include_directories(RHIGPUTimestampVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(RHIGPUTimestampVulkanTest PRIVATE
+    NORVES_BINARY_ROOT="${CMAKE_BINARY_DIR}"
+)
+set_target_properties(RHIGPUTimestampVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/RenderingValidation/TimestampRuns)
+add_test(NAME RHIGPUTimestampVulkanTest COMMAND RHIGPUTimestampVulkanTest)
+add_test(NAME RHIGPUTimestampVulkanSkipContractTest COMMAND RHIGPUTimestampVulkanTest)
+set_tests_properties(
+    RHIGPUTimestampVulkanTest
+    RHIGPUTimestampVulkanSkipContractTest
+    PROPERTIES
+        LABELS "GPU;RenderingValidation"
+        RESOURCE_LOCK NorvesLibGPU
+        SKIP_RETURN_CODE 125
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/RenderingValidation/TimestampRuns
+)
+set_tests_properties(RHIGPUTimestampVulkanSkipContractTest PROPERTIES
+    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
+
 add_library(RenderingGpuTestSupport STATIC
     RenderingValidation/GpuTestEnvironment.cpp
 )

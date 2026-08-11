@@ -75,6 +75,31 @@ namespace NorvesLib::Core::Rendering
             throw std::runtime_error("SwapChain EndFrame failed with an unknown status");
         }
 
+        class ScopedGPUTimestampFrameRecording
+        {
+        public:
+            ScopedGPUTimestampFrameRecording(RHI::ICommandList* commandList,
+                                             uint32_t frameSlotIndex)
+                : m_CommandList(commandList), m_FrameSlotIndex(frameSlotIndex)
+            {
+            }
+
+            ~ScopedGPUTimestampFrameRecording()
+            {
+                if (m_CommandList)
+                {
+                    m_CommandList->AbortGPUTimestampFrame(m_FrameSlotIndex);
+                }
+            }
+
+            ScopedGPUTimestampFrameRecording(const ScopedGPUTimestampFrameRecording&) = delete;
+            ScopedGPUTimestampFrameRecording& operator=(const ScopedGPUTimestampFrameRecording&) = delete;
+
+        private:
+            RHI::ICommandList* m_CommandList = nullptr;
+            uint32_t m_FrameSlotIndex = 0u;
+        };
+
         template<typename CameraResolver>
         ViewportRenderPlan BuildViewportRenderPlan(const Viewport &viewport,
                                                    uint32_t viewId,
@@ -336,6 +361,46 @@ namespace NorvesLib::Core::Rendering
                m_Diagnostics->TryGetRenderGraphDebugDumpSnapshot(knownPublicationSequence, outSnapshot);
     }
 
+    bool RenderingCoordinator::TryConsumeCompletedGPUTimings(
+        Container::VariableArray<RenderPassGPUTiming>& outTimings,
+        uint64_t& outDroppedFrameCount)
+    {
+        return m_GPUTimingMailbox.Consume(outTimings, outDroppedFrameCount);
+    }
+
+    bool RenderingCoordinator::SupportsGPUTimings() const
+    {
+        return m_CommandList && m_CommandList->SupportsGPUTimestamps();
+    }
+
+    void RenderingCoordinator::PublishCompletedGPUTimestampResults()
+    {
+        if (!m_CommandList)
+        {
+            return;
+        }
+
+        Container::VariableArray<RHI::GPUTimestampResult> results;
+        m_CommandList->ConsumeCompletedGPUTimestampResults(results);
+        if (results.empty())
+        {
+            return;
+        }
+
+        Container::VariableArray<RenderPassGPUTiming> timings;
+        timings.reserve(results.size());
+        for (const RHI::GPUTimestampResult& result : results)
+        {
+            RenderPassGPUTiming timing;
+            timing.FrameNumber = result.FrameNumber;
+            timing.PassName = result.ScopeName;
+            timing.DurationMs = result.DurationMs;
+            timing.bValid = result.bValid;
+            timings.push_back(timing);
+        }
+        m_GPUTimingMailbox.Append(timings);
+    }
+
     bool RenderingCoordinator::Initialize(const RenderingCoordinatorSettings &settings)
     {
         if (m_bInitialized)
@@ -348,6 +413,7 @@ namespace NorvesLib::Core::Rendering
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         m_LatestCompletedGPUTimeMs = 0.0f;
         m_bLatestCompletedGPUTimeValid = false;
+        m_GPUTimingMailbox.Clear();
 
         if (m_Diagnostics)
         {
@@ -753,6 +819,7 @@ namespace NorvesLib::Core::Rendering
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         m_LatestCompletedGPUTimeMs = 0.0f;
         m_bLatestCompletedGPUTimeValid = false;
+        m_GPUTimingMailbox.Clear();
 
         if (m_Diagnostics)
         {
@@ -1451,6 +1518,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         const uint32_t frameIndex = ResolveFrameIndex(*swapChain);
+        m_CommandList->NotifyGPUTimestampFrameSlotCompleted(
+            frameIndex,
+            swapChain->GetCompletedSubmissionSerial());
         if (m_RenderResources)
         {
             m_RenderResources->SkinnedMeshes().BeginFrame(
@@ -1477,6 +1547,7 @@ namespace NorvesLib::Core::Rendering
                               m_GraphPresentationLoadFramebuffers.size());
             m_CommandList->SetFrameIndex(frameIndex);
             m_CommandList->BeginRecording();
+            PublishCompletedGPUTimestampResults();
             m_CommandList->End();
             const RHI::SwapChainEndFrameResult endFrameResult = m_Screen.EndFrame(m_CommandList);
             if (m_RenderResources)
@@ -1511,6 +1582,10 @@ namespace NorvesLib::Core::Rendering
 
         // コマンド録画開始
         m_CommandList->BeginRecording();
+        PublishCompletedGPUTimestampResults();
+        ScopedGPUTimestampFrameRecording gpuTimestampFrameGuard(
+            m_CommandList.get(),
+            frameIndex);
 
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
@@ -1531,6 +1606,7 @@ namespace NorvesLib::Core::Rendering
 
             if (m_CommandList->SupportsGPUTimestamps())
             {
+                m_CommandList->BeginGPUTimestampFrame(packet->FrameNumber);
                 m_CommandList->BeginGPUTimestamp("FrameGPU");
             }
         }
@@ -1731,6 +1807,7 @@ namespace NorvesLib::Core::Rendering
         if (bTraceActive && m_CommandList->SupportsGPUTimestamps())
         {
             m_CommandList->EndGPUTimestamp();
+            m_CommandList->EndGPUTimestampFrame();
         }
 #endif
         m_CommandList->End();

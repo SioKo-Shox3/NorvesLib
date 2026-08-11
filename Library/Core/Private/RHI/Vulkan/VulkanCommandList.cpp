@@ -7,8 +7,11 @@
 #include "VulkanRenderPass.h"
 #include "VulkanFramebuffer.h"
 #include "VulkanDescriptorSet.h"
+#include "RHI/SubmissionSerialAllocator.h"
+#include "Logging/LogMacros.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <stdexcept>
 #include <cstring>
 
@@ -250,12 +253,25 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::Begin()
     {
         // フェンスを待機
-        (void)m_device->GetVkDevice().waitForFences(1, &m_fence, vk::True, UINT64_MAX);
-        (void)m_device->GetVkDevice().resetFences(1, &m_fence);
+        const vk::Result waitResult = m_device->GetVkDevice().waitForFences(
+            1, &m_fence, vk::True, UINT64_MAX);
+        if (waitResult != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("コマンドフェンスの待機に失敗しました");
+        }
 
 #if NORVES_ENABLE_STATS
-        ResolveGPUTimestampResult();
+        NotifyGPUTimestampFrameSlotCompleted(
+            m_currentFrameIndex,
+            m_DirectFrameSlotSubmissionSerials[m_currentFrameIndex]);
+        ResolveGPUTimestampResultsForCurrentSlot();
 #endif
+
+        const vk::Result resetFenceResult = m_device->GetVkDevice().resetFences(1, &m_fence);
+        if (resetFenceResult != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("コマンドフェンスのリセットに失敗しました");
+        }
 
         Reset();
 
@@ -269,13 +285,16 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bIsRecording = true;
+#if NORVES_ENABLE_STATS
+        PrepareGPUTimestampSlotForRecording();
+#endif
     }
 
     void VulkanCommandList::BeginRecording()
     {
         // 現在のフレームのコマンドバッファを使用（SetFrameIndexで設定済み）
 #if NORVES_ENABLE_STATS
-        ResolveGPUTimestampResult();
+        ResolveGPUTimestampResultsForCurrentSlot();
 #endif
 
         Reset();
@@ -290,6 +309,9 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bIsRecording = true;
+#if NORVES_ENABLE_STATS
+        PrepareGPUTimestampSlotForRecording();
+#endif
     }
 
     void VulkanCommandList::SetFrameIndex(uint32_t frameIndex)
@@ -311,7 +333,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
 #if NORVES_ENABLE_STATS
-        if (m_bTimestampQueryActive)
+        if (m_LegacyGPUTimestampScope.IsValid())
         {
             EndGPUTimestamp();
         }
@@ -335,24 +357,204 @@ namespace NorvesLib::RHI::Vulkan
 #endif
     }
 
-    void VulkanCommandList::BeginGPUTimestamp(const char* markerName)
+    uint32_t VulkanCommandList::GetMaximumGPUTimestampScopesPerFrame() const
+    {
+        return SupportsGPUTimestamps() ? MaximumGPUTimestampScopesPerFrame : 0u;
+    }
+
+    void VulkanCommandList::BeginGPUTimestampFrame(uint64_t frameNumber)
     {
 #if NORVES_ENABLE_STATS
-        (void)markerName;
-
-        if (!m_bTimestampSupported || !m_bIsRecording || m_bTimestampQueryActive)
+        if (!m_bTimestampSupported || !m_bIsRecording || m_bTimestampFrameActive)
         {
+            ++m_InvalidGPUTimestampOperationCount;
             return;
         }
 
-        const uint32_t queryBaseIndex = GetTimestampQueryBaseIndex();
-        m_commandBuffer.resetQueryPool(m_timestampQueryPool, queryBaseIndex, 2);
-        m_commandBuffer.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe,
-                                       m_timestampQueryPool,
-                                       queryBaseIndex);
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (!Detail::TryBeginGPUTimestampFrame(batch, frameNumber, batch.bQueriesReset))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        m_bTimestampFrameActive = true;
+#else
+        (void)frameNumber;
+#endif
+    }
 
-        m_bTimestampQueryPending[m_currentFrameIndex] = false;
-        m_bTimestampQueryActive = true;
+    GPUTimestampScopeHandle VulkanCommandList::BeginGPUTimestampScope(const char* scopeName)
+    {
+#if NORVES_ENABLE_STATS
+        GPUTimestampScopeHandle handle;
+        if (!m_bTimestampSupported || !m_bIsRecording || !m_bTimestampFrameActive)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return handle;
+        }
+
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (!Detail::TryBeginGPUTimestampScope(
+                batch,
+                m_currentFrameIndex,
+                scopeName,
+                handle))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return {};
+        }
+
+        m_commandBuffer.writeTimestamp(
+            vk::PipelineStageFlagBits::eTopOfPipe,
+            m_timestampQueryPool,
+            GetTimestampQueryBaseIndex(handle.FrameSlotIndex, handle.ScopeIndex));
+        return handle;
+#else
+        (void)scopeName;
+        return {};
+#endif
+    }
+
+    void VulkanCommandList::EndGPUTimestampScope(GPUTimestampScopeHandle handle)
+    {
+#if NORVES_ENABLE_STATS
+        if (!m_bTimestampSupported || !m_bIsRecording || !m_bTimestampFrameActive ||
+            handle.FrameSlotIndex != m_currentFrameIndex)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (!Detail::TryEndGPUTimestampScope(batch, handle))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+
+        m_commandBuffer.writeTimestamp(
+            vk::PipelineStageFlagBits::eBottomOfPipe,
+            m_timestampQueryPool,
+            GetTimestampQueryBaseIndex(handle.FrameSlotIndex, handle.ScopeIndex) + 1u);
+#else
+        (void)handle;
+#endif
+    }
+
+    void VulkanCommandList::EndGPUTimestampFrame()
+    {
+#if NORVES_ENABLE_STATS
+        if (!m_bTimestampSupported || !m_bTimestampFrameActive)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        if (!Detail::TryEndGPUTimestampFrame(m_TimestampFrameBatches[m_currentFrameIndex]))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        m_bTimestampFrameActive = false;
+        m_bLegacyPrivateTimestampFrame = false;
+#endif
+    }
+
+    void VulkanCommandList::CommitGPUTimestampSubmission(uint32_t frameSlotIndex,
+                                                         uint64_t submissionSerial)
+    {
+#if NORVES_ENABLE_STATS
+        if (frameSlotIndex >= MAX_COMMAND_BUFFERS)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[frameSlotIndex];
+        if (batch.State == Detail::GPUTimestampFrameState::Empty)
+        {
+            return;
+        }
+        if (!Detail::TryCommitGPUTimestampSubmission(batch, submissionSerial))
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            AbortGPUTimestampFrame(frameSlotIndex);
+        }
+#else
+        (void)frameSlotIndex;
+        (void)submissionSerial;
+#endif
+    }
+
+    void VulkanCommandList::AbortGPUTimestampFrame(uint32_t frameSlotIndex) noexcept
+    {
+#if NORVES_ENABLE_STATS
+        if (frameSlotIndex >= MAX_COMMAND_BUFFERS)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        Detail::AbortGPUTimestampFrameBatch(m_TimestampFrameBatches[frameSlotIndex]);
+        if (frameSlotIndex == m_currentFrameIndex)
+        {
+            m_bTimestampFrameActive = false;
+            m_bLegacyPrivateTimestampFrame = false;
+            m_LegacyGPUTimestampScope = {};
+        }
+#else
+        (void)frameSlotIndex;
+#endif
+    }
+
+    void VulkanCommandList::NotifyGPUTimestampFrameSlotCompleted(
+        uint32_t frameSlotIndex,
+        uint64_t completedSubmissionSerial)
+    {
+#if NORVES_ENABLE_STATS
+        if (frameSlotIndex >= MAX_COMMAND_BUFFERS)
+        {
+            ++m_InvalidGPUTimestampOperationCount;
+            return;
+        }
+        (void)Detail::TryNotifyGPUTimestampFrameCompleted(
+            m_TimestampFrameBatches[frameSlotIndex],
+            completedSubmissionSerial);
+#else
+        (void)frameSlotIndex;
+        (void)completedSubmissionSerial;
+#endif
+    }
+
+    void VulkanCommandList::ConsumeCompletedGPUTimestampResults(
+        VariableArray<GPUTimestampResult>& outResults)
+    {
+#if NORVES_ENABLE_STATS
+        outResults = m_CompletedGPUTimestampResults;
+        m_CompletedGPUTimestampResults.clear();
+#else
+        outResults.clear();
+#endif
+    }
+
+    void VulkanCommandList::BeginGPUTimestamp(const char* markerName)
+    {
+#if NORVES_ENABLE_STATS
+        if (!m_bTimestampSupported || !m_bIsRecording || m_LegacyGPUTimestampScope.IsValid())
+        {
+            return;
+        }
+        if (!m_bTimestampFrameActive)
+        {
+            BeginGPUTimestampFrame(0u);
+            m_bLegacyPrivateTimestampFrame = m_bTimestampFrameActive;
+        }
+        m_LegacyGPUTimestampScope = BeginGPUTimestampScope(
+            markerName ? markerName : "FrameGPU");
+        if (m_LegacyGPUTimestampScope.IsValid())
+        {
+            m_TimestampFrameBatches[m_currentFrameIndex]
+                .Scopes[m_LegacyGPUTimestampScope.ScopeIndex]
+                .bLegacy = true;
+        }
 #else
         (void)markerName;
 #endif
@@ -361,18 +563,17 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::EndGPUTimestamp()
     {
 #if NORVES_ENABLE_STATS
-        if (!m_bTimestampSupported || !m_bIsRecording || !m_bTimestampQueryActive)
+        if (!m_bTimestampSupported || !m_LegacyGPUTimestampScope.IsValid())
         {
             return;
         }
-
-        const uint32_t queryBaseIndex = GetTimestampQueryBaseIndex();
-        m_commandBuffer.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
-                                       m_timestampQueryPool,
-                                       queryBaseIndex + 1);
-
-        m_bTimestampQueryPending[m_currentFrameIndex] = true;
-        m_bTimestampQueryActive = false;
+        const bool bFinalizePrivateFrame = m_bLegacyPrivateTimestampFrame;
+        EndGPUTimestampScope(m_LegacyGPUTimestampScope);
+        m_LegacyGPUTimestampScope = {};
+        if (bFinalizePrivateFrame)
+        {
+            EndGPUTimestampFrame();
+        }
 #endif
     }
 
@@ -424,15 +625,58 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.pCommandBuffers = &m_commandBuffer;
 
         vk::Queue queue = m_device->GetGraphicsQueue();
+#if NORVES_ENABLE_STATS
+        uint64_t submittedSerial = 0u;
+        const Detail::GPUTimestampSubmissionSequenceStatus submissionStatus =
+            Detail::ExecuteGPUTimestampSubmissionSequence(
+                this,
+                m_currentFrameIndex,
+                false,
+                [&](uint64_t& outSerial)
+                {
+                    return RHI::Detail::TryAllocateSubmissionSerial(
+                        m_DirectNextSubmissionSerial,
+                        outSerial);
+                },
+                []() noexcept
+                {
+                    return true;
+                },
+                [&]()
+                {
+                    return queue.submit(1, &submitInfo, m_fence) == vk::Result::eSuccess;
+                },
+                submittedSerial);
+        if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
+        {
+            throw std::runtime_error("コマンド送信serialが枯渇しました");
+        }
+        if (submissionStatus != Detail::GPUTimestampSubmissionSequenceStatus::Success)
+        {
+            throw std::runtime_error("コマンドの送信に失敗しました");
+        }
+
+        m_DirectNextSubmissionSerial = submittedSerial;
+        m_DirectFrameSlotSubmissionSerials[m_currentFrameIndex] = submittedSerial;
+#else
         auto result = queue.submit(1, &submitInfo, m_fence);
         if (result != vk::Result::eSuccess)
         {
             throw std::runtime_error("コマンドの送信に失敗しました");
         }
+#endif
 
         if (bWaitForCompletion)
         {
-            (void)m_device->GetVkDevice().waitForFences(1, &m_fence, vk::True, UINT64_MAX);
+            const vk::Result waitResult = m_device->GetVkDevice().waitForFences(
+                1, &m_fence, vk::True, UINT64_MAX);
+            if (waitResult != vk::Result::eSuccess)
+            {
+                throw std::runtime_error("コマンド送信完了の待機に失敗しました");
+            }
+#if NORVES_ENABLE_STATS
+            NotifyGPUTimestampFrameSlotCompleted(m_currentFrameIndex, submittedSerial);
+#endif
         }
     }
 
@@ -1195,9 +1439,12 @@ namespace NorvesLib::RHI::Vulkan
 
         auto deviceProperties = m_device->GetVkPhysicalDevice().getProperties();
         m_timestampPeriodNs = deviceProperties.limits.timestampPeriod;
+        m_TimestampValidBits = queueFamilies[graphicsQueueFamilyIndex].timestampValidBits;
         m_bTimestampSupported =
-            queueFamilies[graphicsQueueFamilyIndex].timestampValidBits > 0 &&
-            m_timestampPeriodNs > 0.0f;
+            m_TimestampValidBits > 0u &&
+            m_TimestampValidBits <= 64u &&
+            m_timestampPeriodNs > 0.0f &&
+            std::isfinite(m_timestampPeriodNs);
 
         if (!m_bTimestampSupported)
         {
@@ -1206,7 +1453,8 @@ namespace NorvesLib::RHI::Vulkan
 
         vk::QueryPoolCreateInfo queryPoolInfo;
         queryPoolInfo.queryType = vk::QueryType::eTimestamp;
-        queryPoolInfo.queryCount = MAX_COMMAND_BUFFERS * 2;
+        queryPoolInfo.queryCount =
+            MAX_COMMAND_BUFFERS * MaximumGPUTimestampScopesPerFrame * 2u;
 
         auto result = m_device->GetVkDevice().createQueryPool(queryPoolInfo);
         if (result.result != vk::Result::eSuccess)
@@ -1227,44 +1475,133 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bTimestampSupported = false;
-        m_bTimestampQueryActive = false;
-        std::fill(m_bTimestampQueryPending,
-                  m_bTimestampQueryPending + MAX_COMMAND_BUFFERS,
-                  false);
+        m_bTimestampFrameActive = false;
+        m_bLegacyPrivateTimestampFrame = false;
+        m_LegacyGPUTimestampScope = {};
+        m_CompletedGPUTimestampResults.clear();
+        for (Detail::GPUTimestampFrameBatch& batch : m_TimestampFrameBatches)
+        {
+            Detail::ClearGPUTimestampFrameBatch(batch);
+        }
     }
 
-    void VulkanCommandList::ResolveGPUTimestampResult()
+    void VulkanCommandList::ResolveGPUTimestampResultsForCurrentSlot()
     {
-        if (!m_bTimestampSupported || !m_bTimestampQueryPending[m_currentFrameIndex])
+        if (!m_bTimestampSupported)
         {
             return;
         }
 
-        std::array<uint64_t, 2> timestamps = {};
-        const uint32_t queryBaseIndex = GetTimestampQueryBaseIndex();
-        auto result = m_device->GetVkDevice().getQueryPoolResults(
-            m_timestampQueryPool,
-            queryBaseIndex,
-            static_cast<uint32_t>(timestamps.size()),
-            sizeof(uint64_t) * timestamps.size(),
-            timestamps.data(),
-            sizeof(uint64_t),
-            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
-
-        if (result == vk::Result::eSuccess && timestamps[1] >= timestamps[0])
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (batch.State != Detail::GPUTimestampFrameState::Completed)
         {
-            const double elapsedNs =
-                static_cast<double>(timestamps[1] - timestamps[0]) *
-                static_cast<double>(m_timestampPeriodNs);
-            m_lastGPUTimestampDurationMs = static_cast<float>(elapsedNs / 1000000.0);
+            return;
         }
 
-        m_bTimestampQueryPending[m_currentFrameIndex] = false;
+        if (batch.ScopeCount == 0u)
+        {
+            Detail::ClearGPUTimestampFrameBatch(batch);
+            return;
+        }
+
+        struct TimestampQueryReadback
+        {
+            uint64_t Value = 0u;
+            uint64_t Availability = 0u;
+        };
+        FixedArray<TimestampQueryReadback, MaximumGPUTimestampScopesPerFrame * 2u> timestamps = {};
+        const uint32_t queryCount = batch.ScopeCount * 2u;
+        const vk::Result result = m_device->GetVkDevice().getQueryPoolResults(
+            m_timestampQueryPool,
+            GetTimestampQueryBaseIndex(m_currentFrameIndex),
+            queryCount,
+            sizeof(TimestampQueryReadback) * queryCount,
+            timestamps.data(),
+            sizeof(TimestampQueryReadback),
+            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWithAvailability);
+
+        bool bAllQueriesAvailable = result == vk::Result::eSuccess;
+        if (bAllQueriesAvailable)
+        {
+            for (uint32_t queryIndex = 0u; queryIndex < queryCount; ++queryIndex)
+            {
+                if (timestamps[queryIndex].Availability == 0u)
+                {
+                    bAllQueriesAvailable = false;
+                    break;
+                }
+            }
+        }
+
+        if (Detail::ShouldCarryGPUTimestampBatch(result, bAllQueriesAvailable))
+        {
+            return;
+        }
+
+        if (result != vk::Result::eSuccess)
+        {
+            ++m_GPUTimestampResolveErrorCount;
+            NORVES_LOG_WARNING("Vulkan", "GPU timestamp query resolve failed (%d)", static_cast<int>(result));
+        }
+
+        for (uint32_t scopeIndex = 0u; scopeIndex < batch.ScopeCount; ++scopeIndex)
+        {
+            const Detail::GPUTimestampScopeRecord& scope = batch.Scopes[scopeIndex];
+            const TimestampQueryReadback& begin = timestamps[scopeIndex * 2u];
+            const TimestampQueryReadback& end = timestamps[scopeIndex * 2u + 1u];
+            GPUTimestampResult completed;
+            completed.FrameNumber = batch.FrameNumber;
+            completed.ScopeName = scope.Name;
+
+            const bool bAvailable = result == vk::Result::eSuccess &&
+                                    begin.Availability != 0u &&
+                                    end.Availability != 0u;
+            if (scope.bClosed && bAvailable)
+            {
+                const uint64_t ticks = Detail::CalculateGPUTimestampTicks(
+                    begin.Value,
+                    end.Value,
+                    m_TimestampValidBits);
+                const double durationMs =
+                    static_cast<double>(ticks) * static_cast<double>(m_timestampPeriodNs) /
+                    1000000.0;
+                completed.DurationMs = static_cast<float>(durationMs);
+                completed.bValid = std::isfinite(durationMs) &&
+                                   std::isfinite(completed.DurationMs);
+            }
+            if (scope.bLegacy && completed.bValid)
+            {
+                m_lastGPUTimestampDurationMs = completed.DurationMs;
+            }
+            m_CompletedGPUTimestampResults.push_back(completed);
+        }
+
+        Detail::ClearGPUTimestampFrameBatch(batch);
     }
 
-    uint32_t VulkanCommandList::GetTimestampQueryBaseIndex() const
+    void VulkanCommandList::PrepareGPUTimestampSlotForRecording()
     {
-        return m_currentFrameIndex * 2;
+        if (!m_bTimestampSupported)
+        {
+            return;
+        }
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        if (batch.State != Detail::GPUTimestampFrameState::Empty)
+        {
+            return;
+        }
+        m_commandBuffer.resetQueryPool(
+            m_timestampQueryPool,
+            GetTimestampQueryBaseIndex(m_currentFrameIndex),
+            MaximumGPUTimestampScopesPerFrame * 2u);
+        batch.bQueriesReset = true;
+    }
+
+    uint32_t VulkanCommandList::GetTimestampQueryBaseIndex(uint32_t frameSlotIndex,
+                                                           uint32_t scopeIndex) const
+    {
+        return frameSlotIndex * MaximumGPUTimestampScopesPerFrame * 2u +
+               scopeIndex * 2u;
     }
 #endif
 
@@ -1280,10 +1617,6 @@ namespace NorvesLib::RHI::Vulkan
         m_descriptorSetCache.clear();
         m_activeRenderPass.reset();
         m_activeFramebuffer.reset();
-
-#if NORVES_ENABLE_STATS
-        m_bTimestampQueryActive = false;
-#endif
 
         m_commandBuffer.reset({});
     }

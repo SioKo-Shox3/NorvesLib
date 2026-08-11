@@ -12,6 +12,36 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        class ScopedPassGPUTimestamp
+        {
+        public:
+            ScopedPassGPUTimestamp(RHI::ICommandList* commandList, const char* passName)
+                : m_CommandList(commandList)
+            {
+                if (m_CommandList)
+                {
+                    m_Handle = m_CommandList->BeginGPUTimestampScope(passName);
+                }
+            }
+
+            ~ScopedPassGPUTimestamp()
+            {
+                if (m_CommandList && m_Handle.IsValid())
+                {
+                    m_CommandList->EndGPUTimestampScope(m_Handle);
+                }
+            }
+
+            ScopedPassGPUTimestamp(const ScopedPassGPUTimestamp&) = delete;
+            ScopedPassGPUTimestamp& operator=(const ScopedPassGPUTimestamp&) = delete;
+            ScopedPassGPUTimestamp(ScopedPassGPUTimestamp&&) = delete;
+            ScopedPassGPUTimestamp& operator=(ScopedPassGPUTimestamp&&) = delete;
+
+        private:
+            RHI::ICommandList* m_CommandList = nullptr;
+            RHI::GPUTimestampScopeHandle m_Handle;
+        };
+
         bool IsInvalidPassIndex(uint32_t passIndex)
         {
             return passIndex == RGInvalidPassIndex;
@@ -662,6 +692,7 @@ namespace NorvesLib::Core::Rendering
                 context.CommandList->BeginDebugMarker(pass->GetName());
             }
 #endif
+            ScopedPassGPUTimestamp timing(context.CommandList, pass->GetName());
             pass->Execute(resources, context);
 #if NORVES_ENABLE_RENDERGRAPH_DUMP
             if (bDebugMarkers)

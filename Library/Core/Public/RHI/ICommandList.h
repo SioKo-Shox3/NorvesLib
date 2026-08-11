@@ -1,6 +1,8 @@
 ﻿#pragma once
 
+#include "GPUTimestamp.h"
 #include "RHITypes.h"
+#include "Container/VariableArray.h"
 #include <array>
 
 namespace NorvesLib::RHI
@@ -84,6 +86,57 @@ namespace NorvesLib::RHI
         virtual bool SupportsGPUTimestamps() const
         {
             return false;
+        }
+
+        virtual uint32_t GetMaximumGPUTimestampScopesPerFrame() const
+        {
+            return 0u;
+        }
+
+        virtual void BeginGPUTimestampFrame(uint64_t frameNumber)
+        {
+            (void)frameNumber;
+        }
+
+        virtual GPUTimestampScopeHandle BeginGPUTimestampScope(const char* scopeName)
+        {
+            (void)scopeName;
+            return {};
+        }
+
+        virtual void EndGPUTimestampScope(GPUTimestampScopeHandle handle)
+        {
+            (void)handle;
+        }
+
+        virtual void EndGPUTimestampFrame()
+        {
+        }
+
+        virtual void CommitGPUTimestampSubmission(uint32_t frameSlotIndex,
+                                                  uint64_t submissionSerial)
+        {
+            (void)frameSlotIndex;
+            (void)submissionSerial;
+        }
+
+        virtual void AbortGPUTimestampFrame(uint32_t frameSlotIndex) noexcept
+        {
+            (void)frameSlotIndex;
+        }
+
+        virtual void NotifyGPUTimestampFrameSlotCompleted(
+            uint32_t frameSlotIndex,
+            uint64_t completedSubmissionSerial)
+        {
+            (void)frameSlotIndex;
+            (void)completedSubmissionSerial;
+        }
+
+        virtual void ConsumeCompletedGPUTimestampResults(
+            Core::Container::VariableArray<GPUTimestampResult>& outResults)
+        {
+            outResults.clear();
         }
 
         /**

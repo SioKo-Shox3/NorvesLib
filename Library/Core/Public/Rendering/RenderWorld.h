@@ -169,6 +169,10 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureRequestResult RequestFrameCapture();
         FrameCaptureRequestResult RequestFrameCapture(const FrameCaptureRequest& request);
         bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
+        bool TryConsumeCompletedGPUTimings(
+            Container::VariableArray<RenderPassGPUTiming>& outTimings,
+            uint64_t& outDroppedFrameCount);
+        bool SupportsGPUTimings() const;
 
         // ========================================
         // pre-device-teardown フック

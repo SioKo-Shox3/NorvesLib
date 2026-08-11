@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "FrameCaptureTypes.h"
+#include "RenderGPUTimingTypes.h"
 #include "Screen.h"
 #include "View.h"
 #include "CanvasView.h"
@@ -195,6 +196,10 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureRequestResult RequestFrameCapture();
         FrameCaptureRequestResult RequestFrameCapture(const FrameCaptureRequest& request);
         bool TryConsumeCapturedFrame(CapturedFrame& outFrame);
+        bool TryConsumeCompletedGPUTimings(
+            Container::VariableArray<RenderPassGPUTiming>& outTimings,
+            uint64_t& outDroppedFrameCount);
+        bool SupportsGPUTimings() const;
 
         // ========================================
         // レンダリング実行（RenderThread）
@@ -501,6 +506,7 @@ namespace NorvesLib::Core::Rendering
 
         // 同期
         Thread::Mutex m_Mutex;
+        Detail::GPUTimingMailbox m_GPUTimingMailbox;
 
         // 設定
         uint32_t m_Width = 1280;
@@ -536,6 +542,7 @@ namespace NorvesLib::Core::Rendering
         void RequestCanvasCameraSync();
         void ConsumePendingCanvasCameraSync();
         void UpdateCanvasCameraForRenderResolution();
+        void PublishCompletedGPUTimestampResults();
     };
 
 } // namespace NorvesLib::Core::Rendering

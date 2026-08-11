@@ -396,6 +396,27 @@ namespace NorvesLib::Core::Rendering
         return m_RenderingCoordinator.TryConsumeCapturedFrame(outFrame);
     }
 
+    bool RenderWorld::TryConsumeCompletedGPUTimings(
+        Container::VariableArray<RenderPassGPUTiming>& outTimings,
+        uint64_t& outDroppedFrameCount)
+    {
+        if (!m_bInitialized)
+        {
+            outTimings.clear();
+            outDroppedFrameCount = 0u;
+            return false;
+        }
+
+        return m_RenderingCoordinator.TryConsumeCompletedGPUTimings(
+            outTimings,
+            outDroppedFrameCount);
+    }
+
+    bool RenderWorld::SupportsGPUTimings() const
+    {
+        return m_bInitialized && m_RenderingCoordinator.SupportsGPUTimings();
+    }
+
     void RenderWorld::Resize(uint32_t width, uint32_t height)
     {
         if (width == 0 || height == 0)

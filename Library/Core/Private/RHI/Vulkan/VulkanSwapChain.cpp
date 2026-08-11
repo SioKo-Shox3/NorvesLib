@@ -233,15 +233,7 @@ namespace NorvesLib::RHI::Vulkan
             result.Status = SwapChainEndFrameStatus::InvalidCommandList;
             return result;
         }
-
         vk::CommandBuffer cmdBuffer = vulkanCmdList->GetVkCommandBuffer();
-
-        uint64_t submittedSerial = 0;
-        if (!RHI::Detail::TryAllocateSubmissionSerial(m_nextSubmissionSerial, submittedSerial))
-        {
-            result.Status = SwapChainEndFrameStatus::SubmissionSerialExhausted;
-            return result;
-        }
 
         // セマフォ同期付きでサブミット
         vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -254,15 +246,42 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
 
-        const auto resetResult = m_device->GetVkDevice().resetFences(m_inFlightFences[m_currentFrame]);
-        if (resetResult != vk::Result::eSuccess)
+        uint64_t submittedSerial = 0u;
+        const Detail::GPUTimestampSubmissionSequenceStatus submissionStatus =
+            Detail::ExecuteGPUTimestampSubmissionSequence(
+                vulkanCmdList.get(),
+                m_currentFrame,
+                true,
+                [&](uint64_t& outSerial)
+                {
+                    return RHI::Detail::TryAllocateSubmissionSerial(
+                        m_nextSubmissionSerial,
+                        outSerial);
+                },
+                [&]()
+                {
+                    return m_device->GetVkDevice().resetFences(
+                               m_inFlightFences[m_currentFrame]) == vk::Result::eSuccess;
+                },
+                [&]()
+                {
+                    return m_device->GetGraphicsQueue().submit(
+                               1,
+                               &submitInfo,
+                               m_inFlightFences[m_currentFrame]) == vk::Result::eSuccess;
+                },
+                submittedSerial);
+        if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
+        {
+            result.Status = SwapChainEndFrameStatus::SubmissionSerialExhausted;
+            return result;
+        }
+        if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::FenceResetFailed)
         {
             result.Status = SwapChainEndFrameStatus::FenceResetFailed;
             return result;
         }
-
-        auto submitResult = m_device->GetGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
-        if (submitResult != vk::Result::eSuccess)
+        if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::QueueSubmitFailed)
         {
             // reset済みfenceは未signalのため、このswapchainでの継続利用はfatal扱い。
             result.Status = SwapChainEndFrameStatus::SubmitFailed;
