@@ -206,16 +206,18 @@ namespace
                        "RegisterTexturePtr(\"ShadowMap\", m_ShadowMapTexture)",
                        "ShadowMapPass preserves legacy ShadowMap bridge registration");
         ExpectContains(source,
-                       "if (!shadowMatrices.bEnabled)",
-                       "ShadowMapPass has disabled-shadow early return marker");
+                       "if (shadowMatrices.bEnabled &&",
+                       "ShadowMapPass limits shadow command population to enabled shadows");
+        ExpectContains(source,
+                       "context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass",
+                       "ShadowMapPass always enqueues a geometry pass to establish depth layout");
         ExpectTextBefore(source,
-                         "RegisterTexturePtr(\"ShadowMap\", m_ShadowMapTexture)",
-                         "if (!shadowMatrices.bEnabled)",
-                         "ShadowMapPass registers legacy ShadowMap before disabled return");
-        ExpectTextBefore(source,
-                         "if (!shadowMatrices.bEnabled)",
-                         "FrameCommand::CreateGeometryPass",
-                         "ShadowMapPass disabled return precedes geometry enqueue");
+                         "if (shadowMatrices.bEnabled &&",
+                         "context.EnqueueFrameCommand(FrameCommand::CreateGeometryPass",
+                         "ShadowMapPass populates shadow commands before unconditionally enqueueing the pass");
+        ExpectNotContains(source,
+                          "if (!shadowMatrices.bEnabled)",
+                          "ShadowMapPass does not return before enqueueing the empty depth pass");
         ExpectContains(source,
                        "if (!cmd.Draw.bCastShadow)",
                        "ShadowMapPass keeps DrawCommand shadow-caster filtering");
