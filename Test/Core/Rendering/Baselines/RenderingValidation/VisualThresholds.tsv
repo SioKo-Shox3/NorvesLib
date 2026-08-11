@@ -1,0 +1,3 @@
+scene	mean_flip_limit	max_channel_delta	pixels_per_degree	patch_size	channel_delta	flip_commit
+indoor	0.000001	8	67.0	1	2	b475eb4bf394ab877c42166c9eb0a84a02cc5b14
+outdoor	0.000001	8	67.0	1	1	b475eb4bf394ab877c42166c9eb0a84a02cc5b14

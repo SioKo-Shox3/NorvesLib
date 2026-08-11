@@ -228,6 +228,34 @@ target_include_directories(RenderingGoldenImageSupport
 )
 set_target_properties(RenderingGoldenImageSupport PROPERTIES FOLDER "Test/Core/Rendering")
 
+add_library(RenderingPerceptualDiffSupport STATIC
+    RenderingValidation/RenderingPerceptualDiff.cpp
+)
+target_link_libraries(RenderingPerceptualDiffSupport PUBLIC RenderingGoldenImageSupport)
+target_include_directories(RenderingPerceptualDiffSupport PUBLIC
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_include_directories(RenderingPerceptualDiffSupport SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/flip
+)
+set_target_properties(RenderingPerceptualDiffSupport PROPERTIES FOLDER "Test/Core/Rendering")
+
+add_executable(RenderingPerceptualDiffTest
+    RenderingPerceptualDiffTest.cpp
+)
+target_link_libraries(RenderingPerceptualDiffTest PRIVATE RenderingPerceptualDiffSupport)
+target_include_directories(RenderingPerceptualDiffTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(RenderingPerceptualDiffTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+    NORVES_BINARY_ROOT="${CMAKE_BINARY_DIR}"
+)
+set_target_properties(RenderingPerceptualDiffTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderingPerceptualDiffTest COMMAND RenderingPerceptualDiffTest)
+add_test(NAME RenderingPerceptualArtificialDifferenceTest
+    COMMAND RenderingPerceptualDiffTest --validate-artificial-baselines)
+
 add_executable(RenderingGoldenImageComparatorTest
     RenderingGoldenImageComparatorTest.cpp
 )
@@ -248,6 +276,7 @@ target_link_libraries(RenderingGoldenImageTest PRIVATE
     RenderingValidationFixtureSupport
     RenderingGpuTestSupport
     RenderingGoldenImageSupport
+    RenderingPerceptualDiffSupport
 )
 target_include_directories(RenderingGoldenImageTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Test/Core/Rendering

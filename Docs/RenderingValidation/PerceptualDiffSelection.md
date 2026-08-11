@@ -121,3 +121,27 @@ linear = encoded <= 0.04045
   - 【決定】Task 6 Step 1–6のprototype合否基準を満たさない時。
   - 【決定】upstream pin、license、API、required/conditional include closureのいずれかを変更する時。
 - **全再校正トリガー**: 【決定】sRGB transfer関数、PPD、FLIP pin、R1 presentation gammaのいずれかが変わった時は、indoor/outdoor baseline、無変更通常実行10回のnoise、人工差、mean/raw thresholdをすべて再校正する。部分的なthreshold流用は禁止する。
+
+## R0 threshold 承認記録
+
+- 承認日: 2026-08-10
+- 承認原文: 「承認します」
+- 承認対象 candidate SHA-256: `01755EC8E6091400B3589802411DCF1AD0AB9D3AF6EA5D9658390AC820DC414F`
+- calibration HEAD: `2da856a3edd682807fe205baf884107af59f9198`
+- Indoor baseline SHA-256: `545E745CE9958F310A551B0D71BEAB4DAD35743C6367E0DA0724F9930E6F49E7`
+- Outdoor baseline SHA-256: `3676A470814C68841BF1C8E4BF8612802042AB936AAA77E1A9937C5EC642BA7E`
+- 【実測】indoor: 通常10回の `noiseMax=0.000000000`、採用 `mean_flip_limit=0.000001`、選定人工差 `negativeMean=0.000001520`／`patch_size=1`／`channel_delta=2`。
+- 【実測】outdoor: 通常10回の `noiseMax=0.000000000`、採用 `mean_flip_limit=0.000001`、選定人工差 `negativeMean=0.000002029`／`patch_size=1`／`channel_delta=1`。
+- 【実測】両sceneで `noiseMax < mean_flip_limit < negativeMean` と6桁切上げ式が成立し、通常20行＋人工差40行の実測表が上記HEAD／baseline hashを保持することを確認した。
+- 【決定】この承認は上記candidate hashのexact内容だけをsource thresholdへpublishする許可であり、別hash、再生成candidate、将来の再校正値には流用しない。
+
+### upstream入力契約の証拠等級
+
+- 【実測】vendored pinの `Library/ThirdParty/flip/FLIP.h` 2428〜2431行は、simplified LDR APIの入力を `[0,1]`、3 floats/pixel interleaved、linear RGBと明記する。これはadapterがIEC sRGB EOTFを適用するload-bearing根拠である。
+- 【外部】同pinの公式 `README.md` はversion `1.7` を表示する。version表示は説明資料のidentity補助とし、build identityの正本はfull commit SHA `b475eb4bf394ab877c42166c9eb0a84a02cc5b14`、vendored byte hash、license textとする。
+- 【決定】README version表示だけでpinや入力契約を更新しない。pin変更時はheaderのAPIコメント／実装、include closure、license、byte identityを再取得する。
+
+### 規約例外（waiver）の分離
+
+- 【規約例外】STL利用のwaiverは、byte-identical upstream `Library/ThirdParty/flip/FLIP.h` 内部だけに限定する。NorvesLib wrapper header、Core／Game、test fixture APIには拡張しない。
+- 【規約例外ではない決定】`FLIP_ENABLE_CUDA`未定義、LDR-only、PPD 67.0、IEC sRGB EOTF、mean FLIP＋raw hard maxはR0の比較policyであり、STL waiverとは別にレビューする。
