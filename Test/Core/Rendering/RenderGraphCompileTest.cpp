@@ -4151,10 +4151,11 @@ namespace
         RHI::TexturePtr sceneColorTexture = graphResources.GetTexture(lightingPass.GetSceneColorHandle());
         assert(sceneColorTexture);
         assert(graph.GetLastExecutedPassCount() == 3);
-        assert(result.TextureOutputs.empty());
+        assert(result.TextureOutputs.size() == 1);
         RHI::TexturePtr exportedTexture;
-        assert(!result.TryGetTexture(RenderGraphResourceNames::SceneColor, exportedTexture));
-        assert(exportedTexture == nullptr);
+        assert(result.TryGetTexture(RenderGraphResourceNames::SceneColor, exportedTexture));
+        assert(exportedTexture.get() == sceneColorTexture.get());
+        exportedTexture.reset();
         assert(!result.TryGetTexture(RenderGraphResourceNames::SceneDepth, exportedTexture));
         assert(exportedTexture == nullptr);
         assert(commandList.Barriers.size() == 8);

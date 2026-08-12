@@ -268,7 +268,11 @@ namespace NorvesLib::Core::Rendering
 
         // 色と強度
         float ColorR = 1.0f, ColorG = 1.0f, ColorB = 1.0f;
-        float Intensity = 1.0f;
+        union
+        {
+            float CanonicalIntensity = 1.0f;
+            float Intensity;
+        };
 
         // 減衰
         float Range = 10.0f;
@@ -291,7 +295,7 @@ namespace NorvesLib::Core::Rendering
 
         bool IsValid() const
         {
-            return bVisible && Intensity > 0.0f;
+            return bVisible && CanonicalIntensity > 0.0f;
         }
     };
 
@@ -327,6 +331,16 @@ namespace NorvesLib::Core::Rendering
         // レンダリング設定
         RenderLayer CullingMask = RenderLayer::All;
         uint8_t RenderOrder = 0; // 複数カメラの描画順序
+
+        // 物理露出 snapshot
+        float Aperture = 4.0f;
+        float ShutterSpeed = 1.0f / 60.0f;
+        float ISO = 100.0f;
+        float ExposureCompensation = 0.0f;
+        float EV100 = 9.9068906f;
+        float Exposure = 1.0f / 1152.0f;
+        float PreExposure = 1.0f / 1152.0f;
+        float InvPreExposure = 1152.0f;
 
         // ポストプロセス設定（ハンドル参照）
         // PostProcessHandle PostProcess;

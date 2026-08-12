@@ -102,7 +102,6 @@ namespace NorvesLib::Core::Component
         void SetInnerConeAngle(float degrees)
         {
             InnerConeAngle = degrees;
-            EnsureConeAngleOrder();
             MarkRenderStateDirty();
         }
         float GetInnerConeAngle() const { return InnerConeAngle; }
@@ -113,7 +112,6 @@ namespace NorvesLib::Core::Component
         void SetOuterConeAngle(float degrees)
         {
             OuterConeAngle = degrees;
-            EnsureConeAngleOrder();
             MarkRenderStateDirty();
         }
         float GetOuterConeAngle() const { return OuterConeAngle; }
@@ -128,9 +126,6 @@ namespace NorvesLib::Core::Component
          * @return 有効なProxyが生成できた場合true
          */
         virtual bool BuildLightProxy(Rendering::LightProxy& outProxy) const override;
-
-    private:
-        void EnsureConeAngleOrder();
 
     protected:
         // ========================================

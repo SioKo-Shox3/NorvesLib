@@ -209,6 +209,9 @@ add_executable(SceneSerializerTest
     SceneSerializerTest.cpp
 )
 target_link_libraries(SceneSerializerTest PRIVATE Core)
+target_compile_definitions(SceneSerializerTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
 target_include_directories(SceneSerializerTest PRIVATE
     ${CMAKE_SOURCE_DIR}
 )

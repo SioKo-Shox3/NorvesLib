@@ -1,6 +1,8 @@
 ﻿#include "Scene/SceneSerializer.h"
 
 #include "Component/Component.h"
+#include "Component/CameraComponent.h"
+#include "Component/LightComponent.h"
 #include "Object/Entity.h"
 #include "Object/IClass.h"
 #include "Object/PrefabAsset.h"
@@ -10,9 +12,11 @@
 #include "Text/JsonDocument.h"
 #include "Text/JsonWriter.h"
 #include "Logging/LogMacros.h"
+#include <cmath>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 namespace NorvesLib::Core::Scene
 {
@@ -61,6 +65,235 @@ namespace NorvesLib::Core::Scene
 
             outValue = static_cast<uint64_t>(parsed);
             return true;
+        }
+
+        constexpr uint32_t kPreviousSceneFileFormatVersion = 1;
+
+        enum class SceneLightKind : uint8_t
+        {
+            None,
+            Invalid,
+            Directional,
+            Point,
+            Spot
+        };
+
+        bool IsSceneClassIdentityCorrupt(const SceneObjectRecord& record, const char* className)
+        {
+            const bool bNameMatches = record.ClassName == className;
+            const bool bIdMatches = record.ClassId == MakeSceneStableClassId(Container::StringView(className));
+            return (bNameMatches || bIdMatches) && !(bNameMatches && bIdMatches);
+        }
+
+        SceneLightKind GetSceneLightKind(const SceneObjectRecord& record)
+        {
+            const char* classNames[] = {
+                "DirectionalLightComponent",
+                "PointLightComponent",
+                "SpotLightComponent"};
+            const SceneLightKind kinds[] = {
+                SceneLightKind::Directional,
+                SceneLightKind::Point,
+                SceneLightKind::Spot};
+            for (size_t index = 0; index < 3; ++index)
+            {
+                const bool bNameMatches = record.ClassName == classNames[index];
+                const bool bIdMatches = record.ClassId == MakeSceneStableClassId(
+                    Container::StringView(classNames[index]));
+                if (bNameMatches || bIdMatches)
+                {
+                    return bNameMatches && bIdMatches ? kinds[index] : SceneLightKind::Invalid;
+                }
+            }
+            return SceneLightKind::None;
+        }
+
+        const char* GetV1PhysicalClassName(const SceneObjectRecord& record)
+        {
+            const char* classNames[] = {
+                "CameraComponent",
+                "DirectionalLightComponent",
+                "PointLightComponent",
+                "SpotLightComponent"};
+            for (const char* className : classNames)
+            {
+                if (record.ClassName == className)
+                {
+                    return className;
+                }
+            }
+            return nullptr;
+        }
+
+        SceneLightKind GetV1LightKindByClassName(const char* className)
+        {
+            if (className == nullptr)
+            {
+                return SceneLightKind::None;
+            }
+            if (Container::StringView(className) == Container::StringView("DirectionalLightComponent"))
+            {
+                return SceneLightKind::Directional;
+            }
+            if (Container::StringView(className) == Container::StringView("PointLightComponent"))
+            {
+                return SceneLightKind::Point;
+            }
+            if (Container::StringView(className) == Container::StringView("SpotLightComponent"))
+            {
+                return SceneLightKind::Spot;
+            }
+            return SceneLightKind::None;
+        }
+
+        bool IsSceneCameraRecord(const SceneObjectRecord& record)
+        {
+            return record.ClassName == "CameraComponent" &&
+                   record.ClassId == MakeSceneStableClassId(Container::StringView("CameraComponent"));
+        }
+
+        bool IsInvalidSceneCameraRecord(const SceneObjectRecord& record)
+        {
+            return IsSceneClassIdentityCorrupt(record, "CameraComponent");
+        }
+
+        bool IsPhysicalSchemaClass(const IClass& cls)
+        {
+            const Container::StringView className = cls.GetClassName().GetView();
+            return className == Container::StringView("CameraComponent") ||
+                   className == Container::StringView("DirectionalLightComponent") ||
+                   className == Container::StringView("PointLightComponent") ||
+                   className == Container::StringView("SpotLightComponent");
+        }
+
+        const char* GetSceneLightClassName(SceneLightKind kind)
+        {
+            switch (kind)
+            {
+            case SceneLightKind::Directional:
+                return "DirectionalLightComponent";
+            case SceneLightKind::Point:
+                return "PointLightComponent";
+            case SceneLightKind::Spot:
+                return "SpotLightComponent";
+            case SceneLightKind::Invalid:
+            case SceneLightKind::None:
+            default:
+                return nullptr;
+            }
+        }
+
+        struct PhysicalPropertySpec
+        {
+            const char* Name = nullptr;
+            StablePropertyId PropertyId = InvalidSchemaId;
+            const TypeInfo* Type = nullptr;
+            const ScenePropertyRecord* Record = nullptr;
+        };
+
+        bool TryResolveCanonicalPhysicalProperties(
+            const SceneObjectRecord& record,
+            const char* className,
+            PhysicalPropertySpec* specs,
+            size_t specCount)
+        {
+            for (const ScenePropertyRecord& property : record.Properties)
+            {
+                size_t nameIndex = specCount;
+                size_t idIndex = specCount;
+                for (size_t index = 0; index < specCount; ++index)
+                {
+                    if (property.Name == specs[index].Name)
+                    {
+                        nameIndex = index;
+                    }
+                    if (property.PropertyId == specs[index].PropertyId)
+                    {
+                        idIndex = index;
+                    }
+                }
+
+                if (nameIndex == specCount && idIndex == specCount)
+                {
+                    continue;
+                }
+                if (nameIndex != idIndex || nameIndex == specCount)
+                {
+                    return false;
+                }
+
+                const PhysicalPropertySpec& spec = specs[nameIndex];
+                if (property.Name != spec.Name ||
+                    property.PropertyId != spec.PropertyId ||
+                    spec.Type == nullptr ||
+                    property.TypeName != spec.Type->Name ||
+                    property.TypeId != spec.Type->StableId ||
+                    spec.Record != nullptr)
+                {
+                    return false;
+                }
+                specs[nameIndex].Record = &property;
+            }
+
+            for (size_t index = 0; index < specCount; ++index)
+            {
+                if (specs[index].Record == nullptr)
+                {
+                    return false;
+                }
+            }
+            (void)className;
+            return true;
+        }
+
+        const ScenePropertyRecord* FindScenePropertyRecord(
+            const SceneObjectRecord& record,
+            const char* className,
+            const char* propertyName)
+        {
+            const StablePropertyId propertyId = MakeSceneStablePropertyId(
+                Container::StringView(className),
+                Container::StringView(propertyName));
+            for (const ScenePropertyRecord& property : record.Properties)
+            {
+                if (property.Name == propertyName && property.PropertyId == propertyId)
+                {
+                    return &property;
+                }
+            }
+            return nullptr;
+        }
+
+        ScenePropertyRecord* FindScenePropertyRecord(
+            SceneObjectRecord& record,
+            const char* className,
+            const char* propertyName)
+        {
+            const StablePropertyId propertyId = MakeSceneStablePropertyId(
+                Container::StringView(className),
+                Container::StringView(propertyName));
+            for (ScenePropertyRecord& property : record.Properties)
+            {
+                if (property.Name == propertyName && property.PropertyId == propertyId)
+                {
+                    return &property;
+                }
+            }
+            return nullptr;
+        }
+
+        ScenePropertyRecord* FindScenePropertyRecordByName(
+            SceneObjectRecord& record,
+            const char* propertyName)
+        {
+            for (ScenePropertyRecord& property : record.Properties)
+            {
+                if (property.Name == propertyName)
+                {
+                    return &property;
+                }
+            }
+            return nullptr;
         }
 
         // ========================================
@@ -244,6 +477,530 @@ namespace NorvesLib::Core::Scene
                 *pOutError = message;
             }
             return false;
+        }
+
+        bool TryReadExactFormatVersion(const JsonValue& value, uint32_t& outVersion)
+        {
+            if (!value.IsNumber())
+            {
+                return false;
+            }
+
+            const double number = value.AsNumber();
+            if (!std::isfinite(number) || std::trunc(number) != number ||
+                number < 0.0 || number > static_cast<double>(std::numeric_limits<uint32_t>::max()))
+            {
+                return false;
+            }
+
+            outVersion = static_cast<uint32_t>(number);
+            return true;
+        }
+
+        template <typename T>
+        const TypeInfo* GetSceneTypeInfo()
+        {
+            TypeRegistry& registry = TypeRegistry::Get();
+            return registry.Find(registry.GetTypeId<T>());
+        }
+
+        bool IsScenePropertyType(const ScenePropertyRecord& property, const TypeInfo& expectedType)
+        {
+            return (!property.TypeName.empty() && property.TypeName == expectedType.Name) ||
+                   property.TypeId == expectedType.StableId;
+        }
+
+        template <typename T>
+        bool TrySerializeSceneValue(const T& value, Container::String& outValue)
+        {
+            PropertyValue propertyValue = PropertyValue::Create<T>(value);
+            return propertyValue.Serialize(outValue);
+        }
+
+        bool CanonicalizeV1PhysicalProperties(
+            SceneObjectRecord& record,
+            const IClass& cls,
+            Container::String* pOutError)
+        {
+            for (size_t index = 0; index < record.Properties.size(); ++index)
+            {
+                ScenePropertyRecord& property = record.Properties[index];
+                if (property.Name.empty())
+                {
+                    continue;
+                }
+
+                for (size_t previousIndex = 0; previousIndex < index; ++previousIndex)
+                {
+                    if (record.Properties[previousIndex].Name == property.Name)
+                    {
+                        return SetParseError(pOutError, "scene: v1 physical property has a duplicate name");
+                    }
+                }
+
+                const ClassProperty* schemaProperty = cls.GetProperty(Identity(property.Name));
+                if (schemaProperty == nullptr)
+                {
+                    continue;
+                }
+
+                const TypeInfo* typeInfo = TypeRegistry::Get().Find(schemaProperty->GetRuntimeTypeId());
+                if (typeInfo == nullptr)
+                {
+                    return SetParseError(pOutError, "scene: v1 physical property type registration failed");
+                }
+
+                property.PropertyId = MakeSceneStablePropertyId(
+                    cls.GetClassName().GetView(),
+                    Container::StringView(property.Name));
+                property.TypeName = typeInfo->Name;
+                property.TypeId = typeInfo->StableId;
+            }
+            return true;
+        }
+
+        bool EnsureV1CanonicalProperty(
+            SceneObjectRecord& record,
+            const IClass& cls,
+            const char* propertyName,
+            const char* serializedDefault,
+            Container::String* pOutError)
+        {
+            const ClassProperty* schemaProperty = cls.GetProperty(Identity(propertyName));
+            if (schemaProperty == nullptr)
+            {
+                return SetParseError(pOutError, "scene: v1 physical property registration failed");
+            }
+
+            const TypeInfo* typeInfo = TypeRegistry::Get().Find(schemaProperty->GetRuntimeTypeId());
+            if (typeInfo == nullptr)
+            {
+                return SetParseError(pOutError, "scene: v1 physical property type registration failed");
+            }
+
+            ScenePropertyRecord* property = FindScenePropertyRecordByName(record, propertyName);
+            if (property == nullptr)
+            {
+                ScenePropertyRecord newProperty;
+                newProperty.Name = propertyName;
+                newProperty.PropertyId = MakeSceneStablePropertyId(
+                    cls.GetClassName().GetView(),
+                    Container::StringView(propertyName));
+                newProperty.TypeName = typeInfo->Name;
+                newProperty.TypeId = typeInfo->StableId;
+                newProperty.Value = serializedDefault;
+                record.Properties.push_back(std::move(newProperty));
+                return true;
+            }
+
+            property->PropertyId = MakeSceneStablePropertyId(
+                cls.GetClassName().GetView(),
+                Container::StringView(propertyName));
+            property->TypeName = typeInfo->Name;
+            property->TypeId = typeInfo->StableId;
+            return true;
+        }
+
+        bool MigrateV1PhysicalObject(SceneObjectRecord& record, Container::String* pOutError)
+        {
+            const char* className = GetV1PhysicalClassName(record);
+            if (className == nullptr)
+            {
+                return true;
+            }
+
+            const IClass* cls = ClassRegistry::Get().FindClass(Identity(className));
+            if (cls == nullptr)
+            {
+                return SetParseError(pOutError, "scene: v1 physical class registration failed");
+            }
+
+            // v1 はクラス名を正とし、旧IDを現行の安定IDへ正規化する。
+            record.ClassId = MakeSceneStableClassId(Container::StringView(className));
+            if (!CanonicalizeV1PhysicalProperties(record, *cls, pOutError))
+            {
+                return false;
+            }
+
+            if (Container::StringView(className) == Container::StringView("CameraComponent"))
+            {
+                Container::String apertureDefault;
+                Container::String shutterSpeedDefault;
+                Container::String isoDefault;
+                Container::String exposureCompensationDefault;
+                if (!TrySerializeSceneValue(4.0f, apertureDefault) ||
+                    !TrySerializeSceneValue(1.0f / 60.0f, shutterSpeedDefault) ||
+                    !TrySerializeSceneValue(100.0f, isoDefault) ||
+                    !TrySerializeSceneValue(0.0f, exposureCompensationDefault))
+                {
+                    return SetParseError(pOutError, "scene: v1 camera default serialization failed");
+                }
+                return EnsureV1CanonicalProperty(
+                           record,
+                           *cls,
+                           "Aperture",
+                           apertureDefault.c_str(),
+                           pOutError) &&
+                       EnsureV1CanonicalProperty(
+                           record,
+                           *cls,
+                           "ShutterSpeed",
+                           shutterSpeedDefault.c_str(),
+                           pOutError) &&
+                       EnsureV1CanonicalProperty(
+                           record,
+                           *cls,
+                           "ISO",
+                           isoDefault.c_str(),
+                           pOutError) &&
+                       EnsureV1CanonicalProperty(
+                           record,
+                           *cls,
+                           "ExposureCompensation",
+                           exposureCompensationDefault.c_str(),
+                           pOutError);
+            }
+
+            const SceneLightKind kind = GetV1LightKindByClassName(className);
+            if (kind == SceneLightKind::None)
+            {
+                return true;
+            }
+
+            const Container::String intensityUnitDefault = ToDecimalString(
+                static_cast<uint64_t>(kind == SceneLightKind::Directional
+                                          ? Component::LightIntensityUnit::Lux
+                                          : Component::LightIntensityUnit::Candela));
+            const Container::String lightTypeDefault = ToDecimalString(
+                static_cast<uint64_t>(kind == SceneLightKind::Directional
+                                          ? Rendering::LightType::Directional
+                                          : kind == SceneLightKind::Point
+                                              ? Rendering::LightType::Point
+                                              : Rendering::LightType::Spot));
+            return EnsureV1CanonicalProperty(
+                       record,
+                       *cls,
+                       "IntensityUnit",
+                       intensityUnitDefault.c_str(),
+                       pOutError) &&
+                   EnsureV1CanonicalProperty(
+                       record,
+                       *cls,
+                       "LightColor",
+                       "Vector3(1,1,1)",
+                       pOutError) &&
+                   EnsureV1CanonicalProperty(
+                       record,
+                       *cls,
+                       "LightTypeProp",
+                       lightTypeDefault.c_str(),
+                       pOutError);
+        }
+
+        bool MigrateV1EntityRecord(SceneEntityRecord& record, Container::String* pOutError)
+        {
+            if (!MigrateV1PhysicalObject(record.Object, pOutError))
+            {
+                return false;
+            }
+            for (SceneComponentRecord& component : record.Components)
+            {
+                if (!MigrateV1PhysicalObject(component.Object, pOutError))
+                {
+                    return false;
+                }
+            }
+            for (SceneEntityRecord& child : record.Children)
+            {
+                if (!MigrateV1EntityRecord(child, pOutError))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool MigrateV1Document(SceneDocument& document, Container::String* pOutError)
+        {
+            if (document.FormatVersion != kPreviousSceneFileFormatVersion)
+            {
+                return SetParseError(pOutError, "scene: v1 migration received a non-v1 document");
+            }
+
+            for (SceneRootRecord& root : document.Roots)
+            {
+                if (root.FormatVersion != kPreviousSceneFileFormatVersion)
+                {
+                    return SetParseError(pOutError, "scene: v1 document has an incompatible root formatVersion");
+                }
+                if (!MigrateV1EntityRecord(root.Root, pOutError))
+                {
+                    return false;
+                }
+                root.FormatVersion = SceneSerializer::SceneFileFormatVersion;
+            }
+            document.FormatVersion = SceneSerializer::SceneFileFormatVersion;
+            return true;
+        }
+
+        bool TryParseFiniteFloat(const Container::String& text, float& outValue)
+        {
+            if (text.empty())
+            {
+                return false;
+            }
+
+            errno = 0;
+            char* end = nullptr;
+            const float parsed = std::strtof(text.c_str(), &end);
+            if (end == nullptr || *end != '\0' || end == text.c_str() || errno != 0 ||
+                !std::isfinite(parsed))
+            {
+                return false;
+            }
+            outValue = parsed;
+            return true;
+        }
+
+        bool TryParseFiniteNonNegativeFloat(const Container::String& text, float& outValue)
+        {
+            return TryParseFiniteFloat(text, outValue) && outValue >= 0.0f;
+        }
+
+        bool TryParseLightIntensityUnit(const Container::String& text, Component::LightIntensityUnit& outUnit)
+        {
+            uint64_t rawValue = 0;
+            if (!TryParseUInt64(text, rawValue) || rawValue > static_cast<uint64_t>(Component::LightIntensityUnit::Lumen))
+            {
+                return false;
+            }
+            outUnit = static_cast<Component::LightIntensityUnit>(rawValue);
+            return true;
+        }
+
+        bool TryParseLightType(const Container::String& text, Rendering::LightType& outType)
+        {
+            uint64_t rawValue = 0;
+            if (!TryParseUInt64(text, rawValue) || rawValue > static_cast<uint64_t>(Rendering::LightType::Spot))
+            {
+                return false;
+            }
+            outType = static_cast<Rendering::LightType>(rawValue);
+            return true;
+        }
+
+        bool IsIntensityUnitAllowed(SceneLightKind kind, Component::LightIntensityUnit unit)
+        {
+            if (kind == SceneLightKind::Directional)
+            {
+                return unit == Component::LightIntensityUnit::Lux;
+            }
+            if (kind == SceneLightKind::Point || kind == SceneLightKind::Spot)
+            {
+                return unit == Component::LightIntensityUnit::Candela ||
+                       unit == Component::LightIntensityUnit::Lumen;
+            }
+            return false;
+        }
+
+        bool IsValidLightColor(const Container::String& text)
+        {
+            PropertyValue value;
+            if (!value.Deserialize<Math::Vector3>(text))
+            {
+                return false;
+            }
+
+            const Math::Vector3* color = value.Get<Math::Vector3>();
+            if (color == nullptr || !std::isfinite(color->x) || !std::isfinite(color->y) ||
+                !std::isfinite(color->z) || color->x < 0.0f || color->y < 0.0f || color->z < 0.0f)
+            {
+                return false;
+            }
+
+            const float luminance = 0.2126f * color->x +
+                                    0.7152f * color->y +
+                                    0.0722f * color->z;
+            return std::isfinite(luminance) && luminance > 1.0e-6f;
+        }
+
+        bool IsValidSpotCone(const Container::String& innerText, const Container::String& outerText)
+        {
+            float innerDegrees = 0.0f;
+            float outerDegrees = 0.0f;
+            if (!TryParseFiniteFloat(innerText, innerDegrees) ||
+                !TryParseFiniteFloat(outerText, outerDegrees) ||
+                innerDegrees < 0.0f || outerDegrees <= innerDegrees || outerDegrees > 179.0f)
+            {
+                return false;
+            }
+
+            const double innerCosine = std::cos(
+                static_cast<double>(innerDegrees) * static_cast<double>(Math::Constants::PI) / 180.0);
+            const double outerCosine = std::cos(
+                static_cast<double>(outerDegrees) * static_cast<double>(Math::Constants::PI) / 180.0);
+            const double solidAngle = 2.0 * static_cast<double>(Math::Constants::PI) *
+                                      (1.0 - (innerCosine + outerCosine) / 2.0);
+            return std::isfinite(innerCosine) && std::isfinite(outerCosine) &&
+                   std::isfinite(solidAngle) && solidAngle > 0.0 &&
+                   std::isfinite(static_cast<float>(innerCosine)) &&
+                   std::isfinite(static_cast<float>(outerCosine));
+        }
+
+        bool ValidatePhysicalCameraObject(const SceneObjectRecord& record, Container::String* pOutError)
+        {
+            const TypeInfo* floatType = GetSceneTypeInfo<float>();
+            if (floatType == nullptr)
+            {
+                return SetParseError(pOutError, "scene: v2 camera float type registration failed");
+            }
+
+            PhysicalPropertySpec specs[] = {
+                {"Aperture", MakeSceneStablePropertyId(Container::StringView("CameraComponent"), Container::StringView("Aperture")), floatType, nullptr},
+                {"ShutterSpeed", MakeSceneStablePropertyId(Container::StringView("CameraComponent"), Container::StringView("ShutterSpeed")), floatType, nullptr},
+                {"ISO", MakeSceneStablePropertyId(Container::StringView("CameraComponent"), Container::StringView("ISO")), floatType, nullptr},
+                {"ExposureCompensation", MakeSceneStablePropertyId(Container::StringView("CameraComponent"), Container::StringView("ExposureCompensation")), floatType, nullptr}};
+            if (!TryResolveCanonicalPhysicalProperties(
+                    record,
+                    "CameraComponent",
+                    specs,
+                    sizeof(specs) / sizeof(specs[0])))
+            {
+                return SetParseError(pOutError, "scene: v2 camera schema identity is not canonical");
+            }
+
+            float aperture = 0.0f;
+            float shutterSpeed = 0.0f;
+            float iso = 0.0f;
+            float exposureCompensation = 0.0f;
+            if (!TryParseFiniteFloat(specs[0].Record->Value, aperture) || aperture <= 0.0f ||
+                !TryParseFiniteFloat(specs[1].Record->Value, shutterSpeed) || shutterSpeed <= 0.0f ||
+                !TryParseFiniteFloat(specs[2].Record->Value, iso) || iso <= 0.0f ||
+                !TryParseFiniteFloat(specs[3].Record->Value, exposureCompensation))
+            {
+                return SetParseError(pOutError, "scene: v2 camera has invalid exposure values");
+            }
+
+            Rendering::CameraProxy exposureSnapshot;
+            if (!Component::CameraComponent::TryBuildExposureSnapshot(
+                    aperture,
+                    shutterSpeed,
+                    iso,
+                    exposureCompensation,
+                    exposureSnapshot))
+            {
+                return SetParseError(pOutError, "scene: v2 camera exposure is not finite or representable");
+            }
+            return true;
+        }
+
+        bool ValidatePhysicalLightObject(const SceneObjectRecord& record, Container::String* pOutError)
+        {
+            if (IsInvalidSceneCameraRecord(record))
+            {
+                return SetParseError(pOutError, "scene: v2 camera class identity conflict");
+            }
+            if (IsSceneCameraRecord(record))
+            {
+                return ValidatePhysicalCameraObject(record, pOutError);
+            }
+
+            const SceneLightKind kind = GetSceneLightKind(record);
+            if (kind == SceneLightKind::None)
+            {
+                return true;
+            }
+            if (kind == SceneLightKind::Invalid)
+            {
+                return SetParseError(pOutError, "scene: v2 light class identity conflict");
+            }
+
+            const char* className = GetSceneLightClassName(kind);
+            const TypeInfo* floatType = GetSceneTypeInfo<float>();
+            const TypeInfo* intensityUnitType = GetSceneTypeInfo<Component::LightIntensityUnit>();
+            const TypeInfo* lightColorType = GetSceneTypeInfo<Math::Vector3>();
+            const TypeInfo* lightTypeType = GetSceneTypeInfo<Rendering::LightType>();
+            if (className == nullptr || floatType == nullptr || intensityUnitType == nullptr ||
+                lightColorType == nullptr || lightTypeType == nullptr)
+            {
+                return SetParseError(pOutError, "scene: v2 light type registration failed");
+            }
+
+            PhysicalPropertySpec specs[] = {
+                {"Intensity", MakeSceneStablePropertyId(Container::StringView(className), Container::StringView("Intensity")), floatType, nullptr},
+                {"IntensityUnit", MakeSceneStablePropertyId(Container::StringView(className), Container::StringView("IntensityUnit")), intensityUnitType, nullptr},
+                {"LightColor", MakeSceneStablePropertyId(Container::StringView(className), Container::StringView("LightColor")), lightColorType, nullptr},
+                {"LightTypeProp", MakeSceneStablePropertyId(Container::StringView(className), Container::StringView("LightTypeProp")), lightTypeType, nullptr},
+                {"InnerConeAngle", MakeSceneStablePropertyId(Container::StringView(className), Container::StringView("InnerConeAngle")), floatType, nullptr},
+                {"OuterConeAngle", MakeSceneStablePropertyId(Container::StringView(className), Container::StringView("OuterConeAngle")), floatType, nullptr}};
+            const size_t specCount = kind == SceneLightKind::Spot ? 6 : 4;
+            if (!TryResolveCanonicalPhysicalProperties(record, className, specs, specCount))
+            {
+                return SetParseError(pOutError, "scene: v2 light schema identity is not canonical");
+            }
+
+            float parsedIntensity = 0.0f;
+            Component::LightIntensityUnit parsedUnit = Component::LightIntensityUnit::Lux;
+            Rendering::LightType parsedLightType = Rendering::LightType::Directional;
+            if (!TryParseFiniteNonNegativeFloat(specs[0].Record->Value, parsedIntensity) ||
+                !TryParseLightIntensityUnit(specs[1].Record->Value, parsedUnit) ||
+                !TryParseLightType(specs[3].Record->Value, parsedLightType) ||
+                !IsIntensityUnitAllowed(kind, parsedUnit) ||
+                !IsValidLightColor(specs[2].Record->Value))
+            {
+                return SetParseError(pOutError, "scene: v2 light has invalid physical values");
+            }
+            const Rendering::LightType expectedLightType =
+                kind == SceneLightKind::Directional
+                    ? Rendering::LightType::Directional
+                    : kind == SceneLightKind::Point
+                        ? Rendering::LightType::Point
+                        : Rendering::LightType::Spot;
+            if (parsedLightType != expectedLightType)
+            {
+                return SetParseError(pOutError, "scene: v2 light class and LightTypeProp disagree");
+            }
+            if (kind == SceneLightKind::Spot &&
+                !IsValidSpotCone(specs[4].Record->Value, specs[5].Record->Value))
+            {
+                return SetParseError(pOutError, "scene: v2 spot light has invalid cone angles");
+            }
+            return true;
+        }
+
+        bool ValidatePhysicalLightEntity(const SceneEntityRecord& record, Container::String* pOutError)
+        {
+            if (!ValidatePhysicalLightObject(record.Object, pOutError))
+            {
+                return false;
+            }
+            for (const SceneComponentRecord& component : record.Components)
+            {
+                if (!ValidatePhysicalLightObject(component.Object, pOutError))
+                {
+                    return false;
+                }
+            }
+            for (const SceneEntityRecord& child : record.Children)
+            {
+                if (!ValidatePhysicalLightEntity(child, pOutError))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ValidatePhysicalLightDocument(const SceneDocument& document, Container::String* pOutError)
+        {
+            for (const SceneRootRecord& root : document.Roots)
+            {
+                if (!ValidatePhysicalLightEntity(root.Root, pOutError))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         bool ReadUInt64Member(const JsonValue& value, const char* key, uint64_t& outValue)
@@ -712,7 +1469,7 @@ namespace NorvesLib::Core::Scene
         for (const EntitySubtreeSnapshot& snapshot : roots)
         {
             SceneRootRecord record;
-            record.FormatVersion = snapshot.FormatVersion;
+            record.FormatVersion = SceneFileFormatVersion;
             record.RootAlias = snapshot.RootAlias;
             record.RootPath = snapshot.RootPath;
             record.Root = BuildEntityRecord(snapshot.Root, resolver);
@@ -776,12 +1533,12 @@ namespace NorvesLib::Core::Scene
         }
 
         const JsonValue formatVersion = root.FindMember("formatVersion");
-        if (!formatVersion.IsNumber())
+        uint32_t version = 0;
+        if (!TryReadExactFormatVersion(formatVersion, version))
         {
             return SetParseError(pOutError, "scene: formatVersion is required");
         }
-        const uint32_t version = formatVersion.AsUInt32();
-        if (version != SceneFileFormatVersion)
+        if (version != SceneFileFormatVersion && version != kPreviousSceneFileFormatVersion)
         {
             return SetParseError(pOutError, "scene: unsupported formatVersion");
         }
@@ -806,11 +1563,14 @@ namespace NorvesLib::Core::Scene
 
             SceneRootRecord record;
             const JsonValue rootFormatVersion = rootValue.FindMember("formatVersion");
-            if (!rootFormatVersion.IsNumber())
+            if (!TryReadExactFormatVersion(rootFormatVersion, record.FormatVersion))
             {
                 return SetParseError(pOutError, "scene: root formatVersion is required");
             }
-            record.FormatVersion = rootFormatVersion.AsUInt32();
+            if (record.FormatVersion != version)
+            {
+                return SetParseError(pOutError, "scene: root formatVersion does not match document formatVersion");
+            }
             if (!ReadUInt64Member(rootValue, "rootAlias", record.RootAlias))
             {
                 return SetParseError(pOutError, "scene: rootAlias must be a decimal string");
@@ -822,6 +1582,17 @@ namespace NorvesLib::Core::Scene
             }
             outDocument.Roots.push_back(std::move(record));
         }
+
+        if (version == kPreviousSceneFileFormatVersion && !MigrateV1Document(outDocument, pOutError))
+        {
+            return false;
+        }
+
+        Container::String physicalValidationError;
+        if (!ValidatePhysicalLightDocument(outDocument, &physicalValidationError))
+        {
+            return SetParseError(pOutError, physicalValidationError.c_str());
+        }
         return true;
     }
 
@@ -832,6 +1603,19 @@ namespace NorvesLib::Core::Scene
     {
         outRoots.clear();
         outStats = SceneLoadStats(); // outRootsのclear()と対称にゼロ化する（累積させない）
+        if (document.FormatVersion != SceneFileFormatVersion)
+        {
+            NORVES_LOG_WARNING("Scene", "Unsupported document formatVersion %u", document.FormatVersion);
+            return false;
+        }
+
+        Container::String physicalValidationError;
+        if (!ValidatePhysicalLightDocument(document, &physicalValidationError))
+        {
+            NORVES_LOG_WARNING("Scene", "Physical scene validation failed: %s", physicalValidationError.c_str());
+            return false;
+        }
+
         outRoots.reserve(document.Roots.size());
         for (const SceneRootRecord& rootRecord : document.Roots)
         {

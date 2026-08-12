@@ -95,6 +95,25 @@ namespace NorvesLib::Core::Component
         }
         bool IsActiveCamera() const { return bIsActiveCamera; }
 
+        static bool TryBuildExposureSnapshot(
+            float aperture,
+            float shutterSpeed,
+            float iso,
+            float exposureCompensation,
+            Rendering::CameraProxy& outSnapshot);
+
+        bool SetAperture(float aperture);
+        float GetAperture() const { return Aperture; }
+
+        bool SetShutterSpeed(float shutterSpeed);
+        float GetShutterSpeed() const { return ShutterSpeed; }
+
+        bool SetISO(float iso);
+        float GetISO() const { return ISO; }
+
+        bool SetExposureCompensation(float exposureCompensation);
+        float GetExposureCompensation() const { return ExposureCompensation; }
+
         /**
          * @brief owner のワールド Transform とレンズ値を CameraProxy へ snapshot 化します。
          * @return owner が存在して snapshot を構築できた場合 true。
@@ -114,6 +133,10 @@ namespace NorvesLib::Core::Component
         PROPERTY(uint8_t, RenderOrder)
         PROPERTY(Rendering::RenderLayer, CullingMaskProp)
         PROPERTY(bool, bIsActiveCamera)
+        PROPERTY(float, Aperture)
+        PROPERTY(float, ShutterSpeed)
+        PROPERTY(float, ISO)
+        PROPERTY(float, ExposureCompensation)
 
         Rendering::ViewportRect m_Viewport{};
 
