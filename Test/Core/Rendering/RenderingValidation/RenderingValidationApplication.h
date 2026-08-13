@@ -23,6 +23,9 @@ namespace NorvesLib::Test::RenderingValidation
         virtual bool EvaluateCapturedFrame(
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& outFailureReason) = 0;
+        virtual bool RequestFollowupCapture(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Rendering::FrameCaptureRequest& outRequest);
         const RenderingValidationRunConfig& GetRunConfig() const;
 
     private:

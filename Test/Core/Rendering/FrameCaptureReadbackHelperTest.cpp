@@ -644,6 +644,16 @@ namespace
         assert(sceneHelper.TrySnapshotPendingRequest(sceneSnapshot));
         assert(sceneSnapshot.RequestId == sceneResult.RequestId);
         assert(sceneSnapshot.SourceKind == FrameCaptureSourceKind::SceneColor);
+
+        FrameCaptureSourceSet sources;
+        sources.BackBuffer.CurrentState = RHI::ResourceState::Present;
+        sources.BackBuffer.RestoreState = RHI::ResourceState::Present;
+        sources.BackBuffer.ColorSpace = RHI::PresentationColorSpace::Rec709D65;
+        sources.BackBuffer.Transfer = RHI::PresentationTransfer::SRGB;
+        sources.BackBuffer.bHardwareSrgbEncode = true;
+        assert(sources.Find(FrameCaptureSourceKind::BackBuffer) == &sources.BackBuffer);
+        assert(sources.BackBuffer.bHardwareSrgbEncode);
+        assert(!sources.BackBuffer.bShaderSrgbEncode);
     }
 
     void TestSnapshotAndClaimStateMachine()

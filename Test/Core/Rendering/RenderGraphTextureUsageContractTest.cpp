@@ -498,6 +498,7 @@ namespace
 
         RHI::FramebufferPtr CreateFramebuffer(const RHI::FramebufferDesc& desc) override
         {
+            ++CreatedFramebufferCount;
             return RHI::MakeShared<FakeFramebuffer>(desc);
         }
 
@@ -528,6 +529,8 @@ namespace
         {
             return &Allocator;
         }
+
+        uint32_t CreatedFramebufferCount = 0;
 
         void WaitIdle() override
         {
@@ -1116,6 +1119,66 @@ namespace
         assert(descriptorSet->BoundTexture.get() == sceneTexture.get());
         std::cout << "TestCompositePassthroughPresentationKeepsImportedSceneWithoutTransferSrc passed\n";
     }
+
+    void TestPresentationOverlayFramebufferRingOwnsAndReusesByFrameSlotKey()
+    {
+        RHI::DevicePtr device = RHI::MakeShared<FakeDevice>();
+        auto* fakeDevice = static_cast<FakeDevice*>(device.get());
+
+        RHI::TextureDesc overlayDesc =
+            RHI::TextureDesc::RenderTarget(64,
+                                           32,
+                                           RHI::Format::R16G16B16A16_FLOAT,
+                                           "OverlayPresentationColor");
+        RHI::TexturePtr firstTarget = RHI::MakeShared<FakeTexture>(overlayDesc);
+        RHI::TexturePtr replacementTarget = RHI::MakeShared<FakeTexture>(overlayDesc);
+
+        PresentationPass presentationPass;
+        RHI::FramebufferPtr firstSlot =
+            presentationPass.AcquireOverlayFramebuffer(device, 0, 2, firstTarget);
+        assert(firstSlot);
+        RHI::RenderPassPtr overlayRenderPass = presentationPass.GetOverlayRenderPass();
+        assert(overlayRenderPass);
+        auto* fakeOverlayRenderPass = static_cast<FakeRenderPass*>(overlayRenderPass.get());
+        assert(fakeOverlayRenderPass->GetColorAttachmentCount() == 1);
+        assert(fakeOverlayRenderPass->GetColorAttachmentFormat(0) == RHI::Format::R16G16B16A16_FLOAT);
+        assert(fakeOverlayRenderPass->Desc.colorAttachments[0].loadOp == RHI::AttachmentLoadOp::Load);
+        assert(fakeOverlayRenderPass->Desc.colorAttachments[0].storeOp == RHI::AttachmentStoreOp::Store);
+        assert(!fakeOverlayRenderPass->Desc.colorAttachments[0].clear);
+        assert(fakeDevice->CreatedFramebufferCount == 1);
+
+        RHI::FramebufferPtr sameKey =
+            presentationPass.AcquireOverlayFramebuffer(device, 0, 2, firstTarget);
+        assert(sameKey.get() == firstSlot.get());
+        assert(fakeDevice->CreatedFramebufferCount == 1);
+
+        RHI::FramebufferPtr otherSlot =
+            presentationPass.AcquireOverlayFramebuffer(device, 1, 2, firstTarget);
+        assert(otherSlot);
+        assert(otherSlot.get() != firstSlot.get());
+        assert(fakeDevice->CreatedFramebufferCount == 2);
+
+        Container::TWeakPtr<RHI::IFramebuffer> replacedWeak = firstSlot;
+        RHI::FramebufferPtr replacement =
+            presentationPass.AcquireOverlayFramebuffer(device, 0, 2, replacementTarget);
+        assert(replacement);
+        assert(replacement.get() != firstSlot.get());
+        assert(fakeDevice->CreatedFramebufferCount == 3);
+        firstSlot.reset();
+        sameKey.reset();
+        assert(replacedWeak.expired());
+
+        Container::TWeakPtr<RHI::IRenderPass> renderPassWeak =
+            presentationPass.GetOverlayRenderPass();
+        overlayRenderPass.reset();
+        presentationPass.InvalidateOverlayResources();
+        assert(!presentationPass.GetOverlayRenderPass());
+        replacement.reset();
+        otherSlot.reset();
+        assert(renderPassWeak.expired());
+
+        std::cout << "TestPresentationOverlayFramebufferRingOwnsAndReusesByFrameSlotKey passed\n";
+    }
 } // namespace
 
 int main()
@@ -1133,6 +1196,7 @@ int main()
     TestUpscalePersistentOutputIncludesTransferSrc();
     TestCompositeAlphaOverFreshColorIncludesTransferSrc();
     TestCompositePassthroughPresentationKeepsImportedSceneWithoutTransferSrc();
+    TestPresentationOverlayFramebufferRingOwnsAndReusesByFrameSlotKey();
 
     std::cout << "RenderGraphTextureUsageContractTest passed\n";
     return 0;

@@ -9,7 +9,8 @@ namespace NorvesLib::Core::Rendering
     enum class FrameCaptureSourceKind : uint8_t
     {
         PresentationColor,
-        SceneColor
+        SceneColor,
+        BackBuffer
     };
 
     struct FrameCaptureRequest
@@ -63,12 +64,17 @@ namespace NorvesLib::Core::Rendering
         RHI::ResourceState CurrentState = RHI::ResourceState::ShaderResource;
         RHI::ResourceState RestoreState = RHI::ResourceState::ShaderResource;
         uint64_t FrameNumber = 0;
+        RHI::PresentationColorSpace ColorSpace = RHI::PresentationColorSpace::Unknown;
+        RHI::PresentationTransfer Transfer = RHI::PresentationTransfer::Unknown;
+        bool bHardwareSrgbEncode = false;
+        bool bShaderSrgbEncode = false;
     };
 
     struct FrameCaptureSourceSet
     {
         FrameCaptureSource PresentationColor;
         FrameCaptureSource SceneColor;
+        FrameCaptureSource BackBuffer;
 
         const FrameCaptureSource* Find(FrameCaptureSourceKind kind) const
         {
@@ -78,6 +84,8 @@ namespace NorvesLib::Core::Rendering
                 return &PresentationColor;
             case FrameCaptureSourceKind::SceneColor:
                 return &SceneColor;
+            case FrameCaptureSourceKind::BackBuffer:
+                return &BackBuffer;
             default:
                 return nullptr;
             }
@@ -87,6 +95,7 @@ namespace NorvesLib::Core::Rendering
         {
             PresentationColor = FrameCaptureSource{};
             SceneColor = FrameCaptureSource{};
+            BackBuffer = FrameCaptureSource{};
         }
     };
 
@@ -100,6 +109,10 @@ namespace NorvesLib::Core::Rendering
         RHI::Format Format = RHI::Format::UNKNOWN;
         uint32_t BytesPerPixel = 0;
         uint32_t RowPitchBytes = 0;
+        RHI::PresentationColorSpace ColorSpace = RHI::PresentationColorSpace::Unknown;
+        RHI::PresentationTransfer Transfer = RHI::PresentationTransfer::Unknown;
+        bool bHardwareSrgbEncode = false;
+        bool bShaderSrgbEncode = false;
         Container::VariableArray<uint8_t> Pixels;
 
         bool IsSuccess() const

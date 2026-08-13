@@ -15,7 +15,6 @@ namespace NorvesLib::Core::Rendering
         float Radius = 0.8f;
         float Softness = 0.5f;
         bool bEnabled = true;
-        RHI::Format OutputFormat = RHI::Format::R8G8B8A8_UNORM;
     };
 
     class VignettePass : public IViewPass, public IRenderGraphPass

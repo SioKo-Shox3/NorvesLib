@@ -3,6 +3,7 @@
 #include "VulkanTexture.h"
 #include "VulkanCommandList.h"
 #include "RHI/SubmissionSerialAllocator.h"
+#include "Logging/LogMacros.h"
 #include <stdexcept>
 #include <algorithm>
 #include "Container/Containers.h"
@@ -358,6 +359,15 @@ namespace NorvesLib::RHI::Vulkan
         }
         vk::SurfaceCapabilitiesKHR capabilities = capabilitiesResult.value;
 
+        const bool bTransferSrcSupported =
+            (capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferSrc) !=
+            vk::ImageUsageFlags{};
+        if (!bTransferSrcSupported)
+        {
+            NORVES_LOG_WARNING("VulkanSwapChain",
+                               "SourceMissingTransferSrc: swapchain image does not support transfer source");
+        }
+
         // サーフェスフォーマットを選択
         vk::SurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat();
         m_vkFormat = surfaceFormat.format;
@@ -380,7 +390,11 @@ namespace NorvesLib::RHI::Vulkan
         createInfo.imageColorSpace = m_colorSpace;
         createInfo.imageExtent = extent;
         createInfo.imageArrayLayers = 1;                                  // 通常のイメージではレイヤー数は1
-        createInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment; // レンダリング用途
+        createInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
+        if (bTransferSrcSupported)
+        {
+            createInfo.imageUsage = createInfo.imageUsage | vk::ImageUsageFlagBits::eTransferSrc;
+        }
 
         // キューファミリーインデックスの取得
         // 注: GetGraphicsQueueFamilyIndex をグラフィックスとプレゼント両方に使用
@@ -443,6 +457,13 @@ namespace NorvesLib::RHI::Vulkan
             textureDesc.Height = m_height;
             textureDesc.TextureFormat = m_format;
             textureDesc.Usage = ResourceUsage::RenderTarget;
+            auto capabilitiesResult = m_device->GetVkPhysicalDevice().getSurfaceCapabilitiesKHR(m_surface);
+            if (capabilitiesResult.result == vk::Result::eSuccess &&
+                (capabilitiesResult.value.supportedUsageFlags & vk::ImageUsageFlagBits::eTransferSrc) !=
+                    vk::ImageUsageFlags{})
+            {
+                textureDesc.Usage = textureDesc.Usage | ResourceUsage::TransferSrc;
+            }
 
             // VulkanTextureを作成（既存のvk::Imageを使用）
             m_backBufferTextures[i] = MakeShared<VulkanTexture>(m_device, textureDesc, m_swapChainImages[i]);
@@ -496,18 +517,37 @@ namespace NorvesLib::RHI::Vulkan
         }
         auto &availableFormats = formatsResult.value;
 
-        // 優先フォーマットを探す（SRGB + B8G8R8A8）
-        for (const auto &availableFormat : availableFormats)
+        const auto isAccepted = [](const vk::SurfaceFormatKHR &format)
         {
-            if (availableFormat.format == vk::Format::eB8G8R8A8Srgb &&
-                availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+            if (format.colorSpace != vk::ColorSpaceKHR::eSrgbNonlinear)
             {
-                return availableFormat;
+                return false;
+            }
+            return format.format == vk::Format::eR8G8B8A8Unorm ||
+                   format.format == vk::Format::eR8G8B8A8Srgb ||
+                   format.format == vk::Format::eB8G8R8A8Unorm ||
+                   format.format == vk::Format::eB8G8R8A8Srgb;
+        };
+
+        // SDRではSRGB surfaceを優先し、UNORMはshader OETF経路へ明示的に落とす。
+        const vk::Format preferredFormats[] = {
+            vk::Format::eB8G8R8A8Srgb,
+            vk::Format::eR8G8B8A8Srgb,
+            vk::Format::eB8G8R8A8Unorm,
+            vk::Format::eR8G8B8A8Unorm};
+        for (const vk::Format preferredFormat : preferredFormats)
+        {
+            for (const auto &availableFormat : availableFormats)
+            {
+                if (isAccepted(availableFormat) && availableFormat.format == preferredFormat)
+                {
+                    return availableFormat;
+                }
             }
         }
 
-        // 優先フォーマットが見つからなければ、最初のフォーマットを使用
-        return availableFormats[0];
+        // Surface color-space / transferを無視した暗黙fallbackは禁止。
+        throw std::runtime_error("Unsupported presentation surface format/color-space/transfer");
     }
 
     // プレゼントモードの選択

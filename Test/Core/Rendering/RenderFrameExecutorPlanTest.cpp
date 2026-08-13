@@ -19,6 +19,9 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -31,6 +34,16 @@ namespace RHI = NorvesLib::RHI;
 
 namespace
 {
+    void ConfigureAssertOutput()
+    {
+#ifdef _MSC_VER
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
     ViewportRenderPlan MakeViewportPlan(uint32_t viewId, uint32_t viewportId);
     ViewRenderPlan MakeViewPlan(uint32_t viewId, ViewType type);
 
@@ -178,6 +191,60 @@ namespace
             ExtractBraceBlock(diagnostics, "RenderGraphDebugDumpRequestClaim::~RenderGraphDebugDumpRequestClaim()");
         assert(claimDestructor.find("if (m_Owner && m_bRestoreRequest)") != std::string::npos);
         assert(claimDestructor.find("m_Owner->RestoreRenderGraphDebugDumpRequest();") != std::string::npos);
+    }
+
+    void AssertDeferredCompositePresentationSelectionContract()
+    {
+        const std::filesystem::path sourceRoot = FindSourceRoot();
+        const std::string coordinator =
+            ReadTextFile(sourceRoot / "Library/Core/Private/Rendering/RenderingCoordinator.cpp");
+        const std::string renderBlock = ExtractBraceBlock(coordinator,
+                                                          "void RenderingCoordinator::RenderFrame(");
+        const std::size_t selectionDeclaration = renderBlock.find(
+            "RHI::TexturePtr finalPresentationTexture;");
+        const std::size_t deferBlitEnable = renderBlock.find(
+            "m_PresentationPass.SetDeferBlit(true)");
+        const std::size_t executorExecute = renderBlock.find(
+            "frameExecutor.Execute(executionRequest)");
+        const std::size_t compositeBranch = renderBlock.find("if (executionResult.bComposite)",
+                                                              selectionDeclaration);
+        const std::size_t compositeOutput = renderBlock.find(
+            "m_RenderGraph.TryGetLastOutputTexture(RenderGraphResourceNames::CompositeColor",
+            compositeBranch);
+        const std::size_t presentationResultFallback = renderBlock.find(
+            "m_PresentationPass.GetLastResult().InputTexture",
+            compositeOutput);
+        const std::size_t sharedResourceFallback = renderBlock.find(
+            "RenderGraphResourceNames::PresentationColor",
+            presentationResultFallback);
+        const std::size_t finalBlitInput = renderBlock.find(
+            "BindTexture(0, finalPresentationTexture)",
+            sharedResourceFallback);
+        const std::size_t duplicateFinalBlitInput = renderBlock.find(
+            "BindTexture(0, finalPresentationTexture)",
+            finalBlitInput == std::string::npos ? 0 : finalBlitInput + 1);
+        const std::size_t blitCount = renderBlock.find(
+            "executionResult.PresentationBlitCount = 1",
+            finalBlitInput);
+
+        assert(selectionDeclaration != std::string::npos);
+        assert(deferBlitEnable != std::string::npos);
+        assert(executorExecute != std::string::npos);
+        assert(compositeBranch != std::string::npos);
+        assert(compositeOutput != std::string::npos);
+        assert(presentationResultFallback != std::string::npos);
+        assert(sharedResourceFallback != std::string::npos);
+        assert(finalBlitInput != std::string::npos);
+        assert(duplicateFinalBlitInput == std::string::npos);
+        assert(blitCount != std::string::npos);
+        assert(selectionDeclaration < compositeBranch);
+        assert(deferBlitEnable < executorExecute);
+        assert(executorExecute < selectionDeclaration);
+        assert(compositeBranch < compositeOutput);
+        assert(compositeOutput < presentationResultFallback);
+        assert(presentationResultFallback < sharedResourceFallback);
+        assert(sharedResourceFallback < finalBlitInput);
+        assert(finalBlitInput < blitCount);
     }
 
     class FakeTexture final : public RHI::ITexture
@@ -947,6 +1014,7 @@ namespace
 
 int main()
 {
+    ConfigureAssertOutput();
     std::cout.setf(std::ios::unitbuf);
     std::cout << "RenderFrameExecutorPlanTest start\n";
 
@@ -1118,6 +1186,7 @@ int main()
         ViewSettings settings;
         assert(view->Initialize(settings));
         view->AddPass(Container::MakeUnique<EmptyGraphViewPass>());
+        fixture.SharedResources.Clear();
         fixture.Views.push_back(view);
 
         RenderFrameExecutor executor;
@@ -1125,7 +1194,7 @@ int main()
 
         assert(result.bRenderedAnyViewport);
         assert(result.RenderedViewportCount == 1);
-        assert(result.PresentationBlitCount == 1);
+        assert(result.PresentationBlitCount == 0);
         assert(!fixture.GraphPresentationPass.WasPresented());
         assert(!fixture.Context.bPresentationGraphPassHandled);
         assert(fixture.PendingFrameCommands.empty());
@@ -1133,14 +1202,10 @@ int main()
         assert(!fixture.CommandList.HasRenderPass(fixture.GraphLoadRenderPass.get()));
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(!fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
-        assert(result.CaptureSources.PresentationColor.Texture);
-        assert(result.CaptureSources.PresentationColor.FrameNumber == fixture.Packet.FrameNumber);
-        assert(result.CaptureSources.PresentationColor.Texture.get() == fixture.FallbackTexture.get());
-        assert(result.CaptureSources.PresentationColor.Texture.get() != fixture.BackBuffer.get());
-        assert(result.CaptureSources.PresentationColor.CurrentState == RHI::ResourceState::ShaderResource);
-        assert(result.CaptureSources.PresentationColor.RestoreState == RHI::ResourceState::ShaderResource);
+        assert(!result.CaptureSources.PresentationColor.Texture);
+        assert(result.CaptureSources.PresentationColor.FrameNumber == 0);
         assert(!result.CaptureSources.SceneColor.Texture);
-        std::cout << "TestMissingGraphPresentationInputFallsBackToComposer passed\n";
+        std::cout << "TestMissingGraphPresentationInputSkipsEmptyComposer passed\n";
     }
 
     {
@@ -1160,7 +1225,7 @@ int main()
         RenderFrameExecutionResult result = executor.Execute(fixture.MakeExecutionRequest());
 
         assert(result.RenderedViewportCount == 2);
-        assert(result.PresentationBlitCount == 2);
+        assert(result.PresentationBlitCount == 1);
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackClearRenderPass.get()));
         assert(fixture.CommandList.HasRenderPass(fixture.FallbackLoadRenderPass.get()));
         assert(!result.CaptureSources.PresentationColor.Texture);
@@ -1477,6 +1542,8 @@ int main()
 
     AssertDebugDumpCaptureSourceContract();
     std::cout << "TestDebugDumpCaptureSourceContract passed\n";
+    AssertDeferredCompositePresentationSelectionContract();
+    std::cout << "TestDeferredCompositePresentationSelectionContract passed\n";
 
     std::cout << "RenderFrameExecutorPlanTest passed\n";
     return 0;

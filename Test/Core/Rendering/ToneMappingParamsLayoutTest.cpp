@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <cmath>
 #include <string>
 #ifdef _MSC_VER
 #include <crtdbg.h>
@@ -59,10 +60,10 @@ int main()
     assert(sizeof(GPUToneMappingParams) == 64);
     assert(sizeof(GPUToneMappingParams) % 16 == 0);
 
-    assert(offsetof(GPUToneMappingParams, exposure) == 0);
-    assert(offsetof(GPUToneMappingParams, gamma) == 4);
-    assert(offsetof(GPUToneMappingParams, operatorType) == 8);
-    assert(offsetof(GPUToneMappingParams, bBypass) == 12);
+    assert(offsetof(GPUToneMappingParams, CameraExposure) == 0);
+    assert(offsetof(GPUToneMappingParams, operatorType) == 4);
+    assert(offsetof(GPUToneMappingParams, bBypass) == 8);
+    assert(offsetof(GPUToneMappingParams, _pad0) == 12);
     assert(offsetof(GPUToneMappingParams, vignetteIntensity) == 16);
     assert(offsetof(GPUToneMappingParams, vignetteRadius) == 20);
     assert(offsetof(GPUToneMappingParams, vignetteSoftness) == 24);
@@ -97,6 +98,21 @@ int main()
     assert(bypassIfPosition < bypassOutputPosition);
     assert(bypassOutputPosition < bypassReturnPosition);
     assert(bypassReturnPosition < hdrSamplePosition);
+
+    assert(shaderSource.find("float CameraExposure;") != std::string::npos);
+    assert(shaderSource.find("float gamma;") == std::string::npos);
+    assert(shaderSource.find("float exposure;") == std::string::npos);
+    assert(shaderSource.find("hdrColor *= params.CameraExposure;") != std::string::npos);
+    assert(shaderSource.find("TonemapExposure(vec3 color)") != std::string::npos);
+    assert(shaderSource.find("TonemapExposure(hdrColor, params") == std::string::npos);
+    assert(shaderSource.find("pow(mapped") == std::string::npos);
+
+    const float physicalInput = 4.0f;
+    const float cameraExposure = 0.25f;
+    const float commonEntryInput = physicalInput * cameraExposure;
+    assert(std::abs(commonEntryInput - 1.0f) < 0.0001f);
+    const float exposureCurve = 1.0f - std::exp(-commonEntryInput);
+    assert(std::abs(exposureCurve - (1.0f - std::exp(-1.0f))) < 0.0001f);
 
     const std::size_t vignetteFalloffPosition =
         RequirePosition(shaderSource, "float vignette = smoothstep(radius - softness, radius, dist);");

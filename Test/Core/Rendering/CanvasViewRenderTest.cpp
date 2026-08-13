@@ -21,6 +21,7 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 
@@ -900,6 +901,52 @@ namespace
         return value;
     }
 
+    struct NumericColor
+    {
+        float R = 0.0f;
+        float G = 0.0f;
+        float B = 0.0f;
+        float A = 0.0f;
+    };
+
+    struct CanvasColorNumericRows
+    {
+        NumericColor OpaqueOver;
+        float SrgbTextureLinear = 0.0f;
+        float UnormTextureLinear = 0.0f;
+    };
+
+    NumericColor PremultipliedAlphaOver(const NumericColor &source, const NumericColor &destination)
+    {
+        const float inverseSourceAlpha = 1.0f - source.A;
+        return {
+            source.R + inverseSourceAlpha * destination.R,
+            source.G + inverseSourceAlpha * destination.G,
+            source.B + inverseSourceAlpha * destination.B,
+            source.A + inverseSourceAlpha * destination.A};
+    }
+
+    float DecodeTextureSample(RHI::Format textureFormat, float encodedSample)
+    {
+        if (textureFormat == RHI::Format::R8G8B8A8_SRGB ||
+            textureFormat == RHI::Format::B8G8R8A8_SRGB)
+        {
+            return std::pow((encodedSample + 0.055f) / 1.055f, 2.4f);
+        }
+
+        return encodedSample;
+    }
+
+    CanvasColorNumericRows EvaluateCanvasColorNumericRows()
+    {
+        const NumericColor opaqueCanvas{0.2f, 0.4f, 0.6f, 1.0f};
+        const NumericColor scene{0.7f, 0.5f, 0.3f, 0.75f};
+        return {
+            PremultipliedAlphaOver(opaqueCanvas, scene),
+            DecodeTextureSample(RHI::Format::R8G8B8A8_SRGB, 0.5f),
+            DecodeTextureSample(RHI::Format::R8G8B8A8_UNORM, 0.5f)};
+    }
+
     void TestCanvasViewClearsTransparentAndExportsFrameOutput()
     {
         CanvasFixture fixture;
@@ -944,7 +991,7 @@ namespace
         assert(fixture.Device->CreateFramebufferCount == 1);
         assert(fixture.Device->LastRenderPassDesc.colorAttachments.size() == 1);
         const RHI::AttachmentDesc &colorAttachment = fixture.Device->LastRenderPassDesc.colorAttachments[0];
-        assert(colorAttachment.format == RHI::Format::R8G8B8A8_UNORM);
+        assert(colorAttachment.format == RHI::Format::R16G16B16A16_FLOAT);
         assert(colorAttachment.clear);
         assert(colorAttachment.clearColor[0] == 0.0f);
         assert(colorAttachment.clearColor[1] == 0.0f);
@@ -954,6 +1001,21 @@ namespace
         assert(colorAttachment.storeOp == RHI::AttachmentStoreOp::Store);
         assert(colorAttachment.initialState == RHI::ResourceState::RenderTarget);
         assert(colorAttachment.finalState == RHI::ResourceState::ShaderResource);
+
+        const auto numericRow = EvaluateCanvasColorNumericRows();
+        assert(numericRow.OpaqueOver.R == 0.2f);
+        assert(numericRow.OpaqueOver.G == 0.4f);
+        assert(numericRow.OpaqueOver.B == 0.6f);
+        assert(numericRow.OpaqueOver.A == 1.0f);
+        assert(std::abs(numericRow.SrgbTextureLinear - 0.21404114f) < 1.0e-7f);
+        assert(numericRow.UnormTextureLinear == 0.5f);
+
+        const RHI::BlendAttachmentDesc opaqueBlend =
+            CanvasView::CreateBoardBlendAttachmentDesc(BlendMode::Opaque);
+        assert(!opaqueBlend.blendEnable);
+        assert(opaqueBlend.colorWriteMask == RHI::ColorWriteMask::All);
+        assert(RHI::IsPresentationSrgbFormat(RHI::Format::R8G8B8A8_SRGB));
+        assert(RHI::IsPresentationUnormFormat(RHI::Format::R8G8B8A8_UNORM));
 
         assert(fixture.Device->LastFramebufferDesc.colorTargets.size() == 1);
         assert(fixture.Device->LastFramebufferDesc.colorTargets[0].get() == frameOutput.get());

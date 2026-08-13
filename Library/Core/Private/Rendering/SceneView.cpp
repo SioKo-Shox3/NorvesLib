@@ -688,19 +688,19 @@ namespace NorvesLib::Core::Rendering
         auto bloomPass = MakeUnique<BloomPass>(bloomSettings);
         postProcessStack->AddPass(std::move(bloomPass));
 
-        // ToneMapping（HDR→LDR変換 + Color Grading）
+        // ToneMapping（HDR→display-linear Rec.709変換 + Color Grading）
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
-        // Standalone VignettePass owns default SceneView vignette while ToneMapping ABI remains intact.
+        // Standalone VignettePass owns default SceneView vignette.
         toneMappingSettings.VignetteIntensity = 0.0f;
         auto toneMappingPass = MakeUnique<ToneMappingPass>(toneMappingSettings);
         postProcessStack->AddPass(std::move(toneMappingPass));
 
-        // Vignette（ToneMapping後のLDR色へ適用）
+        // Vignette（ToneMapping後のdisplay-linear色へ適用）
         auto vignettePass = MakeUnique<VignettePass>();
         postProcessStack->AddPass(std::move(vignettePass));
 
-        // DebugDraw（ToneMapping後のLDR色へ、SceneDepthで深度遮蔽）
+        // DebugDraw（ToneMapping後のdisplay-linear色へ、SceneDepthで深度遮蔽）
         auto debugDrawPass = MakeUnique<DebugDrawPass>();
         postProcessStack->AddPass(std::move(debugDrawPass));
 
@@ -745,7 +745,7 @@ namespace NorvesLib::Core::Rendering
         auto postProcessStack = MakeUnique<PostProcessStack>();
         ToneMappingSettings toneMappingSettings;
         toneMappingSettings.Operator = ToneMappingOperator::ACES;
-        // Standalone VignettePass owns default SceneView vignette while ToneMapping ABI remains intact.
+        // Standalone VignettePass owns default SceneView vignette.
         toneMappingSettings.VignetteIntensity = 0.0f;
         postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
         postProcessStack->AddPass(MakeUnique<VignettePass>());

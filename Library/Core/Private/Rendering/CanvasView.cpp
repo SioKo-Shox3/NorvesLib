@@ -352,7 +352,7 @@ namespace NorvesLib::Core::Rendering
                     RenderGraphResourceNames::CanvasColor,
                     RGTextureDesc::RenderTarget(width,
                                                 height,
-                                                RHI::Format::R8G8B8A8_UNORM,
+                                                RHI::Format::R16G16B16A16_FLOAT,
                                                 "Canvas.Color"),
                     RGAttachmentKind::Color,
                     RHI::AttachmentLoadOp::Clear,
@@ -376,7 +376,7 @@ namespace NorvesLib::Core::Rendering
                 m_OutputHandle = builder.CreateTextureHandle(
                     RGTextureDesc::RenderTarget(width,
                                                 height,
-                                                RHI::Format::R8G8B8A8_UNORM,
+                                                RHI::Format::R16G16B16A16_FLOAT,
                                                 "Canvas.LayerRT"));
                 builder.UseAttachment(m_OutputHandle.ToResourceHandle(),
                                       RGAttachmentKind::Color,

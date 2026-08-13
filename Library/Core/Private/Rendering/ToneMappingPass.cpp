@@ -175,9 +175,12 @@ namespace NorvesLib::Core::Rendering
 
         if (bNeedsOutputTexture)
         {
-            // LDR出力テクスチャ作成
+            // display-linear Rec.709出力テクスチャ作成
             RHI::TextureDesc outputDesc =
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "ToneMappedColor");
+                RHI::TextureDesc::RenderTarget(width,
+                                               height,
+                                               RHI::Format::R16G16B16A16_FLOAT,
+                                               "ToneMappedColor");
             outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
             m_OutputTexture = m_Device->CreateTexture(outputDesc);
 
@@ -388,7 +391,7 @@ namespace NorvesLib::Core::Rendering
         RenderPassSignature signature;
         signature.bValid = true;
         signature.Output = {RGAttachmentKind::Color,
-                            outputTexture ? outputTexture->GetFormat() : m_Settings.OutputFormat,
+                            outputTexture ? outputTexture->GetFormat() : RHI::Format::R16G16B16A16_FLOAT,
                             RHI::AttachmentLoadOp::DontCare,
                             RHI::AttachmentStoreOp::Store,
                             bUseRenderGraphInitialState ? RHI::ResourceState::RenderTarget : RHI::ResourceState::Undefined,
@@ -467,7 +470,7 @@ namespace NorvesLib::Core::Rendering
 
         RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(width,
                                                                height,
-                                                               m_Settings.OutputFormat,
+                                                               RHI::Format::R16G16B16A16_FLOAT,
                                                                "ToneMappedColor");
         outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
 
@@ -554,12 +557,16 @@ namespace NorvesLib::Core::Rendering
 
         // パラメータバッファ更新
         GPUToneMappingParams params = {};
-        params.exposure = m_Settings.Exposure;
-        params.gamma = m_Settings.Gamma;
+        params.CameraExposure = 1.0f;
+        if (context.CurrentViewport && context.CurrentViewport->bHasCamera)
+        {
+            params.CameraExposure = context.CurrentViewport->Camera.Exposure;
+        }
         params.operatorType = static_cast<uint32_t>(m_Settings.Operator);
         const bool bDebugPostProcessBypass =
             IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
         params.bBypass = bDebugPostProcessBypass ? 1u : 0u;
+        params._pad0 = 0u;
         // Vignette
         params.vignetteIntensity = m_Settings.VignetteIntensity;
         params.vignetteRadius = m_Settings.VignetteRadius;

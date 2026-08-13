@@ -16,6 +16,7 @@
 #include "Rendering/PresentationComposer.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderFrameExecutor.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/FrameCaptureReadbackHelper.h"
 #include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/IViewPass.h"
@@ -477,6 +478,22 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        const RHI::PresentationSurfaceDesc presentationSurface =
+            swapChain->GetPresentationSurfaceDesc();
+        const RHI::PresentationEncodePath presentationEncodePath =
+            RHI::GetPresentationEncodePath(swapChain->GetFormat());
+        if (presentationSurface.ColorSpace != RHI::PresentationColorSpace::Rec709D65 ||
+            presentationSurface.Transfer != RHI::PresentationTransfer::SRGB ||
+            presentationEncodePath == RHI::PresentationEncodePath::Unsupported)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator",
+                             "Unsupported presentation surface: format=%u colorSpace=%u transfer=%u",
+                             static_cast<unsigned int>(swapChain->GetFormat()),
+                             static_cast<unsigned int>(presentationSurface.ColorSpace),
+                             static_cast<unsigned int>(presentationSurface.Transfer));
+            return false;
+        }
+
         RHI::AttachmentDesc colorAttachment;
         colorAttachment.format = swapChain->GetFormat();
         colorAttachment.isDepthStencil = false;
@@ -576,6 +593,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create graph presentation load render pass");
             return false;
         }
+
         m_SwapChainFormat = swapChain->GetFormat();
 
         // ========================================
@@ -646,13 +664,19 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            // Blitディスクリプタセット（binding 0: CombinedImageSampler）
+            // Blitディスクリプタセット（binding 0: CombinedImageSampler、binding 1: encode params）
             RHI::DescriptorSetDesc blitDsDesc;
             RHI::DescriptorBinding texBinding;
             texBinding.binding = 0;
             texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             texBinding.stages = RHI::ShaderStage::Pixel;
             blitDsDesc.bindings.push_back(texBinding);
+
+            RHI::DescriptorBinding encodeBinding;
+            encodeBinding.binding = 1;
+            encodeBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            encodeBinding.stages = RHI::ShaderStage::Pixel;
+            blitDsDesc.bindings.push_back(encodeBinding);
 
             m_BlitDescriptorSet = m_Device->CreateDescriptorSet(blitDsDesc);
             if (!m_BlitDescriptorSet)
@@ -663,6 +687,25 @@ namespace NorvesLib::Core::Rendering
 
             // サンプラーを事前バインド（CombinedImageSamplerに必要）
             m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
+
+            RHI::PresentationEncodeParams presentationParams;
+            presentationParams.EncodePath =
+                presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF ? 1u : 0u;
+            RHI::BufferDesc presentationParamsDesc(sizeof(RHI::PresentationEncodeParams),
+                                                    RHI::ResourceUsage::ConstantBuffer,
+                                                    true,
+                                                    "PresentationEncodeParams");
+            RHI::BufferPtr presentationParamsBuffer = m_Device->CreateBuffer(presentationParamsDesc);
+            if (!presentationParamsBuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create presentation encode buffer");
+                return false;
+            }
+            presentationParamsBuffer->Update(&presentationParams, sizeof(presentationParams));
+            m_BlitDescriptorSet->BindConstantBuffer(1,
+                                                     presentationParamsBuffer,
+                                                     0,
+                                                     sizeof(presentationParams));
 
             // Blitパイプライン
             RHI::GraphicsPipelineDesc blitPipelineDesc;
@@ -864,6 +907,7 @@ namespace NorvesLib::Core::Rendering
         m_CompositePass.SetRequest(CompositePassRequest{});
         m_CompositePass.ReleaseRetainedResources();
         m_PresentationPass.SetRequest(PresentationPassRequest{});
+        m_PresentationPass.InvalidateOverlayResources();
 
         // Viewの破棄
         for (auto &view : m_Views)
@@ -1680,6 +1724,15 @@ namespace NorvesLib::Core::Rendering
         presentationRequest.BlitDescriptorSet = m_BlitDescriptorSet;
         presentationRequest.BlitSampler = m_BlitSampler;
 
+        PresentationComposeRequest deferredLegacyRequest = presentationRequest;
+        deferredLegacyRequest.ClearRenderPass.reset();
+        deferredLegacyRequest.LoadRenderPass.reset();
+        deferredLegacyRequest.ClearFramebuffer.reset();
+        deferredLegacyRequest.LoadFramebuffer.reset();
+        deferredLegacyRequest.BlitPipeline.reset();
+        deferredLegacyRequest.BlitDescriptorSet.reset();
+        deferredLegacyRequest.BlitSampler.reset();
+
         PresentationPassRequest graphPresentationRequest;
         graphPresentationRequest.BackBufferTexture = swapChain->GetBackBuffer(imageIndex);
         graphPresentationRequest.ClearRenderPass = m_GraphPresentationClearRenderPass;
@@ -1705,7 +1758,7 @@ namespace NorvesLib::Core::Rendering
         executionRequest.CommandList = m_CommandList.get();
         executionRequest.PendingFrameCommands = &pendingFrameCommands;
         executionRequest.Presentation = &presentationComposer;
-        executionRequest.PresentationRequest = presentationRequest;
+        executionRequest.PresentationRequest = deferredLegacyRequest;
         executionRequest.PresentationGraphPass = &m_PresentationPass;
         executionRequest.GraphPresentationRequest = graphPresentationRequest;
         executionRequest.CompositeGraphPass = &m_CompositePass;
@@ -1715,6 +1768,7 @@ namespace NorvesLib::Core::Rendering
                                               ? &debugDumpCapture
                                               : nullptr;
 
+        m_PresentationPass.SetDeferBlit(true);
         RenderFrameExecutor frameExecutor;
         RenderFrameExecutionResult executionResult = frameExecutor.Execute(executionRequest);
 
@@ -1742,6 +1796,149 @@ namespace NorvesLib::Core::Rendering
         renderStats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
         renderStats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
 
+        RHI::TexturePtr finalPresentationTexture;
+        if (executionResult.bComposite)
+        {
+            m_RenderGraph.TryGetLastOutputTexture(RenderGraphResourceNames::CompositeColor,
+                                                  finalPresentationTexture);
+        }
+        if (!finalPresentationTexture)
+        {
+            finalPresentationTexture = m_PresentationPass.GetLastResult().InputTexture;
+        }
+        if (!finalPresentationTexture && viewContext.SharedResources)
+        {
+            finalPresentationTexture = viewContext.SharedResources->GetTexturePtr(
+                RenderGraphResourceNames::PresentationColor);
+            if (!finalPresentationTexture)
+            {
+                finalPresentationTexture = viewContext.SharedResources->GetTexturePtr(
+                    RenderGraphResourceNames::ToneMappedColor);
+            }
+        }
+
+        // ========================================
+        // overlay seam（OETF前のRGBA16F PresentationColorへ描画）
+        // ========================================
+        RHI::RenderPassPtr overlayRenderPass;
+        RHI::FramebufferPtr overlayFramebuffer;
+        if (packet && !packet->OverlayPasses.empty() &&
+            finalPresentationTexture &&
+            finalPresentationTexture->GetFormat() == RHI::Format::R16G16B16A16_FLOAT)
+        {
+            overlayFramebuffer = m_PresentationPass.AcquireOverlayFramebuffer(
+                m_Device,
+                swapChain->GetCurrentFrameIndex(),
+                swapChain->GetMaxFramesInFlight(),
+                finalPresentationTexture);
+            overlayRenderPass = m_PresentationPass.GetOverlayRenderPass();
+        }
+
+        if (packet && !packet->OverlayPasses.empty())
+        {
+            if (!overlayRenderPass || !overlayFramebuffer)
+            {
+                LOG_WARNING("RenderingCoordinator", "Overlay skipped: RGBA16F PresentationColor target unavailable");
+            }
+            else
+            {
+                viewContext.OverlayPacketSlotIndex = m_PacketManager.GetSlotIndex(packet);
+                viewContext.OverlayLoadRenderPass = overlayRenderPass.get();
+                viewContext.OverlayLoadFramebuffer = overlayFramebuffer.get();
+
+                for (IViewPass *overlayPass : packet->OverlayPasses)
+                {
+                    if (!overlayPass || !overlayPass->IsEnabled())
+                    {
+                        continue;
+                    }
+
+                    if (!overlayPass->IsInitialized())
+                    {
+                        if (!overlayPass->Initialize(viewContext))
+                        {
+                            overlayPass->SetEnabled(false);
+                            continue;
+                        }
+                    }
+
+                    overlayPass->Setup(viewContext);
+                    overlayPass->Execute(viewContext);
+                }
+            }
+        }
+
+        bool bPresentationBlitRecorded = m_PresentationPass.RecordDeferredBlit(viewContext);
+        if (!bPresentationBlitRecorded &&
+            finalPresentationTexture &&
+            presentationRequest.ClearRenderPass &&
+            presentationRequest.ClearFramebuffer &&
+            m_BlitPipeline &&
+            m_BlitDescriptorSet &&
+            m_BlitSampler)
+        {
+            m_BlitDescriptorSet->BindTexture(0, finalPresentationTexture);
+            m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
+            m_BlitDescriptorSet->Update();
+            viewContext.EnqueueFullscreenPass(presentationRequest.ClearRenderPass,
+                                              presentationRequest.ClearFramebuffer,
+                                              viewContext.GetActiveOutputViewport(),
+                                              viewContext.GetActiveOutputScissor(),
+                                              m_BlitPipeline,
+                                              m_BlitDescriptorSet);
+            bPresentationBlitRecorded = true;
+        }
+        m_PresentationPass.SetDeferBlit(false);
+
+        if (bPresentationBlitRecorded)
+        {
+            executionResult.PresentationBlitCount = 1;
+        }
+
+        if (!pendingFrameCommands.empty())
+        {
+            m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
+            pendingFrameCommands.clear();
+        }
+
+        // Presentation surfaceのtransfer責務をcapture metadataへ記録する。
+        const RHI::PresentationSurfaceDesc presentationSurface =
+            swapChain->GetPresentationSurfaceDesc();
+        const RHI::PresentationEncodePath presentationEncodePath =
+            RHI::GetPresentationEncodePath(swapChain->GetFormat());
+        if (bPresentationBlitRecorded &&
+            claimedCaptureRequest.SourceKind == FrameCaptureSourceKind::PresentationColor)
+        {
+            FrameCaptureSource& presentationSource = executionResult.CaptureSources.PresentationColor;
+            presentationSource.Texture = finalPresentationTexture;
+            presentationSource.CurrentState = RHI::ResourceState::ShaderResource;
+            presentationSource.RestoreState = RHI::ResourceState::ShaderResource;
+            presentationSource.FrameNumber = packet->FrameNumber;
+            presentationSource.ColorSpace = presentationSurface.ColorSpace;
+            presentationSource.Transfer = presentationSurface.Transfer;
+            presentationSource.bHardwareSrgbEncode =
+                presentationEncodePath == RHI::PresentationEncodePath::HardwareSRGB;
+            presentationSource.bShaderSrgbEncode =
+                presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF;
+        }
+
+        // BackBuffer は PresentationPass と全 overlay の後、command list 終了直前に取得する。
+        if (bPresentationBlitRecorded &&
+            claimedCaptureRequest.SourceKind == FrameCaptureSourceKind::BackBuffer)
+        {
+            FrameCaptureSource& backBufferSource = executionResult.CaptureSources.BackBuffer;
+            backBufferSource.Texture = swapChain->GetCurrentBackBuffer();
+            backBufferSource.CurrentState = RHI::ResourceState::Present;
+            backBufferSource.RestoreState = RHI::ResourceState::Present;
+            backBufferSource.FrameNumber = packet->FrameNumber;
+            backBufferSource.ColorSpace = presentationSurface.ColorSpace;
+            backBufferSource.Transfer = presentationSurface.Transfer;
+            backBufferSource.bHardwareSrgbEncode =
+                presentationEncodePath == RHI::PresentationEncodePath::HardwareSRGB;
+            backBufferSource.bShaderSrgbEncode =
+                presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF;
+        }
+
         if (m_FrameCaptureReadbackHelper)
         {
             captureRecordStatus = m_FrameCaptureReadbackHelper->TryRecordCopy(
@@ -1755,52 +1952,6 @@ namespace NorvesLib::Core::Rendering
             }
         }
         executionResult.CaptureSources.Reset();
-
-        // ========================================
-        // overlay seam(モジュール描画の最終段。録画窓内・executor 外側)
-        // ========================================
-        // packet->OverlayPasses が空のとき(=モジュール未登録/overlay 0 件)は
-        // ループに入らず完全 no-op になり、F1 描画 baseline が byte-for-byte 不変。
-        if (packet && !packet->OverlayPasses.empty())
-        {
-            // 描画先 presentation load family は経路依存(legacy / composite=graph)。
-            // executor が一次判定した bComposite を採用し二重判定を避ける。
-            const bool bComposite = executionResult.bComposite;
-            viewContext.bOverlayComposite = bComposite;
-            // 処理中パケットのスロット index を seam が設定する。overlay パスはこの index で
-            // per-slot スナップショットを読む。GameThread の書込みスロット（OnAssignedToPacket）
-            // と同一スロットへの時間窓はプール排他で重ならないため安全。
-            viewContext.OverlayPacketSlotIndex = m_PacketManager.GetSlotIndex(packet);
-            viewContext.OverlayLoadRenderPass = bComposite
-                                                    ? m_GraphPresentationLoadRenderPass.get()
-                                                    : m_PresentationLoadRenderPass.get();
-            viewContext.OverlayLoadFramebuffer = bComposite
-                                                     ? m_GraphPresentationLoadFramebuffers[imageIndex].get()
-                                                     : m_PresentationLoadFramebuffers[imageIndex].get();
-
-            for (IViewPass *overlayPass : packet->OverlayPasses)
-            {
-                if (!overlayPass || !overlayPass->IsEnabled())
-                {
-                    continue;
-                }
-
-                // 録画窓内の遅延初期化(IViewPass::Initialize は bool 返し)。失敗時は
-                // 当該 overlay を恒久無効化して描画素通り。成功時に m_bInitialized を
-                // 立てる責務は派生側にある(IsInitialized 契約)。
-                if (!overlayPass->IsInitialized())
-                {
-                    if (!overlayPass->Initialize(viewContext))
-                    {
-                        overlayPass->SetEnabled(false);
-                        continue;
-                    }
-                }
-
-                overlayPass->Setup(viewContext);
-                overlayPass->Execute(viewContext);
-            }
-        }
 
         // コマンド録画終了
 #if NORVES_ENABLE_STATS
@@ -2186,6 +2337,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_Device->WaitIdle();
         }
+        m_PresentationPass.InvalidateOverlayResources();
 
         // リサイズ前にWriting中のパケットをキャンセル
         // （新しいフレームバッファが確保されるまでGTの書き込みを止める）
@@ -2493,6 +2645,22 @@ namespace NorvesLib::Core::Rendering
         }
         m_SwapChainFormat = swapChain->GetFormat();
 
+        const RHI::PresentationSurfaceDesc presentationSurface =
+            swapChain->GetPresentationSurfaceDesc();
+        const RHI::PresentationEncodePath presentationEncodePath =
+            RHI::GetPresentationEncodePath(m_SwapChainFormat);
+        if (presentationSurface.ColorSpace != RHI::PresentationColorSpace::Rec709D65 ||
+            presentationSurface.Transfer != RHI::PresentationTransfer::SRGB ||
+            presentationEncodePath == RHI::PresentationEncodePath::Unsupported)
+        {
+            NORVES_LOG_ERROR("RenderingCoordinator",
+                             "Unsupported presentation surface after recreation: format=%u colorSpace=%u transfer=%u",
+                             static_cast<unsigned int>(m_SwapChainFormat),
+                             static_cast<unsigned int>(presentationSurface.ColorSpace),
+                             static_cast<unsigned int>(presentationSurface.Transfer));
+            return false;
+        }
+
         if (m_BlitVertexShader && m_BlitFragmentShader && m_BlitDescriptorSet)
         {
             RHI::DescriptorSetDesc blitDsDesc;
@@ -2501,6 +2669,31 @@ namespace NorvesLib::Core::Rendering
             texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
             texBinding.stages = RHI::ShaderStage::Pixel;
             blitDsDesc.bindings.push_back(texBinding);
+
+            RHI::DescriptorBinding encodeBinding;
+            encodeBinding.binding = 1;
+            encodeBinding.type = RHI::ResourceBindType::ConstantBuffer;
+            encodeBinding.stages = RHI::ShaderStage::Pixel;
+            blitDsDesc.bindings.push_back(encodeBinding);
+
+            RHI::PresentationEncodeParams presentationParams;
+            presentationParams.EncodePath =
+                presentationEncodePath == RHI::PresentationEncodePath::ShaderOETF ? 1u : 0u;
+            RHI::BufferDesc presentationParamsDesc(sizeof(RHI::PresentationEncodeParams),
+                                                    RHI::ResourceUsage::ConstantBuffer,
+                                                    true,
+                                                    "PresentationEncodeParams");
+            RHI::BufferPtr presentationParamsBuffer = m_Device->CreateBuffer(presentationParamsDesc);
+            if (!presentationParamsBuffer)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to recreate presentation encode buffer");
+                return false;
+            }
+            presentationParamsBuffer->Update(&presentationParams, sizeof(presentationParams));
+            m_BlitDescriptorSet->BindConstantBuffer(1,
+                                                     presentationParamsBuffer,
+                                                     0,
+                                                     sizeof(presentationParams));
 
             RHI::GraphicsPipelineDesc blitPipelineDesc;
             blitPipelineDesc.vertexShader = m_BlitVertexShader;

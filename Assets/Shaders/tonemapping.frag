@@ -8,10 +8,10 @@ layout(set = 0, binding = 0) uniform sampler2D sceneColor;
 // トーンマッピングパラメータ
 layout(std140, set = 0, binding = 1) uniform ToneMappingParams
 {
-    float exposure;
-    float gamma;
+    float CameraExposure;
     uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure
     uint bBypass;
+    uint _pad0;
     // Vignette パラメータ
     float vignetteIntensity;  // 0.0 = off, ~0.3 = subtle
     float vignetteRadius;     // 内側半径 ~0.8
@@ -70,9 +70,9 @@ vec3 TonemapUncharted2(vec3 color)
 }
 
 // 露出ベース（単純なクランプ）
-vec3 TonemapExposure(vec3 color, float exposure)
+vec3 TonemapExposure(vec3 color)
 {
-    return vec3(1.0) - exp(-color * exposure);
+    return vec3(1.0) - exp(-color);
 }
 
 // ========================================
@@ -123,8 +123,8 @@ void main()
     // HDRシーンカラーをサンプリング
     vec3 hdrColor = texture(sceneColor, fragUV).rgb;
 
-    // 露出補正
-    hdrColor *= params.exposure;
+    // 全 operator 共通のカメラ露出
+    hdrColor *= params.CameraExposure;
 
     // トーンマッピング適用
     vec3 mapped;
@@ -142,14 +142,14 @@ void main()
     }
     else
     {
-        mapped = TonemapExposure(hdrColor, params.exposure);
+        mapped = TonemapExposure(hdrColor);
     }
 
-    // ガンマ補正
-    vec3 result = pow(mapped, vec3(1.0 / params.gamma));
+    // ToneMappedColor は display-linear のまま presentation へ渡す
+    vec3 result = mapped;
 
     // ========================================
-    // Color Grading（LDR空間で適用）
+    // Color Grading（display-linear Rec.709空間で適用）
     // ========================================
     // カラーフィルター
     result *= params.colorFilter.rgb * params.colorFilter.w;

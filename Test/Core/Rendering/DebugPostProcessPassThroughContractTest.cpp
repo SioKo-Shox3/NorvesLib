@@ -124,6 +124,13 @@ int main()
     AssertContains(toneMappingPass, "builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor");
     AssertContains(vignettePass, "builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor");
     AssertContains(fxaaPass, "builder.ExportTexture(RenderGraphResourceNames::ToneMappedColor");
+    AssertNotContains(toneMappingPass, "m_Settings.Exposure");
+    AssertNotContains(toneMappingPass, "m_Settings.Gamma");
+    AssertNotContains(toneMappingPass, "SetExposure");
+    AssertNotContains(toneMappingPass, "SetGamma");
+    AssertContains(toneMappingPass, "RHI::Format::R16G16B16A16_FLOAT");
+    AssertContains(vignettePass, "RHI::Format::R16G16B16A16_FLOAT");
+    AssertContains(fxaaPass, "RHI::Format::R16G16B16A16_FLOAT");
     AssertContains(vignettePass, "fullscreen.vert");
     AssertContains(vignettePass, "vignette.frag");
 
@@ -132,6 +139,9 @@ int main()
     const std::string toneMappingShader = ReadTextFile(shaderDir + "/tonemapping.frag");
     const std::string vignetteShader = ReadTextFile(shaderDir + "/vignette.frag");
     const std::string fxaaShader = ReadTextFile(shaderDir + "/fxaa.frag");
+    const std::string compositeShader = ReadTextFile(shaderDir + "/composite_alpha_over.frag");
+    const std::string blitShader = ReadTextFile(shaderDir + "/blit.frag");
+    const std::string mesh2dShader = ReadTextFile(shaderDir + "/mesh2d.frag");
 
     AssertContains(ssrShader, "if (params.bEnabled == 0u)");
     AssertContains(ssrShader, "outColor = sceneColorSample;");
@@ -150,6 +160,12 @@ int main()
 
     AssertContains(fxaaShader, "if (params.bEnabled == 0u)");
     AssertContains(fxaaShader, "outColor = texture(inputTexture, fragUV);");
+    AssertContains(compositeShader, "canvasColor.rgb + (1.0 - canvasColor.a) * sceneColor.rgb");
+    AssertNotContains(compositeShader, "premultipliedRgb / outAlpha");
+    AssertContains(blitShader, "L <= 0.0031308");
+    AssertContains(blitShader, "1.055 * pow(L, 1.0 / 2.4) - 0.055");
+    AssertContains(mesh2dShader, "SrgbToLinear");
+    AssertContains(mesh2dShader, "outColor.a = textureColor.a * inColor.a");
 
     std::cout << "DebugPostProcessPassThroughContractTest passed\n";
     return 0;

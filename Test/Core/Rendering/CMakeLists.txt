@@ -284,9 +284,11 @@ target_link_libraries(RenderingHdrSceneCaptureTest PRIVATE
     RenderingValidationFixtureSupport
     RenderingGpuTestSupport
     RenderingFloatImageSupport
+    NorvesModule_ImGui
 )
 target_include_directories(RenderingHdrSceneCaptureTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/imgui
 )
 set_target_properties(RenderingHdrSceneCaptureTest PROPERTIES FOLDER "Test/Core/Rendering")
 register_rendering_gpu_test(

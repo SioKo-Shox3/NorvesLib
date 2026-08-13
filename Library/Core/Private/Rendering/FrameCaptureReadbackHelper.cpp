@@ -226,6 +226,11 @@ namespace NorvesLib::Core::Rendering
         m_PendingReadback.BytesPerPixel = bytesPerPixel;
         m_PendingReadback.RowPitchBytes = rowPitchBytes;
         m_PendingReadback.ByteCount = byteCount;
+        m_CompletedFrame = CapturedFrame{};
+        m_CompletedFrame.ColorSpace = source->ColorSpace;
+        m_CompletedFrame.Transfer = source->Transfer;
+        m_CompletedFrame.bHardwareSrgbEncode = source->bHardwareSrgbEncode;
+        m_CompletedFrame.bShaderSrgbEncode = source->bShaderSrgbEncode;
         m_State = State::RecordedAwaitingSubmit;
         return FrameCaptureRecordStatus::Recorded;
     }
@@ -272,6 +277,10 @@ namespace NorvesLib::Core::Rendering
         frame.Format = m_PendingReadback.Format;
         frame.BytesPerPixel = m_PendingReadback.BytesPerPixel;
         frame.RowPitchBytes = m_PendingReadback.RowPitchBytes;
+        frame.ColorSpace = m_CompletedFrame.ColorSpace;
+        frame.Transfer = m_CompletedFrame.Transfer;
+        frame.bHardwareSrgbEncode = m_CompletedFrame.bHardwareSrgbEncode;
+        frame.bShaderSrgbEncode = m_CompletedFrame.bShaderSrgbEncode;
         frame.Pixels.resize(static_cast<size_t>(m_PendingReadback.ByteCount));
         if (!frame.Pixels.empty())
         {

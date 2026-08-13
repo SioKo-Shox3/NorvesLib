@@ -20,7 +20,7 @@ namespace NorvesLib::Core::Rendering
      * TransientResourcePoolからピンポンバッファを自動取得します。
      *
      * パスの追加・削除・有効/無効切り替えが可能です。
-     * 最終パスは SwapChain フォーマット (SRGB) に変換して出力します。
+     * 最終パスは display-linear Rec.709 のまま PresentationPass へ渡します。
      *
      * 使用例:
      * ```cpp

@@ -39,15 +39,6 @@ namespace NorvesLib::Core::Rendering
         /** @brief 使用するトーンマッピングアルゴリズム */
         ToneMappingOperator Operator = ToneMappingOperator::ACES;
 
-        /** @brief 露出値（Exposureモード/共通パラメータ） */
-        float Exposure = 1.0f;
-
-        /** @brief ガンマ補正値 */
-        float Gamma = 2.2f;
-
-        /** @brief 出力フォーマット（LDR） */
-        RHI::Format OutputFormat = RHI::Format::R8G8B8A8_UNORM;
-
         // ========================================
         // Vignette（周辺減光）
         // ========================================
@@ -87,7 +78,7 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief トーンマッピングパス（ポストプロセス）
      *
-     * HDRシーンカラーをLDRに変換し、ガンマ補正を適用します。
+     * HDRシーンカラーをdisplay-linear Rec.709へ変換します。
      * PostProcessStackに追加して使用するポストプロセスパスです。
      *
      * 標準経路では RenderGraph named resource から入力を読み取り、
@@ -98,7 +89,7 @@ namespace NorvesLib::Core::Rendering
      * - "SceneColor" : HDRライティング結果 (R16G16B16A16_FLOAT)
      *
      * 出力:
-     * - "ToneMappedColor" : LDR変換後のカラー (R8G8B8A8_UNORM)
+     * - "ToneMappedColor" : display-linear変換後のカラー (R16G16B16A16_FLOAT)
      *
      * サポートするトーンマッピングアルゴリズム:
      * - Reinhard: シンプルで高速
@@ -151,18 +142,6 @@ namespace NorvesLib::Core::Rendering
          * @param op 新しいアルゴリズム
          */
         void SetOperator(ToneMappingOperator op) { m_Settings.Operator = op; }
-
-        /**
-         * @brief 露出値を設定
-         * @param exposure 露出値
-         */
-        void SetExposure(float exposure) { m_Settings.Exposure = exposure; }
-
-        /**
-         * @brief ガンマ値を設定
-         * @param gamma ガンマ値
-         */
-        void SetGamma(float gamma) { m_Settings.Gamma = gamma; }
 
         /**
          * @brief 現在の設定を取得

@@ -48,6 +48,88 @@ namespace NorvesLib::RHI
     };
 
     /**
+     * @brief presentation surface の working color space
+     */
+    enum class PresentationColorSpace : uint8_t
+    {
+        Unknown,
+        Rec709D65
+    };
+
+    /**
+     * @brief presentation surface の transfer function
+     */
+    enum class PresentationTransfer : uint8_t
+    {
+        Unknown,
+        SRGB
+    };
+
+    /**
+     * @brief presentation surface の最小記述子
+     */
+    struct PresentationSurfaceDesc
+    {
+        PresentationColorSpace ColorSpace = PresentationColorSpace::Unknown;
+        PresentationTransfer Transfer = PresentationTransfer::Unknown;
+    };
+
+    /**
+     * @brief swapchain format による sRGB encode の責務
+     */
+    enum class PresentationEncodePath : uint8_t
+    {
+        Unsupported,
+        HardwareSRGB,
+        ShaderOETF
+    };
+
+    inline bool IsPresentationSrgbFormat(Format format)
+    {
+        return format == Format::R8G8B8A8_SRGB || format == Format::B8G8R8A8_SRGB;
+    }
+
+    inline bool IsPresentationUnormFormat(Format format)
+    {
+        return format == Format::R8G8B8A8_UNORM || format == Format::B8G8R8A8_UNORM;
+    }
+
+    inline PresentationEncodePath GetPresentationEncodePath(Format format)
+    {
+        if (IsPresentationSrgbFormat(format))
+        {
+            return PresentationEncodePath::HardwareSRGB;
+        }
+        if (IsPresentationUnormFormat(format))
+        {
+            return PresentationEncodePath::ShaderOETF;
+        }
+        return PresentationEncodePath::Unsupported;
+    }
+
+    inline PresentationSurfaceDesc DescribePresentationSurface(Format format)
+    {
+        if (GetPresentationEncodePath(format) == PresentationEncodePath::Unsupported)
+        {
+            return {};
+        }
+        return {PresentationColorSpace::Rec709D65, PresentationTransfer::SRGB};
+    }
+
+    /**
+     * @brief blit shader の presentation encode パラメータ
+     *
+     * std140 の 16 byte slot に合わせる。
+     */
+    struct PresentationEncodeParams
+    {
+        uint32_t EncodePath = 0;
+        uint32_t _pad0 = 0;
+        uint32_t _pad1 = 0;
+        uint32_t _pad2 = 0;
+    };
+
+    /**
      * @brief テクスチャ次元の種類
      */
     enum class TextureDimension

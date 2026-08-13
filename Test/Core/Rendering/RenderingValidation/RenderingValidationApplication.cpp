@@ -69,6 +69,10 @@ namespace NorvesLib::Test::RenderingValidation
                 {
                     m_RunConfig.CaptureSource = Core::Rendering::FrameCaptureSourceKind::SceneColor;
                 }
+                else if (value == TEXT("back-buffer"))
+                {
+                    m_RunConfig.CaptureSource = Core::Rendering::FrameCaptureSourceKind::BackBuffer;
+                }
                 else
                 {
                     LOG_ERROR("描画検証の capture-source 値が不正です");
@@ -157,6 +161,20 @@ namespace NorvesLib::Test::RenderingValidation
                     return;
                 }
                 const bool bAccepted = EvaluateCapturedFrame(frame, reason);
+                Core::Rendering::FrameCaptureRequest followupRequest;
+                if (bAccepted && RequestFollowupCapture(frame, followupRequest))
+                {
+                    const Core::Rendering::FrameCaptureRequestResult followupResult =
+                        renderWorld.RequestFrameCapture(followupRequest);
+                    if (!followupResult.IsAccepted())
+                    {
+                        Fail("描画検証の follow-up capture 要求時に別の要求が残っています");
+                        return;
+                    }
+                    m_bCaptureRequested = true;
+                    m_CaptureRequestRenderedFrame = renderedFrames;
+                    return;
+                }
                 m_bExitRequested = true;
                 Core::Engine::GEngine->RequestExit(bAccepted ? 0 : 1);
                 if (!bAccepted)
@@ -197,6 +215,13 @@ namespace NorvesLib::Test::RenderingValidation
     const RenderingValidationRunConfig& RenderingValidationApplicationHandler::GetRunConfig() const
     {
         return m_RunConfig;
+    }
+
+    bool RenderingValidationApplicationHandler::RequestFollowupCapture(
+        const Core::Rendering::CapturedFrame& /*frame*/,
+        Core::Rendering::FrameCaptureRequest& /*outRequest*/)
+    {
+        return false;
     }
 
     void RenderingValidationApplicationHandler::Fail(const char* summary)

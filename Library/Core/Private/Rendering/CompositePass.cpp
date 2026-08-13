@@ -96,7 +96,9 @@ namespace NorvesLib::Core::Rendering
             pipelineDesc.depthStencilState.depthWriteEnable = false;
 
             RHI::BlendAttachmentDesc blend;
-            blend.blendEnable = false;
+            blend.blendEnable = true;
+            blend.srcColorBlendFactor = RHI::BlendFactor::One;
+            blend.dstColorBlendFactor = RHI::BlendFactor::InvSrcAlpha;
             blend.colorWriteMask = RHI::ColorWriteMask::All;
             pipelineDesc.blendState.attachments.push_back(blend);
             pipelineDesc.renderPass = renderPass;
@@ -188,7 +190,7 @@ namespace NorvesLib::Core::Rendering
         {
             RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(m_Request.SceneTexture->GetWidth(),
                                                                    m_Request.SceneTexture->GetHeight(),
-                                                                   m_Request.SceneTexture->GetFormat(),
+                                                                   RHI::Format::R16G16B16A16_FLOAT,
                                                                    "Composite.Color");
             outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
 

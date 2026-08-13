@@ -128,8 +128,9 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 FlushPendingFrameCommands(request);
-                bool bPresented = WasPresentationHandledByGraph(request);
-                if (bPresented)
+                const bool bGraphPresented = WasPresentationHandledByGraph(request);
+                bool bPresented = bGraphPresented;
+                if (bGraphPresented)
                 {
                     TryExportGraphCaptureSource(request, result);
                 }
@@ -137,7 +138,10 @@ namespace NorvesLib::Core::Rendering
                 {
                     bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation, result);
                 }
-                if (bPresented)
+                if (bPresented &&
+                    (!bGraphPresented ||
+                     !request.PresentationGraphPass ||
+                     request.PresentationGraphPass->WasBlitRecorded()))
                 {
                     ++result.PresentationBlitCount;
                 }
@@ -156,8 +160,9 @@ namespace NorvesLib::Core::Rendering
                 ++result.RenderedViewportCount;
             }
             FlushPendingFrameCommands(request);
-            bool bPresented = WasPresentationHandledByGraph(request);
-            if (bPresented)
+            const bool bGraphPresented = WasPresentationHandledByGraph(request);
+            bool bPresented = bGraphPresented;
+            if (bGraphPresented)
             {
                 TryExportGraphCaptureSource(request, result);
             }
@@ -165,7 +170,10 @@ namespace NorvesLib::Core::Rendering
             {
                 bPresented = ComposeLegacyPresentationFallback(request, bClearPresentation, result);
             }
-            if (bPresented)
+            if (bPresented &&
+                (!bGraphPresented ||
+                 !request.PresentationGraphPass ||
+                 request.PresentationGraphPass->WasBlitRecorded()))
             {
                 ++result.PresentationBlitCount;
             }
@@ -298,7 +306,10 @@ namespace NorvesLib::Core::Rendering
                 if (WasPresentationHandledByGraph(request))
                 {
                     TryExportGraphCaptureSource(request, result);
-                    ++result.PresentationBlitCount;
+                    if (request.PresentationGraphPass->WasBlitRecorded())
+                    {
+                        ++result.PresentationBlitCount;
+                    }
                 }
             }
         }
@@ -580,7 +591,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         const PresentationPassResult& presentationResult = request.PresentationGraphPass->GetLastResult();
-        if (!presentationResult.bPresented || !presentationResult.InputTexture)
+        if (!presentationResult.bPresented ||
+            !presentationResult.bBlitRecorded ||
+            !presentationResult.InputTexture)
         {
             return false;
         }
@@ -613,12 +626,14 @@ namespace NorvesLib::Core::Rendering
         {
             captureSource.FrameNumber = request.Packet->FrameNumber;
             result.CaptureSources.PresentationColor = captureSource;
+            return true;
         }
-        else if (bComposed)
+
+        if (bComposed)
         {
             result.CaptureSources.PresentationColor = FrameCaptureSource{};
         }
-        return bComposed;
+        return false;
     }
 
 } // namespace NorvesLib::Core::Rendering

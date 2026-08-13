@@ -11,6 +11,7 @@ namespace NorvesLib::Test::RenderingValidation
     {
         constexpr uint32_t RgbaChannelCount = 4u;
         constexpr uint32_t Rgba16BytesPerPixel = 8u;
+        constexpr float Rgba16MaxFinite = 65504.0f;
     }
 
     float DecodeIeee754Binary16(uint16_t bits)
@@ -158,5 +159,47 @@ namespace NorvesLib::Test::RenderingValidation
     bool IsFiniteImage(const RgbaFloatImage& image)
     {
         return FindFirstNonFinite(image).Kind == NonFiniteKind::None;
+    }
+
+    RgbaFloatViolation FindFirstRgba16FloatViolation(const RgbaFloatImage& image)
+    {
+        if (image.Width == 0u)
+        {
+            return {};
+        }
+
+        for (size_t index = 0; index < image.Values.size(); ++index)
+        {
+            const float value = image.Values[index];
+            RgbaFloatViolationKind kind = RgbaFloatViolationKind::None;
+            if (!std::isfinite(value))
+            {
+                kind = RgbaFloatViolationKind::NonFinite;
+            }
+            else if (!(std::abs(value) < Rgba16MaxFinite))
+            {
+                kind = value < 0.0f
+                    ? RgbaFloatViolationKind::NegativeSaturation
+                    : RgbaFloatViolationKind::PositiveSaturation;
+            }
+
+            if (kind != RgbaFloatViolationKind::None)
+            {
+                const size_t pixelIndex = index / RgbaChannelCount;
+                RgbaFloatViolation violation;
+                violation.Kind = kind;
+                violation.X = static_cast<uint32_t>(pixelIndex % image.Width);
+                violation.Y = static_cast<uint32_t>(pixelIndex / image.Width);
+                violation.Channel = static_cast<uint32_t>(index % RgbaChannelCount);
+                violation.Value = value;
+                return violation;
+            }
+        }
+        return {};
+    }
+
+    bool IsFiniteAndWithinRgba16Range(const RgbaFloatImage& image)
+    {
+        return FindFirstRgba16FloatViolation(image).Kind == RgbaFloatViolationKind::None;
     }
 }
