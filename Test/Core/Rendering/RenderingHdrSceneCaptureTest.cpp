@@ -11,6 +11,7 @@
 #include "ImGuiModule/IImGuiView.h"
 #include "ImGuiModule/ImGuiModule.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/RenderWorld.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -27,8 +28,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 
 namespace
 {
@@ -370,6 +375,17 @@ namespace
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
     public:
+        enum class KnownCdStage : uint8_t
+        {
+            PureLambertA,
+            PureLambertB,
+            DirectPbrA,
+            DirectPbrB,
+            NormalA,
+            NormalB,
+            Complete
+        };
+
         Core::Rendering::FrameCaptureSourceKind GetCaptureSourceForTest() const
         {
             return GetRunConfig().CaptureSource;
@@ -388,9 +404,25 @@ namespace
                 LOG_ERROR("--r1-scenario=srgb-transfer は BackBuffer capture と組み合わせてください");
                 return false;
             }
+            if (m_bKnownCdScenario &&
+                GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::SceneColor)
+            {
+                LOG_ERROR("--r1-scenario=known-cd-lambert は SceneColor capture と組み合わせてください");
+                return false;
+            }
             m_R1CaptureStage = R1CaptureStage::BackBuffer;
             m_bR1HasFrameNumber = false;
             m_R1LastFrameNumber = 0u;
+            m_KnownCdStage = KnownCdStage::PureLambertA;
+            m_KnownCdHasFrameNumber = false;
+            m_KnownCdLastFrameNumber = 0u;
+            m_KnownCdHasStageToken = false;
+            m_KnownCdLastStageToken = 0u;
+            if (m_bKnownCdScenario && !ValidateKnownCdScenarioContract())
+            {
+                LOG_ERROR("known-cd-lambert test-local scenario contract is invalid");
+                return false;
+            }
             return true;
         }
 
@@ -440,6 +472,16 @@ namespace
                 m_bR1Scenario = true;
                 return true;
             }
+            if (argument == TEXT("--r1-scenario=known-cd-lambert"))
+            {
+                if (m_bKnownCdScenario || m_bR1Scenario)
+                {
+                    outFailureReason = TEXT("duplicate r1 scenario");
+                    return false;
+                }
+                m_bKnownCdScenario = true;
+                return true;
+            }
             return RenderingValidationApplicationHandler::ParseAdditionalArgument(argument, outFailureReason);
         }
 
@@ -447,6 +489,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_bKnownCdScenario)
+            {
+                return EvaluateKnownCdFrame(frame, reason);
+            }
             if (m_bR1Scenario)
             {
                 if (frame.FrameNumber < m_R1LastFrameNumber ||
@@ -529,10 +575,70 @@ namespace
             return true;
         }
 
+        void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
+        {
+            if (!m_bKnownCdScenario)
+            {
+                return;
+            }
+
+            Core::Rendering::CameraProxy camera = GetFixture().GetCamera();
+            const bool bExposureA = m_KnownCdStage == KnownCdStage::PureLambertA ||
+                                    m_KnownCdStage == KnownCdStage::DirectPbrA ||
+                                    m_KnownCdStage == KnownCdStage::NormalA;
+            camera.Aperture = 1.0f;
+            camera.ShutterSpeed = bExposureA ? 0.3f : 0.15f;
+            camera.ISO = 100.0f;
+            camera.ExposureCompensation = 0.0f;
+            camera.PreExposure = bExposureA ? 0.25f : 0.125f;
+            camera.InvPreExposure = bExposureA ? 4.0f : 8.0f;
+            camera.Exposure = camera.PreExposure;
+            renderWorld.SetMainCamera(camera);
+
+            Core::Rendering::DebugViewMode debugMode = Core::Rendering::DebugViewMode::Normal;
+            if (m_KnownCdStage == KnownCdStage::PureLambertA ||
+                m_KnownCdStage == KnownCdStage::PureLambertB)
+            {
+                debugMode = static_cast<Core::Rendering::DebugViewMode>(253u);
+            }
+            else if (m_KnownCdStage == KnownCdStage::DirectPbrA ||
+                     m_KnownCdStage == KnownCdStage::DirectPbrB)
+            {
+                debugMode = static_cast<Core::Rendering::DebugViewMode>(254u);
+            }
+            renderWorld.SetDebugViewModeAll(debugMode);
+            LOG_INFO("R1 known-cd stage applied: stage=%s mode=%u pre=%g inv=%g",
+                     GetKnownCdStageName(),
+                     static_cast<unsigned int>(debugMode),
+                     camera.PreExposure,
+                     camera.InvPreExposure);
+        }
+
+        void AdvanceCaptureStage() override
+        {
+            if (m_bKnownCdScenario && m_KnownCdStage != KnownCdStage::Complete)
+            {
+                m_KnownCdStage = static_cast<KnownCdStage>(
+                    static_cast<uint8_t>(m_KnownCdStage) + 1u);
+            }
+        }
+
         bool RequestFollowupCapture(
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_bKnownCdScenario)
+            {
+                if (m_KnownCdStage == KnownCdStage::Complete)
+                {
+                    return false;
+                }
+                outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::SceneColor;
+                LOG_INFO("R1 known-cd follow-up requested: next_stage=%s after frame=%llu",
+                         GetKnownCdStageName(),
+                         static_cast<unsigned long long>(frame.FrameNumber));
+                return true;
+            }
             if (m_bR1Scenario &&
                 GetRunConfig().CaptureSource == Core::Rendering::FrameCaptureSourceKind::BackBuffer)
             {
@@ -560,6 +666,452 @@ namespace
         }
 
     private:
+        static bool ValidateKnownCdScenarioContract()
+        {
+            return static_cast<uint8_t>(KnownCdStage::PureLambertA) == 0u &&
+                   static_cast<uint8_t>(KnownCdStage::PureLambertB) == 1u &&
+                   static_cast<uint8_t>(KnownCdStage::DirectPbrA) == 2u &&
+                   static_cast<uint8_t>(KnownCdStage::DirectPbrB) == 3u &&
+                   static_cast<uint8_t>(KnownCdStage::NormalA) == 4u &&
+                   static_cast<uint8_t>(KnownCdStage::NormalB) == 5u &&
+                   static_cast<uint8_t>(KnownCdStage::Complete) == 6u &&
+                   static_cast<uint32_t>(static_cast<Core::Rendering::DebugViewMode>(253u)) == 253u &&
+                   static_cast<uint32_t>(static_cast<Core::Rendering::DebugViewMode>(254u)) == 254u &&
+                   R1RoiMinX == 112u && R1RoiMaxX == 143u &&
+                   R1RoiMinY == 112u && R1RoiMaxY == 143u &&
+                   R1AnchorX == 127u && R1AnchorY == 127u &&
+                   R1PlaneScale == 0.0025f;
+        }
+
+        const char* GetKnownCdStageName() const
+        {
+            switch (m_KnownCdStage)
+            {
+            case KnownCdStage::PureLambertA:
+                return "PureLambertA";
+            case KnownCdStage::PureLambertB:
+                return "PureLambertB";
+            case KnownCdStage::DirectPbrA:
+                return "DirectPBRA";
+            case KnownCdStage::DirectPbrB:
+                return "DirectPBRB";
+            case KnownCdStage::NormalA:
+                return "NormalA";
+            case KnownCdStage::NormalB:
+                return "NormalB";
+            case KnownCdStage::Complete:
+            default:
+                return "Complete";
+            }
+        }
+
+        static bool IsKnownCdExposureB(KnownCdStage stage)
+        {
+            return stage == KnownCdStage::PureLambertB ||
+                   stage == KnownCdStage::DirectPbrB ||
+                   stage == KnownCdStage::NormalB;
+        }
+
+        static bool IsKnownCdExposureA(KnownCdStage stage)
+        {
+            return stage == KnownCdStage::PureLambertA ||
+                   stage == KnownCdStage::DirectPbrA ||
+                   stage == KnownCdStage::NormalA;
+        }
+
+        struct KnownCdOracleValues
+        {
+            double RangeWindow = 0.0;
+            double Illuminance = 0.0;
+            double IdealPureLambert = 0.0;
+            double PureLambert = 0.0;
+            double FullPbr = 0.0;
+        };
+
+        static bool ComputeKnownCdOracle(KnownCdOracleValues& outOracle)
+        {
+            constexpr double pi = 3.1415926535897932384626433832795;
+            constexpr double intensityCd = 100.0;
+            constexpr double distanceMeters = 2.0;
+            constexpr double rangeMeters = 1000.0;
+            constexpr double albedo = 0.5;
+            const double rangeRatio = distanceMeters / rangeMeters;
+            const double rangeWindow = std::pow(1.0 - std::pow(rangeRatio, 4.0), 2.0);
+            const double inverseSquareIlluminance = intensityCd /
+                                                    (distanceMeters * distanceMeters);
+            const double illuminance = inverseSquareIlluminance * rangeWindow;
+            const double idealPureLambert = inverseSquareIlluminance * albedo / pi;
+            const double pureLambert = illuminance * albedo / pi;
+            const double idealRelativeError =
+                std::abs(pureLambert - idealPureLambert) / idealPureLambert;
+            if (!std::isfinite(rangeWindow) || !std::isfinite(illuminance) ||
+                !std::isfinite(pureLambert) || idealRelativeError > 1.0e-9)
+            {
+                LOG_ERROR("R1 known-cd independent range oracle invalid: range_window=%g illuminance=%g ideal=%g expected=%g relative_error=%g",
+                          rangeWindow,
+                          illuminance,
+                          idealPureLambert,
+                          pureLambert,
+                          idealRelativeError);
+                return false;
+            }
+
+            outOracle.RangeWindow = rangeWindow;
+            outOracle.Illuminance = illuminance;
+            outOracle.IdealPureLambert = idealPureLambert;
+            outOracle.PureLambert = pureLambert;
+            constexpr double roughness = 0.5;
+            constexpr double metallic = 0.0;
+            constexpr double f0 = 0.04;
+            const double nDotL = 1.0;
+            const double nDotV = 1.0;
+            const double nDotH = 1.0;
+            const double lDotH = 1.0;
+            const double a = roughness * roughness;
+            const double a2 = a * a;
+            const double denominator = pi * (nDotH * nDotH * (a2 - 1.0) + 1.0) *
+                                       (nDotH * nDotH * (a2 - 1.0) + 1.0);
+            const double distribution = a2 / denominator;
+            const double k = ((roughness + 1.0) * (roughness + 1.0)) / 8.0;
+            const double geometry = (nDotL / (nDotL * (1.0 - k) + k)) *
+                                    (nDotV / (nDotV * (1.0 - k) + k));
+            const double fresnel = f0 + (1.0 - f0) * std::pow(1.0 - lDotH, 5.0);
+            const double specular = distribution * geometry * fresnel /
+                                    (4.0 * nDotV * nDotL + 0.0001);
+            const double diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / pi;
+            outOracle.FullPbr = illuminance * (diffuse + specular);
+            return std::isfinite(outOracle.FullPbr) && outOracle.FullPbr > 0.0;
+        }
+
+        static bool IsPixelInRoi(uint32_t x, uint32_t y)
+        {
+            return x >= R1RoiMinX && x <= R1RoiMaxX && y >= R1RoiMinY && y <= R1RoiMaxY;
+        }
+
+        bool EvaluateKnownCdFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (frame.RequestId != GetLastAcceptedRequestId())
+            {
+                reason = TEXT("known-cd capture RequestId does not match the accepted request");
+                return false;
+            }
+            if (m_KnownCdHasFrameNumber && frame.FrameNumber <= m_KnownCdLastFrameNumber)
+            {
+                reason = TEXT("known-cd capture FrameNumber is not strictly increasing");
+                return false;
+            }
+            m_KnownCdLastFrameNumber = frame.FrameNumber;
+            m_KnownCdHasFrameNumber = true;
+
+            const uint64_t stageToken = GetLastAcceptedRequestStageToken();
+            if (stageToken == 0u ||
+                (m_KnownCdHasStageToken && stageToken <= m_KnownCdLastStageToken) ||
+                frame.Format != RHI::Format::R16G16B16A16_FLOAT ||
+                frame.Width != ValidationWidth || frame.Height != ValidationHeight)
+            {
+                reason = TEXT("known-cd capture stage token, format, or dimensions are invalid");
+                return false;
+            }
+            m_KnownCdLastStageToken = stageToken;
+            m_KnownCdHasStageToken = true;
+
+            KnownCdOracleValues oracle;
+            if (!ComputeKnownCdOracle(oracle))
+            {
+                reason = TEXT("known-cd independent double range oracle is invalid");
+                return false;
+            }
+
+            RgbaFloatImage image;
+            if (DecodeCapturedRgba16Float(frame, image) != FloatImageStatus::Success)
+            {
+                reason = TEXT("known-cd capture RGBA16F decode failed");
+                return false;
+            }
+
+            if (!IsFiniteAndWithinRgba16Range(image))
+            {
+                reason = TEXT("known-cd capture contains a non-finite or saturated RGBA16F value");
+                return false;
+            }
+            double channelMean[3] = {};
+            size_t roiCount = 0u;
+            size_t firstOffender = 0u;
+            const double invPreExposure = IsKnownCdExposureB(m_KnownCdStage) ? 8.0 : 4.0;
+            for (uint32_t y = 0; y < image.Height; ++y)
+            {
+                for (uint32_t x = 0; x < image.Width; ++x)
+                {
+                    const size_t pixelOffset =
+                        (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    if (!IsPixelInRoi(x, y))
+                    {
+                        continue;
+                    }
+                    for (uint32_t channel = 0; channel < 3u; ++channel)
+                    {
+                        const double physical = static_cast<double>(
+                            image.Values[pixelOffset + channel]) * invPreExposure;
+                        channelMean[channel] += physical;
+                    }
+                    ++roiCount;
+                    for (uint32_t channel = 0; channel < 4u; ++channel)
+                    {
+                        if (!std::isfinite(image.Values[pixelOffset + channel]) ||
+                            std::abs(image.Values[pixelOffset + channel]) >= 65504.0f)
+                        {
+                            ++firstOffender;
+                        }
+                    }
+                    if (std::abs(static_cast<double>(image.Values[pixelOffset + 3u]) - 1.0) > 1.0e-3)
+                    {
+                        reason = TEXT("known-cd SceneColor alpha changed under exposure");
+                        return false;
+                    }
+                }
+            }
+            if (roiCount == 0u || firstOffender != 0u)
+            {
+                reason = TEXT("known-cd ROI scan did not contain finite RGBA16F pixels");
+                return false;
+            }
+            for (uint32_t channel = 0; channel < 3u; ++channel)
+            {
+                channelMean[channel] /= static_cast<double>(roiCount);
+            }
+            const double roiMean = channelMean[0];
+
+            if (m_KnownCdStage == KnownCdStage::NormalA)
+            {
+                const size_t skyOffset = (static_cast<size_t>(R1AnchorY) * image.Width + 255u) * 4u;
+                const size_t transparentOffset =
+                    (static_cast<size_t>(R1AnchorY) * image.Width + 38u) * 4u;
+                const size_t emissiveOffset =
+                    (static_cast<size_t>(R1AnchorY) * image.Width + 217u) * 4u;
+                if (image.Values[skyOffset] <= 0.0f || image.Values[transparentOffset] <= 0.0f ||
+                    static_cast<double>(image.Values[emissiveOffset]) * 4.0 < 100.0)
+                {
+                    reason = TEXT("known-cd sky, legacy transparent, or emissive sample is invalid");
+                    return false;
+                }
+            }
+
+            const bool bPureLambertStage = m_KnownCdStage == KnownCdStage::PureLambertA ||
+                                           m_KnownCdStage == KnownCdStage::PureLambertB;
+            const bool bFullPbrStage = m_KnownCdStage == KnownCdStage::DirectPbrA ||
+                                       m_KnownCdStage == KnownCdStage::DirectPbrB;
+            if (bPureLambertStage || bFullPbrStage)
+            {
+                const double expected = bPureLambertStage ? oracle.PureLambert : oracle.FullPbr;
+                double channelMeanRelativeError[3] = {};
+                double channelSampleMaximumRelativeError[3] = {};
+                for (uint32_t y = R1RoiMinY; y <= R1RoiMaxY; ++y)
+                {
+                    for (uint32_t x = R1RoiMinX; x <= R1RoiMaxX; ++x)
+                    {
+                        const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                        for (uint32_t channel = 0; channel < 3u; ++channel)
+                        {
+                            const double actual = static_cast<double>(
+                                image.Values[offset + channel]) * invPreExposure;
+                            const double relativeError = std::abs(actual - expected) / expected;
+                            channelMeanRelativeError[channel] += relativeError;
+                            channelSampleMaximumRelativeError[channel] = std::max(
+                                channelSampleMaximumRelativeError[channel], relativeError);
+                        }
+                    }
+                }
+                const size_t anchorOffset =
+                    (static_cast<size_t>(R1AnchorY) * image.Width + R1AnchorX) * 4u;
+                double anchorRelativeError[3] = {};
+                for (uint32_t channel = 0; channel < 3u; ++channel)
+                {
+                    channelMeanRelativeError[channel] /= static_cast<double>(roiCount);
+                    const double anchorActual = static_cast<double>(
+                        image.Values[anchorOffset + channel]) * invPreExposure;
+                    anchorRelativeError[channel] = std::abs(anchorActual - expected) / expected;
+                    LOG_INFO("R1 known-cd oracle detail: stage=%s channel=%u mean=%g sample_max=%g anchor=%g expected=%g anchor_error=%g",
+                             GetKnownCdStageName(),
+                             channel,
+                             channelMeanRelativeError[channel],
+                             channelSampleMaximumRelativeError[channel],
+                             anchorActual,
+                             expected,
+                             anchorRelativeError[channel]);
+                    std::cout << "R1 known-cd oracle detail: stage=" << GetKnownCdStageName()
+                              << " channel=" << channel
+                              << " mean_rel_error=" << channelMeanRelativeError[channel]
+                              << " sample_max_rel_error=" << channelSampleMaximumRelativeError[channel]
+                              << " anchor=" << anchorActual
+                              << " expected=" << expected
+                              << " anchor_rel_error=" << anchorRelativeError[channel]
+                              << " range_window=" << std::setprecision(17) << oracle.RangeWindow
+                              << std::setprecision(6) << "\n";
+                    if (channelMeanRelativeError[channel] > 0.01 ||
+                        channelSampleMaximumRelativeError[channel] > 0.03)
+                    {
+                        LOG_ERROR("R1 known-cd RGB oracle detail: stage=%s channel=%u mean_error=%g sample_max_error=%g expected=%g",
+                                  GetKnownCdStageName(),
+                                  channel,
+                                  channelMeanRelativeError[channel],
+                                  channelSampleMaximumRelativeError[channel],
+                                  expected);
+                        reason = TEXT("known-cd ROI RGB mean/sample relative error exceeded tolerance");
+                        return false;
+                    }
+                    if (anchorRelativeError[channel] > 0.03)
+                    {
+                        LOG_ERROR("R1 known-cd anchor RGB oracle: stage=%s channel=%u actual=%g expected=%g relative_error=%g tolerance=0.03",
+                                  GetKnownCdStageName(),
+                                  channel,
+                                  anchorActual,
+                                  expected,
+                                  anchorRelativeError[channel]);
+                        reason = TEXT("known-cd anchor RGB oracle exceeded the fixed 3% tolerance");
+                        return false;
+                    }
+                }
+            }
+            else if (IsKnownCdExposureA(m_KnownCdStage) && roiMean <= 0.1)
+            {
+                reason = TEXT("known-cd Normal ROI is clear or zero-light output");
+                return false;
+            }
+
+            if (IsKnownCdExposureB(m_KnownCdStage))
+            {
+                if (m_KnownCdPreviousImage.Values.empty() ||
+                    m_KnownCdPreviousImage.Width != image.Width ||
+                    m_KnownCdPreviousImage.Height != image.Height ||
+                    m_KnownCdPreviousImage.Values.size() != image.Values.size())
+                {
+                    reason = TEXT("known-cd previous image is unavailable for A/B comparison");
+                    return false;
+                }
+
+                double rawRatioSum[3] = {};
+                double rawRatioMaximumError[3] = {};
+                double physicalMeanRelativeError[3] = {};
+                double physicalMaximumRelativeError[3] = {};
+                size_t ratioCount = 0u;
+                for (uint32_t y = R1RoiMinY; y <= R1RoiMaxY; ++y)
+                {
+                    for (uint32_t x = R1RoiMinX; x <= R1RoiMaxX; ++x)
+                    {
+                        const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                        for (uint32_t channel = 0; channel < 3u; ++channel)
+                        {
+                            const double previous = static_cast<double>(
+                                m_KnownCdPreviousImage.Values[offset + channel]);
+                            const double current = static_cast<double>(image.Values[offset + channel]);
+                            if (std::abs(previous) <= 1.0e-5)
+                            {
+                                reason = TEXT("known-cd A/B ratio sample is zero or unavailable");
+                                return false;
+                            }
+                            const double rawRatio = current / previous;
+                            rawRatioSum[channel] += rawRatio;
+                            rawRatioMaximumError[channel] = std::max(
+                                rawRatioMaximumError[channel], std::abs(rawRatio - 0.5) / 0.5);
+                            const double previousPhysical = previous * 4.0;
+                            const double currentPhysical = current * 8.0;
+                            const double physicalRelativeError = std::abs(
+                                currentPhysical - previousPhysical) /
+                                std::max(std::abs(previousPhysical), 1.0e-3);
+                            physicalMeanRelativeError[channel] += physicalRelativeError;
+                            physicalMaximumRelativeError[channel] = std::max(
+                                physicalMaximumRelativeError[channel], physicalRelativeError);
+                        }
+                        if (std::abs(image.Values[offset + 3u] -
+                                     m_KnownCdPreviousImage.Values[offset + 3u]) > 1.0e-3f)
+                        {
+                            reason = TEXT("known-cd alpha changed between exposure A and B");
+                            return false;
+                        }
+                        ++ratioCount;
+                    }
+                }
+                for (uint32_t channel = 0; channel < 3u; ++channel)
+                {
+                    const double rawRatio = rawRatioSum[channel] /
+                                            static_cast<double>(ratioCount);
+                    physicalMeanRelativeError[channel] /= static_cast<double>(ratioCount);
+                    LOG_INFO("R1 known-cd exposure row: stage=%s channel=%u raw_B_over_A=%g raw_max_error=%g physical_mean_error=%g physical_max_error=%g alpha_unchanged=1",
+                             GetKnownCdStageName(),
+                             channel,
+                             rawRatio,
+                             rawRatioMaximumError[channel],
+                             physicalMeanRelativeError[channel],
+                             physicalMaximumRelativeError[channel]);
+                    std::cout << "R1 known-cd exposure detail: stage=" << GetKnownCdStageName()
+                              << " channel=" << channel
+                              << " raw_B_over_A=" << rawRatio
+                              << " raw_max_error=" << rawRatioMaximumError[channel]
+                              << " physical_mean_error=" << physicalMeanRelativeError[channel]
+                              << " physical_max_error=" << physicalMaximumRelativeError[channel]
+                              << " alpha_unchanged=1\n";
+                    if (std::abs(rawRatio - 0.5) / 0.5 > 0.03 ||
+                        rawRatioMaximumError[channel] > 0.03 ||
+                        physicalMeanRelativeError[channel] > 0.01 ||
+                        physicalMaximumRelativeError[channel] > 0.03)
+                    {
+                        reason = TEXT("known-cd exposure B/A RGB ratio or physical equality failed");
+                        return false;
+                    }
+                }
+                if (m_KnownCdStage == KnownCdStage::NormalB)
+                {
+                    const uint32_t sampleX[3] = {255u, 38u, 217u};
+                    for (uint32_t sampleIndex = 0; sampleIndex < 3u; ++sampleIndex)
+                    {
+                        const size_t offset =
+                            (static_cast<size_t>(R1AnchorY) * image.Width + sampleX[sampleIndex]) * 4u;
+                        for (uint32_t channel = 0; channel < 3u; ++channel)
+                        {
+                            const double previous = static_cast<double>(
+                                m_KnownCdPreviousImage.Values[offset + channel]);
+                            const double current = static_cast<double>(image.Values[offset + channel]);
+                            if (previous <= 0.0 || current <= 0.0 ||
+                                std::abs(current / previous - 0.5) / 0.5 > 0.03 ||
+                                std::abs(current * 8.0 - previous * 4.0) /
+                                        std::max(std::abs(previous * 4.0), 1.0e-3) > 0.03)
+                            {
+                                reason = TEXT("known-cd auxiliary sky/transparent/emissive exposure row failed");
+                                return false;
+                            }
+                        }
+                        if (std::abs(image.Values[offset + 3u] -
+                                     m_KnownCdPreviousImage.Values[offset + 3u]) > 1.0e-3f)
+                        {
+                            reason = TEXT("known-cd auxiliary alpha changed between exposure A and B");
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            m_KnownCdPreviousImage = image;
+            LOG_INFO("R1 known-cd ROI row: stage=%s request=%llu stage_token=%llu frame=%llu mean_rgb=(%g,%g,%g) first_offender=%zu range_window=%g",
+                     GetKnownCdStageName(),
+                     static_cast<unsigned long long>(frame.RequestId),
+                     static_cast<unsigned long long>(GetLastAcceptedRequestStageToken()),
+                     static_cast<unsigned long long>(frame.FrameNumber),
+                     channelMean[0],
+                     channelMean[1],
+                     channelMean[2],
+                     firstOffender,
+                     oracle.RangeWindow);
+            std::cout << "R1 known-cd ROI row: stage=" << GetKnownCdStageName()
+                      << " request=" << frame.RequestId
+                      << " stage_token=" << GetLastAcceptedRequestStageToken()
+                      << " frame=" << frame.FrameNumber
+                      << " mean_rgb=(" << channelMean[0] << "," << channelMean[1] << "," << channelMean[2] << ")"
+                      << " first_offender=" << firstOffender << "\n";
+            return true;
+        }
+
         bool EvaluateR1PresentationColor(
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) const
@@ -789,6 +1341,7 @@ namespace
         }
 
         bool m_bR1Scenario = false;
+        bool m_bKnownCdScenario = false;
         bool m_bMarkerRegistered = false;
         enum class R1CaptureStage : uint8_t
         {
@@ -801,6 +1354,12 @@ namespace
         R1CaptureStage m_R1CaptureStage = R1CaptureStage::BackBuffer;
         bool m_bR1HasFrameNumber = false;
         uint64_t m_R1LastFrameNumber = 0u;
+        KnownCdStage m_KnownCdStage = KnownCdStage::PureLambertA;
+        bool m_KnownCdHasFrameNumber = false;
+        uint64_t m_KnownCdLastFrameNumber = 0u;
+        bool m_KnownCdHasStageToken = false;
+        uint64_t m_KnownCdLastStageToken = 0u;
+        RgbaFloatImage m_KnownCdPreviousImage;
         OpaqueMarkerView m_MarkerView;
     };
 
@@ -865,6 +1424,21 @@ namespace
         return !scenarioMissingBackBufferHandler.OnPreInitialize(scenarioMissingBackBufferArgs);
     }
 
+    bool ValidateKnownCdScenarioArgumentContract()
+    {
+        Core::Container::VariableArray<Core::Container::String> args;
+        args.push_back(TEXT("--scene=indoor"));
+        args.push_back(TEXT("--capture-source=scene-color"));
+        args.push_back(TEXT("--r1-scenario=known-cd-lambert"));
+        HdrHandler handler;
+        if (!handler.OnPreInitialize(args))
+        {
+            std::cerr << "R1 known-cd-lambert scenario argument was rejected\n";
+            return false;
+        }
+        return true;
+    }
+
     Core::Container::TSharedPtr<Core::Application::IApplicationHandler> CreateHandler()
     {
         return Core::Container::MakeShared<HdrHandler>();
@@ -873,6 +1447,13 @@ namespace
 
 int main(int argc, char** argv)
 {
+#ifdef _MSC_VER
+    _set_error_mode(_OUT_TO_STDERR);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+
     using namespace NorvesLib;
     using namespace NorvesLib::Test::RenderingValidation;
 
@@ -887,6 +1468,10 @@ int main(int argc, char** argv)
     }
 
     if (!ValidateCaptureSourceArgumentContract())
+    {
+        return 1;
+    }
+    if (!ValidateKnownCdScenarioArgumentContract())
     {
         return 1;
     }

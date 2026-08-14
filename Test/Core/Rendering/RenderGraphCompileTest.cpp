@@ -239,6 +239,7 @@ namespace
         void Unmap() override {}
         void Update(const void* data, uint64_t size, uint64_t offset = 0) override
         {
+            ++UpdateCallCount;
             LastUpdateOffset = offset;
             LastUpdateSize = size;
             LastUpdateBytes.resize(static_cast<size_t>(size));
@@ -265,6 +266,7 @@ namespace
 
         uint64_t LastUpdateOffset = 0;
         uint64_t LastUpdateSize = 0;
+        uint32_t UpdateCallCount = 0;
         Container::VariableArray<uint8_t> LastUpdateBytes;
 
     private:
@@ -4188,9 +4190,9 @@ namespace
         proxy.DirectionZ = -0.3f;
         proxy.InnerConeAngle = 0.81f;
         proxy.OuterConeAngle = 0.62f;
-        proxy.ColorR = 0.25f + static_cast<float>(index);
-        proxy.ColorG = 0.5f + static_cast<float>(index);
-        proxy.ColorB = 0.75f + static_cast<float>(index);
+        proxy.ColorR = 1.0f;
+        proxy.ColorG = 1.0f;
+        proxy.ColorB = 1.0f;
         proxy.Intensity = 2.0f + static_cast<float>(index);
         proxy.Range = 25.0f + static_cast<float>(index);
         proxy.bVisible = true;
@@ -4267,6 +4269,20 @@ namespace
     {
         assert(GLastDescriptorBinding4UpdateBytes.size() == sizeof(GPULightingParams));
         std::memcpy(&outParams, GLastDescriptorBinding4UpdateBytes.data(), sizeof(GPULightingParams));
+    }
+
+    float ReadPackedLightFloat(const GPULightData& light, size_t byteOffset)
+    {
+        float value = 0.0f;
+        const auto* bytes = reinterpret_cast<const uint8_t*>(&light);
+        std::memcpy(&value, bytes + byteOffset, sizeof(value));
+        return value;
+    }
+
+    FakeBuffer& GetBoundLightArrayBuffer()
+    {
+        assert(GLastDescriptorBinding5Buffer != nullptr);
+        return *static_cast<FakeBuffer*>(GLastDescriptorBinding5Buffer);
     }
 
     GPULightData DecodeLightDataAt(uint32_t index)
@@ -4386,13 +4402,13 @@ namespace
         assert(first.position[2] == lightProxies[0].PositionZ);
         assert(first.position[3] == static_cast<float>(static_cast<int>(LightType::Point)));
         assert(first.direction[3] == lightProxies[0].InnerConeAngle);
-        assert(first.color[3] == lightProxies[0].Intensity);
-        assert(first.attenuation[0] == lightProxies[0].Range);
-        assert(first.attenuation[1] == lightProxies[0].OuterConeAngle);
+        assert(ReadPackedLightFloat(first, 44) == lightProxies[0].Intensity);
+        assert(ReadPackedLightFloat(first, 48) == lightProxies[0].Range);
+        assert(ReadPackedLightFloat(first, 52) == lightProxies[0].OuterConeAngle);
         assert(last.position[0] == lightProxies[19].PositionX);
-        assert(last.color[0] == lightProxies[19].ColorR);
-        assert(last.color[3] == lightProxies[19].Intensity);
-        assert(last.attenuation[0] == lightProxies[19].Range);
+        assert(ReadPackedLightFloat(last, 32) == 1.0f);
+        assert(ReadPackedLightFloat(last, 44) == lightProxies[19].Intensity);
+        assert(ReadPackedLightFloat(last, 48) == lightProxies[19].Range);
 
         const uint32_t ssboUpdateIndex = FindRenderEventIndex(FakeRenderEvent::LightSsboUpdate);
         const uint32_t bindStorageIndex = FindRenderEventIndex(FakeRenderEvent::BindStorageBuffer5);
@@ -4403,6 +4419,59 @@ namespace
         assert(ssboUpdateIndex < bindStorageIndex);
         assert(bindStorageIndex < descriptorUpdateIndex);
         assert(descriptorUpdateIndex < commandSetDescriptorIndex);
+
+        lightingPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        pool.EndFrame();
+        pool.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    void TestLightingNativeExecuteZeroLightsKeepsLogicalCountZeroAndSkipsSsboUpdate()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), ""));
+
+        MockAllocator allocator;
+        RHI::TransientResourcePool pool;
+        assert(pool.Initialize(&allocator, 1));
+        pool.BeginFrame(0);
+
+        RenderResources renderResources;
+        assert(renderResources.Initialize(device));
+
+        SceneRenderer renderer;
+        assert(renderer.Initialize(device.get(), nullptr, &pool));
+
+        LightingPass lightingPass;
+        Container::VariableArray<LightProxy> lightProxies;
+        FakeCommandList commandList;
+        ExecuteLightingGraphWithLights(*device,
+                                       shaderManager,
+                                       pool,
+                                       renderResources,
+                                       renderer,
+                                       lightingPass,
+                                       lightProxies,
+                                       commandList,
+                                       0);
+
+        GPULightingParams params = {};
+        DecodeLightingParams(params);
+        assert(params.lightCount == 0);
+
+        assert(GLastDescriptorBinding5Buffer != nullptr);
+        assert(GLastDescriptorBinding5Size >= sizeof(GPULightData));
+        const FakeBuffer& lightBuffer = GetBoundLightArrayBuffer();
+        assert(lightBuffer.GetSize() >= sizeof(GPULightData));
+        assert(lightBuffer.UpdateCallCount == 0);
+        assert(GLastDescriptorBinding5UpdateBytes.empty());
+        assert(!HasRenderEvent(FakeRenderEvent::LightSsboUpdate));
+        assert(commandList.DrawCallCount > 0);
+        assert(HasRenderEvent(FakeRenderEvent::Draw));
 
         lightingPass.Shutdown();
         renderer.Shutdown();
@@ -6346,6 +6415,7 @@ int main()
     TestSSAONativeExecuteRegistersBridgeWhenUsingSharedResourceFallback();
     TestGBufferSSAOLightingNativeExecuteWithoutSharedResources();
     TestLightingNativeExecuteBindsExpandedLightStorageBuffer();
+    TestLightingNativeExecuteZeroLightsKeepsLogicalCountZeroAndSkipsSsboUpdate();
     TestLightingLightBufferGrowthRetainsRetiredBuffersAndReusesCapacity();
     TestLightingLightBufferGrowthFailureSkipsDescriptorUpdateAndDraw();
     TestProductionDeferredNativeExecuteSkipsLegacyBridge();

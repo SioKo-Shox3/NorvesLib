@@ -56,6 +56,20 @@ namespace NorvesLib::Core
 
     bool MaterialResource::Load()
     {
+        float canonicalColor[3];
+        float canonicalLuminanceNits = 0.0f;
+        if (!Rendering::TryBuildCanonicalEmissive(m_EmissiveColor,
+                                                   m_EmissiveLuminanceNits,
+                                                   canonicalColor,
+                                                   canonicalLuminanceNits))
+        {
+            return false;
+        }
+
+        m_EmissiveColor[0] = canonicalColor[0];
+        m_EmissiveColor[1] = canonicalColor[1];
+        m_EmissiveColor[2] = canonicalColor[2];
+        m_EmissiveLuminanceNits = canonicalLuminanceNits;
         SetResourceState(ResourceState::Loaded);
         return true;
     }
@@ -71,7 +85,7 @@ namespace NorvesLib::Core
         m_EmissiveColor[0] = 0.0f;
         m_EmissiveColor[1] = 0.0f;
         m_EmissiveColor[2] = 0.0f;
-        m_EmissiveStrength = 0.0f;
+        m_EmissiveLuminanceNits = 0.0f;
 
         SetResourceState(ResourceState::Unloaded);
     }

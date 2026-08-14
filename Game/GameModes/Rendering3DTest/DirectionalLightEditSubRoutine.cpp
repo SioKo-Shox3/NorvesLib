@@ -45,9 +45,9 @@ namespace Game::GameModes
                 m_pLight->SetLightColor(col[0], col[1], col[2]);
             }
 
-            // 強度
+            // 照度 (lux)
             float intensity = m_pLight->GetIntensity();
-            if (ImGui::SliderFloat("強度", &intensity, 0.0f, 10.0f))
+            if (ImGui::SliderFloat("照度 (lux)", &intensity, 0.0f, 10.0f))
             {
                 m_pLight->SetIntensity(intensity);
             }

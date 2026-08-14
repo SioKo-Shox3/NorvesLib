@@ -12,6 +12,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveColor;
     vec4 pomParams;
+    vec4 sceneColorParams;
 } mvp;
 
 layout(set = 0, binding = 1) uniform sampler2D albedoTexture;
@@ -47,5 +48,5 @@ void main()
     float specularFactor = pow(max(dot(normal, halfDir), 0.0), 32.0);
     vec3 specular = specularFactor * lightColor * 0.2;
 
-    outColor = vec4(ambient + diffuse + specular, alpha);
+    outColor = vec4((ambient + diffuse + specular) * mvp.sceneColorParams.x, alpha);
 }

@@ -9,7 +9,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 view;
     mat4 projection;
     vec4 cameraPosition;
-    vec4 emissiveColor;  // rgb=エミッシブカラー, a=エミッシブ強度
+    vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;      // x=heightScale, y=hasHeightMap, z=unused, w=unused
 } mvp;
 
@@ -29,7 +29,7 @@ layout(std430, set = 0, binding = 7) readonly buffer InstanceBuffer
 layout(location = 0) out vec3 fragWorldPos;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragObjectColor;
-layout(location = 3) out vec4 fragEmissiveColor;
+layout(location = 3) out vec4 fragEmissiveChromaticityAndLuminanceNits;
 layout(location = 4) out vec2 fragTexCoord;
 layout(location = 5) out vec3 fragViewDir;  // ワールド空間でのカメラ方向
 
@@ -44,7 +44,7 @@ void main()
     fragNormal = normalize(normal);
 
     fragObjectColor = instances[gl_InstanceIndex].objectColor.rgb;
-    fragEmissiveColor = mvp.emissiveColor;
+    fragEmissiveChromaticityAndLuminanceNits = mvp.emissiveChromaticityAndLuminanceNits;
     fragTexCoord = inTexCoord;
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
 

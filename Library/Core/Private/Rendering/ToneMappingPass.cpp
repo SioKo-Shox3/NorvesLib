@@ -557,11 +557,6 @@ namespace NorvesLib::Core::Rendering
 
         // パラメータバッファ更新
         GPUToneMappingParams params = {};
-        params.CameraExposure = 1.0f;
-        if (context.CurrentViewport && context.CurrentViewport->bHasCamera)
-        {
-            params.CameraExposure = context.CurrentViewport->Camera.Exposure;
-        }
         params.operatorType = static_cast<uint32_t>(m_Settings.Operator);
         const bool bDebugPostProcessBypass =
             IsDebugPostProcessBypassMode(context.GetActiveDebugMode());
@@ -572,6 +567,7 @@ namespace NorvesLib::Core::Rendering
         params.vignetteRadius = m_Settings.VignetteRadius;
         params.vignetteSoftness = m_Settings.VignetteSoftness;
         params._pad1 = 0.0f;
+        params._pad2 = 0.0f;
         // Color Grading
         params.colorFilter[0] = m_Settings.ColorFilter[0];
         params.colorFilter[1] = m_Settings.ColorFilter[1];

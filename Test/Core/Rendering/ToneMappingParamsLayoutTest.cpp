@@ -49,6 +49,11 @@ namespace
         assert(position != std::string::npos);
         return position;
     }
+
+    void AssertNotContains(const std::string& source, const std::string& text)
+    {
+        assert(source.find(text) == std::string::npos);
+    }
 } // namespace
 
 int main()
@@ -60,14 +65,14 @@ int main()
     assert(sizeof(GPUToneMappingParams) == 64);
     assert(sizeof(GPUToneMappingParams) % 16 == 0);
 
-    assert(offsetof(GPUToneMappingParams, CameraExposure) == 0);
-    assert(offsetof(GPUToneMappingParams, operatorType) == 4);
-    assert(offsetof(GPUToneMappingParams, bBypass) == 8);
-    assert(offsetof(GPUToneMappingParams, _pad0) == 12);
-    assert(offsetof(GPUToneMappingParams, vignetteIntensity) == 16);
-    assert(offsetof(GPUToneMappingParams, vignetteRadius) == 20);
-    assert(offsetof(GPUToneMappingParams, vignetteSoftness) == 24);
-    assert(offsetof(GPUToneMappingParams, _pad1) == 28);
+    assert(offsetof(GPUToneMappingParams, operatorType) == 0);
+    assert(offsetof(GPUToneMappingParams, bBypass) == 4);
+    assert(offsetof(GPUToneMappingParams, _pad0) == 8);
+    assert(offsetof(GPUToneMappingParams, vignetteIntensity) == 12);
+    assert(offsetof(GPUToneMappingParams, vignetteRadius) == 16);
+    assert(offsetof(GPUToneMappingParams, vignetteSoftness) == 20);
+    assert(offsetof(GPUToneMappingParams, _pad1) == 24);
+    assert(offsetof(GPUToneMappingParams, _pad2) == 28);
     assert(offsetof(GPUToneMappingParams, colorFilter) == 32);
     assert(offsetof(GPUToneMappingParams, contrast) == 48);
     assert(offsetof(GPUToneMappingParams, saturation) == 52);
@@ -85,8 +90,12 @@ int main()
     const std::size_t operatorTypePosition = RequirePosition(shaderSource, "uint operatorType;");
     const std::size_t bypassFieldPosition = RequirePosition(shaderSource, "uint bBypass;");
     const std::size_t vignettePosition = RequirePosition(shaderSource, "float vignetteIntensity;");
+    const std::size_t pad2Position = RequirePosition(shaderSource, "float _pad2;");
+    const std::size_t colorFilterPosition = RequirePosition(shaderSource, "vec4 colorFilter;");
     assert(operatorTypePosition < bypassFieldPosition);
     assert(bypassFieldPosition < vignettePosition);
+    assert(vignettePosition < pad2Position);
+    assert(pad2Position < colorFilterPosition);
 
     const std::size_t bypassIfPosition = RequirePosition(shaderSource, "if (params.bBypass != 0u)");
     const std::size_t bypassOutputPosition =
@@ -99,17 +108,31 @@ int main()
     assert(bypassOutputPosition < bypassReturnPosition);
     assert(bypassReturnPosition < hdrSamplePosition);
 
-    assert(shaderSource.find("float CameraExposure;") != std::string::npos);
+    const std::string cameraToken = std::string("Camera") + "Exposure";
+    const std::string paramsCameraToken = std::string("params.") + cameraToken;
+    const std::string hdrMultiplyToken = std::string("hdrColor *= ") + paramsCameraToken + ";";
+    AssertNotContains(shaderSource, cameraToken);
+    AssertNotContains(shaderSource, hdrMultiplyToken);
     assert(shaderSource.find("float gamma;") == std::string::npos);
     assert(shaderSource.find("float exposure;") == std::string::npos);
-    assert(shaderSource.find("hdrColor *= params.CameraExposure;") != std::string::npos);
+
+    const std::string gpuTypesPath = std::string(NORVES_SHADER_DIR) +
+                                     "/../../Library/Core/Private/Rendering/ToneMappingPassGpuTypes.h";
+    const std::string gpuTypesSource = ReadTextFile(gpuTypesPath);
+    AssertNotContains(gpuTypesSource, cameraToken);
+
+    const std::string toneMappingPassPath = std::string(NORVES_SHADER_DIR) +
+                                             "/../../Library/Core/Private/Rendering/ToneMappingPass.cpp";
+    const std::string toneMappingPassSource = ReadTextFile(toneMappingPassPath);
+    AssertNotContains(toneMappingPassSource, paramsCameraToken);
+    assert(toneMappingPassSource.find("params._pad2 = 0.0f;") != std::string::npos);
     assert(shaderSource.find("TonemapExposure(vec3 color)") != std::string::npos);
     assert(shaderSource.find("TonemapExposure(hdrColor, params") == std::string::npos);
     assert(shaderSource.find("pow(mapped") == std::string::npos);
 
     const float physicalInput = 4.0f;
-    const float cameraExposure = 0.25f;
-    const float commonEntryInput = physicalInput * cameraExposure;
+    const float sceneColorPreExposure = 0.25f;
+    const float commonEntryInput = physicalInput * sceneColorPreExposure;
     assert(std::abs(commonEntryInput - 1.0f) < 0.0001f);
     const float exposureCurve = 1.0f - std::exp(-commonEntryInput);
     assert(std::abs(exposureCurve - (1.0f - std::exp(-1.0f))) < 0.0001f);

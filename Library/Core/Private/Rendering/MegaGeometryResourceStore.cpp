@@ -1,6 +1,7 @@
 #include "Rendering/MegaGeometryResourceStore.h"
 
 #include "Rendering/MegaGeometry/LODHierarchyBuilder.h"
+#include "Rendering/MaterialTypes.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
@@ -48,6 +49,24 @@ namespace NorvesLib::Core::Rendering
                              createInfo.DebugName.c_str());
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
+
+        float canonicalEmissiveColor[3] = {0.0f, 0.0f, 0.0f};
+        float canonicalEmissiveLuminanceNits = 0.0f;
+        if (!TryBuildCanonicalEmissive(createInfo.Material.EmissiveColor,
+                                       createInfo.Material.EmissiveLuminanceNits,
+                                       canonicalEmissiveColor,
+                                       canonicalEmissiveLuminanceNits))
+        {
+            NORVES_LOG_ERROR("MegaGeometryResources", "Invalid MegaMesh emissive material: %s",
+                             createInfo.DebugName.c_str());
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+
+        MegaGeometry::MegaMeshMaterial canonicalMaterial = createInfo.Material;
+        canonicalMaterial.EmissiveColor[0] = canonicalEmissiveColor[0];
+        canonicalMaterial.EmissiveColor[1] = canonicalEmissiveColor[1];
+        canonicalMaterial.EmissiveColor[2] = canonicalEmissiveColor[2];
+        canonicalMaterial.EmissiveLuminanceNits = canonicalEmissiveLuminanceNits;
 
         // Build an optional LOD hierarchy before GPU upload.
         const void *uploadVertexData = createInfo.VertexData;
@@ -212,7 +231,7 @@ namespace NorvesLib::Core::Rendering
         gpuData.IndexCount = uploadIndexCount;
         gpuData.ClusterCount = static_cast<uint32_t>(uploadClusters->size());
         gpuData.TotalBounds = uploadTotalBounds;
-        gpuData.Material = createInfo.Material;
+        gpuData.Material = canonicalMaterial;
         gpuData.DebugName = createInfo.DebugName;
 
         {

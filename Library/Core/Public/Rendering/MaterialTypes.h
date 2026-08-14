@@ -2,6 +2,7 @@
 
 #include "RenderTypes.h"
 #include "Container/Containers.h"
+#include <cmath>
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -220,6 +221,69 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief エミッシブ入力をY=1のchromaticityとnitsへ正規化します。
+     *
+     * 入力と計算はdoubleで検証し、成功時のみ出力を更新します。
+     */
+    inline bool TryBuildCanonicalEmissive(const float (&inputColor)[3],
+                                           float inputLuminanceNits,
+                                           float (&outColor)[3],
+                                           float &outLuminanceNits)
+    {
+        const double red = static_cast<double>(inputColor[0]);
+        const double green = static_cast<double>(inputColor[1]);
+        const double blue = static_cast<double>(inputColor[2]);
+        const double luminanceNits = static_cast<double>(inputLuminanceNits);
+        if (!std::isfinite(red) || !std::isfinite(green) || !std::isfinite(blue) ||
+            !std::isfinite(luminanceNits) || red < 0.0 || green < 0.0 || blue < 0.0 ||
+            luminanceNits < 0.0)
+        {
+            return false;
+        }
+
+        if (luminanceNits == 0.0)
+        {
+            if (red != 0.0 || green != 0.0 || blue != 0.0)
+            {
+                return false;
+            }
+
+            outColor[0] = 0.0f;
+            outColor[1] = 0.0f;
+            outColor[2] = 0.0f;
+            outLuminanceNits = 0.0f;
+            return true;
+        }
+
+        const double y = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+        if (!std::isfinite(y) || y <= 1.0e-6)
+        {
+            return false;
+        }
+
+        const double normalizedRed = red / y;
+        const double normalizedGreen = green / y;
+        const double normalizedBlue = blue / y;
+        const double physicalRed = normalizedRed * luminanceNits;
+        const double physicalGreen = normalizedGreen * luminanceNits;
+        const double physicalBlue = normalizedBlue * luminanceNits;
+        if (!std::isfinite(normalizedRed) || !std::isfinite(normalizedGreen) ||
+            !std::isfinite(normalizedBlue) || !std::isfinite(physicalRed) ||
+            !std::isfinite(physicalGreen) || !std::isfinite(physicalBlue) ||
+            std::abs(physicalRed) >= 65504.0 || std::abs(physicalGreen) >= 65504.0 ||
+            std::abs(physicalBlue) >= 65504.0)
+        {
+            return false;
+        }
+
+        outColor[0] = static_cast<float>(normalizedRed);
+        outColor[1] = static_cast<float>(normalizedGreen);
+        outColor[2] = static_cast<float>(normalizedBlue);
+        outLuminanceNits = static_cast<float>(luminanceNits);
+        return true;
+    }
+
+    /**
      * @brief マテリアル作成情報
      */
     struct MaterialCreateData
@@ -234,7 +298,7 @@ namespace NorvesLib::Core::Rendering
         float HeightScale = 0.05f; ///< POMの高さスケール（0.0～0.1程度が自然）
 
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
-        float EmissiveStrength = 0.0f;
+        float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
 
         BlendMode Blend = BlendMode::Opaque;
         ShadingModel Shading = ShadingModel::DefaultLit;
@@ -259,7 +323,7 @@ namespace NorvesLib::Core::Rendering
         float HeightScale = 0.05f; ///< POMの高さスケール
 
         float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
-        float EmissiveStrength = 0.0f;
+        float EmissiveLuminanceNits = 0.0f; ///< 輝度(nits)。EmissiveColorはY=1 chromaticity。
 
         BlendMode Blend = BlendMode::Opaque;
         ShadingModel Shading = ShadingModel::DefaultLit;

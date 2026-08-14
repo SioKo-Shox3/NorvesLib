@@ -1252,6 +1252,7 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (activeCamera)
         {
+            params.preExposure = activeCamera->PreExposure;
             const CameraViewConstants cameraConstants =
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(params.cameraPosition);
@@ -1259,6 +1260,7 @@ namespace NorvesLib::Core::Rendering
         }
         else
         {
+            params.preExposure = 1.0f;
             params.cameraPosition[0] = 0.0f;
             params.cameraPosition[1] = 2.0f;
             params.cameraPosition[2] = 5.0f;
@@ -1338,7 +1340,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_LightDataBuffer->Update(&params, sizeof(GPULightingParams));
-        m_LightArrayBuffer->Update(lightArray.data(), sizeof(GPULightData) * lightCount);
+        if (lightCount > 0)
+        {
+            m_LightArrayBuffer->Update(lightArray.data(), sizeof(GPULightData) * lightCount);
+        }
         return true;
     }
 

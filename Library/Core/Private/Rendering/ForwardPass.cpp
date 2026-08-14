@@ -33,6 +33,7 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float emissiveColor[4];
             float pomParams[4];
+            float sceneColorParams[4];
         };
 
         struct WorldBoardForwardUBO
@@ -42,6 +43,7 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float cameraRight[4];
             float cameraUp[4];
+            float sceneColorParams[4];
         };
     } // namespace
 
@@ -914,6 +916,15 @@ namespace NorvesLib::Core::Rendering
                                               ? 0xFFFFFFFFu
                                               : static_cast<uint32_t>(instanceDataSize64);
 
+        const DebugViewMode activeDebugMode = context.GetActiveDebugMode();
+        const uint32_t activeDebugModeValue = static_cast<uint32_t>(activeDebugMode);
+        const bool bApplySceneColorPreExposure =
+            activeDebugMode == DebugViewMode::Normal ||
+            activeDebugModeValue == 253u ||
+            activeDebugModeValue == 254u;
+        const float sceneColorPreExposure =
+            activeCamera && bApplySceneColorPreExposure ? activeCamera->PreExposure : 1.0f;
+
         m_UniformAllocator.Reset();
         m_WorldBoardUniformAllocator.Reset();
 
@@ -923,11 +934,13 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(worldBoardFrameUBO.cameraPosition, cameraPosition, sizeof(cameraPosition));
         std::memcpy(worldBoardFrameUBO.cameraRight, cameraRight, sizeof(cameraRight));
         std::memcpy(worldBoardFrameUBO.cameraUp, cameraUp, sizeof(cameraUp));
+        worldBoardFrameUBO.sceneColorParams[0] = sceneColorPreExposure;
 
         TransparentForwardUBO transparentFrameTemplate{};
         std::memcpy(transparentFrameTemplate.view, viewData, sizeof(viewData));
         std::memcpy(transparentFrameTemplate.projection, projectionData, sizeof(projectionData));
         std::memcpy(transparentFrameTemplate.cameraPosition, cameraPosition, sizeof(cameraPosition));
+        transparentFrameTemplate.sceneColorParams[0] = sceneColorPreExposure;
 
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());

@@ -3,7 +3,7 @@
 layout(location = 0) in vec3 fragWorldPos;
 layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec3 fragObjectColor;
-layout(location = 3) in vec4 fragEmissiveColor;
+layout(location = 3) in vec4 fragEmissiveChromaticityAndLuminanceNits;
 layout(location = 4) in vec2 fragTexCoord;
 layout(location = 5) in vec3 fragViewDir;
 
@@ -13,7 +13,7 @@ layout(set = 0, binding = 0) uniform MVPData
     mat4 view;
     mat4 projection;
     vec4 cameraPosition;
-    vec4 emissiveColor;
+    vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=unused, w=unused
 } mvp;
 
@@ -166,6 +166,8 @@ void main()
     float ao        = texture(aoTexture, texCoord).r;
     outMaterial = vec4(metallic, roughness, ao, 0.0);
 
-    // Emissive: エミッシブカラー × 強度 → HDR値
-    outEmissive = vec4(fragEmissiveColor.rgb * fragEmissiveColor.a, 1.0);
+    // Emissive: Y=1 chromaticity × luminance nits → physical HDR RGB
+    vec3 physicalEmissive = fragEmissiveChromaticityAndLuminanceNits.rgb *
+                            fragEmissiveChromaticityAndLuminanceNits.a;
+    outEmissive = vec4(physicalEmissive, 1.0);
 }

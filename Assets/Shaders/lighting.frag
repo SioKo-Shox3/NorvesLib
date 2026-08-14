@@ -23,7 +23,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     uint bSSAOEnabled;      // SSAO有効フラグ
     uint bNeuralBRDFEnabled; // Neural BRDF有効フラグ
     uint debugViewMode;
-    uint _pad2;
+    float preExposure;
 } params;
 
 // ライトデータ構造
@@ -31,7 +31,7 @@ struct LightData
 {
     vec4 position;      // xyz=position, w=type (0:Dir, 1:Point, 2:Spot)
     vec4 direction;     // xyz=direction, w=innerAngle
-    vec4 color;         // xyz=color, w=intensity
+    vec4 chromaticityAndIntensity; // xyz=Y=1 chromaticity, w=canonical lux/cd
     vec4 attenuation;   // x=range, y=outerAngle, z=unused, w=unused
 };
 
@@ -77,6 +77,25 @@ const uint DEBUG_VIEW_MODE_GBUFFER_MATERIAL = 6u;
 const uint DEBUG_VIEW_MODE_GBUFFER_DEPTH = 7u;
 const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
 const uint DEBUG_VIEW_MODE_COUNT = 9u;
+const uint DEBUG_VIEW_MODE_VALIDATION_LAMBERT = 253u;
+const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
+
+bool ShouldApplySceneColorPreExposure()
+{
+    return params.debugViewMode == DEBUG_VIEW_MODE_NORMAL ||
+           params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT ||
+           params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR;
+}
+
+vec3 ApplySceneColorPreExposure(vec3 sceneColor)
+{
+    if (ShouldApplySceneColorPreExposure())
+    {
+        return sceneColor * params.preExposure;
+    }
+
+    return sceneColor;
+}
 
 // ========================================
 // Equirectangular UV from direction vector
@@ -166,12 +185,15 @@ float ComputeDebugDepth01(vec2 uv, float depth)
 // ========================================
 // ライト減衰計算
 // ========================================
-float CalculateAttenuation(float distance, float range)
+float CalculateInverseSquareAttenuation(float distance)
 {
-    // 距離ベースの減衰（スムーズな減衰カーブ）
-    float attenuation = 1.0 / (distance * distance + 1.0);
-    float factor = clamp(1.0 - pow(distance / max(range, 0.001), 4.0), 0.0, 1.0);
-    return attenuation * factor * factor;
+    return 1.0 / max(distance * distance, 0.01 * 0.01);
+}
+
+float CalculateRangeWindow(float distance, float range)
+{
+    float factor = max(1.0 - pow(distance / max(range, 0.0001), 4.0), 0.0);
+    return factor * factor;
 }
 
 // ========================================
@@ -423,7 +445,7 @@ void main()
             vec2 envUV = EquirectangularUV(rayDir);
             vec3 skyColor = textureLod(envMap, envUV, 0.0).rgb;
 
-            outColor = vec4(skyColor, 1.0);
+            outColor = vec4(ApplySceneColorPreExposure(skyColor), 1.0);
         }
         else
         {
@@ -440,6 +462,9 @@ void main()
         outColor = vec4(albedoSample.rgb, 1.0);
         return;
     }
+
+    bool bValidationLambert = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT;
+    bool bValidationPBR = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR;
 
     // データ展開
     vec3 albedo = albedoSample.rgb;
@@ -473,7 +498,7 @@ void main()
     {
         LightData light = lightBuffer.lights[i];
         float lightType = light.position.w;
-        vec3 lightColor = light.color.rgb * light.color.w; // color * intensity
+        vec3 lightColor = light.chromaticityAndIntensity.rgb * light.chromaticityAndIntensity.w;
 
         vec3 L;
         float attenuation = 1.0;
@@ -489,7 +514,7 @@ void main()
             vec3 toLight = light.position.xyz - worldPos;
             float distance = length(toLight);
             L = normalize(toLight);
-            attenuation = CalculateAttenuation(distance, light.attenuation.x);
+            attenuation = CalculateInverseSquareAttenuation(distance) * CalculateRangeWindow(distance, light.attenuation.x);
         }
         else
         {
@@ -497,7 +522,7 @@ void main()
             vec3 toLight = light.position.xyz - worldPos;
             float distance = length(toLight);
             L = normalize(toLight);
-            attenuation = CalculateAttenuation(distance, light.attenuation.x);
+            attenuation = CalculateInverseSquareAttenuation(distance) * CalculateRangeWindow(distance, light.attenuation.x);
 
             // スポットライトのコーン減衰
             float theta = dot(L, normalize(-light.direction.xyz));
@@ -514,32 +539,19 @@ void main()
 
         // シャドウ計算（ディレクショナルライトのみ）
         float shadow = 1.0;
-        if (lightType < 0.5 && params.bShadowEnabled != 0u)
+        if (!bValidationLambert && lightType < 0.5 && params.bShadowEnabled != 0u)
         {
             shadow = CalculateShadow(worldPos);
         }
 
         vec3 radiance = lightColor * NdotL * attenuation * shadow;
 
-        if (params.bNeuralBRDFEnabled != 0u)
+        if (bValidationLambert)
         {
-            // Neural Disney BRDFによる評価
-            // 出力: x=diffuse_scale, y=specular_GD, z=fresnel, w=clearcoat
-            float NdotV_val = max(dot(N, V), 0.0);
-            float NdotH_val = max(dot(N, H), 0.0);
-            float LdotH_val = max(dot(L, H), 0.0);
-
-            vec4 nn = EvaluateNeuralBRDF(NdotL, NdotV_val, NdotH_val, LdotH_val, roughness);
-
-            // Disney BRDF再構成（RTXNS SimpleInferencing準拠）
-            vec3 Cspec0 = mix(vec3(0.04), albedo, metallic);
-            vec3 diffuseContrib = nn.x * albedo * (1.0 - metallic);
-            vec3 specularContrib = nn.y * mix(Cspec0, vec3(1.0), nn.z) + vec3(nn.w);
-
-            Lo_diffuse += diffuseContrib * radiance;
-            Lo_specular += specularContrib * radiance;
+            // Validation 253: pure direct Lambert. No shadow, ambient, emissive or specular term.
+            Lo_diffuse += (albedo / PI) * radiance;
         }
-        else
+        else if (bValidationPBR || params.bNeuralBRDFEnabled == 0u)
         {
             // Analytical Cook-Torrance BRDF
             float D = DistributionGGX(N, H, roughness);
@@ -558,68 +570,91 @@ void main()
             Lo_diffuse += (kD * albedo / PI) * radiance;
             Lo_specular += specular * radiance;
         }
+        else
+        {
+            // Neural Disney BRDFによる評価
+            // 出力: x=diffuse_scale, y=specular_GD, z=fresnel, w=clearcoat
+            float NdotV_val = max(dot(N, V), 0.0);
+            float NdotH_val = max(dot(N, H), 0.0);
+            float LdotH_val = max(dot(L, H), 0.0);
+
+            vec4 nn = EvaluateNeuralBRDF(NdotL, NdotV_val, NdotH_val, LdotH_val, roughness);
+
+            // Disney BRDF再構成（RTXNS SimpleInferencing準拠）
+            vec3 Cspec0 = mix(vec3(0.04), albedo, metallic);
+            vec3 diffuseContrib = nn.x * albedo * (1.0 - metallic);
+            vec3 specularContrib = nn.y * mix(Cspec0, vec3(1.0), nn.z) + vec3(nn.w);
+
+            Lo_diffuse += diffuseContrib * radiance;
+            Lo_specular += specularContrib * radiance;
+        }
     }
 
-    // エミッシブ（自発光）をGBufferから取得
-    vec3 emissive = texture(gbufferEmissive, fragUV).rgb;
+    vec3 emissive = vec3(0.0);
+    vec3 ambient = vec3(0.0);
+    float specularAO = 1.0;
 
-    // ========================================
-    // アンビエント / IBL計算
-    // ========================================
-    float NdotV = max(dot(N, V), 0.0);
-    vec3 F_ambient = FresnelSchlickRoughness(NdotV, F0, roughness);
-    vec3 kS_ambient = F_ambient;
-    vec3 kD_ambient = (1.0 - kS_ambient) * (1.0 - metallic);
-
-    // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
-    float specularAO = ComputeSpecularAO(NdotV, ao, roughness);
-
-    vec3 ambient;
-
-    if (params.bIBLEnabled != 0u)
+    if (!bValidationLambert && !bValidationPBR)
     {
+        // エミッシブ（自発光）をGBufferから取得
+        emissive = texture(gbufferEmissive, fragUV).rgb;
+
         // ========================================
-        // IBL (Image-Based Lighting)
+        // アンビエント / IBL計算
         // ========================================
-        float maxLod = float(params.envMapMipLevels - 1u);
-        float iblIntensity = params.ambientColor.w; // IBL有効時はambientColor.wがIBL強度
+        float NdotV = max(dot(N, V), 0.0);
+        vec3 F_ambient = FresnelSchlickRoughness(NdotV, F0, roughness);
+        vec3 kS_ambient = F_ambient;
+        vec3 kD_ambient = (1.0 - kS_ambient) * (1.0 - metallic);
 
-        // ---- Diffuse IBL (Irradiance) ----
-        // 法線方向で環境マップの高LOD（ブラー済み）をサンプリング → 拡散放射照度近似
-        vec2 irradianceUV = EquirectangularUV(N);
-        vec3 irradiance = textureLod(envMap, irradianceUV, maxLod * 0.7).rgb;
-        // HDR値を露出補正してからトーンマップ（高輝度を適切に圧縮）
-        float iblExposure = 0.15;
-        irradiance = vec3(1.0) - exp(-irradiance * iblExposure);
-        vec3 diffuseIBL = kD_ambient * irradiance * albedo;
+        // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
+        specularAO = ComputeSpecularAO(NdotV, ao, roughness);
 
-        // ---- Specular IBL (Pre-filtered Environment) ----
-        // 反射ベクトル方向でラフネスに応じたLODをサンプリング
-        vec3 R = reflect(-V, N);
-        vec2 specularUV = EquirectangularUV(R);
-        float lod = roughness * maxLod;
-        vec3 prefilteredColor = textureLod(envMap, specularUV, lod).rgb;
-        // HDR値を露出補正してからトーンマップ
-        prefilteredColor = vec3(1.0) - exp(-prefilteredColor * iblExposure);
+        if (params.bIBLEnabled != 0u)
+        {
+            // ========================================
+            // IBL (Image-Based Lighting)
+            // ========================================
+            float maxLod = float(params.envMapMipLevels - 1u);
+            float iblIntensity = params.ambientColor.w; // IBL有効時はambientColor.wがIBL強度
 
-        // BRDF LUT参照（split-sum近似の第2項）
-        vec2 brdf = texture(brdfLUT, vec2(NdotV, roughness)).rg;
+            // ---- Diffuse IBL (Irradiance) ----
+            // 法線方向で環境マップの高LOD（ブラー済み）をサンプリング → 拡散放射照度近似
+            vec2 irradianceUV = EquirectangularUV(N);
+            vec3 irradiance = textureLod(envMap, irradianceUV, maxLod * 0.7).rgb;
+            // HDR値を露出補正してからトーンマップ（高輝度を適切に圧縮）
+            float iblExposure = 0.15;
+            irradiance = vec3(1.0) - exp(-irradiance * iblExposure);
+            vec3 diffuseIBL = kD_ambient * irradiance * albedo;
 
-        // スペキュラIBL = プリフィルタ環境色 × (F × scale + bias)
-        vec3 specularIBL = prefilteredColor * (F_ambient * brdf.x + brdf.y);
+            // ---- Specular IBL (Pre-filtered Environment) ----
+            // 反射ベクトル方向でラフネスに応じたLODをサンプリング
+            vec3 R = reflect(-V, N);
+            vec2 specularUV = EquirectangularUV(R);
+            float lod = roughness * maxLod;
+            vec3 prefilteredColor = textureLod(envMap, specularUV, lod).rgb;
+            // HDR値を露出補正してからトーンマップ
+            prefilteredColor = vec3(1.0) - exp(-prefilteredColor * iblExposure);
 
-        // AO適用: ディフューズ→AO直接、スペキュラ→スペキュラAO（Lagarde法）
-        ambient = (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
-    }
-    else
-    {
-        // ========================================
-        // フォールバック: フラットアンビエントライト
-        // ========================================
-        vec3 ambientLight = params.ambientColor.rgb * params.ambientColor.w;
-        vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
-        vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
-        ambient = diffuseAmbient * ao + specularAmbient * specularAO;
+            // BRDF LUT参照（split-sum近似の第2項）
+            vec2 brdf = texture(brdfLUT, vec2(NdotV, roughness)).rg;
+
+            // スペキュラIBL = プリフィルタ環境色 × (F × scale + bias)
+            vec3 specularIBL = prefilteredColor * (F_ambient * brdf.x + brdf.y);
+
+            // AO適用: ディフューズ→AO直接、スペキュラ→スペキュラAO（Lagarde法）
+            ambient = (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
+        }
+        else
+        {
+            // ========================================
+            // フォールバック: フラットアンビエントライト
+            // ========================================
+            vec3 ambientLight = params.ambientColor.rgb * params.ambientColor.w;
+            vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
+            vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
+            ambient = diffuseAmbient * ao + specularAmbient * specularAO;
+        }
     }
 
     // 直接光へのAO適用（マイクロシャドウ近似）:
@@ -629,6 +664,15 @@ void main()
     float directSpecAO = mix(1.0, specularAO, 0.3);
 
     // 最終カラー（HDR）
-    vec3 color = ambient + Lo_diffuse * directAO + Lo_specular * directSpecAO + emissive;
-    outColor = vec4(color, 1.0);
+    vec3 color;
+    if (bValidationLambert)
+    {
+        color = Lo_diffuse;
+    }
+    else
+    {
+        color = ambient + Lo_diffuse * directAO + Lo_specular * directSpecAO + emissive;
+    }
+
+    outColor = vec4(ApplySceneColorPreExposure(color), 1.0);
 }

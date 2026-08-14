@@ -7,7 +7,6 @@ namespace NorvesLib::Core::Rendering
 
     struct GPUToneMappingParams
     {
-        float CameraExposure;
         uint32_t operatorType;
         uint32_t bBypass;
         uint32_t _pad0;
@@ -15,6 +14,7 @@ namespace NorvesLib::Core::Rendering
         float vignetteRadius;
         float vignetteSoftness;
         float _pad1;
+        float _pad2;
         float colorFilter[4];
         float contrast;
         float saturation;

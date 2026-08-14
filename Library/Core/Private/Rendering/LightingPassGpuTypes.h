@@ -20,21 +20,21 @@ namespace NorvesLib::Core::Rendering
         uint32_t bSSAOEnabled;
         uint32_t bNeuralBRDFEnabled;
         uint32_t debugViewMode;
-        uint32_t _pad2;
+        float preExposure;
     };
 
     struct GPULightData
     {
         float position[4];
         float direction[4];
-        float color[4];
+        float chromaticityAndIntensity[4];
         float attenuation[4];
     };
 
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);
-    static_assert(offsetof(GPULightData, color) == 32);
+    static_assert(offsetof(GPULightData, chromaticityAndIntensity) == 32);
     static_assert(offsetof(GPULightData, attenuation) == 48);
 
 } // namespace NorvesLib::Core::Rendering

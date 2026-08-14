@@ -10,7 +10,7 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        MaterialResourceData CopyMaterialCreateData(const MaterialCreateData &createInfo)
+        bool TryCopyMaterialCreateData(const MaterialCreateData &createInfo, MaterialResourceData &outData)
         {
             MaterialResourceData data;
             data.AlbedoTexture = createInfo.AlbedoTexture;
@@ -20,17 +20,21 @@ namespace NorvesLib::Core::Rendering
             data.AOTexture = createInfo.AOTexture;
             data.HeightTexture = createInfo.HeightTexture;
             data.HeightScale = createInfo.HeightScale;
-            data.EmissiveColor[0] = createInfo.EmissiveColor[0];
-            data.EmissiveColor[1] = createInfo.EmissiveColor[1];
-            data.EmissiveColor[2] = createInfo.EmissiveColor[2];
-            data.EmissiveStrength = createInfo.EmissiveStrength;
+            if (!TryBuildCanonicalEmissive(createInfo.EmissiveColor,
+                                            createInfo.EmissiveLuminanceNits,
+                                            data.EmissiveColor,
+                                            data.EmissiveLuminanceNits))
+            {
+                return false;
+            }
             data.Blend = createInfo.Blend;
             data.Shading = createInfo.Shading;
             data.bTwoSided = createInfo.bTwoSided;
             data.bCastShadows = createInfo.bCastShadows;
             data.RefCount = 1;
             data.DebugName = createInfo.DebugName;
-            return data;
+            outData = std::move(data);
+            return true;
         }
 
         MaterialCreateData BuildMaterialCreateDataFromNeuralResource(
@@ -78,8 +82,13 @@ namespace NorvesLib::Core::Rendering
 
     MaterialHandle RenderMaterialStore::CreateMaterial(const MaterialCreateData &createInfo)
     {
+        MaterialResourceData data;
+        if (!TryCopyMaterialCreateData(createInfo, data))
+        {
+            return MaterialHandle::Invalid();
+        }
+
         MaterialHandle handle = AllocateMaterialHandle();
-        MaterialResourceData data = CopyMaterialCreateData(createInfo);
 
         Thread::ScopedLock lock(m_Mutex);
         m_Materials[handle.Id] = std::move(data);
@@ -100,6 +109,12 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderMaterialStore::UpdateMaterial(MaterialHandle handle, const MaterialCreateData &createInfo)
     {
+        MaterialResourceData data;
+        if (!TryCopyMaterialCreateData(createInfo, data))
+        {
+            return false;
+        }
+
         Thread::ScopedLock lock(m_Mutex);
         auto it = m_Materials.find(handle.Id);
         if (it == m_Materials.end())
@@ -107,7 +122,6 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        MaterialResourceData data = CopyMaterialCreateData(createInfo);
         data.RefCount = it->second.RefCount;
         it->second = std::move(data);
         return true;
@@ -167,8 +181,13 @@ namespace NorvesLib::Core::Rendering
         }
 
         MaterialHandle handle = AllocateMaterialHandle();
-        MaterialResourceData materialData =
-            CopyMaterialCreateData(BuildMaterialCreateDataFromNeuralResource(desc, neuralMaterial));
+        MaterialResourceData materialData;
+        if (!TryCopyMaterialCreateData(BuildMaterialCreateDataFromNeuralResource(desc, neuralMaterial), materialData))
+        {
+            neuralMaterial->ReleaseOutputTextures(textureRegistrar);
+            neuralMaterial->Shutdown();
+            return MaterialHandle::Invalid();
+        }
 
         {
             Thread::ScopedLock lock(m_Mutex);

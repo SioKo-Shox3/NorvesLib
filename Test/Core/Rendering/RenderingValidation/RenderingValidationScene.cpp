@@ -14,6 +14,8 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
 
+#include <cstdint>
+
 namespace NorvesLib::Test::RenderingValidation
 {
     namespace
@@ -39,7 +41,7 @@ namespace NorvesLib::Test::RenderingValidation
 
         bool EqualObject(const SceneObjectSpec& left, const SceneObjectSpec& right)
         {
-            return left.Primitive == right.Primitive &&
+            return left.Primitive == right.Primitive && left.Material == right.Material &&
                    EqualFloatArray(left.Position, right.Position, 3) &&
                    EqualFloatArray(left.RotationEulerDegrees, right.RotationEulerDegrees, 3) &&
                    EqualFloatArray(left.Scale, right.Scale, 3) &&
@@ -98,42 +100,48 @@ namespace NorvesLib::Test::RenderingValidation
 
         void BuildIndoorLayout(SceneLayout& layout)
         {
-            layout.Objects.push_back(MakeObject(ScenePrimitiveKind::Plane, 0.0f, -2.0f, 0.0f,
-                                                0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
-                                                0.60f, 0.60f, 0.60f, 1.0f));
-            layout.Objects.push_back(MakeObject(ScenePrimitiveKind::Plane, 0.0f, 3.0f, 0.0f,
-                                                180.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
-                                                0.70f, 0.70f, 0.70f, 1.0f));
-            layout.Objects.push_back(MakeObject(ScenePrimitiveKind::Plane, 0.0f, 0.5f, -5.0f,
-                                                90.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
-                                                0.70f, 0.70f, 0.70f, 1.0f));
-            layout.Objects.push_back(MakeObject(ScenePrimitiveKind::Plane, -5.0f, 0.5f, 0.0f,
-                                                0.0f, 0.0f, -90.0f, 1.0f, 1.0f, 1.0f,
-                                                0.65f, 0.15f, 0.15f, 1.0f));
-            layout.Objects.push_back(MakeObject(ScenePrimitiveKind::Plane, 5.0f, 0.5f, 0.0f,
-                                                0.0f, 0.0f, 90.0f, 1.0f, 1.0f, 1.0f,
-                                                0.15f, 0.65f, 0.15f, 1.0f));
-            layout.Objects.push_back(MakeObject(ScenePrimitiveKind::Sphere, -1.5f, -1.0f, 0.0f,
-                                                0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
-                                                0.80f, 0.20f, 0.15f, 1.0f));
-            layout.Objects.push_back(MakeObject(ScenePrimitiveKind::Sphere, 1.5f, -1.25f, -1.0f,
-                                                0.0f, 0.0f, 0.0f, 0.75f, 0.75f, 0.75f,
-                                                0.20f, 0.35f, 0.85f, 1.0f));
+            SceneObjectSpec neutral = MakeObject(ScenePrimitiveKind::Plane, 0.0f, 0.0f, 0.0f,
+                                                  90.0f, 0.0f, 0.0f,
+                                                  R1PlaneScale, R1PlaneScale, R1PlaneScale,
+                                                  0.50f, 0.50f, 0.50f, 1.0f);
+            neutral.Material = MaterialKind::NeutralOpaque;
+            layout.Objects.push_back(neutral);
+
+            SceneObjectSpec emissive = MakeObject(ScenePrimitiveKind::Plane, 0.035f, 0.0f, 0.0f,
+                                                  90.0f, 0.0f, 0.0f, 0.0005f, 0.0005f, 0.0005f,
+                                                  1.0f, 1.0f, 1.0f, 1.0f);
+            emissive.Material = MaterialKind::EmissiveOpaque;
+            layout.Objects.push_back(emissive);
+
+            SceneObjectSpec transparent = MakeObject(ScenePrimitiveKind::Plane, -0.035f, 0.0f, 0.0f,
+                                                      90.0f, 0.0f, 0.0f, 0.0005f, 0.0005f, 0.0005f,
+                                                      1.0f, 1.0f, 1.0f, 0.5f);
+            transparent.Material = MaterialKind::LegacyTransparent;
+            layout.Objects.push_back(transparent);
 
             SceneLightSpec light;
             light.Kind = SceneLightKind::Point;
             light.PositionOrDirection[0] = 0.0f;
-            light.PositionOrDirection[1] = 2.0f;
-            light.PositionOrDirection[2] = 1.0f;
+            light.PositionOrDirection[1] = 0.0f;
+            light.PositionOrDirection[2] = 2.0f;
             light.Color[0] = 1.0f;
-            light.Color[1] = 0.90f;
-            light.Color[2] = 0.75f;
-            light.Intensity = 4.0f;
-            light.Range = 12.0f;
-            light.bCastShadows = true;
+            light.Color[1] = 1.0f;
+            light.Color[2] = 1.0f;
+            light.Intensity = 100.0f;
+            light.Range = 1000.0f;
+            light.bCastShadows = false;
             layout.Lights.push_back(light);
-            layout.Camera = BuildLookAtCamera(Math::Vector3(0.0f, 0.0f, 7.0f), Math::Vector3::Zero,
-                                              ValidationWidth, ValidationHeight);
+            layout.Camera = BuildLookAtCamera(
+                Math::Vector3(0.0f, 0.0f, 4.0f),
+                Math::Vector3(static_cast<float>(R1CameraTargetX),
+                              static_cast<float>(R1CameraTargetY),
+                              0.0f),
+                ValidationWidth, ValidationHeight);
+            layout.Camera.Projection = Core::Rendering::ProjectionType::Orthographic;
+            layout.Camera.OrthoWidth = 0.1f;
+            layout.Camera.OrthoHeight = 0.1f;
+            layout.Camera.NearPlane = 0.1f;
+            layout.Camera.FarPlane = 10.0f;
         }
 
         void BuildOutdoorLayout(Random::Generator& random, SceneLayout& layout)
@@ -279,12 +287,18 @@ namespace NorvesLib::Test::RenderingValidation
     void SceneFixtureResourceLease::Reserve(size_t meshCapacity, size_t materialCapacity)
     {
         m_Meshes.reserve(meshCapacity);
+        m_Textures.reserve(1);
         m_Materials.reserve(materialCapacity);
     }
 
     void SceneFixtureResourceLease::TrackMesh(MeshDataHandle handle)
     {
         m_Meshes.push_back(handle);
+    }
+
+    void SceneFixtureResourceLease::TrackTexture(Core::Rendering::TextureHandle handle)
+    {
+        m_Textures.push_back(handle);
     }
 
     void SceneFixtureResourceLease::TrackMaterial(MaterialHandle handle)
@@ -300,18 +314,23 @@ namespace NorvesLib::Test::RenderingValidation
             {
                 m_pReleaser->ReleaseMaterial(m_Materials[index - 1]);
             }
+            for (size_t index = m_Textures.size(); index > 0; --index)
+            {
+                m_pReleaser->ReleaseTexture(m_Textures[index - 1]);
+            }
             for (size_t index = m_Meshes.size(); index > 0; --index)
             {
                 m_pReleaser->UnregisterMesh(m_Meshes[index - 1]);
             }
         }
         m_Materials.clear();
+        m_Textures.clear();
         m_Meshes.clear();
     }
 
     bool SceneFixtureResourceLease::IsEmpty() const noexcept
     {
-        return m_Meshes.empty() && m_Materials.empty();
+        return m_Meshes.empty() && m_Textures.empty() && m_Materials.empty();
     }
 
     SceneFixtureInitializationGuard::SceneFixtureInitializationGuard(SceneFixtureResourceLease* lease) noexcept
@@ -319,10 +338,34 @@ namespace NorvesLib::Test::RenderingValidation
     {
     }
 
+    void SceneFixtureInitializationGuard::BindObjects(
+        Core::World* world,
+        Core::Container::VariableArray<Core::Entity*>* objects) noexcept
+    {
+        m_pWorld = world;
+        m_pObjects = objects;
+    }
+
+    void SceneFixtureInitializationGuard::TrackObject(Core::Entity* object)
+    {
+        if (m_pObjects != nullptr && object != nullptr)
+        {
+            m_pObjects->push_back(object);
+        }
+    }
+
     SceneFixtureInitializationGuard::~SceneFixtureInitializationGuard() noexcept
     {
         if (!m_bCommitted && m_pLease != nullptr)
         {
+            if (m_pWorld != nullptr && m_pObjects != nullptr)
+            {
+                for (size_t index = m_pObjects->size(); index > 0; --index)
+                {
+                    m_pWorld->RemoveEntity((*m_pObjects)[index - 1]);
+                }
+                m_pObjects->clear();
+            }
             m_pLease->Release();
         }
     }
@@ -344,14 +387,29 @@ namespace NorvesLib::Test::RenderingValidation
         }
 
         m_Lease.Reserve(2, 1);
+        m_Objects.clear();
+        m_pWorld = &world;
         m_pResources = &resources;
         m_Lease.Bind(this);
         SceneFixtureInitializationGuard guard(&m_Lease);
+        guard.BindObjects(&world, &m_Objects);
 
         Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> planeVertices;
         Core::Container::VariableArray<uint32_t> planeIndices;
         Core::Rendering::ProceduralMeshGenerator::GeneratePlane(
             10.0f, 10.0f, 1, 1, planeVertices, planeIndices);
+        for (Core::Rendering::Mesh3DVertex& vertex : planeVertices)
+        {
+            vertex.Normal[0] = 0.0f;
+            vertex.Normal[1] = 0.0f;
+            vertex.Normal[2] = 1.0f;
+        }
+        for (size_t index = 0; index + 2 < planeIndices.size(); index += 3)
+        {
+            const uint32_t second = planeIndices[index + 1];
+            planeIndices[index + 1] = planeIndices[index + 2];
+            planeIndices[index + 2] = second;
+        }
         if (!resources.Meshes().Register(PlaneHandle, planeVertices.data(),
                                          planeVertices.size() * sizeof(Core::Rendering::Mesh3DVertex),
                                          planeIndices.data(), static_cast<uint32_t>(planeIndices.size())))
@@ -372,15 +430,49 @@ namespace NorvesLib::Test::RenderingValidation
         }
         m_Lease.TrackMesh(SphereHandle);
 
-        Core::Rendering::MaterialCreateData materialData;
-        materialData.DebugName = TEXT("RenderingValidationNeutral");
-        materialData.bTwoSided = true;
-        const MaterialHandle material = resources.Materials().Create(materialData);
-        if (!material.IsValid())
+        Core::Rendering::TextureCreateInfo normalTextureInfo;
+        normalTextureInfo.Width = 1;
+        normalTextureInfo.Height = 1;
+        normalTextureInfo.PixelFormat = Core::Rendering::TextureCreateInfo::Format::RGBA16_FLOAT;
+        normalTextureInfo.DebugName = TEXT("RenderingValidationExactFlatNormal");
+        constexpr uint16_t normalPixels[] = {0x3800u, 0x3800u, 0x3C00u, 0x3C00u};
+        const Core::Rendering::TextureHandle normalTexture = resources.Textures().CreateTexture(
+            normalTextureInfo, normalPixels, sizeof(normalPixels));
+        if (!normalTexture.IsValid())
         {
             return false;
         }
-        m_Lease.TrackMaterial(material);
+        m_Lease.TrackTexture(normalTexture);
+
+        Core::Container::FixedArray<MaterialHandle, 3> materials;
+        for (uint32_t index = 0; index < 3u; ++index)
+        {
+            Core::Rendering::MaterialCreateData materialData;
+            materialData.NormalTexture = normalTexture;
+            materialData.DebugName = index == 0u
+                                         ? TEXT("RenderingValidationNeutral")
+                                         : index == 1u ? TEXT("RenderingValidationEmissive")
+                                                       : TEXT("RenderingValidationLegacyTransparent");
+            materialData.bTwoSided = true;
+            materialData.bCastShadows = false;
+            if (index == 1u)
+            {
+                materialData.EmissiveColor[0] = 1.0f;
+                materialData.EmissiveColor[1] = 1.0f;
+                materialData.EmissiveColor[2] = 1.0f;
+                materialData.EmissiveLuminanceNits = 100.0f;
+            }
+            else if (index == 2u)
+            {
+                materialData.Blend = Core::Rendering::BlendMode::Translucent;
+            }
+            materials[index] = resources.Materials().Create(materialData);
+            if (!materials[index].IsValid())
+            {
+                return false;
+            }
+            m_Lease.TrackMaterial(materials[index]);
+        }
 
         for (const SceneObjectSpec& object : m_Layout.Objects)
         {
@@ -389,6 +481,7 @@ namespace NorvesLib::Test::RenderingValidation
             {
                 return false;
             }
+            guard.TrackObject(entity);
             entity->SetPosition(object.Position[0], object.Position[1], object.Position[2]);
             const float radians = Math::Constants::PI / 180.0f;
             entity->SetRotation(Math::QuaternionUtils::FromEulerAngles(Math::Vector3(
@@ -403,7 +496,8 @@ namespace NorvesLib::Test::RenderingValidation
                 return false;
             }
             mesh->SetMeshHandle(object.Primitive == ScenePrimitiveKind::Plane ? PlaneHandle : SphereHandle);
-            mesh->SetMaterial(0, material);
+            const uint32_t materialIndex = static_cast<uint32_t>(object.Material);
+            mesh->SetMaterial(0, materials[materialIndex]);
             for (uint32_t channel = 0; channel < 4; ++channel)
             {
                 mesh->SetCustomData(channel, object.Color[channel]);
@@ -417,6 +511,7 @@ namespace NorvesLib::Test::RenderingValidation
             {
                 return false;
             }
+            guard.TrackObject(entity);
             Core::Component::LightComponent* component = nullptr;
             if (light.Kind == SceneLightKind::Point)
             {
@@ -453,6 +548,7 @@ namespace NorvesLib::Test::RenderingValidation
         {
             return false;
         }
+        guard.TrackObject(sentinelEntity);
         m_pSentinel = world.CreateComponent<FixedStepSentinelComponent>(sentinelEntity);
         if (m_pSentinel == nullptr)
         {
@@ -466,8 +562,17 @@ namespace NorvesLib::Test::RenderingValidation
     void RenderingValidationSceneFixture::Shutdown(Core::Rendering::RenderResources& resources)
     {
         (void)resources;
+        if (m_pWorld != nullptr)
+        {
+            for (size_t index = m_Objects.size(); index > 0; --index)
+            {
+                m_pWorld->RemoveEntity(m_Objects[index - 1]);
+            }
+        }
+        m_Objects.clear();
         m_Lease.Release();
         m_pSentinel = nullptr;
+        m_pWorld = nullptr;
         m_pResources = nullptr;
         m_Layout = {};
     }
@@ -475,6 +580,11 @@ namespace NorvesLib::Test::RenderingValidation
     void RenderingValidationSceneFixture::ApplyCamera(Core::Rendering::RenderWorld& renderWorld) const
     {
         renderWorld.SetMainCamera(m_Layout.Camera);
+    }
+
+    const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetCamera() const
+    {
+        return m_Layout.Camera;
     }
 
     uint64_t RenderingValidationSceneFixture::GetObservedFixedStepCount() const
@@ -493,6 +603,14 @@ namespace NorvesLib::Test::RenderingValidation
         if (m_pResources != nullptr)
         {
             m_pResources->Meshes().Unregister(handle);
+        }
+    }
+
+    void RenderingValidationSceneFixture::ReleaseTexture(Core::Rendering::TextureHandle handle) noexcept
+    {
+        if (m_pResources != nullptr)
+        {
+            m_pResources->Textures().ReleaseTexture(handle);
         }
     }
 

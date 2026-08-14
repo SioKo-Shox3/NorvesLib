@@ -8,7 +8,6 @@ layout(set = 0, binding = 0) uniform sampler2D sceneColor;
 // トーンマッピングパラメータ
 layout(std140, set = 0, binding = 1) uniform ToneMappingParams
 {
-    float CameraExposure;
     uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure
     uint bBypass;
     uint _pad0;
@@ -17,6 +16,7 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
     float vignetteRadius;     // 内側半径 ~0.8
     float vignetteSoftness;   // フォールオフの柔らかさ ~0.5
     float _pad1;
+    float _pad2;
     // Color Grading パラメータ
     vec4 colorFilter;         // カラーフィルター (rgb * intensity in w)
     float contrast;           // コントラスト (1.0 = default)
@@ -122,9 +122,6 @@ void main()
 
     // HDRシーンカラーをサンプリング
     vec3 hdrColor = texture(sceneColor, fragUV).rgb;
-
-    // 全 operator 共通のカメラ露出
-    hdrColor *= params.CameraExposure;
 
     // トーンマッピング適用
     vec3 mapped;

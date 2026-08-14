@@ -11,6 +11,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveColor;
     vec4 pomParams;
+    vec4 sceneColorParams;
 } mvp;
 
 struct InstanceData

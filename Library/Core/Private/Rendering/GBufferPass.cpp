@@ -88,7 +88,7 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBOレイアウト: view(64) + projection(64) + cameraPos(16) + emissiveColor(16) + pomParams(16) = 176 bytes
+            // UBOレイアウト: view(64) + projection(64) + cameraPos(16) + emissiveChromaticityAndLuminanceNits(16) + pomParams(16) = 176 bytes
             constexpr uint32_t UBO_SIZE = 176;
             constexpr uint32_t MAX_OBJECTS = 256; // 1フレームあたりの最大オブジェクト数
 
@@ -488,7 +488,7 @@ namespace NorvesLib::Core::Rendering
             float view[16];
             float projection[16];
             float cameraPosition[4];
-            float emissiveColor[4]; // rgb=エミッシブカラー, a=エミッシブ強度
+            float emissiveChromaticityAndLuminanceNits[4];
             float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=unused, w=unused
         };
 
@@ -544,8 +544,10 @@ namespace NorvesLib::Core::Rendering
             TextureHandle matAO;
             TextureHandle matHeight;
             float matHeightScale = 0.05f;
-            float matEmissiveR = 0.0f, matEmissiveG = 0.0f, matEmissiveB = 0.0f;
-            float matEmissiveStrength = 0.0f;
+            float matEmissiveChromaticityR = 0.0f;
+            float matEmissiveChromaticityG = 0.0f;
+            float matEmissiveChromaticityB = 0.0f;
+            float matEmissiveLuminanceNits = 0.0f;
 
             MaterialHandle materialHandle;
             materialHandle.Id = materialKey;
@@ -561,17 +563,17 @@ namespace NorvesLib::Core::Rendering
                     matAO = matData->AOTexture;
                     matHeight = matData->HeightTexture;
                     matHeightScale = matData->HeightScale;
-                    matEmissiveR = matData->EmissiveColor[0];
-                    matEmissiveG = matData->EmissiveColor[1];
-                    matEmissiveB = matData->EmissiveColor[2];
-                    matEmissiveStrength = matData->EmissiveStrength;
+                    matEmissiveChromaticityR = matData->EmissiveColor[0];
+                    matEmissiveChromaticityG = matData->EmissiveColor[1];
+                    matEmissiveChromaticityB = matData->EmissiveColor[2];
+                    matEmissiveLuminanceNits = matData->EmissiveLuminanceNits;
                 }
             }
 
-            uboData.emissiveColor[0] = matEmissiveR;
-            uboData.emissiveColor[1] = matEmissiveG;
-            uboData.emissiveColor[2] = matEmissiveB;
-            uboData.emissiveColor[3] = matEmissiveStrength;
+            uboData.emissiveChromaticityAndLuminanceNits[0] = matEmissiveChromaticityR;
+            uboData.emissiveChromaticityAndLuminanceNits[1] = matEmissiveChromaticityG;
+            uboData.emissiveChromaticityAndLuminanceNits[2] = matEmissiveChromaticityB;
+            uboData.emissiveChromaticityAndLuminanceNits[3] = matEmissiveLuminanceNits;
 
             uboData.pomParams[0] = matHeightScale;
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;

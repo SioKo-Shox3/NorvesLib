@@ -4,15 +4,29 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 
 using namespace NorvesLib::Core::Rendering;
 
 namespace
 {
+    void ConfigureAssertOutput()
+    {
+#ifdef _MSC_VER
+        _set_error_mode(_OUT_TO_STDERR);
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    }
+
     bool ContainsText(const std::string& source, const std::string& expected)
     {
         return source.find(expected) != std::string::npos;
@@ -34,6 +48,49 @@ namespace
         return position;
     }
 
+    std::size_t CountText(const std::string& source, const std::string& expected)
+    {
+        std::size_t count = 0;
+        std::size_t searchPosition = 0;
+        while (true)
+        {
+            const std::size_t position = source.find(expected, searchPosition);
+            if (position == std::string::npos)
+            {
+                return count;
+            }
+
+            ++count;
+            searchPosition = position + expected.size();
+        }
+    }
+
+    template <typename T>
+    std::size_t PreExposureOffset()
+    {
+        if constexpr (requires(T value) { value.preExposure; })
+        {
+            return offsetof(T, preExposure);
+        }
+
+        return static_cast<std::size_t>(-1);
+    }
+
+    std::string FindShaderUintConstantName(const std::string& source, uint32_t value)
+    {
+        const std::string valueText = " = " + std::to_string(value) + "u;";
+        const std::size_t valuePosition = FindText(source, valueText);
+        const std::size_t declarationPosition = source.rfind("const uint ", valuePosition);
+        assert(declarationPosition != std::string::npos);
+
+        const std::size_t nameStart = declarationPosition + std::string("const uint ").size();
+        const std::size_t nameEnd = source.find(" = ", nameStart);
+        assert(nameEnd != std::string::npos);
+        assert(declarationPosition < nameStart);
+        assert(nameEnd == valuePosition);
+        return source.substr(nameStart, nameEnd - nameStart);
+    }
+
     void AssertShaderDebugModeConstant(const std::string& shaderSource,
                                        const std::string& constantName,
                                        uint32_t expectedValue)
@@ -46,6 +103,8 @@ namespace
 
 int main()
 {
+    ConfigureAssertOutput();
+
     std::cout << "LightingParamsLayoutTest start\n";
 
     assert(sizeof(GPULightingParams) == 256);
@@ -63,7 +122,7 @@ int main()
     assert(offsetof(GPULightingParams, bSSAOEnabled) == 240);
     assert(offsetof(GPULightingParams, bNeuralBRDFEnabled) == 244);
     assert(offsetof(GPULightingParams, debugViewMode) == 248);
-    assert(offsetof(GPULightingParams, _pad2) == 252);
+    assert(PreExposureOffset<GPULightingParams>() == 252);
 
     assert(static_cast<uint8_t>(DebugViewMode::Normal) == 0);
     assert(static_cast<uint8_t>(DebugViewMode::Unlit) == 1);
@@ -87,6 +146,11 @@ int main()
     const std::string shaderSource((std::istreambuf_iterator<char>(shaderFile)),
                                    std::istreambuf_iterator<char>());
     assert(ContainsText(shaderSource, "layout(std140, set = 0, binding = 4) uniform LightingParams"));
+
+    const std::size_t debugViewModeFieldPosition = FindText(shaderSource, "uint debugViewMode;");
+    const std::size_t preExposureFieldPosition = FindText(shaderSource, "float preExposure;");
+    assert(debugViewModeFieldPosition < preExposureFieldPosition);
+
     AssertShaderDebugModeConstant(shaderSource,
                                   "DEBUG_VIEW_MODE_NORMAL",
                                   static_cast<uint32_t>(DebugViewMode::Normal));
@@ -117,6 +181,45 @@ int main()
     AssertShaderDebugModeConstant(shaderSource,
                                   "DEBUG_VIEW_MODE_COUNT",
                                   static_cast<uint32_t>(DebugViewMode::Count));
+
+    const std::string validationLambertMode = FindShaderUintConstantName(shaderSource, 253);
+    const std::string validationPbrMode = FindShaderUintConstantName(shaderSource, 254);
+    assert(CountText(shaderSource, " = 253u;") == 1);
+    assert(CountText(shaderSource, " = 254u;") == 1);
+
+    const std::string validationLambertCheck =
+        "params.debugViewMode == " + validationLambertMode;
+    const std::string validationPbrCheck = "params.debugViewMode == " + validationPbrMode;
+    const std::size_t validationLambertCheckPosition =
+        FindText(shaderSource, validationLambertCheck);
+    const std::size_t validationPbrCheckPosition = FindText(shaderSource, validationPbrCheck);
+    assert(validationLambertCheckPosition != validationPbrCheckPosition);
+
+    assert(static_cast<uint8_t>(DebugViewMode::Normal) == 0);
+    assert(static_cast<uint8_t>(DebugViewMode::Count) == 9);
+    assert(CountText(shaderSource, "params.preExposure") == 1);
+
+    const std::size_t lightDataPosition = FindText(shaderSource, "struct LightData");
+    const std::size_t chromaticityPosition =
+        FindTextAfter(shaderSource, "vec4 chromaticityAndIntensity;", lightDataPosition);
+    const std::size_t lightDataEndPosition = FindTextAfter(shaderSource, "};", lightDataPosition);
+    assert(chromaticityPosition < lightDataEndPosition);
+    assert(!ContainsText(shaderSource, "vec4 color;"));
+    assert(ContainsText(shaderSource,
+                        "light.chromaticityAndIntensity.rgb * light.chromaticityAndIntensity.w"));
+    assert(ContainsText(shaderSource,
+                        "vec4 chromaticityAndIntensity; // xyz=Y=1 chromaticity, w=canonical lux/cd"));
+    assert(ContainsText(shaderSource, "float iblExposure = 0.15;"));
+
+    assert(ContainsText(shaderSource,
+                        "1.0 / max(distance * distance, 0.01 * 0.01)"));
+    assert(!ContainsText(shaderSource, "1.0 / (distance * distance + 1.0)"));
+    assert(ContainsText(shaderSource, "float CalculateRangeWindow(float distance, float range)"));
+    assert(ContainsText(shaderSource, "max(range, 0.0001)"));
+    assert(ContainsText(shaderSource, "return factor * factor;"));
+    assert(CountText(shaderSource,
+                     "CalculateInverseSquareAttenuation(distance) * CalculateRangeWindow(distance, " +
+                         std::string("light.attenuation.x)")) == 2);
 
     assert(ContainsText(shaderSource, "float ComputeDebugDepth01(vec2 uv, float depth)"));
     assert(ContainsText(shaderSource, "vec3 worldPos = ReconstructWorldPosition(uv, depth);"));
@@ -178,6 +281,23 @@ int main()
                         "params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME ||"));
     assert(ContainsText(shaderSource,
                         "params.debugViewMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS"));
+
+    const std::size_t skyOutputPosition = shaderSource.find("outColor = vec4(skyColor, 1.0);", skyBranchPosition);
+    assert(skyOutputPosition == std::string::npos);
+
+    assert(ContainsText(shaderSource, "return sceneColor * params.preExposure;"));
+    assert(CountText(shaderSource, "vec3 ApplySceneColorPreExposure(vec3 sceneColor)") == 1);
+    assert(CountText(shaderSource, "ApplySceneColorPreExposure(skyColor)") == 1);
+    assert(CountText(shaderSource, "ApplySceneColorPreExposure(color)") == 1);
+    assert(ContainsText(shaderSource, "if (bValidationLambert)"));
+    assert(ContainsText(shaderSource, "Lo_diffuse += (albedo / PI) * radiance;"));
+    assert(ContainsText(shaderSource,
+                        "else if (bValidationPBR || params.bNeuralBRDFEnabled == 0u)"));
+    assert(ContainsText(shaderSource,
+                        "if (!bValidationLambert && !bValidationPBR)"));
+    assert(ContainsText(shaderSource,
+                        "if (!bValidationLambert && lightType < 0.5 && params.bShadowEnabled != 0u)"));
+    assert(ContainsText(shaderSource, "color = Lo_diffuse;"));
 
     std::cout << "LightingParamsLayoutTest passed\n";
     return 0;

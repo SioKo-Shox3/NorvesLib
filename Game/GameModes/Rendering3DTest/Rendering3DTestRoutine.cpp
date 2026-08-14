@@ -629,7 +629,7 @@ namespace Game::GameModes
             lightSphereMatInfo.EmissiveColor[0] = 1.0f;
             lightSphereMatInfo.EmissiveColor[1] = 0.9f;
             lightSphereMatInfo.EmissiveColor[2] = 0.3f;
-            lightSphereMatInfo.EmissiveStrength = 8.0f;
+            lightSphereMatInfo.EmissiveLuminanceNits = 8.0f;
             lightSphereMatInfo.DebugName = "LightSphere";
             data.m_LightSphereMaterial = materials.Create(lightSphereMatInfo);
         }

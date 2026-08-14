@@ -18,6 +18,13 @@ namespace NorvesLib::Test::RenderingValidation
     bool RenderingValidationApplicationHandler::OnPreInitialize(
         const Core::Container::VariableArray<Core::Container::String>& args)
     {
+        m_RunConfig = RenderingValidationRunConfig{};
+        m_bCaptureRequested = false;
+        m_bExitRequested = false;
+        m_CaptureRequestRenderedFrame = 0;
+        m_LastAcceptedRequestId = 0;
+        m_LastAcceptedRequestStageToken = 0;
+        m_NextStageToken = 0;
         bool bSceneSpecified = false;
         bool bCaptureSourceSpecified = false;
         for (const Core::Container::String& argument : args)
@@ -123,6 +130,7 @@ namespace NorvesLib::Test::RenderingValidation
 
         Core::Rendering::RenderWorld& renderWorld = Core::Engine::GEngine->GetRenderWorld();
         m_Fixture.ApplyCamera(renderWorld);
+        ApplyCaptureStageState(renderWorld);
         if (!m_bCaptureRequested && m_Fixture.IsCaptureStateStable() &&
             !renderWorld.HasPendingAsyncAssets())
         {
@@ -137,6 +145,12 @@ namespace NorvesLib::Test::RenderingValidation
             }
             m_bCaptureRequested = true;
             m_CaptureRequestRenderedFrame = renderWorld.GetRenderedFrameCount();
+            m_LastAcceptedRequestId = request.RequestId;
+            m_LastAcceptedRequestStageToken = ++m_NextStageToken;
+            LOG_INFO("RenderingValidation capture request accepted: request=%llu stage_token=%llu frame=%llu",
+                     static_cast<unsigned long long>(m_LastAcceptedRequestId),
+                     static_cast<unsigned long long>(m_LastAcceptedRequestStageToken),
+                     static_cast<unsigned long long>(m_CaptureRequestRenderedFrame));
         }
     }
 
@@ -161,6 +175,10 @@ namespace NorvesLib::Test::RenderingValidation
                     return;
                 }
                 const bool bAccepted = EvaluateCapturedFrame(frame, reason);
+                if (bAccepted)
+                {
+                    AdvanceCaptureStage();
+                }
                 Core::Rendering::FrameCaptureRequest followupRequest;
                 if (bAccepted && RequestFollowupCapture(frame, followupRequest))
                 {
@@ -173,13 +191,19 @@ namespace NorvesLib::Test::RenderingValidation
                     }
                     m_bCaptureRequested = true;
                     m_CaptureRequestRenderedFrame = renderedFrames;
+                    m_LastAcceptedRequestId = followupResult.RequestId;
+                    m_LastAcceptedRequestStageToken = ++m_NextStageToken;
+                    LOG_INFO("RenderingValidation follow-up request accepted: request=%llu stage_token=%llu frame=%llu",
+                             static_cast<unsigned long long>(m_LastAcceptedRequestId),
+                             static_cast<unsigned long long>(m_LastAcceptedRequestStageToken),
+                             static_cast<unsigned long long>(m_CaptureRequestRenderedFrame));
                     return;
                 }
                 m_bExitRequested = true;
                 Core::Engine::GEngine->RequestExit(bAccepted ? 0 : 1);
                 if (!bAccepted)
                 {
-                    LOG_ERROR("描画検証の capture 評価に失敗しました");
+                    LOG_ERROR("描画検証の capture 評価に失敗しました: %s", reason.c_str());
                 }
                 return;
             }
@@ -222,6 +246,30 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Rendering::FrameCaptureRequest& /*outRequest*/)
     {
         return false;
+    }
+
+    void RenderingValidationApplicationHandler::ApplyCaptureStageState(
+        Core::Rendering::RenderWorld& /*renderWorld*/)
+    {
+    }
+
+    void RenderingValidationApplicationHandler::AdvanceCaptureStage()
+    {
+    }
+
+    uint64_t RenderingValidationApplicationHandler::GetLastAcceptedRequestId() const
+    {
+        return m_LastAcceptedRequestId;
+    }
+
+    uint64_t RenderingValidationApplicationHandler::GetLastAcceptedRequestStageToken() const
+    {
+        return m_LastAcceptedRequestStageToken;
+    }
+
+    const RenderingValidationSceneFixture& RenderingValidationApplicationHandler::GetFixture() const
+    {
+        return m_Fixture;
     }
 
     void RenderingValidationApplicationHandler::Fail(const char* summary)
