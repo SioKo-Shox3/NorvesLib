@@ -31,6 +31,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <utility>
 #ifdef _MSC_VER
 #include <crtdbg.h>
 #endif
@@ -372,6 +373,818 @@ namespace
         return true;
     }
 
+    struct P4SamplePair
+    {
+        double Xi1 = 0.0;
+        double Xi2 = 0.0;
+    };
+
+    struct P4DfgValue
+    {
+        double A = 0.0;
+        double B = 0.0;
+    };
+
+    struct P4DfgOracle
+    {
+        Core::Container::VariableArray<uint32_t> NdotVIndices;
+        Core::Container::VariableArray<uint32_t> RoughnessIndices;
+        Core::Container::VariableArray<P4DfgValue> Values;
+        double HammersleySobolMaxAbs[3] = {};
+        double HammersleySobolMaxRelative[3] = {};
+        double ProductionSobolMaxAbs[3] = {};
+        double ProductionSobolMaxRelative[3] = {};
+    };
+
+    struct P4RoughnessOracle
+    {
+        P4DfgValue Values[5] = {};
+        bool bValid = false;
+    };
+
+    struct P4RgbValue
+    {
+        double R = 0.0;
+        double G = 0.0;
+        double B = 0.0;
+    };
+
+    struct P4RawMip
+    {
+        uint32_t Mip = 0u;
+        uint32_t Width = 0u;
+        uint32_t Height = 0u;
+        Core::Container::VariableArray<P4RgbValue> Values;
+    };
+
+    struct P4Raw250Oracle
+    {
+        Core::Container::VariableArray<P4RawMip> Mips;
+    };
+
+    struct P4DirectConductorOracle
+    {
+        P4DfgValue Dfg;
+        double RangeWindow = 0.0;
+        double Radiance = 0.0;
+        double Common = 0.0;
+        double CorrectTarget = 0.0;
+        double StoredTarget = 0.0;
+        double StoredHalf = 0.0;
+        double LegacyTarget = 0.0;
+        double LegacyStoredHalf = 0.0;
+        double LegacyStoredPhysical = 0.0;
+        double SensitivityPercent = 0.0;
+    };
+
+    struct P4SobolDirections
+    {
+        uint32_t Values[2][32] = {};
+    };
+
+    constexpr double P4Pi = 3.1415926535897932384626433832795;
+    constexpr double P4HalfUnit = 2.3283064365386962890625e-10;
+    constexpr uint32_t P4DfgTextureSize = 256u;
+    constexpr uint32_t P4DfgSampleCount = 65536u;
+    constexpr uint32_t P4DfgHammersleySampleCount = 16384u;
+    constexpr uint32_t P4DfgProductionSampleCount = 4096u;
+    constexpr double P4RneRangeLimit = 65504.0;
+    constexpr double P4DfgCoordinate = 255.5 / 256.0;
+    constexpr double P4DirectTargetLiteral = 6.4407868244456914;
+    constexpr double P4DirectStoredLiteral = 0.089455372561745711;
+    constexpr double P4DirectStoredHalfLiteral = 0.0894775390625;
+    constexpr double P4DirectLegacyTargetLiteral = 1.9893870539086822;
+    constexpr double P4DirectLegacyStoredHalfLiteral = 0.0276336669921875;
+    constexpr double P4DirectLegacyStoredPhysicalLiteral = 1.9896240234375;
+    constexpr double P4DirectSensitivityPercentLiteral = 69.112670421600331;
+    constexpr uint32_t P4RuntimeMaterialCountPerRoughness = 6u;
+    constexpr uint32_t P4RuntimeTargetMetallicIndex = 2u;
+    constexpr uint32_t P4RuntimeDfgQueryIndices[5] = {3u, 4u, 1u, 5u, 2u};
+
+    enum class P4CaptureSubstage : uint8_t
+    {
+        Primary,
+        Depth,
+        Normal,
+        Material
+    };
+
+    bool BuildP4RuntimeIdentity(P4Scenario scenario,
+                                uint32_t rowIndex,
+                                uint32_t& outMaterialIndex,
+                                uint32_t& outLightCount)
+    {
+        uint32_t roughnessIndex = 0u;
+        uint32_t metallicQueryIndex = 0u;
+        switch (scenario)
+        {
+        case P4Scenario::Raw250TextureRepresentation:
+            if (rowIndex != 0u)
+            {
+                return false;
+            }
+            break;
+        case P4Scenario::Raw251DfgLut:
+            if (rowIndex >= 25u)
+            {
+                return false;
+            }
+            roughnessIndex = rowIndex / 5u;
+            metallicQueryIndex = P4RuntimeDfgQueryIndices[rowIndex % 5u];
+            break;
+        case P4Scenario::Raw252RoughnessSweep:
+            if (rowIndex >= 5u)
+            {
+                return false;
+            }
+            roughnessIndex = rowIndex;
+            metallicQueryIndex = 0u;
+            break;
+        case P4Scenario::Raw252TargetNotOne:
+            if (rowIndex != 5u)
+            {
+                return false;
+            }
+            roughnessIndex = 1u;
+            metallicQueryIndex = P4RuntimeTargetMetallicIndex;
+            break;
+        case P4Scenario::Raw252WhiteFurnace:
+            if (rowIndex >= 15u)
+            {
+                return false;
+            }
+            roughnessIndex = rowIndex / 3u;
+            metallicQueryIndex = rowIndex % 3u;
+            break;
+        case P4Scenario::Raw254DirectConductorEndpoint:
+            if (rowIndex != 0u)
+            {
+                return false;
+            }
+            roughnessIndex = 4u;
+            metallicQueryIndex = P4RuntimeTargetMetallicIndex;
+            break;
+        default:
+            return false;
+        }
+        outMaterialIndex = roughnessIndex * P4RuntimeMaterialCountPerRoughness +
+                           metallicQueryIndex;
+        outLightCount = scenario == P4Scenario::Raw254DirectConductorEndpoint ? 1u : 0u;
+        return outMaterialIndex < 30u;
+    }
+    constexpr double P4DirectLegacyEnvelope = 0.005;
+
+    uint32_t ReverseBits32(uint32_t value)
+    {
+        value = (value << 16u) | (value >> 16u);
+        value = ((value & 0x55555555u) << 1u) | ((value & 0xAAAAAAAAu) >> 1u);
+        value = ((value & 0x33333333u) << 2u) | ((value & 0xCCCCCCCCu) >> 2u);
+        value = ((value & 0x0F0F0F0Fu) << 4u) | ((value & 0xF0F0F0F0u) >> 4u);
+        value = ((value & 0x00FF00FFu) << 8u) | ((value & 0xFF00FF00u) >> 8u);
+        return value;
+    }
+
+    uint32_t Mix32(uint32_t value)
+    {
+        value += 0x9E3779B9u;
+        value = (value ^ (value >> 16u)) * 0x85EBCA6Bu;
+        value = (value ^ (value >> 13u)) * 0xC2B2AE35u;
+        return value ^ (value >> 16u);
+    }
+
+    uint32_t Owen32(uint32_t value, uint32_t key)
+    {
+        uint32_t output = 0u;
+        for (int32_t bit = 31; bit >= 0; --bit)
+        {
+            const uint32_t salt = static_cast<uint32_t>(31 - bit) * 0x9E3779B9u;
+            const uint32_t flip = (Mix32(key ^ output ^ salt) >> 31u) & 1u;
+            const uint32_t sourceBit = (value >> static_cast<uint32_t>(bit)) & 1u;
+            output = (output << 1u) | (sourceBit ^ flip);
+        }
+        return output;
+    }
+
+    void BuildP4SobolDirections(P4SobolDirections& outDirections)
+    {
+        for (uint32_t index = 0u; index < 32u; ++index)
+        {
+            outDirections.Values[0][index] = 1u << (31u - index);
+        }
+        uint32_t m[32] = {};
+        m[0] = 1u;
+        m[1] = 3u;
+        m[2] = 5u;
+        for (uint32_t index = 3u; index < 32u; ++index)
+        {
+            m[index] = (m[index - 2u] << 2u) ^
+                       (m[index - 3u] << 3u) ^
+                       m[index - 3u];
+        }
+        for (uint32_t index = 0u; index < 32u; ++index)
+        {
+            outDirections.Values[1][index] = m[index] << (31u - index);
+        }
+    }
+
+    uint32_t SobolUInt(uint32_t index, uint32_t dimension,
+                       const P4SobolDirections& directions)
+    {
+        const uint32_t gray = index ^ (index >> 1u);
+        uint32_t value = 0u;
+        for (uint32_t bit = 0u; bit < 32u; ++bit)
+        {
+            if (((gray >> bit) & 1u) != 0u)
+            {
+                value ^= directions.Values[dimension][bit];
+            }
+        }
+        return value;
+    }
+
+    bool BuildP4HammersleySamples(uint32_t sampleCount,
+                                  Core::Container::VariableArray<P4SamplePair>& outSamples)
+    {
+        if (sampleCount == 0u)
+        {
+            return false;
+        }
+        outSamples.clear();
+        outSamples.reserve(sampleCount);
+        for (uint32_t index = 0u; index < sampleCount; ++index)
+        {
+            P4SamplePair sample;
+            sample.Xi1 = static_cast<double>(index) / static_cast<double>(sampleCount);
+            sample.Xi2 = static_cast<double>(ReverseBits32(index)) * P4HalfUnit;
+            outSamples.push_back(sample);
+        }
+        return true;
+    }
+
+    bool BuildP4SobolSamples(uint32_t sampleCount,
+                             Core::Container::VariableArray<P4SamplePair>& outSamples)
+    {
+        if (sampleCount == 0u)
+        {
+            return false;
+        }
+        P4SobolDirections directions;
+        BuildP4SobolDirections(directions);
+        outSamples.clear();
+        outSamples.reserve(sampleCount);
+        for (uint32_t index = 0u; index < sampleCount; ++index)
+        {
+            P4SamplePair sample;
+            sample.Xi1 = (static_cast<double>(Owen32(
+                             SobolUInt(index, 0u, directions), 0x12345678u)) + 0.5) /
+                         4294967296.0;
+            sample.Xi2 = (static_cast<double>(Owen32(
+                             SobolUInt(index, 1u, directions), 0x9ABCDEF0u)) + 0.5) /
+                         4294967296.0;
+            outSamples.push_back(sample);
+        }
+        return true;
+    }
+
+    double QuantizeP4R8(double value)
+    {
+        return std::floor(std::clamp(value, 0.0, 1.0) * 255.0 + 0.5) / 255.0;
+    }
+
+    void AddP4UniqueIndex(Core::Container::VariableArray<uint32_t>& indices,
+                          uint32_t index)
+    {
+        for (const uint32_t existing : indices)
+        {
+            if (existing == index)
+            {
+                return;
+            }
+        }
+        indices.push_back(index);
+    }
+
+    void BuildP4QueryIndices(const double* values,
+                             Core::Container::VariableArray<uint32_t>& outIndices)
+    {
+        outIndices.clear();
+        for (uint32_t index = 0u; index < 5u; ++index)
+        {
+            const double quantized = QuantizeP4R8(values[index]);
+            const double coordinate = std::clamp(
+                quantized,
+                0.5 / static_cast<double>(P4DfgTextureSize),
+                255.5 / static_cast<double>(P4DfgTextureSize));
+            const double texelPosition = coordinate * static_cast<double>(P4DfgTextureSize) - 0.5;
+            const uint32_t first = static_cast<uint32_t>(std::floor(texelPosition));
+            AddP4UniqueIndex(outIndices, first);
+            AddP4UniqueIndex(outIndices, std::min(first + 1u, P4DfgTextureSize - 1u));
+        }
+    }
+
+    P4DfgValue IntegrateP4Dfg(double nDotV,
+                              double roughness,
+                              const Core::Container::VariableArray<P4SamplePair>& samples)
+    {
+        const double alpha = roughness * roughness;
+        const double alphaSquared = alpha * alpha;
+        const double k = alpha / 2.0;
+        const double viewX = std::sqrt(std::max(0.0, 1.0 - nDotV * nDotV));
+        double sumA = 0.0;
+        double sumB = 0.0;
+        for (const P4SamplePair& sample : samples)
+        {
+            const double phi = 2.0 * P4Pi * sample.Xi1;
+            const double denominator = 1.0 + (alphaSquared - 1.0) * sample.Xi2;
+            const double cosThetaH = std::sqrt(std::max(0.0,
+                (1.0 - sample.Xi2) / denominator));
+            const double sinThetaH = std::sqrt(std::max(0.0, 1.0 - cosThetaH * cosThetaH));
+            const double halfX = sinThetaH * std::cos(phi);
+            const double halfY = sinThetaH * std::sin(phi);
+            const double halfZ = cosThetaH;
+            const double viewDotHalf = std::max(0.0, viewX * halfX + nDotV * halfZ);
+            const double lightZ = 2.0 * viewDotHalf * halfZ - nDotV;
+            const double nDotL = std::max(0.0, lightZ);
+            const double nDotH = std::max(0.0, halfZ);
+            if (nDotL <= 0.0)
+            {
+                continue;
+            }
+
+            const double geometryView = nDotV / (nDotV * (1.0 - k) + k);
+            const double geometryLight = nDotL / (nDotL * (1.0 - k) + k);
+            const double visibility = geometryView * geometryLight * viewDotHalf /
+                                      (nDotH * nDotV + 1.0e-4);
+            const double fresnel = std::pow(1.0 - viewDotHalf, 5.0);
+            sumA += (1.0 - fresnel) * visibility;
+            sumB += fresnel * visibility;
+        }
+
+        P4DfgValue result;
+        result.A = std::clamp(sumA / static_cast<double>(samples.size()), 0.0, 1.0);
+        result.B = std::clamp(sumB / static_cast<double>(samples.size()), 0.0, 1.0);
+        return result;
+    }
+
+    void AccumulateP4CrossCheck(
+        const P4DfgValue& left,
+        const P4DfgValue& right,
+        double outMaxAbs[3],
+        double outMaxRelative[3])
+    {
+        const double valuesLeft[3] = {left.A, left.B, left.A + left.B};
+        const double valuesRight[3] = {right.A, right.B, right.A + right.B};
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            const double absolute = std::abs(valuesLeft[channel] - valuesRight[channel]);
+            outMaxAbs[channel] = std::max(outMaxAbs[channel], absolute);
+            if (std::abs(valuesRight[channel]) >= 0.01)
+            {
+                outMaxRelative[channel] = std::max(
+                    outMaxRelative[channel], absolute / std::abs(valuesRight[channel]));
+            }
+        }
+    }
+
+    const P4DfgValue* FindP4DfgValue(const P4DfgOracle& oracle,
+                                     uint32_t x,
+                                     uint32_t y)
+    {
+        for (const P4DfgValue& value : oracle.Values)
+        {
+            const size_t index = static_cast<size_t>(&value - oracle.Values.data());
+            const uint32_t storedX = oracle.NdotVIndices[index % oracle.NdotVIndices.size()];
+            const uint32_t storedY = oracle.RoughnessIndices[index / oracle.NdotVIndices.size()];
+            if (storedX == x && storedY == y)
+            {
+                return &value;
+            }
+        }
+        return nullptr;
+    }
+
+    bool BuildP4DfgOracle(P4DfgOracle& outOracle)
+    {
+        if (!ValidateIeee754Binary16RneTable())
+        {
+            return false;
+        }
+
+        const double nDotVQueries[] = {0.10, 0.25, 0.50, 0.75, 1.00};
+        const double roughnessQueries[] = {0.05, 0.25, 0.50, 0.75, 1.00};
+        outOracle.NdotVIndices.clear();
+        outOracle.RoughnessIndices.clear();
+        BuildP4QueryIndices(nDotVQueries, outOracle.NdotVIndices);
+        BuildP4QueryIndices(roughnessQueries, outOracle.RoughnessIndices);
+        if (outOracle.NdotVIndices.size() != 9u ||
+            outOracle.RoughnessIndices.size() != 9u)
+        {
+            return false;
+        }
+
+        Core::Container::VariableArray<P4SamplePair> hammersleySamples;
+        Core::Container::VariableArray<P4SamplePair> productionSamples;
+        Core::Container::VariableArray<P4SamplePair> sobolSamples;
+        if (!BuildP4HammersleySamples(P4DfgHammersleySampleCount, hammersleySamples) ||
+            !BuildP4HammersleySamples(P4DfgProductionSampleCount, productionSamples) ||
+            !BuildP4SobolSamples(P4DfgSampleCount, sobolSamples))
+        {
+            return false;
+        }
+        P4SobolDirections smokeDirections;
+        BuildP4SobolDirections(smokeDirections);
+        if (Owen32(SobolUInt(0u, 0u, smokeDirections), 0x12345678u) != 0x312E10D4u ||
+            Owen32(SobolUInt(0u, 1u, smokeDirections), 0x9ABCDEF0u) != 0x531A11A7u)
+        {
+            return false;
+        }
+
+        Core::Container::VariableArray<P4DfgValue> hammersleyValues;
+        Core::Container::VariableArray<P4DfgValue> productionValues;
+        Core::Container::VariableArray<P4DfgValue> sobolValues;
+        hammersleyValues.reserve(81u);
+        productionValues.reserve(81u);
+        sobolValues.reserve(81u);
+        for (const uint32_t roughnessIndex : outOracle.RoughnessIndices)
+        {
+            const double roughness =
+                (static_cast<double>(roughnessIndex) + 0.5) / P4DfgTextureSize;
+            for (const uint32_t nDotVIndex : outOracle.NdotVIndices)
+            {
+                const double nDotV =
+                    (static_cast<double>(nDotVIndex) + 0.5) / P4DfgTextureSize;
+                hammersleyValues.push_back(IntegrateP4Dfg(nDotV, roughness, hammersleySamples));
+                productionValues.push_back(IntegrateP4Dfg(nDotV, roughness, productionSamples));
+                sobolValues.push_back(IntegrateP4Dfg(nDotV, roughness, sobolSamples));
+            }
+        }
+
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            outOracle.HammersleySobolMaxAbs[channel] = 0.0;
+            outOracle.HammersleySobolMaxRelative[channel] = 0.0;
+            outOracle.ProductionSobolMaxAbs[channel] = 0.0;
+            outOracle.ProductionSobolMaxRelative[channel] = 0.0;
+        }
+        for (size_t index = 0u; index < sobolValues.size(); ++index)
+        {
+            AccumulateP4CrossCheck(hammersleyValues[index], sobolValues[index],
+                                   outOracle.HammersleySobolMaxAbs,
+                                   outOracle.HammersleySobolMaxRelative);
+            AccumulateP4CrossCheck(productionValues[index], sobolValues[index],
+                                   outOracle.ProductionSobolMaxAbs,
+                                   outOracle.ProductionSobolMaxRelative);
+        }
+        outOracle.Values.clear();
+        outOracle.Values.reserve(81u);
+        for (const P4DfgValue& value : hammersleyValues)
+        {
+            P4DfgValue encoded;
+            encoded.A = static_cast<double>(DecodeIeee754Binary16(
+                EncodeIeee754Binary16Rne(static_cast<float>(value.A))));
+            encoded.B = static_cast<double>(DecodeIeee754Binary16(
+                EncodeIeee754Binary16Rne(static_cast<float>(value.B))));
+            outOracle.Values.push_back(encoded);
+        }
+        return true;
+    }
+
+    bool BuildP4RoughnessOracle(P4RoughnessOracle& outOracle)
+    {
+        constexpr double roughnessQueries[5] = {0.05, 0.25, 0.50, 0.75, 1.00};
+        outOracle = {};
+        Core::Container::VariableArray<P4SamplePair> sobolSamples;
+        if (!BuildP4SobolSamples(P4DfgSampleCount, sobolSamples))
+        {
+            return false;
+        }
+        const double nDotV = std::clamp(
+            QuantizeP4R8(1.0),
+            0.5 / P4DfgTextureSize,
+            255.5 / P4DfgTextureSize);
+        for (uint32_t index = 0u; index < 5u; ++index)
+        {
+            const double roughness = std::clamp(
+                QuantizeP4R8(roughnessQueries[index]),
+                0.5 / P4DfgTextureSize,
+                255.5 / P4DfgTextureSize);
+            const P4DfgValue raw = IntegrateP4Dfg(nDotV, roughness, sobolSamples);
+            P4DfgValue& canonical = outOracle.Values[index];
+            canonical.A = static_cast<double>(DecodeIeee754Binary16(
+                EncodeIeee754Binary16Rne(static_cast<float>(raw.A))));
+            canonical.B = static_cast<double>(DecodeIeee754Binary16(
+                EncodeIeee754Binary16Rne(static_cast<float>(raw.B))));
+            if (!std::isfinite(canonical.A) || !std::isfinite(canonical.B) ||
+                canonical.A < 0.0 || canonical.B < 0.0 ||
+                canonical.A >= P4RneRangeLimit || canonical.B >= P4RneRangeLimit)
+            {
+                return false;
+            }
+        }
+        outOracle.bValid = true;
+        return true;
+    }
+
+    bool BuildP4DirectConductorOracle(P4DirectConductorOracle& outOracle)
+    {
+        Core::Container::VariableArray<P4SamplePair> samples;
+        if (!BuildP4HammersleySamples(P4DfgHammersleySampleCount, samples))
+        {
+            return false;
+        }
+
+        const P4DfgValue rawDfg = IntegrateP4Dfg(
+            P4DfgCoordinate,
+            P4DfgCoordinate,
+            samples);
+        outOracle.Dfg.A = static_cast<double>(DecodeIeee754Binary16(
+            EncodeIeee754Binary16Rne(static_cast<float>(rawDfg.A))));
+        outOracle.Dfg.B = static_cast<double>(DecodeIeee754Binary16(
+            EncodeIeee754Binary16Rne(static_cast<float>(rawDfg.B))));
+        if (!std::isfinite(outOracle.Dfg.A) || !std::isfinite(outOracle.Dfg.B) ||
+            std::abs(outOracle.Dfg.A - 0.308837890625) > 1.0e-12 ||
+            std::abs(outOracle.Dfg.B - 0.000035405158996582031) > 1.0e-18)
+        {
+            return false;
+        }
+
+        constexpr double intensityCd = 100.0;
+        constexpr double distanceMeters = 2.0;
+        constexpr double rangeMeters = 1000.0;
+        outOracle.RangeWindow = std::pow(
+            1.0 - std::pow(distanceMeters / rangeMeters, 4.0), 2.0);
+        outOracle.Radiance = intensityCd /
+            (distanceMeters * distanceMeters) * outOracle.RangeWindow;
+        outOracle.Common = (1.0 / P4Pi) / (4.0 + 0.0001);
+        const double ess = outOracle.Dfg.A + outOracle.Dfg.B;
+        if (!std::isfinite(ess) || ess <= 0.0)
+        {
+            return false;
+        }
+
+        const double compensation = 1.0 / ess;
+        outOracle.CorrectTarget = outOracle.Radiance * outOracle.Common * compensation;
+        outOracle.StoredTarget = outOracle.CorrectTarget / 72.0;
+        outOracle.StoredHalf = static_cast<double>(DecodeIeee754Binary16(
+            EncodeIeee754Binary16Rne(static_cast<float>(outOracle.StoredTarget))));
+        outOracle.LegacyTarget = outOracle.Radiance * outOracle.Common;
+        outOracle.LegacyStoredHalf = static_cast<double>(DecodeIeee754Binary16(
+            EncodeIeee754Binary16Rne(static_cast<float>(outOracle.LegacyTarget / 72.0))));
+        outOracle.LegacyStoredPhysical = outOracle.LegacyStoredHalf * 72.0;
+        outOracle.SensitivityPercent =
+            std::abs(outOracle.CorrectTarget - outOracle.LegacyTarget) /
+            outOracle.CorrectTarget * 100.0;
+
+        return std::isfinite(outOracle.CorrectTarget) &&
+               std::isfinite(outOracle.StoredTarget) &&
+               std::isfinite(outOracle.StoredHalf) &&
+               std::isfinite(outOracle.LegacyTarget) &&
+               std::isfinite(outOracle.LegacyStoredHalf) &&
+               std::isfinite(outOracle.LegacyStoredPhysical) &&
+               std::isfinite(outOracle.SensitivityPercent) &&
+               std::abs(outOracle.CorrectTarget - P4DirectTargetLiteral) <= 1.0e-12 &&
+               std::abs(outOracle.StoredTarget - P4DirectStoredLiteral) <= 1.0e-12 &&
+               std::abs(outOracle.StoredHalf - P4DirectStoredHalfLiteral) <= 1.0e-12 &&
+               std::abs(outOracle.LegacyTarget - P4DirectLegacyTargetLiteral) <= 1.0e-12 &&
+               std::abs(outOracle.LegacyStoredHalf - P4DirectLegacyStoredHalfLiteral) <= 1.0e-12 &&
+               std::abs(outOracle.LegacyStoredPhysical -
+                        P4DirectLegacyStoredPhysicalLiteral) <= 1.0e-12 &&
+               std::abs(outOracle.SensitivityPercent -
+                        P4DirectSensitivityPercentLiteral) <= 1.0e-12;
+    }
+
+    bool SampleP4DfgOracle(const P4DfgOracle& oracle,
+                           double nDotV,
+                           double roughness,
+                           P4DfgValue& outValue)
+    {
+        if (oracle.NdotVIndices.size() != 9u || oracle.RoughnessIndices.size() != 9u ||
+            oracle.Values.size() != 81u)
+        {
+            return false;
+        }
+        const double coordinateX = std::clamp(
+            QuantizeP4R8(nDotV), 0.5 / P4DfgTextureSize, 255.5 / P4DfgTextureSize);
+        const double coordinateY = std::clamp(
+            QuantizeP4R8(roughness), 0.5 / P4DfgTextureSize, 255.5 / P4DfgTextureSize);
+        const double positionX = coordinateX * P4DfgTextureSize - 0.5;
+        const double positionY = coordinateY * P4DfgTextureSize - 0.5;
+        const uint32_t x0 = static_cast<uint32_t>(std::floor(positionX));
+        const uint32_t y0 = static_cast<uint32_t>(std::floor(positionY));
+        const uint32_t x1 = std::min(x0 + 1u, P4DfgTextureSize - 1u);
+        const uint32_t y1 = std::min(y0 + 1u, P4DfgTextureSize - 1u);
+        const double wx = positionX - std::floor(positionX);
+        const double wy = positionY - std::floor(positionY);
+        const P4DfgValue* v00 = FindP4DfgValue(oracle, x0, y0);
+        const P4DfgValue* v10 = FindP4DfgValue(oracle, x1, y0);
+        const P4DfgValue* v01 = FindP4DfgValue(oracle, x0, y1);
+        const P4DfgValue* v11 = FindP4DfgValue(oracle, x1, y1);
+        if (v00 == nullptr || v10 == nullptr || v01 == nullptr || v11 == nullptr)
+        {
+            return false;
+        }
+        const double topA = v00->A + (v10->A - v00->A) * wx;
+        const double bottomA = v01->A + (v11->A - v01->A) * wx;
+        const double topB = v00->B + (v10->B - v00->B) * wx;
+        const double bottomB = v01->B + (v11->B - v01->B) * wx;
+        outValue.A = topA + (bottomA - topA) * wy;
+        outValue.B = topB + (bottomB - topB) * wy;
+        return true;
+    }
+
+    P4RgbValue P4RawDirection(double u, double v)
+    {
+        const double phi = 2.0 * P4Pi * (u - 0.5);
+        const double theta = P4Pi * v;
+        const double sinTheta = std::sin(theta);
+        P4RgbValue direction;
+        direction.R = sinTheta * std::cos(phi);
+        direction.G = std::cos(theta);
+        direction.B = sinTheta * std::sin(phi);
+        return direction;
+    }
+
+    double IntegrateP4Raw250Coefficient(
+        double roughness,
+        const Core::Container::VariableArray<P4SamplePair>& samples)
+    {
+        const double alpha = roughness * roughness;
+        const double alphaSquared = alpha * alpha;
+        double weightedSum = 0.0;
+        double weightSum = 0.0;
+        for (const P4SamplePair& sample : samples)
+        {
+            const double mu = sample.Xi1;
+            const double phi = 2.0 * P4Pi * sample.Xi2;
+            const double tangent = std::sqrt(std::max(0.0, 1.0 - mu * mu));
+            const double lightX = tangent * std::cos(phi);
+            const double lightY = tangent * std::sin(phi);
+            const double lightZ = mu;
+            const double halfLength = std::sqrt(std::max(1.0e-12,
+                lightX * lightX + lightY * lightY + (1.0 + lightZ) * (1.0 + lightZ)));
+            const double halfZ = (1.0 + lightZ) / halfLength;
+            const double denominator = P4Pi *
+                std::pow(halfZ * halfZ * (alphaSquared - 1.0) + 1.0, 2.0);
+            const double distribution = alphaSquared / std::max(denominator, 1.0e-12);
+            const double weight = distribution * mu;
+            weightSum += weight;
+            weightedSum += weight * mu;
+        }
+        return weightSum > 0.0 ? weightedSum / weightSum : 0.0;
+    }
+
+    const P4RawMip* FindP4RawMip(const P4Raw250Oracle& oracle, uint32_t mip)
+    {
+        for (const P4RawMip& value : oracle.Mips)
+        {
+            if (value.Mip == mip)
+            {
+                return &value;
+            }
+        }
+        return nullptr;
+    }
+
+    P4RgbValue GetP4RawMipTexel(const P4RawMip& mip, uint32_t x, uint32_t y)
+    {
+        const size_t index = static_cast<size_t>(y) * mip.Width + x;
+        return mip.Values[index];
+    }
+
+    uint32_t WrapP4Index(int64_t value, uint32_t size)
+    {
+        const int64_t signedSize = static_cast<int64_t>(size);
+        const int64_t wrapped = value % signedSize;
+        return static_cast<uint32_t>(wrapped < 0 ? wrapped + signedSize : wrapped);
+    }
+
+    P4RgbValue SampleP4RawMip(const P4RawMip& mip, double u, double v)
+    {
+        const double xPosition = u * static_cast<double>(mip.Width) - 0.5;
+        const double yPosition = v * static_cast<double>(mip.Height) - 0.5;
+        const int64_t x0 = static_cast<int64_t>(std::floor(xPosition));
+        const int64_t y0 = static_cast<int64_t>(std::floor(yPosition));
+        const uint32_t x1 = WrapP4Index(x0 + 1, mip.Width);
+        const uint32_t xWrapped = WrapP4Index(x0, mip.Width);
+        const uint32_t yClamped = static_cast<uint32_t>(std::clamp<int64_t>(
+            y0, 0, static_cast<int64_t>(mip.Height - 1u)));
+        const uint32_t yNext = static_cast<uint32_t>(std::clamp<int64_t>(
+            y0 + 1, 0, static_cast<int64_t>(mip.Height - 1u)));
+        const double wx = xPosition - std::floor(xPosition);
+        const double wy = yPosition - std::floor(yPosition);
+        const P4RgbValue c00 = GetP4RawMipTexel(mip, xWrapped, yClamped);
+        const P4RgbValue c10 = GetP4RawMipTexel(mip, x1, yClamped);
+        const P4RgbValue c01 = GetP4RawMipTexel(mip, xWrapped, yNext);
+        const P4RgbValue c11 = GetP4RawMipTexel(mip, x1, yNext);
+        P4RgbValue result;
+        const double topR = c00.R + (c10.R - c00.R) * wx;
+        const double bottomR = c01.R + (c11.R - c01.R) * wx;
+        const double topG = c00.G + (c10.G - c00.G) * wx;
+        const double bottomG = c01.G + (c11.G - c01.G) * wx;
+        const double topB = c00.B + (c10.B - c00.B) * wx;
+        const double bottomB = c01.B + (c11.B - c01.B) * wx;
+        result.R = topR + (bottomR - topR) * wy;
+        result.G = topG + (bottomG - topG) * wy;
+        result.B = topB + (bottomB - topB) * wy;
+        return result;
+    }
+
+    bool BuildP4Raw250Oracle(P4Raw250Oracle& outOracle)
+    {
+        Core::Container::VariableArray<P4SamplePair> samples;
+        if (!BuildP4SobolSamples(P4DfgSampleCount, samples))
+        {
+            return false;
+        }
+        constexpr uint32_t mips[] = {0u, 1u, 2u, 4u, 8u};
+        outOracle.Mips.clear();
+        outOracle.Mips.reserve(5u);
+        for (const uint32_t mip : mips)
+        {
+            P4RawMip result;
+            result.Mip = mip;
+            result.Width = std::max(1u, 256u >> mip);
+            result.Height = std::max(1u, 128u >> mip);
+            result.Values.reserve(static_cast<size_t>(result.Width) * result.Height);
+            const double coefficient = mip == 0u
+                                           ? 0.0
+                                           : IntegrateP4Raw250Coefficient(
+                                                 static_cast<double>(mip) / 8.0, samples);
+            for (uint32_t y = 0u; y < result.Height; ++y)
+            {
+                for (uint32_t x = 0u; x < result.Width; ++x)
+                {
+                    const P4RgbValue direction = P4RawDirection(
+                        (static_cast<double>(x) + 0.5) / result.Width,
+                        (static_cast<double>(y) + 0.5) / result.Height);
+                    P4RgbValue value;
+                    if (mip == 0u)
+                    {
+                        value.R = 64.0 + 16.0 * direction.R;
+                        value.G = 64.0 + 16.0 * direction.G;
+                        value.B = 64.0 + 16.0 * direction.B;
+                    }
+                    else
+                    {
+                        value.R = 64.0 + 16.0 * coefficient * direction.R;
+                        value.G = 64.0 + 16.0 * coefficient * direction.G;
+                        value.B = 64.0 + 16.0 * coefficient * direction.B;
+                    }
+                    value.R = DecodeIeee754Binary16(EncodeIeee754Binary16Rne(
+                        static_cast<float>(value.R)));
+                    value.G = DecodeIeee754Binary16(EncodeIeee754Binary16Rne(
+                        static_cast<float>(value.G)));
+                    value.B = DecodeIeee754Binary16(EncodeIeee754Binary16Rne(
+                        static_cast<float>(value.B)));
+                    result.Values.push_back(value);
+                }
+            }
+            outOracle.Mips.push_back(std::move(result));
+        }
+        const P4RawMip* mip8 = FindP4RawMip(outOracle, 8u);
+        if (mip8 == nullptr || mip8->Values.size() != 1u ||
+            std::abs(mip8->Values[0].R - 74.6875) > 0.1 ||
+            std::abs(mip8->Values[0].G - 64.0) > 0.1 ||
+            std::abs(mip8->Values[0].B - 64.0) > 0.1)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    bool SampleP4Raw250Oracle(const P4Raw250Oracle& oracle,
+                              double u,
+                              double v,
+                              double lod,
+                              P4RgbValue& outValue)
+    {
+        const double floorLod = std::floor(lod);
+        const uint32_t lowerMip = std::min(8u, static_cast<uint32_t>(floorLod));
+        const double mipWeight = std::clamp(lod - floorLod, 0.0, 1.0);
+        const P4RawMip* lower = FindP4RawMip(oracle, lowerMip);
+        if (lower == nullptr)
+        {
+            return false;
+        }
+        if (mipWeight == 0.0)
+        {
+            outValue = SampleP4RawMip(*lower, u, v);
+            return true;
+        }
+        const uint32_t upperMip = std::min(8u, lowerMip + 1u);
+        const P4RawMip* upper = FindP4RawMip(oracle, upperMip);
+        if (upper == nullptr)
+        {
+            return false;
+        }
+        const P4RgbValue lowerValue = SampleP4RawMip(*lower, u, v);
+        const P4RgbValue upperValue = SampleP4RawMip(*upper, u, v);
+        outValue.R = lowerValue.R + (upperValue.R - lowerValue.R) * mipWeight;
+        outValue.G = lowerValue.G + (upperValue.G - lowerValue.G) * mipWeight;
+        outValue.B = lowerValue.B + (upperValue.B - lowerValue.B) * mipWeight;
+        return true;
+    }
+
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
     public:
@@ -410,6 +1223,12 @@ namespace
                 LOG_ERROR("--r1-scenario=known-cd-lambert は SceneColor capture と組み合わせてください");
                 return false;
             }
+            if (m_bP4Scenario &&
+                GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::SceneColor)
+            {
+                LOG_ERROR("P4 scenario は SceneColor capture と組み合わせてください");
+                return false;
+            }
             m_R1CaptureStage = R1CaptureStage::BackBuffer;
             m_bR1HasFrameNumber = false;
             m_R1LastFrameNumber = 0u;
@@ -418,6 +1237,25 @@ namespace
             m_KnownCdLastFrameNumber = 0u;
             m_KnownCdHasStageToken = false;
             m_KnownCdLastStageToken = 0u;
+            m_P4RowIndex = 0u;
+            m_P4Substage = P4CaptureSubstage::Primary;
+            m_P4HasFrameNumber = false;
+            m_P4LastFrameNumber = 0u;
+            m_P4HasStageToken = false;
+            m_P4LastStageToken = 0u;
+            m_bP4StageApplyFailed = false;
+            m_bP4CameraMarkerPrinted = false;
+            m_bP4CaptureEnvelopeMarkerPrinted = false;
+            m_bP4DirectLegacyMarkerPrinted = false;
+            m_bP4ActualOracleMismatch = false;
+            m_bP4MismatchMarkerPrinted = false;
+            m_bP4ActualCameraAvailable = false;
+            m_bP4HasRuntimeIdentity = false;
+            m_P4LastRuntimeRow = 0u;
+            m_bP4FixtureSnapshotAvailable = false;
+            m_P4FixtureMeshCount = 0u;
+            m_P4FixtureTextureCount = 0u;
+            m_P4FixtureMaterialCount = 0u;
             if (m_bKnownCdScenario && !ValidateKnownCdScenarioContract())
             {
                 LOG_ERROR("known-cd-lambert test-local scenario contract is invalid");
@@ -431,6 +1269,114 @@ namespace
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_bP4Scenario)
+            {
+                if (!ValidateIeee754Binary16RneTable() ||
+                    !BuildP4DfgOracle(m_P4DfgOracle) ||
+                    !BuildP4RoughnessOracle(m_P4RoughnessOracle) ||
+                    !BuildP4Raw250Oracle(m_P4Raw250Oracle) ||
+                    !BuildP4DirectConductorOracle(m_P4DirectOracle))
+                {
+                    LOG_ERROR("P4 independent CPU oracle preflight failed");
+                    return false;
+                }
+                LOG_INFO("P4 DFG preflight: unique_texels=%zu H_vs_S_abs=(%g,%g,%g) H_vs_S_rel=(%g,%g,%g) P4096_vs_S_abs=(%g,%g,%g) P4096_vs_S_rel=(%g,%g,%g) hammersley=16384 sobol=65536 production_candidate=4096",
+                         m_P4DfgOracle.Values.size(),
+                         m_P4DfgOracle.HammersleySobolMaxAbs[0],
+                         m_P4DfgOracle.HammersleySobolMaxAbs[1],
+                         m_P4DfgOracle.HammersleySobolMaxAbs[2],
+                         m_P4DfgOracle.HammersleySobolMaxRelative[0],
+                         m_P4DfgOracle.HammersleySobolMaxRelative[1],
+                         m_P4DfgOracle.HammersleySobolMaxRelative[2],
+                         m_P4DfgOracle.ProductionSobolMaxAbs[0],
+                         m_P4DfgOracle.ProductionSobolMaxAbs[1],
+                         m_P4DfgOracle.ProductionSobolMaxAbs[2],
+                         m_P4DfgOracle.ProductionSobolMaxRelative[0],
+                         m_P4DfgOracle.ProductionSobolMaxRelative[1],
+                         m_P4DfgOracle.ProductionSobolMaxRelative[2]);
+                std::cout << "P4 DFG preflight: unique_texels=" << m_P4DfgOracle.Values.size()
+                          << " H_vs_S_abs=(" << m_P4DfgOracle.HammersleySobolMaxAbs[0]
+                          << "," << m_P4DfgOracle.HammersleySobolMaxAbs[1]
+                          << "," << m_P4DfgOracle.HammersleySobolMaxAbs[2]
+                          << ") P4096_vs_S_abs=(" << m_P4DfgOracle.ProductionSobolMaxAbs[0]
+                          << "," << m_P4DfgOracle.ProductionSobolMaxAbs[1]
+                          << "," << m_P4DfgOracle.ProductionSobolMaxAbs[2]
+                         << ") samples=(16384,65536,4096)\n";
+                constexpr double expectedHammersleySobol[3] = {
+                    0.00150252, 0.0000476907, 0.0015395};
+                constexpr double expectedProductionSobol[3] = {
+                    0.00110045, 0.00013509, 0.00102136};
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    if (!std::isfinite(m_P4DfgOracle.HammersleySobolMaxAbs[channel]) ||
+                        !std::isfinite(m_P4DfgOracle.ProductionSobolMaxAbs[channel]) ||
+                        std::abs(m_P4DfgOracle.HammersleySobolMaxAbs[channel] -
+                                     expectedHammersleySobol[channel]) > 1.0e-7 ||
+                        std::abs(m_P4DfgOracle.ProductionSobolMaxAbs[channel] -
+                                     expectedProductionSobol[channel]) > 1.0e-7)
+                    {
+                        LOG_ERROR("P4 DFG cross-check literal mismatch: channel=%u H=%g expectedH=%g P4096=%g expectedP4096=%g",
+                                  channel,
+                                  m_P4DfgOracle.HammersleySobolMaxAbs[channel],
+                                  expectedHammersleySobol[channel],
+                                  m_P4DfgOracle.ProductionSobolMaxAbs[channel],
+                                  expectedProductionSobol[channel]);
+                        return false;
+                    }
+                }
+                std::cout << "P4 preflight passed: scenario=" << GetP4ScenarioName()
+                          << " H_vs_S_abs=(0.00150252,0.0000476907,0.0015395)"
+                          << " P4096_vs_S_abs=(0.00110045,0.00013509,0.00102136)\n";
+                std::cout << "P4 DFG coordinate: value=" << std::setprecision(10)
+                          << P4DfgCoordinate << " texel=(255,255) samples=16384 rne=RG16F\n"
+                          << std::setprecision(6);
+                const P4ScenarioRow firstRow{m_P4Scenario, 0u};
+                if (!GetFixture().ApplyP4ScenarioRow(firstRow))
+                {
+                    LOG_ERROR("P4 fixture first scenario row was rejected");
+                    return false;
+                }
+                const size_t meshCount = GetFixture().TrackedMeshCount();
+                const size_t textureCount = GetFixture().TrackedTextureCount();
+                const size_t materialCount = GetFixture().TrackedMaterialCount();
+                if (meshCount != 2u || textureCount != 13u || materialCount != 33u)
+                {
+                    LOG_ERROR("P4 fixture resource count mismatch: meshes=%zu textures=%zu materials=%zu",
+                              meshCount,
+                              textureCount,
+                              materialCount);
+                    return false;
+                }
+                m_P4FixtureCameraSnapshot = GetFixture().GetCamera();
+                m_P4FixtureMeshCount = meshCount;
+                m_P4FixtureTextureCount = textureCount;
+                m_P4FixtureMaterialCount = materialCount;
+                m_bP4FixtureSnapshotAvailable = true;
+                uint32_t materialIndex = 0u;
+                uint32_t lightCount = 0u;
+                if (!BuildP4RuntimeIdentity(GetP4RowScenario(),
+                                            m_P4RowIndex,
+                                            materialIndex,
+                                            lightCount))
+                {
+                    LOG_ERROR("P4 fixture runtime identity is invalid");
+                    return false;
+                }
+                std::cout << "P4 fixture resources passed meshes=" << meshCount
+                          << " textures=" << textureCount
+                          << " materials=" << materialCount
+                          << " scenario=" << GetP4ScenarioName() << "\n";
+                if (m_P4Scenario == P4Scenario::Raw254DirectConductorEndpoint)
+                {
+                    std::cout << "P4 direct fixture: row=" << m_P4RowIndex
+                              << " meshes=" << meshCount
+                              << " textures=" << textureCount
+                              << " materials=" << materialCount
+                              << " material_index=" << materialIndex
+                              << " light_required=" << lightCount << "\n";
+                }
+                std::cout << "P4 setup passed: scenario=" << GetP4ScenarioName() << "\n";
             }
             if (!m_bR1Scenario)
             {
@@ -482,6 +1428,61 @@ namespace
                 m_bKnownCdScenario = true;
                 return true;
             }
+            if (argument == TEXT("--r1-scenario=ibl-prefilter-nonconstant"))
+            {
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                {
+                    outFailureReason = TEXT("duplicate r1 scenario");
+                    return false;
+                }
+                m_bP4Scenario = true;
+                m_P4Scenario = P4Scenario::Raw250TextureRepresentation;
+                return true;
+            }
+            if (argument == TEXT("--r1-scenario=dfg-lut"))
+            {
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                {
+                    outFailureReason = TEXT("duplicate r1 scenario");
+                    return false;
+                }
+                m_bP4Scenario = true;
+                m_P4Scenario = P4Scenario::Raw251DfgLut;
+                return true;
+            }
+            if (argument == TEXT("--r1-scenario=ibl-roughness-sweep"))
+            {
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                {
+                    outFailureReason = TEXT("duplicate r1 scenario");
+                    return false;
+                }
+                m_bP4Scenario = true;
+                m_P4Scenario = P4Scenario::Raw252RoughnessSweep;
+                return true;
+            }
+            if (argument == TEXT("--r1-scenario=white-furnace"))
+            {
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                {
+                    outFailureReason = TEXT("duplicate r1 scenario");
+                    return false;
+                }
+                m_bP4Scenario = true;
+                m_P4Scenario = P4Scenario::Raw252WhiteFurnace;
+                return true;
+            }
+            if (argument == TEXT("--r1-scenario=direct-conductor-endpoint"))
+            {
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                {
+                    outFailureReason = TEXT("duplicate r1 scenario");
+                    return false;
+                }
+                m_bP4Scenario = true;
+                m_P4Scenario = P4Scenario::Raw254DirectConductorEndpoint;
+                return true;
+            }
             return RenderingValidationApplicationHandler::ParseAdditionalArgument(argument, outFailureReason);
         }
 
@@ -492,6 +1493,10 @@ namespace
             if (m_bKnownCdScenario)
             {
                 return EvaluateKnownCdFrame(frame, reason);
+            }
+            if (m_bP4Scenario)
+            {
+                return EvaluateP4Frame(frame, reason);
             }
             if (m_bR1Scenario)
             {
@@ -577,6 +1582,69 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_bP4Scenario)
+            {
+                if (!m_bP4FixtureSnapshotAvailable ||
+                    m_P4FixtureMeshCount != GetFixture().TrackedMeshCount() ||
+                    m_P4FixtureTextureCount != GetFixture().TrackedTextureCount() ||
+                    m_P4FixtureMaterialCount != GetFixture().TrackedMaterialCount() ||
+                    std::memcmp(&m_P4FixtureCameraSnapshot,
+                                &GetFixture().GetCamera(),
+                                sizeof(Core::Rendering::CameraProxy)) != 0)
+                {
+                    m_bP4StageApplyFailed = true;
+                    return;
+                }
+                Core::Rendering::CameraProxy camera = GetFixture().GetCamera();
+                camera.Aperture = 4.0f;
+                camera.ShutterSpeed = 1.0f / 60.0f;
+                camera.ISO = 100.0f;
+                camera.ExposureCompensation = 4.0f;
+                const double ev100 = std::log2(
+                    (static_cast<double>(camera.Aperture) *
+                     static_cast<double>(camera.Aperture) /
+                     static_cast<double>(camera.ShutterSpeed)) *
+                    (100.0 / static_cast<double>(camera.ISO)));
+                const double exposure = std::exp2(
+                    static_cast<double>(camera.ExposureCompensation) - ev100) / 1.2;
+                camera.EV100 = static_cast<float>(ev100);
+                camera.Exposure = static_cast<float>(exposure);
+                camera.PreExposure = camera.Exposure;
+                camera.InvPreExposure = static_cast<float>(1.0 / exposure);
+                if (!ValidateP4Camera(camera))
+                {
+                    m_bP4StageApplyFailed = true;
+                    return;
+                }
+                renderWorld.SetMainCamera(camera);
+                const Core::Rendering::CameraProxy& actualCamera =
+                    renderWorld.GetRenderingCoordinator().GetMainCamera();
+                if (!ValidateP4Camera(actualCamera))
+                {
+                    m_bP4StageApplyFailed = true;
+                    return;
+                }
+                m_P4ActualCamera = actualCamera;
+                m_bP4ActualCameraAvailable = true;
+                if (!m_bP4CameraMarkerPrinted)
+                {
+                    std::cout << std::setprecision(9)
+                              << "P4 camera passed: scenario=" << GetP4ScenarioName()
+                              << " Aperture=" << actualCamera.Aperture
+                              << " ShutterSpeed=" << actualCamera.ShutterSpeed
+                              << " ISO=" << actualCamera.ISO
+                              << " ExposureCompensation=" << actualCamera.ExposureCompensation
+                              << " EV100=" << actualCamera.EV100
+                              << " Exposure=" << actualCamera.Exposure
+                              << " PreExposure=" << actualCamera.PreExposure
+                              << " InvPreExposure=" << actualCamera.InvPreExposure << "\n"
+                              << std::setprecision(6);
+                    m_bP4CameraMarkerPrinted = true;
+                }
+                renderWorld.SetDebugViewModeAll(
+                    static_cast<Core::Rendering::DebugViewMode>(GetP4DebugViewMode()));
+                return;
+            }
             if (!m_bKnownCdScenario)
             {
                 return;
@@ -616,6 +1684,34 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_bP4Scenario)
+            {
+                if (m_P4Substage != P4CaptureSubstage::Material)
+                {
+                    m_P4Substage = static_cast<P4CaptureSubstage>(
+                        static_cast<uint8_t>(m_P4Substage) + 1u);
+                    return;
+                }
+                m_P4Substage = P4CaptureSubstage::Primary;
+                const uint32_t rowCount = GetP4ScenarioRowCount();
+                if (m_P4RowIndex + 1u < rowCount)
+                {
+                    ++m_P4RowIndex;
+                    const P4ScenarioRow row{m_P4Scenario, m_P4RowIndex};
+                    if (!GetFixture().ApplyP4ScenarioRow(row))
+                    {
+                        LOG_ERROR("P4 fixture scenario row was rejected: scenario=%u row=%u",
+                                  static_cast<unsigned int>(m_P4Scenario),
+                                  m_P4RowIndex);
+                        m_bP4StageApplyFailed = true;
+                    }
+                }
+                else
+                {
+                    m_P4RowIndex = rowCount;
+                }
+                return;
+            }
             if (m_bKnownCdScenario && m_KnownCdStage != KnownCdStage::Complete)
             {
                 m_KnownCdStage = static_cast<KnownCdStage>(
@@ -638,6 +1734,29 @@ namespace
                          GetKnownCdStageName(),
                          static_cast<unsigned long long>(frame.FrameNumber));
                 return true;
+            }
+            if (m_bP4Scenario)
+            {
+                if (m_bP4StageApplyFailed)
+                {
+                    outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::SceneColor;
+                    return true;
+                }
+                if (m_P4Substage != P4CaptureSubstage::Primary)
+                {
+                    outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::SceneColor;
+                    return true;
+                }
+                if (m_P4RowIndex < GetP4ScenarioRowCount())
+                {
+                    outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::SceneColor;
+                    LOG_INFO("P4 follow-up capture requested: scenario=%u row=%u after frame=%llu",
+                             static_cast<unsigned int>(m_P4Scenario),
+                             m_P4RowIndex,
+                             static_cast<unsigned long long>(frame.FrameNumber));
+                    return true;
+                }
+                return false;
             }
             if (m_bR1Scenario &&
                 GetRunConfig().CaptureSource == Core::Rendering::FrameCaptureSourceKind::BackBuffer)
@@ -666,6 +1785,206 @@ namespace
         }
 
     private:
+        static bool ValidateP4Camera(const Core::Rendering::CameraProxy& camera)
+        {
+            constexpr float expectedAperture = 4.0f;
+            constexpr float expectedShutterSpeed = 1.0f / 60.0f;
+            constexpr float expectedIso = 100.0f;
+            constexpr float expectedCompensation = 4.0f;
+            if (!std::isfinite(camera.Aperture) ||
+                !std::isfinite(camera.ShutterSpeed) ||
+                !std::isfinite(camera.ISO) ||
+                !std::isfinite(camera.ExposureCompensation) ||
+                !std::isfinite(camera.EV100) ||
+                !std::isfinite(camera.Exposure) ||
+                !std::isfinite(camera.PreExposure) ||
+                !std::isfinite(camera.InvPreExposure) ||
+                camera.Aperture != expectedAperture ||
+                camera.ShutterSpeed != expectedShutterSpeed ||
+                camera.ISO != expectedIso ||
+                camera.ExposureCompensation != expectedCompensation ||
+                camera.Exposure <= 0.0f || camera.PreExposure <= 0.0f ||
+                camera.InvPreExposure <= 0.0f)
+            {
+                return false;
+            }
+
+            const double ev100 = std::log2(
+                (static_cast<double>(camera.Aperture) *
+                 static_cast<double>(camera.Aperture) /
+                 static_cast<double>(camera.ShutterSpeed)) *
+                (100.0 / static_cast<double>(camera.ISO)));
+            const double exposure = std::exp2(
+                static_cast<double>(camera.ExposureCompensation) - ev100) / 1.2;
+            const float expectedEv100 = static_cast<float>(ev100);
+            const float expectedExposure = static_cast<float>(exposure);
+            const float expectedInvPreExposure = static_cast<float>(1.0 / exposure);
+            const double forwardLength = std::sqrt(
+                R1CameraTargetX * R1CameraTargetX +
+                R1CameraTargetY * R1CameraTargetY + 16.0);
+            const float expectedForwardX = static_cast<float>(R1CameraTargetX / forwardLength);
+            const float expectedForwardY = static_cast<float>(R1CameraTargetY / forwardLength);
+            const float expectedForwardZ = static_cast<float>(-4.0 / forwardLength);
+            return camera.EV100 == expectedEv100 &&
+                   camera.Exposure == expectedExposure &&
+                   camera.PreExposure == expectedExposure &&
+                   camera.InvPreExposure == expectedInvPreExposure &&
+                   camera.Projection == Core::Rendering::ProjectionType::Orthographic &&
+                   camera.PositionX == 0.0f && camera.PositionY == 0.0f &&
+                   camera.PositionZ == 4.0f && camera.OrthoWidth == 0.1f &&
+                   camera.OrthoHeight == 0.1f && camera.NearPlane == 0.1f &&
+                   camera.FarPlane == 10.0f && camera.Viewport.Width == 256.0f &&
+                   camera.Viewport.Height == 256.0f &&
+                   std::abs(camera.ForwardX - expectedForwardX) <= 1.0e-5f &&
+                   std::abs(camera.ForwardY - expectedForwardY) <= 1.0e-5f &&
+                   std::abs(camera.ForwardZ - expectedForwardZ) <= 1.0e-5f;
+        }
+
+        static bool ProjectP4Anchor(const Core::Rendering::CameraProxy& camera,
+                                    uint32_t& outAnchorX,
+                                    uint32_t& outAnchorY,
+                                    double& outDepth)
+        {
+            const double positionX = camera.PositionX;
+            const double positionY = camera.PositionY;
+            const double positionZ = camera.PositionZ;
+            const double forwardX = camera.ForwardX;
+            const double forwardY = camera.ForwardY;
+            const double forwardZ = camera.ForwardZ;
+            if (!std::isfinite(positionX) || !std::isfinite(positionY) ||
+                !std::isfinite(positionZ) || !std::isfinite(forwardX) ||
+                !std::isfinite(forwardY) || !std::isfinite(forwardZ) ||
+                std::abs(forwardZ) < 1.0e-9 || camera.OrthoWidth <= 0.0f ||
+                camera.OrthoHeight <= 0.0f || camera.Viewport.Width <= 0.0f ||
+                camera.Viewport.Height <= 0.0f)
+            {
+                return false;
+            }
+
+            const double targetScale = -positionZ / forwardZ;
+            const double targetX = positionX + forwardX * targetScale;
+            const double targetY = positionY + forwardY * targetScale;
+            if (!std::isfinite(targetX) || !std::isfinite(targetY) ||
+                std::abs(targetX - R1CameraTargetX) > 1.0e-5 ||
+                std::abs(targetY - R1CameraTargetY) > 1.0e-5)
+            {
+                return false;
+            }
+
+            const double worldDeltaX = -positionX;
+            const double worldDeltaY = -positionY;
+            const double worldDeltaZ = -positionZ;
+            const double viewX = worldDeltaX * camera.RightX +
+                                 worldDeltaY * camera.RightY +
+                                 worldDeltaZ * camera.RightZ;
+            const double viewY = worldDeltaX * camera.UpX +
+                                 worldDeltaY * camera.UpY +
+                                 worldDeltaZ * camera.UpZ;
+            const double viewZ = worldDeltaX * forwardX +
+                                 worldDeltaY * forwardY +
+                                 worldDeltaZ * forwardZ;
+            const double ndcX = 2.0 * viewX / static_cast<double>(camera.OrthoWidth);
+            const double ndcY = 2.0 * viewY / static_cast<double>(camera.OrthoHeight);
+            const double screenX = static_cast<double>(camera.Viewport.X) +
+                                   (ndcX + 1.0) * 0.5 * camera.Viewport.Width - 0.5;
+            const double screenY = static_cast<double>(camera.Viewport.Y) +
+                                   (1.0 - ndcY) * 0.5 * camera.Viewport.Height - 0.5;
+            outDepth = (std::abs(viewZ) - static_cast<double>(camera.NearPlane)) /
+                       static_cast<double>(camera.FarPlane - camera.NearPlane);
+            if (!std::isfinite(ndcX) || !std::isfinite(ndcY) ||
+                !std::isfinite(screenX) || !std::isfinite(screenY) ||
+                !std::isfinite(outDepth) || outDepth < 0.0 || outDepth > 1.0 ||
+                screenX < 0.0 || screenY < 0.0)
+            {
+                return false;
+            }
+            outAnchorX = static_cast<uint32_t>(std::floor(screenX));
+            outAnchorY = static_cast<uint32_t>(std::floor(screenY));
+            return outAnchorX == R1AnchorX && outAnchorY == R1AnchorY;
+        }
+
+        static bool ComputeP4SphereNormal(const Core::Rendering::CameraProxy& camera,
+                                          uint32_t x,
+                                          uint32_t y,
+                                          double outNormal[3])
+        {
+            constexpr double centerX = 127.5;
+            constexpr double centerY = 127.5;
+            constexpr double radius = 64.0;
+            const double nx = (static_cast<double>(x) + 0.5 - centerX) / radius;
+            const double ny = -(static_cast<double>(y) + 0.5 - centerY) / radius;
+            const double radialSquared = nx * nx + ny * ny;
+            if (!std::isfinite(nx) || !std::isfinite(ny) ||
+                !std::isfinite(radialSquared) || radialSquared > 1.0)
+            {
+                return false;
+            }
+            const double nz = std::sqrt(std::max(0.0, 1.0 - radialSquared));
+            const double worldX = camera.RightX * nx + camera.UpX * ny - camera.ForwardX * nz;
+            const double worldY = camera.RightY * nx + camera.UpY * ny - camera.ForwardY * nz;
+            const double worldZ = camera.RightZ * nx + camera.UpZ * ny - camera.ForwardZ * nz;
+            outNormal[0] = 0.5 * (worldX + 1.0);
+            outNormal[1] = 0.5 * (worldY + 1.0);
+            outNormal[2] = 0.5 * (worldZ + 1.0);
+            return std::isfinite(outNormal[0]) && std::isfinite(outNormal[1]) &&
+                   std::isfinite(outNormal[2]);
+        }
+
+        bool CheckP4SphereNormalSample(const RgbaFloatImage& image,
+                                       uint32_t x,
+                                       uint32_t y,
+                                       Core::Container::String& reason) const
+        {
+            if (x >= image.Width || y >= image.Height)
+            {
+                reason = TEXT("P4 sphere normal fixed probe is outside the capture");
+                return false;
+            }
+            const size_t pixelOffset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+            const double alpha = image.Values[pixelOffset + 3u];
+            if (!std::isfinite(alpha) || std::abs(alpha - 1.0) > 1.0e-3)
+            {
+                reason = TEXT("P4 sphere normal probe alpha is not one");
+                return false;
+            }
+            double expectedNormal[3] = {};
+            if (!ComputeP4SphereNormal(m_P4ActualCamera, x, y, expectedNormal))
+            {
+                reason = TEXT("P4 sphere normal projection is invalid");
+                return false;
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                const double actual = image.Values[pixelOffset + channel];
+                if (!std::isfinite(actual) || std::abs(actual) >= P4RneRangeLimit ||
+                    std::abs(actual - expectedNormal[channel]) > 0.01)
+                {
+                    reason = TEXT("P4 sphere normal does not match the actual fixture projection");
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        const char* GetP4ScenarioName() const
+        {
+            switch (m_P4Scenario)
+            {
+            case P4Scenario::Raw250TextureRepresentation:
+                return "ibl-prefilter-nonconstant";
+            case P4Scenario::Raw251DfgLut:
+                return "dfg-lut";
+            case P4Scenario::Raw252RoughnessSweep:
+                return "ibl-roughness-sweep";
+            case P4Scenario::Raw252WhiteFurnace:
+                return "white-furnace";
+            case P4Scenario::Raw254DirectConductorEndpoint:
+                return "direct-conductor-endpoint";
+            default:
+                return "unknown";
+            }
+        }
+
         static bool ValidateKnownCdScenarioContract()
         {
             return static_cast<uint8_t>(KnownCdStage::PureLambertA) == 0u &&
@@ -681,6 +2000,1090 @@ namespace
                    R1RoiMinY == 112u && R1RoiMaxY == 143u &&
                    R1AnchorX == 127u && R1AnchorY == 127u &&
                    R1PlaneScale == 0.0025f;
+        }
+
+        uint32_t GetP4ScenarioRowCount() const
+        {
+            switch (m_P4Scenario)
+            {
+            case P4Scenario::Raw250TextureRepresentation:
+                return 1u;
+            case P4Scenario::Raw251DfgLut:
+                return 25u;
+            case P4Scenario::Raw252RoughnessSweep:
+                return 6u;
+            case P4Scenario::Raw252TargetNotOne:
+                return 1u;
+            case P4Scenario::Raw252WhiteFurnace:
+                return 15u;
+            case P4Scenario::Raw254DirectConductorEndpoint:
+                return 1u;
+            default:
+                return 0u;
+            }
+        }
+
+        uint32_t GetP4DebugViewMode() const
+        {
+            switch (m_P4Substage)
+            {
+            case P4CaptureSubstage::Depth:
+                return 7u;
+            case P4CaptureSubstage::Normal:
+                return 5u;
+            case P4CaptureSubstage::Material:
+                return 6u;
+            case P4CaptureSubstage::Primary:
+            default:
+                break;
+            }
+            switch (GetP4RowScenario())
+            {
+            case P4Scenario::Raw250TextureRepresentation:
+                return 250u;
+            case P4Scenario::Raw251DfgLut:
+                return 251u;
+            case P4Scenario::Raw254DirectConductorEndpoint:
+                return 254u;
+            case P4Scenario::Raw252RoughnessSweep:
+            case P4Scenario::Raw252TargetNotOne:
+            case P4Scenario::Raw252WhiteFurnace:
+                return 252u;
+            default:
+                return 0u;
+            }
+        }
+
+        P4Scenario GetP4RowScenario() const
+        {
+            if (m_P4Scenario == P4Scenario::Raw252RoughnessSweep && m_P4RowIndex == 5u)
+            {
+                return P4Scenario::Raw252TargetNotOne;
+            }
+            return m_P4Scenario;
+        }
+
+        bool ValidateP4CaptureEnvelope(
+            const Core::Rendering::CapturedFrame& frame,
+            RgbaFloatImage& outImage,
+            Core::Container::String& reason)
+        {
+            if (frame.RequestId != GetLastAcceptedRequestId())
+            {
+                reason = TEXT("P4 capture RequestId does not match the accepted request");
+                return false;
+            }
+            if (m_P4HasFrameNumber && frame.FrameNumber <= m_P4LastFrameNumber)
+            {
+                reason = TEXT("P4 capture FrameNumber is not strictly increasing");
+                return false;
+            }
+            if (m_P4HasStageToken && GetLastAcceptedRequestStageToken() <= m_P4LastStageToken)
+            {
+                reason = TEXT("P4 capture stage token is not strictly increasing");
+                return false;
+            }
+            uint32_t materialIndex = 0u;
+            uint32_t lightCount = 0u;
+            if (!BuildP4RuntimeIdentity(GetP4RowScenario(),
+                                        m_P4RowIndex,
+                                        materialIndex,
+                                        lightCount))
+            {
+                reason = TEXT("P4 runtime material/light identity is invalid");
+                return false;
+            }
+            if (m_P4Substage == P4CaptureSubstage::Primary &&
+                m_bP4HasRuntimeIdentity && m_P4RowIndex <= m_P4LastRuntimeRow)
+            {
+                reason = TEXT("P4 snapshot row identity regressed or was reused");
+                return false;
+            }
+            m_P4LastFrameNumber = frame.FrameNumber;
+            m_P4HasFrameNumber = true;
+            m_P4LastStageToken = GetLastAcceptedRequestStageToken();
+            m_P4HasStageToken = true;
+            if (m_P4Substage == P4CaptureSubstage::Primary)
+            {
+                m_P4LastRuntimeRow = m_P4RowIndex;
+                m_bP4HasRuntimeIdentity = true;
+            }
+            if (frame.Format != RHI::Format::R16G16B16A16_FLOAT ||
+                frame.Width != ValidationWidth || frame.Height != ValidationHeight ||
+                DecodeCapturedRgba16Float(frame, outImage) != FloatImageStatus::Success)
+            {
+                reason = TEXT("P4 capture format, dimensions, or RGBA16F decode is invalid");
+                return false;
+            }
+            if (!IsFiniteAndWithinRgba16Range(outImage))
+            {
+                const RgbaFloatViolation violation = FindFirstRgba16FloatViolation(outImage);
+                LOG_ERROR("P4 full RGBA16F scan failed: x=%u y=%u channel=%u value=%g kind=%u",
+                          violation.X,
+                          violation.Y,
+                          violation.Channel,
+                          violation.Value,
+                          static_cast<unsigned int>(violation.Kind));
+                reason = TEXT("P4 capture contains a non-finite or saturated RGBA16F value");
+                return false;
+            }
+            if (!CheckP4CornerBackground(outImage, reason) ||
+                !CheckP4N4Geometry(outImage, reason))
+            {
+                return false;
+            }
+            if (!m_bP4CaptureEnvelopeMarkerPrinted)
+            {
+                std::cout << "P4 capture envelope passed request_match=1 frame_order=1"
+                          << " stage_order=1 scenario=" << GetP4ScenarioName() << "\n";
+                m_bP4CaptureEnvelopeMarkerPrinted = true;
+            }
+            std::cout << "P4 snapshot chain: scenario=" << GetP4ScenarioName()
+                      << " mode=" << GetP4DebugViewMode()
+                      << " row=" << m_P4RowIndex
+                      << " source=SceneColor format=R16G16B16A16_FLOAT size=256x256"
+                      << " material_index=" << materialIndex
+                      << " light_count=" << lightCount
+                      << " fixture_row_applied=1"
+                      << " request=" << frame.RequestId
+                      << " stage=" << GetLastAcceptedRequestStageToken()
+                      << " frame=" << frame.FrameNumber << "\n";
+            if (GetP4RowScenario() == P4Scenario::Raw254DirectConductorEndpoint &&
+                m_P4RowIndex == 0u)
+            {
+                std::cout << "P4 capture envelope: source=SceneColor format=R16G16B16A16_FLOAT"
+                          << " size=256x256 material_index=" << materialIndex
+                          << " light_count=" << lightCount
+                          << " fixture_row_applied=1"
+                          << " request_match=1 frame_order=1 stage_order=1 mode=254\n";
+            }
+            return true;
+        }
+
+        static bool IsP4BackgroundPixel(const RgbaFloatImage& image,
+                                        uint32_t x,
+                                        uint32_t y)
+        {
+            const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+            return std::abs(static_cast<double>(image.Values[offset + 3u]) - 1.0) <= 1.0e-3 &&
+                   std::abs(image.Values[offset + 0u]) <= 1.0e-3f &&
+                   std::abs(image.Values[offset + 1u]) <= 1.0e-3f &&
+                   std::abs(image.Values[offset + 2u]) <= 1.0e-3f;
+        }
+
+        static bool CheckP4RelativeError(double actual,
+                                         double expected,
+                                         double& outMaximum,
+                                         double& outSum,
+                                         size_t& outCount)
+        {
+            if (!std::isfinite(actual) || !std::isfinite(expected) ||
+                std::abs(actual) >= P4RneRangeLimit)
+            {
+                return false;
+            }
+            const double relative = std::abs(actual - expected) /
+                                    std::max(std::abs(expected), 1.0e-6);
+            outMaximum = std::max(outMaximum, relative);
+            outSum += relative;
+            ++outCount;
+            return true;
+        }
+
+        static bool CheckP4CornerBackground(const RgbaFloatImage& image,
+                                            Core::Container::String& reason)
+        {
+            constexpr uint32_t corners[4][2] = {
+                {0u, 0u}, {ValidationWidth - 1u, 0u},
+                {0u, ValidationHeight - 1u},
+                {ValidationWidth - 1u, ValidationHeight - 1u}};
+            for (const auto& corner : corners)
+            {
+                const size_t offset =
+                    (static_cast<size_t>(corner[1]) * image.Width + corner[0]) * 4u;
+                if (std::abs(static_cast<double>(image.Values[offset + 3u]) - 1.0) > 1.0e-3)
+                {
+                    reason = TEXT("P4 capture corner is not background alpha");
+                    return false;
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    const double value = image.Values[offset + channel];
+                    if (!std::isfinite(value) || std::abs(value) >= P4RneRangeLimit)
+                    {
+                        reason = TEXT("P4 capture corner contains invalid background color");
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        bool GetP4MaterialExpected(double outMaterial[3]) const
+        {
+            constexpr double roughnessValues[5] = {0.05, 0.25, 0.50, 0.75, 1.00};
+            constexpr double metallicValues[6] = {0.0, 0.5, 1.0, 0.1, 0.25, 0.75};
+            uint32_t roughnessIndex = 0u;
+            uint32_t metallicIndex = 0u;
+            switch (GetP4RowScenario())
+            {
+            case P4Scenario::Raw250TextureRepresentation:
+                break;
+            case P4Scenario::Raw251DfgLut:
+                if (m_P4RowIndex >= 25u)
+                {
+                    return false;
+                }
+                roughnessIndex = m_P4RowIndex / 5u;
+                metallicIndex = P4RuntimeDfgQueryIndices[m_P4RowIndex % 5u];
+                break;
+            case P4Scenario::Raw252RoughnessSweep:
+                if (m_P4RowIndex >= 5u)
+                {
+                    return false;
+                }
+                roughnessIndex = m_P4RowIndex;
+                break;
+            case P4Scenario::Raw252TargetNotOne:
+                roughnessIndex = 1u;
+                metallicIndex = P4RuntimeTargetMetallicIndex;
+                break;
+            case P4Scenario::Raw252WhiteFurnace:
+                if (m_P4RowIndex >= 15u)
+                {
+                    return false;
+                }
+                roughnessIndex = m_P4RowIndex / 3u;
+                metallicIndex = m_P4RowIndex % 3u;
+                break;
+            case P4Scenario::Raw254DirectConductorEndpoint:
+                roughnessIndex = 4u;
+                metallicIndex = P4RuntimeTargetMetallicIndex;
+                break;
+            default:
+                return false;
+            }
+            if (roughnessIndex >= 5u || metallicIndex >= 6u)
+            {
+                return false;
+            }
+            outMaterial[0] = metallicValues[metallicIndex];
+            outMaterial[1] = roughnessValues[roughnessIndex];
+            outMaterial[2] = 1.0;
+            return true;
+        }
+
+        bool CheckP4N4Geometry(const RgbaFloatImage& image,
+                               Core::Container::String& reason)
+        {
+            bool bPrintedMaterialDiagnostic = false;
+            if (!m_bP4ActualCameraAvailable)
+            {
+                reason = TEXT("P4 N4 camera snapshot is unavailable");
+                return false;
+            }
+            uint32_t projectedAnchorX = 0u;
+            uint32_t projectedAnchorY = 0u;
+            double projectedDepth = 0.0;
+            if (!ProjectP4Anchor(m_P4ActualCamera,
+                                 projectedAnchorX,
+                                 projectedAnchorY,
+                                 projectedDepth))
+            {
+                reason = TEXT("P4 N4 projected anchor does not match the actual camera");
+                return false;
+            }
+            constexpr int32_t offsets[5][2] = {
+                {0, 0}, {-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+            for (const auto& offset : offsets)
+            {
+                const int32_t x = static_cast<int32_t>(projectedAnchorX) + offset[0];
+                const int32_t y = static_cast<int32_t>(projectedAnchorY) + offset[1];
+                if (x < 0 || y < 0 || static_cast<uint32_t>(x) >= image.Width ||
+                    static_cast<uint32_t>(y) >= image.Height)
+                {
+                    reason = TEXT("P4 N4 projected sample is outside the capture");
+                    return false;
+                }
+                const size_t pixelOffset =
+                    (static_cast<size_t>(y) * image.Width + static_cast<uint32_t>(x)) * 4u;
+                const double alpha = image.Values[pixelOffset + 3u];
+                const bool bPrimary = m_P4Substage == P4CaptureSubstage::Primary;
+                const bool bDirectEndpoint =
+                    bPrimary && GetP4RowScenario() == P4Scenario::Raw254DirectConductorEndpoint;
+                if (!std::isfinite(alpha) ||
+                    (!bPrimary
+                         ? std::abs(alpha - 1.0) > 1.0e-3
+                         : bDirectEndpoint
+                         ? std::abs(alpha - 1.0) > 1.0e-3
+                         : (alpha < 0.0 || alpha >= 1.0)))
+                {
+                    reason = !bPrimary
+                                 ? TEXT("P4 sibling alpha is not one")
+                                 : bDirectEndpoint
+                                 ? TEXT("P4 N4 direct alpha is not one")
+                                 : TEXT("P4 N4 depth coverage is invalid");
+                    return false;
+                }
+                bool bCovered = false;
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    const double value = image.Values[pixelOffset + channel];
+                    if (!std::isfinite(value) || std::abs(value) >= P4RneRangeLimit)
+                    {
+                        reason = TEXT("P4 N4 color/normal sample is invalid");
+                        return false;
+                    }
+                    bCovered = bCovered || std::abs(value) > 1.0e-6;
+                }
+                if (bPrimary && !bDirectEndpoint)
+                {
+                    continue;
+                }
+                if (!bCovered && alpha >= 0.999)
+                {
+                    reason = TEXT("P4 N4 projected sample is background rather than geometry");
+                    return false;
+                }
+                if (!bPrimary)
+                {
+                    if (m_P4Substage == P4CaptureSubstage::Normal)
+                    {
+                        if (GetP4RowScenario() == P4Scenario::Raw252WhiteFurnace)
+                        {
+                            if (!CheckP4SphereNormalSample(image,
+                                                           static_cast<uint32_t>(x),
+                                                           static_cast<uint32_t>(y),
+                                                           reason))
+                            {
+                                return false;
+                            }
+                        }
+                        else
+                        {
+                            constexpr double expectedNormal[3] = {0.5, 0.5, 1.0};
+                            for (uint32_t channel = 0u; channel < 3u; ++channel)
+                            {
+                                if (std::abs(image.Values[pixelOffset + channel] - expectedNormal[channel]) >
+                                    0.01)
+                                {
+                                    reason = TEXT("P4 normal sibling does not match plane normal");
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    else if (m_P4Substage == P4CaptureSubstage::Material)
+                    {
+                        double expectedMaterial[3] = {};
+                        if (!GetP4MaterialExpected(expectedMaterial))
+                        {
+                            reason = TEXT("P4 material sibling expected state is invalid");
+                            return false;
+                        }
+                        if (!bPrintedMaterialDiagnostic)
+                        {
+                            std::cout << "P4 material sibling first geometry: x=" << x
+                                      << " y=" << y << " actual=("
+                                      << image.Values[pixelOffset + 0u] << ","
+                                      << image.Values[pixelOffset + 1u] << ","
+                                      << image.Values[pixelOffset + 2u] << ") expected=("
+                                      << expectedMaterial[0] << "," << expectedMaterial[1]
+                                      << "," << expectedMaterial[2] << ")\n";
+                            bPrintedMaterialDiagnostic = true;
+                        }
+                        for (uint32_t channel = 0u; channel < 3u; ++channel)
+                        {
+                            if (std::abs(image.Values[pixelOffset + channel] - expectedMaterial[channel]) >
+                                0.01)
+                            {
+                                reason = TEXT("P4 material sibling does not match fixture state");
+                                return false;
+                            }
+                        }
+                    }
+                    else if (m_P4Substage == P4CaptureSubstage::Depth)
+                    {
+                        for (uint32_t channel = 0u; channel < 3u; ++channel)
+                        {
+                            const double value = image.Values[pixelOffset + channel];
+                            if (value < 0.0 || value > 1.0)
+                            {
+                                reason = TEXT("P4 depth sibling is outside the debug depth range");
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            if (projectedDepth < 0.0 || projectedDepth > 1.0)
+            {
+                reason = TEXT("P4 N4 projected depth is outside the camera range");
+                return false;
+            }
+            if (m_P4Substage == P4CaptureSubstage::Normal &&
+                GetP4RowScenario() == P4Scenario::Raw252WhiteFurnace)
+            {
+                constexpr uint32_t fixedNormalPoints[9][2] = {
+                    {127u, 127u}, {95u, 127u}, {159u, 127u},
+                    {127u, 95u}, {127u, 159u}, {104u, 104u},
+                    {151u, 104u}, {104u, 151u}, {151u, 151u}};
+                for (const auto& point : fixedNormalPoints)
+                {
+                    if (!CheckP4SphereNormalSample(image, point[0], point[1], reason))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        bool EvaluateP4Raw250(
+            const RgbaFloatImage& image,
+            Core::Container::String& reason)
+        {
+            double relativeSum = 0.0;
+            double maximumRelative = 0.0;
+            size_t comparisonCount = 0u;
+            size_t geometryPixels = 0u;
+            for (uint32_t y = 0u; y < image.Height; ++y)
+            {
+                const double v = (static_cast<double>(y) + 0.5) / image.Height;
+                const uint32_t band = std::min(4u,
+                    static_cast<uint32_t>(std::floor(v * 5.0)));
+                for (uint32_t x = 0u; x < image.Width; ++x)
+                {
+                    const double u = (static_cast<double>(x) + 0.5) / image.Width;
+                    const double localV = v * 5.0 - static_cast<double>(band);
+                    P4RgbValue expected;
+                    const double lod[] = {0.0, 0.4, 2.0, 4.0, 8.0};
+                    if (!SampleP4Raw250Oracle(m_P4Raw250Oracle, u, localV,
+                                              lod[band], expected))
+                    {
+                        reason = TEXT("raw250 independent texture-representation oracle failed");
+                        return false;
+                    }
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    const double actualR = image.Values[offset + 0u];
+                    const double actualG = image.Values[offset + 1u];
+                    const double actualB = image.Values[offset + 2u];
+                    if (!CheckP4RelativeError(actualR, expected.R, maximumRelative,
+                                              relativeSum, comparisonCount) ||
+                        !CheckP4RelativeError(actualG, expected.G, maximumRelative,
+                                              relativeSum, comparisonCount) ||
+                        !CheckP4RelativeError(actualB, expected.B, maximumRelative,
+                                              relativeSum, comparisonCount))
+                    {
+                        reason = TEXT("raw250 independent texture-representation scan encountered invalid data");
+                        return false;
+                    }
+                    if (image.Values[offset + 3u] < 1.0f)
+                    {
+                        ++geometryPixels;
+                    }
+                }
+            }
+            if (geometryPixels == 0u || comparisonCount == 0u)
+            {
+                reason = TEXT("raw250 geometry or full-pixel comparison is empty");
+                return false;
+            }
+            const double meanRelative = relativeSum / static_cast<double>(comparisonCount);
+            const size_t comparedPixels = comparisonCount / 3u;
+            LOG_INFO("P4 raw250 oracle: pixels=%zu bands=5 mean_rel=%g max_rel=%g kernel_evaluations=327680 finite=1 abs_lt_65504=1",
+                     comparedPixels,
+                     meanRelative,
+                     maximumRelative);
+            std::cout << "P4 raw250 oracle: pixels=" << comparedPixels
+                      << " bands=5 mean_rel=" << meanRelative
+                      << " max_rel=" << maximumRelative
+                      << " kernel_evaluations=327680 finite=1 abs_lt_65504=1\n";
+            if (meanRelative > 0.01 || maximumRelative > 0.03)
+            {
+                m_bP4ActualOracleMismatch = true;
+                reason = TEXT("raw250 mean or maximum relative error exceeded tolerance");
+                return false;
+            }
+            return true;
+        }
+
+        bool EvaluateP4Dfg(
+            const RgbaFloatImage& image,
+            Core::Container::String& reason)
+        {
+            const double nDotVQueries[] = {0.10, 0.25, 0.50, 0.75, 1.00};
+            const double roughnessQueries[] = {0.05, 0.25, 0.50, 0.75, 1.00};
+            const uint32_t roughnessIndex = m_P4RowIndex / 5u;
+            const uint32_t nDotVIndex = m_P4RowIndex % 5u;
+            if (roughnessIndex >= 5u || nDotVIndex >= 5u)
+            {
+                reason = TEXT("raw251 query row index is invalid");
+                return false;
+            }
+            P4DfgValue expected;
+            if (!SampleP4DfgOracle(m_P4DfgOracle,
+                                   nDotVQueries[nDotVIndex],
+                                   roughnessQueries[roughnessIndex],
+                                   expected))
+            {
+                reason = TEXT("raw251 independent DFG oracle lookup failed");
+                return false;
+            }
+            const double expectedRgb[3] = {expected.A, expected.B, expected.A + expected.B};
+            double maximumRelative[3] = {};
+            double maximumAbsolute[3] = {};
+            size_t sampleCount = 0u;
+            size_t geometryPixels = 0u;
+            for (uint32_t y = 0u; y < image.Height; ++y)
+            {
+                for (uint32_t x = 0u; x < image.Width; ++x)
+                {
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    if (IsP4BackgroundPixel(image, x, y))
+                    {
+                        continue;
+                    }
+                    if (!(image.Values[offset + 3u] < 1.0f))
+                    {
+                        reason = TEXT("raw251 geometry depth alpha is not below one");
+                        return false;
+                    }
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double actual = image.Values[offset + channel];
+                        if (!std::isfinite(actual) || std::abs(actual) >= P4RneRangeLimit ||
+                            !std::isfinite(expectedRgb[channel]))
+                        {
+                            reason = TEXT("raw251 geometry pixel contains invalid data");
+                            return false;
+                        }
+                        const double absolute = std::abs(actual - expectedRgb[channel]);
+                        const double relative =
+                            std::abs(expectedRgb[channel]) >= 0.01
+                                ? absolute / std::abs(expectedRgb[channel])
+                                : 0.0;
+                        maximumAbsolute[channel] = std::max(maximumAbsolute[channel], absolute);
+                        ++sampleCount;
+                        if (absolute > 0.002)
+                        {
+                            m_bP4ActualOracleMismatch = true;
+                            std::cout << "P4 raw251 first failure: row=" << m_P4RowIndex
+                                      << " x=" << x << " y=" << y << " channel=" << channel
+                                      << " actual=" << actual << " expected=" << expectedRgb[channel]
+                                      << " absolute=" << absolute << " relative=" << relative
+                                      << " query=(" << nDotVQueries[nDotVIndex] << ","
+                                      << roughnessQueries[roughnessIndex] << ")\n";
+                            reason = TEXT("raw251 DFG absolute error exceeded tolerance");
+                            return false;
+                        }
+                        if (std::abs(expectedRgb[channel]) >= 0.01)
+                        {
+                            maximumRelative[channel] = std::max(maximumRelative[channel], relative);
+                            if (relative > 0.01)
+                            {
+                                m_bP4ActualOracleMismatch = true;
+                                std::cout << "P4 raw251 first failure: row=" << m_P4RowIndex
+                                          << " x=" << x << " y=" << y << " channel=" << channel
+                                          << " actual=" << actual << " expected=" << expectedRgb[channel]
+                                          << " absolute=" << absolute << " relative=" << relative
+                                          << " query=(" << nDotVQueries[nDotVIndex] << ","
+                                          << roughnessQueries[roughnessIndex] << ")\n";
+                                reason = TEXT("raw251 DFG relative error exceeded tolerance");
+                                return false;
+                            }
+                        }
+                    }
+                    ++geometryPixels;
+                }
+            }
+            if (geometryPixels == 0u || sampleCount == 0u)
+            {
+                reason = TEXT("raw251 geometry coverage is empty");
+                return false;
+            }
+            LOG_INFO("P4 raw251 oracle: row=%u query=(%g,%g) unique_texels=%zu geometry_pixels=%zu A=%g B=%g Ess=%g max_rel=(%g,%g,%g) max_abs=(%g,%g,%g) abs_threshold=0.002 conditional_rel_threshold=0.01",
+                     m_P4RowIndex,
+                     nDotVQueries[nDotVIndex],
+                     roughnessQueries[roughnessIndex],
+                     m_P4DfgOracle.Values.size(),
+                     geometryPixels,
+                     expected.A,
+                     expected.B,
+                     expected.A + expected.B,
+                     maximumRelative[0],
+                     maximumRelative[1],
+                     maximumRelative[2],
+                     maximumAbsolute[0],
+                     maximumAbsolute[1],
+                     maximumAbsolute[2]);
+            std::cout << "P4 raw251 oracle: row=" << m_P4RowIndex
+                      << " query=(" << nDotVQueries[nDotVIndex] << ","
+                      << roughnessQueries[roughnessIndex] << ") unique_texels="
+                      << m_P4DfgOracle.Values.size() << " geometry_pixels=" << geometryPixels
+                      << " max_rel=(" << maximumRelative[0] << ","
+                      << maximumRelative[1] << "," << maximumRelative[2] << ")\n";
+            return true;
+        }
+
+        static double ComputeP4Endpoint(double f0, const P4DfgValue& dfg)
+        {
+            const double ess = std::max(dfg.A + dfg.B, 1.0e-4);
+            return std::clamp((f0 * dfg.A + dfg.B) *
+                                  (1.0 + f0 * (1.0 - ess) / ess),
+                              0.0,
+                              1.0);
+        }
+
+        bool CheckP4BackgroundCorners(const RgbaFloatImage& image,
+                                      Core::Container::String& reason) const
+        {
+            constexpr uint32_t corners[4][2] = {
+                {0u, 0u}, {ValidationWidth - 1u, 0u},
+                {0u, ValidationHeight - 1u},
+                {ValidationWidth - 1u, ValidationHeight - 1u}};
+            const double expected = 100.0 / 72.0;
+            for (const auto& corner : corners)
+            {
+                const size_t offset =
+                    (static_cast<size_t>(corner[1]) * image.Width + corner[0]) * 4u;
+                if (static_cast<double>(image.Values[offset + 3u]) != 1.0)
+                {
+                    reason = TEXT("raw252 background corner alpha is not exactly one");
+                    return false;
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    const double relative = std::abs(
+                        static_cast<double>(image.Values[offset + channel]) - expected) /
+                        expected;
+                    if (!std::isfinite(relative) || relative > 0.03)
+                    {
+                        reason = TEXT("raw252 background corner does not match pre-exposed constant source");
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        bool EvaluateP4RoughnessPlane(
+            const RgbaFloatImage& image,
+            Core::Container::String& reason)
+        {
+            constexpr double roughnessValues[5] = {0.05, 0.25, 0.50, 0.75, 1.00};
+            if (m_P4RowIndex >= 5u || !CheckP4BackgroundCorners(image, reason))
+            {
+                return false;
+            }
+            if (!m_P4RoughnessOracle.bValid)
+            {
+                reason = TEXT("raw252 roughness row independent DFG oracle is unavailable");
+                return false;
+            }
+            const P4DfgValue& dfg = m_P4RoughnessOracle.Values[m_P4RowIndex];
+            const double expected = 100.0 * 0.5 *
+                (1.0 - ComputeP4Endpoint(0.04, dfg)) +
+                100.0 * ComputeP4Endpoint(0.04, dfg);
+            double relativeSum = 0.0;
+            double maximumRelative = 0.0;
+            size_t sampleCount = 0u;
+            for (uint32_t y = R1RoiMinY; y <= R1RoiMaxY; ++y)
+            {
+                for (uint32_t x = R1RoiMinX; x <= R1RoiMaxX; ++x)
+                {
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    const double alpha = static_cast<double>(image.Values[offset + 3u]);
+                    if (!std::isfinite(alpha) || alpha < 0.0 || alpha >= 1.0)
+                    {
+                        reason = TEXT("raw252 roughness ROI depth alpha is not below one");
+                        return false;
+                    }
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double actual = static_cast<double>(image.Values[offset + channel]) * 72.0;
+                        if (!CheckP4RelativeError(actual, expected, maximumRelative,
+                                                  relativeSum, sampleCount))
+                        {
+                            reason = TEXT("raw252 roughness ROI contains invalid data");
+                            return false;
+                        }
+                    }
+                }
+            }
+            const double meanRelative = relativeSum / static_cast<double>(sampleCount);
+            LOG_INFO("P4 raw252 roughness row: row=%u roughness=%g target=%g mean_rel=%g max_rel=%g InvPreExposure=72 ROI=[112,143]x[112,143]",
+                     m_P4RowIndex,
+                     roughnessValues[m_P4RowIndex],
+                     expected,
+                     meanRelative,
+                     maximumRelative);
+            std::cout << "P4 raw252 roughness row: row=" << m_P4RowIndex
+                      << " roughness=" << roughnessValues[m_P4RowIndex]
+                      << " target=" << expected
+                      << " mean_rel=" << meanRelative
+                      << " max_rel=" << maximumRelative
+                      << " InvPreExposure=72 ROI=[112,143]x[112,143]\n";
+            if (meanRelative > 0.01 || maximumRelative > 0.03)
+            {
+                m_bP4ActualOracleMismatch = true;
+                reason = TEXT("raw252 roughness mean or maximum relative error exceeded tolerance");
+                return false;
+            }
+            return true;
+        }
+
+        bool EvaluateP4TargetNotOne(
+            const RgbaFloatImage& image,
+            Core::Container::String& reason)
+        {
+            if (!CheckP4BackgroundCorners(image, reason))
+            {
+                return false;
+            }
+            constexpr double target = 55.2197800611;
+            constexpr double storedExpected = 0.7669413897;
+            double relativeSum = 0.0;
+            double maximumRelative = 0.0;
+            size_t sampleCount = 0u;
+            for (uint32_t y = R1RoiMinY; y <= R1RoiMaxY; ++y)
+            {
+                for (uint32_t x = R1RoiMinX; x <= R1RoiMaxX; ++x)
+                {
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    const double alpha = static_cast<double>(image.Values[offset + 3u]);
+                    if (!std::isfinite(alpha) || alpha < 0.0 || alpha >= 1.0)
+                    {
+                        reason = TEXT("raw252 target-not-one ROI depth alpha is not below one");
+                        return false;
+                    }
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double stored = image.Values[offset + channel];
+                        const double actual = stored * 72.0;
+                        if (!CheckP4RelativeError(actual, target, maximumRelative,
+                                                  relativeSum, sampleCount))
+                        {
+                            reason = TEXT("raw252 target-not-one ROI contains invalid data");
+                            return false;
+                        }
+                    }
+                }
+            }
+            const double meanRelative = relativeSum / static_cast<double>(sampleCount);
+            const double wrongTarget = 100.0 * 0.5947797803441714;
+            const double sensitivity = std::abs(wrongTarget - target) / target;
+            LOG_INFO("P4 raw252 target-not-one: target=%0.10f stored_expected=%0.10f mean_rel=%g max_rel=%g wrong_target=%0.10f sensitivity=%g%% depth_alpha=checked corners=checked",
+                     target,
+                     storedExpected,
+                     meanRelative,
+                     maximumRelative,
+                     wrongTarget,
+                     sensitivity * 100.0);
+            std::cout << "P4 raw252 target-not-one: target=" << target
+                      << " stored_expected=" << storedExpected
+                      << " mean_rel=" << meanRelative
+                      << " max_rel=" << maximumRelative
+                      << " wrong_target=" << wrongTarget
+                      << " sensitivity=" << sensitivity * 100.0
+                      << "% depth_alpha=checked corners=checked\n";
+            if (sensitivity < 0.05 || meanRelative > 0.01 || maximumRelative > 0.03)
+            {
+                m_bP4ActualOracleMismatch = meanRelative > 0.01 || maximumRelative > 0.03;
+                reason = TEXT("raw252 target-not-one oracle or sensitivity failed");
+                return false;
+            }
+            return true;
+        }
+
+        bool EvaluateP4WhiteFurnace(
+            const RgbaFloatImage& image,
+            Core::Container::String& reason)
+        {
+            constexpr double furnaceTarget = 100.0;
+            const uint32_t roughnessIndex = m_P4RowIndex / 3u;
+            const uint32_t metallicIndex = m_P4RowIndex % 3u;
+            if (roughnessIndex >= 5u || metallicIndex >= 3u ||
+                !CheckP4BackgroundCorners(image, reason))
+            {
+                return false;
+            }
+            const uint32_t samplePoints[9][2] = {
+                {127u, 127u}, {95u, 127u}, {159u, 127u},
+                {127u, 95u}, {127u, 159u}, {104u, 104u},
+                {151u, 104u}, {104u, 151u}, {151u, 151u}};
+            double meanSum = 0.0;
+            size_t meanCount = 0u;
+            double maximumRelative = 0.0;
+            const double centerX = 127.5;
+            const double centerY = 127.5;
+            for (uint32_t y = 0u; y < image.Height; ++y)
+            {
+                for (uint32_t x = 0u; x < image.Width; ++x)
+                {
+                    const double dx = static_cast<double>(x) + 0.5 - centerX;
+                    const double dy = static_cast<double>(y) + 0.5 - centerY;
+                    if (std::sqrt(dx * dx + dy * dy) > 48.0)
+                    {
+                        continue;
+                    }
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    const double alpha = static_cast<double>(image.Values[offset + 3u]);
+                    if (!std::isfinite(alpha) || alpha < 0.0 || alpha >= 1.0)
+                    {
+                        reason = TEXT("white furnace sphere mask depth alpha is not below one");
+                        return false;
+                    }
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double actual = static_cast<double>(image.Values[offset + channel]) * 72.0;
+                        const double relative = std::abs(actual - furnaceTarget) / furnaceTarget;
+                        meanSum += relative;
+                        maximumRelative = std::max(maximumRelative, relative);
+                        ++meanCount;
+                    }
+                }
+            }
+            if (meanCount == 0u)
+            {
+                reason = TEXT("white furnace sphere mask is empty");
+                return false;
+            }
+            for (const auto& point : samplePoints)
+            {
+                const size_t offset =
+                    (static_cast<size_t>(point[1]) * image.Width + point[0]) * 4u;
+                const double alpha = static_cast<double>(image.Values[offset + 3u]);
+                if (!std::isfinite(alpha) || alpha < 0.0 || alpha >= 1.0)
+                {
+                    reason = TEXT("white furnace fixed probe depth alpha is not below one");
+                    return false;
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    const double actual = static_cast<double>(image.Values[offset + channel]) * 72.0;
+                    maximumRelative = std::max(
+                        maximumRelative, std::abs(actual - furnaceTarget) / furnaceTarget);
+                }
+            }
+            const double meanRelative = meanSum / static_cast<double>(meanCount);
+            LOG_INFO("P4 white furnace row: row=%u roughness_index=%u metallic_index=%u target=100 mean_mask_rel=%g fixed9_max_rel=%g mask_radius=48 sphere_radius=64 center=(127.5,127.5)",
+                     m_P4RowIndex,
+                     roughnessIndex,
+                     metallicIndex,
+                     meanRelative,
+                     maximumRelative);
+            std::cout << "P4 white furnace row: row=" << m_P4RowIndex
+                      << " roughness_index=" << roughnessIndex
+                      << " metallic_index=" << metallicIndex
+                      << " target=100 mean_mask_rel=" << meanRelative
+                      << " fixed9_max_rel=" << maximumRelative
+                      << " mask_radius=48 sphere_radius=64 center=(127.5,127.5)\n";
+            if (meanRelative > 0.01 || maximumRelative > 0.03)
+            {
+                m_bP4ActualOracleMismatch = true;
+                reason = TEXT("white furnace mean or fixed-probe relative error exceeded tolerance");
+                return false;
+            }
+            return true;
+        }
+
+        bool EvaluateP4DirectConductor(
+            const RgbaFloatImage& image,
+            Core::Container::String& reason)
+        {
+            const double expected = m_P4DirectOracle.CorrectTarget;
+            const double legacyExpected = m_P4DirectOracle.LegacyStoredPhysical;
+            double endpointRelativeSum = 0.0;
+            double endpointMaximumRelative = 0.0;
+            double storedHalfMaximumRelative = 0.0;
+            double physicalMean = 0.0;
+            size_t sampleCount = 0u;
+            for (uint32_t y = R1RoiMinY; y <= R1RoiMaxY; ++y)
+            {
+                for (uint32_t x = R1RoiMinX; x <= R1RoiMaxX; ++x)
+                {
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    const double alpha = image.Values[offset + 3u];
+                    if (!std::isfinite(alpha) || std::abs(alpha - 1.0) > 1.0e-3)
+                    {
+                        reason = TEXT("raw254 direct-conductor ROI alpha is not one");
+                        return false;
+                    }
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double stored = image.Values[offset + channel];
+                        const double actual = stored * 72.0;
+                        if (!std::isfinite(stored) ||
+                            std::abs(stored) >= P4RneRangeLimit)
+                        {
+                            reason = TEXT("raw254 direct-conductor ROI contains invalid data");
+                            return false;
+                        }
+                        const double endpointRelative = std::abs(actual - expected) /
+                                                         std::max(std::abs(expected), 1.0e-6);
+                        const double storedHalfRelative = std::abs(
+                            stored - m_P4DirectOracle.StoredHalf) /
+                            std::max(std::abs(m_P4DirectOracle.StoredHalf), 1.0e-6);
+                        endpointRelativeSum += endpointRelative;
+                        endpointMaximumRelative = std::max(endpointMaximumRelative, endpointRelative);
+                        storedHalfMaximumRelative = std::max(
+                            storedHalfMaximumRelative, storedHalfRelative);
+                        physicalMean += actual;
+                        ++sampleCount;
+                    }
+                }
+            }
+            if (sampleCount != 3072u)
+            {
+                reason = TEXT("raw254 direct-conductor ROI sample count is not 3072");
+                return false;
+            }
+
+            const double endpointMeanRelative = endpointRelativeSum /
+                                                static_cast<double>(sampleCount);
+            physicalMean /= static_cast<double>(sampleCount);
+            const double legacyMeanRelative = std::abs(physicalMean - legacyExpected) /
+                                              std::max(std::abs(legacyExpected), 1.0e-6);
+            LOG_INFO("P4 raw254 direct-conductor: expected=%0.13f stored_expected=%0.15f stored_half=%0.15f legacy_stored_half=%0.15f legacy_predicted=%0.15f roi=[112,143]x[112,143] samples=3072 mean_rel=%g max_rel=%g stored_half_max_rel=%g legacy_mean_rel=%g sensitivity=%0.15f%% finite=1",
+                     P4DirectTargetLiteral,
+                     P4DirectStoredLiteral,
+                     P4DirectStoredHalfLiteral,
+                     P4DirectLegacyStoredHalfLiteral,
+                     P4DirectLegacyStoredPhysicalLiteral,
+                     endpointMeanRelative,
+                     endpointMaximumRelative,
+                     storedHalfMaximumRelative,
+                     legacyMeanRelative,
+                     m_P4DirectOracle.SensitivityPercent);
+            std::cout << "P4 raw254 direct-conductor: expected=" << std::setprecision(17)
+                      << P4DirectTargetLiteral
+                      << " stored_expected=" << std::setprecision(18)
+                      << P4DirectStoredLiteral
+                      << " stored_half=" << P4DirectStoredHalfLiteral
+                      << " legacy_stored_half=" << P4DirectLegacyStoredHalfLiteral
+                      << " legacy_predicted=" << P4DirectLegacyStoredPhysicalLiteral
+                      << " roi=[112,143]x[112,143] samples=3072 mean_rel="
+                      << endpointMeanRelative << " max_rel=" << endpointMaximumRelative
+                      << " stored_half_max_rel=" << storedHalfMaximumRelative
+                      << " sensitivity=69.112670421600331%"
+                      << " sensitivity_calculated=" << m_P4DirectOracle.SensitivityPercent
+                      << " finite=1\n" << std::setprecision(6);
+
+            const bool bEndpointPassed = endpointMeanRelative <= 0.01 &&
+                                          endpointMaximumRelative <= 0.03 &&
+                                          storedHalfMaximumRelative <= 0.03;
+            if (bEndpointPassed)
+            {
+                return true;
+            }
+            if (legacyMeanRelative <= P4DirectLegacyEnvelope)
+            {
+                m_bP4ActualOracleMismatch = true;
+                if (!m_bP4DirectLegacyMarkerPrinted)
+                {
+                    std::cout << "P4 direct RED actual: scenario=direct-conductor-endpoint mean="
+                              << std::setprecision(15) << physicalMean
+                              << " legacy_predicted=1.9896240234375\n"
+                              << std::setprecision(6);
+                    m_bP4DirectLegacyMarkerPrinted = true;
+                }
+                reason = TEXT("raw254 direct-conductor legacy output is not the compensated endpoint");
+                return false;
+            }
+            m_bP4ActualOracleMismatch = true;
+            reason = TEXT("raw254 direct-conductor endpoint oracle mismatch");
+            return false;
+        }
+
+        bool EvaluateP4Frame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (m_P4Substage == P4CaptureSubstage::Primary)
+            {
+                m_bP4ActualOracleMismatch = false;
+            }
+            if (m_bP4StageApplyFailed)
+            {
+                reason = TEXT("P4 fixture scenario row application failed");
+                return false;
+            }
+            RgbaFloatImage image;
+            if (!ValidateP4CaptureEnvelope(frame, image, reason))
+            {
+                return false;
+            }
+            if (m_P4Substage != P4CaptureSubstage::Primary)
+            {
+                if (!m_bP4FixtureSnapshotAvailable ||
+                    std::memcmp(&m_P4FixtureCameraSnapshot,
+                                &GetFixture().GetCamera(),
+                                sizeof(Core::Rendering::CameraProxy)) != 0 ||
+                    m_P4FixtureMeshCount != GetFixture().TrackedMeshCount() ||
+                    m_P4FixtureTextureCount != GetFixture().TrackedTextureCount() ||
+                    m_P4FixtureMaterialCount != GetFixture().TrackedMaterialCount())
+                {
+                    reason = TEXT("P4 fixture sandwich snapshot changed across sibling captures");
+                    return false;
+                }
+                if (m_P4Substage == P4CaptureSubstage::Normal ||
+                    m_P4Substage == P4CaptureSubstage::Material ||
+                    m_P4Substage == P4CaptureSubstage::Depth)
+                {
+                    std::cout << "P4 sibling envelope passed: scenario=" << GetP4ScenarioName()
+                              << " substage=" << static_cast<unsigned int>(m_P4Substage)
+                              << " mode=" << GetP4DebugViewMode() << " row=" << m_P4RowIndex
+                              << " fixture_sandwich=PASS\n";
+                }
+                const bool bFinalSibling = m_P4Substage == P4CaptureSubstage::Material;
+                if (!bFinalSibling)
+                {
+                    return true;
+                }
+                if (m_bP4ActualOracleMismatch)
+                {
+                    if (!m_bP4MismatchMarkerPrinted)
+                    {
+                        LOG_ERROR("P4 actual/oracle mismatch detected: scenario=%s", GetP4ScenarioName());
+                        std::cout << "P4 actual/oracle mismatch: scenario=" << GetP4ScenarioName() << "\n";
+                        m_bP4MismatchMarkerPrinted = true;
+                    }
+                    reason = TEXT("P4 actual/oracle mismatch after the sibling fixture sandwich");
+                    return false;
+                }
+                return true;
+            }
+            bool bPassed = false;
+            switch (GetP4RowScenario())
+            {
+            case P4Scenario::Raw250TextureRepresentation:
+                bPassed = EvaluateP4Raw250(image, reason);
+                break;
+            case P4Scenario::Raw251DfgLut:
+                bPassed = EvaluateP4Dfg(image, reason);
+                break;
+            case P4Scenario::Raw252RoughnessSweep:
+                bPassed = EvaluateP4RoughnessPlane(image, reason);
+                break;
+            case P4Scenario::Raw252TargetNotOne:
+                bPassed = EvaluateP4TargetNotOne(image, reason);
+                break;
+            case P4Scenario::Raw252WhiteFurnace:
+                bPassed = EvaluateP4WhiteFurnace(image, reason);
+                break;
+            case P4Scenario::Raw254DirectConductorEndpoint:
+                bPassed = EvaluateP4DirectConductor(image, reason);
+                break;
+            default:
+                reason = TEXT("P4 scenario enum is invalid");
+                return false;
+            }
+            if (!bPassed && !m_bP4ActualOracleMismatch)
+            {
+                return false;
+            }
+            return true;
         }
 
         const char* GetKnownCdStageName() const
@@ -776,10 +3179,22 @@ namespace
             const double geometry = (nDotL / (nDotL * (1.0 - k) + k)) *
                                     (nDotV / (nDotV * (1.0 - k) + k));
             const double fresnel = f0 + (1.0 - f0) * std::pow(1.0 - lDotH, 5.0);
-            const double specular = distribution * geometry * fresnel /
-                                    (4.0 * nDotV * nDotL + 0.0001);
+            Core::Container::VariableArray<P4SamplePair> endpointSamples;
+            const double ess = BuildP4HammersleySamples(
+                                   P4DfgProductionSampleCount, endpointSamples)
+                                   ? [&endpointSamples]()
+                                   {
+                                       const P4DfgValue endpoint = IntegrateP4Dfg(
+                                           1.0, 0.5, endpointSamples);
+                                       return endpoint.A + endpoint.B;
+                                   }()
+                                   : 1.0;
+            const double compensation = 1.0 + f0 * (1.0 - ess) / std::max(ess, 1.0e-4);
+            const double endpointBaseSpecular = distribution * geometry * fresnel /
+                                                (4.0 * nDotV * nDotL + 0.0001);
             const double diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / pi;
-            outOracle.FullPbr = illuminance * (diffuse + specular);
+            const double endpointSpecular = endpointBaseSpecular * compensation;
+            outOracle.FullPbr = illuminance * (diffuse + endpointSpecular);
             return std::isfinite(outOracle.FullPbr) && outOracle.FullPbr > 0.0;
         }
 
@@ -1342,6 +3757,7 @@ namespace
 
         bool m_bR1Scenario = false;
         bool m_bKnownCdScenario = false;
+        bool m_bP4Scenario = false;
         bool m_bMarkerRegistered = false;
         enum class R1CaptureStage : uint8_t
         {
@@ -1360,6 +3776,32 @@ namespace
         bool m_KnownCdHasStageToken = false;
         uint64_t m_KnownCdLastStageToken = 0u;
         RgbaFloatImage m_KnownCdPreviousImage;
+        P4Scenario m_P4Scenario = P4Scenario::Raw250TextureRepresentation;
+        uint32_t m_P4RowIndex = 0u;
+        P4CaptureSubstage m_P4Substage = P4CaptureSubstage::Primary;
+        bool m_P4HasFrameNumber = false;
+        uint64_t m_P4LastFrameNumber = 0u;
+        bool m_P4HasStageToken = false;
+        uint64_t m_P4LastStageToken = 0u;
+        bool m_bP4StageApplyFailed = false;
+        bool m_bP4CameraMarkerPrinted = false;
+        bool m_bP4CaptureEnvelopeMarkerPrinted = false;
+        bool m_bP4DirectLegacyMarkerPrinted = false;
+        bool m_bP4ActualOracleMismatch = false;
+        bool m_bP4MismatchMarkerPrinted = false;
+        bool m_bP4ActualCameraAvailable = false;
+        bool m_bP4HasRuntimeIdentity = false;
+        uint32_t m_P4LastRuntimeRow = 0u;
+        Core::Rendering::CameraProxy m_P4FixtureCameraSnapshot;
+        size_t m_P4FixtureMeshCount = 0u;
+        size_t m_P4FixtureTextureCount = 0u;
+        size_t m_P4FixtureMaterialCount = 0u;
+        bool m_bP4FixtureSnapshotAvailable = false;
+        Core::Rendering::CameraProxy m_P4ActualCamera;
+        P4DfgOracle m_P4DfgOracle;
+        P4RoughnessOracle m_P4RoughnessOracle;
+        P4Raw250Oracle m_P4Raw250Oracle;
+        P4DirectConductorOracle m_P4DirectOracle;
         OpaqueMarkerView m_MarkerView;
     };
 
@@ -1439,6 +3881,32 @@ namespace
         return true;
     }
 
+    bool ValidateP4ScenarioArgumentContract()
+    {
+        const TCHAR* scenarioNames[] = {
+            TEXT("ibl-prefilter-nonconstant"),
+            TEXT("dfg-lut"),
+            TEXT("ibl-roughness-sweep"),
+            TEXT("white-furnace"),
+            TEXT("direct-conductor-endpoint")};
+        for (const TCHAR* scenarioName : scenarioNames)
+        {
+            Core::Container::VariableArray<Core::Container::String> args;
+            args.push_back(TEXT("--scene=indoor"));
+            args.push_back(TEXT("--capture-source=scene-color"));
+            Core::Container::String scenarioArgument = TEXT("--r1-scenario=");
+            scenarioArgument += scenarioName;
+            args.push_back(scenarioArgument);
+            HdrHandler handler;
+            if (!handler.OnPreInitialize(args))
+            {
+                std::cerr << "P4 scenario argument was rejected: " << scenarioName << "\n";
+                return false;
+            }
+        }
+        return true;
+    }
+
     Core::Container::TSharedPtr<Core::Application::IApplicationHandler> CreateHandler()
     {
         return Core::Container::MakeShared<HdrHandler>();
@@ -1472,6 +3940,10 @@ int main(int argc, char** argv)
         return 1;
     }
     if (!ValidateKnownCdScenarioArgumentContract())
+    {
+        return 1;
+    }
+    if (!ValidateP4ScenarioArgumentContract())
     {
         return 1;
     }

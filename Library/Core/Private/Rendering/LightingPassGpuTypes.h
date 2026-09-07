@@ -15,7 +15,7 @@ namespace NorvesLib::Core::Rendering
         float lightProjection[16];
         uint32_t lightCount;
         uint32_t bShadowEnabled;
-        uint32_t envMapMipLevels;
+        uint32_t prefilteredSpecularMipLevels;
         uint32_t bIBLEnabled;
         uint32_t bSSAOEnabled;
         uint32_t bNeuralBRDFEnabled;
@@ -31,6 +31,8 @@ namespace NorvesLib::Core::Rendering
         float attenuation[4];
     };
 
+    static_assert(sizeof(GPULightingParams) == 256);
+    static_assert(offsetof(GPULightingParams, prefilteredSpecularMipLevels) == 232);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);

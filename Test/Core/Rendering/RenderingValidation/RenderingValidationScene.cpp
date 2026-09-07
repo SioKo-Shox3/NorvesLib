@@ -14,7 +14,9 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
 
+#include <cmath>
 #include <cstdint>
+#include <utility>
 
 namespace NorvesLib::Test::RenderingValidation
 {
@@ -23,9 +25,112 @@ namespace NorvesLib::Test::RenderingValidation
         using Core::Rendering::CameraProxy;
         using Core::Rendering::MaterialHandle;
         using Core::Rendering::MeshDataHandle;
+        using Core::Rendering::RenderResources;
+        using Core::Rendering::TextureHandle;
 
         constexpr MeshDataHandle PlaneHandle{0x52300001u};
         constexpr MeshDataHandle SphereHandle{0x52300002u};
+        constexpr uint32_t P4RoughnessCount = 5u;
+        constexpr uint32_t P4MetallicQueryTextureCount = 6u;
+        constexpr uint32_t P4MaterialCount = P4RoughnessCount * P4MetallicQueryTextureCount;
+        constexpr uint32_t P4FurnaceMetallicCount = 3u;
+        constexpr uint32_t P4TargetMetallicIndex = 2u;
+        constexpr uint32_t P4DirectRoughnessIndex = 4u;
+        constexpr uint32_t P4DirectMaterialIndex = 26u;
+        constexpr float P4RoughnessValues[P4RoughnessCount] = {
+            0.05f,
+            0.25f,
+            0.50f,
+            0.75f,
+            1.00f};
+        constexpr float P4MetallicQueryValues[P4MetallicQueryTextureCount] = {
+            0.0f,
+            0.5f,
+            1.0f,
+            0.1f,
+            0.25f,
+            0.75f};
+        constexpr uint32_t P4DfgQueryIndices[5] = {3u, 4u, 1u, 5u, 2u};
+        constexpr bool AreP4QueryValuesDistinct()
+        {
+            for (uint32_t first = 0u; first < P4MetallicQueryTextureCount; ++first)
+            {
+                for (uint32_t second = first + 1u;
+                     second < P4MetallicQueryTextureCount;
+                     ++second)
+                {
+                    if (P4MetallicQueryValues[first] == P4MetallicQueryValues[second])
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        static_assert(P4DfgQueryIndices[0] == 3u && P4DfgQueryIndices[1] == 4u &&
+                          P4DfgQueryIndices[2] == 1u && P4DfgQueryIndices[3] == 5u &&
+                          P4DfgQueryIndices[4] == 2u,
+                      "P4 DFG query axis must map to the five distinct query textures");
+        static_assert(AreP4QueryValuesDistinct(),
+                      "P4 query texture values must remain distinct");
+        static_assert(P4DirectMaterialIndex ==
+                          P4DirectRoughnessIndex * P4MetallicQueryTextureCount + P4TargetMetallicIndex,
+                      "P4 direct conductor material index must remain 26");
+
+        class RenderingValidationResourceReleaser final : public ISceneFixtureResourceReleaser
+        {
+        public:
+            explicit RenderingValidationResourceReleaser(RenderResources* resources) noexcept
+                : m_pResources(resources)
+            {
+            }
+
+            void UnregisterMesh(MeshDataHandle handle) noexcept override
+            {
+                if (m_pResources != nullptr)
+                {
+                    m_pResources->Meshes().Unregister(handle);
+                }
+            }
+
+            void ReleaseTexture(TextureHandle handle) noexcept override
+            {
+                if (m_pResources != nullptr)
+                {
+                    m_pResources->Textures().ReleaseTexture(handle);
+                }
+            }
+
+            void ReleaseMaterial(MaterialHandle handle) noexcept override
+            {
+                if (m_pResources != nullptr)
+                {
+                    m_pResources->Materials().Release(handle);
+                }
+            }
+
+        private:
+            RenderResources* m_pResources = nullptr;
+        };
+
+        TextureHandle CreateScalarTexture(RenderResources& resources,
+                                           float value,
+                                           const TCHAR* debugName)
+        {
+            Core::Rendering::TextureCreateInfo textureInfo;
+            textureInfo.Width = 1u;
+            textureInfo.Height = 1u;
+            textureInfo.PixelFormat = Core::Rendering::TextureCreateInfo::Format::RGBA32_FLOAT;
+            textureInfo.DebugName = debugName;
+            const double doubleValue = static_cast<double>(value);
+            const double clampedValue =
+                doubleValue < 0.0 ? 0.0 : doubleValue > 1.0 ? 1.0 : doubleValue;
+            const double quantizedValue =
+                std::floor(clampedValue * 255.0 + 0.5) / 255.0;
+            const float canonicalValue = static_cast<float>(quantizedValue);
+            const float pixels[4] = {canonicalValue, canonicalValue, canonicalValue, 1.0f};
+            return resources.Textures().CreateTexture(textureInfo, pixels, sizeof(pixels));
+        }
 
         bool EqualFloatArray(const float* left, const float* right, size_t count)
         {
@@ -284,10 +389,12 @@ namespace NorvesLib::Test::RenderingValidation
         m_pReleaser = releaser;
     }
 
-    void SceneFixtureResourceLease::Reserve(size_t meshCapacity, size_t materialCapacity)
+    void SceneFixtureResourceLease::Reserve(size_t meshCapacity,
+                                            size_t textureCapacity,
+                                            size_t materialCapacity)
     {
         m_Meshes.reserve(meshCapacity);
-        m_Textures.reserve(1);
+        m_Textures.reserve(textureCapacity);
         m_Materials.reserve(materialCapacity);
     }
 
@@ -333,6 +440,21 @@ namespace NorvesLib::Test::RenderingValidation
         return m_Meshes.empty() && m_Textures.empty() && m_Materials.empty();
     }
 
+    size_t SceneFixtureResourceLease::TrackedMeshCount() const noexcept
+    {
+        return m_Meshes.size();
+    }
+
+    size_t SceneFixtureResourceLease::TrackedTextureCount() const noexcept
+    {
+        return m_Textures.size();
+    }
+
+    size_t SceneFixtureResourceLease::TrackedMaterialCount() const noexcept
+    {
+        return m_Materials.size();
+    }
+
     SceneFixtureInitializationGuard::SceneFixtureInitializationGuard(SceneFixtureResourceLease* lease) noexcept
         : m_pLease(lease)
     {
@@ -344,6 +466,16 @@ namespace NorvesLib::Test::RenderingValidation
     {
         m_pWorld = world;
         m_pObjects = objects;
+    }
+
+    void SceneFixtureInitializationGuard::BindPublication(
+        RenderingValidationSceneFixture* fixture,
+        SceneFixtureInitializationState* state,
+        ISceneFixtureResourceReleaser* stableOwner) noexcept
+    {
+        m_pFixture = fixture;
+        m_pState = state;
+        m_pStableOwner = stableOwner;
     }
 
     void SceneFixtureInitializationGuard::TrackObject(Core::Entity* object)
@@ -372,7 +504,75 @@ namespace NorvesLib::Test::RenderingValidation
 
     void SceneFixtureInitializationGuard::Commit() noexcept
     {
+        if (m_pFixture != nullptr && m_pState != nullptr)
+        {
+            m_pFixture->PublishInitializationState(*m_pState, m_pStableOwner);
+        }
         m_bCommitted = true;
+    }
+
+    void RenderingValidationSceneFixture::PublishInitializationState(
+        SceneFixtureInitializationState& state,
+        ISceneFixtureResourceReleaser* stableOwner) noexcept
+    {
+        m_pWorld = state.pWorld;
+        m_pResources = state.pResources;
+        m_pSentinel = state.pSentinel;
+        m_pP4PlaneMesh = state.pP4PlaneMesh;
+        m_pP4SphereMesh = state.pP4SphereMesh;
+        m_pEmissiveMesh = state.pEmissiveMesh;
+        m_pTransparentMesh = state.pTransparentMesh;
+        m_pP4LightEntity = state.pP4LightEntity;
+        m_Lease = std::move(state.Lease);
+        state.Lease.Bind(nullptr);
+        m_Lease.Bind(stableOwner);
+        m_Layout = std::move(state.Layout);
+        m_Objects = std::move(state.Objects);
+        m_P4Materials = std::move(state.P4Materials);
+
+        state.pWorld = nullptr;
+        state.pResources = nullptr;
+        state.pSentinel = nullptr;
+        state.pP4PlaneMesh = nullptr;
+        state.pP4SphereMesh = nullptr;
+        state.pEmissiveMesh = nullptr;
+        state.pTransparentMesh = nullptr;
+        state.pP4LightEntity = nullptr;
+        state.Lease.Bind(nullptr);
+        state.Objects.clear();
+        state.Layout = {};
+        state.P4Materials.fill(MaterialHandle::Invalid());
+        m_bPublished = true;
+    }
+
+    void RenderingValidationSceneFixture::ShutdownPublishedInitialization(
+        ISceneFixtureResourceReleaser* releaser) noexcept
+    {
+        Core::World* pWorld = m_pWorld;
+        m_pWorld = nullptr;
+        m_pResources = nullptr;
+        m_pSentinel = nullptr;
+        m_pP4PlaneMesh = nullptr;
+        m_pP4SphereMesh = nullptr;
+        m_pEmissiveMesh = nullptr;
+        m_pTransparentMesh = nullptr;
+        m_pP4LightEntity = nullptr;
+        m_bPublished = false;
+
+        if (pWorld != nullptr)
+        {
+            for (size_t index = m_Objects.size(); index > 0; --index)
+            {
+                pWorld->RemoveEntity(m_Objects[index - 1]);
+            }
+        }
+        m_Objects.clear();
+
+        m_Lease.Bind(releaser);
+        m_Lease.Release();
+        m_Lease.Bind(nullptr);
+        m_P4Materials.fill(MaterialHandle::Invalid());
+        m_Layout = {};
     }
 
     bool RenderingValidationSceneFixture::Initialize(Core::World& world,
@@ -381,18 +581,32 @@ namespace NorvesLib::Test::RenderingValidation
                                                      uint32_t seed)
     {
         Shutdown(resources);
-        if (!BuildSceneLayout(kind, seed, m_Layout))
+        SceneFixtureInitializationState staging;
+        staging.pWorld = &world;
+        staging.pResources = &resources;
+        SceneLayout& layout = staging.Layout;
+        if (!BuildSceneLayout(kind, seed, layout))
         {
             return false;
         }
 
-        m_Lease.Reserve(2, 1);
-        m_Objects.clear();
-        m_pWorld = &world;
-        m_pResources = &resources;
-        m_Lease.Bind(this);
-        SceneFixtureInitializationGuard guard(&m_Lease);
-        guard.BindObjects(&world, &m_Objects);
+        SceneFixtureResourceLease& lease = staging.Lease;
+        lease.Reserve(2, 13, 33);
+        RenderingValidationResourceReleaser releaser(&resources);
+        lease.Bind(&releaser);
+        Core::Container::VariableArray<Core::Entity*>& objects = staging.Objects;
+        objects.reserve(layout.Objects.size() + layout.Lights.size() + 2u);
+        SceneFixtureInitializationGuard guard(&lease);
+        guard.BindObjects(&world, &objects);
+        guard.BindPublication(this, &staging, this);
+
+        FixedStepSentinelComponent*& pSentinel = staging.pSentinel;
+        Core::Component::MeshComponent*& pP4PlaneMesh = staging.pP4PlaneMesh;
+        Core::Component::MeshComponent*& pP4SphereMesh = staging.pP4SphereMesh;
+        Core::Component::MeshComponent*& pEmissiveMesh = staging.pEmissiveMesh;
+        Core::Component::MeshComponent*& pTransparentMesh = staging.pTransparentMesh;
+        Core::Entity*& pP4LightEntity = staging.pP4LightEntity;
+        Core::Container::FixedArray<MaterialHandle, 30>& p4Materials = staging.P4Materials;
 
         Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> planeVertices;
         Core::Container::VariableArray<uint32_t> planeIndices;
@@ -416,7 +630,7 @@ namespace NorvesLib::Test::RenderingValidation
         {
             return false;
         }
-        m_Lease.TrackMesh(PlaneHandle);
+        lease.TrackMesh(PlaneHandle);
 
         Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> sphereVertices;
         Core::Container::VariableArray<uint32_t> sphereIndices;
@@ -428,7 +642,7 @@ namespace NorvesLib::Test::RenderingValidation
         {
             return false;
         }
-        m_Lease.TrackMesh(SphereHandle);
+        lease.TrackMesh(SphereHandle);
 
         Core::Rendering::TextureCreateInfo normalTextureInfo;
         normalTextureInfo.Width = 1;
@@ -442,7 +656,7 @@ namespace NorvesLib::Test::RenderingValidation
         {
             return false;
         }
-        m_Lease.TrackTexture(normalTexture);
+        lease.TrackTexture(normalTexture);
 
         Core::Container::FixedArray<MaterialHandle, 3> materials;
         for (uint32_t index = 0; index < 3u; ++index)
@@ -471,10 +685,67 @@ namespace NorvesLib::Test::RenderingValidation
             {
                 return false;
             }
-            m_Lease.TrackMaterial(materials[index]);
+            lease.TrackMaterial(materials[index]);
         }
 
-        for (const SceneObjectSpec& object : m_Layout.Objects)
+        Core::Container::FixedArray<TextureHandle, P4RoughnessCount> roughnessTextures;
+        for (uint32_t index = 0; index < P4RoughnessCount; ++index)
+        {
+            roughnessTextures[index] = CreateScalarTexture(
+                resources, P4RoughnessValues[index], TEXT("RenderingValidationP4Roughness"));
+            if (!roughnessTextures[index].IsValid())
+            {
+                return false;
+            }
+            lease.TrackTexture(roughnessTextures[index]);
+        }
+
+        Core::Container::FixedArray<TextureHandle, P4MetallicQueryTextureCount> metallicQueryTextures;
+        for (uint32_t index = 0; index < P4MetallicQueryTextureCount; ++index)
+        {
+            metallicQueryTextures[index] = CreateScalarTexture(
+                resources, P4MetallicQueryValues[index], TEXT("RenderingValidationP4MetallicQuery"));
+            if (!metallicQueryTextures[index].IsValid())
+            {
+                return false;
+            }
+            lease.TrackTexture(metallicQueryTextures[index]);
+        }
+
+        const TextureHandle aoTexture = CreateScalarTexture(
+            resources, 1.0f, TEXT("RenderingValidationP4AmbientOcclusion"));
+        if (!aoTexture.IsValid())
+        {
+            return false;
+        }
+        lease.TrackTexture(aoTexture);
+
+        for (uint32_t roughnessIndex = 0; roughnessIndex < P4RoughnessCount; ++roughnessIndex)
+        {
+            for (uint32_t metallicQueryIndex = 0;
+                 metallicQueryIndex < P4MetallicQueryTextureCount;
+                 ++metallicQueryIndex)
+            {
+                const uint32_t materialIndex =
+                    roughnessIndex * P4MetallicQueryTextureCount + metallicQueryIndex;
+                Core::Rendering::MaterialCreateData materialData;
+                materialData.NormalTexture = normalTexture;
+                materialData.RoughnessTexture = roughnessTextures[roughnessIndex];
+                materialData.MetallicTexture = metallicQueryTextures[metallicQueryIndex];
+                materialData.AOTexture = aoTexture;
+                materialData.bTwoSided = true;
+                materialData.bCastShadows = false;
+                materialData.DebugName = TEXT("RenderingValidationP4Material");
+                p4Materials[materialIndex] = resources.Materials().Create(materialData);
+                if (!p4Materials[materialIndex].IsValid())
+                {
+                    return false;
+                }
+                lease.TrackMaterial(p4Materials[materialIndex]);
+            }
+        }
+
+        for (const SceneObjectSpec& object : layout.Objects)
         {
             Core::Entity* entity = world.SpawnEntity();
             if (entity == nullptr)
@@ -502,9 +773,44 @@ namespace NorvesLib::Test::RenderingValidation
             {
                 mesh->SetCustomData(channel, object.Color[channel]);
             }
+
+            if (pP4PlaneMesh == nullptr && object.Primitive == ScenePrimitiveKind::Plane &&
+                object.Material == MaterialKind::NeutralOpaque)
+            {
+                pP4PlaneMesh = mesh;
+            }
+            if (object.Material == MaterialKind::EmissiveOpaque)
+            {
+                pEmissiveMesh = mesh;
+            }
+            if (object.Material == MaterialKind::LegacyTransparent)
+            {
+                pTransparentMesh = mesh;
+            }
         }
 
-        for (const SceneLightSpec& light : m_Layout.Lights)
+        Core::Entity* p4SphereEntity = world.SpawnEntity();
+        if (p4SphereEntity == nullptr)
+        {
+            return false;
+        }
+        guard.TrackObject(p4SphereEntity);
+        p4SphereEntity->SetPosition(0.0f, 0.0f, 0.0f);
+        p4SphereEntity->SetScale(0.025f, 0.025f, 0.025f);
+        pP4SphereMesh = world.CreateComponent<Core::Component::MeshComponent>(p4SphereEntity);
+        if (pP4SphereMesh == nullptr)
+        {
+            return false;
+        }
+        pP4SphereMesh->SetMeshHandle(SphereHandle);
+        pP4SphereMesh->SetMaterial(0, p4Materials[0]);
+        pP4SphereMesh->SetCustomData(0, 1.0f);
+        pP4SphereMesh->SetCustomData(1, 1.0f);
+        pP4SphereMesh->SetCustomData(2, 1.0f);
+        pP4SphereMesh->SetCustomData(3, 1.0f);
+        pP4SphereMesh->SetVisible(false);
+
+        for (const SceneLightSpec& light : layout.Lights)
         {
             Core::Entity* entity = world.SpawnEntity();
             if (entity == nullptr)
@@ -541,6 +847,7 @@ namespace NorvesLib::Test::RenderingValidation
             component->SetLightColor(light.Color[0], light.Color[1], light.Color[2]);
             component->SetIntensity(light.Intensity);
             component->SetCastShadows(light.bCastShadows);
+            pP4LightEntity = entity;
         }
 
         Core::Entity* sentinelEntity = world.SpawnEntity();
@@ -549,8 +856,8 @@ namespace NorvesLib::Test::RenderingValidation
             return false;
         }
         guard.TrackObject(sentinelEntity);
-        m_pSentinel = world.CreateComponent<FixedStepSentinelComponent>(sentinelEntity);
-        if (m_pSentinel == nullptr)
+        pSentinel = world.CreateComponent<FixedStepSentinelComponent>(sentinelEntity);
+        if (pSentinel == nullptr)
         {
             return false;
         }
@@ -559,27 +866,121 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
-    void RenderingValidationSceneFixture::Shutdown(Core::Rendering::RenderResources& resources)
+    void RenderingValidationSceneFixture::Shutdown(Core::Rendering::RenderResources&)
     {
-        (void)resources;
-        if (m_pWorld != nullptr)
-        {
-            for (size_t index = m_Objects.size(); index > 0; --index)
-            {
-                m_pWorld->RemoveEntity(m_Objects[index - 1]);
-            }
-        }
-        m_Objects.clear();
-        m_Lease.Release();
-        m_pSentinel = nullptr;
-        m_pWorld = nullptr;
-        m_pResources = nullptr;
-        m_Layout = {};
+        RenderingValidationResourceReleaser releaser(m_pResources);
+        ShutdownPublishedInitialization(&releaser);
     }
 
     void RenderingValidationSceneFixture::ApplyCamera(Core::Rendering::RenderWorld& renderWorld) const
     {
         renderWorld.SetMainCamera(m_Layout.Camera);
+    }
+
+    bool RenderingValidationSceneFixture::ApplyP4ScenarioRow(const P4ScenarioRow& row) const
+    {
+        if (m_pP4PlaneMesh == nullptr || m_pP4SphereMesh == nullptr ||
+            !m_P4Materials[0].IsValid())
+        {
+            return false;
+        }
+
+        uint32_t roughnessIndex = 0u;
+        uint32_t metallicQueryIndex = 0u;
+        bool bUseSphere = false;
+        float albedo = 0.5f;
+        switch (row.Scenario)
+        {
+        case P4Scenario::Raw250TextureRepresentation:
+            if (row.RowIndex != 0u)
+            {
+                return false;
+            }
+            break;
+        case P4Scenario::Raw251DfgLut:
+            if (row.RowIndex >= P4RoughnessCount * 5u)
+            {
+                return false;
+            }
+            roughnessIndex = row.RowIndex / 5u;
+            metallicQueryIndex = P4DfgQueryIndices[row.RowIndex % 5u];
+            break;
+        case P4Scenario::Raw252RoughnessSweep:
+            if (row.RowIndex > P4RoughnessCount)
+            {
+                return false;
+            }
+            if (row.RowIndex == P4RoughnessCount)
+            {
+                roughnessIndex = 1u;
+                metallicQueryIndex = P4TargetMetallicIndex;
+            }
+            else
+            {
+                roughnessIndex = row.RowIndex;
+            }
+            break;
+        case P4Scenario::Raw252TargetNotOne:
+            if (row.RowIndex != 0u)
+            {
+                return false;
+            }
+            roughnessIndex = 1u;
+            metallicQueryIndex = P4TargetMetallicIndex;
+            break;
+        case P4Scenario::Raw252WhiteFurnace:
+            if (row.RowIndex >= P4RoughnessCount * P4FurnaceMetallicCount)
+            {
+                return false;
+            }
+            roughnessIndex = row.RowIndex / P4FurnaceMetallicCount;
+            metallicQueryIndex = row.RowIndex % P4FurnaceMetallicCount;
+            bUseSphere = true;
+            albedo = 1.0f;
+            break;
+        case P4Scenario::Raw254DirectConductorEndpoint:
+            if (row.RowIndex != 0u || m_pP4LightEntity == nullptr)
+            {
+                return false;
+            }
+            roughnessIndex = P4DirectRoughnessIndex;
+            metallicQueryIndex = P4TargetMetallicIndex;
+            albedo = 1.0f;
+            break;
+        default:
+            return false;
+        }
+
+        const uint32_t materialIndex =
+            roughnessIndex * P4MetallicQueryTextureCount + metallicQueryIndex;
+        if (materialIndex >= P4MaterialCount || !m_P4Materials[materialIndex].IsValid())
+        {
+            return false;
+        }
+
+        m_pP4PlaneMesh->SetMaterial(0u, m_P4Materials[materialIndex]);
+        m_pP4SphereMesh->SetMaterial(0u, m_P4Materials[materialIndex]);
+        for (uint32_t channel = 0u; channel < 4u; ++channel)
+        {
+            const float value = channel == 3u ? 1.0f : albedo;
+            m_pP4PlaneMesh->SetCustomData(channel, value);
+            m_pP4SphereMesh->SetCustomData(channel, value);
+        }
+        m_pP4PlaneMesh->SetVisible(!bUseSphere);
+        m_pP4SphereMesh->SetVisible(bUseSphere);
+        if (m_pEmissiveMesh != nullptr)
+        {
+            m_pEmissiveMesh->SetVisible(false);
+        }
+        if (m_pTransparentMesh != nullptr)
+        {
+            m_pTransparentMesh->SetVisible(false);
+        }
+        if (m_pP4LightEntity != nullptr)
+        {
+            m_pP4LightEntity->SetActive(row.Scenario == P4Scenario::Raw254DirectConductorEndpoint);
+        }
+        return true;
     }
 
     const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetCamera() const
@@ -596,6 +997,21 @@ namespace NorvesLib::Test::RenderingValidation
     {
         return m_pSentinel != nullptr && m_pSentinel->IsFixedDeltaValid() &&
                m_pSentinel->GetObservedSteps() == ValidationWarmupFixedSteps;
+    }
+
+    size_t RenderingValidationSceneFixture::TrackedMeshCount() const noexcept
+    {
+        return m_Lease.TrackedMeshCount();
+    }
+
+    size_t RenderingValidationSceneFixture::TrackedTextureCount() const noexcept
+    {
+        return m_Lease.TrackedTextureCount();
+    }
+
+    size_t RenderingValidationSceneFixture::TrackedMaterialCount() const noexcept
+    {
+        return m_Lease.TrackedMaterialCount();
     }
 
     void RenderingValidationSceneFixture::UnregisterMesh(MeshDataHandle handle) noexcept

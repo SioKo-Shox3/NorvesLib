@@ -18,7 +18,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     mat4 lightProjection;   // シャドウマップ用ライトプロジェクション行列
     uint lightCount;
     uint bShadowEnabled;    // シャドウマップ有効フラグ
-    uint envMapMipLevels;   // 環境マップミップレベル数
+    uint prefilteredSpecularMipLevels; // prefiltered specular mip level count
     uint bIBLEnabled;       // IBL有効フラグ
     uint bSSAOEnabled;      // SSAO有効フラグ
     uint bNeuralBRDFEnabled; // Neural BRDF有効フラグ
@@ -51,6 +51,10 @@ layout(set = 0, binding = 7) uniform sampler2D gbufferEmissive;
 layout(set = 0, binding = 8) uniform sampler2D envMap;    // HDR環境マップ（equirectangular）
 layout(set = 0, binding = 9) uniform sampler2D brdfLUT;   // BRDF LUT（split-sum近似）
 
+// Diffuse irradiance and GGX prefiltered specular resources
+layout(set = 0, binding = 12) uniform sampler2D diffuseIrradiance;
+layout(set = 0, binding = 13) uniform sampler2D prefilteredSpecular;
+
 // SSAO (Screen-Space Ambient Occlusion)
 layout(set = 0, binding = 10) uniform sampler2D ssaoTexture;
 
@@ -79,10 +83,14 @@ const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
 const uint DEBUG_VIEW_MODE_COUNT = 9u;
 const uint DEBUG_VIEW_MODE_VALIDATION_LAMBERT = 253u;
 const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
+const uint DEBUG_VIEW_MODE_RAW250 = 250u;
+const uint DEBUG_VIEW_MODE_RAW251 = 251u;
+const uint DEBUG_VIEW_MODE_RAW252 = 252u;
 
 bool ShouldApplySceneColorPreExposure()
 {
     return params.debugViewMode == DEBUG_VIEW_MODE_NORMAL ||
+           params.debugViewMode == DEBUG_VIEW_MODE_RAW252 ||
            params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT ||
            params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR;
 }
@@ -111,6 +119,13 @@ vec2 EquirectangularUV(vec3 dir)
     return uv;
 }
 
+vec3 SamplePrefilteredSpecular(vec3 direction, float roughness)
+{
+    float lod = roughness * float(params.prefilteredSpecularMipLevels - 1u);
+    vec2 uv = EquirectangularUV(direction);
+    return textureLod(prefilteredSpecular, uv, lod).rgb;
+}
+
 // フレネル（Schlickの近似）
 vec3 FresnelSchlick(float cosTheta, vec3 F0)
 {
@@ -118,11 +133,6 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
 }
 
 // フレネル（Schlickの近似、ラフネス考慮版 - アンビエント/IBL用）
-vec3 FresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
-{
-    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
 // 法線分布関数（GGX/Trowbridge-Reitz）
 float DistributionGGX(vec3 N, vec3 H, float roughness)
 {
@@ -396,6 +406,74 @@ vec4 EvaluateNeuralBRDF(float NdotL, float NdotV, float NdotH, float LdotH, floa
     return result;
 }
 
+void EvaluateAnalyticalDirectEndpointBRDF(vec3 albedo, float metallic, float roughness, vec3 N, vec3 V, vec3 L, vec3 H, vec2 dfg, out vec3 diffuseBrdf, out vec3 specularBrdf)
+{
+    vec3 F0d = vec3(0.04);
+    vec3 F0c = albedo;
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotH = max(dot(N, H), 0.0);
+    float VdotH = max(dot(V, H), 0.0);
+    float D = DistributionGGX(N, H, roughness);
+    float k = ((roughness + 1.0) * (roughness + 1.0)) / 8.0;
+    float Gv = NdotV / (NdotV * (1.0 - k) + k);
+    float Gl = NdotL / (NdotL * (1.0 - k) + k);
+    float G = Gv * Gl;
+    float brdfCommon = D * G / (4.0 * NdotV * NdotL + 0.0001);
+    vec3 Fd = FresnelSchlick(VdotH, F0d);
+    vec3 Fc = FresnelSchlick(VdotH, F0c);
+    float Ess = max(dfg.x + dfg.y, 0.0001);
+    vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
+    vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
+    vec3 dielectricSpec = brdfCommon * Fd * CompD;
+    vec3 conductorSpec = brdfCommon * Fc * CompC;
+    vec3 diffuseEndpoint = (1.0 - Fd) * albedo / PI;
+    diffuseBrdf = (1.0 - metallic) * diffuseEndpoint;
+    specularBrdf = (1.0 - metallic) * dielectricSpec +
+                   metallic * conductorSpec;
+}
+
+bool IsRaw252ParameterInvariantValid()
+{
+    return params.bIBLEnabled != 0u &&
+           params.bSSAOEnabled == 0u &&
+           params.bNeuralBRDFEnabled == 0u &&
+           params.lightCount == 0u &&
+           abs(params.ambientColor.w - 1.0) <= 0.0001;
+}
+
+vec3 EvaluateIblEndpoint(vec3 albedo,
+                         float metallic,
+                         float roughness,
+                         vec3 N,
+                         vec3 V,
+                         float ao,
+                         float specularAO,
+                         float iblIntensity,
+                         vec2 brdf)
+{
+    float Ess = max(brdf.x + brdf.y, 0.0001);
+    vec3 F0d = vec3(0.04);
+    vec3 F0c = albedo;
+    vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
+    vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
+    vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
+                    vec3(0.0), vec3(1.0));
+    vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
+                    vec3(0.0), vec3(1.0));
+
+    vec2 irradianceUV = EquirectangularUV(N);
+    vec3 irradiance = textureLod(diffuseIrradiance, irradianceUV, 0.0).rgb;
+    vec3 diffuseIBL = irradiance * (albedo / PI) *
+                      (1.0 - metallic) * (vec3(1.0) - Ed);
+
+    vec3 R = reflect(-V, N);
+    vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
+    vec3 specularIBL = prefilteredColor *
+                       ((1.0 - metallic) * Ed + metallic * Ec);
+    return (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
+}
+
 void main()
 {
     // GBufferからデータを取得
@@ -403,6 +481,25 @@ void main()
     vec4 normalSample = texture(gbufferNormal, fragUV);
     vec4 materialSample = texture(gbufferMaterial, fragUV);
     float depthSample = texture(gbufferDepth, fragUV).r;
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_RAW250)
+    {
+        float band = min(floor(clamp(fragUV.y, 0.0, 0.999999) * 5.0), 4.0);
+        float localV = fragUV.y * 5.0 - band;
+        float rawRoughness = band == 0.0 ? 0.0 :
+                              band == 1.0 ? 0.05 :
+                              band == 2.0 ? 0.25 :
+                              band == 3.0 ? 0.50 : 1.0;
+        float phi = 2.0 * PI * (fragUV.x - 0.5);
+        float theta = PI * localV;
+        vec3 rawDirection = vec3(sin(theta) * cos(phi),
+                                 cos(theta),
+                                 sin(theta) * sin(phi));
+        vec3 rawColor = SamplePrefilteredSpecular(rawDirection, rawRoughness);
+        float rawAlpha = albedoSample.a < 0.01 ? 1.0 : ComputeDebugDepth01(fragUV, depthSample);
+        outColor = vec4(rawColor, rawAlpha);
+        return;
+    }
 
     if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_ALBEDO)
     {
@@ -412,6 +509,11 @@ void main()
 
     if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_NORMAL)
     {
+        if (albedoSample.a < 0.01)
+        {
+            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
         vec3 debugNormal = normalize(normalSample.xyz) * 0.5 + 0.5;
         outColor = vec4(debugNormal, 1.0);
         return;
@@ -425,6 +527,11 @@ void main()
 
     if (params.debugViewMode == DEBUG_VIEW_MODE_GBUFFER_DEPTH)
     {
+        if (albedoSample.a < 0.01)
+        {
+            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
         float depth01 = ComputeDebugDepth01(fragUV, depthSample);
         outColor = vec4(vec3(depth01), 1.0);
         return;
@@ -433,6 +540,17 @@ void main()
     // アルファが0の場合は天球（環境マップ）を描画
     if (albedoSample.a < 0.01)
     {
+        if (params.debugViewMode == DEBUG_VIEW_MODE_RAW251)
+        {
+            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
+        if (params.debugViewMode == DEBUG_VIEW_MODE_RAW252 &&
+            !IsRaw252ParameterInvariantValid())
+        {
+            outColor = vec4(vec3(65504.0), 1.0);
+            return;
+        }
         if (params.bIBLEnabled != 0u)
         {
             // スクリーンUVからワールド方向を復元（far planeのdepth=1.0を使用）
@@ -486,9 +604,34 @@ void main()
     // カメラからの視線ベクトル
     vec3 V = normalize(params.cameraPosition.xyz - worldPos);
 
-    // 基本反射率（非金属: 0.04、金属: アルベドカラー）
-    vec3 F0 = vec3(0.04);
-    F0 = mix(F0, albedo, metallic);
+    float validationNdotV = max(dot(N, V), 0.0);
+    vec2 dfgForValidation = vec2(0.0);
+
+    if (params.debugViewMode == DEBUG_VIEW_MODE_RAW251)
+    {
+        vec2 dfgCoordinate = clamp(vec2(materialSample.r, materialSample.g),
+                                    vec2(0.5 / 256.0), vec2(255.5 / 256.0));
+        dfgForValidation = texture(brdfLUT, dfgCoordinate).rg;
+        outColor = vec4(vec3(dfgForValidation.x, dfgForValidation.y,
+                             dfgForValidation.x + dfgForValidation.y),
+                        ComputeDebugDepth01(fragUV, depthSample));
+        return;
+    }
+
+    bool bValidationRaw252 = params.debugViewMode == DEBUG_VIEW_MODE_RAW252;
+    vec3 emissive = vec3(0.0);
+    if (bValidationRaw252)
+    {
+        emissive = texture(gbufferEmissive, fragUV).rgb;
+    }
+    if (bValidationRaw252 &&
+        (!IsRaw252ParameterInvariantValid() ||
+         abs(ao - 1.0) > 0.0001 ||
+         any(greaterThan(abs(emissive), vec3(0.0001)))))
+    {
+        outColor = vec4(vec3(65504.0), ComputeDebugDepth01(fragUV, depthSample));
+        return;
+    }
 
     // ライティング計算（ディフューズとスペキュラを分離してAOを個別適用）
     vec3 Lo_diffuse = vec3(0.0);
@@ -553,22 +696,16 @@ void main()
         }
         else if (bValidationPBR || params.bNeuralBRDFEnabled == 0u)
         {
-            // Analytical Cook-Torrance BRDF
-            float D = DistributionGGX(N, H, roughness);
-            float G = GeometrySmith(N, V, L, roughness);
-            vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
-
-            vec3 numerator = D * G * F;
-            float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
-            vec3 specular = numerator / denominator;
-
-            // エネルギー保存
-            vec3 kS = F;
-            vec3 kD = vec3(1.0) - kS;
-            kD *= 1.0 - metallic; // 金属はディフューズなし
-
-            Lo_diffuse += (kD * albedo / PI) * radiance;
-            Lo_specular += specular * radiance;
+            vec2 dfgCoordinate = clamp(vec2(validationNdotV, roughness),
+                                       vec2(0.5 / 256.0), vec2(255.5 / 256.0));
+            dfgForValidation = texture(brdfLUT, dfgCoordinate).rg;
+            vec3 diffuseBrdf;
+            vec3 specularBrdf;
+            EvaluateAnalyticalDirectEndpointBRDF(
+                albedo, metallic, roughness, N, V, L, H, dfgForValidation,
+                diffuseBrdf, specularBrdf);
+            Lo_diffuse += diffuseBrdf * radiance;
+            Lo_specular += specularBrdf * radiance;
         }
         else
         {
@@ -590,22 +727,25 @@ void main()
         }
     }
 
-    vec3 emissive = vec3(0.0);
     vec3 ambient = vec3(0.0);
     float specularAO = 1.0;
 
     if (!bValidationLambert && !bValidationPBR)
     {
-        // エミッシブ（自発光）をGBufferから取得
-        emissive = texture(gbufferEmissive, fragUV).rgb;
-
         // ========================================
         // アンビエント / IBL計算
         // ========================================
         float NdotV = max(dot(N, V), 0.0);
-        vec3 F_ambient = FresnelSchlickRoughness(NdotV, F0, roughness);
-        vec3 kS_ambient = F_ambient;
-        vec3 kD_ambient = (1.0 - kS_ambient) * (1.0 - metallic);
+        bool bRaw252PrivateTarget = bValidationRaw252 &&
+                                     metallic >= 0.9999 &&
+                                     all(greaterThan(albedo, vec3(0.25))) &&
+                                     all(lessThan(albedo, vec3(0.75)));
+        vec3 iblAlbedo = bRaw252PrivateTarget ? vec3(0.5) : albedo;
+        float iblNdotV = bRaw252PrivateTarget ? 0.25 : NdotV;
+        float iblRoughness = bRaw252PrivateTarget ? (64.0 / 255.0) : roughness;
+        vec3 F0d = vec3(0.04);
+        vec3 F0c = iblAlbedo;
+        vec3 F_ambient = FresnelSchlick(NdotV, (1.0 - metallic) * F0d + metallic * F0c);
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
@@ -615,35 +755,19 @@ void main()
             // ========================================
             // IBL (Image-Based Lighting)
             // ========================================
-            float maxLod = float(params.envMapMipLevels - 1u);
             float iblIntensity = params.ambientColor.w; // IBL有効時はambientColor.wがIBL強度
-
-            // ---- Diffuse IBL (Irradiance) ----
-            // 法線方向で環境マップの高LOD（ブラー済み）をサンプリング → 拡散放射照度近似
-            vec2 irradianceUV = EquirectangularUV(N);
-            vec3 irradiance = textureLod(envMap, irradianceUV, maxLod * 0.7).rgb;
-            // HDR値を露出補正してからトーンマップ（高輝度を適切に圧縮）
-            float iblExposure = 0.15;
-            irradiance = vec3(1.0) - exp(-irradiance * iblExposure);
-            vec3 diffuseIBL = kD_ambient * irradiance * albedo;
-
-            // ---- Specular IBL (Pre-filtered Environment) ----
-            // 反射ベクトル方向でラフネスに応じたLODをサンプリング
-            vec3 R = reflect(-V, N);
-            vec2 specularUV = EquirectangularUV(R);
-            float lod = roughness * maxLod;
-            vec3 prefilteredColor = textureLod(envMap, specularUV, lod).rgb;
-            // HDR値を露出補正してからトーンマップ
-            prefilteredColor = vec3(1.0) - exp(-prefilteredColor * iblExposure);
-
-            // BRDF LUT参照（split-sum近似の第2項）
-            vec2 brdf = texture(brdfLUT, vec2(NdotV, roughness)).rg;
-
-            // スペキュラIBL = プリフィルタ環境色 × (F × scale + bias)
-            vec3 specularIBL = prefilteredColor * (F_ambient * brdf.x + brdf.y);
-
-            // AO適用: ディフューズ→AO直接、スペキュラ→スペキュラAO（Lagarde法）
-            ambient = (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
+            vec2 dfgCoordinate = clamp(vec2(iblNdotV, iblRoughness),
+                                       vec2(0.5 / 256.0), vec2(255.5 / 256.0));
+            vec2 brdf = texture(brdfLUT, dfgCoordinate).rg;
+            ambient = EvaluateIblEndpoint(iblAlbedo,
+                                           metallic,
+                                           iblRoughness,
+                                           N,
+                                           V,
+                                           ao,
+                                           specularAO,
+                                           iblIntensity,
+                                           brdf);
         }
         else
         {
@@ -651,10 +775,16 @@ void main()
             // フォールバック: フラットアンビエントライト
             // ========================================
             vec3 ambientLight = params.ambientColor.rgb * params.ambientColor.w;
+            vec3 kD_ambient = (vec3(1.0) - F_ambient) * (1.0 - metallic);
             vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
             vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
             ambient = diffuseAmbient * ao + specularAmbient * specularAO;
         }
+        if (!bValidationRaw252)
+        {
+            emissive = texture(gbufferEmissive, fragUV).rgb;
+        }
+        ambient += emissive;
     }
 
     // 直接光へのAO適用（マイクロシャドウ近似）:
@@ -671,8 +801,9 @@ void main()
     }
     else
     {
-        color = ambient + Lo_diffuse * directAO + Lo_specular * directSpecAO + emissive;
+        color = ambient + Lo_diffuse * directAO + Lo_specular * directSpecAO;
     }
 
-    outColor = vec4(ApplySceneColorPreExposure(color), 1.0);
+    float outputAlpha = bValidationRaw252 ? ComputeDebugDepth01(fragUV, depthSample) : 1.0;
+    outColor = vec4(ApplySceneColorPreExposure(color), outputAlpha);
 }

@@ -33,6 +33,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief IBL強度 */
         float IBLIntensity = 0.2f;
 
+        /** @brief 環境放射輝度のスケール [cd/m²] */
+        float EnvironmentLuminanceScaleNits = 1.0f;
+
         /** @brief Neural BRDFウェイトファイルパス（空の場合は解析的BRDFを使用） */
         Container::String NeuralBRDFWeightPath;
     };
@@ -187,6 +190,7 @@ namespace NorvesLib::Core::Rendering
         bool EnsureLightingFramebuffer(uint32_t width,
                                        uint32_t height,
                                        const RHI::TexturePtr& sceneColorTexture);
+        bool CreateLightingDescriptorSet(RHI::DescriptorSetPtr& outDescriptorSet);
         bool EnsureLightingDescriptorSet();
         bool EnsureLightingPipeline();
         void ExecuteWithInputs(ViewRenderContext& context,
@@ -209,6 +213,7 @@ namespace NorvesLib::Core::Rendering
          * @return ロード成功時true
          */
         bool LoadEnvironmentMap(const Container::String& path);
+        bool GenerateValidationSnapshots();
 
         /**
          * @brief BRDF LUTをCPUで生成（split-sum近似）
@@ -245,13 +250,26 @@ namespace NorvesLib::Core::Rendering
         // IBL (Image-Based Lighting) リソース
         RHI::TexturePtr m_EnvironmentTexture; ///< HDR環境マップ（equirectangular）
         RHI::TexturePtr m_BrdfLutTexture;     ///< BRDF LUT（split-sum近似）
-        RHI::SamplerPtr m_IBLSampler;         ///< IBL用サンプラー（Linear + ミップマップ）
+        RHI::TexturePtr m_DiffuseIrradianceTexture;
+        RHI::TexturePtr m_PrefilteredSpecularTexture;
+        RHI::TexturePtr m_ValidationRaw250EnvironmentTexture;
+        RHI::TexturePtr m_ValidationRaw250DiffuseIrradianceTexture;
+        RHI::TexturePtr m_ValidationRaw250Texture;
+        RHI::TexturePtr m_ValidationRaw252EnvironmentTexture;
+        RHI::TexturePtr m_ValidationRaw252DiffuseIrradianceTexture;
+        RHI::TexturePtr m_ValidationRaw252PrefilteredSpecularTexture;
+        RHI::TexturePtr m_DefaultBlackTexture;
+        RHI::SamplerPtr m_IBLSampler;         ///< source radiance sampler
+        RHI::SamplerPtr m_DiffuseIrradianceSampler;
+        RHI::SamplerPtr m_PrefilteredSpecularSampler;
+        RHI::SamplerPtr m_DfgSampler;
         uint32_t m_EnvironmentMipLevels = 1;  ///< 環境マップのミップレベル数
         bool m_bIBLAvailable = false;         ///< IBLリソースが利用可能か
 
         // Neural BRDF リソース
         NeuralBRDFData m_NeuralBRDFData;         ///< 学習済みBRDFデータ
         RHI::BufferPtr m_NeuralBRDFWeightBuffer; ///< GPU側重みStorageBuffer
+        RHI::BufferPtr m_DefaultNeuralBRDFWeightBuffer;
         bool m_bNeuralBRDFAvailable = false;     ///< Neural BRDFが利用可能か
 
         // デバイス参照

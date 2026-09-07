@@ -1,6 +1,8 @@
 ﻿#include "RenderingValidation/RenderingValidationScene.h"
 
 #include "RenderingValidation/GpuTestEnvironment.h"
+#include "Object/World.h"
+#include "Rendering/RenderResources.h"
 
 #include <cstdlib>
 #include <cmath>
@@ -12,6 +14,79 @@
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Test::RenderingValidation;
+
+namespace NorvesLib::Test::RenderingValidation
+{
+    struct RenderingValidationSceneContractTestAccess
+    {
+        static void Commit(RenderingValidationSceneFixture& fixture,
+                           SceneFixtureInitializationState& state,
+                           ISceneFixtureResourceReleaser* stableOwner) noexcept
+        {
+            SceneFixtureInitializationGuard guard(&state.Lease);
+            guard.BindObjects(state.pWorld, &state.Objects);
+            guard.BindPublication(&fixture, &state, stableOwner);
+            guard.Commit();
+        }
+
+        static void Abort(RenderingValidationSceneFixture& fixture,
+                          SceneFixtureInitializationState& state,
+                          ISceneFixtureResourceReleaser* stableOwner) noexcept
+        {
+            SceneFixtureInitializationGuard guard(&state.Lease);
+            guard.BindObjects(state.pWorld, &state.Objects);
+            guard.BindPublication(&fixture, &state, stableOwner);
+        }
+
+        static void Shutdown(RenderingValidationSceneFixture& fixture,
+                             ISceneFixtureResourceReleaser* stableOwner) noexcept
+        {
+            fixture.ShutdownPublishedInitialization(stableOwner);
+        }
+
+        static void ReleasePublishedLease(RenderingValidationSceneFixture& fixture) noexcept
+        {
+            fixture.m_Lease.Release();
+        }
+
+        static bool IsPublishedEmpty(const RenderingValidationSceneFixture& fixture) noexcept
+        {
+            return !fixture.m_bPublished && fixture.m_pWorld == nullptr &&
+                   fixture.m_pResources == nullptr && fixture.m_pSentinel == nullptr &&
+                   fixture.m_pP4PlaneMesh == nullptr && fixture.m_pP4SphereMesh == nullptr &&
+                   fixture.m_pEmissiveMesh == nullptr && fixture.m_pTransparentMesh == nullptr &&
+                   fixture.m_pP4LightEntity == nullptr && fixture.m_Lease.IsEmpty() &&
+                   fixture.m_Objects.empty();
+        }
+
+        static bool MatchesPublishedState(const RenderingValidationSceneFixture& fixture,
+                              NorvesLib::Core::World* world,
+                              NorvesLib::Core::Rendering::RenderResources* resources,
+                                          FixedStepSentinelComponent* sentinel,
+                                          ISceneFixtureResourceReleaser* stableOwner,
+                                          size_t meshCount,
+                                          size_t textureCount,
+                                          size_t materialCount) noexcept
+        {
+            return fixture.m_bPublished && fixture.m_pWorld == world &&
+                   fixture.m_pResources == resources && fixture.m_pSentinel == sentinel &&
+                   fixture.m_Lease.m_pReleaser == stableOwner &&
+                   fixture.m_Lease.TrackedMeshCount() == meshCount &&
+                   fixture.m_Lease.TrackedTextureCount() == textureCount &&
+                   fixture.m_Lease.TrackedMaterialCount() == materialCount;
+        }
+
+        static bool IsStagingCleared(const SceneFixtureInitializationState& state) noexcept
+        {
+            return state.pWorld == nullptr && state.pResources == nullptr &&
+                   state.pSentinel == nullptr && state.pP4PlaneMesh == nullptr &&
+                   state.pP4SphereMesh == nullptr && state.pEmissiveMesh == nullptr &&
+                   state.pTransparentMesh == nullptr && state.pP4LightEntity == nullptr &&
+                   state.Lease.IsEmpty() && state.Lease.m_pReleaser == nullptr &&
+                   state.Objects.empty();
+        }
+    };
+}
 
 namespace
 {
@@ -27,24 +102,88 @@ namespace
     class FakeReleaser final : public ISceneFixtureResourceReleaser
     {
     public:
+        Rendering::MeshDataHandle CreateMesh(uint64_t id) noexcept
+        {
+            ++GeneratedMeshCount;
+            ++ActiveMeshCount;
+            return Rendering::MeshDataHandle{id};
+        }
+
+        Rendering::TextureHandle CreateTexture(uint64_t id) noexcept
+        {
+            ++GeneratedTextureCount;
+            ++ActiveTextureCount;
+            return Rendering::TextureHandle{id};
+        }
+
+        Rendering::MaterialHandle CreateMaterial(uint64_t id) noexcept
+        {
+            ++GeneratedMaterialCount;
+            ++ActiveMaterialCount;
+            return Rendering::MaterialHandle{id};
+        }
+
+        void ResetObservations() noexcept
+        {
+            Events.clear();
+            GeneratedMeshCount = 0;
+            GeneratedTextureCount = 0;
+            GeneratedMaterialCount = 0;
+            ActiveMeshCount = 0;
+            ActiveTextureCount = 0;
+            ActiveMaterialCount = 0;
+            bInvalidRelease = false;
+        }
+
         void UnregisterMesh(Rendering::MeshDataHandle handle) noexcept override
         {
             Events.push_back(handle.Id);
+            if (ActiveMeshCount > 0)
+            {
+                --ActiveMeshCount;
+            }
+            else
+            {
+                bInvalidRelease = true;
+            }
         }
 
         void ReleaseTexture(Rendering::TextureHandle handle) noexcept override
         {
             Events.push_back(TextureEventMask | handle.Id);
+            if (ActiveTextureCount > 0)
+            {
+                --ActiveTextureCount;
+            }
+            else
+            {
+                bInvalidRelease = true;
+            }
         }
 
         void ReleaseMaterial(Rendering::MaterialHandle handle) noexcept override
         {
             Events.push_back(MaterialEventMask | handle.Id);
+            if (ActiveMaterialCount > 0)
+            {
+                --ActiveMaterialCount;
+            }
+            else
+            {
+                bInvalidRelease = true;
+            }
         }
 
         static constexpr uint64_t MaterialEventMask = uint64_t{1} << 63;
         static constexpr uint64_t TextureEventMask = uint64_t{1} << 62;
         Container::VariableArray<uint64_t> Events;
+        size_t GeneratedMeshCount = 0;
+        size_t GeneratedTextureCount = 0;
+        size_t GeneratedMaterialCount = 0;
+        size_t ActiveMeshCount = 0;
+        size_t ActiveTextureCount = 0;
+        size_t ActiveMaterialCount = 0;
+        bool bInvalidRelease = false;
     };
 
     void RequireEvent(const FakeReleaser& releaser, size_t index, uint64_t expected)
@@ -93,36 +232,223 @@ namespace
                 "known-cd A/B oracle must fail when the previous image is absent");
     }
 
-    void VerifyGuardRollback(size_t meshCount, bool bTrackMaterial)
+    void RequireGenerationCounts(const FakeReleaser& releaser,
+                                 size_t meshCount,
+                                 size_t textureCount,
+                                 size_t materialCount)
     {
-        FakeReleaser releaser;
-        SceneFixtureResourceLease lease;
-        lease.Bind(&releaser);
-        {
-            SceneFixtureInitializationGuard guard(&lease);
-            for (size_t index = 0; index < meshCount; ++index)
-            {
-                lease.TrackMesh(Rendering::MeshDataHandle{index + 1});
-            }
-            if (bTrackMaterial)
-            {
-                lease.TrackTexture(Rendering::TextureHandle{7});
-                lease.TrackMaterial(Rendering::MaterialHandle{9});
-            }
-        }
+        Require(releaser.GeneratedMeshCount == meshCount,
+                "fake releaser must generate the requested mesh count");
+        Require(releaser.GeneratedTextureCount == textureCount,
+                "fake releaser must generate the requested texture count");
+        Require(releaser.GeneratedMaterialCount == materialCount,
+                "fake releaser must generate the requested material count");
+    }
 
-        size_t eventIndex = 0;
-        if (bTrackMaterial)
+    void RequireTrackedCounts(const SceneFixtureResourceLease& lease,
+                              size_t meshCount,
+                              size_t textureCount,
+                              size_t materialCount)
+    {
+        Require(lease.TrackedMeshCount() == meshCount,
+                "resource lease mesh accessor returned an unexpected count");
+        Require(lease.TrackedTextureCount() == textureCount,
+                "resource lease texture accessor returned an unexpected count");
+        Require(lease.TrackedMaterialCount() == materialCount,
+                "resource lease material accessor returned an unexpected count");
+    }
+
+    void TrackGeneratedResources(FakeReleaser& releaser,
+                                 SceneFixtureResourceLease& lease,
+                                 size_t meshCount,
+                                 size_t textureCount,
+                                 size_t materialCount)
+    {
+        for (size_t index = 0; index < meshCount; ++index)
         {
-            RequireEvent(releaser, eventIndex++, FakeReleaser::MaterialEventMask | 9);
-            RequireEvent(releaser, eventIndex++, FakeReleaser::TextureEventMask | 7);
+            lease.TrackMesh(releaser.CreateMesh(index + 1));
+        }
+        for (size_t index = 0; index < textureCount; ++index)
+        {
+            lease.TrackTexture(releaser.CreateTexture(index + 1));
+        }
+        for (size_t index = 0; index < materialCount; ++index)
+        {
+            lease.TrackMaterial(releaser.CreateMaterial(index + 1));
+        }
+    }
+
+    void RequireReleaseOrder(const FakeReleaser& releaser,
+                             size_t meshCount,
+                             size_t textureCount,
+                             size_t materialCount)
+    {
+        size_t eventIndex = 0;
+        for (size_t index = materialCount; index > 0; --index)
+        {
+            RequireEvent(releaser, eventIndex++, FakeReleaser::MaterialEventMask | index);
+        }
+        for (size_t index = textureCount; index > 0; --index)
+        {
+            RequireEvent(releaser, eventIndex++, FakeReleaser::TextureEventMask | index);
         }
         for (size_t index = meshCount; index > 0; --index)
         {
             RequireEvent(releaser, eventIndex++, index);
         }
         Require(releaser.Events.size() == eventIndex, "resource lease rollback has an unexpected event count");
-        Require(lease.IsEmpty(), "resource lease rollback did not clear tracked handles");
+        Require(releaser.ActiveMeshCount == 0 && releaser.ActiveTextureCount == 0 &&
+                    releaser.ActiveMaterialCount == 0,
+                "fake releaser still has active resources after release");
+        Require(!releaser.bInvalidRelease, "fake releaser observed an invalid or duplicate release");
+    }
+
+    void PrepareStagingState(SceneFixtureInitializationState& state,
+                             FakeReleaser& releaser,
+                             NorvesLib::Core::World* world,
+                             NorvesLib::Core::Rendering::RenderResources* resources,
+                             FixedStepSentinelComponent* sentinel,
+                             size_t meshCount,
+                             size_t textureCount,
+                             size_t materialCount)
+    {
+        state.pWorld = world;
+        state.pResources = resources;
+        state.pSentinel = sentinel;
+        state.P4Materials.fill(Rendering::MaterialHandle::Invalid());
+        state.Lease.Bind(&releaser);
+        TrackGeneratedResources(releaser,
+                                state.Lease,
+                                meshCount,
+                                textureCount,
+                                materialCount);
+    }
+
+    void VerifyFixtureTransaction()
+    {
+        constexpr size_t meshCount = 2;
+        constexpr size_t textureCount = 13;
+        constexpr size_t materialCount = 33;
+        NorvesLib::Core::World world;
+        NorvesLib::Core::Rendering::RenderResources resources;
+        FixedStepSentinelComponent sentinel;
+        RenderingValidationSceneFixture fixture;
+
+        FakeReleaser rollbackReleaser;
+        SceneFixtureInitializationState rollbackState;
+        PrepareStagingState(rollbackState,
+                            rollbackReleaser,
+                            &world,
+                            &resources,
+                            &sentinel,
+                            meshCount,
+                            textureCount,
+                            materialCount);
+        Require(!rollbackState.Lease.IsEmpty(),
+                "full rollback staging lease did not receive generated resources");
+        Require(RenderingValidationSceneContractTestAccess::IsPublishedEmpty(fixture),
+                "fixture published members changed before commit");
+        RenderingValidationSceneContractTestAccess::Abort(fixture,
+                                                           rollbackState,
+                                                           &rollbackReleaser);
+        Require(rollbackState.Lease.IsEmpty(),
+                "full rollback did not clear staging lease");
+        Require(RenderingValidationSceneContractTestAccess::IsPublishedEmpty(fixture),
+                "full rollback published partial fixture state");
+        RequireReleaseOrder(rollbackReleaser, meshCount, textureCount, materialCount);
+
+        FakeReleaser partialReleaser;
+        SceneFixtureInitializationState partialState;
+        PrepareStagingState(partialState,
+                            partialReleaser,
+                            &world,
+                            &resources,
+                            &sentinel,
+                            1,
+                            7,
+                            9);
+        RenderingValidationSceneContractTestAccess::Abort(fixture,
+                                                           partialState,
+                                                           &partialReleaser);
+        Require(partialState.Lease.IsEmpty(),
+                "partial failure did not clear staging lease");
+        Require(RenderingValidationSceneContractTestAccess::IsPublishedEmpty(fixture),
+                "partial failure published fixture state");
+        RequireReleaseOrder(partialReleaser, 1, 7, 9);
+
+        FakeReleaser firstReleaser;
+        SceneFixtureInitializationState firstState;
+        PrepareStagingState(firstState,
+                            firstReleaser,
+                            &world,
+                            &resources,
+                            &sentinel,
+                            meshCount,
+                            textureCount,
+                            materialCount);
+        Require(RenderingValidationSceneContractTestAccess::IsPublishedEmpty(fixture),
+                "fixture must remain unpublished before successful commit");
+        RenderingValidationSceneContractTestAccess::Commit(fixture,
+                                                            firstState,
+                                                            &firstReleaser);
+        Require(RenderingValidationSceneContractTestAccess::MatchesPublishedState(
+                    fixture,
+                    &world,
+                    &resources,
+                    &sentinel,
+                    &firstReleaser,
+                    meshCount,
+                    textureCount,
+                    materialCount),
+                "commit did not publish the complete fixture state");
+        Require(RenderingValidationSceneContractTestAccess::IsStagingCleared(firstState),
+                "commit did not invalidate staging borrow and ownership state");
+        Require(firstReleaser.Events.empty(),
+                "commit released resources before shutdown");
+
+        RenderingValidationSceneContractTestAccess::Shutdown(fixture, &firstReleaser);
+        Require(RenderingValidationSceneContractTestAccess::IsPublishedEmpty(fixture),
+                "shutdown did not clear published fixture members");
+        RequireReleaseOrder(firstReleaser, meshCount, textureCount, materialCount);
+        const size_t eventCountAfterShutdown = firstReleaser.Events.size();
+        RenderingValidationSceneContractTestAccess::Shutdown(fixture, &firstReleaser);
+        Require(firstReleaser.Events.size() == eventCountAfterShutdown,
+                "double shutdown released a resource twice");
+
+        FakeReleaser secondReleaser;
+        SceneFixtureInitializationState secondState;
+        PrepareStagingState(secondState,
+                            secondReleaser,
+                            &world,
+                            &resources,
+                            &sentinel,
+                            meshCount,
+                            textureCount,
+                            materialCount);
+        RenderingValidationSceneContractTestAccess::Commit(fixture,
+                                                            secondState,
+                                                            &secondReleaser);
+        Require(RenderingValidationSceneContractTestAccess::MatchesPublishedState(
+                    fixture,
+                    &world,
+                    &resources,
+                    &sentinel,
+                    &secondReleaser,
+                    meshCount,
+                    textureCount,
+                    materialCount),
+                "rebind did not publish the new stable owner");
+        Require(RenderingValidationSceneContractTestAccess::IsStagingCleared(secondState),
+                "rebind did not invalidate the second staging state");
+        RenderingValidationSceneContractTestAccess::ReleasePublishedLease(fixture);
+        RequireReleaseOrder(secondReleaser, meshCount, textureCount, materialCount);
+        const size_t eventCountAfterRelease = secondReleaser.Events.size();
+        RenderingValidationSceneContractTestAccess::ReleasePublishedLease(fixture);
+        Require(secondReleaser.Events.size() == eventCountAfterRelease,
+                "explicit lease release was not idempotent");
+        RenderingValidationSceneContractTestAccess::Shutdown(fixture, &secondReleaser);
+        Require(RenderingValidationSceneContractTestAccess::IsPublishedEmpty(fixture),
+                "shutdown after explicit release did not clear fixture state");
     }
 }
 
@@ -196,35 +522,13 @@ int main()
     Require(first.Lights[0].Intensity == 100.0f && first.Lights[0].Range == 1000.0f &&
                 !first.Lights[0].bCastShadows,
             "known-cd point light must use 100cd, range 1000m, and shadows off");
+    Require(static_cast<uint8_t>(P4Scenario::Raw254DirectConductorEndpoint) == 5u,
+            "direct-conductor-endpoint must be the raw254 fixture scenario");
     Require(BuildSceneLayout(SceneKind::Outdoor, ValidationSeed, outdoor), "outdoor fixture layout is unavailable");
 
     VerifyKnownCdOracleContract();
 
-    VerifyGuardRollback(0, false);
-    VerifyGuardRollback(1, false);
-    VerifyGuardRollback(2, false);
-    VerifyGuardRollback(2, true);
-
-    FakeReleaser releaser;
-    SceneFixtureResourceLease lease;
-    lease.Bind(&releaser);
-    {
-        SceneFixtureInitializationGuard guard(&lease);
-        lease.TrackMesh(Rendering::MeshDataHandle{1});
-        lease.TrackMesh(Rendering::MeshDataHandle{2});
-        lease.TrackTexture(Rendering::TextureHandle{7});
-        lease.TrackMaterial(Rendering::MaterialHandle{9});
-        guard.Commit();
-    }
-    Require(releaser.Events.empty(), "committed fixture lease released before explicit shutdown");
-    Require(!lease.IsEmpty(), "committed fixture lease lost tracked handles");
-    lease.Release();
-    Require(releaser.Events.size() == 4u, "committed fixture lease must release mesh/texture/material resources");
-    RequireEvent(releaser, 0, FakeReleaser::MaterialEventMask | 9);
-    RequireEvent(releaser, 1, FakeReleaser::TextureEventMask | 7);
-    RequireEvent(releaser, 2, 2);
-    RequireEvent(releaser, 3, 1);
-    lease.Release();
-    Require(releaser.Events.size() == 4u, "resource lease release must be idempotent");
+    VerifyFixtureTransaction();
+    std::cout << "RenderingValidationSceneContractTest PASS: fake_resources=2/13/33 rollback=PASS commit=PASS shutdown=PASS release_idempotent=PASS rebind=PASS\n";
     return 0;
 }

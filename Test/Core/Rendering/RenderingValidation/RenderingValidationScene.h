@@ -8,12 +8,18 @@
 #include "Rendering/RenderTypes.h"
 #include "Rendering/SceneProxy.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace NorvesLib::Core
 {
     class Entity;
     class World;
+
+    namespace Component
+    {
+        class MeshComponent;
+    }
 }
 
 namespace NorvesLib::Core::Rendering
@@ -24,6 +30,8 @@ namespace NorvesLib::Core::Rendering
 
 namespace NorvesLib::Test::RenderingValidation
 {
+    struct RenderingValidationSceneContractTestAccess;
+
     enum class SceneKind : uint8_t
     {
         Indoor,
@@ -76,6 +84,22 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Rendering::CameraProxy Camera;
 
         bool operator==(const SceneLayout& other) const;
+    };
+
+    enum class P4Scenario : uint8_t
+    {
+        Raw250TextureRepresentation,
+        Raw251DfgLut,
+        Raw252RoughnessSweep,
+        Raw252TargetNotOne,
+        Raw252WhiteFurnace,
+        Raw254DirectConductorEndpoint
+    };
+
+    struct P4ScenarioRow
+    {
+        P4Scenario Scenario = P4Scenario::Raw250TextureRepresentation;
+        uint32_t RowIndex = 0u;
     };
 
     inline constexpr uint32_t R1RoiMinX = 112u;
@@ -132,9 +156,13 @@ namespace NorvesLib::Test::RenderingValidation
         void TrackMaterial(Core::Rendering::MaterialHandle handle);
         void Release() noexcept;
         bool IsEmpty() const noexcept;
+        size_t TrackedMeshCount() const noexcept;
+        size_t TrackedTextureCount() const noexcept;
+        size_t TrackedMaterialCount() const noexcept;
 
     private:
-        void Reserve(size_t meshCapacity, size_t materialCapacity);
+        friend struct RenderingValidationSceneContractTestAccess;
+        void Reserve(size_t meshCapacity, size_t textureCapacity, size_t materialCapacity);
 
         friend class RenderingValidationSceneFixture;
 
@@ -144,6 +172,9 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Container::VariableArray<Core::Rendering::MaterialHandle> m_Materials;
     };
 
+    class RenderingValidationSceneFixture;
+    struct SceneFixtureInitializationState;
+
     class SceneFixtureInitializationGuard
     {
     public:
@@ -151,6 +182,9 @@ namespace NorvesLib::Test::RenderingValidation
         ~SceneFixtureInitializationGuard() noexcept;
         void BindObjects(Core::World* world,
                          Core::Container::VariableArray<Core::Entity*>* objects) noexcept;
+        void BindPublication(RenderingValidationSceneFixture* fixture,
+                             SceneFixtureInitializationState* state,
+                             ISceneFixtureResourceReleaser* stableOwner) noexcept;
         void TrackObject(Core::Entity* object);
         void Commit() noexcept;
 
@@ -158,7 +192,26 @@ namespace NorvesLib::Test::RenderingValidation
         SceneFixtureResourceLease* m_pLease = nullptr;
         Core::World* m_pWorld = nullptr;
         Core::Container::VariableArray<Core::Entity*>* m_pObjects = nullptr;
+        RenderingValidationSceneFixture* m_pFixture = nullptr;
+        SceneFixtureInitializationState* m_pState = nullptr;
+        ISceneFixtureResourceReleaser* m_pStableOwner = nullptr;
         bool m_bCommitted = false;
+    };
+
+    struct SceneFixtureInitializationState
+    {
+        Core::World* pWorld = nullptr;
+        Core::Rendering::RenderResources* pResources = nullptr;
+        FixedStepSentinelComponent* pSentinel = nullptr;
+        Core::Component::MeshComponent* pP4PlaneMesh = nullptr;
+        Core::Component::MeshComponent* pP4SphereMesh = nullptr;
+        Core::Component::MeshComponent* pEmissiveMesh = nullptr;
+        Core::Component::MeshComponent* pTransparentMesh = nullptr;
+        Core::Entity* pP4LightEntity = nullptr;
+        SceneFixtureResourceLease Lease;
+        SceneLayout Layout;
+        Core::Container::VariableArray<Core::Entity*> Objects;
+        Core::Container::FixedArray<Core::Rendering::MaterialHandle, 30> P4Materials;
     };
 
     class RenderingValidationSceneFixture final : private ISceneFixtureResourceReleaser
@@ -170,11 +223,22 @@ namespace NorvesLib::Test::RenderingValidation
                         uint32_t seed);
         void Shutdown(Core::Rendering::RenderResources& resources);
         void ApplyCamera(Core::Rendering::RenderWorld& renderWorld) const;
+        bool ApplyP4ScenarioRow(const P4ScenarioRow& row) const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         uint64_t GetObservedFixedStepCount() const;
         bool IsCaptureStateStable() const;
+        size_t TrackedMeshCount() const noexcept;
+        size_t TrackedTextureCount() const noexcept;
+        size_t TrackedMaterialCount() const noexcept;
 
     private:
+        friend class SceneFixtureInitializationGuard;
+        friend struct RenderingValidationSceneContractTestAccess;
+
+        void PublishInitializationState(SceneFixtureInitializationState& state,
+                                        ISceneFixtureResourceReleaser* stableOwner) noexcept;
+        void ShutdownPublishedInitialization(ISceneFixtureResourceReleaser* releaser) noexcept;
+
         void UnregisterMesh(Core::Rendering::MeshDataHandle handle) noexcept override;
         void ReleaseTexture(Core::Rendering::TextureHandle handle) noexcept override;
         void ReleaseMaterial(Core::Rendering::MaterialHandle handle) noexcept override;
@@ -182,8 +246,15 @@ namespace NorvesLib::Test::RenderingValidation
         Core::World* m_pWorld = nullptr;
         Core::Rendering::RenderResources* m_pResources = nullptr;
         FixedStepSentinelComponent* m_pSentinel = nullptr;
+        Core::Component::MeshComponent* m_pP4PlaneMesh = nullptr;
+        Core::Component::MeshComponent* m_pP4SphereMesh = nullptr;
+        Core::Component::MeshComponent* m_pEmissiveMesh = nullptr;
+        Core::Component::MeshComponent* m_pTransparentMesh = nullptr;
+        Core::Entity* m_pP4LightEntity = nullptr;
         SceneFixtureResourceLease m_Lease;
         SceneLayout m_Layout;
         Core::Container::VariableArray<Core::Entity*> m_Objects;
+        Core::Container::FixedArray<Core::Rendering::MaterialHandle, 30> m_P4Materials;
+        bool m_bPublished = false;
     };
 }

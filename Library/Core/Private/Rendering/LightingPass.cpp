@@ -23,13 +23,15 @@
 #include "stb_image.h"
 #include <cmath>
 #include <algorithm>
+#include <limits>
+#include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
     // ========================================
-    // float32 → float16 変換ヘルパー
+    // float32 → float16 (round-to-nearest-even) 変換ヘルパー
     // ========================================
-    static uint16_t FloatToHalf(float value)
+    static uint16_t FloatToHalfRne(float value)
     {
         union
         {
@@ -39,34 +41,759 @@ namespace NorvesLib::Core::Rendering
         conv.f = value;
         uint32_t f32 = conv.u;
 
-        uint16_t sign = static_cast<uint16_t>((f32 >> 16) & 0x8000);
-        int32_t exponent = static_cast<int32_t>((f32 >> 23) & 0xFF) - 127;
-        uint32_t mantissa = f32 & 0x007FFFFF;
+        const uint16_t sign = static_cast<uint16_t>((f32 >> 16u) & 0x8000u);
+        const uint32_t exponentBits = (f32 >> 23u) & 0xFFu;
+        const uint32_t mantissa = f32 & 0x007FFFFFu;
+        if (exponentBits == 0xFFu)
+        {
+            return mantissa == 0u ? sign | 0x7C00u : 0x7E00u;
+        }
 
+        const int32_t exponent = static_cast<int32_t>(exponentBits) - 127;
         if (exponent > 15)
         {
-            return sign | 0x7C00; // Overflow → Infinity
+            return sign | 0x7C00u;
         }
-        else if (exponent > -15)
+        if (exponent >= -14)
         {
-            return sign | static_cast<uint16_t>(((exponent + 15) << 10) | (mantissa >> 13));
+            uint32_t roundedMantissa = mantissa;
+            const uint32_t truncated = roundedMantissa >> 13u;
+            const uint32_t remainder = roundedMantissa & 0x1FFFu;
+            const bool bRoundUp = remainder > 0x1000u ||
+                                   (remainder == 0x1000u && (truncated & 1u) != 0u);
+            roundedMantissa = truncated + (bRoundUp ? 1u : 0u);
+            int32_t roundedExponent = exponent;
+            if (roundedMantissa >= 0x400u)
+            {
+                roundedMantissa = 0u;
+                ++roundedExponent;
+            }
+            if (roundedExponent > 15)
+            {
+                return sign | 0x7C00u;
+            }
+            return sign |
+                   static_cast<uint16_t>((roundedExponent + 15) << 10u) |
+                   static_cast<uint16_t>(roundedMantissa);
         }
-        else if (exponent > -25)
+        if (exponent >= -25)
         {
-            mantissa |= 0x800000;
-            uint32_t shift = static_cast<uint32_t>(-14 - exponent);
-            return sign | static_cast<uint16_t>(mantissa >> (shift + 13));
+            const uint32_t normalizedMantissa = mantissa | 0x00800000u;
+            const uint32_t shift = static_cast<uint32_t>(-exponent - 1);
+            const uint32_t truncated = normalizedMantissa >> shift;
+            const uint32_t remainderMask = (1u << shift) - 1u;
+            const uint32_t remainder = normalizedMantissa & remainderMask;
+            const uint32_t halfway = 1u << (shift - 1u);
+            const bool bRoundUp = remainder > halfway ||
+                                   (remainder == halfway && (truncated & 1u) != 0u);
+            return sign | static_cast<uint16_t>(truncated + (bRoundUp ? 1u : 0u));
+        }
+        return sign;
+    }
+
+    static uint32_t ReverseBits32(uint32_t value)
+    {
+        value = (value << 16u) | (value >> 16u);
+        value = ((value & 0x55555555u) << 1u) | ((value & 0xAAAAAAAAu) >> 1u);
+        value = ((value & 0x33333333u) << 2u) | ((value & 0xCCCCCCCCu) >> 2u);
+        value = ((value & 0x0F0F0F0Fu) << 4u) | ((value & 0xF0F0F0F0u) >> 4u);
+        value = ((value & 0x00FF00FFu) << 8u) | ((value & 0xFF00FF00u) >> 8u);
+        return value;
+    }
+
+    static float HalfToFloat(uint16_t value)
+    {
+        const uint32_t sign = (static_cast<uint32_t>(value) & 0x8000u) << 16u;
+        const uint32_t exponent = (static_cast<uint32_t>(value) >> 10u) & 0x1Fu;
+        const uint32_t mantissa = static_cast<uint32_t>(value) & 0x03FFu;
+        uint32_t bits = sign;
+        if (exponent == 0u)
+        {
+            if (mantissa != 0u)
+            {
+                const float significand = static_cast<float>(mantissa) / 1024.0f;
+                return std::ldexp(significand, -14) * (sign != 0u ? -1.0f : 1.0f);
+            }
+            union
+            {
+                uint32_t u;
+                float f;
+            } zero = {sign};
+            return zero.f;
+        }
+        if (exponent == 0x1Fu)
+        {
+            bits |= 0x7F800000u | (mantissa << 13u);
         }
         else
         {
-            return sign; // Too small → zero
+            bits |= (exponent + (127u - 15u)) << 23u;
+            bits |= mantissa << 13u;
         }
+        union
+        {
+            uint32_t u;
+            float f;
+        } result = {bits};
+        return result.f;
+    }
+
+    static bool TryScaleSourceValue(float fileValue,
+                                   double luminanceScale,
+                                   float& outScaledValue)
+    {
+        if (!std::isfinite(luminanceScale) || luminanceScale < 0.0)
+        {
+            return false;
+        }
+        if (!std::isfinite(fileValue) || fileValue < 0.0f)
+        {
+            return false;
+        }
+
+        const double scaledValue = static_cast<double>(fileValue) * luminanceScale;
+        if (!std::isfinite(scaledValue) || scaledValue < 0.0 ||
+            scaledValue >= 65504.0)
+        {
+            return false;
+        }
+
+        outScaledValue = static_cast<float>(scaledValue);
+        return true;
+    }
+
+    static bool ValidateCanonicalSource(const Container::VariableArray<float>& sourceData,
+                                        uint32_t width,
+                                        uint32_t height)
+    {
+        if (width == 0u || height == 0u ||
+            sourceData.size() < static_cast<size_t>(width) * height * 4u)
+        {
+            return false;
+        }
+        const size_t pixelCount = static_cast<size_t>(width) * height;
+        for (size_t pixel = 0u; pixel < pixelCount; ++pixel)
+        {
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                const float value = sourceData[pixel * 4u + channel];
+                float validatedValue = 0.0f;
+                if (!TryScaleSourceValue(value, 1.0, validatedValue))
+                {
+                    return false;
+                }
+                const float canonical = HalfToFloat(FloatToHalfRne(validatedValue));
+                if (!std::isfinite(canonical) || canonical < 0.0f ||
+                    static_cast<double>(canonical) >= 65504.0)
+                {
+                    return false;
+                }
+            }
+            if (!std::isfinite(sourceData[pixel * 4u + 3u]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static bool ValidateProductionInitializationInvariants(float scale)
+    {
+        if (!std::isfinite(scale) || scale < 0.0f)
+        {
+            return false;
+        }
+
+        union
+        {
+            uint32_t u;
+            float f;
+        } negativeNaN = {0xFFC00001u};
+        const bool bRneTable =
+            FloatToHalfRne(0.0f) == 0x0000u &&
+            FloatToHalfRne(-0.0f) == 0x8000u &&
+            FloatToHalfRne(1.0f) == 0x3C00u &&
+            FloatToHalfRne(-2.0f) == 0xC000u &&
+            FloatToHalfRne(65504.0f) == 0x7BFFu &&
+            FloatToHalfRne(std::ldexp(1.0f, 16)) == 0x7C00u &&
+            FloatToHalfRne(-std::ldexp(1.0f, 16)) == 0xFC00u &&
+            FloatToHalfRne(std::ldexp(1.0f, -24)) == 0x0001u &&
+            FloatToHalfRne(std::ldexp(1.0f, -25)) == 0x0000u &&
+            FloatToHalfRne(1.0f + std::ldexp(1.0f, -11)) == 0x3C00u &&
+            FloatToHalfRne(1.0f + 3.0f * std::ldexp(1.0f, -11)) == 0x3C02u &&
+            FloatToHalfRne(std::numeric_limits<float>::infinity()) == 0x7C00u &&
+            FloatToHalfRne(-std::numeric_limits<float>::infinity()) == 0xFC00u &&
+            FloatToHalfRne(negativeNaN.f) == 0x7E00u;
+        if (!bRneTable)
+        {
+            return false;
+        }
+
+        struct SourcePredicateCase
+        {
+            float fileValue;
+            double luminanceScale;
+            bool bExpectedValid;
+        };
+        const SourcePredicateCase sourcePredicateCases[] =
+        {
+            {-0.0f, 0.0, true},
+            {0.0f, 0.0, true},
+            {1.0f, 0.0, true},
+            {65503.0f, 0.0, true},
+            {1.0f, 1.0, true},
+            {65503.0f, 1.0, true},
+            {-1.0f, 1.0, false},
+            {65504.0f, 1.0, false},
+            {std::numeric_limits<float>::quiet_NaN(), 1.0, false},
+            {std::numeric_limits<float>::infinity(), 0.0, false},
+            {-std::numeric_limits<float>::infinity(), 1.0, false},
+            {32768.0f, 2.0, false},
+            {1.0f, -1.0, false},
+            {1.0f, std::numeric_limits<double>::quiet_NaN(), false},
+            {1.0f, std::numeric_limits<double>::infinity(), false},
+            {1.0f, -std::numeric_limits<double>::infinity(), false},
+        };
+        for (const SourcePredicateCase& sourceCase : sourcePredicateCases)
+        {
+            float scaledValue = 0.0f;
+            const bool bActualValid =
+                TryScaleSourceValue(sourceCase.fileValue,
+                                    sourceCase.luminanceScale,
+                                    scaledValue);
+            if (bActualValid != sourceCase.bExpectedValid)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static bool CreateIblResources(RHI::IDevice* device,
+                                   const Container::VariableArray<float>& sourceData,
+                                   uint32_t sourceWidth,
+                                   uint32_t sourceHeight,
+                                   const char* environmentName,
+                                   const char* diffuseName,
+                                   const char* prefilterName,
+                                   RHI::TexturePtr& outEnvironment,
+                                   RHI::TexturePtr& outDiffuse,
+                                   RHI::TexturePtr& outPrefilter)
+    {
+        constexpr uint32_t workingWidth = 256u;
+        constexpr uint32_t workingHeight = 128u;
+        constexpr uint32_t diffuseWidth = 64u;
+        constexpr uint32_t diffuseHeight = 32u;
+        constexpr uint32_t prefilterMipCount = 9u;
+        constexpr uint32_t prefilterSamples = 1024u;
+        constexpr double pi = 3.14159265358979323846;
+
+        outEnvironment.reset();
+        outDiffuse.reset();
+        outPrefilter.reset();
+        if (device == nullptr || !ValidateCanonicalSource(sourceData, sourceWidth, sourceHeight))
+        {
+            return false;
+        }
+
+        auto createRgbaTexture = [device](uint32_t width,
+                                          uint32_t height,
+                                          uint32_t mipLevels,
+                                          const char* debugName) -> RHI::TexturePtr
+        {
+            RHI::TextureDesc desc;
+            desc.Width = width;
+            desc.Height = height;
+            desc.MipLevels = mipLevels;
+            desc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+            desc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+            desc.DebugName = debugName;
+            return device->CreateTexture(desc);
+        };
+
+        const size_t sourcePixelCount = static_cast<size_t>(sourceWidth) * sourceHeight;
+        Container::VariableArray<uint16_t> sourceHalf(sourcePixelCount * 4u);
+        Container::VariableArray<float> canonicalSource(sourcePixelCount * 4u);
+        for (size_t index = 0u; index < sourceHalf.size(); ++index)
+        {
+            sourceHalf[index] = FloatToHalfRne(sourceData[index]);
+            canonicalSource[index] = HalfToFloat(sourceHalf[index]);
+        }
+
+        double constantSourceRgb[3] = {};
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            constantSourceRgb[channel] = static_cast<double>(canonicalSource[channel]);
+        }
+        bool bConstantSource = true;
+        for (size_t pixel = 0u; pixel < sourcePixelCount && bConstantSource; ++pixel)
+        {
+            const size_t offset = pixel * 4u;
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                if (static_cast<double>(canonicalSource[offset + channel]) !=
+                    constantSourceRgb[channel])
+                {
+                    bConstantSource = false;
+                    break;
+                }
+            }
+        }
+
+        auto validateGeneratedRgb =
+            [&](const Container::VariableArray<uint16_t>& halfData,
+                size_t pixelCount,
+                const double expectedRgb[3],
+                bool bCheckExpected,
+                const char* stageName) -> bool
+        {
+            if (halfData.size() < pixelCount * 4u)
+            {
+                NORVES_LOG_ERROR("LightingPass",
+                                 "IBL %s post-RNE buffer size is invalid",
+                                 stageName);
+                return false;
+            }
+            for (size_t pixel = 0u; pixel < pixelCount; ++pixel)
+            {
+                const size_t offset = pixel * 4u;
+                for (uint32_t channel = 0u; channel < 4u; ++channel)
+                {
+                    const double decoded = static_cast<double>(HalfToFloat(halfData[offset + channel]));
+                    if (!std::isfinite(decoded) || decoded < 0.0 || decoded >= 65504.0)
+                    {
+                        NORVES_LOG_ERROR("LightingPass",
+                                         "IBL %s post-RNE range check failed: pixel=%zu channel=%u value=%g",
+                                         stageName,
+                                         pixel,
+                                         channel,
+                                         decoded);
+                        return false;
+                    }
+                    if (bCheckExpected && channel < 3u)
+                    {
+                        const double expected = expectedRgb[channel];
+                        if (expected == 0.0)
+                        {
+                            if (decoded != 0.0)
+                            {
+                                NORVES_LOG_ERROR("LightingPass",
+                                                 "IBL %s constant zero check failed: pixel=%zu channel=%u value=%g",
+                                                 stageName,
+                                                 pixel,
+                                                 channel,
+                                                 decoded);
+                                return false;
+                            }
+                        }
+                        else
+                        {
+                            const double relative = std::abs(decoded - expected) /
+                                                     std::abs(expected);
+                            if (!std::isfinite(relative) || relative > 1.0e-3)
+                            {
+                                NORVES_LOG_ERROR("LightingPass",
+                                                 "IBL %s constant check failed: pixel=%zu channel=%u value=%g expected=%g relative=%g",
+                                                 stageName,
+                                                 pixel,
+                                                 channel,
+                                                 decoded,
+                                                 expected,
+                                                 relative);
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            return true;
+        };
+
+        const double sourceExpectedRgb[3] = {
+            constantSourceRgb[0], constantSourceRgb[1], constantSourceRgb[2]};
+        const double diffuseExpectedRgb[3] = {
+            constantSourceRgb[0] * pi,
+            constantSourceRgb[1] * pi,
+            constantSourceRgb[2] * pi};
+        if (!validateGeneratedRgb(sourceHalf,
+                                  sourcePixelCount,
+                                  sourceExpectedRgb,
+                                  false,
+                                  "source"))
+        {
+            return false;
+        }
+
+        RHI::TexturePtr environmentTexture =
+            createRgbaTexture(sourceWidth, sourceHeight, 1u, environmentName);
+        if (!environmentTexture)
+        {
+            return false;
+        }
+        const uint32_t sourceRowPitch = sourceWidth * 4u * static_cast<uint32_t>(sizeof(uint16_t));
+        environmentTexture->Update(sourceHalf.data(), sourceRowPitch,
+                                    sourceRowPitch * sourceHeight);
+
+        const size_t workingPixelCount = static_cast<size_t>(workingWidth) * workingHeight;
+        Container::VariableArray<uint16_t> workingHalf(workingPixelCount * 4u, 0u);
+        Container::VariableArray<float> workingData(workingPixelCount * 4u, 0.0f);
+        if (sourceWidth == workingWidth && sourceHeight == workingHeight)
+        {
+            for (size_t index = 0u; index < workingHalf.size(); ++index)
+            {
+                workingHalf[index] = sourceHalf[index];
+                workingData[index] = HalfToFloat(workingHalf[index]);
+            }
+        }
+        else
+        {
+            for (uint32_t y = 0u; y < workingHeight; ++y)
+            {
+                const uint32_t sourceY0 = (y * sourceHeight) / workingHeight;
+                const uint32_t sourceY1 = (std::max)(sourceY0 + 1u,
+                                                     ((y + 1u) * sourceHeight) / workingHeight);
+                for (uint32_t x = 0u; x < workingWidth; ++x)
+                {
+                    const uint32_t sourceX0 = (x * sourceWidth) / workingWidth;
+                    const uint32_t sourceX1 = (std::max)(sourceX0 + 1u,
+                                                         ((x + 1u) * sourceWidth) / workingWidth);
+                    double weighted[3] = {};
+                    double weightTotal = 0.0;
+                    for (uint32_t sourceY = sourceY0;
+                         sourceY < sourceY1 && sourceY < sourceHeight;
+                         ++sourceY)
+                    {
+                        const double theta = pi *
+                            (static_cast<double>(sourceY) + 0.5) / sourceHeight;
+                        const double weight = std::sin(theta);
+                        for (uint32_t sourceX = sourceX0; sourceX < sourceX1; ++sourceX)
+                        {
+                            const uint32_t wrappedX = sourceX % sourceWidth;
+                            const size_t sourceOffset =
+                                (static_cast<size_t>(sourceY) * sourceWidth + wrappedX) * 4u;
+                            for (uint32_t channel = 0u; channel < 3u; ++channel)
+                            {
+                                weighted[channel] +=
+                                    static_cast<double>(canonicalSource[sourceOffset + channel]) * weight;
+                            }
+                            weightTotal += weight;
+                        }
+                    }
+                    if (!std::isfinite(weightTotal) || weightTotal <= 0.0)
+                    {
+                        return false;
+                    }
+                    const size_t workingOffset =
+                        (static_cast<size_t>(y) * workingWidth + x) * 4u;
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double value = weighted[channel] / weightTotal;
+                        if (!std::isfinite(value) || value < 0.0 || value >= 65504.0)
+                        {
+                            return false;
+                        }
+                        workingHalf[workingOffset + channel] =
+                            FloatToHalfRne(static_cast<float>(value));
+                        workingData[workingOffset + channel] =
+                            HalfToFloat(workingHalf[workingOffset + channel]);
+                    }
+                    workingHalf[workingOffset + 3u] = FloatToHalfRne(1.0f);
+                    workingData[workingOffset + 3u] = 1.0f;
+                }
+            }
+        }
+        if (!validateGeneratedRgb(workingHalf,
+                                  workingPixelCount,
+                                  sourceExpectedRgb,
+                                  false,
+                                  "working"))
+        {
+            return false;
+        }
+
+        Container::VariableArray<float> workingDirections(workingPixelCount * 3u, 0.0f);
+        Container::VariableArray<double> workingSolidAngles(workingPixelCount, 0.0);
+        const double deltaU = 2.0 * pi / static_cast<double>(workingWidth);
+        const double deltaV = pi / static_cast<double>(workingHeight);
+        for (uint32_t y = 0u; y < workingHeight; ++y)
+        {
+            const double theta = pi * (static_cast<double>(y) + 0.5) / workingHeight;
+            const double sinTheta = std::sin(theta);
+            const double cosTheta = std::cos(theta);
+            for (uint32_t x = 0u; x < workingWidth; ++x)
+            {
+                const double phi = 2.0 * pi *
+                    ((static_cast<double>(x) + 0.5) / workingWidth - 0.5);
+                const size_t index = static_cast<size_t>(y) * workingWidth + x;
+                workingDirections[index * 3u + 0u] =
+                    static_cast<float>(sinTheta * std::cos(phi));
+                workingDirections[index * 3u + 1u] = static_cast<float>(cosTheta);
+                workingDirections[index * 3u + 2u] =
+                    static_cast<float>(sinTheta * std::sin(phi));
+                workingSolidAngles[index] = deltaU * deltaV * sinTheta;
+            }
+        }
+
+        RHI::TexturePtr diffuseTexture =
+            createRgbaTexture(diffuseWidth, diffuseHeight, 1u, diffuseName);
+        RHI::TexturePtr prefilterTexture =
+            createRgbaTexture(workingWidth, workingHeight, prefilterMipCount, prefilterName);
+        if (!diffuseTexture || !prefilterTexture)
+        {
+            return false;
+        }
+
+        Container::VariableArray<uint16_t> diffuseHalf(
+            static_cast<size_t>(diffuseWidth) * diffuseHeight * 4u, 0u);
+        for (uint32_t y = 0u; y < diffuseHeight; ++y)
+        {
+            const double theta = pi * (static_cast<double>(y) + 0.5) / diffuseHeight;
+            const double sinTheta = std::sin(theta);
+            const double cosTheta = std::cos(theta);
+            for (uint32_t x = 0u; x < diffuseWidth; ++x)
+            {
+                const double phi = 2.0 * pi *
+                    ((static_cast<double>(x) + 0.5) / diffuseWidth - 0.5);
+                const double normal[3] = {
+                    sinTheta * std::cos(phi), cosTheta, sinTheta * std::sin(phi)};
+                double sum[3] = {};
+                for (size_t workingIndex = 0u;
+                     workingIndex < workingPixelCount;
+                     ++workingIndex)
+                {
+                    const float* direction = &workingDirections[workingIndex * 3u];
+                    const double nDotL = (std::max)(
+                        normal[0] * direction[0] +
+                        normal[1] * direction[1] +
+                        normal[2] * direction[2], 0.0);
+                    const double weight = nDotL * workingSolidAngles[workingIndex];
+                    const size_t workingOffset = workingIndex * 4u;
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        sum[channel] +=
+                            static_cast<double>(workingData[workingOffset + channel]) * weight;
+                    }
+                }
+                const size_t offset =
+                    (static_cast<size_t>(y) * diffuseWidth + x) * 4u;
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    const double value = sum[channel];
+                    if (!std::isfinite(value) || value < 0.0 || value >= 65504.0)
+                    {
+                        return false;
+                    }
+                    diffuseHalf[offset + channel] =
+                        FloatToHalfRne(static_cast<float>(value));
+                }
+                diffuseHalf[offset + 3u] = FloatToHalfRne(1.0f);
+            }
+        }
+        const uint32_t diffuseRowPitch =
+            diffuseWidth * 4u * static_cast<uint32_t>(sizeof(uint16_t));
+        if (!validateGeneratedRgb(diffuseHalf,
+                                  static_cast<size_t>(diffuseWidth) * diffuseHeight,
+                                  diffuseExpectedRgb,
+                                  bConstantSource,
+                                  "diffuse"))
+        {
+            return false;
+        }
+        diffuseTexture->Update(diffuseHalf.data(), diffuseRowPitch,
+                                diffuseRowPitch * diffuseHeight);
+
+        auto sampleWorking = [&](float u, float v, float outColor[3])
+        {
+            const float wrappedU = u - std::floor(u);
+            const float clampedV = (std::max)(0.0f, (std::min)(1.0f, v));
+            const float xPosition = wrappedU * static_cast<float>(workingWidth) - 0.5f;
+            const float yPosition = clampedV * static_cast<float>(workingHeight) - 0.5f;
+            const int32_t x0 = static_cast<int32_t>(std::floor(xPosition));
+            const int32_t y0 = static_cast<int32_t>(std::floor(yPosition));
+            const int32_t x1 = x0 + 1;
+            const int32_t y1 = y0 + 1;
+            const float wx = xPosition - std::floor(xPosition);
+            const float wy = yPosition - std::floor(yPosition);
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                auto readWorking = [&](int32_t sampleX, int32_t sampleY) -> float
+                {
+                    const int32_t wrappedX = ((sampleX % static_cast<int32_t>(workingWidth)) +
+                                              static_cast<int32_t>(workingWidth)) %
+                                             static_cast<int32_t>(workingWidth);
+                    const uint32_t clampedY = static_cast<uint32_t>((std::max)(
+                        0, (std::min)(sampleY, static_cast<int32_t>(workingHeight - 1u))));
+                    return workingData[(static_cast<size_t>(clampedY) * workingWidth +
+                                        static_cast<uint32_t>(wrappedX)) * 4u + channel];
+                };
+                const float c00 = readWorking(x0, y0);
+                const float c10 = readWorking(x1, y0);
+                const float c01 = readWorking(x0, y1);
+                const float c11 = readWorking(x1, y1);
+                const float top = c00 + (c10 - c00) * wx;
+                const float bottom = c01 + (c11 - c01) * wx;
+                outColor[channel] = top + (bottom - top) * wy;
+            }
+        };
+
+        Container::VariableArray<uint16_t> mip0Half(
+            static_cast<size_t>(workingWidth) * workingHeight * 4u, 0u);
+        for (size_t index = 0u; index < mip0Half.size(); ++index)
+        {
+            mip0Half[index] = workingHalf[index];
+        }
+        const uint32_t mip0RowPitch = workingWidth * 4u * static_cast<uint32_t>(sizeof(uint16_t));
+        if (!validateGeneratedRgb(mip0Half,
+                                  workingPixelCount,
+                                  sourceExpectedRgb,
+                                  bConstantSource,
+                                  "prefilter_mip0"))
+        {
+            return false;
+        }
+        prefilterTexture->Update(mip0Half.data(), mip0RowPitch,
+                                 mip0RowPitch * workingHeight, 0u);
+
+        for (uint32_t mip = 1u; mip < prefilterMipCount; ++mip)
+        {
+            const uint32_t mipWidth = (std::max)(1u, workingWidth >> mip);
+            const uint32_t mipHeight = (std::max)(1u, workingHeight >> mip);
+            Container::VariableArray<uint16_t> prefilteredHalf(
+                static_cast<size_t>(mipWidth) * mipHeight * 4u, 0u);
+            const float roughness = static_cast<float>(mip) / 8.0f;
+            const float alpha = roughness * roughness;
+            const float alphaSquared = alpha * alpha;
+            for (uint32_t y = 0u; y < mipHeight; ++y)
+            {
+                const float v = (static_cast<float>(y) + 0.5f) /
+                                static_cast<float>(mipHeight);
+                for (uint32_t x = 0u; x < mipWidth; ++x)
+                {
+                    const float u = (static_cast<float>(x) + 0.5f) /
+                                    static_cast<float>(mipWidth);
+                    const float theta = 3.14159265358979323846f * v;
+                    const float phi = 2.0f * 3.14159265358979323846f * (u - 0.5f);
+                    const float direction[3] = {
+                        std::sin(theta) * std::cos(phi), std::cos(theta),
+                        std::sin(theta) * std::sin(phi)};
+                    float up[3] = {0.0f, 1.0f, 0.0f};
+                    if (std::abs(direction[1]) >= 0.999f)
+                    {
+                        up[0] = 1.0f;
+                        up[1] = 0.0f;
+                        up[2] = 0.0f;
+                    }
+                    float tangent[3] = {
+                        up[1] * direction[2] - up[2] * direction[1],
+                        up[2] * direction[0] - up[0] * direction[2],
+                        up[0] * direction[1] - up[1] * direction[0]};
+                    const float tangentLength = std::sqrt(
+                        tangent[0] * tangent[0] + tangent[1] * tangent[1] +
+                        tangent[2] * tangent[2]);
+                    if (!std::isfinite(tangentLength) || tangentLength <= 0.0f)
+                    {
+                        return false;
+                    }
+                    tangent[0] /= tangentLength;
+                    tangent[1] /= tangentLength;
+                    tangent[2] /= tangentLength;
+                    const float bitangent[3] = {
+                        direction[1] * tangent[2] - direction[2] * tangent[1],
+                        direction[2] * tangent[0] - direction[0] * tangent[2],
+                        direction[0] * tangent[1] - direction[1] * tangent[0]};
+
+                    double result[3] = {};
+                    double weight = 0.0;
+                    for (uint32_t sample = 0u; sample < prefilterSamples; ++sample)
+                    {
+                        const float xi1 = static_cast<float>(sample) /
+                                          static_cast<float>(prefilterSamples);
+                        const float xi2 = static_cast<float>(ReverseBits32(sample)) *
+                                          2.3283064365386963e-10f;
+                        const float samplePhi = 2.0f * 3.14159265358979323846f * xi1;
+                        const float cosTheta = std::sqrt((std::max)(0.0f,
+                            (1.0f - xi2) / (1.0f + (alphaSquared - 1.0f) * xi2)));
+                        const float sinTheta = std::sqrt((std::max)(
+                            0.0f, 1.0f - cosTheta * cosTheta));
+                        const float half[3] = {
+                            sinTheta * std::cos(samplePhi),
+                            sinTheta * std::sin(samplePhi), cosTheta};
+                        const float worldHalf[3] = {
+                            tangent[0] * half[0] + bitangent[0] * half[1] + direction[0] * half[2],
+                            tangent[1] * half[0] + bitangent[1] * half[1] + direction[1] * half[2],
+                            tangent[2] * half[0] + bitangent[2] * half[1] + direction[2] * half[2]};
+                        const float viewDotHalf = direction[0] * worldHalf[0] +
+                                                  direction[1] * worldHalf[1] +
+                                                  direction[2] * worldHalf[2];
+                        const float light[3] = {
+                            2.0f * viewDotHalf * worldHalf[0] - direction[0],
+                            2.0f * viewDotHalf * worldHalf[1] - direction[1],
+                            2.0f * viewDotHalf * worldHalf[2] - direction[2]};
+                        const float nDotL = light[0] * direction[0] +
+                                            light[1] * direction[1] +
+                                            light[2] * direction[2];
+                        if (!(nDotL > 0.0f) || !std::isfinite(nDotL))
+                        {
+                            continue;
+                        }
+                        const float lightPhi = std::atan2(light[2], light[0]);
+                        const float lightV = std::asin((std::max)(-1.0f,
+                            (std::min)(1.0f, -light[1])));
+                        float radiance[3] = {};
+                        sampleWorking(lightPhi * 0.15915494309189535f + 0.5f,
+                                      lightV * 0.3183098861837907f + 0.5f,
+                                      radiance);
+                        for (uint32_t channel = 0u; channel < 3u; ++channel)
+                        {
+                            result[channel] += static_cast<double>(radiance[channel]) *
+                                               static_cast<double>(nDotL);
+                        }
+                        weight += static_cast<double>(nDotL);
+                    }
+                    if (!std::isfinite(weight) || weight <= 1.0e-8)
+                    {
+                        return false;
+                    }
+                    const size_t offset =
+                        (static_cast<size_t>(y) * mipWidth + x) * 4u;
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double value = result[channel] / weight;
+                        if (!std::isfinite(value) || value < 0.0 || value >= 65504.0)
+                        {
+                            return false;
+                        }
+                        prefilteredHalf[offset + channel] =
+                            FloatToHalfRne(static_cast<float>(value));
+                    }
+                    prefilteredHalf[offset + 3u] = FloatToHalfRne(1.0f);
+                }
+            }
+            const uint32_t rowPitch =
+                mipWidth * 4u * static_cast<uint32_t>(sizeof(uint16_t));
+            if (!validateGeneratedRgb(prefilteredHalf,
+                                      static_cast<size_t>(mipWidth) * mipHeight,
+                                      sourceExpectedRgb,
+                                      bConstantSource,
+                                      "prefilter_mip"))
+            {
+                return false;
+            }
+            prefilterTexture->Update(prefilteredHalf.data(), rowPitch,
+                                     rowPitch * mipHeight, mip);
+        }
+
+        outEnvironment = environmentTexture;
+        outDiffuse = diffuseTexture;
+        outPrefilter = prefilterTexture;
+        return true;
     }
 
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
 
     static RHI::DescriptorSetDesc CreateLightingDescriptorSetDesc(bool bNeuralBRDFAvailable)
     {
+        (void)bNeuralBRDFAvailable;
         RHI::DescriptorSetDesc dsDesc;
 
         RHI::DescriptorBinding albedoBinding;
@@ -135,14 +862,23 @@ namespace NorvesLib::Core::Rendering
         ssaoBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(ssaoBinding);
 
-        if (bNeuralBRDFAvailable)
-        {
-            RHI::DescriptorBinding neuralWeightBinding;
-            neuralWeightBinding.binding = 11;
-            neuralWeightBinding.type = RHI::ResourceBindType::StructuredBuffer;
-            neuralWeightBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(neuralWeightBinding);
-        }
+        RHI::DescriptorBinding neuralWeightBinding;
+        neuralWeightBinding.binding = 11;
+        neuralWeightBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        neuralWeightBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(neuralWeightBinding);
+
+        RHI::DescriptorBinding diffuseIrradianceBinding;
+        diffuseIrradianceBinding.binding = 12;
+        diffuseIrradianceBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        diffuseIrradianceBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(diffuseIrradianceBinding);
+
+        RHI::DescriptorBinding prefilteredSpecularBinding;
+        prefilteredSpecularBinding.binding = 13;
+        prefilteredSpecularBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        prefilteredSpecularBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(prefilteredSpecularBinding);
 
         return dsDesc;
     }
@@ -157,11 +893,68 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
+    namespace
+    {
+        struct LightingPassInitializationRollback
+        {
+            LightingPass& pass;
+            SceneView* sceneView;
+            const GBufferPass* gbufferPass;
+            const SSAOPass* ssaoPass;
+            bool bCommitted = false;
+
+            ~LightingPassInitializationRollback()
+            {
+                if (bCommitted)
+                {
+                    return;
+                }
+
+                pass.Shutdown();
+                pass.SetSceneView(sceneView);
+                pass.SetGBufferPass(gbufferPass);
+                pass.SetSSAOPass(ssaoPass);
+            }
+
+            void Commit()
+            {
+                bCommitted = true;
+            }
+        };
+    }
+
     bool LightingPass::Initialize(ViewRenderContext& context)
     {
         if (m_bInitialized)
         {
             return true;
+        }
+
+        if (m_Device != nullptr || m_DefaultBlackTexture || m_BrdfLutTexture ||
+            m_DefaultNeuralBRDFWeightBuffer)
+        {
+            SceneView* sceneView = m_SceneView;
+            const GBufferPass* gbufferPass = m_GBufferPass;
+            const SSAOPass* ssaoPass = m_SSAOPass;
+            Shutdown();
+            m_SceneView = sceneView;
+            m_GBufferPass = gbufferPass;
+            m_SSAOPass = ssaoPass;
+        }
+
+        if (!std::isfinite(m_Settings.EnvironmentLuminanceScaleNits) ||
+            m_Settings.EnvironmentLuminanceScaleNits < 0.0f)
+        {
+            NORVES_LOG_ERROR("LightingPass",
+                             "EnvironmentLuminanceScaleNits must be finite and non-negative");
+            return false;
+        }
+
+        if (!ValidateProductionInitializationInvariants(
+                m_Settings.EnvironmentLuminanceScaleNits))
+        {
+            NORVES_LOG_ERROR("LightingPass", "Production binary16/source invariant self-test failed");
+            return false;
         }
 
         if (!context.Device)
@@ -170,6 +963,14 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        const uint32_t activeDebugMode = static_cast<uint32_t>(context.GetActiveDebugMode());
+        const bool bValidationSnapshotMode =
+            activeDebugMode == 250u || activeDebugMode == 251u || activeDebugMode == 252u;
+
+        LightingPassInitializationRollback initializationRollback
+        {
+            *this, m_SceneView, m_GBufferPass, m_SSAOPass
+        };
         m_Device = context.Device;
 
         // ========================================
@@ -237,7 +1038,90 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        m_bInitialized = true;
+        // D0/D1共通の有効なfallbackを先に確保する。未bind descriptorは許可しない。
+        RHI::TextureDesc blackTextureDesc;
+        blackTextureDesc.Width = 1u;
+        blackTextureDesc.Height = 1u;
+        blackTextureDesc.MipLevels = 1u;
+        blackTextureDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+        blackTextureDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        blackTextureDesc.DebugName = "LightingBlackEnvironmentFallback";
+        m_DefaultBlackTexture = m_Device->CreateTexture(blackTextureDesc);
+        if (!m_DefaultBlackTexture)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create black environment fallback");
+            return false;
+        }
+        const uint16_t blackPixel[4] = {0x0000u, 0x0000u, 0x0000u, 0x3C00u};
+        m_DefaultBlackTexture->Update(blackPixel, sizeof(blackPixel), sizeof(blackPixel));
+
+        RHI::TextureDesc dfgFallbackDesc;
+        dfgFallbackDesc.Width = 1u;
+        dfgFallbackDesc.Height = 1u;
+        dfgFallbackDesc.MipLevels = 1u;
+        dfgFallbackDesc.TextureFormat = RHI::Format::R16G16_FLOAT;
+        dfgFallbackDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        dfgFallbackDesc.DebugName = "LightingDfgFallback";
+        m_BrdfLutTexture = m_Device->CreateTexture(dfgFallbackDesc);
+        if (!m_BrdfLutTexture)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create DFG fallback");
+            return false;
+        }
+        const uint16_t dfgFallbackPixel[2] = {0x0000u, 0x0000u};
+        m_BrdfLutTexture->Update(dfgFallbackPixel, sizeof(dfgFallbackPixel), sizeof(dfgFallbackPixel));
+
+        RHI::BufferDesc neuralFallbackDesc(
+            4u,
+            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead,
+            true,
+            "NeuralBRDF_ZeroFallback");
+        m_DefaultNeuralBRDFWeightBuffer = m_Device->CreateBuffer(neuralFallbackDesc);
+        if (!m_DefaultNeuralBRDFWeightBuffer)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create Neural BRDF fallback");
+            return false;
+        }
+        const uint32_t neuralFallbackValue = 0u;
+        m_DefaultNeuralBRDFWeightBuffer->Update(&neuralFallbackValue, sizeof(neuralFallbackValue));
+
+        RHI::SamplerDesc sourceSamplerDesc;
+        sourceSamplerDesc.filterMin = RHI::FilterMode::Linear;
+        sourceSamplerDesc.filterMag = RHI::FilterMode::Linear;
+        sourceSamplerDesc.filterMip = RHI::FilterMode::Point;
+        sourceSamplerDesc.addressU = RHI::TextureAddressMode::Wrap;
+        sourceSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        sourceSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_IBLSampler = m_Device->CreateSampler(sourceSamplerDesc);
+        m_DiffuseIrradianceSampler = m_Device->CreateSampler(sourceSamplerDesc);
+        if (!m_IBLSampler || !m_DiffuseIrradianceSampler)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create source/diffuse fallback sampler");
+            return false;
+        }
+
+        RHI::SamplerDesc prefilterSamplerDesc = sourceSamplerDesc;
+        prefilterSamplerDesc.filterMip = RHI::FilterMode::Linear;
+        m_PrefilteredSpecularSampler = m_Device->CreateSampler(prefilterSamplerDesc);
+        if (!m_PrefilteredSpecularSampler)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create prefiltered fallback sampler");
+            return false;
+        }
+
+        RHI::SamplerDesc dfgSamplerDesc;
+        dfgSamplerDesc.filterMin = RHI::FilterMode::Linear;
+        dfgSamplerDesc.filterMag = RHI::FilterMode::Linear;
+        dfgSamplerDesc.filterMip = RHI::FilterMode::Point;
+        dfgSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        dfgSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        dfgSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_DfgSampler = m_Device->CreateSampler(dfgSamplerDesc);
+        if (!m_DfgSampler)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create DFG fallback sampler");
+            return false;
+        }
 
         // ========================================
         // Neural BRDF ウェイトデータ読み込み
@@ -282,75 +1166,88 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // ========================================
-        // IBL (Image-Based Lighting) リソース初期化
-        // ========================================
-        if (!m_Settings.EnvironmentMapPath.empty())
+        if (!GenerateBRDFLut())
         {
-            bool bEnvLoaded = LoadEnvironmentMap(m_Settings.EnvironmentMapPath);
-            bool bBrdfGenerated = GenerateBRDFLut();
-
-            if (bEnvLoaded && bBrdfGenerated)
-            {
-                // IBL用サンプラー作成（Linear + ミップマップ）
-                RHI::SamplerDesc iblSamplerDesc;
-                iblSamplerDesc.filterMin = RHI::FilterMode::Linear;
-                iblSamplerDesc.filterMag = RHI::FilterMode::Linear;
-                iblSamplerDesc.filterMip = RHI::FilterMode::Linear;
-                iblSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
-                iblSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
-                iblSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
-
-                m_IBLSampler = m_Device->CreateSampler(iblSamplerDesc);
-                if (m_IBLSampler)
-                {
-                    m_bIBLAvailable = true;
-                    NORVES_LOG_INFO("LightingPass", "IBL initialized successfully");
-                }
-                else
-                {
-                    NORVES_LOG_WARNING("LightingPass", "Failed to create IBL sampler, falling back to flat ambient");
-                }
-            }
-            else
-            {
-                NORVES_LOG_WARNING("LightingPass", "IBL resource loading failed, falling back to flat ambient");
-            }
+            NORVES_LOG_ERROR("LightingPass", "Failed to generate DFG LUT");
+            return false;
         }
 
+        if (!bValidationSnapshotMode && !m_Settings.EnvironmentMapPath.empty() &&
+            LoadEnvironmentMap(m_Settings.EnvironmentMapPath))
+        {
+            m_bIBLAvailable = true;
+        }
+
+        if (bValidationSnapshotMode && !GenerateValidationSnapshots())
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to generate validation environment snapshots");
+            return false;
+        }
+
+        RHI::DescriptorSetPtr initialDescriptorSet;
+        if (!CreateLightingDescriptorSet(initialDescriptorSet))
+        {
+            return false;
+        }
+        m_LightingDescriptorSet = std::move(initialDescriptorSet);
+
+        initializationRollback.Commit();
+        m_bInitialized = true;
         NORVES_LOG_INFO("LightingPass", "LightingPass initialized");
         return true;
     }
 
     void LightingPass::Shutdown()
     {
-        if (!m_bInitialized)
+        if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
+            !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer)
         {
             return;
         }
 
-        m_SceneColorTexture.reset();
-        m_LightingRenderPass.reset();
-        m_LightingFramebuffer.reset();
+        // Descriptor bindings own references to buffers, textures, and samplers.
+        m_LightingDescriptorSet.reset();
+
+        // Release dependents before the resources they reference.
         m_LightingPipeline.reset();
-        m_LightingVertexShader.reset();
-        m_LightingFragmentShader.reset();
-        m_LightDataBuffer.reset();
+        m_LightingFramebuffer.reset();
+        m_LightingRenderPass.reset();
+        m_SceneColorTexture.reset();
+
         m_LightArrayBuffer.reset();
         m_RetiredLightArrayBuffers.clear();
         m_LightArrayCapacity = 0;
-        m_LightingDescriptorSet.reset();
-        m_GBufferSampler.reset();
+        m_LightDataBuffer.reset();
 
-        // IBLリソース解放
+        // IBL resources
         m_EnvironmentTexture.reset();
+        m_DiffuseIrradianceTexture.reset();
+        m_PrefilteredSpecularTexture.reset();
+        m_ValidationRaw250EnvironmentTexture.reset();
+        m_ValidationRaw250DiffuseIrradianceTexture.reset();
+        m_ValidationRaw250Texture.reset();
+        m_ValidationRaw252EnvironmentTexture.reset();
+        m_ValidationRaw252DiffuseIrradianceTexture.reset();
+        m_ValidationRaw252PrefilteredSpecularTexture.reset();
         m_BrdfLutTexture.reset();
-        m_IBLSampler.reset();
+        m_DefaultBlackTexture.reset();
         m_bIBLAvailable = false;
 
-        // Neural BRDFリソース解放
+        // Neural BRDF resources
         m_NeuralBRDFWeightBuffer.reset();
+        m_DefaultNeuralBRDFWeightBuffer.reset();
         m_bNeuralBRDFAvailable = false;
+
+        // Samplers are released after descriptor and texture ownership is gone.
+        m_GBufferSampler.reset();
+        m_IBLSampler.reset();
+        m_DiffuseIrradianceSampler.reset();
+        m_PrefilteredSpecularSampler.reset();
+        m_DfgSampler.reset();
+
+        // Shaders are released after the pipeline.
+        m_LightingFragmentShader.reset();
+        m_LightingVertexShader.reset();
 
         m_Device = nullptr;
         m_SceneView = nullptr;
@@ -900,7 +1797,6 @@ namespace NorvesLib::Core::Rendering
         m_LightingRenderPass.reset();
         m_LightingFramebuffer.reset();
         m_LightingPipeline.reset();
-        m_LightingDescriptorSet.reset();
         m_FramebufferSceneColorTexture = nullptr;
         m_FramebufferWidth = 0;
         m_FramebufferHeight = 0;
@@ -972,6 +1868,56 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool LightingPass::CreateLightingDescriptorSet(RHI::DescriptorSetPtr& outDescriptorSet)
+    {
+        outDescriptorSet.reset();
+        if (!m_Device || !m_LightDataBuffer || !m_LightArrayBuffer || !m_BrdfLutTexture ||
+            !m_DefaultBlackTexture || !m_DefaultNeuralBRDFWeightBuffer ||
+            !m_GBufferSampler || !m_IBLSampler || !m_DiffuseIrradianceSampler ||
+            !m_PrefilteredSpecularSampler || !m_DfgSampler)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Mandatory lighting descriptor resources are unavailable");
+            return false;
+        }
+
+        RHI::DescriptorSetDesc dsDesc = CreateLightingDescriptorSetDesc(m_bNeuralBRDFAvailable);
+        RHI::DescriptorSetPtr descriptorSet = m_Device->CreateDescriptorSet(dsDesc);
+        if (!descriptorSet)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting descriptor set");
+            return false;
+        }
+
+        descriptorSet->BindConstantBuffer(4, m_LightDataBuffer, 0u, LIGHTING_PARAMS_SIZE);
+        descriptorSet->BindStorageBuffer(5,
+                                         m_LightArrayBuffer,
+                                         0u,
+                                         GetLightArrayBufferSizeBytes());
+        descriptorSet->BindTexture(8, m_DefaultBlackTexture);
+        descriptorSet->BindSampler(8, m_IBLSampler);
+        descriptorSet->BindTexture(9, m_BrdfLutTexture);
+        descriptorSet->BindSampler(9, m_DfgSampler);
+        if (m_bNeuralBRDFAvailable && m_NeuralBRDFWeightBuffer)
+        {
+            descriptorSet->BindStorageBuffer(
+                11,
+                m_NeuralBRDFWeightBuffer,
+                0u,
+                static_cast<uint32_t>(m_NeuralBRDFData.GetWeightDataSizeFP32()));
+        }
+        else
+        {
+            descriptorSet->BindStorageBuffer(11, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
+        }
+        descriptorSet->BindTexture(12, m_DefaultBlackTexture);
+        descriptorSet->BindSampler(12, m_DiffuseIrradianceSampler);
+        descriptorSet->BindTexture(13, m_DefaultBlackTexture);
+        descriptorSet->BindSampler(13, m_PrefilteredSpecularSampler);
+
+        outDescriptorSet = std::move(descriptorSet);
+        return true;
+    }
+
     bool LightingPass::EnsureLightingDescriptorSet()
     {
         if (m_LightingDescriptorSet)
@@ -979,15 +1925,12 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        RHI::DescriptorSetDesc dsDesc = CreateLightingDescriptorSetDesc(m_bNeuralBRDFAvailable);
-        m_LightingDescriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-        if (!m_LightingDescriptorSet)
+        RHI::DescriptorSetPtr descriptorSet;
+        if (!CreateLightingDescriptorSet(descriptorSet))
         {
-            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting descriptor set");
             return false;
         }
-
-        m_LightingDescriptorSet->BindConstantBuffer(4, m_LightDataBuffer, 0, LIGHTING_PARAMS_SIZE);
+        m_LightingDescriptorSet = std::move(descriptorSet);
         return true;
     }
 
@@ -1103,20 +2046,43 @@ namespace NorvesLib::Core::Rendering
         }
         m_LightingDescriptorSet->BindSampler(7, m_GBufferSampler);
 
-        if (m_bIBLAvailable)
-        {
-            m_LightingDescriptorSet->BindTexture(8, m_EnvironmentTexture);
-            m_LightingDescriptorSet->BindSampler(8, m_IBLSampler);
-            m_LightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
-            m_LightingDescriptorSet->BindSampler(9, m_IBLSampler);
-        }
-        else
-        {
-            m_LightingDescriptorSet->BindTexture(8, albedoTexture);
-            m_LightingDescriptorSet->BindSampler(8, m_GBufferSampler);
-            m_LightingDescriptorSet->BindTexture(9, albedoTexture);
-            m_LightingDescriptorSet->BindSampler(9, m_GBufferSampler);
-        }
+        const uint32_t activeDebugMode = static_cast<uint32_t>(context.GetActiveDebugMode());
+        const bool bValidationRaw250 = activeDebugMode == 250u;
+        const bool bValidationRaw251 = activeDebugMode == 251u;
+        const bool bValidationRaw252 = activeDebugMode == 252u;
+
+        const RHI::TexturePtr& environmentTexture =
+            bValidationRaw251 ? m_DefaultBlackTexture :
+            bValidationRaw252 && m_ValidationRaw252EnvironmentTexture ?
+                m_ValidationRaw252EnvironmentTexture :
+            bValidationRaw250 && m_ValidationRaw250EnvironmentTexture ?
+                m_ValidationRaw250EnvironmentTexture :
+            m_bIBLAvailable && m_EnvironmentTexture ? m_EnvironmentTexture : m_DefaultBlackTexture;
+        m_LightingDescriptorSet->BindTexture(8, environmentTexture);
+        m_LightingDescriptorSet->BindSampler(8, m_IBLSampler);
+        m_LightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
+        m_LightingDescriptorSet->BindSampler(9, m_DfgSampler);
+
+        const RHI::TexturePtr& diffuseIrradianceTexture =
+            bValidationRaw251 ? m_DefaultBlackTexture :
+            bValidationRaw252 && m_ValidationRaw252DiffuseIrradianceTexture ?
+                m_ValidationRaw252DiffuseIrradianceTexture :
+            bValidationRaw250 && m_ValidationRaw250DiffuseIrradianceTexture ?
+                m_ValidationRaw250DiffuseIrradianceTexture :
+            m_bIBLAvailable && m_DiffuseIrradianceTexture ?
+                m_DiffuseIrradianceTexture : m_DefaultBlackTexture;
+        m_LightingDescriptorSet->BindTexture(12, diffuseIrradianceTexture);
+        m_LightingDescriptorSet->BindSampler(12, m_DiffuseIrradianceSampler);
+
+        const RHI::TexturePtr& prefilteredSpecularTexture =
+            bValidationRaw251 ? m_DefaultBlackTexture :
+            bValidationRaw252 && m_ValidationRaw252PrefilteredSpecularTexture ?
+                m_ValidationRaw252PrefilteredSpecularTexture :
+            bValidationRaw250 && m_ValidationRaw250Texture ? m_ValidationRaw250Texture :
+            m_bIBLAvailable && m_PrefilteredSpecularTexture ? m_PrefilteredSpecularTexture :
+            m_DefaultBlackTexture;
+        m_LightingDescriptorSet->BindTexture(13, prefilteredSpecularTexture);
+        m_LightingDescriptorSet->BindSampler(13, m_PrefilteredSpecularSampler);
 
         if (ssaoTexture)
         {
@@ -1138,6 +2104,10 @@ namespace NorvesLib::Core::Rendering
             m_LightingDescriptorSet->BindStorageBuffer(
                 11, m_NeuralBRDFWeightBuffer, 0,
                 static_cast<uint32_t>(m_NeuralBRDFData.GetWeightDataSizeFP32()));
+        }
+        else
+        {
+            m_LightingDescriptorSet->BindStorageBuffer(11, m_DefaultNeuralBRDFWeightBuffer, 0, 4u);
         }
 
         m_LightingDescriptorSet->Update();
@@ -1317,19 +2287,32 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // SSAOパラメータ設定
+        params.debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
+        const bool bValidationMode = params.debugViewMode >= 250u &&
+                                     params.debugViewMode <= 254u;
+        params.bSSAOEnabled = bValidationMode ? 0u : (bSSAOAvailable ? 1u : 0u);
+        params.bNeuralBRDFEnabled = bValidationMode ? 0u :
+                                    (m_bNeuralBRDFAvailable ? 1u : 0u);
         params.lightCount = lightCount;
 
         // IBLパラメータ設定
-        params.envMapMipLevels = m_bIBLAvailable ? m_EnvironmentMipLevels : 1;
-        params.bIBLEnabled = m_bIBLAvailable ? 1 : 0;
-
-        // SSAOパラメータ設定
-        params.bSSAOEnabled = bSSAOAvailable ? 1 : 0;
-        params.bNeuralBRDFEnabled = m_bNeuralBRDFAvailable ? 1 : 0;
-        params.debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
+        params.prefilteredSpecularMipLevels = 9u;
+        const bool bValidationRaw251 = params.debugViewMode == 251u;
+        const bool bValidationRaw252 = params.debugViewMode == 252u;
+        const bool bValidationConstantIblAvailable =
+            bValidationRaw252 && m_ValidationRaw252EnvironmentTexture &&
+            m_ValidationRaw252DiffuseIrradianceTexture &&
+            m_ValidationRaw252PrefilteredSpecularTexture;
+        params.bIBLEnabled = (!bValidationRaw251 &&
+                             (m_bIBLAvailable || bValidationConstantIblAvailable)) ? 1u : 0u;
 
         // IBL有効時はambientColor.wにIBL強度を設定
-        if (m_bIBLAvailable)
+        if (bValidationConstantIblAvailable)
+        {
+            params.ambientColor[3] = 1.0f;
+        }
+        else if (m_bIBLAvailable)
         {
             params.ambientColor[3] = m_Settings.IBLIntensity;
         }
@@ -1358,7 +2341,6 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // パス解決
         Container::String resolvedPath = path;
 #ifdef NORVES_ASSET_DIR
         if (path.size() > 0 && path[0] != '/' && path[0] != '\\' &&
@@ -1380,118 +2362,171 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("LightingPass", "Loading HDR environment map...");
         NORVES_LOG_INFO("LightingPass", resolvedPath.c_str());
 
-        // HDRファイル読み込み（float32 RGBA）
-        int width = 0, height = 0, channels = 0;
-        float *hdrData = stbi_loadf(resolvedPath.c_str(), &width, &height, &channels, 4);
-        if (!hdrData)
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        float* hdrData = stbi_loadf(resolvedPath.c_str(), &width, &height, &channels, 4);
+        if (hdrData == nullptr)
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to load HDR environment map");
             return false;
         }
-
-        NORVES_LOG_INFO("LightingPass", "HDR loaded successfully");
-
-        // ミップレベル数の計算
-        uint32_t mipLevels = 1;
+        if (width <= 0 || height <= 0)
         {
-            uint32_t maxDim = (std::max)(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
-            while (maxDim > 1)
-            {
-                maxDim >>= 1;
-                ++mipLevels;
-            }
-        }
-        m_EnvironmentMipLevels = mipLevels;
-
-        // テクスチャ作成
-        RHI::TextureDesc envDesc;
-        envDesc.Width = static_cast<uint32_t>(width);
-        envDesc.Height = static_cast<uint32_t>(height);
-        envDesc.MipLevels = mipLevels;
-        envDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
-        envDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
-        envDesc.DebugName = "EnvironmentMap";
-
-        m_EnvironmentTexture = m_Device->CreateTexture(envDesc);
-        if (!m_EnvironmentTexture)
-        {
-            NORVES_LOG_ERROR("LightingPass", "Failed to create environment map texture");
             stbi_image_free(hdrData);
+            NORVES_LOG_ERROR("LightingPass", "HDR environment map has invalid dimensions");
             return false;
         }
 
-        // ========================================
-        // ミップチェーン生成とアップロード
-        // ========================================
-        uint32_t mipWidth = static_cast<uint32_t>(width);
-        uint32_t mipHeight = static_cast<uint32_t>(height);
-        size_t basePixelCount = static_cast<size_t>(width) * height;
-
-        // float32データの作業バッファ
-        Container::VariableArray<float> currentMipData(basePixelCount * 4);
-        std::memcpy(currentMipData.data(), hdrData, basePixelCount * 4 * sizeof(float));
-        stbi_image_free(hdrData);
-
-        for (uint32_t mip = 0; mip < mipLevels; ++mip)
+        const double luminanceScale =
+            static_cast<double>(m_Settings.EnvironmentLuminanceScaleNits);
+        if (!std::isfinite(luminanceScale) || luminanceScale < 0.0)
         {
-            size_t pixelCount = static_cast<size_t>(mipWidth) * mipHeight;
-
-            // float32 → half16 変換
-            Container::VariableArray<uint16_t> halfData(pixelCount * 4);
-            for (size_t i = 0; i < pixelCount * 4; ++i)
-            {
-                halfData[i] = FloatToHalf(currentMipData[i]);
-            }
-
-            uint32_t rowPitch = mipWidth * 4 * static_cast<uint32_t>(sizeof(uint16_t));
-            uint32_t slicePitch = rowPitch * mipHeight;
-            m_EnvironmentTexture->Update(halfData.data(), rowPitch, slicePitch, mip);
-
-            // 次のミップレベル生成（box filter）
-            if (mip + 1 < mipLevels)
-            {
-                uint32_t nextWidth = (std::max)(mipWidth / 2, 1u);
-                uint32_t nextHeight = (std::max)(mipHeight / 2, 1u);
-                Container::VariableArray<float> nextMipData(static_cast<size_t>(nextWidth) * nextHeight * 4);
-
-                for (uint32_t y = 0; y < nextHeight; ++y)
-                {
-                    for (uint32_t x = 0; x < nextWidth; ++x)
-                    {
-                        uint32_t sx = x * 2;
-                        uint32_t sy = y * 2;
-                        uint32_t sx1 = (std::min)(sx + 1, mipWidth - 1);
-                        uint32_t sy1 = (std::min)(sy + 1, mipHeight - 1);
-
-                        for (uint32_t c = 0; c < 4; ++c)
-                        {
-                            float sum = 0.0f;
-                            sum += currentMipData[(sy * mipWidth + sx) * 4 + c];
-                            sum += currentMipData[(sy * mipWidth + sx1) * 4 + c];
-                            sum += currentMipData[(sy1 * mipWidth + sx) * 4 + c];
-                            sum += currentMipData[(sy1 * mipWidth + sx1) * 4 + c];
-                            nextMipData[(y * nextWidth + x) * 4 + c] = sum * 0.25f;
-                        }
-                    }
-                }
-
-                currentMipData = std::move(nextMipData);
-                mipWidth = nextWidth;
-                mipHeight = nextHeight;
-            }
+            stbi_image_free(hdrData);
+            NORVES_LOG_ERROR("LightingPass", "HDR environment map scale is invalid");
+            return false;
         }
 
-        NORVES_LOG_INFO("LightingPass", "Environment map created with mipmaps");
+        const uint32_t sourceWidth = static_cast<uint32_t>(width);
+        const uint32_t sourceHeight = static_cast<uint32_t>(height);
+        const size_t sourcePixelCount = static_cast<size_t>(sourceWidth) * sourceHeight;
+        Container::VariableArray<float> sourceData(sourcePixelCount * 4u);
+        bool bSourceValid = true;
+        for (size_t pixel = 0u; pixel < sourcePixelCount && bSourceValid; ++pixel)
+        {
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                const float fileValue = hdrData[pixel * 4u + channel];
+                float scaledValue = 0.0f;
+                if (!TryScaleSourceValue(fileValue, luminanceScale, scaledValue))
+                {
+                    bSourceValid = false;
+                    break;
+                }
+                sourceData[pixel * 4u + channel] = scaledValue;
+            }
+            sourceData[pixel * 4u + 3u] = 1.0f;
+        }
+        stbi_image_free(hdrData);
+
+        if (!bSourceValid)
+        {
+            NORVES_LOG_ERROR("LightingPass",
+                             "HDR environment source contains a negative, non-finite, or out-of-range RGB value");
+            return false;
+        }
+
+        RHI::TexturePtr environmentTexture;
+        RHI::TexturePtr diffuseTexture;
+        RHI::TexturePtr prefilterTexture;
+        if (!CreateIblResources(m_Device,
+                                sourceData,
+                                sourceWidth,
+                                sourceHeight,
+                                "EnvironmentMap",
+                                "DiffuseIrradiance",
+                                "PrefilteredSpecular",
+                                environmentTexture,
+                                diffuseTexture,
+                                prefilterTexture))
+        {
+            NORVES_LOG_ERROR("LightingPass",
+                             "Failed to create environment source or derived IBL resources");
+            return false;
+        }
+
+        m_EnvironmentTexture = environmentTexture;
+        m_DiffuseIrradianceTexture = diffuseTexture;
+        m_PrefilteredSpecularTexture = prefilterTexture;
+        m_EnvironmentMipLevels = 1u;
+        NORVES_LOG_INFO("LightingPass", "Environment source and derived IBL resources created");
         return true;
     }
 
-    // ========================================
+    bool LightingPass::GenerateValidationSnapshots()
+    {
+        constexpr uint32_t width = 256u;
+        constexpr uint32_t height = 128u;
+        constexpr double pi = 3.14159265358979323846;
+        const size_t pixelCount = static_cast<size_t>(width) * height;
+
+        Container::VariableArray<float> nonconstantSource(pixelCount * 4u);
+        Container::VariableArray<float> constantSource(pixelCount * 4u);
+        for (uint32_t y = 0u; y < height; ++y)
+        {
+            const double theta = pi * (static_cast<double>(y) + 0.5) / height;
+            const double sinTheta = std::sin(theta);
+            const double cosTheta = std::cos(theta);
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const double phi = 2.0 * pi *
+                    ((static_cast<double>(x) + 0.5) / width - 0.5);
+                const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
+                nonconstantSource[offset + 0u] =
+                    static_cast<float>(64.0 + 16.0 * sinTheta * std::cos(phi));
+                nonconstantSource[offset + 1u] =
+                    static_cast<float>(64.0 + 16.0 * cosTheta);
+                nonconstantSource[offset + 2u] =
+                    static_cast<float>(64.0 + 16.0 * sinTheta * std::sin(phi));
+                nonconstantSource[offset + 3u] = 1.0f;
+                constantSource[offset + 0u] = 100.0f;
+                constantSource[offset + 1u] = 100.0f;
+                constantSource[offset + 2u] = 100.0f;
+                constantSource[offset + 3u] = 1.0f;
+            }
+        }
+
+        RHI::TexturePtr nonconstantEnvironment;
+        RHI::TexturePtr nonconstantDiffuse;
+        RHI::TexturePtr nonconstantPrefilter;
+        if (!CreateIblResources(m_Device,
+                                nonconstantSource,
+                                width,
+                                height,
+                                "ValidationRaw250Environment",
+                                "ValidationRaw250Diffuse",
+                                "ValidationRaw250Prefilter",
+                                nonconstantEnvironment,
+                                nonconstantDiffuse,
+                                nonconstantPrefilter))
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create raw250 validation snapshots");
+            return false;
+        }
+
+        RHI::TexturePtr constantEnvironment;
+        RHI::TexturePtr constantDiffuse;
+        RHI::TexturePtr constantPrefilter;
+        if (!CreateIblResources(m_Device,
+                                constantSource,
+                                width,
+                                height,
+                                "ValidationRaw252Environment",
+                                "ValidationRaw252Diffuse",
+                                "ValidationRaw252Prefilter",
+                                constantEnvironment,
+                                constantDiffuse,
+                                constantPrefilter))
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create raw252 validation snapshots");
+            return false;
+        }
+
+        m_ValidationRaw250EnvironmentTexture = nonconstantEnvironment;
+        m_ValidationRaw250DiffuseIrradianceTexture = nonconstantDiffuse;
+        m_ValidationRaw250Texture = nonconstantPrefilter;
+        m_ValidationRaw252EnvironmentTexture = constantEnvironment;
+        m_ValidationRaw252DiffuseIrradianceTexture = constantDiffuse;
+        m_ValidationRaw252PrefilteredSpecularTexture = constantPrefilter;
+        return true;
+    }
+
     // BRDF LUT CPU生成（split-sum近似）
     // ========================================
     bool LightingPass::GenerateBRDFLut()
     {
         constexpr uint32_t LUT_SIZE = 256;
-        constexpr uint32_t SAMPLE_COUNT = 1024;
+        constexpr uint32_t SAMPLE_COUNT = 4096;
         constexpr float PI = 3.14159265359f;
 
         NORVES_LOG_INFO("LightingPass", "Generating BRDF LUT...");
@@ -1501,13 +2536,13 @@ namespace NorvesLib::Core::Rendering
 
         for (uint32_t y = 0; y < LUT_SIZE; ++y)
         {
-            float roughness = (static_cast<float>(y) + 0.5f) / static_cast<float>(LUT_SIZE);
-            roughness = (std::max)(roughness, 0.01f); // 0に近いとGGXが不安定になる
+            const float roughness = (static_cast<float>(y) + 0.5f) /
+                                    static_cast<float>(LUT_SIZE);
 
             for (uint32_t x = 0; x < LUT_SIZE; ++x)
             {
-                float NdotV = (static_cast<float>(x) + 0.5f) / static_cast<float>(LUT_SIZE);
-                NdotV = (std::max)(NdotV, 0.001f);
+                const float NdotV = (static_cast<float>(x) + 0.5f) /
+                                    static_cast<float>(LUT_SIZE);
 
                 // V vector in tangent space (N = (0,0,1))
                 float Vx = std::sqrt(1.0f - NdotV * NdotV);
@@ -1574,8 +2609,8 @@ namespace NorvesLib::Core::Rendering
                 B = (std::max)(0.0f, (std::min)(1.0f, B));
 
                 size_t idx = (static_cast<size_t>(y) * LUT_SIZE + x) * 2;
-                lutData[idx + 0] = FloatToHalf(A);
-                lutData[idx + 1] = FloatToHalf(B);
+                lutData[idx + 0] = FloatToHalfRne(A);
+                lutData[idx + 1] = FloatToHalfRne(B);
             }
         }
 

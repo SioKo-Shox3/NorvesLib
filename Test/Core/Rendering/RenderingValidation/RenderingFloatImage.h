@@ -57,6 +57,8 @@ namespace NorvesLib::Test::RenderingValidation
     };
 
     float DecodeIeee754Binary16(uint16_t bits);
+    uint16_t EncodeIeee754Binary16Rne(float value);
+    bool ValidateIeee754Binary16RneTable();
     FloatImageStatus DecodeCapturedRgba16Float(
         const Core::Rendering::CapturedFrame& frame,
         RgbaFloatImage& outImage);
