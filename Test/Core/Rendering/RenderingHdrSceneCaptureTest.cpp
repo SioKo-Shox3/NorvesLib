@@ -5946,6 +5946,7 @@ int main(int argc, char** argv)
 
     bool bR1Scenario = false;
     bool bAllNumericalScenario = false;
+    bool bR1FixtureSelfTest = false;
     for (int index = 1; index < argc; ++index)
     {
         if (std::strcmp(argv[index], "--r1-scenario=srgb-transfer") == 0)
@@ -5956,6 +5957,20 @@ int main(int argc, char** argv)
         {
             bAllNumericalScenario = true;
         }
+        if (std::strcmp(argv[index], "--self-test-r1-fixture-contract") == 0)
+        {
+            bR1FixtureSelfTest = true;
+        }
+    }
+
+    if (bR1FixtureSelfTest)
+    {
+        if (!ValidateR1FinalFixtureContract())
+        {
+            return 1;
+        }
+        std::cout << "P6A_FIXTURE_SELF_TEST=PASS\n";
+        return 0;
     }
 
     if (!ValidateCaptureSourceArgumentContract())
