@@ -8,10 +8,10 @@
 
 - 計画§9.2/9.3/11.3の `--self-test-r1-fixture-contract` 専用CPU入口をHDR mainへ追加し、GPU skip/device判定前に `ValidateR1FinalFixtureContract()` を実行する経路を固定した。verify-11で旧Indoor compensationのRED（native exit 1、sentinel exactly once）、verify-12で現行fixtureのPASSを確認した。
 - §11.4 SceneSerializer freshnessをverify-13で実行した。`Assets/Scenes/M6AngelScriptDemo.scene.json` はSHA256 `43B5FDD7E79E559345579CFA0BDE3AB4590EF7D1066BAF4EDDA2844EC2372099` の前後一致、native exit 0、`TRACKED_V1_SCENE_HASH_UNCHANGED=1` である。
-- PROGRESSの旧hash `7d1cff3` を除き、実source基点 `573a9e44d91590541cb7272041b11578bac90de0` と後続修正commitを別々の実commitとして記録する。以後amend/reset等を使わず通常commitで進める。
+- PROGRESSの旧hash `7d1cff3` を除き、実source基点 `573a9e44d91590541cb7272041b11578bac90de0` と後続修正commit `0d3c26c` を別々の実commitとして記録した。以後amend/reset等を使わず通常commitで進める。
 - source20累積EOL parityはPASS。PROGRESSの編集後も `git diff --numstat` と `git diff --ignore-cr-at-eol --numstat` を一致させ、履歴を改変せず運転記録の行末を保持する。
-- `blocked/R1-P6A.md` のP5依存停止はP5正式受入で解消済みと注記し、元の履歴は保持する。
-- 最終受入後にignored `task-6a-report.md` exact26 keyを実事実で発行する。正式評価・fresh verifierは未完。未実施Solや存在しないreportをPASSにしない。P6b正式生成/full build/full CTestはまだ行わない。
+- P5依存停止はP5正式受入済みであり、元の履歴を保持する。P6A側で追加の停止記録は作らない。
+- P6Bのformal candidate/report、full build、full CTestは今回の範囲外として未実施のまま保持する。
 
 ## 通過済み証拠と担当
 

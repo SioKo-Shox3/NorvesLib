@@ -9,7 +9,7 @@
 - R1 P4: `f3d4abb20ad283d66f0a39b38b1b9aaa0ee92013`。放射輝度IBL、DFG、GGX補償と数値検証。focused build 13/13、CPU 7/7、GPU 6/6（exit 125なし）、独立レビュー、接続監査、fresh verifierを2026-09-08にPASS。
 
 - R1 P5: `7d134b7d5fef9486210589d698b01d66bf0c7d31`。物理ライト・GGX・IBL・方向影の透明描画を受入完了。focused8/CPU6/skip、P4 GPU6、透明10行/背景10行/固定4輝度、両scene object-presence、lifecycle、独立recheck12件、累積source18の正式Claude評価（blocking 0）を確認した。
-- R1 P6A: `7d1cff3`。最終fixtureの40 static rows/120 captures、全画素sRGB oracle、forced format、GPU CTest exact21、3 script self-test、focused7/CPU6、Indoor/Outdoor object-presenceを受入。公式9ゲートのraw outputを`.harness/runs/20260908-084154/verify-R1-P6A-1.txt`〜`-9.txt`へ保存し、再読確認した。
+- R1 P6A: `0d3c26c`（`573a9e4` source20基点への後続修正）。最終fixtureの40 static rows/120 captures、全画素sRGB oracle、forced format、GPU CTest exact21、3 script self-test、fixture self-test、focused7/CPU6、Indoor/Outdoor object-presenceを受入。公式9ゲートのraw outputを`.harness/runs/20260908-084154/verify-R1-P6A-1.txt`〜`-9.txt`へ、fixture RED/PASSとSceneSerializer freshnessを`-11.txt`〜`-14.txt`へ保存し、全て再読確認した。
 
 ## In progress
 
@@ -59,3 +59,4 @@
 - 14:19 JST: P5 report `.superpowers/sdd/RenderingR1PhysicalFoundationPlan/task-5-report.md`、SHA256=A314A7B64EBE338786AD76EF6007B8898E5D684C6D24538D305335978FAB6FD4。正式評価とcoverage/実測/hash証拠は `.harness/runs/20260908-084154/p5-review-completed/receipt.json` から辿る。初回attemptは判定形式不正と累積コード未読により採用せず、Read可能な全18 diffを使った再試行で第1周を完了した。原計画4文書を評価者が未読としたUNCERTAINは残し、メインの仕様照合と評価者の00契約/実コード/実測照合を区別する。旧Sol評価は現行AGENTSにより未実施、未実施をPASSと書かない。
 - P5のnon-blocking: checkpoint由来の累積EOL差は保持し履歴を改変しない。未使用row enum、非managed時のempty-pass分岐、CullMode::Noneによる将来の閉曲面shadow acneの観測余地を記録する。数値受入済みのP5コードは変更せずP6aへ進む。
 - 2026-09-08 16:54 JST: P6A公式9ゲートを実行し、all-numerical `static_rows=40 numerical_rows=68 total_numerical_rows=70 captures=120`、`forced_channels=56`、Indoor `delta_y8=11.874405859`、Outdoor `delta_y8=154.644108203`、GPU CTest `count=21`を保存証跡から確認した。source scopeは20/20、EOL parityはPASS。
+- 2026-09-08 17:23 JST: `--self-test-r1-fixture-contract`をGPU初期化前の専用CPU入口として追加。旧Indoor compensationでRED sentinel（native exit 1）を、復元後のfixture PASSをverify-11/12、SceneSerializerの前後SHA256一致をverify-13/14で確認した。後続修正commitは`0d3c26c`、P6B候補生成・publish・full build/full CTestは未実施。
