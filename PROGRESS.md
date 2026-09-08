@@ -10,7 +10,10 @@
 
 ## In progress
 
-- 後続ループの初回タスクは `R1-P5`。P5の実装は未着手。
+- `R1-P5`を実装中。ループrun-id `20260908-084154`（PID 34936）で、透明描画へのライト/影/IBL接続と固定fixture・10行captureを追加している。実ログは `.harness/runs/20260908-084154/iter-1.err.txt`。
+- 開始時のfocused8 buildは成功、CPU6は5/6（RenderGraphCompileTestのSSBO更新順序assertで失敗）。コア接続後のbuildは成功。CPU/GPUの最終受入は未完。
+- 接続確認で、CreateLightingDescriptorSetのbinding5削除がLightingParamsLayoutTest:3097の既存P4契約に抵触する点を検出。初期bindingとSSBO更新順序の両立を確認してからP5を完了にする。
+- 親セッションのgoalでP5→P6a→P6b完了を追跡する。プロセス生存だけで完了を扱わず、停止・失敗・未記録の検証を実ログから確認する。
 
 ## Next
 
@@ -30,3 +33,5 @@
 - 承認ログ: `C:/Users/KINGkawamura/.codex/sessions/2026/08/13/rollout-2026-08-13T09-18-12-019ff87b-d252-7260-94ae-580b5adfc698.jsonl`。8月16日の停止後、9月5日と9月8日に再開指示を受けている。
 - 実装主体・モデル・評価頻度は現行AGENTS.mdを適用する。旧計画のメイン実装禁止や反復ごとの追加承認は再導入しない。数式や画像公開の承認を変更する意味ではない。
 - 残課題: `LightingParamsLayoutTest`のEss lexical assertionは演算子まで反証しない。現shader式はレビュー済みで正しいためP4の非blocking事項として保持。品質返済はR1の次の自然な区切りでまとめる。
+
+- 2026-09-08 09:33 JSTの読取照会: CTest登録219/GPU21/意図的skip7のname hashとsource-start6ファイルhashは計画に一致。固定name hashはPowerShell `Sort-Object -CaseSensitive` による。証拠: `%TEMP%/norveslib-r1-final-prerequisite-inventory-20260908.json`。正式P6b実行やfull build/full CTestは未実行。
