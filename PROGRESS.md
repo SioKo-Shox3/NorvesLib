@@ -15,16 +15,18 @@
 - LUTは256×256・4096sample・式・集積順序・RNEを維持し、行ごとの半角ベクトル事前計算へ変更。親のDebug比較で131072値/262144bytesが全一致、11.018539秒→4.150286秒。証拠 `%TEMP%/norveslib-p5-dfg-hoist-20260908/evidence.json`。元アルゴリズムは受入済みP4関数本体にEOL正規化後一致。
 - 10:29時点: P4 GPU回帰6/6 exit0（verify23〜28）。capture数はknown-cd6、prefilter4、DFG100、roughness24、furnace60、direct-conductor4。raw log/hash/countの集計 `%TEMP%/norveslib-p5-p4-gpu-regression-20260908.json`。これは後続fixture再修正前の回帰証拠で、P5全受入ではない。
 - P5新規numericalはfixture再投影を修正後、背景単独の値を測る前提で停止している。数値用cameraとobject-presence用cameraを区別し、実GPU向け行列規約で固定geometryを確認する。
-- P5計画v4の背景side1.840303983m/同じ画面範囲とbackground-only ROI要求は両立しない。背景のみを画面全体へ広げる具体案 `Docs/Plans/RenderingR1P5BackgroundProposal20260908.md` をユーザーへ提示し、回答待ち。背景拡大も追加capture案も未承認。数値ROI・threshold・exposureを調整して合格させない。独立したobject-presence等の修正・検証は継続する。
+- P5計画v4の背景side1.840303983m/同じ画面範囲とbackground-only ROI要求は両立しない。数値背景だけを全画面へ広げる修正を、全フェーズ再開依頼の範囲内のfixture不整合修正として採用した。追加確認はメインの判断で取り下げたもので、個別承認eventの受領を意味しない。対象ROI・threshold・exposure・10行・通常画像は保持する。根拠と変更前の検証契約は `Docs/Plans/RenderingR1P5BackgroundProposal20260908.md`。
 - 初期binding5とSSBO更新順序を両立し、初期化成功前のpublishを `m_bInitialized && context.PhysicalLighting.bActive` で抑止する修正を含む。正式な独立評価、P5 numerical/object-presence受入、最終hygiene、source commitは未完。
 - 親セッションのgoalでP5→P6a→P6b完了を追跡中。起動やプロセス生存を完了に置き換えない。
 - 11:24時点: object-presenceの黒画面は透明描画の欠落ではなかった。verify58の実HDRはtarget平均RGB(0.003355026,0.003229141,0.003185272)、background(0.006248474,0.006248474,0.006248474)、NaN/Infなし。ACES後に既定Contrast1.05で全て0へclampされる。証拠 `%TEMP%/norveslib-p5-black-roi-diagnosis-20260908.json`。診断専用branchは受入前に撤去する。
 - 既承認の最終照明条件をobject-presenceへ先行適用し、既存main lightの誤った無効化を修正する。P5数値fixtureと既定BuildSceneLayoutは保持。適用範囲と条件はTASKS.mdおよび `Docs/Plans/RenderingR1P5FixtureIntegration20260908.md`。
 - 親の実GPU向け行列計算で、OutdoorのToMatrix再投影がfalse-greenだったことを確認。固定物理geometry/ROI/normalを保ったfixture内の表現補正を実装する。数値oracleも中心一色から画素ごとの独立double参照へ、Shadowedには遮蔽率条件を正しく適用する。指摘は `%TEMP%/norveslib-p5-parent-oracle-findings-20260908.md`。いずれもP5の正式受入は未完。
 - 11:41時点のobject-presence実測（verify70/71）: Indoor delta_y8=11.874405859、Outdoor=154.644108203で、各delta>=8とF9の演算一致を確認した。既存main lightは各1件。診断コードを含む中間測定であり、通常goldenやP5全体の受入ではない。証拠 `%TEMP%/norveslib-p5-objectpresence-final-lighting-20260908.json`。
-- verify90/92の背景平均0.015621185は、ROIの32列中10列だけが対象/背景の共通領域に重なることで説明できる。half(.05)*10/32=0.015621185302734375。ROI移動で背景単独の領域を作ることはできない。証拠 `%TEMP%/norveslib-p5-partial-roi-proof-20260908.json`。背景案の承認状態は変わらない。
+- verify90/92の背景平均0.015621185は、ROIの32列中10列だけが対象/背景の共通領域に重なることで説明できる。half(.05)*10/32=0.015621185302734375。従来のgeometryのままROIを移動しても背景単独の領域は作れない。証拠 `%TEMP%/norveslib-p5-partial-roi-proof-20260908.json`。
 - 数値ROIの端ではNdotV=0.9951476490952となり、DFG参照にはx254/255とy127/128の4texelが必要。独立double積分・half RNE・二軸bilinearの修正を進めた。修正後HDR target build（verify93）はexit0。全10行のGPU数値受入、独立評価、source commitは未完。
 - P6aのRaw251単一行へ25 queryを配置する準備を行った。既存camera/PlaneHandle/materialを使う25領域の100頂点を実GPU向け行列から再投影し、最大誤差5.82563808393e-06pixel、compile/run exit0。具体案と証拠は `Docs/Plans/RenderingR1P6aReadiness20260908.md`。P6a source実装・GPU受入は未着手。
+- P5反復1終了後の12:32:43に `af759e0c8c1cd40b06560c9e14976c5fb39ae890`（作業途中の保存）が作られ、未完のsource18本とPROGRESS/blocked記録が保存された。これはP5受入コミットではない。履歴を保持し、以後の修正を積み重ねる。正式なP5評価はP4描画commitから最終P5 treeまでの累積source18差分を対象とし、最後の修正だけを評価して全体を合格扱いにしない。
+- 反復2のsessionは `01a07f13-555d-7bf1-80f3-91faa7269947`。focused8 build（verify96）exit0後、CPU6（verify97）は6/6、RenderGraphCompileTest72.24秒、全体74.15秒、exit0。skip契約（verify98）は意図的Skipped、CTest exit0。数値背景修正前の証拠として保持し、以後の変更に関係する検証を続ける。
 
 ## Next
 
