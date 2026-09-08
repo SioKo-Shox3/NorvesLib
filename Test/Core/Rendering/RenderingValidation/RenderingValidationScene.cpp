@@ -1683,8 +1683,8 @@ namespace NorvesLib::Test::RenderingValidation
             }
             targetScaleX = 0.17320508075688773f;
             targetScaleY = 0.17320508075688773f;
-            backgroundScaleX = 0.18403039830421827f;
-            backgroundScaleY = 0.18403039830421827f;
+            backgroundScaleX = 0.4907477288111819f;
+            backgroundScaleY = 0.4907477288111819f;
         }
         if (bObjectPresence)
         {
@@ -1834,8 +1834,8 @@ namespace NorvesLib::Test::RenderingValidation
         }
         const double expectedMinX = bObjectPresence ? 18.0 : 80.0;
         const double expectedMaxX = bObjectPresence ? 58.0 : 176.0;
-        const double expectedBackgroundMinX = bObjectPresence ? 18.0 : 80.0;
-        const double expectedBackgroundMaxX = bObjectPresence ? 94.0 : 176.0;
+        const double expectedBackgroundMinX = bObjectPresence ? 18.0 : 0.0;
+        const double expectedBackgroundMaxX = bObjectPresence ? 94.0 : 256.0;
         if (!ValidateR1ProjectedEdges(*m_pR1TargetEntity,
                                       m_R1PhysicalCamera,
                                       expectedMinX,
@@ -1846,8 +1846,8 @@ namespace NorvesLib::Test::RenderingValidation
                                        m_R1PhysicalCamera,
                                        expectedBackgroundMinX,
                                        expectedBackgroundMaxX,
-                                       bObjectPresence ? 108.0 : 80.0,
-                                       bObjectPresence ? 148.0 : 176.0))
+                                       bObjectPresence ? 108.0 : 0.0,
+                                       bObjectPresence ? 148.0 : 256.0))
         {
             return false;
         }

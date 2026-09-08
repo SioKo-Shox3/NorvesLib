@@ -365,7 +365,7 @@ namespace
                                          "worldBoard.sceneColorParams.x",
                                          ", color.a");
 
-        const std::string physicalBindings[] = {
+        const char* const physicalBindings[] = {
             "layout(std430, set = 0, binding = 8) readonly buffer LightBuffer",
             "layout(set = 0, binding = 9) uniform sampler2D shadowMap",
             "layout(set = 0, binding = 10) uniform sampler2D environmentRadiance",
@@ -373,7 +373,7 @@ namespace
             "layout(set = 0, binding = 12) uniform sampler2D prefilteredSpecular",
             "layout(set = 0, binding = 13) uniform sampler2D dfgLut",
         };
-        for (const std::string& binding : physicalBindings)
+        for (const char* binding : physicalBindings)
         {
             assert(transparentFragmentSource.find(binding) != std::string::npos);
         }
@@ -383,6 +383,21 @@ namespace
         assert(forwardPassSource.find("BindStorageBuffer(8") != std::string::npos);
         assert(forwardPassSource.find("BindTexture(13, physicalLighting.DfgLutTexture)") !=
                std::string::npos);
+        const std::size_t viewportGuardPosition =
+            RequirePosition(forwardPassSource, "const bool bHasValidViewport =");
+        assert(forwardPassSource.find("context.CurrentViewport != nullptr") != std::string::npos);
+        assert(forwardPassSource.find("context.CurrentViewport->HasDrawableExtent()") !=
+               std::string::npos);
+        assert(forwardPassSource.find("context.CurrentViewport->ViewId != UINT32_MAX") !=
+               std::string::npos);
+        assert(forwardPassSource.find("context.CurrentViewport->ViewportId != UINT32_MAX") !=
+               std::string::npos);
+        const std::size_t physicalLightingReadyPosition =
+            RequirePosition(forwardPassSource, "const bool bPhysicalLightingReady =");
+        assert(viewportGuardPosition < physicalLightingReadyPosition);
+        RequirePositionAfter(forwardPassSource,
+                             "bHasValidViewport && published.Matches(",
+                             physicalLightingReadyPosition);
         assert(transparentFragmentSource.find("FresnelSchlick") != std::string::npos);
         assert(transparentFragmentSource.find("DistributionGGX") != std::string::npos);
         assert(transparentFragmentSource.find("GeometrySmithDirect") != std::string::npos);

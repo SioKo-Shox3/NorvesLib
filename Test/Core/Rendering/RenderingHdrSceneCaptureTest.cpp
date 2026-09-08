@@ -1380,6 +1380,18 @@ namespace
                     return false;
                 }
                 m_bTransparentPhysicalDfgOracleValid = true;
+                double fixedLuminance[4] = {};
+                if (!BuildTransparentPhysicalFixedLuminancePreflight(fixedLuminance))
+                {
+                    LOG_ERROR("P5 fixed N=V=L=1 luminance preflight failed");
+                    return false;
+                }
+                std::cout << std::fixed << std::setprecision(15)
+                          << "P5 fixed luminance preflight: N=V=L=1"
+                          << " direct_m0_brdf_y=" << fixedLuminance[0]
+                          << " direct_m05_brdf_y=" << fixedLuminance[1]
+                          << " ibl_m0_source_y=" << fixedLuminance[2]
+                          << " ibl_m05_source_y=" << fixedLuminance[3] << "\n";
                 const double dfgA = (m_TransparentPhysicalDfgOracle.X255Y127.A +
                                      m_TransparentPhysicalDfgOracle.X255Y128.A) * 0.5;
                 const double dfgB = (m_TransparentPhysicalDfgOracle.X255Y127.B +
@@ -2334,18 +2346,99 @@ namespace
             return true;
         }
 
+        static bool BuildTransparentPhysicalFixedLuminancePreflight(double outLuminance[4])
+        {
+            constexpr double pi = 3.141592653589793238462643383279502884;
+            constexpr double baseColor[3] = {0.5, 0.25, 0.125};
+            constexpr double roughness = 0.5;
+            constexpr double dfgA = 0.89453125;
+            constexpr double dfgB = 0.0000262856483459473;
+            constexpr double directRadiance = 25.0;
+            constexpr double expected[4] = {
+                0.1410464070373729,
+                0.2651913529406838,
+                31.9519814926778,
+                29.654360326265852};
+            const double ess = dfgA + dfgB;
+            const double alpha = roughness * roughness;
+            const double alphaSquared = alpha * alpha;
+            const double distribution = alphaSquared /
+                (pi * std::pow(alphaSquared, 2.0));
+            const double k = std::pow(roughness + 1.0, 2.0) / 8.0;
+            const double geometry = 1.0 / (1.0 * (1.0 - k) + k);
+            const double specularTerm = distribution * geometry * geometry /
+                                        (4.0 + 0.0001);
+            const double compensationD = 1.0 + 0.04 * (1.0 - ess) / ess;
+            const double dielectricFresnel = 0.04;
+            const double specularAo = std::clamp(
+                std::pow(2.0, std::exp2(-16.0 * roughness - 1.0)) - 1.0 + 1.0,
+                0.0,
+                1.0);
+
+            for (uint32_t metallicIndex = 0u; metallicIndex < 2u; ++metallicIndex)
+            {
+                const double metallic = metallicIndex == 0u ? 0.0 : 0.5;
+                double directRgb[3] = {};
+                double iblRgb[3] = {};
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    const double conductorFresnel = baseColor[channel];
+                    const double compensationC = 1.0 + baseColor[channel] *
+                        (1.0 - ess) / ess;
+                    const double dielectric =
+                        (1.0 - dielectricFresnel) * baseColor[channel] / pi +
+                        specularTerm * dielectricFresnel * compensationD;
+                    const double conductor = specularTerm * conductorFresnel * compensationC;
+                    directRgb[channel] = ((1.0 - metallic) * dielectric +
+                                          metallic * conductor) * directRadiance;
+
+                    const double ed = std::clamp(
+                        (0.04 * dfgA + dfgB) * compensationD, 0.0, 1.0);
+                    const double ec = std::clamp(
+                        (baseColor[channel] * dfgA + dfgB) * compensationC,
+                        0.0,
+                        1.0);
+                    const double diffuse = 100.0 * baseColor[channel] *
+                        (1.0 - metallic) * (1.0 - ed);
+                    const double specular = 100.0 *
+                        ((1.0 - metallic) * ed + metallic * ec);
+                    iblRgb[channel] = diffuse + specular * specularAo;
+                }
+                const double directY = 0.2126 * directRgb[0] +
+                                       0.7152 * directRgb[1] +
+                                       0.0722 * directRgb[2];
+                const double iblY = 0.2126 * iblRgb[0] +
+                                    0.7152 * iblRgb[1] +
+                                    0.0722 * iblRgb[2];
+                outLuminance[metallicIndex] = directY / directRadiance;
+                outLuminance[2u + metallicIndex] = iblY;
+            }
+
+            for (uint32_t index = 0u; index < 4u; ++index)
+            {
+                if (!std::isfinite(outLuminance[index]) ||
+                    std::abs(outLuminance[index] - expected[index]) > 1.0e-12)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         static bool CheckTransparentPhysicalPixels(
             const RgbaFloatImage& image,
             TransparentPhysicalStage stage,
             const P5DfgOracle& dfgOracle,
             bool bCompareToOracle,
             double& outMeanY,
+            double& outExpectedMeanY,
             double outMeanRelative[3],
             double outMaximumRelative[3],
             double outFixedSampleMaximumRelative[3],
             Core::Container::String& reason)
         {
             double sums[3] = {};
+            double expectedSums[3] = {};
             double relativeSums[3] = {};
             double maximumRelative[3] = {};
             double fixedSampleMaximumRelative[3] = {};
@@ -2380,6 +2473,10 @@ namespace
                             expectedRgb[channel] = 0.05 + 0.5 * sourceRgb[channel] / 72.0;
                         }
                     }
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        expectedSums[channel] += expectedRgb[channel];
+                    }
                     const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
                     ++pixelCount;
                     for (uint32_t channel = 0u; channel < 3u; ++channel)
@@ -2393,8 +2490,14 @@ namespace
                         sums[channel] += actual;
                         if (bCompareToOracle)
                         {
+                            const double reference = std::abs(expectedRgb[channel]);
+                            if (!std::isfinite(reference) || reference < 0.01)
+                            {
+                                reason = TEXT("P5 transparent reference channel is below 0.01");
+                                return false;
+                            }
                             const double relative = std::abs(actual - expectedRgb[channel]) /
-                                                    std::max(std::abs(expectedRgb[channel]), 0.01);
+                                                    reference;
                             if (!std::isfinite(relative))
                             {
                                 reason = TEXT("P5 transparent ROI relative error is invalid");
@@ -2430,7 +2533,14 @@ namespace
                 sums[0] / static_cast<double>(pixelCount),
                 sums[1] / static_cast<double>(pixelCount),
                 sums[2] / static_cast<double>(pixelCount)};
+            const double expectedMeanRgb[3] = {
+                expectedSums[0] / static_cast<double>(pixelCount),
+                expectedSums[1] / static_cast<double>(pixelCount),
+                expectedSums[2] / static_cast<double>(pixelCount)};
             outMeanY = 0.2126 * meanRgb[0] + 0.7152 * meanRgb[1] + 0.0722 * meanRgb[2];
+            outExpectedMeanY = 0.2126 * expectedMeanRgb[0] +
+                               0.7152 * expectedMeanRgb[1] +
+                               0.0722 * expectedMeanRgb[2];
             return true;
         }
 
@@ -2471,10 +2581,10 @@ namespace
             }
 
             // Keep the fixed background-only ROI precondition visible in every row before delta/oracle checks.
-            constexpr uint32_t backgroundProbeMinX = 58u;
-            constexpr uint32_t backgroundProbeMaxX = 89u;
-            constexpr uint32_t backgroundProbeMinY = 112u;
-            constexpr uint32_t backgroundProbeMaxY = 143u;
+            constexpr uint32_t backgroundProbeMinX = 16u;
+            constexpr uint32_t backgroundProbeMaxX = 47u;
+            constexpr uint32_t backgroundProbeMinY = 16u;
+            constexpr uint32_t backgroundProbeMaxY = 47u;
             double backgroundChannelSums[3] = {};
             double backgroundMaximumRelative[3] = {};
             size_t backgroundPixelCount = 0u;
@@ -2508,7 +2618,7 @@ namespace
                       << " max_rel=(" << backgroundMaximumRelative[0]
                       << "," << backgroundMaximumRelative[1]
                       << "," << backgroundMaximumRelative[2] << ")"
-                      << " roi=[58,89]x[112,143]\n" << std::setprecision(6);
+                      << " roi=[16,47]x[16,47]\n" << std::setprecision(6);
             if (backgroundPixelCount != 1024u || backgroundSampleCount != 3072u ||
                 backgroundMaximumRelative[0] > 0.01 ||
                 backgroundMaximumRelative[1] > 0.01 ||
@@ -2573,6 +2683,7 @@ namespace
                 }
             }
             double meanY = 0.0;
+            double expectedMeanY = 0.0;
             double meanRelative[3] = {};
             double maximumRelative[3] = {};
             double fixedSampleMaximumRelative[3] = {};
@@ -2583,6 +2694,7 @@ namespace
                                                  m_TransparentPhysicalDfgOracle,
                                                  bCompareToOracle,
                                                  meanY,
+                                                 expectedMeanY,
                                                  meanRelative,
                                                  maximumRelative,
                                                  fixedSampleMaximumRelative,
@@ -2593,8 +2705,8 @@ namespace
             const double sourceY = 0.2126 * sourceRgb[0] +
                                    0.7152 * sourceRgb[1] +
                                    0.0722 * sourceRgb[2];
-            const double expectedY = 0.05 + 0.5 * sourceY / 72.0;
-            const double predictedDelta = 0.5 * sourceY / 72.0;
+            const double expectedY = expectedMeanY;
+            const double predictedDelta = expectedY - 0.05;
             const double measuredDelta = bOn ? std::abs(meanY - 0.05) : 0.0;
             if (m_TransparentPhysicalStage == TransparentPhysicalStage::ShadowUnshadowed)
             {
@@ -2636,6 +2748,7 @@ namespace
                       << "P5 transparent row: row="
                       << GetTransparentPhysicalStageName(m_TransparentPhysicalStage)
                       << " source_y=" << sourceY
+                      << " predicted_source_y=" << (predictedDelta * 72.0 / 0.5)
                       << " expected_y=" << expectedY
                       << " mean_y=" << meanY
                       << " predicted_delta=" << predictedDelta

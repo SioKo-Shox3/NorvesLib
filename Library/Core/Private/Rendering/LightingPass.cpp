@@ -2297,6 +2297,15 @@ namespace NorvesLib::Core::Rendering
         const bool bValidationRaw250 = params.debugViewMode == 250u;
         const bool bValidationRaw251 = params.debugViewMode == 251u;
         const bool bValidationRaw252 = params.debugViewMode == 252u;
+        if (bValidationRaw252 &&
+            (!m_ValidationRaw252EnvironmentTexture ||
+             !m_ValidationRaw252DiffuseIrradianceTexture ||
+             !m_ValidationRaw252PrefilteredSpecularTexture) &&
+            !GenerateValidationSnapshots())
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create lazy raw252 validation snapshots");
+            return false;
+        }
         const bool bValidationConstantIblAvailable =
             bValidationRaw252 && m_ValidationRaw252EnvironmentTexture &&
             m_ValidationRaw252DiffuseIrradianceTexture &&

@@ -214,7 +214,9 @@ namespace NorvesLib::Core::Rendering
 
         // ラスタライザ
         pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
+        // Shadow casters are allowed to face away from the light; the fixture and
+        // two-sided materials must still contribute to the depth map.
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
 

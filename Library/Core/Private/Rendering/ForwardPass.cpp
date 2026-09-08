@@ -968,10 +968,14 @@ namespace NorvesLib::Core::Rendering
                                   std::isfinite(published.DirectionalShadow.View[index]) &&
                                   std::isfinite(published.DirectionalShadow.Projection[index]);
             }
-            const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
-            const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
+            const bool bHasValidViewport =
+                context.CurrentViewport != nullptr && context.CurrentViewport->HasDrawableExtent() &&
+                context.CurrentViewport->ViewId != UINT32_MAX &&
+                context.CurrentViewport->ViewportId != UINT32_MAX;
+            const uint32_t viewId = bHasValidViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
+            const uint32_t viewportId = bHasValidViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
             const bool bPhysicalLightingReady =
-                published.Matches(context.FrameNumber, viewId, viewportId) &&
+                bHasValidViewport && published.Matches(context.FrameNumber, viewId, viewportId) &&
                 published.bShadowPublished && published.bLightingPublished && bMatricesFinite &&
                 published.LightBuffer && published.ShadowMapTexture && published.ShadowSampler &&
                 published.EnvironmentRadianceTexture && published.EnvironmentRadianceSampler &&

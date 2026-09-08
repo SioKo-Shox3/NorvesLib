@@ -5,7 +5,7 @@ Rendering R1 の承認済み残作業。仕様は `Docs/Plans/RenderingR1Physica
 実装・評価・進捗更新の運転は現在の AGENTS.md を適用する。旧計画の担当モデル、メイン実装禁止、反復ごとの再承認は現在の合意へ置き換える。数式、閾値、サンプル数、source範囲、画像と閾値の公開承認は保持する。作業一覧などの運転ファイルは描画sourceとは別の変更として扱う。運転ファイルだけのコミットを跨ぐときは、記録した描画コミットへの祖先関係とsource同一性で基点を確認する。
 
 ## R1-P5: 透明描画を物理ライト・GGX・IBLへ接続する
-- status: todo
+- status: done
 - done-when: 条件付き計画v4の固定10行、direct/IBL/shadow/metallic mutation、P4回帰6条件、Indoor/Outdoorのobject-presenceが数値契約を満たす。focused8 build、CPU6、skip契約を通し、source18本を1論理変更としてコミットする。
 - verify: `cmake --build build --config Debug --target DirectionalShadowPassWiringContractTest ForwardPassPipelinePlacementTest LightingLightBufferTest RenderGraphCompileTest LightingParamsLayoutTest RenderingValidationSceneContractTest RenderingHdrSceneCaptureTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(DirectionalShadowPassWiringContractTest|ForwardPassPipelinePlacementTest|LightingLightBufferTest|RenderGraphCompileTest|LightingParamsLayoutTest|RenderingValidationSceneContractTest)$"`

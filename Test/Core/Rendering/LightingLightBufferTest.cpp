@@ -1,5 +1,9 @@
 ﻿#include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/ViewRenderContext.h"
+#include "RHI/IBuffer.h"
+#include "RHI/ISampler.h"
+#include "RHI/ITexture.h"
 
 #if __has_include("Rendering/LightingPassLightPacking.h")
 #include "Rendering/LightingPassLightPacking.h"
@@ -17,15 +21,75 @@
 #include <iterator>
 #include <regex>
 #include <string>
+#include <type_traits>
 #ifdef _MSC_VER
 #include <crtdbg.h>
 #endif
 
 using namespace NorvesLib::Core::Rendering;
 namespace CoreContainer = NorvesLib::Core::Container;
+namespace RHI = NorvesLib::RHI;
 
 namespace
 {
+    class LifecycleBuffer final : public RHI::IBuffer
+    {
+    public:
+        uint64_t GetSize() const override { return 256; }
+        void* Map(uint64_t offset = 0, uint64_t size = 0) override
+        {
+            (void)offset;
+            (void)size;
+            return nullptr;
+        }
+        void Unmap() override {}
+        void Update(const void* data, uint64_t size, uint64_t offset = 0) override
+        {
+            (void)data;
+            (void)size;
+            (void)offset;
+        }
+        RHI::ResourceUsage GetUsage() const override { return RHI::ResourceUsage::StorageBuffer; }
+    };
+
+    class LifecycleTexture final : public RHI::ITexture
+    {
+    public:
+        uint32_t GetWidth() const override { return 1; }
+        uint32_t GetHeight() const override { return 1; }
+        uint32_t GetDepth() const override { return 1; }
+        uint32_t GetMipLevels() const override { return 1; }
+        uint32_t GetArraySize() const override { return 1; }
+        RHI::Format GetFormat() const override { return RHI::Format::R8G8B8A8_UNORM; }
+        RHI::ResourceUsage GetUsage() const override { return RHI::ResourceUsage::ShaderRead; }
+        bool IsCubemap() const override { return false; }
+        void Update(const void* data,
+                    uint32_t rowPitch,
+                    uint32_t slicePitch,
+                    uint32_t mipLevel = 0,
+                    uint32_t arrayIndex = 0) override
+        {
+            (void)data;
+            (void)rowPitch;
+            (void)slicePitch;
+            (void)mipLevel;
+            (void)arrayIndex;
+        }
+    };
+
+    class LifecycleSampler final : public RHI::ISampler
+    {
+    public:
+        RHI::FilterMode GetFilterMin() const override { return RHI::FilterMode::Linear; }
+        RHI::FilterMode GetFilterMag() const override { return RHI::FilterMode::Linear; }
+        RHI::FilterMode GetFilterMip() const override { return RHI::FilterMode::Linear; }
+        RHI::TextureAddressMode GetAddressModeU() const override { return RHI::TextureAddressMode::Clamp; }
+        RHI::TextureAddressMode GetAddressModeV() const override { return RHI::TextureAddressMode::Clamp; }
+        RHI::TextureAddressMode GetAddressModeW() const override { return RHI::TextureAddressMode::Clamp; }
+        uint32_t GetMaxAnisotropy() const override { return 1; }
+        RHI::CompareFunc GetCompareFunc() const override { return RHI::CompareFunc::Never; }
+    };
+
     void ConfigureAssertOutput()
     {
 #ifdef _MSC_VER
@@ -330,6 +394,125 @@ namespace
         }
     }
 
+    void TestPhysicalLightingResourceLifecycle()
+    {
+        static_assert(std::is_same_v<decltype(PhysicalLightingResources::FrameNumber), uint64_t>);
+        static_assert(std::is_same_v<decltype(PhysicalLightingResources::ViewId), uint32_t>);
+        static_assert(std::is_same_v<decltype(PhysicalLightingResources::ViewportId), uint32_t>);
+
+        PhysicalLightingResources resources;
+        resources.Begin(11, 2, 3);
+
+        const RHI::BufferPtr lightBuffer = CoreContainer::MakeShared<LifecycleBuffer>();
+        const RHI::TexturePtr shadowMap = CoreContainer::MakeShared<LifecycleTexture>();
+        const RHI::SamplerPtr shadowSampler = CoreContainer::MakeShared<LifecycleSampler>();
+        const RHI::TexturePtr environment = CoreContainer::MakeShared<LifecycleTexture>();
+        const RHI::SamplerPtr environmentSampler = CoreContainer::MakeShared<LifecycleSampler>();
+        const RHI::TexturePtr diffuse = CoreContainer::MakeShared<LifecycleTexture>();
+        const RHI::SamplerPtr diffuseSampler = CoreContainer::MakeShared<LifecycleSampler>();
+        const RHI::TexturePtr prefiltered = CoreContainer::MakeShared<LifecycleTexture>();
+        const RHI::SamplerPtr prefilteredSampler = CoreContainer::MakeShared<LifecycleSampler>();
+        const RHI::TexturePtr dfg = CoreContainer::MakeShared<LifecycleTexture>();
+        const RHI::SamplerPtr dfgSampler = CoreContainer::MakeShared<LifecycleSampler>();
+        const float view[16] = {2.0f, 0.0f, 0.0f, 3.0f,
+                                0.0f, 2.0f, 0.0f, 4.0f,
+                                0.0f, 0.0f, 2.0f, 5.0f,
+                                0.0f, 0.0f, 0.0f, 1.0f};
+        const float projection[16] = {6.0f, 0.0f, 0.0f, 7.0f,
+                                      0.0f, 6.0f, 0.0f, 8.0f,
+                                      0.0f, 0.0f, 6.0f, 9.0f,
+                                      0.0f, 0.0f, 0.0f, 1.0f};
+
+        resources.PublishDirectionalShadow(view, projection, 77, true, shadowMap, shadowSampler);
+        resources.PublishLighting(lightBuffer,
+                                  2,
+                                  128,
+                                  environment,
+                                  environmentSampler,
+                                  diffuse,
+                                  diffuseSampler,
+                                  prefiltered,
+                                  prefilteredSampler,
+                                  dfg,
+                                  dfgSampler,
+                                  4,
+                                  3.5f,
+                                  true);
+
+        assert(resources.Matches(11, 2, 3));
+        assert(resources.bShadowPublished);
+        assert(resources.bLightingPublished);
+        assert(resources.DirectionalShadow.LightId == 77);
+        assert(resources.DirectionalShadow.bEnabled);
+        assert(resources.DirectionalShadow.View[3] == 3.0f);
+        assert(resources.DirectionalShadow.Projection[7] == 8.0f);
+        assert(resources.LightBuffer == lightBuffer);
+        assert(resources.LogicalLightCount == 2);
+        assert(resources.LightBufferSizeBytes == 128);
+        assert(resources.EnvironmentRadianceTexture == environment);
+        assert(resources.DiffuseIrradianceSampler == diffuseSampler);
+        assert(resources.PrefilteredSpecularTexture == prefiltered);
+        assert(resources.DfgLutSampler == dfgSampler);
+        assert(resources.PrefilteredSpecularMipLevels == 4);
+        assert(resources.IBLIntensity == 3.5f);
+        assert(resources.bIBLEnabled);
+
+        const PhysicalLightingResources copied = resources;
+        assert(copied.Matches(11, 2, 3));
+        assert(copied.DirectionalShadow.View[3] == 3.0f);
+        assert(copied.DirectionalShadow.Projection[7] == 8.0f);
+        assert(copied.LightBuffer == lightBuffer);
+        assert(copied.EnvironmentRadianceTexture == environment);
+        assert(copied.PrefilteredSpecularMipLevels == 4);
+        assert(copied.IBLIntensity == 3.5f);
+
+        resources.Begin(12, 4, 5);
+        assert(resources.Matches(12, 4, 5));
+        assert(!resources.Matches(11, 2, 3));
+        assert(!resources.bShadowPublished);
+        assert(!resources.bLightingPublished);
+        assert(!resources.ShadowMapTexture);
+        assert(!resources.ShadowSampler);
+        assert(!resources.LightBuffer);
+        assert(!resources.EnvironmentRadianceTexture);
+        assert(!resources.EnvironmentRadianceSampler);
+        assert(!resources.DiffuseIrradianceTexture);
+        assert(!resources.DiffuseIrradianceSampler);
+        assert(!resources.PrefilteredSpecularTexture);
+        assert(!resources.PrefilteredSpecularSampler);
+        assert(!resources.DfgLutTexture);
+        assert(!resources.DfgLutSampler);
+        assert(resources.LogicalLightCount == 0);
+        assert(resources.LightBufferSizeBytes == 0);
+        assert(resources.PrefilteredSpecularMipLevels == 0);
+        assert(resources.IBLIntensity == 0.0f);
+        assert(!resources.bIBLEnabled);
+        assert(resources.DirectionalShadow.LightId == 0);
+        assert(!resources.DirectionalShadow.bEnabled);
+        assert(resources.DirectionalShadow.View[0] == 1.0f);
+        assert(resources.DirectionalShadow.View[3] == 0.0f);
+        assert(resources.DirectionalShadow.Projection[0] == 1.0f);
+        assert(resources.DirectionalShadow.Projection[7] == 0.0f);
+
+        resources.Invalidate();
+        assert(!resources.bActive);
+        assert(resources.FrameNumber == 0);
+        assert(resources.ViewId == UINT32_MAX);
+        assert(resources.ViewportId == UINT32_MAX);
+        assert(!resources.bShadowPublished);
+        assert(!resources.bLightingPublished);
+        assert(!resources.ShadowMapTexture);
+        assert(!resources.LightBuffer);
+        assert(!resources.EnvironmentRadianceTexture);
+        assert(!resources.DfgLutTexture);
+        assert(resources.PrefilteredSpecularMipLevels == 0);
+        assert(resources.IBLIntensity == 0.0f);
+        assert(!resources.bIBLEnabled);
+        assert(resources.DirectionalShadow.View[0] == 1.0f);
+        assert(resources.DirectionalShadow.View[3] == 0.0f);
+        assert(!resources.DirectionalShadow.bEnabled);
+    }
+
     void AssertLightingPassSourceContract(const std::string& sourceRoot)
     {
         const std::string lightingPassSource =
@@ -415,6 +598,7 @@ int main()
     TestAllInvalidInputProducesNoLights();
     TestPackWhiteAndColoredLightsUsesYOneChromaticityAndCanonicalIntensity();
     TestLocalAttenuationBoundaryLiteralTable();
+    TestPhysicalLightingResourceLifecycle();
 
 #ifndef NORVES_SOURCE_DIR
 #error NORVES_SOURCE_DIR must be defined for LightingLightBufferTest.
