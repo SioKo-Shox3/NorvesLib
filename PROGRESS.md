@@ -9,11 +9,11 @@
 - R1 P4: `f3d4abb20ad283d66f0a39b38b1b9aaa0ee92013`。放射輝度IBL、DFG、GGX補償と数値検証。focused build 13/13、CPU 7/7、GPU 6/6（exit 125なし）、独立レビュー、接続監査、fresh verifierを2026-09-08にPASS。
 
 - R1 P5: `7d134b7d5fef9486210589d698b01d66bf0c7d31`。物理ライト・GGX・IBL・方向影の透明描画を受入完了。focused8/CPU6/skip、P4 GPU6、透明10行/背景10行/固定4輝度、両scene object-presence、lifecycle、独立recheck12件、累積source18の正式Claude評価（blocking 0）を確認した。
-- R1 P6A: `0d3c26c`（`573a9e4` source20基点への後続修正）。最終fixtureの40 static rows/120 captures、全画素sRGB oracle、forced format、GPU CTest exact21、3 script self-test、fixture self-test、focused7/CPU6、Indoor/Outdoor object-presenceを受入。公式9ゲートのraw outputを`.harness/runs/20260908-084154/verify-R1-P6A-1.txt`〜`-9.txt`へ、fixture RED/PASSとSceneSerializer freshnessを`-11.txt`〜`-14.txt`へ保存し、全て再読確認した。
+- R1 P6A: `0d3c26c`（`573a9e4` source20基点への後続修正）。最終fixtureの40 static rows/120 captures、全画素sRGB oracle、forced format、GPU CTest exact21、3 script self-test、fixture self-test、focused7/CPU6、Indoor/Outdoor object-presenceの実装側検証を完了。独立再実行と第2周の正式評価は未完。公式9ゲートのraw outputを`.harness/runs/20260908-084154/verify-R1-P6A-1.txt`〜`-9.txt`へ、実装後のfixture mutation/PASSとSceneSerializer freshnessを`-11.txt`〜`-14.txt`へ保存し、全て再読確認した。
 
 ## In progress
 
-- R1-P6Bの実装へ移る。P6A commit/report/hashと開始条件を渡し、正式candidate生成・publishへ進む。
+- R1-P6Aの独立再実行と第2周評価を完了し、実結果からcompletion reportを発行する。その後、clean HEADをP6bのCodeHeadとして固定する。
 - 10:26時点: focused8 build（verify20）exit0、透明vert/frag事前compile（verify21）各exit0、CPU6（verify22）6/6 PASS。RenderGraphCompileTestは184.70秒から72.28秒、CPU6全体74.23秒になった。
 - LUTは256×256・4096sample・式・集積順序・RNEを維持し、行ごとの半角ベクトル事前計算へ変更。親のDebug比較で131072値/262144bytesが全一致、11.018539秒→4.150286秒。証拠 `%TEMP%/norveslib-p5-dfg-hoist-20260908/evidence.json`。元アルゴリズムは受入済みP4関数本体にEOL正規化後一致。
 - 10:29時点: P4 GPU回帰6/6 exit0（verify23〜28）。capture数はknown-cd6、prefilter4、DFG100、roughness24、furnace60、direct-conductor4。raw log/hash/countの集計 `%TEMP%/norveslib-p5-p4-gpu-regression-20260908.json`。これは後続fixture再修正前の回帰証拠で、P5全受入ではない。
