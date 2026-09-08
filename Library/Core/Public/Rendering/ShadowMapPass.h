@@ -127,6 +127,7 @@ namespace NorvesLib::Core::Rendering
 
         // シャドウマップ深度テクスチャ
         RHI::TexturePtr m_ShadowMapTexture;
+        RHI::SamplerPtr m_ShadowSampler;
         RGResourceHandle m_ShadowMapHandle;
 
         // レンダーパス・フレームバッファ

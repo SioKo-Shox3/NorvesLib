@@ -1673,6 +1673,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.CurrentFramebuffer = m_SwapChainFramebuffers[imageIndex].get();
         viewContext.bRenderPassActive = false; // Deferredパスは独自のレンダーパスを使用
         viewContext.FrameIndex = frameIndex;
+        viewContext.FrameNumber = packet->FrameNumber;
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;

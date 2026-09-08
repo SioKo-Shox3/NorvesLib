@@ -2,6 +2,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
@@ -20,13 +21,15 @@
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include "Logging/LogMacros.h"
+#include <cmath>
+#include <cstddef>
 #include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        struct TransparentForwardUBO
+        struct alignas(16) TransparentForwardUBO
         {
             float view[16];
             float projection[16];
@@ -34,7 +37,36 @@ namespace NorvesLib::Core::Rendering
             float emissiveColor[4];
             float pomParams[4];
             float sceneColorParams[4];
+            float lightView[16];
+            float lightProjection[16];
+            uint32_t lightCount;
+            uint32_t bShadowEnabled;
+            uint32_t bIBLEnabled;
+            uint32_t prefilteredSpecularMipLevels;
+            float iblIntensity;
+            uint32_t padding0;
+            uint32_t padding1;
+            uint32_t padding2;
         };
+
+        static_assert(alignof(TransparentForwardUBO) == 16);
+        static_assert(offsetof(TransparentForwardUBO, view) == 0);
+        static_assert(offsetof(TransparentForwardUBO, projection) == 64);
+        static_assert(offsetof(TransparentForwardUBO, cameraPosition) == 128);
+        static_assert(offsetof(TransparentForwardUBO, emissiveColor) == 144);
+        static_assert(offsetof(TransparentForwardUBO, pomParams) == 160);
+        static_assert(offsetof(TransparentForwardUBO, sceneColorParams) == 176);
+        static_assert(offsetof(TransparentForwardUBO, lightView) == 192);
+        static_assert(offsetof(TransparentForwardUBO, lightProjection) == 256);
+        static_assert(offsetof(TransparentForwardUBO, lightCount) == 320);
+        static_assert(offsetof(TransparentForwardUBO, bShadowEnabled) == 324);
+        static_assert(offsetof(TransparentForwardUBO, bIBLEnabled) == 328);
+        static_assert(offsetof(TransparentForwardUBO, prefilteredSpecularMipLevels) == 332);
+        static_assert(offsetof(TransparentForwardUBO, iblIntensity) == 336);
+        static_assert(offsetof(TransparentForwardUBO, padding0) == 340);
+        static_assert(offsetof(TransparentForwardUBO, padding1) == 344);
+        static_assert(offsetof(TransparentForwardUBO, padding2) == 348);
+        static_assert(sizeof(TransparentForwardUBO) == 352);
 
         struct WorldBoardForwardUBO
         {
@@ -156,6 +188,21 @@ namespace NorvesLib::Core::Rendering
             instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
             instanceBinding.stages = RHI::ShaderStage::Vertex;
             descriptorSetDesc.bindings.push_back(instanceBinding);
+
+            RHI::DescriptorBinding lightBufferBinding;
+            lightBufferBinding.binding = 8;
+            lightBufferBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            lightBufferBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(lightBufferBinding);
+
+            for (uint32_t binding = 9; binding <= 13; ++binding)
+            {
+                RHI::DescriptorBinding lightingTextureBinding;
+                lightingTextureBinding.binding = binding;
+                lightingTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+                lightingTextureBinding.stages = RHI::ShaderStage::Pixel;
+                descriptorSetDesc.bindings.push_back(lightingTextureBinding);
+            }
 
             constexpr uint32_t UBO_SIZE = sizeof(TransparentForwardUBO);
             constexpr uint32_t MAX_OBJECTS = 256;
@@ -629,7 +676,7 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.vertexAttributes.push_back(texCoordAttribute);
 
         pipelineDesc.rasterState.polygonMode = RHI::PolygonMode::Fill;
-        pipelineDesc.rasterState.cullMode = RHI::CullMode::Back;
+        pipelineDesc.rasterState.cullMode = RHI::CullMode::None;
         pipelineDesc.rasterState.frontFace = RHI::FrontFace::Clockwise;
         pipelineDesc.rasterState.lineWidth = 1.0f;
 
@@ -672,6 +719,21 @@ namespace NorvesLib::Core::Rendering
         instanceBinding.type = RHI::ResourceBindType::StructuredBuffer;
         instanceBinding.stages = RHI::ShaderStage::Vertex;
         descriptorSetDesc.bindings.push_back(instanceBinding);
+
+        RHI::DescriptorBinding lightBufferBinding;
+        lightBufferBinding.binding = 8;
+        lightBufferBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        lightBufferBinding.stages = RHI::ShaderStage::Pixel;
+        descriptorSetDesc.bindings.push_back(lightBufferBinding);
+
+        for (uint32_t binding = 9; binding <= 13; ++binding)
+        {
+            RHI::DescriptorBinding lightingTextureBinding;
+            lightingTextureBinding.binding = binding;
+            lightingTextureBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            lightingTextureBinding.stages = RHI::ShaderStage::Pixel;
+            descriptorSetDesc.bindings.push_back(lightingTextureBinding);
+        }
 
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSetDesc);
 
@@ -884,6 +946,54 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        bool bHasPhysicalMeshCommand = false;
+        for (const DrawCommand& command : activeTransparentCommands)
+        {
+            if (command.Draw.PayloadKind != DrawPayloadKind::Board)
+            {
+                bHasPhysicalMeshCommand = true;
+                break;
+            }
+        }
+        PhysicalLightingResources physicalLighting;
+        if (bHasPhysicalMeshCommand)
+        {
+            const PhysicalLightingResources& published = context.PhysicalLighting;
+            const uint64_t requiredLightBytes =
+                static_cast<uint64_t>(published.LogicalLightCount) * sizeof(GPULightData);
+            bool bMatricesFinite = true;
+            for (uint32_t index = 0; index < 16; ++index)
+            {
+                bMatricesFinite = bMatricesFinite &&
+                                  std::isfinite(published.DirectionalShadow.View[index]) &&
+                                  std::isfinite(published.DirectionalShadow.Projection[index]);
+            }
+            const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
+            const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
+            const bool bPhysicalLightingReady =
+                published.Matches(context.FrameNumber, viewId, viewportId) &&
+                published.bShadowPublished && published.bLightingPublished && bMatricesFinite &&
+                published.LightBuffer && published.ShadowMapTexture && published.ShadowSampler &&
+                published.EnvironmentRadianceTexture && published.EnvironmentRadianceSampler &&
+                published.DiffuseIrradianceTexture && published.DiffuseIrradianceSampler &&
+                published.PrefilteredSpecularTexture && published.PrefilteredSpecularSampler &&
+                published.DfgLutTexture && published.DfgLutSampler &&
+                published.PrefilteredSpecularMipLevels > 0u &&
+                std::isfinite(published.IBLIntensity) && published.IBLIntensity >= 0.0f &&
+                requiredLightBytes <= static_cast<uint64_t>(published.LightBufferSizeBytes);
+            if (!bPhysicalLightingReady)
+            {
+                NORVES_LOG_ERROR("ForwardPass",
+                                 "Physical transparent lighting publication is incomplete");
+                if (bUseRenderGraphManagedStates)
+                {
+                    EnqueueEmptyTransparentPass(context);
+                }
+                return;
+            }
+            physicalLighting = published;
+        }
+
         auto* materials = context.Resources.Materials;
         auto* textures = context.Resources.Textures;
         auto* meshes = context.Resources.Meshes;
@@ -920,6 +1030,7 @@ namespace NorvesLib::Core::Rendering
         const uint32_t activeDebugModeValue = static_cast<uint32_t>(activeDebugMode);
         const bool bApplySceneColorPreExposure =
             activeDebugMode == DebugViewMode::Normal ||
+            activeDebugModeValue == 252u ||
             activeDebugModeValue == 253u ||
             activeDebugModeValue == 254u;
         const float sceneColorPreExposure =
@@ -941,6 +1052,19 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(transparentFrameTemplate.projection, projectionData, sizeof(projectionData));
         std::memcpy(transparentFrameTemplate.cameraPosition, cameraPosition, sizeof(cameraPosition));
         transparentFrameTemplate.sceneColorParams[0] = sceneColorPreExposure;
+        std::memcpy(transparentFrameTemplate.lightView,
+                    physicalLighting.DirectionalShadow.View,
+                    sizeof(transparentFrameTemplate.lightView));
+        std::memcpy(transparentFrameTemplate.lightProjection,
+                    physicalLighting.DirectionalShadow.Projection,
+                    sizeof(transparentFrameTemplate.lightProjection));
+        transparentFrameTemplate.lightCount = physicalLighting.LogicalLightCount;
+        transparentFrameTemplate.bShadowEnabled =
+            physicalLighting.DirectionalShadow.bEnabled ? 1u : 0u;
+        transparentFrameTemplate.bIBLEnabled = physicalLighting.bIBLEnabled ? 1u : 0u;
+        transparentFrameTemplate.prefilteredSpecularMipLevels =
+            physicalLighting.PrefilteredSpecularMipLevels;
+        transparentFrameTemplate.iblIntensity = physicalLighting.IBLIntensity;
 
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());
@@ -1011,7 +1135,7 @@ namespace NorvesLib::Core::Rendering
 
             if (cmd.Draw.MaterialHandle.IsValid())
             {
-                const auto* materialData = materials->GetData(cmd.Draw.MaterialHandle);
+                const MaterialResourceData* materialData = materials->GetData(cmd.Draw.MaterialHandle);
                 if (materialData)
                 {
                     matAlbedo = materialData->AlbedoTexture;
@@ -1020,8 +1144,14 @@ namespace NorvesLib::Core::Rendering
                     matRoughness = materialData->RoughnessTexture;
                     matAO = materialData->AOTexture;
                     matHeight = materialData->HeightTexture;
+                    uboData.emissiveColor[0] = materialData->EmissiveColor[0];
+                    uboData.emissiveColor[1] = materialData->EmissiveColor[1];
+                    uboData.emissiveColor[2] = materialData->EmissiveColor[2];
+                    uboData.emissiveColor[3] = materialData->EmissiveLuminanceNits;
+                    uboData.pomParams[0] = materialData->HeightScale;
                 }
             }
+            uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
 
             allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
 
@@ -1055,6 +1185,20 @@ namespace NorvesLib::Core::Rendering
                                                         context.InstanceDataBuffer,
                                                         0,
                                                         instanceDataSize);
+            allocation.DescriptorSet->BindStorageBuffer(8,
+                                                        physicalLighting.LightBuffer,
+                                                        0,
+                                                        physicalLighting.LightBufferSizeBytes);
+            allocation.DescriptorSet->BindTexture(9, physicalLighting.ShadowMapTexture);
+            allocation.DescriptorSet->BindSampler(9, physicalLighting.ShadowSampler);
+            allocation.DescriptorSet->BindTexture(10, physicalLighting.EnvironmentRadianceTexture);
+            allocation.DescriptorSet->BindSampler(10, physicalLighting.EnvironmentRadianceSampler);
+            allocation.DescriptorSet->BindTexture(11, physicalLighting.DiffuseIrradianceTexture);
+            allocation.DescriptorSet->BindSampler(11, physicalLighting.DiffuseIrradianceSampler);
+            allocation.DescriptorSet->BindTexture(12, physicalLighting.PrefilteredSpecularTexture);
+            allocation.DescriptorSet->BindSampler(12, physicalLighting.PrefilteredSpecularSampler);
+            allocation.DescriptorSet->BindTexture(13, physicalLighting.DfgLutTexture);
+            allocation.DescriptorSet->BindSampler(13, physicalLighting.DfgLutSampler);
             allocation.DescriptorSet->Update();
 
             DrawCommand drawCommand = cmd;

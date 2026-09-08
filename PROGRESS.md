@@ -46,3 +46,4 @@
 - 残課題: `LightingParamsLayoutTest`のEss lexical assertionは演算子まで反証しない。現shader式はレビュー済みで正しいためP4の非blocking事項として保持。品質返済はR1の次の自然な区切りでまとめる。
 
 - 2026-09-08 09:33 JSTの読取照会: CTest登録219/GPU21/意図的skip7のname hashとsource-start6ファイルhashは計画に一致。固定name hashはPowerShell `Sort-Object -CaseSensitive` による。証拠: `%TEMP%/norveslib-r1-final-prerequisite-inventory-20260908.json`。正式P6b実行やfull build/full CTestは未実行。
+- 12:31 JST: DFGをx254/255・y127/128の独立double積分、half RNE、二軸bilinearへ修正し、HDR capture build（verify93）とknown-cd数値行（verify94）はexit 0。transparent-physical-lighting（verify95）はDFG preflight/fixture 10行後、固定ROIの背景mean 0.015621185（期待0.1）でexit 1。追加captureまたはgeometry/ROI変更の判断待ちとして `blocked/R1-P5.md` に記録し、P5は未完・未コミット。

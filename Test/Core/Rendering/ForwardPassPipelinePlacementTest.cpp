@@ -6,7 +6,9 @@
 #include "Rendering/SceneView.h"
 #include "Rendering/ToneMappingPass.h"
 #include <cassert>
+#include <cstddef>
 #include <cstring>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -161,9 +163,10 @@ namespace
         const std::string whitelist =
             forwardPassSource.substr(whitelistPosition, preExposurePosition - whitelistPosition);
         assert(CountText(whitelist, "activeDebugMode == DebugViewMode::Normal") == 1);
+        assert(CountText(whitelist, "activeDebugModeValue == 252u") == 1);
         assert(CountText(whitelist, "activeDebugModeValue == 253u") == 1);
         assert(CountText(whitelist, "activeDebugModeValue == 254u") == 1);
-        assert(CountText(whitelist, "activeDebugModeValue ==") == 2);
+        assert(CountText(whitelist, "activeDebugModeValue ==") == 3);
 
         const std::size_t preExposureEnd =
             RequirePositionAfter(forwardPassSource, ";", preExposurePosition);
@@ -189,7 +192,7 @@ namespace
                                       const std::string& impostorVertexSource,
                                       const std::string& impostorFragmentSource)
     {
-        struct ExpectedTransparentForwardUBO
+        struct alignas(16) ExpectedTransparentForwardUBO
         {
             float view[16];
             float projection[16];
@@ -197,6 +200,16 @@ namespace
             float emissiveColor[4];
             float pomParams[4];
             float sceneColorParams[4];
+            float lightView[16];
+            float lightProjection[16];
+            uint32_t lightCount;
+            uint32_t bShadowEnabled;
+            uint32_t bIBLEnabled;
+            uint32_t prefilteredSpecularMipLevels;
+            float iblIntensity;
+            uint32_t padding0;
+            uint32_t padding1;
+            uint32_t padding2;
         };
 
         struct ExpectedWorldBoardForwardUBO
@@ -209,11 +222,28 @@ namespace
             float sceneColorParams[4];
         };
 
-        assert(sizeof(ExpectedTransparentForwardUBO) == 192);
+        assert(alignof(ExpectedTransparentForwardUBO) == 16);
+        assert(offsetof(ExpectedTransparentForwardUBO, view) == 0);
+        assert(offsetof(ExpectedTransparentForwardUBO, projection) == 64);
+        assert(offsetof(ExpectedTransparentForwardUBO, cameraPosition) == 128);
+        assert(offsetof(ExpectedTransparentForwardUBO, emissiveColor) == 144);
+        assert(offsetof(ExpectedTransparentForwardUBO, pomParams) == 160);
+        assert(offsetof(ExpectedTransparentForwardUBO, sceneColorParams) == 176);
+        assert(offsetof(ExpectedTransparentForwardUBO, lightView) == 192);
+        assert(offsetof(ExpectedTransparentForwardUBO, lightProjection) == 256);
+        assert(offsetof(ExpectedTransparentForwardUBO, lightCount) == 320);
+        assert(offsetof(ExpectedTransparentForwardUBO, bShadowEnabled) == 324);
+        assert(offsetof(ExpectedTransparentForwardUBO, bIBLEnabled) == 328);
+        assert(offsetof(ExpectedTransparentForwardUBO, prefilteredSpecularMipLevels) == 332);
+        assert(offsetof(ExpectedTransparentForwardUBO, iblIntensity) == 336);
+        assert(offsetof(ExpectedTransparentForwardUBO, padding0) == 340);
+        assert(offsetof(ExpectedTransparentForwardUBO, padding1) == 344);
+        assert(offsetof(ExpectedTransparentForwardUBO, padding2) == 348);
+        assert(sizeof(ExpectedTransparentForwardUBO) == 352);
         assert(sizeof(ExpectedWorldBoardForwardUBO) == 192);
 
         const std::string transparentCpuBlock =
-            ExtractBetween(forwardPassSource, "struct TransparentForwardUBO", "};");
+            ExtractBetween(forwardPassSource, "struct alignas(16) TransparentForwardUBO", "};");
         const std::string transparentCpuFields[] = {
             "float view[16];",
             "float projection[16];",
@@ -221,6 +251,16 @@ namespace
             "float emissiveColor[4];",
             "float pomParams[4];",
             "float sceneColorParams[4];",
+            "float lightView[16];",
+            "float lightProjection[16];",
+            "uint32_t lightCount;",
+            "uint32_t bShadowEnabled;",
+            "uint32_t bIBLEnabled;",
+            "uint32_t prefilteredSpecularMipLevels;",
+            "float iblIntensity;",
+            "uint32_t padding0;",
+            "uint32_t padding1;",
+            "uint32_t padding2;",
         };
         AssertFieldsInOrder(transparentCpuBlock,
                             transparentCpuFields,
@@ -247,6 +287,16 @@ namespace
             "vec4 emissiveColor;",
             "vec4 pomParams;",
             "vec4 sceneColorParams;",
+            "mat4 lightView;",
+            "mat4 lightProjection;",
+            "uint lightCount;",
+            "uint bShadowEnabled;",
+            "uint bIBLEnabled;",
+            "uint prefilteredSpecularMipLevels;",
+            "float iblIntensity;",
+            "uint padding0;",
+            "uint padding1;",
+            "uint padding2;",
         };
         const std::string transparentVertexBlock =
             ExtractBetween(transparentVertexSource,
@@ -315,16 +365,36 @@ namespace
                                          "worldBoard.sceneColorParams.x",
                                          ", color.a");
 
-        assert(transparentFragmentSource.find("vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));") !=
+        const std::string physicalBindings[] = {
+            "layout(std430, set = 0, binding = 8) readonly buffer LightBuffer",
+            "layout(set = 0, binding = 9) uniform sampler2D shadowMap",
+            "layout(set = 0, binding = 10) uniform sampler2D environmentRadiance",
+            "layout(set = 0, binding = 11) uniform sampler2D diffuseIrradiance",
+            "layout(set = 0, binding = 12) uniform sampler2D prefilteredSpecular",
+            "layout(set = 0, binding = 13) uniform sampler2D dfgLut",
+        };
+        for (const std::string& binding : physicalBindings)
+        {
+            assert(transparentFragmentSource.find(binding) != std::string::npos);
+        }
+        assert(forwardPassSource.find("lightBufferBinding.binding = 8") != std::string::npos);
+        assert(forwardPassSource.find("for (uint32_t binding = 9; binding <= 13; ++binding") !=
                std::string::npos);
-        assert(transparentFragmentSource.find("vec3 lightColor = vec3(1.0, 0.98, 0.95);") !=
+        assert(forwardPassSource.find("BindStorageBuffer(8") != std::string::npos);
+        assert(forwardPassSource.find("BindTexture(13, physicalLighting.DfgLutTexture)") !=
                std::string::npos);
-        assert(transparentFragmentSource.find("float diffuseFactor = max(dot(normal, lightDir), 0.0);") !=
+        assert(transparentFragmentSource.find("FresnelSchlick") != std::string::npos);
+        assert(transparentFragmentSource.find("DistributionGGX") != std::string::npos);
+        assert(transparentFragmentSource.find("GeometrySmithDirect") != std::string::npos);
+        assert(transparentFragmentSource.find("compensationD") != std::string::npos);
+        assert(transparentFragmentSource.find("compensationC") != std::string::npos);
+        assert(transparentFragmentSource.find("lightBuffer.lights[index]") != std::string::npos);
+        assert(transparentFragmentSource.find("mvp.bShadowEnabled") != std::string::npos);
+        assert(transparentFragmentSource.find("mvp.bIBLEnabled") != std::string::npos);
+        assert(transparentFragmentSource.find("vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));") ==
                std::string::npos);
-        assert(transparentFragmentSource.find("vec3 ambient = 0.12 * baseColor;") != std::string::npos);
-        assert(transparentFragmentSource.find("vec3 specular = specularFactor * lightColor * 0.2;") !=
-               std::string::npos);
-        assert(transparentFragmentSource.find("pow(max(dot(normal, halfDir), 0.0), 32.0)") !=
+        assert(transparentFragmentSource.find("vec3 ambient = 0.12 * baseColor;") == std::string::npos);
+        assert(transparentFragmentSource.find("pow(max(dot(normal, halfDir), 0.0), 32.0)") ==
                std::string::npos);
     }
 

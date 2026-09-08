@@ -1,10 +1,12 @@
 ﻿#include "RenderingValidation/RenderingValidationScene.h"
 
 #include "RenderingValidation/GpuTestEnvironment.h"
+#include "Component/CameraComponent.h"
 #include "Component/DirectionalLightComponent.h"
 #include "Component/MeshComponent.h"
 #include "Component/PointLightComponent.h"
 #include "Math/MathTypes.h"
+#include "Math/MatrixUtils.h"
 #include "Math/QuaternionUtils.h"
 #include "Math/VectorUtils.h"
 #include "Object/Entity.h"
@@ -30,6 +32,45 @@ namespace NorvesLib::Test::RenderingValidation
 
         constexpr MeshDataHandle PlaneHandle{0x52300001u};
         constexpr MeshDataHandle SphereHandle{0x52300002u};
+        constexpr MeshDataHandle R1ScreenPlaneHandle{0x52300003u};
+        constexpr double R1PerspectiveHalfAngleTangent = 0.577350269189625764509148780501957456;
+        constexpr double R1OccluderCenter[3] = {1.3333333, 0.0, 1.0};
+        constexpr double R1ProjectionTolerancePixels = 1.0e-4;
+        constexpr double R1IndoorTargetCenter[3] = {
+            -0.034985351520794,
+            -0.000170898437704,
+            0.499998291730881};
+        constexpr double R1IndoorBackgroundCenter[3] = {
+            -0.027941894497941,
+            -0.000183105468968,
+            0.249998635649681};
+        constexpr double R1OutdoorTargetCenter[3] = {
+            5.234618808803869,
+            4.196780671097502,
+            8.052662865211994};
+        constexpr double R1OutdoorBackgroundCenter[3] = {
+            5.158142839319194,
+            4.096378254984689,
+            7.822092750485282};
+        constexpr float R1Albedo[4] = {0.5f, 0.25f, 0.125f, 1.0f};
+        constexpr float R1BlackAlbedo[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        constexpr float R1ScalarZero[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        constexpr float R1ScalarHalf[4] = {0.5f, 0.5f, 0.5f, 1.0f};
+        constexpr float R1ScalarOne[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+        enum class R1TextureIndex : uint32_t
+        {
+            TargetAlbedo,
+            BackgroundAlbedo,
+            MetallicZero,
+            MetallicHalf,
+            Roughness,
+            AmbientOcclusionOne,
+            AmbientOcclusionZero,
+            Height,
+            FlatNormal,
+            Count
+        };
         constexpr uint32_t P4RoughnessCount = 5u;
         constexpr uint32_t P4MetallicQueryTextureCount = 6u;
         constexpr uint32_t P4MaterialCount = P4RoughnessCount * P4MetallicQueryTextureCount;
@@ -130,6 +171,198 @@ namespace NorvesLib::Test::RenderingValidation
             const float canonicalValue = static_cast<float>(quantizedValue);
             const float pixels[4] = {canonicalValue, canonicalValue, canonicalValue, 1.0f};
             return resources.Textures().CreateTexture(textureInfo, pixels, sizeof(pixels));
+        }
+
+        TextureHandle CreateR1FloatTexture(RenderResources& resources,
+                                            const float (&pixels)[4],
+                                            const TCHAR* debugName)
+        {
+            Core::Rendering::TextureCreateInfo textureInfo;
+            textureInfo.Width = 1u;
+            textureInfo.Height = 1u;
+            textureInfo.PixelFormat = Core::Rendering::TextureCreateInfo::Format::RGBA32_FLOAT;
+            textureInfo.DebugName = debugName;
+            return resources.Textures().CreateTexture(textureInfo, pixels, sizeof(pixels));
+        }
+
+        TextureHandle CreateR1FlatNormalTexture(RenderResources& resources)
+        {
+            Core::Rendering::TextureCreateInfo textureInfo;
+            textureInfo.Width = 1u;
+            textureInfo.Height = 1u;
+            textureInfo.PixelFormat = Core::Rendering::TextureCreateInfo::Format::RGBA16_FLOAT;
+            textureInfo.DebugName = TEXT("RenderingValidationR1FlatNormal");
+            constexpr uint16_t pixels[] = {0x3800u, 0x3800u, 0x3C00u, 0x3C00u};
+            return resources.Textures().CreateTexture(textureInfo, pixels, sizeof(pixels));
+        }
+
+        bool ValidateR1ProjectedEdges(const Core::Entity& entity,
+                                      const CameraProxy& camera,
+                                      double expectedMinX,
+                                      double expectedMaxX,
+                                      double expectedMinY,
+                                      double expectedMaxY)
+        {
+            const Math::Transform& transform = entity.GetWorldTransform();
+            const Math::Matrix4x4 world = Math::MatrixUtils::CreateWorldRowVector(
+                transform.position,
+                transform.rotation,
+                transform.scale);
+            const Math::Vector3 cameraPosition(camera.PositionX, camera.PositionY, camera.PositionZ);
+            const Math::Vector3 cameraForward(camera.ForwardX, camera.ForwardY, camera.ForwardZ);
+            const Math::Vector3 cameraRight(camera.RightX, camera.RightY, camera.RightZ);
+            const Math::Vector3 cameraUp(camera.UpX, camera.UpY, camera.UpZ);
+            const Math::Vector3 localCorners[4] = {
+                Math::Vector3(-5.0f, -5.0f, 0.0f),
+                Math::Vector3(5.0f, -5.0f, 0.0f),
+                Math::Vector3(-5.0f, 5.0f, 0.0f),
+                Math::Vector3(5.0f, 5.0f, 0.0f)};
+            double minX = 1.0e30;
+            double maxX = -1.0e30;
+            double minY = 1.0e30;
+            double maxY = -1.0e30;
+            for (const Math::Vector3& localCorner : localCorners)
+            {
+                const double localX = static_cast<double>(localCorner.x);
+                const double localY = static_cast<double>(localCorner.y);
+                const double localZ = static_cast<double>(localCorner.z);
+                const double worldX =
+                    localX * static_cast<double>(world.m[0][0]) +
+                    localY * static_cast<double>(world.m[1][0]) +
+                    localZ * static_cast<double>(world.m[2][0]) +
+                    static_cast<double>(world.m[3][0]);
+                const double worldY =
+                    localX * static_cast<double>(world.m[0][1]) +
+                    localY * static_cast<double>(world.m[1][1]) +
+                    localZ * static_cast<double>(world.m[2][1]) +
+                    static_cast<double>(world.m[3][1]);
+                const double worldZ =
+                    localX * static_cast<double>(world.m[0][2]) +
+                    localY * static_cast<double>(world.m[1][2]) +
+                    localZ * static_cast<double>(world.m[2][2]) +
+                    static_cast<double>(world.m[3][2]);
+                const double relativeX = worldX - static_cast<double>(camera.PositionX);
+                const double relativeY = worldY - static_cast<double>(camera.PositionY);
+                const double relativeZ = worldZ - static_cast<double>(camera.PositionZ);
+                const double depth =
+                    relativeX * static_cast<double>(cameraForward.x) +
+                    relativeY * static_cast<double>(cameraForward.y) +
+                    relativeZ * static_cast<double>(cameraForward.z);
+                if (!std::isfinite(depth) || depth <= 0.0)
+                {
+                    return false;
+                }
+                const double right =
+                    relativeX * static_cast<double>(cameraRight.x) +
+                    relativeY * static_cast<double>(cameraRight.y) +
+                    relativeZ * static_cast<double>(cameraRight.z);
+                const double up =
+                    relativeX * static_cast<double>(cameraUp.x) +
+                    relativeY * static_cast<double>(cameraUp.y) +
+                    relativeZ * static_cast<double>(cameraUp.z);
+                double pixelX = 0.0;
+                double pixelY = 0.0;
+                if (camera.Projection == Core::Rendering::ProjectionType::Perspective)
+                {
+                    pixelX = (right / (depth * R1PerspectiveHalfAngleTangent) + 1.0) * 128.0;
+                    pixelY = (1.0 - up / (depth * R1PerspectiveHalfAngleTangent)) * 128.0;
+                }
+                else if (camera.Projection == Core::Rendering::ProjectionType::Orthographic &&
+                         camera.OrthoWidth > 0.0f && camera.OrthoHeight > 0.0f)
+                {
+                    pixelX = (right / (static_cast<double>(camera.OrthoWidth) * 0.5) + 1.0) * 128.0;
+                    pixelY = (1.0 - up / (static_cast<double>(camera.OrthoHeight) * 0.5)) * 128.0;
+                }
+                else
+                {
+                    return false;
+                }
+                minX = std::min(minX, pixelX);
+                maxX = std::max(maxX, pixelX);
+                minY = std::min(minY, pixelY);
+                maxY = std::max(maxY, pixelY);
+            }
+            return std::isfinite(minX) && std::isfinite(maxX) &&
+                   std::isfinite(minY) && std::isfinite(maxY) &&
+                   std::abs(minX - expectedMinX) <= R1ProjectionTolerancePixels &&
+                   std::abs(maxX - expectedMaxX) <= R1ProjectionTolerancePixels &&
+                   std::abs(minY - expectedMinY) <= R1ProjectionTolerancePixels &&
+                   std::abs(maxY - expectedMaxY) <= R1ProjectionTolerancePixels;
+        }
+
+        bool ValidateR1ShadowOccluder(const Core::Entity& entity, const CameraProxy& camera)
+        {
+            const Math::Transform& transform = entity.GetWorldTransform();
+            const Math::Matrix4x4 world = Math::MatrixUtils::CreateWorldRowVector(
+                transform.position,
+                transform.rotation,
+                transform.scale);
+            const Math::Vector3 tangentX(world.m[0][0], world.m[0][1], world.m[0][2]);
+            const Math::Vector3 tangentY(world.m[1][0], world.m[1][1], world.m[1][2]);
+            const float tangentLengthX = Math::VectorUtils::Length(tangentX);
+            const float tangentLengthY = Math::VectorUtils::Length(tangentY);
+            const Math::Vector3 normal = Math::VectorUtils::Normalize(
+                Math::VectorUtils::Cross(tangentX, tangentY));
+            const Math::Vector3 expectedNormal(-0.8f, 0.0f, -0.6f);
+            if (!std::isfinite(tangentLengthX) || !std::isfinite(tangentLengthY) ||
+                std::abs(tangentLengthX - 0.075f) > 1.0e-5f ||
+                std::abs(tangentLengthY - 0.075f) > 1.0e-5f ||
+                Math::VectorUtils::LengthSquared(normal) < 0.99f ||
+                Math::VectorUtils::Dot(normal, expectedNormal) < 1.0f - 1.0e-5f)
+            {
+                return false;
+            }
+
+            const Math::Vector3 cameraPosition(camera.PositionX, camera.PositionY, camera.PositionZ);
+            const Math::Vector3 cameraForward(camera.ForwardX, camera.ForwardY, camera.ForwardZ);
+            const Math::Vector3 cameraRight(camera.RightX, camera.RightY, camera.RightZ);
+            const Math::Vector3 cameraUp(camera.UpX, camera.UpY, camera.UpZ);
+            const Math::Vector3 localCorners[4] = {
+                Math::Vector3(-5.0f, -5.0f, 0.0f),
+                Math::Vector3(5.0f, -5.0f, 0.0f),
+                Math::Vector3(-5.0f, 5.0f, 0.0f),
+                Math::Vector3(5.0f, 5.0f, 0.0f)};
+            double minX = 1.0e30;
+            double maxX = -1.0e30;
+            double minY = 1.0e30;
+            double maxY = -1.0e30;
+            for (const Math::Vector3& localCorner : localCorners)
+            {
+                const double worldX = static_cast<double>(localCorner.x) * world.m[0][0] +
+                                      static_cast<double>(localCorner.y) * world.m[1][0] +
+                                      static_cast<double>(world.m[3][0]);
+                const double worldY = static_cast<double>(localCorner.x) * world.m[0][1] +
+                                      static_cast<double>(localCorner.y) * world.m[1][1] +
+                                      static_cast<double>(world.m[3][1]);
+                const double worldZ = static_cast<double>(localCorner.x) * world.m[0][2] +
+                                      static_cast<double>(localCorner.y) * world.m[1][2] +
+                                      static_cast<double>(world.m[3][2]);
+                const Math::Vector3 relative(static_cast<float>(worldX - cameraPosition.x),
+                                             static_cast<float>(worldY - cameraPosition.y),
+                                             static_cast<float>(worldZ - cameraPosition.z));
+                const double depth = Math::VectorUtils::Dot(relative, cameraForward);
+                const double right = Math::VectorUtils::Dot(relative, cameraRight);
+                const double up = Math::VectorUtils::Dot(relative, cameraUp);
+                if (!std::isfinite(depth) || depth <= 0.0)
+                {
+                    return false;
+                }
+                const double pixelX = (right / (depth * R1PerspectiveHalfAngleTangent) + 1.0) * 128.0;
+                const double pixelY = (1.0 - up / (depth * R1PerspectiveHalfAngleTangent)) * 128.0;
+                if (!std::isfinite(pixelX) || !std::isfinite(pixelY))
+                {
+                    return false;
+                }
+                minX = std::min(minX, pixelX);
+                maxX = std::max(maxX, pixelX);
+                minY = std::min(minY, pixelY);
+                maxY = std::max(maxY, pixelY);
+            }
+            const bool bOverlapsMainRoi = maxX >= static_cast<double>(R1RoiMinX) &&
+                                           minX <= static_cast<double>(R1RoiMaxX) &&
+                                           maxY >= static_cast<double>(R1RoiMinY) &&
+                                           minY <= static_cast<double>(R1RoiMaxY);
+            return !bOverlapsMainRoi;
         }
 
         bool EqualFloatArray(const float* left, const float* right, size_t count)
@@ -529,6 +762,25 @@ namespace NorvesLib::Test::RenderingValidation
         m_Layout = std::move(state.Layout);
         m_Objects = std::move(state.Objects);
         m_P4Materials = std::move(state.P4Materials);
+        m_bR1PhysicalFixturePrepared = false;
+        m_bR1PhysicalFixtureFailed = false;
+        m_bR1ObjectPresence = false;
+        m_R1PhysicalCamera = {};
+        m_pR1TargetEntity = m_Objects.size() > 2u ? m_Objects[2] : nullptr;
+        m_pR1BackgroundEntity = nullptr;
+        m_pR1OccluderEntity = nullptr;
+        m_pR1TargetMesh = m_Objects.size() > 2u
+                               ? m_Objects[2]->GetComponent<Core::Component::MeshComponent>()
+                               : nullptr;
+        m_pR1BackgroundMesh = nullptr;
+        m_pR1OccluderMesh = nullptr;
+        m_pR1PointLightEntity = nullptr;
+        m_pR1DirectionalLightEntity = nullptr;
+        m_R1ScreenPlaneHandle = MeshDataHandle::Invalid();
+        m_R1Textures.fill(TextureHandle::Invalid());
+        m_R1TargetMaterials.fill(MaterialHandle::Invalid());
+        m_R1BackgroundMaterial = MaterialHandle::Invalid();
+        m_R1OccluderMaterial = MaterialHandle::Invalid();
 
         state.pWorld = nullptr;
         state.pResources = nullptr;
@@ -557,6 +809,23 @@ namespace NorvesLib::Test::RenderingValidation
         m_pEmissiveMesh = nullptr;
         m_pTransparentMesh = nullptr;
         m_pP4LightEntity = nullptr;
+        m_bR1PhysicalFixturePrepared = false;
+        m_bR1PhysicalFixtureFailed = false;
+        m_bR1ObjectPresence = false;
+        m_R1PhysicalCamera = {};
+        m_pR1TargetEntity = nullptr;
+        m_pR1BackgroundEntity = nullptr;
+        m_pR1OccluderEntity = nullptr;
+        m_pR1TargetMesh = nullptr;
+        m_pR1BackgroundMesh = nullptr;
+        m_pR1OccluderMesh = nullptr;
+        m_pR1PointLightEntity = nullptr;
+        m_pR1DirectionalLightEntity = nullptr;
+        m_R1ScreenPlaneHandle = MeshDataHandle::Invalid();
+        m_R1Textures.fill(TextureHandle::Invalid());
+        m_R1TargetMaterials.fill(MaterialHandle::Invalid());
+        m_R1BackgroundMaterial = MaterialHandle::Invalid();
+        m_R1OccluderMaterial = MaterialHandle::Invalid();
         m_bPublished = false;
 
         if (pWorld != nullptr)
@@ -581,6 +850,7 @@ namespace NorvesLib::Test::RenderingValidation
                                                      uint32_t seed)
     {
         Shutdown(resources);
+        m_SceneKind = kind;
         SceneFixtureInitializationState staging;
         staging.pWorld = &world;
         staging.pResources = &resources;
@@ -874,7 +1144,7 @@ namespace NorvesLib::Test::RenderingValidation
 
     void RenderingValidationSceneFixture::ApplyCamera(Core::Rendering::RenderWorld& renderWorld) const
     {
-        renderWorld.SetMainCamera(m_Layout.Camera);
+        renderWorld.SetMainCamera(GetCamera());
     }
 
     bool RenderingValidationSceneFixture::ApplyP4ScenarioRow(const P4ScenarioRow& row) const
@@ -983,9 +1253,654 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::EnsureR1PhysicalFixture(bool bObjectPresence) const
+    {
+        if (m_bR1PhysicalFixturePrepared)
+        {
+            return m_bR1ObjectPresence == bObjectPresence;
+        }
+        if (m_bR1PhysicalFixtureFailed || m_pWorld == nullptr || m_pResources == nullptr ||
+            m_pR1TargetEntity == nullptr || m_pR1TargetMesh == nullptr)
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+
+        const bool bIndoor = m_SceneKind == SceneKind::Indoor;
+        if (bObjectPresence || !bIndoor)
+        {
+            m_R1PhysicalCamera = m_Layout.Camera;
+        }
+        else
+        {
+            m_R1PhysicalCamera = BuildLookAtCamera(Math::Vector3(0.0f, 0.0f, 4.0f),
+                                                   Math::Vector3::Zero,
+                                                   ValidationWidth,
+                                                   ValidationHeight);
+        }
+        const float exposureCompensation = bObjectPresence ? (bIndoor ? 4.0f : 0.0f) : 4.0f;
+        if (!Core::Component::CameraComponent::TryBuildExposureSnapshot(
+                4.0f,
+                1.0f / 60.0f,
+                100.0f,
+                exposureCompensation,
+                m_R1PhysicalCamera))
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> vertices;
+        Core::Container::VariableArray<uint32_t> indices;
+        const float localPositions[4][3] = {
+            {-5.0f, -5.0f, 0.0f},
+            {5.0f, -5.0f, 0.0f},
+            {-5.0f, 5.0f, 0.0f},
+            {5.0f, 5.0f, 0.0f}};
+        const float localTexCoords[4][2] = {
+            {0.0f, 0.0f},
+            {1.0f, 0.0f},
+            {0.0f, 1.0f},
+            {1.0f, 1.0f}};
+        for (uint32_t index = 0u; index < 4u; ++index)
+        {
+            Core::Rendering::Mesh3DVertex vertex{};
+            vertex.Position[0] = localPositions[index][0];
+            vertex.Position[1] = localPositions[index][1];
+            vertex.Position[2] = localPositions[index][2];
+            vertex.Normal[0] = 0.0f;
+            vertex.Normal[1] = 0.0f;
+            vertex.Normal[2] = 1.0f;
+            vertex.TexCoord[0] = localTexCoords[index][0];
+            vertex.TexCoord[1] = localTexCoords[index][1];
+            vertices.push_back(vertex);
+        }
+        indices.push_back(0u);
+        indices.push_back(1u);
+        indices.push_back(2u);
+        indices.push_back(1u);
+        indices.push_back(3u);
+        indices.push_back(2u);
+        if (!m_pResources->Meshes().Register(R1ScreenPlaneHandle,
+                                              vertices.data(),
+                                              vertices.size() * sizeof(Core::Rendering::Mesh3DVertex),
+                                              indices.data(),
+                                              static_cast<uint32_t>(indices.size())))
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+        m_R1ScreenPlaneHandle = R1ScreenPlaneHandle;
+        m_Lease.TrackMesh(R1ScreenPlaneHandle);
+
+        auto createTexture = [this](R1TextureIndex index,
+                                     const float (&pixels)[4],
+                                     const TCHAR* debugName) -> bool
+        {
+            const TextureHandle handle = CreateR1FloatTexture(*m_pResources, pixels, debugName);
+            if (!handle.IsValid())
+            {
+                return false;
+            }
+            m_R1Textures[static_cast<size_t>(index)] = handle;
+            m_Lease.TrackTexture(handle);
+            return true;
+        };
+        if (!createTexture(R1TextureIndex::TargetAlbedo,
+                           R1Albedo,
+                           TEXT("RenderingValidationR1TargetAlbedo")) ||
+            !createTexture(R1TextureIndex::BackgroundAlbedo,
+                           R1BlackAlbedo,
+                           TEXT("RenderingValidationR1BackgroundAlbedo")) ||
+            !createTexture(R1TextureIndex::MetallicZero,
+                           R1ScalarZero,
+                           TEXT("RenderingValidationR1MetallicZero")) ||
+            !createTexture(R1TextureIndex::MetallicHalf,
+                           R1ScalarHalf,
+                           TEXT("RenderingValidationR1MetallicHalf")) ||
+            !createTexture(R1TextureIndex::Roughness,
+                           R1ScalarHalf,
+                           TEXT("RenderingValidationR1Roughness")) ||
+            !createTexture(R1TextureIndex::AmbientOcclusionOne,
+                           R1ScalarOne,
+                           TEXT("RenderingValidationR1AmbientOcclusionOne")) ||
+            !createTexture(R1TextureIndex::AmbientOcclusionZero,
+                           R1ScalarZero,
+                           TEXT("RenderingValidationR1AmbientOcclusionZero")) ||
+            !createTexture(R1TextureIndex::Height,
+                           R1ScalarHalf,
+                           TEXT("RenderingValidationR1Height")))
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+        const TextureHandle flatNormal = CreateR1FlatNormalTexture(*m_pResources);
+        if (!flatNormal.IsValid())
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+        m_R1Textures[static_cast<size_t>(R1TextureIndex::FlatNormal)] = flatNormal;
+        m_Lease.TrackTexture(flatNormal);
+
+        auto createTargetMaterial = [this](TextureHandle metallicTexture,
+                                            const TCHAR* debugName) -> MaterialHandle
+        {
+            Core::Rendering::MaterialCreateData materialData;
+            materialData.AlbedoTexture = m_R1Textures[static_cast<size_t>(R1TextureIndex::TargetAlbedo)];
+            materialData.NormalTexture = m_R1Textures[static_cast<size_t>(R1TextureIndex::FlatNormal)];
+            materialData.MetallicTexture = metallicTexture;
+            materialData.RoughnessTexture = m_R1Textures[static_cast<size_t>(R1TextureIndex::Roughness)];
+            materialData.AOTexture = m_R1Textures[static_cast<size_t>(R1TextureIndex::AmbientOcclusionOne)];
+            materialData.HeightTexture = m_R1Textures[static_cast<size_t>(R1TextureIndex::Height)];
+            materialData.HeightScale = 0.0f;
+            materialData.Blend = Core::Rendering::BlendMode::Translucent;
+            materialData.Shading = Core::Rendering::ShadingModel::DefaultLit;
+            materialData.bTwoSided = true;
+            materialData.bCastShadows = false;
+            materialData.DebugName = debugName;
+            return m_pResources->Materials().Create(materialData);
+        };
+        m_R1TargetMaterials[0] = createTargetMaterial(
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::MetallicZero)],
+            TEXT("RenderingValidationR1TargetM0"));
+        m_R1TargetMaterials[1] = createTargetMaterial(
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::MetallicHalf)],
+            TEXT("RenderingValidationR1TargetM05"));
+        if (!m_R1TargetMaterials[0].IsValid() || !m_R1TargetMaterials[1].IsValid())
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+        m_Lease.TrackMaterial(m_R1TargetMaterials[0]);
+        m_Lease.TrackMaterial(m_R1TargetMaterials[1]);
+
+        Core::Rendering::MaterialCreateData backgroundMaterialData;
+        backgroundMaterialData.AlbedoTexture =
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::BackgroundAlbedo)];
+        backgroundMaterialData.NormalTexture =
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::FlatNormal)];
+        backgroundMaterialData.MetallicTexture =
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::MetallicZero)];
+        backgroundMaterialData.RoughnessTexture =
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::Roughness)];
+        backgroundMaterialData.AOTexture =
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::AmbientOcclusionZero)];
+        backgroundMaterialData.HeightTexture =
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::Height)];
+        backgroundMaterialData.HeightScale = 0.0f;
+        backgroundMaterialData.EmissiveColor[0] = 1.0f;
+        backgroundMaterialData.EmissiveColor[1] = 1.0f;
+        backgroundMaterialData.EmissiveColor[2] = 1.0f;
+        backgroundMaterialData.EmissiveLuminanceNits = 7.2f;
+        backgroundMaterialData.Blend = Core::Rendering::BlendMode::Translucent;
+        backgroundMaterialData.Shading = Core::Rendering::ShadingModel::DefaultLit;
+        backgroundMaterialData.bTwoSided = true;
+        backgroundMaterialData.bCastShadows = false;
+        backgroundMaterialData.DebugName = TEXT("RenderingValidationR1Background");
+        m_R1BackgroundMaterial = m_pResources->Materials().Create(backgroundMaterialData);
+        if (!m_R1BackgroundMaterial.IsValid())
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+        m_Lease.TrackMaterial(m_R1BackgroundMaterial);
+
+        Core::Rendering::MaterialCreateData occluderMaterialData = backgroundMaterialData;
+        occluderMaterialData.AlbedoTexture =
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::TargetAlbedo)];
+        occluderMaterialData.AOTexture =
+            m_R1Textures[static_cast<size_t>(R1TextureIndex::AmbientOcclusionOne)];
+        occluderMaterialData.EmissiveColor[0] = 0.0f;
+        occluderMaterialData.EmissiveColor[1] = 0.0f;
+        occluderMaterialData.EmissiveColor[2] = 0.0f;
+        occluderMaterialData.EmissiveLuminanceNits = 0.0f;
+        occluderMaterialData.Blend = Core::Rendering::BlendMode::Opaque;
+        occluderMaterialData.bCastShadows = true;
+        occluderMaterialData.DebugName = TEXT("RenderingValidationR1ShadowOccluder");
+        m_R1OccluderMaterial = m_pResources->Materials().Create(occluderMaterialData);
+        if (!m_R1OccluderMaterial.IsValid())
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+        m_Lease.TrackMaterial(m_R1OccluderMaterial);
+
+        auto spawnMesh = [this](Core::Entity*& outEntity,
+                                Core::Component::MeshComponent*& outMesh) -> bool
+        {
+            outEntity = m_pWorld->SpawnEntity();
+            if (outEntity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(outEntity);
+            outMesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(outEntity);
+            return outMesh != nullptr;
+        };
+        if (!spawnMesh(m_pR1BackgroundEntity, m_pR1BackgroundMesh) ||
+            !spawnMesh(m_pR1OccluderEntity, m_pR1OccluderMesh))
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+
+        auto spawnLight = [this](bool bDirectional, Core::Entity*& outEntity) -> bool
+        {
+            outEntity = m_pWorld->SpawnEntity();
+            if (outEntity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(outEntity);
+            Core::Component::LightComponent* component = nullptr;
+            if (bDirectional)
+            {
+                component = m_pWorld->CreateComponent<Core::Component::DirectionalLightComponent>(outEntity);
+            }
+            else
+            {
+                component = m_pWorld->CreateComponent<Core::Component::PointLightComponent>(outEntity);
+            }
+            return component != nullptr;
+        };
+        if (bIndoor)
+        {
+            m_pR1PointLightEntity = m_pP4LightEntity;
+            if (m_pR1PointLightEntity == nullptr &&
+                !spawnLight(false, m_pR1PointLightEntity))
+            {
+                m_bR1PhysicalFixtureFailed = true;
+                return false;
+            }
+        }
+        else
+        {
+            m_pR1DirectionalLightEntity = m_pP4LightEntity;
+            if (m_pR1DirectionalLightEntity == nullptr &&
+                !spawnLight(true, m_pR1DirectionalLightEntity))
+            {
+                m_bR1PhysicalFixtureFailed = true;
+                return false;
+            }
+        }
+        if (m_pR1PointLightEntity == nullptr && !spawnLight(false, m_pR1PointLightEntity))
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+        if (m_pR1DirectionalLightEntity == nullptr &&
+            !spawnLight(true, m_pR1DirectionalLightEntity))
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+
+        auto configurePoint = [this]() -> bool
+        {
+            if (m_pR1PointLightEntity == nullptr)
+            {
+                return false;
+            }
+            m_pR1PointLightEntity->SetPosition(0.0f, 0.0f, 2.0f);
+            auto* point = m_pR1PointLightEntity->GetComponent<Core::Component::PointLightComponent>();
+            if (point == nullptr ||
+                !point->SetIntensityUnit(Core::Component::LightIntensityUnit::Candela))
+            {
+                return false;
+            }
+            point->SetLightColor(1.0f, 1.0f, 1.0f);
+            point->SetIntensity(100.0f);
+            point->SetRange(1000.0f);
+            point->SetAttenuationConstant(1.0f);
+            point->SetAttenuationLinear(0.0f);
+            point->SetAttenuationQuadratic(0.0f);
+            point->SetCastShadows(false);
+            point->SetLightVisible(true);
+            return true;
+        };
+        auto configureDirectional = [this, bObjectPresence]() -> bool
+        {
+            if (m_pR1DirectionalLightEntity == nullptr)
+            {
+                return false;
+            }
+            auto* directional =
+                m_pR1DirectionalLightEntity->GetComponent<Core::Component::DirectionalLightComponent>();
+            if (directional == nullptr ||
+                !directional->SetIntensityUnit(Core::Component::LightIntensityUnit::Lux))
+            {
+                return false;
+            }
+            if (bObjectPresence)
+            {
+                if (m_Layout.Lights.empty())
+                {
+                    return false;
+                }
+                const SceneLightSpec& mainLight = m_Layout.Lights[0];
+                directional->SetLightDirection(mainLight.PositionOrDirection[0],
+                                               mainLight.PositionOrDirection[1],
+                                               mainLight.PositionOrDirection[2]);
+                directional->SetLightColor(mainLight.Color[0], mainLight.Color[1], mainLight.Color[2]);
+                directional->SetIntensity(10000.0f);
+                directional->SetCastShadows(true);
+            }
+            else
+            {
+                directional->SetLightDirection(-0.8f, 0.0f, -0.6f);
+                directional->SetLightColor(1.0f, 1.0f, 1.0f);
+                directional->SetIntensity(100.0f);
+                directional->SetCastShadows(false);
+            }
+            directional->SetLightVisible(true);
+            return true;
+        };
+        if (!configurePoint() || !configureDirectional())
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+
+        const Math::Vector3 cameraForward(
+            m_R1PhysicalCamera.ForwardX,
+            m_R1PhysicalCamera.ForwardY,
+            m_R1PhysicalCamera.ForwardZ);
+        const Math::Vector3 cameraRight(
+            m_R1PhysicalCamera.RightX,
+            m_R1PhysicalCamera.RightY,
+            m_R1PhysicalCamera.RightZ);
+        const Math::Vector3 cameraUp(
+            m_R1PhysicalCamera.UpX,
+            m_R1PhysicalCamera.UpY,
+            m_R1PhysicalCamera.UpZ);
+        const Math::Quaternion screenRotation =
+            Math::QuaternionUtils::LookRotation(cameraForward * -1.0f);
+        Math::Quaternion targetRotation = screenRotation;
+        Math::Quaternion backgroundRotation = bObjectPresence
+                                                   ? screenRotation
+                                                   : Math::QuaternionUtils::LookRotation(cameraForward);
+        auto setScreenTransform = [](Core::Entity& entity,
+                                     const Math::Quaternion& rotation,
+                                     const double center[3],
+                                     float scaleX,
+                                     float scaleY,
+                                     float scaleZ)
+        {
+            entity.SetPosition(static_cast<float>(center[0]),
+                               static_cast<float>(center[1]),
+                               static_cast<float>(center[2]));
+            entity.SetRotation(rotation);
+            entity.SetScale(scaleX, scaleY, scaleZ);
+        };
+
+        double targetCenter[3] = {};
+        double backgroundCenter[3] = {};
+        float targetScaleX = 0.0f;
+        float targetScaleY = 0.0f;
+        float backgroundScaleX = 0.0f;
+        float backgroundScaleY = 0.0f;
+        float targetScaleZ = 1.0f;
+        float backgroundScaleZ = 1.0f;
+        if (bObjectPresence)
+        {
+            const double* target = bIndoor ? R1IndoorTargetCenter : R1OutdoorTargetCenter;
+            const double* background = bIndoor ? R1IndoorBackgroundCenter : R1OutdoorBackgroundCenter;
+            for (uint32_t axis = 0u; axis < 3u; ++axis)
+            {
+                targetCenter[axis] = target[axis];
+                backgroundCenter[axis] = background[axis];
+            }
+            if (bIndoor)
+            {
+                targetScaleX = 0.0015625f;
+                targetScaleY = 0.0015625f;
+                backgroundScaleX = 0.00296875f;
+                backgroundScaleY = 0.0015625f;
+            }
+            else
+            {
+                targetScaleX = 0.036084391824352f;
+                targetScaleY = 0.036084391824352f;
+                backgroundScaleX = 0.077130387524552f;
+                backgroundScaleY = 0.040594940802396f;
+            }
+        }
+        else
+        {
+            const double cameraPosition[3] = {
+                static_cast<double>(m_R1PhysicalCamera.PositionX),
+                static_cast<double>(m_R1PhysicalCamera.PositionY),
+                static_cast<double>(m_R1PhysicalCamera.PositionZ)};
+            const double forward[3] = {
+                static_cast<double>(m_R1PhysicalCamera.ForwardX),
+                static_cast<double>(m_R1PhysicalCamera.ForwardY),
+                static_cast<double>(m_R1PhysicalCamera.ForwardZ)};
+            for (uint32_t axis = 0u; axis < 3u; ++axis)
+            {
+                targetCenter[axis] = cameraPosition[axis] + forward[axis] * 4.0;
+                backgroundCenter[axis] = cameraPosition[axis] + forward[axis] * 4.25;
+            }
+            targetScaleX = 0.17320508075688773f;
+            targetScaleY = 0.17320508075688773f;
+            backgroundScaleX = 0.18403039830421827f;
+            backgroundScaleY = 0.18403039830421827f;
+        }
+        if (bObjectPresence)
+        {
+            auto buildCompensatedTransform = [&](float scaleX,
+                                                 float scaleY,
+                                                 Math::Quaternion& outRotation,
+                                                 float& outScaleY) -> bool
+            {
+                const double sx = static_cast<double>(scaleX);
+                const double height = static_cast<double>(scaleY);
+                const double uy = static_cast<double>(cameraUp.y);
+                const double denominator = 1.0 / (height * height) -
+                                           (1.0 - uy * uy) / (sx * sx);
+                if (!std::isfinite(denominator) || denominator <= 0.0)
+                {
+                    return false;
+                }
+                const double sy = uy / std::sqrt(denominator);
+                if (!std::isfinite(sy) || sy <= 0.0)
+                {
+                    return false;
+                }
+                Math::Vector3 basisX(
+                    cameraRight.x,
+                    cameraRight.y * static_cast<float>(sx / sy),
+                    cameraRight.z);
+                Math::Vector3 basisY(
+                    cameraUp.x * static_cast<float>(height / sx),
+                    cameraUp.y * static_cast<float>(height / sy),
+                    cameraUp.z * static_cast<float>(height / sx));
+                basisX = Math::VectorUtils::Normalize(basisX);
+                basisY = Math::VectorUtils::Normalize(basisY);
+                const Math::Vector3 basisZ =
+                    Math::VectorUtils::Normalize(Math::VectorUtils::Cross(basisX, basisY));
+                const Math::Matrix4x4 desiredRotation(
+                    basisX.x, basisX.y, basisX.z, 0.0f,
+                    basisY.x, basisY.y, basisY.z, 0.0f,
+                    basisZ.x, basisZ.y, basisZ.z, 0.0f,
+                    0.0f, 0.0f, 0.0f, 1.0f);
+                outRotation = Math::QuaternionUtils::FromRotationMatrix(desiredRotation);
+                outScaleY = static_cast<float>(sy);
+                return true;
+            };
+            if (!buildCompensatedTransform(targetScaleX, targetScaleY, targetRotation, targetScaleY) ||
+                !buildCompensatedTransform(backgroundScaleX,
+                                            backgroundScaleY,
+                                            backgroundRotation,
+                                            backgroundScaleY))
+            {
+                m_bR1PhysicalFixtureFailed = true;
+                return false;
+            }
+            targetScaleZ = targetScaleX;
+            backgroundScaleZ = backgroundScaleX;
+        }
+        setScreenTransform(*m_pR1TargetEntity,
+                           targetRotation,
+                           targetCenter,
+                           targetScaleX,
+                           targetScaleY,
+                           targetScaleZ);
+        setScreenTransform(*m_pR1BackgroundEntity,
+                           backgroundRotation,
+                           backgroundCenter,
+                           backgroundScaleX,
+                           backgroundScaleY,
+                           backgroundScaleZ);
+        m_pR1TargetMesh->SetMeshHandle(R1ScreenPlaneHandle);
+        m_pR1TargetMesh->SetMaterial(0u, m_R1TargetMaterials[0]);
+        m_pR1TargetMesh->SetCustomData(0u, 1.0f);
+        m_pR1TargetMesh->SetCustomData(1u, 1.0f);
+        m_pR1TargetMesh->SetCustomData(2u, 1.0f);
+        m_pR1TargetMesh->SetCustomData(3u, 0.5f);
+        m_pR1TargetMesh->SetCastShadow(false);
+        m_pR1TargetMesh->SetReceiveShadow(true);
+        m_pR1TargetMesh->SetVisible(true);
+
+        m_pR1BackgroundMesh->SetMeshHandle(R1ScreenPlaneHandle);
+        m_pR1BackgroundMesh->SetMaterial(0u, m_R1BackgroundMaterial);
+        m_pR1BackgroundMesh->SetCustomData(0u, 1.0f);
+        m_pR1BackgroundMesh->SetCustomData(1u, 1.0f);
+        m_pR1BackgroundMesh->SetCustomData(2u, 1.0f);
+        m_pR1BackgroundMesh->SetCustomData(3u, 1.0f);
+        m_pR1BackgroundMesh->SetCastShadow(false);
+        m_pR1BackgroundMesh->SetReceiveShadow(false);
+        m_pR1BackgroundMesh->SetVisible(true);
+
+        setScreenTransform(*m_pR1OccluderEntity,
+                           screenRotation,
+                           R1OccluderCenter,
+                           0.075f,
+                           0.075f,
+                           0.075f);
+        const Math::Quaternion occluderLookRotation =
+            Math::QuaternionUtils::LookRotation(Math::Vector3(-0.8f, 0.0f, -0.6f));
+        m_pR1OccluderEntity->SetRotation(Math::Quaternion(-occluderLookRotation.x,
+                                                            -occluderLookRotation.y,
+                                                            -occluderLookRotation.z,
+                                                            occluderLookRotation.w));
+        m_pR1OccluderMesh->SetMeshHandle(R1ScreenPlaneHandle);
+        m_pR1OccluderMesh->SetMaterial(0u, m_R1OccluderMaterial);
+        m_pR1OccluderMesh->SetCastShadow(true);
+        m_pR1OccluderMesh->SetReceiveShadow(false);
+        m_pR1OccluderMesh->SetVisible(false);
+
+        if (!bObjectPresence)
+        {
+            for (Core::Entity* entity : m_Objects)
+            {
+                if (entity == nullptr || entity == m_pR1TargetEntity ||
+                    entity == m_pR1BackgroundEntity || entity == m_pR1OccluderEntity ||
+                    entity == m_pR1PointLightEntity || entity == m_pR1DirectionalLightEntity)
+                {
+                    continue;
+                }
+                if (auto* mesh = entity->GetComponent<Core::Component::MeshComponent>())
+                {
+                    mesh->SetVisible(false);
+                }
+            }
+        }
+        m_pR1PointLightEntity->SetActive(bObjectPresence && bIndoor);
+        m_pR1DirectionalLightEntity->SetActive(bObjectPresence && !bIndoor);
+        if (!ValidateR1PhysicalFixture(bObjectPresence))
+        {
+            m_bR1PhysicalFixtureFailed = true;
+            return false;
+        }
+        m_bR1ObjectPresence = bObjectPresence;
+        m_bR1PhysicalFixturePrepared = true;
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::ValidateR1PhysicalFixture(bool bObjectPresence) const
+    {
+        if (m_R1ScreenPlaneHandle != R1ScreenPlaneHandle ||
+            m_pR1TargetEntity == nullptr || m_pR1BackgroundEntity == nullptr ||
+            m_pR1OccluderEntity == nullptr || m_pR1TargetMesh == nullptr ||
+            m_pR1BackgroundMesh == nullptr || m_pR1OccluderMesh == nullptr ||
+            !m_R1TargetMaterials[0].IsValid() || !m_R1TargetMaterials[1].IsValid() ||
+            !m_R1BackgroundMaterial.IsValid() || !m_R1OccluderMaterial.IsValid() ||
+            m_R1TargetMaterials[0] == m_R1TargetMaterials[1] ||
+            m_R1TargetMaterials[0] == m_R1BackgroundMaterial ||
+            m_R1TargetMaterials[1] == m_R1BackgroundMaterial)
+        {
+            return false;
+        }
+        const double expectedMinX = bObjectPresence ? 18.0 : 80.0;
+        const double expectedMaxX = bObjectPresence ? 58.0 : 176.0;
+        const double expectedBackgroundMinX = bObjectPresence ? 18.0 : 80.0;
+        const double expectedBackgroundMaxX = bObjectPresence ? 94.0 : 176.0;
+        if (!ValidateR1ProjectedEdges(*m_pR1TargetEntity,
+                                      m_R1PhysicalCamera,
+                                      expectedMinX,
+                                      expectedMaxX,
+                                      bObjectPresence ? 108.0 : 80.0,
+                                      bObjectPresence ? 148.0 : 176.0) ||
+            !ValidateR1ProjectedEdges(*m_pR1BackgroundEntity,
+                                       m_R1PhysicalCamera,
+                                       expectedBackgroundMinX,
+                                       expectedBackgroundMaxX,
+                                       bObjectPresence ? 108.0 : 80.0,
+                                       bObjectPresence ? 148.0 : 176.0))
+        {
+            return false;
+        }
+        if (!bObjectPresence && !ValidateR1ShadowOccluder(*m_pR1OccluderEntity,
+                                                           m_R1PhysicalCamera))
+        {
+            return false;
+        }
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::ApplyTransparentPhysicalLightingRow(uint32_t rowIndex) const
+    {
+        if (rowIndex >= TransparentPhysicalLightingRowCount ||
+            !EnsureR1PhysicalFixture(false))
+        {
+            return false;
+        }
+        const bool bMetallicHalf = rowIndex == 2u || rowIndex == 3u ||
+                                   rowIndex == 8u || rowIndex == 9u;
+        m_pR1TargetMesh->SetMaterial(0u, m_R1TargetMaterials[bMetallicHalf ? 1u : 0u]);
+        m_pR1TargetMesh->SetVisible(true);
+        m_pR1BackgroundMesh->SetVisible(true);
+        m_pR1OccluderMesh->SetVisible(rowIndex == 5u);
+        m_pR1PointLightEntity->SetActive(rowIndex == 1u || rowIndex == 3u);
+        m_pR1DirectionalLightEntity->SetActive(rowIndex == 4u || rowIndex == 5u);
+        if (auto* directional =
+                m_pR1DirectionalLightEntity->GetComponent<Core::Component::DirectionalLightComponent>())
+        {
+            directional->SetCastShadows(rowIndex == 5u);
+        }
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::ApplyTransparentPhysicalLightingObjectPresence() const
+    {
+        if (!EnsureR1PhysicalFixture(true))
+        {
+            return false;
+        }
+        m_pR1TargetMesh->SetMaterial(0u, m_R1TargetMaterials[0]);
+        m_pR1TargetMesh->SetVisible(true);
+        m_pR1BackgroundMesh->SetVisible(true);
+        m_pR1OccluderMesh->SetVisible(false);
+        const bool bIndoor = m_SceneKind == SceneKind::Indoor;
+        m_pR1PointLightEntity->SetActive(bIndoor);
+        m_pR1DirectionalLightEntity->SetActive(!bIndoor);
+        return true;
+    }
+
     const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetCamera() const
     {
-        return m_Layout.Camera;
+        return m_bR1PhysicalFixturePrepared ? m_R1PhysicalCamera : m_Layout.Camera;
     }
 
     uint64_t RenderingValidationSceneFixture::GetObservedFixedStepCount() const

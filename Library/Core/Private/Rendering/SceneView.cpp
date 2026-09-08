@@ -570,6 +570,15 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::Render(ViewRenderContext &context)
     {
+        const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
+        const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
+        context.PhysicalLighting.Begin(context.FrameNumber, viewId, viewportId);
+        struct PhysicalLightingScope final
+        {
+            ViewRenderContext& Context;
+            ~PhysicalLightingScope() { Context.PhysicalLighting.Invalidate(); }
+        } physicalLightingScope{context};
+
         if (!m_bEnabled || !m_bInitialized)
         {
             return;

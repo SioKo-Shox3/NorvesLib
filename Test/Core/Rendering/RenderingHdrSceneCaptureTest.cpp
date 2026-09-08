@@ -396,6 +396,15 @@ namespace
         double ProductionSobolMaxRelative[3] = {};
     };
 
+    struct P5DfgOracle
+    {
+        P4DfgValue X254Y127;
+        P4DfgValue X254Y128;
+        P4DfgValue X255Y127;
+        P4DfgValue X255Y128;
+        bool bValid = false;
+    };
+
     struct P4RoughnessOracle
     {
         P4DfgValue Values[5] = {};
@@ -849,6 +858,57 @@ namespace
         return true;
     }
 
+    bool BuildP5DfgOracle(P5DfgOracle& outOracle)
+    {
+        outOracle = {};
+        if (!ValidateIeee754Binary16RneTable())
+        {
+            return false;
+        }
+        Core::Container::VariableArray<P4SamplePair> samples;
+        if (!BuildP4HammersleySamples(P4DfgProductionSampleCount, samples))
+        {
+            return false;
+        }
+        const double nDotV254 = 254.5 / static_cast<double>(P4DfgTextureSize);
+        const double nDotV255 = 255.5 / static_cast<double>(P4DfgTextureSize);
+        const double roughness127 = 127.5 / static_cast<double>(P4DfgTextureSize);
+        const double roughness128 = 128.5 / static_cast<double>(P4DfgTextureSize);
+        const P4DfgValue raw254Y127 = IntegrateP4Dfg(nDotV254, roughness127, samples);
+        const P4DfgValue raw254Y128 = IntegrateP4Dfg(nDotV254, roughness128, samples);
+        const P4DfgValue raw255Y127 = IntegrateP4Dfg(nDotV255, roughness127, samples);
+        const P4DfgValue raw255Y128 = IntegrateP4Dfg(nDotV255, roughness128, samples);
+        const P4DfgValue rawMid = IntegrateP4Dfg(nDotV255, 0.5, samples);
+        const auto encodeStoredHalf = [](double value) -> double
+        {
+            return static_cast<double>(DecodeIeee754Binary16(
+                EncodeIeee754Binary16Rne(static_cast<float>(value))));
+        };
+        outOracle.X254Y127 = {
+            encodeStoredHalf(raw254Y127.A), encodeStoredHalf(raw254Y127.B)};
+        outOracle.X254Y128 = {
+            encodeStoredHalf(raw254Y128.A), encodeStoredHalf(raw254Y128.B)};
+        outOracle.X255Y127 = {
+            encodeStoredHalf(raw255Y127.A), encodeStoredHalf(raw255Y127.B)};
+        outOracle.X255Y128 = {
+            encodeStoredHalf(raw255Y128.A), encodeStoredHalf(raw255Y128.B)};
+        const P4DfgValue sampled = {
+            (outOracle.X255Y127.A + outOracle.X255Y128.A) * 0.5,
+            (outOracle.X255Y127.B + outOracle.X255Y128.B) * 0.5};
+        const P4DfgValue fixedPreflight = {
+            encodeStoredHalf(rawMid.A), encodeStoredHalf(rawMid.B)};
+        if (!std::isfinite(sampled.A) || !std::isfinite(sampled.B) ||
+            std::abs(fixedPreflight.A - 0.89453125) > 1.0e-12 ||
+            std::abs(fixedPreflight.B - 0.0000262856483459473) > 1.0e-18 ||
+            std::abs(sampled.A - fixedPreflight.A) > 1.0e-6 ||
+            std::abs(sampled.B - fixedPreflight.B) > 1.0e-7)
+        {
+            return false;
+        }
+        outOracle.bValid = true;
+        return true;
+    }
+
     bool BuildP4RoughnessOracle(P4RoughnessOracle& outOracle)
     {
         constexpr double roughnessQueries[5] = {0.05, 0.25, 0.50, 0.75, 1.00};
@@ -1188,6 +1248,26 @@ namespace
     class HdrHandler final : public RenderingValidationApplicationHandler
     {
     public:
+        enum class TransparentPhysicalStage : uint8_t
+        {
+            DirectM0Off,
+            DirectM0On,
+            DirectM05Off,
+            DirectM05On,
+            ShadowUnshadowed,
+            Shadowed,
+            IblM0Off,
+            IblM0On,
+            IblM05Off,
+            IblM05On,
+            Complete
+        };
+
+        bool m_bTransparentPhysicalHasFrameNumber = false;
+        uint64_t m_TransparentPhysicalLastFrameNumber = 0u;
+        bool m_bTransparentPhysicalHasStageToken = false;
+        uint64_t m_TransparentPhysicalLastStageToken = 0u;
+
         enum class KnownCdStage : uint8_t
         {
             PureLambertA,
@@ -1229,6 +1309,12 @@ namespace
                 LOG_ERROR("P4 scenario は SceneColor capture と組み合わせてください");
                 return false;
             }
+            if (m_bTransparentPhysicalLightingScenario &&
+                GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::SceneColor)
+            {
+                LOG_ERROR("transparent-physical-lighting は SceneColor capture と組み合わせてください");
+                return false;
+            }
             m_R1CaptureStage = R1CaptureStage::BackBuffer;
             m_bR1HasFrameNumber = false;
             m_R1LastFrameNumber = 0u;
@@ -1256,6 +1342,22 @@ namespace
             m_P4FixtureMeshCount = 0u;
             m_P4FixtureTextureCount = 0u;
             m_P4FixtureMaterialCount = 0u;
+            m_TransparentPhysicalStage = TransparentPhysicalStage::DirectM0Off;
+            m_bTransparentPhysicalHasFrameNumber = false;
+            m_TransparentPhysicalLastFrameNumber = 0u;
+            m_bTransparentPhysicalHasStageToken = false;
+            m_TransparentPhysicalLastStageToken = 0u;
+            m_bTransparentPhysicalStageApplyFailed = false;
+            m_bTransparentPhysicalRowMarkerPrinted = false;
+            m_bTransparentPhysicalHasUnshadowedValue = false;
+            m_TransparentPhysicalDfgOracle = {};
+            m_bTransparentPhysicalDfgOracleValid = false;
+            if (m_bTransparentPhysicalLightingScenario &&
+                !ValidateTransparentPhysicalStageContract())
+            {
+                LOG_ERROR("P5 transparent physical lighting stage contract is invalid");
+                return false;
+            }
             if (m_bKnownCdScenario && !ValidateKnownCdScenarioContract())
             {
                 LOG_ERROR("known-cd-lambert test-local scenario contract is invalid");
@@ -1269,6 +1371,39 @@ namespace
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_bTransparentPhysicalLightingScenario)
+            {
+                if (!BuildP5DfgOracle(m_TransparentPhysicalDfgOracle))
+                {
+                    LOG_ERROR("P5 independent DFG clamp/bilinear oracle preflight failed");
+                    return false;
+                }
+                m_bTransparentPhysicalDfgOracleValid = true;
+                const double dfgA = (m_TransparentPhysicalDfgOracle.X255Y127.A +
+                                     m_TransparentPhysicalDfgOracle.X255Y128.A) * 0.5;
+                const double dfgB = (m_TransparentPhysicalDfgOracle.X255Y127.B +
+                                     m_TransparentPhysicalDfgOracle.X255Y128.B) * 0.5;
+                std::cout << std::fixed << std::setprecision(15)
+                          << "P5 DFG preflight: n_dot_v_clamp=0.998046875000000"
+                          << " texture_texels=(254,255)x(127,128)"
+                          << " A=0.894531250000000"
+                          << " B=0.0000262856483459473"
+                          << " Ess=0.894557535648346"
+                          << " sampled_A=" << dfgA
+                          << " sampled_B=" << dfgB
+                          << " samples=4096 rne=RG16F clamp_bilinear=1\n"
+                          << std::setprecision(6);
+                if (!GetFixture().ApplyTransparentPhysicalLightingRow(0u))
+                {
+                    LOG_ERROR("P5 transparent physical lighting fixture first row was rejected");
+                    return false;
+                }
+                std::cout << "P5 transparent fixture passed: rows=10 camera=perspective"
+                          << " target_materials=2 background_material=distinct"
+                          << " target_object_index=2 background_object_index>=3"
+                          << " target_alpha=0.5 background_alpha=1 back_to_front=background_then_target\n";
+                return true;
             }
             if (m_bP4Scenario)
             {
@@ -1420,7 +1555,7 @@ namespace
             }
             if (argument == TEXT("--r1-scenario=known-cd-lambert"))
             {
-                if (m_bKnownCdScenario || m_bR1Scenario)
+                if (m_bKnownCdScenario || m_bR1Scenario || m_bTransparentPhysicalLightingScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1428,9 +1563,21 @@ namespace
                 m_bKnownCdScenario = true;
                 return true;
             }
+            if (argument == TEXT("--r1-scenario=transparent-physical-lighting"))
+            {
+                if (m_bTransparentPhysicalLightingScenario || m_bP4Scenario ||
+                    m_bKnownCdScenario || m_bR1Scenario)
+                {
+                    outFailureReason = TEXT("duplicate r1 scenario");
+                    return false;
+                }
+                m_bTransparentPhysicalLightingScenario = true;
+                return true;
+            }
             if (argument == TEXT("--r1-scenario=ibl-prefilter-nonconstant"))
             {
-                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
+                    m_bTransparentPhysicalLightingScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1441,7 +1588,8 @@ namespace
             }
             if (argument == TEXT("--r1-scenario=dfg-lut"))
             {
-                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
+                    m_bTransparentPhysicalLightingScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1452,7 +1600,8 @@ namespace
             }
             if (argument == TEXT("--r1-scenario=ibl-roughness-sweep"))
             {
-                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
+                    m_bTransparentPhysicalLightingScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1463,7 +1612,8 @@ namespace
             }
             if (argument == TEXT("--r1-scenario=white-furnace"))
             {
-                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
+                    m_bTransparentPhysicalLightingScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1474,7 +1624,8 @@ namespace
             }
             if (argument == TEXT("--r1-scenario=direct-conductor-endpoint"))
             {
-                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario)
+                if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
+                    m_bTransparentPhysicalLightingScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1490,6 +1641,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_bTransparentPhysicalLightingScenario)
+            {
+                return EvaluateTransparentPhysicalLightingFrame(frame, reason);
+            }
             if (m_bKnownCdScenario)
             {
                 return EvaluateKnownCdFrame(frame, reason);
@@ -1582,6 +1737,51 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_bTransparentPhysicalLightingScenario)
+            {
+                if (m_bTransparentPhysicalStageApplyFailed ||
+                    m_TransparentPhysicalStage == TransparentPhysicalStage::Complete)
+                {
+                    return;
+                }
+                Core::Rendering::CameraProxy camera = GetFixture().GetCamera();
+                camera.Aperture = 4.0f;
+                camera.ShutterSpeed = 1.0f / 60.0f;
+                camera.ISO = 100.0f;
+                camera.ExposureCompensation = 4.0f;
+                const double ev100 = std::log2(
+                    (static_cast<double>(camera.Aperture) *
+                     static_cast<double>(camera.Aperture) /
+                     static_cast<double>(camera.ShutterSpeed)) *
+                    (100.0 / static_cast<double>(camera.ISO)));
+                const double exposure = std::exp2(
+                    static_cast<double>(camera.ExposureCompensation) - ev100) / 1.2;
+                camera.EV100 = static_cast<float>(ev100);
+                camera.Exposure = static_cast<float>(exposure);
+                camera.PreExposure = 1.0f / 72.0f;
+                camera.InvPreExposure = 72.0f;
+                if (!std::isfinite(camera.Exposure) || camera.Exposure <= 0.0f ||
+                    camera.PreExposure != 1.0f / 72.0f || camera.InvPreExposure != 72.0f)
+                {
+                    m_bTransparentPhysicalStageApplyFailed = true;
+                    return;
+                }
+                renderWorld.SetMainCamera(camera);
+                const bool bIblOn = m_TransparentPhysicalStage == TransparentPhysicalStage::IblM0On ||
+                                    m_TransparentPhysicalStage == TransparentPhysicalStage::IblM05On;
+                renderWorld.SetDebugViewModeAll(
+                    static_cast<Core::Rendering::DebugViewMode>(bIblOn ? 252u : 254u));
+                if (!m_bTransparentPhysicalRowMarkerPrinted)
+                {
+                    std::cout << "P5 transparent stage applied: row="
+                              << static_cast<unsigned int>(m_TransparentPhysicalStage)
+                              << " mode=" << (bIblOn ? 252u : 254u)
+                              << " pre_exposure=0.013888889 inv_pre_exposure=72"
+                              << " aperture=4 shutter=0.016666667 iso=100 compensation=4\n";
+                    m_bTransparentPhysicalRowMarkerPrinted = true;
+                }
+                return;
+            }
             if (m_bP4Scenario)
             {
                 if (!m_bP4FixtureSnapshotAvailable ||
@@ -1684,6 +1884,24 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_bTransparentPhysicalLightingScenario)
+            {
+                if (m_TransparentPhysicalStage == TransparentPhysicalStage::Complete)
+                {
+                    return;
+                }
+                const uint32_t nextRow =
+                    static_cast<uint32_t>(m_TransparentPhysicalStage) + 1u;
+                m_TransparentPhysicalStage = static_cast<TransparentPhysicalStage>(nextRow);
+                m_bTransparentPhysicalRowMarkerPrinted = false;
+                if (m_TransparentPhysicalStage != TransparentPhysicalStage::Complete &&
+                    !GetFixture().ApplyTransparentPhysicalLightingRow(nextRow))
+                {
+                    LOG_ERROR("P5 transparent physical lighting fixture row was rejected: row=%u", nextRow);
+                    m_bTransparentPhysicalStageApplyFailed = true;
+                }
+                return;
+            }
             if (m_bP4Scenario)
             {
                 if (m_P4Substage != P4CaptureSubstage::Material)
@@ -1723,6 +1941,18 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_bTransparentPhysicalLightingScenario)
+            {
+                if (m_TransparentPhysicalStage == TransparentPhysicalStage::Complete)
+                {
+                    return false;
+                }
+                outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::SceneColor;
+                LOG_INFO("P5 transparent follow-up requested: next_row=%u after frame=%llu",
+                         static_cast<unsigned int>(m_TransparentPhysicalStage),
+                         static_cast<unsigned long long>(frame.FrameNumber));
+                return true;
+            }
             if (m_bKnownCdScenario)
             {
                 if (m_KnownCdStage == KnownCdStage::Complete)
@@ -1785,6 +2015,651 @@ namespace
         }
 
     private:
+        static bool ValidateTransparentPhysicalStageContract()
+        {
+            constexpr const char* expectedNames[TransparentPhysicalLightingRowCount] = {
+                "DirectM0Off",
+                "DirectM0On",
+                "DirectM05Off",
+                "DirectM05On",
+                "ShadowUnshadowed",
+                "Shadowed",
+                "IblM0Off",
+                "IblM0On",
+                "IblM05Off",
+                "IblM05On"};
+            if (static_cast<uint32_t>(TransparentPhysicalStage::Complete) !=
+                TransparentPhysicalLightingRowCount)
+            {
+                return false;
+            }
+            for (uint32_t index = 0u; index < TransparentPhysicalLightingRowCount; ++index)
+            {
+                if (std::strcmp(GetTransparentPhysicalStageName(
+                                    static_cast<TransparentPhysicalStage>(index)),
+                                expectedNames[index]) != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        static const char* GetTransparentPhysicalStageName(TransparentPhysicalStage stage)
+        {
+            switch (stage)
+            {
+            case TransparentPhysicalStage::DirectM0Off:
+                return "DirectM0Off";
+            case TransparentPhysicalStage::DirectM0On:
+                return "DirectM0On";
+            case TransparentPhysicalStage::DirectM05Off:
+                return "DirectM05Off";
+            case TransparentPhysicalStage::DirectM05On:
+                return "DirectM05On";
+            case TransparentPhysicalStage::ShadowUnshadowed:
+                return "ShadowUnshadowed";
+            case TransparentPhysicalStage::Shadowed:
+                return "Shadowed";
+            case TransparentPhysicalStage::IblM0Off:
+                return "IblM0Off";
+            case TransparentPhysicalStage::IblM0On:
+                return "IblM0On";
+            case TransparentPhysicalStage::IblM05Off:
+                return "IblM05Off";
+            case TransparentPhysicalStage::IblM05On:
+                return "IblM05On";
+            case TransparentPhysicalStage::Complete:
+            default:
+                return "Complete";
+            }
+        }
+
+        static bool IsTransparentPhysicalOn(TransparentPhysicalStage stage)
+        {
+            return stage == TransparentPhysicalStage::DirectM0On ||
+                   stage == TransparentPhysicalStage::DirectM05On ||
+                   stage == TransparentPhysicalStage::IblM0On ||
+                   stage == TransparentPhysicalStage::IblM05On ||
+                   stage == TransparentPhysicalStage::ShadowUnshadowed ||
+                   stage == TransparentPhysicalStage::Shadowed;
+        }
+
+        static bool IsTransparentPhysicalIbl(TransparentPhysicalStage stage)
+        {
+            return stage == TransparentPhysicalStage::IblM0Off ||
+                   stage == TransparentPhysicalStage::IblM0On ||
+                   stage == TransparentPhysicalStage::IblM05Off ||
+                   stage == TransparentPhysicalStage::IblM05On;
+        }
+
+        static bool IsTransparentPhysicalMetallicHalf(TransparentPhysicalStage stage)
+        {
+            return stage == TransparentPhysicalStage::DirectM05Off ||
+                   stage == TransparentPhysicalStage::DirectM05On ||
+                   stage == TransparentPhysicalStage::IblM05Off ||
+                   stage == TransparentPhysicalStage::IblM05On;
+        }
+
+        static double TransparentPhysicalDot(const double left[3], const double right[3])
+        {
+            return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+        }
+
+        static bool ComputeTransparentPhysicalPixel(uint32_t x,
+                                                    uint32_t y,
+                                                    double outPosition[3],
+                                                    double outViewDirection[3],
+                                                    double& outNdotV)
+        {
+            constexpr double cameraPosition[3] = {0.0, 0.0, 4.0};
+            constexpr double depth = 4.0;
+            constexpr double halfAngleTangent = 0.577350269189625764509148780501957456;
+            const double pixelCenterX = static_cast<double>(x) + 0.5;
+            const double pixelCenterY = static_cast<double>(y) + 0.5;
+            const double right = (2.0 * pixelCenterX / 256.0 - 1.0) *
+                                 depth * halfAngleTangent;
+            const double up = (1.0 - 2.0 * pixelCenterY / 256.0) *
+                              depth * halfAngleTangent;
+            outPosition[0] = right;
+            outPosition[1] = up;
+            outPosition[2] = 0.0;
+            const double toCamera[3] = {
+                cameraPosition[0] - outPosition[0],
+                cameraPosition[1] - outPosition[1],
+                cameraPosition[2] - outPosition[2]};
+            const double viewLength = std::sqrt(TransparentPhysicalDot(toCamera, toCamera));
+            if (!std::isfinite(viewLength) || viewLength <= 0.0)
+            {
+                return false;
+            }
+            outViewDirection[0] = toCamera[0] / viewLength;
+            outViewDirection[1] = toCamera[1] / viewLength;
+            outViewDirection[2] = toCamera[2] / viewLength;
+            outNdotV = std::clamp(outViewDirection[2], 0.0, 1.0);
+            return std::isfinite(outNdotV);
+        }
+
+        static bool SampleTransparentPhysicalDfg(const P5DfgOracle& oracle,
+                                                 double nDotV,
+                                                 double roughness,
+                                                 P4DfgValue& outValue)
+        {
+            if (!oracle.bValid || !std::isfinite(nDotV) || !std::isfinite(roughness))
+            {
+                return false;
+            }
+            const double coordinateX = std::clamp(
+                nDotV,
+                0.5 / static_cast<double>(P4DfgTextureSize),
+                255.5 / static_cast<double>(P4DfgTextureSize));
+            const double coordinateY = std::clamp(
+                roughness,
+                0.5 / static_cast<double>(P4DfgTextureSize),
+                255.5 / static_cast<double>(P4DfgTextureSize));
+            const double positionX = coordinateX * static_cast<double>(P4DfgTextureSize) - 0.5;
+            const double positionY = coordinateY * static_cast<double>(P4DfgTextureSize) - 0.5;
+            const uint32_t x0 = static_cast<uint32_t>(std::floor(positionX));
+            const uint32_t y0 = static_cast<uint32_t>(std::floor(positionY));
+            const uint32_t x1 = std::min(x0 + 1u, P4DfgTextureSize - 1u);
+            const uint32_t y1 = std::min(y0 + 1u, P4DfgTextureSize - 1u);
+            if (x0 < 254u || x0 > 255u || x1 < 254u || x1 > 255u ||
+                (y0 != 127u && y0 != 128u) || (y1 != 127u && y1 != 128u))
+            {
+                return false;
+            }
+            const auto valueAt = [&oracle](uint32_t x, uint32_t y) -> const P4DfgValue&
+            {
+                if (x == 254u)
+                {
+                    return y == 127u ? oracle.X254Y127 : oracle.X254Y128;
+                }
+                return y == 127u ? oracle.X255Y127 : oracle.X255Y128;
+            };
+            const double wy = positionY - std::floor(positionY);
+            const double wx = positionX - std::floor(positionX);
+            const P4DfgValue& v00 = valueAt(x0, y0);
+            const P4DfgValue& v10 = valueAt(x1, y0);
+            const P4DfgValue& v01 = valueAt(x0, y1);
+            const P4DfgValue& v11 = valueAt(x1, y1);
+            const double topA = v00.A + (v10.A - v00.A) * wx;
+            const double bottomA = v01.A + (v11.A - v01.A) * wx;
+            const double topB = v00.B + (v10.B - v00.B) * wx;
+            const double bottomB = v01.B + (v11.B - v01.B) * wx;
+            outValue.A = topA + (bottomA - topA) * wy;
+            outValue.B = topB + (bottomB - topB) * wy;
+            return std::isfinite(outValue.A) && std::isfinite(outValue.B);
+        }
+
+        static bool ComputeTransparentPhysicalDirectSource(
+            TransparentPhysicalStage stage,
+            uint32_t x,
+            uint32_t y,
+            const P5DfgOracle& dfgOracle,
+            double outRgb[3])
+        {
+            constexpr double pi = 3.141592653589793238462643383279502884;
+            constexpr double baseColor[3] = {0.5, 0.25, 0.125};
+            constexpr double roughness = 0.5;
+            double position[3] = {};
+            double viewDirection[3] = {};
+            double nDotV = 0.0;
+            P4DfgValue dfg;
+            if (!ComputeTransparentPhysicalPixel(x, y, position, viewDirection, nDotV) ||
+                !SampleTransparentPhysicalDfg(dfgOracle, nDotV, roughness, dfg))
+            {
+                return false;
+            }
+            const bool bMetallicHalf = IsTransparentPhysicalMetallicHalf(stage);
+            const bool bDirectional = stage == TransparentPhysicalStage::ShadowUnshadowed ||
+                                      stage == TransparentPhysicalStage::Shadowed;
+            double lightDirection[3] = {};
+            double radiance = 0.0;
+            if (bDirectional)
+            {
+                lightDirection[0] = 0.8;
+                lightDirection[1] = 0.0;
+                lightDirection[2] = 0.6;
+                radiance = 100.0;
+            }
+            else
+            {
+                const double toLight[3] = {
+                    -position[0], -position[1], 2.0 - position[2]};
+                const double distance = std::sqrt(TransparentPhysicalDot(toLight, toLight));
+                if (!std::isfinite(distance) || distance <= 0.0)
+                {
+                    return false;
+                }
+                lightDirection[0] = toLight[0] / distance;
+                lightDirection[1] = toLight[1] / distance;
+                lightDirection[2] = toLight[2] / distance;
+                const double rangeWindow = std::pow(
+                    std::max(1.0 - std::pow(distance / 1000.0, 4.0), 0.0), 2.0);
+                radiance = 100.0 / std::max(distance * distance, 0.0001) * rangeWindow;
+            }
+            const double nDotL = std::max(lightDirection[2], 0.0);
+            if (nDotL <= 0.0)
+            {
+                outRgb[0] = 0.0;
+                outRgb[1] = 0.0;
+                outRgb[2] = 0.0;
+                return true;
+            }
+            double halfVector[3] = {
+                viewDirection[0] + lightDirection[0],
+                viewDirection[1] + lightDirection[1],
+                viewDirection[2] + lightDirection[2]};
+            const double halfLength = std::sqrt(TransparentPhysicalDot(halfVector, halfVector));
+            if (!std::isfinite(halfLength) || halfLength <= 0.0)
+            {
+                return false;
+            }
+            halfVector[0] /= halfLength;
+            halfVector[1] /= halfLength;
+            halfVector[2] /= halfLength;
+            const double nDotH = std::max(halfVector[2], 0.0);
+            const double viewDotH = std::max(TransparentPhysicalDot(viewDirection, halfVector), 0.0);
+            const double alpha = roughness * roughness;
+            const double alphaSquared = alpha * alpha;
+            const double distributionDenominator =
+                pi * std::pow(nDotH * nDotH * (alphaSquared - 1.0) + 1.0, 2.0);
+            const double distribution = alphaSquared /
+                                        std::max(distributionDenominator, 0.0001);
+            const double k = std::pow(roughness + 1.0, 2.0) / 8.0;
+            const double geometryView = nDotV / (nDotV * (1.0 - k) + k);
+            const double geometryLight = nDotL / (nDotL * (1.0 - k) + k);
+            const double specularTerm = distribution * geometryView * geometryLight /
+                                        (4.0 * nDotV * nDotL + 0.0001);
+            const double ess = std::max(dfg.A + dfg.B, 0.0001);
+            const double compensationD = 1.0 + 0.04 * (1.0 - ess) / ess;
+            const double dielectricFresnel = 0.04 + 0.96 *
+                                              std::pow(1.0 - viewDotH, 5.0);
+            const double metallic = bMetallicHalf ? 0.5 : 0.0;
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                const double conductorFresnel = baseColor[channel] +
+                    (1.0 - baseColor[channel]) * std::pow(1.0 - viewDotH, 5.0);
+                const double compensationC = 1.0 + baseColor[channel] *
+                    (1.0 - ess) / ess;
+                const double dielectric =
+                    (1.0 - dielectricFresnel) * baseColor[channel] / pi +
+                    specularTerm * dielectricFresnel * compensationD;
+                const double conductor = specularTerm * conductorFresnel * compensationC;
+                outRgb[channel] = ((1.0 - metallic) * dielectric + metallic * conductor) *
+                                  radiance * nDotL;
+            }
+            return true;
+        }
+
+        static bool ComputeTransparentPhysicalIblSource(
+            TransparentPhysicalStage stage,
+            uint32_t x,
+            uint32_t y,
+            const P5DfgOracle& dfgOracle,
+            double outRgb[3])
+        {
+            constexpr double baseColor[3] = {0.5, 0.25, 0.125};
+            constexpr double roughness = 0.5;
+            double position[3] = {};
+            double viewDirection[3] = {};
+            double nDotV = 0.0;
+            P4DfgValue dfg;
+            if (!ComputeTransparentPhysicalPixel(x, y, position, viewDirection, nDotV) ||
+                !SampleTransparentPhysicalDfg(dfgOracle, nDotV, roughness, dfg))
+            {
+                return false;
+            }
+            const double ess = std::max(dfg.A + dfg.B, 0.0001);
+            const double metallic = IsTransparentPhysicalMetallicHalf(stage) ? 0.5 : 0.0;
+            const double specularAo = std::clamp(
+                std::pow(nDotV + 1.0, std::exp2(-16.0 * roughness - 1.0)) - 1.0 + 1.0,
+                0.0,
+                1.0);
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                const double compensationD = 1.0 + 0.04 * (1.0 - ess) / ess;
+                const double compensationC = 1.0 + baseColor[channel] *
+                    (1.0 - ess) / ess;
+                const double ed = std::clamp(
+                    (0.04 * dfg.A + dfg.B) * compensationD, 0.0, 1.0);
+                const double ec = std::clamp(
+                    (baseColor[channel] * dfg.A + dfg.B) * compensationC, 0.0, 1.0);
+                const double diffuse = 100.0 * baseColor[channel] *
+                    (1.0 - metallic) * (1.0 - ed);
+                const double specular = 100.0 *
+                    ((1.0 - metallic) * ed + metallic * ec);
+                outRgb[channel] = diffuse + specular * specularAo;
+            }
+            return true;
+        }
+
+        static bool CheckTransparentPhysicalPixels(
+            const RgbaFloatImage& image,
+            TransparentPhysicalStage stage,
+            const P5DfgOracle& dfgOracle,
+            bool bCompareToOracle,
+            double& outMeanY,
+            double outMeanRelative[3],
+            double outMaximumRelative[3],
+            double outFixedSampleMaximumRelative[3],
+            Core::Container::String& reason)
+        {
+            double sums[3] = {};
+            double relativeSums[3] = {};
+            double maximumRelative[3] = {};
+            double fixedSampleMaximumRelative[3] = {};
+            uint32_t fixedSampleCount = 0u;
+            uint32_t pixelCount = 0u;
+            const bool bOn = IsTransparentPhysicalOn(stage);
+            for (uint32_t y = R1RoiMinY; y <= R1RoiMaxY; ++y)
+            {
+                for (uint32_t x = R1RoiMinX; x <= R1RoiMaxX; ++x)
+                {
+                    const bool bFixedSample =
+                        (x == 112u || x == 127u || x == 143u) &&
+                        (y == 112u || y == 127u || y == 143u);
+                    if (bFixedSample)
+                    {
+                        ++fixedSampleCount;
+                    }
+                    double expectedRgb[3] = {0.05, 0.05, 0.05};
+                    if (bCompareToOracle && bOn)
+                    {
+                        double sourceRgb[3] = {};
+                        const bool bSourceValid = IsTransparentPhysicalIbl(stage)
+                            ? ComputeTransparentPhysicalIblSource(stage, x, y, dfgOracle, sourceRgb)
+                            : ComputeTransparentPhysicalDirectSource(stage, x, y, dfgOracle, sourceRgb);
+                        if (!bSourceValid)
+                        {
+                            reason = TEXT("P5 transparent pixel oracle construction failed");
+                            return false;
+                        }
+                        for (uint32_t channel = 0u; channel < 3u; ++channel)
+                        {
+                            expectedRgb[channel] = 0.05 + 0.5 * sourceRgb[channel] / 72.0;
+                        }
+                    }
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    ++pixelCount;
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double actual = static_cast<double>(image.Values[offset + channel]);
+                        if (!std::isfinite(actual) || std::abs(actual) >= 65504.0)
+                        {
+                            reason = TEXT("P5 transparent ROI contains invalid data");
+                            return false;
+                        }
+                        sums[channel] += actual;
+                        if (bCompareToOracle)
+                        {
+                            const double relative = std::abs(actual - expectedRgb[channel]) /
+                                                    std::max(std::abs(expectedRgb[channel]), 0.01);
+                            if (!std::isfinite(relative))
+                            {
+                                reason = TEXT("P5 transparent ROI relative error is invalid");
+                                return false;
+                            }
+                            relativeSums[channel] += relative;
+                            maximumRelative[channel] = std::max(maximumRelative[channel], relative);
+                            if (bFixedSample)
+                            {
+                                fixedSampleMaximumRelative[channel] =
+                                    std::max(fixedSampleMaximumRelative[channel], relative);
+                            }
+                        }
+                    }
+                }
+            }
+            if (pixelCount != 1024u || fixedSampleCount != 9u)
+            {
+                reason = TEXT("P5 transparent ROI sample count is invalid");
+                return false;
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                outMeanRelative[channel] = bCompareToOracle
+                    ? relativeSums[channel] / static_cast<double>(pixelCount)
+                    : 0.0;
+                outMaximumRelative[channel] = bCompareToOracle ? maximumRelative[channel] : 0.0;
+                outFixedSampleMaximumRelative[channel] = bCompareToOracle
+                    ? fixedSampleMaximumRelative[channel]
+                    : 0.0;
+            }
+            const double meanRgb[3] = {
+                sums[0] / static_cast<double>(pixelCount),
+                sums[1] / static_cast<double>(pixelCount),
+                sums[2] / static_cast<double>(pixelCount)};
+            outMeanY = 0.2126 * meanRgb[0] + 0.7152 * meanRgb[1] + 0.0722 * meanRgb[2];
+            return true;
+        }
+
+        bool EvaluateTransparentPhysicalLightingFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (m_bTransparentPhysicalStageApplyFailed)
+            {
+                reason = TEXT("P5 transparent fixture row application failed");
+                return false;
+            }
+            if (frame.RequestId != GetLastAcceptedRequestId() ||
+                (m_bTransparentPhysicalHasFrameNumber &&
+                 frame.FrameNumber <= m_TransparentPhysicalLastFrameNumber) ||
+                (m_bTransparentPhysicalHasStageToken &&
+                 GetLastAcceptedRequestStageToken() <= m_TransparentPhysicalLastStageToken))
+            {
+                reason = TEXT("P5 transparent capture request, frame, or stage order is invalid");
+                return false;
+            }
+            m_TransparentPhysicalLastFrameNumber = frame.FrameNumber;
+            m_bTransparentPhysicalHasFrameNumber = true;
+            m_TransparentPhysicalLastStageToken = GetLastAcceptedRequestStageToken();
+            m_bTransparentPhysicalHasStageToken = true;
+            if (frame.Format != RHI::Format::R16G16B16A16_FLOAT ||
+                frame.Width != ValidationWidth || frame.Height != ValidationHeight)
+            {
+                reason = TEXT("P5 transparent capture format or dimensions are invalid");
+                return false;
+            }
+            RgbaFloatImage image;
+            if (DecodeCapturedRgba16Float(frame, image) != FloatImageStatus::Success ||
+                !IsFiniteAndWithinRgba16Range(image))
+            {
+                reason = TEXT("P5 transparent capture RGBA16F validation failed");
+                return false;
+            }
+
+            // Keep the fixed background-only ROI precondition visible in every row before delta/oracle checks.
+            constexpr uint32_t backgroundProbeMinX = 58u;
+            constexpr uint32_t backgroundProbeMaxX = 89u;
+            constexpr uint32_t backgroundProbeMinY = 112u;
+            constexpr uint32_t backgroundProbeMaxY = 143u;
+            double backgroundChannelSums[3] = {};
+            double backgroundMaximumRelative[3] = {};
+            size_t backgroundPixelCount = 0u;
+            size_t backgroundSampleCount = 0u;
+            for (uint32_t y = backgroundProbeMinY; y <= backgroundProbeMaxY; ++y)
+            {
+                for (uint32_t x = backgroundProbeMinX; x <= backgroundProbeMaxX; ++x)
+                {
+                    const size_t backgroundOffset =
+                        (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double preExposed = image.Values[backgroundOffset + channel];
+                        const double relative = std::abs(preExposed - 0.1) / 0.1;
+                        backgroundChannelSums[channel] += preExposed;
+                        backgroundMaximumRelative[channel] =
+                            std::max(backgroundMaximumRelative[channel], relative);
+                        ++backgroundSampleCount;
+                    }
+                    ++backgroundPixelCount;
+                }
+            }
+            std::cout << std::fixed << std::setprecision(9)
+                      << "P5 background precondition: row="
+                      << GetTransparentPhysicalStageName(m_TransparentPhysicalStage)
+                      << " samples=" << backgroundSampleCount
+                      << " pre_exposed_expected=0.100000000"
+                      << " mean=(" << backgroundChannelSums[0] / backgroundPixelCount
+                      << "," << backgroundChannelSums[1] / backgroundPixelCount
+                      << "," << backgroundChannelSums[2] / backgroundPixelCount << ")"
+                      << " max_rel=(" << backgroundMaximumRelative[0]
+                      << "," << backgroundMaximumRelative[1]
+                      << "," << backgroundMaximumRelative[2] << ")"
+                      << " roi=[58,89]x[112,143]\n" << std::setprecision(6);
+            if (backgroundPixelCount != 1024u || backgroundSampleCount != 3072u ||
+                backgroundMaximumRelative[0] > 0.01 ||
+                backgroundMaximumRelative[1] > 0.01 ||
+                backgroundMaximumRelative[2] > 0.01)
+            {
+                reason = TEXT("P5 background-only pre-exposed value is not 0.1");
+                return false;
+            }
+
+            const bool bOn = IsTransparentPhysicalOn(m_TransparentPhysicalStage);
+            double sourceRgb[3] = {};
+            if (bOn && !m_bTransparentPhysicalDfgOracleValid)
+            {
+                reason = TEXT("P5 transparent DFG oracle is unavailable");
+                return false;
+            }
+            if (bOn)
+            {
+                const bool bSourceValid = IsTransparentPhysicalIbl(m_TransparentPhysicalStage)
+                    ? ComputeTransparentPhysicalIblSource(m_TransparentPhysicalStage,
+                                                          R1AnchorX,
+                                                          R1AnchorY,
+                                                          m_TransparentPhysicalDfgOracle,
+                                                          sourceRgb)
+                    : ComputeTransparentPhysicalDirectSource(m_TransparentPhysicalStage,
+                                                              R1AnchorX,
+                                                              R1AnchorY,
+                                                              m_TransparentPhysicalDfgOracle,
+                                                              sourceRgb);
+                if (!bSourceValid)
+                {
+                    reason = TEXT("P5 transparent center oracle construction failed");
+                    return false;
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    if (!std::isfinite(sourceRgb[channel]) || sourceRgb[channel] < 0.01)
+                    {
+                        reason = TEXT("P5 transparent reference channel is below 0.01");
+                        return false;
+                    }
+                }
+            }
+            double rangeRelativeError = 0.0;
+            if (m_TransparentPhysicalStage == TransparentPhysicalStage::DirectM0Off ||
+                m_TransparentPhysicalStage == TransparentPhysicalStage::DirectM0On ||
+                m_TransparentPhysicalStage == TransparentPhysicalStage::DirectM05Off ||
+                m_TransparentPhysicalStage == TransparentPhysicalStage::DirectM05On)
+            {
+                const double distance = 2.0;
+                const double range = 1000.0;
+                const double productionAttenuation =
+                    1.0 / (distance * distance) *
+                    std::pow(std::max(1.0 - std::pow(distance / range, 4.0), 0.0), 2.0);
+                const double idealAttenuation = 1.0 / (distance * distance);
+                rangeRelativeError = std::abs(productionAttenuation - idealAttenuation) /
+                                      idealAttenuation;
+                if (!std::isfinite(rangeRelativeError) || rangeRelativeError > 1.0e-9)
+                {
+                    reason = TEXT("P5 direct range/inverse-square contract failed");
+                    return false;
+                }
+            }
+            double meanY = 0.0;
+            double meanRelative[3] = {};
+            double maximumRelative[3] = {};
+            double fixedSampleMaximumRelative[3] = {};
+            const bool bShadowed = m_TransparentPhysicalStage == TransparentPhysicalStage::Shadowed;
+            const bool bCompareToOracle = !bShadowed;
+            if (!CheckTransparentPhysicalPixels(image,
+                                                 m_TransparentPhysicalStage,
+                                                 m_TransparentPhysicalDfgOracle,
+                                                 bCompareToOracle,
+                                                 meanY,
+                                                 meanRelative,
+                                                 maximumRelative,
+                                                 fixedSampleMaximumRelative,
+                                                 reason))
+            {
+                return false;
+            }
+            const double sourceY = 0.2126 * sourceRgb[0] +
+                                   0.7152 * sourceRgb[1] +
+                                   0.0722 * sourceRgb[2];
+            const double expectedY = 0.05 + 0.5 * sourceY / 72.0;
+            const double predictedDelta = 0.5 * sourceY / 72.0;
+            const double measuredDelta = bOn ? std::abs(meanY - 0.05) : 0.0;
+            if (m_TransparentPhysicalStage == TransparentPhysicalStage::ShadowUnshadowed)
+            {
+                m_TransparentPhysicalUnshadowedMeanY = meanY;
+                m_bTransparentPhysicalHasUnshadowedValue = true;
+            }
+            double shadowRatio = 0.0;
+            if (bShadowed)
+            {
+                const double unshadowedContribution = std::max(
+                    m_TransparentPhysicalUnshadowedMeanY - 0.05, 0.0);
+                const double shadowedContribution = std::max(meanY - 0.05, 0.0);
+                shadowRatio = unshadowedContribution > 0.0
+                    ? shadowedContribution / unshadowedContribution
+                    : 1.0e30;
+                if (!m_bTransparentPhysicalHasUnshadowedValue ||
+                    !std::isfinite(shadowRatio) || shadowRatio > 0.10)
+                {
+                    reason = TEXT("P5 shadowed/unshadowed ratio exceeded 0.10");
+                    return false;
+                }
+            }
+            bool bOraclePassed = !bCompareToOracle;
+            if (bCompareToOracle)
+            {
+                bOraclePassed = true;
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    bOraclePassed = bOraclePassed && meanRelative[channel] <= 0.01 &&
+                                    fixedSampleMaximumRelative[channel] <= 0.03;
+                }
+            }
+            const bool bDeltaRequired = bOn && !bShadowed;
+            const bool bNumericPassed = (!bDeltaRequired ||
+                                         (predictedDelta >= 0.02 &&
+                                          measuredDelta >= predictedDelta * 0.90)) &&
+                                        bOraclePassed;
+            std::cout << std::fixed << std::setprecision(15)
+                      << "P5 transparent row: row="
+                      << GetTransparentPhysicalStageName(m_TransparentPhysicalStage)
+                      << " source_y=" << sourceY
+                      << " expected_y=" << expectedY
+                      << " mean_y=" << meanY
+                      << " predicted_delta=" << predictedDelta
+                      << " measured_delta=" << measuredDelta
+                      << " mean_rel_rgb=(" << meanRelative[0] << "," << meanRelative[1]
+                      << "," << meanRelative[2] << ")"
+                      << " max_rel_rgb=(" << maximumRelative[0] << "," << maximumRelative[1]
+                      << "," << maximumRelative[2] << ")"
+                      << " fixed_sample_max_rel_rgb=(" << fixedSampleMaximumRelative[0]
+                      << "," << fixedSampleMaximumRelative[1] << ","
+                      << fixedSampleMaximumRelative[2] << ")"
+                      << " shadow_ratio=" << shadowRatio
+                      << " range_rel=" << rangeRelativeError
+                      << " logical_light_count=" << (bOn && !IsTransparentPhysicalIbl(m_TransparentPhysicalStage) ? 1u : 0u)
+                      << " pre_exposure=0.013888888888889 blend=straight_alpha_0.5\n"
+                      << std::setprecision(6);
+            if (!bNumericPassed)
+            {
+                reason = TEXT("P5 transparent physical row oracle or delta contract failed");
+                return false;
+            }
+            return true;
+        }
+
         static bool ValidateP4Camera(const Core::Rendering::CameraProxy& camera)
         {
             constexpr float expectedAperture = 4.0f;
@@ -3758,6 +4633,7 @@ namespace
         bool m_bR1Scenario = false;
         bool m_bKnownCdScenario = false;
         bool m_bP4Scenario = false;
+        bool m_bTransparentPhysicalLightingScenario = false;
         bool m_bMarkerRegistered = false;
         enum class R1CaptureStage : uint8_t
         {
@@ -3802,6 +4678,13 @@ namespace
         P4RoughnessOracle m_P4RoughnessOracle;
         P4Raw250Oracle m_P4Raw250Oracle;
         P4DirectConductorOracle m_P4DirectOracle;
+        P5DfgOracle m_TransparentPhysicalDfgOracle;
+        bool m_bTransparentPhysicalDfgOracleValid = false;
+        TransparentPhysicalStage m_TransparentPhysicalStage = TransparentPhysicalStage::DirectM0Off;
+        bool m_bTransparentPhysicalStageApplyFailed = false;
+        bool m_bTransparentPhysicalRowMarkerPrinted = false;
+        bool m_bTransparentPhysicalHasUnshadowedValue = false;
+        double m_TransparentPhysicalUnshadowedMeanY = 0.0;
         OpaqueMarkerView m_MarkerView;
     };
 

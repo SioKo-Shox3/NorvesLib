@@ -1,5 +1,4 @@
 ﻿#include "Rendering/LightingPass.h"
-#include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/LightingPassLightPacking.h"
 #include "Rendering/ViewRenderContext.h"
@@ -22,6 +21,7 @@
 // HDR環境マップロード用
 #include "stb_image.h"
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -1184,6 +1184,15 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // Populate the initial light buffer before the mandatory descriptor bindings are made.
+        // Render-graph initialization therefore has a complete binding, while the first
+        // per-frame update remains ordered before the descriptor update.
+        if (!UpdateLightBuffer(context, false, false))
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to populate the initial light buffer");
+            return false;
+        }
+
         RHI::DescriptorSetPtr initialDescriptorSet;
         if (!CreateLightingDescriptorSet(initialDescriptorSet))
         {
@@ -2245,30 +2254,17 @@ namespace NorvesLib::Core::Rendering
         params.ambientColor[3] = m_Settings.AmbientIntensity;
 
         // ========================================
-        // シャドウマップ用ライトビュー・プロジェクション行列
+        // ShadowMapPassが公開した単一のライトビュー・プロジェクション行列
         // ========================================
-        const DirectionalShadowMatrixSettings shadowSettings =
-            context.ActiveShadowMapSettings
-                ? MakeDirectionalShadowMatrixSettings(*context.ActiveShadowMapSettings)
-                : MakeDefaultDirectionalShadowMatrixSettings();
-        const DirectionalShadowMatrixResult shadowMatrices =
-            BuildFittedDirectionalShadowLightMatrices(context.SnapshotLightProxies,
-                                                     context.SnapshotMeshProxies,
-                                                     context.SnapshotMegaGeometryProxies,
-                                                     shadowSettings);
-        CopyIdentityShadowMatricesToShaderData(params.lightView, params.lightProjection);
-        params.bShadowEnabled = 0;
-        if (bShadowAvailable)
-        {
-            if (shadowMatrices.bEnabled)
-            {
-                Math::Matrix4x4 lightProjMat =
-                    context.Device->AdjustProjectionForClipSpace(shadowMatrices.Projection, false);
-                CopyShadowMatrixToShaderData(shadowMatrices.View, params.lightView);
-                CopyShadowMatrixToShaderData(lightProjMat, params.lightProjection);
-                params.bShadowEnabled = 1;
-            }
-        }
+        std::memcpy(params.lightView,
+                    context.PhysicalLighting.DirectionalShadow.View,
+                    sizeof(params.lightView));
+        std::memcpy(params.lightProjection,
+                    context.PhysicalLighting.DirectionalShadow.Projection,
+                    sizeof(params.lightProjection));
+        params.bShadowEnabled =
+            bShadowAvailable && context.PhysicalLighting.bShadowPublished &&
+            context.PhysicalLighting.DirectionalShadow.bEnabled ? 1u : 0u;
 
         // ========================================
         // SceneViewのLightProxyからライト配列を構築
@@ -2298,14 +2294,20 @@ namespace NorvesLib::Core::Rendering
 
         // IBLパラメータ設定
         params.prefilteredSpecularMipLevels = 9u;
+        const bool bValidationRaw250 = params.debugViewMode == 250u;
         const bool bValidationRaw251 = params.debugViewMode == 251u;
         const bool bValidationRaw252 = params.debugViewMode == 252u;
         const bool bValidationConstantIblAvailable =
             bValidationRaw252 && m_ValidationRaw252EnvironmentTexture &&
             m_ValidationRaw252DiffuseIrradianceTexture &&
             m_ValidationRaw252PrefilteredSpecularTexture;
+        const bool bValidationPbr = params.debugViewMode == 254u;
         params.bIBLEnabled = (!bValidationRaw251 &&
                              (m_bIBLAvailable || bValidationConstantIblAvailable)) ? 1u : 0u;
+        if (bValidationPbr)
+        {
+            params.bIBLEnabled = 0u;
+        }
 
         // IBL有効時はambientColor.wにIBL強度を設定
         if (bValidationConstantIblAvailable)
@@ -2326,6 +2328,44 @@ namespace NorvesLib::Core::Rendering
         if (lightCount > 0)
         {
             m_LightArrayBuffer->Update(lightArray.data(), sizeof(GPULightData) * lightCount);
+        }
+
+        const RHI::TexturePtr& environmentRadiance =
+            bValidationRaw252 && m_ValidationRaw252EnvironmentTexture ?
+                m_ValidationRaw252EnvironmentTexture :
+            bValidationRaw250 && m_ValidationRaw250EnvironmentTexture ?
+                m_ValidationRaw250EnvironmentTexture :
+            m_bIBLAvailable && m_EnvironmentTexture ? m_EnvironmentTexture : m_DefaultBlackTexture;
+        const RHI::TexturePtr& diffuseIrradiance =
+            bValidationRaw252 && m_ValidationRaw252DiffuseIrradianceTexture ?
+                m_ValidationRaw252DiffuseIrradianceTexture :
+            bValidationRaw250 && m_ValidationRaw250DiffuseIrradianceTexture ?
+                m_ValidationRaw250DiffuseIrradianceTexture :
+            m_bIBLAvailable && m_DiffuseIrradianceTexture ?
+                m_DiffuseIrradianceTexture : m_DefaultBlackTexture;
+        const RHI::TexturePtr& prefilteredSpecular =
+            bValidationRaw252 && m_ValidationRaw252PrefilteredSpecularTexture ?
+                m_ValidationRaw252PrefilteredSpecularTexture :
+            bValidationRaw250 && m_ValidationRaw250Texture ? m_ValidationRaw250Texture :
+            m_bIBLAvailable && m_PrefilteredSpecularTexture ? m_PrefilteredSpecularTexture :
+            m_DefaultBlackTexture;
+        if (m_bInitialized && context.PhysicalLighting.bActive)
+        {
+            context.PhysicalLighting.PublishLighting(
+                m_LightArrayBuffer,
+                lightCount,
+                GetLightArrayBufferSizeBytes(),
+                environmentRadiance,
+                m_IBLSampler,
+                diffuseIrradiance,
+                m_DiffuseIrradianceSampler,
+                prefilteredSpecular,
+                m_PrefilteredSpecularSampler,
+                m_BrdfLutTexture,
+                m_DfgSampler,
+                9u,
+                bValidationConstantIblAvailable ? 1.0f : m_Settings.IBLIntensity,
+                params.bIBLEnabled != 0u);
         }
         return true;
     }
@@ -2533,11 +2573,35 @@ namespace NorvesLib::Core::Rendering
 
         // RG16_FLOAT LUT
         Container::VariableArray<uint16_t> lutData(static_cast<size_t>(LUT_SIZE) * LUT_SIZE * 2, 0);
+        Container::VariableArray<float> halfVectors(SAMPLE_COUNT * 3, 0.0f);
 
         for (uint32_t y = 0; y < LUT_SIZE; ++y)
         {
             const float roughness = (static_cast<float>(y) + 0.5f) /
                                     static_cast<float>(LUT_SIZE);
+
+            for (uint32_t i = 0; i < SAMPLE_COUNT; ++i)
+            {
+                // Hammersley sequence
+                float u = static_cast<float>(i) / static_cast<float>(SAMPLE_COUNT);
+                uint32_t bits = i;
+                bits = (bits << 16u) | (bits >> 16u);
+                bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+                bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+                bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+                bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+                float v = static_cast<float>(bits) * 2.3283064365386963e-10f;
+
+                // ImportanceSample GGX
+                float a = roughness * roughness;
+                float phi = 2.0f * PI * u;
+                float cosTheta = std::sqrt((1.0f - v) / (1.0f + (a * a - 1.0f) * v));
+                float sinTheta = std::sqrt(1.0f - cosTheta * cosTheta);
+
+                halfVectors[i * 3] = sinTheta * std::cos(phi);
+                halfVectors[i * 3 + 1] = sinTheta * std::sin(phi);
+                halfVectors[i * 3 + 2] = cosTheta;
+            }
 
             for (uint32_t x = 0; x < LUT_SIZE; ++x)
             {
@@ -2554,26 +2618,9 @@ namespace NorvesLib::Core::Rendering
 
                 for (uint32_t i = 0; i < SAMPLE_COUNT; ++i)
                 {
-                    // Hammersley sequence
-                    float u = static_cast<float>(i) / static_cast<float>(SAMPLE_COUNT);
-                    uint32_t bits = i;
-                    bits = (bits << 16u) | (bits >> 16u);
-                    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-                    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-                    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-                    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-                    float v = static_cast<float>(bits) * 2.3283064365386963e-10f;
-
-                    // ImportanceSample GGX
-                    float a = roughness * roughness;
-                    float phi = 2.0f * PI * u;
-                    float cosTheta = std::sqrt((1.0f - v) / (1.0f + (a * a - 1.0f) * v));
-                    float sinTheta = std::sqrt(1.0f - cosTheta * cosTheta);
-
-                    // Half vector in tangent space
-                    float Hx = sinTheta * std::cos(phi);
-                    float Hy = sinTheta * std::sin(phi);
-                    float Hz = cosTheta;
+                    const float Hx = halfVectors[i * 3];
+                    const float Hy = halfVectors[i * 3 + 1];
+                    const float Hz = halfVectors[i * 3 + 2];
 
                     // Reflect V around H to get L
                     float VdotH = Vx * Hx + Vy * Hy + Vz * Hz;

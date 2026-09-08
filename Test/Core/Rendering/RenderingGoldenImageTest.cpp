@@ -9,6 +9,7 @@
 #include "Container/PointerTypes.h"
 #include "Logging/LogMacros.h"
 
+#include <cmath>
 #include <iomanip>
 #include <iostream>
 
@@ -80,6 +81,21 @@ namespace
     class GoldenHandler final : public RenderingValidationApplicationHandler
     {
     protected:
+        bool OnInitialize() override
+        {
+            if (!RenderingValidationApplicationHandler::OnInitialize())
+            {
+                return false;
+            }
+            if (m_bMeasureVisual &&
+                !GetFixture().ApplyTransparentPhysicalLightingObjectPresence())
+            {
+                LOG_ERROR("golden object-presence fixture preparation failed");
+                return false;
+            }
+            return true;
+        }
+
         bool ParseAdditionalArgument(
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
@@ -183,6 +199,51 @@ namespace
 
             if (m_bMeasureVisual)
             {
+                double targetSum = 0.0;
+                double backgroundSum = 0.0;
+                uint32_t targetCount = 0u;
+                uint32_t backgroundCount = 0u;
+                for (uint32_t y = 112u; y <= 143u; ++y)
+                {
+                    for (uint32_t x = 22u; x <= 53u; ++x)
+                    {
+                        const size_t offset = static_cast<size_t>(y) * candidate.RowPitchBytes +
+                                               static_cast<size_t>(x) * 4u;
+                        targetSum += 0.2126 * candidate.Pixels[offset + 0u] +
+                                     0.7152 * candidate.Pixels[offset + 1u] +
+                                     0.0722 * candidate.Pixels[offset + 2u];
+                        ++targetCount;
+                    }
+                    for (uint32_t x = 58u; x <= 89u; ++x)
+                    {
+                        const size_t offset = static_cast<size_t>(y) * candidate.RowPitchBytes +
+                                               static_cast<size_t>(x) * 4u;
+                        backgroundSum += 0.2126 * candidate.Pixels[offset + 0u] +
+                                         0.7152 * candidate.Pixels[offset + 1u] +
+                                         0.0722 * candidate.Pixels[offset + 2u];
+                        ++backgroundCount;
+                    }
+                }
+                if (targetCount != 1024u || backgroundCount != 1024u)
+                {
+                    outFailureReason = TEXT("object-presence ROI sample count is invalid");
+                    return false;
+                }
+                const double targetMean = targetSum / static_cast<double>(targetCount);
+                const double backgroundMean = backgroundSum / static_cast<double>(backgroundCount);
+                const double delta = std::abs(targetMean - backgroundMean);
+                std::cout << std::fixed << std::setprecision(9)
+                          << "NORVESLIB_OBJECT_PRESENCE scene=" << SceneName(GetRunConfig().Scene)
+                          << " target_mean_y8=" << targetMean
+                          << " background_mean_y8=" << backgroundMean
+                          << " delta_y8=" << delta << std::endl;
+                if (!std::isfinite(targetMean) || !std::isfinite(backgroundMean) ||
+                    !std::isfinite(delta) || targetMean < 0.0 || targetMean > 255.0 ||
+                    backgroundMean < 0.0 || backgroundMean > 255.0 || delta < 8.0)
+                {
+                    outFailureReason = TEXT("object-presence Y8 delta is below 8");
+                    return false;
+                }
                 PerceptualDifferenceMetrics visualMetrics;
                 const PerceptualDiffStatus visualStatus = CompareLdrFlip(reference, candidate, visualMetrics);
                 if (visualStatus != PerceptualDiffStatus::Success)

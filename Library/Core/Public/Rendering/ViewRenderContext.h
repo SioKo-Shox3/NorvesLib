@@ -43,6 +43,160 @@ namespace NorvesLib::Core::Rendering
         bool bAttempted = false;
     };
 
+    struct DirectionalShadowShaderValues
+    {
+        float View[16] = {1.0f, 0.0f, 0.0f, 0.0f,
+                          0.0f, 1.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 1.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f, 1.0f};
+        float Projection[16] = {1.0f, 0.0f, 0.0f, 0.0f,
+                                0.0f, 1.0f, 0.0f, 0.0f,
+                                0.0f, 0.0f, 1.0f, 0.0f,
+                                0.0f, 0.0f, 0.0f, 1.0f};
+        uint64_t LightId = 0;
+        bool bEnabled = false;
+    };
+
+    struct PhysicalLightingResources
+    {
+        uint64_t FrameNumber = 0;
+        uint32_t ViewId = UINT32_MAX;
+        uint32_t ViewportId = UINT32_MAX;
+        bool bActive = false;
+        bool bShadowPublished = false;
+        bool bLightingPublished = false;
+
+        RHI::TexturePtr ShadowMapTexture;
+        RHI::SamplerPtr ShadowSampler;
+        DirectionalShadowShaderValues DirectionalShadow;
+
+        RHI::BufferPtr LightBuffer;
+        uint32_t LogicalLightCount = 0;
+        uint32_t LightBufferSizeBytes = 0;
+
+        RHI::TexturePtr EnvironmentRadianceTexture;
+        RHI::SamplerPtr EnvironmentRadianceSampler;
+        RHI::TexturePtr DiffuseIrradianceTexture;
+        RHI::SamplerPtr DiffuseIrradianceSampler;
+        RHI::TexturePtr PrefilteredSpecularTexture;
+        RHI::SamplerPtr PrefilteredSpecularSampler;
+        RHI::TexturePtr DfgLutTexture;
+        RHI::SamplerPtr DfgLutSampler;
+        uint32_t PrefilteredSpecularMipLevels = 0;
+        float IBLIntensity = 0.0f;
+        bool bIBLEnabled = false;
+
+        void Begin(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId)
+        {
+            FrameNumber = 0;
+            ViewId = UINT32_MAX;
+            ViewportId = UINT32_MAX;
+            bActive = false;
+            bShadowPublished = false;
+            bLightingPublished = false;
+            ShadowMapTexture.reset();
+            ShadowSampler.reset();
+            LightBuffer.reset();
+            LogicalLightCount = 0;
+            LightBufferSizeBytes = 0;
+            EnvironmentRadianceTexture.reset();
+            EnvironmentRadianceSampler.reset();
+            DiffuseIrradianceTexture.reset();
+            DiffuseIrradianceSampler.reset();
+            PrefilteredSpecularTexture.reset();
+            PrefilteredSpecularSampler.reset();
+            DfgLutTexture.reset();
+            DfgLutSampler.reset();
+            PrefilteredSpecularMipLevels = 0;
+            IBLIntensity = 0.0f;
+            bIBLEnabled = false;
+            for (uint32_t index = 0; index < 16; ++index)
+            {
+                DirectionalShadow.View[index] = 0.0f;
+                DirectionalShadow.Projection[index] = 0.0f;
+            }
+            DirectionalShadow.View[0] = 1.0f;
+            DirectionalShadow.View[5] = 1.0f;
+            DirectionalShadow.View[10] = 1.0f;
+            DirectionalShadow.View[15] = 1.0f;
+            DirectionalShadow.Projection[0] = 1.0f;
+            DirectionalShadow.Projection[5] = 1.0f;
+            DirectionalShadow.Projection[10] = 1.0f;
+            DirectionalShadow.Projection[15] = 1.0f;
+            DirectionalShadow.LightId = 0;
+            DirectionalShadow.bEnabled = false;
+            FrameNumber = frameNumber;
+            ViewId = viewId;
+            ViewportId = viewportId;
+            bActive = true;
+        }
+
+        void PublishDirectionalShadow(const float* view,
+                                      const float* projection,
+                                      uint64_t lightId,
+                                      bool bEnabledValue,
+                                      const RHI::TexturePtr& shadowMap,
+                                      const RHI::SamplerPtr& shadowSampler)
+        {
+            if (view != nullptr && projection != nullptr)
+            {
+                for (uint32_t index = 0; index < 16; ++index)
+                {
+                    DirectionalShadow.View[index] = view[index];
+                    DirectionalShadow.Projection[index] = projection[index];
+                }
+            }
+            DirectionalShadow.LightId = lightId;
+            DirectionalShadow.bEnabled = bEnabledValue;
+            ShadowMapTexture = shadowMap;
+            ShadowSampler = shadowSampler;
+            bShadowPublished = true;
+        }
+
+        void PublishLighting(const RHI::BufferPtr& lightBuffer,
+                             uint32_t logicalLightCount,
+                             uint32_t lightBufferSizeBytes,
+                             const RHI::TexturePtr& environmentRadiance,
+                             const RHI::SamplerPtr& environmentRadianceSampler,
+                             const RHI::TexturePtr& diffuseIrradiance,
+                             const RHI::SamplerPtr& diffuseIrradianceSampler,
+                             const RHI::TexturePtr& prefilteredSpecular,
+                             const RHI::SamplerPtr& prefilteredSpecularSampler,
+                             const RHI::TexturePtr& dfgLut,
+                             const RHI::SamplerPtr& dfgLutSampler,
+                             uint32_t prefilteredSpecularMipLevels,
+                             float iblIntensity,
+                             bool bIBLEnabledValue)
+        {
+            LightBuffer = lightBuffer;
+            LogicalLightCount = logicalLightCount;
+            LightBufferSizeBytes = lightBufferSizeBytes;
+            EnvironmentRadianceTexture = environmentRadiance;
+            EnvironmentRadianceSampler = environmentRadianceSampler;
+            DiffuseIrradianceTexture = diffuseIrradiance;
+            DiffuseIrradianceSampler = diffuseIrradianceSampler;
+            PrefilteredSpecularTexture = prefilteredSpecular;
+            PrefilteredSpecularSampler = prefilteredSpecularSampler;
+            DfgLutTexture = dfgLut;
+            DfgLutSampler = dfgLutSampler;
+            PrefilteredSpecularMipLevels = prefilteredSpecularMipLevels;
+            IBLIntensity = iblIntensity;
+            bIBLEnabled = bIBLEnabledValue;
+            bLightingPublished = true;
+        }
+
+        bool Matches(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId) const
+        {
+            return bActive && FrameNumber == frameNumber && ViewId == viewId &&
+                   ViewportId == viewportId;
+        }
+
+        void Invalidate()
+        {
+            *this = PhysicalLightingResources{};
+        }
+    };
+
     /**
      * @brief View描画コンテキスト
      *
@@ -58,6 +212,8 @@ namespace NorvesLib::Core::Rendering
      */
     struct ViewRenderContext
     {
+        PhysicalLightingResources PhysicalLighting;
+
         // ========================================
         // RHIリソース
         // ========================================
@@ -417,6 +573,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 現在のフレームインデックス（ダブル/トリプルバッファリング用） */
         uint32_t FrameIndex = 0;
+
+        /** @brief FramePacketの単調なフレーム番号 */
+        uint64_t FrameNumber = 0;
 
         /** @brief スクリーン幅 */
         uint32_t ScreenWidth = 0;

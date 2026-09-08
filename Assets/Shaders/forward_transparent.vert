@@ -12,6 +12,16 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 emissiveColor;
     vec4 pomParams;
     vec4 sceneColorParams;
+    mat4 lightView;
+    mat4 lightProjection;
+    uint lightCount;
+    uint bShadowEnabled;
+    uint bIBLEnabled;
+    uint prefilteredSpecularMipLevels;
+    float iblIntensity;
+    uint padding0;
+    uint padding1;
+    uint padding2;
 } mvp;
 
 struct InstanceData

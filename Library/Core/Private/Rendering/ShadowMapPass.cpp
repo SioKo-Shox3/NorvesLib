@@ -93,6 +93,20 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        RHI::SamplerDesc shadowSamplerDesc;
+        shadowSamplerDesc.filterMin = RHI::FilterMode::Linear;
+        shadowSamplerDesc.filterMag = RHI::FilterMode::Linear;
+        shadowSamplerDesc.filterMip = RHI::FilterMode::Point;
+        shadowSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        shadowSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        shadowSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_ShadowSampler = m_Device->CreateSampler(shadowSamplerDesc);
+        if (!m_ShadowSampler)
+        {
+            NORVES_LOG_ERROR("ShadowMapPass", "Failed to create shadow sampler");
+            return false;
+        }
+
         // ========================================
         // 深度オンリーレンダーパス作成
         // ========================================
@@ -281,6 +295,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_ShadowMapTexture.reset();
+        m_ShadowSampler.reset();
         m_ShadowMapHandle = {};
         m_ShadowRenderPass.reset();
         m_SkinnedShadowPipeline.reset();
@@ -353,14 +368,26 @@ namespace NorvesLib::Core::Rendering
                                                      context.SnapshotMegaGeometryProxies,
                                                      shadowSettings);
 
-        Math::Matrix4x4 lightProjMat =
-            context.Device->AdjustProjectionForClipSpace(shadowMatrices.Projection, false);
-
         // ライトビュー・プロジェクションをGPU用データに変換
         float lightViewData[16];
         float lightProjData[16];
-        CopyShadowMatrixToShaderData(shadowMatrices.View, lightViewData);
-        CopyShadowMatrixToShaderData(lightProjMat, lightProjData);
+        if (shadowMatrices.bEnabled)
+        {
+            Math::Matrix4x4 lightProjMat =
+                context.Device->AdjustProjectionForClipSpace(shadowMatrices.Projection, false);
+            CopyShadowMatrixToShaderData(shadowMatrices.View, lightViewData);
+            CopyShadowMatrixToShaderData(lightProjMat, lightProjData);
+        }
+        else
+        {
+            CopyIdentityShadowMatricesToShaderData(lightViewData, lightProjData);
+        }
+        context.PhysicalLighting.PublishDirectionalShadow(lightViewData,
+                                                           lightProjData,
+                                                           shadowMatrices.LightId,
+                                                           shadowMatrices.bEnabled,
+                                                           m_ShadowMapTexture,
+                                                           m_ShadowSampler);
 
         // SharedResourceRegistry は legacy/fallback bridge の互換経路でのみ公開する。
         if (m_bRegisterLegacyBridge && context.SharedResources)

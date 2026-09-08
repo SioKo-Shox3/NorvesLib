@@ -349,6 +349,20 @@ namespace
         assert(!ContainsText(lightingPassSource, "LIGHT_BUFFER_SIZE"));
         assert(!std::regex_search(lightingPassSource, std::regex("GPULightData\\s+\\w+\\s*\\[")));
         assert(!ContainsText(lightingPassSource, "lightCount >= MAX_LIGHTS"));
+
+        assert(CountText(lightingPassSource, "context.PhysicalLighting.PublishLighting(") == 1);
+        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.DirectionalShadow.View"));
+        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.DirectionalShadow.Projection"));
+        assert(ContainsText(lightingPassSource, "m_EnvironmentTexture"));
+        assert(ContainsText(lightingPassSource, "m_DiffuseIrradianceTexture"));
+        assert(ContainsText(lightingPassSource, "m_PrefilteredSpecularTexture"));
+        assert(ContainsText(lightingPassSource, "m_BrdfLutTexture"));
+        assert(ContainsText(lightingPassSource, "params.bIBLEnabled != 0u"));
+        assert(ContainsText(lightingPassSource, "if (m_bInitialized && context.PhysicalLighting.bActive)"));
+        assert(FindText(lightingPassSource, "m_LightDataBuffer->Update") <
+               FindText(lightingPassSource, "context.PhysicalLighting.PublishLighting("));
+        assert(FindText(lightingPassSource, "m_LightArrayBuffer->Update") <
+               FindText(lightingPassSource, "context.PhysicalLighting.PublishLighting("));
     }
 
     void AssertLightingShaderSourceContract(const std::string& sourceRoot)

@@ -214,6 +214,23 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Container::FixedArray<Core::Rendering::MaterialHandle, 30> P4Materials;
     };
 
+    enum class TransparentPhysicalLightingRow : uint8_t
+    {
+        DirectM0Off,
+        DirectM0On,
+        DirectM05Off,
+        DirectM05On,
+        ShadowUnshadowed,
+        Shadowed,
+        IblM0Off,
+        IblM0On,
+        IblM05Off,
+        IblM05On,
+        Complete
+    };
+
+    inline constexpr uint32_t TransparentPhysicalLightingRowCount = 10u;
+
     class RenderingValidationSceneFixture final : private ISceneFixtureResourceReleaser
     {
     public:
@@ -224,6 +241,8 @@ namespace NorvesLib::Test::RenderingValidation
         void Shutdown(Core::Rendering::RenderResources& resources);
         void ApplyCamera(Core::Rendering::RenderWorld& renderWorld) const;
         bool ApplyP4ScenarioRow(const P4ScenarioRow& row) const;
+        bool ApplyTransparentPhysicalLightingRow(uint32_t rowIndex) const;
+        bool ApplyTransparentPhysicalLightingObjectPresence() const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         uint64_t GetObservedFixedStepCount() const;
         bool IsCaptureStateStable() const;
@@ -238,6 +257,8 @@ namespace NorvesLib::Test::RenderingValidation
         void PublishInitializationState(SceneFixtureInitializationState& state,
                                         ISceneFixtureResourceReleaser* stableOwner) noexcept;
         void ShutdownPublishedInitialization(ISceneFixtureResourceReleaser* releaser) noexcept;
+        bool EnsureR1PhysicalFixture(bool bObjectPresence) const;
+        bool ValidateR1PhysicalFixture(bool bObjectPresence) const;
 
         void UnregisterMesh(Core::Rendering::MeshDataHandle handle) noexcept override;
         void ReleaseTexture(Core::Rendering::TextureHandle handle) noexcept override;
@@ -251,10 +272,31 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Component::MeshComponent* m_pEmissiveMesh = nullptr;
         Core::Component::MeshComponent* m_pTransparentMesh = nullptr;
         Core::Entity* m_pP4LightEntity = nullptr;
-        SceneFixtureResourceLease m_Lease;
+        mutable SceneFixtureResourceLease m_Lease;
         SceneLayout m_Layout;
-        Core::Container::VariableArray<Core::Entity*> m_Objects;
+        mutable Core::Container::VariableArray<Core::Entity*> m_Objects;
         Core::Container::FixedArray<Core::Rendering::MaterialHandle, 30> m_P4Materials;
+        SceneKind m_SceneKind = SceneKind::Indoor;
+        mutable bool m_bR1PhysicalFixturePrepared = false;
+        mutable bool m_bR1PhysicalFixtureFailed = false;
+        mutable bool m_bR1ObjectPresence = false;
+        mutable Core::Rendering::CameraProxy m_R1PhysicalCamera;
+        mutable Core::Entity* m_pR1TargetEntity = nullptr;
+        mutable Core::Entity* m_pR1BackgroundEntity = nullptr;
+        mutable Core::Entity* m_pR1OccluderEntity = nullptr;
+        mutable Core::Component::MeshComponent* m_pR1TargetMesh = nullptr;
+        mutable Core::Component::MeshComponent* m_pR1BackgroundMesh = nullptr;
+        mutable Core::Component::MeshComponent* m_pR1OccluderMesh = nullptr;
+        mutable Core::Entity* m_pR1PointLightEntity = nullptr;
+        mutable Core::Entity* m_pR1DirectionalLightEntity = nullptr;
+        mutable Core::Rendering::MeshDataHandle m_R1ScreenPlaneHandle =
+            Core::Rendering::MeshDataHandle::Invalid();
+        mutable Core::Container::FixedArray<Core::Rendering::TextureHandle, 9> m_R1Textures;
+        mutable Core::Container::FixedArray<Core::Rendering::MaterialHandle, 2> m_R1TargetMaterials;
+        mutable Core::Rendering::MaterialHandle m_R1BackgroundMaterial =
+            Core::Rendering::MaterialHandle::Invalid();
+        mutable Core::Rendering::MaterialHandle m_R1OccluderMaterial =
+            Core::Rendering::MaterialHandle::Invalid();
         bool m_bPublished = false;
     };
 }

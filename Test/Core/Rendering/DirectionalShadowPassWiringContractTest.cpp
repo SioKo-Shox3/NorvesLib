@@ -161,6 +161,21 @@ namespace
         ExpectContains(source,
                        "ActiveShadowMapSettings",
                        "ViewRenderContext tracks active ShadowMapPass settings");
+        ExpectContains(source,
+                       "struct PhysicalLightingResources",
+                       "ViewRenderContext owns the physical-lighting publication aggregate");
+        ExpectContains(source,
+                       "PhysicalLightingResources PhysicalLighting;",
+                       "ViewRenderContext exposes physical-lighting resources");
+        ExpectContains(source,
+                       "void PublishDirectionalShadow",
+                       "physical-lighting aggregate publishes directional shadow data");
+        ExpectContains(source,
+                       "void PublishLighting",
+                       "physical-lighting aggregate publishes light and IBL data");
+        ExpectContains(source,
+                       "bool Matches(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId)",
+                       "physical-lighting aggregate validates frame and viewport identity");
     }
 
     void AssertRenderingCoordinatorContract(const std::string& source)
@@ -201,6 +216,12 @@ namespace
         ExpectContains(source,
                        "CopyShadowMatrixToShaderData",
                        "ShadowMapPass copies shadow matrices through helper");
+        ExpectContains(source,
+                       "context.PhysicalLighting.PublishDirectionalShadow",
+                       "ShadowMapPass publishes the canonical shadow resources");
+        ExpectContains(source,
+                       "m_ShadowSampler",
+                       "ShadowMapPass publishes a shadow sampler");
         AssertClipSpaceShadowCopyContract(source);
         ExpectContains(source,
                        "RegisterTexturePtr(\"ShadowMap\", m_ShadowMapTexture)",
@@ -229,43 +250,43 @@ namespace
 
     void AssertLightingPassContract(const std::string& source)
     {
+        ExpectNotContains(source,
+                          "#include \"Rendering/DirectionalShadowLightMatrices.h\"",
+                          "LightingPass does not recompute directional shadow matrices");
+        ExpectNotContains(source,
+                          "MakeDirectionalShadowMatrixSettings",
+                          "LightingPass does not call the directional shadow helper");
         ExpectContains(source,
-                       "#include \"Rendering/DirectionalShadowLightMatrices.h\"",
-                       "LightingPass includes DirectionalShadowLightMatrices helper");
+                       "context.PhysicalLighting.DirectionalShadow.View",
+                       "LightingPass consumes the published shadow view matrix");
         ExpectContains(source,
-                       "context.ActiveShadowMapSettings",
-                       "LightingPass reads active ShadowMapPass settings");
+                       "context.PhysicalLighting.DirectionalShadow.Projection",
+                       "LightingPass consumes the published shadow projection matrix");
         ExpectContains(source,
-                       "MakeDirectionalShadowMatrixSettings(*context.ActiveShadowMapSettings)",
-                       "LightingPass converts active ShadowMapPass settings through helper");
-        AssertFittedShadowMatrixCall(source,
-                                     "LightingPass builds fitted matrices from snapshot proxies and active/default settings");
+                       "context.PhysicalLighting.PublishLighting(",
+                       "LightingPass publishes the light SSBO and IBL resources");
         ExpectContains(source,
-                       "CopyIdentityShadowMatricesToShaderData(params.lightView, params.lightProjection)",
-                       "LightingPass writes identity matrices through helper on disabled path");
+                       "m_LightArrayBuffer",
+                       "LightingPass publishes the physical light SSBO");
         ExpectContains(source,
-                       "CopyShadowMatrixToShaderData(shadowMatrices.View, params.lightView)",
-                       "LightingPass copies enabled shadow view through helper");
+                       "m_EnvironmentTexture",
+                       "LightingPass publishes environment radiance");
         ExpectContains(source,
-                       "CopyShadowMatrixToShaderData(lightProjMat, params.lightProjection)",
-                       "LightingPass copies enabled shadow projection through helper");
-        AssertClipSpaceShadowCopyContract(source);
+                       "m_DiffuseIrradianceTexture",
+                       "LightingPass publishes diffuse irradiance");
         ExpectContains(source,
-                       "params.bShadowEnabled = 1",
-                       "LightingPass enables shadow flag on enabled helper path");
+                       "m_PrefilteredSpecularTexture",
+                       "LightingPass publishes prefiltered specular radiance");
         ExpectContains(source,
-                       "params.bShadowEnabled = 0",
-                       "LightingPass disables shadow flag on disabled helper path");
-
-        const std::string shadowMatrixBlock =
-            ExtractBlock(source,
-                         "// シャドウマップ用ライトビュー・プロジェクション行列",
-                         "if (bShadowAvailable)",
-                         "// SceneViewのLightProxyからライト配列を構築",
-                         "uint32_t lightCount = 0;");
-        ExpectNotContains(shadowMatrixBlock,
-                          "-0.577f",
-                          "LightingPass shadow-matrix block no longer contains hardcoded direction");
+                       "m_BrdfLutTexture",
+                       "LightingPass publishes the DFG LUT");
+        ExpectContains(source,
+                       "descriptorSet->BindStorageBuffer(5",
+                       "LightingPass binds the physical light SSBO at binding five");
+        ExpectTextBefore(source,
+                         "UpdateLightBuffer(context, false, false)",
+                         "CreateLightingDescriptorSet(initialDescriptorSet)",
+                         "initial light publication precedes the mandatory descriptor binding");
         AssertNoLiveSceneViewProxyReads(source);
     }
 } // namespace

@@ -13,6 +13,16 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 emissiveColor;
     vec4 pomParams;
     vec4 sceneColorParams;
+    mat4 lightView;
+    mat4 lightProjection;
+    uint lightCount;
+    uint bShadowEnabled;
+    uint bIBLEnabled;
+    uint prefilteredSpecularMipLevels;
+    float iblIntensity;
+    uint padding0;
+    uint padding1;
+    uint padding2;
 } mvp;
 
 layout(set = 0, binding = 1) uniform sampler2D albedoTexture;
@@ -22,11 +32,172 @@ layout(set = 0, binding = 4) uniform sampler2D roughnessTexture;
 layout(set = 0, binding = 5) uniform sampler2D aoTexture;
 layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 
+struct LightData
+{
+    vec4 position;
+    vec4 direction;
+    vec4 chromaticityAndIntensity;
+    vec4 attenuation;
+};
+
+layout(std430, set = 0, binding = 8) readonly buffer LightBuffer
+{
+    LightData lights[];
+} lightBuffer;
+
+layout(set = 0, binding = 9) uniform sampler2D shadowMap;
+layout(set = 0, binding = 10) uniform sampler2D environmentRadiance;
+layout(set = 0, binding = 11) uniform sampler2D diffuseIrradiance;
+layout(set = 0, binding = 12) uniform sampler2D prefilteredSpecular;
+layout(set = 0, binding = 13) uniform sampler2D dfgLut;
+
 layout(location = 0) out vec4 outColor;
+
+const float PI = 3.14159265359;
+
+mat3 CalculateTBN(vec3 worldNormal, vec3 worldPos, vec2 texCoord)
+{
+    vec3 dp1 = dFdx(worldPos);
+    vec3 dp2 = -dFdy(worldPos);
+    vec2 duv1 = dFdx(texCoord);
+    vec2 duv2 = -dFdy(texCoord);
+
+    vec3 N = normalize(worldNormal);
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float maxLen2 = max(dot(T, T), dot(B, B));
+    if (maxLen2 < 1e-8)
+    {
+        vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        T = normalize(cross(up, N));
+        B = cross(N, T);
+        return mat3(T, B, N);
+    }
+    return mat3(T * inversesqrt(maxLen2), B * inversesqrt(maxLen2), N);
+}
+
+vec2 ParallaxOcclusionMapping(vec2 texCoord, vec3 viewDirTS, float heightScale)
+{
+    const float minLayers = 8.0;
+    const float maxLayers = 32.0;
+    float layerCount = mix(maxLayers, minLayers, clamp(abs(viewDirTS.z), 0.0, 1.0));
+    float layerDepth = 1.0 / layerCount;
+    float currentLayerDepth = 0.0;
+    vec2 deltaTexCoords = viewDirTS.xy * heightScale / layerCount;
+    vec2 currentTexCoords = texCoord;
+    float currentDepth = texture(heightTexture, currentTexCoords).r;
+    for (int layer = 0; layer < 32 && currentLayerDepth < currentDepth; ++layer)
+    {
+        currentTexCoords -= deltaTexCoords;
+        currentDepth = texture(heightTexture, currentTexCoords).r;
+        currentLayerDepth += layerDepth;
+    }
+    vec2 previousTexCoords = currentTexCoords + deltaTexCoords;
+    float afterDepth = currentDepth - currentLayerDepth;
+    float beforeDepth = texture(heightTexture, previousTexCoords).r -
+                        currentLayerDepth + layerDepth;
+    float weight = afterDepth / max(afterDepth - beforeDepth, 1e-5);
+    return mix(currentTexCoords, previousTexCoords, clamp(weight, 0.0, 1.0));
+}
+
+vec2 EquirectangularUV(vec3 direction)
+{
+    vec2 uv = vec2(atan(direction.z, direction.x),
+                   asin(clamp(-direction.y, -1.0, 1.0)));
+    uv *= vec2(0.15915494, 0.31830989);
+    return uv + 0.5;
+}
+
+vec3 FresnelSchlick(float cosTheta, vec3 F0)
+{
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+float DistributionGGX(vec3 N, vec3 H, float roughness)
+{
+    float alpha = roughness * roughness;
+    float alphaSquared = alpha * alpha;
+    float NdotH = max(dot(N, H), 0.0);
+    float denominator = PI * pow(NdotH * NdotH * (alphaSquared - 1.0) + 1.0, 2.0);
+    return alphaSquared / max(denominator, 0.0001);
+}
+
+float GeometrySchlickGGX(float NdotX, float roughness)
+{
+    float k = pow(roughness + 1.0, 2.0) / 8.0;
+    return NdotX / (NdotX * (1.0 - k) + k);
+}
+
+float GeometrySmithDirect(vec3 N, vec3 V, vec3 L, float roughness)
+{
+    return GeometrySchlickGGX(max(dot(N, V), 0.0), roughness) *
+           GeometrySchlickGGX(max(dot(N, L), 0.0), roughness);
+}
+
+float ComputeSpecularAO(float NdotV, float ao, float roughness)
+{
+    return clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao,
+                 0.0,
+                 1.0);
+}
+
+float CalculateInverseSquareAttenuation(float distanceToLight)
+{
+    return 1.0 / max(distanceToLight * distanceToLight, 0.01 * 0.01);
+}
+
+float CalculateRangeWindow(float distanceToLight, float range)
+{
+    float rangeRatio = distanceToLight / max(range, 0.0001);
+    float window = max(1.0 - pow(rangeRatio, 4.0), 0.0);
+    return window * window;
+}
+
+float CalculateShadow(vec3 worldPos)
+{
+    vec4 lightSpacePosition = mvp.lightProjection * mvp.lightView * vec4(worldPos, 1.0);
+    vec3 projection = lightSpacePosition.xyz / lightSpacePosition.w;
+    vec2 shadowUV = projection.xy * 0.5 + 0.5;
+    float receiverDepth = projection.z;
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 ||
+        shadowUV.y < 0.0 || shadowUV.y > 1.0 ||
+        receiverDepth < 0.0 || receiverDepth > 1.0)
+    {
+        return 1.0;
+    }
+
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    const vec2 offsets[4] = vec2[4](
+        vec2(-0.5, -0.5), vec2(0.5, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
+    float visible = 0.0;
+    for (int index = 0; index < 4; ++index)
+    {
+        float shadowDepth = texture(shadowMap, shadowUV + offsets[index] * texelSize).r;
+        visible += receiverDepth - 0.005 <= shadowDepth ? 1.0 : 0.0;
+    }
+    return visible * 0.25;
+}
 
 void main()
 {
     vec4 texColor = texture(albedoTexture, fragTexCoord);
+    vec2 texCoord = fragTexCoord;
+    mat3 TBN = CalculateTBN(fragNormal, fragWorldPos, fragTexCoord);
+    vec3 viewDirection = normalize(mvp.cameraPosition.xyz - fragWorldPos);
+    vec3 viewDirectionTS = normalize(transpose(TBN) * viewDirection);
+    if (mvp.pomParams.y > 0.5)
+    {
+        float pomFade = smoothstep(0.1, 0.3, clamp(viewDirectionTS.z, 0.0, 1.0));
+        texCoord = mix(fragTexCoord,
+                       ParallaxOcclusionMapping(fragTexCoord,
+                                                viewDirectionTS,
+                                                mvp.pomParams.x),
+                       pomFade);
+        texColor = texture(albedoTexture, texCoord);
+    }
+
     vec3 baseColor = texColor.rgb * fragObjectColor.rgb;
     float alpha = texColor.a * fragObjectColor.a;
 
@@ -35,18 +206,95 @@ void main()
         discard;
     }
 
-    vec3 normal = normalize(fragNormal);
-    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    vec3 lightColor = vec3(1.0, 0.98, 0.95);
+    vec3 tangentNormal = texture(normalTexture, texCoord).rgb * 2.0 - 1.0;
+    vec3 normal = normalize(TBN * tangentNormal);
+    float metallic = clamp(texture(metallicTexture, texCoord).r, 0.0, 1.0);
+    float roughness = clamp(texture(roughnessTexture, texCoord).r, 0.04, 1.0);
+    float ao = clamp(texture(aoTexture, texCoord).r, 0.0, 1.0);
+    vec3 direct = vec3(0.0);
+    float NdotV = max(dot(normal, viewDirection), 0.0);
+    vec3 F0d = vec3(0.04);
+    vec3 F0c = baseColor;
+    vec2 dfg = texture(dfgLut,
+                       clamp(vec2(NdotV, roughness),
+                             vec2(0.5 / 256.0),
+                             vec2(255.5 / 256.0))).rg;
+    float Ess = max(dfg.x + dfg.y, 0.0001);
+    vec3 compensationD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
+    vec3 compensationC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
 
-    float diffuseFactor = max(dot(normal, lightDir), 0.0);
-    vec3 diffuse = diffuseFactor * lightColor * baseColor;
-    vec3 ambient = 0.12 * baseColor;
+    for (uint index = 0u; index < mvp.lightCount; ++index)
+    {
+        LightData light = lightBuffer.lights[index];
+        float lightType = light.position.w;
+        vec3 lightDirection;
+        float attenuation = 1.0;
+        if (lightType < 0.5)
+        {
+            lightDirection = normalize(-light.direction.xyz);
+        }
+        else
+        {
+            vec3 toLight = light.position.xyz - fragWorldPos;
+            float distanceToLight = length(toLight);
+            lightDirection = toLight / max(distanceToLight, 0.0001);
+            attenuation = CalculateInverseSquareAttenuation(distanceToLight) *
+                          CalculateRangeWindow(distanceToLight, light.attenuation.x);
+        }
 
-    vec3 viewDir = normalize(mvp.cameraPosition.xyz - fragWorldPos);
-    vec3 halfDir = normalize(lightDir + viewDir);
-    float specularFactor = pow(max(dot(normal, halfDir), 0.0), 32.0);
-    vec3 specular = specularFactor * lightColor * 0.2;
+        float NdotL = max(dot(normal, lightDirection), 0.0);
+        if (NdotL <= 0.0)
+        {
+            continue;
+        }
+        vec3 halfVector = normalize(viewDirection + lightDirection);
+        float VdotH = max(dot(viewDirection, halfVector), 0.0);
+        float distribution = DistributionGGX(normal, halfVector, roughness);
+        float geometry = GeometrySmithDirect(normal, viewDirection, lightDirection, roughness);
+        float specularTerm = distribution * geometry / (4.0 * NdotV * NdotL + 0.0001);
+        vec3 dielectricFresnel = FresnelSchlick(VdotH, F0d);
+        vec3 conductorFresnel = FresnelSchlick(VdotH, F0c);
+        vec3 dielectricBRDF = (1.0 - dielectricFresnel) * baseColor / PI +
+                              specularTerm * dielectricFresnel * compensationD;
+        vec3 conductorBRDF = specularTerm * conductorFresnel * compensationC;
+        vec3 directBRDF = (1.0 - metallic) * dielectricBRDF + metallic * conductorBRDF;
+        vec3 radiance = light.chromaticityAndIntensity.rgb *
+                        light.chromaticityAndIntensity.w * attenuation * NdotL;
+        if (lightType < 0.5 && mvp.bShadowEnabled != 0u)
+        {
+            radiance *= CalculateShadow(fragWorldPos);
+        }
+        direct += directBRDF * radiance;
+    }
 
-    outColor = vec4((ambient + diffuse + specular) * mvp.sceneColorParams.x, alpha);
+    vec3 ambient = vec3(0.0);
+    if (mvp.bIBLEnabled != 0u)
+    {
+        vec3 irradiance = textureLod(diffuseIrradiance,
+                                     EquirectangularUV(normal),
+                                     0.0).rgb;
+        vec3 reflectionDirection = reflect(-viewDirection, normal);
+        vec3 sourceRadiance = textureLod(environmentRadiance,
+                                         EquirectangularUV(reflectionDirection),
+                                         0.0).rgb;
+        float mipDenominator = float(max(mvp.prefilteredSpecularMipLevels, 1u) - 1u);
+        vec3 prefilteredColor = mipDenominator > 0.0
+                                    ? textureLod(prefilteredSpecular,
+                                                 EquirectangularUV(reflectionDirection),
+                                                 roughness * mipDenominator).rgb
+                                    : sourceRadiance;
+        vec3 Ed = clamp((F0d * dfg.x + dfg.y) * compensationD,
+                        vec3(0.0), vec3(1.0));
+        vec3 Ec = clamp((F0c * dfg.x + dfg.y) * compensationC,
+                        vec3(0.0), vec3(1.0));
+        vec3 diffuseIBL = irradiance * (baseColor / PI) *
+                          (1.0 - metallic) * (vec3(1.0) - Ed);
+        vec3 specularIBL = prefilteredColor *
+                           ((1.0 - metallic) * Ed + metallic * Ec);
+        float specularAO = ComputeSpecularAO(NdotV, ao, roughness);
+        ambient = (diffuseIBL * ao + specularIBL * specularAO) * mvp.iblIntensity;
+    }
+
+    vec3 emissive = mvp.emissiveColor.rgb * mvp.emissiveColor.a;
+    outColor = vec4((direct + ambient + emissive) * mvp.sceneColorParams.x, alpha);
 }

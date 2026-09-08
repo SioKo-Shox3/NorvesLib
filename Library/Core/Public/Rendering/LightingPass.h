@@ -142,6 +142,9 @@ namespace NorvesLib::Core::Rendering
     private:
         /**
          * @brief ライト情報をGPUバッファにパック
+         *
+         * 更新に成功したフレームは、同じViewRenderContextへ物理ライトSSBO・方向影・
+         * radiometric IBLリソースを公開します。ForwardPassはこの公開値だけを使用します。
          * @param context 描画コンテキスト
          * @param bShadowAvailable シャドウマップが利用可能か
          * @param bSSAOAvailable SSAOテクスチャが利用可能か
