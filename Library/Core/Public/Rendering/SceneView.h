@@ -220,15 +220,6 @@ namespace NorvesLib::Core::Rendering
         void SetupDeferredPipeline(SceneRenderer *sceneRenderer);
 
         /**
-         * @brief フォワードレンダリングパイプラインをセットアップ
-         * @param sceneRenderer SceneRenderer参照
-         *
-         * ForwardPass → PostProcessStack(ToneMapping)
-         * の順にパスチェーンを構築します。
-         */
-        void SetupForwardPipeline(SceneRenderer *sceneRenderer);
-
-        /**
          * @brief Proxyをカリング
          * @param viewport 対象Viewport
          *

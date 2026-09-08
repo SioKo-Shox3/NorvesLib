@@ -109,6 +109,8 @@ namespace NorvesLib::Test::RenderingValidation
     inline constexpr uint32_t R1AnchorX = 127u;
     inline constexpr uint32_t R1AnchorY = 127u;
     inline constexpr float R1PlaneScale = 0.0025f;
+    inline constexpr uint32_t R1P4DfgTileGridSize = 5u;
+    inline constexpr float R1P4DfgTileScale = 0.0005f;
     inline constexpr double R1CameraTargetX = 0.000195312500232831;
     inline constexpr double R1CameraTargetY = -0.000195312500698492;
 
@@ -211,6 +213,8 @@ namespace NorvesLib::Test::RenderingValidation
         SceneFixtureResourceLease Lease;
         SceneLayout Layout;
         Core::Container::VariableArray<Core::Entity*> Objects;
+        Core::Rendering::MaterialHandle NeutralMaterial =
+            Core::Rendering::MaterialHandle::Invalid();
         Core::Container::FixedArray<Core::Rendering::MaterialHandle, 30> P4Materials;
     };
 
@@ -240,7 +244,10 @@ namespace NorvesLib::Test::RenderingValidation
                         uint32_t seed);
         void Shutdown(Core::Rendering::RenderResources& resources);
         void ApplyCamera(Core::Rendering::RenderWorld& renderWorld) const;
+        bool ApplyBaseValidationFixture() const;
         bool ApplyP4ScenarioRow(const P4ScenarioRow& row) const;
+        bool ApplyP4DfgTileFixture() const;
+        bool ClearP4DfgTileFixture() const;
         bool ApplyTransparentPhysicalLightingRow(uint32_t rowIndex) const;
         bool ApplyTransparentPhysicalLightingObjectPresence() const;
         const Core::Rendering::CameraProxy& GetCamera() const;
@@ -275,6 +282,9 @@ namespace NorvesLib::Test::RenderingValidation
         mutable SceneFixtureResourceLease m_Lease;
         SceneLayout m_Layout;
         mutable Core::Container::VariableArray<Core::Entity*> m_Objects;
+        mutable Core::Container::VariableArray<Core::Entity*> m_P4DfgTileObjects;
+        Core::Rendering::MaterialHandle m_NeutralMaterial =
+            Core::Rendering::MaterialHandle::Invalid();
         Core::Container::FixedArray<Core::Rendering::MaterialHandle, 30> m_P4Materials;
         SceneKind m_SceneKind = SceneKind::Indoor;
         mutable bool m_bR1PhysicalFixturePrepared = false;

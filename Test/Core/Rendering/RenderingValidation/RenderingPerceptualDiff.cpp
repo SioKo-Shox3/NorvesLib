@@ -419,4 +419,78 @@ namespace NorvesLib::Test::RenderingValidation
             }
         }
     }
+
+    void BuildVisualCalibrationCandidateSpecs(
+        Core::Container::VariableArray<VisualCalibrationCandidateSpec>& outSpecs)
+    {
+        constexpr uint32_t patchSizes[20] = {
+            1u, 1u, 1u, 2u, 1u, 2u, 2u, 4u, 2u, 4u,
+            4u, 8u, 4u, 8u, 8u, 16u, 8u, 16u, 16u, 16u};
+        constexpr uint8_t channelDeltas[20] = {
+            1u, 2u, 4u, 1u, 8u, 2u, 4u, 1u, 8u, 2u,
+            4u, 1u, 8u, 2u, 4u, 1u, 8u, 2u, 4u, 8u};
+        outSpecs.clear();
+        outSpecs.reserve(20u);
+        for (uint32_t index = 0u; index < 20u; ++index)
+        {
+            VisualCalibrationCandidateSpec spec;
+            spec.PatchSize = patchSizes[index];
+            spec.ChannelDelta = channelDeltas[index];
+            spec.ChangeAmount = spec.PatchSize * spec.PatchSize * spec.ChannelDelta;
+            outSpecs.push_back(spec);
+        }
+    }
+
+    bool SelectVisualCalibrationThreshold(
+        Core::Container::Span<const uint64_t> noiseMeanNanounits,
+        Core::Container::Span<const uint64_t> artificialMeanNanounits,
+        VisualCalibrationSelection& outSelection)
+    {
+        outSelection = {};
+        if (noiseMeanNanounits.size() != 10u || artificialMeanNanounits.size() != 20u)
+        {
+            return false;
+        }
+
+        uint64_t noiseMaximum = 0u;
+        for (const uint64_t value : noiseMeanNanounits)
+        {
+            if (value > 1000000000u)
+            {
+                return false;
+            }
+            noiseMaximum = std::max(noiseMaximum, value);
+        }
+        for (const uint64_t value : artificialMeanNanounits)
+        {
+            if (value > 1000000000u)
+            {
+                return false;
+            }
+        }
+
+        Core::Container::VariableArray<VisualCalibrationCandidateSpec> candidates;
+        BuildVisualCalibrationCandidateSpecs(candidates);
+        for (uint32_t index = 0u; index < candidates.size(); ++index)
+        {
+            const uint64_t artificial = artificialMeanNanounits[index];
+            if (artificial <= noiseMaximum)
+            {
+                continue;
+            }
+            const uint64_t numerator = noiseMaximum * 3u + artificial;
+            const uint64_t limitMillionths = (numerator + 3999u) / 4000u;
+            if (noiseMaximum < limitMillionths * 1000u &&
+                limitMillionths * 1000u < artificial)
+            {
+                outSelection.NoiseMaximumNanounits = noiseMaximum;
+                outSelection.NegativeMeanNanounits = artificial;
+                outSelection.MeanFlipLimitMillionths = static_cast<uint32_t>(limitMillionths);
+                outSelection.Difference.PatchSize = candidates[index].PatchSize;
+                outSelection.Difference.ChannelDelta = candidates[index].ChannelDelta;
+                return true;
+            }
+        }
+        return false;
+    }
 } // namespace NorvesLib::Test::RenderingValidation

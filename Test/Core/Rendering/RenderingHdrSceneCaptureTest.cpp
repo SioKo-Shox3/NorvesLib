@@ -6,6 +6,7 @@
 #include "Boot/AppLauncher.h"
 #include "Boot/BootConfig.h"
 #include "Container/PointerTypes.h"
+#include "Engine/Engine.h"
 #include "Logging/LogMacros.h"
 #include "Module/ModuleRegistry.h"
 #include "ImGuiModule/IImGuiView.h"
@@ -343,8 +344,14 @@ namespace
         return bPassed;
     }
 
-    bool RunForcedPresentationFormatReadback()
+    bool RunForcedPresentationFormatReadback(
+        uint32_t& outRows,
+        uint32_t& outPixels,
+        uint32_t& outChannels)
     {
+        outRows = 0u;
+        outPixels = 0u;
+        outChannels = 0u;
         RHI::RHIDeviceDesc deviceDesc;
         deviceDesc.Api = RHI::GraphicsAPI::Vulkan;
         deviceDesc.bEnableValidation = true;
@@ -360,6 +367,7 @@ namespace
         {
             return false;
         }
+        ++outRows;
         std::cout << "R1 forced actual readback passed: format=R8G8B8A8_SRGB "
                      "encode_path=hardware_srgb samples=7 channels=4 lsb=1\n";
         if (!VerifyForcedPresentationFormat(device.get(),
@@ -368,6 +376,9 @@ namespace
         {
             return false;
         }
+        ++outRows;
+        outPixels = outRows * 7u;
+        outChannels = outPixels * 4u;
         std::cout << "R1 forced actual readback passed: format=R8G8B8A8_UNORM "
                      "encode_path=shader_oetf samples=7 channels=4 lsb=1\n";
         return true;
@@ -1279,6 +1290,14 @@ namespace
             Complete
         };
 
+        enum class AllNumericalCaptureStage : uint8_t
+        {
+            BackBuffer,
+            PresentationColor,
+            SceneColor,
+            Complete
+        };
+
         Core::Rendering::FrameCaptureSourceKind GetCaptureSourceForTest() const
         {
             return GetRunConfig().CaptureSource;
@@ -1287,8 +1306,32 @@ namespace
         bool OnPreInitialize(
             const Core::Container::VariableArray<Core::Container::String>& args) override
         {
+            m_bAllNumericalScenario = false;
+            m_bAllNumericalArgumentParsed = false;
+            m_bAllNumericalForcedRowsArgumentParsed = false;
+            for (const Core::Container::String& argument : args)
+            {
+                if (argument == TEXT("--r1-scenario=all-numerical"))
+                {
+                    m_bAllNumericalScenario = true;
+                    break;
+                }
+            }
+
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
+                return false;
+            }
+            if (m_bAllNumericalScenario &&
+                GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::BackBuffer)
+            {
+                LOG_ERROR("--r1-scenario=all-numerical は BackBuffer capture と組み合わせてください");
+                return false;
+            }
+            if (m_bAllNumericalScenario &&
+                (!m_bAllNumericalForcedRowsArgumentParsed || m_AllNumericalForcedRows != 2u))
+            {
+                LOG_ERROR("R1 all-numerical forced format row count is not the measured value");
                 return false;
             }
             if (m_bR1Scenario &&
@@ -1352,6 +1395,33 @@ namespace
             m_bTransparentPhysicalHasUnshadowedValue = false;
             m_TransparentPhysicalDfgOracle = {};
             m_bTransparentPhysicalDfgOracleValid = false;
+            m_AllNumericalCaptureStage = AllNumericalCaptureStage::BackBuffer;
+            m_AllNumericalRowIndex = 0u;
+            m_AllNumericalHasFrameNumber = false;
+            m_AllNumericalLastFrameNumber = 0u;
+            m_AllNumericalHasStageToken = false;
+            m_AllNumericalLastStageToken = 0u;
+            m_bAllNumericalRequestStartFrameSet = false;
+            m_AllNumericalRequestStartFrame = 0u;
+            m_AllNumericalLastObservedRequestId = 0u;
+            m_AllNumericalStartupFrame = 0u;
+            m_AllNumericalFinalFrame = 0u;
+            m_AllNumericalPreviousFrame = 0u;
+            m_AllNumericalMaxLatency = 0u;
+            m_AllNumericalBackBufferScans = 0u;
+            m_AllNumericalPresentationScans = 0u;
+            m_AllNumericalSceneScans = 0u;
+            m_AllNumericalActualByteChannels = 0u;
+            m_AllNumericalFloatChannels = 0u;
+            m_AllNumericalNumericalRows = 0u;
+            m_AllNumericalForcedRows = 0u;
+            m_bAllNumericalStartupFrameSet = false;
+            m_bAllNumericalStageApplyFailed = false;
+            m_bAllNumericalRowMarkerPrinted = false;
+            m_AllNumericalBackBuffer = {};
+            m_AllNumericalPresentationColor = {};
+            m_AllNumericalPresentationImage = {};
+            m_AllNumericalSceneColor = {};
             if (m_bTransparentPhysicalLightingScenario &&
                 !ValidateTransparentPhysicalStageContract())
             {
@@ -1371,6 +1441,38 @@ namespace
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_bAllNumericalScenario)
+            {
+                if (GetRunConfig().Scene != SceneKind::Indoor ||
+                    !ValidateAllNumericalRowContract() || !ValidateSyntheticLsbContract() ||
+                    !ValidateIeee754Binary16RneTable() ||
+                    !BuildP4DfgOracle(m_P4DfgOracle) ||
+                    !BuildP4RoughnessOracle(m_P4RoughnessOracle) ||
+                    !BuildP4Raw250Oracle(m_P4Raw250Oracle) ||
+                    !BuildP5DfgOracle(m_TransparentPhysicalDfgOracle) ||
+                    !GetFixture().ApplyBaseValidationFixture() ||
+                    !GetFixture().ApplyP4ScenarioRow({P4Scenario::Raw250TextureRepresentation, 0u}) ||
+                    GetFixture().TrackedMeshCount() != 2u ||
+                    GetFixture().TrackedTextureCount() != 13u ||
+                    GetFixture().TrackedMaterialCount() != 33u)
+                {
+                    LOG_ERROR("R1 all-numerical fixture preflight failed");
+                    return false;
+                }
+                m_AllNumericalForcedRows = 2u;
+                m_bTransparentPhysicalDfgOracleValid = true;
+                if (Core::Module::RegisterImGuiModule(Core::Module::GetModuleRegistry()) == nullptr)
+                {
+                    LOG_ERROR("R1 all-numerical scenario failed to register ImGui module");
+                    return false;
+                }
+                Modules::Gui::RegisterImGuiView(&m_MarkerView);
+                m_bMarkerRegistered = true;
+                std::cout << "R1 all-numerical fixture passed: scene="
+                          << (GetRunConfig().Scene == SceneKind::Indoor ? "indoor" : "outdoor")
+                          << " marker=outer[4,20)x[4,20) interior=144" << "\n";
+                return true;
             }
             if (m_bTransparentPhysicalLightingScenario)
             {
@@ -1540,6 +1642,28 @@ namespace
             return true;
         }
 
+        void OnPreRender() override
+        {
+            RenderingValidationApplicationHandler::OnPreRender();
+            if (m_bAllNumericalScenario && Core::Engine::GEngine != nullptr)
+            {
+                Core::Rendering::RenderWorld& renderWorld = Core::Engine::GEngine->GetRenderWorld();
+                const uint64_t requestId = GetLastAcceptedRequestId();
+                if (requestId != 0u && requestId != m_AllNumericalLastObservedRequestId &&
+                    GetFixture().IsCaptureStateStable() && !renderWorld.HasPendingAsyncAssets())
+                {
+                    m_AllNumericalLastObservedRequestId = requestId;
+                    if (!m_bAllNumericalStartupFrameSet)
+                    {
+                        m_AllNumericalRequestStartFrame = renderWorld.GetRenderedFrameCount();
+                        m_bAllNumericalRequestStartFrameSet = true;
+                        m_AllNumericalStartupFrame = m_AllNumericalRequestStartFrame;
+                        m_bAllNumericalStartupFrameSet = true;
+                    }
+                }
+            }
+        }
+
         void OnPreShutdown() override
         {
             if (m_bMarkerRegistered)
@@ -1555,9 +1679,33 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument == TEXT("--r1-scenario=all-numerical"))
+            {
+                if (m_bAllNumericalArgumentParsed ||
+                    m_bR1Scenario || m_bKnownCdScenario || m_bP4Scenario ||
+                    m_bTransparentPhysicalLightingScenario)
+                {
+                    outFailureReason = TEXT("duplicate r1 scenario");
+                    return false;
+                }
+                m_bAllNumericalScenario = true;
+                m_bAllNumericalArgumentParsed = true;
+                return true;
+            }
+            if (argument == TEXT("--r1-forced-rows=2"))
+            {
+                if (!m_bAllNumericalScenario || m_bAllNumericalForcedRowsArgumentParsed)
+                {
+                    outFailureReason = TEXT("forced row count is only valid for all-numerical");
+                    return false;
+                }
+                m_bAllNumericalForcedRowsArgumentParsed = true;
+                m_AllNumericalForcedRows = 2u;
+                return true;
+            }
             if (argument == TEXT("--r1-scenario=srgb-transfer"))
             {
-                if (m_bR1Scenario)
+                if (m_bR1Scenario || m_bAllNumericalScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1567,7 +1715,8 @@ namespace
             }
             if (argument == TEXT("--r1-scenario=known-cd-lambert"))
             {
-                if (m_bKnownCdScenario || m_bR1Scenario || m_bTransparentPhysicalLightingScenario)
+                if (m_bKnownCdScenario || m_bR1Scenario || m_bTransparentPhysicalLightingScenario ||
+                    m_bAllNumericalScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1578,7 +1727,7 @@ namespace
             if (argument == TEXT("--r1-scenario=transparent-physical-lighting"))
             {
                 if (m_bTransparentPhysicalLightingScenario || m_bP4Scenario ||
-                    m_bKnownCdScenario || m_bR1Scenario)
+                    m_bKnownCdScenario || m_bR1Scenario || m_bAllNumericalScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1589,7 +1738,7 @@ namespace
             if (argument == TEXT("--r1-scenario=ibl-prefilter-nonconstant"))
             {
                 if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
-                    m_bTransparentPhysicalLightingScenario)
+                    m_bTransparentPhysicalLightingScenario || m_bAllNumericalScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1601,7 +1750,7 @@ namespace
             if (argument == TEXT("--r1-scenario=dfg-lut"))
             {
                 if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
-                    m_bTransparentPhysicalLightingScenario)
+                    m_bTransparentPhysicalLightingScenario || m_bAllNumericalScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1613,7 +1762,7 @@ namespace
             if (argument == TEXT("--r1-scenario=ibl-roughness-sweep"))
             {
                 if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
-                    m_bTransparentPhysicalLightingScenario)
+                    m_bTransparentPhysicalLightingScenario || m_bAllNumericalScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1625,7 +1774,7 @@ namespace
             if (argument == TEXT("--r1-scenario=white-furnace"))
             {
                 if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
-                    m_bTransparentPhysicalLightingScenario)
+                    m_bTransparentPhysicalLightingScenario || m_bAllNumericalScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1637,7 +1786,7 @@ namespace
             if (argument == TEXT("--r1-scenario=direct-conductor-endpoint"))
             {
                 if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
-                    m_bTransparentPhysicalLightingScenario)
+                    m_bTransparentPhysicalLightingScenario || m_bAllNumericalScenario)
                 {
                     outFailureReason = TEXT("duplicate r1 scenario");
                     return false;
@@ -1653,6 +1802,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_bAllNumericalScenario)
+            {
+                return EvaluateAllNumericalFrame(frame, reason);
+            }
             if (m_bTransparentPhysicalLightingScenario)
             {
                 return EvaluateTransparentPhysicalLightingFrame(frame, reason);
@@ -1749,6 +1902,86 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_bAllNumericalScenario)
+            {
+                if (m_bAllNumericalStageApplyFailed ||
+                    m_AllNumericalCaptureStage == AllNumericalCaptureStage::Complete)
+                {
+                    return;
+                }
+                if (m_AllNumericalRowIndex <= 22u)
+                {
+                    const Core::Rendering::CameraProxy camera = GetFixture().GetCamera();
+                    renderWorld.SetMainCamera(camera);
+                    const Core::Rendering::CameraProxy& actualCamera =
+                        renderWorld.GetRenderingCoordinator().GetMainCamera();
+                    if (!ValidateP4Camera(actualCamera))
+                    {
+                        m_bAllNumericalStageApplyFailed = true;
+                        return;
+                    }
+                    m_P4ActualCamera = actualCamera;
+                    m_bP4ActualCameraAvailable = true;
+                }
+                else if (m_AllNumericalRowIndex >= 23u && m_AllNumericalRowIndex <= 28u)
+                {
+                    Core::Rendering::CameraProxy camera = GetFixture().GetCamera();
+                    const bool bExposureA = m_KnownCdStage == KnownCdStage::PureLambertA ||
+                                            m_KnownCdStage == KnownCdStage::DirectPbrA ||
+                                            m_KnownCdStage == KnownCdStage::NormalA;
+                    camera.Aperture = 1.0f;
+                    camera.ShutterSpeed = bExposureA ? 0.3f : 0.15f;
+                    camera.ISO = 100.0f;
+                    camera.ExposureCompensation = 0.0f;
+                    camera.PreExposure = bExposureA ? 0.25f : 0.125f;
+                    camera.InvPreExposure = bExposureA ? 4.0f : 8.0f;
+                    camera.Exposure = camera.PreExposure;
+                    renderWorld.SetMainCamera(camera);
+                }
+                else if (m_AllNumericalRowIndex == 29u)
+                {
+                    renderWorld.SetMainCamera(GetFixture().GetCamera());
+                }
+                else
+                {
+                    Core::Rendering::CameraProxy camera = GetFixture().GetCamera();
+                    camera.Aperture = 4.0f;
+                    camera.ShutterSpeed = 1.0f / 60.0f;
+                    camera.ISO = 100.0f;
+                    camera.ExposureCompensation = 4.0f;
+                    const double ev100 = std::log2(
+                        (static_cast<double>(camera.Aperture) *
+                         static_cast<double>(camera.Aperture) /
+                         static_cast<double>(camera.ShutterSpeed)) *
+                        (100.0 / static_cast<double>(camera.ISO)));
+                    const double exposure = std::exp2(
+                        static_cast<double>(camera.ExposureCompensation) - ev100) / 1.2;
+                    camera.EV100 = static_cast<float>(ev100);
+                    camera.Exposure = static_cast<float>(exposure);
+                    camera.PreExposure = 1.0f / 72.0f;
+                    camera.InvPreExposure = 72.0f;
+                    if (!std::isfinite(camera.Exposure) || camera.Exposure <= 0.0f)
+                    {
+                        m_bAllNumericalStageApplyFailed = true;
+                        return;
+                    }
+                    renderWorld.SetMainCamera(camera);
+                }
+                renderWorld.SetDebugViewModeAll(
+                    static_cast<Core::Rendering::DebugViewMode>(
+                        GetAllNumericalDebugViewMode(m_AllNumericalRowIndex)));
+                if (!m_bAllNumericalRowMarkerPrinted)
+                {
+                    std::cout << "R1 all-numerical row applied: row="
+                              << m_AllNumericalRowIndex
+                              << " mode=" << GetAllNumericalDebugViewMode(m_AllNumericalRowIndex)
+                              << " numerical_assertions="
+                              << GetAllNumericalNumericalAssertionCount(m_AllNumericalRowIndex)
+                              << "\n";
+                    m_bAllNumericalRowMarkerPrinted = true;
+                }
+                return;
+            }
             if (m_bTransparentPhysicalLightingScenario)
             {
                 if (m_bTransparentPhysicalStageApplyFailed ||
@@ -1896,6 +2129,10 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_bAllNumericalScenario)
+            {
+                return;
+            }
             if (m_bTransparentPhysicalLightingScenario)
             {
                 if (m_TransparentPhysicalStage == TransparentPhysicalStage::Complete)
@@ -1953,6 +2190,38 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_bAllNumericalScenario)
+            {
+                if (m_bAllNumericalStageApplyFailed ||
+                    m_AllNumericalCaptureStage == AllNumericalCaptureStage::Complete)
+                {
+                    return false;
+                }
+                if (m_AllNumericalCaptureStage == AllNumericalCaptureStage::PresentationColor)
+                {
+                    outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::PresentationColor;
+                }
+                else if (m_AllNumericalCaptureStage == AllNumericalCaptureStage::SceneColor)
+                {
+                    outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::SceneColor;
+                }
+                else
+                {
+                    outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::BackBuffer;
+                }
+                if (Core::Engine::GEngine == nullptr)
+                {
+                    return false;
+                }
+                m_AllNumericalRequestStartFrame =
+                    Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount();
+                m_bAllNumericalRequestStartFrameSet = true;
+                LOG_INFO("R1 all-numerical follow-up requested: row=%u stage=%u after frame=%llu",
+                         m_AllNumericalRowIndex,
+                         static_cast<unsigned int>(m_AllNumericalCaptureStage),
+                         static_cast<unsigned long long>(frame.FrameNumber));
+                return true;
+            }
             if (m_bTransparentPhysicalLightingScenario)
             {
                 if (m_TransparentPhysicalStage == TransparentPhysicalStage::Complete)
@@ -2027,6 +2296,602 @@ namespace
         }
 
     private:
+        static constexpr uint32_t AllNumericalStaticRowCount = 40u;
+
+        static uint32_t GetAllNumericalDebugViewMode(uint32_t rowIndex)
+        {
+            if (rowIndex == 0u)
+            {
+                return 250u;
+            }
+            if (rowIndex == 1u)
+            {
+                return 251u;
+            }
+            if (rowIndex >= 2u && rowIndex <= 22u)
+            {
+                return 252u;
+            }
+            if (rowIndex >= 23u && rowIndex <= 24u)
+            {
+                return 253u;
+            }
+            if (rowIndex >= 25u && rowIndex <= 26u)
+            {
+                return 254u;
+            }
+            if (rowIndex >= 30u && rowIndex <= 36u)
+            {
+                return 254u;
+            }
+            if (rowIndex == 37u || rowIndex == 39u)
+            {
+                return 252u;
+            }
+            if (rowIndex == 38u)
+            {
+                return 254u;
+            }
+            return 0u;
+        }
+
+        static uint32_t GetAllNumericalNumericalAssertionCount(uint32_t rowIndex)
+        {
+            if (rowIndex == 0u)
+            {
+                return 5u;
+            }
+            if (rowIndex == 1u)
+            {
+                return 25u;
+            }
+            if (rowIndex >= 2u && rowIndex <= 7u)
+            {
+                return 1u;
+            }
+            if (rowIndex >= 8u && rowIndex <= 22u)
+            {
+                return 1u;
+            }
+            return 1u;
+        }
+
+        static uint32_t GetExpectedAllNumericalAssertionTotal()
+        {
+            uint32_t total = 0u;
+            for (uint32_t rowIndex = 0u; rowIndex < AllNumericalStaticRowCount; ++rowIndex)
+            {
+                total += GetAllNumericalNumericalAssertionCount(rowIndex);
+            }
+            return total;
+        }
+
+        static bool ValidateAllNumericalRowContract()
+        {
+            return GetExpectedAllNumericalAssertionTotal() == 68u &&
+                   GetAllNumericalDebugViewMode(0u) == 250u &&
+                   GetAllNumericalDebugViewMode(1u) == 251u &&
+                   GetAllNumericalDebugViewMode(2u) == 252u &&
+                   GetAllNumericalDebugViewMode(22u) == 252u &&
+                   GetAllNumericalDebugViewMode(23u) == 253u &&
+                   GetAllNumericalDebugViewMode(25u) == 254u &&
+                   GetAllNumericalDebugViewMode(27u) == 0u;
+        }
+
+        static bool ValidateSyntheticLsbContract()
+        {
+            const uint8_t expected = 128u;
+            const uint8_t oneLsb = static_cast<uint8_t>(expected + 1u);
+            const uint8_t twoLsb = static_cast<uint8_t>(expected + 2u);
+            return IsWithinOneLsb(oneLsb, expected) && !IsWithinOneLsb(twoLsb, expected);
+        }
+
+        bool ApplyAllNumericalRow(uint32_t rowIndex)
+        {
+            if (rowIndex >= AllNumericalStaticRowCount)
+            {
+                return false;
+            }
+            m_bP4StageApplyFailed = false;
+            m_bP4ActualCameraAvailable = false;
+            m_P4HasFrameNumber = false;
+            m_P4HasStageToken = false;
+            m_bP4HasRuntimeIdentity = false;
+            m_P4LastRuntimeRow = 0u;
+            m_bP4ActualOracleMismatch = false;
+            if (rowIndex != 1u && !GetFixture().ClearP4DfgTileFixture())
+            {
+                return false;
+            }
+            if (rowIndex == 0u)
+            {
+                m_P4Scenario = P4Scenario::Raw250TextureRepresentation;
+                m_P4RowIndex = 0u;
+                m_P4Substage = P4CaptureSubstage::Primary;
+                return GetFixture().ApplyP4ScenarioRow({P4Scenario::Raw250TextureRepresentation, 0u});
+            }
+            if (rowIndex == 1u)
+            {
+                m_P4Scenario = P4Scenario::Raw251DfgLut;
+                m_P4RowIndex = 0u;
+                m_P4Substage = P4CaptureSubstage::Primary;
+                return GetFixture().ApplyP4ScenarioRow({P4Scenario::Raw251DfgLut, 0u}) &&
+                       GetFixture().ApplyP4DfgTileFixture();
+            }
+            if (rowIndex >= 2u && rowIndex <= 6u)
+            {
+                m_P4Scenario = P4Scenario::Raw252RoughnessSweep;
+                m_P4RowIndex = rowIndex - 2u;
+                m_P4Substage = P4CaptureSubstage::Primary;
+                return GetFixture().ApplyP4ScenarioRow({
+                    P4Scenario::Raw252RoughnessSweep, rowIndex - 2u});
+            }
+            if (rowIndex == 7u)
+            {
+                m_P4Scenario = P4Scenario::Raw252RoughnessSweep;
+                m_P4RowIndex = 5u;
+                m_P4Substage = P4CaptureSubstage::Primary;
+                return GetFixture().ApplyP4ScenarioRow({
+                    P4Scenario::Raw252RoughnessSweep, 5u});
+            }
+            if (rowIndex >= 8u && rowIndex <= 22u)
+            {
+                m_P4Scenario = P4Scenario::Raw252WhiteFurnace;
+                m_P4RowIndex = rowIndex - 8u;
+                m_P4Substage = P4CaptureSubstage::Primary;
+                return GetFixture().ApplyP4ScenarioRow({
+                    P4Scenario::Raw252WhiteFurnace, rowIndex - 8u});
+            }
+            if (rowIndex >= 23u && rowIndex <= 28u)
+            {
+                if (rowIndex == 23u)
+                {
+                    m_KnownCdPreviousImage = {};
+                }
+                m_KnownCdStage = static_cast<KnownCdStage>(rowIndex - 23u);
+                return GetFixture().ApplyBaseValidationFixture();
+            }
+            if (rowIndex == 29u)
+            {
+                return GetFixture().ApplyBaseValidationFixture();
+            }
+            if (rowIndex >= 30u && rowIndex <= 39u)
+            {
+                m_TransparentPhysicalStage = static_cast<TransparentPhysicalStage>(rowIndex - 30u);
+                if (rowIndex == 30u)
+                {
+                    m_bTransparentPhysicalHasFrameNumber = false;
+                    m_bTransparentPhysicalHasStageToken = false;
+                    m_bTransparentPhysicalHasUnshadowedValue = false;
+                    m_TransparentPhysicalUnshadowedMeanY = 0.0;
+                }
+                if (!GetFixture().ApplyTransparentPhysicalLightingRow(rowIndex - 30u))
+                {
+                    return false;
+                }
+                return rowIndex != 30u ||
+                       (GetFixture().TrackedMeshCount() == 3u &&
+                        GetFixture().TrackedTextureCount() == 22u &&
+                        GetFixture().TrackedMaterialCount() == 37u);
+            }
+            return false;
+        }
+
+        static bool IsAllNumericalBackBufferFormat(RHI::Format format)
+        {
+            return RHI::IsPresentationSrgbFormat(format) || RHI::IsPresentationUnormFormat(format);
+        }
+
+        static uint8_t EncodeAllNumericalSrgb(double linear)
+        {
+            const double encoded = linear <= 0.0031308
+                ? 12.92 * linear
+                : 1.055 * std::pow(linear, 1.0 / 2.4) - 0.055;
+            const double clamped = std::clamp(encoded, 0.0, 1.0);
+            return static_cast<uint8_t>(std::floor(clamped * 255.0 + 0.5));
+        }
+
+        static bool ValidateAllNumericalCaptureEnvelope(
+            const Core::Rendering::CapturedFrame& frame,
+            bool bBackBuffer,
+            Core::Container::String& reason)
+        {
+            if (frame.Width != ValidationWidth || frame.Height != ValidationHeight)
+            {
+                reason = TEXT("R1 all-numerical capture dimensions are invalid");
+                return false;
+            }
+            if (bBackBuffer)
+            {
+                if (!IsAllNumericalBackBufferFormat(frame.Format) ||
+                    frame.BytesPerPixel != 4u ||
+                    frame.ColorSpace != RHI::PresentationColorSpace::Rec709D65 ||
+                    frame.Transfer != RHI::PresentationTransfer::SRGB ||
+                    frame.bHardwareSrgbEncode == frame.bShaderSrgbEncode ||
+                    frame.bHardwareSrgbEncode != RHI::IsPresentationSrgbFormat(frame.Format) ||
+                    frame.bShaderSrgbEncode != RHI::IsPresentationUnormFormat(frame.Format))
+                {
+                    reason = TEXT("R1 all-numerical BackBuffer format or encode metadata is invalid");
+                    return false;
+                }
+                const uint64_t tightPitch = static_cast<uint64_t>(frame.Width) * 4u;
+                const uint64_t requiredBytes = static_cast<uint64_t>(frame.RowPitchBytes) * frame.Height;
+                if (frame.RowPitchBytes < tightPitch ||
+                    requiredBytes > frame.Pixels.size())
+                {
+                    reason = TEXT("R1 all-numerical BackBuffer pixel storage is invalid");
+                    return false;
+                }
+                return true;
+            }
+            if (frame.Format != RHI::Format::R16G16B16A16_FLOAT ||
+                frame.BytesPerPixel != 8u)
+            {
+                reason = TEXT("R1 all-numerical float capture format is invalid");
+                return false;
+            }
+            return true;
+        }
+
+        static bool ValidateAllNumericalBackBufferMarker(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            const bool bBgra = frame.Format == RHI::Format::B8G8R8A8_UNORM ||
+                               frame.Format == RHI::Format::B8G8R8A8_SRGB;
+            size_t matched = 0u;
+            for (uint32_t y = 6u; y < 18u; ++y)
+            {
+                const size_t rowOffset = static_cast<size_t>(y) * frame.RowPitchBytes;
+                for (uint32_t x = 6u; x < 18u; ++x)
+                {
+                    const size_t offset = rowOffset + static_cast<size_t>(x) * 4u;
+                    const uint8_t red = frame.Pixels[offset + (bBgra ? 2u : 0u)];
+                    const uint8_t green = frame.Pixels[offset + 1u];
+                    const uint8_t blue = frame.Pixels[offset + (bBgra ? 0u : 2u)];
+                    if (IsWithinOneLsb(red, 128u) && IsWithinOneLsb(green, 64u) &&
+                        IsWithinOneLsb(blue, 191u) && frame.Pixels[offset + 3u] == 255u)
+                    {
+                        ++matched;
+                    }
+                }
+            }
+            if (matched != 144u)
+            {
+                reason = TEXT("R1 all-numerical BackBuffer marker interior is incomplete");
+                return false;
+            }
+            std::cout << "R1 all-numerical BackBuffer marker: matched=144/144\n";
+            return true;
+        }
+
+        bool EvaluateAllNumericalBackBuffer(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (!ValidateAllNumericalCaptureEnvelope(frame, true, reason) ||
+                !ValidateAllNumericalBackBufferMarker(frame, reason))
+            {
+                return false;
+            }
+            m_AllNumericalBackBuffer = frame;
+            ++m_AllNumericalBackBufferScans;
+            m_AllNumericalActualByteChannels +=
+                static_cast<uint64_t>(ValidationWidth) * ValidationHeight * 4u;
+            return true;
+        }
+
+        bool EvaluateAllNumericalPresentationColor(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (!ValidateAllNumericalCaptureEnvelope(frame, false, reason) ||
+                frame.ColorSpace != RHI::PresentationColorSpace::Rec709D65 ||
+                frame.Transfer != RHI::PresentationTransfer::SRGB ||
+                frame.bHardwareSrgbEncode == frame.bShaderSrgbEncode)
+            {
+                reason = TEXT("R1 all-numerical PresentationColor metadata is invalid");
+                return false;
+            }
+            RgbaFloatImage image;
+            if (DecodeCapturedRgba16Float(frame, image) != FloatImageStatus::Success ||
+                !IsFiniteAndWithinRgba16Range(image))
+            {
+                reason = TEXT("R1 all-numerical PresentationColor RGBA16F validation failed");
+                return false;
+            }
+            const bool bBgra = m_AllNumericalBackBuffer.Format == RHI::Format::B8G8R8A8_UNORM ||
+                               m_AllNumericalBackBuffer.Format == RHI::Format::B8G8R8A8_SRGB;
+            size_t markerMatches = 0u;
+            for (uint32_t y = 0u; y < ValidationHeight; ++y)
+            {
+                const size_t backRowOffset = static_cast<size_t>(y) * m_AllNumericalBackBuffer.RowPitchBytes;
+                for (uint32_t x = 0u; x < ValidationWidth; ++x)
+                {
+                    const size_t floatOffset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    const size_t backOffset = backRowOffset + static_cast<size_t>(x) * 4u;
+                    const uint8_t expectedLogical[4] = {
+                        EncodeAllNumericalSrgb(static_cast<double>(image.Values[floatOffset + 0u])),
+                        EncodeAllNumericalSrgb(static_cast<double>(image.Values[floatOffset + 1u])),
+                        EncodeAllNumericalSrgb(static_cast<double>(image.Values[floatOffset + 2u])),
+                        static_cast<uint8_t>(std::floor(std::clamp(
+                            static_cast<double>(image.Values[floatOffset + 3u]), 0.0, 1.0) * 255.0 + 0.5))};
+                    const uint8_t expectedStorage[4] = {
+                        bBgra ? expectedLogical[2] : expectedLogical[0],
+                        expectedLogical[1],
+                        bBgra ? expectedLogical[0] : expectedLogical[2],
+                        expectedLogical[3]};
+                    for (uint32_t channel = 0u; channel < 4u; ++channel)
+                    {
+                        const int delta = static_cast<int>(m_AllNumericalBackBuffer.Pixels[backOffset + channel]) -
+                                          static_cast<int>(expectedStorage[channel]);
+                        if (std::abs(delta) > 1)
+                        {
+                            const uint32_t logicalChannel = bBgra && channel == 0u
+                                ? 2u
+                                : bBgra && channel == 2u ? 0u : channel;
+                            const char* encodePath = frame.bHardwareSrgbEncode
+                                ? "hardware_srgb"
+                                : "shader_oetf";
+                            std::cerr << "R1 all-numerical oracle mismatch: row=" << m_AllNumericalRowIndex
+                                      << " source=BackBuffer x=" << x << " y=" << y
+                                      << " storage_channel=" << channel
+                                      << " logical_channel=" << logicalChannel
+                                      << " logical_linear=" << image.Values[floatOffset + logicalChannel]
+                                      << " format=" << static_cast<unsigned int>(frame.Format)
+                                      << " color_space=" << static_cast<unsigned int>(frame.ColorSpace)
+                                      << " transfer=" << static_cast<unsigned int>(frame.Transfer)
+                                      << " hardware_srgb=" << (frame.bHardwareSrgbEncode ? 1 : 0)
+                                      << " shader_srgb=" << (frame.bShaderSrgbEncode ? 1 : 0)
+                                      << " encode_path=" << encodePath
+                                      << " expected=" << static_cast<unsigned int>(expectedStorage[channel])
+                                      << " actual=" << static_cast<unsigned int>(
+                                             m_AllNumericalBackBuffer.Pixels[backOffset + channel])
+                                      << " delta=" << delta << "\n";
+                            reason = TEXT("R1 all-numerical sRGB oracle rejected a BackBuffer pixel");
+                            return false;
+                        }
+                    }
+                    if (x >= 6u && x < 18u && y >= 6u && y < 18u &&
+                        IsWithinOneLsb(expectedLogical[0], 128u) &&
+                        IsWithinOneLsb(expectedLogical[1], 64u) &&
+                        IsWithinOneLsb(expectedLogical[2], 191u) &&
+                        expectedLogical[3] == 255u)
+                    {
+                        ++markerMatches;
+                    }
+                }
+            }
+            if (markerMatches != 144u)
+            {
+                reason = TEXT("R1 all-numerical PresentationColor marker interior is incomplete");
+                return false;
+            }
+            m_AllNumericalPresentationColor = frame;
+            m_AllNumericalPresentationImage = image;
+            ++m_AllNumericalPresentationScans;
+            m_AllNumericalFloatChannels += static_cast<uint64_t>(ValidationWidth) * ValidationHeight * 4u;
+            return true;
+        }
+
+        bool EvaluateAllNumericalSceneColor(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (!ValidateAllNumericalCaptureEnvelope(frame, false, reason))
+            {
+                return false;
+            }
+            RgbaFloatImage image;
+            if (DecodeCapturedRgba16Float(frame, image) != FloatImageStatus::Success ||
+                !IsFiniteAndWithinRgba16Range(image))
+            {
+                reason = TEXT("R1 all-numerical SceneColor RGBA16F validation failed");
+                return false;
+            }
+            const double markerLinear[3] = {
+                0.21586050011389926, 0.05126945837404324, 0.5209955732043543};
+            bool bSceneLooksLikeMarker = true;
+            bool bPresentationDiffers = false;
+            for (uint32_t y = 6u; y < 18u; ++y)
+            {
+                for (uint32_t x = 6u; x < 18u; ++x)
+                {
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    if (std::abs(static_cast<double>(image.Values[offset + 0u]) - markerLinear[0]) > 1.0e-3 ||
+                        std::abs(static_cast<double>(image.Values[offset + 1u]) - markerLinear[1]) > 1.0e-3 ||
+                        std::abs(static_cast<double>(image.Values[offset + 2u]) - markerLinear[2]) > 1.0e-3 ||
+                        std::abs(static_cast<double>(image.Values[offset + 3u]) - 1.0) > 1.0e-3)
+                    {
+                        bSceneLooksLikeMarker = false;
+                    }
+                    if (std::abs(static_cast<double>(image.Values[offset + 0u]) -
+                                 static_cast<double>(m_AllNumericalPresentationImage.Values[offset + 0u])) > 1.0e-6 ||
+                        std::abs(static_cast<double>(image.Values[offset + 1u]) -
+                                 static_cast<double>(m_AllNumericalPresentationImage.Values[offset + 1u])) > 1.0e-6 ||
+                        std::abs(static_cast<double>(image.Values[offset + 2u]) -
+                                 static_cast<double>(m_AllNumericalPresentationImage.Values[offset + 2u])) > 1.0e-6 ||
+                        std::abs(static_cast<double>(image.Values[offset + 3u]) -
+                                 static_cast<double>(m_AllNumericalPresentationImage.Values[offset + 3u])) > 1.0e-6)
+                    {
+                        bPresentationDiffers = true;
+                    }
+                }
+            }
+            if (bSceneLooksLikeMarker || !bPresentationDiffers)
+            {
+                reason = TEXT("R1 all-numerical SceneColor marker or overlay contamination detected");
+                return false;
+            }
+
+            uint32_t actualAssertions = 0u;
+            if (m_AllNumericalRowIndex <= 22u)
+            {
+                m_bP4ActualOracleMismatch = false;
+                if (m_AllNumericalRowIndex == 1u)
+                {
+                    if (!ValidateP4CaptureEnvelope(frame, image, reason) ||
+                        !EvaluateAllNumericalP4DfgTiles(image, reason))
+                    {
+                        return false;
+                    }
+                    actualAssertions = 25u;
+                }
+                else if (!EvaluateP4Frame(frame, reason) || m_bP4ActualOracleMismatch)
+                {
+                    if (reason.empty())
+                    {
+                        reason = TEXT("R1 all-numerical P4 oracle rejected a SceneColor row");
+                    }
+                    return false;
+                }
+                else
+                {
+                    actualAssertions = GetAllNumericalNumericalAssertionCount(
+                        m_AllNumericalRowIndex);
+                }
+            }
+            else if (m_AllNumericalRowIndex >= 23u && m_AllNumericalRowIndex <= 28u)
+            {
+                if (!EvaluateKnownCdFrame(frame, reason))
+                {
+                    return false;
+                }
+                actualAssertions = 1u;
+            }
+            else if (m_AllNumericalRowIndex == 29u)
+            {
+                if (!EvaluateR1SrgbTransfer(m_AllNumericalBackBuffer, reason))
+                {
+                    return false;
+                }
+                std::cout << "R1 all-numerical Raw254 sRGB transfer oracle passed:"
+                          << " source=actual_back_buffer transfer=IEC_reference marker=144\n";
+                actualAssertions = 1u;
+            }
+            else if (m_AllNumericalRowIndex >= 30u && m_AllNumericalRowIndex <= 39u)
+            {
+                if (!EvaluateTransparentPhysicalLightingFrame(frame, reason))
+                {
+                    return false;
+                }
+                actualAssertions = 1u;
+            }
+            if (actualAssertions != GetAllNumericalNumericalAssertionCount(
+                                      m_AllNumericalRowIndex))
+            {
+                reason = TEXT("R1 all-numerical oracle assertion count is invalid");
+                return false;
+            }
+            m_AllNumericalSceneColor = frame;
+            ++m_AllNumericalSceneScans;
+            m_AllNumericalFloatChannels += static_cast<uint64_t>(ValidationWidth) * ValidationHeight * 4u;
+            m_AllNumericalNumericalRows += actualAssertions;
+            m_AllNumericalRowIndex++;
+            if (m_AllNumericalRowIndex >= AllNumericalStaticRowCount)
+            {
+                m_AllNumericalCaptureStage = AllNumericalCaptureStage::Complete;
+                const uint64_t finalRenderedFrame =
+                    Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount();
+                m_AllNumericalFinalFrame = finalRenderedFrame;
+                const uint64_t expectedFinal = m_AllNumericalStartupFrame + 240u;
+                if (!m_bAllNumericalStartupFrameSet || m_AllNumericalFinalFrame != expectedFinal ||
+                    m_AllNumericalStartupFrame > 359u || m_AllNumericalFinalFrame >= 600u ||
+                    m_AllNumericalBackBufferScans != 40u ||
+                    m_AllNumericalPresentationScans != 40u || m_AllNumericalSceneScans != 40u ||
+                    m_AllNumericalActualByteChannels != 10485760u ||
+                    m_AllNumericalFloatChannels != 20971520u ||
+                    m_AllNumericalNumericalRows != 68u || m_AllNumericalForcedRows != 2u ||
+                    m_AllNumericalMaxLatency != 2u)
+                {
+                    reason = TEXT("R1 all-numerical frame or scan aggregate is invalid");
+                    return false;
+                }
+                std::cout << "R1 all-numerical contract passed: static_rows=40 numerical_rows=68 total_numerical_rows=70 captures=120 backbuffer_scans=40 presentation_scans=40 scene_scans=40 actual_byte_channels=10485760 float_channels=20971520 forced_rows=2 forced_pixels=14 forced_channels=56 lsb=1 synthetic_2_lsb=rejected startup_frame="
+                          << m_AllNumericalStartupFrame << " final_frame=" << m_AllNumericalFinalFrame
+                          << " ideal_latency=2 max_latency=2\n";
+            }
+            else
+            {
+                m_bAllNumericalRowMarkerPrinted = false;
+                m_AllNumericalCaptureStage = AllNumericalCaptureStage::BackBuffer;
+                if (!ApplyAllNumericalRow(m_AllNumericalRowIndex))
+                {
+                    m_bAllNumericalStageApplyFailed = true;
+                    reason = TEXT("R1 all-numerical next row application failed");
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool EvaluateAllNumericalFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (m_bAllNumericalStageApplyFailed)
+            {
+                reason = TEXT("R1 all-numerical capture stage application failed");
+                return false;
+            }
+            if (frame.RequestId != GetLastAcceptedRequestId() ||
+                (m_AllNumericalHasFrameNumber && frame.FrameNumber <= m_AllNumericalLastFrameNumber) ||
+                (m_AllNumericalHasStageToken &&
+                 GetLastAcceptedRequestStageToken() <= m_AllNumericalLastStageToken))
+            {
+                reason = TEXT("R1 all-numerical request, frame, or stage order is invalid");
+                return false;
+            }
+            if (!m_bAllNumericalRequestStartFrameSet || Core::Engine::GEngine == nullptr)
+            {
+                reason = TEXT("R1 all-numerical request start frame is unavailable");
+                return false;
+            }
+            const uint64_t completionFrame =
+                Core::Engine::GEngine->GetRenderWorld().GetRenderedFrameCount();
+            if (completionFrame < m_AllNumericalRequestStartFrame)
+            {
+                reason = TEXT("R1 all-numerical completion precedes request start");
+                return false;
+            }
+            const uint64_t latency = completionFrame - m_AllNumericalRequestStartFrame;
+            m_AllNumericalMaxLatency = std::max(m_AllNumericalMaxLatency, latency);
+            if (latency != 2u)
+            {
+                reason = TEXT("R1 all-numerical capture latency is not exactly two rendered frames");
+                return false;
+            }
+            m_AllNumericalLastFrameNumber = frame.FrameNumber;
+            m_AllNumericalPreviousFrame = frame.FrameNumber;
+            m_AllNumericalHasFrameNumber = true;
+            m_AllNumericalLastStageToken = GetLastAcceptedRequestStageToken();
+            m_AllNumericalHasStageToken = true;
+
+            switch (m_AllNumericalCaptureStage)
+            {
+            case AllNumericalCaptureStage::BackBuffer:
+                if (!EvaluateAllNumericalBackBuffer(frame, reason))
+                {
+                    return false;
+                }
+                m_AllNumericalCaptureStage = AllNumericalCaptureStage::PresentationColor;
+                return true;
+            case AllNumericalCaptureStage::PresentationColor:
+                if (!EvaluateAllNumericalPresentationColor(frame, reason))
+                {
+                    return false;
+                }
+                m_AllNumericalCaptureStage = AllNumericalCaptureStage::SceneColor;
+                return true;
+            case AllNumericalCaptureStage::SceneColor:
+                return EvaluateAllNumericalSceneColor(frame, reason);
+            case AllNumericalCaptureStage::Complete:
+            default:
+                reason = TEXT("R1 all-numerical capture sequence completed unexpectedly");
+                return false;
+            }
+        }
+
         static bool ValidateTransparentPhysicalStageContract()
         {
             constexpr const char* expectedNames[TransparentPhysicalLightingRowCount] = {
@@ -2504,7 +3369,10 @@ namespace
                                 return false;
                             }
                             relativeSums[channel] += relative;
-                            maximumRelative[channel] = std::max(maximumRelative[channel], relative);
+                            if (relative > maximumRelative[channel])
+                            {
+                                maximumRelative[channel] = relative;
+                            }
                             if (bFixedSample)
                             {
                                 fixedSampleMaximumRelative[channel] =
@@ -3614,6 +4482,77 @@ namespace
             return true;
         }
 
+        bool EvaluateAllNumericalP4DfgTiles(
+            const RgbaFloatImage& image,
+            Core::Container::String& reason)
+        {
+            constexpr double nDotVQueries[5] = {0.10, 0.25, 0.50, 0.75, 1.00};
+            constexpr double roughnessQueries[5] = {0.05, 0.25, 0.50, 0.75, 1.00};
+            uint32_t passedTiles = 0u;
+            for (uint32_t row = 0u; row < R1P4DfgTileGridSize; ++row)
+            {
+                for (uint32_t column = 0u; column < R1P4DfgTileGridSize; ++column)
+                {
+                    const uint32_t x = static_cast<uint32_t>(std::floor(
+                        102.4 + 12.8 * static_cast<double>(column) + 0.5));
+                    const uint32_t y = static_cast<uint32_t>(std::floor(
+                        102.4 + 12.8 * static_cast<double>(row) + 0.5));
+                    if (x >= image.Width || y >= image.Height)
+                    {
+                        reason = TEXT("R1 all-numerical Raw251 tile probe is outside the capture");
+                        return false;
+                    }
+                    const size_t offset = (static_cast<size_t>(y) * image.Width + x) * 4u;
+                    const double alpha = image.Values[offset + 3u];
+                    if (!std::isfinite(alpha) || alpha < 0.0 || alpha >= 1.0)
+                    {
+                        reason = TEXT("R1 all-numerical Raw251 tile has no covered geometry");
+                        return false;
+                    }
+                    P4DfgValue expected;
+                    if (!SampleP4DfgOracle(m_P4DfgOracle,
+                                           nDotVQueries[column],
+                                           roughnessQueries[row],
+                                           expected))
+                    {
+                        reason = TEXT("R1 all-numerical Raw251 tile oracle lookup failed");
+                        return false;
+                    }
+                    const double expectedRgb[3] = {expected.A, expected.B, expected.A + expected.B};
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const double actual = image.Values[offset + channel];
+                        const double absolute = std::abs(actual - expectedRgb[channel]);
+                        const double relative = std::abs(expectedRgb[channel]) >= 0.01
+                            ? absolute / std::abs(expectedRgb[channel])
+                            : 0.0;
+                        if (!std::isfinite(actual) || !std::isfinite(relative) ||
+                            std::abs(actual) >= P4RneRangeLimit || absolute > 0.002 ||
+                            (std::abs(expectedRgb[channel]) >= 0.01 && relative > 0.01))
+                        {
+                            m_bP4ActualOracleMismatch = true;
+                            std::cout << "R1 all-numerical Raw251 first failure: tile=("
+                                      << column << "," << row << ") pixel=(" << x << "," << y
+                                      << ") channel=" << channel << " actual=" << actual
+                                      << " expected=" << expectedRgb[channel]
+                                      << " absolute=" << absolute << " relative=" << relative << "\n";
+                            reason = TEXT("R1 all-numerical Raw251 tile oracle exceeded tolerance");
+                            return false;
+                        }
+                    }
+                    ++passedTiles;
+                }
+            }
+            if (passedTiles != 25u)
+            {
+                reason = TEXT("R1 all-numerical Raw251 tile assertion count is invalid");
+                return false;
+            }
+            std::cout << "R1 all-numerical Raw251 oracle passed: tiles=25 grid=5x5"
+                      << " queries=25 abs_threshold=0.002 relative_threshold=0.01\n";
+            return true;
+        }
+
         static double ComputeP4Endpoint(double f0, const P4DfgValue& dfg)
         {
             const double ess = std::max(dfg.A + dfg.B, 1.0e-4);
@@ -4293,7 +5232,8 @@ namespace
                     (static_cast<size_t>(R1AnchorY) * image.Width + 38u) * 4u;
                 const size_t emissiveOffset =
                     (static_cast<size_t>(R1AnchorY) * image.Width + 217u) * 4u;
-                if (image.Values[skyOffset] <= 0.0f || image.Values[transparentOffset] <= 0.0f ||
+                if ((!m_bAllNumericalScenario && image.Values[skyOffset] <= 0.0f) ||
+                    image.Values[transparentOffset] <= 0.0f ||
                     static_cast<double>(image.Values[emissiveOffset]) * 4.0 < 100.0)
                 {
                     reason = TEXT("known-cd sky, legacy transparent, or emissive sample is invalid");
@@ -4467,7 +5407,8 @@ namespace
                 if (m_KnownCdStage == KnownCdStage::NormalB)
                 {
                     const uint32_t sampleX[3] = {255u, 38u, 217u};
-                    for (uint32_t sampleIndex = 0; sampleIndex < 3u; ++sampleIndex)
+                    const uint32_t firstSampleIndex = m_bAllNumericalScenario ? 1u : 0u;
+                    for (uint32_t sampleIndex = firstSampleIndex; sampleIndex < 3u; ++sampleIndex)
                     {
                         const size_t offset =
                             (static_cast<size_t>(R1AnchorY) * image.Width + sampleX[sampleIndex]) * 4u;
@@ -4744,6 +5685,8 @@ namespace
         }
 
         bool m_bR1Scenario = false;
+        bool m_bAllNumericalScenario = false;
+        bool m_bAllNumericalArgumentParsed = false;
         bool m_bKnownCdScenario = false;
         bool m_bP4Scenario = false;
         bool m_bTransparentPhysicalLightingScenario = false;
@@ -4798,6 +5741,34 @@ namespace
         bool m_bTransparentPhysicalRowMarkerPrinted = false;
         bool m_bTransparentPhysicalHasUnshadowedValue = false;
         double m_TransparentPhysicalUnshadowedMeanY = 0.0;
+        AllNumericalCaptureStage m_AllNumericalCaptureStage = AllNumericalCaptureStage::BackBuffer;
+        uint32_t m_AllNumericalRowIndex = 0u;
+        bool m_AllNumericalHasFrameNumber = false;
+        uint64_t m_AllNumericalLastFrameNumber = 0u;
+        bool m_AllNumericalHasStageToken = false;
+        uint64_t m_AllNumericalLastStageToken = 0u;
+        bool m_bAllNumericalRequestStartFrameSet = false;
+        uint64_t m_AllNumericalRequestStartFrame = 0u;
+        uint64_t m_AllNumericalLastObservedRequestId = 0u;
+        bool m_bAllNumericalStartupFrameSet = false;
+        bool m_bAllNumericalStageApplyFailed = false;
+        bool m_bAllNumericalRowMarkerPrinted = false;
+        uint64_t m_AllNumericalStartupFrame = 0u;
+        uint64_t m_AllNumericalFinalFrame = 0u;
+        uint64_t m_AllNumericalPreviousFrame = 0u;
+        uint64_t m_AllNumericalMaxLatency = 0u;
+        uint32_t m_AllNumericalBackBufferScans = 0u;
+        uint32_t m_AllNumericalPresentationScans = 0u;
+        uint32_t m_AllNumericalSceneScans = 0u;
+        uint64_t m_AllNumericalActualByteChannels = 0u;
+        uint64_t m_AllNumericalFloatChannels = 0u;
+        uint32_t m_AllNumericalNumericalRows = 0u;
+        uint32_t m_AllNumericalForcedRows = 0u;
+        bool m_bAllNumericalForcedRowsArgumentParsed = false;
+        Core::Rendering::CapturedFrame m_AllNumericalBackBuffer;
+        Core::Rendering::CapturedFrame m_AllNumericalPresentationColor;
+        Core::Rendering::CapturedFrame m_AllNumericalSceneColor;
+        RgbaFloatImage m_AllNumericalPresentationImage;
         OpaqueMarkerView m_MarkerView;
     };
 
@@ -4903,6 +5874,58 @@ namespace
         return true;
     }
 
+    bool ValidateR1FinalFixtureContract()
+    {
+        SceneLayout indoor;
+        SceneLayout indoorRepeat;
+        SceneLayout outdoor;
+        SceneLayout outdoorRepeat;
+        if (!BuildSceneLayout(SceneKind::Indoor, ValidationSeed, indoor) ||
+            !BuildSceneLayout(SceneKind::Indoor, ValidationSeed, indoorRepeat) ||
+            !BuildSceneLayout(SceneKind::Outdoor, ValidationSeed, outdoor) ||
+            !BuildSceneLayout(SceneKind::Outdoor, ValidationSeed, outdoorRepeat) ||
+            !(indoor == indoorRepeat) || !(outdoor == outdoorRepeat) ||
+            indoor.Objects.size() < 3u || indoor.Lights.size() != 1u || outdoor.Lights.size() != 1u)
+        {
+            std::cerr << "P6A_FIXTURE_RED=indoor_compensation_or_outdoor_lux\n";
+            return false;
+        }
+
+        const auto isNear = [](float actual, float expected, float tolerance)
+        {
+            return std::isfinite(actual) && std::abs(actual - expected) <= tolerance;
+        };
+        const Core::Rendering::CameraProxy& indoorCamera = indoor.Camera;
+        const Core::Rendering::CameraProxy& outdoorCamera = outdoor.Camera;
+        const bool bIndoorExposure = isNear(indoorCamera.ExposureCompensation, 4.0f, 1.0e-6f) &&
+                                     isNear(indoorCamera.EV100, 9.9068906f, 1.0e-5f) &&
+                                     isNear(indoorCamera.Exposure, 1.0f / 72.0f, 1.0e-7f) &&
+                                     isNear(indoorCamera.PreExposure, 1.0f / 72.0f, 1.0e-7f) &&
+                                     isNear(indoorCamera.InvPreExposure, 72.0f, 1.0e-3f);
+        const bool bOutdoorExposure = isNear(outdoorCamera.ExposureCompensation, 0.0f, 1.0e-6f) &&
+                                      isNear(outdoorCamera.EV100, 9.9068906f, 1.0e-5f) &&
+                                      isNear(outdoorCamera.Exposure, 1.0f / 1152.0f, 1.0e-7f) &&
+                                      isNear(outdoorCamera.PreExposure, 1.0f / 1152.0f, 1.0e-7f) &&
+                                      isNear(outdoorCamera.InvPreExposure, 1152.0f, 1.0e-3f);
+        const bool bLights = indoor.Lights[0].Kind == SceneLightKind::Point &&
+                             indoor.Lights[0].Intensity == 100.0f &&
+                             indoor.Lights[0].Range == 1000.0f &&
+                             !indoor.Lights[0].bCastShadows &&
+                             outdoor.Lights[0].Kind == SceneLightKind::Directional &&
+                             outdoor.Lights[0].Intensity == 10000.0f &&
+                             outdoor.Lights[0].Color[0] == 1.0f &&
+                             outdoor.Lights[0].Color[1] == 0.95f &&
+                             outdoor.Lights[0].Color[2] == 0.85f &&
+                             outdoor.Lights[0].bCastShadows;
+        if (!bIndoorExposure || !bOutdoorExposure || !bLights)
+        {
+            std::cerr << "P6A_FIXTURE_RED=indoor_compensation_or_outdoor_lux\n";
+            return false;
+        }
+        std::cout << "P6A fixture preflight passed: indoor_compensation=4.0 indoor_pre_exposure=0.013888889 outdoor_compensation=0.0 outdoor_pre_exposure=0.000868056 outdoor_directional_lux=10000\n";
+        return true;
+    }
+
     Core::Container::TSharedPtr<Core::Application::IApplicationHandler> CreateHandler()
     {
         return Core::Container::MakeShared<HdrHandler>();
@@ -4922,12 +5945,16 @@ int main(int argc, char** argv)
     using namespace NorvesLib::Test::RenderingValidation;
 
     bool bR1Scenario = false;
+    bool bAllNumericalScenario = false;
     for (int index = 1; index < argc; ++index)
     {
         if (std::strcmp(argv[index], "--r1-scenario=srgb-transfer") == 0)
         {
             bR1Scenario = true;
-            break;
+        }
+        if (std::strcmp(argv[index], "--r1-scenario=all-numerical") == 0)
+        {
+            bAllNumericalScenario = true;
         }
     }
 
@@ -4943,6 +5970,10 @@ int main(int argc, char** argv)
     {
         return 1;
     }
+    if (!ValidateR1FinalFixtureContract())
+    {
+        return 1;
+    }
 
     if (IsForcedGpuTestSkipRequested())
     {
@@ -4955,14 +5986,19 @@ int main(int argc, char** argv)
         return ReportGpuTestSkip("RenderingHdrSceneCaptureTest", "no Vulkan device is available");
     }
 
-    if (bR1Scenario)
+    if (bR1Scenario || bAllNumericalScenario)
     {
-        if (!RunForcedPresentationFormatReadback())
+        uint32_t forcedRows = 0u;
+        uint32_t forcedPixels = 0u;
+        uint32_t forcedChannels = 0u;
+        if (!RunForcedPresentationFormatReadback(forcedRows, forcedPixels, forcedChannels))
         {
             LOG_ERROR("R1 forced R8G8B8A8_SRGB/UNORM offscreen render/readback failed");
             return 1;
         }
-        std::cout << "R1 forced R8G8B8A8_SRGB/UNORM offscreen render/readback passed\n";
+        std::cout << "R1 forced R8G8B8A8_SRGB/UNORM offscreen render/readback passed rows="
+                  << forcedRows << " pixels=" << forcedPixels
+                  << " channels=" << forcedChannels << "\n";
     }
 
     Core::Boot::BootConfig config;
@@ -4978,7 +6014,12 @@ int main(int argc, char** argv)
     config.CreateHandler = &CreateHandler;
     for (int index = 1; index < argc; ++index)
     {
-        config.Arguments.push_back(Core::Container::String(argv[index]));
+        const Core::Container::String argument(argv[index]);
+        config.Arguments.push_back(argument);
+    }
+    if (bAllNumericalScenario)
+    {
+        config.Arguments.push_back(TEXT("--r1-forced-rows=2"));
     }
     return Core::Boot::LaunchApplication(config);
 }

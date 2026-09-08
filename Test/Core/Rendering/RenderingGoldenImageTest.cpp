@@ -81,6 +81,21 @@ namespace
     class GoldenHandler final : public RenderingValidationApplicationHandler
     {
     protected:
+        bool OnPreInitialize(
+            const Core::Container::VariableArray<Core::Container::String>& args) override
+        {
+            if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
+            {
+                return false;
+            }
+            if (GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::BackBuffer)
+            {
+                LOG_ERROR("RenderingGoldenImageTest は BackBuffer capture のみを受け付けます");
+                return false;
+            }
+            return true;
+        }
+
         bool OnInitialize() override
         {
             if (!RenderingValidationApplicationHandler::OnInitialize())

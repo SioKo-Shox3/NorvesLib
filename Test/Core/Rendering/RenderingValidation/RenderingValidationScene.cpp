@@ -409,7 +409,11 @@ namespace NorvesLib::Test::RenderingValidation
                    left.Viewport.Width == right.Viewport.Width && left.Viewport.Height == right.Viewport.Height &&
                    left.Viewport.MinDepth == right.Viewport.MinDepth &&
                    left.Viewport.MaxDepth == right.Viewport.MaxDepth && left.CullingMask == right.CullingMask &&
-                   left.RenderOrder == right.RenderOrder;
+                   left.RenderOrder == right.RenderOrder && left.Aperture == right.Aperture &&
+                   left.ShutterSpeed == right.ShutterSpeed && left.ISO == right.ISO &&
+                   left.ExposureCompensation == right.ExposureCompensation &&
+                   left.EV100 == right.EV100 && left.Exposure == right.Exposure &&
+                   left.PreExposure == right.PreExposure && left.InvPreExposure == right.InvPreExposure;
         }
 
         SceneObjectSpec MakeObject(ScenePrimitiveKind primitive,
@@ -480,6 +484,11 @@ namespace NorvesLib::Test::RenderingValidation
             layout.Camera.OrthoHeight = 0.1f;
             layout.Camera.NearPlane = 0.1f;
             layout.Camera.FarPlane = 10.0f;
+            if (!Core::Component::CameraComponent::TryBuildExposureSnapshot(
+                    4.0f, 1.0f / 60.0f, 100.0f, 4.0f, layout.Camera))
+            {
+                return;
+            }
         }
 
         void BuildOutdoorLayout(Random::Generator& random, SceneLayout& layout)
@@ -513,11 +522,16 @@ namespace NorvesLib::Test::RenderingValidation
             light.Color[0] = 1.0f;
             light.Color[1] = 0.95f;
             light.Color[2] = 0.85f;
-            light.Intensity = 2.0f;
+            light.Intensity = 10000.0f;
             light.bCastShadows = true;
             layout.Lights.push_back(light);
             layout.Camera = BuildLookAtCamera(Math::Vector3(7.0f, 5.0f, 9.0f), Math::Vector3::Zero,
                                               ValidationWidth, ValidationHeight);
+            if (!Core::Component::CameraComponent::TryBuildExposureSnapshot(
+                    4.0f, 1.0f / 60.0f, 100.0f, 0.0f, layout.Camera))
+            {
+                return;
+            }
         }
     }
 
@@ -761,6 +775,8 @@ namespace NorvesLib::Test::RenderingValidation
         m_Lease.Bind(stableOwner);
         m_Layout = std::move(state.Layout);
         m_Objects = std::move(state.Objects);
+        m_P4DfgTileObjects.clear();
+        m_NeutralMaterial = state.NeutralMaterial;
         m_P4Materials = std::move(state.P4Materials);
         m_bR1PhysicalFixturePrepared = false;
         m_bR1PhysicalFixtureFailed = false;
@@ -792,6 +808,7 @@ namespace NorvesLib::Test::RenderingValidation
         state.pP4LightEntity = nullptr;
         state.Lease.Bind(nullptr);
         state.Objects.clear();
+        state.NeutralMaterial = MaterialHandle::Invalid();
         state.Layout = {};
         state.P4Materials.fill(MaterialHandle::Invalid());
         m_bPublished = true;
@@ -800,6 +817,14 @@ namespace NorvesLib::Test::RenderingValidation
     void RenderingValidationSceneFixture::ShutdownPublishedInitialization(
         ISceneFixtureResourceReleaser* releaser) noexcept
     {
+        if (m_pWorld != nullptr)
+        {
+            for (size_t index = m_P4DfgTileObjects.size(); index > 0; --index)
+            {
+                m_pWorld->RemoveEntity(m_P4DfgTileObjects[index - 1]);
+            }
+        }
+        m_P4DfgTileObjects.clear();
         Core::World* pWorld = m_pWorld;
         m_pWorld = nullptr;
         m_pResources = nullptr;
@@ -841,6 +866,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_Lease.Release();
         m_Lease.Bind(nullptr);
         m_P4Materials.fill(MaterialHandle::Invalid());
+        m_NeutralMaterial = MaterialHandle::Invalid();
         m_Layout = {};
     }
 
@@ -957,6 +983,7 @@ namespace NorvesLib::Test::RenderingValidation
             }
             lease.TrackMaterial(materials[index]);
         }
+        staging.NeutralMaterial = materials[0];
 
         Core::Container::FixedArray<TextureHandle, P4RoughnessCount> roughnessTextures;
         for (uint32_t index = 0; index < P4RoughnessCount; ++index)
@@ -1147,6 +1174,42 @@ namespace NorvesLib::Test::RenderingValidation
         renderWorld.SetMainCamera(GetCamera());
     }
 
+    bool RenderingValidationSceneFixture::ApplyBaseValidationFixture() const
+    {
+        if (m_pP4PlaneMesh == nullptr || m_pP4SphereMesh == nullptr ||
+            !m_NeutralMaterial.IsValid() || !ClearP4DfgTileFixture())
+        {
+            return false;
+        }
+        m_pP4PlaneMesh->SetMaterial(0u, m_NeutralMaterial);
+        m_pP4PlaneMesh->SetCustomData(0u, 0.5f);
+        m_pP4PlaneMesh->SetCustomData(1u, 0.5f);
+        m_pP4PlaneMesh->SetCustomData(2u, 0.5f);
+        m_pP4PlaneMesh->SetCustomData(3u, 1.0f);
+        m_pP4PlaneMesh->SetVisible(true);
+        m_pP4SphereMesh->SetVisible(false);
+        if (m_pEmissiveMesh != nullptr)
+        {
+            m_pEmissiveMesh->SetVisible(true);
+        }
+        if (m_pTransparentMesh != nullptr)
+        {
+            m_pTransparentMesh->SetVisible(true);
+        }
+        if (m_pP4LightEntity != nullptr)
+        {
+            m_pP4LightEntity->SetActive(true);
+            auto* light = m_pP4LightEntity->GetComponent<Core::Component::LightComponent>();
+            if (light == nullptr)
+            {
+                return false;
+            }
+            light->SetLightVisible(false);
+            light->SetLightVisible(true);
+        }
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::ApplyP4ScenarioRow(const P4ScenarioRow& row) const
     {
         if (m_pP4PlaneMesh == nullptr || m_pP4SphereMesh == nullptr ||
@@ -1249,6 +1312,100 @@ namespace NorvesLib::Test::RenderingValidation
         if (m_pP4LightEntity != nullptr)
         {
             m_pP4LightEntity->SetActive(row.Scenario == P4Scenario::Raw254DirectConductorEndpoint);
+        }
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::ApplyP4DfgTileFixture() const
+    {
+        if (m_pWorld == nullptr || m_pP4PlaneMesh == nullptr || m_pP4SphereMesh == nullptr ||
+            m_P4Materials[0].IsValid() == false ||
+            !m_P4DfgTileObjects.empty())
+        {
+            return false;
+        }
+
+        const float radians = Math::Constants::PI / 180.0f;
+        const Math::Quaternion rotation = Math::QuaternionUtils::FromEulerAngles(
+            Math::Vector3(90.0f * radians, 0.0f, 0.0f));
+        for (uint32_t row = 0u; row < R1P4DfgTileGridSize; ++row)
+        {
+            for (uint32_t column = 0u; column < R1P4DfgTileGridSize; ++column)
+            {
+                const uint32_t materialIndex =
+                    row * P4MetallicQueryTextureCount + P4DfgQueryIndices[column];
+                if (materialIndex >= P4MaterialCount || !m_P4Materials[materialIndex].IsValid())
+                {
+                    ClearP4DfgTileFixture();
+                    return false;
+                }
+                Core::Entity* entity = m_pWorld->SpawnEntity();
+                if (entity == nullptr)
+                {
+                    ClearP4DfgTileFixture();
+                    return false;
+                }
+                m_P4DfgTileObjects.push_back(entity);
+                entity->SetPosition(
+                    (static_cast<float>(column) - 2.0f) * 0.005f,
+                    (2.0f - static_cast<float>(row)) * 0.005f,
+                    0.0f);
+                entity->SetRotation(rotation);
+                entity->SetScale(R1P4DfgTileScale, R1P4DfgTileScale, R1P4DfgTileScale);
+                Core::Component::MeshComponent* mesh =
+                    m_pWorld->CreateComponent<Core::Component::MeshComponent>(entity);
+                if (mesh == nullptr)
+                {
+                    ClearP4DfgTileFixture();
+                    return false;
+                }
+                mesh->SetMeshHandle(PlaneHandle);
+                mesh->SetMaterial(0u, m_P4Materials[materialIndex]);
+                mesh->SetCustomData(0u, 0.5f);
+                mesh->SetCustomData(1u, 0.5f);
+                mesh->SetCustomData(2u, 0.5f);
+                mesh->SetCustomData(3u, 1.0f);
+            }
+        }
+
+        m_pP4PlaneMesh->SetVisible(false);
+        m_pP4SphereMesh->SetVisible(false);
+        if (m_pEmissiveMesh != nullptr)
+        {
+            m_pEmissiveMesh->SetVisible(false);
+        }
+        if (m_pTransparentMesh != nullptr)
+        {
+            m_pTransparentMesh->SetVisible(false);
+        }
+        if (m_pP4LightEntity != nullptr)
+        {
+            m_pP4LightEntity->SetActive(false);
+        }
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::ClearP4DfgTileFixture() const
+    {
+        if (m_pWorld != nullptr)
+        {
+            for (size_t index = m_P4DfgTileObjects.size(); index > 0; --index)
+            {
+                m_pWorld->RemoveEntity(m_P4DfgTileObjects[index - 1]);
+            }
+        }
+        m_P4DfgTileObjects.clear();
+        if (m_pP4PlaneMesh != nullptr)
+        {
+            m_pP4PlaneMesh->SetVisible(true);
+        }
+        if (m_pP4SphereMesh != nullptr)
+        {
+            m_pP4SphereMesh->SetVisible(false);
+        }
+        if (m_pP4PlaneMesh != nullptr)
+        {
+            m_pP4PlaneMesh->SetVisible(false);
         }
         return true;
     }
@@ -1865,6 +2022,10 @@ namespace NorvesLib::Test::RenderingValidation
             !EnsureR1PhysicalFixture(false))
         {
             return false;
+        }
+        if (m_pP4SphereMesh != nullptr)
+        {
+            m_pP4SphereMesh->SetVisible(false);
         }
         const bool bMetallicHalf = rowIndex == 2u || rowIndex == 3u ||
                                    rowIndex == 8u || rowIndex == 9u;

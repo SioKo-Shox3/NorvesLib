@@ -386,6 +386,141 @@ namespace
                   << changed.MaxFlipX << ',' << changed.MaxFlipY << ')' << std::endl;
         return true;
     }
+
+    bool TestCalibrationSelectionContract()
+    {
+        Core::Container::VariableArray<VisualCalibrationCandidateSpec> specifications;
+        BuildVisualCalibrationCandidateSpecs(specifications);
+        if (!Require(specifications.size() == 20u, "calibration candidate count must be 20"))
+        {
+            return false;
+        }
+        constexpr uint32_t expectedPatchSizes[20] = {
+            1u, 1u, 1u, 2u, 1u, 2u, 2u, 4u, 2u, 4u,
+            4u, 8u, 4u, 8u, 8u, 16u, 8u, 16u, 16u, 16u};
+        constexpr uint8_t expectedDeltas[20] = {
+            1u, 2u, 4u, 1u, 8u, 2u, 4u, 1u, 8u, 2u,
+            4u, 1u, 8u, 2u, 4u, 1u, 8u, 2u, 4u, 8u};
+        for (uint32_t index = 0u; index < 20u; ++index)
+        {
+            if (!Require(specifications[index].PatchSize == expectedPatchSizes[index] &&
+                             specifications[index].ChannelDelta == expectedDeltas[index],
+                         "calibration candidate order must be fixed") ||
+                !Require(specifications[index].ChangeAmount ==
+                             expectedPatchSizes[index] * expectedPatchSizes[index] * expectedDeltas[index],
+                         "calibration change amount must be patch area times delta"))
+            {
+                return false;
+            }
+        }
+
+        Core::Container::VariableArray<uint64_t> noise;
+        noise.resize(10u, 999u);
+        Core::Container::VariableArray<uint64_t> artificial;
+        artificial.resize(20u, 1000000000u);
+        artificial[0] = 1000u;
+        artificial[1] = 1001u;
+        VisualCalibrationSelection selection;
+        if (!Require(SelectVisualCalibrationThreshold(
+                         Core::Container::Span<const uint64_t>(noise),
+                         Core::Container::Span<const uint64_t>(artificial),
+                         selection),
+                     "strict separation must advance past an inseparable first candidate") ||
+            !Require(selection.NegativeMeanNanounits == 1001u &&
+                         selection.MeanFlipLimitMillionths == 1u &&
+                         selection.Difference.PatchSize == 1u &&
+                         selection.Difference.ChannelDelta == 2u,
+                     "strict separation boundary selection is incorrect"))
+        {
+            return false;
+        }
+
+        for (uint64_t& value : noise)
+        {
+            value = 1000u;
+        }
+        for (uint64_t& value : artificial)
+        {
+            value = 1000000000u;
+        }
+        artificial[0] = 2000u;
+        artificial[1] = 2001u;
+        if (!Require(SelectVisualCalibrationThreshold(
+                         Core::Container::Span<const uint64_t>(noise),
+                         Core::Container::Span<const uint64_t>(artificial),
+                         selection),
+                     "second strict separation boundary must be selectable") ||
+            !Require(selection.NegativeMeanNanounits == 2001u &&
+                         selection.MeanFlipLimitMillionths == 2u,
+                     "second strict separation boundary is incorrect"))
+        {
+            return false;
+        }
+
+        selection.NoiseMaximumNanounits = 7u;
+        noise.resize(9u, 0u);
+        if (!Require(!SelectVisualCalibrationThreshold(
+                         Core::Container::Span<const uint64_t>(noise),
+                         Core::Container::Span<const uint64_t>(artificial),
+                         selection),
+                     "nine noise values must be rejected") ||
+            !Require(selection.NoiseMaximumNanounits == 0u &&
+                         selection.NegativeMeanNanounits == 0u &&
+                         selection.MeanFlipLimitMillionths == 0u &&
+                         selection.Difference.PatchSize == 0u,
+                     "failed selection must zero its output"))
+        {
+            return false;
+        }
+
+        noise.resize(10u, 1000u);
+        artificial.resize(20u, 1000u);
+        for (uint64_t& value : artificial)
+        {
+            value = 1000u;
+        }
+        artificial[0] = 9u;
+        artificial[1] = 11u;
+        if (!Require(!SelectVisualCalibrationThreshold(
+                         Core::Container::Span<const uint64_t>(noise),
+                         Core::Container::Span<const uint64_t>(artificial),
+                         selection),
+                     "artificial value below the noise maximum must not select") ||
+            !Require(selection.Difference.PatchSize == 0u,
+                     "inseparable calibration boundary must leave selection empty"))
+        {
+            return false;
+        }
+
+        artificial[0] = 19u;
+        artificial[1] = 21u;
+        if (!Require(!SelectVisualCalibrationThreshold(
+                         Core::Container::Span<const uint64_t>(noise),
+                         Core::Container::Span<const uint64_t>(artificial),
+                         selection),
+                     "strict integer margin must reject a too-small artificial boundary") ||
+            !Require(selection.Difference.PatchSize == 0u,
+                     "rejected strict integer boundary must leave selection empty"))
+        {
+            return false;
+        }
+
+        artificial[0] = 1000u;
+        artificial[1] = 1001u;
+        artificial[19] = 1000000001u;
+        if (!Require(!SelectVisualCalibrationThreshold(
+                         Core::Container::Span<const uint64_t>(noise),
+                         Core::Container::Span<const uint64_t>(artificial),
+                         selection),
+                     "invalid artificial tail must be rejected before candidate selection") ||
+            !Require(selection.Difference.PatchSize == 0u,
+                     "invalid artificial input must leave selection empty"))
+        {
+            return false;
+        }
+        std::cout << "calibration_selection=PASS strict_separation=PASS" << std::endl;
+        return true;
+    }
 }
 
 int main(int argc, char** argv)
@@ -408,7 +543,8 @@ int main(int argc, char** argv)
     {
         return ValidateArtificialBaselines() ? 0 : 1;
     }
-    if (!TestSrgbTransferContract() || !TestSameImageAndArtificialDifference())
+    if (!TestSrgbTransferContract() || !TestSameImageAndArtificialDifference() ||
+        !TestCalibrationSelectionContract())
     {
         return 1;
     }

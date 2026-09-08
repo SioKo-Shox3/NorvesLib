@@ -7,6 +7,10 @@
 
 namespace NorvesLib::Test::RenderingValidation
 {
+    inline constexpr uint32_t RenderingGoldenImageWidth = 256u;
+    inline constexpr uint32_t RenderingGoldenImageHeight = 256u;
+    inline constexpr uint32_t RenderingGoldenImageChannelCount = 4u;
+
     struct Rgba8Image
     {
         uint32_t Width = 0;

@@ -41,6 +41,21 @@ namespace NorvesLib::Test::RenderingValidation
         uint8_t ChannelDelta = 0;
     };
 
+    struct VisualCalibrationCandidateSpec
+    {
+        uint32_t PatchSize = 0;
+        uint8_t ChannelDelta = 0;
+        uint32_t ChangeAmount = 0;
+    };
+
+    struct VisualCalibrationSelection
+    {
+        uint64_t NoiseMaximumNanounits = 0;
+        uint64_t NegativeMeanNanounits = 0;
+        uint32_t MeanFlipLimitMillionths = 0;
+        ArtificialDifferenceSpec Difference;
+    };
+
     PerceptualDiffStatus CompareLdrFlip(
         const Rgba8Image& reference,
         const Rgba8Image& candidate,
@@ -56,4 +71,10 @@ namespace NorvesLib::Test::RenderingValidation
     void ApplyArtificialDifference(
         Rgba8Image& image,
         const ArtificialDifferenceSpec& difference);
+    void BuildVisualCalibrationCandidateSpecs(
+        Core::Container::VariableArray<VisualCalibrationCandidateSpec>& outSpecs);
+    bool SelectVisualCalibrationThreshold(
+        Core::Container::Span<const uint64_t> noiseMeanNanounits,
+        Core::Container::Span<const uint64_t> artificialMeanNanounits,
+        VisualCalibrationSelection& outSelection);
 } // namespace NorvesLib::Test::RenderingValidation

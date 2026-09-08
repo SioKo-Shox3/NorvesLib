@@ -234,6 +234,95 @@ namespace
                 "unsuccessful capture must retain a specific status");
     }
 
+    Core::Rendering::CapturedFrame MakeCapturedFrame(
+        RHI::Format format,
+        uint32_t rowPitchBytes,
+        bool bBgra)
+    {
+        Core::Rendering::CapturedFrame frame;
+        frame.Status = Core::Rendering::FrameCaptureResultStatus::Success;
+        frame.Width = 256u;
+        frame.Height = 256u;
+        frame.Format = format;
+        frame.BytesPerPixel = 4u;
+        frame.RowPitchBytes = rowPitchBytes;
+        frame.Pixels.resize(static_cast<size_t>(rowPitchBytes) * frame.Height, 0u);
+        for (uint32_t y = 0u; y < frame.Height; ++y)
+        {
+            const size_t rowOffset = static_cast<size_t>(y) * rowPitchBytes;
+            for (uint32_t x = 0u; x < frame.Width; ++x)
+            {
+                const size_t offset = rowOffset + static_cast<size_t>(x) * 4u;
+                frame.Pixels[offset + (bBgra ? 2u : 0u)] = 30u;
+                frame.Pixels[offset + 1u] = 60u;
+                frame.Pixels[offset + (bBgra ? 0u : 2u)] = 90u;
+                frame.Pixels[offset + 3u] = 255u;
+            }
+        }
+        return frame;
+    }
+
+    void TestCapturedFrameFormatAndPitchMatrix()
+    {
+        struct FormatCase
+        {
+            RHI::Format Format;
+            uint32_t RowPitchBytes;
+            bool bBgra;
+        };
+        const FormatCase cases[] = {
+            {RHI::Format::R8G8B8A8_UNORM, 1024u, false},
+            {RHI::Format::B8G8R8A8_UNORM, 1024u, true},
+            {RHI::Format::R8G8B8A8_SRGB, 1032u, false},
+            {RHI::Format::B8G8R8A8_SRGB, 1032u, true}};
+        for (const FormatCase& formatCase : cases)
+        {
+            Core::Rendering::CapturedFrame frame = MakeCapturedFrame(
+                formatCase.Format, formatCase.RowPitchBytes, formatCase.bBgra);
+            Core::Container::VariableArray<uint8_t> png;
+            Require(EncodeCapturedFramePng(frame, png) == GoldenImageStatus::Success,
+                    "RGBA/BGRA tight and padded captures must encode");
+            Rgba8Image decoded;
+            Require(DecodePng(Core::Container::Span<const uint8_t>(png), decoded) ==
+                        GoldenImageStatus::Success,
+                    "format matrix PNG must decode");
+            Require(decoded.Width == 256u && decoded.Height == 256u &&
+                        decoded.RowPitchBytes == 1024u && decoded.Pixels.size() == 256u * 256u * 4u,
+                    "format matrix output must be tight 256x256 RGBA8");
+            constexpr uint32_t sampleCoordinates[4][2] = {
+                {0u, 0u}, {255u, 0u}, {0u, 255u}, {255u, 255u}};
+            for (const auto& coordinate : sampleCoordinates)
+            {
+                const size_t offset =
+                    (static_cast<size_t>(coordinate[1]) * decoded.RowPitchBytes) +
+                    static_cast<size_t>(coordinate[0]) * 4u;
+                Require(decoded.Pixels[offset + 0u] == 30u &&
+                            decoded.Pixels[offset + 1u] == 60u &&
+                            decoded.Pixels[offset + 2u] == 90u &&
+                            decoded.Pixels[offset + 3u] == 255u,
+                        "format matrix must preserve logical RGBA order across padded rows");
+            }
+        }
+
+        Core::Rendering::CapturedFrame unsupported = MakeCapturedFrame(
+            RHI::Format::R16G16B16A16_FLOAT, 2048u, false);
+        Core::Container::VariableArray<uint8_t> png;
+        Require(EncodeCapturedFramePng(unsupported, png) == GoldenImageStatus::UnsupportedFormat,
+                "unsupported capture format must be rejected");
+
+        Core::Rendering::CapturedFrame insufficient = MakeCapturedFrame(
+            RHI::Format::R8G8B8A8_UNORM, 1024u, false);
+        insufficient.Pixels.resize(insufficient.Pixels.size() - 1u);
+        Require(EncodeCapturedFramePng(insufficient, png) == GoldenImageStatus::InvalidPixelData,
+                "insufficient capture bytes must be rejected");
+
+        Core::Rendering::CapturedFrame wrongDimensions = MakeCapturedFrame(
+            RHI::Format::R8G8B8A8_UNORM, 1028u, false);
+        wrongDimensions.Width = 257u;
+        Require(EncodeCapturedFramePng(wrongDimensions, png) == GoldenImageStatus::InvalidDimensions,
+                "257x256 capture must be rejected without thumbnail downscale");
+    }
+
     int RunFixedStagingValidator()
     {
         const GoldenImageStatus status = ValidateFixedStaging();
@@ -303,6 +392,7 @@ int main(int argc, char** argv)
     TestDecodeRejectsEmptyPng();
     TestPngRoundTripNormalizesToTightRgbaAndPersists();
     TestCapturedFramePngRequiresExactGoldenDimensions();
+    TestCapturedFrameFormatAndPitchMatrix();
     std::cout << "RenderingGoldenImageComparatorTest passed\n";
     return 0;
 }

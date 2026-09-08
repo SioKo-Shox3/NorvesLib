@@ -392,11 +392,13 @@ set_target_properties(RenderingGoldenImageTest PROPERTIES FOLDER "Test/Core/Rend
 register_rendering_gpu_test(
     RenderingGoldenIndoorVulkanTest
     RenderingGoldenImageTest
-    --scene=indoor)
+    --scene=indoor
+    --capture-source=back-buffer)
 register_rendering_gpu_test(
     RenderingGoldenOutdoorVulkanTest
     RenderingGoldenImageTest
-    --scene=outdoor)
+    --scene=outdoor
+    --capture-source=back-buffer)
 register_rendering_gpu_test(
     RenderingGoldenVulkanSkipContractTest
     RenderingGoldenImageTest

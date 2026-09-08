@@ -730,40 +730,6 @@ namespace NorvesLib::Core::Rendering
                         "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
     }
 
-    void SceneView::SetupForwardPipeline(SceneRenderer *sceneRenderer)
-    {
-        // 既存のパスをクリア
-        while (GetPassCount() > 0)
-        {
-            auto &passes = m_Passes;
-            if (!passes.empty())
-            {
-                if (passes.back() && passes.back()->IsInitialized())
-                {
-                    passes.back()->Shutdown();
-                }
-                passes.pop_back();
-            }
-        }
-
-        // ForwardPass: 従来のフォワード描画
-        auto forwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
-        AddPass(std::move(forwardPass));
-
-        // PostProcessStack: ToneMapping -> Vignette -> Upscale
-        auto postProcessStack = MakeUnique<PostProcessStack>();
-        ToneMappingSettings toneMappingSettings;
-        toneMappingSettings.Operator = ToneMappingOperator::ACES;
-        // Standalone VignettePass owns default SceneView vignette.
-        toneMappingSettings.VignetteIntensity = 0.0f;
-        postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
-        postProcessStack->AddPass(MakeUnique<VignettePass>());
-        postProcessStack->AddPass(MakeUnique<UpscalePass>());
-        SetPostProcessStack(std::move(postProcessStack));
-
-        NORVES_LOG_INFO("SceneView", "Forward pipeline configured: Forward -> ToneMapping -> Vignette -> Upscale");
-    }
-
     void SceneView::CullProxies(Viewport *viewport)
     {
         NORVES_STAT_TIME_START(cullingViewport);

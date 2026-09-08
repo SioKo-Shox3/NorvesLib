@@ -509,29 +509,6 @@ int main()
     assert(fxaaIndex == debugDrawIndex + 1);
     assert(upscaleIndex == fxaaIndex + 1);
 
-    InspectableSceneView forwardSceneView;
-    forwardSceneView.SetupForwardPipeline(&sceneRenderer);
-
-    PostProcessStack* forwardPostProcessStack = forwardSceneView.GetPostProcessStack();
-    assert(forwardPostProcessStack != nullptr);
-    assert(forwardPostProcessStack->GetPassCount() == 3);
-    assert(forwardPostProcessStack->GetPass("VignettePass") != nullptr);
-
-    const ToneMappingPass* forwardToneMappingPass = RequireToneMappingPass(forwardPostProcessStack);
-    assert(forwardToneMappingPass->GetSettings().VignetteIntensity == 0.0f);
-
-    const auto& forwardPostPasses = forwardPostProcessStack->GetPasses();
-    const uint32_t forwardPostPassCount = static_cast<uint32_t>(forwardPostPasses.size());
-    const uint32_t forwardToneMappingIndex =
-        FindPostProcessPassIndex(forwardPostProcessStack, "ToneMappingPass");
-    const uint32_t forwardVignetteIndex =
-        FindPostProcessPassIndex(forwardPostProcessStack, "VignettePass");
-    const uint32_t forwardUpscaleIndex =
-        FindPostProcessPassIndex(forwardPostProcessStack, "UpscalePass");
-    assert(forwardToneMappingIndex < forwardPostPassCount);
-    assert(forwardVignetteIndex == forwardToneMappingIndex + 1);
-    assert(forwardUpscaleIndex == forwardVignetteIndex + 1);
-
     const std::string forwardPassSource =
         ReadRepositoryFile("Library/Core/Private/Rendering/ForwardPass.cpp");
     const std::string transparentVertexSource =

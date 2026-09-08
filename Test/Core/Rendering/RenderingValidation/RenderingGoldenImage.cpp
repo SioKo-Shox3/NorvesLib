@@ -16,9 +16,9 @@ namespace NorvesLib::Test::RenderingValidation
 {
     namespace
     {
-        constexpr uint32_t RgbaChannelCount = 4u;
-        constexpr uint32_t GoldenWidth = 256u;
-        constexpr uint32_t GoldenHeight = 256u;
+        constexpr uint32_t RgbaChannelCount = RenderingGoldenImageChannelCount;
+        constexpr uint32_t GoldenWidth = RenderingGoldenImageWidth;
+        constexpr uint32_t GoldenHeight = RenderingGoldenImageHeight;
 
         struct ImageValidation
         {
@@ -125,6 +125,11 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Container::VariableArray<uint8_t>& outPng)
     {
         outPng.clear();
+        if (frame.IsSuccess() &&
+            (frame.Width != GoldenWidth || frame.Height != GoldenHeight))
+        {
+            return GoldenImageStatus::InvalidDimensions;
+        }
         Core::Rendering::FrameCaptureThumbnailOptions options;
         options.MaxWidth = GoldenWidth;
         options.MaxHeight = GoldenHeight;

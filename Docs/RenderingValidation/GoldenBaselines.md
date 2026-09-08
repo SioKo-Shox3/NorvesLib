@@ -41,45 +41,59 @@ CTestのexit 125はskip契約の確認には使えるが、GPU acceptance pass�
 
 成功した通常golden実行は`NORVESLIB_VISUAL_METRICS`をexact 1行出す。連続実行scriptはscene一致、finiteなmean/max、raw整数、threshold超過を検査し、sceneごとの成功回数、max mean、max rawを集計する。`-RequireGpu`時のexit 125は失敗とする。
 
-## Visual threshold校正と承認
+## R1 最終数値検証
 
-candidate生成とsource publishは別invocation、別の人間承認gateである。
+R1の統合fixtureはIndoor/Outdoorの公開露出・照明条件を使用し、P2 1行、P3 6行、P4 23行、P5 10行の計40 static rowsを、各行で`BackBuffer → PresentationColor → SceneColor`の3 source（計120 capture）として検証する。BackBufferは256×256の全画素・全RGBA channelをIEC 61966-2-1 sRGB oracleと±1 LSBで照合し、PresentationColor/SceneColorはRGBA16Fの全channelを走査する。forced format行は`R8G8B8A8_SRGB`と`R8G8B8A8_UNORM`を各1回実readbackする。
 
 ```powershell
-& .\Scripts\CalibrateRenderingVisualThresholds.ps1 -GenerateCandidate -Iterations 10 -RequireGpu
-$candidateHash = (Get-FileHash -LiteralPath '.\build\RenderingValidation\Calibration\VisualThresholds.candidate.tsv' -Algorithm SHA256).Hash
-# candidate、60行実測表、両sceneのnoise／人工差／式を人間がreviewし、decision recordへ承認原文とhashを記録する。
-& .\Scripts\CalibrateRenderingVisualThresholds.ps1 -PublishApprovedCandidate -CandidateSha256 $candidateHash
+& .\build\Test\Core\Rendering\Debug\RenderingHdrSceneCaptureTest.exe --scene=indoor --capture-source=back-buffer --r1-scenario=all-numerical
 ```
 
-`-GenerateCandidate`はbuild配下のcandidate／実測表だけを作り、source thresholdへ書かない。publishはcandidate hash、decision recordの承認marker、current HEAD、両baseline hash、2scene row、式、PPD、pinをsource変更前に検証し、承認されたexact candidateだけをatomic publishする。承認前、別hash、再生成candidate、identity不一致ではpublishしない。
+成功sentinelはstatic40、numerical68、capture120、各source40、actual byte channels 10485760、float channels 20971520、forced rows 2、forced channels 56、capture latency exact 2である。Indoor/Outdoorの`--measure-visual`実行はBackBufferを指定し、object-presenceのdeltaも同じ実出力で検査する。
 
-threshold transactionの`before-publish`／`after-publish` seamは、失敗後にsource hashが不変でtemp／backup／rollback-discardが残らないことを検証する。承認済みcandidateと60行実測表は監査証拠としてbuild配下に保持する。
+## Visual threshold校正と承認
+
+candidate生成とsource publishは別invocation、別の人間承認gateである。P6Aではformal生成・publishを実行せず、scriptのSelfTestだけをbuild配下の固定synthetic fixtureで検証する。
+
+```powershell
+& .\Scripts\CalibrateRenderingVisualThresholds.ps1 -GenerateCandidate -Iterations 10 -RequireGpu -CodeHead $codeHead -BaselineIndoorSha256 $indoorBaselineSha256 -BaselineOutdoorSha256 $outdoorBaselineSha256 -DecisionPath Docs/RenderingValidation/R1Acceptance.md -DecisionSection 'R1 visual approval'
+$candidateHash = (Get-FileHash -LiteralPath '.\build\RenderingValidation\Calibration\VisualThresholds.candidate.tsv' -Algorithm SHA256).Hash
+# candidate、60行実測表、両sceneのnoise／人工差／式を人間がreviewし、R1 visual approval節へ承認lineとhashを記録する。
+& .\Scripts\CalibrateRenderingVisualThresholds.ps1 -PublishApprovedCandidate -CandidateSha256 $candidateHash -CodeHead $codeHead -BaselineIndoorSha256 $indoorBaselineSha256 -BaselineOutdoorSha256 $outdoorBaselineSha256 -DecisionPath Docs/RenderingValidation/R1Acceptance.md -DecisionSection 'R1 visual approval'
+```
+
+`-GenerateCandidate`はbuild配下のcandidate、60行実測表、`VisualThresholdCandidateManifest.json`だけを作り、source thresholdへ書かない。F9値は`\A(0\.[0-9]{9}|1\.000000000)\z`を厳密受理し、fraction digitsからnanounitsへ直接変換する。thresholdはinteger millionthsのcanonical F6とし、strict separationを満たす最初の人工差候補を再計算する。publishはbaseline manifest、candidate／measurement hash、decision節、current HEAD、両baseline hash、2 scene row、式、PPD、pinをsource変更前に同じpure validatorで検証し、承認されたexact candidateだけをatomic publishする。
+
+threshold candidate manifestは`build/RenderingValidation/Calibration/VisualThresholdCandidateManifest.json`、baseline candidate manifestは`build/RenderingValidation/R1/BaselineCandidate/Manifest.json`であり、duplicate／unknown／case mismatch／type mismatch、path traversal、hash不一致を拒否する。threshold transactionの`before-publish`／`after-publish`／success seamはproductionと同じpure prepublish validatorおよびtransaction helperをsynthetic pathへ渡し、失敗後にsource hashが復元され、成功後はcandidate hashと一致し、temp／backup／rollback-discardが残らないことを検証する。
 
 sRGB transfer、PPD、FLIP pinの変更、またはR1 presentation gamma修正時は、既存thresholdを流用しない。indoor/outdoor両baseline、通常10回ずつのnoise、全40人工差候補、thresholdをすべて再生成し、candidate実測表に対する人間承認を取り直す。
 
 ## Baseline更新
 
-更新は明示的な`-Approve`を必須とし、次のcommandだけを使う。
+candidate生成とpublishを分離し、旧来の直接`-Approve`入口は使用しない。formal baseline candidate生成は次の入口で行う。
 
 ```powershell
-& .\Scripts\UpdateRenderingGoldenBaselines.ps1 -Approve
+& .\Scripts\UpdateRenderingGoldenBaselines.ps1 -GenerateCandidate -CodeHead $codeHead
 ```
 
-scriptはsource publish直前に、内部で次の固定staging gateを必ず実行する。このvalidator単独ではsourceをpublishしない。
+`-GenerateCandidate`はcurrent HEADを`CodeHead`と厳密照合し、Indoor/Outdoorを`--scene=<scene> --capture-source=back-buffer --write-baseline-staging`でcaptureする。fixed stagingをvalidatorへ渡し、candidateへbyte bridgeした後にcandidate hashとsource開始hashをmanifestへatomic発行する。source baselineは変更しない。
+
+人間承認後のpublishだけが次の入口を使う。
 
 ```powershell
-& .\build\Test\Core\Rendering\Debug\RenderingGoldenImageComparatorTest.exe --validate-fixed-staging
+& .\Scripts\UpdateRenderingGoldenBaselines.ps1 -PublishApprovedCandidate -CodeHead $codeHead -ApprovedIndoorSha256 $approvedIndoorSha256 -ApprovedOutdoorSha256 $approvedOutdoorSha256 -DecisionPath Docs/RenderingValidation/R1Acceptance.md -DecisionSection 'R1 visual approval'
 ```
+
+publishはmanifest、candidate hash、source開始hash、current HEAD、`R1 visual approval`節のheading／approval line（各exactly once）をsource mutation前に検証する。publish入口はmanifest済みのcandidateと既存source 2枚だけを受け取り、staging capture／validationは行わない。片側publish failureでは両sourceを同じ開始hashへ戻し、rollback failure時だけapplication backupを残す。
 
 アプリケーションが書けるのはbinary root内の次の固定stagingだけである。
 
 - `build\RenderingValidation\BaselineStaging\Indoor.png.tmp`
 - `build\RenderingValidation\BaselineStaging\Outdoor.png.tmp`
 
-更新scriptは両sceneをcaptureしてstaging validatorを通過させた後、`Test\Core\Rendering\Baselines\RenderingValidation\Indoor.png`と`Outdoor.png`だけを1 transactionとしてpublishする。既存baselineは`File.Replace`、初回baselineはsame-volumeの`File.Move`を使う。片sceneの失敗、GPU skip、validation failure、publish failureでは両sourceを元の状態へ戻す。
+更新scriptのGenerate入口だけが両sceneをcaptureしてstaging validatorを通過させ、candidate hash／source開始hashとmanifestを最後に発行する。Publish入口は`Test\Core\Rendering\Baselines\RenderingValidation\Indoor.png`と`Outdoor.png`が存在することを確認し、両方を`File.Replace`する1 transactionとしてpublishする。片sceneの失敗、GPU skip、validation failure、publish failureでは両sourceを元の状態へ戻す。
 
-transaction seamは`NORVESLIB_BASELINE_TRANSACTION_TEST_FAILURE=after-indoor-staging`と`after-first-publish`で検証できる。staging validatorのnegativeは次のcommandで実行し、source baselineのhashが変化していないことを併せて確認する。
+transaction seamは`NORVESLIB_BASELINE_TRANSACTION_TEST_FAILURE=before-publish`と`after-first-publish`で検証できる。P6Aで実行する`-SelfTestR1Contract`は、formal pathやtracked source／decisionを変更せず、production pure prepublish validatorとtransaction helperへsynthetic source／candidateを渡して、partial／corrupt／hash／path／reparse／decision／exit codeの拒否、同じ復旧条件、成功publishを検証する。staging validatorのnegativeは次のcommandで実行し、source baselineのhashが変化していないことを併せて確認する。
 
 ```powershell
 & .\build\Test\Core\Rendering\Debug\RenderingGoldenImageComparatorTest.exe --self-test-fixed-staging-negative=corrupt-indoor
@@ -87,6 +101,21 @@ transaction seamは`NORVESLIB_BASELINE_TRANSACTION_TEST_FAILURE=after-indoor-sta
 ```
 
 corrupt PNGは`DecodeFailed`、decode可能な128×256 PNGは`InvalidDimensions`としてrejectされる。
+
+## P6A script契約
+
+P6Aで実行するSelfTestは次の3本で、いずれもformal candidate・publish、tracked source、decision recordを変更しない。
+
+```powershell
+& .\Scripts\CalibrateRenderingVisualThresholds.ps1 -SelfTestR1Contract
+& .\Scripts\UpdateRenderingGoldenBaselines.ps1 -SelfTestR1Contract
+& .\Scripts\TestRenderingGpuCTestContract.ps1 -SelfTestR1Contract
+& .\Scripts\TestRenderingGpuCTestContract.ps1 -BuildDirectory build -ExpectedCount 21
+```
+
+GPU CTest contractはexact21 name、label集合`GPU;RenderingValidation`、`RESOURCE_LOCK=NorvesLibGPU`、`SKIP_RETURN_CODE=125`、force-skip 7件、family breakdown `2+2+3+6+2+3+3`、command sequenceを検証する。
+
+SelfTestのpure validator coverageは、Baselineが`Get-R1BaselinePublishInputs`、Thresholdが`Get-R1ThresholdPublishInputs`を正のsynthetic fixtureで通過させ、各fixtureを1項目だけ変えて拒否する。Baselineはpartial／corrupt candidate、candidate／source-start hash、duplicate／unknown／case／type、repo外／staging境界／reparse、HEAD、heading、approval 0／2／section外、exit 125／nonzeroを含む。Thresholdは10+10 noise、40 artificial、fixed order、F6、raw max、HEAD／CodeHead、baseline bridge、candidate／measurement hash、P5 manifest、duplicate／unknown／case／type、decision section、approval 0／2／section外を含む。いずれもsource非変更と残留0を確認し、transactionはfailure 2経路とsuccess経路を確認する。
 
 ## Review
 

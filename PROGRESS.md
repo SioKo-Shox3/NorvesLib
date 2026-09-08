@@ -9,10 +9,11 @@
 - R1 P4: `f3d4abb20ad283d66f0a39b38b1b9aaa0ee92013`。放射輝度IBL、DFG、GGX補償と数値検証。focused build 13/13、CPU 7/7、GPU 6/6（exit 125なし）、独立レビュー、接続監査、fresh verifierを2026-09-08にPASS。
 
 - R1 P5: `7d134b7d5fef9486210589d698b01d66bf0c7d31`。物理ライト・GGX・IBL・方向影の透明描画を受入完了。focused8/CPU6/skip、P4 GPU6、透明10行/背景10行/固定4輝度、両scene object-presence、lifecycle、独立recheck12件、累積source18の正式Claude評価（blocking 0）を確認した。
+- R1 P6A: `7d1cff3`。最終fixtureの40 static rows/120 captures、全画素sRGB oracle、forced format、GPU CTest exact21、3 script self-test、focused7/CPU6、Indoor/Outdoor object-presenceを受入。公式9ゲートのraw outputを`.harness/runs/20260908-084154/verify-R1-P6A-1.txt`〜`-9.txt`へ保存し、再読確認した。
 
 ## In progress
 
-- R1-P6Aの実装へ移る。P5の正式受入を完了し、現在のM2反復3へP5 commit/report/hashと開始条件を渡す。
+- R1-P6Bの実装へ移る。P6A commit/report/hashと開始条件を渡し、正式candidate生成・publishへ進む。
 - 10:26時点: focused8 build（verify20）exit0、透明vert/frag事前compile（verify21）各exit0、CPU6（verify22）6/6 PASS。RenderGraphCompileTestは184.70秒から72.28秒、CPU6全体74.23秒になった。
 - LUTは256×256・4096sample・式・集積順序・RNEを維持し、行ごとの半角ベクトル事前計算へ変更。親のDebug比較で131072値/262144bytesが全一致、11.018539秒→4.150286秒。証拠 `%TEMP%/norveslib-p5-dfg-hoist-20260908/evidence.json`。元アルゴリズムは受入済みP4関数本体にEOL正規化後一致。
 - 10:29時点: P4 GPU回帰6/6 exit0（verify23〜28）。capture数はknown-cd6、prefilter4、DFG100、roughness24、furnace60、direct-conductor4。raw log/hash/countの集計 `%TEMP%/norveslib-p5-p4-gpu-regression-20260908.json`。これは後続fixture再修正前の回帰証拠で、P5全受入ではない。
@@ -57,3 +58,4 @@
 
 - 14:19 JST: P5 report `.superpowers/sdd/RenderingR1PhysicalFoundationPlan/task-5-report.md`、SHA256=A314A7B64EBE338786AD76EF6007B8898E5D684C6D24538D305335978FAB6FD4。正式評価とcoverage/実測/hash証拠は `.harness/runs/20260908-084154/p5-review-completed/receipt.json` から辿る。初回attemptは判定形式不正と累積コード未読により採用せず、Read可能な全18 diffを使った再試行で第1周を完了した。原計画4文書を評価者が未読としたUNCERTAINは残し、メインの仕様照合と評価者の00契約/実コード/実測照合を区別する。旧Sol評価は現行AGENTSにより未実施、未実施をPASSと書かない。
 - P5のnon-blocking: checkpoint由来の累積EOL差は保持し履歴を改変しない。未使用row enum、非managed時のempty-pass分岐、CullMode::Noneによる将来の閉曲面shadow acneの観測余地を記録する。数値受入済みのP5コードは変更せずP6aへ進む。
+- 2026-09-08 16:54 JST: P6A公式9ゲートを実行し、all-numerical `static_rows=40 numerical_rows=68 total_numerical_rows=70 captures=120`、`forced_channels=56`、Indoor `delta_y8=11.874405859`、Outdoor `delta_y8=154.644108203`、GPU CTest `count=21`を保存証跡から確認した。source scopeは20/20、EOL parityはPASS。
