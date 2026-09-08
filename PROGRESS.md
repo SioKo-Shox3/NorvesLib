@@ -18,6 +18,9 @@
 - P5計画v4の背景side1.840303983m/同じ画面範囲とbackground-only ROI要求は両立しない。背景のみを画面全体へ広げる具体案 `Docs/Plans/RenderingR1P5BackgroundProposal20260908.md` をユーザーへ提示し、回答待ち。背景拡大も追加capture案も未承認。数値ROI・threshold・exposureを調整して合格させない。独立したobject-presence等の修正・検証は継続する。
 - 初期binding5とSSBO更新順序を両立し、初期化成功前のpublishを `m_bInitialized && context.PhysicalLighting.bActive` で抑止する修正を含む。正式な独立評価、P5 numerical/object-presence受入、最終hygiene、source commitは未完。
 - 親セッションのgoalでP5→P6a→P6b完了を追跡中。起動やプロセス生存を完了に置き換えない。
+- 11:24時点: object-presenceの黒画面は透明描画の欠落ではなかった。verify58の実HDRはtarget平均RGB(0.003355026,0.003229141,0.003185272)、background(0.006248474,0.006248474,0.006248474)、NaN/Infなし。ACES後に既定Contrast1.05で全て0へclampされる。証拠 `%TEMP%/norveslib-p5-black-roi-diagnosis-20260908.json`。診断専用branchは受入前に撤去する。
+- 既承認の最終照明条件をobject-presenceへ先行適用し、既存main lightの誤った無効化を修正する。P5数値fixtureと既定BuildSceneLayoutは保持。適用範囲と条件はTASKS.mdおよび `Docs/Plans/RenderingR1P5FixtureIntegration20260908.md`。
+- 親の実GPU向け行列計算で、OutdoorのToMatrix再投影がfalse-greenだったことを確認。固定物理geometry/ROI/normalを保ったfixture内の表現補正を実装する。数値oracleも中心一色から画素ごとの独立double参照へ、Shadowedには遮蔽率条件を正しく適用する。指摘は `%TEMP%/norveslib-p5-parent-oracle-findings-20260908.md`。いずれもP5の正式受入は未完。
 
 ## Next
 
