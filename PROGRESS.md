@@ -7,11 +7,10 @@
 - R1 P2: `98bd5c9`。表示リニア中間とsRGB一回出力。
 - R1 P3: `053e73be13ab49454691105fd91acbe5144140ff`。物理ライトとEV100プリエクスポージャ。
 - R1 P4: `f3d4abb20ad283d66f0a39b38b1b9aaa0ee92013`。放射輝度IBL、DFG、GGX補償と数値検証。focused build 13/13、CPU 7/7、GPU 6/6（exit 125なし）、独立レビュー、接続監査、fresh verifierを2026-09-08にPASS。
-- R1 P5: 透明描画を実ライト・GGX・IBL・方向影へ接続。固定10行、direct/IBL/shadow/metallic mutation、P4回帰6条件、CPU6、skip契約、Indoor/Outdoor object-presenceを検証済み。
 
 ## In progress
 
-- R1-P5の実装・検証・コミットを完了。次はR1-P6Aへ進む。
+- R1-P5の実装を `7d134b7d5fef9486210589d698b01d66bf0c7d31`（透明描画を実ライト・方向影・IBLのPBRへ接続する）へコミットした。独立recheckとClaude評価はまだ結果待ちで、P5の受入完了とP6a開始はその確認後。TASKSのdoneはM2の実装完了信号であり、未実施評価のPASSを意味しない。
 - 10:26時点: focused8 build（verify20）exit0、透明vert/frag事前compile（verify21）各exit0、CPU6（verify22）6/6 PASS。RenderGraphCompileTestは184.70秒から72.28秒、CPU6全体74.23秒になった。
 - LUTは256×256・4096sample・式・集積順序・RNEを維持し、行ごとの半角ベクトル事前計算へ変更。親のDebug比較で131072値/262144bytesが全一致、11.018539秒→4.150286秒。証拠 `%TEMP%/norveslib-p5-dfg-hoist-20260908/evidence.json`。元アルゴリズムは受入済みP4関数本体にEOL正規化後一致。
 - 10:29時点: P4 GPU回帰6/6 exit0（verify23〜28）。capture数はknown-cd6、prefilter4、DFG100、roughness24、furnace60、direct-conductor4。raw log/hash/countの集計 `%TEMP%/norveslib-p5-p4-gpu-regression-20260908.json`。これは後続fixture再修正前の回帰証拠で、P5全受入ではない。
@@ -51,3 +50,5 @@
 - 2026-09-08 09:33 JSTの読取照会: CTest登録219/GPU21/意図的skip7のname hashとsource-start6ファイルhashは計画に一致。固定name hashはPowerShell `Sort-Object -CaseSensitive` による。証拠: `%TEMP%/norveslib-r1-final-prerequisite-inventory-20260908.json`。正式P6b実行やfull build/full CTestは未実行。
 - 12:31 JST: DFGをx254/255・y127/128の独立double積分、half RNE、二軸bilinearへ修正し、HDR capture build（verify93）とknown-cd数値行（verify94）はexit 0。transparent-physical-lighting（verify95）はDFG preflight/fixture 10行後、固定ROIの背景mean 0.015621185（期待0.1）でexit 1。追加captureまたはgeometry/ROI変更の判断待ちとして `blocked/R1-P5.md` に記録し、P5は未完・未コミット。
 - 2026-09-08 反復2: `verify-R1-P5-123.txt` focused8 build、`verify-R1-P5-124.txt` CPU6、`verify-R1-P5-125.txt` skip契約、`verify-R1-P5-126.txt`〜`verify-R1-P5-132.txt` のGPU7条件、`verify-R1-P5-133.txt`/`verify-R1-P5-134.txt` のIndoor/Outdoorを保存し再読した。全実行はexit 0、skip契約は1/1 Skipped。透明10行は direct/metallic、shadow、IBL on/off を含み、固定 preflight は direct M0=0.141046407037373、direct M0.5=0.265191352940684、IBL M0=31.951981492677799、IBL M0.5=29.654360326265852。object-presenceのdelta_y8はIndoor=11.874405859、Outdoor=154.644108203。`verify-R1-P5-135.txt`/`verify-R1-P5-136.txt` で `PhysicalLightingResources` の lifecycle 実値検査も通過した。
+
+- 13:48 JST: P5最終source commitは描画7本＋運転2本。P4からの累積描画差分は18本。最終commitのnumstat/ignore-CRは9本とも一致、CRLF-aware diff check exit0、working tree cleanを確認した。checkpoint継承の累積行末差とは区別する。source18 hashとprotected diff0は `%TEMP%/norveslib-p5-final-source-audit-20260908.json`。GPU6回帰のcapture数6/4/100/24/60/4、透明10行/背景10行/固定4値、object-presenceのF9演算一致を `%TEMP%/norveslib-p5-final-gpu-and-presence-20260908.json` でrawと照合済み。lifecycle追加はverify135 build/136 CPU1各exit0。正式評価対象は `.harness/runs/20260908-084154/00-R1-P5-evaluation-contract.md`。
