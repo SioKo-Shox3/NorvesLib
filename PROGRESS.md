@@ -10,10 +10,14 @@
 
 ## In progress
 
-- `R1-P5`を実装中。ループrun-id `20260908-084154`（PID 34936）で、透明描画へのライト/影/IBL接続と固定fixture・10行captureを追加している。実ログは `.harness/runs/20260908-084154/iter-1.err.txt`。
-- 開始時のfocused8 buildは成功、CPU6は5/6（RenderGraphCompileTestのSSBO更新順序assertで失敗）。コア接続後のbuildは成功。CPU/GPUの最終受入は未完。
-- 接続確認で、CreateLightingDescriptorSetのbinding5削除がLightingParamsLayoutTest:3097の既存P4契約に抵触する点を検出。初期bindingとSSBO更新順序の両立を確認してからP5を完了にする。
-- 親セッションのgoalでP5→P6a→P6b完了を追跡する。プロセス生存だけで完了を扱わず、停止・失敗・未記録の検証を実ログから確認する。
+- `R1-P5`を実装中。ループrun-id `20260908-084154`（PID 34936）。進行中の実出力はCodex session `01a07e3f-eeed-7c21-8d0a-37010f61c2b1` のJSONLと `.harness/runs/20260908-084154/verify-R1-P5-*.txt`。CLI側stderrはcompaction後に更新されない時間帯があり、外側heartbeatの出力0KBだけで停止と判断しない。
+- 10:26時点: focused8 build（verify20）exit0、透明vert/frag事前compile（verify21）各exit0、CPU6（verify22）6/6 PASS。RenderGraphCompileTestは184.70秒から72.28秒、CPU6全体74.23秒になった。
+- LUTは256×256・4096sample・式・集積順序・RNEを維持し、行ごとの半角ベクトル事前計算へ変更。親のDebug比較で131072値/262144bytesが全一致、11.018539秒→4.150286秒。証拠 `%TEMP%/norveslib-p5-dfg-hoist-20260908/evidence.json`。元アルゴリズムは受入済みP4関数本体にEOL正規化後一致。
+- 10:29時点: P4 GPU回帰6/6 exit0（verify23〜28）。capture数はknown-cd6、prefilter4、DFG100、roughness24、furnace60、direct-conductor4。raw log/hash/countの集計 `%TEMP%/norveslib-p5-p4-gpu-regression-20260908.json`。これは後続fixture再修正前の回帰証拠で、P5全受入ではない。
+- P5新規numericalはfixture再投影で失敗。検査側の行列規約、double演算、numericalとobject-presenceで使うcameraの区別を修正中。背景の法線とCdstへの余分な寄与も確認する。
+- P5計画v4の背景side1.840303983m/同じ画面範囲とbackground-only ROI要求は両立しない。背景のみを画面全体へ広げる具体案 `Docs/Plans/RenderingR1P5BackgroundProposal20260908.md` をユーザーへ提示し、回答待ち。背景拡大も追加capture案も未承認。数値ROI・threshold・exposureを調整して合格させない。独立したobject-presence等の修正・検証は継続する。
+- 初期binding5とSSBO更新順序を両立し、初期化成功前のpublishを `m_bInitialized && context.PhysicalLighting.bActive` で抑止する修正を含む。正式な独立評価、P5 numerical/object-presence受入、最終hygiene、source commitは未完。
+- 親セッションのgoalでP5→P6a→P6b完了を追跡中。起動やプロセス生存を完了に置き換えない。
 
 ## Next
 
