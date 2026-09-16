@@ -102,7 +102,7 @@ namespace
             {
                 return false;
             }
-            if (m_bMeasureVisual &&
+            if ((m_bMeasureVisual || m_bWriteBaselineStaging) &&
                 !GetFixture().ApplyTransparentPhysicalLightingObjectPresence())
             {
                 LOG_ERROR("golden object-presence fixture preparation failed");
