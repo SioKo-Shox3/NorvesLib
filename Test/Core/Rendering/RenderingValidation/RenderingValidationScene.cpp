@@ -196,15 +196,22 @@ namespace NorvesLib::Test::RenderingValidation
                 }
             }
 
-            const Core::Rendering::Mesh3DVertex& first = vertices[indices[0]];
-            const Core::Rendering::Mesh3DVertex& second = vertices[indices[1]];
-            const Core::Rendering::Mesh3DVertex& third = vertices[indices[2]];
-            const double edgeAX = static_cast<double>(second.Position[0]) - first.Position[0];
-            const double edgeAZ = static_cast<double>(second.Position[2]) - first.Position[2];
-            const double edgeBX = static_cast<double>(third.Position[0]) - first.Position[0];
-            const double edgeBZ = static_cast<double>(third.Position[2]) - first.Position[2];
-            const double signedY = edgeAZ * edgeBX - edgeAX * edgeBZ;
-            return kind == SceneKind::Indoor ? signedY > 0.0 : signedY < 0.0;
+            for (size_t triangle = 0u; triangle < indices.size(); triangle += 3u)
+            {
+                const Core::Rendering::Mesh3DVertex& first = vertices[indices[triangle]];
+                const Core::Rendering::Mesh3DVertex& second = vertices[indices[triangle + 1u]];
+                const Core::Rendering::Mesh3DVertex& third = vertices[indices[triangle + 2u]];
+                const double edgeAX = static_cast<double>(second.Position[0]) - first.Position[0];
+                const double edgeAZ = static_cast<double>(second.Position[2]) - first.Position[2];
+                const double edgeBX = static_cast<double>(third.Position[0]) - first.Position[0];
+                const double edgeBZ = static_cast<double>(third.Position[2]) - first.Position[2];
+                const double signedY = edgeAZ * edgeBX - edgeAX * edgeBZ;
+                if (kind == SceneKind::Indoor ? signedY <= 0.0 : signedY >= 0.0)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         class RenderingValidationResourceReleaser final : public ISceneFixtureResourceReleaser
