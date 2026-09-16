@@ -118,6 +118,95 @@ namespace NorvesLib::Test::RenderingValidation
                           P4DirectRoughnessIndex * P4MetallicQueryTextureCount + P4TargetMetallicIndex,
                       "P4 direct conductor material index must remain 26");
 
+        void BuildR1PlaneMesh(
+            SceneKind kind,
+            Core::Container::VariableArray<Core::Rendering::Mesh3DVertex>& outVertices,
+            Core::Container::VariableArray<uint32_t>& outIndices)
+        {
+            Core::Rendering::ProceduralMeshGenerator::GeneratePlane(
+                10.0f, 10.0f, 1, 1, outVertices, outIndices);
+
+            // Indoor uses the existing wall-facing representation. Outdoor keeps
+            // the generator's native ground-facing winding and normal.
+            if (kind != SceneKind::Indoor)
+            {
+                return;
+            }
+
+            for (Core::Rendering::Mesh3DVertex& vertex : outVertices)
+            {
+                vertex.Normal[0] = 0.0f;
+                vertex.Normal[1] = 0.0f;
+                vertex.Normal[2] = 1.0f;
+            }
+            for (size_t index = 0; index + 2 < outIndices.size(); index += 3)
+            {
+                const uint32_t second = outIndices[index + 1];
+                outIndices[index + 1] = outIndices[index + 2];
+                outIndices[index + 2] = second;
+            }
+        }
+
+        bool ValidateR1PlaneMeshContract(
+            SceneKind kind,
+            const Core::Container::VariableArray<Core::Rendering::Mesh3DVertex>& vertices,
+            const Core::Container::VariableArray<uint32_t>& indices)
+        {
+            if (vertices.size() != 4u || indices.size() != 6u)
+            {
+                return false;
+            }
+
+            constexpr float expectedPositions[4][3] = {
+                {-5.0f, 0.0f, -5.0f},
+                {5.0f, 0.0f, -5.0f},
+                {-5.0f, 0.0f, 5.0f},
+                {5.0f, 0.0f, 5.0f}};
+            constexpr uint32_t outdoorIndices[6] = {0u, 1u, 2u, 1u, 3u, 2u};
+            constexpr uint32_t indoorIndices[6] = {0u, 2u, 1u, 1u, 2u, 3u};
+            const float expectedNormalX = 0.0f;
+            const float expectedNormalY = kind == SceneKind::Indoor ? 0.0f : 1.0f;
+            const float expectedNormalZ = kind == SceneKind::Indoor ? 1.0f : 0.0f;
+            const uint32_t* expectedIndices =
+                kind == SceneKind::Indoor ? indoorIndices : outdoorIndices;
+
+            for (size_t vertexIndex = 0u; vertexIndex < vertices.size(); ++vertexIndex)
+            {
+                const Core::Rendering::Mesh3DVertex& vertex = vertices[vertexIndex];
+                for (uint32_t component = 0u; component < 3u; ++component)
+                {
+                    if (vertex.Position[component] != expectedPositions[vertexIndex][component])
+                    {
+                        return false;
+                    }
+                }
+                if (vertex.Normal[0] != expectedNormalX ||
+                    vertex.Normal[1] != expectedNormalY ||
+                    vertex.Normal[2] != expectedNormalZ)
+                {
+                    return false;
+                }
+            }
+
+            for (size_t index = 0u; index < indices.size(); ++index)
+            {
+                if (indices[index] != expectedIndices[index])
+                {
+                    return false;
+                }
+            }
+
+            const Core::Rendering::Mesh3DVertex& first = vertices[indices[0]];
+            const Core::Rendering::Mesh3DVertex& second = vertices[indices[1]];
+            const Core::Rendering::Mesh3DVertex& third = vertices[indices[2]];
+            const double edgeAX = static_cast<double>(second.Position[0]) - first.Position[0];
+            const double edgeAZ = static_cast<double>(second.Position[2]) - first.Position[2];
+            const double edgeBX = static_cast<double>(third.Position[0]) - first.Position[0];
+            const double edgeBZ = static_cast<double>(third.Position[2]) - first.Position[2];
+            const double signedY = edgeAZ * edgeBX - edgeAX * edgeBZ;
+            return kind == SceneKind::Indoor ? signedY > 0.0 : signedY < 0.0;
+        }
+
         class RenderingValidationResourceReleaser final : public ISceneFixtureResourceReleaser
         {
         public:
@@ -576,6 +665,18 @@ namespace NorvesLib::Test::RenderingValidation
         return false;
     }
 
+    bool ValidateR1PlaneMeshContractForTesting()
+    {
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> indoorVertices;
+        Core::Container::VariableArray<uint32_t> indoorIndices;
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> outdoorVertices;
+        Core::Container::VariableArray<uint32_t> outdoorIndices;
+        BuildR1PlaneMesh(SceneKind::Indoor, indoorVertices, indoorIndices);
+        BuildR1PlaneMesh(SceneKind::Outdoor, outdoorVertices, outdoorIndices);
+        return ValidateR1PlaneMeshContract(SceneKind::Indoor, indoorVertices, indoorIndices) &&
+               ValidateR1PlaneMeshContract(SceneKind::Outdoor, outdoorVertices, outdoorIndices);
+    }
+
     CameraProxy BuildLookAtCamera(const Math::Vector3& position,
                                   const Math::Vector3& target,
                                   uint32_t width,
@@ -906,19 +1007,10 @@ namespace NorvesLib::Test::RenderingValidation
 
         Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> planeVertices;
         Core::Container::VariableArray<uint32_t> planeIndices;
-        Core::Rendering::ProceduralMeshGenerator::GeneratePlane(
-            10.0f, 10.0f, 1, 1, planeVertices, planeIndices);
-        for (Core::Rendering::Mesh3DVertex& vertex : planeVertices)
+        BuildR1PlaneMesh(kind, planeVertices, planeIndices);
+        if (!ValidateR1PlaneMeshContract(kind, planeVertices, planeIndices))
         {
-            vertex.Normal[0] = 0.0f;
-            vertex.Normal[1] = 0.0f;
-            vertex.Normal[2] = 1.0f;
-        }
-        for (size_t index = 0; index + 2 < planeIndices.size(); index += 3)
-        {
-            const uint32_t second = planeIndices[index + 1];
-            planeIndices[index + 1] = planeIndices[index + 2];
-            planeIndices[index + 2] = second;
+            return false;
         }
         if (!resources.Meshes().Register(PlaneHandle, planeVertices.data(),
                                          planeVertices.size() * sizeof(Core::Rendering::Mesh3DVertex),

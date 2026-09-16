@@ -5876,6 +5876,12 @@ namespace
 
     bool ValidateR1FinalFixtureContract()
     {
+        if (!ValidateR1PlaneMeshContractForTesting())
+        {
+            std::cerr << "P6A_FIXTURE_RED=plane_mesh_scene_orientation\n";
+            return false;
+        }
+
         SceneLayout indoor;
         SceneLayout indoorRepeat;
         SceneLayout outdoor;

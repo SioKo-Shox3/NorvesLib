@@ -122,6 +122,7 @@ namespace NorvesLib::Test::RenderingValidation
     };
 
     bool BuildSceneLayout(SceneKind kind, uint32_t seed, SceneLayout& outLayout);
+    bool ValidateR1PlaneMeshContractForTesting();
     Core::Rendering::CameraProxy BuildLookAtCamera(
         const Math::Vector3& position,
         const Math::Vector3& target,
