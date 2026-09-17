@@ -13,7 +13,7 @@
 - R1 P6b: `eedec7a681489768645eabf77355886ae8e755c0`。承認済みbaseline（Indoor `3845F8671194A3C55EA929503E7ECB4C777EB7A5A4D900C03E75853E50D9D4EF` / Outdoor `05D202193F8C304E45099EBA6557A48BB7B5BF88E694552CBABC50E898D895B6`）、threshold、BackBuffer20=20/20、targetless full build=exit 0、full CTest=212 passed/7 intentional skipped/0 failedを受入完了。Roadmap trailerは`RenderingRoadmap: R1 complete`、GPU性能はDeferred。
 - R2 M1: `Docs/Plans/RenderingR2SkyAtmosphereCsmPlan.md` を作成し、Hillaire 2020系空、太陽ディスクのプリエクスポージャ表現、空由来IBL、4カスケードCSM、R2-P1〜P8の検証単位を定義した。R1受入れ基点は再利用せず、R2用の数値/画像証拠を分離する。
 - R2-P1: `76a0c15`。`SkyAtmosphereParameters` の有限化、太陽高度・方位角からの正規化方向、太陽ディスク立体角を積分したCPU参照サンプル、R1露出規約に沿う太陽ディスク安全域を実装した。対象ビルド成功、`SkyAtmosphereModelTest` は1/1 passed。P1の固定値は平行大気・単一散乱のCPU回帰アンカーとして後続LUTと単位を共有する。
-- R2-P2: `07a0cd9`。空スナップショットをFramePacketからRenderThreadへ接続し、SkyAtmospherePassで透過率LUT・空放射輝度LUT・太陽ディスクを生成してRenderGraph named resourceへ公開した。LightingPassのbinding 14/15と空背景の有効/無効フォールバックを接続し、P2対象ビルド・CTestは3/3 passed。空由来の拡散/鏡面IBL更新はP3へ分離した。
+- R2-P2: `53a58dc`（実装 `07a0cd9`）。空スナップショットをFramePacketからRenderThreadへ接続し、SkyAtmospherePassで透過率LUT・空放射輝度LUT・太陽ディスクを生成してRenderGraph named resourceへ公開した。LightingPassのbinding 14/15と空背景の有効/無効フォールバックを接続し、太陽ディスクは解析的な方向・角半径マスクへ修正した。P2対象ビルド・CTestは3/3 passed、エンジンと同じBOM除去経路のsky/lightingシェーダーコンパイルも合格した。空由来の拡散/鏡面IBL更新はP3へ分離した。
 
 ## In progress
 
@@ -32,4 +32,5 @@
 - 2026-08-15の承認: P6a v4 SHA=B805112EC87BAB673F7D0093FB6BB93DABBACCF5B4682D55992602869D40156F、P6b v3 SHA=37D08DE402478F1D1EBEEEE2D0D8F134492AA0A0EDEB2A4C8FF69527721A2AE3。`Docs/Plans/RenderingR1P6aPhaseDeclaration.md`に承認原文と元sessionの参照を保持する。P6b baseline/thresholdの実物承認原文は`Docs/RenderingValidation/R1Acceptance.md`とcontrol eventへ記録した。
 - P4/P5受入の詳細、途中診断、非blocking事項は `.harness/runs/20260908-084154/progress-before-p6a-acceptance.md` および `Docs/Plans/RenderingR1P6aParentNotes20260908.md` に保存した。途中の「未完」は当時の状態である。
 - R2の設計判断: S2はHillaire 2020系の事前計算LUTを採用し、太陽高度・方位角をFramePacketの空スナップショットへ持たせる。空由来IBLは既存の放射輝度/拡散照明/プリフィルタ生成へ接続し、R1の静的HDRは空無効時だけフォールバックにする。性能回帰はR2本体の完了条件から分離する。
+- R2-P2評価: 1周目のblocking指摘（sky_atmosphere.fragの`#version`欠落、低解像度αマスク）を`53a58dc`で修正し、2周目の独立評価はPASS。空LUTの毎フレーム再生成、未使用sky shaderのUV/α契約、太陽ディスクの透過率適用、GameThread側の空有効化はP3以降の非blocking課題として扱う。
 - tracked v1 scene、R0基準2文書、P6b開始時のsource-start hashesは証跡へ固定した。P6bの公開tracked範囲はPNG2枚、VisualThresholds.tsv、R1Acceptance.mdで、forward-fixのテスト契約修正と受入れ記録を別コミットに分離した。プッシュは行わない。
