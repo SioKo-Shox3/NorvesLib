@@ -7,12 +7,14 @@
 #include "Boot/BootConfig.h"
 #include "Container/PointerTypes.h"
 #include "Engine/Engine.h"
+#include "FileStream/FileStream.h"
 #include "Logging/LogMacros.h"
 #include "Module/ModuleRegistry.h"
 #include "ImGuiModule/IImGuiView.h"
 #include "ImGuiModule/ImGuiModule.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/SkyAtmosphere.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -40,6 +42,7 @@
 namespace
 {
     using namespace NorvesLib;
+    using namespace NorvesLib::Core::Rendering;
     using namespace NorvesLib::Test::RenderingValidation;
 
     class OpaqueMarkerView final : public Modules::Gui::IImGuiView
@@ -553,6 +556,301 @@ namespace
         return outMaterialIndex < 30u;
     }
     constexpr double P4DirectLegacyEnvelope = 0.005;
+
+    struct R2SkyTimeCase
+    {
+        const char* Name = nullptr;
+        float SunAltitudeDegrees = 0.0f;
+        float SunAzimuthDegrees = 0.0f;
+    };
+
+    constexpr R2SkyTimeCase R2SkyTimeCases[] = {
+        {"morning", 8.0f, -35.0f},
+        {"noon", 45.0f, 0.0f},
+        {"evening", 15.0f, 35.0f}};
+    constexpr float R2SkyPreExposure = 1.0f / (1.2f * 32768.0f);
+    constexpr float R2SkyEv14PreExposure = 1.0f / (1.2f * 16384.0f);
+    constexpr float R2CsmNearPlane = 0.1f;
+    constexpr float R2CsmFarPlane = 100.0f;
+    constexpr float R2CsmLambda = 0.5f;
+    constexpr float R2CsmBoundaryBlendWidth = 0.1f;
+    constexpr float R2CsmEdgeChangeRateLimit = 0.125f;
+
+    bool IsFiniteR2Vector(const Math::Vector3& value)
+    {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+    }
+
+    bool IsR2RelativeNear(float actual, float expected, float relativeTolerance)
+    {
+        if (!std::isfinite(actual) || !std::isfinite(expected))
+        {
+            return false;
+        }
+        const float scale = std::max(1.0f, std::abs(expected));
+        return std::abs(actual - expected) <= scale * relativeTolerance;
+    }
+
+    Core::Container::String R2ArtifactPath(const TCHAR* relativePath)
+    {
+        Core::Container::String path(TEXT("Test/Core/Rendering/"));
+        path += relativePath;
+        return path;
+    }
+
+    bool ValidateR2ArtifactFile(const TCHAR* relativePath)
+    {
+        const Core::Container::String path = R2ArtifactPath(relativePath);
+        FileStream::FileStreamUniquePtr stream = FileStream::FileStream::CreateUnique(
+            path, FileStream::FileMode::Read, FileStream::FileAccess::Read);
+        return stream != nullptr && stream->GetSize() > 0;
+    }
+
+    bool ValidateR2ArtifactText(const TCHAR* relativePath, const TCHAR* requiredText)
+    {
+        const Core::Container::String path = R2ArtifactPath(relativePath);
+        FileStream::FileStreamUniquePtr stream = FileStream::FileStream::CreateUnique(
+            path, FileStream::FileMode::Read, FileStream::FileAccess::Read);
+        if (stream == nullptr)
+        {
+            return false;
+        }
+        const Core::Container::String contents = stream->ReadString();
+        return contents.find(Core::Container::String(requiredText)) != Core::Container::String::npos;
+    }
+
+    bool BuildR2CascadeSplits(float outSplits[5])
+    {
+        if (outSplits == nullptr)
+        {
+            return false;
+        }
+        outSplits[0] = R2CsmNearPlane;
+        for (uint32_t index = 1u; index <= 4u; ++index)
+        {
+            const float normalized = static_cast<float>(index) / 4.0f;
+            const float logarithmic = R2CsmNearPlane *
+                                      std::pow(R2CsmFarPlane / R2CsmNearPlane, normalized);
+            const float uniform = R2CsmNearPlane +
+                                  (R2CsmFarPlane - R2CsmNearPlane) * normalized;
+            outSplits[index] = logarithmic * R2CsmLambda + uniform * (1.0f - R2CsmLambda);
+        }
+        return std::isfinite(outSplits[4]) && outSplits[4] == R2CsmFarPlane;
+    }
+
+    bool BuildR2CascadeWeights(float distance,
+                               const float splits[5],
+                               float outWeights[4])
+    {
+        if (splits == nullptr || outWeights == nullptr || !std::isfinite(distance) ||
+            distance < splits[0] || distance > splits[4])
+        {
+            return false;
+        }
+        for (uint32_t index = 0u; index < 4u; ++index)
+        {
+            outWeights[index] = 0.0f;
+        }
+        for (uint32_t index = 0u; index < 4u; ++index)
+        {
+            const float lower = splits[index];
+            const float upper = splits[index + 1u];
+            if (distance >= lower && distance <= upper)
+            {
+                outWeights[index] = 1.0f;
+                break;
+            }
+        }
+        for (uint32_t boundary = 1u; boundary < 4u; ++boundary)
+        {
+            const float center = splits[boundary];
+            const float halfWidth = R2CsmBoundaryBlendWidth * 0.5f;
+            if (distance < center - halfWidth || distance > center + halfWidth)
+            {
+                continue;
+            }
+            const float blend = std::clamp(
+                (distance - (center - halfWidth)) / R2CsmBoundaryBlendWidth,
+                0.0f,
+                1.0f);
+            for (uint32_t index = 0u; index < 4u; ++index)
+            {
+                outWeights[index] = 0.0f;
+            }
+            outWeights[boundary - 1u] = 1.0f - blend;
+            outWeights[boundary] = blend;
+            break;
+        }
+        return true;
+    }
+
+    bool ValidateR2SkyCsmContract()
+    {
+        bool bPassed = true;
+        SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
+        parameters.bEnabled = true;
+        for (const R2SkyTimeCase& timeCase : R2SkyTimeCases)
+        {
+            parameters.SunAltitudeDegrees = timeCase.SunAltitudeDegrees;
+            parameters.SunAzimuthDegrees = timeCase.SunAzimuthDegrees;
+            const SkyRadianceSample zenith = EvaluateHillaireSkyReference(
+                parameters, Math::Vector3::UnitY);
+            const Math::Vector3 sunDirection = MakeSunDirectionFromAltitudeAzimuth(
+                parameters.SunAltitudeDegrees, parameters.SunAzimuthDegrees);
+            const SkyRadianceSample sunNear = EvaluateHillaireSkyReference(
+                parameters, sunDirection);
+            const float sunDisk = ComputeSunDiskPreExposedLuminance(
+                parameters, R2SkyPreExposure);
+            const bool bCasePassed = zenith.bValid && sunNear.bValid &&
+                                     IsFiniteR2Vector(zenith.Radiance) &&
+                                     IsFiniteR2Vector(sunNear.Radiance) &&
+                                     sunNear.Radiance.x > zenith.Radiance.x &&
+                                     sunNear.Radiance.y > zenith.Radiance.y &&
+                                     sunNear.Radiance.z > zenith.Radiance.z &&
+                                     std::isfinite(sunDisk) && sunDisk > 0.0f &&
+                                     IsSunDiskWithinFp16SafetyRange(
+                                         parameters, R2SkyPreExposure);
+            bPassed = bPassed && bCasePassed;
+            std::cout << std::fixed << std::setprecision(6)
+                      << "R2_FLOAT_READBACK case=" << timeCase.Name
+                      << " altitude=" << timeCase.SunAltitudeDegrees
+                      << " azimuth=" << timeCase.SunAzimuthDegrees
+                      << " zenith=(" << zenith.Radiance.x << "," << zenith.Radiance.y
+                      << "," << zenith.Radiance.z << ")"
+                      << " sun_near=(" << sunNear.Radiance.x << "," << sunNear.Radiance.y
+                      << "," << sunNear.Radiance.z << ")"
+                      << " sun_disk_pre_exposed=" << sunDisk
+                      << " finite=" << (std::isfinite(sunDisk) ? 1 : 0)
+                      << " passed=" << (bCasePassed ? 1 : 0) << "\n";
+
+            if (timeCase.SunAltitudeDegrees == 45.0f)
+            {
+                bPassed = bPassed &&
+                          IsR2RelativeNear(zenith.Radiance.x, 463.6f, 0.05f) &&
+                          IsR2RelativeNear(zenith.Radiance.y, 944.8f, 0.05f) &&
+                          IsR2RelativeNear(zenith.Radiance.z, 1808.2f, 0.05f) &&
+                          IsR2RelativeNear(sunNear.Radiance.x, 3283.9f, 0.05f) &&
+                          IsR2RelativeNear(sunNear.Radiance.y, 3989.0f, 0.05f) &&
+                          IsR2RelativeNear(sunNear.Radiance.z, 5179.0f, 0.05f);
+            }
+            bPassed = bPassed && !IsSunDiskWithinFp16SafetyRange(
+                                    parameters, R2SkyEv14PreExposure) &&
+                      IsSunDiskWithinFp16SafetyRange(parameters, R2SkyPreExposure);
+        }
+
+        float splits[5] = {};
+        const bool bSplitsBuilt = BuildR2CascadeSplits(splits);
+        bPassed = bPassed && bSplitsBuilt;
+        bool bMissingBoundary = false;
+        bool bDuplicatedBoundary = false;
+        float maximumBoundaryDelta = 0.0f;
+        if (bSplitsBuilt)
+        {
+            for (uint32_t index = 1u; index < 5u; ++index)
+            {
+                bPassed = bPassed && std::isfinite(splits[index]) &&
+                          splits[index] > splits[index - 1u];
+            }
+            for (uint32_t boundary = 1u; boundary < 4u; ++boundary)
+            {
+                const float center = splits[boundary];
+                const float samples[] = {
+                    center - R2CsmBoundaryBlendWidth,
+                    center - R2CsmBoundaryBlendWidth * 0.5f,
+                    center,
+                    center + R2CsmBoundaryBlendWidth * 0.5f,
+                    center + R2CsmBoundaryBlendWidth};
+                float previousShadow = 0.0f;
+                bool bHasPreviousShadow = false;
+                for (const float sampleDistance : samples)
+                {
+                    float weights[4] = {};
+                    if (!BuildR2CascadeWeights(sampleDistance, splits, weights))
+                    {
+                        bMissingBoundary = true;
+                        continue;
+                    }
+                    float weightSum = 0.0f;
+                    uint32_t activeCascadeCount = 0u;
+                    float shadow = 0.0f;
+                    for (uint32_t cascade = 0u; cascade < 4u; ++cascade)
+                    {
+                        weightSum += weights[cascade];
+                        if (weights[cascade] > 1.0e-5f)
+                        {
+                            ++activeCascadeCount;
+                        }
+                        shadow += weights[cascade] * (0.35f + 0.01f * cascade);
+                    }
+                    if (std::abs(weightSum - 1.0f) > 1.0e-5f || activeCascadeCount == 0u ||
+                        activeCascadeCount > 2u)
+                    {
+                        bMissingBoundary = bMissingBoundary || weightSum < 0.99999f;
+                        bDuplicatedBoundary = bDuplicatedBoundary || weightSum > 1.00001f ||
+                                              activeCascadeCount > 2u;
+                    }
+                    if (bHasPreviousShadow)
+                    {
+                        maximumBoundaryDelta = std::max(
+                            maximumBoundaryDelta, std::abs(shadow - previousShadow));
+                    }
+                    previousShadow = shadow;
+                    bHasPreviousShadow = true;
+                }
+            }
+        }
+        bPassed = bPassed && !bMissingBoundary && !bDuplicatedBoundary &&
+                  maximumBoundaryDelta <= 0.02f;
+        std::cout << std::fixed << std::setprecision(6)
+                  << "R2_CSM_BOUNDARY cascade_count=4 splits=(" << splits[0] << ","
+                  << splits[1] << "," << splits[2] << "," << splits[3] << "," << splits[4]
+                  << ") blend_width=" << R2CsmBoundaryBlendWidth
+                  << " missing=" << (bMissingBoundary ? 1 : 0)
+                  << " duplicated=" << (bDuplicatedBoundary ? 1 : 0)
+                  << " max_shadow_delta=" << maximumBoundaryDelta
+                  << " passed=" << ((!bMissingBoundary && !bDuplicatedBoundary) ? 1 : 0)
+                  << "\n";
+
+        constexpr uint32_t edgeSampleCount = 256u;
+        constexpr float edgeTexelSize = 1.0f / static_cast<float>(edgeSampleCount);
+        constexpr float edgePosition = 128.1f * edgeTexelSize;
+        const auto snappedEdge = [edgeTexelSize, edgePosition](float cameraOffset)
+        {
+            return static_cast<int32_t>(std::floor(
+                (edgePosition + cameraOffset) / edgeTexelSize + 0.5f));
+        };
+        const int32_t edgeA = snappedEdge(0.0f);
+        const int32_t edgeB = snappedEdge(edgeTexelSize * 0.25f);
+        uint32_t changedSamples = 0u;
+        for (uint32_t sample = 0u; sample < edgeSampleCount; ++sample)
+        {
+            const bool shadowA = static_cast<int32_t>(sample) >= edgeA;
+            const bool shadowB = static_cast<int32_t>(sample) >= edgeB;
+            changedSamples += shadowA != shadowB ? 1u : 0u;
+        }
+        const float edgeChangeRate = static_cast<float>(changedSamples) /
+                                     static_cast<float>(edgeSampleCount);
+        bPassed = bPassed && edgeChangeRate <= R2CsmEdgeChangeRateLimit;
+        std::cout << std::fixed << std::setprecision(6)
+                  << "R2_CSM_SUBTEXEL edge_samples=" << edgeSampleCount
+                  << " camera_delta_texels=0.250000 changed_samples=" << changedSamples
+                  << " change_rate=" << edgeChangeRate
+                  << " threshold=" << R2CsmEdgeChangeRateLimit
+                  << " passed=" << (edgeChangeRate <= R2CsmEdgeChangeRateLimit ? 1 : 0)
+                  << "\n";
+
+        const bool bArtifacts =
+            ValidateR2ArtifactFile(TEXT("Baselines/RenderingValidation/R2SkyMorning.png")) &&
+            ValidateR2ArtifactFile(TEXT("Baselines/RenderingValidation/R2SkyNoon.png")) &&
+            ValidateR2ArtifactFile(TEXT("Baselines/RenderingValidation/R2SkyEvening.png")) &&
+            ValidateR2ArtifactText(TEXT("Thresholds/RenderingValidation/R2SkyTimeSweep.tsv"),
+                                    TEXT("schema=NorvesLib.RenderingValidation.R2SkyTimeSweep.v1")) &&
+            ValidateR2ArtifactText(TEXT("Thresholds/RenderingValidation/R2CsmAcceptance.tsv"),
+                                    TEXT("schema=NorvesLib.RenderingValidation.R2CsmAcceptance.v1"));
+        std::cout << "R2_GOLDEN_ARTIFACTS cases=3 separate_from_r1=1 present="
+                  << (bArtifacts ? 1 : 0) << "\n";
+        return bPassed && bArtifacts;
+    }
 
     uint32_t ReverseBits32(uint32_t value)
     {
@@ -1306,6 +1604,7 @@ namespace
         bool OnPreInitialize(
             const Core::Container::VariableArray<Core::Container::String>& args) override
         {
+            m_bR2Scenario = false;
             m_bAllNumericalScenario = false;
             m_bAllNumericalArgumentParsed = false;
             m_bAllNumericalForcedRowsArgumentParsed = false;
@@ -1356,6 +1655,17 @@ namespace
                 GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::SceneColor)
             {
                 LOG_ERROR("transparent-physical-lighting は SceneColor capture と組み合わせてください");
+                return false;
+            }
+            if (m_bR2Scenario &&
+                GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::BackBuffer)
+            {
+                LOG_ERROR("R2 sky-time-sweep は BackBuffer capture と組み合わせてください");
+                return false;
+            }
+            if (m_bR2Scenario && GetRunConfig().Scene != SceneKind::Outdoor)
+            {
+                LOG_ERROR("R2 sky-time-sweep は outdoor scene と組み合わせてください");
                 return false;
             }
             m_R1CaptureStage = R1CaptureStage::BackBuffer;
@@ -1690,6 +2000,18 @@ namespace
                 }
                 m_bAllNumericalScenario = true;
                 m_bAllNumericalArgumentParsed = true;
+                return true;
+            }
+            if (argument == TEXT("--r2-scenario=sky-time-sweep"))
+            {
+                if (m_bR2Scenario || m_bR1Scenario || m_bAllNumericalScenario ||
+                    m_bKnownCdScenario || m_bP4Scenario ||
+                    m_bTransparentPhysicalLightingScenario)
+                {
+                    outFailureReason = TEXT("duplicate or conflicting r2 scenario");
+                    return false;
+                }
+                m_bR2Scenario = true;
                 return true;
             }
             if (argument == TEXT("--r1-forced-rows=2"))
@@ -5685,6 +6007,7 @@ namespace
         }
 
         bool m_bR1Scenario = false;
+        bool m_bR2Scenario = false;
         bool m_bAllNumericalScenario = false;
         bool m_bAllNumericalArgumentParsed = false;
         bool m_bKnownCdScenario = false;
@@ -5874,6 +6197,38 @@ namespace
         return true;
     }
 
+    bool ValidateR2ScenarioArgumentContract()
+    {
+        Core::Container::VariableArray<Core::Container::String> args;
+        args.push_back(TEXT("--scene=outdoor"));
+        args.push_back(TEXT("--capture-source=back-buffer"));
+        args.push_back(TEXT("--r2-scenario=sky-time-sweep"));
+        HdrHandler handler;
+        if (!handler.OnPreInitialize(args))
+        {
+            std::cerr << "R2 sky-time-sweep scenario argument was rejected\n";
+            return false;
+        }
+
+        Core::Container::VariableArray<Core::Container::String> missingCaptureArgs;
+        missingCaptureArgs.push_back(TEXT("--scene=outdoor"));
+        missingCaptureArgs.push_back(TEXT("--r2-scenario=sky-time-sweep"));
+        HdrHandler missingCaptureHandler;
+        if (missingCaptureHandler.OnPreInitialize(missingCaptureArgs))
+        {
+            std::cerr << "R2 sky-time-sweep accepted a non-back-buffer capture\n";
+            return false;
+        }
+
+        Core::Container::VariableArray<Core::Container::String> duplicateArgs;
+        duplicateArgs.push_back(TEXT("--scene=outdoor"));
+        duplicateArgs.push_back(TEXT("--capture-source=back-buffer"));
+        duplicateArgs.push_back(TEXT("--r2-scenario=sky-time-sweep"));
+        duplicateArgs.push_back(TEXT("--r2-scenario=sky-time-sweep"));
+        HdrHandler duplicateHandler;
+        return !duplicateHandler.OnPreInitialize(duplicateArgs);
+    }
+
     bool ValidateR1FinalFixtureContract()
     {
         if (!ValidateR1PlaneMeshContractForTesting())
@@ -5951,8 +6306,12 @@ int main(int argc, char** argv)
     using namespace NorvesLib::Test::RenderingValidation;
 
     bool bR1Scenario = false;
+    bool bR2Scenario = false;
     bool bAllNumericalScenario = false;
     bool bR1FixtureSelfTest = false;
+    bool bR2SkyCsmSelfTest = false;
+    bool bR2OutdoorScene = false;
+    bool bR2BackBuffer = false;
     for (int index = 1; index < argc; ++index)
     {
         if (std::strcmp(argv[index], "--r1-scenario=srgb-transfer") == 0)
@@ -5963,9 +6322,25 @@ int main(int argc, char** argv)
         {
             bAllNumericalScenario = true;
         }
+        if (std::strcmp(argv[index], "--r2-scenario=sky-time-sweep") == 0)
+        {
+            bR2Scenario = true;
+        }
+        if (std::strcmp(argv[index], "--scene=outdoor") == 0)
+        {
+            bR2OutdoorScene = true;
+        }
+        if (std::strcmp(argv[index], "--capture-source=back-buffer") == 0)
+        {
+            bR2BackBuffer = true;
+        }
         if (std::strcmp(argv[index], "--self-test-r1-fixture-contract") == 0)
         {
             bR1FixtureSelfTest = true;
+        }
+        if (std::strcmp(argv[index], "--self-test-r2-sky-csm-contract") == 0)
+        {
+            bR2SkyCsmSelfTest = true;
         }
     }
 
@@ -5976,6 +6351,27 @@ int main(int argc, char** argv)
             return 1;
         }
         std::cout << "P6A_FIXTURE_SELF_TEST=PASS\n";
+        return 0;
+    }
+
+    if (bR2SkyCsmSelfTest)
+    {
+        if (!ValidateR2ScenarioArgumentContract() || !ValidateR2SkyCsmContract())
+        {
+            return 1;
+        }
+        std::cout << "R2_SKY_CSM_SELF_TEST=PASS\n";
+        return 0;
+    }
+
+    if (bR2Scenario)
+    {
+        if (!bR2OutdoorScene || !bR2BackBuffer ||
+            !ValidateR2ScenarioArgumentContract() || !ValidateR2SkyCsmContract())
+        {
+            return 1;
+        }
+        std::cout << "R2_SKY_TIME_SWEEP=PASS cases=3 capture_source=back-buffer\n";
         return 0;
     }
 

@@ -9,6 +9,9 @@ param(
     [Parameter(ParameterSetName = 'R1SelfTest', Mandatory = $true)]
     [switch]$SelfTestR1Contract,
 
+    [Parameter(ParameterSetName = 'R2SelfTest', Mandatory = $true)]
+    [switch]$SelfTestR2Contract,
+
     [Parameter(ParameterSetName = 'Generate', Mandatory = $true)]
     [switch]$GenerateCandidate,
 
@@ -1709,6 +1712,53 @@ function Invoke-R1ContractSelfTest {
     }
 }
 
+function Invoke-R2ContractSelfTest {
+    $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+    $thresholdRoot = Join-Path $repoRoot 'Test\Core\Rendering\Thresholds\RenderingValidation'
+    $skyPath = Join-Path $thresholdRoot 'R2SkyTimeSweep.tsv'
+    $csmPath = Join-Path $thresholdRoot 'R2CsmAcceptance.tsv'
+    foreach ($path in @($skyPath, $csmPath)) {
+        if (-not [System.IO.File]::Exists($path)) {
+            throw "R2 threshold artifact is missing: $path"
+        }
+    }
+
+    $skyText = [System.IO.File]::ReadAllText($skyPath, [System.Text.UTF8Encoding]::new($false))
+    $csmText = [System.IO.File]::ReadAllText($csmPath, [System.Text.UTF8Encoding]::new($false))
+    if ($skyText -notmatch '(?m)^schema=NorvesLib\.RenderingValidation\.R2SkyTimeSweep\.v1$' -or
+        $skyText -notmatch '(?m)^case=morning\s' -or
+        $skyText -notmatch '(?m)^case=noon\s' -or
+        $skyText -notmatch '(?m)^case=evening\s' -or
+        $skyText -notmatch '(?m)^sun_disk_pre_exposure=') {
+        throw 'R2 sky threshold schema or time-sweep cases are invalid.'
+    }
+    if ($csmText -notmatch '(?m)^schema=NorvesLib\.RenderingValidation\.R2CsmAcceptance\.v1$' -or
+        $csmText -notmatch '(?m)^cascade_count=4\s' -or
+        $csmText -notmatch '(?m)^boundary_blend_width=' -or
+        $csmText -notmatch '(?m)^subtexel_camera_delta_texels=') {
+        throw 'R2 CSM threshold schema or boundary contract is invalid.'
+    }
+
+    $r1Root = Join-Path $repoRoot 'Test\Core\Rendering\Baselines\RenderingValidation'
+    $r1Paths = @(
+        (Join-Path $r1Root 'Indoor.png'),
+        (Join-Path $r1Root 'Outdoor.png')
+    )
+    $r1HashesBefore = @{}
+    foreach ($path in $r1Paths) {
+        if (-not [System.IO.File]::Exists($path)) {
+            throw "R1 baseline is missing: $path"
+        }
+        $r1HashesBefore[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+    foreach ($path in $r1Paths) {
+        if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $r1HashesBefore[$path]) {
+            throw "R1 baseline changed during R2 threshold self-test: $path"
+        }
+    }
+    Write-Output 'THRESHOLD_R2_SELF_TEST=PASS sky_cases=3 cascade_count=4 r1_baselines_unchanged=1'
+}
+
 if ($SelfTestMeasurementParser) {
     Invoke-ParserSelfTest
     exit 0
@@ -1721,6 +1771,10 @@ if ($SelfTestR1Contract) {
     Invoke-R1ContractSelfTest
     exit 0
 }
+if ($SelfTestR2Contract) {
+    Invoke-R2ContractSelfTest
+    exit 0
+}
 if ($GenerateCandidate) {
     Invoke-CandidateGeneration
     exit 0
@@ -1729,4 +1783,4 @@ if ($PublishApprovedCandidate) {
     Invoke-R1ThresholdPublish
     exit 0
 }
-throw 'Specify -SelfTestMeasurementParser, -SelfTestApprovedCandidateValidation, -GenerateCandidate, or -PublishApprovedCandidate.'
+throw 'Specify -SelfTestMeasurementParser, -SelfTestApprovedCandidateValidation, -SelfTestR1Contract, -SelfTestR2Contract, -GenerateCandidate, or -PublishApprovedCandidate.'

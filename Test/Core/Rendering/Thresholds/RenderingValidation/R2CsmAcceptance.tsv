@@ -1,0 +1,4 @@
+schema=NorvesLib.RenderingValidation.R2CsmAcceptance.v1
+cascade_count=4 near=0.100000 far=100.000000 logarithmic_uniform_mix=0.500000
+boundary_blend_width=0.100000 missing_cascade_max=0 duplicated_cascade_max=0 max_shadow_delta=0.020000
+subtexel_camera_delta_texels=0.250000 edge_change_rate_max=0.125000 sample_count=256

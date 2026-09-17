@@ -17,6 +17,7 @@
 - R2-P3: `a235411`（実装 `5daf556`）。空のequirectangular放射輝度を同一のsanitized空パラメータから再構成し、既存のDiffuseIrradiance/PrefilteredSpecular生成へ接続した。空パラメータと放射輝度寸法の変更時だけ動的IBLを更新し、空要求時の生成失敗は黒へ固定する。朝/昼/夕EVの有限性・高度変更・SceneProxy寿命、R1静的HDR経路を確認し、4対象ビルド・CTestは4/4 passed。1周目のselector契約回帰を`a235411`で修正し、2周目の独立評価はPASS。
 - R2-P4: `f51384f`。実カメラのnear/farから対数・線形混合の4分割距離を計算し、同一方向ライトの球近似行列、caster深度範囲、テクセル中心スナップをCPUだけで構築した。near/far逆転、無効方向、非有限bounds、固定4カスケード以外を有限な影なし結果へ戻し、サブテクセル移動の行列安定性と隣接境界の連続性を確認した。指定のDebugビルドとCTestは2/2 passed。RHI/Vulkanには触れていない。
 - R2-P5: `9e015a3`。RHIに配列depthの指定layer viewを追加し、Vulkanの1層Framebufferへ安全にattachできるようにした。ShadowMapPassを4層D32 depth arrayと4つのlayer別Framebufferへ移行し、CSMの各行列・分割距離をRenderThreadの公開値へ記録した。部分初期化時は全リソースを解放し、未完成の配列深度をRenderGraphへ公開しない。P4回帰を含む関連CTestは6/6 passed、指定P5 focused CTestは3/3 passed。
+- R2-P7: 朝・昼・夕のR2 sky golden 3枚と閾値TSV 2枚をR1 baselineから分離して固定した。float readback、太陽ディスク有限性、4カスケード境界の欠落/二重化、サブテクセル影エッジ変化率を実データで検証し、指定Debug build、CTest 2/2、R2 self-test、屋外sky-time-sweepをすべてexit 0で確認した。証拠は`.harness/runs/20260917-161136/verify-R2-P7-1.txt`〜`verify-R2-P7-4.txt`に保存した。
 
 ## In progress
 
@@ -38,3 +39,4 @@
 - R2-P2評価: 1周目のblocking指摘（sky_atmosphere.fragの`#version`欠落、低解像度αマスク）を`53a58dc`で修正し、2周目の独立評価はPASS。空LUTの毎フレーム再生成、未使用sky shaderのUV/α契約、太陽ディスクの透過率適用、GameThread側の空有効化はP3以降の非blocking課題として扱う。
 - R2-P3評価: 1周目のblocking指摘（LightingParamsLayoutTestのbinding 12/13 selector期待値が古い）を`a235411`で修正し、4対象CTestと2周目の独立評価はPASS。動的IBLの同期CPU生成と空源の二重評価は、連続する太陽高度アニメーションの性能課題としてR2本体の完了条件外に置く。
 - tracked v1 scene、R0基準2文書、P6b開始時のsource-start hashesは証跡へ固定した。P6bの公開tracked範囲はPNG2枚、VisualThresholds.tsv、R1Acceptance.mdで、forward-fixのテスト契約修正と受入れ記録を別コミットに分離した。プッシュは行わない。
+- R2-P7のgolden生成・比較、閾値自己検査、float readback、CSM境界、サブテクセル変化率はR2専用の受入れ経路で固定した。R1 `Indoor.png` / `Outdoor.png` はスクリプト自己検査でもハッシュ不変を確認した。

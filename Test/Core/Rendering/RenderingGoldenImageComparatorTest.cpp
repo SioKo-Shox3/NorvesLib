@@ -1,5 +1,11 @@
 ﻿#include "RenderingValidation/RenderingGoldenImage.h"
 
+#include "FileStream/FileStream.h"
+#include "Math/VectorUtils.h"
+#include "Rendering/SkyAtmosphere.h"
+
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -9,6 +15,7 @@ namespace
 {
     using namespace NorvesLib;
     using namespace NorvesLib::Core;
+    using namespace NorvesLib::Core::Rendering;
     using namespace NorvesLib::Test::RenderingValidation;
 
     void Require(bool condition, const char* message)
@@ -42,6 +49,180 @@ namespace
         Core::Container::String path(NORVES_BINARY_ROOT);
         path += suffix;
         return path;
+    }
+
+    Core::Container::String R2SourcePath(const TCHAR* suffix)
+    {
+        Core::Container::String path = BuildPath(TEXT("/../Test/Core/Rendering/"));
+        path += suffix;
+        return path;
+    }
+
+    struct R2SkyGoldenCase
+    {
+        const char* Name = nullptr;
+        const TCHAR* FileName = nullptr;
+        float SunAltitudeDegrees = 0.0f;
+        float SunAzimuthDegrees = 0.0f;
+    };
+
+    constexpr R2SkyGoldenCase R2SkyGoldenCases[] = {
+        {"morning", TEXT("Baselines/RenderingValidation/R2SkyMorning.png"), 8.0f, -35.0f},
+        {"noon", TEXT("Baselines/RenderingValidation/R2SkyNoon.png"), 45.0f, 0.0f},
+        {"evening", TEXT("Baselines/RenderingValidation/R2SkyEvening.png"), 15.0f, 35.0f}};
+    constexpr float R2GoldenPreExposure = 1.0f / (1.2f * 32768.0f);
+    constexpr float R2GoldenSunDiskRadius = 0.00468f;
+
+    uint8_t EncodeR2Srgb(float linear)
+    {
+        const float encoded = linear <= 0.0031308f
+                                  ? 12.92f * linear
+                                  : 1.055f * std::pow(std::max(0.0f, linear), 1.0f / 2.4f) - 0.055f;
+        return static_cast<uint8_t>(std::lround(std::clamp(encoded, 0.0f, 1.0f) * 255.0f));
+    }
+
+    Rgba8Image BuildR2SkyGolden(const R2SkyGoldenCase& timeCase)
+    {
+        Rgba8Image image;
+        image.Width = RenderingGoldenImageWidth;
+        image.Height = RenderingGoldenImageHeight;
+        image.RowPitchBytes = image.Width * RenderingGoldenImageChannelCount;
+        image.Pixels.resize(static_cast<size_t>(image.RowPitchBytes) * image.Height);
+
+        SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
+        parameters.bEnabled = true;
+        parameters.SunAltitudeDegrees = timeCase.SunAltitudeDegrees;
+        parameters.SunAzimuthDegrees = timeCase.SunAzimuthDegrees;
+        const Math::Vector3 sunDirection = MakeSunDirectionFromAltitudeAzimuth(
+            parameters.SunAltitudeDegrees, parameters.SunAzimuthDegrees);
+        const float sunDiskCosine = std::cos(R2GoldenSunDiskRadius);
+        const float sunDisk = ComputeSunDiskPreExposedLuminance(
+            parameters, R2GoldenPreExposure);
+
+        constexpr float tangentHalfFov = 0.5773502691896258f;
+        for (uint32_t y = 0u; y < image.Height; ++y)
+        {
+            for (uint32_t x = 0u; x < image.Width; ++x)
+            {
+                const float screenX =
+                    (static_cast<float>(x) + 0.5f) / static_cast<float>(image.Width) * 2.0f - 1.0f;
+                const float screenY =
+                    1.0f - (static_cast<float>(y) + 0.5f) / static_cast<float>(image.Height) * 2.0f;
+                const Math::Vector3 viewDirection = Math::VectorUtils::Normalize(Math::Vector3(
+                    screenX * tangentHalfFov,
+                    screenY * tangentHalfFov,
+                    1.0f));
+                const SkyRadianceSample sample = EvaluateHillaireSkyReference(
+                    parameters, viewDirection);
+                float red = std::max(0.0f, sample.Radiance.x * R2GoldenPreExposure);
+                float green = std::max(0.0f, sample.Radiance.y * R2GoldenPreExposure);
+                float blue = std::max(0.0f, sample.Radiance.z * R2GoldenPreExposure);
+                if (Math::VectorUtils::Dot(viewDirection, sunDirection) >= sunDiskCosine)
+                {
+                    const float diskContribution = sunDisk * 2.0e-5f;
+                    red += diskContribution;
+                    green += diskContribution;
+                    blue += diskContribution;
+                }
+                red = 1.0f - std::exp(-red);
+                green = 1.0f - std::exp(-green);
+                blue = 1.0f - std::exp(-blue);
+
+                const size_t offset = static_cast<size_t>(y) * image.RowPitchBytes +
+                                       static_cast<size_t>(x) * RenderingGoldenImageChannelCount;
+                image.Pixels[offset + 0u] = EncodeR2Srgb(red);
+                image.Pixels[offset + 1u] = EncodeR2Srgb(green);
+                image.Pixels[offset + 2u] = EncodeR2Srgb(blue);
+                image.Pixels[offset + 3u] = 255u;
+            }
+        }
+        return image;
+    }
+
+    int WriteR2GoldenArtifacts()
+    {
+        for (const R2SkyGoldenCase& timeCase : R2SkyGoldenCases)
+        {
+            const Rgba8Image image = BuildR2SkyGolden(timeCase);
+            Core::Container::VariableArray<uint8_t> png;
+            Require(EncodeRgba8Png(image, png) == GoldenImageStatus::Success,
+                    "R2 sky golden encoding must succeed");
+            const Core::Container::String path = R2SourcePath(timeCase.FileName);
+            Require(SavePng(path, Core::Container::Span<const uint8_t>(png)) ==
+                        GoldenImageStatus::Success,
+                    "R2 sky golden write must succeed");
+            std::cout << "R2_GOLDEN_WRITER case=" << timeCase.Name
+                      << " path=" << path.c_str()
+                      << " bytes=" << png.size() << '\n';
+        }
+        return 0;
+    }
+
+    void TestR2AcceptanceArtifacts()
+    {
+        Rgba8Image images[3];
+        for (uint32_t index = 0u; index < 3u; ++index)
+        {
+            const GoldenImageStatus status = LoadPng(
+                R2SourcePath(R2SkyGoldenCases[index].FileName), images[index]);
+            Require(status == GoldenImageStatus::Success,
+                    "R2 sky golden must decode");
+            Require(images[index].Width == RenderingGoldenImageWidth &&
+                        images[index].Height == RenderingGoldenImageHeight &&
+                        images[index].RowPitchBytes == RenderingGoldenImageWidth * 4u,
+                    "R2 sky golden must retain the fixed 256x256 RGBA8 contract");
+            bool bHasNonBlackPixel = false;
+            for (size_t offset = 0u; offset + 3u < images[index].Pixels.size(); offset += 4u)
+            {
+                if (images[index].Pixels[offset + 0u] != 0u ||
+                    images[index].Pixels[offset + 1u] != 0u ||
+                    images[index].Pixels[offset + 2u] != 0u)
+                {
+                    bHasNonBlackPixel = true;
+                    break;
+                }
+            }
+            Require(bHasNonBlackPixel, "R2 sky golden must contain measured sky pixels");
+        }
+
+        for (uint32_t first = 0u; first < 3u; ++first)
+        {
+            for (uint32_t second = first + 1u; second < 3u; ++second)
+            {
+                RawImageDifferenceMetrics metrics;
+                Require(CompareRgba8(images[first], images[second], metrics) ==
+                            GoldenImageStatus::Success &&
+                            metrics.DifferingPixelCount > 0u,
+                        "R2 morning/noon/evening goldens must remain distinct");
+            }
+        }
+
+        const Core::Container::String skyThresholdPath = R2SourcePath(
+            TEXT("Thresholds/RenderingValidation/R2SkyTimeSweep.tsv"));
+        FileStream::FileStreamUniquePtr skyThresholds = FileStream::FileStream::CreateUnique(
+            skyThresholdPath, FileStream::FileMode::Read, FileStream::FileAccess::Read);
+        Require(skyThresholds != nullptr, "R2 sky threshold table must exist");
+        const Core::Container::String skyThresholdText = skyThresholds->ReadString();
+        Require(skyThresholdText.find(TEXT("schema=NorvesLib.RenderingValidation.R2SkyTimeSweep.v1")) !=
+                    Core::Container::String::npos &&
+                    skyThresholdText.find(TEXT("case=morning")) != Core::Container::String::npos &&
+                    skyThresholdText.find(TEXT("case=noon")) != Core::Container::String::npos &&
+                    skyThresholdText.find(TEXT("case=evening")) != Core::Container::String::npos,
+                "R2 sky threshold table must enumerate all three times");
+
+        const Core::Container::String csmThresholdPath = R2SourcePath(
+            TEXT("Thresholds/RenderingValidation/R2CsmAcceptance.tsv"));
+        FileStream::FileStreamUniquePtr csmThresholds = FileStream::FileStream::CreateUnique(
+            csmThresholdPath, FileStream::FileMode::Read, FileStream::FileAccess::Read);
+        Require(csmThresholds != nullptr, "R2 CSM threshold table must exist");
+        const Core::Container::String csmThresholdText = csmThresholds->ReadString();
+        Require(csmThresholdText.find(TEXT("schema=NorvesLib.RenderingValidation.R2CsmAcceptance.v1")) !=
+                    Core::Container::String::npos &&
+                    csmThresholdText.find(TEXT("cascade_count=4")) != Core::Container::String::npos &&
+                    csmThresholdText.find(TEXT("edge_change_rate_max=0.125000")) !=
+                        Core::Container::String::npos,
+                "R2 CSM threshold table must fix the four-cascade edge contract");
+        std::cout << "R2_ACCEPTANCE_ARTIFACTS=PASS cases=3 csm_cascades=4\n";
     }
 
     void EnsureValidationDirectories()
@@ -371,6 +552,15 @@ namespace
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::strcmp(argv[1], "--write-r2-sky-goldens") == 0)
+    {
+        return WriteR2GoldenArtifacts();
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--self-test-r2-artifacts") == 0)
+    {
+        TestR2AcceptanceArtifacts();
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "--validate-fixed-staging") == 0)
     {
         return RunFixedStagingValidator();
@@ -393,6 +583,7 @@ int main(int argc, char** argv)
     TestPngRoundTripNormalizesToTightRgbaAndPersists();
     TestCapturedFramePngRequiresExactGoldenDimensions();
     TestCapturedFrameFormatAndPitchMatrix();
+    TestR2AcceptanceArtifacts();
     std::cout << "RenderingGoldenImageComparatorTest passed\n";
     return 0;
 }

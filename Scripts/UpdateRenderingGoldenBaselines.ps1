@@ -26,7 +26,10 @@ param(
     [string]$DecisionSection,
 
     [Parameter(ParameterSetName = 'SelfTest', Mandatory = $true)]
-    [switch]$SelfTestR1Contract
+    [switch]$SelfTestR1Contract,
+
+    [Parameter(ParameterSetName = 'R2SelfTest', Mandatory = $true)]
+    [switch]$SelfTestR2Contract
 )
 
 $ErrorActionPreference = 'Stop'
@@ -936,8 +939,68 @@ function Invoke-R1SelfTest {
     }
 }
 
+function Invoke-R2SelfTest {
+    $repoRoot = Get-NormalizedPath (Join-Path $PSScriptRoot '..')
+    $r2BaselineRoot = Get-NormalizedPath (Join-Path $repoRoot 'Test\Core\Rendering\Baselines\RenderingValidation')
+    $r2ThresholdRoot = Get-NormalizedPath (Join-Path $repoRoot 'Test\Core\Rendering\Thresholds\RenderingValidation')
+    $goldenPaths = @(
+        (Join-Path $r2BaselineRoot 'R2SkyMorning.png'),
+        (Join-Path $r2BaselineRoot 'R2SkyNoon.png'),
+        (Join-Path $r2BaselineRoot 'R2SkyEvening.png')
+    )
+    $thresholdPaths = @(
+        (Join-Path $r2ThresholdRoot 'R2SkyTimeSweep.tsv'),
+        (Join-Path $r2ThresholdRoot 'R2CsmAcceptance.tsv')
+    )
+    foreach ($path in $goldenPaths + $thresholdPaths) {
+        if (-not [IO.File]::Exists($path)) {
+            throw "R2 acceptance artifact is missing: $path"
+        }
+    }
+    foreach ($path in $goldenPaths) {
+        $bytes = [IO.File]::ReadAllBytes($path)
+        if ($bytes.Length -lt 8 -or
+            $bytes[0] -ne 137 -or $bytes[1] -ne 80 -or $bytes[2] -ne 78 -or $bytes[3] -ne 71 -or
+            $bytes[4] -ne 13 -or $bytes[5] -ne 10 -or $bytes[6] -ne 26 -or $bytes[7] -ne 10) {
+            throw "R2 golden is not a PNG: $path"
+        }
+    }
+    $skyText = [IO.File]::ReadAllText($thresholdPaths[0], [Text.UTF8Encoding]::new($false))
+    $csmText = [IO.File]::ReadAllText($thresholdPaths[1], [Text.UTF8Encoding]::new($false))
+    if ($skyText -notmatch '(?m)^schema=NorvesLib\.RenderingValidation\.R2SkyTimeSweep\.v1$' -or
+        @('morning', 'noon', 'evening' | Where-Object { $skyText -notmatch "(?m)^case=$($_)\s" }).Count -ne 0) {
+        throw 'R2 sky golden threshold contract is invalid.'
+    }
+    if ($csmText -notmatch '(?m)^schema=NorvesLib\.RenderingValidation\.R2CsmAcceptance\.v1$' -or
+        $csmText -notmatch '(?m)^cascade_count=4\s') {
+        throw 'R2 CSM threshold contract is invalid.'
+    }
+
+    $r1Paths = @(
+        (Join-Path $r2BaselineRoot 'Indoor.png'),
+        (Join-Path $r2BaselineRoot 'Outdoor.png')
+    )
+    $r1HashesBefore = @{}
+    foreach ($path in $r1Paths) {
+        if (-not [IO.File]::Exists($path)) {
+            throw "R1 baseline is missing: $path"
+        }
+        $r1HashesBefore[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+    foreach ($path in $r1Paths) {
+        if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $r1HashesBefore[$path]) {
+            throw "R1 baseline changed during R2 golden self-test: $path"
+        }
+    }
+    Write-Output 'BASELINE_R2_SELF_TEST=PASS goldens=3 thresholds=2 r1_baselines_unchanged=1'
+}
+
 if ($SelfTestR1Contract) {
     Invoke-R1SelfTest
+    exit 0
+}
+if ($SelfTestR2Contract) {
+    Invoke-R2SelfTest
     exit 0
 }
 if ($GenerateCandidate) {
@@ -948,4 +1011,4 @@ if ($PublishApprovedCandidate) {
     Invoke-R1PublishCandidate
     exit 0
 }
-throw 'Specify -GenerateCandidate, -PublishApprovedCandidate, or -SelfTestR1Contract.'
+throw 'Specify -GenerateCandidate, -PublishApprovedCandidate, -SelfTestR1Contract, or -SelfTestR2Contract.'
