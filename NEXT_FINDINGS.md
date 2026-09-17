@@ -35,3 +35,9 @@
 - fix: 空スナップショットから太陽方向と積分した角半径のcos値をLightingParamsへ渡し、`dot(rayDir, sunDirection)`による解析的マスクへ変更した。
 - verify: `LightingParamsLayoutTest`のstd140サイズ/オフセット検査、`SkyAtmospherePassContractTest`、sky/lightingシェーダーのBOM除去後`glslc`コンパイル。
 - resolution: `53a58dc`で修正し、2周目評価はPASS。
+
+## 反復 1 — 評価者が枠切れ(429)で未実施
+
+対象: R2-P7 空・太陽・CSMの数値/画像受入れを固定する
+
+claude-opus-5 でも枠切れだったため評価していない。リセット後、次の反復より先にこの差分の評価を回す。

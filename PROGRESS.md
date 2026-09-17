@@ -29,6 +29,7 @@
 
 ## Notes
 
+- R2-P8: R2-P6未完了のためブロック。現行の`lighting.frag`/`forward_transparent.frag`は単一`sampler2D`影経路で、4行列・分割距離・`sampler2DArray`の実装コミットがない。受入れ記録/Roadmap完了化は`blocked/R2-P8.md`の再開条件を満たしてから行う。
 - P6a completion report: `.superpowers/sdd/RenderingR1PhysicalFoundationPlan/task-6a-report.md`。forward-fixの最終証拠は `.harness/runs/20260908-084154/p6a-forward-fix-gpu/` と `p6a-forward-fix-review/claude-final.json` に保存する。旧P6a reportは同ディレクトリのアーカイブへ保持する。
 - 独立再検証: `recheck-R1-P6A-4-1.txt`〜`-11.txt`。集計は `p6a-independent-recheck-audit-1730.json`。統合接続評価は `p6a-r1-integrated-review/receipt.json` / `stdout.json`。
 - 統合評価はcapture状態遷移の全寿命と照明単位の全項を追跡していない。blocking 0として受理し、確認範囲を拡大解釈しない。bundle評価本文のS79→319はrawと不一致で、実値S80→320を採用する。
