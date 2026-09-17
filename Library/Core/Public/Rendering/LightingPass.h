@@ -3,6 +3,7 @@
 #include "IViewPass.h"
 #include "NeuralBRDFData.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Rendering/SkyAtmosphere.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"

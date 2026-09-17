@@ -2056,8 +2056,14 @@ namespace
         assert(samplerCount >= 1);
         for (std::size_t index = 0; index < samplerCount; ++index)
         {
+            TestString descriptorExpression = samplerExpressions[index];
+            if (ContainsText(descriptorExpression, "?"))
+            {
+                // Dynamic sky selection still falls back to the existing IBL sampler.
+                descriptorExpression = "m_IBLSampler";
+            }
             const TestString descriptorSource =
-                FindSamplerDescriptorSource(source, samplerExpressions[index]);
+                FindSamplerDescriptorSource(source, descriptorExpression);
             const auto AssertFinalFieldValue =
                 [&](const char* field, const char* expectedValue)
                 {
@@ -2126,7 +2132,7 @@ namespace
                 const std::size_t selectorEndPosition =
                     normalizedSource.find(';', selectorPosition);
                 assert(selectorEndPosition != TestString::npos);
-                const std::size_t expectedSelectorCount = 4;
+                const std::size_t expectedSelectorCount = binding == 8 ? 6 : 4;
                 std::size_t selectorCount = 0;
                 for (std::size_t position = selectorPosition;
                      position < selectorEndPosition;
@@ -2565,7 +2571,7 @@ int main()
         sourceRoot / "Library/Core/Private/Rendering/LightingPass.cpp");
     const TestString maskedShaderSource = MaskShaderNonCode(shaderSource);
     const TestString maskedLightingPassSource = MaskShaderNonCode(lightingPassSource);
-    for (uint32_t binding = 0; binding <= 13; ++binding)
+    for (uint32_t binding = 0; binding <= 15; ++binding)
     {
         AssertShaderBinding(shaderSource, binding);
     }
@@ -2574,7 +2580,7 @@ int main()
         FindShaderLayoutDeclaration(shaderSource, 4);
     assert(lightingParamsDeclaration.resourceType == "uniform");
     assert(lightingParamsDeclaration.resourceName == "params");
-    for (uint32_t binding = 0; binding <= 13; ++binding)
+    for (uint32_t binding = 0; binding <= 15; ++binding)
     {
         const ShaderLayoutDeclaration declaration =
             FindShaderLayoutDeclaration(shaderSource, binding);
@@ -2622,6 +2628,18 @@ int main()
                                     "prefilter",
                                     "Prefilter",
                                     "specular");
+    AssertShaderResourceDeclaration(shaderSource,
+                                    14,
+                                    "sampler2D",
+                                    "skySunDisk",
+                                    "SunDisk",
+                                    "sky");
+    AssertShaderResourceDeclaration(shaderSource,
+                                    15,
+                                    "sampler2D",
+                                    "skyTransmittance",
+                                    "Transmittance",
+                                    "sky");
 
     assert(ContainsText(shaderSource, "uint prefilteredSpecularMipLevels;"));
     assert(!ContainsText(shaderSource, "uint envMapMipLevels;"));
@@ -2881,7 +2899,7 @@ int main()
     const TestString descriptorSource =
         maskedLightingPassSource.substr(descriptorPosition,
                                        constructorPosition - descriptorPosition);
-    for (uint32_t binding = 0; binding <= 13; ++binding)
+    for (uint32_t binding = 0; binding <= 15; ++binding)
     {
         AssertProductionDescriptorBinding(descriptorSource, binding);
         if (binding == 4)
@@ -2920,7 +2938,7 @@ int main()
         RemoveWhitespace(maskedLightingPassSource.substr(executePosition,
                                                          registerOutputsPosition -
                                                              executePosition));
-    for (const uint32_t binding : {8u, 12u, 13u})
+    for (const uint32_t binding : {8u, 12u, 13u, 14u, 15u})
     {
         const TestString bindingText = FormatUnsigned(binding) + ",";
         assert(CountText(executeSource, "BindTexture(" + bindingText) == 1);
@@ -2946,6 +2964,8 @@ int main()
     const TestString binding8Resources[] = {
         "m_ValidationRaw252EnvironmentTexture",
         "m_ValidationRaw250EnvironmentTexture",
+        "context.SkyAtmosphere.RadianceTexture",
+        "SkyAtmosphere.Radiance",
         "m_EnvironmentTexture",
         "EnvironmentTexture",
         "m_DefaultBlackTexture"};
@@ -2977,6 +2997,14 @@ int main()
         "m_Prefilter",
         "Prefilter",
         "m_DefaultBlackTexture"};
+    const TestString binding14Resources[] = {
+        "context.SkyAtmosphere.SunDiskTexture",
+        "SkyAtmosphere.SunDisk",
+        "m_DefaultBlackTexture"};
+    const TestString binding15Resources[] = {
+        "context.SkyAtmosphere.TransmittanceTexture",
+        "SkyAtmosphere.Transmittance",
+        "m_DefaultBlackTexture"};
     const TestString binding11Resources[] = {
         "m_NeuralBRDFWeightBuffer",
         "NeuralBRDF",
@@ -3002,6 +3030,14 @@ int main()
                                  13,
                                  binding13Resources,
                                  sizeof(binding13Resources) / sizeof(binding13Resources[0]));
+    AssertTextureBindingResource(executeSource,
+                                 14,
+                                 binding14Resources,
+                                 sizeof(binding14Resources) / sizeof(binding14Resources[0]));
+    AssertTextureBindingResource(executeSource,
+                                 15,
+                                 binding15Resources,
+                                 sizeof(binding15Resources) / sizeof(binding15Resources[0]));
     AssertStorageBindingResource(lightingPassSource,
                                  11,
                                  binding11Resources,
@@ -3103,6 +3139,10 @@ int main()
                         "BindTexture(12,m_DefaultBlackTexture)"));
     assert(ContainsText(descriptorFactorySource,
                         "BindTexture(13,m_DefaultBlackTexture)"));
+    assert(ContainsText(descriptorFactorySource,
+                        "BindTexture(14,m_DefaultBlackTexture)"));
+    assert(ContainsText(descriptorFactorySource,
+                        "BindTexture(15,m_DefaultBlackTexture)"));
     assert(ContainsText(descriptorFactorySource,
                         "BindStorageBuffer(11,m_DefaultNeuralBRDFWeightBuffer,0u,4u)"));
 

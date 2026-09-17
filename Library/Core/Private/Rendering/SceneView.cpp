@@ -4,6 +4,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/ForwardPass.h"
 #include "Rendering/BloomPass.h"
@@ -573,6 +574,7 @@ namespace NorvesLib::Core::Rendering
         const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
         const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
         context.PhysicalLighting.Begin(context.FrameNumber, viewId, viewportId);
+        context.SkyAtmosphere.Reset();
         struct PhysicalLightingScope final
         {
             ViewRenderContext& Context;
@@ -658,6 +660,10 @@ namespace NorvesLib::Core::Rendering
         ssaoSettings.Intensity = 2.0f;
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
         AddPass(std::move(ssaoPass));
+
+        // SkyAtmospherePass: 同一空スナップショットからLUTと太陽ディスクを生成
+        auto skyAtmospherePass = MakeUnique<SkyAtmospherePass>();
+        AddPass(std::move(skyAtmospherePass));
 
         // LightingPass: GBuffer→HDRシーンカラー
         LightingPassSettings lightingSettings;

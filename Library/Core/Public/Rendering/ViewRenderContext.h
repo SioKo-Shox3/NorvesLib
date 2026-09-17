@@ -197,6 +197,56 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    struct SkyAtmosphereRenderResources
+    {
+        SkyAtmosphereParameters Parameters;
+        RHI::TexturePtr TransmittanceTexture;
+        RHI::TexturePtr RadianceTexture;
+        RHI::TexturePtr SunDiskTexture;
+        RHI::SamplerPtr Sampler;
+        float PreExposure = 1.0f;
+        float SunDiskPreExposedLuminance = 0.0f;
+        bool bSnapshotEnabled = false;
+        bool bValid = false;
+        bool bSunDiskSaturated = false;
+
+        void Reset()
+        {
+            Parameters = SkyAtmosphereParameters{};
+            TransmittanceTexture.reset();
+            RadianceTexture.reset();
+            SunDiskTexture.reset();
+            Sampler.reset();
+            PreExposure = 1.0f;
+            SunDiskPreExposedLuminance = 0.0f;
+            bSnapshotEnabled = false;
+            bValid = false;
+            bSunDiskSaturated = false;
+        }
+
+        void Publish(const SkyAtmosphereParameters& parameters,
+                     const RHI::TexturePtr& transmittance,
+                     const RHI::TexturePtr& radiance,
+                     const RHI::TexturePtr& sunDisk,
+                     const RHI::SamplerPtr& sampler,
+                     float preExposureValue,
+                     float sunDiskValue,
+                     bool bSunDiskSaturatedValue,
+                     bool bValidValue)
+        {
+            Parameters = parameters;
+            TransmittanceTexture = transmittance;
+            RadianceTexture = radiance;
+            SunDiskTexture = sunDisk;
+            Sampler = sampler;
+            PreExposure = preExposureValue;
+            SunDiskPreExposedLuminance = sunDiskValue;
+            bSnapshotEnabled = parameters.bEnabled;
+            bValid = bValidValue;
+            bSunDiskSaturated = bSunDiskSaturatedValue;
+        }
+    };
+
     /**
      * @brief View描画コンテキスト
      *
@@ -213,6 +263,7 @@ namespace NorvesLib::Core::Rendering
     struct ViewRenderContext
     {
         PhysicalLightingResources PhysicalLighting;
+        SkyAtmosphereRenderResources SkyAtmosphere;
 
         // ========================================
         // RHIリソース
@@ -251,6 +302,12 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief メインカメラ情報（ビュー/プロジェクション行列計算用） */
         const CameraProxy *MainCamera = nullptr;
+
+        /** @brief FramePacketが所有する空パラメータのスナップショット（未接続時は無効） */
+        const SceneProxy *SnapshotScene = nullptr;
+
+        /** @brief SnapshotScene未接続時に使用する空パラメータ値 */
+        SkyAtmosphereParameters SkyAtmosphereSnapshot;
 
         /** @brief 現在描画中のViewportスナップショット（新描画フロー用） */
         const ViewportRenderPlan *CurrentViewport = nullptr;

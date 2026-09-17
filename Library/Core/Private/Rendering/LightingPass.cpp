@@ -880,6 +880,18 @@ namespace NorvesLib::Core::Rendering
         prefilteredSpecularBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(prefilteredSpecularBinding);
 
+        RHI::DescriptorBinding skySunDiskBinding;
+        skySunDiskBinding.binding = 14;
+        skySunDiskBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        skySunDiskBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(skySunDiskBinding);
+
+        RHI::DescriptorBinding skyTransmittanceBinding;
+        skyTransmittanceBinding.binding = 15;
+        skyTransmittanceBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        skyTransmittanceBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(skyTransmittanceBinding);
+
         return dsDesc;
     }
 
@@ -1052,7 +1064,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("LightingPass", "Failed to create black environment fallback");
             return false;
         }
-        const uint16_t blackPixel[4] = {0x0000u, 0x0000u, 0x0000u, 0x3C00u};
+        const uint16_t blackPixel[4] = {0x0000u, 0x0000u, 0x0000u, 0x0000u};
         m_DefaultBlackTexture->Update(blackPixel, sizeof(blackPixel), sizeof(blackPixel));
 
         RHI::TextureDesc dfgFallbackDesc;
@@ -1479,6 +1491,22 @@ namespace NorvesLib::Core::Rendering
         {
             m_ShadowMapHandle = shadowMapHandle.ToResourceHandle();
         }
+
+        // SkyAtmospherePassの同一スナップショット由来リソースを依存として読む。
+        // 実体はViewRenderContextへ公開されたテクスチャを使い、named resourceの
+        // 読み取り宣言は空LUTがLighting前段にあることをRenderGraphへ伝える。
+        RGTextureHandle skyTransmittanceHandle;
+        RGTextureHandle skyRadianceHandle;
+        RGTextureHandle skySunDiskHandle;
+        builder.TryReadTexture(RenderGraphResourceNames::SkyAtmosphereTransmittance,
+                               skyTransmittanceHandle,
+                               RHI::ResourceState::ShaderResource);
+        builder.TryReadTexture(RenderGraphResourceNames::SkyAtmosphereRadiance,
+                               skyRadianceHandle,
+                               RHI::ResourceState::ShaderResource);
+        builder.TryReadTexture(RenderGraphResourceNames::SkyAtmosphereSunDisk,
+                               skySunDiskHandle,
+                               RHI::ResourceState::ShaderResource);
 
         RGTextureDesc sceneColorDesc =
             RGTextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
@@ -1922,6 +1950,10 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindSampler(12, m_DiffuseIrradianceSampler);
         descriptorSet->BindTexture(13, m_DefaultBlackTexture);
         descriptorSet->BindSampler(13, m_PrefilteredSpecularSampler);
+        descriptorSet->BindTexture(14, m_DefaultBlackTexture);
+        descriptorSet->BindSampler(14, m_IBLSampler);
+        descriptorSet->BindTexture(15, m_DefaultBlackTexture);
+        descriptorSet->BindSampler(15, m_IBLSampler);
 
         outDescriptorSet = std::move(descriptorSet);
         return true;
@@ -2060,15 +2092,27 @@ namespace NorvesLib::Core::Rendering
         const bool bValidationRaw251 = activeDebugMode == 251u;
         const bool bValidationRaw252 = activeDebugMode == 252u;
 
+        const bool bSkyAtmosphereRequested = context.SkyAtmosphere.bSnapshotEnabled;
+        const bool bSkyAtmosphereAvailable =
+            bSkyAtmosphereRequested && context.SkyAtmosphere.bValid &&
+            context.SkyAtmosphere.RadianceTexture &&
+            context.SkyAtmosphere.TransmittanceTexture &&
+            context.SkyAtmosphere.SunDiskTexture &&
+            context.SkyAtmosphere.Sampler;
+
         const RHI::TexturePtr& environmentTexture =
             bValidationRaw251 ? m_DefaultBlackTexture :
             bValidationRaw252 && m_ValidationRaw252EnvironmentTexture ?
                 m_ValidationRaw252EnvironmentTexture :
             bValidationRaw250 && m_ValidationRaw250EnvironmentTexture ?
                 m_ValidationRaw250EnvironmentTexture :
+            bSkyAtmosphereAvailable ? context.SkyAtmosphere.RadianceTexture :
+            bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_EnvironmentTexture ? m_EnvironmentTexture : m_DefaultBlackTexture;
         m_LightingDescriptorSet->BindTexture(8, environmentTexture);
-        m_LightingDescriptorSet->BindSampler(8, m_IBLSampler);
+        m_LightingDescriptorSet->BindSampler(8,
+                                             bSkyAtmosphereAvailable ?
+                                                 context.SkyAtmosphere.Sampler : m_IBLSampler);
         m_LightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
         m_LightingDescriptorSet->BindSampler(9, m_DfgSampler);
 
@@ -2092,6 +2136,19 @@ namespace NorvesLib::Core::Rendering
             m_DefaultBlackTexture;
         m_LightingDescriptorSet->BindTexture(13, prefilteredSpecularTexture);
         m_LightingDescriptorSet->BindSampler(13, m_PrefilteredSpecularSampler);
+
+        m_LightingDescriptorSet->BindTexture(
+            14,
+            bSkyAtmosphereAvailable ? context.SkyAtmosphere.SunDiskTexture : m_DefaultBlackTexture);
+        m_LightingDescriptorSet->BindSampler(
+            14,
+            bSkyAtmosphereAvailable ? context.SkyAtmosphere.Sampler : m_IBLSampler);
+        m_LightingDescriptorSet->BindTexture(
+            15,
+            bSkyAtmosphereAvailable ? context.SkyAtmosphere.TransmittanceTexture : m_DefaultBlackTexture);
+        m_LightingDescriptorSet->BindSampler(
+            15,
+            bSkyAtmosphereAvailable ? context.SkyAtmosphere.Sampler : m_IBLSampler);
 
         if (ssaoTexture)
         {
@@ -2231,7 +2288,10 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (activeCamera)
         {
-            params.preExposure = activeCamera->PreExposure;
+            params.preExposure = std::isfinite(activeCamera->PreExposure) &&
+                                         activeCamera->PreExposure > 0.0f
+                                     ? std::clamp(activeCamera->PreExposure, 1.0e-6f, 1.0e6f)
+                                     : 1.0f;
             const CameraViewConstants cameraConstants =
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(params.cameraPosition);
@@ -2310,9 +2370,23 @@ namespace NorvesLib::Core::Rendering
             bValidationRaw252 && m_ValidationRaw252EnvironmentTexture &&
             m_ValidationRaw252DiffuseIrradianceTexture &&
             m_ValidationRaw252PrefilteredSpecularTexture;
+        const bool bSkyAtmosphereRequested = context.SkyAtmosphere.bSnapshotEnabled;
+        const bool bSkyAtmosphereTexturesAvailable =
+            bSkyAtmosphereRequested && context.SkyAtmosphere.bValid &&
+            context.SkyAtmosphere.RadianceTexture &&
+            context.SkyAtmosphere.TransmittanceTexture &&
+            context.SkyAtmosphere.SunDiskTexture &&
+            context.SkyAtmosphere.Sampler;
+        const bool bSkyAtmosphereAvailable = bSkyAtmosphereTexturesAvailable;
         const bool bValidationPbr = params.debugViewMode == 254u;
         params.bIBLEnabled = (!bValidationRaw251 &&
                              (m_bIBLAvailable || bValidationConstantIblAvailable)) ? 1u : 0u;
+        if (bSkyAtmosphereRequested && !bValidationRaw251)
+        {
+            // 空が有効なフレームでは静的HDRへ暗黙に戻さない。生成失敗時は
+            // bIBLEnabled=0としてシェーダー側を黒へ固定する。
+            params.bIBLEnabled = bSkyAtmosphereAvailable ? 1u : 0u;
+        }
         if (bValidationPbr)
         {
             params.bIBLEnabled = 0u;
@@ -2324,6 +2398,10 @@ namespace NorvesLib::Core::Rendering
             params.ambientColor[3] = 1.0f;
         }
         else if (m_bIBLAvailable)
+        {
+            params.ambientColor[3] = m_Settings.IBLIntensity;
+        }
+        if (bSkyAtmosphereAvailable && !bValidationRaw251)
         {
             params.ambientColor[3] = m_Settings.IBLIntensity;
         }
@@ -2344,7 +2422,11 @@ namespace NorvesLib::Core::Rendering
                 m_ValidationRaw252EnvironmentTexture :
             bValidationRaw250 && m_ValidationRaw250EnvironmentTexture ?
                 m_ValidationRaw250EnvironmentTexture :
+            bSkyAtmosphereAvailable ? context.SkyAtmosphere.RadianceTexture :
+            bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_EnvironmentTexture ? m_EnvironmentTexture : m_DefaultBlackTexture;
+        const RHI::SamplerPtr& environmentRadianceSampler =
+            bSkyAtmosphereAvailable ? context.SkyAtmosphere.Sampler : m_IBLSampler;
         const RHI::TexturePtr& diffuseIrradiance =
             bValidationRaw252 && m_ValidationRaw252DiffuseIrradianceTexture ?
                 m_ValidationRaw252DiffuseIrradianceTexture :
@@ -2365,7 +2447,7 @@ namespace NorvesLib::Core::Rendering
                 lightCount,
                 GetLightArrayBufferSizeBytes(),
                 environmentRadiance,
-                m_IBLSampler,
+                environmentRadianceSampler,
                 diffuseIrradiance,
                 m_DiffuseIrradianceSampler,
                 prefilteredSpecular,

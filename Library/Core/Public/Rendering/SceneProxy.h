@@ -403,6 +403,7 @@ namespace NorvesLib::Core::Rendering
             MegaGeometryProxies.clear();
             LightProxies.clear();
             AdditionalCameras.clear();
+            SkyAtmosphere = SkyAtmosphereParameters{};
         }
 
         /**

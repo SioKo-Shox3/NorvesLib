@@ -120,6 +120,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
     Private/Rendering/SkyAtmosphere.cpp
+    Private/Rendering/SkyAtmospherePass.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
@@ -361,6 +362,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SharedResourceRegistry.h
     Public/Rendering/PostProcessStack.h
     Public/Rendering/GBufferPass.h
+    Public/Rendering/SkyAtmospherePass.h
     Public/Rendering/ShadowMapPass.h
     Public/Rendering/LightingPass.h
     Public/Rendering/ToneMappingPass.h

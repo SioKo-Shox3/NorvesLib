@@ -1697,6 +1697,8 @@ namespace NorvesLib::Core::Rendering
 
         // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
         viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;
+        viewContext.SnapshotScene = &packet->Scene;
+        viewContext.SkyAtmosphereSnapshot = packet->Scene.SkyAtmosphere;
         viewContext.SnapshotDrawCommandSource = &packet->DrawCommands;
         viewContext.SnapshotDrawCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                       packet->DrawCommandRange);

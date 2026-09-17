@@ -54,6 +54,8 @@ layout(set = 0, binding = 9) uniform sampler2D brdfLUT;   // BRDF LUT（split-su
 // Diffuse irradiance and GGX prefiltered specular resources
 layout(set = 0, binding = 12) uniform sampler2D diffuseIrradiance;
 layout(set = 0, binding = 13) uniform sampler2D prefilteredSpecular;
+layout(set = 0, binding = 14) uniform sampler2D skySunDisk;
+layout(set = 0, binding = 15) uniform sampler2D skyTransmittance;
 
 // SSAO (Screen-Space Ambient Occlusion)
 layout(set = 0, binding = 10) uniform sampler2D ssaoTexture;
@@ -561,9 +563,23 @@ void main()
 
             // equirectangular環境マップをサンプリング（LOD 0 = 最高解像度）
             vec2 envUV = EquirectangularUV(rayDir);
-            vec3 skyColor = textureLod(envMap, envUV, 0.0).rgb;
+            vec4 skySample = textureLod(envMap, envUV, 0.0);
+            vec3 skyColor = skySample.rgb;
+            vec4 sunDiskSample = textureLod(skySunDisk, vec2(0.5), 0.0);
+            if (sunDiskSample.a > 0.5)
+            {
+                vec3 transmittance = textureLod(skyTransmittance,
+                                                vec2(0.5,
+                                                     clamp(0.5 + 0.5 * rayDir.y, 0.0, 1.0)),
+                                                0.0).rgb;
+                skyColor *= clamp(transmittance, vec3(0.0), vec3(1.0));
+            }
+            vec3 sunDisk = sunDiskSample.rgb;
+            vec3 preExposedSkyColor = ApplySceneColorPreExposure(skyColor);
+            preExposedSkyColor += sunDisk * clamp(skySample.a, 0.0, 1.0);
+            preExposedSkyColor = max(preExposedSkyColor, vec3(0.0));
 
-            outColor = vec4(ApplySceneColorPreExposure(skyColor), 1.0);
+            outColor = vec4(preExposedSkyColor, 1.0);
         }
         else
         {
