@@ -85,6 +85,16 @@ namespace NorvesLib::Core::Rendering
                 std::max(cosine, 0.05f);
             return std::exp(-opticalDepth);
         }
+
+        float ComputeSunDiskIrradianceFromSanitized(
+            const SkyAtmosphereParameters& sanitized)
+        {
+            if (!sanitized.bEnabled)
+            {
+                return 0.0f;
+            }
+            return sanitized.SunLuminanceNits * SolarDiskSolidAngleSteradians;
+        }
     } // namespace
 
     SkyAtmosphereParameters MakeDefaultSkyAtmosphereParameters()
@@ -217,10 +227,13 @@ namespace NorvesLib::Core::Rendering
                 rayleighPhase * sunTransmittance.z);
         const float mieScatter = kMieScattering * sanitized.MieScaleHeightMeters /
             viewCosine * miePhase;
-        result.Radiance = (Math::Vector3(rayleighScatter.x + mieScatter * sunTransmittance.x,
-                                         rayleighScatter.y + mieScatter * sunTransmittance.y,
-                                         rayleighScatter.z + mieScatter * sunTransmittance.z) *
-                           sanitized.SunLuminanceNits);
+        const Math::Vector3 scatteredRadiance(
+            rayleighScatter.x + mieScatter * sunTransmittance.x,
+            rayleighScatter.y + mieScatter * sunTransmittance.y,
+            rayleighScatter.z + mieScatter * sunTransmittance.z);
+        const float solarDiskIrradianceScale =
+            ComputeSunDiskIrradianceFromSanitized(sanitized);
+        result.Radiance = scatteredRadiance * solarDiskIrradianceScale;
         result.MeanSunTransmittance =
             (sunTransmittance.x + sunTransmittance.y + sunTransmittance.z) / 3.0f;
 
@@ -229,6 +242,13 @@ namespace NorvesLib::Core::Rendering
             return SkyRadianceSample{};
         }
         return result;
+    }
+
+    float ComputeSunDiskIrradiance(
+        const SkyAtmosphereParameters& parameters)
+    {
+        return ComputeSunDiskIrradianceFromSanitized(
+            SanitizeSkyAtmosphereParameters(parameters));
     }
 
     float ComputeSunDiskPreExposedLuminance(

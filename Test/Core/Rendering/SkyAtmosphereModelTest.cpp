@@ -7,8 +7,12 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <type_traits>
 
 using namespace NorvesLib::Core::Rendering;
+
+static_assert(std::is_trivially_copyable_v<SkyAtmosphereParameters>);
+static_assert(std::is_standard_layout_v<SkyAtmosphereParameters>);
 
 namespace
 {
@@ -90,6 +94,11 @@ namespace
                "non-finite azimuth uses the default");
         Expect(sanitized.SunLuminanceNits == 1.6e9f,
                "non-positive luminance uses the default");
+        Expect(sanitized.PlanetRadiusMeters == 6360000.0f &&
+                   sanitized.AtmosphereHeightMeters == 80000.0f &&
+                   sanitized.RayleighScaleHeightMeters == 8000.0f &&
+                   sanitized.MieScaleHeightMeters == 1200.0f,
+               "atmosphere dimensions and density heights use finite defaults");
         Expect(sanitized.MieAnisotropy == 0.9f,
                "anisotropy is clamped to the phase-function domain");
         Expect(sanitized.GroundAlbedo.x == 0.0f &&
@@ -129,17 +138,17 @@ namespace
 
         // These values are the frozen R2-P1 CPU reference from the documented
         // default atmosphere parameters.
-        Expect(RelativeNearlyEqual(zenith.Radiance.x, 6747700.0f, 0.01f),
+        Expect(RelativeNearlyEqual(zenith.Radiance.x, 463.6f, 0.01f),
                "zenith red reference remains within one percent");
-        Expect(RelativeNearlyEqual(zenith.Radiance.y, 13753100.0f, 0.01f),
+        Expect(RelativeNearlyEqual(zenith.Radiance.y, 944.8f, 0.01f),
                "zenith green reference remains within one percent");
-        Expect(RelativeNearlyEqual(zenith.Radiance.z, 26319800.0f, 0.01f),
+        Expect(RelativeNearlyEqual(zenith.Radiance.z, 1808.2f, 0.01f),
                "zenith blue reference remains within one percent");
-        Expect(RelativeNearlyEqual(nearSun.Radiance.x, 47801000.0f, 0.01f),
+        Expect(RelativeNearlyEqual(nearSun.Radiance.x, 3283.9f, 0.01f),
                "sun-near red reference remains within one percent");
-        Expect(RelativeNearlyEqual(nearSun.Radiance.y, 58063800.0f, 0.01f),
+        Expect(RelativeNearlyEqual(nearSun.Radiance.y, 3989.0f, 0.01f),
                "sun-near green reference remains within one percent");
-        Expect(RelativeNearlyEqual(nearSun.Radiance.z, 75386300.0f, 0.01f),
+        Expect(RelativeNearlyEqual(nearSun.Radiance.z, 5179.0f, 0.01f),
                "sun-near blue reference remains within one percent");
     }
 
@@ -150,15 +159,26 @@ namespace
         const float ev15PreExposure = 1.0f / 32768.0f;
         const float ev14PreExposure = 1.0f / 16384.0f;
 
+        Expect(NearlyEqual(ComputeSunDiskIrradiance(parameters), 109920.0f, 0.5f),
+               "solar disk radiance is integrated over its documented solid angle");
+        // R1 exposure uses 1 / (1.2 * 2^EV100); keep the EV labels aligned with
+        // the camera exposure contract while the disk value remains in float.
+        const float r1Ev15PreExposure = 1.0f / (1.2f * 32768.0f);
+        const float r1Ev14PreExposure = 1.0f / (1.2f * 16384.0f);
+        Expect(NearlyEqual(ComputeSunDiskPreExposedLuminance(
+                               parameters, r1Ev15PreExposure),
+                           40690.1f,
+                           0.5f),
+               "EV15 sun disk luminance is represented without FP16 saturation");
+        Expect(!IsSunDiskWithinFp16SafetyRange(parameters, r1Ev14PreExposure),
+               "EV14 identifies the nominal solar disk as outside the FP16 safety range");
+        Expect(IsSunDiskWithinFp16SafetyRange(parameters, r1Ev15PreExposure),
+               "EV15 is inside the FP16 safety range");
         Expect(NearlyEqual(ComputeSunDiskPreExposedLuminance(
                                parameters, ev15PreExposure),
                            48828.125f,
                            0.5f),
-               "EV15 sun disk luminance is represented without FP16 saturation");
-        Expect(!IsSunDiskWithinFp16SafetyRange(parameters, ev14PreExposure),
-               "EV14 identifies the nominal solar disk as outside the FP16 safety range");
-        Expect(IsSunDiskWithinFp16SafetyRange(parameters, ev15PreExposure),
-               "EV15 is inside the FP16 safety range");
+               "unscaled EV15 pre-exposure remains a valid direct disk value");
         Expect(ComputeSunDiskPreExposedLuminance(parameters, 0.0f) == 0.0f,
                "non-positive pre-exposure disables the disk value");
     }
