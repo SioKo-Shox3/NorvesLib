@@ -18,6 +18,15 @@
 - verify: `SkyAtmospherePassContractTest`、対象3テストのCTest、sky/lighting両シェーダーのBOM除去後`glslc`コンパイル。
 - resolution: `53a58dc`で修正し、2周目評価はPASS。
 
+## R2-P3-001
+
+- status: resolved
+- source: R2-P3 1周目読み取り専用評価
+- finding: 動的空IBLのbinding 12/13 selector分岐を追加した結果、既存`LightingParamsLayoutTest`がselector数4を期待したままとなり、P2/R1の検証経路が失敗した。
+- fix: binding 8/12/13のselector数を実装の6分岐へ同期し、binding 12/13の空用テクスチャ選択と空要求時の黒フォールバックを意味検査へ追加した。P3 verifyへ同テストを追加した。
+- verify: `LightingParamsLayoutTest`を含むP3 4対象のDebugビルド・CTest。
+- resolution: `a235411`で修正し、4/4 passed、2周目評価はPASS。
+
 ## R2-P2-002
 
 - status: resolved
