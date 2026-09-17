@@ -16,14 +16,15 @@
 - R2-P2: `53a58dc`（実装 `07a0cd9`）。空スナップショットをFramePacketからRenderThreadへ接続し、SkyAtmospherePassで透過率LUT・空放射輝度LUT・太陽ディスクを生成してRenderGraph named resourceへ公開した。LightingPassのbinding 14/15と空背景の有効/無効フォールバックを接続し、太陽ディスクは解析的な方向・角半径マスクへ修正した。P2対象ビルド・CTestは3/3 passed、エンジンと同じBOM除去経路のsky/lightingシェーダーコンパイルも合格した。空由来の拡散/鏡面IBL更新はP3へ分離した。
 - R2-P3: `a235411`（実装 `5daf556`）。空のequirectangular放射輝度を同一のsanitized空パラメータから再構成し、既存のDiffuseIrradiance/PrefilteredSpecular生成へ接続した。空パラメータと放射輝度寸法の変更時だけ動的IBLを更新し、空要求時の生成失敗は黒へ固定する。朝/昼/夕EVの有限性・高度変更・SceneProxy寿命、R1静的HDR経路を確認し、4対象ビルド・CTestは4/4 passed。1周目のselector契約回帰を`a235411`で修正し、2周目の独立評価はPASS。
 - R2-P4: `f51384f`。実カメラのnear/farから対数・線形混合の4分割距離を計算し、同一方向ライトの球近似行列、caster深度範囲、テクセル中心スナップをCPUだけで構築した。near/far逆転、無効方向、非有限bounds、固定4カスケード以外を有限な影なし結果へ戻し、サブテクセル移動の行列安定性と隣接境界の連続性を確認した。指定のDebugビルドとCTestは2/2 passed。RHI/Vulkanには触れていない。
+- R2-P5: `9e015a3`。RHIに配列depthの指定layer viewを追加し、Vulkanの1層Framebufferへ安全にattachできるようにした。ShadowMapPassを4層D32 depth arrayと4つのlayer別Framebufferへ移行し、CSMの各行列・分割距離をRenderThreadの公開値へ記録した。部分初期化時は全リソースを解放し、未完成の配列深度をRenderGraphへ公開しない。P4回帰を含む関連CTestは6/6 passed、指定P5 focused CTestは3/3 passed。
 
 ## In progress
 
-- R2-P5（RHIの配列layer attachmentとShadowMapPassのCSM深度記録）へ進む。
+- R2-P6（Lighting/ForwardのCSMサンプリングと安全なフォールバック）へ進む。
 
 ## Next
 
-- R2-P5で4層D32 array textureのlayer attachmentとShadowMapPassのCSM深度記録を実装・検証する。部分リソースは公開せず、単一方向影の所有権と破棄順序を維持する。
+- R2-P6でGPU lighting params、descriptor、Lighting/Forward shaderを4行列・分割距離・sampler2DArrayへ揃え、境界ブレンドと不完全公開値の安全なフォールバックを実装・検証する。
 
 ## Notes
 
