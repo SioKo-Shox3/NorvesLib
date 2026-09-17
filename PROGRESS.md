@@ -12,14 +12,15 @@
 - R1 P6a: `93f01220c2bcd899c51e3a9c538265e5723395dc`（P6a forward-fixの受入状態を記録）。`2a50d4c` と `d4cbe3e` のforward-fixを含む最終報告、focused7、CPU6、fixture CPU検査、40 static/68 numerical/70 total/120 captures、両scene object-presence、script self-tests、GPU CTest exact21を確認した。旧P6b候補は再利用しない。
 - R1 P6b: `eedec7a681489768645eabf77355886ae8e755c0`。承認済みbaseline（Indoor `3845F8671194A3C55EA929503E7ECB4C777EB7A5A4D900C03E75853E50D9D4EF` / Outdoor `05D202193F8C304E45099EBA6557A48BB7B5BF88E694552CBABC50E898D895B6`）、threshold、BackBuffer20=20/20、targetless full build=exit 0、full CTest=212 passed/7 intentional skipped/0 failedを受入完了。Roadmap trailerは`RenderingRoadmap: R1 complete`、GPU性能はDeferred。
 - R2 M1: `Docs/Plans/RenderingR2SkyAtmosphereCsmPlan.md` を作成し、Hillaire 2020系空、太陽ディスクのプリエクスポージャ表現、空由来IBL、4カスケードCSM、R2-P1〜P8の検証単位を定義した。R1受入れ基点は再利用せず、R2用の数値/画像証拠を分離する。
+- R2-P1: `76a0c15`。`SkyAtmosphereParameters` の有限化、太陽高度・方位角からの正規化方向、太陽ディスク立体角を積分したCPU参照サンプル、R1露出規約に沿う太陽ディスク安全域を実装した。対象ビルド成功、`SkyAtmosphereModelTest` は1/1 passed。P1の固定値は平行大気・単一散乱のCPU回帰アンカーとして後続LUTと単位を共有する。
 
 ## In progress
 
-- R2-P1の参照単位を修正中。評価で太陽ディスク立体角の未積分が見つかったため、P2 LUTとの単位契約を揃える。
+- R2-P2（空LUTと太陽ディスクをLighting前段へ接続する）へ進む。
 
 ## Next
 
-- R2-P1の修正を検証・再評価して完了させる。その後R2-P2の空LUT/太陽ディスク接続へ進む。R2-P5以降のRHI/Vulkan変更は、行列契約が閉じてから着手する。
+- R2-P2の空LUT/太陽ディスク接続を実装・検証する。夕方ケースはP1の高度下限（0度）を前提に正の高度で固定し、薄明・夜空はR2対象外とする。R2-P5以降のRHI/Vulkan変更は、行列契約が閉じてから着手する。
 
 ## Notes
 

@@ -5,7 +5,7 @@
 #include "MaterialTypes.h"
 #include "SkinnedMeshTypes.h"
 #include "MegaGeometry/MegaGeometryTypes.h"
-#include "Rendering/SkyAtmosphere.h"
+#include "SkyAtmosphere.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
 #include "Math/MatrixUtils.h"

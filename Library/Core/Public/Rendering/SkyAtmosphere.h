@@ -6,6 +6,7 @@ namespace NorvesLib::Core::Rendering
 {
 
     // The visible solar disk is integrated once for the atmosphere source.
+    // This corresponds to an angular radius of about 0.00468 rad (0.268 deg).
     // Keep this shared by the CPU reference and the later LUT generation path.
     inline constexpr float SolarDiskSolidAngleSteradians = 6.87e-5f;
 
@@ -65,8 +66,10 @@ namespace NorvesLib::Core::Rendering
      * ディスク立体角で積分した等価照度を散乱源に使う。後続LUTも同じ単位・
      * sanitize済み入力・float精度の参照条件で突き合わせる。
      * 球殻の有限曲率、多重散乱、地表からの反射はこの参照の適用範囲外であり、
-     * PlanetRadiusMeters/AtmosphereHeightMeters/GroundAlbedoは後続LUT用に保持・
-     * 正規化するが、P1の平行大気評価では使用しない。
+     * 視線経路の減光、オゾン吸収、Mie消散、球殻の有限曲率、多重散乱、地表から
+     * の反射はこの参照の適用範囲外であり、PlanetRadiusMeters/AtmosphereHeightMeters/
+     * GroundAlbedoは後続LUT用に保持・正規化するが、P1の平行大気評価では使用しない。
+     * ここで固定する値はP1のCPU回帰アンカーであり、P2 LUTの受入れ目標値ではない。
      */
     SkyRadianceSample EvaluateHillaireSkyReference(
         const SkyAtmosphereParameters& parameters,
