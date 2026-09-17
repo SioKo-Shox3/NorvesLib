@@ -2306,6 +2306,10 @@ namespace NorvesLib::Core::Rendering
             params.cameraPosition[3] = 1.0f;
             MatrixUtils::TransposeToShaderData(Matrix4x4::Identity, params.invViewProjection);
         }
+        params.skySunDirectionAndCosRadius[0] = 0.0f;
+        params.skySunDirectionAndCosRadius[1] = 1.0f;
+        params.skySunDirectionAndCosRadius[2] = 0.0f;
+        params.skySunDirectionAndCosRadius[3] = 1.0f;
 
         // アンビエントカラー
         params.ambientColor[0] = m_Settings.AmbientColor[0];
@@ -2378,6 +2382,21 @@ namespace NorvesLib::Core::Rendering
             context.SkyAtmosphere.SunDiskTexture &&
             context.SkyAtmosphere.Sampler;
         const bool bSkyAtmosphereAvailable = bSkyAtmosphereTexturesAvailable;
+        if (bSkyAtmosphereRequested)
+        {
+            const Math::Vector3 sunDirection =
+                MakeSunDirectionFromAltitudeAzimuth(
+                    context.SkyAtmosphere.Parameters.SunAltitudeDegrees,
+                    context.SkyAtmosphere.Parameters.SunAzimuthDegrees);
+            constexpr float kPi = 3.14159265358979323846f;
+            const float solarDiskAngularRadius =
+                std::sqrt(SolarDiskSolidAngleSteradians / kPi);
+            params.skySunDirectionAndCosRadius[0] = sunDirection.x;
+            params.skySunDirectionAndCosRadius[1] = sunDirection.y;
+            params.skySunDirectionAndCosRadius[2] = sunDirection.z;
+            params.skySunDirectionAndCosRadius[3] =
+                std::cos(solarDiskAngularRadius);
+        }
         const bool bValidationPbr = params.debugViewMode == 254u;
         params.bIBLEnabled = (!bValidationRaw251 &&
                              (m_bIBLAvailable || bValidationConstantIblAvailable)) ? 1u : 0u;

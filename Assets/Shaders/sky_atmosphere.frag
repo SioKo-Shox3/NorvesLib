@@ -1,4 +1,6 @@
-﻿layout(location = 0) in vec2 fragUV;
+﻿#version 450
+
+layout(location = 0) in vec2 fragUV;
 
 layout(std140, set = 0, binding = 0) uniform SkyAtmosphereParams
 {

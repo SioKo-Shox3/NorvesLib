@@ -2533,7 +2533,7 @@ int main()
     assert(std::isfinite(defaultSettings.EnvironmentLuminanceScaleNits));
     assert(defaultSettings.EnvironmentLuminanceScaleNits >= 0.0f);
 
-    assert(sizeof(GPULightingParams) == 256);
+    assert(sizeof(GPULightingParams) == 272);
     assert(sizeof(GPULightingParams) % 16 == 0);
 
     assert(offsetof(GPULightingParams, invViewProjection) == 0);
@@ -2550,6 +2550,7 @@ int main()
     assert(offsetof(GPULightingParams, bNeuralBRDFEnabled) == 244);
     assert(offsetof(GPULightingParams, debugViewMode) == 248);
     assert(PreExposureOffset<GPULightingParams>() == 252);
+    assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 256);
 
     assert(static_cast<uint8_t>(DebugViewMode::Normal) == 0);
     assert(static_cast<uint8_t>(DebugViewMode::Unlit) == 1);
@@ -2642,6 +2643,7 @@ int main()
                                     "sky");
 
     assert(ContainsText(shaderSource, "uint prefilteredSpecularMipLevels;"));
+    assert(ContainsText(shaderSource, "vec4 skySunDirectionAndCosRadius;"));
     assert(!ContainsText(shaderSource, "uint envMapMipLevels;"));
 
     const std::size_t debugViewModeFieldPosition = FindText(shaderSource, "uint debugViewMode;");

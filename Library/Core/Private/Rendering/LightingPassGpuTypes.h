@@ -21,6 +21,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t bNeuralBRDFEnabled;
         uint32_t debugViewMode;
         float preExposure;
+        float skySunDirectionAndCosRadius[4];
     };
 
     struct GPULightData
@@ -31,8 +32,9 @@ namespace NorvesLib::Core::Rendering
         float attenuation[4];
     };
 
-    static_assert(sizeof(GPULightingParams) == 256);
+    static_assert(sizeof(GPULightingParams) == 272);
     static_assert(offsetof(GPULightingParams, prefilteredSpecularMipLevels) == 232);
+    static_assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 256);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);

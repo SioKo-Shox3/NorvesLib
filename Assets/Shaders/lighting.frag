@@ -24,6 +24,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     uint bNeuralBRDFEnabled; // Neural BRDF有効フラグ
     uint debugViewMode;
     float preExposure;
+    vec4 skySunDirectionAndCosRadius; // xyz=太陽方向, w=cos(太陽ディスク角半径)
 } params;
 
 // ライトデータ構造
@@ -569,14 +570,15 @@ void main()
             if (sunDiskSample.a > 0.5)
             {
                 vec3 transmittance = textureLod(skyTransmittance,
-                                                vec2(0.5,
-                                                     clamp(0.5 + 0.5 * rayDir.y, 0.0, 1.0)),
+                                                vec2(clamp(rayDir.y, 0.0, 1.0), 0.0),
                                                 0.0).rgb;
                 skyColor *= clamp(transmittance, vec3(0.0), vec3(1.0));
             }
-            vec3 sunDisk = sunDiskSample.rgb;
+            vec3 sunDirection = normalize(params.skySunDirectionAndCosRadius.xyz);
+            float sunDiskMask = step(params.skySunDirectionAndCosRadius.w,
+                                     dot(rayDir, sunDirection));
             vec3 preExposedSkyColor = ApplySceneColorPreExposure(skyColor);
-            preExposedSkyColor += sunDisk * clamp(skySample.a, 0.0, 1.0);
+            preExposedSkyColor += sunDiskSample.rgb * sunDiskMask;
             preExposedSkyColor = max(preExposedSkyColor, vec3(0.0));
 
             outColor = vec4(preExposedSkyColor, 1.0);

@@ -107,11 +107,15 @@ namespace
                        "layout(set = 0, binding = 14) uniform sampler2D skySunDisk");
         AssertContains(lightingShader,
                        "layout(set = 0, binding = 15) uniform sampler2D skyTransmittance");
+        AssertContains(lightingShader, "skySunDirectionAndCosRadius");
         AssertContains(lightingShader, "ApplySceneColorPreExposure(skyColor)");
-        AssertContains(lightingShader, "sunDisk * clamp(skySample.a");
+        AssertContains(lightingShader, "sunDiskSample.rgb * sunDiskMask");
+        AssertContains(lightingShader, "step(params.skySunDirectionAndCosRadius.w");
         AssertContains(lightingShader, "if (sunDiskSample.a > 0.5)");
         AssertContains(lightingShader, "textureLod(skyTransmittance");
+        assert(lightingShader.find("skySample.a") == std::string::npos);
 
+        AssertContains(skyShader, "#version 450");
         AssertContains(skyShader, "transmittanceLut");
         AssertContains(skyShader, "skyRadianceLut");
         AssertContains(skyShader, "sunDiskPreExposed");
