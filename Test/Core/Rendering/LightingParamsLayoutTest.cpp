@@ -2132,7 +2132,7 @@ namespace
                 const std::size_t selectorEndPosition =
                     normalizedSource.find(';', selectorPosition);
                 assert(selectorEndPosition != TestString::npos);
-                const std::size_t expectedSelectorCount = binding == 8 ? 6 : 4;
+                const std::size_t expectedSelectorCount = 6;
                 std::size_t selectorCount = 0;
                 for (std::size_t position = selectorPosition;
                      position < selectorEndPosition;
@@ -2206,6 +2206,12 @@ namespace
                                "bValidationRaw250&&m_ValidationRaw250DiffuseIrradianceTexture?",
                                selectorPosition) < selectorEndPosition);
                     assert(normalizedSource.find(
+                               "bSkyAtmosphereAvailable&&m_SkyAtmosphereDiffuseIrradianceTexture?",
+                               selectorPosition) < selectorEndPosition);
+                    assert(normalizedSource.find(
+                               "bSkyAtmosphereRequested?m_DefaultBlackTexture",
+                               selectorPosition) < selectorEndPosition);
+                    assert(normalizedSource.find(
                                "m_bIBLAvailable&&m_DiffuseIrradianceTexture?",
                                selectorPosition) < selectorEndPosition);
                 }
@@ -2220,6 +2226,12 @@ namespace
                            selectorEndPosition);
                     assert(normalizedSource.find(
                                "bValidationRaw250&&m_ValidationRaw250Texture?",
+                               selectorPosition) < selectorEndPosition);
+                    assert(normalizedSource.find(
+                               "bSkyAtmosphereAvailable&&m_SkyAtmospherePrefilteredSpecularTexture?",
+                               selectorPosition) < selectorEndPosition);
+                    assert(normalizedSource.find(
+                               "bSkyAtmosphereRequested?m_DefaultBlackTexture",
                                selectorPosition) < selectorEndPosition);
                     assert(normalizedSource.find(
                                "m_bIBLAvailable&&m_PrefilteredSpecularTexture?",
@@ -2986,6 +2998,7 @@ int main()
     const TestString binding12Resources[] = {
         "m_ValidationRaw252DiffuseIrradianceTexture",
         "m_ValidationRaw250DiffuseIrradianceTexture",
+        "m_SkyAtmosphereDiffuseIrradianceTexture",
         "m_DiffuseIrradianceTexture",
         "diffuseIrradiance",
         "m_Irradiance",
@@ -2994,6 +3007,7 @@ int main()
     const TestString binding13Resources[] = {
         "m_ValidationRaw252PrefilteredSpecularTexture",
         "m_ValidationRaw250Texture",
+        "m_SkyAtmospherePrefilteredSpecularTexture",
         "m_PrefilteredSpecularTexture",
         "prefilteredSpecular",
         "m_Prefilter",
