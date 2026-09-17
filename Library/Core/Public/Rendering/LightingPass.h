@@ -218,6 +218,9 @@ namespace NorvesLib::Core::Rendering
          */
         bool LoadEnvironmentMap(const Container::String& path);
         bool GenerateValidationSnapshots();
+        bool EnsureSkyAtmosphereIbl(const SkyAtmosphereParameters& parameters,
+                                    uint32_t radianceWidth,
+                                    uint32_t radianceHeight);
 
         /**
          * @brief BRDF LUTをCPUで生成（split-sum近似）
@@ -256,6 +259,8 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_BrdfLutTexture;     ///< BRDF LUT（split-sum近似）
         RHI::TexturePtr m_DiffuseIrradianceTexture;
         RHI::TexturePtr m_PrefilteredSpecularTexture;
+        RHI::TexturePtr m_SkyAtmosphereDiffuseIrradianceTexture;
+        RHI::TexturePtr m_SkyAtmospherePrefilteredSpecularTexture;
         RHI::TexturePtr m_ValidationRaw250EnvironmentTexture;
         RHI::TexturePtr m_ValidationRaw250DiffuseIrradianceTexture;
         RHI::TexturePtr m_ValidationRaw250Texture;
@@ -269,6 +274,11 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_DfgSampler;
         uint32_t m_EnvironmentMipLevels = 1;  ///< 環境マップのミップレベル数
         bool m_bIBLAvailable = false;         ///< IBLリソースが利用可能か
+        SkyAtmosphereParameters m_SkyAtmosphereIblParameters;
+        uint32_t m_SkyAtmosphereIblRadianceWidth = 0;
+        uint32_t m_SkyAtmosphereIblRadianceHeight = 0;
+        bool m_bSkyAtmosphereIblCacheValid = false;
+        bool m_bSkyAtmosphereIblAvailable = false;
 
         // Neural BRDF リソース
         NeuralBRDFData m_NeuralBRDFData;         ///< 学習済みBRDFデータ

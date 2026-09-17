@@ -630,6 +630,19 @@ target_compile_definitions(SkyAtmospherePassContractTest PRIVATE
 set_target_properties(SkyAtmospherePassContractTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkyAtmospherePassContractTest COMMAND SkyAtmospherePassContractTest)
 
+add_executable(SkyAtmosphereIblTest
+    SkyAtmosphereIblTest.cpp
+)
+target_link_libraries(SkyAtmosphereIblTest PRIVATE Core)
+target_include_directories(SkyAtmosphereIblTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(SkyAtmosphereIblTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(SkyAtmosphereIblTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME SkyAtmosphereIblTest COMMAND SkyAtmosphereIblTest)
+
 add_executable(DirectionalShadowPassWiringContractTest
     DirectionalShadowPassWiringContractTest.cpp
 )

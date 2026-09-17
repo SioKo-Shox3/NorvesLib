@@ -513,6 +513,16 @@ namespace
         assert(!resources.DirectionalShadow.bEnabled);
     }
 
+    void TestSceneProxySkyLifecycle()
+    {
+        SceneProxy scene;
+        scene.SkyAtmosphere.bEnabled = true;
+        scene.SkyAtmosphere.SunAltitudeDegrees = 12.0f;
+        scene.Clear();
+        assert(!scene.SkyAtmosphere.bEnabled);
+        assert(scene.SkyAtmosphere.SunAltitudeDegrees == 45.0f);
+    }
+
     void AssertLightingPassSourceContract(const std::string& sourceRoot)
     {
         const std::string lightingPassSource =
@@ -539,6 +549,13 @@ namespace
         assert(ContainsText(lightingPassSource, "m_EnvironmentTexture"));
         assert(ContainsText(lightingPassSource, "m_DiffuseIrradianceTexture"));
         assert(ContainsText(lightingPassSource, "m_PrefilteredSpecularTexture"));
+        assert(ContainsText(lightingPassSource, "EnsureSkyAtmosphereIbl("));
+        assert(ContainsText(lightingPassSource, "BuildSkyAtmosphereRadianceSource"));
+        assert(ContainsText(lightingPassSource, "m_SkyAtmosphereDiffuseIrradianceTexture"));
+        assert(ContainsText(lightingPassSource, "m_SkyAtmospherePrefilteredSpecularTexture"));
+        assert(ContainsText(lightingPassSource, "environmentRadianceSampler"));
+        assert(ContainsText(lightingPassSource, "context.SkyAtmosphere.RadianceTexture->GetWidth()"));
+        assert(ContainsText(lightingPassSource, "bSkyAtmosphereRequested ? m_DefaultBlackTexture"));
         assert(ContainsText(lightingPassSource, "m_BrdfLutTexture"));
         assert(ContainsText(lightingPassSource, "params.bIBLEnabled != 0u"));
         assert(ContainsText(lightingPassSource, "if (m_bInitialized && context.PhysicalLighting.bActive)"));
@@ -599,6 +616,7 @@ int main()
     TestPackWhiteAndColoredLightsUsesYOneChromaticityAndCanonicalIntensity();
     TestLocalAttenuationBoundaryLiteralTable();
     TestPhysicalLightingResourceLifecycle();
+    TestSceneProxySkyLifecycle();
 
 #ifndef NORVES_SOURCE_DIR
 #error NORVES_SOURCE_DIR must be defined for LightingLightBufferTest.

@@ -789,6 +789,97 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    static bool AreSkyAtmosphereParametersEqual(const SkyAtmosphereParameters& lhs,
+                                                const SkyAtmosphereParameters& rhs)
+    {
+        return lhs.bEnabled == rhs.bEnabled &&
+               lhs.SunAltitudeDegrees == rhs.SunAltitudeDegrees &&
+               lhs.SunAzimuthDegrees == rhs.SunAzimuthDegrees &&
+               lhs.SunLuminanceNits == rhs.SunLuminanceNits &&
+               lhs.PlanetRadiusMeters == rhs.PlanetRadiusMeters &&
+               lhs.AtmosphereHeightMeters == rhs.AtmosphereHeightMeters &&
+               lhs.RayleighScaleHeightMeters == rhs.RayleighScaleHeightMeters &&
+               lhs.MieScaleHeightMeters == rhs.MieScaleHeightMeters &&
+               lhs.MieAnisotropy == rhs.MieAnisotropy &&
+               lhs.GroundAlbedo.x == rhs.GroundAlbedo.x &&
+               lhs.GroundAlbedo.y == rhs.GroundAlbedo.y &&
+               lhs.GroundAlbedo.z == rhs.GroundAlbedo.z;
+    }
+
+    static float ClampSkyRadianceForFp16(float value)
+    {
+        constexpr float kFp16SafeMax = 65504.0f * 0.9f;
+        return std::isfinite(value) ? std::clamp(value, 0.0f, kFp16SafeMax) : 0.0f;
+    }
+
+    static Math::Vector3 SkyDirectionFromEquirectangular(uint32_t x,
+                                                         uint32_t y,
+                                                         uint32_t width,
+                                                         uint32_t height)
+    {
+        constexpr float kPi = 3.14159265358979323846f;
+        const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(width);
+        const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(height);
+        const float longitude = (u - 0.5f) * 2.0f * kPi;
+        const float latitude = (v - 0.5f) * kPi;
+        const float horizontal = std::cos(latitude);
+        return Math::Vector3(horizontal * std::cos(longitude),
+                             -std::sin(latitude),
+                             horizontal * std::sin(longitude));
+    }
+
+    static bool BuildSkyAtmosphereRadianceSource(
+        const SkyAtmosphereParameters& parameters,
+        uint32_t width,
+        uint32_t height,
+        Container::VariableArray<float>& outSource)
+    {
+        outSource.clear();
+        if (width == 0u || height == 0u ||
+            static_cast<size_t>(width) > std::numeric_limits<size_t>::max() /
+                                      static_cast<size_t>(height))
+        {
+            return false;
+        }
+
+        const size_t pixelCount = static_cast<size_t>(width) * height;
+        if (pixelCount > std::numeric_limits<size_t>::max() / 4u)
+        {
+            return false;
+        }
+
+        const SkyAtmosphereParameters sanitized =
+            SanitizeSkyAtmosphereParameters(parameters);
+        if (!sanitized.bEnabled)
+        {
+            return false;
+        }
+
+        outSource.resize(pixelCount * 4u, 0.0f);
+        for (uint32_t y = 0u; y < height; ++y)
+        {
+            for (uint32_t x = 0u; x < width; ++x)
+            {
+                const SkyRadianceSample sample = EvaluateHillaireSkyReference(
+                    sanitized, SkyDirectionFromEquirectangular(x, y, width, height));
+                if (!sample.bValid || !std::isfinite(sample.Radiance.x) ||
+                    !std::isfinite(sample.Radiance.y) ||
+                    !std::isfinite(sample.Radiance.z))
+                {
+                    outSource.clear();
+                    return false;
+                }
+
+                const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
+                outSource[offset + 0u] = ClampSkyRadianceForFp16(sample.Radiance.x);
+                outSource[offset + 1u] = ClampSkyRadianceForFp16(sample.Radiance.y);
+                outSource[offset + 2u] = ClampSkyRadianceForFp16(sample.Radiance.z);
+                outSource[offset + 3u] = 1.0f;
+            }
+        }
+        return true;
+    }
+
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
 
     static RHI::DescriptorSetDesc CreateLightingDescriptorSetDesc(bool bNeuralBRDFAvailable)
@@ -1244,6 +1335,8 @@ namespace NorvesLib::Core::Rendering
         m_EnvironmentTexture.reset();
         m_DiffuseIrradianceTexture.reset();
         m_PrefilteredSpecularTexture.reset();
+        m_SkyAtmosphereDiffuseIrradianceTexture.reset();
+        m_SkyAtmospherePrefilteredSpecularTexture.reset();
         m_ValidationRaw250EnvironmentTexture.reset();
         m_ValidationRaw250DiffuseIrradianceTexture.reset();
         m_ValidationRaw250Texture.reset();
@@ -1253,6 +1346,11 @@ namespace NorvesLib::Core::Rendering
         m_BrdfLutTexture.reset();
         m_DefaultBlackTexture.reset();
         m_bIBLAvailable = false;
+        m_SkyAtmosphereIblParameters = SkyAtmosphereParameters{};
+        m_SkyAtmosphereIblRadianceWidth = 0u;
+        m_SkyAtmosphereIblRadianceHeight = 0u;
+        m_bSkyAtmosphereIblCacheValid = false;
+        m_bSkyAtmosphereIblAvailable = false;
 
         // Neural BRDF resources
         m_NeuralBRDFWeightBuffer.reset();
@@ -2098,7 +2196,7 @@ namespace NorvesLib::Core::Rendering
             context.SkyAtmosphere.RadianceTexture &&
             context.SkyAtmosphere.TransmittanceTexture &&
             context.SkyAtmosphere.SunDiskTexture &&
-            context.SkyAtmosphere.Sampler;
+            context.SkyAtmosphere.Sampler && m_bSkyAtmosphereIblAvailable;
 
         const RHI::TexturePtr& environmentTexture =
             bValidationRaw251 ? m_DefaultBlackTexture :
@@ -2122,6 +2220,9 @@ namespace NorvesLib::Core::Rendering
                 m_ValidationRaw252DiffuseIrradianceTexture :
             bValidationRaw250 && m_ValidationRaw250DiffuseIrradianceTexture ?
                 m_ValidationRaw250DiffuseIrradianceTexture :
+            bSkyAtmosphereAvailable && m_SkyAtmosphereDiffuseIrradianceTexture ?
+                m_SkyAtmosphereDiffuseIrradianceTexture :
+            bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_DiffuseIrradianceTexture ?
                 m_DiffuseIrradianceTexture : m_DefaultBlackTexture;
         m_LightingDescriptorSet->BindTexture(12, diffuseIrradianceTexture);
@@ -2132,6 +2233,9 @@ namespace NorvesLib::Core::Rendering
             bValidationRaw252 && m_ValidationRaw252PrefilteredSpecularTexture ?
                 m_ValidationRaw252PrefilteredSpecularTexture :
             bValidationRaw250 && m_ValidationRaw250Texture ? m_ValidationRaw250Texture :
+            bSkyAtmosphereAvailable && m_SkyAtmospherePrefilteredSpecularTexture ?
+                m_SkyAtmospherePrefilteredSpecularTexture :
+            bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_PrefilteredSpecularTexture ? m_PrefilteredSpecularTexture :
             m_DefaultBlackTexture;
         m_LightingDescriptorSet->BindTexture(13, prefilteredSpecularTexture);
@@ -2276,6 +2380,75 @@ namespace NorvesLib::Core::Rendering
         return m_LightArrayCapacity * static_cast<uint32_t>(sizeof(GPULightData));
     }
 
+    bool LightingPass::EnsureSkyAtmosphereIbl(const SkyAtmosphereParameters& parameters,
+                                              uint32_t radianceWidth,
+                                              uint32_t radianceHeight)
+    {
+        const SkyAtmosphereParameters sanitized =
+            SanitizeSkyAtmosphereParameters(parameters);
+        if (!m_Device || !sanitized.bEnabled || radianceWidth == 0u || radianceHeight == 0u)
+        {
+            m_SkyAtmosphereDiffuseIrradianceTexture.reset();
+            m_SkyAtmospherePrefilteredSpecularTexture.reset();
+            m_bSkyAtmosphereIblCacheValid = false;
+            m_bSkyAtmosphereIblAvailable = false;
+            return false;
+        }
+
+        if (m_bSkyAtmosphereIblCacheValid &&
+            m_SkyAtmosphereIblRadianceWidth == radianceWidth &&
+            m_SkyAtmosphereIblRadianceHeight == radianceHeight &&
+            AreSkyAtmosphereParametersEqual(m_SkyAtmosphereIblParameters, sanitized))
+        {
+            return m_bSkyAtmosphereIblAvailable;
+        }
+
+        m_SkyAtmosphereIblParameters = sanitized;
+        m_SkyAtmosphereIblRadianceWidth = radianceWidth;
+        m_SkyAtmosphereIblRadianceHeight = radianceHeight;
+        m_bSkyAtmosphereIblCacheValid = true;
+        m_bSkyAtmosphereIblAvailable = false;
+        m_SkyAtmosphereDiffuseIrradianceTexture.reset();
+        m_SkyAtmospherePrefilteredSpecularTexture.reset();
+
+        Container::VariableArray<float> sourceData;
+        if (!BuildSkyAtmosphereRadianceSource(sanitized,
+                                              radianceWidth,
+                                              radianceHeight,
+                                              sourceData))
+        {
+            NORVES_LOG_WARNING("LightingPass",
+                               "Sky atmosphere radiance source generation failed; using black IBL");
+            return false;
+        }
+
+        RHI::TexturePtr generatedEnvironment;
+        RHI::TexturePtr generatedDiffuse;
+        RHI::TexturePtr generatedPrefilter;
+        if (!CreateIblResources(m_Device,
+                                sourceData,
+                                radianceWidth,
+                                radianceHeight,
+                                "SkyAtmosphere.Environment",
+                                "SkyAtmosphere.DiffuseIrradiance",
+                                "SkyAtmosphere.PrefilteredSpecular",
+                                generatedEnvironment,
+                                generatedDiffuse,
+                                generatedPrefilter))
+        {
+            NORVES_LOG_WARNING("LightingPass",
+                               "Sky atmosphere IBL generation failed; using black IBL");
+            return false;
+        }
+
+        m_SkyAtmosphereDiffuseIrradianceTexture = generatedDiffuse;
+        m_SkyAtmospherePrefilteredSpecularTexture = generatedPrefilter;
+        m_bSkyAtmosphereIblAvailable =
+            m_SkyAtmosphereDiffuseIrradianceTexture &&
+            m_SkyAtmospherePrefilteredSpecularTexture;
+        return m_bSkyAtmosphereIblAvailable;
+    }
+
     bool LightingPass::UpdateLightBuffer(ViewRenderContext& context,
                                          bool bShadowAvailable,
                                          bool bSSAOAvailable)
@@ -2381,7 +2554,16 @@ namespace NorvesLib::Core::Rendering
             context.SkyAtmosphere.TransmittanceTexture &&
             context.SkyAtmosphere.SunDiskTexture &&
             context.SkyAtmosphere.Sampler;
-        const bool bSkyAtmosphereAvailable = bSkyAtmosphereTexturesAvailable;
+        bool bSkyAtmosphereIblAvailable = false;
+        if (bSkyAtmosphereTexturesAvailable)
+        {
+            bSkyAtmosphereIblAvailable = EnsureSkyAtmosphereIbl(
+                context.SkyAtmosphere.Parameters,
+                context.SkyAtmosphere.RadianceTexture->GetWidth(),
+                context.SkyAtmosphere.RadianceTexture->GetHeight());
+        }
+        const bool bSkyAtmosphereAvailable =
+            bSkyAtmosphereTexturesAvailable && bSkyAtmosphereIblAvailable;
         if (bSkyAtmosphereRequested)
         {
             const Math::Vector3 sunDirection =
@@ -2451,12 +2633,18 @@ namespace NorvesLib::Core::Rendering
                 m_ValidationRaw252DiffuseIrradianceTexture :
             bValidationRaw250 && m_ValidationRaw250DiffuseIrradianceTexture ?
                 m_ValidationRaw250DiffuseIrradianceTexture :
+            bSkyAtmosphereAvailable && m_SkyAtmosphereDiffuseIrradianceTexture ?
+                m_SkyAtmosphereDiffuseIrradianceTexture :
+            bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_DiffuseIrradianceTexture ?
                 m_DiffuseIrradianceTexture : m_DefaultBlackTexture;
         const RHI::TexturePtr& prefilteredSpecular =
             bValidationRaw252 && m_ValidationRaw252PrefilteredSpecularTexture ?
                 m_ValidationRaw252PrefilteredSpecularTexture :
             bValidationRaw250 && m_ValidationRaw250Texture ? m_ValidationRaw250Texture :
+            bSkyAtmosphereAvailable && m_SkyAtmospherePrefilteredSpecularTexture ?
+                m_SkyAtmospherePrefilteredSpecularTexture :
+            bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_PrefilteredSpecularTexture ? m_PrefilteredSpecularTexture :
             m_DefaultBlackTexture;
         if (m_bInitialized && context.PhysicalLighting.bActive)
