@@ -44,7 +44,7 @@ namespace NorvesLib::RHI::Vulkan
         // カラーアタッチメントのイメージビュー取得
         for (const auto &target : m_desc.colorTargets)
         {
-            vk::ImageView imageView = GetImageViewFromTexture(target);
+            vk::ImageView imageView = GetImageViewFromTexture(target, 0, false);
             if (!imageView)
             {
                 throw std::runtime_error("アタッチメントのイメージビューが無効です");
@@ -55,7 +55,17 @@ namespace NorvesLib::RHI::Vulkan
         // デプスアタッチメントのイメージビュー取得
         if (m_desc.depthStencilTarget)
         {
-            vk::ImageView depthImageView = GetImageViewFromTexture(m_desc.depthStencilTarget);
+            if (m_desc.depthStencilTarget->GetArraySize() == 0 ||
+                m_desc.depthStencilArrayLayer >= m_desc.depthStencilTarget->GetArraySize() ||
+                m_desc.depthStencilTarget->IsCubemap())
+            {
+                throw std::runtime_error("デプス配列アタッチメントのlayerが範囲外です");
+            }
+
+            vk::ImageView depthImageView = GetImageViewFromTexture(
+                m_desc.depthStencilTarget,
+                m_desc.depthStencilArrayLayer,
+                true);
             if (!depthImageView)
             {
                 throw std::runtime_error("デプスアタッチメントのイメージビューが無効です");
@@ -70,7 +80,7 @@ namespace NorvesLib::RHI::Vulkan
         framebufferInfo.pAttachments = m_attachmentViews.data();
         framebufferInfo.width = m_desc.width;
         framebufferInfo.height = m_desc.height;
-        framebufferInfo.layers = 1; // マルチレイヤーの場合は変更が必要
+        framebufferInfo.layers = 1; // 配列テクスチャも指定layerの1層viewとして扱う
 
         // フレームバッファの作成
         vk::Result result;
@@ -83,7 +93,9 @@ namespace NorvesLib::RHI::Vulkan
     }
 
     // テクスチャからVulkanイメージビューを取得
-    vk::ImageView VulkanFramebuffer::GetImageViewFromTexture(const TexturePtr &texture)
+    vk::ImageView VulkanFramebuffer::GetImageViewFromTexture(const TexturePtr &texture,
+                                                             uint32_t arrayLayer,
+                                                             bool bUseArrayLayer)
     {
         if (texture)
         {
@@ -91,7 +103,9 @@ namespace NorvesLib::RHI::Vulkan
             auto vulkanTexture = DynamicPointerCast<VulkanTexture>(texture);
             if (vulkanTexture)
             {
-                return vulkanTexture->GetVkImageView();
+                return bUseArrayLayer
+                    ? vulkanTexture->GetArrayLayerImageView(arrayLayer)
+                    : vulkanTexture->GetVkImageView();
             }
         }
 

@@ -1,7 +1,6 @@
 ﻿#pragma once
 
 #include "RHITypes.h"
-#include <vector>
 
 namespace NorvesLib::RHI 
 {
@@ -57,6 +56,15 @@ public:
      * @return デプスステンシルアタッチメントを持つ場合true
      */
     virtual bool HasDepthStencilAttachment() const = 0;
+
+    /**
+     * @brief デプスステンシル配列アタッチメントのレイヤーを取得
+     *
+     * 非配列テクスチャでは常に0を返します。バックエンドは指定レイヤーだけを
+     * attachment viewへ束ね、フレームバッファ自体は1 layerとして扱います。
+     * @return デプスステンシル配列レイヤー
+     */
+    virtual uint32_t GetDepthStencilArrayLayer() const { return 0; }
 };
 
 } // namespace NorvesLib::RHI

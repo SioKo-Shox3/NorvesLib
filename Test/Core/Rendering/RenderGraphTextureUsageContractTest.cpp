@@ -6,6 +6,8 @@
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
+#include "Rendering/ShadowMapPass.h"
+#include "Rendering/ShaderManager.h"
 #include "Rendering/ToneMappingPass.h"
 #include "Rendering/UpscalePass.h"
 #undef private
@@ -20,6 +22,7 @@
 #include "RHI/IRenderPass.h"
 #include "RHI/ISampler.h"
 #include "RHI/IShader.h"
+#include "RHI/IShaderCompiler.h"
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
 #include <cassert>
@@ -454,6 +457,44 @@ namespace
         uint32_t UpdateCount = 0;
     };
 
+    class FakeShaderCompiler final : public RHI::IShaderCompiler
+    {
+    public:
+        RHI::ShaderCompileResult CompileFromSource(const Container::String& source,
+                                                   RHI::ShaderStage stage,
+                                                   const Container::String& filename = "shader",
+                                                   const Container::String& entryPoint = "main") override
+        {
+            (void)source;
+            (void)stage;
+            (void)filename;
+            (void)entryPoint;
+            return MakeResult();
+        }
+
+        RHI::ShaderCompileResult CompileFromFile(const Container::String& filePath,
+                                                 RHI::ShaderStage stage,
+                                                 const Container::String& entryPoint = "main") override
+        {
+            (void)filePath;
+            (void)stage;
+            (void)entryPoint;
+            return MakeResult();
+        }
+
+    private:
+        RHI::ShaderCompileResult MakeResult() const
+        {
+            RHI::ShaderCompileResult result;
+            result.bSuccess = true;
+            result.ByteCode.push_back(0x03);
+            result.ByteCode.push_back(0x02);
+            result.ByteCode.push_back(0x23);
+            result.ByteCode.push_back(0x07);
+            return result;
+        }
+    };
+
     class FakeDevice final : public RHI::IDevice
     {
     public:
@@ -499,6 +540,10 @@ namespace
         RHI::FramebufferPtr CreateFramebuffer(const RHI::FramebufferDesc& desc) override
         {
             ++CreatedFramebufferCount;
+            if (desc.depthStencilTarget)
+            {
+                CreatedFramebufferDescs.push_back(desc);
+            }
             return RHI::MakeShared<FakeFramebuffer>(desc);
         }
 
@@ -522,7 +567,7 @@ namespace
 
         RHI::ShaderCompilerPtr CreateShaderCompiler() override
         {
-            return nullptr;
+            return RHI::MakeShared<FakeShaderCompiler>();
         }
 
         RHI::IGPUResourceAllocator* GetResourceAllocator() override
@@ -557,6 +602,7 @@ namespace
         FakeAllocator Allocator;
         RHI::DeviceCapabilities Capabilities;
         Container::VariableArray<RHI::TextureDesc> CreatedTextureDescs;
+        Container::VariableArray<RHI::FramebufferDesc> CreatedFramebufferDescs;
     };
 
     class FakeCommandList final : public RHI::ICommandList
@@ -893,6 +939,46 @@ namespace
         return nullptr;
     }
 
+    void TestShadowMapGraphImportsFourLayerArrayAndPerLayerFramebuffers()
+    {
+        GraphFixture fixture;
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(&fixture.Device, ""));
+        fixture.Context.ShaderMgr = &shaderManager;
+
+        ShadowMapPass pass;
+        assert(pass.Initialize(fixture.Context));
+        assert(pass.GetShadowMapTexture());
+        assert(pass.GetShadowMapTexture()->GetArraySize() == 4);
+        assert(pass.GetShadowMapTexture()->GetFormat() == RHI::Format::D32_FLOAT);
+        assert(HasUsage(pass.GetShadowMapTexture()->GetUsage(),
+                        RHI::ResourceUsage::DepthStencil));
+        assert(HasUsage(pass.GetShadowMapTexture()->GetUsage(),
+                        RHI::ResourceUsage::ShaderResource));
+
+        assert(fixture.Device.CreatedFramebufferDescs.size() == 4);
+        for (uint32_t cascadeIndex = 0; cascadeIndex < 4; ++cascadeIndex)
+        {
+            const RHI::FramebufferDesc& desc = fixture.Device.CreatedFramebufferDescs[cascadeIndex];
+            assert(desc.depthStencilTarget.get() == pass.GetShadowMapTexture());
+            assert(desc.depthStencilArrayLayer == cascadeIndex);
+            assert(desc.width == 2048);
+            assert(desc.height == 2048);
+        }
+
+        fixture.Graph.AddPass(&pass);
+        assert(fixture.Graph.Compile(fixture.Context));
+        assert(pass.GetShadowMapHandle().IsValid());
+        RenderGraphResources resources(&fixture.Graph);
+        RHI::TexturePtr importedShadowMap = resources.GetTexture(pass.GetShadowMapHandle());
+        assert(importedShadowMap.get() == pass.GetShadowMapTexture());
+        assert(importedShadowMap->GetArraySize() == 4);
+
+        pass.Shutdown();
+        shaderManager.Shutdown();
+        std::cout << "TestShadowMapGraphImportsFourLayerArrayAndPerLayerFramebuffers passed\n";
+    }
+
     class TestFXAAPass final : public FXAAPass
     {
     public:
@@ -1186,6 +1272,7 @@ int main()
     std::cout << "RenderGraphTextureUsageContractTest start\n";
 
     TestRenderTargetDescDoesNotIncludeTransferSrc();
+    TestShadowMapGraphImportsFourLayerArrayAndPerLayerFramebuffers();
     TestToneMappingGraphOutputIncludesTransferSrc();
     TestLightingSceneColorIncludesTransferSrcAndIsExported();
     TestLightingPersistentSceneColorIncludesTransferSrc();

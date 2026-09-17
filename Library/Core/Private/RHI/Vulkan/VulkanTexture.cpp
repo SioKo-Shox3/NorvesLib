@@ -140,6 +140,16 @@ namespace NorvesLib::RHI::Vulkan
     {
         vk::Device vkDevice = m_device->GetVkDevice();
 
+        // 配列layer ImageViewの破棄
+        for (auto arrayLayerView : m_arrayLayerImageViews)
+        {
+            if (arrayLayerView)
+            {
+                vkDevice.destroyImageView(arrayLayerView);
+            }
+        }
+        m_arrayLayerImageViews.clear();
+
         // per-mip ImageViewの破棄
         for (auto mipView : m_mipImageViews)
         {
@@ -369,6 +379,66 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         return m_mipImageViews[mipLevel];
+    }
+
+    vk::ImageView VulkanTexture::GetArrayLayerImageView(uint32_t arrayLayer) const
+    {
+        if (m_desc.Dimension != TextureDimension::Texture2D ||
+            m_desc.IsCubemap ||
+            m_desc.ArraySize == 0 ||
+            arrayLayer >= m_desc.ArraySize)
+        {
+            return vk::ImageView{};
+        }
+
+        if (m_arrayLayerImageViews.empty())
+        {
+            m_arrayLayerImageViews.resize(m_desc.ArraySize, nullptr);
+        }
+
+        if (!m_arrayLayerImageViews[arrayLayer])
+        {
+            vk::ImageViewCreateInfo viewInfo;
+            viewInfo.image = m_image;
+            viewInfo.viewType = vk::ImageViewType::e2D;
+            viewInfo.format = ConvertToVkFormat(m_desc.TextureFormat);
+            viewInfo.components.r = vk::ComponentSwizzle::eIdentity;
+            viewInfo.components.g = vk::ComponentSwizzle::eIdentity;
+            viewInfo.components.b = vk::ComponentSwizzle::eIdentity;
+            viewInfo.components.a = vk::ComponentSwizzle::eIdentity;
+
+            if ((m_desc.Usage & ResourceUsage::DepthStencil) != ResourceUsage::None)
+            {
+                if (m_desc.TextureFormat == Format::D24_UNORM_S8_UINT)
+                {
+                    viewInfo.subresourceRange.aspectMask =
+                        vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
+                }
+                else
+                {
+                    viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+                }
+            }
+            else
+            {
+                viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            }
+
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = arrayLayer;
+            viewInfo.subresourceRange.layerCount = 1;
+
+            vk::Device vkDevice = m_device->GetVkDevice();
+            auto createResult = vkDevice.createImageView(viewInfo);
+            if (createResult.result != vk::Result::eSuccess)
+            {
+                return vk::ImageView{};
+            }
+            m_arrayLayerImageViews[arrayLayer] = createResult.value;
+        }
+
+        return m_arrayLayerImageViews[arrayLayer];
     }
 
     uint64_t VulkanTexture::GetMipImageViewHandle(uint32_t mipLevel) const

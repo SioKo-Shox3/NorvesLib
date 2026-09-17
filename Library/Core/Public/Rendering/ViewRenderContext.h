@@ -57,6 +57,20 @@ namespace NorvesLib::Core::Rendering
         bool bEnabled = false;
     };
 
+    inline constexpr uint32_t PhysicalLightingShadowCascadeCount = 4u;
+    inline constexpr uint32_t PhysicalLightingShadowSplitCount =
+        PhysicalLightingShadowCascadeCount + 1u;
+
+    struct CascadedDirectionalShadowShaderValues
+    {
+        float View[PhysicalLightingShadowCascadeCount][16] = {};
+        float Projection[PhysicalLightingShadowCascadeCount][16] = {};
+        float SplitDistances[PhysicalLightingShadowSplitCount] = {};
+        uint32_t CascadeCount = 0;
+        uint64_t LightId = 0;
+        bool bEnabled = false;
+    };
+
     struct PhysicalLightingResources
     {
         uint64_t FrameNumber = 0;
@@ -69,6 +83,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr ShadowMapTexture;
         RHI::SamplerPtr ShadowSampler;
         DirectionalShadowShaderValues DirectionalShadow;
+        CascadedDirectionalShadowShaderValues CascadedShadow;
 
         RHI::BufferPtr LightBuffer;
         uint32_t LogicalLightCount = 0;
@@ -110,6 +125,7 @@ namespace NorvesLib::Core::Rendering
             PrefilteredSpecularMipLevels = 0;
             IBLIntensity = 0.0f;
             bIBLEnabled = false;
+            CascadedShadow = CascadedDirectionalShadowShaderValues{};
             for (uint32_t index = 0; index < 16; ++index)
             {
                 DirectionalShadow.View[index] = 0.0f;
@@ -151,6 +167,44 @@ namespace NorvesLib::Core::Rendering
             ShadowMapTexture = shadowMap;
             ShadowSampler = shadowSampler;
             bShadowPublished = true;
+        }
+
+        void PublishCascadedShadow(const float* views,
+                                   const float* projections,
+                                   const float* splitDistances,
+                                   uint32_t cascadeCount,
+                                   uint64_t lightId,
+                                   bool bEnabledValue)
+        {
+            CascadedShadow = CascadedDirectionalShadowShaderValues{};
+            if (views == nullptr || projections == nullptr || splitDistances == nullptr ||
+                cascadeCount > PhysicalLightingShadowCascadeCount)
+            {
+                return;
+            }
+
+            for (uint32_t cascadeIndex = 0;
+                 cascadeIndex < PhysicalLightingShadowCascadeCount;
+                 ++cascadeIndex)
+            {
+                for (uint32_t matrixIndex = 0; matrixIndex < 16; ++matrixIndex)
+                {
+                    CascadedShadow.View[cascadeIndex][matrixIndex] =
+                        views[cascadeIndex * 16u + matrixIndex];
+                    CascadedShadow.Projection[cascadeIndex][matrixIndex] =
+                        projections[cascadeIndex * 16u + matrixIndex];
+                }
+            }
+            for (uint32_t splitIndex = 0;
+                 splitIndex < PhysicalLightingShadowSplitCount;
+                 ++splitIndex)
+            {
+                CascadedShadow.SplitDistances[splitIndex] = splitDistances[splitIndex];
+            }
+            CascadedShadow.CascadeCount = cascadeCount;
+            CascadedShadow.LightId = lightId;
+            CascadedShadow.bEnabled = bEnabledValue &&
+                cascadeCount == PhysicalLightingShadowCascadeCount;
         }
 
         void PublishLighting(const RHI::BufferPtr& lightBuffer,

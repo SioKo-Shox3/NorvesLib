@@ -666,6 +666,19 @@ target_compile_definitions(DirectionalShadowPassWiringContractTest PRIVATE
 set_target_properties(DirectionalShadowPassWiringContractTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME DirectionalShadowPassWiringContractTest COMMAND DirectionalShadowPassWiringContractTest)
 
+add_executable(ShadowMapArrayLayerContractTest
+    ShadowMapArrayLayerContractTest.cpp
+)
+target_link_libraries(ShadowMapArrayLayerContractTest PRIVATE Core)
+target_include_directories(ShadowMapArrayLayerContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(ShadowMapArrayLayerContractTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(ShadowMapArrayLayerContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME ShadowMapArrayLayerContractTest COMMAND ShadowMapArrayLayerContractTest)
+
 add_executable(ToneMappingParamsLayoutTest
     ToneMappingParamsLayoutTest.cpp
 )
