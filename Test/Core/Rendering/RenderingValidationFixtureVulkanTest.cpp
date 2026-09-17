@@ -18,8 +18,10 @@ namespace
                                    Core::Container::String& reason) override
         {
             const bool bValid = frame.IsSuccess() && frame.Width == ValidationWidth &&
-                                frame.Height == ValidationHeight && frame.BytesPerPixel == 4u &&
-                                frame.Pixels.size() == ValidationWidth * ValidationHeight * 4u;
+                                frame.Height == ValidationHeight &&
+                                frame.Format == RHI::Format::R16G16B16A16_FLOAT &&
+                                frame.BytesPerPixel == 8u &&
+                                frame.Pixels.size() == ValidationWidth * ValidationHeight * 8u;
             if (!bValid)
             {
                 reason = TEXT("captured frame dimensions or storage are invalid");
