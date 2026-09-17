@@ -122,6 +122,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkyAtmosphere.cpp
     Private/Rendering/SkyAtmospherePass.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
+    Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
     Private/Rendering/ToneMappingPass.cpp

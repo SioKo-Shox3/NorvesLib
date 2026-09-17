@@ -606,6 +606,16 @@ target_include_directories(DirectionalShadowLightMatricesTest PRIVATE
 )
 set_target_properties(DirectionalShadowLightMatricesTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME DirectionalShadowLightMatricesTest COMMAND DirectionalShadowLightMatricesTest)
+add_executable(CascadedShadowLightMatricesTest
+    CascadedShadowLightMatricesTest.cpp
+)
+target_link_libraries(CascadedShadowLightMatricesTest PRIVATE Core)
+target_include_directories(CascadedShadowLightMatricesTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(CascadedShadowLightMatricesTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME CascadedShadowLightMatricesTest COMMAND CascadedShadowLightMatricesTest)
 
 add_executable(SkyAtmosphereModelTest
     SkyAtmosphereModelTest.cpp
