@@ -119,6 +119,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/DynamicUniformAllocator.cpp
     Private/Rendering/PostProcessStack.cpp
     Private/Rendering/GBufferPass.cpp
+    Private/Rendering/SkyAtmosphere.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
@@ -314,6 +315,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ITextureHandleRegistrar.h
     Public/Rendering/ProceduralMeshGPUData.h
     Public/Rendering/SceneProxy.h
+    Public/Rendering/SkyAtmosphere.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h
     Public/Rendering/FrameCaptureThumbnailEncoder.h
