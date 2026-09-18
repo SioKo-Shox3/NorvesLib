@@ -284,11 +284,14 @@ namespace
                           "MakeDirectionalShadowMatrixSettings",
                           "LightingPass does not call the directional shadow helper");
         ExpectContains(source,
-                       "context.PhysicalLighting.DirectionalShadow.View",
-                       "LightingPass consumes the published shadow view matrix");
+                       "context.PhysicalLighting.CascadedShadow.View",
+                       "LightingPass consumes the published cascaded shadow view matrices");
         ExpectContains(source,
-                       "context.PhysicalLighting.DirectionalShadow.Projection",
-                       "LightingPass consumes the published shadow projection matrix");
+                       "context.PhysicalLighting.CascadedShadow.Projection",
+                       "LightingPass consumes the published cascaded shadow projection matrices");
+        ExpectContains(source,
+                       "context.PhysicalLighting.CascadedShadow.SplitDistances",
+                       "LightingPass consumes the published cascaded split distances");
         ExpectContains(source,
                        "context.PhysicalLighting.PublishLighting(",
                        "LightingPass publishes the light SSBO and IBL resources");

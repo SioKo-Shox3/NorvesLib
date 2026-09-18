@@ -791,77 +791,96 @@ namespace
                                  declaration.bHasBinding,
                                  declaration.binding);
 
-            const std::size_t samplerTypePosition =
+            const std::size_t samplerArrayTypePosition =
                 FindIdentifierToken(maskedSource,
-                                    "sampler2D",
+                                    "sampler2DArray",
                                     closingPosition + 1,
                                     declarationEnd);
-            if (samplerTypePosition != TestString::npos)
+            if (samplerArrayTypePosition != TestString::npos)
             {
-                declaration.resourceType = "sampler2D";
-                std::size_t resourceNameEndPosition = samplerTypePosition;
-                declaration.resourceName = ReadIdentifier(maskedSource,
-                                                          samplerTypePosition +
-                                                              TestString("sampler2D").size(),
-                                                          declarationEnd,
-                                                          resourceNameEndPosition);
+                declaration.resourceType = "sampler2DArray";
+                std::size_t resourceNameEndPosition = samplerArrayTypePosition;
+                declaration.resourceName =
+                    ReadIdentifier(maskedSource,
+                                   samplerArrayTypePosition +
+                                       TestString("sampler2DArray").size(),
+                                   declarationEnd,
+                                   resourceNameEndPosition);
             }
             else
             {
-                const std::size_t bufferTypePosition =
+                const std::size_t samplerTypePosition =
                     FindIdentifierToken(maskedSource,
-                                        "buffer",
+                                        "sampler2D",
                                         closingPosition + 1,
                                         declarationEnd);
-                if (bufferTypePosition != TestString::npos)
+                if (samplerTypePosition != TestString::npos)
                 {
-                    declaration.resourceType = "buffer";
-                    std::size_t blockNameEndPosition = bufferTypePosition;
-                    const TestString blockName =
+                    declaration.resourceType = "sampler2D";
+                    std::size_t resourceNameEndPosition = samplerTypePosition;
+                    declaration.resourceName =
                         ReadIdentifier(maskedSource,
-                                       bufferTypePosition + TestString("buffer").size(),
-                                       declarationEnd,
-                                       blockNameEndPosition);
-                    const std::size_t closingBlockPosition =
-                        maskedSource.substr(0, declarationEnd + 1).FindLast('}');
-                    assert(closingBlockPosition != TestString::npos);
-                    std::size_t resourceNameEndPosition = closingBlockPosition + 1;
-                    const TestString instanceName =
-                        ReadIdentifier(maskedSource,
-                                       closingBlockPosition + 1,
+                                       samplerTypePosition + TestString("sampler2D").size(),
                                        declarationEnd,
                                        resourceNameEndPosition);
-                    declaration.resourceName = instanceName.empty() ? blockName : instanceName;
                 }
                 else
                 {
-                    const std::size_t uniformTypePosition =
+                    const std::size_t bufferTypePosition =
                         FindIdentifierToken(maskedSource,
-                                            "uniform",
+                                            "buffer",
                                             closingPosition + 1,
                                             declarationEnd);
-                    if (uniformTypePosition != TestString::npos)
+                    if (bufferTypePosition != TestString::npos)
                     {
-                        declaration.resourceType = "uniform";
+                        declaration.resourceType = "buffer";
+                        std::size_t blockNameEndPosition = bufferTypePosition;
+                        const TestString blockName =
+                            ReadIdentifier(maskedSource,
+                                           bufferTypePosition + TestString("buffer").size(),
+                                           declarationEnd,
+                                           blockNameEndPosition);
                         const std::size_t closingBlockPosition =
                             maskedSource.substr(0, declarationEnd + 1).FindLast('}');
-                        if (closingBlockPosition != TestString::npos)
+                        assert(closingBlockPosition != TestString::npos);
+                        std::size_t resourceNameEndPosition = closingBlockPosition + 1;
+                        const TestString instanceName =
+                            ReadIdentifier(maskedSource,
+                                           closingBlockPosition + 1,
+                                           declarationEnd,
+                                           resourceNameEndPosition);
+                        declaration.resourceName = instanceName.empty() ? blockName : instanceName;
+                    }
+                    else
+                    {
+                        const std::size_t uniformTypePosition =
+                            FindIdentifierToken(maskedSource,
+                                                "uniform",
+                                                closingPosition + 1,
+                                                declarationEnd);
+                        if (uniformTypePosition != TestString::npos)
                         {
-                            std::size_t resourceNameEndPosition = closingBlockPosition + 1;
-                            declaration.resourceName =
-                                ReadIdentifier(maskedSource,
-                                               closingBlockPosition + 1,
-                                               declarationEnd,
-                                               resourceNameEndPosition);
-                        }
-                        else
-                        {
-                            std::size_t resourceNameEndPosition = uniformTypePosition;
-                            declaration.resourceName =
-                                ReadIdentifier(maskedSource,
-                                               uniformTypePosition + TestString("uniform").size(),
-                                               declarationEnd,
-                                               resourceNameEndPosition);
+                            declaration.resourceType = "uniform";
+                            const std::size_t closingBlockPosition =
+                                maskedSource.substr(0, declarationEnd + 1).FindLast('}');
+                            if (closingBlockPosition != TestString::npos)
+                            {
+                                std::size_t resourceNameEndPosition = closingBlockPosition + 1;
+                                declaration.resourceName =
+                                    ReadIdentifier(maskedSource,
+                                                   closingBlockPosition + 1,
+                                                   declarationEnd,
+                                                   resourceNameEndPosition);
+                            }
+                            else
+                            {
+                                std::size_t resourceNameEndPosition = uniformTypePosition;
+                                declaration.resourceName =
+                                    ReadIdentifier(maskedSource,
+                                                   uniformTypePosition + TestString("uniform").size(),
+                                                   declarationEnd,
+                                                   resourceNameEndPosition);
+                            }
                         }
                     }
                 }
@@ -2545,24 +2564,26 @@ int main()
     assert(std::isfinite(defaultSettings.EnvironmentLuminanceScaleNits));
     assert(defaultSettings.EnvironmentLuminanceScaleNits >= 0.0f);
 
-    assert(sizeof(GPULightingParams) == 272);
+    assert(sizeof(GPULightingParams) == 704);
     assert(sizeof(GPULightingParams) % 16 == 0);
 
     assert(offsetof(GPULightingParams, invViewProjection) == 0);
     assert(offsetof(GPULightingParams, cameraPosition) == 64);
     assert(offsetof(GPULightingParams, ambientColor) == 80);
     assert(offsetof(GPULightingParams, lightView) == 96);
-    assert(offsetof(GPULightingParams, lightProjection) == 160);
-    assert(offsetof(GPULightingParams, lightCount) == 224);
-    assert(offsetof(GPULightingParams, bShadowEnabled) == 228);
+    assert(offsetof(GPULightingParams, lightProjection) == 352);
+    assert(offsetof(GPULightingParams, shadowSplitDistances) == 608);
+    assert(offsetof(GPULightingParams, cascadeCount) == 640);
+    assert(offsetof(GPULightingParams, lightCount) == 644);
+    assert(offsetof(GPULightingParams, bShadowEnabled) == 648);
     static_assert(std::is_same_v<decltype(GPULightingParams{}.prefilteredSpecularMipLevels), uint32_t>);
-    assert(offsetof(GPULightingParams, prefilteredSpecularMipLevels) == 232);
-    assert(offsetof(GPULightingParams, bIBLEnabled) == 236);
-    assert(offsetof(GPULightingParams, bSSAOEnabled) == 240);
-    assert(offsetof(GPULightingParams, bNeuralBRDFEnabled) == 244);
-    assert(offsetof(GPULightingParams, debugViewMode) == 248);
-    assert(PreExposureOffset<GPULightingParams>() == 252);
-    assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 256);
+    assert(offsetof(GPULightingParams, prefilteredSpecularMipLevels) == 652);
+    assert(offsetof(GPULightingParams, bIBLEnabled) == 656);
+    assert(offsetof(GPULightingParams, bSSAOEnabled) == 660);
+    assert(offsetof(GPULightingParams, bNeuralBRDFEnabled) == 664);
+    assert(offsetof(GPULightingParams, debugViewMode) == 668);
+    assert(PreExposureOffset<GPULightingParams>() == 672);
+    assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 688);
 
     assert(static_cast<uint8_t>(DebugViewMode::Normal) == 0);
     assert(static_cast<uint8_t>(DebugViewMode::Unlit) == 1);
@@ -2606,11 +2627,21 @@ int main()
         {
             assert(declaration.resourceType == "buffer");
         }
+        else if (binding == 6)
+        {
+            assert(declaration.resourceType == "sampler2DArray");
+        }
         else
         {
             assert(declaration.resourceType == "sampler2D");
         }
     }
+    AssertShaderResourceDeclaration(shaderSource,
+                                    6,
+                                    "sampler2DArray",
+                                    "shadowMap",
+                                    "shadow",
+                                    "Shadow");
     AssertShaderResourceDeclaration(shaderSource,
                                     8,
                                     "sampler2D",
@@ -2961,6 +2992,8 @@ int main()
 
     assert(CountText(executeSource, "BindTexture(9,") == 1);
     assert(CountText(executeSource, "BindSampler(9,") == 1);
+    assert(ContainsText(executeSource, "bShadowMapIsArray"));
+    assert(ContainsText(executeSource, "m_DefaultShadowMapArrayTexture"));
     assert(ContainsText(executeSource, "BindStorageBuffer(11,"));
     assert(ContainsText(executeSource, "bValidationRaw251=activeDebugMode==251u"));
     assert(CountText(executeSource, "bValidationRaw251?m_DefaultBlackTexture:") == 3);
@@ -3147,6 +3180,10 @@ int main()
                         "BindConstantBuffer(4,m_LightDataBuffer,0u,LIGHTING_PARAMS_SIZE)"));
     assert(ContainsText(descriptorFactorySource,
                         "BindStorageBuffer(5,m_LightArrayBuffer,0u,GetLightArrayBufferSizeBytes())"));
+    assert(ContainsText(descriptorFactorySource,
+                        "BindTexture(6,m_DefaultShadowMapArrayTexture)"));
+    assert(ContainsText(descriptorFactorySource,
+                        "BindSampler(6,m_GBufferSampler)"));
     assert(ContainsText(descriptorFactorySource,
                         "BindTexture(8,m_DefaultBlackTexture)"));
     assert(ContainsText(descriptorFactorySource,

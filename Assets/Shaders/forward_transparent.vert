@@ -12,8 +12,10 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 emissiveColor;
     vec4 pomParams;
     vec4 sceneColorParams;
-    mat4 lightView;
-    mat4 lightProjection;
+    mat4 lightView[4];
+    mat4 lightProjection[4];
+    vec4 shadowSplitDistances[2];
+    uint cascadeCount;
     uint lightCount;
     uint bShadowEnabled;
     uint bIBLEnabled;

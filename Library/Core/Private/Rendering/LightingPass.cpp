@@ -882,6 +882,82 @@ namespace NorvesLib::Core::Rendering
 
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
 
+    static void InitializeSafeCascadedShadowParams(GPULightingParams& params)
+    {
+        for (uint32_t cascadeIndex = 0u;
+             cascadeIndex < PhysicalLightingShadowCascadeCount;
+             ++cascadeIndex)
+        {
+            for (uint32_t matrixIndex = 0u; matrixIndex < 16u; ++matrixIndex)
+            {
+                params.lightView[cascadeIndex][matrixIndex] = 0.0f;
+                params.lightProjection[cascadeIndex][matrixIndex] = 0.0f;
+            }
+            params.lightView[cascadeIndex][0] = 1.0f;
+            params.lightView[cascadeIndex][5] = 1.0f;
+            params.lightView[cascadeIndex][10] = 1.0f;
+            params.lightView[cascadeIndex][15] = 1.0f;
+            params.lightProjection[cascadeIndex][0] = 1.0f;
+            params.lightProjection[cascadeIndex][5] = 1.0f;
+            params.lightProjection[cascadeIndex][10] = 1.0f;
+            params.lightProjection[cascadeIndex][15] = 1.0f;
+        }
+
+        params.shadowSplitDistances[0] = 0.0f;
+        params.shadowSplitDistances[1] = 1.0f;
+        params.shadowSplitDistances[2] = 2.0f;
+        params.shadowSplitDistances[3] = 3.0f;
+        params.shadowSplitDistances[4] = 4.0f;
+        params.shadowSplitDistances[5] = 0.0f;
+        params.shadowSplitDistances[6] = 0.0f;
+        params.shadowSplitDistances[7] = 0.0f;
+        params.cascadeCount = 0u;
+        params.bShadowEnabled = 0u;
+    }
+
+    static bool HasValidCascadedShadowPublication(const ViewRenderContext& context,
+                                                   bool bShadowResourceAvailable)
+    {
+        const PhysicalLightingResources& lighting = context.PhysicalLighting;
+        const CascadedDirectionalShadowShaderValues& cascaded = lighting.CascadedShadow;
+        if (!bShadowResourceAvailable || !lighting.bShadowPublished ||
+            !lighting.ShadowMapTexture || !lighting.ShadowSampler ||
+            lighting.ShadowMapTexture->GetArraySize() != PhysicalLightingShadowCascadeCount ||
+            !cascaded.bEnabled ||
+            cascaded.CascadeCount != PhysicalLightingShadowCascadeCount)
+        {
+            return false;
+        }
+
+        for (uint32_t cascadeIndex = 0u;
+             cascadeIndex < PhysicalLightingShadowCascadeCount;
+             ++cascadeIndex)
+        {
+            for (uint32_t matrixIndex = 0u; matrixIndex < 16u; ++matrixIndex)
+            {
+                if (!std::isfinite(cascaded.View[cascadeIndex][matrixIndex]) ||
+                    !std::isfinite(cascaded.Projection[cascadeIndex][matrixIndex]))
+                {
+                    return false;
+                }
+            }
+        }
+
+        for (uint32_t splitIndex = 0u;
+             splitIndex < PhysicalLightingShadowSplitCount;
+             ++splitIndex)
+        {
+            if (!std::isfinite(cascaded.SplitDistances[splitIndex]) ||
+                (splitIndex > 0u &&
+                 cascaded.SplitDistances[splitIndex] <=
+                     cascaded.SplitDistances[splitIndex - 1u]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static RHI::DescriptorSetDesc CreateLightingDescriptorSetDesc(bool bNeuralBRDFAvailable)
     {
         (void)bNeuralBRDFAvailable;
@@ -1033,7 +1109,8 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        if (m_Device != nullptr || m_DefaultBlackTexture || m_BrdfLutTexture ||
+        if (m_Device != nullptr || m_DefaultBlackTexture || m_DefaultShadowMapArrayTexture ||
+            m_BrdfLutTexture ||
             m_DefaultNeuralBRDFWeightBuffer)
         {
             SceneView* sceneView = m_SceneView;
@@ -1157,6 +1234,32 @@ namespace NorvesLib::Core::Rendering
         }
         const uint16_t blackPixel[4] = {0x0000u, 0x0000u, 0x0000u, 0x0000u};
         m_DefaultBlackTexture->Update(blackPixel, sizeof(blackPixel), sizeof(blackPixel));
+
+        RHI::TextureDesc shadowMapFallbackDesc;
+        shadowMapFallbackDesc.Width = 1u;
+        shadowMapFallbackDesc.Height = 1u;
+        shadowMapFallbackDesc.ArraySize = PhysicalLightingShadowCascadeCount;
+        shadowMapFallbackDesc.TextureFormat = RHI::Format::R8G8B8A8_UNORM;
+        shadowMapFallbackDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                                      RHI::ResourceUsage::TransferDst;
+        shadowMapFallbackDesc.DebugName = "LightingShadowMapArrayFallback";
+        m_DefaultShadowMapArrayTexture = m_Device->CreateTexture(shadowMapFallbackDesc);
+        if (!m_DefaultShadowMapArrayTexture)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Failed to create shadow map array fallback");
+            return false;
+        }
+        const uint8_t shadowMapFallbackPixel[4] = {255u, 255u, 255u, 255u};
+        for (uint32_t layer = 0u;
+             layer < PhysicalLightingShadowCascadeCount;
+             ++layer)
+        {
+            m_DefaultShadowMapArrayTexture->Update(shadowMapFallbackPixel,
+                                                    sizeof(shadowMapFallbackPixel),
+                                                    sizeof(shadowMapFallbackPixel),
+                                                    0u,
+                                                    layer);
+        }
 
         RHI::TextureDesc dfgFallbackDesc;
         dfgFallbackDesc.Width = 1u;
@@ -1312,6 +1415,7 @@ namespace NorvesLib::Core::Rendering
     void LightingPass::Shutdown()
     {
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
+            !m_DefaultShadowMapArrayTexture &&
             !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer)
         {
             return;
@@ -1345,6 +1449,7 @@ namespace NorvesLib::Core::Rendering
         m_ValidationRaw252PrefilteredSpecularTexture.reset();
         m_BrdfLutTexture.reset();
         m_DefaultBlackTexture.reset();
+        m_DefaultShadowMapArrayTexture.reset();
         m_bIBLAvailable = false;
         m_SkyAtmosphereIblParameters = SkyAtmosphereParameters{};
         m_SkyAtmosphereIblRadianceWidth = 0u;
@@ -2007,7 +2112,8 @@ namespace NorvesLib::Core::Rendering
     {
         outDescriptorSet.reset();
         if (!m_Device || !m_LightDataBuffer || !m_LightArrayBuffer || !m_BrdfLutTexture ||
-            !m_DefaultBlackTexture || !m_DefaultNeuralBRDFWeightBuffer ||
+            !m_DefaultBlackTexture || !m_DefaultShadowMapArrayTexture ||
+            !m_DefaultNeuralBRDFWeightBuffer ||
             !m_GBufferSampler || !m_IBLSampler || !m_DiffuseIrradianceSampler ||
             !m_PrefilteredSpecularSampler || !m_DfgSampler)
         {
@@ -2028,6 +2134,8 @@ namespace NorvesLib::Core::Rendering
                                          m_LightArrayBuffer,
                                          0u,
                                          GetLightArrayBufferSizeBytes());
+        descriptorSet->BindTexture(6, m_DefaultShadowMapArrayTexture);
+        descriptorSet->BindSampler(6, m_GBufferSampler);
         descriptorSet->BindTexture(8, m_DefaultBlackTexture);
         descriptorSet->BindSampler(8, m_IBLSampler);
         descriptorSet->BindTexture(9, m_BrdfLutTexture);
@@ -2145,7 +2253,10 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!UpdateLightBuffer(context, shadowMapTexture != nullptr, ssaoTexture != nullptr))
+        const bool bShadowResourceAvailable =
+            shadowMapTexture &&
+            shadowMapTexture->GetArraySize() == PhysicalLightingShadowCascadeCount;
+        if (!UpdateLightBuffer(context, bShadowResourceAvailable, ssaoTexture != nullptr))
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to update lighting light buffer, skipping lighting draw");
             return;
@@ -2165,15 +2276,18 @@ namespace NorvesLib::Core::Rendering
         m_LightingDescriptorSet->BindSampler(2, m_GBufferSampler);
         m_LightingDescriptorSet->BindSampler(3, m_GBufferSampler);
 
-        if (shadowMapTexture)
-        {
-            m_LightingDescriptorSet->BindTexture(6, shadowMapTexture);
-        }
-        else
-        {
-            m_LightingDescriptorSet->BindTexture(6, depthTexture);
-        }
-        m_LightingDescriptorSet->BindSampler(6, m_GBufferSampler);
+        const RHI::TexturePtr& boundShadowMapTexture =
+            shadowMapTexture ? shadowMapTexture : context.PhysicalLighting.ShadowMapTexture;
+        const bool bShadowMapIsArray =
+            boundShadowMapTexture &&
+            boundShadowMapTexture->GetArraySize() == PhysicalLightingShadowCascadeCount;
+        m_LightingDescriptorSet->BindTexture(
+            6,
+            bShadowMapIsArray ? boundShadowMapTexture : m_DefaultShadowMapArrayTexture);
+        m_LightingDescriptorSet->BindSampler(
+            6,
+            bShadowMapIsArray && context.PhysicalLighting.ShadowSampler ?
+                context.PhysicalLighting.ShadowSampler : m_GBufferSampler);
 
         if (emissiveTexture)
         {
@@ -2455,6 +2569,7 @@ namespace NorvesLib::Core::Rendering
     {
         // ライティングパラメータを構築
         GPULightingParams params = {};
+        InitializeSafeCascadedShadowParams(params);
 
         using namespace NorvesLib::Math;
 
@@ -2491,17 +2606,24 @@ namespace NorvesLib::Core::Rendering
         params.ambientColor[3] = m_Settings.AmbientIntensity;
 
         // ========================================
-        // ShadowMapPassが公開した単一のライトビュー・プロジェクション行列
+        // ShadowMapPassが公開した4カスケードの行列・分割距離
         // ========================================
-        std::memcpy(params.lightView,
-                    context.PhysicalLighting.DirectionalShadow.View,
-                    sizeof(params.lightView));
-        std::memcpy(params.lightProjection,
-                    context.PhysicalLighting.DirectionalShadow.Projection,
-                    sizeof(params.lightProjection));
-        params.bShadowEnabled =
-            bShadowAvailable && context.PhysicalLighting.bShadowPublished &&
-            context.PhysicalLighting.DirectionalShadow.bEnabled ? 1u : 0u;
+        const bool bCascadedShadowEnabled =
+            HasValidCascadedShadowPublication(context, bShadowAvailable);
+        if (bCascadedShadowEnabled)
+        {
+            std::memcpy(params.lightView,
+                        context.PhysicalLighting.CascadedShadow.View,
+                        sizeof(params.lightView));
+            std::memcpy(params.lightProjection,
+                        context.PhysicalLighting.CascadedShadow.Projection,
+                        sizeof(params.lightProjection));
+            std::memcpy(params.shadowSplitDistances,
+                        context.PhysicalLighting.CascadedShadow.SplitDistances,
+                        sizeof(float) * PhysicalLightingShadowSplitCount);
+            params.cascadeCount = PhysicalLightingShadowCascadeCount;
+            params.bShadowEnabled = 1u;
+        }
 
         // ========================================
         // SceneViewのLightProxyからライト配列を構築

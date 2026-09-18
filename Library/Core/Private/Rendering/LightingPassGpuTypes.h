@@ -11,8 +11,10 @@ namespace NorvesLib::Core::Rendering
         float invViewProjection[16];
         float cameraPosition[4];
         float ambientColor[4];
-        float lightView[16];
-        float lightProjection[16];
+        float lightView[4][16];
+        float lightProjection[4][16];
+        float shadowSplitDistances[8];
+        uint32_t cascadeCount;
         uint32_t lightCount;
         uint32_t bShadowEnabled;
         uint32_t prefilteredSpecularMipLevels;
@@ -21,6 +23,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t bNeuralBRDFEnabled;
         uint32_t debugViewMode;
         float preExposure;
+        uint32_t shadowPadding0;
+        uint32_t shadowPadding1;
+        uint32_t shadowPadding2;
         float skySunDirectionAndCosRadius[4];
     };
 
@@ -32,9 +37,14 @@ namespace NorvesLib::Core::Rendering
         float attenuation[4];
     };
 
-    static_assert(sizeof(GPULightingParams) == 272);
-    static_assert(offsetof(GPULightingParams, prefilteredSpecularMipLevels) == 232);
-    static_assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 256);
+    static_assert(sizeof(GPULightingParams) == 704);
+    static_assert(offsetof(GPULightingParams, lightView) == 96);
+    static_assert(offsetof(GPULightingParams, lightProjection) == 352);
+    static_assert(offsetof(GPULightingParams, shadowSplitDistances) == 608);
+    static_assert(offsetof(GPULightingParams, cascadeCount) == 640);
+    static_assert(offsetof(GPULightingParams, prefilteredSpecularMipLevels) == 652);
+    static_assert(offsetof(GPULightingParams, preExposure) == 672);
+    static_assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 688);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);

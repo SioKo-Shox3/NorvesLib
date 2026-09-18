@@ -14,8 +14,10 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     mat4 invViewProjection;
     vec4 cameraPosition;    // xyz=position, w=unused
     vec4 ambientColor;      // xyz=color, w=intensity
-    mat4 lightView;         // シャドウマップ用ライトビュー行列
-    mat4 lightProjection;   // シャドウマップ用ライトプロジェクション行列
+    mat4 lightView[4];      // 4カスケードのライトビュー行列
+    mat4 lightProjection[4];// 4カスケードのライトプロジェクション行列
+    vec4 shadowSplitDistances[2]; // x/y/z/w = split 0..3, split 4 in [1].x
+    uint cascadeCount;       // 完全なCSM公開値の場合だけ4
     uint lightCount;
     uint bShadowEnabled;    // シャドウマップ有効フラグ
     uint prefilteredSpecularMipLevels; // prefiltered specular mip level count
@@ -24,6 +26,9 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     uint bNeuralBRDFEnabled; // Neural BRDF有効フラグ
     uint debugViewMode;
     float preExposure;
+    uint shadowPadding0;
+    uint shadowPadding1;
+    uint shadowPadding2;
     vec4 skySunDirectionAndCosRadius; // xyz=太陽方向, w=cos(太陽ディスク角半径)
 } params;
 
@@ -42,8 +47,8 @@ layout(std430, set = 0, binding = 5) readonly buffer LightBuffer
     LightData lights[];
 } lightBuffer;
 
-// シャドウマップ
-layout(set = 0, binding = 6) uniform sampler2D shadowMap;
+// 4層CSMシャドウマップ
+layout(set = 0, binding = 6) uniform sampler2DArray shadowMap;
 
 // GBufferエミッシブ
 layout(set = 0, binding = 7) uniform sampler2D gbufferEmissive;
@@ -238,8 +243,48 @@ const vec2 POISSON_DISK[16] = vec2[16](
 const float PCSS_LIGHT_SIZE = 0.04;
 const float PCSS_BLOCKER_SEARCH_RADIUS = 0.02;
 
+float GetShadowSplitDistance(uint splitIndex)
+{
+    return splitIndex < 4u
+               ? params.shadowSplitDistances[0][splitIndex]
+               : params.shadowSplitDistances[1][splitIndex - 4u];
+}
+
+bool IsFiniteShadowValue(float value)
+{
+    return !isnan(value) && !isinf(value);
+}
+
+bool HasValidCascadedShadowData()
+{
+    if (params.bShadowEnabled == 0u ||
+        params.cascadeCount != 4u)
+    {
+        return false;
+    }
+
+    float previousSplit = GetShadowSplitDistance(0u);
+    if (!IsFiniteShadowValue(previousSplit))
+    {
+        return false;
+    }
+    for (uint splitIndex = 1u; splitIndex < 5u; ++splitIndex)
+    {
+        float split = GetShadowSplitDistance(splitIndex);
+        if (!IsFiniteShadowValue(split) || split <= previousSplit)
+        {
+            return false;
+        }
+        previousSplit = split;
+    }
+    return true;
+}
+
 // Phase 1: ブロッカーサーチ（平均ブロッカー深度を求める）
-float FindBlockerDepth(vec2 shadowUV, float receiverDepth, vec2 texelSize)
+float FindBlockerDepth(vec2 shadowUV,
+                       float receiverDepth,
+                       vec2 texelSize,
+                       uint cascadeIndex)
 {
     float blockerSum = 0.0;
     int blockerCount = 0;
@@ -248,7 +293,8 @@ float FindBlockerDepth(vec2 shadowUV, float receiverDepth, vec2 texelSize)
     for (int i = 0; i < 16; i++)
     {
         vec2 offset = POISSON_DISK[i] * searchRadius;
-        float sampleDepth = texture(shadowMap, shadowUV + offset).r;
+        float sampleDepth = texture(shadowMap,
+                                    vec3(shadowUV + offset, float(cascadeIndex))).r;
         if (sampleDepth < receiverDepth - 0.005)
         {
             blockerSum += sampleDepth;
@@ -271,7 +317,10 @@ float EstimatePenumbraSize(float receiverDepth, float blockerDepth)
 }
 
 // Phase 3: 可変カーネルPCF
-float PCSSFilter(vec2 shadowUV, float receiverDepth, float filterRadius)
+float PCSSFilter(vec2 shadowUV,
+                 float receiverDepth,
+                 float filterRadius,
+                 uint cascadeIndex)
 {
     float shadow = 0.0;
     float bias = 0.005;
@@ -279,17 +328,23 @@ float PCSSFilter(vec2 shadowUV, float receiverDepth, float filterRadius)
     for (int i = 0; i < 16; i++)
     {
         vec2 offset = POISSON_DISK[i] * filterRadius;
-        float sampleDepth = texture(shadowMap, shadowUV + offset).r;
+        float sampleDepth = texture(shadowMap,
+                                    vec3(shadowUV + offset, float(cascadeIndex))).r;
         shadow += (receiverDepth - bias > sampleDepth) ? 0.0 : 1.0;
     }
 
     return shadow / 16.0;
 }
 
-float CalculateShadow(vec3 worldPos)
+float SampleShadowCascade(vec3 worldPos, uint cascadeIndex)
 {
     // ワールド座標をライトクリップ空間に変換
-    vec4 lightSpacePos = params.lightProjection * params.lightView * vec4(worldPos, 1.0);
+    vec4 lightSpacePos = params.lightProjection[cascadeIndex] *
+                         params.lightView[cascadeIndex] * vec4(worldPos, 1.0);
+    if (!IsFiniteShadowValue(lightSpacePos.w) || abs(lightSpacePos.w) < 0.000001)
+    {
+        return 1.0;
+    }
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
 
     // クリップ空間[-1,1] → UV座標[0,1]に変換
@@ -308,10 +363,13 @@ float CalculateShadow(vec3 worldPos)
         return 1.0;
     }
 
-    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0).xy);
 
     // Phase 1: ブロッカーサーチ
-    float avgBlockerDepth = FindBlockerDepth(shadowUV, currentDepth, texelSize);
+    float avgBlockerDepth = FindBlockerDepth(shadowUV,
+                                             currentDepth,
+                                             texelSize,
+                                             cascadeIndex);
 
     // ブロッカーなし → 完全にライトが当たっている
     if (avgBlockerDepth < 0.0)
@@ -326,7 +384,50 @@ float CalculateShadow(vec3 worldPos)
     float filterRadius = clamp(penumbraSize, texelSize.x, 0.05);
 
     // Phase 3: 可変カーネルPCF
-    return PCSSFilter(shadowUV, currentDepth, filterRadius);
+    return PCSSFilter(shadowUV, currentDepth, filterRadius, cascadeIndex);
+}
+
+float CalculateShadow(vec3 worldPos)
+{
+    if (!HasValidCascadedShadowData())
+    {
+        return 1.0;
+    }
+
+    float receiverDistance = distance(params.cameraPosition.xyz, worldPos);
+    float nearDistance = GetShadowSplitDistance(0u);
+    float farDistance = GetShadowSplitDistance(4u);
+    if (!IsFiniteShadowValue(receiverDistance) ||
+        receiverDistance < nearDistance || receiverDistance > farDistance)
+    {
+        return 1.0;
+    }
+
+    uint cascadeIndex = 3u;
+    for (uint candidate = 0u; candidate < 3u; ++candidate)
+    {
+        if (receiverDistance < GetShadowSplitDistance(candidate + 1u))
+        {
+            cascadeIndex = candidate;
+            break;
+        }
+    }
+
+    float shadow = SampleShadowCascade(worldPos, cascadeIndex);
+    if (cascadeIndex < 3u)
+    {
+        float boundary = GetShadowSplitDistance(cascadeIndex + 1u);
+        float previousBoundary = GetShadowSplitDistance(cascadeIndex);
+        float blendWidth = max((boundary - previousBoundary) * 0.1, 0.001);
+        float blendStart = boundary - blendWidth;
+        if (receiverDistance > blendStart)
+        {
+            float nextShadow = SampleShadowCascade(worldPos, cascadeIndex + 1u);
+            float blend = smoothstep(blendStart, boundary, receiverDistance);
+            shadow = mix(shadow, nextShadow, blend);
+        }
+    }
+    return shadow;
 }
 
 // ========================================

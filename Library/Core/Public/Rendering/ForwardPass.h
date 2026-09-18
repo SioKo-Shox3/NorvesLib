@@ -169,6 +169,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultWhiteTexture;
         RHI::TexturePtr m_DefaultFlatNormalTexture;
         RHI::TexturePtr m_DefaultBlackTexture;
+        RHI::TexturePtr m_DefaultShadowMapArrayTexture;
         RHI::TexturePtr m_DefaultMidGrayTexture;
         RHI::SamplerPtr m_DefaultLinearSampler;
 

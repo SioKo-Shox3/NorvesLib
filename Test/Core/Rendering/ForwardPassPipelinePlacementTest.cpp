@@ -201,8 +201,10 @@ namespace
             float emissiveColor[4];
             float pomParams[4];
             float sceneColorParams[4];
-            float lightView[16];
-            float lightProjection[16];
+            float lightView[4][16];
+            float lightProjection[4][16];
+            float shadowSplitDistances[8];
+            uint32_t cascadeCount;
             uint32_t lightCount;
             uint32_t bShadowEnabled;
             uint32_t bIBLEnabled;
@@ -231,16 +233,18 @@ namespace
         assert(offsetof(ExpectedTransparentForwardUBO, pomParams) == 160);
         assert(offsetof(ExpectedTransparentForwardUBO, sceneColorParams) == 176);
         assert(offsetof(ExpectedTransparentForwardUBO, lightView) == 192);
-        assert(offsetof(ExpectedTransparentForwardUBO, lightProjection) == 256);
-        assert(offsetof(ExpectedTransparentForwardUBO, lightCount) == 320);
-        assert(offsetof(ExpectedTransparentForwardUBO, bShadowEnabled) == 324);
-        assert(offsetof(ExpectedTransparentForwardUBO, bIBLEnabled) == 328);
-        assert(offsetof(ExpectedTransparentForwardUBO, prefilteredSpecularMipLevels) == 332);
-        assert(offsetof(ExpectedTransparentForwardUBO, iblIntensity) == 336);
-        assert(offsetof(ExpectedTransparentForwardUBO, padding0) == 340);
-        assert(offsetof(ExpectedTransparentForwardUBO, padding1) == 344);
-        assert(offsetof(ExpectedTransparentForwardUBO, padding2) == 348);
-        assert(sizeof(ExpectedTransparentForwardUBO) == 352);
+        assert(offsetof(ExpectedTransparentForwardUBO, lightProjection) == 448);
+        assert(offsetof(ExpectedTransparentForwardUBO, shadowSplitDistances) == 704);
+        assert(offsetof(ExpectedTransparentForwardUBO, cascadeCount) == 736);
+        assert(offsetof(ExpectedTransparentForwardUBO, lightCount) == 740);
+        assert(offsetof(ExpectedTransparentForwardUBO, bShadowEnabled) == 744);
+        assert(offsetof(ExpectedTransparentForwardUBO, bIBLEnabled) == 748);
+        assert(offsetof(ExpectedTransparentForwardUBO, prefilteredSpecularMipLevels) == 752);
+        assert(offsetof(ExpectedTransparentForwardUBO, iblIntensity) == 756);
+        assert(offsetof(ExpectedTransparentForwardUBO, padding0) == 760);
+        assert(offsetof(ExpectedTransparentForwardUBO, padding1) == 764);
+        assert(offsetof(ExpectedTransparentForwardUBO, padding2) == 768);
+        assert(sizeof(ExpectedTransparentForwardUBO) == 784);
         assert(sizeof(ExpectedWorldBoardForwardUBO) == 192);
 
         const std::string transparentCpuBlock =
@@ -252,8 +256,10 @@ namespace
             "float emissiveColor[4];",
             "float pomParams[4];",
             "float sceneColorParams[4];",
-            "float lightView[16];",
-            "float lightProjection[16];",
+            "float lightView[4][16];",
+            "float lightProjection[4][16];",
+            "float shadowSplitDistances[8];",
+            "uint32_t cascadeCount;",
             "uint32_t lightCount;",
             "uint32_t bShadowEnabled;",
             "uint32_t bIBLEnabled;",
@@ -288,8 +294,10 @@ namespace
             "vec4 emissiveColor;",
             "vec4 pomParams;",
             "vec4 sceneColorParams;",
-            "mat4 lightView;",
-            "mat4 lightProjection;",
+            "mat4 lightView[4];",
+            "mat4 lightProjection[4];",
+            "vec4 shadowSplitDistances[2];",
+            "uint cascadeCount;",
             "uint lightCount;",
             "uint bShadowEnabled;",
             "uint bIBLEnabled;",
@@ -368,7 +376,7 @@ namespace
 
         const char* const physicalBindings[] = {
             "layout(std430, set = 0, binding = 8) readonly buffer LightBuffer",
-            "layout(set = 0, binding = 9) uniform sampler2D shadowMap",
+            "layout(set = 0, binding = 9) uniform sampler2DArray shadowMap",
             "layout(set = 0, binding = 10) uniform sampler2D environmentRadiance",
             "layout(set = 0, binding = 11) uniform sampler2D diffuseIrradiance",
             "layout(set = 0, binding = 12) uniform sampler2D prefilteredSpecular",
@@ -381,6 +389,8 @@ namespace
         assert(forwardPassSource.find("lightBufferBinding.binding = 8") != std::string::npos);
         assert(forwardPassSource.find("for (uint32_t binding = 9; binding <= 13; ++binding") !=
                std::string::npos);
+        assert(forwardPassSource.find("m_DefaultShadowMapArrayTexture") != std::string::npos);
+        assert(forwardPassSource.find("GetArraySize() ==") != std::string::npos);
         assert(forwardPassSource.find("BindStorageBuffer(8") != std::string::npos);
         assert(forwardPassSource.find("BindTexture(13, physicalLighting.DfgLutTexture)") !=
                std::string::npos);
@@ -406,6 +416,9 @@ namespace
         assert(transparentFragmentSource.find("compensationC") != std::string::npos);
         assert(transparentFragmentSource.find("lightBuffer.lights[index]") != std::string::npos);
         assert(transparentFragmentSource.find("mvp.bShadowEnabled") != std::string::npos);
+        assert(transparentFragmentSource.find("HasValidCascadedShadowData") != std::string::npos);
+        assert(transparentFragmentSource.find("smoothstep(blendStart, boundary, receiverDistance)") !=
+               std::string::npos);
         assert(transparentFragmentSource.find("mvp.bIBLEnabled") != std::string::npos);
         assert(transparentFragmentSource.find("vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));") ==
                std::string::npos);

@@ -11,6 +11,7 @@
 #include "SceneRenderer.h"
 #include "SceneProxy.h"
 #include "Container/Containers.h"
+#include <cmath>
 #include <cstdint>
 
 // 前方宣言
@@ -178,9 +179,34 @@ namespace NorvesLib::Core::Rendering
         {
             CascadedShadow = CascadedDirectionalShadowShaderValues{};
             if (views == nullptr || projections == nullptr || splitDistances == nullptr ||
-                cascadeCount > PhysicalLightingShadowCascadeCount)
+                cascadeCount != PhysicalLightingShadowCascadeCount)
             {
                 return;
+            }
+
+            for (uint32_t cascadeIndex = 0;
+                 cascadeIndex < PhysicalLightingShadowCascadeCount;
+                 ++cascadeIndex)
+            {
+                for (uint32_t matrixIndex = 0; matrixIndex < 16; ++matrixIndex)
+                {
+                    if (!std::isfinite(views[cascadeIndex * 16u + matrixIndex]) ||
+                        !std::isfinite(projections[cascadeIndex * 16u + matrixIndex]))
+                    {
+                        return;
+                    }
+                }
+            }
+            for (uint32_t splitIndex = 0;
+                 splitIndex < PhysicalLightingShadowSplitCount;
+                 ++splitIndex)
+            {
+                if (!std::isfinite(splitDistances[splitIndex]) ||
+                    (splitIndex > 0u &&
+                     splitDistances[splitIndex] <= splitDistances[splitIndex - 1u]))
+                {
+                    return;
+                }
             }
 
             for (uint32_t cascadeIndex = 0;

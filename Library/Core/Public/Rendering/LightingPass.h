@@ -268,6 +268,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_ValidationRaw252DiffuseIrradianceTexture;
         RHI::TexturePtr m_ValidationRaw252PrefilteredSpecularTexture;
         RHI::TexturePtr m_DefaultBlackTexture;
+        RHI::TexturePtr m_DefaultShadowMapArrayTexture;
         RHI::SamplerPtr m_IBLSampler;         ///< source radiance sampler
         RHI::SamplerPtr m_DiffuseIrradianceSampler;
         RHI::SamplerPtr m_PrefilteredSpecularSampler;

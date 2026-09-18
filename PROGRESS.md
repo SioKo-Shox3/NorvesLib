@@ -17,19 +17,20 @@
 - R2-P3: `a235411`（実装 `5daf556`）。空のequirectangular放射輝度を同一のsanitized空パラメータから再構成し、既存のDiffuseIrradiance/PrefilteredSpecular生成へ接続した。空パラメータと放射輝度寸法の変更時だけ動的IBLを更新し、空要求時の生成失敗は黒へ固定する。朝/昼/夕EVの有限性・高度変更・SceneProxy寿命、R1静的HDR経路を確認し、4対象ビルド・CTestは4/4 passed。1周目のselector契約回帰を`a235411`で修正し、2周目の独立評価はPASS。
 - R2-P4: `f51384f`。実カメラのnear/farから対数・線形混合の4分割距離を計算し、同一方向ライトの球近似行列、caster深度範囲、テクセル中心スナップをCPUだけで構築した。near/far逆転、無効方向、非有限bounds、固定4カスケード以外を有限な影なし結果へ戻し、サブテクセル移動の行列安定性と隣接境界の連続性を確認した。指定のDebugビルドとCTestは2/2 passed。RHI/Vulkanには触れていない。
 - R2-P5: `9e015a3`。RHIに配列depthの指定layer viewを追加し、Vulkanの1層Framebufferへ安全にattachできるようにした。ShadowMapPassを4層D32 depth arrayと4つのlayer別Framebufferへ移行し、CSMの各行列・分割距離をRenderThreadの公開値へ記録した。部分初期化時は全リソースを解放し、未完成の配列深度をRenderGraphへ公開しない。P4回帰を含む関連CTestは6/6 passed、指定P5 focused CTestは3/3 passed。
+- R2-P6: Lighting/ForwardのGPUパラメータ、descriptor、頂点/フラグメントシェーダーを4カスケード行列・5分割距離・`sampler2DArray`へ統一した。カスケード境界の10%ブレンド、有限性/分割順序検査、影なし・単一層・不完全公開値向けの1×1×4層型互換フォールバックを実装した。指定DebugビルドとCTestは4/4 passed、`forward_transparent.vert`/`.frag`/`lighting.frag`の`glslangValidator`は3/3 exit 0。
 - R2-P7: 朝・昼・夕のR2 sky golden 3枚と閾値TSV 2枚をR1 baselineから分離して固定した。float readback、太陽ディスク有限性、4カスケード境界の欠落/二重化、サブテクセル影エッジ変化率を実データで検証し、指定Debug build、CTest 2/2、R2 self-test、屋外sky-time-sweepをすべてexit 0で確認した。証拠は`.harness/runs/20260917-161136/verify-R2-P7-1.txt`〜`verify-R2-P7-4.txt`に保存した。
 
 ## In progress
 
-- R2-P6（Lighting/ForwardのCSMサンプリングと安全なフォールバック）へ進む。
+- R2-P7（P6のCSM実装を反映した空・太陽・CSM受入れの再検証）へ進む。
 
 ## Next
 
-- R2-P6でGPU lighting params、descriptor、Lighting/Forward shaderを4行列・分割距離・sampler2DArrayへ揃え、境界ブレンドと不完全公開値の安全なフォールバックを実装・検証する。
+- R2-P7でP6適用後の朝/昼/夕golden、float readback、太陽ディスク有限性、CSM境界、サブテクセル影エッジ変化率を再検証し、R2-P8の受入れ記録へ進む。
 
 ## Notes
 
-- R2-P8: R2-P6未完了のためブロック。現行の`lighting.frag`/`forward_transparent.frag`は単一`sampler2D`影経路で、4行列・分割距離・`sampler2DArray`の実装コミットがない。受入れ記録/Roadmap完了化は`blocked/R2-P8.md`の再開条件を満たしてから行う。
+- R2-P8: P6の実装とfocused検証は完了したが、P7のP6適用後受入れ再検証とR2全体の受入れ記録が未完了。`blocked/R2-P8.md`の再開条件はP7再検証とR2受入れ記録の更新後に満たす。
 - P6a completion report: `.superpowers/sdd/RenderingR1PhysicalFoundationPlan/task-6a-report.md`。forward-fixの最終証拠は `.harness/runs/20260908-084154/p6a-forward-fix-gpu/` と `p6a-forward-fix-review/claude-final.json` に保存する。旧P6a reportは同ディレクトリのアーカイブへ保持する。
 - 独立再検証: `recheck-R1-P6A-4-1.txt`〜`-11.txt`。集計は `p6a-independent-recheck-audit-1730.json`。統合接続評価は `p6a-r1-integrated-review/receipt.json` / `stdout.json`。
 - 統合評価はcapture状態遷移の全寿命と照明単位の全項を追跡していない。blocking 0として受理し、確認範囲を拡大解釈しない。bundle評価本文のS79→319はrawと不一致で、実値S80→320を採用する。

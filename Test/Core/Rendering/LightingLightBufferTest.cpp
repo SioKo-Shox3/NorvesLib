@@ -55,11 +55,16 @@ namespace
     class LifecycleTexture final : public RHI::ITexture
     {
     public:
+        explicit LifecycleTexture(uint32_t arraySize = 1)
+            : m_ArraySize(arraySize)
+        {
+        }
+
         uint32_t GetWidth() const override { return 1; }
         uint32_t GetHeight() const override { return 1; }
         uint32_t GetDepth() const override { return 1; }
         uint32_t GetMipLevels() const override { return 1; }
-        uint32_t GetArraySize() const override { return 1; }
+        uint32_t GetArraySize() const override { return m_ArraySize; }
         RHI::Format GetFormat() const override { return RHI::Format::R8G8B8A8_UNORM; }
         RHI::ResourceUsage GetUsage() const override { return RHI::ResourceUsage::ShaderRead; }
         bool IsCubemap() const override { return false; }
@@ -75,6 +80,9 @@ namespace
             (void)mipLevel;
             (void)arrayIndex;
         }
+
+    private:
+        uint32_t m_ArraySize = 1;
     };
 
     class LifecycleSampler final : public RHI::ISampler
@@ -404,7 +412,7 @@ namespace
         resources.Begin(11, 2, 3);
 
         const RHI::BufferPtr lightBuffer = CoreContainer::MakeShared<LifecycleBuffer>();
-        const RHI::TexturePtr shadowMap = CoreContainer::MakeShared<LifecycleTexture>();
+        const RHI::TexturePtr shadowMap = CoreContainer::MakeShared<LifecycleTexture>(4);
         const RHI::SamplerPtr shadowSampler = CoreContainer::MakeShared<LifecycleSampler>();
         const RHI::TexturePtr environment = CoreContainer::MakeShared<LifecycleTexture>();
         const RHI::SamplerPtr environmentSampler = CoreContainer::MakeShared<LifecycleSampler>();
@@ -423,6 +431,27 @@ namespace
                                       0.0f, 0.0f, 6.0f, 9.0f,
                                       0.0f, 0.0f, 0.0f, 1.0f};
 
+        float cascadedViews[4][16] = {};
+        float cascadedProjections[4][16] = {};
+        for (uint32_t cascadeIndex = 0; cascadeIndex < 4; ++cascadeIndex)
+        {
+            cascadedViews[cascadeIndex][0] = 1.0f;
+            cascadedViews[cascadeIndex][5] = 1.0f;
+            cascadedViews[cascadeIndex][10] = 1.0f;
+            cascadedViews[cascadeIndex][15] = 1.0f;
+            cascadedProjections[cascadeIndex][0] = 1.0f;
+            cascadedProjections[cascadeIndex][5] = 1.0f;
+            cascadedProjections[cascadeIndex][10] = 1.0f;
+            cascadedProjections[cascadeIndex][15] = 1.0f;
+        }
+        const float splitDistances[5] = {0.1f, 10.0f, 25.0f, 60.0f, 150.0f};
+
+        resources.PublishCascadedShadow(&cascadedViews[0][0],
+                                        &cascadedProjections[0][0],
+                                        splitDistances,
+                                        4,
+                                        77,
+                                        true);
         resources.PublishDirectionalShadow(view, projection, 77, true, shadowMap, shadowSampler);
         resources.PublishLighting(lightBuffer,
                                   2,
@@ -446,6 +475,9 @@ namespace
         assert(resources.DirectionalShadow.bEnabled);
         assert(resources.DirectionalShadow.View[3] == 3.0f);
         assert(resources.DirectionalShadow.Projection[7] == 8.0f);
+        assert(resources.CascadedShadow.CascadeCount == 4);
+        assert(resources.CascadedShadow.SplitDistances[4] == 150.0f);
+        assert(resources.CascadedShadow.View[3][0] == 1.0f);
         assert(resources.LightBuffer == lightBuffer);
         assert(resources.LogicalLightCount == 2);
         assert(resources.LightBufferSizeBytes == 128);
@@ -461,6 +493,8 @@ namespace
         assert(copied.Matches(11, 2, 3));
         assert(copied.DirectionalShadow.View[3] == 3.0f);
         assert(copied.DirectionalShadow.Projection[7] == 8.0f);
+        assert(copied.CascadedShadow.CascadeCount == 4);
+        assert(copied.CascadedShadow.SplitDistances[1] == 10.0f);
         assert(copied.LightBuffer == lightBuffer);
         assert(copied.EnvironmentRadianceTexture == environment);
         assert(copied.PrefilteredSpecularMipLevels == 4);
@@ -544,8 +578,13 @@ namespace
         assert(!ContainsText(lightingPassSource, "lightCount >= MAX_LIGHTS"));
 
         assert(CountText(lightingPassSource, "context.PhysicalLighting.PublishLighting(") == 1);
-        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.DirectionalShadow.View"));
-        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.DirectionalShadow.Projection"));
+        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.CascadedShadow.View"));
+        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.CascadedShadow.Projection"));
+        assert(ContainsText(lightingPassSource, "context.PhysicalLighting.CascadedShadow.SplitDistances"));
+        assert(ContainsText(lightingPassSource, "HasValidCascadedShadowPublication"));
+        assert(ContainsText(lightingPassSource, "m_DefaultShadowMapArrayTexture"));
+        assert(ContainsText(lightingPassSource, "bShadowMapIsArray"));
+        assert(ContainsText(lightingPassSource, "GetArraySize() == PhysicalLightingShadowCascadeCount"));
         assert(ContainsText(lightingPassSource, "m_EnvironmentTexture"));
         assert(ContainsText(lightingPassSource, "m_DiffuseIrradianceTexture"));
         assert(ContainsText(lightingPassSource, "m_PrefilteredSpecularTexture"));
@@ -571,6 +610,10 @@ namespace
 
         assert(ContainsText(shaderSource,
                             "layout(std430, set = 0, binding = 5) readonly buffer LightBuffer"));
+        assert(ContainsText(shaderSource,
+                            "layout(set = 0, binding = 6) uniform sampler2DArray shadowMap"));
+        assert(ContainsText(shaderSource, "HasValidCascadedShadowData"));
+        assert(ContainsText(shaderSource, "smoothstep(blendStart, boundary, receiverDistance)"));
         assert(ContainsText(shaderSource, "LightData lights[];"));
         assert(!std::regex_search(shaderSource, std::regex("lights\\s*\\[\\s*[0-9]+u?\\s*\\]")));
         assert(!ContainsText(shaderSource, "min(params.lightCount"));

@@ -13,8 +13,10 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 emissiveColor;
     vec4 pomParams;
     vec4 sceneColorParams;
-    mat4 lightView;
-    mat4 lightProjection;
+    mat4 lightView[4];
+    mat4 lightProjection[4];
+    vec4 shadowSplitDistances[2];
+    uint cascadeCount;
     uint lightCount;
     uint bShadowEnabled;
     uint bIBLEnabled;
@@ -45,7 +47,7 @@ layout(std430, set = 0, binding = 8) readonly buffer LightBuffer
     LightData lights[];
 } lightBuffer;
 
-layout(set = 0, binding = 9) uniform sampler2D shadowMap;
+layout(set = 0, binding = 9) uniform sampler2DArray shadowMap;
 layout(set = 0, binding = 10) uniform sampler2D environmentRadiance;
 layout(set = 0, binding = 11) uniform sampler2D diffuseIrradiance;
 layout(set = 0, binding = 12) uniform sampler2D prefilteredSpecular;
@@ -155,9 +157,52 @@ float CalculateRangeWindow(float distanceToLight, float range)
     return window * window;
 }
 
-float CalculateShadow(vec3 worldPos)
+float GetShadowSplitDistance(uint splitIndex)
 {
-    vec4 lightSpacePosition = mvp.lightProjection * mvp.lightView * vec4(worldPos, 1.0);
+    return splitIndex < 4u
+               ? mvp.shadowSplitDistances[0][splitIndex]
+               : mvp.shadowSplitDistances[1][splitIndex - 4u];
+}
+
+bool IsFiniteShadowValue(float value)
+{
+    return !isnan(value) && !isinf(value);
+}
+
+bool HasValidCascadedShadowData()
+{
+    if (mvp.bShadowEnabled == 0u || mvp.cascadeCount != 4u)
+    {
+        return false;
+    }
+
+    float previousSplit = GetShadowSplitDistance(0u);
+    if (!IsFiniteShadowValue(previousSplit))
+    {
+        return false;
+    }
+    for (uint splitIndex = 1u; splitIndex < 5u; ++splitIndex)
+    {
+        float split = GetShadowSplitDistance(splitIndex);
+        if (!IsFiniteShadowValue(split) || split <= previousSplit)
+        {
+            return false;
+        }
+        previousSplit = split;
+    }
+    return true;
+}
+
+float SampleShadowCascade(vec3 worldPos, uint cascadeIndex)
+{
+    vec4 lightSpacePosition = mvp.lightProjection[cascadeIndex] *
+                               mvp.lightView[cascadeIndex] *
+                               vec4(worldPos, 1.0);
+    if (!IsFiniteShadowValue(lightSpacePosition.w) || abs(lightSpacePosition.w) < 0.000001)
+    {
+        return 1.0;
+    }
+
     vec3 projection = lightSpacePosition.xyz / lightSpacePosition.w;
     vec2 shadowUV = projection.xy * 0.5 + 0.5;
     float receiverDepth = projection.z;
@@ -168,16 +213,61 @@ float CalculateShadow(vec3 worldPos)
         return 1.0;
     }
 
-    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0).xy);
     const vec2 offsets[4] = vec2[4](
         vec2(-0.5, -0.5), vec2(0.5, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
     float visible = 0.0;
     for (int index = 0; index < 4; ++index)
     {
-        float shadowDepth = texture(shadowMap, shadowUV + offsets[index] * texelSize).r;
+        float shadowDepth = texture(shadowMap,
+                                    vec3(shadowUV + offsets[index] * texelSize,
+                                         float(cascadeIndex))).r;
         visible += receiverDepth - 0.005 <= shadowDepth ? 1.0 : 0.0;
     }
     return visible * 0.25;
+}
+
+float CalculateShadow(vec3 worldPos)
+{
+    if (!HasValidCascadedShadowData())
+    {
+        return 1.0;
+    }
+
+    float receiverDistance = distance(mvp.cameraPosition.xyz, worldPos);
+    float nearDistance = GetShadowSplitDistance(0u);
+    float farDistance = GetShadowSplitDistance(4u);
+    if (!IsFiniteShadowValue(receiverDistance) ||
+        receiverDistance < nearDistance || receiverDistance > farDistance)
+    {
+        return 1.0;
+    }
+
+    uint cascadeIndex = 3u;
+    for (uint candidate = 0u; candidate < 3u; ++candidate)
+    {
+        if (receiverDistance < GetShadowSplitDistance(candidate + 1u))
+        {
+            cascadeIndex = candidate;
+            break;
+        }
+    }
+
+    float shadow = SampleShadowCascade(worldPos, cascadeIndex);
+    if (cascadeIndex < 3u)
+    {
+        float boundary = GetShadowSplitDistance(cascadeIndex + 1u);
+        float previousBoundary = GetShadowSplitDistance(cascadeIndex);
+        float blendWidth = max((boundary - previousBoundary) * 0.1, 0.001);
+        float blendStart = boundary - blendWidth;
+        if (receiverDistance > blendStart)
+        {
+            float nextShadow = SampleShadowCascade(worldPos, cascadeIndex + 1u);
+            float blend = smoothstep(blendStart, boundary, receiverDistance);
+            shadow = mix(shadow, nextShadow, blend);
+        }
+    }
+    return shadow;
 }
 
 void main()
