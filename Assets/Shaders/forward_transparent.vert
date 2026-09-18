@@ -24,6 +24,7 @@ layout(set = 0, binding = 0) uniform MVPData
     uint padding0;
     uint padding1;
     uint padding2;
+    vec4 cameraForward;
 } mvp;
 
 struct InstanceData

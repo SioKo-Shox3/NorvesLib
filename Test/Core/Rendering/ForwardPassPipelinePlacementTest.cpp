@@ -213,6 +213,7 @@ namespace
             uint32_t padding0;
             uint32_t padding1;
             uint32_t padding2;
+            alignas(16) float cameraForward[4];
         };
 
         struct ExpectedWorldBoardForwardUBO
@@ -244,7 +245,8 @@ namespace
         assert(offsetof(ExpectedTransparentForwardUBO, padding0) == 760);
         assert(offsetof(ExpectedTransparentForwardUBO, padding1) == 764);
         assert(offsetof(ExpectedTransparentForwardUBO, padding2) == 768);
-        assert(sizeof(ExpectedTransparentForwardUBO) == 784);
+        assert(offsetof(ExpectedTransparentForwardUBO, cameraForward) == 784);
+        assert(sizeof(ExpectedTransparentForwardUBO) == 800);
         assert(sizeof(ExpectedWorldBoardForwardUBO) == 192);
 
         const std::string transparentCpuBlock =
@@ -268,6 +270,7 @@ namespace
             "uint32_t padding0;",
             "uint32_t padding1;",
             "uint32_t padding2;",
+            "float cameraForward[4];",
         };
         AssertFieldsInOrder(transparentCpuBlock,
                             transparentCpuFields,
@@ -306,6 +309,7 @@ namespace
             "uint padding0;",
             "uint padding1;",
             "uint padding2;",
+            "vec4 cameraForward;",
         };
         const std::string transparentVertexBlock =
             ExtractBetween(transparentVertexSource,
@@ -362,6 +366,9 @@ namespace
         assert(forwardPassSource.find("PreExposure") != std::string::npos);
         assert(forwardPassSource.find("worldBoardFrameUBO.sceneColorParams") != std::string::npos);
         assert(forwardPassSource.find("transparentFrameTemplate.sceneColorParams") != std::string::npos);
+        assert(forwardPassSource.find(
+                   "std::memcpy(transparentFrameTemplate.cameraForward, cameraForward, sizeof(cameraForward));") !=
+               std::string::npos);
         AssertSceneColorPreExposureDebugModeContract(forwardPassSource);
 
         AssertWriterSourceLayoutContract(transparentFragmentSource,
@@ -418,6 +425,11 @@ namespace
         assert(transparentFragmentSource.find("mvp.bShadowEnabled") != std::string::npos);
         assert(transparentFragmentSource.find("HasValidCascadedShadowData") != std::string::npos);
         assert(transparentFragmentSource.find("smoothstep(blendStart, boundary, receiverDistance)") !=
+               std::string::npos);
+        assert(transparentFragmentSource.find("vec3 viewForward = mvp.cameraForward.xyz;") !=
+               std::string::npos);
+        assert(transparentFragmentSource.find(
+                   "dot(worldPos - mvp.cameraPosition.xyz, viewForward)") !=
                std::string::npos);
         assert(transparentFragmentSource.find("mvp.bIBLEnabled") != std::string::npos);
         assert(transparentFragmentSource.find("vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));") ==

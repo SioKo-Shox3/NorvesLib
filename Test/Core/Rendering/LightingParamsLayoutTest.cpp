@@ -2564,7 +2564,7 @@ int main()
     assert(std::isfinite(defaultSettings.EnvironmentLuminanceScaleNits));
     assert(defaultSettings.EnvironmentLuminanceScaleNits >= 0.0f);
 
-    assert(sizeof(GPULightingParams) == 704);
+    assert(sizeof(GPULightingParams) == 720);
     assert(sizeof(GPULightingParams) % 16 == 0);
 
     assert(offsetof(GPULightingParams, invViewProjection) == 0);
@@ -2584,6 +2584,7 @@ int main()
     assert(offsetof(GPULightingParams, debugViewMode) == 668);
     assert(PreExposureOffset<GPULightingParams>() == 672);
     assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 688);
+    assert(offsetof(GPULightingParams, cameraForward) == 704);
 
     assert(static_cast<uint8_t>(DebugViewMode::Normal) == 0);
     assert(static_cast<uint8_t>(DebugViewMode::Unlit) == 1);
@@ -2687,6 +2688,10 @@ int main()
 
     assert(ContainsText(shaderSource, "uint prefilteredSpecularMipLevels;"));
     assert(ContainsText(shaderSource, "vec4 skySunDirectionAndCosRadius;"));
+    assert(ContainsText(shaderSource, "vec4 cameraForward;"));
+    assert(ContainsText(shaderSource, "vec3 viewForward = params.cameraForward.xyz;"));
+    assert(ContainsText(shaderSource,
+                        "dot(worldPos - params.cameraPosition.xyz, viewForward)"));
     assert(!ContainsText(shaderSource, "uint envMapMipLevels;"));
 
     const std::size_t debugViewModeFieldPosition = FindText(shaderSource, "uint debugViewMode;");

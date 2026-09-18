@@ -568,12 +568,14 @@ namespace
         {"morning", 8.0f, -35.0f},
         {"noon", 45.0f, 0.0f},
         {"evening", 15.0f, 35.0f}};
+    constexpr uint32_t R2SkyTimeCaseCount =
+        static_cast<uint32_t>(sizeof(R2SkyTimeCases) / sizeof(R2SkyTimeCases[0]));
     constexpr float R2SkyPreExposure = 1.0f / (1.2f * 32768.0f);
     constexpr float R2SkyEv14PreExposure = 1.0f / (1.2f * 16384.0f);
     constexpr float R2CsmNearPlane = 0.1f;
     constexpr float R2CsmFarPlane = 100.0f;
     constexpr float R2CsmLambda = 0.5f;
-    constexpr float R2CsmBoundaryBlendWidth = 0.1f;
+    constexpr float R2CsmBoundaryBlendRatio = 0.1f;
     constexpr float R2CsmEdgeChangeRateLimit = 0.125f;
 
     bool IsFiniteR2Vector(const Math::Vector3& value)
@@ -655,7 +657,8 @@ namespace
         {
             const float lower = splits[index];
             const float upper = splits[index + 1u];
-            if (distance >= lower && distance <= upper)
+            if (distance >= lower &&
+                (distance < upper || (index == 3u && distance <= upper)))
             {
                 outWeights[index] = 1.0f;
                 break;
@@ -664,15 +667,18 @@ namespace
         for (uint32_t boundary = 1u; boundary < 4u; ++boundary)
         {
             const float center = splits[boundary];
-            const float halfWidth = R2CsmBoundaryBlendWidth * 0.5f;
-            if (distance < center - halfWidth || distance > center + halfWidth)
+            const float blendWidth = std::max(
+                (center - splits[boundary - 1u]) * R2CsmBoundaryBlendRatio,
+                0.001f);
+            const float blendStart = center - blendWidth;
+            if (distance <= blendStart || distance >= center)
             {
                 continue;
             }
-            const float blend = std::clamp(
-                (distance - (center - halfWidth)) / R2CsmBoundaryBlendWidth,
-                0.0f,
-                1.0f);
+            const float normalizedBlend = std::clamp(
+                (distance - blendStart) / blendWidth, 0.0f, 1.0f);
+            const float blend = normalizedBlend * normalizedBlend *
+                                (3.0f - 2.0f * normalizedBlend);
             for (uint32_t index = 0u; index < 4u; ++index)
             {
                 outWeights[index] = 0.0f;
@@ -754,12 +760,17 @@ namespace
             for (uint32_t boundary = 1u; boundary < 4u; ++boundary)
             {
                 const float center = splits[boundary];
+                const float blendWidth = std::max(
+                    (center - splits[boundary - 1u]) * R2CsmBoundaryBlendRatio,
+                    0.001f);
                 const float samples[] = {
-                    center - R2CsmBoundaryBlendWidth,
-                    center - R2CsmBoundaryBlendWidth * 0.5f,
+                    center - blendWidth,
+                    center - blendWidth * 0.75f,
+                    center - blendWidth * 0.5f,
+                    center - blendWidth * 0.25f,
                     center,
-                    center + R2CsmBoundaryBlendWidth * 0.5f,
-                    center + R2CsmBoundaryBlendWidth};
+                    center + blendWidth * 0.5f,
+                    center + blendWidth};
                 float previousShadow = 0.0f;
                 bool bHasPreviousShadow = false;
                 for (const float sampleDistance : samples)
@@ -799,16 +810,17 @@ namespace
                 }
             }
         }
-        bPassed = bPassed && !bMissingBoundary && !bDuplicatedBoundary &&
-                  maximumBoundaryDelta <= 0.02f;
+        const bool bBoundaryPassed = !bMissingBoundary && !bDuplicatedBoundary &&
+                                      maximumBoundaryDelta <= 0.02f;
+        bPassed = bPassed && bBoundaryPassed;
         std::cout << std::fixed << std::setprecision(6)
                   << "R2_CSM_BOUNDARY cascade_count=4 splits=(" << splits[0] << ","
                   << splits[1] << "," << splits[2] << "," << splits[3] << "," << splits[4]
-                  << ") blend_width=" << R2CsmBoundaryBlendWidth
+                  << ") blend_ratio=" << R2CsmBoundaryBlendRatio
                   << " missing=" << (bMissingBoundary ? 1 : 0)
                   << " duplicated=" << (bDuplicatedBoundary ? 1 : 0)
                   << " max_shadow_delta=" << maximumBoundaryDelta
-                  << " passed=" << ((!bMissingBoundary && !bDuplicatedBoundary) ? 1 : 0)
+                  << " passed=" << (bBoundaryPassed ? 1 : 0)
                   << "\n";
 
         constexpr uint32_t edgeSampleCount = 256u;
@@ -1671,6 +1683,13 @@ namespace
             m_R1CaptureStage = R1CaptureStage::BackBuffer;
             m_bR1HasFrameNumber = false;
             m_R1LastFrameNumber = 0u;
+            m_R2SkyTimeCaseIndex = 0u;
+            m_bR2HasFrameNumber = false;
+            m_R2LastFrameNumber = 0u;
+            m_bR2HasPreviousChannelMean = false;
+            m_R2PreviousChannelMean[0] = 0.0;
+            m_R2PreviousChannelMean[1] = 0.0;
+            m_R2PreviousChannelMean[2] = 0.0;
             m_KnownCdStage = KnownCdStage::PureLambertA;
             m_KnownCdHasFrameNumber = false;
             m_KnownCdLastFrameNumber = 0u;
@@ -2124,6 +2143,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_bR2Scenario)
+            {
+                return EvaluateR2BackBufferFrame(frame, reason);
+            }
             if (m_bAllNumericalScenario)
             {
                 return EvaluateAllNumericalFrame(frame, reason);
@@ -2224,6 +2247,20 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_bR2Scenario)
+            {
+                SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
+                parameters.bEnabled = true;
+                if (m_R2SkyTimeCaseIndex < R2SkyTimeCaseCount)
+                {
+                    parameters.SunAltitudeDegrees =
+                        R2SkyTimeCases[m_R2SkyTimeCaseIndex].SunAltitudeDegrees;
+                    parameters.SunAzimuthDegrees =
+                        R2SkyTimeCases[m_R2SkyTimeCaseIndex].SunAzimuthDegrees;
+                }
+                renderWorld.SetSkyAtmosphere(parameters);
+                return;
+            }
             if (m_bAllNumericalScenario)
             {
                 if (m_bAllNumericalStageApplyFailed ||
@@ -2451,6 +2488,14 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_bR2Scenario)
+            {
+                if (m_R2SkyTimeCaseIndex < R2SkyTimeCaseCount)
+                {
+                    ++m_R2SkyTimeCaseIndex;
+                }
+                return;
+            }
             if (m_bAllNumericalScenario)
             {
                 return;
@@ -2512,6 +2557,18 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_bR2Scenario)
+            {
+                if (m_R2SkyTimeCaseIndex >= R2SkyTimeCaseCount)
+                {
+                    return false;
+                }
+                outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::BackBuffer;
+                LOG_INFO("R2 sky follow-up requested: case=%u after frame=%llu",
+                         m_R2SkyTimeCaseIndex,
+                         static_cast<unsigned long long>(frame.FrameNumber));
+                return true;
+            }
             if (m_bAllNumericalScenario)
             {
                 if (m_bAllNumericalStageApplyFailed ||
@@ -5785,6 +5842,136 @@ namespace
             return EvaluateR1FloatCapture(frame, "PresentationColor", TEXT("OETF前PresentationColor"), reason);
         }
 
+        bool EvaluateR2BackBufferFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (frame.RequestId != GetLastAcceptedRequestId())
+            {
+                reason = TEXT("R2 BackBuffer capture RequestId does not match the accepted request");
+                return false;
+            }
+            if (m_bR2HasFrameNumber && frame.FrameNumber <= m_R2LastFrameNumber)
+            {
+                reason = TEXT("R2 BackBuffer capture FrameNumber is not strictly increasing");
+                return false;
+            }
+
+            const bool bHardwareFormat = RHI::IsPresentationSrgbFormat(frame.Format);
+            const bool bShaderFormat = RHI::IsPresentationUnormFormat(frame.Format);
+            const bool bSupportedFormat = bHardwareFormat || bShaderFormat;
+            const bool bMetadataValid =
+                frame.ColorSpace == RHI::PresentationColorSpace::Rec709D65 &&
+                frame.Transfer == RHI::PresentationTransfer::SRGB &&
+                bSupportedFormat &&
+                frame.bHardwareSrgbEncode == bHardwareFormat &&
+                frame.bShaderSrgbEncode == bShaderFormat &&
+                frame.BytesPerPixel == 4u &&
+                frame.Width == ValidationWidth &&
+                frame.Height == ValidationHeight;
+            if (!bMetadataValid)
+            {
+                reason = TEXT("R2 BackBuffer capture format or encode metadata is invalid");
+                return false;
+            }
+
+            const bool bBgra = frame.Format == RHI::Format::B8G8R8A8_UNORM ||
+                               frame.Format == RHI::Format::B8G8R8A8_SRGB;
+            const bool bRgba = frame.Format == RHI::Format::R8G8B8A8_UNORM ||
+                               frame.Format == RHI::Format::R8G8B8A8_SRGB;
+            const size_t minimumRowPitch = static_cast<size_t>(frame.Width) * frame.BytesPerPixel;
+            if ((!bBgra && !bRgba) || frame.RowPitchBytes < minimumRowPitch ||
+                frame.Height > std::numeric_limits<size_t>::max() / frame.RowPitchBytes ||
+                frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
+            {
+                reason = TEXT("R2 BackBuffer capture pixel storage is invalid");
+                return false;
+            }
+
+            size_t nonZeroPixels = 0u;
+            size_t differentFromFirstPixels = 0u;
+            double channelSum[3] = {};
+            uint8_t firstRgb[3] = {};
+            bool bFirstPixelSet = false;
+            for (uint32_t y = 0u; y < frame.Height; ++y)
+            {
+                const size_t rowOffset = static_cast<size_t>(y) * frame.RowPitchBytes;
+                for (uint32_t x = 0u; x < frame.Width; ++x)
+                {
+                    const size_t offset = rowOffset + static_cast<size_t>(x) * frame.BytesPerPixel;
+                    const uint8_t red = frame.Pixels[offset + (bBgra ? 2u : 0u)];
+                    const uint8_t green = frame.Pixels[offset + 1u];
+                    const uint8_t blue = frame.Pixels[offset + (bBgra ? 0u : 2u)];
+                    channelSum[0] += static_cast<double>(red);
+                    channelSum[1] += static_cast<double>(green);
+                    channelSum[2] += static_cast<double>(blue);
+                    if (red != 0u || green != 0u || blue != 0u)
+                    {
+                        ++nonZeroPixels;
+                    }
+                    if (!bFirstPixelSet)
+                    {
+                        firstRgb[0] = red;
+                        firstRgb[1] = green;
+                        firstRgb[2] = blue;
+                        bFirstPixelSet = true;
+                    }
+                    else if (red != firstRgb[0] || green != firstRgb[1] || blue != firstRgb[2])
+                    {
+                        ++differentFromFirstPixels;
+                    }
+                }
+            }
+
+            m_R2LastFrameNumber = frame.FrameNumber;
+            m_bR2HasFrameNumber = true;
+            const double pixelCount = static_cast<double>(frame.Width) * static_cast<double>(frame.Height);
+            const double channelMean[3] = {
+                channelSum[0] / pixelCount,
+                channelSum[1] / pixelCount,
+                channelSum[2] / pixelCount};
+            double meanDeltaFromPrevious = 0.0;
+            if (m_bR2HasPreviousChannelMean)
+            {
+                meanDeltaFromPrevious = std::max(
+                    std::abs(channelMean[0] - m_R2PreviousChannelMean[0]),
+                    std::max(
+                        std::abs(channelMean[1] - m_R2PreviousChannelMean[1]),
+                        std::abs(channelMean[2] - m_R2PreviousChannelMean[2])));
+            }
+            const bool bChangedFromPrevious =
+                !m_bR2HasPreviousChannelMean || meanDeltaFromPrevious > 0.5;
+            const bool bPassed = nonZeroPixels > 0u && differentFromFirstPixels > 0u && bChangedFromPrevious;
+            m_R2PreviousChannelMean[0] = channelMean[0];
+            m_R2PreviousChannelMean[1] = channelMean[1];
+            m_R2PreviousChannelMean[2] = channelMean[2];
+            m_bR2HasPreviousChannelMean = true;
+            const char* caseName = m_R2SkyTimeCaseIndex < R2SkyTimeCaseCount
+                                       ? R2SkyTimeCases[m_R2SkyTimeCaseIndex].Name
+                                       : "unknown";
+            std::cout << "R2_GPU_CAPTURE case=" << caseName
+                      << " frame=" << frame.FrameNumber
+                      << " source=back-buffer"
+                      << " format=" << static_cast<unsigned int>(frame.Format)
+                      << " nonzero_pixels=" << nonZeroPixels
+                      << " different_from_first=" << differentFromFirstPixels
+                      << " mean_rgb=(" << channelMean[0] << "," << channelMean[1] << "," << channelMean[2] << ")"
+                      << " mean_delta_from_previous=" << meanDeltaFromPrevious
+                      << " changed_from_previous=" << (bChangedFromPrevious ? 1 : 0)
+                      << " passed=" << (bPassed ? 1 : 0) << "\n";
+            if (!bPassed)
+            {
+                reason = TEXT("R2 BackBuffer capture is empty, spatially uniform, or unchanged from the previous sky case");
+                return false;
+            }
+            if (m_R2SkyTimeCaseIndex + 1u == R2SkyTimeCaseCount)
+            {
+                std::cout << "R2_SKY_TIME_SWEEP=PASS cases=" << R2SkyTimeCaseCount
+                          << " capture_source=back-buffer gpu_capture=1\n";
+            }
+            return true;
+        }
+
         bool EvaluateR1SceneColor(
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) const
@@ -6008,6 +6195,11 @@ namespace
 
         bool m_bR1Scenario = false;
         bool m_bR2Scenario = false;
+        uint32_t m_R2SkyTimeCaseIndex = 0u;
+        bool m_bR2HasFrameNumber = false;
+        uint64_t m_R2LastFrameNumber = 0u;
+        bool m_bR2HasPreviousChannelMean = false;
+        double m_R2PreviousChannelMean[3] = {};
         bool m_bAllNumericalScenario = false;
         bool m_bAllNumericalArgumentParsed = false;
         bool m_bKnownCdScenario = false;
@@ -6367,12 +6559,10 @@ int main(int argc, char** argv)
     if (bR2Scenario)
     {
         if (!bR2OutdoorScene || !bR2BackBuffer ||
-            !ValidateR2ScenarioArgumentContract() || !ValidateR2SkyCsmContract())
+            !ValidateR2ScenarioArgumentContract())
         {
             return 1;
         }
-        std::cout << "R2_SKY_TIME_SWEEP=PASS cases=3 capture_source=back-buffer\n";
-        return 0;
     }
 
     if (!ValidateCaptureSourceArgumentContract())

@@ -2573,6 +2573,10 @@ namespace NorvesLib::Core::Rendering
 
         using namespace NorvesLib::Math;
 
+        params.cameraForward[0] = 0.0f;
+        params.cameraForward[1] = 0.0f;
+        params.cameraForward[2] = -1.0f;
+        params.cameraForward[3] = 0.0f;
         const CameraProxy *activeCamera = context.GetActiveCamera();
         if (activeCamera)
         {
@@ -2584,6 +2588,20 @@ namespace NorvesLib::Core::Rendering
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(params.cameraPosition);
             cameraConstants.CopyShaderInverseViewProjection(params.invViewProjection);
+            const float forwardLengthSquared =
+                activeCamera->ForwardX * activeCamera->ForwardX +
+                activeCamera->ForwardY * activeCamera->ForwardY +
+                activeCamera->ForwardZ * activeCamera->ForwardZ;
+            if (std::isfinite(forwardLengthSquared) && forwardLengthSquared > 1.0e-10f)
+            {
+                const float inverseForwardLength = 1.0f / std::sqrt(forwardLengthSquared);
+                if (std::isfinite(inverseForwardLength))
+                {
+                    params.cameraForward[0] = activeCamera->ForwardX * inverseForwardLength;
+                    params.cameraForward[1] = activeCamera->ForwardY * inverseForwardLength;
+                    params.cameraForward[2] = activeCamera->ForwardZ * inverseForwardLength;
+                }
+            }
         }
         else
         {

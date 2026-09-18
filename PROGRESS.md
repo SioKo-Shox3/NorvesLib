@@ -18,11 +18,11 @@
 - R2-P4: `f51384f`。実カメラのnear/farから対数・線形混合の4分割距離を計算し、同一方向ライトの球近似行列、caster深度範囲、テクセル中心スナップをCPUだけで構築した。near/far逆転、無効方向、非有限bounds、固定4カスケード以外を有限な影なし結果へ戻し、サブテクセル移動の行列安定性と隣接境界の連続性を確認した。指定のDebugビルドとCTestは2/2 passed。RHI/Vulkanには触れていない。
 - R2-P5: `9e015a3`。RHIに配列depthの指定layer viewを追加し、Vulkanの1層Framebufferへ安全にattachできるようにした。ShadowMapPassを4層D32 depth arrayと4つのlayer別Framebufferへ移行し、CSMの各行列・分割距離をRenderThreadの公開値へ記録した。部分初期化時は全リソースを解放し、未完成の配列深度をRenderGraphへ公開しない。P4回帰を含む関連CTestは6/6 passed、指定P5 focused CTestは3/3 passed。
 - R2-P6: Lighting/ForwardのGPUパラメータ、descriptor、頂点/フラグメントシェーダーを4カスケード行列・5分割距離・`sampler2DArray`へ統一した。カスケード境界の10%ブレンド、有限性/分割順序検査、影なし・単一層・不完全公開値向けの1×1×4層型互換フォールバックを実装した。指定DebugビルドとCTestは4/4 passed、`forward_transparent.vert`/`.frag`/`lighting.frag`の`glslangValidator`は3/3 exit 0。
-- R2-P7: 朝・昼・夕のR2 sky golden 3枚と閾値TSV 2枚をR1 baselineから分離して固定した。P6適用後にfloat readback、太陽ディスク有限性、4カスケード境界の欠落/二重化、サブテクセル影エッジ変化率を再検証し、指定Debug build、CTest 2/2、R2 self-test、屋外sky-time-sweepをすべてexit 0で確認した。証拠は`.harness/runs/20260918-r2-p7/verify-R2-P7-p6-rerun.txt`に保存した。
+- R2-P7（追補中）: 朝・昼・夕のR2 sky golden 3枚と閾値TSV 2枚をR1 baselineから分離して固定した。初回P6適用後検証の不足を受け、`cameraForward`のview-depth規約、空パラメータのFramePacket接続、CPU/shaderのsmoothstep一致、実GPU BackBufferのケース間変化検証を追加した。最終評価と追補コミットの記録が残っている。
 
 ## In progress
 
-- R2-P8（R2受入れ記録とRoadmap更新）へ進む。
+- R2-P7追補の最終評価とコミットを完了してから、R2-P8（R2受入れ記録とRoadmap更新）へ進む。
 
 ## Next
 
@@ -30,7 +30,7 @@
 
 ## Notes
 
-- R2-P8: P6の実装とP7の適用後再検証は完了した。R2全体の受入れ記録とRoadmap更新が残っている。`blocked/R2-P8.md`の再開条件はP7再検証とR2受入れ記録の更新後に満たす。
+- R2-P7追補: 初回評価で検出されたCPU/shader補間差、行末差分、実GPU経路の明示不足を修正した。source/CTest 5/5、R2 self-test、実GPU BackBuffer 3/3、RHI/Vulkan 4/4、GLSL 3/3を再実行済み。`blocked/R2-P8.md`は最終評価と受入れ記録更新までREOPENEDとする。
 - P6a completion report: `.superpowers/sdd/RenderingR1PhysicalFoundationPlan/task-6a-report.md`。forward-fixの最終証拠は `.harness/runs/20260908-084154/p6a-forward-fix-gpu/` と `p6a-forward-fix-review/claude-final.json` に保存する。旧P6a reportは同ディレクトリのアーカイブへ保持する。
 - 独立再検証: `recheck-R1-P6A-4-1.txt`〜`-11.txt`。集計は `p6a-independent-recheck-audit-1730.json`。統合接続評価は `p6a-r1-integrated-review/receipt.json` / `stdout.json`。
 - 統合評価はcapture状態遷移の全寿命と照明単位の全項を追跡していない。blocking 0として受理し、確認範囲を拡大解釈しない。bundle評価本文のS79→319はrawと不一致で、実値S80→320を採用する。

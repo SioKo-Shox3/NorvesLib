@@ -49,6 +49,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t padding0;
             uint32_t padding1;
             uint32_t padding2;
+            alignas(16) float cameraForward[4];
         };
 
         static_assert(alignof(TransparentForwardUBO) == 16);
@@ -70,7 +71,8 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(TransparentForwardUBO, padding0) == 760);
         static_assert(offsetof(TransparentForwardUBO, padding1) == 764);
         static_assert(offsetof(TransparentForwardUBO, padding2) == 768);
-        static_assert(sizeof(TransparentForwardUBO) == 784);
+        static_assert(offsetof(TransparentForwardUBO, cameraForward) == 784);
+        static_assert(sizeof(TransparentForwardUBO) == 800);
 
         static void InitializeSafeTransparentShadowParams(TransparentForwardUBO& ubo)
         {
@@ -1088,6 +1090,7 @@ namespace NorvesLib::Core::Rendering
 
         CameraViewConstants cameraConstants;
         float cameraPosition[4] = {0.0f, 1.5f, 4.0f, 1.0f};
+        float cameraForward[4] = {0.0f, 0.0f, -1.0f, 0.0f};
         float cameraRight[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         float cameraUp[4] = {0.0f, 1.0f, 0.0f, 0.0f};
 
@@ -1097,6 +1100,20 @@ namespace NorvesLib::Core::Rendering
             cameraConstants =
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(cameraPosition);
+            const float forwardLengthSquared =
+                activeCamera->ForwardX * activeCamera->ForwardX +
+                activeCamera->ForwardY * activeCamera->ForwardY +
+                activeCamera->ForwardZ * activeCamera->ForwardZ;
+            if (std::isfinite(forwardLengthSquared) && forwardLengthSquared > 1.0e-10f)
+            {
+                const float inverseForwardLength = 1.0f / std::sqrt(forwardLengthSquared);
+                if (std::isfinite(inverseForwardLength))
+                {
+                    cameraForward[0] = activeCamera->ForwardX * inverseForwardLength;
+                    cameraForward[1] = activeCamera->ForwardY * inverseForwardLength;
+                    cameraForward[2] = activeCamera->ForwardZ * inverseForwardLength;
+                }
+            }
             cameraRight[0] = activeCamera->RightX;
             cameraRight[1] = activeCamera->RightY;
             cameraRight[2] = activeCamera->RightZ;
@@ -1140,6 +1157,7 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(transparentFrameTemplate.view, viewData, sizeof(viewData));
         std::memcpy(transparentFrameTemplate.projection, projectionData, sizeof(projectionData));
         std::memcpy(transparentFrameTemplate.cameraPosition, cameraPosition, sizeof(cameraPosition));
+        std::memcpy(transparentFrameTemplate.cameraForward, cameraForward, sizeof(cameraForward));
         transparentFrameTemplate.sceneColorParams[0] = sceneColorPreExposure;
         std::memcpy(transparentFrameTemplate.lightView,
                     physicalLighting.CascadedShadow.View,

@@ -1153,6 +1153,7 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
             }
+            m_CurrentPacket->Scene.SkyAtmosphere = m_SkyAtmosphere;
 
             m_CurrentPacket->DrawCommands.clear();
             m_CurrentPacket->DrawCommands.reserve(m_MaxDrawCallsPerFrame);
@@ -2280,6 +2281,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_bCameraSet = true;
+    }
+
+    void RenderingCoordinator::SetSkyAtmosphere(const SkyAtmosphereParameters& parameters)
+    {
+        m_SkyAtmosphere = parameters;
     }
 
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)

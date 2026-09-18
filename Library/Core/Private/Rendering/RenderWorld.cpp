@@ -290,6 +290,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetMainCamera(camera);
     }
 
+    void RenderWorld::SetSkyAtmosphere(const SkyAtmosphereParameters& parameters)
+    {
+        m_RenderingCoordinator.SetSkyAtmosphere(parameters);
+    }
+
     void RenderWorld::EndFrame()
     {
         if (!m_bInitialized)

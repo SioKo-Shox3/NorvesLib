@@ -30,6 +30,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     uint shadowPadding1;
     uint shadowPadding2;
     vec4 skySunDirectionAndCosRadius; // xyz=太陽方向, w=cos(太陽ディスク角半径)
+    vec4 cameraForward; // xyz=CSM分割に使うカメラ前方単位ベクトル
 } params;
 
 // ライトデータ構造
@@ -394,7 +395,14 @@ float CalculateShadow(vec3 worldPos)
         return 1.0;
     }
 
-    float receiverDistance = distance(params.cameraPosition.xyz, worldPos);
+    vec3 viewForward = params.cameraForward.xyz;
+    float forwardLength = length(viewForward);
+    if (!IsFiniteShadowValue(forwardLength) || forwardLength <= 0.00001)
+    {
+        return 1.0;
+    }
+    viewForward /= forwardLength;
+    float receiverDistance = dot(worldPos - params.cameraPosition.xyz, viewForward);
     float nearDistance = GetShadowSplitDistance(0u);
     float farDistance = GetShadowSplitDistance(4u);
     if (!IsFiniteShadowValue(receiverDistance) ||

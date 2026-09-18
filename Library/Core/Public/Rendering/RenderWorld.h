@@ -2,6 +2,7 @@
 
 #include "RenderTypes.h"
 #include "FrameCaptureTypes.h"
+#include "SkyAtmosphere.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
@@ -143,6 +144,12 @@ namespace NorvesLib::Core::Rendering
          * @param camera メインカメラ情報
          */
         void SetMainCamera(const CameraProxy &camera);
+
+        /**
+         * @brief 空パラメータを設定（GameThread）
+         * @param parameters 次のFramePacketへコピーする空スナップショット
+         */
+        void SetSkyAtmosphere(const SkyAtmosphereParameters& parameters);
 
         /**
          * @brief フレーム終了（GameThread）

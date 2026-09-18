@@ -25,6 +25,7 @@ layout(set = 0, binding = 0) uniform MVPData
     uint padding0;
     uint padding1;
     uint padding2;
+    vec4 cameraForward;
 } mvp;
 
 layout(set = 0, binding = 1) uniform sampler2D albedoTexture;
@@ -234,7 +235,14 @@ float CalculateShadow(vec3 worldPos)
         return 1.0;
     }
 
-    float receiverDistance = distance(mvp.cameraPosition.xyz, worldPos);
+    vec3 viewForward = mvp.cameraForward.xyz;
+    float forwardLength = length(viewForward);
+    if (!IsFiniteShadowValue(forwardLength) || forwardLength <= 0.00001)
+    {
+        return 1.0;
+    }
+    viewForward /= forwardLength;
+    float receiverDistance = dot(worldPos - mvp.cameraPosition.xyz, viewForward);
     float nearDistance = GetShadowSplitDistance(0u);
     float farDistance = GetShadowSplitDistance(4u);
     if (!IsFiniteShadowValue(receiverDistance) ||

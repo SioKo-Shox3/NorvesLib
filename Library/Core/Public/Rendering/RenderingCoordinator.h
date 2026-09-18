@@ -276,6 +276,12 @@ namespace NorvesLib::Core::Rendering
         void SetMainCamera(const CameraProxy &camera);
 
         /**
+         * @brief 空パラメータを次のFramePacketへ公開する
+         * @param parameters GameThread側で設定する空スナップショット
+         */
+        void SetSkyAtmosphere(const SkyAtmosphereParameters& parameters);
+
+        /**
          * @brief メインカメラを取得
          */
         const CameraProxy &GetMainCamera() const { return m_MainCamera; }
@@ -460,6 +466,7 @@ namespace NorvesLib::Core::Rendering
 
         // メインカメラ（GameThreadから設定される）
         CameraProxy m_MainCamera;
+        SkyAtmosphereParameters m_SkyAtmosphere;
         Container::UnorderedMap<uint64_t, CameraProxy> m_Cameras;
         uint64_t m_NextCameraId = 1;
         uint64_t m_MainCameraId = 0;

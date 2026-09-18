@@ -41,3 +41,12 @@
 対象: R2-P7 空・太陽・CSMの数値/画像受入れを固定する
 
 claude-opus-5 でも枠切れだったため評価していない。リセット後、次の反復より先にこの差分の評価を回す。
+
+## R2-P7-002
+
+- status: doing
+- source: R2-P7 blocker-fix evaluation
+- finding: 初回のP7受入れ差分は、CPUのCSM境界補間がshaderのsmoothstepと一致せず、編集ファイルの行末差分も混入していた。実GPUのR2シナリオはFramePacketへ空時刻を渡す経路とBackBuffer実読出しを明示する必要があった。
+- fix: CPU境界ブレンドをshaderと同じsmoothstepへ揃え、`cameraForward`をLighting/ForwardのUBOへ追加し、空パラメータをRenderWorldからFramePacketへ接続した。BackBuffer検証は3時刻の非黒・空間差分・ケース間平均値差分を実測する。
+- verify: source/CTest 5/5、R2 self-test PASS、GPU BackBuffer 3/3 PASS、RHI/Vulkan 4/4 PASS、GLSL 3/3 exit 0、`git diff --numstat` と `--ignore-cr-at-eol --numstat` の一致、`git diff --check` clean。
+- resolution: 最終評価PASS後にP7修正コミットSHAを記録し、R2-P8受入れ記録へ反映する。
