@@ -14,9 +14,9 @@ R2-P1〜P7で、空パラメータと太陽方向、空LUT、空由来IBL、4分
 | R2-P4 | `f51384f` | 4分割CSMの距離・行列・テクセル安定化 |
 | R2-P5 | `9e015a3` | 4層配列深度とlayer別Framebuffer |
 | R2-P6 | `90c99ab` | Lighting/ForwardのCSM GPUサンプリングと安全なフォールバック |
-| R2-P7 | `9e1c953` + follow-up | P6適用後の空・太陽・CSM再検証、カメラ前方CSM深度、実GPU BackBuffer取得 |
+| R2-P7 | `9e1c953` + `ca9204d` | P6適用後の空・太陽・CSM再検証、カメラ前方CSM深度、実GPU BackBuffer取得 |
 
-R2のコード完了基点は `90c99ab` とP7の追補修正であり、R2専用の受入れ記録とRoadmap更新はこの実装および追補後の検証を根拠とする。
+R2のコード完了基点は `90c99ab` とP7追補 `ca9204d` であり、R2専用の受入れ記録とRoadmap更新はこの実装および追補後の検証を根拠とする。
 
 ## P6 GPU契約の検証
 
