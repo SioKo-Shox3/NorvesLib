@@ -185,14 +185,17 @@ namespace
                ExpectResultContains(response, expectedFragments, fragmentCount, message);
     }
 
-    // object.getSnapshot を投げ、dump した result に fragment が含まれるかを返す。
-    // 「載っていないこと」の検査に使う（含まれていれば true）。
-    bool ResultContains(
+    // object.getSnapshot を投げ、dump した result に fragment が含まれるかを outContains へ返す。
+    // 戻り値は**要求そのものが成立したか**。両者を 1 つの bool に畳むと、「載っていないこと」の
+    // 検査が要求経路の故障でも通ってしまう。
+    bool TryResultContains(
         Norves::Bridge::BridgeEngineServer& server,
         std::string_view requestId,
         std::string_view paramsJson,
-        std::string_view fragment)
+        std::string_view fragment,
+        bool& outContains)
     {
+        outContains = true;  // 要求が成立しなければ「載っている」側に倒し、呼び出し側を落とす。
         std::string response;
         if (!HandleRequest(server, requestId, "object.getSnapshot", paramsJson, response))
         {
@@ -203,8 +206,9 @@ namespace
         {
             return false;
         }
-        return decoded.value().result.value().dump().find(std::string(fragment)) !=
-               std::string::npos;
+        outContains = decoded.value().result.value().dump().find(std::string(fragment)) !=
+                      std::string::npos;
+        return true;
     }
 
     bool RequestAndExpect(
@@ -472,9 +476,12 @@ namespace
             R"({"objectId":")" + baseId + R"("})",
             baseFragments, 3,
             "base Component snapshot surface") && bPassed;
-        bPassed = Check(!ResultContains(fixture.Server, "base-snapshot-components",
-                                        R"({"objectId":")" + baseId + R"("})",
-                                        R"("components")"),
+        bool bBaseHasComponents = true;
+        bPassed = Check(TryResultContains(fixture.Server, "base-snapshot-components",
+                                          R"({"objectId":")" + baseId + R"("})",
+                                          R"("components")", bBaseHasComponents),
+                        "nested-components check request succeeded") && bPassed;
+        bPassed = Check(!bBaseHasComponents,
                         "component snapshot carries no nested components") && bPassed;
 
         const ScriptRuntimeDiagnostics beforeSets =
@@ -775,6 +782,23 @@ namespace
             R"({"objectId":")" + zeroPaddedOwnerA + R"("})",
             entityFragments, entityFragmentCount,
             "zero-padded numeric Entity snapshot document") && bPassed;
+
+        // エンジンが所有する識別子と寿命状態は Entity 宛てでも書けない。
+        const uint64_t ownerAObjectIdBefore = fixture.OwnerA->GetObjectId();
+        const char* rejectedEntityParams[] =
+        {
+            R"("property":"ObjectId","value":9)",
+            R"("property":"bPendingDestroy","value":true)"
+        };
+        for (uint32_t index = 0; index < 2u; ++index)
+        {
+            bPassed = RequestAndExpect(
+                fixture.Server, "rejected-entity-set-" + std::to_string(index), "object.setProperty",
+                R"({"objectId":")" + ownerAId + R"(",)" + rejectedEntityParams[index] + '}',
+                R"({"accepted":false})", "rejected Entity identity/lifecycle set") && bPassed;
+        }
+        bPassed = Check(fixture.OwnerA->GetObjectId() == ownerAObjectIdBefore,
+                        "rejected Entity ObjectId set preserves the identifier") && bPassed;
 
         bPassed = RequestAndExpect(
             fixture.Server, "numeric-set", "object.setProperty",
