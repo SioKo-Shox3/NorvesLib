@@ -884,9 +884,11 @@ namespace
             {
                 const std::string dumped = decoded.value().result.value().dump();
                 bPassed = CheckTypeDescriptor(dumped, "CameraComponent", "component", true) && bPassed;
-                bPassed = CheckTypeDescriptor(dumped, "ScriptComponent", "component", true) && bPassed;
-                // 反映に載っていても factory に登録していない型は広告しない（基底 Component）。
+                bPassed = CheckTypeDescriptor(dumped, "SpringArmComponent", "component", true) && bPassed;
+                // 反映に載っていても factory に登録していない型は広告しない（基底 Component と、
+                // 生成時に ScriptPath を渡せないため意図的に外している ScriptComponent）。
                 bPassed = CheckTypeDescriptor(dumped, "Component", "component", false) && bPassed;
+                bPassed = CheckTypeDescriptor(dumped, "ScriptComponent", "component", false) && bPassed;
                 // Entity は Component 派生ではないので kind は object のまま。
                 bPassed = CheckTypeDescriptor(dumped, "Entity", "object", false) && bPassed;
             }
@@ -945,6 +947,11 @@ namespace
         {
             R"({"objectId":")" + ownerBId + R"(","kind":"Component"})",
             R"({"objectId":")" + ownerBId + R"(","kind":"Entity"})",
+            // 反映には載っているが factory に登録していない型（生成時に ScriptPath を渡せない）。
+            R"({"objectId":")" + ownerBId + R"(","kind":"ScriptComponent"})",
+            // 文字列でない欄は読めないものとして扱う（wire の型を信用しない）。
+            R"({"objectId":")" + ownerBId + R"(","kind":123})",
+            R"({"objectId":123,"kind":"CameraComponent"})",
             R"({"objectId":")" + ownerBId + R"(","kind":"NotARealComponentType"})",
             R"({"objectId":")" + ownerBId + R"(","kind":""})",
             R"({"objectId":")" + ownerBId + R"("})",
@@ -973,7 +980,11 @@ namespace
             R"({"objectId":")" + ownerBId + R"("})",
             R"({"objectId":""})",
             R"({})",
-            R"({"objectId":"component:)" + ownerBId + R"(:999999999"})"
+            R"({"objectId":123})",
+            R"({"objectId":"component:)" + ownerBId + R"(:999999999"})",
+            // 所有者プレフィックスが別 Entity を指す id。cid だけ合っていても解決させない。
+            R"({"objectId":")" + MakeComponentObjectId(
+                fixture.OwnerB->GetObjectId(), fixture.Script->GetComponentId()) + R"("})"
         };
         for (uint32_t index = 0;
              index < static_cast<uint32_t>(sizeof(rejectedRemoveParams) / sizeof(rejectedRemoveParams[0]));

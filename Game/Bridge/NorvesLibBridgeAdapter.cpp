@@ -10,7 +10,6 @@
 #include "Core/Public/Application/IWindow.h"
 #include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/Component.h"
-#include "Core/Public/Component/ScriptComponent.h"
 #include "Core/Public/Component/SpringArmComponent.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Logging/LogMacros.h"
@@ -816,9 +815,14 @@ namespace Game::Bridge
 
         // Kind は REFLECTION_CLASS のクラス名と一致させる（AppendComponentsArray が綴る kind、
         // および schemaGetSnapshot の typeName と同じ綴り）。
+        //
+        // ScriptComponent は載せない。Entity::AddComponent が生成直後に BeginPlay を呼び、
+        // ScriptComponent::BeginPlay はそこで束縛を試みる。component.add の params は
+        // { objectId, kind } だけで ScriptPath を渡せないため、束縛は必ず失敗する。失敗後に
+        // 再束縛する経路は無い（ScriptRuntime::BeginFrameMaintenance は既存のスロットしか
+        // 見ない）ので、後から object.setProperty で ScriptPath を入れても動かない死んだ
+        // コンポーネントが残る。生成時にプロパティを渡せるようになるまでは広告しない。
         constexpr ComponentFactoryEntry kComponentFactories[] = {
-            {"ScriptComponent",
-             &CreateComponentOfType<NorvesLib::Core::Component::ScriptComponent>},
             {"CameraComponent",
              &CreateComponentOfType<NorvesLib::Core::Component::CameraComponent>},
             {"SpringArmComponent",
