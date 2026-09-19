@@ -121,6 +121,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/GBufferPass.cpp
     Private/Rendering/SkyAtmosphere.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/VolumetricsPass.cpp
     Private/Rendering/SkyAtmospherePass.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
     Private/Rendering/CascadedShadowLightMatrices.cpp
@@ -320,6 +321,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SceneProxy.h
     Public/Rendering/SkyAtmosphere.h
     Public/Rendering/VolumetricFog.h
+    Public/Rendering/VolumetricsPass.h
     Public/Rendering/FramePacket.h
     Public/Rendering/FrameCaptureTypes.h
     Public/Rendering/FrameCaptureThumbnailEncoder.h

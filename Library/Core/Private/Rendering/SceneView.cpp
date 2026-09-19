@@ -6,6 +6,7 @@
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/VolumetricsPass.h"
 #include "Rendering/ForwardPass.h"
 #include "Rendering/BloomPass.h"
 #include "Rendering/ToneMappingPass.h"
@@ -675,6 +676,9 @@ namespace NorvesLib::Core::Rendering
         lightingPass->SetRegisterLegacyBridge(false);
         AddPass(std::move(lightingPass));
 
+        // VolumetricsPass: Lighting後のSceneColorを解析高さフォグで合成
+        AddPass(MakeUnique<VolumetricsPass>());
+
         // ForwardPass(TransparentOnly): Lighting後のSceneColorへ半透明をLoad合成
         auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
         transparentForwardPass->SetTransparentOnly(true);
@@ -733,7 +737,7 @@ namespace NorvesLib::Core::Rendering
         SetPostProcessStack(std::move(postProcessStack));
 
         NORVES_LOG_INFO("SceneView",
-                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
     }
 
     void SceneView::CullProxies(Viewport *viewport)

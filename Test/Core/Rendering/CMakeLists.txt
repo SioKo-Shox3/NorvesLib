@@ -489,6 +489,19 @@ target_include_directories(ForwardPassPipelinePlacementTest PRIVATE
 set_target_properties(ForwardPassPipelinePlacementTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME ForwardPassPipelinePlacementTest COMMAND ForwardPassPipelinePlacementTest)
 
+add_executable(VolumetricsPassContractTest
+    VolumetricsPassContractTest.cpp
+)
+target_link_libraries(VolumetricsPassContractTest PRIVATE Core)
+target_include_directories(VolumetricsPassContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(VolumetricsPassContractTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(VolumetricsPassContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME VolumetricsPassContractTest COMMAND VolumetricsPassContractTest)
+
 add_executable(ViewScreenTopologyTest
     ViewScreenTopologyTest.cpp
 )

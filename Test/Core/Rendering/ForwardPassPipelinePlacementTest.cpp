@@ -5,6 +5,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/SkyAtmospherePass.h"
+#include "Rendering/VolumetricsPass.h"
 #include "Rendering/ToneMappingPass.h"
 #include <cassert>
 #include <cstddef>
@@ -495,7 +496,7 @@ int main()
 
     sceneView.SetupDeferredPipeline(&sceneRenderer);
 
-    assert(sceneView.GetPassCount() == 8);
+    assert(sceneView.GetPassCount() == 9);
 
     IViewPass* skyAtmospherePass = sceneView.GetPassAt(5);
     assert(skyAtmospherePass != nullptr);
@@ -507,7 +508,12 @@ int main()
     assert(std::strcmp(lightingPass->GetName(), "LightingPass") == 0);
     assert(dynamic_cast<LightingPass*>(lightingPass) != nullptr);
 
-    IViewPass* forwardPassBase = sceneView.GetPassAt(7);
+    IViewPass* volumetricsPassBase = sceneView.GetPassAt(7);
+    assert(volumetricsPassBase != nullptr);
+    assert(std::strcmp(volumetricsPassBase->GetName(), "VolumetricsPass") == 0);
+    assert(dynamic_cast<VolumetricsPass*>(volumetricsPassBase) != nullptr);
+
+    IViewPass* forwardPassBase = sceneView.GetPassAt(8);
     assert(forwardPassBase != nullptr);
     assert(std::strcmp(forwardPassBase->GetName(), "ForwardPass") == 0);
 
