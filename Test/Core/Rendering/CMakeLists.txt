@@ -627,6 +627,16 @@ target_include_directories(SkyAtmosphereModelTest PRIVATE
 set_target_properties(SkyAtmosphereModelTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkyAtmosphereModelTest COMMAND SkyAtmosphereModelTest)
 
+add_executable(VolumetricFogModelTest
+    VolumetricFogModelTest.cpp
+)
+target_link_libraries(VolumetricFogModelTest PRIVATE Core)
+target_include_directories(VolumetricFogModelTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(VolumetricFogModelTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME VolumetricFogModelTest COMMAND VolumetricFogModelTest)
+
 add_executable(SkyAtmospherePassContractTest
     SkyAtmospherePassContractTest.cpp
 )

@@ -6,6 +6,7 @@
 #include "SkinnedMeshTypes.h"
 #include "MegaGeometry/MegaGeometryTypes.h"
 #include "SkyAtmosphere.h"
+#include "VolumetricFog.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
 #include "Math/MatrixUtils.h"
@@ -385,6 +386,7 @@ namespace NorvesLib::Core::Rendering
         float AmbientColorR = 0.1f, AmbientColorG = 0.1f, AmbientColorB = 0.1f;
         float AmbientIntensity = 1.0f;
         SkyAtmosphereParameters SkyAtmosphere;
+        VolumetricFogParameters VolumetricFog;
 
         // フォグ設定
         bool bFogEnabled = false;
@@ -404,6 +406,12 @@ namespace NorvesLib::Core::Rendering
             LightProxies.clear();
             AdditionalCameras.clear();
             SkyAtmosphere = SkyAtmosphereParameters{};
+            VolumetricFog = MakeDefaultVolumetricFogParameters();
+        }
+
+        void SetVolumetricFogParameters(const VolumetricFogParameters& parameters)
+        {
+            VolumetricFog = SanitizeVolumetricFogParameters(parameters);
         }
 
         /**
