@@ -9,7 +9,6 @@
 
 #include "Core/Public/Application/IWindow.h"
 #include "Core/Public/Component/Component.h"
-#include "Core/Public/Component/ScriptComponent.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
@@ -2415,6 +2414,21 @@ namespace Game::Bridge
         if (cls == nullptr)
         {
             return OkLiteral(kRejected);
+        }
+
+        // エンジンが所有する識別子と寿命状態は、汎用プロパティ編集の対象にしない。
+        // ObjectId / ComponentId は Bridge の objectId 体系そのもので、書き換えると
+        // 以後その対象を指せなくなる。bBegunPlay / bPendingDestroy は BeginPlay と破棄の
+        // 進行状態で、外から巻き戻すとライフサイクルが二重に走りうる。
+        // 反映に載っている（= 読める）ことと、外部から書いてよいことは別。
+        static constexpr std::string_view kEngineOwnedProperties[] = {
+            "ObjectId", "ComponentId", "bBegunPlay", "bPendingDestroy"};
+        for (const std::string_view engineOwned : kEngineOwnedProperties)
+        {
+            if (std::string_view{propertyName} == engineOwned)
+            {
+                return OkLiteral(kRejected);
+            }
         }
 
         // クラスから ClassProperty を引く（プロパティ名 -> Identity）。IdentityPool 経由で

@@ -133,6 +133,80 @@ namespace
                Check(envelope.result.value() == expected.value(), message);
     }
 
+    // 反映投影が返すプロパティの並び順は実装依存（ハッシュ順）で、期待値として固定すると
+    // 実装と無関係な理由で落ちる。契約として意味があるのは「どの欄がどの値で載るか」なので、
+    // result を dump した文字列に対する包含で検査する。JsonValue::dump はキーを正規化して
+    // 綴るため、{"name":...,"value":...,"valueType":...} の並びは安定する。
+    bool ExpectResultContains(
+        const std::string& response,
+        const std::string* expectedFragments,
+        uint32_t fragmentCount,
+        const char* message)
+    {
+        const auto decoded = Norves::Bridge::decode_envelope(response);
+        if (!Check(decoded.is_ok(), "result response failed to decode"))
+        {
+            return false;
+        }
+
+        const Envelope& envelope = decoded.value();
+        if (!Check(envelope.result.has_value(), "success response has result") ||
+            !Check(!envelope.error.has_value(), "success response has no error"))
+        {
+            return false;
+        }
+
+        const std::string dumped = envelope.result.value().dump();
+        bool bPassed = true;
+        for (uint32_t index = 0; index < fragmentCount; ++index)
+        {
+            const bool bFound = dumped.find(expectedFragments[index]) != std::string::npos;
+            if (!bFound)
+            {
+                std::cout << "  missing fragment: " << expectedFragments[index] << "\n"
+                          << "  in result: " << dumped << "\n";
+            }
+            bPassed = Check(bFound, message) && bPassed;
+        }
+        return bPassed;
+    }
+
+    bool RequestAndExpectContains(
+        Norves::Bridge::BridgeEngineServer& server,
+        std::string_view requestId,
+        std::string_view method,
+        std::string_view paramsJson,
+        const std::string* expectedFragments,
+        uint32_t fragmentCount,
+        const char* message)
+    {
+        std::string response;
+        return HandleRequest(server, requestId, method, paramsJson, response) &&
+               ExpectResultContains(response, expectedFragments, fragmentCount, message);
+    }
+
+    // object.getSnapshot を投げ、dump した result に fragment が含まれるかを返す。
+    // 「載っていないこと」の検査に使う（含まれていれば true）。
+    bool ResultContains(
+        Norves::Bridge::BridgeEngineServer& server,
+        std::string_view requestId,
+        std::string_view paramsJson,
+        std::string_view fragment)
+    {
+        std::string response;
+        if (!HandleRequest(server, requestId, "object.getSnapshot", paramsJson, response))
+        {
+            return false;
+        }
+        const auto decoded = Norves::Bridge::decode_envelope(response);
+        if (!decoded.is_ok() || !decoded.value().result.has_value())
+        {
+            return false;
+        }
+        return decoded.value().result.value().dump().find(std::string(fragment)) !=
+               std::string::npos;
+    }
+
     bool RequestAndExpect(
         Norves::Bridge::BridgeEngineServer& server,
         std::string_view requestId,
@@ -191,17 +265,23 @@ namespace
         return R"({"objectId":")" + std::string(objectId) + R"(","properties":[]})";
     }
 
-    std::string EntitySnapshot(
+    // Entity のスナップショットに必ず載るもの。プロパティ本体の並びは実装依存なので、
+    // ここでは「どの欄がどの値か」と components の中身だけを固定する。
+    uint32_t EntitySnapshotFragments(
         std::string_view objectId,
-        uint64_t entityObjectId,
-        std::string_view name)
+        std::string_view name,
+        const std::string& scriptComponentId,
+        const std::string& baseComponentId,
+        std::string* out)
     {
-        return R"({"objectId":")" + std::string(objectId) +
-               R"(","kind":"Entity","properties":[{"name":"bTickEnabled","value":true,"valueType":"bool"},{"name":"ObjectId","value":)" +
-               MakeEntityId(entityObjectId) +
-               R"(,"valueType":"uint64"},{"name":"Rotation","value":[0,0,0,1],"valueType":"Math::Quaternion"},{"name":"bActive","value":true,"valueType":"bool"},{"name":"Name","value":")" +
-               std::string(name) +
-               R"(","valueType":"String"},{"name":"bPendingDestroy","value":false,"valueType":"bool"},{"name":"Position","value":[0,0,0],"valueType":"Math::Vector3"},{"name":"Scale","value":[1,1,1],"valueType":"Math::Vector3"}]})";
+        out[0] = R"("objectId":")" + std::string(objectId) + R"(")";
+        out[1] = R"("kind":"Entity")";
+        out[2] = R"({"name":"Name","value":")" + std::string(name) + R"(","valueType":"String"})";
+        // 数値プロパティは dump の表記（整数か小数か）が型に依存するので断片にしない。
+        // components は Entity のときだけ載り、id は解決経路が受け付ける形と同一。
+        out[3] = R"({"kind":"ScriptComponent","objectId":")" + scriptComponentId + R"("})";
+        out[4] = R"({"kind":"Component","objectId":")" + baseComponentId + R"("})";
+        return 5;
     }
 
     Entity* FindEntityByObjectId(Entity* entity, uint64_t objectId)
@@ -249,17 +329,23 @@ namespace
         return false;
     }
 
-    std::string ScriptSnapshot(
+    // ScriptComponent のスナップショットに必ず載るもの。コンポーネントは Entity と同じ
+    // 反映投影経路で綴られるので、ScriptComponent 自身の 2 欄に加えて Component 基底の
+    // 欄（ComponentId 等）も載る。valueType は TypeInfo::Name 由来なので String（大文字）。
+    uint32_t ScriptSnapshotFragments(
         std::string_view objectId,
         std::string_view scriptPath,
-        std::string_view scriptClassName)
+        std::string_view scriptClassName,
+        std::string* out)
     {
-        return R"({"objectId":")" + std::string(objectId) +
-               R"(","kind":"ScriptComponent","properties":[{"name":"ScriptPath","value":")" +
-               std::string(scriptPath) +
-               R"(","valueType":"string"},{"name":"ScriptClassName","value":")" +
-               std::string(scriptClassName) +
-               R"(","valueType":"string"}]})";
+        out[0] = R"("objectId":")" + std::string(objectId) + R"(")";
+        out[1] = R"("kind":"ScriptComponent")";
+        out[2] = R"({"name":"ScriptPath","value":")" + std::string(scriptPath) +
+                 R"(","valueType":"String"})";
+        out[3] = R"({"name":"ScriptClassName","value":")" + std::string(scriptClassName) +
+                 R"(","valueType":"String"})";
+        out[4] = R"("name":"ComponentId")";
+        return 5;
     }
 
     struct Fixture final
@@ -367,16 +453,29 @@ namespace
         const std::string baseId = MakeComponentObjectId(
             fixture.OwnerA->GetObjectId(), fixture.Base->GetComponentId());
 
-        bPassed = RequestAndExpect(
+        std::string fragments[8];
+        uint32_t fragmentCount = ScriptSnapshotFragments(scriptId, kMoverPath, kMoverClass, fragments);
+        bPassed = RequestAndExpectContains(
             fixture.Server, "component-snapshot", "object.getSnapshot",
             R"({"objectId":")" + scriptId + R"("})",
-            ScriptSnapshot(scriptId, kMoverPath, kMoverClass),
+            fragments, fragmentCount,
             "ScriptComponent snapshot surface") && bPassed;
-        bPassed = RequestAndExpect(
+
+        // 素の Component も反映投影で綴られる（以前は空のプロパティバッグだった）。
+        // 入れ子は無いので components は付かない。
+        std::string baseFragments[3];
+        baseFragments[0] = R"("objectId":")" + baseId + R"(")";
+        baseFragments[1] = R"("kind":"Component")";
+        baseFragments[2] = R"("name":"ComponentId")";
+        bPassed = RequestAndExpectContains(
             fixture.Server, "base-snapshot", "object.getSnapshot",
             R"({"objectId":")" + baseId + R"("})",
-            EmptySnapshot(baseId),
+            baseFragments, 3,
             "base Component snapshot surface") && bPassed;
+        bPassed = Check(!ResultContains(fixture.Server, "base-snapshot-components",
+                                        R"({"objectId":")" + baseId + R"("})",
+                                        R"("components")"),
+                        "component snapshot carries no nested components") && bPassed;
 
         const ScriptRuntimeDiagnostics beforeSets =
             NorvesLib::Core::GEngine.GetScriptRuntime().GetDiagnostics();
@@ -407,10 +506,11 @@ namespace
             "escaped ScriptPath set response") && bPassed;
         bPassed = Check(static_cast<NorvesLib::Core::Container::String>(fixture.Script->getScriptPath()) == escapedPath,
                         "escaped ScriptPath accessor") && bPassed;
-        bPassed = RequestAndExpect(
+        fragmentCount = ScriptSnapshotFragments(scriptId, escapedPathJson, kRetainedClass, fragments);
+        bPassed = RequestAndExpectContains(
             fixture.Server, "escaped-snapshot", "object.getSnapshot",
             R"({"objectId":")" + scriptId + R"("})",
-            ScriptSnapshot(scriptId, escapedPathJson, kRetainedClass),
+            fragments, fragmentCount,
             "escaped ScriptComponent snapshot") && bPassed;
 
         bPassed = RequestAndExpect(
@@ -423,10 +523,11 @@ namespace
             R"({"objectId":")" + scriptId + R"(","property":"ScriptClassName","value":"ScriptComponentRetainedReference"})",
             R"({"accepted":true,"appliedValue":"ScriptComponentRetainedReference"})",
             "ScriptClassName restore response") && bPassed;
-        bPassed = RequestAndExpect(
+        fragmentCount = ScriptSnapshotFragments(scriptId, kRetainedPath, kRetainedClass, fragments);
+        bPassed = RequestAndExpectContains(
             fixture.Server, "restored-snapshot", "object.getSnapshot",
             R"({"objectId":")" + scriptId + R"("})",
-            ScriptSnapshot(scriptId, kRetainedPath, kRetainedClass),
+            fragments, fragmentCount,
             "restored ScriptComponent snapshot") && bPassed;
         bPassed = Check(static_cast<NorvesLib::Core::Container::String>(fixture.Script->getScriptPath()) == kRetainedPath &&
                             static_cast<NorvesLib::Core::Container::String>(fixture.Script->getScriptClassName()) == kRetainedClass,
@@ -435,11 +536,12 @@ namespace
                             beforeSets.ReloadGeneration,
                         "restored sets do not reload before maintenance") && bPassed;
 
+        // bEnabled / bTickEnabled は反映に載る通常のプロパティなので、汎用化後は編集できる
+        // （コンポーネントの有効/無効はエディタの正当な操作）。逆に ComponentId と
+        // bBegunPlay は識別子と寿命状態なのでアダプタが明示的に拒否する。
         const char* rejectedParams[] =
         {
-            R"("property":"ComponentId","value":"9")",
-            R"("property":"bEnabled","value":false)",
-            R"("property":"bTickEnabled","value":false)",
+            R"("property":"ComponentId","value":9)",
             R"("property":"bBegunPlay","value":false)",
             R"("property":"ScriptPath","value":42)",
             R"("property":"ScriptClassName","value":null)",
@@ -454,6 +556,21 @@ namespace
             bPassed = Check(static_cast<NorvesLib::Core::Container::String>(fixture.Script->getScriptPath()) == kRetainedPath &&
                                 static_cast<NorvesLib::Core::Container::String>(fixture.Script->getScriptClassName()) == kRetainedClass,
                             "rejected set preserves ScriptComponent") && bPassed;
+        }
+
+        // 受理側: コンポーネントの有効/無効はエディタの正当な操作として通る。ライブの
+        // ScriptComponent を止めると後続の Tick 検査に波及するので、素の Component で確かめる。
+        const char* acceptedBaseParams[] =
+        {
+            R"("property":"bEnabled","value":false)",
+            R"("property":"bTickEnabled","value":false)"
+        };
+        for (uint32_t index = 0; index < 2u; ++index)
+        {
+            bPassed = RequestAndExpect(
+                fixture.Server, "accepted-base-set-" + std::to_string(index), "object.setProperty",
+                R"({"objectId":")" + baseId + R"(",)" + acceptedBaseParams[index] + '}',
+                R"({"accepted":true,"appliedValue":false})", "accepted base Component set") && bPassed;
         }
 
         const std::string overflowOwnerId = AddDecimal("18446744073709551616", fixture.OwnerA->GetObjectId());
@@ -639,16 +756,25 @@ namespace
         const std::string ownerAId = MakeEntityId(fixture.OwnerA->GetObjectId());
         const std::string ownerBId = MakeEntityId(fixture.OwnerB->GetObjectId());
         const std::string zeroPaddedOwnerA = "000" + ownerAId;
-        bPassed = RequestAndExpect(
+        const std::string numericScriptId = MakeComponentObjectId(
+            fixture.OwnerA->GetObjectId(), fixture.Script->GetComponentId());
+        const std::string numericBaseId = MakeComponentObjectId(
+            fixture.OwnerA->GetObjectId(), fixture.Base->GetComponentId());
+        std::string entityFragments[8];
+        uint32_t entityFragmentCount = EntitySnapshotFragments(
+            ownerAId, "", numericScriptId, numericBaseId, entityFragments);
+        bPassed = RequestAndExpectContains(
             fixture.Server, "numeric-snapshot", "object.getSnapshot",
             R"({"objectId":")" + ownerAId + R"("})",
-            EntitySnapshot(ownerAId, fixture.OwnerA->GetObjectId(), ""),
-            "numeric Entity snapshot hand-derived document") && bPassed;
-        bPassed = RequestAndExpect(
+            entityFragments, entityFragmentCount,
+            "numeric Entity snapshot document") && bPassed;
+        entityFragmentCount = EntitySnapshotFragments(
+            zeroPaddedOwnerA, "", numericScriptId, numericBaseId, entityFragments);
+        bPassed = RequestAndExpectContains(
             fixture.Server, "numeric-padded-snapshot", "object.getSnapshot",
             R"({"objectId":")" + zeroPaddedOwnerA + R"("})",
-            EntitySnapshot(zeroPaddedOwnerA, fixture.OwnerA->GetObjectId(), ""),
-            "zero-padded numeric Entity snapshot hand-derived document") && bPassed;
+            entityFragments, entityFragmentCount,
+            "zero-padded numeric Entity snapshot document") && bPassed;
 
         bPassed = RequestAndExpect(
             fixture.Server, "numeric-set", "object.setProperty",
