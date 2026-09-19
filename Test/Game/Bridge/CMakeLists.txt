@@ -117,8 +117,14 @@ add_test(
     COMMAND NorvesLibBridgeAdapterScriptComponentTest --numeric-regression
 )
 
+add_test(
+    NAME NorvesLibBridgeAdapterComponentEditTest
+    COMMAND NorvesLibBridgeAdapterScriptComponentTest --component-edit
+)
+
 set_tests_properties(
     NorvesLibBridgeAdapterScriptComponentTest
     NorvesLibBridgeAdapterNumericEntityRegressionTest
+    NorvesLibBridgeAdapterComponentEditTest
     PROPERTIES TIMEOUT 300
 )

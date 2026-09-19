@@ -280,6 +280,46 @@ namespace Game::Bridge
         Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
         objectSetProperty(const Norves::Bridge::JsonValue& params) override;
 
+        // --- Component（書き込み系） ---
+
+        /**
+         * @brief component.add。params.kind の型のコンポーネントを Entity へ付ける
+         *
+         * params.objectId（文字列）は Entity を指していなければならない（コンポーネント id を
+         * 渡されたら拒否する）。params.kind（文字列）はアダプタ内の factory テーブルに登録された
+         * クラス名だけを受け付ける — リフレクションに載っているだけの型は生成しない。生成は
+         * World::CreateComponent<T> に委ね、成功したら
+         * {accepted:true, componentId:"component:<ownerObjectId>:<componentId>"} を返す。
+         * 返す componentId は ResolveBridgeObjectTarget が受け付ける形と同一で、エディタは
+         * この文字列を解釈せずそのまま投げ返す。
+         * 必須 params の欠落 / GEngine 未生成 / Entity でない objectId / 未登録の kind /
+         * 生成失敗のいずれも {accepted:false}（プロトコルエラーにしない）。
+         *
+         * @param params リクエスト params（借用、objectId / kind を読む）
+         * @return {accepted:bool, componentId?:string} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        componentAdd(const Norves::Bridge::JsonValue& params) override;
+
+        /**
+         * @brief component.remove。params.objectId のコンポーネントを所有 Entity から外す
+         *
+         * params.objectId（文字列）は "component:<ownerObjectId>:<componentId>" 形式でなければ
+         * ならない（Entity id を渡されたら拒否する）。Entity::RemoveComponent は void で、Inner に
+         * 無ければ黙って何もしないため、受理判定は呼ぶ前に所有関係を確かめて行う（所有者は
+         * Component::GetOuter() を Entity へ CastTo して得る）。外した後に同じ id を投げると
+         * 解決できず {accepted:false} になる。
+         * 必須 params の欠落 / GEngine 未生成 / 解決できない id / Entity を指す id のいずれも
+         * {accepted:false}（プロトコルエラーにしない）。
+         *
+         * @param params リクエスト params（借用、objectId を読む）
+         * @return {accepted:bool} を収めた JsonValue
+         * @note ゲームスレッド上から逐次呼ばれる。エンジン状態を変更する（副作用あり）。
+         */
+        Norves::Bridge::Result<Norves::Bridge::JsonValue, Norves::Bridge::BridgeError>
+        componentRemove(const Norves::Bridge::JsonValue& params) override;
+
         // --- Scene（書き込み系） ---
 
         /**

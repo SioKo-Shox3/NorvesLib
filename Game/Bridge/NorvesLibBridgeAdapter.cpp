@@ -8,7 +8,10 @@
 #include "GameApplicationHandler.h"
 
 #include "Core/Public/Application/IWindow.h"
+#include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/Component.h"
+#include "Core/Public/Component/ScriptComponent.h"
+#include "Core/Public/Component/SpringArmComponent.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
@@ -780,6 +783,64 @@ namespace Game::Bridge
                 out += R"("})";
             }
             out += ']';
+        }
+
+        /**
+         * @brief 型名から Component を生成できる経路（アダプタ内の明示テーブル）
+         *
+         * 生成そのものは World::CreateComponent<T> が持つ（new T() -> Entity::AddComponent、
+         * 失敗時は null）。足りないのは「型名 -> T」の対応だけなので、Core の公開 API を
+         * 広げず、NorvesLib を知ってよい層であるアダプタ側に明示テーブルを置く。
+         *
+         * リフレクションに載っているという理由だけで生成可能にはしない（初期化に外部の前提を
+         * 要する型が混ざる）。schema.getSnapshot の instantiable 広告も、このテーブルを唯一の
+         * 出典にする — 広告と実際に生成できる型がずれないようにするため。
+         */
+        using ComponentFactoryFunction =
+            NorvesLib::Core::Component::Component* (*)(NorvesLib::Core::World&,
+                                                       NorvesLib::Core::Entity&);
+
+        template <typename TComponent>
+        NorvesLib::Core::Component::Component* CreateComponentOfType(
+            NorvesLib::Core::World& world,
+            NorvesLib::Core::Entity& owner)
+        {
+            return world.CreateComponent<TComponent>(&owner);
+        }
+
+        struct ComponentFactoryEntry
+        {
+            std::string_view Kind;
+            ComponentFactoryFunction Create;
+        };
+
+        // Kind は REFLECTION_CLASS のクラス名と一致させる（AppendComponentsArray が綴る kind、
+        // および schemaGetSnapshot の typeName と同じ綴り）。
+        constexpr ComponentFactoryEntry kComponentFactories[] = {
+            {"ScriptComponent",
+             &CreateComponentOfType<NorvesLib::Core::Component::ScriptComponent>},
+            {"CameraComponent",
+             &CreateComponentOfType<NorvesLib::Core::Component::CameraComponent>},
+            {"SpringArmComponent",
+             &CreateComponentOfType<NorvesLib::Core::Component::SpringArmComponent>},
+        };
+
+        /**
+         * @brief 型名に対応する factory を引く
+         *
+         * @param kind クラス名
+         * @return 対応する entry（借用）。未登録なら nullptr
+         */
+        const ComponentFactoryEntry* FindComponentFactory(std::string_view kind) noexcept
+        {
+            for (const ComponentFactoryEntry& entry : kComponentFactories)
+            {
+                if (entry.Kind == kind)
+                {
+                    return &entry;
+                }
+            }
+            return nullptr;
         }
 
         /**
@@ -1811,13 +1872,15 @@ namespace Game::Bridge
     NorvesLibBridgeAdapter::getCapabilities(const JsonValue& /*params*/)
     {
         // runtime.control / log.stream / viewport.focus / viewport.thumbnail / scene.query / scene.edit / scene.liveUpdate /
-        // object.query / object.edit / asset.read / asset.reload を
+        // object.query / object.edit / component.edit / asset.read / asset.reload を
         // 広告する。scene.query は scene.getTree と schema.getSnapshot を束ねる token（両者とも実装済み）。
         // scene.edit は scene.createObject / scene.deleteObject / scene.reparentObject /
         // scene.duplicateObject 用（実装済み。duplicate は新規 token を足さず scene.edit に含める）。
         // scene.liveUpdate は scene.treeChanged イベントを発火するようになったため広告する（実装済み）。
         // object.query は object.getSnapshot 用（実装済み）。object.edit は object.setProperty 用
-        // （実装済み）。asset.read は asset.resolve / asset.getManifest 用（実装済み＝NorvesLib アダプタが
+        // （実装済み）。component.edit は component.add / component.remove 用（実装済み。追加できる
+        // 型はアダプタ内の factory テーブルに載っているものだけで、schema.getSnapshot の
+        // instantiable が同じテーブルを広告する）。asset.read は asset.resolve / asset.getManifest 用（実装済み＝NorvesLib アダプタが
         // handler が保持する immutable snapshot から解決する）。asset.reload は
         // asset.reloadManifest 用（実装済み）。viewport.thumbnail は
         // viewport.getThumbnail 用（実装済み、キャプチャ未到着時も cache/placeholder success）。
@@ -1834,6 +1897,7 @@ namespace Game::Bridge
             R"({"name":"scene.liveUpdate"},)"
             R"({"name":"object.query"},)"
             R"({"name":"object.edit"},)"
+            R"({"name":"component.edit"},)"
             R"({"name":"asset.read"},)"
             R"({"name":"asset.reload"}]})");
     }
@@ -2138,7 +2202,47 @@ namespace Game::Bridge
         // 解決できない Type のフォールバック型名（propertyDefinition.valueType は必須・minLength:1）。
         static constexpr std::string_view kUnknownType = "unknown";
 
-        // result wire: { "types": [ { typeName, kind, properties:[{name, valueType}] }, ... ] }。
+        // StableClassId -> 投影 の対応。kind の判定（Component 派生かどうか）で親クラスを
+        // 辿るために使う。IClass を引き直さず、同じ snapshot の中だけで閉じる
+        // （ParentStableId は親クラス名から作られた同じ体系の id）。
+        std::unordered_map<uint64_t, const NorvesLib::Core::ClassSchemaProjection*> classByStableId;
+        classByStableId.reserve(snapshot.Classes.size());
+        for (const NorvesLib::Core::ClassSchemaProjection& cls : snapshot.Classes)
+        {
+            if (cls.StableId != NorvesLib::Core::InvalidSchemaId)
+            {
+                classByStableId.emplace(static_cast<uint64_t>(cls.StableId), &cls);
+            }
+        }
+
+        // Component 派生（Component 自身を含む）かどうか。継承鎖に壊れた id や循環があっても
+        // 止まらないよう、クラス数を上限に打ち切る。
+        const auto IsComponentClass =
+            [&classByStableId, &snapshot](const NorvesLib::Core::ClassSchemaProjection& cls)
+        {
+            const NorvesLib::Core::ClassSchemaProjection* current = &cls;
+            for (std::size_t depth = 0; depth <= snapshot.Classes.size(); ++depth)
+            {
+                if (ViewOf(current->Name) == std::string_view{"Component"})
+                {
+                    return true;
+                }
+                if (current->ParentStableId == NorvesLib::Core::InvalidSchemaId)
+                {
+                    return false;
+                }
+                const auto parent =
+                    classByStableId.find(static_cast<uint64_t>(current->ParentStableId));
+                if (parent == classByStableId.end())
+                {
+                    return false;
+                }
+                current = parent->second;
+            }
+            return false;
+        };
+
+        // result wire: { "types": [ { typeName, kind, instantiable?, properties:[{name, valueType}] }, ... ] }。
         // typeName / プロパティ名 / 型名はすべて AppendJsonString でエスケープして綴る。
         std::string text = R"({"types":[)";
         bool bFirstClass = true;
@@ -2152,8 +2256,18 @@ namespace Game::Bridge
 
             text += R"({"typeName":")";
             AppendJsonString(text, ViewOf(cls.Name));
-            // class 投影なので kind は "object" 固定。
-            text += R"(","kind":"object","properties":[)";
+            // kind は Component 派生だけ "component"、それ以外は "object"。
+            text += IsComponentClass(cls) ? R"(","kind":"component")" : R"(","kind":"object")";
+
+            // instantiable は factory テーブルに載っている型にだけ true で付ける。欄そのものを
+            // 出さない = 「生成可否を報告しない」で、エディタは追加候補に入れない。false を
+            // 明示しないのは、報告しないことと「報告した上で不可」を区別しないため。
+            if (FindComponentFactory(ViewOf(cls.Name)) != nullptr)
+            {
+                text += R"(,"instantiable":true)";
+            }
+
+            text += R"(,"properties":[)";
 
             bool bFirstProp = true;
             for (const NorvesLib::Core::PropertySchemaProjection& prop : cls.Properties)
@@ -2531,6 +2645,126 @@ namespace Game::Bridge
         }
         out += '}';
         return OkLiteral(out);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::componentAdd(const JsonValue& params)
+    {
+        // 未登録の型・Entity でない objectId・生成失敗はすべて graceful に {"accepted":false}
+        // （エラー Result ではなく成功 Result に accepted:false を載せる＝result schema の必須形）。
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> objectIdField = extract_string_field(paramsText, "objectId");
+        const std::optional<std::string> kindField = extract_string_field(paramsText, "kind");
+        if (!objectIdField.has_value() || !kindField.has_value())
+        {
+            return OkLiteral(kRejected);  // 必須 params 欠落。
+        }
+        const std::string& objectId = objectIdField.value();
+        const std::string& kind = kindField.value();
+        if (objectId.empty() || kind.empty())
+        {
+            return OkLiteral(kRejected);
+        }
+
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);  // World を得られない。
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+
+        // 追加先は Entity でなければならない（コンポーネントの入れ子は無い）。
+        const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
+        if (target.Kind != EBridgeObjectTargetKind::Entity || target.EntityValue == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // 生成できるのは factory テーブルに載っている型だけ（schema の instantiable と同じ出典）。
+        const ComponentFactoryEntry* factory = FindComponentFactory(kind);
+        if (factory == nullptr || factory->Create == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        NorvesLib::Core::Component::Component* created =
+            factory->Create(world, *target.EntityValue);
+        if (created == nullptr)
+        {
+            return OkLiteral(kRejected);  // World 未初期化・AddComponent 失敗含む生成失敗。
+        }
+
+        // componentId は ResolveBridgeObjectTarget が受け付ける形と同一に綴る
+        // （AppendComponentsArray と同じ）。ObjectId / ComponentId 値のコピーだけで、
+        // 生ポインタは JSON へ入れない（live memory 非転送）。
+        std::string out = R"({"accepted":true,"componentId":")";
+        out += kComponentObjectIdPrefix;
+        out += std::to_string(static_cast<unsigned long long>(target.EntityValue->GetObjectId()));
+        out += ':';
+        out += std::to_string(static_cast<unsigned long long>(created->GetComponentId()));
+        out += R"("})";
+        return OkLiteral(out);
+    }
+
+
+    AdapterResult
+    NorvesLibBridgeAdapter::componentRemove(const JsonValue& params)
+    {
+        static constexpr std::string_view kRejected = R"({"accepted":false})";
+
+        const std::string paramsText = params.dump();
+        const std::optional<std::string> objectIdField = extract_string_field(paramsText, "objectId");
+        if (!objectIdField.has_value())
+        {
+            return OkLiteral(kRejected);  // 必須 params 欠落。
+        }
+        const std::string& objectId = objectIdField.value();
+        if (objectId.empty())
+        {
+            return OkLiteral(kRejected);
+        }
+
+        auto* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        NorvesLib::Core::World& world = engine->GetWorld();
+
+        // 外せるのはコンポーネントだけ（Entity は scene.deleteObject の領分）。
+        const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
+        if (target.Kind != EBridgeObjectTargetKind::Component || target.ComponentValue == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // Entity::RemoveComponent は void で、Inner に無ければ黙って何もしない。受理を返す前に
+        // 所有関係を確かめる（GetOwner は GetOuter を Entity へ CastTo する）。
+        NorvesLib::Core::Entity* owner = target.ComponentValue->GetOwner();
+        if (owner == nullptr)
+        {
+            return OkLiteral(kRejected);
+        }
+        bool bOwned = false;
+        for (const NorvesLib::Core::Component::Component* component : owner->GetComponents())
+        {
+            if (component == target.ComponentValue)
+            {
+                bOwned = true;
+                break;
+            }
+        }
+        if (!bOwned)
+        {
+            return OkLiteral(kRejected);
+        }
+
+        // 除去後、component は破棄済みになり得るので以降は触らない（Inner の連鎖破棄）。
+        owner->RemoveComponent(target.ComponentValue);
+        return OkLiteral(R"({"accepted":true})");
     }
 
 

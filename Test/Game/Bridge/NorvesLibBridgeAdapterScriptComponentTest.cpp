@@ -269,6 +269,108 @@ namespace
         return R"({"objectId":")" + std::string(objectId) + R"(","properties":[]})";
     }
 
+    // dump した schema.getSnapshot の result から、typeName が一致する型オブジェクトのテキストを
+    // 取り出す。JsonValue::dump はキーを並べ替えるため（instantiable → kind → properties →
+    // typeName）、型ごとの欄を 1 本の断片では固定できない — properties が間に挟まる。
+    // typeName は並びの最後に来るので、その位置から前後へ括弧の深さを数えて当該オブジェクトの
+    // 範囲を切り出す。反映の型名・プロパティ名に波括弧は現れないので、文字列中の括弧は考えない。
+    std::optional<std::string> FindTypeObject(const std::string& dumped, std::string_view typeName)
+    {
+        const std::string needle = R"("typeName":")" + std::string(typeName) + R"(")";
+        const std::size_t found = dumped.find(needle);
+        if (found == std::string::npos)
+        {
+            return std::nullopt;
+        }
+
+        std::size_t depth = 0;
+        std::size_t begin = found;
+        while (begin != 0)
+        {
+            --begin;
+            const char c = dumped[begin];
+            if (c == '}' || c == ']')
+            {
+                ++depth;
+            }
+            else if (c == '[')
+            {
+                if (depth == 0)
+                {
+                    return std::nullopt;  // 配列直下に typeName は現れない（想定外の形）。
+                }
+                --depth;
+            }
+            else if (c == '{')
+            {
+                if (depth == 0)
+                {
+                    break;
+                }
+                --depth;
+            }
+        }
+        if (dumped[begin] != '{')
+        {
+            return std::nullopt;
+        }
+
+        depth = 0;
+        for (std::size_t end = begin; end < dumped.size(); ++end)
+        {
+            const char c = dumped[end];
+            if (c == '{' || c == '[')
+            {
+                ++depth;
+            }
+            else if (c == '}' || c == ']')
+            {
+                --depth;
+                if (depth == 0)
+                {
+                    return dumped.substr(begin, end - begin + 1);
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
+    // schema.getSnapshot の result（dump 済み）に対し、1 つの型の kind と instantiable を検査する。
+    bool CheckTypeDescriptor(
+        const std::string& dumped,
+        std::string_view typeName,
+        std::string_view expectedKind,
+        bool bExpectInstantiable)
+    {
+        const std::optional<std::string> typeObject = FindTypeObject(dumped, typeName);
+        const std::string label = std::string("schema type ") + std::string(typeName);
+        if (!Check(typeObject.has_value(), (label + " is present").c_str()))
+        {
+            return false;
+        }
+
+        const std::string kindFragment = R"("kind":")" + std::string(expectedKind) + R"(")";
+        bool bPassed = Check(typeObject.value().find(kindFragment) != std::string::npos,
+                             (label + " kind").c_str());
+        const bool bHasInstantiable =
+            typeObject.value().find(R"("instantiable")") != std::string::npos;
+        if (bExpectInstantiable)
+        {
+            bPassed = Check(typeObject.value().find(R"("instantiable":true)") != std::string::npos,
+                            (label + " advertises instantiable:true").c_str()) && bPassed;
+        }
+        else
+        {
+            bPassed = Check(!bHasInstantiable,
+                            (label + " omits instantiable").c_str()) && bPassed;
+        }
+        if (!bPassed)
+        {
+            std::cout << "  type object: " << typeObject.value() << "\n";
+        }
+        return bPassed;
+    }
+
     // Entity のスナップショットに必ず載るもの。プロパティ本体の並びは実装依存なので、
     // ここでは「どの欄がどの値か」と components の中身だけを固定する。
     uint32_t EntitySnapshotFragments(
@@ -751,6 +853,174 @@ namespace
         return Check(fixture.Cleanup(), "fixture cleanup") && bPassed;
     }
 
+    bool TestComponentEditSurface()
+    {
+        Fixture fixture;
+        bool bPassed = Check(fixture.IsReady(), "component edit fixture initialization");
+        if (!bPassed)
+        {
+            return fixture.Cleanup() && bPassed;
+        }
+
+        const std::string ownerAId = MakeEntityId(fixture.OwnerA->GetObjectId());
+        const std::string ownerBId = MakeEntityId(fixture.OwnerB->GetObjectId());
+
+        // capability を広告していなければエディタは追加/削除の UI を出さない。
+        std::string capabilityFragments[1];
+        capabilityFragments[0] = R"({"name":"component.edit"})";
+        bPassed = RequestAndExpectContains(
+            fixture.Server, "capabilities", "bridge.getCapabilities", "{}",
+            capabilityFragments, 1, "component.edit capability advertised") && bPassed;
+
+        // 生成できる型だけが instantiable:true を持ち、Component 派生だけが kind:"component"。
+        std::string schemaResponse;
+        bPassed = HandleRequest(fixture.Server, "schema", "schema.getSnapshot", "{}",
+                                schemaResponse) && bPassed;
+        {
+            const auto decoded = Norves::Bridge::decode_envelope(schemaResponse);
+            const bool bHaveSchema = decoded.is_ok() && decoded.value().result.has_value();
+            bPassed = Check(bHaveSchema, "schema.getSnapshot result") && bPassed;
+            if (bHaveSchema)
+            {
+                const std::string dumped = decoded.value().result.value().dump();
+                bPassed = CheckTypeDescriptor(dumped, "CameraComponent", "component", true) && bPassed;
+                bPassed = CheckTypeDescriptor(dumped, "ScriptComponent", "component", true) && bPassed;
+                // 反映に載っていても factory に登録していない型は広告しない（基底 Component）。
+                bPassed = CheckTypeDescriptor(dumped, "Component", "component", false) && bPassed;
+                // Entity は Component 派生ではないので kind は object のまま。
+                bPassed = CheckTypeDescriptor(dumped, "Entity", "object", false) && bPassed;
+            }
+        }
+
+        // --- component.add ---
+        const std::size_t ownerAComponentsBefore = fixture.OwnerA->GetComponents().size();
+        const std::size_t ownerBComponentsBefore = fixture.OwnerB->GetComponents().size();
+        std::string addResponse;
+        bPassed = HandleRequest(
+            fixture.Server, "add-camera", "component.add",
+            R"({"objectId":")" + ownerBId + R"(","kind":"CameraComponent"})",
+            addResponse) && bPassed;
+        const auto ownerBComponentsAfterAdd = fixture.OwnerB->GetComponents();
+        Component* added = ownerBComponentsAfterAdd.size() == ownerBComponentsBefore + 1 ?
+            ownerBComponentsAfterAdd[ownerBComponentsBefore] : nullptr;
+        const std::string addedId = added == nullptr ? std::string{} :
+            MakeComponentObjectId(fixture.OwnerB->GetObjectId(), added->GetComponentId());
+        bPassed = ExpectResult(addResponse,
+                               R"({"accepted":true,"componentId":")" + addedId + R"("})",
+                               "component.add response") && bPassed;
+        bPassed = Check(added != nullptr && added->GetOwner() == fixture.OwnerB,
+                        "added component is owned by the target Entity") && bPassed;
+
+        // 返ってきた id は解決経路がそのまま受け付ける形でなければならない
+        // （エディタはこの文字列を解釈せず投げ返すだけ）。
+        std::string addedFragments[3];
+        addedFragments[0] = R"("objectId":")" + addedId + R"(")";
+        addedFragments[1] = R"("kind":"CameraComponent")";
+        addedFragments[2] = R"("name":"FieldOfView")";
+        bPassed = RequestAndExpectContains(
+            fixture.Server, "added-snapshot", "object.getSnapshot",
+            R"({"objectId":")" + addedId + R"("})",
+            addedFragments, 3, "added component snapshot") && bPassed;
+
+        // 所有 Entity の components にも同じ id で載る。
+        std::string ownerBFragments[2];
+        ownerBFragments[0] = R"("objectId":")" + ownerBId + R"(")";
+        ownerBFragments[1] = R"({"kind":"CameraComponent","objectId":")" + addedId + R"("})";
+        bPassed = RequestAndExpectContains(
+            fixture.Server, "owner-snapshot", "object.getSnapshot",
+            R"({"objectId":")" + ownerBId + R"("})",
+            ownerBFragments, 2, "owner Entity lists the added component") && bPassed;
+
+        // 追加したコンポーネントはプロパティ編集の対象になる（object.edit の既存経路）。
+        bPassed = RequestAndExpect(
+            fixture.Server, "added-set", "object.setProperty",
+            R"({"objectId":")" + addedId + R"(","property":"bIsActiveCamera","value":true})",
+            R"({"accepted":true,"appliedValue":true})",
+            "added component property set") && bPassed;
+
+        // --- component.add の拒否 ---
+        // 反映に載っているだけの型、実在しない型、Entity を指す kind、欄の欠落、
+        // コンポーネントを指す objectId（入れ子は無い）、消えた Entity。
+        const std::string rejectedAddParams[] =
+        {
+            R"({"objectId":")" + ownerBId + R"(","kind":"Component"})",
+            R"({"objectId":")" + ownerBId + R"(","kind":"Entity"})",
+            R"({"objectId":")" + ownerBId + R"(","kind":"NotARealComponentType"})",
+            R"({"objectId":")" + ownerBId + R"(","kind":""})",
+            R"({"objectId":")" + ownerBId + R"("})",
+            R"({"kind":"CameraComponent"})",
+            R"({"objectId":"","kind":"CameraComponent"})",
+            R"({"objectId":")" + addedId + R"(","kind":"CameraComponent"})",
+            R"({"objectId":"999999999","kind":"CameraComponent"})"
+        };
+        const std::size_t ownerBComponentsBeforeRejects = fixture.OwnerB->GetComponents().size();
+        for (uint32_t index = 0;
+             index < static_cast<uint32_t>(sizeof(rejectedAddParams) / sizeof(rejectedAddParams[0]));
+             ++index)
+        {
+            bPassed = RequestAndExpect(
+                fixture.Server, "rejected-add-" + std::to_string(index), "component.add",
+                rejectedAddParams[index], R"({"accepted":false})",
+                "rejected component.add") && bPassed;
+        }
+        bPassed = Check(fixture.OwnerB->GetComponents().size() == ownerBComponentsBeforeRejects &&
+                            fixture.OwnerA->GetComponents().size() == ownerAComponentsBefore,
+                        "rejected component.add adds nothing") && bPassed;
+
+        // --- component.remove の拒否（Entity 宛て・欄の欠落・未知の id） ---
+        const std::string rejectedRemoveParams[] =
+        {
+            R"({"objectId":")" + ownerBId + R"("})",
+            R"({"objectId":""})",
+            R"({})",
+            R"({"objectId":"component:)" + ownerBId + R"(:999999999"})"
+        };
+        for (uint32_t index = 0;
+             index < static_cast<uint32_t>(sizeof(rejectedRemoveParams) / sizeof(rejectedRemoveParams[0]));
+             ++index)
+        {
+            bPassed = RequestAndExpect(
+                fixture.Server, "rejected-remove-" + std::to_string(index), "component.remove",
+                rejectedRemoveParams[index], R"({"accepted":false})",
+                "rejected component.remove") && bPassed;
+        }
+        bPassed = Check(fixture.OwnerB->GetComponents().size() == ownerBComponentsBeforeRejects &&
+                            fixture.OwnerA->GetComponents().size() == ownerAComponentsBefore,
+                        "rejected component.remove removes nothing") && bPassed;
+
+        // --- component.remove ---
+        bPassed = RequestAndExpect(
+            fixture.Server, "remove-camera", "component.remove",
+            R"({"objectId":")" + addedId + R"("})", R"({"accepted":true})",
+            "component.remove response") && bPassed;
+        bPassed = Check(fixture.OwnerB->GetComponents().size() == ownerBComponentsBefore,
+                        "component.remove detaches the component") && bPassed;
+        // 外した後は同じ id が解決できない＝再削除は拒否、スナップショットは空。
+        bPassed = RequestAndExpect(
+            fixture.Server, "remove-camera-again", "component.remove",
+            R"({"objectId":")" + addedId + R"("})", R"({"accepted":false})",
+            "second component.remove is rejected") && bPassed;
+        bPassed = RequestAndExpect(
+            fixture.Server, "removed-snapshot", "object.getSnapshot",
+            R"({"objectId":")" + addedId + R"("})", EmptySnapshot(addedId),
+            "removed component snapshot") && bPassed;
+        bool bOwnerBStillLists = true;
+        bPassed = Check(TryResultContains(fixture.Server, "owner-snapshot-after-remove",
+                                          R"({"objectId":")" + ownerBId + R"("})",
+                                          addedId, bOwnerBStillLists),
+                        "post-remove owner snapshot request succeeded") && bPassed;
+        bPassed = Check(!bOwnerBStillLists,
+                        "owner Entity no longer lists the removed component") && bPassed;
+
+        // OwnerA の既存コンポーネントは一連の操作で変わらない。
+        bPassed = Check(fixture.OwnerA->GetComponents().size() == ownerAComponentsBefore &&
+                            fixture.Script->GetOwner() == fixture.OwnerA &&
+                            fixture.Base->GetOwner() == fixture.OwnerA,
+                        "component edit leaves the other Entity untouched") && bPassed;
+
+        return Check(fixture.Cleanup(), "component edit fixture cleanup") && bPassed;
+    }
+
     bool TestNumericEntityRegression()
     {
         Fixture fixture;
@@ -874,13 +1144,27 @@ int main(int argumentCount, char** arguments)
 {
     const bool bNumericRegression = argumentCount == 2 &&
                                     std::strcmp(arguments[1], "--numeric-regression") == 0;
-    if (argumentCount != 1 && !bNumericRegression)
+    const bool bComponentEdit = argumentCount == 2 &&
+                                std::strcmp(arguments[1], "--component-edit") == 0;
+    if (argumentCount != 1 && !bNumericRegression && !bComponentEdit)
     {
         std::cerr << "NorvesLibBridgeAdapterScriptComponentTest invalid arguments\n";
         return 1;
     }
 
-    const bool bPassed = bNumericRegression ? TestNumericEntityRegression() : TestComponentSurfaceLoopback();
+    bool bPassed = false;
+    if (bNumericRegression)
+    {
+        bPassed = TestNumericEntityRegression();
+    }
+    else if (bComponentEdit)
+    {
+        bPassed = TestComponentEditSurface();
+    }
+    else
+    {
+        bPassed = TestComponentSurfaceLoopback();
+    }
     if (!bPassed)
     {
         return 1;
