@@ -721,17 +721,6 @@ namespace Game::Bridge
             return target;
         }
 
-        NorvesLib::Core::Component::ScriptComponent* AsScriptComponent(
-            NorvesLib::Core::Component::Component* component) noexcept
-        {
-            using ScriptComponent = NorvesLib::Core::Component::ScriptComponent;
-            if (component == nullptr || component->GetClass() != ScriptComponent::StaticClass())
-            {
-                return nullptr;
-            }
-            return static_cast<ScriptComponent*>(component);
-        }
-
         std::string BuildEmptyObjectSnapshot(std::string_view objectId)
         {
             std::string out = R"({"objectId":")";
@@ -740,22 +729,58 @@ namespace Game::Bridge
             return out;
         }
 
-        std::string BuildScriptComponentSnapshot(
-            std::string_view objectId,
-            const NorvesLib::Core::Component::ScriptComponent& component)
+        /**
+         * @brief Entity に付いているコンポーネントを `,"components":[...]` として out へ追記する
+         *
+         * 出力する id は ResolveBridgeObjectTarget が受け付ける形と**同一**でなければならない
+         * （エディタはこの文字列を解釈せず、そのまま object.getSnapshot / object.setProperty へ
+         * 投げ返す）。kind はクラス名で、空ならスキーマの minLength:1 を満たすよう "Component" へ
+         * 落とす。1 件も無ければ空配列を出す — 欄の省略は「このエンジンはコンポーネントを投影
+         * しない」を意味するので、投影した上で 0 件であることと区別する。
+         *
+         * ObjectId 値・クラス名文字列のコピーだけを綴り、ポインタは JSON へ入れない
+         * （live memory 非転送）。
+         *
+         * @param out 追記先
+         * @param entity コンポーネントを列挙する Entity
+         */
+        void AppendComponentsArray(std::string& out, const NorvesLib::Core::Entity& entity)
         {
-            std::string out = R"({"objectId":")";
-            AppendJsonString(out, objectId);
-            out += R"(","kind":"ScriptComponent","properties":[{"name":"ScriptPath","value":")";
+            out += R"(,"components":[)";
+            bool bFirst = true;
+            for (const NorvesLib::Core::Component::Component* component : entity.GetComponents())
+            {
+                if (component == nullptr)
+                {
+                    continue;
+                }
+                if (!bFirst)
+                {
+                    out += ',';
+                }
+                bFirst = false;
 
-            const auto pathRef = component.getScriptPath();
-            AppendJsonString(out, ViewOf(*pathRef));
-            out += R"(","valueType":"string"},{"name":"ScriptClassName","value":")";
+                out += R"({"objectId":")";
+                out += kComponentObjectIdPrefix;
+                out += std::to_string(static_cast<unsigned long long>(entity.GetObjectId()));
+                out += ':';
+                out += std::to_string(static_cast<unsigned long long>(component->GetComponentId()));
+                out += R"(","kind":")";
 
-            const auto classRef = component.getScriptClassName();
-            AppendJsonString(out, ViewOf(*classRef));
-            out += R"(","valueType":"string"}]})";
-            return out;
+                std::string_view kind = "Component";
+                const NorvesLib::Core::IClass* cls = component->GetClass();
+                if (cls != nullptr)
+                {
+                    const std::string_view className = ViewOf(cls->GetClassName().GetView());
+                    if (!className.empty())
+                    {
+                        kind = className;
+                    }
+                }
+                AppendJsonString(out, kind);
+                out += R"("})";
+            }
+            out += ']';
         }
 
         /**
@@ -1472,40 +1497,6 @@ namespace Game::Bridge
                         return false;  // 未知のエスケープ。
                 }
             }
-            return true;
-        }
-
-        bool ApplyScriptComponentStringProperty(
-            NorvesLib::Core::Component::ScriptComponent& component,
-            std::string_view propertyName,
-            std::string_view rawJsonValue,
-            std::string& outAppliedValueJson)
-        {
-            std::string decoded;
-            if (!DecodeJsonString(rawJsonValue, decoded))
-            {
-                return false;
-            }
-
-            NorvesLib::Core::Container::String value;
-            value.append(decoded.data(), decoded.size());
-            if (propertyName == "ScriptPath")
-            {
-                component.getScriptPath() = value;
-            }
-            else if (propertyName == "ScriptClassName")
-            {
-                component.getScriptClassName() = value;
-            }
-            else
-            {
-                return false;
-            }
-
-            outAppliedValueJson.clear();
-            outAppliedValueJson += '"';
-            AppendJsonString(outAppliedValueJson, decoded);
-            outAppliedValueJson += '"';
             return true;
         }
 
@@ -2247,24 +2238,41 @@ namespace Game::Bridge
 
         NorvesLib::Core::World& world = engine->GetWorld();
         const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
+
+        // Entity もコンポーネントも Object 派生でリフレクションを持つので、ここから先は同じ
+        // 投影経路で扱う（以前はコンポーネントだけ ScriptComponent 決め打ちで、2 つの文字列
+        // プロパティしか読めなかった）。違いは 2 つだけ: kind のフォールバックと、components を
+        // 出すのが Entity のときだけであること（コンポーネントに入れ子は無い）。
+        NorvesLib::Core::Object* object = nullptr;
+        NorvesLib::Core::Entity* entity = nullptr;
+        uint64_t stableId = 0;
+        std::string_view kindFallback = "Object";
         if (target.Kind == EBridgeObjectTargetKind::Component)
         {
-            auto* scriptComponent = AsScriptComponent(target.ComponentValue);
-            if (scriptComponent == nullptr)
+            object = target.ComponentValue;
+            kindFallback = "Component";
+            if (object != nullptr)
             {
-                return OkLiteral(BuildEmptyObjectSnapshot(objectId));
+                stableId = target.ComponentValue->GetComponentId();
             }
-            return OkLiteral(BuildScriptComponentSnapshot(objectId, *scriptComponent));
+        }
+        else if (target.Kind == EBridgeObjectTargetKind::Entity)
+        {
+            entity = target.EntityValue;
+            object = entity;
+            kindFallback = "Entity";
+            if (entity != nullptr)
+            {
+                stableId = entity->GetObjectId();
+            }
         }
 
-        if (target.Kind != EBridgeObjectTargetKind::Entity || target.EntityValue == nullptr)
+        if (object == nullptr)
         {
             return OkLiteral(BuildEmptyObjectSnapshot(objectId));
         }
 
-        NorvesLib::Core::Entity* entity = target.EntityValue;
-
-        const NorvesLib::Core::IClass* cls = entity->GetClass();
+        const NorvesLib::Core::IClass* cls = object->GetClass();
         if (cls == nullptr)
         {
             return OkLiteral(BuildEmptyObjectSnapshot(objectId));
@@ -2289,17 +2297,17 @@ namespace Game::Bridge
         // オブジェクトのシリアライズ済みプロパティ値スナップショットを取得する。ref は wire 出力に
         // 使わないので Id に ObjectId を入れる最小構築でよい。
         NorvesLib::Core::StableObjectRef ref;
-        ref.Id = entity->GetObjectId();
+        ref.Id = stableId;
         const NorvesLib::Core::ObjectSnapshot snapshot =
-            NorvesLib::Core::RuntimeSchemaProjector::BuildObjectSnapshot(*entity, ref, "NorvesLib");
+            NorvesLib::Core::RuntimeSchemaProjector::BuildObjectSnapshot(*object, ref, "NorvesLib");
 
-        // wire: { "objectId":<入力>, "kind":<クラス名>, "properties":[ {name,value,valueType} ... ] }。
-        // name は省略（Entity に表示名アクセサが無い）。
+        // wire: { "objectId":<入力>, "kind":<クラス名>, "properties":[ ... ], "components":[ ... ] }。
+        // name は省略（Entity に表示名アクセサが無い）。components は Entity のときだけ出す。
         std::string text = R"({"objectId":")";
         AppendJsonString(text, objectId.empty() ? std::string_view{"0"} : std::string_view{objectId});
         text += R"(","kind":")";
 
-        std::string_view kind = "Entity";
+        std::string_view kind = kindFallback;
         const std::string_view className = ViewOf(cls->GetClassName().GetView());
         if (!className.empty())
         {
@@ -2333,7 +2341,12 @@ namespace Game::Bridge
             text += R"("})";
         }
 
-        text += R"(]})";
+        text += ']';
+        if (entity != nullptr)
+        {
+            AppendComponentsArray(text, *entity);
+        }
+        text += '}';
         return OkLiteral(text);
     }
 
@@ -2370,38 +2383,35 @@ namespace Game::Bridge
 
         NorvesLib::Core::World& world = engine->GetWorld();
         const BridgeObjectTarget target = ResolveBridgeObjectTarget(world, objectId);
+
+        // 読み取りと同じく、Entity もコンポーネントも Object として同じ適用経路へ通す
+        // （以前はコンポーネントだけ ScriptComponent の 2 プロパティ決め打ちだった）。
+        // 未知プロパティ・型不一致は従来どおり accepted:false で返す。
+        NorvesLib::Core::Object* object = nullptr;
+        uint64_t stableId = 0;
         if (target.Kind == EBridgeObjectTargetKind::Component)
         {
-            auto* scriptComponent = AsScriptComponent(target.ComponentValue);
-            if (scriptComponent == nullptr)
+            object = target.ComponentValue;
+            if (object != nullptr)
             {
-                return OkLiteral(kRejected);
+                stableId = target.ComponentValue->GetComponentId();
             }
-
-            std::string appliedValueJson;
-            if (!ApplyScriptComponentStringProperty(
-                    *scriptComponent,
-                    propertyName,
-                    wireValue,
-                    appliedValueJson))
+        }
+        else if (target.Kind == EBridgeObjectTargetKind::Entity)
+        {
+            object = target.EntityValue;
+            if (object != nullptr)
             {
-                return OkLiteral(kRejected);
+                stableId = target.EntityValue->GetObjectId();
             }
-
-            std::string out = R"({"accepted":true,"appliedValue":)";
-            out += appliedValueJson;
-            out += '}';
-            return OkLiteral(out);
         }
 
-        if (target.Kind != EBridgeObjectTargetKind::Entity || target.EntityValue == nullptr)
+        if (object == nullptr)
         {
             return OkLiteral(kRejected);
         }
 
-        NorvesLib::Core::Entity* entity = target.EntityValue;
-
-        const NorvesLib::Core::IClass* cls = entity->GetClass();
+        const NorvesLib::Core::IClass* cls = object->GetClass();
         if (cls == nullptr)
         {
             return OkLiteral(kRejected);
@@ -2443,9 +2453,9 @@ namespace Game::Bridge
             return OkLiteral(kRejected);  // 内部表記のパース失敗。
         }
 
-        // Entity を IUnknown* として渡して適用する（Entity : Object : UnknownImpl : IUnknown）。
+        // 対象を IUnknown* として渡して適用する（Entity / Component : Object : UnknownImpl : IUnknown）。
         // ApplyValue は PropertyValue の型がプロパティ型と一致しなければ false を返す。
-        if (!prop->ApplyValue(static_cast<NorvesLib::Core::IUnknown*>(entity), pv))
+        if (!prop->ApplyValue(static_cast<NorvesLib::Core::IUnknown*>(object), pv))
         {
             return OkLiteral(kRejected);  // 適用失敗（型不一致含む）。
         }
@@ -2454,7 +2464,7 @@ namespace Game::Bridge
         // UpdateWorldTransforms が次フレームで反映する（既存挙動）。ここで明示呼び出しはしない。
         // 同フレーム即時の getSnapshot ではローカル値が反映される。
 
-        // appliedValue: Entity を再投影して、実際に格納された値を読み戻して wire JSON 値へ。
+        // appliedValue: 対象を再投影して、実際に格納された値を読み戻して wire JSON 値へ。
         // 該当プロパティの StablePropertyId を classProjection から名前一致で引き、再 BuildObjectSnapshot
         // の SerializedValue を AppendWireValue で wire 値へ変換する（M-6 往復一致）。読み戻せない
         // 場合は appliedValue を省略する（accepted:true は維持）。
@@ -2481,9 +2491,9 @@ namespace Game::Bridge
             if (targetStableId != NorvesLib::Core::InvalidSchemaId)
             {
                 NorvesLib::Core::StableObjectRef ref;
-                ref.Id = entity->GetObjectId();
+                ref.Id = stableId;
                 const NorvesLib::Core::ObjectSnapshot snapshot =
-                    NorvesLib::Core::RuntimeSchemaProjector::BuildObjectSnapshot(*entity, ref,
+                    NorvesLib::Core::RuntimeSchemaProjector::BuildObjectSnapshot(*object, ref,
                                                                                  "NorvesLib");
                 for (const NorvesLib::Core::ProjectedPropertyValue& projected : snapshot.Properties)
                 {
