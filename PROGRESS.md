@@ -21,10 +21,11 @@
 - R2-P7: `ca9204d`。朝・昼・夕のR2 sky golden 3枚と閾値TSV 2枚をR1 baselineから分離して固定し、`cameraForward`のview-depth規約、空パラメータのFramePacket接続、CPU/shaderのsmoothstep一致、実GPU BackBufferのケース間変化検証を追加した。最終評価PASS、source/CTest 5/5、R2 self-test、GPU BackBuffer 3/3、RHI/Vulkan 4/4、GLSL 3/3を確認した。
 - R2-P8: R2受入れ記録、実装コミット一覧、検証ログ、golden/threshold、既知の非対象、Roadmapの完了行を確定した。R3は新規M1の入口として未着手のまま残した。
 - R3 M1: 解析高さフォグ＋固定24ステップ方向光散乱を選択した。既存SceneColor/Depth、R2空radiance、4層CSMを使う全画面passとし、froxel/新規RHI資源を避ける。タスクR3-P1〜P4を登録した。
+- R3-P1: `2973941`。指数高さ密度の有限なパラメータ正規化、水平・上昇・下降レイの解析透過率、SceneProxy/FramePacketスナップショットを実装した。対象Debugビルド成功、VolumetricFogModelTest 1/1 passed。
 
 ## In progress
 
-- R3-P1: 高さフォグの解析モデルとRenderThreadスナップショット契約。
+- なし
 
 ## Next
 
@@ -43,6 +44,7 @@
 - P4/P5受入の詳細、途中診断、非blocking事項は `.harness/runs/20260908-084154/progress-before-p6a-acceptance.md` および `Docs/Plans/RenderingR1P6aParentNotes20260908.md` に保存した。途中の「未完」は当時の状態である。
 - R2の設計判断: S2はHillaire 2020系の事前計算LUTを採用し、太陽高度・方位角をFramePacketの空スナップショットへ持たせる。空由来IBLは既存の放射輝度/拡散照明/プリフィルタ生成へ接続し、R1の静的HDRは空無効時だけフォールバックにする。性能回帰はR2本体の完了条件から分離する。\r
 - R3の設計判断: 指数高さ密度の視線透過率は解析積分、方向光単一散乱は固定24ステップとし、既存CSMとR2 SkyAtmosphere radianceへ接続する。passはLighting後・Forward透明前で、透明物自体へのfog適用とGPU性能計測はR3完了条件外。
+- R3-P1の検証ログは `.harness/runs/20260919-204219/verify-R3-P1-1.txt` と `verify-R3-P1-2.txt` に保存し、両ログでビルド終了コード0・CTest 1/1 passedを確認した。
 - R2-P2評価: 1周目のblocking指摘（sky_atmosphere.fragの`#version`欠落、低解像度αマスク）を`53a58dc`で修正し、2周目の独立評価はPASS。空LUTの毎フレーム再生成、未使用sky shaderのUV/α契約、太陽ディスクの透過率適用、GameThread側の空有効化はP3以降の非blocking課題として扱う。
 - R2-P3評価: 1周目のblocking指摘（LightingParamsLayoutTestのbinding 12/13 selector期待値が古い）を`a235411`で修正し、4対象CTestと2周目の独立評価はPASS。動的IBLの同期CPU生成と空源の二重評価は、連続する太陽高度アニメーションの性能課題としてR2本体の完了条件外に置く。
 - tracked v1 scene、R0基準2文書、P6b開始時のsource-start hashesは証跡へ固定した。P6bの公開tracked範囲はPNG2枚、VisualThresholds.tsv、R1Acceptance.mdで、forward-fixのテスト契約修正と受入れ記録を別コミットに分離した。プッシュは行わない。
