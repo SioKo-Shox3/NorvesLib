@@ -28,14 +28,15 @@
 - R5-P1: `5c82133`。RHIにBuffer Device Addressの明示要求と既定値0の取得APIを追加し、Vulkan 1.2能力に応じてバッファusage・メモリ割り当て・アドレス取得を同じ条件で制御した。RTX 4080で対応能力true、要求バッファのaddress非0、未要求バッファ0を確認。対象ビルドexit 0、BDA CTest 1/1、関連RHI/描画GPUテスト6/6、独立評価PASS。
 - R5-P2: AS、ray query、RT pipelineを拡張とfeatureごとに照会し、Vulkan 1.2 BDAとdeferred host operationsを含む依存関係を満たす機能だけを論理デバイスで有効化した。非対応時の初期化とラスタ描画を維持する。
 - R5-P3: RHI ShaderStageにRT 6 stageを追加し、Vulkan shadercをstageごとのshaderc kindへ一意に写像した。共通fixtureのDebugビルドはexit 0、6 stageのSPIR-V実行モデルを確認するCTestは1/1 passed。
+- R5-P4: `6501234`。BLAS/TLASのBuild/Update記述子と加速構造resourceをバックエンド非依存APIへ追加した。BLAS内のgeometry type統一と混在拒否、source/destination双方の容量境界、無効入力、RT非対応時の戻り値を契約テストで固定した。
 
 ## In progress
 
-- なし。R5-P3を受入済み。次はR5-P4に進む。
+- なし。R5-P4を受入済み。次はR5-P5に進む。
 
 ## Next
 
-- R5-P4: 加速構造のRHI契約を定義する。作業ブランチは`feature/rendering-r5-hwrt`。
+- R5-P5: Vulkan BLAS構築を実装する。作業ブランチは`feature/rendering-r5-hwrt`。
 
 ## Notes
 
@@ -64,3 +65,4 @@
 - R5-P2検証ログ: `.harness/runs/20260920-151245/verify-R5-P2-6.txt` (Gameと契約テストのDebug build exit 0)、`verify-R5-P2-7.txt` (能力契約CTest 1/1)、`verify-R5-P2-8.txt` (RHI image layoutとIndoor HDR描画CTest 2/2)。Vulkan実デバイス初期化と能力依存関係を確認した。
 - R5-P3検証ログ: .harness/runs/20260920-151245/verify-R5-P3-1.txt（Debug build exit 0）とverify-R5-P3-2.txt（CTest 1/1 passed）。
 - R5-P7ではVulkanShader::ToVkShaderStageとdescriptor visibilityのRT対応を追加し、RT descriptorにAllRayTracingを指定する。
+- R5-P4検証ログ: `.harness/runs/20260920-151245/verify-R5-P4-6.txt` (Debug build, EXIT_CODE=0)、`verify-R5-P4-7.txt` (CTest 1/1 passed)。
