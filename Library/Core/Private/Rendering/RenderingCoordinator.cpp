@@ -1303,6 +1303,9 @@ namespace NorvesLib::Core::Rendering
             m_Device->WaitIdle();
         }
 
+        // デバイス所有参照を解放する前に、レイトレーシングsceneの資源を破棄する
+        NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().Shutdown();
+
         if (m_FrameCaptureReadbackHelper)
         {
             m_FrameCaptureReadbackHelper->Shutdown();
