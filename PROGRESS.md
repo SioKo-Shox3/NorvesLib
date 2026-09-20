@@ -53,5 +53,5 @@
 - R3-P2の最終検証ログ: `.harness/runs/20260919-204219/verify-R3-P2-4.txt` (Debug build, EXIT_CODE=0)、`verify-R3-P2-5.txt` (CTest 2/2 passed)、`verify-R3-P2-6.txt` (glslc, EXIT_CODE=0)。
 - R3-P2では失敗経路にも空Load/StoreパスまたはRenderTarget→ShaderResourceバリアを積み、SceneColorの最終状態を維持する。独立評価はPASS。
 - `855de28`の作業途中保存には、着手時点で未コミットだった`NEXT_FINDINGS.md`の52行削除も含まれる。R3-P2実装とTASKS更新は`b6865ea`。
-- R3-P3のcapture状態遷移では段階更新直後と次のPreRenderで状態を適用する。重複適用は冪等で、フォローアップcaptureの段階とfixture状態の同期を優先した。P3評価の散乱量上限なし所見は`NEXT_FINDINGS.md`とR3-P4へ引き継いだ。
+- R3-P3のcapture状態遷移では段階更新直後と次のPreRenderで状態を適用する。重複適用は冪等で、フォローアップcaptureの段階とfixture状態の同期を優先した。P3評価の散乱量上限なし所見は、R3-P4で密度sweep/CSM A/Bの上限・非飽和閾値を追加して解消した。
 - R3-P4の指定検証ログ: `.harness/runs/20260920-124224/verify-R3-P4-1.txt`〜`verify-R3-P4-7.txt`。全7ログの終了コード0、GPU受入れsentinel、CTest 7/7を読戻し確認した。R1/R2基準8ファイルのSHA256はHEADと一致する。
