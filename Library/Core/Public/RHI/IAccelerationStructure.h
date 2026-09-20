@@ -130,6 +130,12 @@ namespace NorvesLib::RHI
         virtual uint64_t GetSize() const = 0;
         /** @brief GPUから参照する加速構造のデバイスアドレスを取得 */
         virtual uint64_t GetDeviceAddress() const = 0;
+        /** @brief 記述子に従ってGPU上に加速構造を構築 */
+        virtual bool Build(const AccelerationStructureBuildDesc& desc)
+        {
+            (void)desc;
+            return false;
+        }
     };
 
     namespace Detail

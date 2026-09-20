@@ -26,7 +26,10 @@ namespace NorvesLib::RHI::Vulkan
          * @param device Vulkanデバイス
          * @param desc バッファ記述子
          */
-        VulkanBuffer(TSharedPtr<VulkanDevice> device, const BufferDesc &desc);
+        VulkanBuffer(
+            TSharedPtr<VulkanDevice> device,
+            const BufferDesc &desc,
+            vk::BufferUsageFlags additionalUsage = {});
 
         /**
          * @brief デストラクタ
@@ -47,6 +50,8 @@ namespace NorvesLib::RHI::Vulkan
         uint64_t GetDeviceAddress() const override { return m_deviceAddress; }
 
     private:
+        friend class VulkanAccelerationStructure;
+
         TSharedPtr<VulkanDevice> m_device;
         BufferDesc m_desc;
         vk::Buffer m_buffer;

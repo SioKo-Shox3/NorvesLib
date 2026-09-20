@@ -9,11 +9,14 @@ namespace NorvesLib::RHI::Vulkan
     using namespace NorvesLib::Core::Container;
 
     // コンストラクタ
-    VulkanBuffer::VulkanBuffer(TSharedPtr<VulkanDevice> device, const BufferDesc &desc)
+    VulkanBuffer::VulkanBuffer(
+        TSharedPtr<VulkanDevice> device,
+        const BufferDesc &desc,
+        vk::BufferUsageFlags additionalUsage)
         : m_device(device), m_desc(desc)
     {
         // Vulkanバッファ使用法フラグを取得
-        vk::BufferUsageFlags usage = GetVkBufferUsage();
+        vk::BufferUsageFlags usage = GetVkBufferUsage() | additionalUsage;
 
         // メモリプロパティを設定
         vk::MemoryPropertyFlags memProps;
@@ -281,6 +284,10 @@ namespace NorvesLib::RHI::Vulkan
         if (ShouldEnableDeviceAddress())
         {
             usage |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
+            if ((m_desc.Usage & (ResourceUsage::VertexBuffer | ResourceUsage::IndexBuffer)) != ResourceUsage::None)
+            {
+                usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+            }
         }
 
         // デフォルトでトランスファー先として使用可能にする

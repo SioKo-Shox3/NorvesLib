@@ -28,6 +28,7 @@ namespace NorvesLib::RHI::Vulkan
     using ::NorvesLib::Core::Container::VariableArray;
 
     class VulkanBuffer;
+    class VulkanAccelerationStructure;
     class VulkanCommandList;
     class VulkanTexture;
     class VulkanSampler;
@@ -80,6 +81,7 @@ namespace NorvesLib::RHI::Vulkan
 
         // IDeviceインターフェース実装
         BufferPtr CreateBuffer(const BufferDesc &desc) override;
+        AccelerationStructurePtr CreateAccelerationStructure(const AccelerationStructureDesc &desc) override;
         TexturePtr CreateTexture(const TextureDesc &desc) override;
         SamplerPtr CreateSampler(const SamplerDesc &desc) override;
         ShaderPtr CreateShader(const ShaderDesc &desc) override;

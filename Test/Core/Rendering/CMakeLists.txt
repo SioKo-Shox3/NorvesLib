@@ -123,6 +123,19 @@ register_rendering_gpu_test(
     RHIBufferDeviceAddressVulkanTest
     RHIBufferDeviceAddressVulkanTest
 )
+add_executable(RHIAccelerationStructureVulkanTest
+    RHIAccelerationStructureVulkanTest.cpp
+)
+target_link_libraries(RHIAccelerationStructureVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(RHIAccelerationStructureVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RHIAccelerationStructureVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RHIAccelerationStructureVulkanTest
+    RHIAccelerationStructureVulkanTest
+)
 add_executable(RayTracingCapabilityContractTest
     RayTracingCapabilityContractTest.cpp
 )

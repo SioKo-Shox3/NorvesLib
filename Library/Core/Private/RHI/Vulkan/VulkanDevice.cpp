@@ -1,5 +1,6 @@
 ﻿#include "VulkanDevice.h"
 #include "VulkanBuffer.h"
+#include "VulkanAccelerationStructure.h"
 #include "VulkanTexture.h"
 #include "VulkanSampler.h"
 #include "VulkanShader.h"
@@ -53,6 +54,339 @@ namespace NorvesLib::RHI::Vulkan
                 NORVES_LOG_ERROR("Vulkan", "vkDeviceWaitIdle failed context=%s result=%d", context, static_cast<int32_t>(result));
             }
             return result;
+        }
+
+        vk::BuildAccelerationStructureFlagsKHR ToVkAccelerationStructureBuildFlags(
+            const AccelerationStructureDesc& desc)
+        {
+            vk::BuildAccelerationStructureFlagsKHR flags =
+                vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+            if (desc.allowUpdate)
+            {
+                flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate;
+            }
+            if (desc.allowCompaction)
+            {
+                flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction;
+            }
+            return flags;
+        }
+
+        vk::AccelerationStructureGeometryKHR MakeAccelerationStructureCapacityGeometry(
+            const AccelerationStructureGeometryCapacityDesc& capacity)
+        {
+            vk::AccelerationStructureGeometryKHR geometry{};
+            if (capacity.type == AccelerationStructureGeometryType::Triangles)
+            {
+                vk::AccelerationStructureGeometryTrianglesDataKHR triangles{};
+                triangles.vertexFormat = vk::Format::eR32G32B32Sfloat;
+                triangles.vertexStride = 12;
+                const uint64_t maxVertex = static_cast<uint64_t>(capacity.maxPrimitiveCount) * 3u - 1u;
+                triangles.maxVertex = static_cast<uint32_t>(
+                    std::min<uint64_t>(maxVertex, std::numeric_limits<uint32_t>::max()));
+                triangles.indexType = vk::IndexType::eUint32;
+                geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+                geometry.geometry.triangles = triangles;
+            }
+            else
+            {
+                vk::AccelerationStructureGeometryAabbsDataKHR aabbs{};
+                aabbs.stride = 24;
+                geometry.geometryType = vk::GeometryTypeKHR::eAabbs;
+                geometry.geometry.aabbs = aabbs;
+            }
+
+            if (capacity.opaque)
+            {
+                geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+            }
+            return geometry;
+        }
+    }
+
+    VulkanAccelerationStructure::VulkanAccelerationStructure(
+        TSharedPtr<VulkanDevice> device,
+        const AccelerationStructureDesc& desc)
+        : m_device(device), m_desc(desc)
+    {
+        if (!m_device || !m_device->GetCapabilities().RayTracing.bAccelerationStructure ||
+            !m_device->GetCapabilities().bBufferDeviceAddress || !IsValidAccelerationStructureDesc(m_desc))
+        {
+            throw std::invalid_argument("Vulkan加速構造の記述子またはデバイス能力が無効です");
+        }
+
+        VariableArray<vk::AccelerationStructureGeometryKHR> capacityGeometries;
+        VariableArray<uint32_t> maxPrimitiveCounts;
+        if (m_desc.type == AccelerationStructureType::BottomLevel)
+        {
+            for (const AccelerationStructureGeometryCapacityDesc& capacity : m_desc.geometryCapacities)
+            {
+                capacityGeometries.push_back(MakeAccelerationStructureCapacityGeometry(capacity));
+                maxPrimitiveCounts.push_back(capacity.maxPrimitiveCount);
+            }
+        }
+        else
+        {
+            vk::AccelerationStructureGeometryKHR instancesGeometry{};
+            vk::AccelerationStructureGeometryInstancesDataKHR instancesData{};
+            instancesData.arrayOfPointers = VK_FALSE;
+            instancesGeometry.geometryType = vk::GeometryTypeKHR::eInstances;
+            instancesGeometry.geometry.instances = instancesData;
+            capacityGeometries.push_back(instancesGeometry);
+            maxPrimitiveCounts.push_back(m_desc.maxInstanceCount);
+        }
+
+        vk::AccelerationStructureBuildGeometryInfoKHR buildInfo{};
+        buildInfo.type = m_desc.type == AccelerationStructureType::BottomLevel
+            ? vk::AccelerationStructureTypeKHR::eBottomLevel
+            : vk::AccelerationStructureTypeKHR::eTopLevel;
+        buildInfo.flags = ToVkAccelerationStructureBuildFlags(m_desc);
+        buildInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        buildInfo.geometryCount = static_cast<uint32_t>(capacityGeometries.size());
+        buildInfo.pGeometries = capacityGeometries.data();
+
+        vk::AccelerationStructureBuildSizesInfoKHR buildSizes{};
+        m_device->GetVkDevice().getAccelerationStructureBuildSizesKHR(
+            vk::AccelerationStructureBuildTypeKHR::eDevice,
+            &buildInfo,
+            maxPrimitiveCounts.data(),
+            &buildSizes);
+        if (buildSizes.accelerationStructureSize == 0 || buildSizes.buildScratchSize == 0)
+        {
+            throw std::runtime_error("Vulkan加速構造の容量を計算できませんでした");
+        }
+
+        m_size = buildSizes.accelerationStructureSize;
+        m_buildScratchSize = buildSizes.buildScratchSize;
+        BufferDesc storageDesc;
+        storageDesc.Size = m_size;
+        storageDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+        storageDesc.DebugName = m_desc.type == AccelerationStructureType::BottomLevel
+            ? "VulkanAccelerationStructure.BLAS.Storage"
+            : "VulkanAccelerationStructure.TLAS.Storage";
+        m_storageBuffer = MakeShared<VulkanBuffer>(
+            m_device,
+            storageDesc,
+            vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR);
+
+        vk::AccelerationStructureCreateInfoKHR createInfo{};
+        createInfo.buffer = m_storageBuffer->GetVkBuffer();
+        createInfo.size = m_size;
+        createInfo.type = buildInfo.type;
+        auto createResult = m_device->GetVkDevice().createAccelerationStructureKHR(createInfo);
+        if (createResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("Vulkan加速構造リソースを作成できませんでした");
+        }
+        m_accelerationStructure = createResult.value;
+
+        vk::AccelerationStructureDeviceAddressInfoKHR addressInfo{};
+        addressInfo.accelerationStructure = m_accelerationStructure;
+        m_deviceAddress = m_device->GetVkDevice().getAccelerationStructureAddressKHR(addressInfo);
+        if (m_deviceAddress == 0)
+        {
+            m_device->GetVkDevice().destroyAccelerationStructureKHR(m_accelerationStructure);
+            m_accelerationStructure = nullptr;
+            throw std::runtime_error("Vulkan加速構造のdevice addressを取得できませんでした");
+        }
+    }
+
+    VulkanAccelerationStructure::~VulkanAccelerationStructure()
+    {
+        if (m_device && m_accelerationStructure)
+        {
+            m_device->GetVkDevice().destroyAccelerationStructureKHR(m_accelerationStructure);
+        }
+    }
+
+    bool VulkanAccelerationStructure::Build(const AccelerationStructureBuildDesc& desc)
+    {
+        if (desc.destination.get() != this || desc.mode != AccelerationStructureBuildMode::Build ||
+            !IsValidAccelerationStructureBuildDesc(desc) || desc.type != m_desc.type)
+        {
+            return false;
+        }
+
+        try
+        {
+            VariableArray<vk::AccelerationStructureGeometryKHR> geometries;
+            VariableArray<vk::AccelerationStructureBuildRangeInfoKHR> buildRanges;
+            TSharedPtr<VulkanBuffer> instanceBuffer;
+            if (desc.type == AccelerationStructureType::BottomLevel)
+            {
+                for (const AccelerationStructureGeometryDesc& geometryDesc : desc.geometries)
+                {
+                    vk::AccelerationStructureGeometryKHR geometry{};
+                    if (geometryDesc.opaque)
+                    {
+                        geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+                    }
+                    vk::AccelerationStructureBuildRangeInfoKHR buildRange{};
+                    if (geometryDesc.type == AccelerationStructureGeometryType::Triangles)
+                    {
+                        const AccelerationStructureTriangleGeometryDesc& triangles = geometryDesc.triangles;
+                        TSharedPtr<VulkanBuffer> vertexBuffer = DynamicPointerCast<VulkanBuffer>(triangles.vertexBuffer);
+                        TSharedPtr<VulkanBuffer> indexBuffer = DynamicPointerCast<VulkanBuffer>(triangles.indexBuffer);
+                        if (!vertexBuffer || vertexBuffer->m_device.get() != m_device.get() ||
+                            (triangles.indexBuffer &&
+                             (!indexBuffer || indexBuffer->m_device.get() != m_device.get())))
+                        {
+                            return false;
+                        }
+
+                        vk::AccelerationStructureGeometryTrianglesDataKHR triangleData{};
+                        triangleData.vertexFormat = triangles.vertexFormat == Format::R32G32B32_FLOAT
+                            ? vk::Format::eR32G32B32Sfloat
+                            : vk::Format::eR32G32B32A32Sfloat;
+                        triangleData.vertexData.deviceAddress =
+                            vertexBuffer->GetDeviceAddress() + triangles.vertexOffset;
+                        triangleData.vertexStride = triangles.vertexStride;
+                        triangleData.maxVertex = triangles.vertexCount - 1u;
+                        triangleData.indexType = vk::IndexType::eNoneKHR;
+                        if (indexBuffer)
+                        {
+                            triangleData.indexType = triangles.indexFormat == IndexType::Uint16
+                                ? vk::IndexType::eUint16
+                                : vk::IndexType::eUint32;
+                            triangleData.indexData.deviceAddress =
+                                indexBuffer->GetDeviceAddress() + triangles.indexOffset;
+                        }
+                        geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+                        geometry.geometry.triangles = triangleData;
+                        buildRange.primitiveCount = indexBuffer
+                            ? triangles.indexCount / 3u
+                            : triangles.vertexCount / 3u;
+                    }
+                    else
+                    {
+                        const AccelerationStructureAabbGeometryDesc& aabbs = geometryDesc.aabbs;
+                        TSharedPtr<VulkanBuffer> inputBuffer = DynamicPointerCast<VulkanBuffer>(aabbs.buffer);
+                        if (!inputBuffer || inputBuffer->m_device.get() != m_device.get())
+                        {
+                            return false;
+                        }
+                        vk::AccelerationStructureGeometryAabbsDataKHR aabbData{};
+                        aabbData.data.deviceAddress = inputBuffer->GetDeviceAddress() + aabbs.offset;
+                        aabbData.stride = aabbs.stride;
+                        geometry.geometryType = vk::GeometryTypeKHR::eAabbs;
+                        geometry.geometry.aabbs = aabbData;
+                        buildRange.primitiveCount = aabbs.primitiveCount;
+                    }
+                    geometries.push_back(geometry);
+                    buildRanges.push_back(buildRange);
+                }
+            }
+            else
+            {
+                VariableArray<vk::AccelerationStructureInstanceKHR> instances;
+                for (const AccelerationStructureInstanceDesc& instanceDesc : desc.instances)
+                {
+                    TSharedPtr<VulkanAccelerationStructure> bottomLevel =
+                        DynamicPointerCast<VulkanAccelerationStructure>(instanceDesc.bottomLevel);
+                    if (!bottomLevel || bottomLevel->m_device.get() != m_device.get() ||
+                        bottomLevel->GetDesc().type != AccelerationStructureType::BottomLevel)
+                    {
+                        return false;
+                    }
+
+                    vk::AccelerationStructureInstanceKHR instance{};
+                    for (uint32_t row = 0; row < 3; ++row)
+                    {
+                        for (uint32_t column = 0; column < 4; ++column)
+                        {
+                            instance.transform.matrix[row][column] = instanceDesc.transform[row * 4u + column];
+                        }
+                    }
+                    instance.instanceCustomIndex = instanceDesc.customIndex;
+                    instance.mask = instanceDesc.mask;
+                    instance.instanceShaderBindingTableRecordOffset = instanceDesc.shaderBindingTableRecordOffset;
+                    if (instanceDesc.disableTriangleFacingCull)
+                    {
+                        instance.flags = static_cast<VkGeometryInstanceFlagsKHR>(
+                            vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable);
+                    }
+                    instance.accelerationStructureReference = bottomLevel->GetDeviceAddress();
+                    instances.push_back(instance);
+                }
+
+                BufferDesc instanceBufferDesc;
+                instanceBufferDesc.Size = static_cast<uint64_t>(instances.size()) * sizeof(vk::AccelerationStructureInstanceKHR);
+                instanceBufferDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+                instanceBufferDesc.CPUAccessible = true;
+                instanceBufferDesc.DebugName = "VulkanAccelerationStructure.Build.Instances";
+                instanceBuffer = MakeShared<VulkanBuffer>(
+                    m_device,
+                    instanceBufferDesc,
+                    vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
+                instanceBuffer->Update(instances.data(), instanceBufferDesc.Size);
+
+                vk::AccelerationStructureGeometryInstancesDataKHR instancesData{};
+                instancesData.arrayOfPointers = VK_FALSE;
+                instancesData.data.deviceAddress = instanceBuffer->GetDeviceAddress();
+                vk::AccelerationStructureGeometryKHR instancesGeometry{};
+                instancesGeometry.geometryType = vk::GeometryTypeKHR::eInstances;
+                instancesGeometry.geometry.instances = instancesData;
+                geometries.push_back(instancesGeometry);
+
+                vk::AccelerationStructureBuildRangeInfoKHR buildRange{};
+                buildRange.primitiveCount = static_cast<uint32_t>(instances.size());
+                buildRanges.push_back(buildRange);
+            }
+
+            vk::PhysicalDeviceAccelerationStructurePropertiesKHR accelerationStructureProperties{};
+            vk::PhysicalDeviceProperties2 properties{};
+            properties.pNext = &accelerationStructureProperties;
+            m_device->GetVkPhysicalDevice().getProperties2(&properties);
+            const uint64_t scratchAlignment = std::max<uint64_t>(
+                accelerationStructureProperties.minAccelerationStructureScratchOffsetAlignment,
+                1u);
+
+            BufferDesc scratchDesc;
+            scratchDesc.Size = m_buildScratchSize + scratchAlignment - 1u;
+            scratchDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+            scratchDesc.DebugName = "VulkanAccelerationStructure.Build.Scratch";
+            TSharedPtr<VulkanBuffer> scratchBuffer = MakeShared<VulkanBuffer>(m_device, scratchDesc);
+            const uint64_t scratchAddress = scratchBuffer->GetDeviceAddress();
+            const uint64_t scratchRemainder = scratchAddress % scratchAlignment;
+            const uint64_t alignedScratchAddress = scratchAddress +
+                (scratchRemainder == 0 ? 0 : scratchAlignment - scratchRemainder);
+
+            vk::AccelerationStructureBuildGeometryInfoKHR buildInfo{};
+            buildInfo.type = desc.type == AccelerationStructureType::BottomLevel
+                ? vk::AccelerationStructureTypeKHR::eBottomLevel
+                : vk::AccelerationStructureTypeKHR::eTopLevel;
+            buildInfo.flags = ToVkAccelerationStructureBuildFlags(m_desc);
+            buildInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+            buildInfo.dstAccelerationStructure = m_accelerationStructure;
+            buildInfo.geometryCount = static_cast<uint32_t>(geometries.size());
+            buildInfo.pGeometries = geometries.data();
+            buildInfo.scratchData.deviceAddress = alignedScratchAddress;
+
+            const vk::AccelerationStructureBuildRangeInfoKHR* buildRangeInfos = buildRanges.data();
+            const vk::AccelerationStructureBuildRangeInfoKHR* buildRangeInfoArrays[] = {buildRangeInfos};
+            vk::CommandBuffer commandBuffer = m_device->BeginSingleTimeCommands();
+            commandBuffer.buildAccelerationStructuresKHR(1, &buildInfo, buildRangeInfoArrays);
+
+            vk::MemoryBarrier accelerationStructureBarrier{};
+            accelerationStructureBarrier.srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            accelerationStructureBarrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR;
+            commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR | vk::PipelineStageFlagBits::eComputeShader,
+                {},
+                1,
+                &accelerationStructureBarrier,
+                0,
+                nullptr,
+                0,
+                nullptr);
+            m_device->EndSingleTimeCommands(commandBuffer);
+            return true;
+        }
+        catch (const std::exception& error)
+        {
+            NORVES_LOG_ERROR("VulkanAccelerationStructure", "加速構造の構築に失敗しました: %s", error.what());
+            return false;
         }
     }
 
@@ -1247,6 +1581,20 @@ namespace NorvesLib::RHI::Vulkan
         auto buffer = MakeShared<VulkanBuffer>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
         return StaticPointerCast<IBuffer>(buffer);
+    }
+
+    AccelerationStructurePtr VulkanDevice::CreateAccelerationStructure(const AccelerationStructureDesc& desc)
+    {
+        if (!m_Capabilities.RayTracing.bAccelerationStructure ||
+            !m_Capabilities.bBufferDeviceAddress || !IsValidAccelerationStructureDesc(desc))
+        {
+            return {};
+        }
+
+        auto accelerationStructure = MakeShared<VulkanAccelerationStructure>(
+            TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
+            desc);
+        return StaticPointerCast<IAccelerationStructure>(accelerationStructure);
     }
 
     TexturePtr VulkanDevice::CreateTexture(const TextureDesc &desc)
