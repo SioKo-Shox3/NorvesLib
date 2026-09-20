@@ -34,6 +34,7 @@ namespace NorvesLib::Core::Rendering
     class RenderGraph;
     struct RenderGraphExecutionResult;
     struct ShadowMapPassSettings;
+    struct RayTracingSceneSnapshot;
 
     struct RenderGraphDebugCapture
     {
@@ -85,6 +86,8 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr ShadowSampler;
         RHI::TexturePtr ShadowMapFallbackTexture;
         RHI::SamplerPtr ShadowMapFallbackSampler;
+        RHI::TexturePtr RayTracingShadowVisibilityTexture;
+        bool bRayTracingShadowPublished = false;
         DirectionalShadowShaderValues DirectionalShadow;
         CascadedDirectionalShadowShaderValues CascadedShadow;
 
@@ -116,6 +119,8 @@ namespace NorvesLib::Core::Rendering
             ShadowSampler.reset();
             ShadowMapFallbackTexture.reset();
             ShadowMapFallbackSampler.reset();
+            RayTracingShadowVisibilityTexture.reset();
+            bRayTracingShadowPublished = false;
             LightBuffer.reset();
             LogicalLightCount = 0;
             LightBufferSizeBytes = 0;
@@ -179,6 +184,13 @@ namespace NorvesLib::Core::Rendering
         {
             ShadowMapFallbackTexture = texture;
             ShadowMapFallbackSampler = sampler;
+        }
+
+        void PublishRayTracingShadow(const RHI::TexturePtr& visibilityTexture,
+                                     bool bEnabled)
+        {
+            RayTracingShadowVisibilityTexture = visibilityTexture;
+            bRayTracingShadowPublished = bEnabled && static_cast<bool>(visibilityTexture);
         }
 
         void PublishCascadedShadow(const float* views,
@@ -403,6 +415,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief FramePacketが所有する空パラメータのスナップショット（未接続時は無効） */
         const SceneProxy *SnapshotScene = nullptr;
+
+        /** @brief FramePacketが所有するRT scene snapshot */
+        const RayTracingSceneSnapshot* SnapshotRayTracingScene = nullptr;
 
         /** @brief SnapshotScene未接続時に使用する空パラメータ値 */
         SkyAtmosphereParameters SkyAtmosphereSnapshot;

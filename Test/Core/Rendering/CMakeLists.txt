@@ -403,6 +403,24 @@ register_rendering_gpu_test(
 set_tests_properties(RenderingHdrSceneVulkanSkipContractTest PROPERTIES
     ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
+add_executable(RenderingRayTracingShadowVulkanTest
+    RenderingRayTracingShadowVulkanTest.cpp
+)
+target_link_libraries(RenderingRayTracingShadowVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+)
+target_include_directories(RenderingRayTracingShadowVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingRayTracingShadowVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RenderingRayTracingShadowVulkanTest
+    RenderingRayTracingShadowVulkanTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --scenario=raster-rt-shadow-ab)
+
 add_executable(FrameCaptureThumbnailEncoderTest
     FrameCaptureThumbnailEncoderTest.cpp
 )

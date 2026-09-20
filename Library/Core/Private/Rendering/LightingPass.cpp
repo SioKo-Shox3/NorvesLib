@@ -1059,6 +1059,12 @@ namespace NorvesLib::Core::Rendering
         skyTransmittanceBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(skyTransmittanceBinding);
 
+        RHI::DescriptorBinding rayTracingShadowBinding;
+        rayTracingShadowBinding.binding = 16;
+        rayTracingShadowBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        rayTracingShadowBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(rayTracingShadowBinding);
+
         return dsDesc;
     }
 
@@ -1414,6 +1420,7 @@ namespace NorvesLib::Core::Rendering
 
     void LightingPass::Shutdown()
     {
+        m_RayTracingShadowPass.Shutdown();
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
             !m_DefaultShadowMapArrayTexture &&
             !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer)
@@ -2160,6 +2167,8 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindSampler(14, m_IBLSampler);
         descriptorSet->BindTexture(15, m_DefaultBlackTexture);
         descriptorSet->BindSampler(15, m_IBLSampler);
+        descriptorSet->BindTexture(16, m_DefaultBlackTexture);
+        descriptorSet->BindSampler(16, m_GBufferSampler);
 
         outDescriptorSet = std::move(descriptorSet);
         return true;
@@ -2255,6 +2264,18 @@ namespace NorvesLib::Core::Rendering
             TryEnqueueNativeTransitionPass(context);
             return;
         }
+
+        const uint32_t debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
+        const bool bForceRasterShadow = debugViewMode == 246u || debugViewMode == 249u;
+        RHI::TexturePtr rayTracingShadowVisibility;
+        const bool bRayTracingShadowAvailable = m_RayTracingShadowPass.Execute(
+            context,
+            depthTexture,
+            normalTexture,
+            !bForceRasterShadow,
+            rayTracingShadowVisibility);
+        context.PhysicalLighting.PublishRayTracingShadow(
+            rayTracingShadowVisibility, bRayTracingShadowAvailable);
 
         const bool bShadowResourceAvailable =
             shadowMapTexture &&
@@ -2370,6 +2391,13 @@ namespace NorvesLib::Core::Rendering
         m_LightingDescriptorSet->BindSampler(
             15,
             bSkyAtmosphereAvailable ? context.SkyAtmosphere.Sampler : m_IBLSampler);
+
+        m_LightingDescriptorSet->BindTexture(
+            16,
+            context.PhysicalLighting.bRayTracingShadowPublished
+                ? context.PhysicalLighting.RayTracingShadowVisibilityTexture
+                : m_DefaultBlackTexture);
+        m_LightingDescriptorSet->BindSampler(16, m_GBufferSampler);
 
         if (ssaoTexture)
         {
@@ -2631,6 +2659,11 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         const bool bCascadedShadowEnabled =
             HasValidCascadedShadowPublication(context, bShadowAvailable);
+        const bool bRayTracingShadowEnabled =
+            context.PhysicalLighting.bRayTracingShadowPublished &&
+            context.PhysicalLighting.RayTracingShadowVisibilityTexture;
+        // shadowPadding0はRT可視性テクスチャが有効なフレームを示す。
+        params.shadowPadding0 = bRayTracingShadowEnabled ? 1u : 0u;
         if (bCascadedShadowEnabled)
         {
             std::memcpy(params.lightView,
@@ -2643,6 +2676,10 @@ namespace NorvesLib::Core::Rendering
                         context.PhysicalLighting.CascadedShadow.SplitDistances,
                         sizeof(float) * PhysicalLightingShadowSplitCount);
             params.cascadeCount = PhysicalLightingShadowCascadeCount;
+            params.bShadowEnabled = 1u;
+        }
+        else if (bRayTracingShadowEnabled)
+        {
             params.bShadowEnabled = 1u;
         }
 
@@ -2665,8 +2702,8 @@ namespace NorvesLib::Core::Rendering
 
         // SSAOパラメータ設定
         params.debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
-        const bool bValidationMode = params.debugViewMode >= 250u &&
-                                     params.debugViewMode <= 254u;
+        const bool bValidationMode = params.debugViewMode >= 246u &&
+                                     params.debugViewMode <= 255u;
         params.bSSAOEnabled = bValidationMode ? 0u : (bSSAOAvailable ? 1u : 0u);
         params.bNeuralBRDFEnabled = bValidationMode ? 0u :
                                     (m_bNeuralBRDFAvailable ? 1u : 0u);

@@ -63,6 +63,7 @@ layout(set = 0, binding = 12) uniform sampler2D diffuseIrradiance;
 layout(set = 0, binding = 13) uniform sampler2D prefilteredSpecular;
 layout(set = 0, binding = 14) uniform sampler2D skySunDisk;
 layout(set = 0, binding = 15) uniform sampler2D skyTransmittance;
+layout(set = 0, binding = 16) uniform sampler2D rayTracingShadowVisibility;
 
 // SSAO (Screen-Space Ambient Occlusion)
 layout(set = 0, binding = 10) uniform sampler2D ssaoTexture;
@@ -95,13 +96,27 @@ const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
 const uint DEBUG_VIEW_MODE_RAW250 = 250u;
 const uint DEBUG_VIEW_MODE_RAW251 = 251u;
 const uint DEBUG_VIEW_MODE_RAW252 = 252u;
+const uint DEBUG_VIEW_MODE_R5_RASTER_HARD_SHADOW = 246u;
+const uint DEBUG_VIEW_MODE_R5_RAY_TRACING_HARD_SHADOW = 247u;
+const uint DEBUG_VIEW_MODE_R5_RAY_TRACING_VISIBILITY = 248u;
+const uint DEBUG_VIEW_MODE_R5_RASTER_FALLBACK = 249u;
+
+bool IsR5HardShadowValidationMode()
+{
+    return params.debugViewMode == DEBUG_VIEW_MODE_R5_RASTER_HARD_SHADOW ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_HARD_SHADOW ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RASTER_FALLBACK;
+}
 
 bool ShouldApplySceneColorPreExposure()
 {
     return params.debugViewMode == DEBUG_VIEW_MODE_NORMAL ||
            params.debugViewMode == DEBUG_VIEW_MODE_RAW252 ||
            params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT ||
-           params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR;
+           params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RASTER_HARD_SHADOW ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_HARD_SHADOW ||
+           params.debugViewMode == DEBUG_VIEW_MODE_R5_RASTER_FALLBACK;
 }
 
 vec3 ApplySceneColorPreExposure(vec3 sceneColor)
@@ -364,6 +379,13 @@ float SampleShadowCascade(vec3 worldPos, uint cascadeIndex)
         return 1.0;
     }
 
+    if (IsR5HardShadowValidationMode())
+    {
+        float sampleDepth = texture(shadowMap,
+                                    vec3(shadowUV, float(cascadeIndex))).r;
+        return currentDepth - 0.005 > sampleDepth ? 0.0 : 1.0;
+    }
+
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0).xy);
 
     // Phase 1: ブロッカーサーチ
@@ -594,6 +616,20 @@ void main()
     vec4 materialSample = texture(gbufferMaterial, fragUV);
     float depthSample = texture(gbufferDepth, fragUV).r;
 
+    if (params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_VISIBILITY)
+    {
+        if (params.shadowPadding0 == 0u)
+        {
+            outColor = vec4(1.0, 0.0, 1.0, 1.0);
+        }
+        else
+        {
+            float visibility = texture(rayTracingShadowVisibility, fragUV).r;
+            outColor = vec4(vec3(visibility), 1.0);
+        }
+        return;
+    }
+
     if (params.debugViewMode == DEBUG_VIEW_MODE_RAW250)
     {
         float band = min(floor(clamp(fragUV.y, 0.0, 0.999999) * 5.0), 4.0);
@@ -708,7 +744,9 @@ void main()
         return;
     }
 
-    bool bValidationLambert = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT;
+    bool bValidationHardShadow = IsR5HardShadowValidationMode();
+    bool bValidationLambert = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_LAMBERT ||
+                              bValidationHardShadow;
     bool bValidationPBR = params.debugViewMode == DEBUG_VIEW_MODE_VALIDATION_PBR;
 
     // データ展開
@@ -809,9 +847,12 @@ void main()
 
         // シャドウ計算（ディレクショナルライトのみ）
         float shadow = 1.0;
-        if (!bValidationLambert && lightType < 0.5 && params.bShadowEnabled != 0u)
+        if ((!bValidationLambert || bValidationHardShadow) &&
+            lightType < 0.5 && params.bShadowEnabled != 0u)
         {
-            shadow = CalculateShadow(worldPos);
+            shadow = params.shadowPadding0 != 0u
+                         ? texture(rayTracingShadowVisibility, fragUV).r
+                         : CalculateShadow(worldPos);
         }
 
         vec3 radiance = lightColor * NdotL * attenuation * shadow;

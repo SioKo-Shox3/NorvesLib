@@ -127,6 +127,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/CascadedShadowLightMatrices.cpp
     Private/Rendering/ShadowMapPass.cpp
     Private/Rendering/LightingPass.cpp
+    Private/Rendering/RayTracingShadowPass.cpp
     Private/Rendering/ToneMappingPass.cpp
     Private/Rendering/VignettePass.cpp
     Private/Rendering/BloomPass.cpp
@@ -370,6 +371,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SkyAtmospherePass.h
     Public/Rendering/ShadowMapPass.h
     Public/Rendering/LightingPass.h
+    Public/Rendering/RayTracingShadowPass.h
     Public/Rendering/ToneMappingPass.h
     Public/Rendering/VignettePass.h
     Public/Rendering/BloomPass.h

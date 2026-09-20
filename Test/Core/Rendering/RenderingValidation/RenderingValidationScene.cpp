@@ -33,6 +33,8 @@ namespace NorvesLib::Test::RenderingValidation
         constexpr MeshDataHandle PlaneHandle{0x52300001u};
         constexpr MeshDataHandle SphereHandle{0x52300002u};
         constexpr MeshDataHandle R1ScreenPlaneHandle{0x52300003u};
+        constexpr MeshDataHandle R5ShadowPlaneHandle{0x52300005u};
+        constexpr float R5ShadowReceiverAlbedo[4] = {0.8f, 0.8f, 0.8f, 1.0f};
         constexpr double R1PerspectiveHalfAngleTangent = 0.577350269189625764509148780501957456;
         constexpr double R1OccluderCenter[3] = {1.3333333, 0.0, 1.0};
         constexpr double R1ProjectionTolerancePixels = 1.0e-4;
@@ -915,6 +917,16 @@ namespace NorvesLib::Test::RenderingValidation
         m_R3ShadowPlaneHandle = MeshDataHandle::Invalid();
         m_R3ShadowAlbedoTexture = TextureHandle::Invalid();
         m_R3ShadowMaterial = MaterialHandle::Invalid();
+        m_bR5RayTracingShadowFixturePrepared = false;
+        m_bR5RayTracingShadowFixtureFailed = false;
+        m_R5RayTracingShadowCamera = {};
+        m_pR5ShadowReceiverEntity = nullptr;
+        m_pR5ShadowOccluderEntity = nullptr;
+        m_pR5ShadowReceiverMesh = nullptr;
+        m_pR5ShadowOccluderMesh = nullptr;
+        m_R5ShadowPlaneHandle = MeshDataHandle::Invalid();
+        m_R5ShadowAlbedoTexture = TextureHandle::Invalid();
+        m_R5ShadowMaterial = MaterialHandle::Invalid();
 
         state.pWorld = nullptr;
         state.pResources = nullptr;
@@ -979,6 +991,16 @@ namespace NorvesLib::Test::RenderingValidation
         m_R3ShadowPlaneHandle = MeshDataHandle::Invalid();
         m_R3ShadowAlbedoTexture = TextureHandle::Invalid();
         m_R3ShadowMaterial = MaterialHandle::Invalid();
+        m_bR5RayTracingShadowFixturePrepared = false;
+        m_bR5RayTracingShadowFixtureFailed = false;
+        m_R5RayTracingShadowCamera = {};
+        m_pR5ShadowReceiverEntity = nullptr;
+        m_pR5ShadowOccluderEntity = nullptr;
+        m_pR5ShadowReceiverMesh = nullptr;
+        m_pR5ShadowOccluderMesh = nullptr;
+        m_R5ShadowPlaneHandle = MeshDataHandle::Invalid();
+        m_R5ShadowAlbedoTexture = TextureHandle::Invalid();
+        m_R5ShadowMaterial = MaterialHandle::Invalid();
         m_bPublished = false;
 
         if (pWorld != nullptr)
@@ -2385,6 +2407,186 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::ApplyR5RayTracingShadowFixture() const
+    {
+        if (m_bR5RayTracingShadowFixturePrepared)
+        {
+            return true;
+        }
+        if (m_bR5RayTracingShadowFixtureFailed || m_SceneKind != SceneKind::Outdoor ||
+            m_pWorld == nullptr || m_pResources == nullptr || m_pP4LightEntity == nullptr)
+        {
+            m_bR5RayTracingShadowFixtureFailed = true;
+            return false;
+        }
+
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> vertices;
+        Core::Container::VariableArray<uint32_t> indices;
+        constexpr float positions[4][3] = {
+            {-1.0f, -1.0f, 0.0f},
+            {1.0f, -1.0f, 0.0f},
+            {-1.0f, 1.0f, 0.0f},
+            {1.0f, 1.0f, 0.0f}};
+        constexpr float texCoords[4][2] = {
+            {0.0f, 0.0f},
+            {1.0f, 0.0f},
+            {0.0f, 1.0f},
+            {1.0f, 1.0f}};
+        for (uint32_t index = 0u; index < 4u; ++index)
+        {
+            Core::Rendering::Mesh3DVertex vertex{};
+            vertex.Position[0] = positions[index][0];
+            vertex.Position[1] = positions[index][1];
+            vertex.Position[2] = positions[index][2];
+            vertex.Normal[0] = 0.0f;
+            vertex.Normal[1] = 0.0f;
+            vertex.Normal[2] = 1.0f;
+            vertex.TexCoord[0] = texCoords[index][0];
+            vertex.TexCoord[1] = texCoords[index][1];
+            vertices.push_back(vertex);
+        }
+        indices.push_back(0u);
+        indices.push_back(1u);
+        indices.push_back(2u);
+        indices.push_back(1u);
+        indices.push_back(3u);
+        indices.push_back(2u);
+        if (!m_pResources->Meshes().Register(R5ShadowPlaneHandle,
+                                              vertices.data(),
+                                              vertices.size() * sizeof(Core::Rendering::Mesh3DVertex),
+                                              indices.data(),
+                                              static_cast<uint32_t>(indices.size())))
+        {
+            m_bR5RayTracingShadowFixtureFailed = true;
+            return false;
+        }
+        m_R5ShadowPlaneHandle = R5ShadowPlaneHandle;
+        m_Lease.TrackMesh(R5ShadowPlaneHandle);
+
+        m_R5ShadowAlbedoTexture = CreateR1FloatTexture(
+            *m_pResources,
+            R5ShadowReceiverAlbedo,
+            TEXT("RenderingValidationR5ShadowReceiverAlbedo"));
+        if (!m_R5ShadowAlbedoTexture.IsValid())
+        {
+            m_bR5RayTracingShadowFixtureFailed = true;
+            return false;
+        }
+        m_Lease.TrackTexture(m_R5ShadowAlbedoTexture);
+
+        Core::Rendering::MaterialCreateData materialData;
+        materialData.AlbedoTexture = m_R5ShadowAlbedoTexture;
+        materialData.Blend = Core::Rendering::BlendMode::Opaque;
+        materialData.Shading = Core::Rendering::ShadingModel::DefaultLit;
+        materialData.bTwoSided = true;
+        materialData.bCastShadows = true;
+        materialData.DebugName = TEXT("RenderingValidationR5RayTracingShadow");
+        m_R5ShadowMaterial = m_pResources->Materials().Create(materialData);
+        if (!m_R5ShadowMaterial.IsValid())
+        {
+            m_bR5RayTracingShadowFixtureFailed = true;
+            return false;
+        }
+        m_Lease.TrackMaterial(m_R5ShadowMaterial);
+
+        auto spawnShadowMesh = [this](Core::Entity*& outEntity,
+                                      Core::Component::MeshComponent*& outMesh) -> bool
+        {
+            outEntity = m_pWorld->SpawnEntity();
+            if (outEntity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(outEntity);
+            outMesh = m_pWorld->CreateComponent<Core::Component::MeshComponent>(outEntity);
+            if (outMesh == nullptr)
+            {
+                return false;
+            }
+            outMesh->SetMeshHandle(m_R5ShadowPlaneHandle);
+            outMesh->SetMaterial(0u, m_R5ShadowMaterial);
+            outMesh->SetCastShadow(false);
+            outMesh->SetReceiveShadow(false);
+            outMesh->SetVisible(true);
+            return true;
+        };
+        if (!spawnShadowMesh(m_pR5ShadowReceiverEntity, m_pR5ShadowReceiverMesh) ||
+            !spawnShadowMesh(m_pR5ShadowOccluderEntity, m_pR5ShadowOccluderMesh))
+        {
+            m_bR5RayTracingShadowFixtureFailed = true;
+            return false;
+        }
+
+        m_pR5ShadowReceiverEntity->SetPosition(0.0f, 0.0f, 20.0f);
+        m_pR5ShadowReceiverEntity->SetScale(12.0f, 12.0f, 1.0f);
+        m_pR5ShadowReceiverMesh->SetCastShadow(false);
+        m_pR5ShadowReceiverMesh->SetReceiveShadow(true);
+        m_pR5ShadowReceiverMesh->SetVisible(true);
+
+        m_pR5ShadowOccluderEntity->SetPosition(0.0f, 0.0f, 24.0f);
+        m_pR5ShadowOccluderEntity->SetScale(2.4f, 2.4f, 1.0f);
+        m_pR5ShadowOccluderMesh->SetCastShadow(true);
+        m_pR5ShadowOccluderMesh->SetReceiveShadow(false);
+        m_pR5ShadowOccluderMesh->SetVisible(true);
+
+        m_R5RayTracingShadowCamera = BuildLookAtCamera(
+            Math::Vector3::Zero,
+            Math::Vector3(0.0f, 0.0f, 1.0f),
+            ValidationWidth,
+            ValidationHeight);
+        m_R5RayTracingShadowCamera.NearPlane = 0.1f;
+        m_R5RayTracingShadowCamera.FarPlane = 40.0f;
+        if (!Core::Component::CameraComponent::TryBuildExposureSnapshot(
+                4.0f,
+                1.0f / 60.0f,
+                100.0f,
+                0.0f,
+                m_R5RayTracingShadowCamera))
+        {
+            m_bR5RayTracingShadowFixtureFailed = true;
+            return false;
+        }
+
+        for (Core::Entity* entity : m_Objects)
+        {
+            if (entity == nullptr)
+            {
+                continue;
+            }
+            if (Core::Component::MeshComponent* mesh =
+                    entity->GetComponent<Core::Component::MeshComponent>())
+            {
+                mesh->SetVisible(entity == m_pR5ShadowReceiverEntity ||
+                                 entity == m_pR5ShadowOccluderEntity);
+            }
+            if (Core::Component::LightComponent* light =
+                    entity->GetComponent<Core::Component::LightComponent>())
+            {
+                const bool bMainDirectional = entity == m_pP4LightEntity;
+                entity->SetActive(bMainDirectional);
+                light->SetLightVisible(bMainDirectional);
+            }
+        }
+
+        auto* directional =
+            m_pP4LightEntity->GetComponent<Core::Component::DirectionalLightComponent>();
+        if (directional == nullptr ||
+            !directional->SetIntensityUnit(Core::Component::LightIntensityUnit::Lux))
+        {
+            m_bR5RayTracingShadowFixtureFailed = true;
+            return false;
+        }
+        directional->SetLightDirection(0.0f, 0.0f, -1.0f);
+        directional->SetLightColor(1.0f, 1.0f, 1.0f);
+        directional->SetIntensity(10000.0f);
+        directional->SetCastShadows(true);
+        directional->SetLightVisible(true);
+        m_pP4LightEntity->SetActive(true);
+
+        m_bR5RayTracingShadowFixturePrepared = true;
+        return true;
+    }
+
     const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetCamera() const
     {
         return m_bR1PhysicalFixturePrepared ? m_R1PhysicalCamera : m_Layout.Camera;
@@ -2394,6 +2596,12 @@ namespace NorvesLib::Test::RenderingValidation
     RenderingValidationSceneFixture::GetR3ShadowedShaftsCamera() const
     {
         return m_R3ShadowedShaftsCamera;
+    }
+
+    const Core::Rendering::CameraProxy&
+    RenderingValidationSceneFixture::GetR5RayTracingShadowCamera() const
+    {
+        return m_R5RayTracingShadowCamera;
     }
 
     uint64_t RenderingValidationSceneFixture::GetObservedFixedStepCount() const

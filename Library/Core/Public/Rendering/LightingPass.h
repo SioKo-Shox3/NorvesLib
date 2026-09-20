@@ -3,6 +3,7 @@
 #include "IViewPass.h"
 #include "NeuralBRDFData.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Rendering/RayTracingShadowPass.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
@@ -248,6 +249,7 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_LightingPipeline;
         RHI::ShaderPtr m_LightingVertexShader;
         RHI::ShaderPtr m_LightingFragmentShader;
+        RayTracingShadowPass m_RayTracingShadowPass;
         RHI::BufferPtr m_LightDataBuffer;
         RHI::BufferPtr m_LightArrayBuffer;
         Container::VariableArray<RHI::BufferPtr> m_RetiredLightArrayBuffers;

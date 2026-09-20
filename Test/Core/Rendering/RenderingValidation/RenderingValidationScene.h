@@ -255,8 +255,10 @@ namespace NorvesLib::Test::RenderingValidation
                                           bool bDirectionalLightEnabled = true,
                                           bool bDirectionalLightCastsShadows = true) const;
         bool ApplyR3DistantAtmosphereFixture() const;
+        bool ApplyR5RayTracingShadowFixture() const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
+        const Core::Rendering::CameraProxy& GetR5RayTracingShadowCamera() const;
         uint64_t GetObservedFixedStepCount() const;
         bool IsCaptureStateStable() const;
         size_t TrackedMeshCount() const noexcept;
@@ -326,6 +328,19 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Rendering::TextureHandle m_R3ShadowAlbedoTexture =
             Core::Rendering::TextureHandle::Invalid();
         mutable Core::Rendering::MaterialHandle m_R3ShadowMaterial =
+            Core::Rendering::MaterialHandle::Invalid();
+        mutable bool m_bR5RayTracingShadowFixturePrepared = false;
+        mutable bool m_bR5RayTracingShadowFixtureFailed = false;
+        mutable Core::Rendering::CameraProxy m_R5RayTracingShadowCamera;
+        mutable Core::Entity* m_pR5ShadowReceiverEntity = nullptr;
+        mutable Core::Entity* m_pR5ShadowOccluderEntity = nullptr;
+        mutable Core::Component::MeshComponent* m_pR5ShadowReceiverMesh = nullptr;
+        mutable Core::Component::MeshComponent* m_pR5ShadowOccluderMesh = nullptr;
+        mutable Core::Rendering::MeshDataHandle m_R5ShadowPlaneHandle =
+            Core::Rendering::MeshDataHandle::Invalid();
+        mutable Core::Rendering::TextureHandle m_R5ShadowAlbedoTexture =
+            Core::Rendering::TextureHandle::Invalid();
+        mutable Core::Rendering::MaterialHandle m_R5ShadowMaterial =
             Core::Rendering::MaterialHandle::Invalid();
         bool m_bPublished = false;
     };
