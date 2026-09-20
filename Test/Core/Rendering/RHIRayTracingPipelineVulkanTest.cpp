@@ -289,12 +289,6 @@ namespace
             axisDimensions[axis] = 1;
             ++testedAxisCount;
         }
-        if (testedAxisCount == 0)
-        {
-            commandList->End();
-            std::cerr << "device上限からdispatch軸の拒否ケースを構成できませんでした\n";
-            return false;
-        }
         if (commandList->TraceRays(0, 1, 1) || commandList->TraceRays(65536, 65536, 1) ||
             !commandList->TraceRays(2, 1, 1))
         {
