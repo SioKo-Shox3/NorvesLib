@@ -124,9 +124,9 @@ int main()
     assert(shader.find("EquirectangularUV(rayDirection)") != std::string::npos);
     assert(shader.find("float opacity = clamp(1.0 - transmittance, 0.0, 1.0);") !=
            std::string::npos);
-    assert(shader.find("outColor = vec4(fogRadiance * opacity, opacity);") !=
-           std::string::npos ||
-           shader.find("fogRadiance * opacity + singleScatteringRadiance") != std::string::npos);
+    assert(shader.find(
+               "outColor = vec4(fogRadiance * opacity + singleScatteringRadiance, opacity);") !=
+           std::string::npos);
     assert(implementation.find("static_assert(sizeof(GPUVolumetricsParams) == 704u)") !=
            std::string::npos);
     assert(implementation.find("TryReadTexture(RenderGraphResourceNames::ShadowMap") !=
