@@ -23,14 +23,14 @@
 - R3 M1: 解析高さフォグ＋固定24ステップ方向光散乱を選択した。既存SceneColor/Depth、R2空radiance、4層CSMを使う全画面passとし、froxel/新規RHI資源を避ける。タスクR3-P1〜P4を登録した。
 - R3-P1: `2973941`。指数高さ密度の有限なパラメータ正規化、水平・上昇・下降レイの解析透過率、SceneProxy/FramePacketスナップショットを実装した。対象Debugビルド成功、VolumetricFogModelTest 1/1 passed。
 - R3-P2: 855de28 / b6865ea。解析フォグとR2空radianceをSceneColorへ合成し、Lighting後・Forward透明前へ接続した。指定ビルド、契約CTest 2/2、GLSLコンパイルを確認。
+- R3-P3: RenderWorld→Coordinator→FramePacket.Sceneの高さフォグ値コピー、CSM配列からの固定24ステップ単一散乱、CSM不在時の解析フォグ維持を実装。focused Debug build exit 0、契約CTest 3/3、実GPU capture PASS（中心差1.59418/上限3、非遮蔽散乱差98.4629/下限1、解析フォグ差3.12447・15.3901/各下限0.25）。独立評価2周目PASS。ログは`.harness/runs/20260920-r3-p3-final/`。
 
 ## In progress
 
-- R3-P3: 方向光単一散乱のCSM接続と、RenderWorld→Coordinator→FramePacketの高さフォグ設定経路を実装中。部分実装の基点は `714a978`。
+- なし。
 
 ## Next
 
-- R3-P3: 方向光の単一散乱を既存CSM遮蔽へ接続する。
 - R3-P4: R3専用GPU受入れを固定し、R3Acceptanceを記録する。
 
 ## Notes
@@ -52,4 +52,4 @@
 - R3-P2の最終検証ログ: `.harness/runs/20260919-204219/verify-R3-P2-4.txt` (Debug build, EXIT_CODE=0)、`verify-R3-P2-5.txt` (CTest 2/2 passed)、`verify-R3-P2-6.txt` (glslc, EXIT_CODE=0)。
 - R3-P2では失敗経路にも空Load/StoreパスまたはRenderTarget→ShaderResourceバリアを積み、SceneColorの最終状態を維持する。独立評価はPASS。
 - `855de28`の作業途中保存には、着手時点で未コミットだった`NEXT_FINDINGS.md`の52行削除も含まれる。R3-P2実装とTASKS更新は`b6865ea`。
-- R3-P3の途中保存`714a978`では方向光散乱・CSM契約とfixture準備を保存した。対象Debug buildと契約CTest 3/3は成功したが、GPUシナリオ引数とGameThreadの高さフォグ設定経路が未実装だったため、受入れ前として継続中。
+- R3-P3のcapture状態遷移では段階更新直後と次のPreRenderで状態を適用する。重複適用は冪等で、フォローアップcaptureの段階とfixture状態の同期を優先した。P3評価の散乱量上限なし所見は`NEXT_FINDINGS.md`とR3-P4へ引き継いだ。
