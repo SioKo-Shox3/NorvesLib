@@ -284,7 +284,8 @@ namespace NorvesLib::RHI::Vulkan
         if (ShouldEnableDeviceAddress())
         {
             usage |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
-            if ((m_desc.Usage & (ResourceUsage::VertexBuffer | ResourceUsage::IndexBuffer)) != ResourceUsage::None)
+            if (m_device->GetCapabilities().RayTracing.bAccelerationStructure &&
+                (m_desc.Usage & (ResourceUsage::VertexBuffer | ResourceUsage::IndexBuffer)) != ResourceUsage::None)
             {
                 usage |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
             }

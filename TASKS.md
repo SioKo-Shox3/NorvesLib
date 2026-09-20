@@ -196,6 +196,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - verify: `cmake --build build --config Debug --target RHIAccelerationStructureVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RHIAccelerationStructureVulkanTest$"`
 - paths: Library/Core/Private/RHI/Vulkan/VulkanBuffer.*, Library/Core/Private/RHI/Vulkan/VulkanDevice.*, Library/Core/Private/RHI/Vulkan/VulkanAccelerationStructure.*, Library/Core/Public/RHI/IAccelerationStructure.h, Test/Core/Rendering/RHIAccelerationStructureVulkanTest.cpp, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 実装と指定検証は完了。独立評価をClaudeのセッション上限で完了できず、受入れ状態は保留する。再開条件はblocked/R5-P5.md。
 
 ## R5-P6: TLASのinstance build/updateを実装する
 - status: todo

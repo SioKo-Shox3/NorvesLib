@@ -32,11 +32,11 @@
 
 ## In progress
 
-- なし。R5-P4を受入済み。次はR5-P5に進む。
+- R5-P5: 実装とGPU検証は完了。必須の独立評価がClaudeのセッション上限で未了のため受入待ち。
 
 ## Next
 
-- R5-P5: Vulkan BLAS構築を実装する。作業ブランチは`feature/rendering-r5-hwrt`。
+- R5-P5: Claude独立評価を再開し、PASS後にTASKS.mdをdoneへ更新する。指摘時は指定範囲で修正・再検証する。
 
 ## Notes
 
@@ -66,3 +66,4 @@
 - R5-P3検証ログ: .harness/runs/20260920-151245/verify-R5-P3-1.txt（Debug build exit 0）とverify-R5-P3-2.txt（CTest 1/1 passed）。
 - R5-P7ではVulkanShader::ToVkShaderStageとdescriptor visibilityのRT対応を追加し、RT descriptorにAllRayTracingを指定する。
 - R5-P4検証ログ: `.harness/runs/20260920-151245/verify-R5-P4-6.txt` (Debug build, EXIT_CODE=0)、`verify-R5-P4-7.txt` (CTest 1/1 passed)。
+- R5-P5検証: build exit 0（VulkanDevice.hの既存マクロ再定義warning 2件）、専用CTest 1/1 passed、実行ログでray_query_hit=1 / ray_query_miss=0。証拠は`.harness/runs/20260920-174410/verify-R5-P5-1.txt`〜`verify-R5-P5-3.txt`。独立評価と助言窓口はClaudeのセッション上限で起動できず、blocked/R5-P5.mdに再開条件を記録した。
