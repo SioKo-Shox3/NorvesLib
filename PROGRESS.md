@@ -33,11 +33,13 @@
 - R5-P7: RayTracing pipeline descriptorにraygen/miss/closest-hit shader groupを加え、Vulkan pipelineとSBT生成を実装した。6 RT stageとAllRayTracingのdescriptor visibility、無効group拒否、group handleとSBT region alignmentをGPUテストで確認した。Debug build exit 0、専用CTest 1/1 passed、独立評価PASS。ログは`.harness/runs/20260920-174410/verify-R5-P7-5.txt`と`verify-R5-P7-6.txt`。
 - R5-P8: `2add53a` / `f9fa15a` / `1267197`。Vulkanの各dispatch軸上限と総呼出し数上限を検査し、同一deviceのTLAS binding、null/BLAS/foreign-device/別descriptor種の拒否、hit=1・miss=0のGPU readbackを固定した。両readback要素を番兵値から初期化して欠落dispatchも検出する。Debug build exit 0、専用CTest 1/1 passed、軸別拒否2件、上限・番兵値の修正差分は独立評価PASS。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-build-3.txt`、`verify-R5-P8-resume-ctest-3.txt`。
 
+- R5-P9: `9e213c9` / `27d7505` / `c8db734`。GEngine所有のRayTracingSceneSubsystemがopaque DrawCommandからgeometryとinstance transformをFramePacketへコピーし、RenderThreadではFramePacketからBLAS/TLASを構築する。同一slotのTLAS update再利用、GPU待機後・device参照解放前の資源破棄、FramePacket寿命を契約テストで確認した。Debug build exit 0、専用GPU CTest 2/2 passed（Validation Layer無効）。証拠は`.harness/runs/20260921-r5-p9-resume/verify-R5-P9-final-build.txt`と`verify-R5-P9-final-ctest.txt`。
+
 ## In progress
 
 ## Next
 
-- R5-P9: GEngine所有のray-tracing sceneをFramePacketへ接続する。
+- R5-P10: RT pipelineでハードシャドウを描画する。
 
 ## Notes
 
