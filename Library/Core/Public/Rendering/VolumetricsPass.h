@@ -41,6 +41,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_SceneColorHandle;
         RGResourceHandle m_SceneDepthHandle;
         RGResourceHandle m_SkyAtmosphereRadianceHandle;
+        RGResourceHandle m_CascadedShadowMapHandle;
         VolumetricFogParameters m_FogParameters;
 
         uint32_t m_CurrentWidth = 0;

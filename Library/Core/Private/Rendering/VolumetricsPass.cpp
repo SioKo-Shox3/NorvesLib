@@ -21,11 +21,19 @@ namespace NorvesLib::Core::Rendering
         {
             float InverseViewProjection[16];
             float CameraPositionAndPreExposure[4];
+            float CameraForwardAndScatteringEnabled[4];
             float FogParameters[4];
             float FallbackFogColor[4];
+            float DirectionalLightDirectionAndAnisotropy[4];
+            float DirectionalLightRadianceAndEnabled[4];
+            float CascadeView[PhysicalLightingShadowCascadeCount][16];
+            float CascadeProjection[PhysicalLightingShadowCascadeCount][16];
+            float CascadeSplitDistances[8];
         };
 
-        static_assert(sizeof(GPUVolumetricsParams) == 112u);
+        static_assert(sizeof(GPUVolumetricsParams) == 704u);
+
+        constexpr float kVolumetricScatteringAnisotropy = 0.76f;
 
         RHI::DescriptorSetDesc CreateVolumetricsDescriptorSetDesc()
         {
@@ -48,6 +56,12 @@ namespace NorvesLib::Core::Rendering
             paramsBinding.type = RHI::ResourceBindType::ConstantBuffer;
             paramsBinding.stages = RHI::ShaderStage::Pixel;
             desc.bindings.push_back(paramsBinding);
+
+            RHI::DescriptorBinding shadowMapBinding;
+            shadowMapBinding.binding = 3u;
+            shadowMapBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            shadowMapBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(shadowMapBinding);
             return desc;
         }
 
@@ -63,6 +77,115 @@ namespace NorvesLib::Core::Rendering
         float SafeFogColorChannel(float value)
         {
             return std::isfinite(value) ? std::max(value, 0.0f) : 0.0f;
+        }
+
+        bool IsValidCascadedShadowMapTexture(const RHI::TexturePtr& texture)
+        {
+            if (!texture || texture->GetWidth() == 0u || texture->GetHeight() == 0u ||
+                texture->GetArraySize() != PhysicalLightingShadowCascadeCount ||
+                texture->GetFormat() != RHI::Format::D32_FLOAT)
+            {
+                return false;
+            }
+
+            const RHI::ResourceUsage usage = texture->GetUsage();
+            return (usage & RHI::ResourceUsage::ShaderRead) != RHI::ResourceUsage::None &&
+                   (usage & RHI::ResourceUsage::DepthStencil) != RHI::ResourceUsage::None;
+        }
+
+        bool HasValidCascadedShadowValues(const PhysicalLightingResources& lighting)
+        {
+            if (!lighting.HasCompleteCascadedShadow())
+            {
+                return false;
+            }
+
+            const CascadedDirectionalShadowShaderValues& shadow = lighting.CascadedShadow;
+            for (uint32_t cascadeIndex = 0u;
+                 cascadeIndex < PhysicalLightingShadowCascadeCount;
+                 ++cascadeIndex)
+            {
+                for (uint32_t matrixIndex = 0u; matrixIndex < 16u; ++matrixIndex)
+                {
+                    if (!std::isfinite(shadow.View[cascadeIndex][matrixIndex]) ||
+                        !std::isfinite(shadow.Projection[cascadeIndex][matrixIndex]))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            for (uint32_t splitIndex = 0u;
+                 splitIndex < PhysicalLightingShadowSplitCount;
+                 ++splitIndex)
+            {
+                if (!std::isfinite(shadow.SplitDistances[splitIndex]) ||
+                    (splitIndex > 0u &&
+                     shadow.SplitDistances[splitIndex] <= shadow.SplitDistances[splitIndex - 1u]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool TryBuildDirectionalScatteringLight(const ViewRenderContext& context,
+                                                float (&outDirectionAndAnisotropy)[4],
+                                                float (&outRadianceAndEnabled)[4])
+        {
+            if (!context.SnapshotLightProxies || !HasValidCascadedShadowValues(context.PhysicalLighting))
+            {
+                return false;
+            }
+
+            for (const LightProxy& light : *context.SnapshotLightProxies)
+            {
+                if (light.LightId != context.PhysicalLighting.CascadedShadow.LightId ||
+                    light.Type != LightType::Directional || !light.IsValid() ||
+                    !std::isfinite(light.DirectionX) || !std::isfinite(light.DirectionY) ||
+                    !std::isfinite(light.DirectionZ) ||
+                    !std::isfinite(light.CanonicalIntensity) || light.CanonicalIntensity <= 0.0f ||
+                    !std::isfinite(light.ColorR) || !std::isfinite(light.ColorG) ||
+                    !std::isfinite(light.ColorB) || light.ColorR < 0.0f ||
+                    light.ColorG < 0.0f || light.ColorB < 0.0f)
+                {
+                    continue;
+                }
+
+                const double directionLength = std::sqrt(
+                    static_cast<double>(light.DirectionX) * light.DirectionX +
+                    static_cast<double>(light.DirectionY) * light.DirectionY +
+                    static_cast<double>(light.DirectionZ) * light.DirectionZ);
+                if (!std::isfinite(directionLength) || directionLength <= 1.0e-8)
+                {
+                    continue;
+                }
+
+                const double intensity = std::min(
+                    static_cast<double>(light.CanonicalIntensity), 1.0e7);
+                const double radiance[3] = {
+                    static_cast<double>(light.ColorR) * intensity,
+                    static_cast<double>(light.ColorG) * intensity,
+                    static_cast<double>(light.ColorB) * intensity};
+                if (!std::isfinite(radiance[0]) || !std::isfinite(radiance[1]) ||
+                    !std::isfinite(radiance[2]) ||
+                    (std::max)({radiance[0], radiance[1], radiance[2]}) <= 0.0)
+                {
+                    continue;
+                }
+
+                const double inverseDirectionLength = 1.0 / directionLength;
+                outDirectionAndAnisotropy[0] = static_cast<float>(light.DirectionX * inverseDirectionLength);
+                outDirectionAndAnisotropy[1] = static_cast<float>(light.DirectionY * inverseDirectionLength);
+                outDirectionAndAnisotropy[2] = static_cast<float>(light.DirectionZ * inverseDirectionLength);
+                outDirectionAndAnisotropy[3] = kVolumetricScatteringAnisotropy;
+                outRadianceAndEnabled[0] = static_cast<float>(std::min(radiance[0], 1.0e8));
+                outRadianceAndEnabled[1] = static_cast<float>(std::min(radiance[1], 1.0e8));
+                outRadianceAndEnabled[2] = static_cast<float>(std::min(radiance[2], 1.0e8));
+                outRadianceAndEnabled[3] = 1.0f;
+                return true;
+            }
+            return false;
         }
     } // namespace
 
@@ -154,6 +277,7 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorHandle = {};
         m_SceneDepthHandle = {};
         m_SkyAtmosphereRadianceHandle = {};
+        m_CascadedShadowMapHandle = {};
         m_CurrentWidth = 0u;
         m_CurrentHeight = 0u;
         m_CurrentFormat = RHI::Format::UNKNOWN;
@@ -174,6 +298,7 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorHandle = {};
         m_SceneDepthHandle = {};
         m_SkyAtmosphereRadianceHandle = {};
+        m_CascadedShadowMapHandle = {};
 
         const ViewRenderContext* context = builder.GetContext();
         m_FogParameters = context && context->SnapshotScene
@@ -202,6 +327,14 @@ namespace NorvesLib::Core::Rendering
             m_SkyAtmosphereRadianceHandle = skyRadianceHandle.ToResourceHandle();
         }
 
+        RGTextureHandle cascadedShadowMapHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::ShadowMap,
+                                   cascadedShadowMapHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_CascadedShadowMapHandle = cascadedShadowMapHandle.ToResourceHandle();
+        }
+
         RGTextureHandle sceneColorHandle;
         if (!builder.TryLoadStoreColorAttachment(RenderGraphResourceNames::SceneColor,
                                                  sceneColorHandle,
@@ -212,6 +345,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_SceneDepthHandle = {};
             m_SkyAtmosphereRadianceHandle = {};
+            m_CascadedShadowMapHandle = {};
             return;
         }
         m_SceneColorHandle = sceneColorHandle.ToResourceHandle();
@@ -233,6 +367,9 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr skyRadianceTexture = m_SkyAtmosphereRadianceHandle.IsValid()
                                                  ? resources.GetTexture(m_SkyAtmosphereRadianceHandle)
                                                  : RHI::TexturePtr{};
+        RHI::TexturePtr cascadedShadowMapTexture = m_CascadedShadowMapHandle.IsValid()
+                                                       ? resources.GetTexture(m_CascadedShadowMapHandle)
+                                                       : RHI::TexturePtr{};
         if (!sceneColorTexture)
         {
             return;
@@ -242,7 +379,8 @@ namespace NorvesLib::Core::Rendering
             EnqueueEmptyNativePass(context, sceneColorTexture);
             return;
         }
-        if (!sceneDepthTexture || !m_ParamsBuffer || !m_DescriptorSet)
+        if (!sceneDepthTexture || !m_ParamsBuffer || !m_DescriptorSet ||
+            !IsValidCascadedShadowMapTexture(cascadedShadowMapTexture))
         {
             EnqueueEmptyNativePass(context, sceneColorTexture);
             return;
@@ -265,6 +403,22 @@ namespace NorvesLib::Core::Rendering
         params.CameraPositionAndPreExposure[1] = activeCamera->PositionY;
         params.CameraPositionAndPreExposure[2] = activeCamera->PositionZ;
         params.CameraPositionAndPreExposure[3] = SafePreExposure(activeCamera);
+
+        const double cameraForwardLength = std::sqrt(
+            static_cast<double>(activeCamera->ForwardX) * activeCamera->ForwardX +
+            static_cast<double>(activeCamera->ForwardY) * activeCamera->ForwardY +
+            static_cast<double>(activeCamera->ForwardZ) * activeCamera->ForwardZ);
+        bool bCameraForwardValid = std::isfinite(cameraForwardLength) && cameraForwardLength > 1.0e-8;
+        if (bCameraForwardValid)
+        {
+            const double inverseForwardLength = 1.0 / cameraForwardLength;
+            params.CameraForwardAndScatteringEnabled[0] =
+                static_cast<float>(activeCamera->ForwardX * inverseForwardLength);
+            params.CameraForwardAndScatteringEnabled[1] =
+                static_cast<float>(activeCamera->ForwardY * inverseForwardLength);
+            params.CameraForwardAndScatteringEnabled[2] =
+                static_cast<float>(activeCamera->ForwardZ * inverseForwardLength);
+        }
         params.FogParameters[0] = m_FogParameters.DensityAtBaseHeight;
         params.FogParameters[1] = m_FogParameters.BaseHeight;
         params.FogParameters[2] = m_FogParameters.HeightFalloffPerUnit;
@@ -275,6 +429,36 @@ namespace NorvesLib::Core::Rendering
         params.FallbackFogColor[1] = scene ? SafeFogColorChannel(scene->FogColorG) : 0.0f;
         params.FallbackFogColor[2] = scene ? SafeFogColorChannel(scene->FogColorB) : 0.0f;
         params.FallbackFogColor[3] = 1.0f;
+
+        const PhysicalLightingResources& physicalLighting = context.PhysicalLighting;
+        const ViewportRenderPlan* activeViewport = context.CurrentViewport;
+        const bool bPhysicalLightingMatches = activeViewport &&
+            physicalLighting.Matches(context.FrameNumber,
+                                     activeViewport->ViewId,
+                                     activeViewport->ViewportId);
+        const bool bShadowTextureMatches = physicalLighting.ShadowMapTexture &&
+            physicalLighting.ShadowMapTexture.get() == cascadedShadowMapTexture.get();
+        const bool bCascadedShadowAvailable =
+            bCameraForwardValid && bPhysicalLightingMatches && bShadowTextureMatches &&
+            physicalLighting.HasCompleteCascadedShadow() &&
+            HasValidCascadedShadowValues(physicalLighting);
+        const bool bDirectionalLightAvailable = bCascadedShadowAvailable &&
+            TryBuildDirectionalScatteringLight(context,
+                                               params.DirectionalLightDirectionAndAnisotropy,
+                                               params.DirectionalLightRadianceAndEnabled);
+        if (bDirectionalLightAvailable)
+        {
+            params.CameraForwardAndScatteringEnabled[3] = 1.0f;
+            std::memcpy(params.CascadeView,
+                        physicalLighting.CascadedShadow.View,
+                        sizeof(params.CascadeView));
+            std::memcpy(params.CascadeProjection,
+                        physicalLighting.CascadedShadow.Projection,
+                        sizeof(params.CascadeProjection));
+            std::memcpy(params.CascadeSplitDistances,
+                        physicalLighting.CascadedShadow.SplitDistances,
+                        sizeof(float) * PhysicalLightingShadowSplitCount);
+        }
         m_ParamsBuffer->Update(&params, sizeof(params));
 
         m_DescriptorSet->BindTexture(0u, sceneDepthTexture);
@@ -283,6 +467,11 @@ namespace NorvesLib::Core::Rendering
                                      skyRadianceTexture ? skyRadianceTexture : sceneDepthTexture);
         m_DescriptorSet->BindSampler(1u,
                                      skyRadianceTexture ? m_SkyRadianceSampler : m_SceneDepthSampler);
+        m_DescriptorSet->BindTexture(3u, cascadedShadowMapTexture);
+        m_DescriptorSet->BindSampler(3u,
+                                     physicalLighting.ShadowSampler
+                                         ? physicalLighting.ShadowSampler
+                                         : m_SceneDepthSampler);
         m_DescriptorSet->Update();
 
         context.EnqueueFullscreenPass(m_RenderPass,

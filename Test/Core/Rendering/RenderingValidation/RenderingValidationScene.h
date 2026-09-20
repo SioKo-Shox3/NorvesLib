@@ -251,7 +251,9 @@ namespace NorvesLib::Test::RenderingValidation
         bool ClearP4DfgTileFixture() const;
         bool ApplyTransparentPhysicalLightingRow(uint32_t rowIndex) const;
         bool ApplyTransparentPhysicalLightingObjectPresence() const;
+        bool ApplyR3ShadowedShaftsFixture(bool bOccluderCastsShadow) const;
         const Core::Rendering::CameraProxy& GetCamera() const;
+        const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
         uint64_t GetObservedFixedStepCount() const;
         bool IsCaptureStateStable() const;
         size_t TrackedMeshCount() const noexcept;
@@ -267,6 +269,7 @@ namespace NorvesLib::Test::RenderingValidation
         void ShutdownPublishedInitialization(ISceneFixtureResourceReleaser* releaser) noexcept;
         bool EnsureR1PhysicalFixture(bool bObjectPresence) const;
         bool ValidateR1PhysicalFixture(bool bObjectPresence) const;
+        bool EnsureR3ShadowedShaftsFixture() const;
 
         void UnregisterMesh(Core::Rendering::MeshDataHandle handle) noexcept override;
         void ReleaseTexture(Core::Rendering::TextureHandle handle) noexcept override;
@@ -307,6 +310,19 @@ namespace NorvesLib::Test::RenderingValidation
         mutable Core::Rendering::MaterialHandle m_R1BackgroundMaterial =
             Core::Rendering::MaterialHandle::Invalid();
         mutable Core::Rendering::MaterialHandle m_R1OccluderMaterial =
+            Core::Rendering::MaterialHandle::Invalid();
+        mutable bool m_bR3ShadowedShaftsPrepared = false;
+        mutable bool m_bR3ShadowedShaftsFailed = false;
+        mutable Core::Rendering::CameraProxy m_R3ShadowedShaftsCamera;
+        mutable Core::Entity* m_pR3ShadowBackgroundEntity = nullptr;
+        mutable Core::Entity* m_pR3ShadowOccluderEntity = nullptr;
+        mutable Core::Component::MeshComponent* m_pR3ShadowBackgroundMesh = nullptr;
+        mutable Core::Component::MeshComponent* m_pR3ShadowOccluderMesh = nullptr;
+        mutable Core::Rendering::MeshDataHandle m_R3ShadowPlaneHandle =
+            Core::Rendering::MeshDataHandle::Invalid();
+        mutable Core::Rendering::TextureHandle m_R3ShadowAlbedoTexture =
+            Core::Rendering::TextureHandle::Invalid();
+        mutable Core::Rendering::MaterialHandle m_R3ShadowMaterial =
             Core::Rendering::MaterialHandle::Invalid();
         bool m_bPublished = false;
     };

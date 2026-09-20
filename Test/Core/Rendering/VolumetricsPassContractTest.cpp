@@ -46,6 +46,10 @@ int main()
     const std::string sceneView = ReadRepositoryFile("Library/Core/Private/Rendering/SceneView.cpp");
     const std::string resourceNames =
         ReadRepositoryFile("Library/Core/Public/Rendering/RenderGraph/RenderGraphResourceNames.h");
+    const std::string renderContext =
+        ReadRepositoryFile("Library/Core/Public/Rendering/ViewRenderContext.h");
+    const std::string coordinator =
+        ReadRepositoryFile("Library/Core/Private/Rendering/RenderingCoordinator.cpp");
 
     assert(header.find("class VolumetricsPass : public IViewPass, public IRenderGraphPass") !=
            std::string::npos);
@@ -83,6 +87,7 @@ int main()
     assert(implementation.find("sceneDepthBinding.binding = 0u") != std::string::npos);
     assert(implementation.find("skyRadianceBinding.binding = 1u") != std::string::npos);
     assert(implementation.find("paramsBinding.binding = 2u") != std::string::npos);
+    assert(implementation.find("shadowMapBinding.binding = 3u") != std::string::npos);
     assert(implementation.find("sceneDepthBinding.type = RHI::ResourceBindType::CombinedImageSampler") !=
            std::string::npos);
     assert(implementation.find("skyRadianceBinding.type = RHI::ResourceBindType::CombinedImageSampler") !=
@@ -94,6 +99,8 @@ int main()
     assert(shader.find("layout(set = 0, binding = 1) uniform sampler2D skyAtmosphereRadiance") !=
            std::string::npos);
     assert(shader.find("layout(std140, set = 0, binding = 2) uniform VolumetricsParams") !=
+           std::string::npos);
+    assert(shader.find("layout(set = 0, binding = 3) uniform sampler2DArray cascadedShadowMap") !=
            std::string::npos);
     assert(shader.find("sceneColorTexture") == std::string::npos);
 
@@ -108,7 +115,29 @@ int main()
     assert(shader.find("float opacity = clamp(1.0 - transmittance, 0.0, 1.0);") !=
            std::string::npos);
     assert(shader.find("outColor = vec4(fogRadiance * opacity, opacity);") !=
+           std::string::npos ||
+           shader.find("fogRadiance * opacity + singleScatteringRadiance") != std::string::npos);
+    assert(implementation.find("static_assert(sizeof(GPUVolumetricsParams) == 704u)") !=
            std::string::npos);
+    assert(implementation.find("TryReadTexture(RenderGraphResourceNames::ShadowMap") !=
+           std::string::npos);
+    assert(implementation.find("GetArraySize() != PhysicalLightingShadowCascadeCount") !=
+           std::string::npos);
+    assert(implementation.find("RHI::Format::D32_FLOAT") != std::string::npos);
+    assert(implementation.find("HasCompleteCascadedShadow()") != std::string::npos);
+    assert(implementation.find("light.LightId != context.PhysicalLighting.CascadedShadow.LightId") !=
+           std::string::npos);
+    assert(implementation.find("params.CascadeSplitDistances") != std::string::npos);
+    assert(renderContext.find("bool HasCompleteCascadedShadow() const") != std::string::npos);
+    assert(coordinator.find("viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;") !=
+           std::string::npos);
+    assert(shader.find("float stepLength = rayDistance / 24.0;") != std::string::npos);
+    assert(shader.find("for (int stepIndex = 0; stepIndex < 24; ++stepIndex)") !=
+           std::string::npos);
+    assert(shader.find("CalculateVolumetricShadowVisibility(samplePosition)") !=
+           std::string::npos);
+    assert(shader.find("textureLod(cascadedShadowMap,") != std::string::npos);
+    assert(shader.find("directionalLightDirectionAndAnisotropy.xyz,") != std::string::npos);
     assert(implementation.find("blendAttachment.srcColorBlendFactor = RHI::BlendFactor::One") !=
            std::string::npos);
     assert(implementation.find("blendAttachment.dstColorBlendFactor = RHI::BlendFactor::InvSrcAlpha") !=

@@ -233,6 +233,13 @@ namespace NorvesLib::Core::Rendering
                 cascadeCount == PhysicalLightingShadowCascadeCount;
         }
 
+        bool HasCompleteCascadedShadow() const
+        {
+            return bActive && bShadowPublished && ShadowMapTexture && ShadowSampler &&
+                   CascadedShadow.bEnabled &&
+                   CascadedShadow.CascadeCount == PhysicalLightingShadowCascadeCount;
+        }
+
         void PublishLighting(const RHI::BufferPtr& lightBuffer,
                              uint32_t logicalLightCount,
                              uint32_t lightBufferSizeBytes,

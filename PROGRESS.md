@@ -22,14 +22,15 @@
 - R2-P8: R2受入れ記録、実装コミット一覧、検証ログ、golden/threshold、既知の非対象、Roadmapの完了行を確定した。R3は新規M1の入口として未着手のまま残した。
 - R3 M1: 解析高さフォグ＋固定24ステップ方向光散乱を選択した。既存SceneColor/Depth、R2空radiance、4層CSMを使う全画面passとし、froxel/新規RHI資源を避ける。タスクR3-P1〜P4を登録した。
 - R3-P1: `2973941`。指数高さ密度の有限なパラメータ正規化、水平・上昇・下降レイの解析透過率、SceneProxy/FramePacketスナップショットを実装した。対象Debugビルド成功、VolumetricFogModelTest 1/1 passed。
+- R3-P2: 855de28 / b6865ea。解析フォグとR2空radianceをSceneColorへ合成し、Lighting後・Forward透明前へ接続した。指定ビルド、契約CTest 2/2、GLSLコンパイルを確認。
 
 ## In progress
 
-- なし
+- R3-P3: 許可パス外のfog設定API追加が必要なため停止。詳細は blocked/R3-P3.md。
 
 ## Next
 
-- R3-P2: 解析フォグとR2遠景空を描画パスへ接続する。
+- R3-P3: 方向光の単一散乱を既存CSM遮蔽へ接続する。
 - R3-P3: 方向光の単一散乱を既存CSM遮蔽へ接続する。
 - R3-P4: R3専用GPU受入れを固定し、R3Acceptanceを記録する。
 
@@ -49,3 +50,6 @@
 - R2-P3評価: 1周目のblocking指摘（LightingParamsLayoutTestのbinding 12/13 selector期待値が古い）を`a235411`で修正し、4対象CTestと2周目の独立評価はPASS。動的IBLの同期CPU生成と空源の二重評価は、連続する太陽高度アニメーションの性能課題としてR2本体の完了条件外に置く。
 - tracked v1 scene、R0基準2文書、P6b開始時のsource-start hashesは証跡へ固定した。P6bの公開tracked範囲はPNG2枚、VisualThresholds.tsv、R1Acceptance.mdで、forward-fixのテスト契約修正と受入れ記録を別コミットに分離した。プッシュは行わない。
 - R2-P7のgolden生成・比較、閾値自己検査、float readback、CSM境界、サブテクセル変化率はR2専用の受入れ経路で固定した。R1 `Indoor.png` / `Outdoor.png` はスクリプト自己検査でもハッシュ不変を確認した。
+- R3-P2の最終検証ログ: `.harness/runs/20260919-204219/verify-R3-P2-4.txt` (Debug build, EXIT_CODE=0)、`verify-R3-P2-5.txt` (CTest 2/2 passed)、`verify-R3-P2-6.txt` (glslc, EXIT_CODE=0)。
+- R3-P2では失敗経路にも空Load/StoreパスまたはRenderTarget→ShaderResourceバリアを積み、SceneColorの最終状態を維持する。独立評価はPASS。
+- `855de28`の作業途中保存には、着手時点で未コミットだった`NEXT_FINDINGS.md`の52行削除も含まれる。R3-P2実装とTASKS更新は`b6865ea`。
