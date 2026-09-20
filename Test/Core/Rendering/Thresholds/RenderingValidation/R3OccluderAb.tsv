@@ -1,0 +1,5 @@
+schema=NorvesLib.RenderingValidation.R3OccluderAb.v1
+center_delta_luma_min=0.250000 maximum=48.000000
+unoccluded_delta_luma_max=16.000000 maximum_back_buffer_luma=245.000000
+shadow_contrast_luma_min=8.000000
+maximum_saturated_rgb_pixels=0

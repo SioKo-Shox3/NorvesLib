@@ -579,6 +579,32 @@ namespace
     constexpr float R2CsmBoundaryBlendRatio = 0.1f;
     constexpr float R2CsmEdgeChangeRateLimit = 0.125f;
 
+    enum class R3ScenarioKind : uint8_t
+    {
+        ShadowedShafts,
+        DensitySweep,
+        OccluderAb,
+        DistantAtmosphereBlend
+    };
+
+    constexpr float R3DensitySweepValues[] = {0.0025f, 0.005f, 0.01f};
+    constexpr uint32_t R3DensitySweepCount =
+        static_cast<uint32_t>(sizeof(R3DensitySweepValues) / sizeof(R3DensitySweepValues[0]));
+    constexpr uint32_t R3OccluderAbCount = 2u;
+    constexpr uint32_t R3DistantAtmosphereBlendCount = 3u;
+    constexpr double R3MaximumBackBufferLuma = 245.0;
+    constexpr uint64_t R3MaximumSaturatedPixels = 0u;
+    constexpr double R3DensitySweepMinimumStepLuma = 0.25;
+    constexpr double R3DensitySweepMaximumSideDeltaLuma = 64.0;
+    constexpr double R3OccluderCenterDeltaMinimumLuma = 0.25;
+    constexpr double R3OccluderCenterDeltaMaximumLuma = 48.0;
+    constexpr double R3OccluderUnoccludedDeltaMaximumLuma = 16.0;
+    constexpr double R3OccluderShadowContrastMinimumLuma = 8.0;
+    constexpr double R3AtmosphereSkyDeltaMinimumLuma = 1.0;
+    constexpr double R3AtmosphereHorizonDeltaMinimumLuma = 1.0;
+    constexpr double R3AtmosphereHorizonDeltaMaximumLuma = 160.0;
+    constexpr double R3AtmosphereSkyPreservationDeltaMaximumLuma = 2.0;
+
     bool IsFiniteR2Vector(const Math::Vector3& value)
     {
         return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
@@ -620,6 +646,90 @@ namespace
         }
         const Core::Container::String contents = stream->ReadString();
         return contents.find(Core::Container::String(requiredText)) != Core::Container::String::npos;
+    }
+
+    Core::Container::String R3ArtifactPath(const TCHAR* relativePath)
+    {
+        Core::Container::String path(TEXT("Test/Core/Rendering/"));
+        path += relativePath;
+        return path;
+    }
+
+    bool ValidateR3ArtifactFile(const TCHAR* relativePath)
+    {
+        const Core::Container::String path = R3ArtifactPath(relativePath);
+        FileStream::FileStreamUniquePtr stream = FileStream::FileStream::CreateUnique(
+            path, FileStream::FileMode::Read, FileStream::FileAccess::Read);
+        return stream != nullptr && stream->GetSize() > 0;
+    }
+
+    bool ValidateR3ArtifactText(const TCHAR* relativePath, const TCHAR* requiredText)
+    {
+        const Core::Container::String path = R3ArtifactPath(relativePath);
+        FileStream::FileStreamUniquePtr stream = FileStream::FileStream::CreateUnique(
+            path, FileStream::FileMode::Read, FileStream::FileAccess::Read);
+        if (stream == nullptr)
+        {
+            return false;
+        }
+        const Core::Container::String contents = stream->ReadString();
+        return contents.find(Core::Container::String(requiredText)) != Core::Container::String::npos;
+    }
+
+    bool ValidateR3AcceptanceArtifactContract()
+    {
+        const bool bDensityArtifacts =
+            ValidateR3ArtifactFile(TEXT("Baselines/RenderingValidation/R3FogDensityLow.png")) &&
+            ValidateR3ArtifactFile(TEXT("Baselines/RenderingValidation/R3FogDensityMedium.png")) &&
+            ValidateR3ArtifactFile(TEXT("Baselines/RenderingValidation/R3FogDensityHigh.png")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DensitySweep.tsv"),
+                                    TEXT("schema=NorvesLib.RenderingValidation.R3DensitySweep.v1")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DensitySweep.tsv"),
+                                    TEXT("density_values=0.002500,0.005000,0.010000")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DensitySweep.tsv"),
+                                    TEXT("minimum_step_luma=0.250000 maximum_side_delta_luma=64.000000")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DensitySweep.tsv"),
+                                    TEXT("maximum_back_buffer_luma=245.000000 maximum_saturated_rgb_pixels=0")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DensitySweep.tsv"),
+                                    TEXT("golden_mean_flip_max=0.020000 golden_max_channel_delta=8"));
+        const bool bOccluderArtifacts =
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3OccluderAb.tsv"),
+                                    TEXT("schema=NorvesLib.RenderingValidation.R3OccluderAb.v1")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3OccluderAb.tsv"),
+                                    TEXT("center_delta_luma_min=0.250000 maximum=48.000000")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3OccluderAb.tsv"),
+                                    TEXT("unoccluded_delta_luma_max=16.000000 maximum_back_buffer_luma=245.000000")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3OccluderAb.tsv"),
+                                    TEXT("shadow_contrast_luma_min=8.000000"));
+        const bool bOccluderSaturationThreshold =
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3OccluderAb.tsv"),
+                                    TEXT("maximum_saturated_rgb_pixels=0"));
+        const bool bAtmosphereArtifacts =
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DistantAtmosphereBlend.tsv"),
+                                    TEXT("schema=NorvesLib.RenderingValidation.R3DistantAtmosphereBlend.v1")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DistantAtmosphereBlend.tsv"),
+                                    TEXT("sun_altitude_degrees=45.000000 sun_azimuth_degrees=90.000000 sun_luminance_nits=100000000.000000")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DistantAtmosphereBlend.tsv"),
+                                    TEXT("sky_delta_luma_min=1.000000 horizon_delta_luma_min=1.000000")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DistantAtmosphereBlend.tsv"),
+                                    TEXT("sky_roi_y_percent=8,28 horizon_roi_y_percent=43,49")) &&
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DistantAtmosphereBlend.tsv"),
+                                    TEXT("horizon_delta_luma_max=160.000000 maximum_saturated_rgb_pixels=0"));
+        const bool bAtmosphereUpperThreshold =
+            ValidateR3ArtifactText(TEXT("Thresholds/RenderingValidation/R3DistantAtmosphereBlend.tsv"),
+                                    TEXT("maximum_back_buffer_luma=245.000000 sky_preservation_delta_luma_max=2.000000"));
+        std::cout << "R3_ACCEPTANCE_ARTIFACT_GROUPS density=" << (bDensityArtifacts ? 1 : 0)
+                  << " occluder=" << (bOccluderArtifacts ? 1 : 0)
+                  << " occluder_non_saturation=" << (bOccluderSaturationThreshold ? 1 : 0)
+                  << " atmosphere=" << (bAtmosphereArtifacts ? 1 : 0)
+                  << " atmosphere_upper=" << (bAtmosphereUpperThreshold ? 1 : 0) << "\n";
+        const bool bPassed = bDensityArtifacts && bOccluderArtifacts &&
+                             bOccluderSaturationThreshold && bAtmosphereArtifacts &&
+                             bAtmosphereUpperThreshold;
+        std::cout << "R3_ACCEPTANCE_ARTIFACTS density_pngs=3 occluder_threshold=1"
+                  << " atmosphere_threshold=1 separate_from_r1_r2=1 present="
+                  << (bPassed ? 1 : 0) << "\n";
+        return bPassed;
     }
 
     bool BuildR2CascadeSplits(float outSplits[5])
@@ -1609,13 +1719,13 @@ namespace
             Complete
         };
 
-        enum class R3CaptureStage : uint8_t
-        {
-            ShadowedScattering,
-            FogOnlyWithoutShadowMap,
-            FogDisabledControl,
-            Complete
-        };
+            enum class R3CaptureStage : uint8_t
+            {
+                ShadowedScattering,
+                FogOnlyWithoutShadowMap,
+                FogDisabledControl,
+                Complete
+            };
 
         Core::Rendering::FrameCaptureSourceKind GetCaptureSourceForTest() const
         {
@@ -1627,6 +1737,7 @@ namespace
         {
             m_bR2Scenario = false;
             m_bR3Scenario = false;
+            m_R3ScenarioKind = R3ScenarioKind::ShadowedShafts;
             m_bAllNumericalScenario = false;
             m_bAllNumericalArgumentParsed = false;
             m_bAllNumericalForcedRowsArgumentParsed = false;
@@ -1695,18 +1806,18 @@ namespace
                  m_bKnownCdScenario || m_bP4Scenario ||
                  m_bTransparentPhysicalLightingScenario))
             {
-                LOG_ERROR("R3 shadowed-shafts は他の描画シナリオと併用できません");
+                LOG_ERROR("R3 シナリオは他の描画シナリオと併用できません");
                 return false;
             }
             if (m_bR3Scenario &&
                 GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::BackBuffer)
             {
-                LOG_ERROR("R3 shadowed-shafts のcapture sourceが診断モードと一致しません");
+                LOG_ERROR("R3 シナリオには BackBuffer capture が必要です");
                 return false;
             }
             if (m_bR3Scenario && GetRunConfig().Scene != SceneKind::Outdoor)
             {
-                LOG_ERROR("R3 shadowed-shafts は outdoor scene と組み合わせてください");
+                LOG_ERROR("R3 シナリオには outdoor scene が必要です");
                 return false;
             }
             m_R1CaptureStage = R1CaptureStage::BackBuffer;
@@ -1720,6 +1831,9 @@ namespace
             m_R2PreviousChannelMean[1] = 0.0;
             m_R2PreviousChannelMean[2] = 0.0;
             m_R3CaptureStage = R3CaptureStage::ShadowedScattering;
+            m_R3DensitySweepIndex = 0u;
+            m_R3OccluderAbIndex = 0u;
+            m_R3DistantAtmosphereBlendIndex = 0u;
             m_bR3StageApplyFailed = false;
             m_bR3HasFrameNumber = false;
             m_R3LastFrameNumber = 0u;
@@ -1729,6 +1843,21 @@ namespace
             m_bR3HasFogOnlyMeans = false;
             m_R3FogOnlyCenterMean = 0.0;
             m_R3FogOnlySideMean = 0.0;
+            for (uint32_t index = 0u; index < R3DensitySweepCount; ++index)
+            {
+                m_R3DensityCenterMeans[index] = 0.0;
+                m_R3DensitySideMeans[index] = 0.0;
+            }
+            for (uint32_t index = 0u; index < R3OccluderAbCount; ++index)
+            {
+                m_R3OccluderCenterMeans[index] = 0.0;
+                m_R3OccluderSideMeans[index] = 0.0;
+            }
+            for (uint32_t index = 0u; index < R3DistantAtmosphereBlendCount; ++index)
+            {
+                m_R3AtmosphereSkyMeans[index] = 0.0;
+                m_R3AtmosphereHorizonMeans[index] = 0.0;
+            }
             m_KnownCdStage = KnownCdStage::PureLambertA;
             m_KnownCdHasFrameNumber = false;
             m_KnownCdLastFrameNumber = 0u;
@@ -2072,7 +2201,25 @@ namespace
                 m_bR2Scenario = true;
                 return true;
             }
-            if (argument == TEXT("--r3-scenario=shadowed-shafts"))
+            R3ScenarioKind parsedR3Scenario = R3ScenarioKind::ShadowedShafts;
+            const bool bR3Argument =
+                argument == TEXT("--r3-scenario=shadowed-shafts") ||
+                argument == TEXT("--r3-scenario=density-sweep") ||
+                argument == TEXT("--r3-scenario=occluder-ab") ||
+                argument == TEXT("--r3-scenario=distant-atmosphere-blend");
+            if (argument == TEXT("--r3-scenario=density-sweep"))
+            {
+                parsedR3Scenario = R3ScenarioKind::DensitySweep;
+            }
+            else if (argument == TEXT("--r3-scenario=occluder-ab"))
+            {
+                parsedR3Scenario = R3ScenarioKind::OccluderAb;
+            }
+            else if (argument == TEXT("--r3-scenario=distant-atmosphere-blend"))
+            {
+                parsedR3Scenario = R3ScenarioKind::DistantAtmosphereBlend;
+            }
+            if (bR3Argument)
             {
                 if (m_bR3Scenario || m_bR1Scenario || m_bR2Scenario ||
                     m_bAllNumericalScenario || m_bKnownCdScenario || m_bP4Scenario ||
@@ -2082,6 +2229,7 @@ namespace
                     return false;
                 }
                 m_bR3Scenario = true;
+                m_R3ScenarioKind = parsedR3Scenario;
                 return true;
             }
             if (argument == TEXT("--r1-forced-rows=2"))
@@ -2196,7 +2344,7 @@ namespace
         {
             if (m_bR3Scenario)
             {
-                return EvaluateR3ShadowedShaftsFrame(frame, reason);
+                return EvaluateR3ScenarioFrame(frame, reason);
             }
             if (m_bR2Scenario)
             {
@@ -2304,29 +2452,74 @@ namespace
         {
             if (m_bR3Scenario)
             {
-                if (m_R3CaptureStage == R3CaptureStage::Complete)
+                bool bFixtureApplied = false;
+                bool bFogEnabled = true;
+                bool bSkyEnabled = false;
+                float density = 0.01f;
+                switch (m_R3ScenarioKind)
                 {
-                    return;
+                case R3ScenarioKind::ShadowedShafts:
+                    if (m_R3CaptureStage == R3CaptureStage::Complete)
+                    {
+                        return;
+                    }
+                    {
+                        const bool bDirectionalLightCastsShadows =
+                            m_R3CaptureStage == R3CaptureStage::ShadowedScattering;
+                        bFixtureApplied = GetFixture().ApplyR3ShadowedShaftsFixture(
+                            bDirectionalLightCastsShadows,
+                            true,
+                            bDirectionalLightCastsShadows);
+                        bFogEnabled = m_R3CaptureStage != R3CaptureStage::FogDisabledControl;
+                    }
+                    break;
+                case R3ScenarioKind::DensitySweep:
+                    if (m_R3DensitySweepIndex >= R3DensitySweepCount)
+                    {
+                        return;
+                    }
+                    bFixtureApplied = GetFixture().ApplyR3ShadowedShaftsFixture(true, true, true);
+                    density = R3DensitySweepValues[m_R3DensitySweepIndex];
+                    break;
+                case R3ScenarioKind::OccluderAb:
+                    if (m_R3OccluderAbIndex >= R3OccluderAbCount)
+                    {
+                        return;
+                    }
+                    bFixtureApplied = GetFixture().ApplyR3ShadowedShaftsFixture(
+                        m_R3OccluderAbIndex == 0u, true, true);
+                    break;
+                case R3ScenarioKind::DistantAtmosphereBlend:
+                    if (m_R3DistantAtmosphereBlendIndex >= R3DistantAtmosphereBlendCount)
+                    {
+                        return;
+                    }
+                    bFixtureApplied = GetFixture().ApplyR3DistantAtmosphereFixture();
+                    bSkyEnabled = m_R3DistantAtmosphereBlendIndex != 0u;
+                    bFogEnabled = m_R3DistantAtmosphereBlendIndex != 1u;
+                    break;
                 }
-                const bool bDirectionalLightCastsShadows =
-                    m_R3CaptureStage == R3CaptureStage::ShadowedScattering;
-                if (!GetFixture().ApplyR3ShadowedShaftsFixture(
-                        bDirectionalLightCastsShadows,
-                        true,
-                        bDirectionalLightCastsShadows))
+                if (!bFixtureApplied)
                 {
                     m_bR3StageApplyFailed = true;
-                    LOG_ERROR("R3 shadowed-shafts fixture state could not be applied");
+                    LOG_ERROR("R3 検証fixtureの状態を適用できませんでした");
                     return;
                 }
                 renderWorld.SetMainCamera(GetFixture().GetR3ShadowedShaftsCamera());
-                renderWorld.SetSkyAtmosphere(
-                    Core::Rendering::MakeDefaultSkyAtmosphereParameters());
+                Core::Rendering::SkyAtmosphereParameters sky =
+                    Core::Rendering::MakeDefaultSkyAtmosphereParameters();
+                sky.bEnabled = bSkyEnabled;
+                if (m_R3ScenarioKind == R3ScenarioKind::DistantAtmosphereBlend)
+                {
+                    sky.SunAzimuthDegrees = 90.0f;
+                    sky.SunLuminanceNits = 1.0e8f;
+                }
+                renderWorld.SetSkyAtmosphere(sky);
 
                 Core::Rendering::VolumetricFogParameters fog =
                     Core::Rendering::MakeDefaultVolumetricFogParameters();
-                fog.bEnabled = m_R3CaptureStage != R3CaptureStage::FogDisabledControl;
-                fog.DensityAtBaseHeight = 0.01f;
+                fog.bEnabled = bFogEnabled;
+                fog.DensityAtBaseHeight = density;
                 renderWorld.SetVolumetricFogParameters(fog);
                 return;
             }
@@ -2573,10 +2766,33 @@ namespace
         {
             if (m_bR3Scenario)
             {
-                if (m_R3CaptureStage != R3CaptureStage::Complete)
+                switch (m_R3ScenarioKind)
                 {
-                    m_R3CaptureStage = static_cast<R3CaptureStage>(
-                        static_cast<uint8_t>(m_R3CaptureStage) + 1u);
+                case R3ScenarioKind::ShadowedShafts:
+                    if (m_R3CaptureStage != R3CaptureStage::Complete)
+                    {
+                        m_R3CaptureStage = static_cast<R3CaptureStage>(
+                            static_cast<uint8_t>(m_R3CaptureStage) + 1u);
+                    }
+                    break;
+                case R3ScenarioKind::DensitySweep:
+                    if (m_R3DensitySweepIndex < R3DensitySweepCount)
+                    {
+                        ++m_R3DensitySweepIndex;
+                    }
+                    break;
+                case R3ScenarioKind::OccluderAb:
+                    if (m_R3OccluderAbIndex < R3OccluderAbCount)
+                    {
+                        ++m_R3OccluderAbIndex;
+                    }
+                    break;
+                case R3ScenarioKind::DistantAtmosphereBlend:
+                    if (m_R3DistantAtmosphereBlendIndex < R3DistantAtmosphereBlendCount)
+                    {
+                        ++m_R3DistantAtmosphereBlendIndex;
+                    }
+                    break;
                 }
                 return;
             }
@@ -2651,13 +2867,29 @@ namespace
         {
             if (m_bR3Scenario)
             {
-                if (m_R3CaptureStage == R3CaptureStage::Complete)
+                bool bComplete = false;
+                switch (m_R3ScenarioKind)
+                {
+                case R3ScenarioKind::ShadowedShafts:
+                    bComplete = m_R3CaptureStage == R3CaptureStage::Complete;
+                    break;
+                case R3ScenarioKind::DensitySweep:
+                    bComplete = m_R3DensitySweepIndex >= R3DensitySweepCount;
+                    break;
+                case R3ScenarioKind::OccluderAb:
+                    bComplete = m_R3OccluderAbIndex >= R3OccluderAbCount;
+                    break;
+                case R3ScenarioKind::DistantAtmosphereBlend:
+                    bComplete = m_R3DistantAtmosphereBlendIndex >= R3DistantAtmosphereBlendCount;
+                    break;
+                }
+                if (bComplete)
                 {
                     return false;
                 }
                 outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::BackBuffer;
-                LOG_INFO("R3 shadowed-shafts follow-up requested: stage=%u after frame=%llu",
-                         static_cast<unsigned int>(m_R3CaptureStage),
+                LOG_INFO("R3 follow-up capture requested: scenario=%u after frame=%llu",
+                         static_cast<unsigned int>(m_R3ScenarioKind),
                          static_cast<unsigned long long>(frame.FrameNumber));
                 return true;
             }
@@ -6136,6 +6368,392 @@ namespace
             return true;
         }
 
+        bool EvaluateR3ScenarioFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            switch (m_R3ScenarioKind)
+            {
+            case R3ScenarioKind::ShadowedShafts:
+                return EvaluateR3ShadowedShaftsFrame(frame, reason);
+            case R3ScenarioKind::DensitySweep:
+                return EvaluateR3DensitySweepFrame(frame, reason);
+            case R3ScenarioKind::OccluderAb:
+                return EvaluateR3OccluderAbFrame(frame, reason);
+            case R3ScenarioKind::DistantAtmosphereBlend:
+                return EvaluateR3DistantAtmosphereBlendFrame(frame, reason);
+            }
+            reason = TEXT("R3 シナリオ種別が不正です");
+            return false;
+        }
+
+        bool ValidateR3BackBufferFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (m_bR3StageApplyFailed)
+            {
+                reason = TEXT("R3 検証fixtureの状態を適用できませんでした");
+                return false;
+            }
+            if (frame.RequestId != GetLastAcceptedRequestId())
+            {
+                reason = TEXT("R3 BackBuffer capture の RequestId が現在の要求と一致しません");
+                return false;
+            }
+            if (m_bR3HasFrameNumber && frame.FrameNumber <= m_R3LastFrameNumber)
+            {
+                reason = TEXT("R3 BackBuffer capture の FrameNumber が単調増加していません");
+                return false;
+            }
+            const bool bHardwareFormat = RHI::IsPresentationSrgbFormat(frame.Format);
+            const bool bShaderFormat = RHI::IsPresentationUnormFormat(frame.Format);
+            const bool bMetadataValid =
+                frame.ColorSpace == RHI::PresentationColorSpace::Rec709D65 &&
+                frame.Transfer == RHI::PresentationTransfer::SRGB &&
+                (bHardwareFormat || bShaderFormat) &&
+                frame.bHardwareSrgbEncode == bHardwareFormat &&
+                frame.bShaderSrgbEncode == bShaderFormat &&
+                frame.BytesPerPixel == 4u &&
+                frame.Width == ValidationWidth &&
+                frame.Height == ValidationHeight;
+            if (!bMetadataValid)
+            {
+                reason = TEXT("R3 BackBuffer capture の形式または色変換情報が不正です");
+                return false;
+            }
+
+            const size_t minimumRowPitch = static_cast<size_t>(frame.Width) * frame.BytesPerPixel;
+            if (frame.RowPitchBytes < minimumRowPitch ||
+                frame.Height > std::numeric_limits<size_t>::max() / frame.RowPitchBytes ||
+                frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
+            {
+                reason = TEXT("R3 BackBuffer capture の画素データ範囲が不正です");
+                return false;
+            }
+            m_R3LastFrameNumber = frame.FrameNumber;
+            m_bR3HasFrameNumber = true;
+            return true;
+        }
+
+        struct R3FrameStatistics
+        {
+            double MeanLuma = 0.0;
+            double MaximumLuma = 0.0;
+            uint8_t MaximumChannel = 0u;
+            uint64_t SaturatedRgbPixelCount = 0u;
+        };
+
+        static bool ComputeR3FrameStatistics(
+            const Core::Rendering::CapturedFrame& frame,
+            R3FrameStatistics& outStatistics)
+        {
+            const bool bBgra = frame.Format == RHI::Format::B8G8R8A8_UNORM ||
+                               frame.Format == RHI::Format::B8G8R8A8_SRGB;
+            double lumaSum = 0.0;
+            double maximumLuma = 0.0;
+            uint8_t maximumChannel = 0u;
+            uint64_t saturatedPixelCount = 0u;
+            const uint64_t pixelCount = static_cast<uint64_t>(frame.Width) * frame.Height;
+            for (uint32_t y = 0u; y < frame.Height; ++y)
+            {
+                const size_t rowOffset = static_cast<size_t>(y) * frame.RowPitchBytes;
+                for (uint32_t x = 0u; x < frame.Width; ++x)
+                {
+                    const size_t offset = rowOffset + static_cast<size_t>(x) * frame.BytesPerPixel;
+                    const uint8_t channels[3] = {
+                        frame.Pixels[offset + (bBgra ? 2u : 0u)],
+                        frame.Pixels[offset + 1u],
+                        frame.Pixels[offset + (bBgra ? 0u : 2u)]};
+                    const double luma = 0.2126 * channels[0] +
+                                        0.7152 * channels[1] +
+                                        0.0722 * channels[2];
+                    lumaSum += luma;
+                    maximumLuma = std::max(maximumLuma, luma);
+                    bool bSaturatedPixel = false;
+                    for (const uint8_t channel : channels)
+                    {
+                        maximumChannel = std::max(maximumChannel, channel);
+                        bSaturatedPixel = bSaturatedPixel || channel == 255u;
+                    }
+                    saturatedPixelCount += bSaturatedPixel ? 1u : 0u;
+                }
+            }
+            if (pixelCount == 0u)
+            {
+                return false;
+            }
+            outStatistics.MeanLuma = lumaSum / static_cast<double>(pixelCount);
+            outStatistics.MaximumLuma = maximumLuma;
+            outStatistics.MaximumChannel = maximumChannel;
+            outStatistics.SaturatedRgbPixelCount = saturatedPixelCount;
+            return std::isfinite(outStatistics.MeanLuma) &&
+                   std::isfinite(outStatistics.MaximumLuma);
+        }
+
+        bool EvaluateR3DensitySweepFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (m_R3DensitySweepIndex >= R3DensitySweepCount ||
+                !ValidateR3BackBufferFrame(frame, reason))
+            {
+                if (m_R3DensitySweepIndex >= R3DensitySweepCount)
+                {
+                    reason = TEXT("R3 density-sweep に余分なcaptureが届きました");
+                }
+                return false;
+            }
+            R3FrameStatistics frameStatistics;
+            const uint32_t centerMinX = ValidationWidth * 45u / 100u;
+            const uint32_t centerMaxX = ValidationWidth * 55u / 100u;
+            const uint32_t centerMinY = ValidationHeight * 45u / 100u;
+            const uint32_t centerMaxY = ValidationHeight * 55u / 100u;
+            const uint32_t sideMinX = ValidationWidth * 70u / 100u;
+            const uint32_t sideMaxX = ValidationWidth * 75u / 100u;
+            R3RoiStatistics center;
+            R3RoiStatistics side;
+            if (!ComputeR3FrameStatistics(frame, frameStatistics) ||
+                !ComputeR3RoiStatistics(frame, centerMinX, centerMaxX,
+                                        centerMinY, centerMaxY, center) ||
+                !ComputeR3RoiStatistics(frame, sideMinX, sideMaxX,
+                                        centerMinY, centerMaxY, side))
+            {
+                reason = TEXT("R3 density-sweep のcapture統計が不正です");
+                return false;
+            }
+            m_R3DensityCenterMeans[m_R3DensitySweepIndex] = center.MeanLuma;
+            m_R3DensitySideMeans[m_R3DensitySweepIndex] = side.MeanLuma;
+            const bool bEnvelopePassed =
+                frameStatistics.MaximumLuma <= R3MaximumBackBufferLuma &&
+                frameStatistics.SaturatedRgbPixelCount <= R3MaximumSaturatedPixels;
+            bool bMonotonicPassed = true;
+            if (m_R3DensitySweepIndex > 0u)
+            {
+                const double sideStep = side.MeanLuma -
+                    m_R3DensitySideMeans[m_R3DensitySweepIndex - 1u];
+                bMonotonicPassed = sideStep >= R3DensitySweepMinimumStepLuma;
+            }
+            const bool bPassed = bEnvelopePassed && bMonotonicPassed;
+            const char* caseName = m_R3DensitySweepIndex == 0u
+                                       ? "low"
+                                       : m_R3DensitySweepIndex == 1u ? "medium" : "high";
+            std::cout << std::fixed << std::setprecision(6)
+                      << "R3_GPU_CAPTURE scenario=density-sweep case=" << caseName
+                      << " density=" << R3DensitySweepValues[m_R3DensitySweepIndex]
+                      << " frame=" << frame.FrameNumber
+                      << " center_mean_luma=" << center.MeanLuma
+                      << " unoccluded_mean_luma=" << side.MeanLuma
+                      << " maximum_luma=" << frameStatistics.MaximumLuma
+                      << " maximum_channel=" << static_cast<unsigned int>(frameStatistics.MaximumChannel)
+                      << " saturated_rgb_pixels=" << frameStatistics.SaturatedRgbPixelCount
+                      << " monotonic=" << (bMonotonicPassed ? 1 : 0)
+                      << " passed=" << (bPassed ? 1 : 0) << "\n";
+            if (!bPassed)
+            {
+                reason = TEXT("R3 density-sweep が単調性または非飽和閾値を満たしません");
+                return false;
+            }
+            if (m_R3DensitySweepIndex + 1u == R3DensitySweepCount)
+            {
+                const double sideDelta = m_R3DensitySideMeans[2] - m_R3DensitySideMeans[0];
+                const bool bSweepPassed = sideDelta <= R3DensitySweepMaximumSideDeltaLuma;
+                std::cout << std::fixed << std::setprecision(6)
+                          << "R3_DENSITY_SWEEP=" << (bSweepPassed ? "PASS" : "FAIL")
+                          << " captures=" << R3DensitySweepCount
+                          << " side_delta_luma=" << sideDelta
+                          << " maximum_side_delta_luma=" << R3DensitySweepMaximumSideDeltaLuma
+                          << " non_saturated=1\n";
+                if (!bSweepPassed)
+                {
+                    reason = TEXT("R3 density-sweep の散乱上限を超えました");
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool EvaluateR3OccluderAbFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (m_R3OccluderAbIndex >= R3OccluderAbCount ||
+                !ValidateR3BackBufferFrame(frame, reason))
+            {
+                if (m_R3OccluderAbIndex >= R3OccluderAbCount)
+                {
+                    reason = TEXT("R3 occluder-ab に余分なcaptureが届きました");
+                }
+                return false;
+            }
+            R3FrameStatistics frameStatistics;
+            const uint32_t centerMinX = ValidationWidth * 45u / 100u;
+            const uint32_t centerMaxX = ValidationWidth * 55u / 100u;
+            const uint32_t centerMinY = ValidationHeight * 45u / 100u;
+            const uint32_t centerMaxY = ValidationHeight * 55u / 100u;
+            const uint32_t sideMinX = ValidationWidth * 70u / 100u;
+            const uint32_t sideMaxX = ValidationWidth * 75u / 100u;
+            R3RoiStatistics center;
+            R3RoiStatistics side;
+            if (!ComputeR3FrameStatistics(frame, frameStatistics) ||
+                !ComputeR3RoiStatistics(frame, centerMinX, centerMaxX,
+                                        centerMinY, centerMaxY, center) ||
+                !ComputeR3RoiStatistics(frame, sideMinX, sideMaxX,
+                                        centerMinY, centerMaxY, side))
+            {
+                reason = TEXT("R3 occluder-ab のcapture統計が不正です");
+                return false;
+            }
+            m_R3OccluderCenterMeans[m_R3OccluderAbIndex] = center.MeanLuma;
+            m_R3OccluderSideMeans[m_R3OccluderAbIndex] = side.MeanLuma;
+            if (frameStatistics.MaximumLuma > R3MaximumBackBufferLuma ||
+                frameStatistics.SaturatedRgbPixelCount > R3MaximumSaturatedPixels)
+            {
+                reason = TEXT("R3 occluder-ab のcaptureが非飽和閾値を満たしません");
+                return false;
+            }
+            const char* caseName = m_R3OccluderAbIndex == 0u ? "occluder" : "no-occluder";
+            std::cout << std::fixed << std::setprecision(6)
+                      << "R3_GPU_CAPTURE scenario=occluder-ab case=" << caseName
+                      << " frame=" << frame.FrameNumber
+                      << " center_mean_luma=" << center.MeanLuma
+                      << " unoccluded_mean_luma=" << side.MeanLuma
+                      << " maximum_luma=" << frameStatistics.MaximumLuma
+                      << " maximum_channel=" << static_cast<unsigned int>(frameStatistics.MaximumChannel)
+                      << " saturated_rgb_pixels=" << frameStatistics.SaturatedRgbPixelCount
+                      << " passed=1\n";
+            if (m_R3OccluderAbIndex + 1u == R3OccluderAbCount)
+            {
+                const double centerDelta = m_R3OccluderCenterMeans[1] -
+                                           m_R3OccluderCenterMeans[0];
+                const double unoccludedDelta = std::abs(
+                    m_R3OccluderSideMeans[1] - m_R3OccluderSideMeans[0]);
+                const double shadowContrast = centerDelta - unoccludedDelta;
+                const bool bPassed =
+                    centerDelta >= R3OccluderCenterDeltaMinimumLuma &&
+                    centerDelta <= R3OccluderCenterDeltaMaximumLuma &&
+                    unoccludedDelta <= R3OccluderUnoccludedDeltaMaximumLuma &&
+                    shadowContrast >= R3OccluderShadowContrastMinimumLuma;
+                std::cout << std::fixed << std::setprecision(6)
+                          << "R3_OCCLUDER_AB=" << (bPassed ? "PASS" : "FAIL")
+                          << " center_delta_luma=" << centerDelta
+                          << " center_delta_range=(" << R3OccluderCenterDeltaMinimumLuma
+                          << "," << R3OccluderCenterDeltaMaximumLuma << ")"
+                          << " unoccluded_delta_luma=" << unoccludedDelta
+                          << " unoccluded_delta_max=" << R3OccluderUnoccludedDeltaMaximumLuma
+                          << " shadow_contrast_luma=" << shadowContrast
+                          << " shadow_contrast_min=" << R3OccluderShadowContrastMinimumLuma
+                          << " non_saturated=1\n";
+                if (!bPassed)
+                {
+                    reason = TEXT("R3 CSM遮蔽物A/Bが差分または散乱上限を満たしません");
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool EvaluateR3DistantAtmosphereBlendFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (m_R3DistantAtmosphereBlendIndex >= R3DistantAtmosphereBlendCount ||
+                !ValidateR3BackBufferFrame(frame, reason))
+            {
+                if (m_R3DistantAtmosphereBlendIndex >= R3DistantAtmosphereBlendCount)
+                {
+                    reason = TEXT("R3 distant-atmosphere-blend に余分なcaptureが届きました");
+                }
+                return false;
+            }
+            R3FrameStatistics frameStatistics;
+            R3RoiStatistics sky;
+            R3RoiStatistics horizon;
+            if (!ComputeR3FrameStatistics(frame, frameStatistics) ||
+                !ComputeR3RoiStatistics(frame,
+                                        ValidationWidth * 25u / 100u,
+                                        ValidationWidth * 75u / 100u,
+                                        ValidationHeight * 8u / 100u,
+                                        ValidationHeight * 28u / 100u,
+                                        sky) ||
+                !ComputeR3RoiStatistics(frame,
+                                        ValidationWidth * 25u / 100u,
+                                        ValidationWidth * 75u / 100u,
+                                        ValidationHeight * 43u / 100u,
+                                        ValidationHeight * 49u / 100u,
+                                        horizon))
+            {
+                std::cout << "R3_ATMOSPHERE_CAPTURE_INVALID stage="
+                          << m_R3DistantAtmosphereBlendIndex
+                          << " width=" << frame.Width << " height=" << frame.Height
+                          << " row_pitch=" << frame.RowPitchBytes
+                          << " bytes_per_pixel=" << frame.BytesPerPixel << "\n";
+                reason = TEXT("R3 distant-atmosphere-blend のcapture統計が不正です");
+                return false;
+            }
+            m_R3AtmosphereSkyMeans[m_R3DistantAtmosphereBlendIndex] = sky.MeanLuma;
+            m_R3AtmosphereHorizonMeans[m_R3DistantAtmosphereBlendIndex] = horizon.MeanLuma;
+            if (frameStatistics.MaximumLuma > R3MaximumBackBufferLuma ||
+                frameStatistics.SaturatedRgbPixelCount > R3MaximumSaturatedPixels)
+            {
+                std::cout << std::fixed << std::setprecision(6)
+                          << "R3_ATMOSPHERE_ENVELOPE_FAIL stage="
+                          << m_R3DistantAtmosphereBlendIndex
+                          << " maximum_luma=" << frameStatistics.MaximumLuma
+                          << " maximum_channel="
+                          << static_cast<unsigned int>(frameStatistics.MaximumChannel)
+                          << " saturated_rgb_pixels="
+                          << frameStatistics.SaturatedRgbPixelCount << "\n";
+                reason = TEXT("R3 distant-atmosphere-blend のcaptureが非飽和閾値を満たしません");
+                return false;
+            }
+            const char* caseName = m_R3DistantAtmosphereBlendIndex == 0u
+                                       ? "fog-only"
+                                       : m_R3DistantAtmosphereBlendIndex == 1u
+                                             ? "sky-only"
+                                             : "sky-and-fog";
+            std::cout << std::fixed << std::setprecision(6)
+                      << "R3_GPU_CAPTURE scenario=distant-atmosphere-blend case=" << caseName
+                      << " frame=" << frame.FrameNumber
+                      << " sky_mean_luma=" << sky.MeanLuma
+                      << " horizon_mean_luma=" << horizon.MeanLuma
+                      << " maximum_luma=" << frameStatistics.MaximumLuma
+                      << " maximum_channel=" << static_cast<unsigned int>(frameStatistics.MaximumChannel)
+                      << " saturated_rgb_pixels=" << frameStatistics.SaturatedRgbPixelCount
+                      << " passed=1\n";
+            if (m_R3DistantAtmosphereBlendIndex + 1u == R3DistantAtmosphereBlendCount)
+            {
+                const double atmosphereSkyDelta =
+                    m_R3AtmosphereSkyMeans[1] - m_R3AtmosphereSkyMeans[0];
+                const double atmosphereHorizonDelta =
+                    m_R3AtmosphereHorizonMeans[2] - m_R3AtmosphereHorizonMeans[0];
+                const double fogHorizonDelta =
+                    m_R3AtmosphereHorizonMeans[2] - m_R3AtmosphereHorizonMeans[1];
+                const double skyPreservationDelta = std::abs(
+                    m_R3AtmosphereSkyMeans[2] - m_R3AtmosphereSkyMeans[1]);
+                const bool bPassed =
+                    atmosphereSkyDelta >= R3AtmosphereSkyDeltaMinimumLuma &&
+                    atmosphereHorizonDelta >= R3AtmosphereHorizonDeltaMinimumLuma &&
+                    fogHorizonDelta >= R3AtmosphereHorizonDeltaMinimumLuma &&
+                    atmosphereHorizonDelta <= R3AtmosphereHorizonDeltaMaximumLuma &&
+                    skyPreservationDelta <= R3AtmosphereSkyPreservationDeltaMaximumLuma;
+                std::cout << std::fixed << std::setprecision(6)
+                          << "R3_DISTANT_ATMOSPHERE_BLEND=" << (bPassed ? "PASS" : "FAIL")
+                          << " atmosphere_sky_delta_luma=" << atmosphereSkyDelta
+                          << " atmosphere_horizon_delta_luma=" << atmosphereHorizonDelta
+                          << " fog_horizon_delta_luma=" << fogHorizonDelta
+                          << " sky_preservation_delta_luma=" << skyPreservationDelta
+                          << " maximum_horizon_delta_luma=" << R3AtmosphereHorizonDeltaMaximumLuma
+                          << " non_saturated=1\n";
+                if (!bPassed)
+                {
+                    reason = TEXT("R3 遠景の空・地平線と大気ブレンドが閾値を満たしません");
+                    return false;
+                }
+            }
+            return true;
+        }
+
         bool EvaluateR2BackBufferFrame(
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason)
@@ -6495,7 +7113,11 @@ namespace
         uint64_t m_R2LastFrameNumber = 0u;
         bool m_bR2HasPreviousChannelMean = false;
         double m_R2PreviousChannelMean[3] = {};
+        R3ScenarioKind m_R3ScenarioKind = R3ScenarioKind::ShadowedShafts;
         R3CaptureStage m_R3CaptureStage = R3CaptureStage::ShadowedScattering;
+        uint32_t m_R3DensitySweepIndex = 0u;
+        uint32_t m_R3OccluderAbIndex = 0u;
+        uint32_t m_R3DistantAtmosphereBlendIndex = 0u;
         bool m_bR3StageApplyFailed = false;
         bool m_bR3HasFrameNumber = false;
         uint64_t m_R3LastFrameNumber = 0u;
@@ -6505,6 +7127,12 @@ namespace
         bool m_bR3HasFogOnlyMeans = false;
         double m_R3FogOnlyCenterMean = 0.0;
         double m_R3FogOnlySideMean = 0.0;
+        double m_R3DensityCenterMeans[R3DensitySweepCount] = {};
+        double m_R3DensitySideMeans[R3DensitySweepCount] = {};
+        double m_R3OccluderCenterMeans[R3OccluderAbCount] = {};
+        double m_R3OccluderSideMeans[R3OccluderAbCount] = {};
+        double m_R3AtmosphereSkyMeans[R3DistantAtmosphereBlendCount] = {};
+        double m_R3AtmosphereHorizonMeans[R3DistantAtmosphereBlendCount] = {};
         bool m_bAllNumericalScenario = false;
         bool m_bAllNumericalArgumentParsed = false;
         bool m_bKnownCdScenario = false;
@@ -6735,7 +7363,7 @@ namespace
         HdrHandler validHandler;
         if (!validHandler.OnPreInitialize(validArgs))
         {
-            std::cerr << "R3 shadowed-shafts scenario argument was rejected\n";
+            std::cerr << "R3 shadowed-shafts シナリオ引数を受理しませんでした\n";
             return false;
         }
 
@@ -6745,7 +7373,7 @@ namespace
         HdrHandler missingCaptureHandler;
         if (missingCaptureHandler.OnPreInitialize(missingCaptureArgs))
         {
-            std::cerr << "R3 shadowed-shafts accepted a non-back-buffer capture\n";
+            std::cerr << "R3 shadowed-shafts がBackBuffer以外のcaptureを受理しました\n";
             return false;
         }
 
@@ -6756,7 +7384,7 @@ namespace
         HdrHandler wrongSceneHandler;
         if (wrongSceneHandler.OnPreInitialize(wrongSceneArgs))
         {
-            std::cerr << "R3 shadowed-shafts accepted a non-outdoor scene\n";
+            std::cerr << "R3 shadowed-shafts がoutdoor以外のsceneを受理しました\n";
             return false;
         }
 
@@ -6766,7 +7394,30 @@ namespace
         duplicateArgs.push_back(TEXT("--r3-scenario=shadowed-shafts"));
         duplicateArgs.push_back(TEXT("--r3-scenario=shadowed-shafts"));
         HdrHandler duplicateHandler;
-        return !duplicateHandler.OnPreInitialize(duplicateArgs);
+        if (duplicateHandler.OnPreInitialize(duplicateArgs))
+        {
+            std::cerr << "R3シナリオの重複引数を受理しました\n";
+            return false;
+        }
+
+        const TCHAR* additionalScenarios[] = {
+            TEXT("--r3-scenario=density-sweep"),
+            TEXT("--r3-scenario=occluder-ab"),
+            TEXT("--r3-scenario=distant-atmosphere-blend")};
+        for (const TCHAR* scenario : additionalScenarios)
+        {
+            Core::Container::VariableArray<Core::Container::String> scenarioArgs;
+            scenarioArgs.push_back(TEXT("--scene=outdoor"));
+            scenarioArgs.push_back(TEXT("--capture-source=back-buffer"));
+            scenarioArgs.push_back(scenario);
+            HdrHandler scenarioHandler;
+            if (!scenarioHandler.OnPreInitialize(scenarioArgs))
+            {
+                std::cerr << "R3受入れシナリオの引数を受理しませんでした\n";
+                return false;
+            }
+        }
+        return true;
     }
 
     bool ValidateR1FinalFixtureContract()
@@ -6873,6 +7524,12 @@ int main(int argc, char** argv)
         {
             bR3Scenario = true;
         }
+        if (std::strcmp(argv[index], "--r3-scenario=density-sweep") == 0 ||
+            std::strcmp(argv[index], "--r3-scenario=occluder-ab") == 0 ||
+            std::strcmp(argv[index], "--r3-scenario=distant-atmosphere-blend") == 0)
+        {
+            bR3Scenario = true;
+        }
         if (std::strcmp(argv[index], "--scene=outdoor") == 0)
         {
             bR2OutdoorScene = true;
@@ -6921,10 +7578,13 @@ int main(int argc, char** argv)
             return 1;
         }
     }
-    if (bR3Scenario &&
-        (!bR3OutdoorScene || !bR3BackBuffer))
+    if (bR3Scenario && (!bR3OutdoorScene || !bR3BackBuffer))
     {
-        std::cerr << "R3 shadowed-shafts requires outdoor scene and a matching capture source\n";
+        std::cerr << "R3受入れシナリオにはoutdoor sceneとBackBuffer captureが必要です\n";
+        return 1;
+    }
+    if (bR3Scenario && !ValidateR3AcceptanceArtifactContract())
+    {
         return 1;
     }
 

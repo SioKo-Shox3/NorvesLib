@@ -254,6 +254,7 @@ namespace NorvesLib::Test::RenderingValidation
         bool ApplyR3ShadowedShaftsFixture(bool bOccluderCastsShadow,
                                           bool bDirectionalLightEnabled = true,
                                           bool bDirectionalLightCastsShadows = true) const;
+        bool ApplyR3DistantAtmosphereFixture() const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
         uint64_t GetObservedFixedStepCount() const;

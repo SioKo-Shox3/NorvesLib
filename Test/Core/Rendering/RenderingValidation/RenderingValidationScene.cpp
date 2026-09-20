@@ -2366,6 +2366,25 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::ApplyR3DistantAtmosphereFixture() const
+    {
+        if (!ApplyR3ShadowedShaftsFixture(false, false, false) ||
+            m_pR3ShadowBackgroundEntity == nullptr ||
+            m_pR3ShadowBackgroundMesh == nullptr ||
+            m_pR3ShadowOccluderMesh == nullptr)
+        {
+            return false;
+        }
+
+        m_pR3ShadowBackgroundEntity->SetPosition(0.0f, 1.0f, 20.0f);
+        m_pR3ShadowBackgroundEntity->SetScale(14.0f, 2.0f, 1.0f);
+        m_pR3ShadowBackgroundMesh->SetCastShadow(false);
+        m_pR3ShadowBackgroundMesh->SetReceiveShadow(false);
+        m_pR3ShadowBackgroundMesh->SetVisible(true);
+        m_pR3ShadowOccluderMesh->SetVisible(false);
+        return true;
+    }
+
     const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetCamera() const
     {
         return m_bR1PhysicalFixturePrepared ? m_R1PhysicalCamera : m_Layout.Camera;

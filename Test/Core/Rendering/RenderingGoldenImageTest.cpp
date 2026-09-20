@@ -7,11 +7,20 @@
 #include "Boot/AppLauncher.h"
 #include "Boot/BootConfig.h"
 #include "Container/PointerTypes.h"
+#include "FileStream/FileStream.h"
 #include "Logging/LogMacros.h"
+#include "Rendering/RenderWorld.h"
+#include "Rendering/SkyAtmosphere.h"
+#include "Rendering/VolumetricFog.h"
 
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
 
 namespace
 {
@@ -78,6 +87,97 @@ namespace
         return path;
     }
 
+    constexpr float R3DensityValues[] = {0.0025f, 0.005f, 0.01f};
+    constexpr uint32_t R3DensityCount =
+        static_cast<uint32_t>(sizeof(R3DensityValues) / sizeof(R3DensityValues[0]));
+    constexpr double R3MaximumMeanFlipError = 0.02;
+    constexpr uint8_t R3MaximumChannelDelta = 8u;
+
+    const char* R3DensityCaseName(uint32_t index)
+    {
+        switch (index)
+        {
+        case 0u:
+            return "low";
+        case 1u:
+            return "medium";
+        case 2u:
+            return "high";
+        default:
+            return "invalid";
+        }
+    }
+
+    const TCHAR* R3DensityBaselineFileName(uint32_t index)
+    {
+        switch (index)
+        {
+        case 0u:
+            return TEXT("R3FogDensityLow.png");
+        case 1u:
+            return TEXT("R3FogDensityMedium.png");
+        case 2u:
+            return TEXT("R3FogDensityHigh.png");
+        default:
+            return TEXT("R3FogDensityInvalid.png");
+        }
+    }
+
+    Core::Container::String R3DensityBaselinePath(uint32_t index)
+    {
+        Core::Container::String path(NORVES_SOURCE_ROOT);
+        path += TEXT("/Test/Core/Rendering/Baselines/RenderingValidation/");
+        path += R3DensityBaselineFileName(index);
+        return path;
+    }
+
+    Core::Container::String R3DensityStagingPath(uint32_t index)
+    {
+        Core::Container::String path(NORVES_BINARY_ROOT);
+        path += TEXT("/RenderingValidation/BaselineStaging/");
+        path += R3DensityBaselineFileName(index);
+        path += TEXT(".tmp");
+        return path;
+    }
+
+    Core::Container::String R3DensityThresholdPath()
+    {
+        Core::Container::String path(NORVES_SOURCE_ROOT);
+        path += TEXT("/Test/Core/Rendering/Thresholds/RenderingValidation/R3DensitySweep.tsv");
+        return path;
+    }
+
+    void EnsureR3BaselineStagingDirectories()
+    {
+        Core::Container::String validationRoot(NORVES_BINARY_ROOT);
+        validationRoot += TEXT("/RenderingValidation");
+        Core::Container::String stagingRoot = validationRoot;
+        stagingRoot += TEXT("/BaselineStaging");
+        CreateDirectory(validationRoot.c_str(), nullptr);
+        CreateDirectory(stagingRoot.c_str(), nullptr);
+    }
+
+    bool LoadR3DensityGoldenThresholds(VisualGoldenThresholds& outThresholds)
+    {
+        FileStream::FileStreamUniquePtr stream = FileStream::FileStream::CreateUnique(
+            R3DensityThresholdPath(), FileStream::FileMode::Read, FileStream::FileAccess::Read);
+        if (stream == nullptr)
+        {
+            return false;
+        }
+        const Core::Container::String contents = stream->ReadString();
+        if (contents.find(TEXT("schema=NorvesLib.RenderingValidation.R3DensitySweep.v1")) ==
+                Core::Container::String::npos ||
+            contents.find(TEXT("golden_mean_flip_max=0.020000 golden_max_channel_delta=8")) ==
+                Core::Container::String::npos)
+        {
+            return false;
+        }
+        outThresholds.MaximumMeanFlipError = R3MaximumMeanFlipError;
+        outThresholds.MaximumChannelDelta = R3MaximumChannelDelta;
+        return true;
+    }
+
     class GoldenHandler final : public RenderingValidationApplicationHandler
     {
     protected:
@@ -93,6 +193,22 @@ namespace
                 LOG_ERROR("RenderingGoldenImageTest は BackBuffer capture のみを受け付けます");
                 return false;
             }
+            if (m_bR3DensityScenario && GetRunConfig().Scene != SceneKind::Outdoor)
+            {
+                LOG_ERROR("R3 density-sweep には outdoor scene が必要です");
+                return false;
+            }
+            if (m_bR3DensityScenario &&
+                (m_bWriteBaselineStaging || m_bMeasureVisual))
+            {
+                LOG_ERROR("R3 density-sweep は既存のgolden image modeと併用できません");
+                return false;
+            }
+            if (m_bWriteR3DensityBaselineStaging && !m_bR3DensityScenario)
+            {
+                LOG_ERROR("R3 baseline stagingには density-sweep scenario が必要です");
+                return false;
+            }
             return true;
         }
 
@@ -101,6 +217,10 @@ namespace
             if (!RenderingValidationApplicationHandler::OnInitialize())
             {
                 return false;
+            }
+            if (m_bR3DensityScenario)
+            {
+                return GetFixture().ApplyR3ShadowedShaftsFixture(true, true, true);
             }
             if (!GetFixture().ApplyTransparentPhysicalLightingObjectPresence())
             {
@@ -114,11 +234,33 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument == TEXT("--r3-scenario=density-sweep"))
+            {
+                if (m_bR3DensityScenario || m_bWriteBaselineStaging || m_bMeasureVisual ||
+                    m_bWriteR3DensityBaselineStaging)
+                {
+                    outFailureReason = TEXT("重複または競合するR3 goldenシナリオ指定です");
+                    return false;
+                }
+                m_bR3DensityScenario = true;
+                return true;
+            }
+            if (argument == TEXT("--write-r3-density-baseline-staging"))
+            {
+                if (m_bWriteR3DensityBaselineStaging || m_bWriteBaselineStaging || m_bMeasureVisual)
+                {
+                    outFailureReason = TEXT("重複または競合するR3 baseline staging指定です");
+                    return false;
+                }
+                m_bWriteR3DensityBaselineStaging = true;
+                return true;
+            }
             if (argument == TEXT("--write-baseline-staging"))
             {
-                if (m_bWriteBaselineStaging || m_bMeasureVisual)
+                if (m_bWriteBaselineStaging || m_bMeasureVisual || m_bR3DensityScenario ||
+                    m_bWriteR3DensityBaselineStaging)
                 {
-                    outFailureReason = TEXT("duplicate or conflicting golden image mode");
+                    outFailureReason = TEXT("重複または競合するgolden image mode指定です");
                     LOG_ERROR("golden image argument rejected: duplicate or conflicting mode");
                     return false;
                 }
@@ -127,7 +269,8 @@ namespace
             }
             if (argument == TEXT("--measure-visual"))
             {
-                if (m_bMeasureVisual || m_bWriteBaselineStaging)
+                if (m_bMeasureVisual || m_bWriteBaselineStaging || m_bR3DensityScenario ||
+                    m_bWriteR3DensityBaselineStaging)
                 {
                     outFailureReason = TEXT("duplicate or conflicting golden image mode");
                     LOG_ERROR("golden image argument rejected: duplicate or conflicting mode");
@@ -141,10 +284,59 @@ namespace
             return false;
         }
 
+        void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
+        {
+            if (!m_bR3DensityScenario || m_R3DensityStage >= R3DensityCount)
+            {
+                return;
+            }
+            if (!GetFixture().ApplyR3ShadowedShaftsFixture(true, true, true))
+            {
+                m_bR3DensityStageApplyFailed = true;
+                LOG_ERROR("R3 density-sweep fixtureの状態を適用できませんでした");
+                return;
+            }
+            renderWorld.SetMainCamera(GetFixture().GetR3ShadowedShaftsCamera());
+            Core::Rendering::SkyAtmosphereParameters sky =
+                Core::Rendering::MakeDefaultSkyAtmosphereParameters();
+            sky.bEnabled = false;
+            renderWorld.SetSkyAtmosphere(sky);
+            Core::Rendering::VolumetricFogParameters fog =
+                Core::Rendering::MakeDefaultVolumetricFogParameters();
+            fog.bEnabled = true;
+            fog.DensityAtBaseHeight = R3DensityValues[m_R3DensityStage];
+            renderWorld.SetVolumetricFogParameters(fog);
+        }
+
+        void AdvanceCaptureStage() override
+        {
+            if (m_bR3DensityScenario && m_R3DensityStage < R3DensityCount)
+            {
+                ++m_R3DensityStage;
+            }
+        }
+
+        bool RequestFollowupCapture(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Rendering::FrameCaptureRequest& outRequest) override
+        {
+            (void)frame;
+            if (!m_bR3DensityScenario || m_R3DensityStage >= R3DensityCount)
+            {
+                return false;
+            }
+            outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::BackBuffer;
+            return true;
+        }
+
         bool EvaluateCapturedFrame(
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& outFailureReason) override
         {
+            if (m_bR3DensityScenario)
+            {
+                return EvaluateR3DensityGoldenFrame(frame, outFailureReason);
+            }
             Core::Container::VariableArray<uint8_t> candidatePng;
             const GoldenImageStatus encodeStatus = EncodeCapturedFramePng(frame, candidatePng);
             if (encodeStatus != GoldenImageStatus::Success)
@@ -345,9 +537,160 @@ namespace
             return true;
         }
 
+        bool EvaluateR3DensityGoldenFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& outFailureReason)
+        {
+            if (m_bR3DensityStageApplyFailed || m_R3DensityStage >= R3DensityCount)
+            {
+                outFailureReason = TEXT("R3 density-sweep のcapture状態が不正です");
+                return false;
+            }
+            if (frame.RequestId != GetLastAcceptedRequestId() ||
+                (m_bR3DensityHasFrameNumber && frame.FrameNumber <= m_R3DensityLastFrameNumber))
+            {
+                outFailureReason = TEXT("R3 density-sweep のcapture順序が不正です");
+                return false;
+            }
+
+            Core::Container::VariableArray<uint8_t> candidatePng;
+            const GoldenImageStatus encodeStatus = EncodeCapturedFramePng(frame, candidatePng);
+            if (encodeStatus != GoldenImageStatus::Success)
+            {
+                outFailureReason = TEXT("R3 density-sweep のPNG encodeに失敗しました");
+                return false;
+            }
+            Rgba8Image candidate;
+            if (DecodePng(Core::Container::Span<const uint8_t>(candidatePng), candidate) !=
+                GoldenImageStatus::Success)
+            {
+                outFailureReason = TEXT("R3 density-sweep のPNG decodeに失敗しました");
+                return false;
+            }
+            uint8_t maximumChannel = 0u;
+            uint64_t saturatedPixelCount = 0u;
+            for (uint32_t y = 0u; y < candidate.Height; ++y)
+            {
+                const size_t rowOffset = static_cast<size_t>(y) * candidate.RowPitchBytes;
+                for (uint32_t x = 0u; x < candidate.Width; ++x)
+                {
+                    const size_t offset = rowOffset + static_cast<size_t>(x) * 4u;
+                    maximumChannel = std::max(maximumChannel, candidate.Pixels[offset + 0u]);
+                    maximumChannel = std::max(maximumChannel, candidate.Pixels[offset + 1u]);
+                    maximumChannel = std::max(maximumChannel, candidate.Pixels[offset + 2u]);
+                    if (candidate.Pixels[offset + 0u] == 255u ||
+                        candidate.Pixels[offset + 1u] == 255u ||
+                        candidate.Pixels[offset + 2u] == 255u)
+                    {
+                        ++saturatedPixelCount;
+                    }
+                }
+            }
+            if (saturatedPixelCount != 0u)
+            {
+                outFailureReason = TEXT("R3 density-sweep のBackBufferに飽和画素があります");
+                return false;
+            }
+
+            if (m_bWriteR3DensityBaselineStaging)
+            {
+                EnsureR3BaselineStagingDirectories();
+                const GoldenImageStatus saveStatus = SavePng(
+                    R3DensityStagingPath(m_R3DensityStage),
+                    Core::Container::Span<const uint8_t>(candidatePng));
+                if (saveStatus != GoldenImageStatus::Success)
+                {
+                    outFailureReason = TEXT("R3 density-sweep baseline stagingの保存に失敗しました");
+                    return false;
+                }
+                std::cout << std::fixed << std::setprecision(6)
+                          << "R3_DENSITY_GOLDEN_STAGE case="
+                          << R3DensityCaseName(m_R3DensityStage)
+                          << " density=" << R3DensityValues[m_R3DensityStage]
+                          << " baseline_staged=1 maximum_channel="
+                          << static_cast<unsigned int>(maximumChannel)
+                          << " saturated_rgb_pixels=" << saturatedPixelCount << "\n";
+            }
+            else
+            {
+                Rgba8Image reference;
+                if (LoadPng(R3DensityBaselinePath(m_R3DensityStage), reference) !=
+                    GoldenImageStatus::Success)
+                {
+                    outFailureReason = TEXT("R3 density-sweep baseline PNGを読み込めません");
+                    return false;
+                }
+                VisualGoldenThresholds thresholds;
+                if (!LoadR3DensityGoldenThresholds(thresholds))
+                {
+                    outFailureReason = TEXT("R3 density-sweep thresholdが不正です");
+                    return false;
+                }
+                PerceptualDifferenceMetrics metrics;
+                const PerceptualDiffStatus compareStatus =
+                    CompareLdrFlip(reference, candidate, metrics);
+                if (compareStatus != PerceptualDiffStatus::Success ||
+                    !MeetsVisualGoldenThresholds(metrics, thresholds))
+                {
+                    outFailureReason = TEXT("R3 density-sweep golden比較が閾値を満たしません");
+                    std::cout << std::fixed << std::setprecision(9)
+                              << "R3_DENSITY_GOLDEN_STAGE case="
+                              << R3DensityCaseName(m_R3DensityStage)
+                              << " density=" << R3DensityValues[m_R3DensityStage]
+                              << " mean_flip=" << metrics.MeanFlipError
+                              << " mean_flip_max=" << thresholds.MaximumMeanFlipError
+                              << " raw_max=" << static_cast<unsigned int>(metrics.Raw.MaxChannelDelta)
+                              << " raw_max_limit="
+                              << static_cast<unsigned int>(thresholds.MaximumChannelDelta)
+                              << " maximum_channel=" << static_cast<unsigned int>(maximumChannel)
+                              << " saturated_rgb_pixels=" << saturatedPixelCount
+                              << " passed=0\n";
+                    return false;
+                }
+                std::cout << std::fixed << std::setprecision(9)
+                          << "R3_DENSITY_GOLDEN_STAGE case="
+                          << R3DensityCaseName(m_R3DensityStage)
+                          << " density=" << R3DensityValues[m_R3DensityStage]
+                          << " mean_flip=" << metrics.MeanFlipError
+                          << " mean_flip_max=" << thresholds.MaximumMeanFlipError
+                          << " raw_max=" << static_cast<unsigned int>(metrics.Raw.MaxChannelDelta)
+                          << " raw_max_limit="
+                          << static_cast<unsigned int>(thresholds.MaximumChannelDelta)
+                          << " maximum_channel=" << static_cast<unsigned int>(maximumChannel)
+                          << " saturated_rgb_pixels=" << saturatedPixelCount
+                          << " passed=1\n";
+            }
+
+            m_bR3DensityHasFrameNumber = true;
+            m_R3DensityLastFrameNumber = frame.FrameNumber;
+            ++m_R3DensityAcceptedCaseCount;
+            if (m_R3DensityStage + 1u == R3DensityCount)
+            {
+                const bool bAllCasesAccepted = m_R3DensityAcceptedCaseCount == R3DensityCount;
+                std::cout << "R3_DENSITY_GOLDEN_SWEEP="
+                          << (bAllCasesAccepted ? "PASS" : "FAIL")
+                          << " cases=" << m_R3DensityAcceptedCaseCount
+                          << " mode=" << (m_bWriteR3DensityBaselineStaging ? "staging" : "compare")
+                          << " non_saturated=1\n";
+                if (!bAllCasesAccepted)
+                {
+                    outFailureReason = TEXT("R3 density-sweep の3段階goldenが完了しませんでした");
+                    return false;
+                }
+            }
+            return true;
+        }
+
     private:
         bool m_bWriteBaselineStaging = false;
         bool m_bMeasureVisual = false;
+        bool m_bR3DensityScenario = false;
+        bool m_bWriteR3DensityBaselineStaging = false;
+        bool m_bR3DensityStageApplyFailed = false;
+        uint32_t m_R3DensityStage = 0u;
+        uint32_t m_R3DensityAcceptedCaseCount = 0u;
+        bool m_bR3DensityHasFrameNumber = false;
+        uint64_t m_R3DensityLastFrameNumber = 0u;
     };
 
     Core::Container::TSharedPtr<Core::Application::IApplicationHandler> CreateHandler()
