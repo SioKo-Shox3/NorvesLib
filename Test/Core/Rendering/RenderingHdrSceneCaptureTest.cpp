@@ -15,6 +15,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/SkyAtmosphere.h"
+#include "Rendering/VolumetricFog.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -1608,6 +1609,14 @@ namespace
             Complete
         };
 
+        enum class R3CaptureStage : uint8_t
+        {
+            ShadowedScattering,
+            FogOnlyWithoutShadowMap,
+            FogDisabledControl,
+            Complete
+        };
+
         Core::Rendering::FrameCaptureSourceKind GetCaptureSourceForTest() const
         {
             return GetRunConfig().CaptureSource;
@@ -1617,6 +1626,7 @@ namespace
             const Core::Container::VariableArray<Core::Container::String>& args) override
         {
             m_bR2Scenario = false;
+            m_bR3Scenario = false;
             m_bAllNumericalScenario = false;
             m_bAllNumericalArgumentParsed = false;
             m_bAllNumericalForcedRowsArgumentParsed = false;
@@ -1680,6 +1690,25 @@ namespace
                 LOG_ERROR("R2 sky-time-sweep は outdoor scene と組み合わせてください");
                 return false;
             }
+            if (m_bR3Scenario &&
+                (m_bR1Scenario || m_bR2Scenario || m_bAllNumericalScenario ||
+                 m_bKnownCdScenario || m_bP4Scenario ||
+                 m_bTransparentPhysicalLightingScenario))
+            {
+                LOG_ERROR("R3 shadowed-shafts は他の描画シナリオと併用できません");
+                return false;
+            }
+            if (m_bR3Scenario &&
+                GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::BackBuffer)
+            {
+                LOG_ERROR("R3 shadowed-shafts は BackBuffer capture と組み合わせてください");
+                return false;
+            }
+            if (m_bR3Scenario && GetRunConfig().Scene != SceneKind::Outdoor)
+            {
+                LOG_ERROR("R3 shadowed-shafts は outdoor scene と組み合わせてください");
+                return false;
+            }
             m_R1CaptureStage = R1CaptureStage::BackBuffer;
             m_bR1HasFrameNumber = false;
             m_R1LastFrameNumber = 0u;
@@ -1690,6 +1719,16 @@ namespace
             m_R2PreviousChannelMean[0] = 0.0;
             m_R2PreviousChannelMean[1] = 0.0;
             m_R2PreviousChannelMean[2] = 0.0;
+            m_R3CaptureStage = R3CaptureStage::ShadowedScattering;
+            m_bR3StageApplyFailed = false;
+            m_bR3HasFrameNumber = false;
+            m_R3LastFrameNumber = 0u;
+            m_bR3HasShadowedMeans = false;
+            m_R3ShadowedCenterMean = 0.0;
+            m_R3ShadowedSideMean = 0.0;
+            m_bR3HasFogOnlyMeans = false;
+            m_R3FogOnlyCenterMean = 0.0;
+            m_R3FogOnlySideMean = 0.0;
             m_KnownCdStage = KnownCdStage::PureLambertA;
             m_KnownCdHasFrameNumber = false;
             m_KnownCdLastFrameNumber = 0u;
@@ -2033,6 +2072,18 @@ namespace
                 m_bR2Scenario = true;
                 return true;
             }
+            if (argument == TEXT("--r3-scenario=shadowed-shafts"))
+            {
+                if (m_bR3Scenario || m_bR1Scenario || m_bR2Scenario ||
+                    m_bAllNumericalScenario || m_bKnownCdScenario || m_bP4Scenario ||
+                    m_bTransparentPhysicalLightingScenario)
+                {
+                    outFailureReason = TEXT("duplicate or conflicting r3 scenario");
+                    return false;
+                }
+                m_bR3Scenario = true;
+                return true;
+            }
             if (argument == TEXT("--r1-forced-rows=2"))
             {
                 if (!m_bAllNumericalScenario || m_bAllNumericalForcedRowsArgumentParsed)
@@ -2143,6 +2194,10 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason) override
         {
+            if (m_bR3Scenario)
+            {
+                return EvaluateR3ShadowedShaftsFrame(frame, reason);
+            }
             if (m_bR2Scenario)
             {
                 return EvaluateR2BackBufferFrame(frame, reason);
@@ -2247,6 +2302,31 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_bR3Scenario)
+            {
+                if (m_R3CaptureStage == R3CaptureStage::Complete)
+                {
+                    return;
+                }
+                const bool bDirectionalLightEnabled =
+                    m_R3CaptureStage == R3CaptureStage::ShadowedScattering;
+                if (!GetFixture().ApplyR3ShadowedShaftsFixture(
+                        true, bDirectionalLightEnabled))
+                {
+                    m_bR3StageApplyFailed = true;
+                    LOG_ERROR("R3 shadowed-shafts fixture state could not be applied");
+                    return;
+                }
+                renderWorld.SetMainCamera(GetFixture().GetR3ShadowedShaftsCamera());
+                renderWorld.SetSkyAtmosphere(
+                    Core::Rendering::MakeDefaultSkyAtmosphereParameters());
+
+                Core::Rendering::VolumetricFogParameters fog =
+                    Core::Rendering::MakeDefaultVolumetricFogParameters();
+                fog.bEnabled = m_R3CaptureStage != R3CaptureStage::FogDisabledControl;
+                renderWorld.SetVolumetricFogParameters(fog);
+                return;
+            }
             if (m_bR2Scenario)
             {
                 SkyAtmosphereParameters parameters = MakeDefaultSkyAtmosphereParameters();
@@ -2488,6 +2568,15 @@ namespace
 
         void AdvanceCaptureStage() override
         {
+            if (m_bR3Scenario)
+            {
+                if (m_R3CaptureStage != R3CaptureStage::Complete)
+                {
+                    m_R3CaptureStage = static_cast<R3CaptureStage>(
+                        static_cast<uint8_t>(m_R3CaptureStage) + 1u);
+                }
+                return;
+            }
             if (m_bR2Scenario)
             {
                 if (m_R2SkyTimeCaseIndex < R2SkyTimeCaseCount)
@@ -2557,6 +2646,18 @@ namespace
             const Core::Rendering::CapturedFrame& frame,
             Core::Rendering::FrameCaptureRequest& outRequest) override
         {
+            if (m_bR3Scenario)
+            {
+                if (m_R3CaptureStage == R3CaptureStage::Complete)
+                {
+                    return false;
+                }
+                outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::BackBuffer;
+                LOG_INFO("R3 shadowed-shafts follow-up requested: stage=%u after frame=%llu",
+                         static_cast<unsigned int>(m_R3CaptureStage),
+                         static_cast<unsigned long long>(frame.FrameNumber));
+                return true;
+            }
             if (m_bR2Scenario)
             {
                 if (m_R2SkyTimeCaseIndex >= R2SkyTimeCaseCount)
@@ -5842,6 +5943,188 @@ namespace
             return EvaluateR1FloatCapture(frame, "PresentationColor", TEXT("OETF前PresentationColor"), reason);
         }
 
+        static bool ComputeR3RoiMeanLuma(
+            const Core::Rendering::CapturedFrame& frame,
+            uint32_t minimumX,
+            uint32_t maximumXExclusive,
+            uint32_t minimumY,
+            uint32_t maximumYExclusive,
+            double& outMeanLuma)
+        {
+            const bool bBgra = frame.Format == RHI::Format::B8G8R8A8_UNORM ||
+                               frame.Format == RHI::Format::B8G8R8A8_SRGB;
+            const uint32_t clampedMinimumX = std::min(minimumX, frame.Width);
+            const uint32_t clampedMaximumX = std::min(maximumXExclusive, frame.Width);
+            const uint32_t clampedMinimumY = std::min(minimumY, frame.Height);
+            const uint32_t clampedMaximumY = std::min(maximumYExclusive, frame.Height);
+            if (clampedMinimumX >= clampedMaximumX || clampedMinimumY >= clampedMaximumY)
+            {
+                return false;
+            }
+
+            double sum = 0.0;
+            size_t pixelCount = 0u;
+            for (uint32_t y = clampedMinimumY; y < clampedMaximumY; ++y)
+            {
+                const size_t rowOffset = static_cast<size_t>(y) * frame.RowPitchBytes;
+                for (uint32_t x = clampedMinimumX; x < clampedMaximumX; ++x)
+                {
+                    const size_t offset = rowOffset + static_cast<size_t>(x) * frame.BytesPerPixel;
+                    const double red = frame.Pixels[offset + (bBgra ? 2u : 0u)];
+                    const double green = frame.Pixels[offset + 1u];
+                    const double blue = frame.Pixels[offset + (bBgra ? 0u : 2u)];
+                    sum += 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+                    ++pixelCount;
+                }
+            }
+            if (pixelCount == 0u)
+            {
+                return false;
+            }
+            outMeanLuma = sum / static_cast<double>(pixelCount);
+            return std::isfinite(outMeanLuma);
+        }
+
+        bool EvaluateR3ShadowedShaftsFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& reason)
+        {
+            if (m_bR3StageApplyFailed)
+            {
+                reason = TEXT("R3 shadowed-shafts fixture state could not be applied");
+                return false;
+            }
+            if (m_R3CaptureStage == R3CaptureStage::Complete)
+            {
+                reason = TEXT("R3 shadowed-shafts received an unexpected extra capture");
+                return false;
+            }
+            if (frame.RequestId != GetLastAcceptedRequestId())
+            {
+                reason = TEXT("R3 BackBuffer capture RequestId does not match the accepted request");
+                return false;
+            }
+            if (m_bR3HasFrameNumber && frame.FrameNumber <= m_R3LastFrameNumber)
+            {
+                reason = TEXT("R3 BackBuffer capture FrameNumber is not strictly increasing");
+                return false;
+            }
+
+            const bool bHardwareFormat = RHI::IsPresentationSrgbFormat(frame.Format);
+            const bool bShaderFormat = RHI::IsPresentationUnormFormat(frame.Format);
+            const bool bMetadataValid =
+                frame.ColorSpace == RHI::PresentationColorSpace::Rec709D65 &&
+                frame.Transfer == RHI::PresentationTransfer::SRGB &&
+                (bHardwareFormat || bShaderFormat) &&
+                frame.bHardwareSrgbEncode == bHardwareFormat &&
+                frame.bShaderSrgbEncode == bShaderFormat &&
+                frame.BytesPerPixel == 4u &&
+                frame.Width == ValidationWidth &&
+                frame.Height == ValidationHeight;
+            if (!bMetadataValid)
+            {
+                reason = TEXT("R3 BackBuffer capture format or encode metadata is invalid");
+                return false;
+            }
+
+            const size_t minimumRowPitch = static_cast<size_t>(frame.Width) * frame.BytesPerPixel;
+            if (frame.RowPitchBytes < minimumRowPitch ||
+                frame.Height > std::numeric_limits<size_t>::max() / frame.RowPitchBytes ||
+                frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
+            {
+                reason = TEXT("R3 BackBuffer capture pixel storage is invalid");
+                return false;
+            }
+
+            const uint32_t centerMinX = ValidationWidth * 45u / 100u;
+            const uint32_t centerMaxX = ValidationWidth * 55u / 100u;
+            const uint32_t centerMinY = ValidationHeight * 45u / 100u;
+            const uint32_t centerMaxY = ValidationHeight * 55u / 100u;
+            const uint32_t sideMinX = ValidationWidth * 70u / 100u;
+            const uint32_t sideMaxX = ValidationWidth * 75u / 100u;
+            double centerMean = 0.0;
+            double sideMean = 0.0;
+            if (!ComputeR3RoiMeanLuma(frame,
+                                      centerMinX,
+                                      centerMaxX,
+                                      centerMinY,
+                                      centerMaxY,
+                                      centerMean) ||
+                !ComputeR3RoiMeanLuma(frame,
+                                      sideMinX,
+                                      sideMaxX,
+                                      centerMinY,
+                                      centerMaxY,
+                                      sideMean))
+            {
+                reason = TEXT("R3 BackBuffer capture ROI is invalid");
+                return false;
+            }
+
+            m_R3LastFrameNumber = frame.FrameNumber;
+            m_bR3HasFrameNumber = true;
+            if (m_R3CaptureStage == R3CaptureStage::ShadowedScattering)
+            {
+                m_R3ShadowedCenterMean = centerMean;
+                m_R3ShadowedSideMean = sideMean;
+                m_bR3HasShadowedMeans = true;
+                std::cout << "R3_GPU_CAPTURE stage=shadowed-scattering"
+                          << " frame=" << frame.FrameNumber
+                          << " center_mean_luma=" << centerMean
+                          << " unoccluded_mean_luma=" << sideMean << "\n";
+                return true;
+            }
+            if (m_R3CaptureStage == R3CaptureStage::FogOnlyWithoutShadowMap)
+            {
+                m_R3FogOnlyCenterMean = centerMean;
+                m_R3FogOnlySideMean = sideMean;
+                m_bR3HasFogOnlyMeans = true;
+                std::cout << "R3_GPU_CAPTURE stage=fog-only-without-shadow-map"
+                          << " frame=" << frame.FrameNumber
+                          << " center_mean_luma=" << centerMean
+                          << " unoccluded_mean_luma=" << sideMean << "\n";
+                return true;
+            }
+            if (!m_bR3HasShadowedMeans || !m_bR3HasFogOnlyMeans)
+            {
+                reason = TEXT("R3 comparison captures are missing a prior stage");
+                return false;
+            }
+
+            constexpr double maximumShadowedCenterDeltaLuma = 3.0;
+            constexpr double minimumUnoccludedScatteringDeltaLuma = 1.0;
+            constexpr double minimumAnalyticFogDeltaLuma = 0.25;
+            const double shadowedCenterDelta =
+                std::abs(m_R3ShadowedCenterMean - m_R3FogOnlyCenterMean);
+            const double unoccludedScatteringDelta =
+                m_R3ShadowedSideMean - m_R3FogOnlySideMean;
+            const double fogCenterDelta = m_R3FogOnlyCenterMean - centerMean;
+            const double fogSideDelta = m_R3FogOnlySideMean - sideMean;
+            const bool bPassed =
+                shadowedCenterDelta <= maximumShadowedCenterDeltaLuma &&
+                unoccludedScatteringDelta >= minimumUnoccludedScatteringDeltaLuma &&
+                fogCenterDelta >= minimumAnalyticFogDeltaLuma &&
+                fogSideDelta >= minimumAnalyticFogDeltaLuma &&
+                fogSideDelta + 0.5 >= fogCenterDelta;
+            std::cout << "R3_GPU_CAPTURE stage=fog-disabled-control"
+                      << " frame=" << frame.FrameNumber
+                      << " center_mean_luma=" << centerMean
+                      << " unoccluded_mean_luma=" << sideMean
+                      << " shadowed_center_delta=" << shadowedCenterDelta
+                      << " unoccluded_scattering_delta=" << unoccludedScatteringDelta
+                      << " fog_center_delta=" << fogCenterDelta
+                      << " fog_unoccluded_delta=" << fogSideDelta
+                      << " passed=" << (bPassed ? 1 : 0) << "\n";
+            if (!bPassed)
+            {
+                reason = TEXT("R3 GPU capture did not isolate shadowed scattering and no-shadow analytic fog");
+                return false;
+            }
+            std::cout << "R3_SHADOWED_SHAFTS=PASS captures=3 shadowed_csm=1"
+                      << " no_shadow_fog=1 analytic_fog_control=1\n";
+            return true;
+        }
+
         bool EvaluateR2BackBufferFrame(
             const Core::Rendering::CapturedFrame& frame,
             Core::Container::String& reason)
@@ -6195,11 +6478,22 @@ namespace
 
         bool m_bR1Scenario = false;
         bool m_bR2Scenario = false;
+        bool m_bR3Scenario = false;
         uint32_t m_R2SkyTimeCaseIndex = 0u;
         bool m_bR2HasFrameNumber = false;
         uint64_t m_R2LastFrameNumber = 0u;
         bool m_bR2HasPreviousChannelMean = false;
         double m_R2PreviousChannelMean[3] = {};
+        R3CaptureStage m_R3CaptureStage = R3CaptureStage::ShadowedScattering;
+        bool m_bR3StageApplyFailed = false;
+        bool m_bR3HasFrameNumber = false;
+        uint64_t m_R3LastFrameNumber = 0u;
+        bool m_bR3HasShadowedMeans = false;
+        double m_R3ShadowedCenterMean = 0.0;
+        double m_R3ShadowedSideMean = 0.0;
+        bool m_bR3HasFogOnlyMeans = false;
+        double m_R3FogOnlyCenterMean = 0.0;
+        double m_R3FogOnlySideMean = 0.0;
         bool m_bAllNumericalScenario = false;
         bool m_bAllNumericalArgumentParsed = false;
         bool m_bKnownCdScenario = false;
@@ -6421,6 +6715,49 @@ namespace
         return !duplicateHandler.OnPreInitialize(duplicateArgs);
     }
 
+    bool ValidateR3ScenarioArgumentContract()
+    {
+        Core::Container::VariableArray<Core::Container::String> validArgs;
+        validArgs.push_back(TEXT("--scene=outdoor"));
+        validArgs.push_back(TEXT("--capture-source=back-buffer"));
+        validArgs.push_back(TEXT("--r3-scenario=shadowed-shafts"));
+        HdrHandler validHandler;
+        if (!validHandler.OnPreInitialize(validArgs))
+        {
+            std::cerr << "R3 shadowed-shafts scenario argument was rejected\n";
+            return false;
+        }
+
+        Core::Container::VariableArray<Core::Container::String> missingCaptureArgs;
+        missingCaptureArgs.push_back(TEXT("--scene=outdoor"));
+        missingCaptureArgs.push_back(TEXT("--r3-scenario=shadowed-shafts"));
+        HdrHandler missingCaptureHandler;
+        if (missingCaptureHandler.OnPreInitialize(missingCaptureArgs))
+        {
+            std::cerr << "R3 shadowed-shafts accepted a non-back-buffer capture\n";
+            return false;
+        }
+
+        Core::Container::VariableArray<Core::Container::String> wrongSceneArgs;
+        wrongSceneArgs.push_back(TEXT("--scene=indoor"));
+        wrongSceneArgs.push_back(TEXT("--capture-source=back-buffer"));
+        wrongSceneArgs.push_back(TEXT("--r3-scenario=shadowed-shafts"));
+        HdrHandler wrongSceneHandler;
+        if (wrongSceneHandler.OnPreInitialize(wrongSceneArgs))
+        {
+            std::cerr << "R3 shadowed-shafts accepted a non-outdoor scene\n";
+            return false;
+        }
+
+        Core::Container::VariableArray<Core::Container::String> duplicateArgs;
+        duplicateArgs.push_back(TEXT("--scene=outdoor"));
+        duplicateArgs.push_back(TEXT("--capture-source=back-buffer"));
+        duplicateArgs.push_back(TEXT("--r3-scenario=shadowed-shafts"));
+        duplicateArgs.push_back(TEXT("--r3-scenario=shadowed-shafts"));
+        HdrHandler duplicateHandler;
+        return !duplicateHandler.OnPreInitialize(duplicateArgs);
+    }
+
     bool ValidateR1FinalFixtureContract()
     {
         if (!ValidateR1PlaneMeshContractForTesting())
@@ -6499,11 +6836,14 @@ int main(int argc, char** argv)
 
     bool bR1Scenario = false;
     bool bR2Scenario = false;
+    bool bR3Scenario = false;
     bool bAllNumericalScenario = false;
     bool bR1FixtureSelfTest = false;
     bool bR2SkyCsmSelfTest = false;
     bool bR2OutdoorScene = false;
     bool bR2BackBuffer = false;
+    bool bR3OutdoorScene = false;
+    bool bR3BackBuffer = false;
     for (int index = 1; index < argc; ++index)
     {
         if (std::strcmp(argv[index], "--r1-scenario=srgb-transfer") == 0)
@@ -6518,13 +6858,19 @@ int main(int argc, char** argv)
         {
             bR2Scenario = true;
         }
+        if (std::strcmp(argv[index], "--r3-scenario=shadowed-shafts") == 0)
+        {
+            bR3Scenario = true;
+        }
         if (std::strcmp(argv[index], "--scene=outdoor") == 0)
         {
             bR2OutdoorScene = true;
+            bR3OutdoorScene = true;
         }
         if (std::strcmp(argv[index], "--capture-source=back-buffer") == 0)
         {
             bR2BackBuffer = true;
+            bR3BackBuffer = true;
         }
         if (std::strcmp(argv[index], "--self-test-r1-fixture-contract") == 0)
         {
@@ -6564,6 +6910,11 @@ int main(int argc, char** argv)
             return 1;
         }
     }
+    if (bR3Scenario && (!bR3OutdoorScene || !bR3BackBuffer))
+    {
+        std::cerr << "R3 shadowed-shafts requires outdoor scene and BackBuffer capture\n";
+        return 1;
+    }
 
     if (!ValidateCaptureSourceArgumentContract())
     {
@@ -6574,6 +6925,10 @@ int main(int argc, char** argv)
         return 1;
     }
     if (!ValidateP4ScenarioArgumentContract())
+    {
+        return 1;
+    }
+    if (!ValidateR3ScenarioArgumentContract())
     {
         return 1;
     }

@@ -10,6 +10,7 @@
 #include "DrawCommand.h"
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
+#include "Rendering/VolumetricFog.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/PresentationPass.h"
@@ -282,6 +283,12 @@ namespace NorvesLib::Core::Rendering
         void SetSkyAtmosphere(const SkyAtmosphereParameters& parameters);
 
         /**
+         * @brief 高さフォグ設定を次のFramePacketへ公開する
+         * @param parameters GameThread側で保持する高さフォグ設定
+         */
+        void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
+
+        /**
          * @brief メインカメラを取得
          */
         const CameraProxy &GetMainCamera() const { return m_MainCamera; }
@@ -467,6 +474,7 @@ namespace NorvesLib::Core::Rendering
         // メインカメラ（GameThreadから設定される）
         CameraProxy m_MainCamera;
         SkyAtmosphereParameters m_SkyAtmosphere;
+        VolumetricFogParameters m_VolumetricFog;
         Container::UnorderedMap<uint64_t, CameraProxy> m_Cameras;
         uint64_t m_NextCameraId = 1;
         uint64_t m_MainCameraId = 0;

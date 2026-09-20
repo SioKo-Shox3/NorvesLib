@@ -83,6 +83,8 @@ namespace NorvesLib::Core::Rendering
 
         RHI::TexturePtr ShadowMapTexture;
         RHI::SamplerPtr ShadowSampler;
+        RHI::TexturePtr ShadowMapFallbackTexture;
+        RHI::SamplerPtr ShadowMapFallbackSampler;
         DirectionalShadowShaderValues DirectionalShadow;
         CascadedDirectionalShadowShaderValues CascadedShadow;
 
@@ -112,6 +114,8 @@ namespace NorvesLib::Core::Rendering
             bLightingPublished = false;
             ShadowMapTexture.reset();
             ShadowSampler.reset();
+            ShadowMapFallbackTexture.reset();
+            ShadowMapFallbackSampler.reset();
             LightBuffer.reset();
             LogicalLightCount = 0;
             LightBufferSizeBytes = 0;
@@ -168,6 +172,13 @@ namespace NorvesLib::Core::Rendering
             ShadowMapTexture = shadowMap;
             ShadowSampler = shadowSampler;
             bShadowPublished = true;
+        }
+
+        void PublishShadowMapFallback(const RHI::TexturePtr& texture,
+                                      const RHI::SamplerPtr& sampler)
+        {
+            ShadowMapFallbackTexture = texture;
+            ShadowMapFallbackSampler = sampler;
         }
 
         void PublishCascadedShadow(const float* views,

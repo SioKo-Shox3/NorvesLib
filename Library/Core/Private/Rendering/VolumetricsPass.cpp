@@ -93,6 +93,19 @@ namespace NorvesLib::Core::Rendering
                    (usage & RHI::ResourceUsage::DepthStencil) != RHI::ResourceUsage::None;
         }
 
+        bool IsValidShadowMapArrayFallbackTexture(const RHI::TexturePtr& texture)
+        {
+            if (!texture || texture->GetWidth() == 0u || texture->GetHeight() == 0u ||
+                texture->GetArraySize() != PhysicalLightingShadowCascadeCount ||
+                texture->GetFormat() != RHI::Format::R8G8B8A8_UNORM)
+            {
+                return false;
+            }
+
+            return (texture->GetUsage() & RHI::ResourceUsage::ShaderRead) !=
+                   RHI::ResourceUsage::None;
+        }
+
         bool HasValidCascadedShadowValues(const PhysicalLightingResources& lighting)
         {
             if (!lighting.HasCompleteCascadedShadow())
@@ -305,6 +318,15 @@ namespace NorvesLib::Core::Rendering
                               ? SanitizeVolumetricFogParameters(
                                     context->SnapshotScene->VolumetricFog)
                               : MakeDefaultVolumetricFogParameters();
+        if (context && context->FrameNumber >= 140u && context->FrameNumber <= 170u)
+        {
+            NORVES_LOG_INFO("VolumetricsPass",
+                            "R3_DECLARE frame=%llu scene=%u enabled=%u density=%g",
+                            static_cast<unsigned long long>(context->FrameNumber),
+                            context->SnapshotScene ? 1u : 0u,
+                            m_FogParameters.bEnabled ? 1u : 0u,
+                            m_FogParameters.DensityAtBaseHeight);
+        }
         if (!m_FogParameters.bEnabled)
         {
             return;
@@ -355,6 +377,15 @@ namespace NorvesLib::Core::Rendering
     void VolumetricsPass::Execute(RenderGraphResources& resources,
                                   ViewRenderContext& context)
     {
+        if (context.FrameNumber >= 140u && context.FrameNumber <= 170u)
+        {
+            NORVES_LOG_INFO("VolumetricsPass",
+                            "R3_EXEC_ENTER frame=%llu enabled=%u scene_color=%u scene_depth=%u",
+                            static_cast<unsigned long long>(context.FrameNumber),
+                            m_FogParameters.bEnabled ? 1u : 0u,
+                            m_SceneColorHandle.IsValid() ? 1u : 0u,
+                            m_SceneDepthHandle.IsValid() ? 1u : 0u);
+        }
         if (!m_FogParameters.bEnabled ||
             !m_SceneColorHandle.IsValid() ||
             !m_SceneDepthHandle.IsValid())
@@ -370,6 +401,33 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr cascadedShadowMapTexture = m_CascadedShadowMapHandle.IsValid()
                                                        ? resources.GetTexture(m_CascadedShadowMapHandle)
                                                        : RHI::TexturePtr{};
+        const PhysicalLightingResources& physicalLighting = context.PhysicalLighting;
+        const bool bActualShadowMapAvailable =
+            IsValidCascadedShadowMapTexture(cascadedShadowMapTexture) &&
+            physicalLighting.ShadowMapTexture &&
+            physicalLighting.ShadowMapTexture.get() == cascadedShadowMapTexture.get() &&
+            physicalLighting.ShadowSampler;
+        const RHI::TexturePtr& shadowMapTextureForSampling = bActualShadowMapAvailable
+                                                                 ? cascadedShadowMapTexture
+                                                                 : physicalLighting.ShadowMapFallbackTexture;
+        const RHI::SamplerPtr& shadowMapSamplerForSampling = bActualShadowMapAvailable
+                                                                 ? physicalLighting.ShadowSampler
+                                                                 : physicalLighting.ShadowMapFallbackSampler;
+        const bool bShadowSamplingTextureAvailable =
+            bActualShadowMapAvailable ||
+            IsValidShadowMapArrayFallbackTexture(shadowMapTextureForSampling);
+        if (context.FrameNumber >= 140u && context.FrameNumber <= 170u)
+        {
+            NORVES_LOG_INFO("VolumetricsPass",
+                            "R3_EXEC_RESOURCES frame=%llu scene_color=%u depth=%u actual_csm=%u fallback=%u sampler=%u",
+                            static_cast<unsigned long long>(context.FrameNumber),
+                            sceneColorTexture ? 1u : 0u,
+                            sceneDepthTexture ? 1u : 0u,
+                            bActualShadowMapAvailable ? 1u : 0u,
+                            IsValidShadowMapArrayFallbackTexture(
+                                physicalLighting.ShadowMapFallbackTexture) ? 1u : 0u,
+                            shadowMapSamplerForSampling ? 1u : 0u);
+        }
         if (!sceneColorTexture)
         {
             return;
@@ -380,7 +438,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         if (!sceneDepthTexture || !m_ParamsBuffer || !m_DescriptorSet ||
-            !IsValidCascadedShadowMapTexture(cascadedShadowMapTexture))
+            !bShadowSamplingTextureAvailable || !shadowMapSamplerForSampling)
         {
             EnqueueEmptyNativePass(context, sceneColorTexture);
             return;
@@ -430,22 +488,43 @@ namespace NorvesLib::Core::Rendering
         params.FallbackFogColor[2] = scene ? SafeFogColorChannel(scene->FogColorB) : 0.0f;
         params.FallbackFogColor[3] = 1.0f;
 
-        const PhysicalLightingResources& physicalLighting = context.PhysicalLighting;
         const ViewportRenderPlan* activeViewport = context.CurrentViewport;
         const bool bPhysicalLightingMatches = activeViewport &&
             physicalLighting.Matches(context.FrameNumber,
                                      activeViewport->ViewId,
                                      activeViewport->ViewportId);
-        const bool bShadowTextureMatches = physicalLighting.ShadowMapTexture &&
-            physicalLighting.ShadowMapTexture.get() == cascadedShadowMapTexture.get();
         const bool bCascadedShadowAvailable =
-            bCameraForwardValid && bPhysicalLightingMatches && bShadowTextureMatches &&
+            bCameraForwardValid && bPhysicalLightingMatches && bActualShadowMapAvailable &&
             physicalLighting.HasCompleteCascadedShadow() &&
             HasValidCascadedShadowValues(physicalLighting);
         const bool bDirectionalLightAvailable = bCascadedShadowAvailable &&
             TryBuildDirectionalScatteringLight(context,
                                                params.DirectionalLightDirectionAndAnisotropy,
                                                params.DirectionalLightRadianceAndEnabled);
+        if (m_FogParameters.bEnabled)
+        {
+            NORVES_LOG_INFO("VolumetricsPass",
+                            "R3_DIAG frame=%llu camera=%llu position=(%g,%g,%g) pre=%g density=%g falloff=%g fog=(%g,%g,%g) sky=%u actual_csm=%u fallback=%u csm_ready=%u light=%u radiance=(%g,%g,%g)",
+                            static_cast<unsigned long long>(context.FrameNumber),
+                            static_cast<unsigned long long>(activeCamera->CameraId),
+                            activeCamera->PositionX,
+                            activeCamera->PositionY,
+                            activeCamera->PositionZ,
+                            params.CameraPositionAndPreExposure[3],
+                            params.FogParameters[0],
+                            params.FogParameters[2],
+                            params.FallbackFogColor[0],
+                            params.FallbackFogColor[1],
+                            params.FallbackFogColor[2],
+                            skyRadianceTexture ? 1u : 0u,
+                            bActualShadowMapAvailable ? 1u : 0u,
+                            bShadowSamplingTextureAvailable ? 1u : 0u,
+                            bCascadedShadowAvailable ? 1u : 0u,
+                            bDirectionalLightAvailable ? 1u : 0u,
+                            params.DirectionalLightRadianceAndEnabled[0],
+                            params.DirectionalLightRadianceAndEnabled[1],
+                            params.DirectionalLightRadianceAndEnabled[2]);
+        }
         if (bDirectionalLightAvailable)
         {
             params.CameraForwardAndScatteringEnabled[3] = 1.0f;
@@ -467,11 +546,8 @@ namespace NorvesLib::Core::Rendering
                                      skyRadianceTexture ? skyRadianceTexture : sceneDepthTexture);
         m_DescriptorSet->BindSampler(1u,
                                      skyRadianceTexture ? m_SkyRadianceSampler : m_SceneDepthSampler);
-        m_DescriptorSet->BindTexture(3u, cascadedShadowMapTexture);
-        m_DescriptorSet->BindSampler(3u,
-                                     physicalLighting.ShadowSampler
-                                         ? physicalLighting.ShadowSampler
-                                         : m_SceneDepthSampler);
+        m_DescriptorSet->BindTexture(3u, shadowMapTextureForSampling);
+        m_DescriptorSet->BindSampler(3u, shadowMapSamplerForSampling);
         m_DescriptorSet->Update();
 
         context.EnqueueFullscreenPass(m_RenderPass,

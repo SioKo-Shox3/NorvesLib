@@ -3,6 +3,7 @@
 #include "RenderTypes.h"
 #include "FrameCaptureTypes.h"
 #include "SkyAtmosphere.h"
+#include "VolumetricFog.h"
 #include "RenderingCoordinator.h"
 #include "RenderThread.h"
 #include "RenderResources.h"
@@ -150,6 +151,12 @@ namespace NorvesLib::Core::Rendering
          * @param parameters 次のFramePacketへコピーする空スナップショット
          */
         void SetSkyAtmosphere(const SkyAtmosphereParameters& parameters);
+
+        /**
+         * @brief 高さフォグ設定を次のFramePacketへ公開する（GameThread）
+         * @param parameters GameThread側で保持し、FramePacketへ値コピーする設定
+         */
+        void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
         /**
          * @brief フレーム終了（GameThread）

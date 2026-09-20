@@ -251,7 +251,8 @@ namespace NorvesLib::Test::RenderingValidation
         bool ClearP4DfgTileFixture() const;
         bool ApplyTransparentPhysicalLightingRow(uint32_t rowIndex) const;
         bool ApplyTransparentPhysicalLightingObjectPresence() const;
-        bool ApplyR3ShadowedShaftsFixture(bool bOccluderCastsShadow) const;
+        bool ApplyR3ShadowedShaftsFixture(bool bOccluderCastsShadow,
+                                          bool bDirectionalLightEnabled = true) const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
         uint64_t GetObservedFixedStepCount() const;

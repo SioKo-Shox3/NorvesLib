@@ -1154,6 +1154,7 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
             }
             m_CurrentPacket->Scene.SkyAtmosphere = m_SkyAtmosphere;
+            m_CurrentPacket->Scene.SetVolumetricFogParameters(m_VolumetricFog);
 
             m_CurrentPacket->DrawCommands.clear();
             m_CurrentPacket->DrawCommands.reserve(m_MaxDrawCallsPerFrame);
@@ -2286,6 +2287,12 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetSkyAtmosphere(const SkyAtmosphereParameters& parameters)
     {
         m_SkyAtmosphere = parameters;
+    }
+
+    void RenderingCoordinator::SetVolumetricFogParameters(
+        const VolumetricFogParameters& parameters)
+    {
+        m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
     }
 
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)

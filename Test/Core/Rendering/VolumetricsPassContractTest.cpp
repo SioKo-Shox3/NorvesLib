@@ -50,6 +50,16 @@ int main()
         ReadRepositoryFile("Library/Core/Public/Rendering/ViewRenderContext.h");
     const std::string coordinator =
         ReadRepositoryFile("Library/Core/Private/Rendering/RenderingCoordinator.cpp");
+    const std::string coordinatorHeader =
+        ReadRepositoryFile("Library/Core/Public/Rendering/RenderingCoordinator.h");
+    const std::string renderWorldHeader =
+        ReadRepositoryFile("Library/Core/Public/Rendering/RenderWorld.h");
+    const std::string renderWorldImplementation =
+        ReadRepositoryFile("Library/Core/Private/Rendering/RenderWorld.cpp");
+    const std::string sceneProxy =
+        ReadRepositoryFile("Library/Core/Public/Rendering/SceneProxy.h");
+    const std::string lightingImplementation =
+        ReadRepositoryFile("Library/Core/Private/Rendering/LightingPass.cpp");
 
     assert(header.find("class VolumetricsPass : public IViewPass, public IRenderGraphPass") !=
            std::string::npos);
@@ -138,6 +148,31 @@ int main()
            std::string::npos);
     assert(shader.find("textureLod(cascadedShadowMap,") != std::string::npos);
     assert(shader.find("directionalLightDirectionAndAnisotropy.xyz,") != std::string::npos);
+    assert(renderWorldHeader.find(
+               "SetVolumetricFogParameters(const VolumetricFogParameters& parameters)") !=
+           std::string::npos);
+    assert(renderWorldImplementation.find(
+               "m_RenderingCoordinator.SetVolumetricFogParameters(parameters);") !=
+           std::string::npos);
+    assert(coordinatorHeader.find("VolumetricFogParameters m_VolumetricFog;") !=
+           std::string::npos);
+    assert(coordinator.find(
+               "m_CurrentPacket->Scene.SetVolumetricFogParameters(m_VolumetricFog);") !=
+           std::string::npos);
+    assert(coordinator.find(
+               "m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);") !=
+           std::string::npos);
+    assert(sceneProxy.find("VolumetricFog = SanitizeVolumetricFogParameters(parameters);") !=
+           std::string::npos);
+    assert(renderContext.find("ShadowMapFallbackTexture") != std::string::npos);
+    assert(renderContext.find("ShadowMapFallbackSampler") != std::string::npos);
+    assert(lightingImplementation.find(
+               "PublishShadowMapFallback(m_DefaultShadowMapArrayTexture,") !=
+           std::string::npos);
+    assert(implementation.find("IsValidShadowMapArrayFallbackTexture") !=
+           std::string::npos);
+    assert(implementation.find("shadowMapTextureForSampling") != std::string::npos);
+    assert(implementation.find("bActualShadowMapAvailable &&") != std::string::npos);
     assert(implementation.find("blendAttachment.srcColorBlendFactor = RHI::BlendFactor::One") !=
            std::string::npos);
     assert(implementation.find("blendAttachment.dstColorBlendFactor = RHI::BlendFactor::InvSrcAlpha") !=

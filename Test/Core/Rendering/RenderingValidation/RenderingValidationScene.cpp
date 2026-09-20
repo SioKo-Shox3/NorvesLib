@@ -2316,7 +2316,8 @@ namespace NorvesLib::Test::RenderingValidation
     }
 
     bool RenderingValidationSceneFixture::ApplyR3ShadowedShaftsFixture(
-        bool bOccluderCastsShadow) const
+        bool bOccluderCastsShadow,
+        bool bDirectionalLightEnabled) const
     {
         if (!EnsureR3ShadowedShaftsFixture())
         {
@@ -2338,7 +2339,8 @@ namespace NorvesLib::Test::RenderingValidation
             if (Core::Component::LightComponent* light =
                     entity->GetComponent<Core::Component::LightComponent>())
             {
-                const bool bMainDirectional = entity == m_pP4LightEntity;
+                const bool bMainDirectional = bDirectionalLightEnabled &&
+                                              entity == m_pP4LightEntity;
                 entity->SetActive(bMainDirectional);
                 light->SetLightVisible(bMainDirectional);
             }
@@ -2353,10 +2355,10 @@ namespace NorvesLib::Test::RenderingValidation
         }
         directional->SetLightDirection(0.0f, 0.0f, -1.0f);
         directional->SetLightColor(1.0f, 1.0f, 1.0f);
-        directional->SetIntensity(10000.0f);
-        directional->SetCastShadows(true);
-        directional->SetLightVisible(true);
-        m_pP4LightEntity->SetActive(true);
+        directional->SetIntensity(bDirectionalLightEnabled ? 10000.0f : 0.0f);
+        directional->SetCastShadows(bDirectionalLightEnabled);
+        directional->SetLightVisible(bDirectionalLightEnabled);
+        m_pP4LightEntity->SetActive(bDirectionalLightEnabled);
 
         m_pR3ShadowBackgroundMesh->SetCastShadow(false);
         m_pR3ShadowOccluderMesh->SetCastShadow(bOccluderCastsShadow);

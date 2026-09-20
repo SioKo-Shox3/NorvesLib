@@ -26,11 +26,10 @@
 
 ## In progress
 
-- R3-P3: 許可パス外のfog設定API追加が必要なため停止。詳細は blocked/R3-P3.md。
+- R3-P3: 方向光単一散乱のCSM接続と、RenderWorld→Coordinator→FramePacketの高さフォグ設定経路を実装中。部分実装の基点は `714a978`。
 
 ## Next
 
-- R3-P3: 方向光の単一散乱を既存CSM遮蔽へ接続する。
 - R3-P3: 方向光の単一散乱を既存CSM遮蔽へ接続する。
 - R3-P4: R3専用GPU受入れを固定し、R3Acceptanceを記録する。
 
@@ -53,3 +52,4 @@
 - R3-P2の最終検証ログ: `.harness/runs/20260919-204219/verify-R3-P2-4.txt` (Debug build, EXIT_CODE=0)、`verify-R3-P2-5.txt` (CTest 2/2 passed)、`verify-R3-P2-6.txt` (glslc, EXIT_CODE=0)。
 - R3-P2では失敗経路にも空Load/StoreパスまたはRenderTarget→ShaderResourceバリアを積み、SceneColorの最終状態を維持する。独立評価はPASS。
 - `855de28`の作業途中保存には、着手時点で未コミットだった`NEXT_FINDINGS.md`の52行削除も含まれる。R3-P2実装とTASKS更新は`b6865ea`。
+- R3-P3の途中保存`714a978`では方向光散乱・CSM契約とfixture準備を保存した。対象Debug buildと契約CTest 3/3は成功したが、GPUシナリオ引数とGameThreadの高さフォグ設定経路が未実装だったため、受入れ前として継続中。

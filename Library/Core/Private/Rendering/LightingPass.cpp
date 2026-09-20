@@ -2239,6 +2239,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        context.PhysicalLighting.PublishShadowMapFallback(m_DefaultShadowMapArrayTexture,
+                                                          m_GBufferSampler);
+
         if (!m_LightingRenderPass || !m_LightingFramebuffer || !m_LightingPipeline || !m_LightingDescriptorSet)
         {
             NORVES_LOG_WARNING("LightingPass", "Lighting resources not ready, skipping");
