@@ -62,7 +62,9 @@ namespace
         VulkanDevice& device,
         const AccelerationStructurePtr& topLevel,
         const BufferPtr& resultBuffer,
-        uint32_t frameIndex)
+        uint32_t frameIndex,
+        uint32_t expectedCenterHit,
+        uint32_t expectedMovedHit)
     {
         const String shaderSource = R"glsl(#version 460
 #extension GL_EXT_ray_query : require
@@ -256,8 +258,6 @@ void main()
         const uint32_t hit = results[0];
         const uint32_t movedHit = results[1];
         resultBuffer->Unmap();
-        const uint32_t expectedCenterHit = frameIndex == 0u ? 1u : 0u;
-        const uint32_t expectedMovedHit = frameIndex == 0u ? 0u : 1u;
         std::cout << "tlas_frame" << frameIndex << "_center_hit=" << hit << '\n';
         std::cout << "tlas_frame" << frameIndex << "_moved_hit=" << movedHit << '\n';
         if (hit != expectedCenterHit || movedHit != expectedMovedHit)
@@ -467,7 +467,7 @@ void main()
         resultDesc.CPUAccessible = true;
         resultDesc.DebugName = "RHIAccelerationStructure.QueryResults";
         BufferPtr resultBuffer = device->CreateBuffer(resultDesc);
-        if (!resultBuffer || !RunRayQuery(*vulkanDevice, topLevel, resultBuffer, 0u))
+        if (!resultBuffer || !RunRayQuery(*vulkanDevice, topLevel, resultBuffer, 0u, 1u, 0u))
         {
             return 1;
         }
@@ -528,11 +528,63 @@ void main()
                 tlasUpdateDesc,
                 true,
                 false) ||
-            !RunRayQuery(*vulkanDevice, topLevel, resultBuffer, 1u))
+            !RunRayQuery(*vulkanDevice, topLevel, resultBuffer, 1u, 0u, 1u))
         {
             std::cerr << "移動後のTLAS Update/query検証に失敗しました\n";
             return 1;
         }
+
+        AccelerationStructureInstanceDesc synchronousBuildInstance;
+        synchronousBuildInstance.bottomLevel = accelerationStructure;
+        AccelerationStructureBuildDesc synchronousTlasBuildDesc;
+        synchronousTlasBuildDesc.type = AccelerationStructureType::TopLevel;
+        synchronousTlasBuildDesc.destination = topLevel;
+        synchronousTlasBuildDesc.instances.push_back(synchronousBuildInstance);
+        synchronousTlasBuildDesc.instances.push_back(synchronousBuildInstance);
+        if (!topLevel->Build(synchronousTlasBuildDesc) ||
+            !RunRayQuery(*vulkanDevice, topLevel, resultBuffer, 2u, 1u, 0u))
+        {
+            std::cerr << "同期Buildによるinstance数変更後のTLAS/query検証に失敗しました\n";
+            return 1;
+        }
+        std::cout << "tlas_sync_build_instance_count=2\n";
+
+        AccelerationStructureBuildDesc staleInstanceCountUpdateDesc;
+        staleInstanceCountUpdateDesc.type = AccelerationStructureType::TopLevel;
+        staleInstanceCountUpdateDesc.mode = AccelerationStructureBuildMode::Update;
+        staleInstanceCountUpdateDesc.destination = topLevel;
+        staleInstanceCountUpdateDesc.source = topLevel;
+        staleInstanceCountUpdateDesc.instances.push_back(movedInstance);
+        accelerationStructureCommandList->Begin();
+        const bool staleInstanceCountUpdateAccepted =
+            accelerationStructureCommandList->UpdateAccelerationStructure(staleInstanceCountUpdateDesc);
+        accelerationStructureCommandList->End();
+        if (staleInstanceCountUpdateAccepted)
+        {
+            std::cerr << "同期Build後に旧instance数を使うTLAS Updateが受理されました\n";
+            return 1;
+        }
+        accelerationStructureCommandList->Submit(true);
+        std::cout << "tlas_sync_build_stale_update_rejected=true\n";
+
+        AccelerationStructureBuildDesc synchronousTlasUpdateDesc;
+        synchronousTlasUpdateDesc.type = AccelerationStructureType::TopLevel;
+        synchronousTlasUpdateDesc.mode = AccelerationStructureBuildMode::Update;
+        synchronousTlasUpdateDesc.destination = topLevel;
+        synchronousTlasUpdateDesc.source = topLevel;
+        synchronousTlasUpdateDesc.instances.push_back(movedInstance);
+        synchronousTlasUpdateDesc.instances.push_back(synchronousBuildInstance);
+        if (!RecordAndSubmitAccelerationStructureCommand(
+                accelerationStructureCommandList,
+                synchronousTlasUpdateDesc,
+                true,
+                false) ||
+            !RunRayQuery(*vulkanDevice, topLevel, resultBuffer, 3u, 1u, 1u))
+        {
+            std::cerr << "同期Build後の正しいinstance数によるTLAS Update/query検証に失敗しました\n";
+            return 1;
+        }
+        std::cout << "tlas_sync_build_matching_update_query=true\n";
 
         AccelerationStructurePtr legacyTopLevel = device->CreateAccelerationStructure(tlasResourceDesc);
         AccelerationStructureBuildDesc legacyTlasBuildDesc;
@@ -560,12 +612,12 @@ void main()
                 legacyTlasUpdateDesc,
                 true,
                 false) ||
-            !RunRayQuery(*vulkanDevice, legacyTopLevel, resultBuffer, 2u))
+            !RunRayQuery(*vulkanDevice, legacyTopLevel, resultBuffer, 4u, 0u, 1u))
         {
-            std::cerr << "同期Build後のTLAS再Build fallback/query検証に失敗しました\n";
+            std::cerr << "同期Build後のTLAS Update/query検証に失敗しました\n";
             return 1;
         }
-        std::cout << "tlas_legacy_build_update_rebuilt=true\n";
+        std::cout << "tlas_legacy_build_update=true\n";
 
         tlasUpdateDesc.destination.reset();
         tlasUpdateDesc.source.reset();
@@ -580,7 +632,16 @@ void main()
         legacyTlasUpdateDesc.destination.reset();
         legacyTlasUpdateDesc.source.reset();
         legacyTlasUpdateDesc.instances.clear();
+        synchronousTlasBuildDesc.destination.reset();
+        synchronousTlasBuildDesc.instances.clear();
+        staleInstanceCountUpdateDesc.destination.reset();
+        staleInstanceCountUpdateDesc.source.reset();
+        staleInstanceCountUpdateDesc.instances.clear();
+        synchronousTlasUpdateDesc.destination.reset();
+        synchronousTlasUpdateDesc.source.reset();
+        synchronousTlasUpdateDesc.instances.clear();
         movedInstance.bottomLevel.reset();
+        synchronousBuildInstance.bottomLevel.reset();
         legacyInstance.bottomLevel.reset();
         legacyMovedInstance.bottomLevel.reset();
         discardedInstance.bottomLevel.reset();

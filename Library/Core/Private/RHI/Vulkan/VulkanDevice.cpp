@@ -212,6 +212,7 @@ namespace NorvesLib::RHI::Vulkan
             VariableArray<vk::AccelerationStructureGeometryKHR> geometries;
             VariableArray<vk::AccelerationStructureBuildRangeInfoKHR> buildRanges;
             TSharedPtr<VulkanBuffer> instanceBuffer;
+            uint32_t builtInstanceCount = 0;
             if (desc.type == AccelerationStructureType::BottomLevel)
             {
                 for (const AccelerationStructureGeometryDesc& geometryDesc : desc.geometries)
@@ -330,6 +331,7 @@ namespace NorvesLib::RHI::Vulkan
 
                 vk::AccelerationStructureBuildRangeInfoKHR buildRange{};
                 buildRange.primitiveCount = static_cast<uint32_t>(instances.size());
+                builtInstanceCount = buildRange.primitiveCount;
                 buildRanges.push_back(buildRange);
             }
 
@@ -381,6 +383,10 @@ namespace NorvesLib::RHI::Vulkan
                 0,
                 nullptr);
             m_device->EndSingleTimeCommands(commandBuffer);
+            if (desc.type == AccelerationStructureType::TopLevel)
+            {
+                m_lastBuiltInstanceCount = builtInstanceCount;
+            }
             return true;
         }
         catch (const std::exception& error)

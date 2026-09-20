@@ -1093,7 +1093,7 @@ namespace NorvesLib::RHI::Vulkan
             const uint32_t sourceInstanceCount = GetLatestBuiltInstanceCount(*source);
             if (sourceInstanceCount == 0)
             {
-                // 既存の同期Build経路はinstance数を記録しないため、未知のsourceはフルBuildで置き換える
+                // Build履歴がないsourceはUpdate条件を確認できないため、フルBuildで置き換える
                 rebuildDestination = true;
                 source.reset();
             }
