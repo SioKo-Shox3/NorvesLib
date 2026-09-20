@@ -199,7 +199,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: 実装と指定検証は完了。独立評価をClaudeのセッション上限で完了できず、受入れ状態は保留する。再開条件はblocked/R5-P5.md。
 
 ## R5-P6: TLASのinstance build/updateを実装する
-- status: blocked
+- status: done
 - done-when: BLAS instance配列からTLASを構築し、既知transformの変更をupdateまたはrebuildで反映する。2フレーム間のGPU query結果が移動後の解析位置と一致し、build/update間のbarrierと寿命が検証される。
 - verify: `cmake --build build --config Debug --target RHIAccelerationStructureVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RHIAccelerationStructureVulkanTest$"`
