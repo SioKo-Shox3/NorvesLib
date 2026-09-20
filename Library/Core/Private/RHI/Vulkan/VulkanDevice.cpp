@@ -336,9 +336,11 @@ namespace NorvesLib::RHI::Vulkan
         m_vulkan12Features = vk::PhysicalDeviceVulkan12Features{};
         m_vulkan12Features.drawIndirectCount =
             vulkan12Query.drawIndirectCount == VK_TRUE ? VK_TRUE : VK_FALSE;
+        m_vulkan12Features.bufferDeviceAddress =
+            vulkan12Query.bufferDeviceAddress == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.pNext = &m_vulkan12Features;
 
-        // Optional device extensions are selected before their feature queries.
+        // 任意のデバイス拡張は機能照会より先に選定する。
         auto extensions = GetDeviceExtensions();
 
         bool bDeviceFaultRequested = false;
@@ -1456,6 +1458,8 @@ namespace NorvesLib::RHI::Vulkan
         // ========================================
         {
             m_Capabilities.bDrawIndirectCount = (m_vulkan12Features.drawIndirectCount == VK_TRUE);
+            m_Capabilities.bBufferDeviceAddress =
+                m_vulkan12Features.bufferDeviceAddress == VK_TRUE;
             m_Capabilities.bDrawIndirectFirstInstance =
                 (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
 

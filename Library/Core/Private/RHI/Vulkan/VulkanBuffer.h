@@ -44,15 +44,19 @@ namespace NorvesLib::RHI::Vulkan
         vk::Buffer GetVkBuffer() const { return m_buffer; }
         vk::DeviceMemory GetVkDeviceMemory() const { return m_deviceMemory; }
         bool IsHostVisible() const { return m_desc.CPUAccessible; }
+        uint64_t GetDeviceAddress() const override { return m_deviceAddress; }
 
     private:
         TSharedPtr<VulkanDevice> m_device;
         BufferDesc m_desc;
         vk::Buffer m_buffer;
         vk::DeviceMemory m_deviceMemory;
+        uint64_t m_deviceAddress = 0;
 
         bool m_bIsMapped = false;
         void *m_mappedData = nullptr;
+
+        bool ShouldEnableDeviceAddress() const;
 
         // バッファとメモリの作成
         void CreateBuffer(vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties);

@@ -110,6 +110,19 @@ target_include_directories(RenderThreadFrameCompletionTest PRIVATE
 set_target_properties(RenderThreadFrameCompletionTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderThreadFrameCompletionTest COMMAND RenderThreadFrameCompletionTest)
 
+add_executable(RHIBufferDeviceAddressVulkanTest
+    RHIBufferDeviceAddressVulkanTest.cpp
+)
+target_link_libraries(RHIBufferDeviceAddressVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(RHIBufferDeviceAddressVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RHIBufferDeviceAddressVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RHIBufferDeviceAddressVulkanTest
+    RHIBufferDeviceAddressVulkanTest
+)
 add_executable(RHITextureToBufferReadbackVulkanTest
     RHITextureToBufferReadbackVulkanTest.cpp
 )

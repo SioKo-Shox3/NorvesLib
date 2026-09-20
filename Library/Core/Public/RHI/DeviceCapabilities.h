@@ -96,6 +96,9 @@ namespace NorvesLib::RHI
 
         /** @brief DrawIndirectFirstInstance（Vulkanコア機能）が論理デバイスで有効か */
         bool bDrawIndirectFirstInstance = false;
+
+        /** @brief バッファのdevice address機能が論理デバイスで有効か */
+        bool bBufferDeviceAddress = false;
     };
 
 } // namespace NorvesLib::RHI

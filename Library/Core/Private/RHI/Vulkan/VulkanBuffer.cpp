@@ -31,6 +31,13 @@ namespace NorvesLib::RHI::Vulkan
 
         // バッファとメモリを作成
         CreateBuffer(usage, memProps);
+
+        if (ShouldEnableDeviceAddress())
+        {
+            vk::BufferDeviceAddressInfo addressInfo{};
+            addressInfo.buffer = m_buffer;
+            m_deviceAddress = m_device->GetVkDevice().getBufferAddress(addressInfo);
+        }
     }
 
     // デストラクタ
@@ -157,6 +164,12 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
+    bool VulkanBuffer::ShouldEnableDeviceAddress() const
+    {
+        return m_device->GetCapabilities().bBufferDeviceAddress &&
+               (m_desc.Usage & ResourceUsage::BufferDeviceAddress) == ResourceUsage::BufferDeviceAddress;
+    }
+
     // バッファとメモリの作成
     void VulkanBuffer::CreateBuffer(vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties)
     {
@@ -190,6 +203,13 @@ namespace NorvesLib::RHI::Vulkan
         vk::MemoryAllocateInfo allocInfo{};
         allocInfo.allocationSize = memRequirements.size;
         allocInfo.memoryTypeIndex = memoryTypeIndex;
+
+        vk::MemoryAllocateFlagsInfo allocateFlagsInfo{};
+        if (ShouldEnableDeviceAddress())
+        {
+            allocateFlagsInfo.flags = vk::MemoryAllocateFlagBits::eDeviceAddress;
+            allocInfo.pNext = &allocateFlagsInfo;
+        }
 
         // メモリの割り当て
         auto allocResult = vkDevice.allocateMemory(allocInfo);
@@ -256,6 +276,11 @@ namespace NorvesLib::RHI::Vulkan
         if ((m_desc.Usage & ResourceUsage::TransferDst) == ResourceUsage::TransferDst)
         {
             usage |= vk::BufferUsageFlagBits::eTransferDst;
+        }
+
+        if (ShouldEnableDeviceAddress())
+        {
+            usage |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
         }
 
         // デフォルトでトランスファー先として使用可能にする
