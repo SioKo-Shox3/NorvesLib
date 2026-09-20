@@ -210,6 +210,8 @@ namespace
             std::cerr << "visibility用の結果bufferまたはdescriptor setを作成できませんでした\n";
             return false;
         }
+        const uint32_t initialResults[2] = {0xffffffffu, 0xffffffffu};
+        resultBuffer->Update(initialResults, sizeof(initialResults));
         if (descriptorSet->BindAccelerationStructure(0, AccelerationStructurePtr{}) ||
             descriptorSet->BindAccelerationStructure(1, topLevel))
         {
@@ -255,7 +257,8 @@ namespace
         CommandListPtr commandList = device.CreateCommandList();
         TSharedPtr<VulkanCommandList> vulkanCommandList = DynamicPointerCast<VulkanCommandList>(commandList);
         TSharedPtr<VulkanBuffer> vulkanResultBuffer = DynamicPointerCast<VulkanBuffer>(resultBuffer);
-        if (!commandList || !vulkanCommandList || !vulkanResultBuffer)
+        TSharedPtr<VulkanRayTracingPipeline> rayTracingPipeline = DynamicPointerCast<VulkanRayTracingPipeline>(pipeline);
+        if (!commandList || !vulkanCommandList || !vulkanResultBuffer || !rayTracingPipeline)
         {
             std::cerr << "visibility用のVulkan command listまたはbufferを取得できませんでした\n";
             return false;
@@ -264,6 +267,34 @@ namespace
         commandList->Begin();
         commandList->SetPipeline(pipeline);
         commandList->SetDescriptorSet(descriptorSet, 0);
+        const uint64_t maxUint32 = static_cast<uint64_t>(~uint32_t{0});
+        const uint64_t maxInvocationCount = rayTracingPipeline->GetMaxRayDispatchInvocationCount();
+        uint32_t axisDimensions[3] = {1, 1, 1};
+        uint32_t testedAxisCount = 0;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            const uint64_t axisLimit = rayTracingPipeline->GetMaxRayDispatchDimension(axis);
+            if (axisLimit >= maxUint32 || axisLimit >= maxInvocationCount)
+            {
+                continue;
+            }
+
+            axisDimensions[axis] = static_cast<uint32_t>(axisLimit + 1);
+            if (commandList->TraceRays(axisDimensions[0], axisDimensions[1], axisDimensions[2]))
+            {
+                commandList->End();
+                std::cerr << "Vulkanのdispatch軸上限を超える寸法を拒否できませんでした: " << axis << '\n';
+                return false;
+            }
+            axisDimensions[axis] = 1;
+            ++testedAxisCount;
+        }
+        if (testedAxisCount == 0)
+        {
+            commandList->End();
+            std::cerr << "device上限からdispatch軸の拒否ケースを構成できませんでした\n";
+            return false;
+        }
         if (commandList->TraceRays(0, 1, 1) || commandList->TraceRays(65536, 65536, 1) ||
             !commandList->TraceRays(2, 1, 1))
         {
@@ -319,6 +350,7 @@ namespace
 
         std::cout << "tlas_descriptor_binding_and_lifetime=true\n";
         std::cout << "vulkan_trace_rays_readback=true\n";
+        std::cout << "ray_dispatch_axis_limit_rejections=" << testedAxisCount << '\n';
         return true;
     }
 

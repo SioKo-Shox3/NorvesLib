@@ -466,6 +466,13 @@ namespace NorvesLib::RHI::Vulkan
         vk::PhysicalDeviceProperties2 physicalDeviceProperties{};
         physicalDeviceProperties.pNext = &m_rayTracingProperties;
         m_device->GetVkPhysicalDevice().getProperties2(&physicalDeviceProperties);
+        const vk::PhysicalDeviceLimits& deviceLimits = physicalDeviceProperties.properties.limits;
+        for (uint32_t dimension = 0; dimension < 3; ++dimension)
+        {
+            m_maxRayDispatchDimensions[dimension] =
+                static_cast<uint64_t>(deviceLimits.maxComputeWorkGroupCount[dimension]) *
+                deviceLimits.maxComputeWorkGroupSize[dimension];
+        }
         if (m_desc.maxPipelineRayRecursionDepth > m_rayTracingProperties.maxRayRecursionDepth ||
             m_rayTracingProperties.shaderGroupHandleSize == 0 ||
             m_rayTracingProperties.shaderGroupHandleAlignment == 0 ||

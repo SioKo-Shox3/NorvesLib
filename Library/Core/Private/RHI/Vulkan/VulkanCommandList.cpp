@@ -1091,8 +1091,10 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         const uint64_t maxInvocationCount = rayTracingPipeline->GetMaxRayDispatchInvocationCount();
-        if (maxInvocationCount == 0 || width > maxInvocationCount || height > maxInvocationCount ||
-            depth > maxInvocationCount)
+        if (maxInvocationCount == 0 || width > rayTracingPipeline->GetMaxRayDispatchDimension(0) ||
+            height > rayTracingPipeline->GetMaxRayDispatchDimension(1) ||
+            depth > rayTracingPipeline->GetMaxRayDispatchDimension(2) || width > maxInvocationCount ||
+            height > maxInvocationCount || depth > maxInvocationCount)
         {
             return false;
         }

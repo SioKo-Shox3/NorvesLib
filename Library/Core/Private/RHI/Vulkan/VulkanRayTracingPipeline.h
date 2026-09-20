@@ -24,6 +24,10 @@ namespace NorvesLib::RHI::Vulkan
         {
             return m_rayTracingProperties.maxRayDispatchInvocationCount;
         }
+        uint64_t GetMaxRayDispatchDimension(uint32_t dimension) const
+        {
+            return dimension < 3 ? m_maxRayDispatchDimensions[dimension] : 0;
+        }
         const vk::StridedDeviceAddressRegionKHR& GetRayGenerationRegion() const { return m_rayGenerationRegion; }
         const vk::StridedDeviceAddressRegionKHR& GetMissRegion() const { return m_missRegion; }
         const vk::StridedDeviceAddressRegionKHR& GetHitRegion() const { return m_hitRegion; }
@@ -42,6 +46,7 @@ namespace NorvesLib::RHI::Vulkan
         vk::StridedDeviceAddressRegionKHR m_hitRegion{};
         vk::StridedDeviceAddressRegionKHR m_callableRegion{};
         uint32_t m_shaderGroupCount = 0;
+        uint64_t m_maxRayDispatchDimensions[3]{};
 
         void CreateRayTracingPipeline();
         void CreateShaderBindingTable();
