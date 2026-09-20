@@ -24,15 +24,15 @@
 - R3-P1: `2973941`。指数高さ密度の有限なパラメータ正規化、水平・上昇・下降レイの解析透過率、SceneProxy/FramePacketスナップショットを実装した。対象Debugビルド成功、VolumetricFogModelTest 1/1 passed。
 - R3-P2: 855de28 / b6865ea。解析フォグとR2空radianceをSceneColorへ合成し、Lighting後・Forward透明前へ接続した。指定ビルド、契約CTest 2/2、GLSLコンパイルを確認。
 - R3-P3: RenderWorld→Coordinator→FramePacket.Sceneの高さフォグ値コピー、CSM配列からの固定24ステップ単一散乱、CSM不在時の解析フォグ維持を実装。focused Debug build exit 0、契約CTest 3/3、実GPU capture PASS（中心差1.59418/上限3、非遮蔽散乱差98.4629/下限1、解析フォグ差3.12447・15.3901/各下限0.25）。独立評価2周目PASS。ログは`.harness/runs/20260920-r3-p3-final/`。
-- R3-P4: 9dc360d。3段階フォグ密度のGPU golden、CSM遮蔽A/B、遠景大気ブレンドの専用受入れを固定した。R1/R2基準は不変で、GPU性能計測は後続ゲートへ分離した。
+- R3-P4: 9dc360d。3段階フォグ密度のGPU golden、CSM遮蔽A/B、遠景大気ブレンドの専用受入れを固定した。独立評価PASS。P3の散乱上限所見は`f446618`で解消済み。R1/R2基準は不変で、GPU性能計測は後続ゲートへ分離した。
 
 ## In progress
 
-- なし。
+- なし。R5のM1計画を登録し、次の反復でR5-P1へ進む。
 
 ## Next
 
-- なし。TASKS.mdの未完項目はない。
+- R5-P1: Buffer Device Addressを独立して有効化する。着手ブランチは`feature/rendering-r5-hwrt`。
 
 ## Notes
 
@@ -55,3 +55,5 @@
 - `855de28`の作業途中保存には、着手時点で未コミットだった`NEXT_FINDINGS.md`の52行削除も含まれる。R3-P2実装とTASKS更新は`b6865ea`。
 - R3-P3のcapture状態遷移では段階更新直後と次のPreRenderで状態を適用する。重複適用は冪等で、フォローアップcaptureの段階とfixture状態の同期を優先した。P3評価の散乱量上限なし所見は、R3-P4で密度sweep/CSM A/Bの上限・非飽和閾値を追加して解消した。
 - R3-P4の指定検証ログ: `.harness/runs/20260920-124224/verify-R3-P4-1.txt`〜`verify-R3-P4-7.txt`。全7ログの終了コード0、GPU受入れsentinel、CTest 7/7を読戻し確認した。R1/R2基準8ファイルのSHA256はHEADと一致する。
+- R4 S4はDDGIを選定し、RT pipelineでのR5影実証とray queryでのR4 probe更新を計画した。R5完了後にR4へ進む。
+- R5開始儀式(2026-09-20): `git log --oneline -10`確認、Game Debug build exit 0、RHI/GPU smoke CTest 4/4 passed。`vulkaninfo`でRTX 4080のBDA/AS/ray query/RT pipeline featureを確認した。Core更新後は静的リンク済みGPU test target自体も再buildしてから実行する。
