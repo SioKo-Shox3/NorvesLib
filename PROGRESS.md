@@ -31,17 +31,20 @@
 - R5-P4: `6501234`。BLAS/TLASのBuild/Update記述子と加速構造resourceをバックエンド非依存APIへ追加した。BLAS内のgeometry type統一と混在拒否、source/destination双方の容量境界、無効入力、RT非対応時の戻り値を契約テストで固定した。
 - R5-P6: `67780ea` / `29c483d` / `7d8d164`。Vulkan同期TLAS BuildはGPU完了後だけ実instance数を更新し、command-list Build 1件から同期Build 2件への変更、旧件数Update拒否、新件数UpdateとGPU queryを検証した。Debugビルドと専用CTestはexit 0、CTest 1/1 passed、独立評価PASS。証拠は`.harness/runs/20260920-174410/verify-R5-P6-5.txt`、`verify-R5-P6-6.txt`、`evaluator-R5-P6-2.txt`、`evaluator-R5-P6-3.txt`。
 - R5-P7: RayTracing pipeline descriptorにraygen/miss/closest-hit shader groupを加え、Vulkan pipelineとSBT生成を実装した。6 RT stageとAllRayTracingのdescriptor visibility、無効group拒否、group handleとSBT region alignmentをGPUテストで確認した。Debug build exit 0、専用CTest 1/1 passed、独立評価PASS。ログは`.harness/runs/20260920-174410/verify-R5-P7-5.txt`と`verify-R5-P7-6.txt`。
+- R5-P8: `2add53a` / `f9fa15a` / `1267197`。Vulkanの各dispatch軸上限と総呼出し数上限を検査し、同一deviceのTLAS binding、null/BLAS/foreign-device/別descriptor種の拒否、hit=1・miss=0のGPU readbackを固定した。両readback要素を番兵値から初期化して欠落dispatchも検出する。Debug build exit 0、専用CTest 1/1 passed、軸別拒否2件、上限・番兵値の修正差分は独立評価PASS。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-build-3.txt`、`verify-R5-P8-resume-ctest-3.txt`。
 
 ## In progress
-- R5-P8: 実装済みコードの独立評価で挙がったgraphics pipeline descriptor型の写像、TLAS以外の加速構造binding拒否、TraceRays上限検査の修正と再レビュー中。詳細はblocked/R5-P8.md。
 
 ## Next
 
-- R5-P8: 3件のblocking指摘を修正し、追加拒否テスト、再ビルド、CTest、2周目の独立レビューを通して完了する。
+- R5-P9: GEngine所有のray-tracing sceneをFramePacketへ接続する。
 
 ## Notes
 
 - R5-P8開始ゲート: Debug buildはEXIT_CODE=0、対象CTestは1/1 passed。ログは.harness/runs/20260920-174410/verify-R5-P8-1.txtとverify-R5-P8-2.txt。これは既存P7テストの開始時状態で、P8の完了証拠ではない。
+- R5-P8再開儀式(2026-09-21): `git log --oneline -10`を確認し、再開時Debug build exit 0・専用CTest 1/1 passed。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-baseline-build.txt`と`verify-R5-P8-resume-baseline-ctest.txt`。
+- R5-P8再開ゲートと完了検証: 2026-09-21にDebug build exit 0、専用CTest 1/1 passed。`LastTest.log`でhit=1、miss=0、軸別拒否2件を確認した。RTX 4080ではX軸の最大幅が総呼出し上限を超え、uint32 dispatch寸法ではX単独の上限超過を構成できないため、Y/Zを個別検査した。Validation Layerは無効で、buildにはNOMINMAX C4005とthird-party PDB LNK4099警告がある。これらをValidation Layer検証済み・警告なしとは扱わない。
+- R5-P8のdescriptor型回帰は共通ResourceBindType変換とRT descriptor layoutを検査する。graphics pipeline全体の生成経路はこのGPUテストでは直接実行していない。
 - R2完了: 初回評価で検出されたCPU/shader補間差、行末差分、実GPU経路の明示不足を `ca9204d` で修正し、受入れ記録とRoadmapへ反映した。R1 baseline、candidate/approvalは変更・再利用していない。
 - P6a completion report: `.superpowers/sdd/RenderingR1PhysicalFoundationPlan/task-6a-report.md`。forward-fixの最終証拠は `.harness/runs/20260908-084154/p6a-forward-fix-gpu/` と `p6a-forward-fix-review/claude-final.json` に保存する。旧P6a reportは同ディレクトリのアーカイブへ保持する。
 - 独立再検証: `recheck-R1-P6A-4-1.txt`〜`-11.txt`。集計は `p6a-independent-recheck-audit-1730.json`。統合接続評価は `p6a-r1-integrated-review/receipt.json` / `stdout.json`。
