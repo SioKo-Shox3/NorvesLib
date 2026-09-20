@@ -27,14 +27,15 @@
 - R3-P4: 9dc360d。3段階フォグ密度のGPU golden、CSM遮蔽A/B、遠景大気ブレンドの専用受入れを固定した。独立評価PASS。P3の散乱上限所見は`f446618`で解消済み。R1/R2基準は不変で、GPU性能計測は後続ゲートへ分離した。
 - R5-P1: `5c82133`。RHIにBuffer Device Addressの明示要求と既定値0の取得APIを追加し、Vulkan 1.2能力に応じてバッファusage・メモリ割り当て・アドレス取得を同じ条件で制御した。RTX 4080で対応能力true、要求バッファのaddress非0、未要求バッファ0を確認。対象ビルドexit 0、BDA CTest 1/1、関連RHI/描画GPUテスト6/6、独立評価PASS。
 - R5-P2: AS、ray query、RT pipelineを拡張とfeatureごとに照会し、Vulkan 1.2 BDAとdeferred host operationsを含む依存関係を満たす機能だけを論理デバイスで有効化した。非対応時の初期化とラスタ描画を維持する。
+- R5-P3: RHI ShaderStageにRT 6 stageを追加し、Vulkan shadercをstageごとのshaderc kindへ一意に写像した。共通fixtureのDebugビルドはexit 0、6 stageのSPIR-V実行モデルを確認するCTestは1/1 passed。
 
 ## In progress
 
-- なし。R5-P2を受入済み。次はR5-P3に進む。
+- なし。R5-P3を受入済み。次はR5-P4に進む。
 
 ## Next
 
-- R5-P3: RT shader stageをshadercへ接続する。作業ブランチは`feature/rendering-r5-hwrt`。
+- R5-P4: 加速構造のRHI契約を定義する。作業ブランチは`feature/rendering-r5-hwrt`。
 
 ## Notes
 
@@ -61,3 +62,5 @@
 - R5開始儀式(2026-09-20): `git log --oneline -10`確認、Game Debug build exit 0、RHI/GPU smoke CTest 4/4 passed。`vulkaninfo`でRTX 4080のBDA/AS/ray query/RT pipeline featureを確認した。Core更新後は静的リンク済みGPU test target自体も再buildしてから実行する。
 - R5-P1検証ログ: `verify-R5-P1-1.txt`はALL_BUILD exit 1（PhysicsArchitectureContractTestとPhysicsFixedStepPipelineTestの8件のFramePacket/SceneProxy静的assert）、`verify-R5-P1-2.txt`はBDA CTest 1/1、`verify-R5-P1-3.txt`は全CTest 217 passed/7 skipped/3 failed（exit 8）、`verify-R5-P1-4.txt`はGameとBDAテスト対象build exit 0。全CTestの失敗はRenderingGoldenOutdoorVulkanTest（Slang SDK未設定ログの後にgolden差分）、RenderGraphCompileTest（binding 6 shadow map assertion）、SkinnedRenderPathContractTest（pending件数assert）。BDA・readback・RHI image layout・HDR indoor/outdoorの対象テストは成功した。
 - R5-P2検証ログ: `.harness/runs/20260920-151245/verify-R5-P2-6.txt` (Gameと契約テストのDebug build exit 0)、`verify-R5-P2-7.txt` (能力契約CTest 1/1)、`verify-R5-P2-8.txt` (RHI image layoutとIndoor HDR描画CTest 2/2)。Vulkan実デバイス初期化と能力依存関係を確認した。
+- R5-P3検証ログ: .harness/runs/20260920-151245/verify-R5-P3-1.txt（Debug build exit 0）とverify-R5-P3-2.txt（CTest 1/1 passed）。
+- R5-P7ではVulkanShader::ToVkShaderStageとdescriptor visibilityのRT対応を追加し、RT descriptorにAllRayTracingを指定する。

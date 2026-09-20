@@ -137,6 +137,20 @@ register_rendering_gpu_test(
     RayTracingCapabilityContractTest
 )
 
+add_executable(RHIRayTracingShaderStageCompileTest
+    RHIRayTracingShaderStageCompileTest.cpp
+)
+target_link_libraries(RHIRayTracingShaderStageCompileTest PRIVATE Core)
+target_include_directories(RHIRayTracingShaderStageCompileTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(RHIRayTracingShaderStageCompileTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(RHIRayTracingShaderStageCompileTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RHIRayTracingShaderStageCompileTest COMMAND RHIRayTracingShaderStageCompileTest)
+
 add_executable(RHITextureToBufferReadbackVulkanTest
     RHITextureToBufferReadbackVulkanTest.cpp
 )
