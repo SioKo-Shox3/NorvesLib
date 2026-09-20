@@ -24,6 +24,7 @@
 - R3-P1: `2973941`。指数高さ密度の有限なパラメータ正規化、水平・上昇・下降レイの解析透過率、SceneProxy/FramePacketスナップショットを実装した。対象Debugビルド成功、VolumetricFogModelTest 1/1 passed。
 - R3-P2: 855de28 / b6865ea。解析フォグとR2空radianceをSceneColorへ合成し、Lighting後・Forward透明前へ接続した。指定ビルド、契約CTest 2/2、GLSLコンパイルを確認。
 - R3-P3: RenderWorld→Coordinator→FramePacket.Sceneの高さフォグ値コピー、CSM配列からの固定24ステップ単一散乱、CSM不在時の解析フォグ維持を実装。focused Debug build exit 0、契約CTest 3/3、実GPU capture PASS（中心差1.59418/上限3、非遮蔽散乱差98.4629/下限1、解析フォグ差3.12447・15.3901/各下限0.25）。独立評価2周目PASS。ログは`.harness/runs/20260920-r3-p3-final/`。
+- R3-P4: 9dc360d。3段階フォグ密度のGPU golden、CSM遮蔽A/B、遠景大気ブレンドの専用受入れを固定した。R1/R2基準は不変で、GPU性能計測は後続ゲートへ分離した。
 
 ## In progress
 
@@ -31,7 +32,7 @@
 
 ## Next
 
-- R3-P4: R3専用GPU受入れを固定し、R3Acceptanceを記録する。
+- なし。TASKS.mdの未完項目はない。
 
 ## Notes
 
@@ -53,3 +54,4 @@
 - R3-P2では失敗経路にも空Load/StoreパスまたはRenderTarget→ShaderResourceバリアを積み、SceneColorの最終状態を維持する。独立評価はPASS。
 - `855de28`の作業途中保存には、着手時点で未コミットだった`NEXT_FINDINGS.md`の52行削除も含まれる。R3-P2実装とTASKS更新は`b6865ea`。
 - R3-P3のcapture状態遷移では段階更新直後と次のPreRenderで状態を適用する。重複適用は冪等で、フォローアップcaptureの段階とfixture状態の同期を優先した。P3評価の散乱量上限なし所見は`NEXT_FINDINGS.md`とR3-P4へ引き継いだ。
+- R3-P4の指定検証ログ: `.harness/runs/20260920-124224/verify-R3-P4-1.txt`〜`verify-R3-P4-7.txt`。全7ログの終了コード0、GPU受入れsentinel、CTest 7/7を読戻し確認した。R1/R2基準8ファイルのSHA256はHEADと一致する。
