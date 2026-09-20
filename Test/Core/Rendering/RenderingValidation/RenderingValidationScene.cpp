@@ -2292,8 +2292,8 @@ namespace NorvesLib::Test::RenderingValidation
 
         m_pR3ShadowBackgroundEntity->SetPosition(0.0f, 0.0f, 20.0f);
         m_pR3ShadowBackgroundEntity->SetScale(14.0f, 14.0f, 1.0f);
-        m_pR3ShadowOccluderEntity->SetPosition(0.0f, 0.0f, -2.0f);
-        m_pR3ShadowOccluderEntity->SetScale(1.5f, 1.5f, 1.0f);
+        m_pR3ShadowOccluderEntity->SetPosition(0.0f, 0.0f, 4.0f);
+        m_pR3ShadowOccluderEntity->SetScale(0.9f, 0.9f, 1.0f);
 
         m_R3ShadowedShaftsCamera = BuildLookAtCamera(Math::Vector3::Zero,
                                                      Math::Vector3(0.0f, 0.0f, 1.0f),

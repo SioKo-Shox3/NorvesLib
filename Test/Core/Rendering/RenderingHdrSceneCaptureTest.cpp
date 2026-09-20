@@ -1627,7 +1627,6 @@ namespace
         {
             m_bR2Scenario = false;
             m_bR3Scenario = false;
-            m_bR3SceneColorDiagnosticRequested = false;
             m_bAllNumericalScenario = false;
             m_bAllNumericalArgumentParsed = false;
             m_bAllNumericalForcedRowsArgumentParsed = false;
@@ -1642,12 +1641,6 @@ namespace
 
             if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
-                return false;
-            }
-            m_bR3SceneColorDiagnostic = m_bR3SceneColorDiagnosticRequested;
-            if (m_bR3SceneColorDiagnostic && !m_bR3Scenario)
-            {
-                LOG_ERROR("--r3-diagnostic-scene-color は R3 shadowed-shafts 専用です");
                 return false;
             }
             if (m_bAllNumericalScenario &&
@@ -1706,10 +1699,7 @@ namespace
                 return false;
             }
             if (m_bR3Scenario &&
-                GetRunConfig().CaptureSource !=
-                    (m_bR3SceneColorDiagnostic
-                         ? Core::Rendering::FrameCaptureSourceKind::SceneColor
-                         : Core::Rendering::FrameCaptureSourceKind::BackBuffer))
+                GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::BackBuffer)
             {
                 LOG_ERROR("R3 shadowed-shafts のcapture sourceが診断モードと一致しません");
                 return false;
@@ -2094,16 +2084,6 @@ namespace
                 m_bR3Scenario = true;
                 return true;
             }
-            if (argument == TEXT("--r3-diagnostic-scene-color"))
-            {
-                if (m_bR3SceneColorDiagnosticRequested)
-                {
-                    outFailureReason = TEXT("duplicate R3 SceneColor diagnostic flag");
-                    return false;
-                }
-                m_bR3SceneColorDiagnosticRequested = true;
-                return true;
-            }
             if (argument == TEXT("--r1-forced-rows=2"))
             {
                 if (!m_bAllNumericalScenario || m_bAllNumericalForcedRowsArgumentParsed)
@@ -2346,7 +2326,7 @@ namespace
                 Core::Rendering::VolumetricFogParameters fog =
                     Core::Rendering::MakeDefaultVolumetricFogParameters();
                 fog.bEnabled = m_R3CaptureStage != R3CaptureStage::FogDisabledControl;
-                fog.DensityAtBaseHeight = 0.05f;
+                fog.DensityAtBaseHeight = 0.01f;
                 renderWorld.SetVolumetricFogParameters(fog);
                 return;
             }
@@ -2675,9 +2655,7 @@ namespace
                 {
                     return false;
                 }
-                outRequest.SourceKind = m_bR3SceneColorDiagnostic
-                                            ? Core::Rendering::FrameCaptureSourceKind::SceneColor
-                                            : Core::Rendering::FrameCaptureSourceKind::BackBuffer;
+                outRequest.SourceKind = Core::Rendering::FrameCaptureSourceKind::BackBuffer;
                 LOG_INFO("R3 shadowed-shafts follow-up requested: stage=%u after frame=%llu",
                          static_cast<unsigned int>(m_R3CaptureStage),
                          static_cast<unsigned long long>(frame.FrameNumber));
@@ -5971,9 +5949,6 @@ namespace
         struct R3RoiStatistics
         {
             double MeanLuma = 0.0;
-            double MeanRgb[3] = {};
-            uint8_t MinimumRgb[3] = {255u, 255u, 255u};
-            uint8_t MaximumRgb[3] = {};
         };
 
         static bool ComputeR3RoiStatistics(
@@ -5996,7 +5971,6 @@ namespace
             }
 
             double lumaSum = 0.0;
-            double channelSums[3] = {};
             size_t pixelCount = 0u;
             for (uint32_t y = clampedMinimumY; y < clampedMaximumY; ++y)
             {
@@ -6007,16 +5981,6 @@ namespace
                     const double red = frame.Pixels[offset + (bBgra ? 2u : 0u)];
                     const double green = frame.Pixels[offset + 1u];
                     const double blue = frame.Pixels[offset + (bBgra ? 0u : 2u)];
-                    const double channels[3] = {red, green, blue};
-                    for (size_t channel = 0u; channel < 3u; ++channel)
-                    {
-                        channelSums[channel] += channels[channel];
-                        const uint8_t value = static_cast<uint8_t>(channels[channel]);
-                        outStatistics.MinimumRgb[channel] =
-                            std::min(outStatistics.MinimumRgb[channel], value);
-                        outStatistics.MaximumRgb[channel] =
-                            std::max(outStatistics.MaximumRgb[channel], value);
-                    }
                     lumaSum += 0.2126 * red + 0.7152 * green + 0.0722 * blue;
                     ++pixelCount;
                 }
@@ -6026,111 +5990,7 @@ namespace
                 return false;
             }
             outStatistics.MeanLuma = lumaSum / static_cast<double>(pixelCount);
-            for (size_t channel = 0u; channel < 3u; ++channel)
-            {
-                outStatistics.MeanRgb[channel] =
-                    channelSums[channel] / static_cast<double>(pixelCount);
-            }
-            return std::isfinite(outStatistics.MeanLuma) &&
-                   std::isfinite(outStatistics.MeanRgb[0]) &&
-                   std::isfinite(outStatistics.MeanRgb[1]) &&
-                   std::isfinite(outStatistics.MeanRgb[2]);
-        }
-
-        bool EvaluateR3SceneColorDiagnosticFrame(
-            const Core::Rendering::CapturedFrame& frame,
-            Core::Container::String& reason)
-        {
-            RgbaFloatImage image;
-            if (DecodeCapturedRgba16Float(frame, image) != FloatImageStatus::Success ||
-                image.Width != ValidationWidth || image.Height != ValidationHeight)
-            {
-                reason = TEXT("R3 SceneColor diagnostic requires a valid RGBA16F capture");
-                return false;
-            }
-
-            const auto computeMeanRgb = [&image](uint32_t minimumX,
-                                                 uint32_t maximumXExclusive,
-                                                 uint32_t minimumY,
-                                                 uint32_t maximumYExclusive,
-                                                 double (&outMeanRgb)[3])
-            {
-                double channelSums[3] = {};
-                size_t pixelCount = 0u;
-                for (uint32_t y = minimumY; y < maximumYExclusive; ++y)
-                {
-                    for (uint32_t x = minimumX; x < maximumXExclusive; ++x)
-                    {
-                        const size_t pixelOffset =
-                            (static_cast<size_t>(y) * image.Width + x) * 4u;
-                        for (size_t channel = 0u; channel < 3u; ++channel)
-                        {
-                            const float value = image.Values[pixelOffset + channel];
-                            if (!std::isfinite(value))
-                            {
-                                return false;
-                            }
-                            channelSums[channel] += value;
-                        }
-                        ++pixelCount;
-                    }
-                }
-                if (pixelCount == 0u)
-                {
-                    return false;
-                }
-                for (size_t channel = 0u; channel < 3u; ++channel)
-                {
-                    outMeanRgb[channel] = channelSums[channel] /
-                                          static_cast<double>(pixelCount);
-                }
-                return true;
-            };
-
-            double centerMeanRgb[3] = {};
-            double sideMeanRgb[3] = {};
-            if (!computeMeanRgb(ValidationWidth * 45u / 100u,
-                                ValidationWidth * 55u / 100u,
-                                ValidationHeight * 45u / 100u,
-                                ValidationHeight * 55u / 100u,
-                                centerMeanRgb) ||
-                !computeMeanRgb(ValidationWidth * 70u / 100u,
-                                ValidationWidth * 75u / 100u,
-                                ValidationHeight * 45u / 100u,
-                                ValidationHeight * 55u / 100u,
-                                sideMeanRgb))
-            {
-                reason = TEXT("R3 SceneColor diagnostic ROI is invalid");
-                return false;
-            }
-
-            const char* stageName = "unknown";
-            switch (m_R3CaptureStage)
-            {
-            case R3CaptureStage::ShadowedScattering:
-                stageName = "shadowed-scattering";
-                break;
-            case R3CaptureStage::FogOnlyWithoutShadowMap:
-                stageName = "fog-only-without-shadow-map";
-                break;
-            case R3CaptureStage::FogDisabledControl:
-                stageName = "fog-disabled-control";
-                break;
-            case R3CaptureStage::Complete:
-                reason = TEXT("R3 SceneColor diagnostic received an unexpected extra capture");
-                return false;
-            }
-
-            std::cout << "R3_SCENE_COLOR_DIAGNOSTIC stage=" << stageName
-                      << " frame=" << frame.FrameNumber
-                      << " format=" << static_cast<unsigned int>(frame.Format)
-                      << " center_rgb=(" << centerMeanRgb[0] << ","
-                      << centerMeanRgb[1] << "," << centerMeanRgb[2] << ")"
-                      << " side_rgb=(" << sideMeanRgb[0] << ","
-                      << sideMeanRgb[1] << "," << sideMeanRgb[2] << ")\n";
-            m_R3LastFrameNumber = frame.FrameNumber;
-            m_bR3HasFrameNumber = true;
-            return true;
+            return std::isfinite(outStatistics.MeanLuma);
         }
 
         bool EvaluateR3ShadowedShaftsFrame(
@@ -6157,11 +6017,6 @@ namespace
                 reason = TEXT("R3 BackBuffer capture FrameNumber is not strictly increasing");
                 return false;
             }
-            if (m_bR3SceneColorDiagnostic)
-            {
-                return EvaluateR3SceneColorDiagnosticFrame(frame, reason);
-            }
-
             const bool bHardwareFormat = RHI::IsPresentationSrgbFormat(frame.Format);
             const bool bShaderFormat = RHI::IsPresentationUnormFormat(frame.Format);
             const bool bMetadataValid =
@@ -6215,23 +6070,6 @@ namespace
             const double centerMean = centerStatistics.MeanLuma;
             const double sideMean = sideStatistics.MeanLuma;
 
-            const auto printRgbStatistics = [](const char* name,
-                                               const R3RoiStatistics& statistics)
-            {
-                std::cout << " " << name << "_rgb_mean=("
-                          << statistics.MeanRgb[0] << ","
-                          << statistics.MeanRgb[1] << ","
-                          << statistics.MeanRgb[2] << ")"
-                          << " " << name << "_rgb_min=("
-                          << static_cast<unsigned int>(statistics.MinimumRgb[0]) << ","
-                          << static_cast<unsigned int>(statistics.MinimumRgb[1]) << ","
-                          << static_cast<unsigned int>(statistics.MinimumRgb[2]) << ")"
-                          << " " << name << "_rgb_max=("
-                          << static_cast<unsigned int>(statistics.MaximumRgb[0]) << ","
-                          << static_cast<unsigned int>(statistics.MaximumRgb[1]) << ","
-                          << static_cast<unsigned int>(statistics.MaximumRgb[2]) << ")";
-            };
-
             m_R3LastFrameNumber = frame.FrameNumber;
             m_bR3HasFrameNumber = true;
             if (m_R3CaptureStage == R3CaptureStage::ShadowedScattering)
@@ -6242,10 +6080,7 @@ namespace
                 std::cout << "R3_GPU_CAPTURE stage=shadowed-scattering"
                           << " frame=" << frame.FrameNumber
                           << " center_mean_luma=" << centerMean
-                          << " unoccluded_mean_luma=" << sideMean;
-                printRgbStatistics("center", centerStatistics);
-                printRgbStatistics("side", sideStatistics);
-                std::cout << "\n";
+                          << " unoccluded_mean_luma=" << sideMean << "\n";
                 return true;
             }
             if (m_R3CaptureStage == R3CaptureStage::FogOnlyWithoutShadowMap)
@@ -6256,10 +6091,7 @@ namespace
                 std::cout << "R3_GPU_CAPTURE stage=fog-only-without-shadow-map"
                           << " frame=" << frame.FrameNumber
                           << " center_mean_luma=" << centerMean
-                          << " unoccluded_mean_luma=" << sideMean;
-                printRgbStatistics("center", centerStatistics);
-                printRgbStatistics("side", sideStatistics);
-                std::cout << "\n";
+                          << " unoccluded_mean_luma=" << sideMean << "\n";
                 return true;
             }
             if (!m_bR3HasShadowedMeans || !m_bR3HasFogOnlyMeans)
@@ -6293,10 +6125,7 @@ namespace
                       << " unoccluded_scattering_delta=" << unoccludedScatteringDelta
                       << " fog_center_delta=" << fogCenterDelta
                       << " fog_unoccluded_delta=" << fogSideDelta
-                      << " passed=" << (bPassed ? 1 : 0);
-            printRgbStatistics("center", centerStatistics);
-            printRgbStatistics("side", sideStatistics);
-            std::cout << "\n";
+                      << " passed=" << (bPassed ? 1 : 0) << "\n";
             if (!bPassed)
             {
                 reason = TEXT("R3 GPU capture did not isolate shadowed scattering and no-shadow analytic fog");
@@ -6661,8 +6490,6 @@ namespace
         bool m_bR1Scenario = false;
         bool m_bR2Scenario = false;
         bool m_bR3Scenario = false;
-        bool m_bR3SceneColorDiagnosticRequested = false;
-        bool m_bR3SceneColorDiagnostic = false;
         uint32_t m_R2SkyTimeCaseIndex = 0u;
         bool m_bR2HasFrameNumber = false;
         uint64_t m_R2LastFrameNumber = 0u;
@@ -7021,7 +6848,6 @@ int main(int argc, char** argv)
     bool bR1Scenario = false;
     bool bR2Scenario = false;
     bool bR3Scenario = false;
-    bool bR3SceneColorDiagnostic = false;
     bool bAllNumericalScenario = false;
     bool bR1FixtureSelfTest = false;
     bool bR2SkyCsmSelfTest = false;
@@ -7029,7 +6855,6 @@ int main(int argc, char** argv)
     bool bR2BackBuffer = false;
     bool bR3OutdoorScene = false;
     bool bR3BackBuffer = false;
-    bool bR3SceneColor = false;
     for (int index = 1; index < argc; ++index)
     {
         if (std::strcmp(argv[index], "--r1-scenario=srgb-transfer") == 0)
@@ -7048,10 +6873,6 @@ int main(int argc, char** argv)
         {
             bR3Scenario = true;
         }
-        if (std::strcmp(argv[index], "--r3-diagnostic-scene-color") == 0)
-        {
-            bR3SceneColorDiagnostic = true;
-        }
         if (std::strcmp(argv[index], "--scene=outdoor") == 0)
         {
             bR2OutdoorScene = true;
@@ -7061,10 +6882,6 @@ int main(int argc, char** argv)
         {
             bR2BackBuffer = true;
             bR3BackBuffer = true;
-        }
-        if (std::strcmp(argv[index], "--capture-source=scene-color") == 0)
-        {
-            bR3SceneColor = true;
         }
         if (std::strcmp(argv[index], "--self-test-r1-fixture-contract") == 0)
         {
@@ -7105,8 +6922,7 @@ int main(int argc, char** argv)
         }
     }
     if (bR3Scenario &&
-        (!bR3OutdoorScene ||
-         (bR3SceneColorDiagnostic ? !bR3SceneColor : !bR3BackBuffer)))
+        (!bR3OutdoorScene || !bR3BackBuffer))
     {
         std::cerr << "R3 shadowed-shafts requires outdoor scene and a matching capture source\n";
         return 1;

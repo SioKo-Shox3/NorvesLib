@@ -318,16 +318,6 @@ namespace NorvesLib::Core::Rendering
                               ? SanitizeVolumetricFogParameters(
                                     context->SnapshotScene->VolumetricFog)
                               : MakeDefaultVolumetricFogParameters();
-        if (context && context->SnapshotScene &&
-            context->SnapshotScene->VolumetricFog.bEnabled)
-        {
-            NORVES_LOG_WARNING("VolumetricsPass",
-                            "R3_DECLARE frame=%llu scene=%u enabled=%u density=%g",
-                            static_cast<unsigned long long>(context->FrameNumber),
-                            context->SnapshotScene ? 1u : 0u,
-                            m_FogParameters.bEnabled ? 1u : 0u,
-                            m_FogParameters.DensityAtBaseHeight);
-        }
         if (!m_FogParameters.bEnabled)
         {
             return;
@@ -378,15 +368,6 @@ namespace NorvesLib::Core::Rendering
     void VolumetricsPass::Execute(RenderGraphResources& resources,
                                   ViewRenderContext& context)
     {
-        if (m_FogParameters.bEnabled)
-        {
-            NORVES_LOG_WARNING("VolumetricsPass",
-                            "R3_EXEC_ENTER frame=%llu enabled=%u scene_color=%u scene_depth=%u",
-                            static_cast<unsigned long long>(context.FrameNumber),
-                            m_FogParameters.bEnabled ? 1u : 0u,
-                            m_SceneColorHandle.IsValid() ? 1u : 0u,
-                            m_SceneDepthHandle.IsValid() ? 1u : 0u);
-        }
         if (!m_FogParameters.bEnabled ||
             !m_SceneColorHandle.IsValid() ||
             !m_SceneDepthHandle.IsValid())
@@ -417,18 +398,6 @@ namespace NorvesLib::Core::Rendering
         const bool bShadowSamplingTextureAvailable =
             bActualShadowMapAvailable ||
             IsValidShadowMapArrayFallbackTexture(shadowMapTextureForSampling);
-        if (m_FogParameters.bEnabled)
-        {
-            NORVES_LOG_WARNING("VolumetricsPass",
-                            "R3_EXEC_RESOURCES frame=%llu scene_color=%u depth=%u actual_csm=%u fallback=%u sampler=%u",
-                            static_cast<unsigned long long>(context.FrameNumber),
-                            sceneColorTexture ? 1u : 0u,
-                            sceneDepthTexture ? 1u : 0u,
-                            bActualShadowMapAvailable ? 1u : 0u,
-                            IsValidShadowMapArrayFallbackTexture(
-                                physicalLighting.ShadowMapFallbackTexture) ? 1u : 0u,
-                            shadowMapSamplerForSampling ? 1u : 0u);
-        }
         if (!sceneColorTexture)
         {
             return;
@@ -502,30 +471,6 @@ namespace NorvesLib::Core::Rendering
             TryBuildDirectionalScatteringLight(context,
                                                params.DirectionalLightDirectionAndAnisotropy,
                                                params.DirectionalLightRadianceAndEnabled);
-        if (m_FogParameters.bEnabled)
-        {
-            NORVES_LOG_WARNING("VolumetricsPass",
-                            "R3_DIAG frame=%llu camera=%llu position=(%g,%g,%g) pre=%g density=%g falloff=%g fog=(%g,%g,%g) sky=%u actual_csm=%u fallback=%u csm_ready=%u light=%u radiance=(%g,%g,%g)",
-                            static_cast<unsigned long long>(context.FrameNumber),
-                            static_cast<unsigned long long>(activeCamera->CameraId),
-                            activeCamera->PositionX,
-                            activeCamera->PositionY,
-                            activeCamera->PositionZ,
-                            params.CameraPositionAndPreExposure[3],
-                            params.FogParameters[0],
-                            params.FogParameters[2],
-                            params.FallbackFogColor[0],
-                            params.FallbackFogColor[1],
-                            params.FallbackFogColor[2],
-                            skyRadianceTexture ? 1u : 0u,
-                            bActualShadowMapAvailable ? 1u : 0u,
-                            bShadowSamplingTextureAvailable ? 1u : 0u,
-                            bCascadedShadowAvailable ? 1u : 0u,
-                            bDirectionalLightAvailable ? 1u : 0u,
-                            params.DirectionalLightRadianceAndEnabled[0],
-                            params.DirectionalLightRadianceAndEnabled[1],
-                            params.DirectionalLightRadianceAndEnabled[2]);
-        }
         if (bDirectionalLightAvailable)
         {
             params.CameraForwardAndScatteringEnabled[3] = 1.0f;
