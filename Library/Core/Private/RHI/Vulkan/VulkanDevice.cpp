@@ -343,6 +343,108 @@ namespace NorvesLib::RHI::Vulkan
         // 任意のデバイス拡張は機能照会より先に選定する。
         auto extensions = GetDeviceExtensions();
 
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeaturesQuery{};
+        vk::PhysicalDeviceRayQueryFeaturesKHR rayQueryFeaturesQuery{};
+        vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeaturesQuery{};
+        const auto availableDeviceExtensionsResult = m_physicalDevice.enumerateDeviceExtensionProperties();
+        // Vulkan 1.2のBDAとdeferred host operationsが揃う場合だけRT拡張を照会する。
+        bool bAccelerationStructureExtensionAvailable = false;
+        bool bDeferredHostOperationsExtensionAvailable = false;
+        bool bRayQueryExtensionAvailable = false;
+        bool bRayTracingPipelineExtensionAvailable = false;
+        if (availableDeviceExtensionsResult.result == vk::Result::eSuccess &&
+            m_deviceProperties.apiVersion >= VK_API_VERSION_1_2)
+        {
+            const auto& availableDeviceExtensions = availableDeviceExtensionsResult.value;
+            auto hasDeviceExtension = [&availableDeviceExtensions](const char* name) -> bool
+            {
+                for (const auto& extension : availableDeviceExtensions)
+                {
+                    if (String(extension.extensionName.data()) == String(name))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            bAccelerationStructureExtensionAvailable =
+                hasDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+            bDeferredHostOperationsExtensionAvailable =
+                hasDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+            const bool bAccelerationStructureDependencyAvailable =
+                bAccelerationStructureExtensionAvailable &&
+                bDeferredHostOperationsExtensionAvailable;
+
+            if (bAccelerationStructureDependencyAvailable)
+            {
+                vk::PhysicalDeviceFeatures2 accelerationStructureFeatures2Query{};
+                accelerationStructureFeatures2Query.pNext = &accelerationStructureFeaturesQuery;
+                m_physicalDevice.getFeatures2(&accelerationStructureFeatures2Query);
+            }
+
+            bRayQueryExtensionAvailable =
+                bAccelerationStructureDependencyAvailable &&
+                hasDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+            if (bRayQueryExtensionAvailable)
+            {
+                vk::PhysicalDeviceFeatures2 rayQueryFeatures2Query{};
+                rayQueryFeatures2Query.pNext = &rayQueryFeaturesQuery;
+                m_physicalDevice.getFeatures2(&rayQueryFeatures2Query);
+            }
+
+            bRayTracingPipelineExtensionAvailable =
+                bAccelerationStructureDependencyAvailable &&
+                hasDeviceExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+            if (bRayTracingPipelineExtensionAvailable)
+            {
+                vk::PhysicalDeviceFeatures2 rayTracingPipelineFeatures2Query{};
+                rayTracingPipelineFeatures2Query.pNext = &rayTracingPipelineFeaturesQuery;
+                m_physicalDevice.getFeatures2(&rayTracingPipelineFeatures2Query);
+            }
+        }
+
+        RayTracingFeatureAvailability rayTracingAvailability;
+        rayTracingAvailability.bAccelerationStructureExtension =
+            bAccelerationStructureExtensionAvailable;
+        rayTracingAvailability.bDeferredHostOperationsExtension =
+            bDeferredHostOperationsExtensionAvailable;
+        rayTracingAvailability.bBufferDeviceAddress =
+            m_vulkan12Features.bufferDeviceAddress == VK_TRUE;
+        rayTracingAvailability.bAccelerationStructureFeature =
+            accelerationStructureFeaturesQuery.accelerationStructure == VK_TRUE;
+        rayTracingAvailability.bRayQueryExtension = bRayQueryExtensionAvailable;
+        rayTracingAvailability.bRayQueryFeature = rayQueryFeaturesQuery.rayQuery == VK_TRUE;
+        rayTracingAvailability.bRayTracingPipelineExtension =
+            bRayTracingPipelineExtensionAvailable;
+        rayTracingAvailability.bRayTracingPipelineFeature =
+            rayTracingPipelineFeaturesQuery.rayTracingPipeline == VK_TRUE;
+
+        const RayTracingCapabilities rayTracingCapabilities =
+            ResolveRayTracingCapabilities(rayTracingAvailability);
+        m_accelerationStructureFeatures = vk::PhysicalDeviceAccelerationStructureFeaturesKHR{};
+        m_accelerationStructureFeatures.accelerationStructure =
+            rayTracingCapabilities.bAccelerationStructure ? VK_TRUE : VK_FALSE;
+        m_rayQueryFeatures = vk::PhysicalDeviceRayQueryFeaturesKHR{};
+        m_rayQueryFeatures.rayQuery = rayTracingCapabilities.bRayQuery ? VK_TRUE : VK_FALSE;
+        m_rayTracingPipelineFeatures = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR{};
+        m_rayTracingPipelineFeatures.rayTracingPipeline =
+            rayTracingCapabilities.bRayTracingPipeline ? VK_TRUE : VK_FALSE;
+
+        if (rayTracingCapabilities.bAccelerationStructure)
+        {
+            extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        }
+        if (rayTracingCapabilities.bRayQuery)
+        {
+            extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        }
+        if (rayTracingCapabilities.bRayTracingPipeline)
+        {
+            extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        }
+
         bool bDeviceFaultRequested = false;
         bool bCooperativeVectorRequested = false;
 #if defined(VK_EXT_device_address_binding_report)
@@ -421,6 +523,24 @@ namespace NorvesLib::RHI::Vulkan
 
             *featuresTail = &m_cooperativeVectorFeatures;
             featuresTail = &m_cooperativeVectorFeatures.pNext;
+        }
+
+        if (rayTracingCapabilities.bAccelerationStructure)
+        {
+            *featuresTail = &m_accelerationStructureFeatures;
+            featuresTail = &m_accelerationStructureFeatures.pNext;
+        }
+
+        if (rayTracingCapabilities.bRayQuery)
+        {
+            *featuresTail = &m_rayQueryFeatures;
+            featuresTail = &m_rayQueryFeatures.pNext;
+        }
+
+        if (rayTracingCapabilities.bRayTracingPipeline)
+        {
+            *featuresTail = &m_rayTracingPipelineFeatures;
+            featuresTail = &m_rayTracingPipelineFeatures.pNext;
         }
 
 #if defined(VK_EXT_device_address_binding_report)
@@ -1453,6 +1573,12 @@ namespace NorvesLib::RHI::Vulkan
             availableExtensions.contains(String("VK_NV_cluster_acceleration_structure")) &&
             m_Capabilities.MegaGeometry.bAccelerationStructureSupported;
 
+        m_Capabilities.RayTracing.bAccelerationStructure =
+            m_accelerationStructureFeatures.accelerationStructure == VK_TRUE;
+        m_Capabilities.RayTracing.bRayQuery = m_rayQueryFeatures.rayQuery == VK_TRUE;
+        m_Capabilities.RayTracing.bRayTracingPipeline =
+            m_rayTracingPipelineFeatures.rayTracingPipeline == VK_TRUE;
+
         // ========================================
         // Draw Indirect (論理デバイスで有効化済みのコア機能)
         // ========================================
@@ -1477,11 +1603,15 @@ namespace NorvesLib::RHI::Vulkan
         // サマリーログ
         const char *deviceName = m_Capabilities.DeviceName;
         NORVES_LOG_INFO("VulkanDevice", "Device Capabilities: GPU=%s, NVIDIA=%s, "
-                                        "NeuralShaders=%s, MegaGeometry=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s",
+                                        "NeuralShaders=%s, MegaGeometry=%s, AccelerationStructure=%s, "
+                                        "RayQuery=%s, RayTracingPipeline=%s, DrawIndirectCount=%s, DrawIndirectFirstInstance=%s",
                         deviceName,
                         m_Capabilities.bIsNvidia ? "Yes" : "No",
                         m_Capabilities.NeuralShaders.bSupported ? "Yes" : "No",
                         m_Capabilities.MegaGeometry.bSupported ? "Yes" : "No",
+                        m_Capabilities.RayTracing.bAccelerationStructure ? "Yes" : "No",
+                        m_Capabilities.RayTracing.bRayQuery ? "Yes" : "No",
+                        m_Capabilities.RayTracing.bRayTracingPipeline ? "Yes" : "No",
                         m_Capabilities.bDrawIndirectCount ? "Yes" : "No",
                         m_Capabilities.bDrawIndirectFirstInstance ? "Yes" : "No");
     }

@@ -44,6 +44,77 @@ namespace NorvesLib::RHI
     };
 
     /**
+     * @brief 論理デバイスで有効になったレイトレーシング機能
+     */
+    struct RayTracingCapabilities
+    {
+        /** @brief acceleration structure 機能が有効か */
+        bool bAccelerationStructure = false;
+
+        /** @brief ray query 機能が有効か */
+        bool bRayQuery = false;
+
+        /** @brief レイトレーシングパイプライン機能が有効か */
+        bool bRayTracingPipeline = false;
+    };
+
+    /**
+     * @brief Vulkanの拡張とfeature照会から得たレイトレーシング対応状況
+     */
+    struct RayTracingFeatureAvailability
+    {
+        /** @brief VK_KHR_acceleration_structure が利用可能か */
+        bool bAccelerationStructureExtension = false;
+
+        /** @brief RT構築に必要なdeferred host operationsが利用可能か */
+        bool bDeferredHostOperationsExtension = false;
+
+        /** @brief Vulkan 1.2のbuffer device address featureが利用可能か */
+        bool bBufferDeviceAddress = false;
+
+        /** @brief acceleration structure featureが利用可能か */
+        bool bAccelerationStructureFeature = false;
+
+        /** @brief VK_KHR_ray_query が利用可能か */
+        bool bRayQueryExtension = false;
+
+        /** @brief ray query featureが利用可能か */
+        bool bRayQueryFeature = false;
+
+        /** @brief VK_KHR_ray_tracing_pipeline が利用可能か */
+        bool bRayTracingPipelineExtension = false;
+
+        /** @brief ray tracing pipeline featureが利用可能か */
+        bool bRayTracingPipelineFeature = false;
+    };
+
+    /**
+     * @brief 拡張・依存機能・featureの結果から有効化できる機能を解決
+     *
+     * @param availability 拡張とfeatureの個別照会結果
+     * @return 論理デバイスで有効化できる機能の組み合わせ
+     */
+    constexpr RayTracingCapabilities ResolveRayTracingCapabilities(
+        const RayTracingFeatureAvailability& availability)
+    {
+        RayTracingCapabilities capabilities;
+        capabilities.bAccelerationStructure =
+            availability.bAccelerationStructureExtension &&
+            availability.bDeferredHostOperationsExtension &&
+            availability.bBufferDeviceAddress &&
+            availability.bAccelerationStructureFeature;
+        capabilities.bRayQuery =
+            capabilities.bAccelerationStructure &&
+            availability.bRayQueryExtension &&
+            availability.bRayQueryFeature;
+        capabilities.bRayTracingPipeline =
+            capabilities.bAccelerationStructure &&
+            availability.bRayTracingPipelineExtension &&
+            availability.bRayTracingPipelineFeature;
+        return capabilities;
+    }
+
+    /**
      * @brief GPUデバイスの能力情報
      *
      * 物理デバイスがサポートする拡張と、論理デバイスで実際に有効化した
@@ -74,6 +145,9 @@ namespace NorvesLib::RHI
 
         /** @brief Cluster Acceleration Structure 機能 */
         ClusterAccelerationStructureCapabilities MegaGeometry;
+
+        /** @brief 論理デバイスで有効になったレイトレーシング機能 */
+        RayTracingCapabilities RayTracing;
 
         // ========================================
         // 基本機能フラグ

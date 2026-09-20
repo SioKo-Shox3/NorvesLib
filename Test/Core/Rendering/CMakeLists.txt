@@ -123,6 +123,20 @@ register_rendering_gpu_test(
     RHIBufferDeviceAddressVulkanTest
     RHIBufferDeviceAddressVulkanTest
 )
+add_executable(RayTracingCapabilityContractTest
+    RayTracingCapabilityContractTest.cpp
+)
+target_link_libraries(RayTracingCapabilityContractTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(RayTracingCapabilityContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RayTracingCapabilityContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RayTracingCapabilityContractTest
+    RayTracingCapabilityContractTest
+)
+
 add_executable(RHITextureToBufferReadbackVulkanTest
     RHITextureToBufferReadbackVulkanTest.cpp
 )

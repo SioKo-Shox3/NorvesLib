@@ -178,6 +178,11 @@ namespace NorvesLib::RHI::Vulkan
         // Vulkan 1.2 機能構造体（Features2チェーン用）
         vk::PhysicalDeviceVulkan12Features m_vulkan12Features{};
 
+        // RT機能構造体（照会結果と論理デバイス有効化に使用）
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR m_accelerationStructureFeatures{};
+        vk::PhysicalDeviceRayQueryFeaturesKHR m_rayQueryFeatures{};
+        vk::PhysicalDeviceRayTracingPipelineFeaturesKHR m_rayTracingPipelineFeatures{};
+
         // キューファミリー
         uint32_t m_graphicsQueueFamilyIndex = UINT32_MAX;
         uint32_t m_computeQueueFamilyIndex = UINT32_MAX;
