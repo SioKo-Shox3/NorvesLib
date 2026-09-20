@@ -1231,7 +1231,12 @@ namespace NorvesLib::RHI::Vulkan
     // 単発コマンドバッファ終了
     void VulkanDevice::EndSingleTimeCommands(vk::CommandBuffer commandBuffer)
     {
-        commandBuffer.end();
+        const vk::Result endResult = commandBuffer.end();
+        if (endResult != vk::Result::eSuccess)
+        {
+            m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+            throw std::runtime_error("単発コマンドバッファの終了に失敗しました");
+        }
 
         vk::SubmitInfo submitInfo{};
         submitInfo.commandBufferCount = 1;
@@ -1240,10 +1245,15 @@ namespace NorvesLib::RHI::Vulkan
         auto submitResult = m_graphicsQueue.submit(1, &submitInfo, nullptr);
         if (submitResult != vk::Result::eSuccess)
         {
+            m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
             throw std::runtime_error("キューへの送信に失敗しました");
         }
 
-        m_graphicsQueue.waitIdle();
+        const vk::Result waitResult = m_graphicsQueue.waitIdle();
+        if (waitResult != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("キューの完了待機に失敗しました");
+        }
 
         m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
     }
