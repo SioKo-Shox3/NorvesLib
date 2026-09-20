@@ -42,11 +42,13 @@ namespace NorvesLib::RHI::Vulkan
 
         vk::DescriptorSetLayout GetVkDescriptorSetLayout() const { return m_layout; }
         const VariableArray<DescriptorBindingDesc> &GetBindings() const { return m_bindings; }
+        const VariableArray<vk::DescriptorSetLayoutBinding> &GetVkBindings() const { return m_vkBindings; }
         vk::DescriptorType ToVkDescriptorType(DescriptorType type) const;
 
     private:
         TSharedPtr<VulkanDevice> m_device;
         VariableArray<DescriptorBindingDesc> m_bindings;
+        VariableArray<vk::DescriptorSetLayoutBinding> m_vkBindings;
         vk::DescriptorSetLayout m_layout;
 
         vk::ShaderStageFlags ToVkShaderStageFlags(ShaderStage stage) const;

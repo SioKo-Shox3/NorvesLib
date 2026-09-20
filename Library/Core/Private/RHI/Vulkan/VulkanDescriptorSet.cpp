@@ -40,8 +40,7 @@ namespace NorvesLib::RHI::Vulkan
         const NorvesLib::Core::Container::VariableArray<DescriptorBindingDesc> &bindings)
         : m_device(device), m_bindings(bindings)
     {
-        NorvesLib::Core::Container::VariableArray<vk::DescriptorSetLayoutBinding> layoutBindings;
-        layoutBindings.reserve(bindings.size());
+        m_vkBindings.reserve(bindings.size());
 
         for (const auto &binding : bindings)
         {
@@ -52,12 +51,12 @@ namespace NorvesLib::RHI::Vulkan
             layoutBinding.stageFlags = ToVkShaderStageFlags(binding.stages);
             layoutBinding.pImmutableSamplers = nullptr;
 
-            layoutBindings.push_back(layoutBinding);
+            m_vkBindings.push_back(layoutBinding);
         }
 
         vk::DescriptorSetLayoutCreateInfo layoutInfo;
-        layoutInfo.bindingCount = static_cast<uint32_t>(layoutBindings.size());
-        layoutInfo.pBindings = layoutBindings.data();
+        layoutInfo.bindingCount = static_cast<uint32_t>(m_vkBindings.size());
+        layoutInfo.pBindings = m_vkBindings.data();
 
         auto result = m_device->GetVkDevice().createDescriptorSetLayout(layoutInfo);
         if (result.result != vk::Result::eSuccess)
@@ -103,7 +102,7 @@ namespace NorvesLib::RHI::Vulkan
 
     vk::ShaderStageFlags VulkanDescriptorSetLayout::ToVkShaderStageFlags(ShaderStage stage) const
     {
-        vk::ShaderStageFlags flags;
+        vk::ShaderStageFlags flags{};
 
         if ((stage & ShaderStage::Vertex) != ShaderStage::None)
         {
@@ -133,6 +132,36 @@ namespace NorvesLib::RHI::Vulkan
         if ((stage & ShaderStage::Domain) != ShaderStage::None)
         {
             flags |= vk::ShaderStageFlagBits::eTessellationEvaluation;
+        }
+
+        if ((stage & ShaderStage::RayGen) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eRaygenKHR;
+        }
+
+        if ((stage & ShaderStage::Miss) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eMissKHR;
+        }
+
+        if ((stage & ShaderStage::ClosestHit) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eClosestHitKHR;
+        }
+
+        if ((stage & ShaderStage::AnyHit) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eAnyHitKHR;
+        }
+
+        if ((stage & ShaderStage::Intersection) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eIntersectionKHR;
+        }
+
+        if ((stage & ShaderStage::Callable) != ShaderStage::None)
+        {
+            flags |= vk::ShaderStageFlagBits::eCallableKHR;
         }
 
         return flags;
