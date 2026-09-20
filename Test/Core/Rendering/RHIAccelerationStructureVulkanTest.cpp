@@ -254,13 +254,13 @@ void main()
 
         const auto* results = static_cast<const uint32_t*>(resultBuffer->Map(0, sizeof(uint32_t) * 2u));
         const uint32_t hit = results[0];
-        const uint32_t miss = results[1];
+        const uint32_t movedHit = results[1];
         resultBuffer->Unmap();
         const uint32_t expectedCenterHit = frameIndex == 0u ? 1u : 0u;
         const uint32_t expectedMovedHit = frameIndex == 0u ? 0u : 1u;
         std::cout << "tlas_frame" << frameIndex << "_center_hit=" << hit << '\n';
-        std::cout << "tlas_frame" << frameIndex << "_moved_hit=" << miss << '\n';
-        if (hit != expectedCenterHit || miss != expectedMovedHit)
+        std::cout << "tlas_frame" << frameIndex << "_moved_hit=" << movedHit << '\n';
+        if (hit != expectedCenterHit || movedHit != expectedMovedHit)
         {
             std::cerr << "TLASの移動前後の交差位置が解析値と一致しません\n";
             return false;
@@ -472,6 +472,32 @@ void main()
             return 1;
         }
 
+        AccelerationStructureInstanceDesc discardedInstance;
+        discardedInstance.bottomLevel = accelerationStructure;
+        discardedInstance.transform[3] = 4.0f;
+        AccelerationStructureInstanceDesc discardedInstanceAtOrigin = discardedInstance;
+        discardedInstanceAtOrigin.transform[3] = 0.0f;
+        AccelerationStructureBuildDesc discardedTlasBuildDesc;
+        discardedTlasBuildDesc.type = AccelerationStructureType::TopLevel;
+        discardedTlasBuildDesc.destination = topLevel;
+        discardedTlasBuildDesc.instances.push_back(discardedInstanceAtOrigin);
+        discardedTlasBuildDesc.instances.push_back(discardedInstance);
+        CommandListPtr discardedBuildCommandList = device->CreateCommandList();
+        if (!discardedBuildCommandList)
+        {
+            std::cerr << "未送信Build用TLAS command listを作成できませんでした\n";
+            return 1;
+        }
+        discardedBuildCommandList->Begin();
+        if (!discardedBuildCommandList->BuildAccelerationStructure(discardedTlasBuildDesc))
+        {
+            discardedBuildCommandList->End();
+            std::cerr << "未送信Build用TLASを記録できませんでした\n";
+            return 1;
+        }
+        discardedBuildCommandList->End();
+        discardedBuildCommandList.reset();
+
         AccelerationStructureBuildDesc tlasUpdateDesc;
         tlasUpdateDesc.type = AccelerationStructureType::TopLevel;
         tlasUpdateDesc.mode = AccelerationStructureBuildMode::Update;
@@ -494,6 +520,7 @@ void main()
             return 1;
         }
         accelerationStructureCommandList->Submit(true);
+        std::cout << "tlas_unsubmitted_build_count_discarded=true\n";
         std::cout << "tlas_update_mismatched_instance_count_rejected=true\n";
 
         if (!RecordAndSubmitAccelerationStructureCommand(
@@ -507,13 +534,58 @@ void main()
             return 1;
         }
 
+        AccelerationStructurePtr legacyTopLevel = device->CreateAccelerationStructure(tlasResourceDesc);
+        AccelerationStructureBuildDesc legacyTlasBuildDesc;
+        legacyTlasBuildDesc.type = AccelerationStructureType::TopLevel;
+        legacyTlasBuildDesc.destination = legacyTopLevel;
+        AccelerationStructureInstanceDesc legacyInstance;
+        legacyInstance.bottomLevel = accelerationStructure;
+        legacyTlasBuildDesc.instances.push_back(legacyInstance);
+        if (!legacyTopLevel || !legacyTopLevel->Build(legacyTlasBuildDesc))
+        {
+            std::cerr << "同期Build経路でTLASを構築できませんでした\n";
+            return 1;
+        }
+
+        AccelerationStructureBuildDesc legacyTlasUpdateDesc;
+        legacyTlasUpdateDesc.type = AccelerationStructureType::TopLevel;
+        legacyTlasUpdateDesc.mode = AccelerationStructureBuildMode::Update;
+        legacyTlasUpdateDesc.destination = legacyTopLevel;
+        legacyTlasUpdateDesc.source = legacyTopLevel;
+        AccelerationStructureInstanceDesc legacyMovedInstance = legacyInstance;
+        legacyMovedInstance.transform[3] = 4.0f;
+        legacyTlasUpdateDesc.instances.push_back(legacyMovedInstance);
+        if (!RecordAndSubmitAccelerationStructureCommand(
+                accelerationStructureCommandList,
+                legacyTlasUpdateDesc,
+                true,
+                false) ||
+            !RunRayQuery(*vulkanDevice, legacyTopLevel, resultBuffer, 2u))
+        {
+            std::cerr << "同期Build後のTLAS再Build fallback/query検証に失敗しました\n";
+            return 1;
+        }
+        std::cout << "tlas_legacy_build_update_rebuilt=true\n";
+
         tlasUpdateDesc.destination.reset();
         tlasUpdateDesc.source.reset();
         tlasUpdateDesc.instances.clear();
         mismatchedUpdateDesc.destination.reset();
         mismatchedUpdateDesc.source.reset();
         mismatchedUpdateDesc.instances.clear();
+        discardedTlasBuildDesc.destination.reset();
+        discardedTlasBuildDesc.instances.clear();
+        legacyTlasBuildDesc.destination.reset();
+        legacyTlasBuildDesc.instances.clear();
+        legacyTlasUpdateDesc.destination.reset();
+        legacyTlasUpdateDesc.source.reset();
+        legacyTlasUpdateDesc.instances.clear();
         movedInstance.bottomLevel.reset();
+        legacyInstance.bottomLevel.reset();
+        legacyMovedInstance.bottomLevel.reset();
+        discardedInstance.bottomLevel.reset();
+        discardedInstanceAtOrigin.bottomLevel.reset();
+        legacyTopLevel.reset();
         topLevel.reset();
         accelerationStructure.reset();
         accelerationStructureCommandList->Begin();

@@ -400,7 +400,6 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("コマンドバッファの終了に失敗しました");
         }
 
-        CommitPendingAccelerationStructureBuilds(m_currentFrameIndex);
         m_bIsRecording = false;
     }
 
@@ -518,6 +517,11 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::CommitGPUTimestampSubmission(uint32_t frameSlotIndex,
                                                          uint64_t submissionSerial)
     {
+        if (submissionSerial != 0u)
+        {
+            CommitPendingAccelerationStructureBuilds(frameSlotIndex);
+        }
+
 #if NORVES_ENABLE_STATS
         if (frameSlotIndex >= MAX_COMMAND_BUFFERS)
         {
@@ -1074,6 +1078,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         TSharedPtr<VulkanAccelerationStructure> source;
+        bool rebuildDestination = mode == AccelerationStructureBuildMode::Build;
         if (mode == AccelerationStructureBuildMode::Update)
         {
             source = DynamicPointerCast<VulkanAccelerationStructure>(desc.source);
@@ -1086,7 +1091,13 @@ namespace NorvesLib::RHI::Vulkan
             }
 
             const uint32_t sourceInstanceCount = GetLatestBuiltInstanceCount(*source);
-            if (sourceInstanceCount == 0 || desc.instances.size() != sourceInstanceCount)
+            if (sourceInstanceCount == 0)
+            {
+                // 既存の同期Build経路はinstance数を記録しないため、未知のsourceはフルBuildで置き換える
+                rebuildDestination = true;
+                source.reset();
+            }
+            else if (desc.instances.size() != sourceInstanceCount)
             {
                 return false;
             }
@@ -1172,7 +1183,7 @@ namespace NorvesLib::RHI::Vulkan
             const uint64_t scratchAlignment = std::max<uint64_t>(
                 accelerationStructureProperties.minAccelerationStructureScratchOffsetAlignment,
                 1u);
-            const uint64_t requiredScratchSize = mode == AccelerationStructureBuildMode::Build
+            const uint64_t requiredScratchSize = rebuildDestination
                 ? buildSizes.buildScratchSize
                 : buildSizes.updateScratchSize;
             if (requiredScratchSize == 0 ||
@@ -1184,7 +1195,7 @@ namespace NorvesLib::RHI::Vulkan
             BufferDesc scratchDesc;
             scratchDesc.Size = requiredScratchSize + scratchAlignment - 1u;
             scratchDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
-            scratchDesc.DebugName = mode == AccelerationStructureBuildMode::Build
+            scratchDesc.DebugName = rebuildDestination
                 ? "VulkanAccelerationStructure.TLAS.BuildScratch"
                 : "VulkanAccelerationStructure.TLAS.UpdateScratch";
             TSharedPtr<VulkanBuffer> scratchBuffer = MakeShared<VulkanBuffer>(m_device, scratchDesc);
@@ -1198,10 +1209,10 @@ namespace NorvesLib::RHI::Vulkan
                 (scratchRemainder == 0 ? 0 : scratchAlignment - scratchRemainder);
 
             vk::AccelerationStructureBuildGeometryInfoKHR buildInfo = sizeInfo;
-            buildInfo.mode = mode == AccelerationStructureBuildMode::Build
+            buildInfo.mode = rebuildDestination
                 ? vk::BuildAccelerationStructureModeKHR::eBuild
                 : vk::BuildAccelerationStructureModeKHR::eUpdate;
-            buildInfo.srcAccelerationStructure = source
+            buildInfo.srcAccelerationStructure = !rebuildDestination && source
                 ? source->GetVkAccelerationStructure()
                 : vk::AccelerationStructureKHR{};
             buildInfo.dstAccelerationStructure = destination->GetVkAccelerationStructure();

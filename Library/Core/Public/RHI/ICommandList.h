@@ -349,7 +349,7 @@ namespace NorvesLib::RHI
         virtual void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) = 0;
 
         /**
-         * @brief BLAS/TLAS構築コマンドを記録
+         * @brief TLASのBuildコマンドを記録
          * @param desc 構築内容
          * @return RT未対応、入力不正、または記録失敗時はfalse
          */
@@ -360,7 +360,7 @@ namespace NorvesLib::RHI
         }
 
         /**
-         * @brief BLAS/TLAS更新コマンドを記録
+         * @brief TLASのUpdateコマンドを記録。sourceのBuild数が不明な場合はdestinationを再Buildすることがあります
          * @param desc 更新内容
          * @return RT未対応、入力不正、または記録失敗時はfalse
          */
