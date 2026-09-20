@@ -2,6 +2,7 @@
 
 #include "GPUTimestamp.h"
 #include "RHITypes.h"
+#include "IAccelerationStructure.h"
 #include "Container/VariableArray.h"
 #include <array>
 
@@ -346,6 +347,28 @@ namespace NorvesLib::RHI
          * @param threadGroupCountZ Zスレッドグループ数
          */
         virtual void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) = 0;
+
+        /**
+         * @brief BLAS/TLAS構築コマンドを記録
+         * @param desc 構築内容
+         * @return RT未対応、入力不正、または記録失敗時はfalse
+         */
+        virtual bool BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc)
+        {
+            (void)desc;
+            return false;
+        }
+
+        /**
+         * @brief BLAS/TLAS更新コマンドを記録
+         * @param desc 更新内容
+         * @return RT未対応、入力不正、または記録失敗時はfalse
+         */
+        virtual bool UpdateAccelerationStructure(const AccelerationStructureBuildDesc& desc)
+        {
+            (void)desc;
+            return false;
+        }
 
         /**
          * @brief バッファコピー

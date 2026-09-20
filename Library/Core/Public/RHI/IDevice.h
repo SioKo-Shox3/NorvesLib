@@ -4,6 +4,7 @@
 #include "DeviceCapabilities.h"
 #include "IGPUResourceAllocator.h"
 #include "IDescriptorSet.h"
+#include "IAccelerationStructure.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
 #include "Platform/NativeWindowHandle.h"
@@ -171,6 +172,15 @@ namespace NorvesLib::RHI
          * @return 作成されたバッファオブジェクト
          */
         virtual BufferPtr CreateBuffer(const BufferDesc &desc) = 0;
+
+        /**
+         * @brief 加速構造リソースを作成
+         * @return 基底の未対応実装はnullptrを返す。対応バックエンドはoverrideする。
+         */
+        virtual AccelerationStructurePtr CreateAccelerationStructure(const AccelerationStructureDesc &)
+        {
+            return {};
+        }
 
         /**
          * @brief テクスチャを作成

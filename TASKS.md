@@ -184,7 +184,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - paths: Library/Core/Public/RHI/RHITypes.h, Library/Core/Public/RHI/IShaderCompiler.h, Library/Core/Private/RHI/Vulkan/VulkanShaderCompiler.cpp, Test/Core/Rendering/RHIRayTracingShaderStageCompileTest.cpp, Test/Core/Rendering/CMakeLists.txt, Assets/Shaders/RayTracing/*, TASKS.md, PROGRESS.md
 
 ## R5-P4: 加速構造のRHI契約を定義する
-- status: todo
+- status: done
 - done-when: BLAS/TLAS geometry・instance・build/update descriptorsと加速構造resourceがbackend-neutral APIで表現され、無効入力とRT非対応時の戻り値契約がテストで固定される。
 - verify: `cmake --build build --config Debug --target RHIRayTracingApiContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RHIRayTracingApiContractTest$"`
@@ -203,6 +203,8 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - verify: `cmake --build build --config Debug --target RHIAccelerationStructureVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RHIAccelerationStructureVulkanTest$"`
 - paths: Library/Core/Public/RHI/IAccelerationStructure.h, Library/Core/Public/RHI/ICommandList.h, Library/Core/Private/RHI/Vulkan/VulkanAccelerationStructure.*, Library/Core/Private/RHI/Vulkan/VulkanCommandList.*, Test/Core/Rendering/RHIAccelerationStructureVulkanTest.cpp, TASKS.md, PROGRESS.md
+
+- notes: Updateの適合性は容量だけでは判定できない。TLASはsourceの直近Buildで使った実instance数を記録し、Update入力との一致を検証する。
 
 ## R5-P7: RT pipelineとShader Binding Tableを実装する
 - status: todo

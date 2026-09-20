@@ -137,6 +137,16 @@ register_rendering_gpu_test(
     RayTracingCapabilityContractTest
 )
 
+add_executable(RHIRayTracingApiContractTest
+    RHIRayTracingApiContractTest.cpp
+)
+target_link_libraries(RHIRayTracingApiContractTest PRIVATE Core)
+target_include_directories(RHIRayTracingApiContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RHIRayTracingApiContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RHIRayTracingApiContractTest COMMAND RHIRayTracingApiContractTest)
+
 add_executable(RHIRayTracingShaderStageCompileTest
     RHIRayTracingShaderStageCompileTest.cpp
 )

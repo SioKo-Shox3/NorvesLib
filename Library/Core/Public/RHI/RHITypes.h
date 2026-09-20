@@ -579,6 +579,7 @@ namespace NorvesLib::RHI
     class IDevice;
     class ICommandList;
     class IBuffer;
+    class IAccelerationStructure;
     class ITexture;
     class ISampler;
     class IRenderPass;
@@ -593,6 +594,7 @@ namespace NorvesLib::RHI
     using DevicePtr = TSharedPtr<IDevice>;
     using CommandListPtr = TSharedPtr<ICommandList>;
     using BufferPtr = TSharedPtr<IBuffer>;
+    using AccelerationStructurePtr = TSharedPtr<IAccelerationStructure>;
     using TexturePtr = TSharedPtr<ITexture>;
     using SamplerPtr = TSharedPtr<ISampler>;
     using RenderPassPtr = TSharedPtr<IRenderPass>;
