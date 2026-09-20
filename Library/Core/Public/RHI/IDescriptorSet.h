@@ -17,7 +17,8 @@ namespace NorvesLib::RHI
         CombinedImageSampler, ///< テクスチャ+サンプラーの結合バインド（uniform sampler2D用）
         RWTexture,
         RWBuffer,
-        StructuredBuffer
+        StructuredBuffer,
+        AccelerationStructure
     };
 
     /**
@@ -78,6 +79,20 @@ namespace NorvesLib::RHI
          * @param size バインドするバッファのサイズ
          */
         virtual void BindStorageBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size) = 0;
+
+        /**
+         * @brief 加速構造をバインドする
+         * @param binding バインディングポイント
+         * @param accelerationStructure バインドする加速構造
+         * @return 対応する加速構造descriptorへのbindingが成立した場合はtrue
+         */
+        virtual bool BindAccelerationStructure(uint32_t binding,
+                                               AccelerationStructurePtr accelerationStructure)
+        {
+            (void)binding;
+            (void)accelerationStructure;
+            return false;
+        }
 
         /**
          * @brief ストレージテクスチャ（RWTexture）をバインドする

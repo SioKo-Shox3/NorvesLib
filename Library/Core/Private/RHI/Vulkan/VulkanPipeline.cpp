@@ -321,34 +321,7 @@ namespace NorvesLib::RHI::Vulkan
                 bindingDesc.stages = binding.stages;
                 bindingDesc.count = 1;
 
-                // ResourceBindTypeからDescriptorTypeへの変換
-                switch (binding.type)
-                {
-                case ResourceBindType::ConstantBuffer:
-                    bindingDesc.type = DescriptorType::UniformBuffer;
-                    break;
-                case ResourceBindType::Texture:
-                    bindingDesc.type = DescriptorType::SampledImage;
-                    break;
-                case ResourceBindType::Sampler:
-                    bindingDesc.type = DescriptorType::Sampler;
-                    break;
-                case ResourceBindType::RWTexture:
-                    bindingDesc.type = DescriptorType::StorageImage;
-                    break;
-                case ResourceBindType::RWBuffer:
-                    bindingDesc.type = DescriptorType::StorageBuffer;
-                    break;
-                case ResourceBindType::StructuredBuffer:
-                    bindingDesc.type = DescriptorType::StorageBuffer;
-                    break;
-                case ResourceBindType::CombinedImageSampler:
-                    bindingDesc.type = DescriptorType::CombinedImageSampler;
-                    break;
-                default:
-                    bindingDesc.type = DescriptorType::UniformBuffer;
-                    break;
-                }
+                bindingDesc.type = VulkanDevice::ConvertResourceBindType(binding.type);
 
                 bindingDescs.push_back(bindingDesc);
             }

@@ -420,7 +420,8 @@ namespace NorvesLib::RHI
         StorageImage,
         UniformTexelBuffer,
         StorageTexelBuffer,
-        CombinedImageSampler
+        CombinedImageSampler,
+        AccelerationStructure
     };
 
     /**

@@ -6,6 +6,7 @@
 namespace NorvesLib::RHI::Vulkan
 {
     class VulkanCommandList;
+    class VulkanDescriptorSet;
 
     /**
      * @brief Vulkan加速構造とその構築領域を管理する
@@ -27,6 +28,7 @@ namespace NorvesLib::RHI::Vulkan
 
     private:
         friend class VulkanCommandList;
+        friend class VulkanDescriptorSet;
 
         TSharedPtr<VulkanDevice> m_device;
         AccelerationStructureDesc m_desc;

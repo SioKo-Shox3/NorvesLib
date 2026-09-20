@@ -19,6 +19,7 @@ namespace NorvesLib::RHI::Vulkan
     class VulkanBuffer;
     class VulkanTexture;
     class VulkanSampler;
+    class VulkanAccelerationStructure;
 
     /**
      * @brief Vulkanディスクリプタセットレイアウト (vulkan.hpp使用)
@@ -109,6 +110,8 @@ namespace NorvesLib::RHI::Vulkan
         void BindTexture(uint32_t binding, TexturePtr texture) override;
         void BindSampler(uint32_t binding, SamplerPtr sampler) override;
         void BindStorageBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size) override;
+        bool BindAccelerationStructure(uint32_t binding,
+                                       AccelerationStructurePtr accelerationStructure) override;
         void BindStorageTexture(uint32_t binding, TexturePtr texture) override;
         void BindStorageTexture(uint32_t binding, TexturePtr texture, uint32_t mipLevel) override;
         void Update() override;
@@ -135,13 +138,15 @@ namespace NorvesLib::RHI::Vulkan
             {
                 Buffer,
                 Texture,
-                Sampler
+                Sampler,
+                AccelerationStructure
             };
 
             ResourceType type;
             BufferPtr buffer;
             TexturePtr texture;
             SamplerPtr sampler;
+            AccelerationStructurePtr accelerationStructure;
             uint64_t offset = 0;
             uint64_t range = VK_WHOLE_SIZE;
             int32_t mipLevel = -1; // -1 = 全ミップ（デフォルト）、0+ = 特定ミップ

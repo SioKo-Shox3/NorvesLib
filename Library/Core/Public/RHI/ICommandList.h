@@ -371,6 +371,21 @@ namespace NorvesLib::RHI
         }
 
         /**
+         * @brief ray tracing pipelineを実行
+         * @param width trace領域の幅
+         * @param height trace領域の高さ
+         * @param depth trace領域の深さ
+         * @return traceを記録できた場合true
+         */
+        virtual bool TraceRays(uint32_t width, uint32_t height, uint32_t depth)
+        {
+            (void)width;
+            (void)height;
+            (void)depth;
+            return false;
+        }
+
+        /**
          * @brief バッファコピー
          * @param src コピー元バッファ
          * @param dst コピー先バッファ

@@ -20,6 +20,10 @@ namespace NorvesLib::RHI::Vulkan
 
         BufferPtr GetShaderBindingTable() const;
         uint32_t GetShaderGroupCount() const { return m_shaderGroupCount; }
+        uint32_t GetMaxRayDispatchInvocationCount() const
+        {
+            return m_rayTracingProperties.maxRayDispatchInvocationCount;
+        }
         const vk::StridedDeviceAddressRegionKHR& GetRayGenerationRegion() const { return m_rayGenerationRegion; }
         const vk::StridedDeviceAddressRegionKHR& GetMissRegion() const { return m_missRegion; }
         const vk::StridedDeviceAddressRegionKHR& GetHitRegion() const { return m_hitRegion; }

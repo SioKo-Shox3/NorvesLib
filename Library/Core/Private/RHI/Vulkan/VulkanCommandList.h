@@ -528,6 +528,7 @@ namespace NorvesLib::RHI::Vulkan
         void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) override;
         bool BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc) override;
         bool UpdateAccelerationStructure(const AccelerationStructureBuildDesc& desc) override;
+        bool TraceRays(uint32_t width, uint32_t height, uint32_t depth) override;
 
         void CopyBuffer(BufferPtr src, BufferPtr dst, uint64_t size = 0,
                         uint64_t srcOffset = 0, uint64_t dstOffset = 0) override;

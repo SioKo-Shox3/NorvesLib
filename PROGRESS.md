@@ -33,11 +33,11 @@
 - R5-P7: RayTracing pipeline descriptorにraygen/miss/closest-hit shader groupを加え、Vulkan pipelineとSBT生成を実装した。6 RT stageとAllRayTracingのdescriptor visibility、無効group拒否、group handleとSBT region alignmentをGPUテストで確認した。Debug build exit 0、専用CTest 1/1 passed、独立評価PASS。ログは`.harness/runs/20260920-174410/verify-R5-P7-5.txt`と`verify-R5-P7-6.txt`。
 
 ## In progress
-- R5-P8: blocked。実三角形traceにはTLASの加速構造descriptor bindingが必要だが、RHI/Vulkan descriptor経路は未対応で指定paths外。詳細はblocked/R5-P8.md。
+- R5-P8: 実装済みコードの独立評価で挙がったgraphics pipeline descriptor型の写像、TLAS以外の加速構造binding拒否、TraceRays上限検査の修正と再レビュー中。詳細はblocked/R5-P8.md。
 
 ## Next
 
-- R5-P8: TLAS descriptor経路の対象pathsを拡張した後に再開する（blocked/R5-P8.md）。
+- R5-P8: 3件のblocking指摘を修正し、追加拒否テスト、再ビルド、CTest、2周目の独立レビューを通して完了する。
 
 ## Notes
 

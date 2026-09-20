@@ -1709,6 +1709,8 @@ namespace NorvesLib::RHI::Vulkan
             return DescriptorType::StorageBuffer;
         case ResourceBindType::StructuredBuffer:
             return DescriptorType::StorageBuffer;
+        case ResourceBindType::AccelerationStructure:
+            return DescriptorType::AccelerationStructure;
         default:
             return DescriptorType::UniformBuffer;
         }

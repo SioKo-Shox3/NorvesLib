@@ -4,6 +4,7 @@
 #include "VulkanTexture.h"
 #include "VulkanSampler.h"
 #include "VulkanPipeline.h"
+#include "VulkanRayTracingPipeline.h"
 #include "VulkanRenderPass.h"
 #include "VulkanFramebuffer.h"
 #include "VulkanDescriptorSet.h"
@@ -881,7 +882,15 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("無効なパイプラインです");
         }
 
-        vk::PipelineBindPoint bindPoint = vkPipeline->IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
+        vk::PipelineBindPoint bindPoint = vk::PipelineBindPoint::eGraphics;
+        if (vkPipeline->IsCompute())
+        {
+            bindPoint = vk::PipelineBindPoint::eCompute;
+        }
+        else if (vkPipeline->IsRayTracing())
+        {
+            bindPoint = vk::PipelineBindPoint::eRayTracingKHR;
+        }
 
         m_commandBuffer.bindPipeline(bindPoint, vkPipeline->GetVkPipeline());
         m_currentPipeline = pipeline;
@@ -966,7 +975,15 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("パイプラインが設定されていません");
         }
 
-        vk::PipelineBindPoint bindPoint = vkPipeline->IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
+        vk::PipelineBindPoint bindPoint = vk::PipelineBindPoint::eGraphics;
+        if (vkPipeline->IsCompute())
+        {
+            bindPoint = vk::PipelineBindPoint::eCompute;
+        }
+        else if (vkPipeline->IsRayTracing())
+        {
+            bindPoint = vk::PipelineBindPoint::eRayTracingKHR;
+        }
 
         vk::DescriptorSet descSet = vkDescSet->GetVkDescriptorSet();
         m_commandBuffer.bindDescriptorSets(
@@ -1058,6 +1075,51 @@ namespace NorvesLib::RHI::Vulkan
     bool VulkanCommandList::UpdateAccelerationStructure(const AccelerationStructureBuildDesc& desc)
     {
         return RecordTopLevelAccelerationStructureBuild(desc, AccelerationStructureBuildMode::Update);
+    }
+
+    bool VulkanCommandList::TraceRays(uint32_t width, uint32_t height, uint32_t depth)
+    {
+        if (!m_bIsRecording || m_bInRenderPass || width == 0 || height == 0 || depth == 0)
+        {
+            return false;
+        }
+
+        auto rayTracingPipeline = DynamicPointerCast<VulkanRayTracingPipeline>(m_currentPipeline);
+        if (!rayTracingPipeline)
+        {
+            return false;
+        }
+
+        const uint64_t maxInvocationCount = rayTracingPipeline->GetMaxRayDispatchInvocationCount();
+        if (maxInvocationCount == 0 || width > maxInvocationCount || height > maxInvocationCount ||
+            depth > maxInvocationCount)
+        {
+            return false;
+        }
+
+        const uint64_t widthHeight = static_cast<uint64_t>(width) * height;
+        if (widthHeight > maxInvocationCount || depth > maxInvocationCount / widthHeight)
+        {
+            return false;
+        }
+
+        const vk::StridedDeviceAddressRegionKHR& rayGenerationRegion =
+            rayTracingPipeline->GetRayGenerationRegion();
+        if (rayGenerationRegion.deviceAddress == 0 || rayGenerationRegion.size == 0 ||
+            rayGenerationRegion.stride == 0)
+        {
+            return false;
+        }
+
+        m_commandBuffer.traceRaysKHR(
+            rayGenerationRegion,
+            rayTracingPipeline->GetMissRegion(),
+            rayTracingPipeline->GetHitRegion(),
+            rayTracingPipeline->GetCallableRegion(),
+            width,
+            height,
+            depth);
+        return true;
     }
 
     bool VulkanCommandList::RecordTopLevelAccelerationStructureBuild(

@@ -2,11 +2,14 @@
 #include "RenderingValidation/GpuTestEnvironment.h"
 
 #include "RHI/IDevice.h"
+#include "RHI/ICommandList.h"
 #include "RHI/IShaderCompiler.h"
 #include "RHI/RHIDeviceDesc.h"
 #include "RHI/RHIDeviceFactory.h"
+#include "RHI/Vulkan/VulkanAccelerationStructure.h"
 #include "RHI/Vulkan/VulkanDevice.h"
 #include "RHI/Vulkan/VulkanBuffer.h"
+#include "RHI/Vulkan/VulkanCommandList.h"
 #include "RHI/Vulkan/VulkanDescriptorSet.h"
 #include "RHI/Vulkan/VulkanRayTracingPipeline.h"
 
@@ -108,8 +111,226 @@ namespace
         return true;
     }
 
+    bool VerifyTriangleVisibility(
+        IDevice& device,
+        const PipelinePtr& pipeline,
+        const DescriptorSetDesc& descriptorSetDesc)
+    {
+        struct Vertex
+        {
+            float Position[3];
+        };
+
+        const Vertex vertices[3] = {
+            {{-1.0f, -1.0f, 0.0f}},
+            {{1.0f, -1.0f, 0.0f}},
+            {{0.0f, 1.0f, 0.0f}},
+        };
+        const uint32_t indices[3] = {0, 1, 2};
+
+        BufferDesc vertexBufferDesc;
+        vertexBufferDesc.Size = sizeof(vertices);
+        vertexBufferDesc.Usage = ResourceUsage::VertexBuffer | ResourceUsage::BufferDeviceAddress;
+        vertexBufferDesc.CPUAccessible = true;
+        vertexBufferDesc.DebugName = "RHIRayTracingPipeline.VisibilityVertices";
+        BufferPtr vertexBuffer = device.CreateBuffer(vertexBufferDesc);
+
+        BufferDesc indexBufferDesc;
+        indexBufferDesc.Size = sizeof(indices);
+        indexBufferDesc.Usage = ResourceUsage::IndexBuffer | ResourceUsage::BufferDeviceAddress;
+        indexBufferDesc.CPUAccessible = true;
+        indexBufferDesc.DebugName = "RHIRayTracingPipeline.VisibilityIndices";
+        BufferPtr indexBuffer = device.CreateBuffer(indexBufferDesc);
+        if (!vertexBuffer || !indexBuffer || vertexBuffer->GetDeviceAddress() == 0 ||
+            indexBuffer->GetDeviceAddress() == 0)
+        {
+            std::cerr << "visibility用のBDA vertex/index bufferを作成できませんでした\n";
+            return false;
+        }
+        vertexBuffer->Update(vertices, sizeof(vertices));
+        indexBuffer->Update(indices, sizeof(indices));
+
+        AccelerationStructureDesc bottomLevelDesc;
+        bottomLevelDesc.type = AccelerationStructureType::BottomLevel;
+        AccelerationStructureGeometryCapacityDesc geometryCapacity;
+        geometryCapacity.type = AccelerationStructureGeometryType::Triangles;
+        geometryCapacity.maxPrimitiveCount = 1;
+        geometryCapacity.opaque = true;
+        bottomLevelDesc.geometryCapacities.push_back(geometryCapacity);
+        AccelerationStructurePtr bottomLevel = device.CreateAccelerationStructure(bottomLevelDesc);
+        AccelerationStructureGeometryDesc triangleGeometry;
+        triangleGeometry.type = AccelerationStructureGeometryType::Triangles;
+        triangleGeometry.opaque = true;
+        triangleGeometry.triangles.vertexBuffer = vertexBuffer;
+        triangleGeometry.triangles.vertexCount = 3;
+        triangleGeometry.triangles.vertexStride = sizeof(Vertex);
+        triangleGeometry.triangles.vertexFormat = Format::R32G32B32_FLOAT;
+        triangleGeometry.triangles.indexBuffer = indexBuffer;
+        triangleGeometry.triangles.indexCount = 3;
+        triangleGeometry.triangles.indexFormat = IndexType::Uint32;
+        AccelerationStructureBuildDesc bottomLevelBuildDesc;
+        bottomLevelBuildDesc.type = AccelerationStructureType::BottomLevel;
+        bottomLevelBuildDesc.destination = bottomLevel;
+        bottomLevelBuildDesc.geometries.push_back(triangleGeometry);
+        if (!bottomLevel || !bottomLevel->Build(bottomLevelBuildDesc))
+        {
+            std::cerr << "visibility用BLASを構築できませんでした\n";
+            return false;
+        }
+
+        AccelerationStructureDesc topLevelDesc;
+        topLevelDesc.type = AccelerationStructureType::TopLevel;
+        topLevelDesc.maxInstanceCount = 1;
+        AccelerationStructurePtr topLevel = device.CreateAccelerationStructure(topLevelDesc);
+        AccelerationStructureInstanceDesc instance;
+        instance.bottomLevel = bottomLevel;
+        AccelerationStructureBuildDesc topLevelBuildDesc;
+        topLevelBuildDesc.type = AccelerationStructureType::TopLevel;
+        topLevelBuildDesc.destination = topLevel;
+        topLevelBuildDesc.instances.push_back(instance);
+        if (!topLevel || !topLevel->Build(topLevelBuildDesc))
+        {
+            std::cerr << "visibility用TLASを構築できませんでした\n";
+            return false;
+        }
+        topLevelBuildDesc.destination.reset();
+        topLevelBuildDesc.instances.clear();
+        instance.bottomLevel.reset();
+        TWeakPtr<IAccelerationStructure> topLevelLifetime = topLevel;
+
+        BufferDesc resultBufferDesc;
+        resultBufferDesc.Size = sizeof(uint32_t) * 2u;
+        resultBufferDesc.Usage = ResourceUsage::StorageBuffer;
+        resultBufferDesc.CPUAccessible = true;
+        resultBufferDesc.DebugName = "RHIRayTracingPipeline.VisibilityResults";
+        BufferPtr resultBuffer = device.CreateBuffer(resultBufferDesc);
+        DescriptorSetPtr descriptorSet = device.CreateDescriptorSet(descriptorSetDesc);
+        if (!resultBuffer || !descriptorSet)
+        {
+            std::cerr << "visibility用の結果bufferまたはdescriptor setを作成できませんでした\n";
+            return false;
+        }
+        if (descriptorSet->BindAccelerationStructure(0, AccelerationStructurePtr{}) ||
+            descriptorSet->BindAccelerationStructure(1, topLevel))
+        {
+            std::cerr << "nullまたは別種のdescriptor bindingを加速構造として受理しました\n";
+            return false;
+        }
+        if (!descriptorSet->BindAccelerationStructure(0, topLevel))
+        {
+            std::cerr << "有効なTLASを加速構造descriptorへ設定できませんでした\n";
+            return false;
+        }
+        if (descriptorSet->BindAccelerationStructure(0, bottomLevel))
+        {
+            std::cerr << "BLASをTLAS専用descriptorへ誤bindingできてしまいました\n";
+            return false;
+        }
+        RHIDeviceDesc foreignDeviceDesc;
+        foreignDeviceDesc.Api = GraphicsAPI::Vulkan;
+        foreignDeviceDesc.bEnableValidation = false;
+        DevicePtr foreignDevice = CreateRHIDevice(foreignDeviceDesc);
+        if (!foreignDevice || !foreignDevice->GetCapabilities().RayTracing.bAccelerationStructure)
+        {
+            std::cerr << "異なるdevice所有の加速構造bindingを検証できませんでした\n";
+            return false;
+        }
+        AccelerationStructurePtr foreignTopLevel = foreignDevice->CreateAccelerationStructure(topLevelDesc);
+        if (!foreignTopLevel || descriptorSet->BindAccelerationStructure(0, foreignTopLevel))
+        {
+            std::cerr << "異なるVulkan device所有のTLASを拒否できませんでした\n";
+            return false;
+        }
+        foreignDevice->WaitIdle();
+
+        descriptorSet->BindStorageBuffer(1, resultBuffer, 0, sizeof(uint32_t) * 2u);
+        descriptorSet->Update();
+        topLevel.reset();
+        if (topLevelLifetime.expired())
+        {
+            std::cerr << "descriptor setがTLASの寿命を保持しませんでした\n";
+            return false;
+        }
+
+        CommandListPtr commandList = device.CreateCommandList();
+        TSharedPtr<VulkanCommandList> vulkanCommandList = DynamicPointerCast<VulkanCommandList>(commandList);
+        TSharedPtr<VulkanBuffer> vulkanResultBuffer = DynamicPointerCast<VulkanBuffer>(resultBuffer);
+        if (!commandList || !vulkanCommandList || !vulkanResultBuffer)
+        {
+            std::cerr << "visibility用のVulkan command listまたはbufferを取得できませんでした\n";
+            return false;
+        }
+
+        commandList->Begin();
+        commandList->SetPipeline(pipeline);
+        commandList->SetDescriptorSet(descriptorSet, 0);
+        if (commandList->TraceRays(0, 1, 1) || commandList->TraceRays(65536, 65536, 1) ||
+            !commandList->TraceRays(2, 1, 1))
+        {
+            commandList->End();
+            std::cerr << "TraceRaysが無効/上限超過の寸法を受理するか、有効なtraceを記録できませんでした\n";
+            return false;
+        }
+
+        vk::BufferMemoryBarrier resultBarrier{};
+        resultBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+        resultBarrier.dstAccessMask = vk::AccessFlagBits::eHostRead;
+        resultBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        resultBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        resultBarrier.buffer = vulkanResultBuffer->GetVkBuffer();
+        resultBarrier.offset = 0;
+        resultBarrier.size = sizeof(uint32_t) * 2u;
+        vulkanCommandList->GetVkCommandBuffer().pipelineBarrier(
+            vk::PipelineStageFlagBits::eRayTracingShaderKHR,
+            vk::PipelineStageFlagBits::eHost,
+            {},
+            0,
+            nullptr,
+            1,
+            &resultBarrier,
+            0,
+            nullptr);
+        commandList->End();
+        commandList->Submit(true);
+
+        const auto* results = static_cast<const uint32_t*>(resultBuffer->Map(0, sizeof(uint32_t) * 2u));
+        if (!results)
+        {
+            std::cerr << "visibility結果bufferをmapできませんでした\n";
+            return false;
+        }
+        const uint32_t hit = results[0];
+        const uint32_t miss = results[1];
+        resultBuffer->Unmap();
+        std::cout << "rt_trace_hit=" << hit << '\n';
+        std::cout << "rt_trace_miss=" << miss << '\n';
+        if (hit != 1u || miss != 0u)
+        {
+            std::cerr << "TraceRaysのtriangle hit/missが解析結果と一致しません\n";
+            return false;
+        }
+
+        descriptorSet.reset();
+        if (!topLevelLifetime.expired())
+        {
+            std::cerr << "descriptor set破棄後もTLAS resourceが解放されませんでした\n";
+            return false;
+        }
+
+        std::cout << "tlas_descriptor_binding_and_lifetime=true\n";
+        std::cout << "vulkan_trace_rays_readback=true\n";
+        return true;
+    }
+
     bool VerifyRayTracingDescriptorVisibility(const TSharedPtr<VulkanDevice>& device)
     {
+        if (VulkanDevice::ConvertResourceBindType(ResourceBindType::AccelerationStructure) !=
+            DescriptorType::AccelerationStructure)
+        {
+            std::cerr << "加速構造のResourceBindType変換が不正です\n";
+            return false;
+        }
+
         struct StageCase
         {
             ShaderStage stage;
@@ -163,6 +384,24 @@ namespace
             return false;
         }
 
+        DescriptorBindingDesc accelerationStructureBinding;
+        accelerationStructureBinding.binding = 0;
+        accelerationStructureBinding.type = DescriptorType::AccelerationStructure;
+        accelerationStructureBinding.stages = ShaderStage::RayGen;
+        VariableArray<DescriptorBindingDesc> accelerationStructureBindings;
+        accelerationStructureBindings.push_back(accelerationStructureBinding);
+        TSharedPtr<VulkanDescriptorSetLayout> accelerationStructureLayout =
+            MakeShared<VulkanDescriptorSetLayout>(device, accelerationStructureBindings);
+        const VariableArray<vk::DescriptorSetLayoutBinding>& vkAccelerationStructureBindings =
+            accelerationStructureLayout->GetVkBindings();
+        if (vkAccelerationStructureBindings.size() != 1 ||
+            vkAccelerationStructureBindings[0].descriptorType != vk::DescriptorType::eAccelerationStructureKHR ||
+            vkAccelerationStructureBindings[0].stageFlags != vk::ShaderStageFlagBits::eRaygenKHR)
+        {
+            std::cerr << "加速構造descriptorのVulkan型またはRT stageが不正です\n";
+            return false;
+        }
+
         return true;
     }
 
@@ -201,14 +440,18 @@ namespace
             return 1;
         }
 
-        const String fixturePath = NORVES_SOURCE_ROOT "/Assets/Shaders/RayTracing/RayTracingStageFixture.glsl";
+        const String rayGenerationPath =
+            NORVES_SOURCE_ROOT "/Assets/Shaders/RayTracing/RayTracingVisibilityRayGen.glsl";
+        const String missPath = NORVES_SOURCE_ROOT "/Assets/Shaders/RayTracing/RayTracingVisibilityMiss.glsl";
+        const String closestHitPath =
+            NORVES_SOURCE_ROOT "/Assets/Shaders/RayTracing/RayTracingVisibilityClosestHit.glsl";
         ShaderPtr rayGenerationShader = CompileRayTracingShader(
             *device,
             compiler,
-            fixturePath,
+            rayGenerationPath,
             ShaderStage::RayGen);
-        ShaderPtr missShader = CompileRayTracingShader(*device, compiler, fixturePath, ShaderStage::Miss);
-        ShaderPtr closestHitShader = CompileRayTracingShader(*device, compiler, fixturePath, ShaderStage::ClosestHit);
+        ShaderPtr missShader = CompileRayTracingShader(*device, compiler, missPath, ShaderStage::Miss);
+        ShaderPtr closestHitShader = CompileRayTracingShader(*device, compiler, closestHitPath, ShaderStage::ClosestHit);
         if (!rayGenerationShader || !missShader || !closestHitShader)
         {
             return 1;
@@ -235,12 +478,17 @@ namespace
         hitGroup.closestHitShader = closestHitShader;
         desc.shaderGroups.push_back(hitGroup);
 
-        DescriptorBinding rayTracingBinding;
-        rayTracingBinding.binding = 0;
-        rayTracingBinding.type = ResourceBindType::ConstantBuffer;
-        rayTracingBinding.stages = ShaderStage::AllRayTracing;
+        DescriptorBinding accelerationStructureBinding;
+        accelerationStructureBinding.binding = 0;
+        accelerationStructureBinding.type = ResourceBindType::AccelerationStructure;
+        accelerationStructureBinding.stages = ShaderStage::RayGen;
+        DescriptorBinding resultBufferBinding;
+        resultBufferBinding.binding = 1;
+        resultBufferBinding.type = ResourceBindType::RWBuffer;
+        resultBufferBinding.stages = ShaderStage::RayGen;
         DescriptorSetDesc rayTracingSet;
-        rayTracingSet.bindings.push_back(rayTracingBinding);
+        rayTracingSet.bindings.push_back(accelerationStructureBinding);
+        rayTracingSet.bindings.push_back(resultBufferBinding);
         desc.descriptorSetLayouts.push_back(rayTracingSet);
 
         if (!IsValidRayTracingPipelineDesc(desc) || !VerifyInvalidGroups(*device, desc))
@@ -312,6 +560,11 @@ namespace
         if (!groupHandlesMatch)
         {
             std::cerr << "SBT recordに対応するshader group handleが格納されていません\n";
+            return 1;
+        }
+
+        if (!VerifyTriangleVisibility(*device, createdPipeline, rayTracingSet))
+        {
             return 1;
         }
 
