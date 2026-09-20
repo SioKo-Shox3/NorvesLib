@@ -30,14 +30,13 @@
 - R5-P3: RHI ShaderStageにRT 6 stageを追加し、Vulkan shadercをstageごとのshaderc kindへ一意に写像した。共通fixtureのDebugビルドはexit 0、6 stageのSPIR-V実行モデルを確認するCTestは1/1 passed。
 - R5-P4: `6501234`。BLAS/TLASのBuild/Update記述子と加速構造resourceをバックエンド非依存APIへ追加した。BLAS内のgeometry type統一と混在拒否、source/destination双方の容量境界、無効入力、RT非対応時の戻り値を契約テストで固定した。
 - R5-P6: `67780ea` / `29c483d` / `7d8d164`。Vulkan同期TLAS BuildはGPU完了後だけ実instance数を更新し、command-list Build 1件から同期Build 2件への変更、旧件数Update拒否、新件数UpdateとGPU queryを検証した。Debugビルドと専用CTestはexit 0、CTest 1/1 passed、独立評価PASS。証拠は`.harness/runs/20260920-174410/verify-R5-P6-5.txt`、`verify-R5-P6-6.txt`、`evaluator-R5-P6-2.txt`、`evaluator-R5-P6-3.txt`。
+- R5-P7: RayTracing pipeline descriptorにraygen/miss/closest-hit shader groupを加え、Vulkan pipelineとSBT生成を実装した。6 RT stageとAllRayTracingのdescriptor visibility、無効group拒否、group handleとSBT region alignmentをGPUテストで確認した。Debug build exit 0、専用CTest 1/1 passed、独立評価PASS。ログは`.harness/runs/20260920-174410/verify-R5-P7-5.txt`と`verify-R5-P7-6.txt`。
 
 ## In progress
 
-- R5-P7: RT pipeline descriptor、group、descriptor visibility、SBTの実装と専用GPU回帰を進行中。
-
 ## Next
 
-- R5-P7: descriptor stage flagsの写像とRT-only binding付きpipelineの検証を完了する。
+- R5-P8: TraceRaysをコマンドリストとVulkan ray tracing commandへ接続する。
 
 ## Notes
 
@@ -65,7 +64,7 @@
 - R5-P1検証ログ: `verify-R5-P1-1.txt`はALL_BUILD exit 1（PhysicsArchitectureContractTestとPhysicsFixedStepPipelineTestの8件のFramePacket/SceneProxy静的assert）、`verify-R5-P1-2.txt`はBDA CTest 1/1、`verify-R5-P1-3.txt`は全CTest 217 passed/7 skipped/3 failed（exit 8）、`verify-R5-P1-4.txt`はGameとBDAテスト対象build exit 0。全CTestの失敗はRenderingGoldenOutdoorVulkanTest（Slang SDK未設定ログの後にgolden差分）、RenderGraphCompileTest（binding 6 shadow map assertion）、SkinnedRenderPathContractTest（pending件数assert）。BDA・readback・RHI image layout・HDR indoor/outdoorの対象テストは成功した。
 - R5-P2検証ログ: `.harness/runs/20260920-151245/verify-R5-P2-6.txt` (Gameと契約テストのDebug build exit 0)、`verify-R5-P2-7.txt` (能力契約CTest 1/1)、`verify-R5-P2-8.txt` (RHI image layoutとIndoor HDR描画CTest 2/2)。Vulkan実デバイス初期化と能力依存関係を確認した。
 - R5-P3検証ログ: .harness/runs/20260920-151245/verify-R5-P3-1.txt（Debug build exit 0）とverify-R5-P3-2.txt（CTest 1/1 passed）。
-- R5-P7ではVulkanDescriptorSet.cppに6つのRT stage flags写像を加え、RT-only binding付きpipelineを専用GPUテストで検証する。
+- R5-P7ではVulkanDescriptorSet.cppに6つのRT stage flagsとAllRayTracingの写像を追加し、RT-only binding付きpipelineを専用GPUテストで確認した。
 - R5-P4検証ログ: `.harness/runs/20260920-151245/verify-R5-P4-6.txt` (Debug build, EXIT_CODE=0)、`verify-R5-P4-7.txt` (CTest 1/1 passed)。
 - R5-P5検証: build exit 0（VulkanDevice.hの既存マクロ再定義warning 2件）、専用CTest 1/1 passed、実行ログでray_query_hit=1 / ray_query_miss=0。証拠は`.harness/runs/20260920-174410/verify-R5-P5-1.txt`〜`verify-R5-P5-3.txt`。独立評価と助言窓口はClaudeのセッション上限で起動できず、blocked/R5-P5.mdに再開条件を記録した。
 - R5-P6の独立評価でVulkanTexture::Updateの同期失敗時にstaging buffer/memoryの解放漏れが見つかった。独立フォローアップR5-P13へ登録した。
