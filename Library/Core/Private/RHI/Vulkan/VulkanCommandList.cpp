@@ -1,5 +1,5 @@
-﻿#include "VulkanCommandList.h"
-#include "VulkanDevice.h"
+﻿#include "VulkanDevice.h"
+#include "VulkanCommandList.h"
 #include "VulkanBuffer.h"
 #include "VulkanTexture.h"
 #include "VulkanSampler.h"
@@ -7,11 +7,13 @@
 #include "VulkanRenderPass.h"
 #include "VulkanFramebuffer.h"
 #include "VulkanDescriptorSet.h"
+#include "VulkanAccelerationStructure.h"
 #include "RHI/SubmissionSerialAllocator.h"
 #include "Logging/LogMacros.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <cstring>
 
@@ -22,6 +24,59 @@ namespace NorvesLib::RHI::Vulkan
 
     namespace
     {
+        vk::BuildAccelerationStructureFlagsKHR GetAccelerationStructureBuildFlags(
+            const AccelerationStructureDesc& desc)
+        {
+            vk::BuildAccelerationStructureFlagsKHR flags =
+                vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+            if (desc.allowUpdate)
+            {
+                flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate;
+            }
+            if (desc.allowCompaction)
+            {
+                flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction;
+            }
+            return flags;
+        }
+
+        void AddAccelerationStructureBuildBarrier(vk::CommandBuffer commandBuffer)
+        {
+            vk::MemoryBarrier barrier{};
+            barrier.srcAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                                    vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            barrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                                    vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eAllCommands,
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                {},
+                1,
+                &barrier,
+                0,
+                nullptr,
+                0,
+                nullptr);
+        }
+
+        void AddAccelerationStructureWriteBarrier(vk::CommandBuffer commandBuffer)
+        {
+            vk::MemoryBarrier barrier{};
+            barrier.srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            barrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                                    vk::AccessFlagBits::eAccelerationStructureWriteKHR;
+            commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                vk::PipelineStageFlagBits::eAllCommands,
+                {},
+                1,
+                &barrier,
+                0,
+                nullptr,
+                0,
+                nullptr);
+        }
+
         vk::ImageAspectFlags GetBarrierAspectMask(const VulkanTexture& texture)
         {
             if ((texture.GetUsage() & ResourceUsage::DepthStencil) != ResourceUsage::None)
@@ -345,6 +400,7 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("コマンドバッファの終了に失敗しました");
         }
 
+        CommitPendingAccelerationStructureBuilds(m_currentFrameIndex);
         m_bIsRecording = false;
     }
 
@@ -666,6 +722,8 @@ namespace NorvesLib::RHI::Vulkan
         }
 #endif
 
+        CommitPendingAccelerationStructureBuilds(m_currentFrameIndex);
+
         if (bWaitForCompletion)
         {
             const vk::Result waitResult = m_device->GetVkDevice().waitForFences(
@@ -986,6 +1044,249 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ)
     {
         m_commandBuffer.dispatch(threadGroupCountX, threadGroupCountY, threadGroupCountZ);
+    }
+
+    bool VulkanCommandList::BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc)
+    {
+        return RecordTopLevelAccelerationStructureBuild(desc, AccelerationStructureBuildMode::Build);
+    }
+
+    bool VulkanCommandList::UpdateAccelerationStructure(const AccelerationStructureBuildDesc& desc)
+    {
+        return RecordTopLevelAccelerationStructureBuild(desc, AccelerationStructureBuildMode::Update);
+    }
+
+    bool VulkanCommandList::RecordTopLevelAccelerationStructureBuild(
+        const AccelerationStructureBuildDesc& desc,
+        AccelerationStructureBuildMode mode)
+    {
+        if (desc.type != AccelerationStructureType::TopLevel || desc.mode != mode ||
+            !IsValidAccelerationStructureBuildDesc(desc, mode))
+        {
+            return false;
+        }
+
+        auto destination = DynamicPointerCast<VulkanAccelerationStructure>(desc.destination);
+        if (!m_device || !destination || destination->m_device.get() != m_device.get() ||
+            destination->GetDesc().type != AccelerationStructureType::TopLevel)
+        {
+            return false;
+        }
+
+        TSharedPtr<VulkanAccelerationStructure> source;
+        if (mode == AccelerationStructureBuildMode::Update)
+        {
+            source = DynamicPointerCast<VulkanAccelerationStructure>(desc.source);
+            if (!source || source->m_device.get() != m_device.get() ||
+                source->GetDesc().type != AccelerationStructureType::TopLevel ||
+                GetAccelerationStructureBuildFlags(source->GetDesc()) !=
+                    GetAccelerationStructureBuildFlags(destination->GetDesc()))
+            {
+                return false;
+            }
+
+            const uint32_t sourceInstanceCount = GetLatestBuiltInstanceCount(*source);
+            if (sourceInstanceCount == 0 || desc.instances.size() != sourceInstanceCount)
+            {
+                return false;
+            }
+        }
+
+        if (!m_bIsRecording || m_bInRenderPass)
+        {
+            return false;
+        }
+
+        try
+        {
+            VariableArray<vk::AccelerationStructureInstanceKHR> instances;
+            for (const AccelerationStructureInstanceDesc& instanceDesc : desc.instances)
+            {
+                auto bottomLevel = DynamicPointerCast<VulkanAccelerationStructure>(instanceDesc.bottomLevel);
+                if (!bottomLevel || bottomLevel->m_device.get() != m_device.get() ||
+                    bottomLevel->GetDesc().type != AccelerationStructureType::BottomLevel)
+                {
+                    return false;
+                }
+
+                vk::AccelerationStructureInstanceKHR instance{};
+                for (uint32_t row = 0; row < 3; ++row)
+                {
+                    for (uint32_t column = 0; column < 4; ++column)
+                    {
+                        instance.transform.matrix[row][column] = instanceDesc.transform[row * 4u + column];
+                    }
+                }
+                instance.instanceCustomIndex = instanceDesc.customIndex;
+                instance.mask = instanceDesc.mask;
+                instance.instanceShaderBindingTableRecordOffset = instanceDesc.shaderBindingTableRecordOffset;
+                if (instanceDesc.disableTriangleFacingCull)
+                {
+                    instance.flags = static_cast<VkGeometryInstanceFlagsKHR>(
+                        vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable);
+                }
+                instance.accelerationStructureReference = bottomLevel->GetDeviceAddress();
+                instances.push_back(instance);
+            }
+
+            BufferDesc instanceBufferDesc;
+            instanceBufferDesc.Size = static_cast<uint64_t>(instances.size()) * sizeof(vk::AccelerationStructureInstanceKHR);
+            instanceBufferDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+            instanceBufferDesc.CPUAccessible = true;
+            instanceBufferDesc.DebugName = "VulkanAccelerationStructure.TLAS.Instances";
+            TSharedPtr<VulkanBuffer> instanceBuffer = MakeShared<VulkanBuffer>(
+                m_device,
+                instanceBufferDesc,
+                vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR);
+            if (!instanceBuffer || instanceBuffer->GetDeviceAddress() == 0)
+            {
+                return false;
+            }
+            instanceBuffer->Update(instances.data(), instanceBufferDesc.Size);
+
+            vk::AccelerationStructureGeometryInstancesDataKHR instanceData{};
+            instanceData.arrayOfPointers = VK_FALSE;
+            instanceData.data.deviceAddress = instanceBuffer->GetDeviceAddress();
+            vk::AccelerationStructureGeometryKHR geometry{};
+            geometry.geometryType = vk::GeometryTypeKHR::eInstances;
+            geometry.geometry.instances = instanceData;
+
+            vk::AccelerationStructureBuildGeometryInfoKHR sizeInfo{};
+            sizeInfo.type = vk::AccelerationStructureTypeKHR::eTopLevel;
+            sizeInfo.flags = GetAccelerationStructureBuildFlags(destination->GetDesc());
+            sizeInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+            sizeInfo.geometryCount = 1;
+            sizeInfo.pGeometries = &geometry;
+            const uint32_t instanceCount = static_cast<uint32_t>(instances.size());
+            vk::AccelerationStructureBuildSizesInfoKHR buildSizes{};
+            m_device->GetVkDevice().getAccelerationStructureBuildSizesKHR(
+                vk::AccelerationStructureBuildTypeKHR::eDevice,
+                &sizeInfo,
+                &instanceCount,
+                &buildSizes);
+
+            vk::PhysicalDeviceAccelerationStructurePropertiesKHR accelerationStructureProperties{};
+            vk::PhysicalDeviceProperties2 physicalDeviceProperties{};
+            physicalDeviceProperties.pNext = &accelerationStructureProperties;
+            m_device->GetVkPhysicalDevice().getProperties2(&physicalDeviceProperties);
+            const uint64_t scratchAlignment = std::max<uint64_t>(
+                accelerationStructureProperties.minAccelerationStructureScratchOffsetAlignment,
+                1u);
+            const uint64_t requiredScratchSize = mode == AccelerationStructureBuildMode::Build
+                ? buildSizes.buildScratchSize
+                : buildSizes.updateScratchSize;
+            if (requiredScratchSize == 0 ||
+                requiredScratchSize > std::numeric_limits<uint64_t>::max() - (scratchAlignment - 1u))
+            {
+                return false;
+            }
+
+            BufferDesc scratchDesc;
+            scratchDesc.Size = requiredScratchSize + scratchAlignment - 1u;
+            scratchDesc.Usage = ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress;
+            scratchDesc.DebugName = mode == AccelerationStructureBuildMode::Build
+                ? "VulkanAccelerationStructure.TLAS.BuildScratch"
+                : "VulkanAccelerationStructure.TLAS.UpdateScratch";
+            TSharedPtr<VulkanBuffer> scratchBuffer = MakeShared<VulkanBuffer>(m_device, scratchDesc);
+            const uint64_t scratchAddress = scratchBuffer->GetDeviceAddress();
+            if (scratchAddress == 0)
+            {
+                return false;
+            }
+            const uint64_t scratchRemainder = scratchAddress % scratchAlignment;
+            const uint64_t alignedScratchAddress = scratchAddress +
+                (scratchRemainder == 0 ? 0 : scratchAlignment - scratchRemainder);
+
+            vk::AccelerationStructureBuildGeometryInfoKHR buildInfo = sizeInfo;
+            buildInfo.mode = mode == AccelerationStructureBuildMode::Build
+                ? vk::BuildAccelerationStructureModeKHR::eBuild
+                : vk::BuildAccelerationStructureModeKHR::eUpdate;
+            buildInfo.srcAccelerationStructure = source
+                ? source->GetVkAccelerationStructure()
+                : vk::AccelerationStructureKHR{};
+            buildInfo.dstAccelerationStructure = destination->GetVkAccelerationStructure();
+            buildInfo.scratchData.deviceAddress = alignedScratchAddress;
+            vk::AccelerationStructureBuildRangeInfoKHR buildRange{};
+            buildRange.primitiveCount = instanceCount;
+            const vk::AccelerationStructureBuildRangeInfoKHR* buildRangeInfo = &buildRange;
+
+            AddAccelerationStructureBuildBarrier(m_commandBuffer);
+            vk::BufferMemoryBarrier instanceInputBarrier{};
+            instanceInputBarrier.srcAccessMask = vk::AccessFlagBits::eHostWrite;
+            instanceInputBarrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR;
+            instanceInputBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            instanceInputBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            instanceInputBarrier.buffer = instanceBuffer->GetVkBuffer();
+            instanceInputBarrier.offset = 0;
+            instanceInputBarrier.size = instanceBufferDesc.Size;
+            m_commandBuffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eHost,
+                vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                {},
+                0,
+                nullptr,
+                1,
+                &instanceInputBarrier,
+                0,
+                nullptr);
+
+            AddTemporaryResource(destination);
+            if (source)
+            {
+                AddTemporaryResource(source);
+            }
+            for (const AccelerationStructureInstanceDesc& instanceDesc : desc.instances)
+            {
+                AddTemporaryResource(instanceDesc.bottomLevel);
+            }
+            AddTemporaryResource(instanceBuffer);
+            AddTemporaryResource(scratchBuffer);
+            m_frameResourceLeases[m_currentFrameIndex].pendingAccelerationStructureBuilds.push_back(
+                {destination, instanceCount});
+
+            m_commandBuffer.buildAccelerationStructuresKHR(1, &buildInfo, &buildRangeInfo);
+            AddAccelerationStructureWriteBarrier(m_commandBuffer);
+            return true;
+        }
+        catch (const std::exception& error)
+        {
+            NORVES_LOG_ERROR("VulkanCommandList", "TLASのBuild/Update記録に失敗しました: %s", error.what());
+            return false;
+        }
+    }
+
+    uint32_t VulkanCommandList::GetLatestBuiltInstanceCount(
+        const VulkanAccelerationStructure& resource) const
+    {
+        const FrameResourceLease& lease = m_frameResourceLeases[m_currentFrameIndex];
+        for (size_t index = lease.pendingAccelerationStructureBuilds.size(); index > 0; --index)
+        {
+            const PendingAccelerationStructureBuild& pending =
+                lease.pendingAccelerationStructureBuilds[index - 1u];
+            if (pending.destination.get() == &resource)
+            {
+                return pending.instanceCount;
+            }
+        }
+        return resource.m_lastBuiltInstanceCount;
+    }
+
+    void VulkanCommandList::CommitPendingAccelerationStructureBuilds(uint32_t frameSlotIndex)
+    {
+        if (frameSlotIndex >= MAX_COMMAND_BUFFERS)
+        {
+            return;
+        }
+
+        FrameResourceLease& lease = m_frameResourceLeases[frameSlotIndex];
+        for (const PendingAccelerationStructureBuild& pending : lease.pendingAccelerationStructureBuilds)
+        {
+            if (pending.destination)
+            {
+                pending.destination->m_lastBuiltInstanceCount = pending.instanceCount;
+            }
+        }
+        lease.pendingAccelerationStructureBuilds.clear();
     }
 
     void VulkanCommandList::CopyBuffer(BufferPtr src, BufferPtr dst, uint64_t size,
@@ -1612,7 +1913,9 @@ namespace NorvesLib::RHI::Vulkan
         m_currentVertexBufferOffsets.clear();
         m_currentIndexBuffer = nullptr;
         m_currentIndexBufferOffset = 0;
-        m_temporaryResources.clear();
+        FrameResourceLease& frameResourceLease = m_frameResourceLeases[m_currentFrameIndex];
+        frameResourceLease.pendingAccelerationStructureBuilds.clear();
+        frameResourceLease.temporaryResources.clear();
         m_bindingResources.clear();
         m_descriptorSetCache.clear();
         m_activeRenderPass.reset();

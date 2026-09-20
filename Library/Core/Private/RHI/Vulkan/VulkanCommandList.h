@@ -9,6 +9,8 @@
 
 namespace NorvesLib::RHI::Vulkan
 {
+    class VulkanAccelerationStructure;
+
 
     // グローバル名前空間から絶対パスで指定
     using ::NorvesLib::Core::Container::DynamicPointerCast;
@@ -524,6 +526,8 @@ namespace NorvesLib::RHI::Vulkan
                                       uint32_t maxDrawCount, uint32_t stride) override;
         void FillBuffer(BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) override;
         void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) override;
+        bool BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc) override;
+        bool UpdateAccelerationStructure(const AccelerationStructureBuildDesc& desc) override;
 
         void CopyBuffer(BufferPtr src, BufferPtr dst, uint64_t size = 0,
                         uint64_t srcOffset = 0, uint64_t dstOffset = 0) override;
@@ -597,6 +601,24 @@ namespace NorvesLib::RHI::Vulkan
         void ResetResourceBarriers();
 
     private:
+        struct PendingAccelerationStructureBuild
+        {
+            TSharedPtr<VulkanAccelerationStructure> destination;
+            uint32_t instanceCount = 0;
+        };
+
+        struct FrameResourceLease
+        {
+            VariableArray<TSharedPtr<void>> temporaryResources;
+            VariableArray<PendingAccelerationStructureBuild> pendingAccelerationStructureBuilds;
+        };
+
+        bool RecordTopLevelAccelerationStructureBuild(
+            const AccelerationStructureBuildDesc& desc,
+            AccelerationStructureBuildMode mode);
+        uint32_t GetLatestBuiltInstanceCount(const VulkanAccelerationStructure& resource) const;
+        void CommitPendingAccelerationStructureBuilds(uint32_t frameSlotIndex);
+
         TSharedPtr<VulkanDevice> m_device;
         vk::CommandBuffer m_commandBuffer;                 ///< 現在のフレームのコマンドバッファ（m_commandBuffersの要素を参照）
         VariableArray<vk::CommandBuffer> m_commandBuffers; ///< フレームごとのコマンドバッファ
@@ -632,8 +654,8 @@ namespace NorvesLib::RHI::Vulkan
         // パイプラインステートキャッシュ
         PipelineStateCache m_pipelineStateCache;
 
-        // 一時リソース保存用（リソース解放を防ぐため）
-        VariableArray<TSharedPtr<void>> m_temporaryResources;
+        // フレームスロットのGPU処理が完了するまで一時リソースを保持する
+        FixedArray<FrameResourceLease, MAX_COMMAND_BUFFERS> m_frameResourceLeases = {};
 
         // ディスクリプタセット管理
         struct DescriptorSetInfo
@@ -669,7 +691,8 @@ namespace NorvesLib::RHI::Vulkan
         template <typename T>
         void AddTemporaryResource(TSharedPtr<T> resource)
         {
-            m_temporaryResources.push_back(StaticPointerCast<void>(resource));
+            m_frameResourceLeases[m_currentFrameIndex].temporaryResources.push_back(
+                StaticPointerCast<void>(resource));
         }
 
         // シェーダーステージをVkPipelineStageに変換

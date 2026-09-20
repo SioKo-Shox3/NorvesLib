@@ -5,6 +5,8 @@
 
 namespace NorvesLib::RHI::Vulkan
 {
+    class VulkanCommandList;
+
     /**
      * @brief Vulkan加速構造とその構築領域を管理する
      */
@@ -24,6 +26,8 @@ namespace NorvesLib::RHI::Vulkan
         vk::AccelerationStructureKHR GetVkAccelerationStructure() const { return m_accelerationStructure; }
 
     private:
+        friend class VulkanCommandList;
+
         TSharedPtr<VulkanDevice> m_device;
         AccelerationStructureDesc m_desc;
         TSharedPtr<VulkanBuffer> m_storageBuffer;
@@ -31,5 +35,7 @@ namespace NorvesLib::RHI::Vulkan
         uint64_t m_size = 0;
         uint64_t m_buildScratchSize = 0;
         uint64_t m_deviceAddress = 0;
+        // 直近Buildで使用した実instance数
+        uint32_t m_lastBuiltInstanceCount = 0;
     };
 } // namespace NorvesLib::RHI::Vulkan

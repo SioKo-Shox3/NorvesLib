@@ -1,6 +1,7 @@
 ﻿// BDA入力から加速構造を構築し、ray queryの交差結果をGPUで検証します。
 #include "RenderingValidation/GpuTestEnvironment.h"
 
+#include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 #include "RHI/IShaderCompiler.h"
 #include "RHI/RHIDeviceDesc.h"
@@ -10,6 +11,7 @@
 #include "RHI/Vulkan/VulkanDevice.h"
 
 #include <cstdint>
+#include <exception>
 #include <iostream>
 
 namespace
@@ -59,7 +61,8 @@ namespace
     bool RunRayQuery(
         VulkanDevice& device,
         const AccelerationStructurePtr& topLevel,
-        const BufferPtr& resultBuffer)
+        const BufferPtr& resultBuffer,
+        uint32_t frameIndex)
     {
         const String shaderSource = R"glsl(#version 460
 #extension GL_EXT_ray_query : require
@@ -72,7 +75,7 @@ layout(set = 0, binding = 1, std430) buffer QueryResults
 void main()
 {
     uint rayIndex = gl_GlobalInvocationID.x;
-    vec3 origin = rayIndex == 0u ? vec3(0.0, 0.0, 2.0) : vec3(3.0, 0.0, 2.0);
+    vec3 origin = rayIndex == 0u ? vec3(0.0, 0.0, 2.0) : vec3(4.0, 0.0, 2.0);
     rayQueryEXT query;
     rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT, 0xffu, origin, 0.0,
                           vec3(0.0, 0.0, -1.0), 10.0);
@@ -253,14 +256,44 @@ void main()
         const uint32_t hit = results[0];
         const uint32_t miss = results[1];
         resultBuffer->Unmap();
-        std::cout << "ray_query_hit=" << hit << '\n';
-        std::cout << "ray_query_miss=" << miss << '\n';
-        if (hit != 1u || miss != 0u)
+        const uint32_t expectedCenterHit = frameIndex == 0u ? 1u : 0u;
+        const uint32_t expectedMovedHit = frameIndex == 0u ? 0u : 1u;
+        std::cout << "tlas_frame" << frameIndex << "_center_hit=" << hit << '\n';
+        std::cout << "tlas_frame" << frameIndex << "_moved_hit=" << miss << '\n';
+        if (hit != expectedCenterHit || miss != expectedMovedHit)
         {
-            std::cerr << "ray queryの交差/非交差結果が解析値と一致しません\n";
+            std::cerr << "TLASの移動前後の交差位置が解析値と一致しません\n";
             return false;
         }
         return true;
+    }
+
+    bool RecordAndSubmitAccelerationStructureCommand(
+        const CommandListPtr& commandList,
+        const AccelerationStructureBuildDesc& desc,
+        bool update,
+        bool waitForCompletion = true)
+    {
+        if (!commandList)
+        {
+            return false;
+        }
+
+        try
+        {
+            commandList->Begin();
+            const bool recorded = update
+                ? commandList->UpdateAccelerationStructure(desc)
+                : commandList->BuildAccelerationStructure(desc);
+            commandList->End();
+            commandList->Submit(waitForCompletion);
+            return recorded;
+        }
+        catch (const std::exception& error)
+        {
+            std::cerr << "TLAS command listの送信に失敗しました: " << error.what() << '\n';
+            return false;
+        }
     }
 
     int RunTest()
@@ -382,7 +415,8 @@ void main()
 
         AccelerationStructureDesc tlasResourceDesc;
         tlasResourceDesc.type = AccelerationStructureType::TopLevel;
-        tlasResourceDesc.maxInstanceCount = 1;
+        tlasResourceDesc.maxInstanceCount = 2;
+        tlasResourceDesc.allowUpdate = true;
         AccelerationStructurePtr topLevel = device->CreateAccelerationStructure(tlasResourceDesc);
         if (!topLevel || topLevel->GetDeviceAddress() == 0)
         {
@@ -391,15 +425,41 @@ void main()
         }
         AccelerationStructureInstanceDesc instance;
         instance.bottomLevel = accelerationStructure;
+        TWeakPtr<IAccelerationStructure> bottomLevelLifetime = accelerationStructure;
+        TWeakPtr<IAccelerationStructure> topLevelLifetime = topLevel;
         AccelerationStructureBuildDesc tlasBuildDesc;
         tlasBuildDesc.type = AccelerationStructureType::TopLevel;
         tlasBuildDesc.destination = topLevel;
         tlasBuildDesc.instances.push_back(instance);
-        if (!topLevel->Build(tlasBuildDesc))
+        CommandListPtr accelerationStructureCommandList = device->CreateCommandList();
+        if (!accelerationStructureCommandList)
         {
+            std::cerr << "TLAS command listを作成できませんでした\n";
+            return 1;
+        }
+        accelerationStructureCommandList->Begin();
+        if (!accelerationStructureCommandList->BuildAccelerationStructure(tlasBuildDesc))
+        {
+            accelerationStructureCommandList->End();
             std::cerr << "ray query用TLASを構築できませんでした\n";
             return 1;
         }
+        tlasBuildDesc.destination.reset();
+        tlasBuildDesc.instances.clear();
+        blasBuildDesc.destination.reset();
+        instance.bottomLevel.reset();
+        topLevel.reset();
+        accelerationStructure.reset();
+        accelerationStructureCommandList->End();
+        accelerationStructureCommandList->Submit(false);
+        topLevel = topLevelLifetime.lock();
+        accelerationStructure = bottomLevelLifetime.lock();
+        if (!topLevel || !accelerationStructure)
+        {
+            std::cerr << "TLAS buildの送信中に加速構造resourceの寿命が維持されませんでした\n";
+            return 1;
+        }
+        std::cout << "tlas_build_resources_retained_until_completion=true\n";
 
         BufferDesc resultDesc;
         resultDesc.Size = sizeof(uint32_t) * 2u;
@@ -407,12 +467,68 @@ void main()
         resultDesc.CPUAccessible = true;
         resultDesc.DebugName = "RHIAccelerationStructure.QueryResults";
         BufferPtr resultBuffer = device->CreateBuffer(resultDesc);
-        if (!resultBuffer || !RunRayQuery(*vulkanDevice, topLevel, resultBuffer))
+        if (!resultBuffer || !RunRayQuery(*vulkanDevice, topLevel, resultBuffer, 0u))
         {
             return 1;
         }
 
-        std::cout << "RHI acceleration structure Vulkan検証に成功しました\n";
+        AccelerationStructureBuildDesc tlasUpdateDesc;
+        tlasUpdateDesc.type = AccelerationStructureType::TopLevel;
+        tlasUpdateDesc.mode = AccelerationStructureBuildMode::Update;
+        tlasUpdateDesc.destination = topLevel;
+        tlasUpdateDesc.source = topLevel;
+        AccelerationStructureInstanceDesc movedInstance;
+        movedInstance.bottomLevel = accelerationStructure;
+        movedInstance.transform[3] = 4.0f;
+        tlasUpdateDesc.instances.push_back(movedInstance);
+
+        AccelerationStructureBuildDesc mismatchedUpdateDesc = tlasUpdateDesc;
+        mismatchedUpdateDesc.instances.push_back(movedInstance);
+        accelerationStructureCommandList->Begin();
+        const bool mismatchedUpdateAccepted =
+            accelerationStructureCommandList->UpdateAccelerationStructure(mismatchedUpdateDesc);
+        accelerationStructureCommandList->End();
+        if (mismatchedUpdateAccepted)
+        {
+            std::cerr << "直近Buildとinstance数が異なるTLAS Updateが受理されました\n";
+            return 1;
+        }
+        accelerationStructureCommandList->Submit(true);
+        std::cout << "tlas_update_mismatched_instance_count_rejected=true\n";
+
+        if (!RecordAndSubmitAccelerationStructureCommand(
+                accelerationStructureCommandList,
+                tlasUpdateDesc,
+                true,
+                false) ||
+            !RunRayQuery(*vulkanDevice, topLevel, resultBuffer, 1u))
+        {
+            std::cerr << "移動後のTLAS Update/query検証に失敗しました\n";
+            return 1;
+        }
+
+        tlasUpdateDesc.destination.reset();
+        tlasUpdateDesc.source.reset();
+        tlasUpdateDesc.instances.clear();
+        mismatchedUpdateDesc.destination.reset();
+        mismatchedUpdateDesc.source.reset();
+        mismatchedUpdateDesc.instances.clear();
+        movedInstance.bottomLevel.reset();
+        topLevel.reset();
+        accelerationStructure.reset();
+        accelerationStructureCommandList->Begin();
+        const bool resourcesReleasedAfterFence =
+            topLevelLifetime.expired() && bottomLevelLifetime.expired();
+        accelerationStructureCommandList->End();
+        accelerationStructureCommandList->Submit(true);
+        if (!resourcesReleasedAfterFence)
+        {
+            std::cerr << "フレームフェンス完了後も加速構造resourceが解放されませんでした\n";
+            return 1;
+        }
+        std::cout << "tlas_build_resources_released_after_fence=true\n";
+
+        std::cout << "RHI acceleration structure Vulkan build/update検証に成功しました\n";
         return 0;
     }
 }
