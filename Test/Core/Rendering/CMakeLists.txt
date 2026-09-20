@@ -136,6 +136,19 @@ register_rendering_gpu_test(
     RHIAccelerationStructureVulkanTest
     RHIAccelerationStructureVulkanTest
 )
+add_executable(RayTracingSceneSnapshotTest
+    RayTracingSceneSnapshotTest.cpp
+)
+target_link_libraries(RayTracingSceneSnapshotTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(RayTracingSceneSnapshotTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RayTracingSceneSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RayTracingSceneSnapshotTest
+    RayTracingSceneSnapshotTest
+)
 add_executable(RHIRayTracingPipelineVulkanTest
     RHIRayTracingPipelineVulkanTest.cpp
 )

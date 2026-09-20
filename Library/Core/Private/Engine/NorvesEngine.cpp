@@ -127,6 +127,9 @@ namespace NorvesLib::Core
         // RenderingCoordinatorのシャットダウン
         m_RenderingCoordinator.Shutdown();
 
+        // レイトレーシングシーンの加速構造を解放
+        m_RayTracingSceneSubsystem.Shutdown();
+
         // TODO: 追加サブシステムのシャットダウン
         // - 物理演算システムのシャットダウン
         // - オーディオシステムのシャットダウン

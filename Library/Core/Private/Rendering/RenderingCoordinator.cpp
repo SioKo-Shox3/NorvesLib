@@ -20,6 +20,8 @@
 #include "Rendering/FrameCaptureReadbackHelper.h"
 #include "Rendering/FrameCaptureAssignmentGuard.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/RayTracingSceneSubsystem.h"
+#include "Rendering/ProceduralMeshGenerator.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "RHI/ISampler.h"
@@ -41,6 +43,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 namespace NorvesLib::Core::Rendering
@@ -323,7 +326,417 @@ namespace NorvesLib::Core::Rendering
             return frameIndex;
         }
 
+        RHI::BufferPtr CreateAddressableMeshBuffer(RHI::IDevice& device,
+                                                   const RHI::BufferPtr& source,
+                                                   RHI::ResourceUsage usage,
+                                                   const char* debugName)
+        {
+            if (!source || source->GetSize() == 0)
+            {
+                return {};
+            }
+
+            const RHI::ResourceUsage sourceUsage = source->GetUsage();
+            if ((sourceUsage & RHI::ResourceUsage::BufferDeviceAddress) ==
+                    RHI::ResourceUsage::BufferDeviceAddress &&
+                source->GetDeviceAddress() != 0)
+            {
+                return source;
+            }
+
+            RHI::BufferDesc desc;
+            desc.Size = source->GetSize();
+            desc.Usage = usage | RHI::ResourceUsage::BufferDeviceAddress;
+            desc.CPUAccessible = true;
+            desc.DebugName = debugName;
+            RHI::BufferPtr addressable = device.CreateBuffer(desc);
+            if (!addressable || addressable->GetDeviceAddress() == 0)
+            {
+                return {};
+            }
+
+            void* sourceData = source->Map(0, source->GetSize());
+            if (!sourceData)
+            {
+                return {};
+            }
+
+            addressable->Update(sourceData, source->GetSize());
+            source->Unmap();
+            return addressable;
+        }
+
+        bool IsFiniteRayTracingTransform(const Math::Matrix4x4& transform)
+        {
+            for (float value : transform.values)
+            {
+                if (!std::isfinite(value))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        void CopyRayTracingInstanceTransform(const Math::Matrix4x4& worldTransform,
+                                             float outTransform[12])
+        {
+            for (uint32_t row = 0; row < 3; ++row)
+            {
+                for (uint32_t column = 0; column < 4; ++column)
+                {
+                    outTransform[row * 4 + column] = worldTransform.m[column][row];
+                }
+            }
+        }
+
     } // namespace
+
+    RayTracingSceneSubsystem::~RayTracingSceneSubsystem()
+    {
+        Shutdown();
+    }
+
+    void RayTracingSceneSubsystem::Shutdown()
+    {
+        m_BottomLevelCache.clear();
+        for (TopLevelCacheEntry& topLevel : m_TopLevelCache)
+        {
+            topLevel = TopLevelCacheEntry{};
+        }
+    }
+
+    bool RayTracingSceneSubsystem::BuildFrameSnapshot(const MeshResources* meshResources,
+                                                       FramePacket& packet)
+    {
+        packet.RayTracingScene.Clear();
+        if (!meshResources)
+        {
+            return true;
+        }
+
+        const DrawCommandView opaqueCommands =
+            DrawCommandView::FromRange(packet.DrawCommands, packet.OpaqueCommandRange);
+        for (const DrawCommand& command : opaqueCommands)
+        {
+            const DrawParams& draw = command.Draw;
+            if ((command.Type != DrawCommandType::DrawIndexed &&
+                 command.Type != DrawCommandType::DrawIndexedInstanced) ||
+                draw.PayloadKind != DrawPayloadKind::Mesh ||
+                !draw.MeshHandle.IsValid() ||
+                !draw.bCastShadow ||
+                (draw.MaterialBlendMode != BlendMode::Opaque &&
+                 draw.MaterialBlendMode != BlendMode::Masked))
+            {
+                continue;
+            }
+
+            const MeshResources::MeshGPUData* meshData = meshResources->GetGPUData(draw.MeshHandle);
+            if (!meshData || !meshData->VertexBuffer || !meshData->IndexBuffer)
+            {
+                continue;
+            }
+
+            const uint32_t indexOffset = draw.IndexCount > 0 ? draw.IndexOffset : 0u;
+            const uint32_t indexCount = draw.IndexCount > 0 ? draw.IndexCount : meshData->IndexCount;
+            if (indexCount < 3 || indexCount % 3 != 0 ||
+                indexOffset > meshData->IndexCount ||
+                indexCount > meshData->IndexCount - indexOffset)
+            {
+                continue;
+            }
+
+            constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+            const uint64_t vertexOffset = static_cast<uint64_t>(draw.VertexOffset) * vertexStride;
+            if (vertexOffset >= meshData->VertexBuffer->GetSize() ||
+                (meshData->VertexBuffer->GetSize() - vertexOffset) % vertexStride != 0)
+            {
+                continue;
+            }
+            const uint64_t vertexCount64 =
+                (meshData->VertexBuffer->GetSize() - vertexOffset) / vertexStride;
+            if (vertexCount64 < 3 || vertexCount64 > std::numeric_limits<uint32_t>::max())
+            {
+                continue;
+            }
+
+            const uint32_t instanceCount = draw.bInstanced ? draw.InstanceCount : 1u;
+            if (instanceCount == 0 ||
+                (draw.bInstanced &&
+                 static_cast<uint64_t>(draw.InstanceDataOffset) + instanceCount > packet.InstanceData.size()))
+            {
+                continue;
+            }
+
+            for (uint32_t instanceIndex = 0; instanceIndex < instanceCount; ++instanceIndex)
+            {
+                if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
+                {
+                    break;
+                }
+
+                Math::Matrix4x4 worldTransform;
+                if (draw.bInstanced)
+                {
+                    const GPUSceneInstanceData& instanceData =
+                        packet.InstanceData[draw.InstanceDataOffset + instanceIndex];
+                    std::memcpy(worldTransform.values, instanceData.World, sizeof(instanceData.World));
+                }
+                else
+                {
+                    worldTransform = draw.WorldMatrix;
+                }
+
+                if (!IsFiniteRayTracingTransform(worldTransform))
+                {
+                    continue;
+                }
+
+                RayTracingSceneInstanceSnapshot instance;
+                instance.MeshHandle = draw.MeshHandle;
+                instance.SourceVertexBuffer = meshData->VertexBuffer;
+                instance.SourceIndexBuffer = meshData->IndexBuffer;
+                instance.IndexOffset = indexOffset;
+                instance.IndexCount = indexCount;
+                instance.VertexOffset = draw.VertexOffset;
+                instance.VertexCount = static_cast<uint32_t>(vertexCount64);
+                instance.VertexStride = vertexStride;
+                instance.bGeometryOpaque = draw.MaterialBlendMode == BlendMode::Opaque;
+                instance.Instance.customIndex =
+                    static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+                CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
+                packet.RayTracingScene.Instances.push_back(std::move(instance));
+            }
+        }
+
+        return true;
+    }
+
+    bool RayTracingSceneSubsystem::BuildAccelerationStructures(RHI::DevicePtr device,
+                                                                RHI::ICommandList& commandList,
+                                                                uint32_t frameSlot,
+                                                                FramePacket& packet)
+    {
+        auto clearPacketAccelerationStructures = [&packet]()
+        {
+            packet.RayTracingScene.TopLevel.reset();
+            for (RayTracingSceneInstanceSnapshot& instance : packet.RayTracingScene.Instances)
+            {
+                instance.BottomLevel.reset();
+                instance.AccelerationStructureVertexBuffer.reset();
+                instance.AccelerationStructureIndexBuffer.reset();
+            }
+        };
+
+        if (!device || !device->GetCapabilities().RayTracing.bAccelerationStructure)
+        {
+            clearPacketAccelerationStructures();
+            m_BottomLevelCache.clear();
+            for (TopLevelCacheEntry& topLevel : m_TopLevelCache)
+            {
+                topLevel = TopLevelCacheEntry{};
+            }
+            return true;
+        }
+
+        if (frameSlot >= FRAME_PACKET_BUFFER_COUNT)
+        {
+            clearPacketAccelerationStructures();
+            return false;
+        }
+
+        if (packet.RayTracingScene.Instances.empty())
+        {
+            clearPacketAccelerationStructures();
+            m_BottomLevelCache.clear();
+            for (TopLevelCacheEntry& topLevel : m_TopLevelCache)
+            {
+                topLevel = TopLevelCacheEntry{};
+            }
+            return true;
+        }
+
+        Container::VariableArray<BottomLevelCacheEntry> activeBottomLevels;
+        Container::VariableArray<RHI::AccelerationStructureInstanceDesc> tlasInstances;
+        for (RayTracingSceneInstanceSnapshot& instance : packet.RayTracingScene.Instances)
+        {
+            if (!instance.SourceVertexBuffer || !instance.SourceIndexBuffer ||
+                instance.IndexCount < 3 || instance.IndexCount % 3 != 0 ||
+                instance.VertexCount < 3 || instance.VertexStride < sizeof(float) * 3u)
+            {
+                clearPacketAccelerationStructures();
+                return false;
+            }
+
+            auto matchesGeometry = [&instance](const BottomLevelCacheEntry& candidate)
+            {
+                return candidate.MeshHandle == instance.MeshHandle &&
+                       candidate.SourceVertexBuffer == instance.SourceVertexBuffer &&
+                       candidate.SourceIndexBuffer == instance.SourceIndexBuffer &&
+                       candidate.IndexOffset == instance.IndexOffset &&
+                       candidate.IndexCount == instance.IndexCount &&
+                       candidate.VertexOffset == instance.VertexOffset &&
+                       candidate.VertexCount == instance.VertexCount &&
+                       candidate.VertexStride == instance.VertexStride &&
+                       candidate.bGeometryOpaque == instance.bGeometryOpaque;
+            };
+
+            BottomLevelCacheEntry* bottomLevel = nullptr;
+            for (BottomLevelCacheEntry& candidate : activeBottomLevels)
+            {
+                if (matchesGeometry(candidate))
+                {
+                    bottomLevel = &candidate;
+                    break;
+                }
+            }
+            if (!bottomLevel)
+            {
+                for (const BottomLevelCacheEntry& candidate : m_BottomLevelCache)
+                {
+                    if (matchesGeometry(candidate))
+                    {
+                        activeBottomLevels.push_back(candidate);
+                        bottomLevel = &activeBottomLevels.back();
+                        break;
+                    }
+                }
+            }
+
+            if (!bottomLevel)
+            {
+                BottomLevelCacheEntry entry;
+                entry.MeshHandle = instance.MeshHandle;
+                entry.SourceVertexBuffer = instance.SourceVertexBuffer;
+                entry.SourceIndexBuffer = instance.SourceIndexBuffer;
+                entry.IndexOffset = instance.IndexOffset;
+                entry.IndexCount = instance.IndexCount;
+                entry.VertexOffset = instance.VertexOffset;
+                entry.VertexCount = instance.VertexCount;
+                entry.VertexStride = instance.VertexStride;
+                entry.bGeometryOpaque = instance.bGeometryOpaque;
+                entry.VertexBuffer = CreateAddressableMeshBuffer(
+                    *device,
+                    instance.SourceVertexBuffer,
+                    RHI::ResourceUsage::VertexBuffer,
+                    "RayTracingScene.VertexInput");
+                entry.IndexBuffer = CreateAddressableMeshBuffer(
+                    *device,
+                    instance.SourceIndexBuffer,
+                    RHI::ResourceUsage::IndexBuffer,
+                    "RayTracingScene.IndexInput");
+                if (!entry.VertexBuffer || !entry.IndexBuffer)
+                {
+                    clearPacketAccelerationStructures();
+                    return false;
+                }
+
+                const uint32_t primitiveCount = instance.IndexCount / 3u;
+                RHI::AccelerationStructureDesc blasDesc;
+                blasDesc.type = RHI::AccelerationStructureType::BottomLevel;
+                blasDesc.geometryCapacities.push_back(
+                    {RHI::AccelerationStructureGeometryType::Triangles,
+                     primitiveCount,
+                     instance.bGeometryOpaque});
+                entry.Structure = device->CreateAccelerationStructure(blasDesc);
+                if (!entry.Structure)
+                {
+                    clearPacketAccelerationStructures();
+                    return false;
+                }
+
+                RHI::AccelerationStructureGeometryDesc geometry;
+                geometry.type = RHI::AccelerationStructureGeometryType::Triangles;
+                geometry.opaque = instance.bGeometryOpaque;
+                geometry.triangles.vertexBuffer = entry.VertexBuffer;
+                geometry.triangles.vertexOffset =
+                    static_cast<uint64_t>(instance.VertexOffset) * instance.VertexStride;
+                geometry.triangles.vertexCount = instance.VertexCount;
+                geometry.triangles.vertexStride = instance.VertexStride;
+                geometry.triangles.vertexFormat = RHI::Format::R32G32B32_FLOAT;
+                geometry.triangles.indexBuffer = entry.IndexBuffer;
+                geometry.triangles.indexOffset =
+                    static_cast<uint64_t>(instance.IndexOffset) * sizeof(uint32_t);
+                geometry.triangles.indexCount = instance.IndexCount;
+                geometry.triangles.indexFormat = RHI::IndexType::Uint32;
+
+                RHI::AccelerationStructureBuildDesc blasBuild;
+                blasBuild.type = RHI::AccelerationStructureType::BottomLevel;
+                blasBuild.destination = entry.Structure;
+                blasBuild.geometries.push_back(geometry);
+                // ICommandListのBuildはTLAS用。BLASは加速構造リソースから同期構築する。
+                if (!entry.Structure->Build(blasBuild))
+                {
+                    clearPacketAccelerationStructures();
+                    return false;
+                }
+
+                activeBottomLevels.push_back(std::move(entry));
+                bottomLevel = &activeBottomLevels.back();
+            }
+
+            instance.BottomLevel = bottomLevel->Structure;
+            instance.AccelerationStructureVertexBuffer = bottomLevel->VertexBuffer;
+            instance.AccelerationStructureIndexBuffer = bottomLevel->IndexBuffer;
+            RHI::AccelerationStructureInstanceDesc tlasInstance = instance.Instance;
+            tlasInstance.bottomLevel = bottomLevel->Structure;
+            tlasInstances.push_back(std::move(tlasInstance));
+        }
+
+        m_BottomLevelCache = std::move(activeBottomLevels);
+        if (tlasInstances.empty())
+        {
+            m_TopLevelCache[frameSlot] = TopLevelCacheEntry{};
+            return true;
+        }
+
+        TopLevelCacheEntry& cachedTopLevel = m_TopLevelCache[frameSlot];
+        const uint32_t instanceCount = static_cast<uint32_t>(tlasInstances.size());
+        RHI::AccelerationStructurePtr topLevel;
+        if (cachedTopLevel.Structure && cachedTopLevel.InstanceCount == instanceCount)
+        {
+            RHI::AccelerationStructureBuildDesc tlasUpdate;
+            tlasUpdate.type = RHI::AccelerationStructureType::TopLevel;
+            tlasUpdate.mode = RHI::AccelerationStructureBuildMode::Update;
+            tlasUpdate.destination = cachedTopLevel.Structure;
+            tlasUpdate.source = cachedTopLevel.Structure;
+            tlasUpdate.instances = tlasInstances;
+            if (commandList.UpdateAccelerationStructure(tlasUpdate))
+            {
+                topLevel = cachedTopLevel.Structure;
+            }
+        }
+
+        if (!topLevel)
+        {
+            RHI::AccelerationStructureDesc tlasDesc;
+            tlasDesc.type = RHI::AccelerationStructureType::TopLevel;
+            tlasDesc.maxInstanceCount = instanceCount;
+            tlasDesc.allowUpdate = true;
+            topLevel = device->CreateAccelerationStructure(tlasDesc);
+            if (!topLevel)
+            {
+                clearPacketAccelerationStructures();
+                return false;
+            }
+
+            RHI::AccelerationStructureBuildDesc tlasBuild;
+            tlasBuild.type = RHI::AccelerationStructureType::TopLevel;
+            tlasBuild.destination = topLevel;
+            tlasBuild.instances = std::move(tlasInstances);
+            if (!commandList.BuildAccelerationStructure(tlasBuild))
+            {
+                clearPacketAccelerationStructures();
+                return false;
+            }
+
+            cachedTopLevel.Structure = topLevel;
+            cachedTopLevel.InstanceCount = instanceCount;
+        }
+
+        packet.RayTracingScene.TopLevel = topLevel;
+        return true;
+    }
 
     // ========================================
     // RenderingCoordinator
@@ -1325,6 +1738,16 @@ namespace NorvesLib::Core::Rendering
         {
             m_CurrentPacket->GeneratedDrawCommandCount =
                 static_cast<uint32_t>(m_CurrentPacket->DrawCommands.size());
+
+            const MeshResources* meshResources =
+                m_RenderResources ? &m_RenderResources->Meshes() : nullptr;
+            if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
+                    meshResources,
+                    *m_CurrentPacket))
+            {
+                NORVES_LOG_WARNING("RayTracingSceneSubsystem",
+                                   "FramePacketのレイトレーシングscene snapshotを構築できませんでした");
+            }
         }
 
         NORVES_STAT_TIME_END(cmdGen, m_GameThreadStats.CommandGenerationTimeMs);
@@ -1632,6 +2055,16 @@ namespace NorvesLib::Core::Rendering
         ScopedGPUTimestampFrameRecording gpuTimestampFrameGuard(
             m_CommandList.get(),
             frameIndex);
+
+        if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
+                m_Device,
+                *m_CommandList,
+                m_PacketManager.GetSlotIndex(packet),
+                *packet))
+        {
+            NORVES_LOG_WARNING("RayTracingSceneSubsystem",
+                               "FramePacketのレイトレーシング加速構造を構築できませんでした");
+        }
 
 #if NORVES_ENABLE_STATS
         if (bTraceActive)

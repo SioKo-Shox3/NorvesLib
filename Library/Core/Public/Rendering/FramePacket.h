@@ -9,6 +9,7 @@
 #include "Debug/Stats.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
+#include "RHI/IAccelerationStructure.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -51,6 +52,40 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief レイトレーシング用シーンのフレームスナップショット
+     *
+     * BLAS参照とTLASをFramePacketへ格納し、RenderThreadへ値として渡します。
+     */
+    struct RayTracingSceneInstanceSnapshot
+    {
+        MeshDataHandle MeshHandle;
+        RHI::BufferPtr SourceVertexBuffer;
+        RHI::BufferPtr SourceIndexBuffer;
+        RHI::BufferPtr AccelerationStructureVertexBuffer;
+        RHI::BufferPtr AccelerationStructureIndexBuffer;
+        uint32_t IndexOffset = 0;
+        uint32_t IndexCount = 0;
+        uint32_t VertexOffset = 0;
+        uint32_t VertexCount = 0;
+        uint32_t VertexStride = 0;
+        bool bGeometryOpaque = true;
+        RHI::AccelerationStructureInstanceDesc Instance;
+        RHI::AccelerationStructurePtr BottomLevel;
+    };
+
+    struct RayTracingSceneSnapshot
+    {
+        Container::VariableArray<RayTracingSceneInstanceSnapshot> Instances;
+        RHI::AccelerationStructurePtr TopLevel;
+
+        void Clear()
+        {
+            TopLevel.reset();
+            Instances.clear();
+        }
+    };
+
+    /**
      * @brief フレームパケット
      *
      * 1フレーム分の描画データを格納する構造体。
@@ -76,6 +111,7 @@ namespace NorvesLib::Core::Rendering
 
         bool bHasMainCamera = false;
         SceneProxy Scene;
+        RayTracingSceneSnapshot RayTracingScene;
 
         // ========================================
         // DrawCommandスナップショット（GameThreadで生成、RenderThreadで読み取り専用）
@@ -149,6 +185,7 @@ namespace NorvesLib::Core::Rendering
             CaptureRequest = FrameCaptureRequestSnapshot{};
             bHasMainCamera = false;
             Scene.Clear();
+            RayTracingScene.Clear();
             DrawCommands.clear();
             DrawCommandRange = CommandRange{};
             OpaqueCommandRange = CommandRange{};
