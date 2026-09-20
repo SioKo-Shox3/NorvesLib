@@ -455,7 +455,8 @@ namespace NorvesLib::RHI
     enum class PipelineType
     {
         Graphics,
-        Compute
+        Compute,
+        RayTracing
     };
 
     /**

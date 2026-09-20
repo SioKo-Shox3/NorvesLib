@@ -7,6 +7,7 @@
 #include "VulkanShaderCompiler.h"
 #include "VulkanSlangCompiler.h"
 #include "VulkanPipeline.h"
+#include "VulkanRayTracingPipeline.h"
 #include "VulkanRenderPass.h"
 #include "VulkanFramebuffer.h"
 #include "VulkanDescriptorSet.h"
@@ -1672,6 +1673,19 @@ namespace NorvesLib::RHI::Vulkan
     PipelinePtr VulkanDevice::CreateComputePipeline(const ComputePipelineDesc &desc)
     {
         auto pipeline = MakeShared<VulkanComputePipeline>(
+            TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
+        return StaticPointerCast<IPipeline>(pipeline);
+    }
+
+    PipelinePtr VulkanDevice::CreateRayTracingPipeline(const RayTracingPipelineDesc& desc)
+    {
+        if (!m_Capabilities.RayTracing.bRayTracingPipeline ||
+            !m_Capabilities.bBufferDeviceAddress || !IsValidRayTracingPipelineDesc(desc))
+        {
+            return {};
+        }
+
+        auto pipeline = MakeShared<VulkanRayTracingPipeline>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}), desc);
         return StaticPointerCast<IPipeline>(pipeline);
     }

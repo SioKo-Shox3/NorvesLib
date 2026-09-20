@@ -1,15 +1,54 @@
 ﻿#include "VulkanPipeline.h"
 #include "VulkanDevice.h"
+#include "VulkanRayTracingPipeline.h"
+#include "VulkanBuffer.h"
 #include "VulkanRenderPass.h"
 #include "VulkanShader.h"
 #include "VulkanDescriptorSet.h"
 #include <stdexcept>
+#include <cstring>
+#include <limits>
 #include "Container/Containers.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
 
     using namespace NorvesLib::Core::Container;
+
+    namespace
+    {
+        vk::ShaderStageFlagBits ToVkRayTracingShaderStage(ShaderStage stage)
+        {
+            switch (stage)
+            {
+            case ShaderStage::RayGen:
+                return vk::ShaderStageFlagBits::eRaygenKHR;
+            case ShaderStage::Miss:
+                return vk::ShaderStageFlagBits::eMissKHR;
+            case ShaderStage::ClosestHit:
+                return vk::ShaderStageFlagBits::eClosestHitKHR;
+            case ShaderStage::AnyHit:
+                return vk::ShaderStageFlagBits::eAnyHitKHR;
+            case ShaderStage::Intersection:
+                return vk::ShaderStageFlagBits::eIntersectionKHR;
+            case ShaderStage::Callable:
+                return vk::ShaderStageFlagBits::eCallableKHR;
+            default:
+                throw std::runtime_error("レイトレーシングshader stageが不正です");
+            }
+        }
+
+        bool AlignUp(uint64_t value, uint64_t alignment, uint64_t& alignedValue)
+        {
+            if (alignment == 0 || value > std::numeric_limits<uint64_t>::max() - (alignment - 1))
+            {
+                return false;
+            }
+
+            alignedValue = ((value + alignment - 1) / alignment) * alignment;
+            return true;
+        }
+    } // namespace
 
     // VulkanPipelineLayoutの実装
     VulkanPipelineLayout::VulkanPipelineLayout(
@@ -427,6 +466,292 @@ namespace NorvesLib::RHI::Vulkan
         {
             throw std::runtime_error("コンピュートパイプラインの作成に失敗しました");
         }
+    }
+
+    VulkanRayTracingPipeline::VulkanRayTracingPipeline(
+        TSharedPtr<VulkanDevice> device,
+        const RayTracingPipelineDesc& desc)
+        : VulkanPipeline(device), m_desc(desc)
+    {
+        m_pipelineType = PipelineType::RayTracing;
+        CreateRayTracingPipeline();
+    }
+
+    BufferPtr VulkanRayTracingPipeline::GetShaderBindingTable() const
+    {
+        return StaticPointerCast<IBuffer>(m_shaderBindingTable);
+    }
+
+    void VulkanRayTracingPipeline::CreateRayTracingPipeline()
+    {
+        if (!m_device || !m_device->GetCapabilities().RayTracing.bRayTracingPipeline ||
+            !m_device->GetCapabilities().bBufferDeviceAddress || !IsValidRayTracingPipelineDesc(m_desc))
+        {
+            throw std::runtime_error("レイトレーシングpipelineの設定またはdevice capabilityが不正です");
+        }
+
+        vk::PhysicalDeviceProperties2 physicalDeviceProperties{};
+        physicalDeviceProperties.pNext = &m_rayTracingProperties;
+        m_device->GetVkPhysicalDevice().getProperties2(&physicalDeviceProperties);
+        if (m_desc.maxPipelineRayRecursionDepth > m_rayTracingProperties.maxRayRecursionDepth ||
+            m_rayTracingProperties.shaderGroupHandleSize == 0 ||
+            m_rayTracingProperties.shaderGroupHandleAlignment == 0 ||
+            m_rayTracingProperties.shaderGroupBaseAlignment == 0 ||
+            m_rayTracingProperties.maxShaderGroupStride == 0)
+        {
+            throw std::runtime_error("レイトレーシングpipelineの要求がdevice limitsを超えています");
+        }
+
+        VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
+        for (const DescriptorSetDesc& setDesc : m_desc.descriptorSetLayouts)
+        {
+            VariableArray<DescriptorBindingDesc> bindingDescs;
+            for (const DescriptorBinding& binding : setDesc.bindings)
+            {
+                DescriptorBindingDesc bindingDesc;
+                bindingDesc.binding = binding.binding;
+                bindingDesc.type = VulkanDevice::ConvertResourceBindType(binding.type);
+                bindingDesc.stages = binding.stages;
+                bindingDesc.count = 1;
+                bindingDescs.push_back(bindingDesc);
+            }
+
+            descriptorSetLayouts.push_back(MakeShared<VulkanDescriptorSetLayout>(m_device, bindingDescs));
+        }
+        m_descriptorSetLayouts = descriptorSetLayouts;
+        m_pipelineLayout = MakeShared<VulkanPipelineLayout>(m_device, descriptorSetLayouts);
+
+        VariableArray<TSharedPtr<VulkanShader>> shaders;
+        VariableArray<String> entryPoints;
+        VariableArray<vk::RayTracingShaderGroupCreateInfoKHR> shaderGroups;
+        shaders.reserve(m_desc.shaderGroups.size() * 3);
+        entryPoints.reserve(m_desc.shaderGroups.size() * 3);
+        shaderGroups.reserve(m_desc.shaderGroups.size());
+
+        const auto appendShader = [&shaders, &entryPoints](const ShaderPtr& shader)
+        {
+            TSharedPtr<VulkanShader> vulkanShader = DynamicPointerCast<VulkanShader>(shader);
+            if (!vulkanShader)
+            {
+                throw std::runtime_error("Vulkan以外のshaderはray tracing pipelineに指定できません");
+            }
+
+            const uint32_t stageIndex = static_cast<uint32_t>(shaders.size());
+            shaders.push_back(vulkanShader);
+            entryPoints.push_back(vulkanShader->GetEntryPoint());
+            return stageIndex;
+        };
+
+        for (uint32_t groupIndex = 0; groupIndex < m_desc.shaderGroups.size(); ++groupIndex)
+        {
+            const RayTracingShaderGroupDesc& groupDesc = m_desc.shaderGroups[groupIndex];
+            vk::RayTracingShaderGroupCreateInfoKHR group{};
+            group.generalShader = vk::ShaderUnusedKHR;
+            group.closestHitShader = vk::ShaderUnusedKHR;
+            group.anyHitShader = vk::ShaderUnusedKHR;
+            group.intersectionShader = vk::ShaderUnusedKHR;
+
+            switch (groupDesc.type)
+            {
+            case RayTracingShaderGroupType::General:
+            {
+                group.type = vk::RayTracingShaderGroupTypeKHR::eGeneral;
+                group.generalShader = appendShader(groupDesc.generalShader);
+                switch (groupDesc.generalShader->GetStage())
+                {
+                case ShaderStage::RayGen:
+                    m_rayGenerationGroupIndices.push_back(groupIndex);
+                    break;
+                case ShaderStage::Miss:
+                    m_missGroupIndices.push_back(groupIndex);
+                    break;
+                case ShaderStage::Callable:
+                    m_callableGroupIndices.push_back(groupIndex);
+                    break;
+                default:
+                    throw std::runtime_error("general shader groupのstageが不正です");
+                }
+                break;
+            }
+            case RayTracingShaderGroupType::TrianglesHit:
+                group.type = vk::RayTracingShaderGroupTypeKHR::eTrianglesHitGroup;
+                if (groupDesc.closestHitShader)
+                {
+                    group.closestHitShader = appendShader(groupDesc.closestHitShader);
+                }
+                if (groupDesc.anyHitShader)
+                {
+                    group.anyHitShader = appendShader(groupDesc.anyHitShader);
+                }
+                m_hitGroupIndices.push_back(groupIndex);
+                break;
+            case RayTracingShaderGroupType::ProceduralHit:
+                group.type = vk::RayTracingShaderGroupTypeKHR::eProceduralHitGroup;
+                if (groupDesc.closestHitShader)
+                {
+                    group.closestHitShader = appendShader(groupDesc.closestHitShader);
+                }
+                if (groupDesc.anyHitShader)
+                {
+                    group.anyHitShader = appendShader(groupDesc.anyHitShader);
+                }
+                group.intersectionShader = appendShader(groupDesc.intersectionShader);
+                m_hitGroupIndices.push_back(groupIndex);
+                break;
+            default:
+                throw std::runtime_error("ray tracing shader group typeが不正です");
+            }
+
+            shaderGroups.push_back(group);
+        }
+
+        VariableArray<vk::PipelineShaderStageCreateInfo> shaderStages;
+        shaderStages.reserve(shaders.size());
+        for (size_t stageIndex = 0; stageIndex < shaders.size(); ++stageIndex)
+        {
+            vk::PipelineShaderStageCreateInfo shaderStage{};
+            shaderStage.stage = ToVkRayTracingShaderStage(shaders[stageIndex]->GetStage());
+            shaderStage.module = shaders[stageIndex]->GetVkShaderModule();
+            shaderStage.pName = entryPoints[stageIndex].c_str();
+            shaderStages.push_back(shaderStage);
+        }
+
+        vk::RayTracingPipelineCreateInfoKHR pipelineInfo{};
+        pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+        pipelineInfo.pStages = shaderStages.data();
+        pipelineInfo.groupCount = static_cast<uint32_t>(shaderGroups.size());
+        pipelineInfo.pGroups = shaderGroups.data();
+        pipelineInfo.maxPipelineRayRecursionDepth = m_desc.maxPipelineRayRecursionDepth;
+        pipelineInfo.layout = m_pipelineLayout->GetVkPipelineLayout();
+
+        const auto pipelineResult = m_device->GetVkDevice().createRayTracingPipelineKHR({}, {}, pipelineInfo);
+        if (pipelineResult.result != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("Vulkanレイトレーシングpipelineの作成に失敗しました");
+        }
+
+        m_pipeline = pipelineResult.value;
+        m_shaderGroupCount = static_cast<uint32_t>(shaderGroups.size());
+        CreateShaderBindingTable();
+    }
+
+    void VulkanRayTracingPipeline::CreateShaderBindingTable()
+    {
+        const uint64_t handleSize = m_rayTracingProperties.shaderGroupHandleSize;
+        uint64_t shaderGroupHandleSize = 0;
+        if (m_shaderGroupCount == 0 || m_rayGenerationGroupIndices.size() != 1 ||
+            !AlignUp(handleSize, m_rayTracingProperties.shaderGroupHandleAlignment, shaderGroupHandleSize) ||
+            shaderGroupHandleSize > m_rayTracingProperties.maxShaderGroupStride)
+        {
+            throw std::runtime_error("Shader Binding Tableのstrideまたはraygen groupが不正です");
+        }
+
+        const uint64_t handleDataSize = handleSize * m_shaderGroupCount;
+        if (handleDataSize > std::numeric_limits<size_t>::max())
+        {
+            throw std::runtime_error("Shader Binding Tableのhandle容量が大きすぎます");
+        }
+
+        VariableArray<uint8_t> groupHandles;
+        groupHandles.resize(static_cast<size_t>(handleDataSize));
+        const vk::Result handlesResult = m_device->GetVkDevice().getRayTracingShaderGroupHandlesKHR(
+            m_pipeline,
+            0,
+            m_shaderGroupCount,
+            static_cast<size_t>(handleDataSize),
+            groupHandles.data());
+        if (handlesResult != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("Vulkan shader group handleの取得に失敗しました");
+        }
+
+        const uint64_t recordCount = m_rayGenerationGroupIndices.size() + m_missGroupIndices.size() +
+            m_hitGroupIndices.size() + m_callableGroupIndices.size();
+        const uint64_t paddingSize = static_cast<uint64_t>(m_rayTracingProperties.shaderGroupBaseAlignment) * 4;
+        if (recordCount > (std::numeric_limits<uint64_t>::max() - paddingSize) / shaderGroupHandleSize)
+        {
+            throw std::runtime_error("Shader Binding Tableの容量計算でoverflowしました");
+        }
+        const uint64_t bufferSize = recordCount * shaderGroupHandleSize + paddingSize;
+
+        BufferDesc bufferDesc;
+        bufferDesc.Size = bufferSize;
+        bufferDesc.Usage = ResourceUsage::BufferDeviceAddress;
+        bufferDesc.CPUAccessible = true;
+        bufferDesc.DebugName = "VulkanRayTracingPipeline.ShaderBindingTable";
+        m_shaderBindingTable = MakeShared<VulkanBuffer>(
+            m_device,
+            bufferDesc,
+            vk::BufferUsageFlagBits::eShaderBindingTableKHR);
+        const uint64_t bufferAddress = m_shaderBindingTable->GetDeviceAddress();
+        if (bufferAddress == 0)
+        {
+            throw std::runtime_error("Shader Binding Tableのdevice addressを取得できません");
+        }
+
+        uint64_t cursor = 0;
+        const auto setRegion = [this, bufferAddress, bufferSize, shaderGroupHandleSize, &cursor](
+                                   const VariableArray<uint32_t>& groupIndices,
+                                   vk::StridedDeviceAddressRegionKHR& region)
+        {
+            if (groupIndices.empty())
+            {
+                return;
+            }
+
+            if (bufferAddress > std::numeric_limits<uint64_t>::max() - cursor)
+            {
+                throw std::runtime_error("Shader Binding Tableのaddress計算でoverflowしました");
+            }
+            uint64_t alignedAddress = 0;
+            if (!AlignUp(
+                    bufferAddress + cursor,
+                    m_rayTracingProperties.shaderGroupBaseAlignment,
+                    alignedAddress))
+            {
+                throw std::runtime_error("Shader Binding Tableのregionをalignできません");
+            }
+
+            const uint64_t offset = alignedAddress - bufferAddress;
+            const uint64_t regionSize = shaderGroupHandleSize * groupIndices.size();
+            if (offset > bufferSize || regionSize > bufferSize - offset)
+            {
+                throw std::runtime_error("Shader Binding Tableのregionがbuffer範囲を超えています");
+            }
+
+            region.deviceAddress = alignedAddress;
+            region.stride = shaderGroupHandleSize;
+            region.size = regionSize;
+            cursor = offset + regionSize;
+        };
+
+        setRegion(m_rayGenerationGroupIndices, m_rayGenerationRegion);
+        setRegion(m_missGroupIndices, m_missRegion);
+        setRegion(m_hitGroupIndices, m_hitRegion);
+        setRegion(m_callableGroupIndices, m_callableRegion);
+
+        auto* mappedData = static_cast<uint8_t*>(m_shaderBindingTable->Map(0, bufferSize));
+        std::memset(mappedData, 0, static_cast<size_t>(bufferSize));
+        const auto writeRegion = [this, bufferAddress, mappedData, handleSize, &groupHandles](
+                                     const VariableArray<uint32_t>& groupIndices,
+                                     const vk::StridedDeviceAddressRegionKHR& region)
+        {
+            for (size_t recordIndex = 0; recordIndex < groupIndices.size(); ++recordIndex)
+            {
+                const uint64_t offset = region.deviceAddress - bufferAddress + region.stride * recordIndex;
+                const uint64_t handleOffset = handleSize * groupIndices[recordIndex];
+                std::memcpy(
+                    mappedData + offset,
+                    groupHandles.data() + handleOffset,
+                    static_cast<size_t>(handleSize));
+            }
+        };
+
+        writeRegion(m_rayGenerationGroupIndices, m_rayGenerationRegion);
+        writeRegion(m_missGroupIndices, m_missRegion);
+        writeRegion(m_hitGroupIndices, m_hitRegion);
+        writeRegion(m_callableGroupIndices, m_callableRegion);
+        m_shaderBindingTable->Unmap();
     }
 
     // 列挙型変換ヘルパーメソッド

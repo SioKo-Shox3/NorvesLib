@@ -4,6 +4,7 @@
 #include "DeviceCapabilities.h"
 #include "IGPUResourceAllocator.h"
 #include "IDescriptorSet.h"
+#include "IPipeline.h"
 #include "IAccelerationStructure.h"
 #include "Container/Containers.h"
 #include "Math/Matrix4x4.h"
@@ -243,6 +244,15 @@ namespace NorvesLib::RHI
          * @return 作成されたパイプラインオブジェクト
          */
         virtual PipelinePtr CreateComputePipeline(const ComputePipelineDesc &desc) = 0;
+
+        /**
+         * @brief レイトレーシングパイプラインを作成
+         * @return 未対応の描画バックエンドではnullptrを返す
+         */
+        virtual PipelinePtr CreateRayTracingPipeline(const RayTracingPipelineDesc&)
+        {
+            return {};
+        }
 
         /**
          * @brief ディスクリプタセットを作成

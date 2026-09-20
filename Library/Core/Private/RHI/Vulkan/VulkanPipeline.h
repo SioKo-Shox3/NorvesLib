@@ -73,6 +73,11 @@ namespace NorvesLib::RHI::Vulkan
             return m_pipelineType == PipelineType::Graphics;
         }
 
+        bool IsRayTracing() const
+        {
+            return m_pipelineType == PipelineType::RayTracing;
+        }
+
         // Vulkan固有のメソッド
         vk::Pipeline GetVkPipeline() const
         {

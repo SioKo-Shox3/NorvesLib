@@ -91,6 +91,7 @@ namespace NorvesLib::RHI::Vulkan
         FramebufferPtr CreateFramebuffer(const FramebufferDesc &desc) override;
         PipelinePtr CreateGraphicsPipeline(const GraphicsPipelineDesc &desc) override;
         PipelinePtr CreateComputePipeline(const ComputePipelineDesc &desc) override;
+        PipelinePtr CreateRayTracingPipeline(const RayTracingPipelineDesc& desc) override;
         DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc &desc) override;
         ShaderCompilerPtr CreateShaderCompiler() override;
         ShaderCompilerPtr CreateSlangShaderCompiler() override;
