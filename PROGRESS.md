@@ -25,14 +25,15 @@
 - R3-P2: 855de28 / b6865ea。解析フォグとR2空radianceをSceneColorへ合成し、Lighting後・Forward透明前へ接続した。指定ビルド、契約CTest 2/2、GLSLコンパイルを確認。
 - R3-P3: RenderWorld→Coordinator→FramePacket.Sceneの高さフォグ値コピー、CSM配列からの固定24ステップ単一散乱、CSM不在時の解析フォグ維持を実装。focused Debug build exit 0、契約CTest 3/3、実GPU capture PASS（中心差1.59418/上限3、非遮蔽散乱差98.4629/下限1、解析フォグ差3.12447・15.3901/各下限0.25）。独立評価2周目PASS。ログは`.harness/runs/20260920-r3-p3-final/`。
 - R3-P4: 9dc360d。3段階フォグ密度のGPU golden、CSM遮蔽A/B、遠景大気ブレンドの専用受入れを固定した。独立評価PASS。P3の散乱上限所見は`f446618`で解消済み。R1/R2基準は不変で、GPU性能計測は後続ゲートへ分離した。
+- R5-P1: `5c82133`。RHIにBuffer Device Addressの明示要求と既定値0の取得APIを追加し、Vulkan 1.2能力に応じてバッファusage・メモリ割り当て・アドレス取得を同じ条件で制御した。RTX 4080で対応能力true、要求バッファのaddress非0、未要求バッファ0を確認。対象ビルドexit 0、BDA CTest 1/1、関連RHI/描画GPUテスト6/6、独立評価PASS。
 
 ## In progress
 
-- なし。R5のM1計画を登録し、次の反復でR5-P1へ進む。
+- なし。R5-P1を受入済み。次はR5-P2に進む。
 
 ## Next
 
-- R5-P1: Buffer Device Addressを独立して有効化する。着手ブランチは`feature/rendering-r5-hwrt`。
+- R5-P2: RT機能を任意機能として検出する。作業ブランチは`feature/rendering-r5-hwrt`。
 
 ## Notes
 
@@ -57,3 +58,4 @@
 - R3-P4の指定検証ログ: `.harness/runs/20260920-124224/verify-R3-P4-1.txt`〜`verify-R3-P4-7.txt`。全7ログの終了コード0、GPU受入れsentinel、CTest 7/7を読戻し確認した。R1/R2基準8ファイルのSHA256はHEADと一致する。
 - R4 S4はDDGIを選定し、RT pipelineでのR5影実証とray queryでのR4 probe更新を計画した。R5完了後にR4へ進む。
 - R5開始儀式(2026-09-20): `git log --oneline -10`確認、Game Debug build exit 0、RHI/GPU smoke CTest 4/4 passed。`vulkaninfo`でRTX 4080のBDA/AS/ray query/RT pipeline featureを確認した。Core更新後は静的リンク済みGPU test target自体も再buildしてから実行する。
+- R5-P1検証ログ: `verify-R5-P1-1.txt`はALL_BUILD exit 1（PhysicsArchitectureContractTestとPhysicsFixedStepPipelineTestの8件のFramePacket/SceneProxy静的assert）、`verify-R5-P1-2.txt`はBDA CTest 1/1、`verify-R5-P1-3.txt`は全CTest 217 passed/7 skipped/3 failed（exit 8）、`verify-R5-P1-4.txt`はGameとBDAテスト対象build exit 0。全CTestの失敗はRenderingGoldenOutdoorVulkanTest（Slang SDK未設定ログの後にgolden差分）、RenderGraphCompileTest（binding 6 shadow map assertion）、SkinnedRenderPathContractTest（pending件数assert）。BDA・readback・RHI image layout・HDR indoor/outdoorの対象テストは成功した。
