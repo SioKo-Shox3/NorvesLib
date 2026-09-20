@@ -29,14 +29,15 @@
 - R5-P2: AS、ray query、RT pipelineを拡張とfeatureごとに照会し、Vulkan 1.2 BDAとdeferred host operationsを含む依存関係を満たす機能だけを論理デバイスで有効化した。非対応時の初期化とラスタ描画を維持する。
 - R5-P3: RHI ShaderStageにRT 6 stageを追加し、Vulkan shadercをstageごとのshaderc kindへ一意に写像した。共通fixtureのDebugビルドはexit 0、6 stageのSPIR-V実行モデルを確認するCTestは1/1 passed。
 - R5-P4: `6501234`。BLAS/TLASのBuild/Update記述子と加速構造resourceをバックエンド非依存APIへ追加した。BLAS内のgeometry type統一と混在拒否、source/destination双方の容量境界、無効入力、RT非対応時の戻り値を契約テストで固定した。
+- R5-P6: `67780ea` / `29c483d` / `7d8d164`。Vulkan同期TLAS BuildはGPU完了後だけ実instance数を更新し、command-list Build 1件から同期Build 2件への変更、旧件数Update拒否、新件数UpdateとGPU queryを検証した。Debugビルドと専用CTestはexit 0、CTest 1/1 passed、独立評価PASS。証拠は`.harness/runs/20260920-174410/verify-R5-P6-5.txt`、`verify-R5-P6-6.txt`、`evaluator-R5-P6-2.txt`、`evaluator-R5-P6-3.txt`。
 
 ## In progress
 
-- R5-P5: 実装とGPU検証は完了。必須の独立評価がClaudeのセッション上限で未了のため受入待ち。
+- R5-P7: RT pipeline descriptor、shader group、Shader Binding Tableの生成を実装中。
 
 ## Next
 
-- R5-P5: Claude独立評価を再開し、PASS後にTASKS.mdをdoneへ更新する。指摘時は指定範囲で修正・再検証する。
+- R5-P7: 最小pipeline作成と無効group構成の拒否を含む専用検証を完了する。
 
 ## Notes
 
@@ -67,3 +68,4 @@
 - R5-P7ではVulkanShader::ToVkShaderStageとdescriptor visibilityのRT対応を追加し、RT descriptorにAllRayTracingを指定する。
 - R5-P4検証ログ: `.harness/runs/20260920-151245/verify-R5-P4-6.txt` (Debug build, EXIT_CODE=0)、`verify-R5-P4-7.txt` (CTest 1/1 passed)。
 - R5-P5検証: build exit 0（VulkanDevice.hの既存マクロ再定義warning 2件）、専用CTest 1/1 passed、実行ログでray_query_hit=1 / ray_query_miss=0。証拠は`.harness/runs/20260920-174410/verify-R5-P5-1.txt`〜`verify-R5-P5-3.txt`。独立評価と助言窓口はClaudeのセッション上限で起動できず、blocked/R5-P5.mdに再開条件を記録した。
+- R5-P6の独立評価でVulkanTexture::Updateの同期失敗時にstaging buffer/memoryの解放漏れが見つかった。独立フォローアップR5-P13へ登録した。

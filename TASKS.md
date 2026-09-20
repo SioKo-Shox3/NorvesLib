@@ -251,3 +251,10 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - verify: `git status --short --branch`
 - verify: `git log --oneline -10`
 - paths: Docs/RenderingValidation/R5Acceptance.md, TASKS.md, PROGRESS.md
+
+## R5-P13: VulkanTexture::Updateの同期失敗時staging資源を解放する
+- status: todo
+- done-when: EndSingleTimeCommandsの終了・送信・待機失敗時もVulkanTexture::Updateがstaging bufferとmemoryを確実に解放する。失敗経路を再現する検証と正常なtexture updateの回帰を通す。
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RHITextureUpdateVulkanTest$"`
+- paths: Library/Core/Private/RHI/Vulkan/VulkanTexture.cpp, Library/Core/Private/RHI/Vulkan/VulkanDevice.cpp, Test/Core/Rendering/RHITextureUpdateVulkanTest.cpp, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
