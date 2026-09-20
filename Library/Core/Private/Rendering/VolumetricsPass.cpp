@@ -318,9 +318,10 @@ namespace NorvesLib::Core::Rendering
                               ? SanitizeVolumetricFogParameters(
                                     context->SnapshotScene->VolumetricFog)
                               : MakeDefaultVolumetricFogParameters();
-        if (context && context->FrameNumber >= 140u && context->FrameNumber <= 170u)
+        if (context && context->SnapshotScene &&
+            context->SnapshotScene->VolumetricFog.bEnabled)
         {
-            NORVES_LOG_INFO("VolumetricsPass",
+            NORVES_LOG_WARNING("VolumetricsPass",
                             "R3_DECLARE frame=%llu scene=%u enabled=%u density=%g",
                             static_cast<unsigned long long>(context->FrameNumber),
                             context->SnapshotScene ? 1u : 0u,
@@ -377,9 +378,9 @@ namespace NorvesLib::Core::Rendering
     void VolumetricsPass::Execute(RenderGraphResources& resources,
                                   ViewRenderContext& context)
     {
-        if (context.FrameNumber >= 140u && context.FrameNumber <= 170u)
+        if (m_FogParameters.bEnabled)
         {
-            NORVES_LOG_INFO("VolumetricsPass",
+            NORVES_LOG_WARNING("VolumetricsPass",
                             "R3_EXEC_ENTER frame=%llu enabled=%u scene_color=%u scene_depth=%u",
                             static_cast<unsigned long long>(context.FrameNumber),
                             m_FogParameters.bEnabled ? 1u : 0u,
@@ -416,9 +417,9 @@ namespace NorvesLib::Core::Rendering
         const bool bShadowSamplingTextureAvailable =
             bActualShadowMapAvailable ||
             IsValidShadowMapArrayFallbackTexture(shadowMapTextureForSampling);
-        if (context.FrameNumber >= 140u && context.FrameNumber <= 170u)
+        if (m_FogParameters.bEnabled)
         {
-            NORVES_LOG_INFO("VolumetricsPass",
+            NORVES_LOG_WARNING("VolumetricsPass",
                             "R3_EXEC_RESOURCES frame=%llu scene_color=%u depth=%u actual_csm=%u fallback=%u sampler=%u",
                             static_cast<unsigned long long>(context.FrameNumber),
                             sceneColorTexture ? 1u : 0u,
@@ -503,7 +504,7 @@ namespace NorvesLib::Core::Rendering
                                                params.DirectionalLightRadianceAndEnabled);
         if (m_FogParameters.bEnabled)
         {
-            NORVES_LOG_INFO("VolumetricsPass",
+            NORVES_LOG_WARNING("VolumetricsPass",
                             "R3_DIAG frame=%llu camera=%llu position=(%g,%g,%g) pre=%g density=%g falloff=%g fog=(%g,%g,%g) sky=%u actual_csm=%u fallback=%u csm_ready=%u light=%u radiance=(%g,%g,%g)",
                             static_cast<unsigned long long>(context.FrameNumber),
                             static_cast<unsigned long long>(activeCamera->CameraId),

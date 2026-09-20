@@ -178,6 +178,7 @@ namespace NorvesLib::Test::RenderingValidation
                 if (bAccepted)
                 {
                     AdvanceCaptureStage();
+                    ApplyCaptureStageState(renderWorld);
                 }
                 Core::Rendering::FrameCaptureRequest followupRequest;
                 if (bAccepted && RequestFollowupCapture(frame, followupRequest))

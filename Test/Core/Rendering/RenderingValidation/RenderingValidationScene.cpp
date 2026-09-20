@@ -2292,7 +2292,7 @@ namespace NorvesLib::Test::RenderingValidation
 
         m_pR3ShadowBackgroundEntity->SetPosition(0.0f, 0.0f, 20.0f);
         m_pR3ShadowBackgroundEntity->SetScale(14.0f, 14.0f, 1.0f);
-        m_pR3ShadowOccluderEntity->SetPosition(0.0f, 0.0f, 8.0f);
+        m_pR3ShadowOccluderEntity->SetPosition(0.0f, 0.0f, -2.0f);
         m_pR3ShadowOccluderEntity->SetScale(1.5f, 1.5f, 1.0f);
 
         m_R3ShadowedShaftsCamera = BuildLookAtCamera(Math::Vector3::Zero,
@@ -2317,7 +2317,8 @@ namespace NorvesLib::Test::RenderingValidation
 
     bool RenderingValidationSceneFixture::ApplyR3ShadowedShaftsFixture(
         bool bOccluderCastsShadow,
-        bool bDirectionalLightEnabled) const
+        bool bDirectionalLightEnabled,
+        bool bDirectionalLightCastsShadows) const
     {
         if (!EnsureR3ShadowedShaftsFixture())
         {
@@ -2355,8 +2356,8 @@ namespace NorvesLib::Test::RenderingValidation
         }
         directional->SetLightDirection(0.0f, 0.0f, -1.0f);
         directional->SetLightColor(1.0f, 1.0f, 1.0f);
-        directional->SetIntensity(bDirectionalLightEnabled ? 10000.0f : 0.0f);
-        directional->SetCastShadows(bDirectionalLightEnabled);
+        directional->SetIntensity(bDirectionalLightEnabled ? 1000.0f : 0.0f);
+        directional->SetCastShadows(bDirectionalLightEnabled && bDirectionalLightCastsShadows);
         directional->SetLightVisible(bDirectionalLightEnabled);
         m_pP4LightEntity->SetActive(bDirectionalLightEnabled);
 
