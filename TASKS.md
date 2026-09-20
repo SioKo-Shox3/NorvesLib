@@ -215,11 +215,12 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - paths: Library/Core/Public/RHI/RHITypes.h, Library/Core/Public/RHI/IPipeline.h, Library/Core/Public/RHI/IDevice.h, Library/Core/Private/RHI/Vulkan/VulkanPipeline.*, Library/Core/Private/RHI/Vulkan/VulkanDevice.*, Library/Core/Private/RHI/Vulkan/VulkanRayTracingPipeline.*, Library/Core/Private/RHI/Vulkan/VulkanDescriptorSet.*, Test/Core/Rendering/RHIRayTracingPipelineVulkanTest.cpp, blocked/R5-P7.md, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 
 ## R5-P8: TraceRaysをコマンドリストへ接続する
-- status: todo
+- status: blocked
 - done-when: RHI ICommandListのTraceRaysがVulkan ray tracing commandへ到達し、最小raygen/miss/hit shaderで既知のtriangle visibility結果をreadbackできる。
 - verify: `cmake --build build --config Debug --target RHIRayTracingPipelineVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RHIRayTracingPipelineVulkanTest$"`
 - paths: Library/Core/Public/RHI/ICommandList.h, Library/Core/Private/RHI/Vulkan/VulkanCommandList.h, Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp, Library/Core/Private/RHI/Vulkan/VulkanRayTracingPipeline.*, Assets/Shaders/RayTracing/*, Test/Core/Rendering/RHIRayTracingPipelineVulkanTest.cpp, TASKS.md, PROGRESS.md
+- notes: 既知triangle visibilityにはTLASの加速構造descriptor bindingが必要だが、RHI/Vulkan descriptor経路は未対応で対象paths外。詳細と推奨はblocked/R5-P8.md。
 
 ## R5-P9: GEngine所有のray-tracing sceneをFramePacketへ接続する
 - status: todo

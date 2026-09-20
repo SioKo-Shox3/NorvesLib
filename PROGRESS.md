@@ -33,13 +33,15 @@
 - R5-P7: RayTracing pipeline descriptorにraygen/miss/closest-hit shader groupを加え、Vulkan pipelineとSBT生成を実装した。6 RT stageとAllRayTracingのdescriptor visibility、無効group拒否、group handleとSBT region alignmentをGPUテストで確認した。Debug build exit 0、専用CTest 1/1 passed、独立評価PASS。ログは`.harness/runs/20260920-174410/verify-R5-P7-5.txt`と`verify-R5-P7-6.txt`。
 
 ## In progress
+- R5-P8: blocked。実三角形traceにはTLASの加速構造descriptor bindingが必要だが、RHI/Vulkan descriptor経路は未対応で指定paths外。詳細はblocked/R5-P8.md。
 
 ## Next
 
-- R5-P8: TraceRaysをコマンドリストとVulkan ray tracing commandへ接続する。
+- R5-P8: TLAS descriptor経路の対象pathsを拡張した後に再開する（blocked/R5-P8.md）。
 
 ## Notes
 
+- R5-P8開始ゲート: Debug buildはEXIT_CODE=0、対象CTestは1/1 passed。ログは.harness/runs/20260920-174410/verify-R5-P8-1.txtとverify-R5-P8-2.txt。これは既存P7テストの開始時状態で、P8の完了証拠ではない。
 - R2完了: 初回評価で検出されたCPU/shader補間差、行末差分、実GPU経路の明示不足を `ca9204d` で修正し、受入れ記録とRoadmapへ反映した。R1 baseline、candidate/approvalは変更・再利用していない。
 - P6a completion report: `.superpowers/sdd/RenderingR1PhysicalFoundationPlan/task-6a-report.md`。forward-fixの最終証拠は `.harness/runs/20260908-084154/p6a-forward-fix-gpu/` と `p6a-forward-fix-review/claude-final.json` に保存する。旧P6a reportは同ディレクトリのアーカイブへ保持する。
 - 独立再検証: `recheck-R1-P6A-4-1.txt`〜`-11.txt`。集計は `p6a-independent-recheck-audit-1730.json`。統合接続評価は `p6a-r1-integrated-review/receipt.json` / `stdout.json`。
