@@ -9,6 +9,7 @@
 
 namespace NorvesLib::RHI::Vulkan
 {
+    TSharedPtr<VulkanDevice> AcquireVulkanDeviceOwnerForDeferredTextureUpdate(VulkanDevice *device) noexcept;
     void BeginVulkanTextureUpdateSyncScopeForTesting(vk::Device device) noexcept;
     void RegisterVulkanTextureUpdateStagingResourcesForTesting(
         vk::Device device,
@@ -114,11 +115,18 @@ namespace NorvesLib::RHI::Vulkan
 
             void DeferUntilDeviceIdle(VulkanTexture *pendingTexture) noexcept
             {
+                TSharedPtr<VulkanDevice> deviceOwner =
+                    AcquireVulkanDeviceOwnerForDeferredTextureUpdate(m_deviceOwner.get());
+                if (!deviceOwner)
+                {
+                    deviceOwner = m_deviceOwner;
+                }
+
                 ::NorvesLib::Thread::ScopedLock lock(g_deferredUpdateStagingMutex);
                 --g_reservedDeferredUpdateStagingSlots;
                 g_deferredUpdateStagingResources.emplace_back();
                 DeferredTextureUpdateStagingResources &record = g_deferredUpdateStagingResources.back();
-                record.deviceOwner = m_deviceOwner;
+                record.deviceOwner = std::move(deviceOwner);
                 record.device = m_device;
                 record.buffer = m_buffer;
                 record.stagingMemory = m_memory;
@@ -386,7 +394,6 @@ namespace NorvesLib::RHI::Vulkan
         vk::Device vkDevice = m_device->GetVkDevice();
         if (IsVulkanTextureUpdatePendingUntilDeviceIdle(this))
         {
-            m_device->WaitIdle();
             if (DeferVulkanTextureResourcesUntilDeviceIdle(
                     this,
                     vkDevice,
@@ -397,6 +404,8 @@ namespace NorvesLib::RHI::Vulkan
                     m_mipImageViews,
                     m_arrayLayerImageViews))
             {
+                // テクスチャ資源を先に記録へ移し、待機でデバイスが解放されても参照しない。
+                m_device->WaitIdle();
                 return;
             }
         }

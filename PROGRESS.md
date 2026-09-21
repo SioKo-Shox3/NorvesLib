@@ -39,12 +39,13 @@
 - R5-P11: `LightingParamsLayoutTest`でプリエクスポージャを適用する7 mode（Normal、RAW252、Validation Lambert/PBR、R5 RasterHardShadow/RayTracingHardShadow/RasterFallback）を個別に固定し、RT visibility・RAW250/251は除外した。Debug build exit 0、対象CTest 2/2 passed、同期validation付き動的capture全段PASS（TLAS更新後の旧領域255・移動先0、Raster/RT/fallbackの`max_lsb=0`）。全CTestは235件中6失敗・7 skipで、開始baseline234件/8失敗の失敗集合に対して新規失敗0。ログは`.harness/runs/20260921-073235/verify-R5-P11-contract-fix-target-ctest.txt`、`verify-R5-P11-contract-fix-dynamic-sync.txt`、`verify-R5-P11-contract-fix-full-ctest.txt`。
 
 - R5-P12: `d8cde71`。R5Acceptance.mdへ方式選定、RHI/Vulkan/API変更、RT影A/B、動的TLAS、非対応fallback、検証ログ、性能ゲート保留を集約し、R4/DDGIを後続として記録した。
+- R5-P13: VulkanTexture::Updateの終了・送信・待機失敗時にstaging資源と転送先texture資源をデバイス待機まで保持し、非device-lost待機失敗時のdevice teardown保護とValidation error検出を実装した。Debug build exit 0、直接GPU実行 exit 0、専用CTest 1/1 passed。ビルドには既存のVulkan macro再定義とthird-party PDB警告がある。同一deviceの共有command pool操作とWaitIdleは呼出側で直列化する。
 
 ## In progress
 
 ## Next
 
-- R5-P13: VulkanTexture::Updateの同期失敗時staging資源を解放する。
+- R4 M1: DDGIの実装スコープ、依存関係、検証単位をTASKS.mdへ定義する。
 
 ## Notes
 

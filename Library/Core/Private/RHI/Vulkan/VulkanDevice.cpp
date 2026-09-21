@@ -18,6 +18,7 @@
 #include "Math/MatrixUtils.h"
 #include <iostream>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <limits>
 #include "Container/Containers.h"
@@ -51,6 +52,13 @@ namespace NorvesLib::RHI::Vulkan
             SingleTimeCommandFailurePointForTesting::None;
         thread_local VulkanDevice *g_lastTestFailureDevice = nullptr;
         thread_local uint32_t g_testFailureHitCount = 0;
+        thread_local VulkanDevice *g_waitIdleFailureDevice = nullptr;
+        thread_local uint32_t g_waitIdleFailuresRemaining = 0;
+        thread_local VulkanDevice *g_lastWaitIdleFailureDevice = nullptr;
+        thread_local uint32_t g_waitIdleFailureHitCount = 0;
+        std::atomic<bool> g_validationErrorCaptureActive{false};
+        std::atomic<uint32_t> g_validationErrorCaptureHitCount{0};
+        std::atomic<uint32_t> g_safeDeviceTeardownLeakCount{0};
         thread_local vk::Device g_textureUpdateSyncScopeDevice{};
         thread_local vk::Device g_registeredTextureUpdateStagingDevice{};
         thread_local vk::Buffer g_registeredTextureUpdateStagingBuffer{};
@@ -61,6 +69,61 @@ namespace NorvesLib::RHI::Vulkan
         ::NorvesLib::Thread::Mutex g_deferredCommandBufferMutex;
         ::NorvesLib::Core::Container::VariableArray<DeferredSingleTimeCommandBuffer> g_deferredCommandBuffers;
         size_t g_reservedDeferredCommandBufferSlots = 0;
+        struct RegisteredVulkanDeviceOwner
+        {
+            VulkanDevice *device = nullptr;
+            TWeakPtr<VulkanDevice> owner;
+        };
+        ::NorvesLib::Thread::Mutex g_vulkanDeviceOwnerMutex;
+        VariableArray<RegisteredVulkanDeviceOwner> g_vulkanDeviceOwners;
+
+        void RegisterVulkanDeviceOwner(const TSharedPtr<VulkanDevice> &owner)
+        {
+            if (!owner)
+            {
+                return;
+            }
+
+            ::NorvesLib::Thread::ScopedLock lock(g_vulkanDeviceOwnerMutex);
+            for (RegisteredVulkanDeviceOwner &record : g_vulkanDeviceOwners)
+            {
+                if (record.device == owner.get())
+                {
+                    record.owner = owner;
+                    return;
+                }
+            }
+            g_vulkanDeviceOwners.push_back({owner.get(), owner});
+        }
+
+        void UnregisterVulkanDeviceOwner(VulkanDevice *device) noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_vulkanDeviceOwnerMutex);
+            for (size_t index = 0; index < g_vulkanDeviceOwners.size();)
+            {
+                if (g_vulkanDeviceOwners[index].device == device)
+                {
+                    g_vulkanDeviceOwners.erase(g_vulkanDeviceOwners.begin() + index);
+                }
+                else
+                {
+                    ++index;
+                }
+            }
+        }
+
+        TSharedPtr<VulkanDevice> FindVulkanDeviceOwner(VulkanDevice *device) noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_vulkanDeviceOwnerMutex);
+            for (const RegisteredVulkanDeviceOwner &record : g_vulkanDeviceOwners)
+            {
+                if (record.device == device)
+                {
+                    return record.owner.lock();
+                }
+            }
+            return {};
+        }
 
         void ArmVulkanSingleTimeCommandFailureForTesting(
             IDevice *device,
@@ -159,6 +222,133 @@ namespace NorvesLib::RHI::Vulkan
     {
         const VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device);
         return g_lastTestFailureDevice == vulkanDevice ? g_testFailureHitCount : 0;
+    }
+
+    void InjectVulkanDeviceWaitIdleFailuresForTesting(IDevice *device, uint32_t failureCount) noexcept
+    {
+        g_waitIdleFailureDevice = dynamic_cast<VulkanDevice *>(device);
+        g_waitIdleFailuresRemaining = failureCount;
+        g_lastWaitIdleFailureDevice = g_waitIdleFailureDevice;
+        g_waitIdleFailureHitCount = 0;
+    }
+
+    uint32_t GetVulkanDeviceWaitIdleFailureHitCountForTesting(IDevice *device) noexcept
+    {
+        const VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device);
+        return g_lastWaitIdleFailureDevice == vulkanDevice ? g_waitIdleFailureHitCount : 0;
+    }
+
+    TSharedPtr<VulkanDevice> AcquireVulkanDeviceOwnerForDeferredTextureUpdate(VulkanDevice *device) noexcept
+    {
+        return FindVulkanDeviceOwner(device);
+    }
+
+    void BeginVulkanValidationErrorCaptureForTesting() noexcept
+    {
+        g_validationErrorCaptureHitCount.store(0, std::memory_order_relaxed);
+        g_validationErrorCaptureActive.store(true, std::memory_order_release);
+    }
+
+    void EndVulkanValidationErrorCaptureForTesting() noexcept
+    {
+        g_validationErrorCaptureActive.store(false, std::memory_order_release);
+    }
+
+    void ResetVulkanValidationErrorCaptureForTesting() noexcept
+    {
+        g_validationErrorCaptureHitCount.store(0, std::memory_order_relaxed);
+    }
+
+    uint32_t GetVulkanValidationErrorCaptureHitCountForTesting() noexcept
+    {
+        return g_validationErrorCaptureHitCount.load(std::memory_order_relaxed);
+    }
+
+    uint32_t GetVulkanSafeDeviceTeardownLeakCountForTesting() noexcept
+    {
+        return g_safeDeviceTeardownLeakCount.load(std::memory_order_relaxed);
+    }
+
+    bool TriggerVulkanDeviceTeardownWaitFailureForTesting(::NorvesLib::RHI::DevicePtr &device) noexcept
+    {
+        VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device.get());
+        if (vulkanDevice == nullptr)
+        {
+            return false;
+        }
+
+        const uint32_t failureHitCountBefore = g_testFailureHitCount;
+        vk::CommandBuffer commandBuffer;
+        try
+        {
+            commandBuffer = vulkanDevice->BeginSingleTimeCommands();
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        InjectVulkanSingleTimeCommandWaitAndFallbackFailureForTesting(device.get());
+        bool bEndThrew = false;
+        try
+        {
+            vulkanDevice->EndSingleTimeCommands(commandBuffer);
+        }
+        catch (...)
+        {
+            bEndThrew = true;
+        }
+        ClearVulkanSingleTimeCommandFailureForTesting(device.get());
+        if (!bEndThrew)
+        {
+            std::cerr << "teardown test setup failed: EndSingleTimeCommands did not throw\n";
+            return false;
+        }
+        if (g_lastTestFailureDevice != vulkanDevice || g_testFailureHitCount != failureHitCountBefore + 1)
+        {
+            std::cerr << "teardown test setup failed: wait-failure hook count before=" << failureHitCountBefore
+                      << " after=" << g_testFailureHitCount << '\n';
+            return false;
+        }
+
+        const uint32_t protectedTeardownCountBefore = GetVulkanSafeDeviceTeardownLeakCountForTesting();
+        InjectVulkanDeviceWaitIdleFailuresForTesting(device.get(), 1);
+        device.reset();
+        const uint32_t protectedTeardownCountAfter = GetVulkanSafeDeviceTeardownLeakCountForTesting();
+        if (device || protectedTeardownCountAfter != protectedTeardownCountBefore + 1)
+        {
+            std::cerr << "teardown test failed: protected-count before=" << protectedTeardownCountBefore
+                      << " after=" << protectedTeardownCountAfter << '\n';
+            return false;
+        }
+        return true;
+    }
+
+    bool SubmitVulkanValidationErrorForTesting(IDevice *device) noexcept
+    {
+        VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device);
+        if (vulkanDevice == nullptr || !vulkanDevice->GetVkInstance())
+        {
+            return false;
+        }
+
+        const auto submitMessage = VULKAN_HPP_DEFAULT_DISPATCHER.vkSubmitDebugUtilsMessageEXT;
+        if (submitMessage == nullptr)
+        {
+            return false;
+        }
+
+        VkDebugUtilsMessengerCallbackDataEXT callbackData{};
+        callbackData.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CALLBACK_DATA_EXT;
+        callbackData.pMessageIdName = "RHITextureUpdateVulkanTest";
+        callbackData.messageIdNumber = 13;
+        callbackData.pMessage = "検証コールバック捕捉の自己検査";
+        submitMessage(
+            static_cast<VkInstance>(vulkanDevice->GetVkInstance()),
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+            &callbackData);
+        return true;
     }
 
     void BeginVulkanTextureUpdateSyncScopeForTesting(vk::Device device) noexcept
@@ -583,7 +773,9 @@ namespace NorvesLib::RHI::Vulkan
     // ファクトリメソッド
     DevicePtr VulkanDevice::Create(const VulkanInitParams &params)
     {
-        return MakeShared<VulkanDevice>(params.bEnableValidation);
+        TSharedPtr<VulkanDevice> device = MakeShared<VulkanDevice>(params.bEnableValidation);
+        RegisterVulkanDeviceOwner(device);
+        return StaticPointerCast<IDevice>(device);
     }
 
     // コンストラクタ
@@ -621,9 +813,35 @@ namespace NorvesLib::RHI::Vulkan
     // デストラクタ
     VulkanDevice::~VulkanDevice()
     {
+        UnregisterVulkanDeviceOwner(this);
+        VkResult waitResult = VK_SUCCESS;
         if (m_device)
         {
-            WaitIdle();
+            waitResult = WaitIdleInternal();
+        }
+
+        if (m_device && waitResult != VK_SUCCESS && waitResult != VK_ERROR_DEVICE_LOST)
+        {
+            NORVES_LOG_ERROR(
+                "VulkanDevice",
+                "Device teardown deferred after vkDeviceWaitIdle failure result=%d",
+                static_cast<int32_t>(waitResult));
+#if defined(VK_EXT_device_address_binding_report)
+            ShutdownAddressBindingDiagnostics();
+            if (m_addressBindingDebugMessenger)
+            {
+                m_instance.destroyDebugUtilsMessengerEXT(m_addressBindingDebugMessenger);
+            }
+#endif
+            if (m_debugMessenger)
+            {
+                m_instance.destroyDebugUtilsMessengerEXT(m_debugMessenger);
+            }
+
+            // 待機を確認できないため、GPUが参照し得る資源群を意図的に保持する。
+            m_ResourceAllocator.release();
+            g_safeDeviceTeardownLeakCount.fetch_add(1, std::memory_order_relaxed);
+            return;
         }
 
         m_ResourceAllocator.reset();
@@ -708,6 +926,7 @@ namespace NorvesLib::RHI::Vulkan
                 vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
                 vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
             debugCreateInfo.pfnUserCallback = reinterpret_cast<vk::PFN_DebugUtilsMessengerCallbackEXT>(DebugCallback);
+            debugCreateInfo.pUserData = this;
 
             createInfo.pNext = &debugCreateInfo;
         }
@@ -1631,8 +1850,8 @@ namespace NorvesLib::RHI::Vulkan
                 case '\r':
                     builder.Append("\\r");
                     break;
-                case '\r\n':
-                    builder.Append("\\r\n");
+                case '\n':
+                    builder.Append("\\n");
                     break;
                 default:
                     if (*pCharacter < 0x20 || *pCharacter == 0x7F)
@@ -1815,6 +2034,13 @@ namespace NorvesLib::RHI::Vulkan
     {
         try
         {
+            if ((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0 &&
+                pUserData != nullptr &&
+                g_validationErrorCaptureActive.load(std::memory_order_acquire))
+            {
+                g_validationErrorCaptureHitCount.fetch_add(1, std::memory_order_relaxed);
+            }
+
             if (pCallbackData != nullptr &&
                 messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
             {
@@ -2017,7 +2243,30 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanDevice::WaitIdle()
     {
-        const VkResult result = WaitIdleWithoutResultCheck(m_device, "VulkanDevice::WaitIdle");
+        // 遅延資源の解放中に最後の参照が消えても、この呼び出しが戻るまではデバイスを保持する。
+        TSharedPtr<VulkanDevice> deviceLifetimeGuard = FindVulkanDeviceOwner(this);
+        (void)deviceLifetimeGuard;
+
+        (void)WaitIdleInternal();
+    }
+
+    VkResult VulkanDevice::WaitIdleInternal() noexcept
+    {
+        VkResult result = VK_SUCCESS;
+        if (g_waitIdleFailureDevice == this && g_waitIdleFailuresRemaining > 0)
+        {
+            --g_waitIdleFailuresRemaining;
+            ++g_waitIdleFailureHitCount;
+            result = VK_ERROR_OUT_OF_HOST_MEMORY;
+            if (g_waitIdleFailuresRemaining == 0)
+            {
+                g_waitIdleFailureDevice = nullptr;
+            }
+        }
+        else
+        {
+            result = WaitIdleWithoutResultCheck(m_device, "VulkanDevice::WaitIdle");
+        }
         if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)
         {
             ReleaseDeferredSingleTimeCommandBuffers(m_device);
@@ -2027,6 +2276,7 @@ namespace NorvesLib::RHI::Vulkan
         {
             ReportDeviceFaultOnce();
         }
+        return result;
     }
 
     void VulkanDevice::ReportDeviceFaultOnce()

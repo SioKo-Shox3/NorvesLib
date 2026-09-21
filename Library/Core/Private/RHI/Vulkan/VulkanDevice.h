@@ -96,6 +96,7 @@ namespace NorvesLib::RHI::Vulkan
         ShaderCompilerPtr CreateShaderCompiler() override;
         ShaderCompilerPtr CreateSlangShaderCompiler() override;
         IGPUResourceAllocator* GetResourceAllocator() override;
+        // 同一デバイスのコマンド送信・コマンドプール操作と呼出側で直列化する。
         void WaitIdle() override;
         API GetAPI() const override { return API::Vulkan; }
         const DeviceCapabilities &GetCapabilities() const override { return m_Capabilities; }
@@ -230,6 +231,7 @@ namespace NorvesLib::RHI::Vulkan
         VariableArray<const char *> GetDeviceExtensions();
         void FindQueueFamilies(vk::PhysicalDevice device);
         void ReportDeviceFaultOnce();
+        VkResult WaitIdleInternal() noexcept;
 
 #if defined(VK_EXT_device_address_binding_report)
         void SetupAddressBindingDebugMessenger();
