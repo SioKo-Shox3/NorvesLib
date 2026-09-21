@@ -121,6 +121,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/GBufferPass.cpp
     Private/Rendering/SkyAtmosphere.cpp
     Private/Rendering/VolumetricFog.cpp
+    Private/Rendering/DDGIVolume.cpp
     Private/Rendering/VolumetricsPass.cpp
     Private/Rendering/SkyAtmospherePass.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp

@@ -784,6 +784,16 @@ target_include_directories(VolumetricFogModelTest PRIVATE
 set_target_properties(VolumetricFogModelTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME VolumetricFogModelTest COMMAND VolumetricFogModelTest)
 
+add_executable(DDGIVolumeModelTest
+    DDGIVolumeModelTest.cpp
+)
+target_link_libraries(DDGIVolumeModelTest PRIVATE Core)
+target_include_directories(DDGIVolumeModelTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(DDGIVolumeModelTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DDGIVolumeModelTest COMMAND DDGIVolumeModelTest)
+
 add_executable(SkyAtmospherePassContractTest
     SkyAtmospherePassContractTest.cpp
 )

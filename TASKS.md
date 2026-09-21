@@ -166,7 +166,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - R5-P5の独立評価はblockedのまま。R4はR5の既存GPU hit/miss経路を最初のray-query検証で再確認し、P5全体の受入れ完了とは扱わない。
 
 ## R4-P1: DDGI volume設定と格子/方向変換のCPU契約を作る
-- status: todo
+- status: done
 - done-when: DDGI volumeの有限値検証、1..1024 probeのchecked grid indexing、octahedral direction mapping、ray方向列と無効入力fallbackをCPU契約テストで固定する。既定volumeは無効である。
 - verify: `cmake --build build --config Debug --target DDGIVolumeModelTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^DDGIVolumeModelTest$"`
