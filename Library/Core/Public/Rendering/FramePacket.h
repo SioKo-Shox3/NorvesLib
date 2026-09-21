@@ -71,6 +71,7 @@ namespace NorvesLib::Core::Rendering
         bool bGeometryOpaque = true;
         RHI::AccelerationStructureInstanceDesc Instance;
         RHI::AccelerationStructurePtr BottomLevel;
+        RayTracingHitMaterialSnapshot Material;
     };
 
     struct RayTracingSceneSnapshot

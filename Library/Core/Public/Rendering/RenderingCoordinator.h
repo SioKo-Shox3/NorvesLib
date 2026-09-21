@@ -10,6 +10,7 @@
 #include "DrawCommand.h"
 #include "FramePacket.h"
 #include "ViewRenderContext.h"
+#include "Rendering/DDGIVolume.h"
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/CompositePass.h"
@@ -40,6 +41,7 @@ namespace NorvesLib::RHI
     class ITexture;
     class IDescriptorSet;
     class ISampler;
+    struct DeviceCapabilities;
 }
 
 namespace NorvesLib::Core::Rendering
@@ -283,6 +285,12 @@ namespace NorvesLib::Core::Rendering
         void SetSkyAtmosphere(const SkyAtmosphereParameters& parameters);
 
         /**
+         * @brief DDGIプローブボリュームを次のFramePacketへ公開する
+         */
+        void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters);
+        DDGIVolumeParameters GetDDGIVolumeParameters() const { return m_DDGIVolume; }
+
+        /**
          * @brief 高さフォグ設定を次のFramePacketへ公開する
          * @param parameters GameThread側で保持する高さフォグ設定
          */
@@ -414,6 +422,11 @@ namespace NorvesLib::Core::Rendering
                                                  RenderGraphDebugDumpSnapshot &outSnapshot) const;
 
     private:
+        friend struct DDGISnapshotContractTestAccess;
+
+        void SnapshotSceneParameters(FramePacket& packet,
+                                     const RHI::DeviceCapabilities& capabilities) const;
+
         // ========================================
         // 内部ヘルパー
         // ========================================
@@ -474,6 +487,7 @@ namespace NorvesLib::Core::Rendering
         // メインカメラ（GameThreadから設定される）
         CameraProxy m_MainCamera;
         SkyAtmosphereParameters m_SkyAtmosphere;
+        DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
         Container::UnorderedMap<uint64_t, CameraProxy> m_Cameras;
         uint64_t m_NextCameraId = 1;

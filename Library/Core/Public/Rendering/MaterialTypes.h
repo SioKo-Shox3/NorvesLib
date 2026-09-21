@@ -306,6 +306,7 @@ namespace NorvesLib::Core::Rendering
         bool bCastShadows = true;
 
         Container::String DebugName;
+        float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
     };
 
     /**
@@ -332,7 +333,41 @@ namespace NorvesLib::Core::Rendering
 
         uint32_t RefCount = 0;
         Container::String DebugName;
+        float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< リニア空間のベースカラーRGBA
     };
+
+    /**
+     * @brief レイ命中時に使う材質値のフレームスナップショット
+     *
+     * 色値はシーンリニアのまま保持し、FramePacketが所有する。
+     */
+    struct RayTracingHitMaterialSnapshot
+    {
+        float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};
+        float EmissiveLuminanceNits = 0.0f;
+    };
+
+    inline RayTracingHitMaterialSnapshot MakeRayTracingHitMaterialSnapshot(
+        const MaterialResourceData* materialData)
+    {
+        RayTracingHitMaterialSnapshot snapshot;
+        if (materialData == nullptr)
+        {
+            return snapshot;
+        }
+
+        for (std::uint32_t index = 0; index < 4u; ++index)
+        {
+            snapshot.BaseColor[index] = materialData->BaseColor[index];
+        }
+        for (std::uint32_t index = 0; index < 3u; ++index)
+        {
+            snapshot.EmissiveColor[index] = materialData->EmissiveColor[index];
+        }
+        snapshot.EmissiveLuminanceNits = materialData->EmissiveLuminanceNits;
+        return snapshot;
+    }
 
     // ========================================
     // マテリアル定義

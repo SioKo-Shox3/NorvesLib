@@ -5,6 +5,7 @@
 #include "MaterialTypes.h"
 #include "SkinnedMeshTypes.h"
 #include "MegaGeometry/MegaGeometryTypes.h"
+#include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
 #include "VolumetricFog.h"
 #include "Container/Containers.h"
@@ -394,6 +395,7 @@ namespace NorvesLib::Core::Rendering
         float FogDensity = 0.01f;
         float FogStart = 10.0f;
         float FogEnd = 100.0f;
+        DDGIVolumeParameters DDGIVolume;
 
         /**
          * @brief シーンをクリア
@@ -405,8 +407,14 @@ namespace NorvesLib::Core::Rendering
             MegaGeometryProxies.clear();
             LightProxies.clear();
             AdditionalCameras.clear();
+            DDGIVolume = MakeDefaultDDGIVolumeParameters();
             SkyAtmosphere = SkyAtmosphereParameters{};
             VolumetricFog = MakeDefaultVolumetricFogParameters();
+        }
+
+        void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)
+        {
+            DDGIVolume = SanitizeDDGIVolumeParameters(parameters);
         }
 
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters)

@@ -41,6 +41,21 @@ namespace NorvesLib::Core::Rendering
         const DDGIVolumeParameters& parameters);
 
     /**
+     * @brief 必要なレイトレーシング機能がなければボリュームを無効化する
+     */
+    inline DDGIVolumeParameters SanitizeDDGIVolumeParametersForRHI(
+        const DDGIVolumeParameters& parameters,
+        bool bSupportsAccelerationStructure,
+        bool bSupportsRayQuery)
+    {
+        if (!bSupportsAccelerationStructure || !bSupportsRayQuery)
+        {
+            return MakeDefaultDDGIVolumeParameters();
+        }
+        return SanitizeDDGIVolumeParameters(parameters);
+    }
+
+    /**
      * @brief 有効なvolumeの総probe数を返す。無効なvolumeでは0を返す
      */
     std::uint32_t GetDDGIProbeCount(const DDGIVolumeParameters& parameters);

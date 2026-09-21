@@ -407,7 +407,8 @@ namespace NorvesLib::Core::Rendering
     }
 
     bool RayTracingSceneSubsystem::BuildFrameSnapshot(const MeshResources* meshResources,
-                                                       FramePacket& packet)
+                                                       FramePacket& packet,
+                                                       const MaterialResources* materialResources)
     {
         packet.RayTracingScene.Clear();
         if (!meshResources)
@@ -468,6 +469,12 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
+            const MaterialResourceData* materialData = materialResources
+                                                           ? materialResources->GetData(draw.MaterialHandle)
+                                                           : nullptr;
+            const RayTracingHitMaterialSnapshot materialSnapshot =
+                MakeRayTracingHitMaterialSnapshot(materialData);
+
             for (uint32_t instanceIndex = 0; instanceIndex < instanceCount; ++instanceIndex)
             {
                 if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
@@ -502,6 +509,7 @@ namespace NorvesLib::Core::Rendering
                 instance.VertexCount = static_cast<uint32_t>(vertexCount64);
                 instance.VertexStride = vertexStride;
                 instance.bGeometryOpaque = draw.MaterialBlendMode == BlendMode::Opaque;
+                instance.Material = materialSnapshot;
                 instance.Instance.customIndex =
                     static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
                 CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
@@ -853,6 +861,13 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("RenderingCoordinator", "RHI Device is null");
             return false;
         }
+
+        const RHI::RayTracingCapabilities& rayTracingCapabilities =
+            m_Device->GetCapabilities().RayTracing;
+        m_DDGIVolume = SanitizeDDGIVolumeParametersForRHI(
+            m_DDGIVolume,
+            rayTracingCapabilities.bAccelerationStructure,
+            rayTracingCapabilities.bRayQuery);
 
         // ========================================
         // 2. Screenの初期化（SwapChain作成を含む）
@@ -1537,6 +1552,19 @@ namespace NorvesLib::Core::Rendering
         NORVES_STAT_TIME_END(collection, m_GameThreadStats.CollectionTimeMs);
     }
 
+    void RenderingCoordinator::SnapshotSceneParameters(
+        FramePacket& packet,
+        const RHI::DeviceCapabilities& capabilities) const
+    {
+        packet.Scene.SkyAtmosphere = m_SkyAtmosphere;
+        packet.Scene.SetDDGIVolumeParameters(
+            SanitizeDDGIVolumeParametersForRHI(
+                m_DDGIVolume,
+                capabilities.RayTracing.bAccelerationStructure,
+                capabilities.RayTracing.bRayQuery));
+        packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+    }
+
     void RenderingCoordinator::GenerateDrawCommands()
     {
         if (!m_bInitialized)
@@ -1569,8 +1597,7 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
             }
-            m_CurrentPacket->Scene.SkyAtmosphere = m_SkyAtmosphere;
-            m_CurrentPacket->Scene.SetVolumetricFogParameters(m_VolumetricFog);
+            SnapshotSceneParameters(*m_CurrentPacket, m_Device->GetCapabilities());
 
             m_CurrentPacket->DrawCommands.clear();
             m_CurrentPacket->DrawCommands.reserve(m_MaxDrawCallsPerFrame);
@@ -1744,9 +1771,12 @@ namespace NorvesLib::Core::Rendering
 
             const MeshResources* meshResources =
                 m_RenderResources ? &m_RenderResources->Meshes() : nullptr;
+            const MaterialResources* materialResources =
+                m_RenderResources ? &m_RenderResources->Materials() : nullptr;
             if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
                     meshResources,
-                    *m_CurrentPacket))
+                    *m_CurrentPacket,
+                    materialResources))
             {
                 NORVES_LOG_WARNING("RayTracingSceneSubsystem",
                                    "FramePacketのレイトレーシングscene snapshotを構築できませんでした");
@@ -2724,6 +2754,21 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetSkyAtmosphere(const SkyAtmosphereParameters& parameters)
     {
         m_SkyAtmosphere = parameters;
+    }
+
+    void RenderingCoordinator::SetDDGIVolumeParameters(
+        const DDGIVolumeParameters& parameters)
+    {
+        m_DDGIVolume = SanitizeDDGIVolumeParameters(parameters);
+        if (m_Device)
+        {
+            const RHI::RayTracingCapabilities& rayTracingCapabilities =
+                m_Device->GetCapabilities().RayTracing;
+            m_DDGIVolume = SanitizeDDGIVolumeParametersForRHI(
+                m_DDGIVolume,
+                rayTracingCapabilities.bAccelerationStructure,
+                rayTracingCapabilities.bRayQuery);
+        }
     }
 
     void RenderingCoordinator::SetVolumetricFogParameters(

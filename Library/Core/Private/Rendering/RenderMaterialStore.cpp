@@ -13,6 +13,10 @@ namespace NorvesLib::Core::Rendering
         bool TryCopyMaterialCreateData(const MaterialCreateData &createInfo, MaterialResourceData &outData)
         {
             MaterialResourceData data;
+            for (std::uint32_t index = 0; index < 4u; ++index)
+            {
+                data.BaseColor[index] = createInfo.BaseColor[index];
+            }
             data.AlbedoTexture = createInfo.AlbedoTexture;
             data.NormalTexture = createInfo.NormalTexture;
             data.MetallicTexture = createInfo.MetallicTexture;

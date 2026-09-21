@@ -13,6 +13,7 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class MeshResources;
+    class MaterialResources;
 
     /**
      * @brief FramePacketの描画スナップショットから加速構造を管理
@@ -30,12 +31,15 @@ namespace NorvesLib::Core::Rendering
         RayTracingSceneSubsystem& operator=(const RayTracingSceneSubsystem&) = delete;
 
         /**
-         * @brief Draw snapshotからFramePacketのレイトレーシングシーンを構築
-         * @param meshResources DrawCommandのメッシュハンドルを解決するGPU mesh resource
+         * @brief DrawスナップショットからFramePacketのレイトレーシングシーンを構築
+         * @param meshResources DrawCommandのメッシュハンドルを解決するGPUメッシュリソース
          * @param packet 構築元および出力先のフレームスナップショット
-         * @return 有効なsnapshotを構築できた場合true
+         * @param materialResources DrawCommandのマテリアル値を解決するリソース
+         * @return 有効なスナップショットを構築できた場合true
          */
-        bool BuildFrameSnapshot(const MeshResources* meshResources, FramePacket& packet);
+        bool BuildFrameSnapshot(const MeshResources* meshResources,
+                                FramePacket& packet,
+                                const MaterialResources* materialResources = nullptr);
 
         /**
          * @brief FramePacketのgeometryからBLAS/TLAS buildをRenderThreadへ記録

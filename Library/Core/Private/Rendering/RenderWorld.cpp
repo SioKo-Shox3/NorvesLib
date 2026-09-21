@@ -295,6 +295,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetSkyAtmosphere(parameters);
     }
 
+    void RenderWorld::SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters)
+    {
+        m_RenderingCoordinator.SetDDGIVolumeParameters(parameters);
+    }
+
     void RenderWorld::SetVolumetricFogParameters(const VolumetricFogParameters& parameters)
     {
         m_RenderingCoordinator.SetVolumetricFogParameters(parameters);

@@ -794,6 +794,22 @@ target_include_directories(DDGIVolumeModelTest PRIVATE
 set_target_properties(DDGIVolumeModelTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME DDGIVolumeModelTest COMMAND DDGIVolumeModelTest)
 
+add_executable(DDGISnapshotContractTest
+    DDGISnapshotContractTest.cpp
+)
+target_link_libraries(DDGISnapshotContractTest PRIVATE Core RenderingGpuTestSupport)
+target_include_directories(DDGISnapshotContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+set_target_properties(DDGISnapshotContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME DDGISnapshotContractTest COMMAND DDGISnapshotContractTest)
+set_tests_properties(DDGISnapshotContractTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+)
+
 add_executable(SkyAtmospherePassContractTest
     SkyAtmospherePassContractTest.cpp
 )

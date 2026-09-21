@@ -2,6 +2,7 @@
 
 #include "RenderTypes.h"
 #include "FrameCaptureTypes.h"
+#include "DDGIVolume.h"
 #include "SkyAtmosphere.h"
 #include "VolumetricFog.h"
 #include "RenderingCoordinator.h"
@@ -151,6 +152,12 @@ namespace NorvesLib::Core::Rendering
          * @param parameters 次のFramePacketへコピーする空スナップショット
          */
         void SetSkyAtmosphere(const SkyAtmosphereParameters& parameters);
+
+        /**
+         * @brief DDGIプローブボリュームを設定（GameThread）
+         * @param parameters 次のFramePacketへ値コピーするプローブボリューム
+         */
+        void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters);
 
         /**
          * @brief 高さフォグ設定を次のFramePacketへ公開する（GameThread）
