@@ -41,12 +41,13 @@
 - R5-P12: `d8cde71`。R5Acceptance.mdへ方式選定、RHI/Vulkan/API変更、RT影A/B、動的TLAS、非対応fallback、検証ログ、性能ゲート保留を集約し、R4/DDGIを後続として記録した。
 - R5-P13: `1545a41`。VulkanTexture::Updateの終了・送信・待機失敗時にstaging資源と転送先texture資源をデバイス待機まで保持し、非device-lost待機失敗時のdevice teardown保護とValidation error検出を実装した。Debug build exit 0、直接GPU実行 exit 0、専用CTest 1/1 passed。ビルドには既存のVulkan macro再定義とthird-party PDB警告がある。同一deviceの共有command pool操作とWaitIdleは呼出側で直列化する。
 - R4 M1: DDGIの有限なprobe volume、ray-query更新、scene-linear octahedral irradiance/distance atlas、LightingPass統合、Cornell RGBE region metric、動的8-frame収束のR4-P1〜P7を定義した。
+- R4-P1: `9c34d35`。有限値検証、1..1024 probeのchecked grid indexing、octahedral方向変換、64 ray方向列と無効入力fallbackをCPU契約テストで固定した。Debug build exit 0、専用CTest 1/1 passed。
 
 ## In progress
 
 ## Next
 
-- R4-P1: DDGI volume設定と格子/方向変換のCPU契約。
+- R4-P2: volume設定とray-hit材質をFramePacketへ値スナップショットする。
 
 ## Notes
 
@@ -85,3 +86,4 @@
 - `VK_LAYER_VALIDATE_SYNC=1`をRenderingValidation全体へ設定した診断では、`RHIImageLayoutVulkanNoCasterSceneTest`と`RHIImageLayoutVulkanDrawThenNoCasterSceneTest`がswapchain画像のWRITE_AFTER_READを報告した。通常validationでは両テストが成功し、RT影専用テストも同期validation下で成功する。このswapchain経路は独立した追跡事項としてNEXT_FINDINGS.mdへ記録する。
 - R5-P10の影captureは`shadow_luma=0`/`lit_luma=255`の高コントラスト画像であるため、現在のA/Bは影領域の位置と出力一致を検証し、半影や階調誤差は検出しない。
 - R5-P12開始時の全CTest(2026-09-21): 235件中222 passed、7 skipped、6 failed/Not Run、exit 1。保存ログは`.harness/runs/20260921-125655/startup-ctest-LastTest.log`と`startup-ctest-LastTestsFailed.log`。R5のBDA、機能検出、RHI契約、RT影、動的TLAS/fallbackテストは成功。失敗はOutdoor golden差分、RenderGraphCompileTestのbinding 6 assertion、SkinnedRenderPathContractTestのpending件数assert、ScriptRuntimeSafetyTestのBAD_COMMAND、Bridgeの2 test executable不在。
+- R4-P1検証ログ: `.harness/runs/20260921-164825/verify-R4-P1-7.txt`（Debug build、EXIT_CODE=0）と`verify-R4-P1-8.txt`（CTest 1/1 passed）。両ログを開いて終了コードと結果を確認した。
