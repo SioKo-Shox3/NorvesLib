@@ -2268,7 +2268,6 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
         const bool bEnableRayTracingShadow = debugViewMode == 247u || debugViewMode == 248u;
-        m_DDGIProbePass.Execute(context);
         RHI::TexturePtr rayTracingShadowVisibility;
         const bool bRayTracingShadowAvailable = m_RayTracingShadowPass.Execute(
             context,
@@ -2287,6 +2286,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("LightingPass", "Failed to update lighting light buffer, skipping lighting draw");
             return;
         }
+        m_DDGIProbePass.Execute(context);
 
         if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {

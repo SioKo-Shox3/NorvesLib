@@ -3,6 +3,7 @@
 
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
@@ -12,8 +13,11 @@
 #include "RHI/IPipeline.h"
 #include "Logging/LogMacros.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <exception>
+#include <limits>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
@@ -23,6 +27,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DDGIProbeRayWorkgroupSize = 64u;
         constexpr float DDGIProbeRayMinimumDistance = 0.001f;
         constexpr float DDGIProbeRayMaximumDistance = 10000.0f;
+        constexpr float DDGIProbeShadowOriginOffset = 0.002f;
+        constexpr uint32_t DDGIProbeMaximumInstanceCustomIndex = 0x00FFFFFFu;
 
         struct DDGIProbeRayQueryParameters
         {
@@ -30,9 +36,131 @@ namespace NorvesLib::Core::Rendering
             float ProbeSpacing[4] = {};
             uint32_t ProbeCounts[4] = {};
             float RayLimits[4] = {};
+            uint32_t SceneCounts[4] = {};
+            float EnvironmentParameters[4] = {};
         };
 
-        static_assert(sizeof(DDGIProbeRayQueryParameters) == 64u);
+        struct DDGIProbeRayInstanceData
+        {
+            uint64_t VertexAddress = 0u;
+            uint64_t IndexAddress = 0u;
+            float BaseColor[4] = {};
+            float EmissiveChromaticityAndLuminance[4] = {};
+            uint32_t VertexStride = 0u;
+            uint32_t VertexCount = 0u;
+            uint32_t IndexCount = 0u;
+            uint32_t CustomIndex = UINT32_MAX;
+        };
+
+        static_assert(sizeof(DDGIProbeRayQueryParameters) == 96u);
+        static_assert(sizeof(DDGIProbeRayInstanceData) == 64u);
+        static_assert(sizeof(GPULightData) == 64u);
+
+        bool IsFiniteNonNegative(float value)
+        {
+            return std::isfinite(value) && value >= 0.0f;
+        }
+
+        bool TryBuildDDGIProbeInstanceData(
+            const RayTracingSceneSnapshot& scene,
+            Container::VariableArray<DDGIProbeRayInstanceData>& outInstances,
+            Container::VariableArray<RHI::BufferPtr>& outGeometryBuffers)
+        {
+            outInstances.clear();
+            outGeometryBuffers.clear();
+            if (scene.Instances.size() > std::numeric_limits<uint32_t>::max())
+            {
+                return false;
+            }
+
+            for (const RayTracingSceneInstanceSnapshot& snapshot : scene.Instances)
+            {
+                if (!snapshot.AccelerationStructureVertexBuffer ||
+                    !snapshot.AccelerationStructureIndexBuffer ||
+                    snapshot.VertexStride < sizeof(float) * 3u ||
+                    snapshot.VertexCount < 3u ||
+                    snapshot.IndexCount < 3u || snapshot.IndexCount % 3u != 0u ||
+                    snapshot.Instance.customIndex > DDGIProbeMaximumInstanceCustomIndex)
+                {
+                    return false;
+                }
+
+                const uint64_t vertexOffsetBytes =
+                    static_cast<uint64_t>(snapshot.VertexOffset) * snapshot.VertexStride;
+                const uint64_t vertexRangeBytes =
+                    static_cast<uint64_t>(snapshot.VertexCount) * snapshot.VertexStride;
+                const uint64_t indexOffsetBytes =
+                    static_cast<uint64_t>(snapshot.IndexOffset) * sizeof(uint32_t);
+                const uint64_t indexRangeBytes =
+                    static_cast<uint64_t>(snapshot.IndexCount) * sizeof(uint32_t);
+                const RHI::BufferPtr& vertexBuffer = snapshot.AccelerationStructureVertexBuffer;
+                const RHI::BufferPtr& indexBuffer = snapshot.AccelerationStructureIndexBuffer;
+                if (vertexRangeBytes > std::numeric_limits<uint32_t>::max() ||
+                    indexRangeBytes > std::numeric_limits<uint32_t>::max() ||
+                    vertexOffsetBytes > vertexBuffer->GetSize() ||
+                    vertexRangeBytes > vertexBuffer->GetSize() - vertexOffsetBytes ||
+                    indexOffsetBytes > indexBuffer->GetSize() ||
+                    indexRangeBytes > indexBuffer->GetSize() - indexOffsetBytes ||
+                    vertexBuffer->GetDeviceAddress() == 0u ||
+                    indexBuffer->GetDeviceAddress() == 0u ||
+                    vertexBuffer->GetDeviceAddress() >
+                        std::numeric_limits<uint64_t>::max() - vertexOffsetBytes ||
+                    indexBuffer->GetDeviceAddress() >
+                        std::numeric_limits<uint64_t>::max() - indexOffsetBytes)
+                {
+                    return false;
+                }
+
+                DDGIProbeRayInstanceData instanceData;
+                instanceData.VertexAddress = vertexBuffer->GetDeviceAddress() + vertexOffsetBytes;
+                instanceData.IndexAddress = indexBuffer->GetDeviceAddress() + indexOffsetBytes;
+                for (uint32_t channel = 0u; channel < 4u; ++channel)
+                {
+                    if (!IsFiniteNonNegative(snapshot.Material.BaseColor[channel]))
+                    {
+                        return false;
+                    }
+                    instanceData.BaseColor[channel] = snapshot.Material.BaseColor[channel];
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    if (!IsFiniteNonNegative(snapshot.Material.EmissiveColor[channel]))
+                    {
+                        return false;
+                    }
+                    instanceData.EmissiveChromaticityAndLuminance[channel] =
+                        snapshot.Material.EmissiveColor[channel];
+                }
+                if (!IsFiniteNonNegative(snapshot.Material.EmissiveLuminanceNits))
+                {
+                    return false;
+                }
+                instanceData.EmissiveChromaticityAndLuminance[3] =
+                    snapshot.Material.EmissiveLuminanceNits;
+                instanceData.VertexStride = snapshot.VertexStride;
+                instanceData.VertexCount = snapshot.VertexCount;
+                instanceData.IndexCount = snapshot.IndexCount;
+                instanceData.CustomIndex = snapshot.Instance.customIndex;
+                outInstances.push_back(instanceData);
+                outGeometryBuffers.push_back(vertexBuffer);
+                outGeometryBuffers.push_back(indexBuffer);
+            }
+
+            std::sort(outInstances.begin(), outInstances.end(),
+                      [](const DDGIProbeRayInstanceData& lhs,
+                         const DDGIProbeRayInstanceData& rhs)
+                      {
+                          return lhs.CustomIndex < rhs.CustomIndex;
+                      });
+            for (size_t index = 1u; index < outInstances.size(); ++index)
+            {
+                if (outInstances[index - 1u].CustomIndex == outInstances[index].CustomIndex)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
 
         RHI::DescriptorSetDesc CreateDDGIProbeRayQueryDescriptorSetDesc()
         {
@@ -40,8 +168,11 @@ namespace NorvesLib::Core::Rendering
             const RHI::ResourceBindType types[] = {
                 RHI::ResourceBindType::AccelerationStructure,
                 RHI::ResourceBindType::ConstantBuffer,
-                RHI::ResourceBindType::RWBuffer};
-            for (uint32_t bindingIndex = 0u; bindingIndex < 3u; ++bindingIndex)
+                RHI::ResourceBindType::RWBuffer,
+                RHI::ResourceBindType::StructuredBuffer,
+                RHI::ResourceBindType::StructuredBuffer,
+                RHI::ResourceBindType::CombinedImageSampler};
+            for (uint32_t bindingIndex = 0u; bindingIndex < 6u; ++bindingIndex)
             {
                 RHI::DescriptorBinding binding;
                 binding.binding = bindingIndex;
@@ -77,7 +208,8 @@ namespace NorvesLib::Core::Rendering
             ? *context.Capabilities
             : context.Device->GetCapabilities();
         if (!capabilities.RayTracing.bAccelerationStructure ||
-            !capabilities.RayTracing.bRayQuery)
+            !capabilities.RayTracing.bRayQuery ||
+            !capabilities.bBufferDeviceAddress)
         {
             return false;
         }
@@ -85,7 +217,7 @@ namespace NorvesLib::Core::Rendering
         m_bPipelineAttempted = true;
         m_Device = context.Device;
         m_ComputeShader = context.ShaderMgr->LoadShader(
-            "DDGI/ProbeRayQuery.comp", RHI::ShaderStage::Compute);
+            "DDGI/ProbeRadiance.comp", RHI::ShaderStage::Compute);
         if (!m_ComputeShader)
         {
             DisableAfterResourceFailure("プローブレイ問い合わせシェーダーを読み込めません");
@@ -107,12 +239,20 @@ namespace NorvesLib::Core::Rendering
 
     DDGIProbePass::FrameResources* DDGIProbePass::FindOrCreateFrameResources(
         ViewRenderContext& context,
-        uint32_t resultCount)
+        uint32_t resultCount,
+        uint32_t instanceDataCount)
     {
         const uint32_t viewId = context.PhysicalLighting.ViewId;
         const uint32_t viewportId = context.PhysicalLighting.ViewportId;
         const uint64_t requiredResultBufferSize =
             static_cast<uint64_t>(resultCount) * sizeof(DDGIProbeRayQueryResult);
+        const uint32_t allocatedInstanceCount = instanceDataCount > 0u ? instanceDataCount : 1u;
+        const uint64_t requiredInstanceDataBufferSize =
+            static_cast<uint64_t>(allocatedInstanceCount) * sizeof(DDGIProbeRayInstanceData);
+        if (requiredInstanceDataBufferSize > std::numeric_limits<uint32_t>::max())
+        {
+            return nullptr;
+        }
 
         FrameResources* frameResources = nullptr;
         for (FrameResources& resources : m_FrameResources)
@@ -171,6 +311,25 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        if (frameResources->InstanceDataBuffer == nullptr ||
+            frameResources->InstanceDataBuffer->GetSize() < requiredInstanceDataBufferSize)
+        {
+            frameResources->DescriptorSet.reset();
+            frameResources->InstanceDataBuffer.reset();
+
+            RHI::BufferDesc instanceDataBufferDesc(
+                requiredInstanceDataBufferSize,
+                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                true,
+                "DDGIProbeRayQuery.InstanceData");
+            frameResources->InstanceDataBuffer = context.Device->CreateBuffer(instanceDataBufferDesc);
+            if (frameResources->InstanceDataBuffer == nullptr)
+            {
+                DisableAfterResourceFailure("プローブ材質/geometry snapshot bufferを作成できません");
+                return nullptr;
+            }
+        }
+
         if (frameResources->DescriptorSet == nullptr)
         {
             frameResources->DescriptorSet = context.Device->CreateDescriptorSet(
@@ -190,7 +349,11 @@ namespace NorvesLib::Core::Rendering
         if (context.CommandList == nullptr || context.Device == nullptr ||
             context.SnapshotScene == nullptr || context.SnapshotRayTracingScene == nullptr ||
             context.SnapshotRayTracingScene->TopLevel == nullptr ||
-            context.FrameIndex >= FRAME_PACKET_BUFFER_COUNT)
+            context.FrameIndex >= FRAME_PACKET_BUFFER_COUNT ||
+            !context.PhysicalLighting.bLightingPublished ||
+            !context.PhysicalLighting.LightBuffer ||
+            !context.PhysicalLighting.EnvironmentRadianceTexture ||
+            !context.PhysicalLighting.EnvironmentRadianceSampler)
         {
             return false;
         }
@@ -199,7 +362,19 @@ namespace NorvesLib::Core::Rendering
             ? *context.Capabilities
             : context.Device->GetCapabilities();
         if (!capabilities.RayTracing.bAccelerationStructure ||
-            !capabilities.RayTracing.bRayQuery)
+            !capabilities.RayTracing.bRayQuery ||
+            !capabilities.bBufferDeviceAddress)
+        {
+            return false;
+        }
+
+        const PhysicalLightingResources& physicalLighting = context.PhysicalLighting;
+        const uint64_t requiredLightBufferSize =
+            static_cast<uint64_t>(physicalLighting.LogicalLightCount > 0u
+                                      ? physicalLighting.LogicalLightCount
+                                      : 1u) * sizeof(GPULightData);
+        if (physicalLighting.LightBufferSizeBytes < requiredLightBufferSize ||
+            physicalLighting.LightBuffer->GetSize() < physicalLighting.LightBufferSizeBytes)
         {
             return false;
         }
@@ -215,20 +390,32 @@ namespace NorvesLib::Core::Rendering
         const uint32_t resultCount = probeCount * DDGIProbeRayDirectionCount;
         const uint32_t resultBufferSize = resultCount * sizeof(DDGIProbeRayQueryResult);
         FrameResources* frameResources = nullptr;
+        Container::VariableArray<DDGIProbeRayInstanceData> instanceData;
+        Container::VariableArray<RHI::BufferPtr> geometryBuffers;
         try
         {
+            if (!TryBuildDDGIProbeInstanceData(*context.SnapshotRayTracingScene,
+                                               instanceData,
+                                               geometryBuffers))
+            {
+                return false;
+            }
             if (!EnsurePipeline(context))
             {
                 return false;
             }
 
-            frameResources = FindOrCreateFrameResources(context, resultCount);
+            frameResources = FindOrCreateFrameResources(
+                context, resultCount, static_cast<uint32_t>(instanceData.size()));
             if (frameResources == nullptr || frameResources->DescriptorSet == nullptr ||
-                frameResources->ParametersBuffer == nullptr || frameResources->ResultBuffer == nullptr)
+                frameResources->ParametersBuffer == nullptr ||
+                frameResources->InstanceDataBuffer == nullptr ||
+                frameResources->ResultBuffer == nullptr)
             {
                 DisableAfterResourceFailure("プローブレイ資源が不完全です");
                 return false;
             }
+            frameResources->GeometryBuffers = std::move(geometryBuffers);
 
             DDGIProbeRayQueryParameters parameters;
             parameters.VolumeOrigin[0] = volume.Origin.x;
@@ -243,10 +430,30 @@ namespace NorvesLib::Core::Rendering
             parameters.ProbeCounts[3] = DDGIProbeRayDirectionCount;
             parameters.RayLimits[0] = DDGIProbeRayMinimumDistance;
             parameters.RayLimits[1] = DDGIProbeRayMaximumDistance;
+            parameters.RayLimits[2] = DDGIProbeShadowOriginOffset;
+            parameters.RayLimits[3] = DDGIProbeRayMaximumDistance;
+            parameters.SceneCounts[0] = static_cast<uint32_t>(instanceData.size());
+            parameters.SceneCounts[1] = physicalLighting.LogicalLightCount;
+            parameters.SceneCounts[2] = physicalLighting.bIBLEnabled ? 1u : 0u;
+            parameters.EnvironmentParameters[0] =
+                std::isfinite(physicalLighting.IBLIntensity) &&
+                        physicalLighting.IBLIntensity > 0.0f
+                    ? physicalLighting.IBLIntensity
+                    : 0.0f;
             frameResources->ParametersBuffer->Update(&parameters, sizeof(parameters));
 
+            DDGIProbeRayInstanceData emptyInstanceData;
+            const void* instanceDataSource = instanceData.empty()
+                ? static_cast<const void*>(&emptyInstanceData)
+                : static_cast<const void*>(instanceData.data());
+            const uint32_t instanceDataBufferSize = static_cast<uint32_t>(
+                (instanceData.empty() ? 1u : instanceData.size()) *
+                sizeof(DDGIProbeRayInstanceData));
+            frameResources->InstanceDataBuffer->Update(
+                instanceDataSource, instanceDataBufferSize);
+
             if (!frameResources->DescriptorSet->BindAccelerationStructure(
-                    0u, context.SnapshotRayTracingScene->TopLevel))
+                0u, context.SnapshotRayTracingScene->TopLevel))
             {
                 return false;
             }
@@ -260,6 +467,20 @@ namespace NorvesLib::Core::Rendering
                 frameResources->ResultBuffer,
                 0u,
                 resultBufferSize);
+            frameResources->DescriptorSet->BindStorageBuffer(
+                3u,
+                frameResources->InstanceDataBuffer,
+                0u,
+                instanceDataBufferSize);
+            frameResources->DescriptorSet->BindStorageBuffer(
+                4u,
+                physicalLighting.LightBuffer,
+                0u,
+                physicalLighting.LightBufferSizeBytes);
+            frameResources->DescriptorSet->BindTexture(
+                5u, physicalLighting.EnvironmentRadianceTexture);
+            frameResources->DescriptorSet->BindSampler(
+                5u, physicalLighting.EnvironmentRadianceSampler);
             frameResources->DescriptorSet->Update();
         }
         catch (const std::exception& exception)

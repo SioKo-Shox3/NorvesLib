@@ -47,6 +47,8 @@
 
 ## In progress
 
+- R4-P3A: FramePacketのTLAS hit geometry/materialと公開済みライト・environment radianceから、scene-linear diffuse radianceを計算する。開始ゲート: Debug build exit 0、DDGIProbeRayQueryVulkanTest 1/1 passed。完了条件・検証コマンドはTASKS.mdのP3A項目。
+
 ## Next
 
 - R4-P3A: ray hitの拡散radianceを材質と直接光から計算する。

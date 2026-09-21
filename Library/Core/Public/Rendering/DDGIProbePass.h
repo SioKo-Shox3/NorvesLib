@@ -25,9 +25,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t bHit = 0u;
         uint32_t InstanceCustomIndex = UINT32_MAX;
         uint32_t PrimitiveIndex = UINT32_MAX;
+        float Radiance[4] = {};
     };
 
-    static_assert(sizeof(DDGIProbeRayQueryResult) == 16u);
+    static_assert(sizeof(DDGIProbeRayQueryResult) == 32u);
 
     /**
      * @brief FramePacketのTLASに対するDDGIプローブレイ問い合わせを記録する
@@ -54,13 +55,17 @@ namespace NorvesLib::Core::Rendering
             uint32_t ResultCount = 0u;
             RHI::DescriptorSetPtr DescriptorSet;
             RHI::BufferPtr ParametersBuffer;
+            RHI::BufferPtr InstanceDataBuffer;
             RHI::BufferPtr ResultBuffer;
+            // device address参照はdescriptorに保持されないため、frame slotのGPU完了まで保持する。
+            Container::VariableArray<RHI::BufferPtr> GeometryBuffers;
             RHI::ResourceState ResultState = RHI::ResourceState::Undefined;
         };
 
         bool EnsurePipeline(ViewRenderContext& context);
         FrameResources* FindOrCreateFrameResources(ViewRenderContext& context,
-                                                   uint32_t resultCount);
+                                                   uint32_t resultCount,
+                                                   uint32_t instanceDataCount);
         void DisableAfterResourceFailure(const char* reason);
 
         RHI::IDevice* m_Device = nullptr;
