@@ -27,10 +27,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DDGIProbeRayWorkgroupSize = 64u;
         constexpr uint32_t DDGIProbeAtlasTexelCount = 8u;
         constexpr uint32_t DDGIProbeAtlasInteriorTexelCount = 6u;
+        constexpr uint32_t DDGIProbeAtlasMinimumArrayLayerCount = 2u;
         constexpr float DDGIProbeRayMinimumDistance = 0.001f;
         constexpr float DDGIProbeRayMaximumDistance = 10000.0f;
         constexpr float DDGIProbeShadowOriginOffset = 0.002f;
-        constexpr float DDGIProbeAtlasHysteresis = 0.8f;
         constexpr uint32_t DDGIProbeMaximumInstanceCustomIndex = 0x00FFFFFFu;
 
         struct DDGIProbeRayQueryParameters
@@ -326,7 +326,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TextureDesc defaultIrradianceDesc;
         defaultIrradianceDesc.Width = DDGIProbeAtlasTexelCount;
         defaultIrradianceDesc.Height = DDGIProbeAtlasTexelCount;
-        defaultIrradianceDesc.ArraySize = 1u;
+        defaultIrradianceDesc.ArraySize = DDGIProbeAtlasMinimumArrayLayerCount;
         defaultIrradianceDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
         defaultIrradianceDesc.Usage = RHI::ResourceUsage::ShaderRead |
                                      RHI::ResourceUsage::TransferDst;
@@ -346,7 +346,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TextureDesc defaultDistanceDesc;
         defaultDistanceDesc.Width = DDGIProbeAtlasTexelCount;
         defaultDistanceDesc.Height = DDGIProbeAtlasTexelCount;
-        defaultDistanceDesc.ArraySize = 1u;
+        defaultDistanceDesc.ArraySize = DDGIProbeAtlasMinimumArrayLayerCount;
         defaultDistanceDesc.TextureFormat = RHI::Format::R16G16_FLOAT;
         defaultDistanceDesc.Usage = RHI::ResourceUsage::ShaderRead |
                                    RHI::ResourceUsage::TransferDst;
@@ -551,15 +551,17 @@ namespace NorvesLib::Core::Rendering
             }
             frameResources->GeometryBuffers = std::move(geometryBuffers);
 
+            const uint32_t atlasArrayLayerCount = std::max(
+                probeCount, DDGIProbeAtlasMinimumArrayLayerCount);
             const bool bAtlasResourcesMatch =
                 frameResources->IrradianceAtlas && frameResources->DistanceAtlas &&
                 frameResources->IrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
                 frameResources->IrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
-                frameResources->IrradianceAtlas->GetArraySize() == probeCount &&
+                frameResources->IrradianceAtlas->GetArraySize() == atlasArrayLayerCount &&
                 frameResources->IrradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
                 frameResources->DistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
                 frameResources->DistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
-                frameResources->DistanceAtlas->GetArraySize() == probeCount &&
+                frameResources->DistanceAtlas->GetArraySize() == atlasArrayLayerCount &&
                 frameResources->DistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT;
             if (!bAtlasResourcesMatch)
             {
@@ -572,7 +574,7 @@ namespace NorvesLib::Core::Rendering
                 RHI::TextureDesc irradianceAtlasDesc;
                 irradianceAtlasDesc.Width = DDGIProbeAtlasTexelCount;
                 irradianceAtlasDesc.Height = DDGIProbeAtlasTexelCount;
-                irradianceAtlasDesc.ArraySize = probeCount;
+                irradianceAtlasDesc.ArraySize = atlasArrayLayerCount;
                 irradianceAtlasDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
                 irradianceAtlasDesc.Usage = RHI::ResourceUsage::ShaderRead |
                                             RHI::ResourceUsage::ShaderWrite |
@@ -583,7 +585,7 @@ namespace NorvesLib::Core::Rendering
                 RHI::TextureDesc distanceAtlasDesc;
                 distanceAtlasDesc.Width = DDGIProbeAtlasTexelCount;
                 distanceAtlasDesc.Height = DDGIProbeAtlasTexelCount;
-                distanceAtlasDesc.ArraySize = probeCount;
+                distanceAtlasDesc.ArraySize = atlasArrayLayerCount;
                 distanceAtlasDesc.TextureFormat = RHI::Format::R16G16_FLOAT;
                 distanceAtlasDesc.Usage = RHI::ResourceUsage::ShaderRead |
                                           RHI::ResourceUsage::ShaderWrite |
