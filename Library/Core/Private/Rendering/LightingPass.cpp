@@ -1420,6 +1420,7 @@ namespace NorvesLib::Core::Rendering
 
     void LightingPass::Shutdown()
     {
+        m_DDGIProbePass.Shutdown();
         m_RayTracingShadowPass.Shutdown();
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
             !m_DefaultShadowMapArrayTexture &&
@@ -2267,6 +2268,7 @@ namespace NorvesLib::Core::Rendering
 
         const uint32_t debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
         const bool bEnableRayTracingShadow = debugViewMode == 247u || debugViewMode == 248u;
+        m_DDGIProbePass.Execute(context);
         RHI::TexturePtr rayTracingShadowVisibility;
         const bool bRayTracingShadowAvailable = m_RayTracingShadowPass.Execute(
             context,

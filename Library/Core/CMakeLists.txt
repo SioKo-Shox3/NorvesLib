@@ -122,6 +122,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkyAtmosphere.cpp
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/DDGIVolume.cpp
+    Private/Rendering/DDGIProbePass.cpp
     Private/Rendering/VolumetricsPass.cpp
     Private/Rendering/SkyAtmospherePass.cpp
     Private/Rendering/DirectionalShadowLightMatrices.cpp
@@ -370,6 +371,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/PostProcessStack.h
     Public/Rendering/GBufferPass.h
     Public/Rendering/SkyAtmospherePass.h
+    Public/Rendering/DDGIProbePass.h
     Public/Rendering/ShadowMapPass.h
     Public/Rendering/LightingPass.h
     Public/Rendering/RayTracingShadowPass.h

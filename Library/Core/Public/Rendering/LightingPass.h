@@ -2,6 +2,7 @@
 
 #include "IViewPass.h"
 #include "NeuralBRDFData.h"
+#include "Rendering/DDGIProbePass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RayTracingShadowPass.h"
 #include "Rendering/SkyAtmosphere.h"
@@ -142,6 +143,8 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetSceneColorHandle() const { return m_SceneColorHandle.ToResourceHandle(); }
 
     private:
+        friend struct DDGIProbeRayQueryVulkanTestAccess;
+
         /**
          * @brief ライト情報をGPUバッファにパック
          *
@@ -249,6 +252,7 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_LightingPipeline;
         RHI::ShaderPtr m_LightingVertexShader;
         RHI::ShaderPtr m_LightingFragmentShader;
+        DDGIProbePass m_DDGIProbePass;
         RayTracingShadowPass m_RayTracingShadowPass;
         RHI::BufferPtr m_LightDataBuffer;
         RHI::BufferPtr m_LightArrayBuffer;

@@ -1,7 +1,6 @@
 # NEXT_FINDINGS
 
-## R4-P2: 本番フレーム生成経路を契約テストで通す
-- 1回目の独立評価は NEEDS_WORK。DDGISnapshotContractTest が SceneProxy を直接 FramePacket に代入し、RHI能力のboolを補助関数へ直接渡しているため、RenderWorldから本番のフレーム生成経路へのvolume転送や能力判定を検証できない。
-- 材質テストも RayTracingSceneInstanceSnapshot.Material を直接代入し、BuildFrameSnapshot を通らない。DrawCommandの材質ハンドルから実際にpacket snapshotを構築し、BaseColor/emissiveの値対応と、元材質更新・解放後のpacket所有値、Clear後の消去を確認する。
-- volume snapshotを作成した後でCoordinatorの設定を更新し、既存packetが旧volume値を保持することも確認する。
-- 実装変更を落とすと失敗するよう、RenderWorld→RenderingCoordinator→FramePacketの実経路または本番builderそのものを呼ぶテストを追加する。AS/ray-query能力の有効・無効条件も実経路で検証し、この所見が解消されるまでR4-P2を完了扱いにしない。
+## R4-P3 評価指摘
+
+- [P1 / blocking] `DDGIProbePass` のパイプライン・buffer・descriptor set 作成は、Vulkan 実装が送出する例外を捕捉していない。資源準備を安全に失敗させ、DDGIを無効化して既存描画を継続するGPU契約テストを追加する。
+- [P2 / blocking] GPUテストが `LightingPass` 接続を通らず、TLAS build後に別コマンドリストでdispatchし、複数フレームslotの再利用と描画fallbackを検証していない。`LightingPass` 経由の実GPU readback、同一コマンド列のTLAS build→dispatch、slot再利用、RT無効/資源例外時の出力比較を追加する。
