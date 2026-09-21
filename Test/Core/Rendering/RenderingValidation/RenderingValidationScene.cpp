@@ -75,7 +75,7 @@ namespace NorvesLib::Test::RenderingValidation
             Core::Container::VariableArray<Core::Rendering::Mesh3DVertex>& outVertices,
             Core::Container::VariableArray<uint32_t>& outIndices,
             const float (&positions)[4][3],
-            bool bReverseWinding = false)
+            bool bReverseIndexWinding = true)
         {
             const uint32_t firstVertex = static_cast<uint32_t>(outVertices.size());
             const double edgeAX = static_cast<double>(positions[1][0] - positions[0][0]);
@@ -93,12 +93,6 @@ namespace NorvesLib::Test::RenderingValidation
                 normalX /= normalLength;
                 normalY /= normalLength;
                 normalZ /= normalLength;
-            }
-            if (bReverseWinding)
-            {
-                normalX = -normalX;
-                normalY = -normalY;
-                normalZ = -normalZ;
             }
             constexpr float texCoords[4][2] = {
                 {0.0f, 0.0f},
@@ -120,7 +114,7 @@ namespace NorvesLib::Test::RenderingValidation
                 outVertices.push_back(vertex);
             }
 
-            if (!bReverseWinding)
+            if (!bReverseIndexWinding)
             {
                 outIndices.push_back(firstVertex);
                 outIndices.push_back(firstVertex + 1u);
