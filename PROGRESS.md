@@ -45,14 +45,14 @@
 - R4-P2: `578236d`。DDGI volumeとlinear BaseColor/emissiveを値所有snapshot化し、RHI非対応時の無効化とpacket clearを固定した。Debug build exit 0、専用CTest 1/1 passed。
 - R4-P3: FramePacketのTLASへ64方向のcompute ray queryをLightingPassからdispatchし、hit距離・instance/primitive属性とmissをGPU readbackした。同一command listのTLAS build→dispatch、frame slot再利用、RT無効時の番兵維持とSceneColor一致、pipeline/result-buffer生成例外時のDDGI停止・描画継続を固定した。`Game`とGPUテストのDebug buildはexit 0、専用CTestは1/1 passed。
 - R4-P3A: `1ec32dd`。ray hit三角形normal・FramePacketのBaseColor/emissive・遮蔽付きdirectional/point/spot radianceとmiss環境をscene-linear ray結果へ保存した。frame slotごとにBDA geometry buffersを保持し、shaderInt64対応を有効化・ゲートした。Debug build exit 0、P3/P3A validation GPU CTest 2/2 passed、radiance readback期待値一致、独立評価PASS。
-- R4-P5: `9e55ed5`。GBufferのworld position/normalでvolume内probeをvisibility-weightedに補間し、diffuse IBLをDDGI irradianceへ置換して間接拡散を加えた。無効・volume外・RT非対応・不完全atlasでは既存IBLへ戻し、binding 4は全構造体を一括更新する。Debug build exit 0、focused CTest 3/3 passed。
+- R4-P5: `0116e8f`。GBufferのworld position/normalでvolume内probeをvisibility-weightedに補間し、diffuse IBLをDDGI irradianceへ置換して間接拡散を加えた。無効・volume外・RT非対応・不完全atlasでは既存IBLへ戻し、binding 4は全構造体を一括更新する。Debug build exit 0、focused CTest 3/3 passed。
 
 ## In progress
-- R4-P7: blocked。理由はblocked/R4-P7.md。再開はR4-P6のCornell ROI・動的capture検証後。
+- R4-P6: 再開。Cornell quad winding、capture source、実FrameNumberによる動的収束判定を修正・検証する。P5は完了コミット`0116e8f`と対象CTest 3/3、独立評価PASSを根拠にdoneへ整合した。
 
 ## Next
 
-- R4-P6: Cornell ROI誤差と動的captureのFrameNumber欠落を解消し、受入れ検証後にR4-P7へ戻る。
+- R4-P7: R4受入れ記録と独立評価を確定する（P6受入れ後）。
 
 ## Notes
 

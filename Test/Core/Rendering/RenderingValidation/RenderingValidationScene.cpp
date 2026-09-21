@@ -74,8 +74,7 @@ namespace NorvesLib::Test::RenderingValidation
         void AppendR4CornellQuad(
             Core::Container::VariableArray<Core::Rendering::Mesh3DVertex>& outVertices,
             Core::Container::VariableArray<uint32_t>& outIndices,
-            const float (&positions)[4][3],
-            bool bReverseIndexWinding = true)
+            const float (&positions)[4][3])
         {
             const uint32_t firstVertex = static_cast<uint32_t>(outVertices.size());
             const double edgeAX = static_cast<double>(positions[1][0] - positions[0][0]);
@@ -84,9 +83,9 @@ namespace NorvesLib::Test::RenderingValidation
             const double edgeBX = static_cast<double>(positions[2][0] - positions[0][0]);
             const double edgeBY = static_cast<double>(positions[2][1] - positions[0][1]);
             const double edgeBZ = static_cast<double>(positions[2][2] - positions[0][2]);
-            double normalX = edgeAY * edgeBZ - edgeAZ * edgeBY;
-            double normalY = edgeAZ * edgeBX - edgeAX * edgeBZ;
-            double normalZ = edgeAX * edgeBY - edgeAY * edgeBX;
+            double normalX = edgeBY * edgeAZ - edgeBZ * edgeAY;
+            double normalY = edgeBZ * edgeAX - edgeBX * edgeAZ;
+            double normalZ = edgeBX * edgeAY - edgeBY * edgeAX;
             const double normalLength = std::sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
             if (normalLength > 0.0)
             {
@@ -114,24 +113,12 @@ namespace NorvesLib::Test::RenderingValidation
                 outVertices.push_back(vertex);
             }
 
-            if (!bReverseIndexWinding)
-            {
-                outIndices.push_back(firstVertex);
-                outIndices.push_back(firstVertex + 1u);
-                outIndices.push_back(firstVertex + 2u);
-                outIndices.push_back(firstVertex);
-                outIndices.push_back(firstVertex + 2u);
-                outIndices.push_back(firstVertex + 3u);
-            }
-            else
-            {
-                outIndices.push_back(firstVertex);
-                outIndices.push_back(firstVertex + 2u);
-                outIndices.push_back(firstVertex + 1u);
-                outIndices.push_back(firstVertex);
-                outIndices.push_back(firstVertex + 3u);
-                outIndices.push_back(firstVertex + 2u);
-            }
+            outIndices.push_back(firstVertex);
+            outIndices.push_back(firstVertex + 2u);
+            outIndices.push_back(firstVertex + 1u);
+            outIndices.push_back(firstVertex);
+            outIndices.push_back(firstVertex + 3u);
+            outIndices.push_back(firstVertex + 2u);
         }
 
         enum class R1TextureIndex : uint32_t
@@ -2813,7 +2800,7 @@ namespace NorvesLib::Test::RenderingValidation
             {343.0f, 548.8f, 332.0f},
             {213.0f, 548.8f, 332.0f},
             {213.0f, 548.8f, 227.0f}};
-        AppendR4CornellQuad(emitterVertices, emitterIndices, areaLight, true);
+        AppendR4CornellQuad(emitterVertices, emitterIndices, areaLight);
 
         auto registerMesh = [this](MeshDataHandle handle,
                                    const Core::Container::VariableArray<Core::Rendering::Mesh3DVertex>& vertices,
