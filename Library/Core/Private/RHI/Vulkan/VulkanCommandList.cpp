@@ -1709,20 +1709,32 @@ namespace NorvesLib::RHI::Vulkan
         barrier.subresourceRange.baseArrayLayer = arrayIndex;
         barrier.subresourceRange.layerCount = arrayCount == 0 ? VK_REMAINING_ARRAY_LAYERS : arrayCount;
 
-        const bool bRayTracingStorageTransition =
-            beforeState == ResourceState::RayTracingStorage ||
-            afterState == ResourceState::RayTracingStorage;
         const bool bRayTracingPipelineEnabled =
-            bRayTracingStorageTransition && m_device != nullptr &&
+            m_device != nullptr &&
             m_device->GetCapabilities().RayTracing.bRayTracingPipeline;
-        const vk::PipelineStageFlags sourceStage =
-            beforeState == ResourceState::RayTracingStorage && bRayTracingPipelineEnabled
-                ? vk::PipelineStageFlagBits::eRayTracingShaderKHR
-                : m_barrierTracker.ResourceStateToPipelineStageFlags(beforeState);
-        const vk::PipelineStageFlags destinationStage =
-            afterState == ResourceState::RayTracingStorage && bRayTracingPipelineEnabled
-                ? vk::PipelineStageFlagBits::eRayTracingShaderKHR
-                : m_barrierTracker.ResourceStateToPipelineStageFlags(afterState);
+        const auto resolveTextureBarrierStage = [this, bRayTracingPipelineEnabled](
+                                                    ResourceState state) -> vk::PipelineStageFlags
+        {
+            vk::PipelineStageFlags stageFlags =
+                m_barrierTracker.ResourceStateToPipelineStageFlags(state);
+            if (!bRayTracingPipelineEnabled)
+            {
+                return stageFlags;
+            }
+
+            if (state == ResourceState::RayTracingStorage)
+            {
+                return vk::PipelineStageFlagBits::eRayTracingShaderKHR;
+            }
+            if (state == ResourceState::ShaderResource)
+            {
+                stageFlags |= vk::PipelineStageFlagBits::eRayTracingShaderKHR;
+            }
+            return stageFlags;
+        };
+
+        const vk::PipelineStageFlags sourceStage = resolveTextureBarrierStage(beforeState);
+        const vk::PipelineStageFlags destinationStage = resolveTextureBarrierStage(afterState);
 
         m_commandBuffer.pipelineBarrier(
             sourceStage,

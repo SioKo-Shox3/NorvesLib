@@ -420,6 +420,12 @@ register_rendering_gpu_test(
     --scene=outdoor
     --capture-source=back-buffer
     --scenario=raster-rt-shadow-ab)
+register_rendering_gpu_test(
+    RenderingRayTracingShadowDynamicVulkanTest
+    RenderingRayTracingShadowVulkanTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --scenario=dynamic-occluder-fallback)
 
 add_executable(FrameCaptureThumbnailEncoderTest
     FrameCaptureThumbnailEncoderTest.cpp

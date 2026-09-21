@@ -256,6 +256,7 @@ namespace NorvesLib::Test::RenderingValidation
                                           bool bDirectionalLightCastsShadows = true) const;
         bool ApplyR3DistantAtmosphereFixture() const;
         bool ApplyR5RayTracingShadowFixture() const;
+        bool SetR5RayTracingShadowOccluderPositionX(float positionX) const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
         const Core::Rendering::CameraProxy& GetR5RayTracingShadowCamera() const;
