@@ -75,3 +75,4 @@
 - R5-P4検証ログ: `.harness/runs/20260920-151245/verify-R5-P4-6.txt` (Debug build, EXIT_CODE=0)、`verify-R5-P4-7.txt` (CTest 1/1 passed)。
 - R5-P5検証: build exit 0（VulkanDevice.hの既存マクロ再定義warning 2件）、専用CTest 1/1 passed、実行ログでray_query_hit=1 / ray_query_miss=0。証拠は`.harness/runs/20260920-174410/verify-R5-P5-1.txt`〜`verify-R5-P5-3.txt`。独立評価と助言窓口はClaudeのセッション上限で起動できず、blocked/R5-P5.mdに再開条件を記録した。
 - R5-P6の独立評価でVulkanTexture::Updateの同期失敗時にstaging buffer/memoryの解放漏れが見つかった。独立フォローアップR5-P13へ登録した。
+- R5-P11（2026-09-21）：Debug build exit 0、dynamic captureのTLAS移動とRT無効raster fallbackをPASS。全CTestは反復前baselineの失敗集合内で新規失敗なし（baseline 234件/8失敗、今回235件/7失敗）。必須RayTracingShadow GLSLが今回の許可paths外で未追跡のためコミットを保留し、TASKS statusをblockedにしてblocked/R5-P11.mdへ選択肢を記録した。証拠は`.harness/runs/20260921-073235/verify-R5-P11-1.txt`〜`verify-R5-P11-3.txt`。
