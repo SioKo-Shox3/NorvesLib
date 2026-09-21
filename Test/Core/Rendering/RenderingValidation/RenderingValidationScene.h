@@ -257,9 +257,12 @@ namespace NorvesLib::Test::RenderingValidation
         bool ApplyR3DistantAtmosphereFixture() const;
         bool ApplyR5RayTracingShadowFixture() const;
         bool SetR5RayTracingShadowOccluderPositionX(float positionX) const;
+        bool ApplyR4CornellFixture() const;
+        bool SetR4CornellLightOffsetX(float offsetX) const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
         const Core::Rendering::CameraProxy& GetR5RayTracingShadowCamera() const;
+        const Core::Rendering::CameraProxy& GetR4CornellCamera() const;
         uint64_t GetObservedFixedStepCount() const;
         bool IsCaptureStateStable() const;
         size_t TrackedMeshCount() const noexcept;
@@ -343,6 +346,11 @@ namespace NorvesLib::Test::RenderingValidation
             Core::Rendering::TextureHandle::Invalid();
         mutable Core::Rendering::MaterialHandle m_R5ShadowMaterial =
             Core::Rendering::MaterialHandle::Invalid();
+        mutable bool m_bR4CornellFixturePrepared = false;
+        mutable bool m_bR4CornellFixtureFailed = false;
+        mutable Core::Rendering::CameraProxy m_R4CornellCamera;
+        mutable Core::Entity* m_pR4CornellEmitterEntity = nullptr;
+        mutable Core::Container::FixedArray<Core::Entity*, 4> m_R4CornellPointLights{};
         bool m_bPublished = false;
     };
 }

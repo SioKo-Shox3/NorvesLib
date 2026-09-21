@@ -34,7 +34,18 @@ namespace NorvesLib::Test::RenderingValidation
         constexpr MeshDataHandle SphereHandle{0x52300002u};
         constexpr MeshDataHandle R1ScreenPlaneHandle{0x52300003u};
         constexpr MeshDataHandle R5ShadowPlaneHandle{0x52300005u};
+        constexpr MeshDataHandle R4CornellWhiteMeshHandle{0x52400001u};
+        constexpr MeshDataHandle R4CornellRedMeshHandle{0x52400002u};
+        constexpr MeshDataHandle R4CornellGreenMeshHandle{0x52400003u};
+        constexpr MeshDataHandle R4CornellEmitterMeshHandle{0x52400004u};
         constexpr float R5ShadowReceiverAlbedo[4] = {0.8f, 0.8f, 0.8f, 1.0f};
+        constexpr float R4CornellWorldScale = 0.01f;
+        constexpr float R4CornellLightColor[3] = {1.378f, 0.937f, 0.482f};
+        constexpr float R4CornellPointLightPositions[4][2] = {
+            {2.40f, 2.45f},
+            {3.15f, 2.45f},
+            {2.40f, 3.15f},
+            {3.15f, 3.15f}};
         constexpr double R1PerspectiveHalfAngleTangent = 0.577350269189625764509148780501957456;
         constexpr double R1OccluderCenter[3] = {1.3333333, 0.0, 1.0};
         constexpr double R1ProjectionTolerancePixels = 1.0e-4;
@@ -59,6 +70,75 @@ namespace NorvesLib::Test::RenderingValidation
         constexpr float R1ScalarZero[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         constexpr float R1ScalarHalf[4] = {0.5f, 0.5f, 0.5f, 1.0f};
         constexpr float R1ScalarOne[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+        void AppendR4CornellQuad(
+            Core::Container::VariableArray<Core::Rendering::Mesh3DVertex>& outVertices,
+            Core::Container::VariableArray<uint32_t>& outIndices,
+            const float (&positions)[4][3],
+            bool bReverseWinding = false)
+        {
+            const uint32_t firstVertex = static_cast<uint32_t>(outVertices.size());
+            const double edgeAX = static_cast<double>(positions[1][0] - positions[0][0]);
+            const double edgeAY = static_cast<double>(positions[1][1] - positions[0][1]);
+            const double edgeAZ = static_cast<double>(positions[1][2] - positions[0][2]);
+            const double edgeBX = static_cast<double>(positions[2][0] - positions[0][0]);
+            const double edgeBY = static_cast<double>(positions[2][1] - positions[0][1]);
+            const double edgeBZ = static_cast<double>(positions[2][2] - positions[0][2]);
+            double normalX = edgeAY * edgeBZ - edgeAZ * edgeBY;
+            double normalY = edgeAZ * edgeBX - edgeAX * edgeBZ;
+            double normalZ = edgeAX * edgeBY - edgeAY * edgeBX;
+            const double normalLength = std::sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
+            if (normalLength > 0.0)
+            {
+                normalX /= normalLength;
+                normalY /= normalLength;
+                normalZ /= normalLength;
+            }
+            if (bReverseWinding)
+            {
+                normalX = -normalX;
+                normalY = -normalY;
+                normalZ = -normalZ;
+            }
+            constexpr float texCoords[4][2] = {
+                {0.0f, 0.0f},
+                {1.0f, 0.0f},
+                {1.0f, 1.0f},
+                {0.0f, 1.0f}};
+            for (uint32_t vertexIndex = 0; vertexIndex < 4u; ++vertexIndex)
+            {
+                Core::Rendering::Mesh3DVertex vertex{};
+                for (uint32_t component = 0; component < 3u; ++component)
+                {
+                    vertex.Position[component] = positions[vertexIndex][component] * R4CornellWorldScale;
+                }
+                vertex.Normal[0] = static_cast<float>(normalX);
+                vertex.Normal[1] = static_cast<float>(normalY);
+                vertex.Normal[2] = static_cast<float>(normalZ);
+                vertex.TexCoord[0] = texCoords[vertexIndex][0];
+                vertex.TexCoord[1] = texCoords[vertexIndex][1];
+                outVertices.push_back(vertex);
+            }
+
+            if (!bReverseWinding)
+            {
+                outIndices.push_back(firstVertex);
+                outIndices.push_back(firstVertex + 1u);
+                outIndices.push_back(firstVertex + 2u);
+                outIndices.push_back(firstVertex);
+                outIndices.push_back(firstVertex + 2u);
+                outIndices.push_back(firstVertex + 3u);
+            }
+            else
+            {
+                outIndices.push_back(firstVertex);
+                outIndices.push_back(firstVertex + 2u);
+                outIndices.push_back(firstVertex + 1u);
+                outIndices.push_back(firstVertex);
+                outIndices.push_back(firstVertex + 3u);
+                outIndices.push_back(firstVertex + 2u);
+            }
+        }
 
         enum class R1TextureIndex : uint32_t
         {
@@ -927,6 +1007,11 @@ namespace NorvesLib::Test::RenderingValidation
         m_R5ShadowPlaneHandle = MeshDataHandle::Invalid();
         m_R5ShadowAlbedoTexture = TextureHandle::Invalid();
         m_R5ShadowMaterial = MaterialHandle::Invalid();
+        m_bR4CornellFixturePrepared = false;
+        m_bR4CornellFixtureFailed = false;
+        m_R4CornellCamera = {};
+        m_pR4CornellEmitterEntity = nullptr;
+        m_R4CornellPointLights.fill(nullptr);
 
         state.pWorld = nullptr;
         state.pResources = nullptr;
@@ -1001,6 +1086,11 @@ namespace NorvesLib::Test::RenderingValidation
         m_R5ShadowPlaneHandle = MeshDataHandle::Invalid();
         m_R5ShadowAlbedoTexture = TextureHandle::Invalid();
         m_R5ShadowMaterial = MaterialHandle::Invalid();
+        m_bR4CornellFixturePrepared = false;
+        m_bR4CornellFixtureFailed = false;
+        m_R4CornellCamera = {};
+        m_pR4CornellEmitterEntity = nullptr;
+        m_R4CornellPointLights.fill(nullptr);
         m_bPublished = false;
 
         if (pWorld != nullptr)
@@ -2600,6 +2690,328 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::ApplyR4CornellFixture() const
+    {
+        if (m_bR4CornellFixturePrepared)
+        {
+            return true;
+        }
+        if (m_bR4CornellFixtureFailed || m_pWorld == nullptr || m_pResources == nullptr)
+        {
+            return false;
+        }
+
+        for (Core::Entity* entity : m_Objects)
+        {
+            if (entity == nullptr || entity->GetComponent<FixedStepSentinelComponent>() != nullptr)
+            {
+                continue;
+            }
+            if (Core::Component::MeshComponent* mesh =
+                    entity->GetComponent<Core::Component::MeshComponent>())
+            {
+                mesh->SetVisible(false);
+            }
+            if (Core::Component::LightComponent* light =
+                    entity->GetComponent<Core::Component::LightComponent>())
+            {
+                light->SetLightVisible(false);
+            }
+            entity->SetActive(false);
+        }
+
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> whiteVertices;
+        Core::Container::VariableArray<uint32_t> whiteIndices;
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> redVertices;
+        Core::Container::VariableArray<uint32_t> redIndices;
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> greenVertices;
+        Core::Container::VariableArray<uint32_t> greenIndices;
+        Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> emitterVertices;
+        Core::Container::VariableArray<uint32_t> emitterIndices;
+
+        // Cornell Bowers公開データの実測寸法(mm)とLambert反射面を再構成する。
+        const float floor[4][3] = {
+            {552.8f, 0.0f, 0.0f},
+            {0.0f, 0.0f, 0.0f},
+            {0.0f, 0.0f, 559.2f},
+            {549.6f, 0.0f, 559.2f}};
+        AppendR4CornellQuad(whiteVertices, whiteIndices, floor);
+
+        const float ceilingLeft[4][3] = {
+            {213.0f, 548.8f, 0.0f},
+            {213.0f, 548.8f, 559.2f},
+            {0.0f, 548.8f, 559.2f},
+            {0.0f, 548.8f, 0.0f}};
+        const float ceilingRight[4][3] = {
+            {556.0f, 548.8f, 0.0f},
+            {556.0f, 548.8f, 559.2f},
+            {343.0f, 548.8f, 559.2f},
+            {343.0f, 548.8f, 0.0f}};
+        const float ceilingFront[4][3] = {
+            {343.0f, 548.8f, 0.0f},
+            {343.0f, 548.8f, 227.0f},
+            {213.0f, 548.8f, 227.0f},
+            {213.0f, 548.8f, 0.0f}};
+        const float ceilingBack[4][3] = {
+            {343.0f, 548.8f, 332.0f},
+            {343.0f, 548.8f, 559.2f},
+            {213.0f, 548.8f, 559.2f},
+            {213.0f, 548.8f, 332.0f}};
+        AppendR4CornellQuad(whiteVertices, whiteIndices, ceilingLeft);
+        AppendR4CornellQuad(whiteVertices, whiteIndices, ceilingRight);
+        AppendR4CornellQuad(whiteVertices, whiteIndices, ceilingFront);
+        AppendR4CornellQuad(whiteVertices, whiteIndices, ceilingBack);
+
+        const float backWall[4][3] = {
+            {549.6f, 0.0f, 559.2f},
+            {0.0f, 0.0f, 559.2f},
+            {0.0f, 548.8f, 559.2f},
+            {556.0f, 548.8f, 559.2f}};
+        AppendR4CornellQuad(whiteVertices, whiteIndices, backWall);
+
+        const float shortBlock[5][4][3] = {
+            {{130.0f, 165.0f, 65.0f}, {82.0f, 165.0f, 225.0f},
+             {240.0f, 165.0f, 272.0f}, {290.0f, 165.0f, 114.0f}},
+            {{290.0f, 0.0f, 114.0f}, {290.0f, 165.0f, 114.0f},
+             {240.0f, 165.0f, 272.0f}, {240.0f, 0.0f, 272.0f}},
+            {{130.0f, 0.0f, 65.0f}, {130.0f, 165.0f, 65.0f},
+             {290.0f, 165.0f, 114.0f}, {290.0f, 0.0f, 114.0f}},
+            {{82.0f, 0.0f, 225.0f}, {82.0f, 165.0f, 225.0f},
+             {130.0f, 165.0f, 65.0f}, {130.0f, 0.0f, 65.0f}},
+            {{240.0f, 0.0f, 272.0f}, {240.0f, 165.0f, 272.0f},
+             {82.0f, 165.0f, 225.0f}, {82.0f, 0.0f, 225.0f}}};
+        for (const float (&quad)[4][3] : shortBlock)
+        {
+            AppendR4CornellQuad(whiteVertices, whiteIndices, quad);
+        }
+
+        const float tallBlock[5][4][3] = {
+            {{423.0f, 330.0f, 247.0f}, {265.0f, 330.0f, 296.0f},
+             {314.0f, 330.0f, 456.0f}, {472.0f, 330.0f, 406.0f}},
+            {{423.0f, 0.0f, 247.0f}, {423.0f, 330.0f, 247.0f},
+             {472.0f, 330.0f, 406.0f}, {472.0f, 0.0f, 406.0f}},
+            {{472.0f, 0.0f, 406.0f}, {472.0f, 330.0f, 406.0f},
+             {314.0f, 330.0f, 456.0f}, {314.0f, 0.0f, 456.0f}},
+            {{314.0f, 0.0f, 456.0f}, {314.0f, 330.0f, 456.0f},
+             {265.0f, 330.0f, 296.0f}, {265.0f, 0.0f, 296.0f}},
+            {{265.0f, 0.0f, 296.0f}, {265.0f, 330.0f, 296.0f},
+             {423.0f, 330.0f, 247.0f}, {423.0f, 0.0f, 247.0f}}};
+        for (const float (&quad)[4][3] : tallBlock)
+        {
+            AppendR4CornellQuad(whiteVertices, whiteIndices, quad);
+        }
+
+        const float rightWall[4][3] = {
+            {0.0f, 0.0f, 559.2f},
+            {0.0f, 0.0f, 0.0f},
+            {0.0f, 548.8f, 0.0f},
+            {0.0f, 548.8f, 559.2f}};
+        const float leftWall[4][3] = {
+            {552.8f, 0.0f, 0.0f},
+            {549.6f, 0.0f, 559.2f},
+            {556.0f, 548.8f, 559.2f},
+            {556.0f, 548.8f, 0.0f}};
+        AppendR4CornellQuad(greenVertices, greenIndices, rightWall);
+        AppendR4CornellQuad(redVertices, redIndices, leftWall);
+
+        const float areaLight[4][3] = {
+            {343.0f, 548.8f, 227.0f},
+            {343.0f, 548.8f, 332.0f},
+            {213.0f, 548.8f, 332.0f},
+            {213.0f, 548.8f, 227.0f}};
+        AppendR4CornellQuad(emitterVertices, emitterIndices, areaLight, true);
+
+        auto registerMesh = [this](MeshDataHandle handle,
+                                   const Core::Container::VariableArray<Core::Rendering::Mesh3DVertex>& vertices,
+                                   const Core::Container::VariableArray<uint32_t>& indices) -> bool
+        {
+            if (vertices.empty() || indices.empty() ||
+                !m_pResources->Meshes().Register(
+                    handle,
+                    vertices.data(),
+                    vertices.size() * sizeof(Core::Rendering::Mesh3DVertex),
+                    indices.data(),
+                    static_cast<uint32_t>(indices.size())))
+            {
+                return false;
+            }
+            m_Lease.TrackMesh(handle);
+            return true;
+        };
+        if (!registerMesh(R4CornellWhiteMeshHandle, whiteVertices, whiteIndices) ||
+            !registerMesh(R4CornellRedMeshHandle, redVertices, redIndices) ||
+            !registerMesh(R4CornellGreenMeshHandle, greenVertices, greenIndices) ||
+            !registerMesh(R4CornellEmitterMeshHandle, emitterVertices, emitterIndices))
+        {
+            m_bR4CornellFixtureFailed = true;
+            return false;
+        }
+
+        const TextureHandle flatNormal = CreateR1FlatNormalTexture(*m_pResources);
+        if (!flatNormal.IsValid())
+        {
+            m_bR4CornellFixtureFailed = true;
+            return false;
+        }
+        m_Lease.TrackTexture(flatNormal);
+
+        Core::Container::FixedArray<MaterialHandle, 4> materials;
+        materials.fill(MaterialHandle::Invalid());
+        auto createMaterial = [this, flatNormal](const TCHAR* debugName,
+                                                 float red,
+                                                 float green,
+                                                 float blue,
+                                                 bool bEmitter) -> MaterialHandle
+        {
+            Core::Rendering::MaterialCreateData data;
+            data.NormalTexture = flatNormal;
+            data.BaseColor[0] = red;
+            data.BaseColor[1] = green;
+            data.BaseColor[2] = blue;
+            data.BaseColor[3] = 1.0f;
+            data.bTwoSided = true;
+            data.bCastShadows = true;
+            data.DebugName = debugName;
+            if (bEmitter)
+            {
+                data.EmissiveColor[0] = R4CornellLightColor[0];
+                data.EmissiveColor[1] = R4CornellLightColor[1];
+                data.EmissiveColor[2] = R4CornellLightColor[2];
+                data.EmissiveLuminanceNits = 12000.0f;
+            }
+            return m_pResources->Materials().Create(data);
+        };
+        materials[0] = createMaterial(TEXT("R4 Cornell 白色反射面"), 0.712f, 0.744f, 0.765f, false);
+        materials[1] = createMaterial(TEXT("R4 Cornell 赤色反射面"), 0.609f, 0.061f, 0.062f, false);
+        materials[2] = createMaterial(TEXT("R4 Cornell 緑色反射面"), 0.114f, 0.406f, 0.104f, false);
+        materials[3] = createMaterial(TEXT("R4 Cornell 面光源"), 0.78f, 0.78f, 0.78f, true);
+        for (MaterialHandle material : materials)
+        {
+            if (!material.IsValid())
+            {
+                m_bR4CornellFixtureFailed = true;
+                return false;
+            }
+            m_Lease.TrackMaterial(material);
+        }
+
+        auto spawnMesh = [this](MeshDataHandle handle,
+                                MaterialHandle material,
+                                Core::Entity*& outEntity) -> bool
+        {
+            outEntity = m_pWorld->SpawnEntity();
+            if (outEntity == nullptr)
+            {
+                return false;
+            }
+            m_Objects.push_back(outEntity);
+            Core::Component::MeshComponent* mesh =
+                m_pWorld->CreateComponent<Core::Component::MeshComponent>(outEntity);
+            if (mesh == nullptr)
+            {
+                return false;
+            }
+            mesh->SetMeshHandle(handle);
+            mesh->SetMaterial(0u, material);
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                mesh->SetCustomData(channel, 1.0f);
+            }
+            mesh->SetCastShadow(true);
+            mesh->SetReceiveShadow(true);
+            mesh->SetVisible(true);
+            return true;
+        };
+
+        Core::Entity* pWhiteEntity = nullptr;
+        Core::Entity* pRedEntity = nullptr;
+        Core::Entity* pGreenEntity = nullptr;
+        if (!spawnMesh(R4CornellWhiteMeshHandle, materials[0], pWhiteEntity) ||
+            !spawnMesh(R4CornellRedMeshHandle, materials[1], pRedEntity) ||
+            !spawnMesh(R4CornellGreenMeshHandle, materials[2], pGreenEntity) ||
+            !spawnMesh(R4CornellEmitterMeshHandle, materials[3], m_pR4CornellEmitterEntity))
+        {
+            m_bR4CornellFixtureFailed = true;
+            return false;
+        }
+        m_pR4CornellEmitterEntity->SetPosition(0.0f, 0.0f, 0.0f);
+
+        for (uint32_t index = 0; index < m_R4CornellPointLights.size(); ++index)
+        {
+            Core::Entity* entity = m_pWorld->SpawnEntity();
+            if (entity == nullptr)
+            {
+                m_bR4CornellFixtureFailed = true;
+                return false;
+            }
+            m_Objects.push_back(entity);
+            entity->SetPosition(R4CornellPointLightPositions[index][0],
+                                5.35f,
+                                R4CornellPointLightPositions[index][1]);
+            Core::Component::PointLightComponent* pointLight =
+                m_pWorld->CreateComponent<Core::Component::PointLightComponent>(entity);
+            if (pointLight == nullptr ||
+                !pointLight->SetIntensityUnit(Core::Component::LightIntensityUnit::Lumen))
+            {
+                m_bR4CornellFixtureFailed = true;
+                return false;
+            }
+            pointLight->SetRange(9.0f);
+            pointLight->SetLightColor(
+                R4CornellLightColor[0], R4CornellLightColor[1], R4CornellLightColor[2]);
+            pointLight->SetIntensity(2000.0f);
+            pointLight->SetCastShadows(true);
+            pointLight->SetLightVisible(true);
+            m_R4CornellPointLights[index] = entity;
+        }
+
+        m_R4CornellCamera = BuildLookAtCamera(
+            Math::Vector3(2.78f, 2.73f, -8.0f),
+            Math::Vector3(2.78f, 2.73f, 0.0f),
+            512u,
+            512u);
+        m_R4CornellCamera.CameraId = 4u;
+        m_R4CornellCamera.FieldOfView = 39.31f;
+        m_R4CornellCamera.NearPlane = 0.05f;
+        m_R4CornellCamera.FarPlane = 20.0f;
+        if (!Core::Component::CameraComponent::TryBuildExposureSnapshot(
+                4.0f,
+                1.0f / 60.0f,
+                100.0f,
+                0.0f,
+                m_R4CornellCamera))
+        {
+            m_bR4CornellFixtureFailed = true;
+            return false;
+        }
+
+        m_bR4CornellFixturePrepared = true;
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetR4CornellLightOffsetX(float offsetX) const
+    {
+        if (!std::isfinite(offsetX) || std::abs(offsetX) > 0.8f ||
+            !m_bR4CornellFixturePrepared || m_pR4CornellEmitterEntity == nullptr)
+        {
+            return false;
+        }
+        for (uint32_t index = 0; index < m_R4CornellPointLights.size(); ++index)
+        {
+            Core::Entity* entity = m_R4CornellPointLights[index];
+            if (entity == nullptr)
+            {
+                return false;
+            }
+            entity->SetPosition(
+                R4CornellPointLightPositions[index][0] + offsetX,
+                5.35f,
+                R4CornellPointLightPositions[index][1]);
+        }
+        m_pR4CornellEmitterEntity->SetPosition(offsetX, 0.0f, 0.0f);
+        return true;
+    }
+
     const Core::Rendering::CameraProxy& RenderingValidationSceneFixture::GetCamera() const
     {
         return m_bR1PhysicalFixturePrepared ? m_R1PhysicalCamera : m_Layout.Camera;
@@ -2615,6 +3027,12 @@ namespace NorvesLib::Test::RenderingValidation
     RenderingValidationSceneFixture::GetR5RayTracingShadowCamera() const
     {
         return m_R5RayTracingShadowCamera;
+    }
+
+    const Core::Rendering::CameraProxy&
+    RenderingValidationSceneFixture::GetR4CornellCamera() const
+    {
+        return m_R4CornellCamera;
     }
 
     uint64_t RenderingValidationSceneFixture::GetObservedFixedStepCount() const

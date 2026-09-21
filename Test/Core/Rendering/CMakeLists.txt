@@ -200,6 +200,27 @@ register_rendering_gpu_test(
     DDGIProbeUpdateVulkanTest
     DDGIProbeUpdateVulkanTest
 )
+add_executable(RenderingDDGIVulkanTest
+    RenderingDDGIVulkanTest.cpp
+)
+target_link_libraries(RenderingDDGIVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+)
+target_include_directories(RenderingDDGIVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(RenderingDDGIVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(RenderingDDGIVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RenderingDDGIVulkanTest
+    RenderingDDGIVulkanTest
+    --capture-source=back-buffer
+    --scenario=cornell-reference
+)
 add_executable(RHIRayTracingPipelineVulkanTest
     RHIRayTracingPipelineVulkanTest.cpp
 )
