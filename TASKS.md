@@ -241,11 +241,11 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 
 ## R5-P11: 動的TLAS更新とRT無効fallbackをGPU受入れする
 - status: todo
-- done-when: opaque occluder移動の複数フレームcaptureでTLAS更新後の影位置が解析範囲へ移り、RT無効化時はraster shadowへ復帰する。既存R1/R2/R3 baselineと全CTestに回帰がない。
+- done-when: opaque occluder移動の複数フレームcaptureでTLAS更新後の影位置が解析範囲へ移り、移動後のRT影とraster影が比較可能な範囲で一致し、RT無効化時はraster shadowへ復帰する。R5 shaderのプリエクスポージャmodeをLightingParamsLayoutTestが期待値で検証し、全CTestに新規回帰がない。
 - verify: `cmake --build build --config Debug --target RenderingRayTracingShadowVulkanTest -- /m:1`
 - verify: `build\Test\Core\Rendering\Debug\RenderingRayTracingShadowVulkanTest.exe --capture-source=back-buffer --scenario=dynamic-occluder-fallback`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error`
-- paths: Library/Core/Private/Rendering/RayTracingShadowPass.cpp, Library/Core/Private/Rendering/RayTracingSceneSubsystem.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, Test/Core/Rendering/RenderingRayTracingShadowVulkanTest.cpp, Test/Core/Rendering/RenderingValidation/RenderingValidationScene.*, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- paths: Library/Core/Private/Rendering/RayTracingShadowPass.cpp, Library/Core/Private/Rendering/RayTracingSceneSubsystem.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, Test/Core/Rendering/RenderingRayTracingShadowVulkanTest.cpp, Test/Core/Rendering/RenderingValidation/RenderingValidationScene.*, Test/Core/Rendering/LightingParamsLayoutTest.cpp, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md, NEXT_FINDINGS.md
 
 ## R5-P12: R5の受入れ記録を確定する
 - status: todo
