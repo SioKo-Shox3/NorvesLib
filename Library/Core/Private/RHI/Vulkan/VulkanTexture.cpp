@@ -3,9 +3,70 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cstring>
+#include <atomic>
 
 namespace NorvesLib::RHI::Vulkan
 {
+    namespace
+    {
+        std::atomic<uint32_t> g_liveUpdateStagingBufferCount{0};
+        std::atomic<uint32_t> g_liveUpdateStagingMemoryCount{0};
+
+        class VulkanTextureUpdateStagingResources
+        {
+        public:
+            explicit VulkanTextureUpdateStagingResources(vk::Device device)
+                : m_device(device)
+            {
+            }
+
+            VulkanTextureUpdateStagingResources(const VulkanTextureUpdateStagingResources &) = delete;
+            VulkanTextureUpdateStagingResources &operator=(const VulkanTextureUpdateStagingResources &) = delete;
+
+            ~VulkanTextureUpdateStagingResources()
+            {
+                if (m_buffer)
+                {
+                    m_device.destroyBuffer(m_buffer);
+                    g_liveUpdateStagingBufferCount.fetch_sub(1, std::memory_order_relaxed);
+                }
+
+                if (m_memory)
+                {
+                    m_device.freeMemory(m_memory);
+                    g_liveUpdateStagingMemoryCount.fetch_sub(1, std::memory_order_relaxed);
+                }
+            }
+
+            void SetBuffer(vk::Buffer buffer)
+            {
+                m_buffer = buffer;
+                g_liveUpdateStagingBufferCount.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            void SetMemory(vk::DeviceMemory memory)
+            {
+                m_memory = memory;
+                g_liveUpdateStagingMemoryCount.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            vk::Buffer GetBuffer() const { return m_buffer; }
+            vk::DeviceMemory GetMemory() const { return m_memory; }
+
+        private:
+            vk::Device m_device;
+            vk::Buffer m_buffer;
+            vk::DeviceMemory m_memory;
+        };
+    }
+
+    void GetVulkanTextureUpdateStagingResourceCountsForTesting(
+        uint32_t &bufferCount,
+        uint32_t &memoryCount) noexcept
+    {
+        bufferCount = g_liveUpdateStagingBufferCount.load(std::memory_order_relaxed);
+        memoryCount = g_liveUpdateStagingMemoryCount.load(std::memory_order_relaxed);
+    }
 
     /**
      * @brief RHI FormatをVulkanフォーマットに変換
@@ -554,14 +615,16 @@ namespace NorvesLib::RHI::Vulkan
         {
             throw std::runtime_error("ステージングバッファの作成に失敗しました");
         }
-        vk::Buffer stagingBuffer = bufferResult.value;
+        VulkanTextureUpdateStagingResources stagingResources(vkDevice);
+        stagingResources.SetBuffer(bufferResult.value);
         m_device->SetDebugObjectName(
             vk::ObjectType::eBuffer,
-            reinterpret_cast<uint64_t>(static_cast<VkBuffer>(stagingBuffer)),
+            reinterpret_cast<uint64_t>(static_cast<VkBuffer>(stagingResources.GetBuffer())),
             "VulkanTexture.Update.Staging");
 
         // メモリ要件の取得
-        vk::MemoryRequirements memRequirements = vkDevice.getBufferMemoryRequirements(stagingBuffer);
+        vk::MemoryRequirements memRequirements =
+            vkDevice.getBufferMemoryRequirements(stagingResources.GetBuffer());
 
         // ステージングバッファ用のメモリタイプ
         uint32_t stagingMemoryTypeIndex = m_device->FindMemoryType(
@@ -576,32 +639,28 @@ namespace NorvesLib::RHI::Vulkan
         auto memResult = vkDevice.allocateMemory(allocInfo);
         if (memResult.result != vk::Result::eSuccess)
         {
-            vkDevice.destroyBuffer(stagingBuffer);
             throw std::runtime_error("ステージングメモリの割り当てに失敗しました");
         }
-        vk::DeviceMemory stagingMemory = memResult.value;
+        stagingResources.SetMemory(memResult.value);
 
         // メモリとバッファをバインド
-        auto bindResult = vkDevice.bindBufferMemory(stagingBuffer, stagingMemory, 0);
+        auto bindResult = vkDevice.bindBufferMemory(
+            stagingResources.GetBuffer(), stagingResources.GetMemory(), 0);
         if (bindResult != vk::Result::eSuccess)
         {
-            vkDevice.destroyBuffer(stagingBuffer);
-            vkDevice.freeMemory(stagingMemory);
             throw std::runtime_error("ステージングバッファのメモリバインドに失敗しました");
         }
 
         // データのコピー
-        auto mapResult = vkDevice.mapMemory(stagingMemory, 0, bufferSize, {});
+        auto mapResult = vkDevice.mapMemory(stagingResources.GetMemory(), 0, bufferSize, {});
         if (mapResult.result != vk::Result::eSuccess)
         {
-            vkDevice.destroyBuffer(stagingBuffer);
-            vkDevice.freeMemory(stagingMemory);
             throw std::runtime_error("メモリのマッピングに失敗しました");
         }
         void *mapped = mapResult.value;
 
         std::memcpy(mapped, data, bufferSize);
-        vkDevice.unmapMemory(stagingMemory);
+        vkDevice.unmapMemory(stagingResources.GetMemory());
 
         // 一時的なコマンドバッファの作成
         vk::CommandBuffer commandBuffer = m_device->BeginSingleTimeCommands();
@@ -641,7 +700,7 @@ namespace NorvesLib::RHI::Vulkan
         region.imageExtent = vk::Extent3D{width, height, depth};
 
         commandBuffer.copyBufferToImage(
-            stagingBuffer,
+            stagingResources.GetBuffer(),
             m_image,
             vk::ImageLayout::eTransferDstOptimal,
             1,
@@ -674,10 +733,6 @@ namespace NorvesLib::RHI::Vulkan
 
         // コマンドバッファの実行と解放
         m_device->EndSingleTimeCommands(commandBuffer);
-
-        // ステージングリソースの解放
-        vkDevice.destroyBuffer(stagingBuffer);
-        vkDevice.freeMemory(stagingMemory);
     }
 
     void VulkanTexture::TransitionLayout(

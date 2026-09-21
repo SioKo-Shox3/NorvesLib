@@ -229,6 +229,22 @@ set_tests_properties(RHITextureToBufferReadbackVulkanSkipContractTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+add_executable(RHITextureUpdateVulkanTest
+    RHITextureUpdateVulkanTest.cpp
+)
+target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
+target_include_directories(RHITextureUpdateVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+set_target_properties(RHITextureUpdateVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RHITextureUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest)
+set_tests_properties(RHITextureUpdateVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_executable(RenderingValidationFixtureVulkanTest
     RenderingValidationFixtureVulkanTest.cpp
 )

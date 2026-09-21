@@ -18,6 +18,7 @@
 #include "Math/MatrixUtils.h"
 #include <iostream>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <limits>
 #include "Container/Containers.h"
@@ -27,6 +28,25 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace NorvesLib::RHI::Vulkan
 {
+    namespace
+    {
+        constexpr uint32_t SingleTimeCommandFailureOnEnd = 1;
+        constexpr uint32_t SingleTimeCommandFailureOnSubmit = 2;
+        constexpr uint32_t SingleTimeCommandFailureOnWait = 3;
+        std::atomic<uint32_t> g_singleTimeCommandFailurePointForTesting{0};
+        std::atomic<uint32_t> g_singleTimeCommandFailureHitCountForTesting{0};
+    }
+
+    void SetVulkanSingleTimeCommandFailurePointForTesting(uint32_t failurePoint) noexcept
+    {
+        g_singleTimeCommandFailurePointForTesting.store(failurePoint, std::memory_order_relaxed);
+    }
+
+    uint32_t GetVulkanSingleTimeCommandFailureHitCountForTesting() noexcept
+    {
+        return g_singleTimeCommandFailureHitCountForTesting.load(std::memory_order_relaxed);
+    }
+
     // 明示的なusing宣言（グローバル名前空間から参照）
     using ::NorvesLib::Core::Container::DynamicPointerCast;
     using ::NorvesLib::Core::Container::FixedArray;
@@ -1232,7 +1252,15 @@ namespace NorvesLib::RHI::Vulkan
     // 単発コマンドバッファ終了
     void VulkanDevice::EndSingleTimeCommands(vk::CommandBuffer commandBuffer)
     {
-        const vk::Result endResult = commandBuffer.end();
+        const uint32_t failurePoint =
+            g_singleTimeCommandFailurePointForTesting.exchange(0, std::memory_order_relaxed);
+        if (failurePoint != 0)
+        {
+            g_singleTimeCommandFailureHitCountForTesting.fetch_add(1, std::memory_order_relaxed);
+        }
+        const vk::Result endResult = failurePoint == SingleTimeCommandFailureOnEnd
+            ? vk::Result::eErrorUnknown
+            : commandBuffer.end();
         if (endResult != vk::Result::eSuccess)
         {
             m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
@@ -1243,16 +1271,26 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffer;
 
-        auto submitResult = m_graphicsQueue.submit(1, &submitInfo, nullptr);
+        const vk::Result submitResult = failurePoint == SingleTimeCommandFailureOnSubmit
+            ? vk::Result::eErrorUnknown
+            : m_graphicsQueue.submit(1, &submitInfo, nullptr);
         if (submitResult != vk::Result::eSuccess)
         {
             m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
             throw std::runtime_error("キューへの送信に失敗しました");
         }
 
-        const vk::Result waitResult = m_graphicsQueue.waitIdle();
+        const vk::Result queueWaitResult = m_graphicsQueue.waitIdle();
+        const vk::Result waitResult =
+            failurePoint == SingleTimeCommandFailureOnWait && queueWaitResult == vk::Result::eSuccess
+                ? vk::Result::eErrorUnknown
+                : queueWaitResult;
         if (waitResult != vk::Result::eSuccess)
         {
+            if (queueWaitResult == vk::Result::eSuccess)
+            {
+                m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+            }
             throw std::runtime_error("キューの完了待機に失敗しました");
         }
 
