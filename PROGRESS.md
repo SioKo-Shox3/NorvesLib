@@ -44,16 +44,17 @@
 - R4-P1: `9c34d35`。有限値検証、1..1024 probeのchecked grid indexing、octahedral方向変換、64 ray方向列と無効入力fallbackをCPU契約テストで固定した。Debug build exit 0、専用CTest 1/1 passed。
 - R4-P2: `578236d`。DDGI volumeとlinear BaseColor/emissiveを値所有snapshot化し、RHI非対応時の無効化とpacket clearを固定した。Debug build exit 0、専用CTest 1/1 passed。
 - R4-P3: FramePacketのTLASへ64方向のcompute ray queryをLightingPassからdispatchし、hit距離・instance/primitive属性とmissをGPU readbackした。同一command listのTLAS build→dispatch、frame slot再利用、RT無効時の番兵維持とSceneColor一致、pipeline/result-buffer生成例外時のDDGI停止・描画継続を固定した。`Game`とGPUテストのDebug buildはexit 0、専用CTestは1/1 passed。
+- R4-P3A: `1ec32dd`。ray hit三角形normal・FramePacketのBaseColor/emissive・遮蔽付きdirectional/point/spot radianceとmiss環境をscene-linear ray結果へ保存した。frame slotごとにBDA geometry buffersを保持し、shaderInt64対応を有効化・ゲートした。Debug build exit 0、P3/P3A validation GPU CTest 2/2 passed、radiance readback期待値一致、独立評価PASS。
 
 ## In progress
 
-- R4-P3A: FramePacketのTLAS hit geometry/materialと公開済みライト・environment radianceから、scene-linear diffuse radianceを計算する。開始ゲート: Debug build exit 0、DDGIProbeRayQueryVulkanTest 1/1 passed。完了条件・検証コマンドはTASKS.mdのP3A項目。
-
 ## Next
 
-- R4-P3A: ray hitの拡散radianceを材質と直接光から計算する。
+- R4-P4: ray結果をirradiance/distance atlasへ積分して更新する。
 
 ## Notes
+
+- R4-P3Aの非blocking残課題: GPUテストはVUIDを自動でテスト失敗へ反映せず、validation layer未導入時はskipする。今回の受け入れでは実GPU readbackと実行ログを確認した。
 
 - R5-P8開始ゲート: Debug buildはEXIT_CODE=0、対象CTestは1/1 passed。ログは.harness/runs/20260920-174410/verify-R5-P8-1.txtとverify-R5-P8-2.txt。これは既存P7テストの開始時状態で、P8の完了証拠ではない。
 - R5-P8再開儀式(2026-09-21): `git log --oneline -10`を確認し、再開時Debug build exit 0・専用CTest 1/1 passed。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-baseline-build.txt`と`verify-R5-P8-resume-baseline-ctest.txt`。
