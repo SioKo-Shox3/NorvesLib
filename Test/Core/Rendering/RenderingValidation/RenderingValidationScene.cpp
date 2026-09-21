@@ -2940,7 +2940,7 @@ namespace NorvesLib::Test::RenderingValidation
             pointLight->SetRange(9.0f);
             pointLight->SetLightColor(
                 R4CornellLightColor[0], R4CornellLightColor[1], R4CornellLightColor[2]);
-            pointLight->SetIntensity(2000.0f);
+            pointLight->SetIntensity(200000.0f);
             pointLight->SetCastShadows(true);
             pointLight->SetLightVisible(true);
             m_R4CornellPointLights[index] = entity;
