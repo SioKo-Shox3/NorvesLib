@@ -222,11 +222,12 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - notes: 再開時の独立評価でCornell boxの面がほぼ描画されていないことを確認した。quadの法線とindex windingを一致させ、診断出力のrun-id固定を除去する。動的captureのsampleは2 frame間隔なので、実GPU FrameNumberの期限内で判定し、連続sampleを要求しない。FramePacket dropの有無を切り分けてから必要な場合のみDDGIProbePassを変更する。閾値・完了条件は変更しない。
 
 ## R4-P7: R4受入れ記録と独立評価を確定する
-- status: todo
+- status: blocked
 - done-when: R4Acceptanceへ選定、scope、Cornell参照URL/asset hash/ROI閾値、動的更新結果、対象build/CTest/GPU captureの読戻しログ、既知の制限、性能gate保留を記録する。FramePacket/RHI/Vulkan/Rendering境界の独立評価blocking指摘を処理し、未処理はNEXT_FINDINGS.mdに残す。
 - verify: `git diff --check`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(DDGIVolumeModelTest|DDGISnapshotContractTest|DDGIProbeRayQueryVulkanTest|DDGIProbeUpdateVulkanTest|LightingParamsLayoutTest|RenderingDDGILightingContractTest|RenderingDDGIVulkanTest|RenderingGoldenImageComparatorTest)$"`
 - paths: Docs/RenderingValidation/R4Acceptance.md, TASKS.md, PROGRESS.md, NEXT_FINDINGS.md
+- notes: 20260922-045823で対象Debug buildはEXIT_CODE=0、dynamic captureはEXIT_CODE=0だが、Cornell ROIはred/green measured Y=0でfocused CTestは8件中7件成功。HDR capture、disabled A/B、間接光ROIの独立性、未コミット成果物をNEXT_FINDINGS.mdへ残し、独立評価はNEEDS_WORKのためblockedとする。
 
 # R5: ハードウェアレイトレーシング基盤
 

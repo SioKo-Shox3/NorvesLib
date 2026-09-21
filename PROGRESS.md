@@ -48,15 +48,16 @@
 - R4-P5: `0116e8f`。GBufferのworld position/normalでvolume内probeをvisibility-weightedに補間し、diffuse IBLをDDGI irradianceへ置換して間接拡散を加えた。無効・volume外・RT非対応・不完全atlasでは既存IBLへ戻し、binding 4は全構造体を一括更新する。Debug build exit 0、focused CTest 3/3 passed。
 
 ## In progress
-- R4-P6: 再開。Cornell quad winding、capture source、実FrameNumberによる動的収束判定を修正・検証する。P5は完了コミット`0116e8f`と対象CTest 3/3、独立評価PASSを根拠にdoneへ整合した。
+- R4-P6/P7: blocked。20260922-045823でCornell red/green ROI、HDR capture、disabled A/Bが未達。dynamic captureの機械判定は通るが間接光ROIの独立性を示さず、独立評価はNEEDS_WORK。P5の完了コミットは0116e8f。
 
 ## Next
 
-- R4-P7: R4受入れ記録と独立評価を確定する（P6受入れ後）。
+- R4-P7: P6/P7のblocking事項を解消後、受入れ記録と独立評価を再検証する。
 
 ## Notes
 
 - R4-P3Aの非blocking残課題: GPUテストはVUIDを自動でテスト失敗へ反映せず、validation layer未導入時はskipする。今回の受け入れでは実GPU readbackと実行ログを確認した。
+- R4-P7（2026-09-22、run-id 20260922-045823）: 対象Debug buildはEXIT_CODE=0。Cornell captureはEXIT_CODE=1でformat=6（LDR）、shadow-floor relative error=0.00308765、red/green measured Y=0・chroma差0.860907/0.619895。dynamic captureはEXIT_CODE=0、elapsed_frames=8、frame8_progress=1だがshadow-floor ROIがsample 1以降一定。focused CTestは8件中7件成功で、独立評価はNEEDS_WORK。R4Acceptance.mdとNEXT_FINDINGS.mdへ未処理事項を記録し、R4-P7はblockedとした。
 
 - R5-P8開始ゲート: Debug buildはEXIT_CODE=0、対象CTestは1/1 passed。ログは.harness/runs/20260920-174410/verify-R5-P8-1.txtとverify-R5-P8-2.txt。これは既存P7テストの開始時状態で、P8の完了証拠ではない。
 - R5-P8再開儀式(2026-09-21): `git log --oneline -10`を確認し、再開時Debug build exit 0・専用CTest 1/1 passed。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-baseline-build.txt`と`verify-R5-P8-resume-baseline-ctest.txt`。
@@ -99,4 +100,4 @@
 - R4-P4: source commits `738ede8`, `3dcd38f`, `63fa779`でprobe atlas更新を確定した。前frame irradianceの1段bounce、visibility weighting、octahedral border、hysteresis 0.8を実装し、single/2-probe GPU readbackでirradiance・距離モーメント・border sampleを検証した。Debug build exit 0（third-party shaderc PDB LNK4099警告のみ）、専用CTest 1/1 passed、直接実行exit 0。出力は`single_probe_array_layers=2`、border sample `0.912965` / interior-only `0.89276`、visibility-weighted `1.95123` / unweighted `1.22487`、`VUID_COUNT=0`。証跡は`.harness/runs/20260922-r4-p4/verify-4-build.txt`、`verify-5-ctest.txt`、`verify-6-direct.txt`。
 - R4-P5最終検証: Debug buildはEXIT_CODE=0、対象CTestは3/3 passed。証跡は`.harness/runs/20260922-003731/verify-R4-P5-12.txt`と`verify-R4-P5-13.txt`。
 - R4-P5の後続確認: Lighting側のnormal biasとGLSLコンパイルをR4-P6のGPU受入れで確認する。
-- R4-P7実GPU検証: 対象Debug buildはexit 0、指定CTestは7/8、Cornell captureはshadow-floor相対誤差2.5766とred/green ROI=0で失敗、dynamic captureはFrameNumber差2で失敗。証跡は .harness/runs/20260922-003731/verify-R4-P7-2.txt〜verify-R4-P7-5.txt。開始Game buildはMSVC C1041 (PDB共有)で失敗。
+- R4-P7実GPU検証（20260922-045823）: 対象Debug buildはEXIT_CODE=0、focused CTestは8件中7件成功。Cornell captureはformat=6（LDR）、shadow-floor relative error=0.00308765、red/green ROI=0で失敗。dynamic captureはFrameNumber差2だがelapsed_frames=8の機械判定のみ通過し、間接光の独立証明ではない。証跡は .harness/runs/20260922-045823/verify-R4-P7-1.txt〜verify-R4-P7-6.txt。
