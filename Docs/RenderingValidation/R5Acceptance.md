@@ -2,14 +2,14 @@
 
 ## 対象と方式選定
 
-R5では、backend-neutralなRHI APIとVulkan実装を用意し、不透明ジオメトリのハードシャドウまでを検証した。R5-P1〜P11の実装範囲と検証結果を本書に集約する。
+R5では、backend-neutralなRHI APIとVulkan実装を用意し、不透明ジオメトリのハードシャドウまでを検証した。R5-P1〜P13の実装範囲と検証結果を本書に集約する。
 
 - 加速構造の所有・更新は`GEngine`所有の`RayTracingSceneSubsystem`に集約する。GameThreadからRenderThreadへは`FramePacket`の不変スナップショットを渡し、RenderThreadはライブのWorld/Sceneを参照しない。
 - R5の影はRT pipelineで実証する。R4/DDGIのprobe更新にはray queryを使う。
 - RT機能は任意機能として検出する。RT非対応またはRT無効時は既存のラスタ影へ戻す。
 - R5はRT影までを対象とし、GI本実装とGPU性能gateは後続へ分離する。実装バックエンドはVulkan。
 
-本書は検証済み範囲を示す。R5全体の完了は宣言しない。R5-P5は独立評価待ちで`blocked`、R5-P13は未完了として`TASKS.md`に残る。
+本書は検証済み範囲を示す。R5全体の完了は宣言しない。R5-P5は独立評価待ちで`blocked`。R5-P13の同期失敗時資源寿命所見は`1545a41`で修正済み。
 
 ## RHI・Vulkan・描画経路の変更
 
@@ -60,6 +60,7 @@ R5では、backend-neutralなRHI APIとVulkan実装を用意し、不透明ジ�
 | P9: FramePacket scene接続 | `.harness/runs/20260921-r5-p9-resume/` | `verify-R5-P9-final-build.txt`、`verify-R5-P9-final-ctest.txt`（build exit 0、加速構造/scene snapshot 2/2）。 |
 | P10: RT影 | `.harness/runs/20260921-073235/` | `verify-R5-P10-17.txt`〜`verify-R5-P10-23.txt`。RT影CTest 1/1、Raster/RT A/B、RT無効fallbackがPASS。 |
 | P11: 動的TLAS・fallback・照明契約 | `.harness/runs/20260921-073235/` | `verify-R5-P11-contract-fix-target-ctest.txt`（2/2）、`verify-R5-P11-contract-fix-dynamic-sync.txt`（移動後captureとRaster/RT/fallback A/B）、`verify-R5-P11-contract-fix-full-ctest.txt`。全CTestは235件中6件失敗・7件skip。6件の失敗はP11開始baselineの8件の部分集合で、新規失敗はない。 |
+| P13: texture同期失敗時の寿命 | `.harness/runs/20260921-125655/` | `verify-R5-P13-1.txt`〜`verify-R5-P13-10.txt`（Debug build exit 0、直接GPU実行 exit 0、専用CTest 1/1）。 |
 
 ## 既知の制限と保留
 
@@ -67,7 +68,7 @@ R5では、backend-neutralなRHI APIとVulkan実装を用意し、不透明ジ�
 - R5-P3のstage compile検証はshaderc fixtureの6 stageを対象とする。SlangのRT stage compile結果はこの証拠に含めない。
 - `VK_LAYER_VALIDATE_SYNC=1`をRenderingValidation全体へ適用した診断で、`RHIImageLayoutVulkanNoCasterSceneTest`と`RHIImageLayoutVulkanDrawThenNoCasterSceneTest`のswapchain画像に`SYNC-HAZARD-WRITE-AFTER-READ`が報告された。RT影専用テストは同期validation下で成功しており、swapchain acquire/present経路は別件として追跡する。
 - R5-P5はray query build/hit/missの検証ログがあるが、独立評価が未完了のためstatusは`blocked`。
-- R5-P13は`VulkanTexture::Update`の同期失敗時にstaging資源を解放する後続タスク。
+- R5-P13では`VulkanTexture::Update`の終了・送信・待機失敗時にstaging資源と転送先texture資源をGPU完了まで保持し、非device-lostのteardown待機失敗ではdevice資源を破棄しない。
 
 ## 性能gate
 
@@ -75,4 +76,4 @@ GPU性能は未計測。パス別GPU時間の評価は将来のCI GPU性能回�
 
 ## R4 / DDGIへの引継ぎ
 
-R4のS4はDDGIを選定済み。R4はR5の後続として実装し、probe更新にray queryを使う。R5のRT影実証はR4のprobe更新やGI本実装を含まない。
+R4のS4はDDGIを選定済み。R5のray-query実装を利用し、probe更新とGI本体はR4で実装する。R5-P13は完了したが、P5の独立評価待ちは残るためR5全体の完了とは扱わない。R4ではray-query hit/miss経路を専用テストで再確認する。
