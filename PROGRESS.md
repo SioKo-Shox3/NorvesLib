@@ -38,11 +38,13 @@
 
 - R5-P11: `LightingParamsLayoutTest`でプリエクスポージャを適用する7 mode（Normal、RAW252、Validation Lambert/PBR、R5 RasterHardShadow/RayTracingHardShadow/RasterFallback）を個別に固定し、RT visibility・RAW250/251は除外した。Debug build exit 0、対象CTest 2/2 passed、同期validation付き動的capture全段PASS（TLAS更新後の旧領域255・移動先0、Raster/RT/fallbackの`max_lsb=0`）。全CTestは235件中6失敗・7 skipで、開始baseline234件/8失敗の失敗集合に対して新規失敗0。ログは`.harness/runs/20260921-073235/verify-R5-P11-contract-fix-target-ctest.txt`、`verify-R5-P11-contract-fix-dynamic-sync.txt`、`verify-R5-P11-contract-fix-full-ctest.txt`。
 
+- R5-P12: `d8cde71`。R5Acceptance.mdへ方式選定、RHI/Vulkan/API変更、RT影A/B、動的TLAS、非対応fallback、検証ログ、性能ゲート保留を集約し、R4/DDGIを後続として記録した。
+
 ## In progress
 
 ## Next
 
-- R5-P12: R5の受入れ記録を確定する。
+- R5-P13: VulkanTexture::Updateの同期失敗時staging資源を解放する。
 
 ## Notes
 
@@ -80,3 +82,4 @@
 - R5-P6の独立評価でVulkanTexture::Updateの同期失敗時にstaging buffer/memoryの解放漏れが見つかった。独立フォローアップR5-P13へ登録した。
 - `VK_LAYER_VALIDATE_SYNC=1`をRenderingValidation全体へ設定した診断では、`RHIImageLayoutVulkanNoCasterSceneTest`と`RHIImageLayoutVulkanDrawThenNoCasterSceneTest`がswapchain画像のWRITE_AFTER_READを報告した。通常validationでは両テストが成功し、RT影専用テストも同期validation下で成功する。このswapchain経路は独立した追跡事項としてNEXT_FINDINGS.mdへ記録する。
 - R5-P10の影captureは`shadow_luma=0`/`lit_luma=255`の高コントラスト画像であるため、現在のA/Bは影領域の位置と出力一致を検証し、半影や階調誤差は検出しない。
+- R5-P12開始時の全CTest(2026-09-21): 235件中222 passed、7 skipped、6 failed/Not Run、exit 1。保存ログは`.harness/runs/20260921-125655/startup-ctest-LastTest.log`と`startup-ctest-LastTestsFailed.log`。R5のBDA、機能検出、RHI契約、RT影、動的TLAS/fallbackテストは成功。失敗はOutdoor golden差分、RenderGraphCompileTestのbinding 6 assertion、SkinnedRenderPathContractTestのpending件数assert、ScriptRuntimeSafetyTestのBAD_COMMAND、Bridgeの2 test executable不在。
