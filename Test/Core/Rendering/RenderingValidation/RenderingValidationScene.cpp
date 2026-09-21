@@ -83,9 +83,9 @@ namespace NorvesLib::Test::RenderingValidation
             const double edgeBX = static_cast<double>(positions[2][0] - positions[0][0]);
             const double edgeBY = static_cast<double>(positions[2][1] - positions[0][1]);
             const double edgeBZ = static_cast<double>(positions[2][2] - positions[0][2]);
-            double normalX = edgeBY * edgeAZ - edgeBZ * edgeAY;
-            double normalY = edgeBZ * edgeAX - edgeBX * edgeAZ;
-            double normalZ = edgeBX * edgeAY - edgeBY * edgeAX;
+            double normalX = edgeAY * edgeBZ - edgeAZ * edgeBY;
+            double normalY = edgeAZ * edgeBX - edgeAX * edgeBZ;
+            double normalZ = edgeAX * edgeBY - edgeAY * edgeBX;
             const double normalLength = std::sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
             if (normalLength > 0.0)
             {
@@ -2850,7 +2850,7 @@ namespace NorvesLib::Test::RenderingValidation
             data.BaseColor[1] = green;
             data.BaseColor[2] = blue;
             data.BaseColor[3] = 1.0f;
-            data.bTwoSided = true;
+            data.bTwoSided = false;
             data.bCastShadows = true;
             data.DebugName = debugName;
             if (bEmitter)
