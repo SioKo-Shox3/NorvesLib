@@ -34,12 +34,13 @@
 - R5-P8: `2add53a` / `f9fa15a` / `1267197`。Vulkanの各dispatch軸上限と総呼出し数上限を検査し、同一deviceのTLAS binding、null/BLAS/foreign-device/別descriptor種の拒否、hit=1・miss=0のGPU readbackを固定した。両readback要素を番兵値から初期化して欠落dispatchも検出する。Debug build exit 0、専用CTest 1/1 passed、軸別拒否2件、上限・番兵値の修正差分は独立評価PASS。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-build-3.txt`、`verify-R5-P8-resume-ctest-3.txt`。
 
 - R5-P9: `9e213c9` / `27d7505` / `c8db734`。GEngine所有のRayTracingSceneSubsystemがopaque DrawCommandからgeometryとinstance transformをFramePacketへコピーし、RenderThreadではFramePacketからBLAS/TLASを構築する。同一slotのTLAS update再利用、GPU待機後・device参照解放前の資源破棄、FramePacket寿命を契約テストで確認した。Debug build exit 0、専用GPU CTest 2/2 passed（Validation Layer無効）。証拠は`.harness/runs/20260921-r5-p9-resume/verify-R5-P9-final-build.txt`と`verify-R5-P9-final-ctest.txt`。
+- R5-P10: `VulkanCommandList`のstage解決をRT pipeline capabilityで制御し、対応デバイスの`ShaderResource` barrierに`eRayTracingShaderKHR`を追加した。RT保存状態も全buffer/image barrier経路で専用RT stageを使う。対象build exit 0、同期validation有効のRT CTest 1/1と直接capture（Raster/RT A/B・RT無効fallback、max_lsb=0）を確認。再リンク後のRenderingValidationは20 passed/7 skipped/1 known baseline failure（Outdoor golden、`mean_flip=0.002326954`で過去基準と一致）。ログは`.harness/runs/20260921-073235/verify-R5-P10-17.txt`〜`-23.txt`。
 
 ## In progress
 
 ## Next
 
-- R5-P10: RT pipelineでハードシャドウを描画する。
+- R5-P11: 動的TLAS更新とRT無効fallbackをGPU受入れする。
 
 ## Notes
 
@@ -75,4 +76,5 @@
 - R5-P4検証ログ: `.harness/runs/20260920-151245/verify-R5-P4-6.txt` (Debug build, EXIT_CODE=0)、`verify-R5-P4-7.txt` (CTest 1/1 passed)。
 - R5-P5検証: build exit 0（VulkanDevice.hの既存マクロ再定義warning 2件）、専用CTest 1/1 passed、実行ログでray_query_hit=1 / ray_query_miss=0。証拠は`.harness/runs/20260920-174410/verify-R5-P5-1.txt`〜`verify-R5-P5-3.txt`。独立評価と助言窓口はClaudeのセッション上限で起動できず、blocked/R5-P5.mdに再開条件を記録した。
 - R5-P6の独立評価でVulkanTexture::Updateの同期失敗時にstaging buffer/memoryの解放漏れが見つかった。独立フォローアップR5-P13へ登録した。
-- R5-P11（2026-09-21）：Debug build exit 0、dynamic captureのTLAS移動とRT無効raster fallbackをPASS。全CTestは反復前baselineの失敗集合内で新規失敗なし（baseline 234件/8失敗、今回235件/7失敗）。必須RayTracingShadow GLSLが今回の許可paths外で未追跡のためコミットを保留し、TASKS statusをblockedにしてblocked/R5-P11.mdへ選択肢を記録した。証拠は`.harness/runs/20260921-073235/verify-R5-P11-1.txt`〜`verify-R5-P11-3.txt`。
+- `VK_LAYER_VALIDATE_SYNC=1`をRenderingValidation全体へ設定した診断では、`RHIImageLayoutVulkanNoCasterSceneTest`と`RHIImageLayoutVulkanDrawThenNoCasterSceneTest`がswapchain画像のWRITE_AFTER_READを報告した。通常validationでは両テストが成功し、RT影専用テストも同期validation下で成功する。このswapchain経路は独立した追跡事項としてNEXT_FINDINGS.mdへ記録する。
+- R5-P10の影captureは`shadow_luma=0`/`lit_luma=255`の高コントラスト画像であるため、現在のA/Bは影領域の位置と出力一致を検証し、半影や階調誤差は検出しない。

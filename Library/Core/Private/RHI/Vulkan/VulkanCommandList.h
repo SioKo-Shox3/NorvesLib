@@ -346,7 +346,9 @@ namespace NorvesLib::RHI::Vulkan
         vk::AccessFlags ResourceStateToAccessFlags(ResourceState state) const;
 
         // リソース状態からパイプラインステージフラグに変換
-        vk::PipelineStageFlags ResourceStateToPipelineStageFlags(ResourceState state) const;
+        vk::PipelineStageFlags ResourceStateToPipelineStageFlags(
+            ResourceState state,
+            bool bRayTracingPipelineEnabled) const;
 
         // リソース状態からイメージレイアウトに変換
         vk::ImageLayout ResourceStateToImageLayout(ResourceState state) const;
@@ -617,6 +619,7 @@ namespace NorvesLib::RHI::Vulkan
         bool RecordTopLevelAccelerationStructureBuild(
             const AccelerationStructureBuildDesc& desc,
             AccelerationStructureBuildMode mode);
+        vk::PipelineStageFlags ResolvePipelineStageFlags(ResourceState state) const;
         uint32_t GetLatestBuiltInstanceCount(const VulkanAccelerationStructure& resource) const;
         void CommitPendingAccelerationStructureBuilds(uint32_t frameSlotIndex);
 

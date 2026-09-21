@@ -135,7 +135,9 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
-    vk::PipelineStageFlags ResourceBarrierTracker::ResourceStateToPipelineStageFlags(ResourceState state) const
+    vk::PipelineStageFlags ResourceBarrierTracker::ResourceStateToPipelineStageFlags(
+        ResourceState state,
+        bool bRayTracingPipelineEnabled) const
     {
         switch (state)
         {
@@ -152,12 +154,22 @@ namespace NorvesLib::RHI::Vulkan
         case ResourceState::DepthRead:
             return vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests;
         case ResourceState::ShaderResource:
-            return vk::PipelineStageFlagBits::eFragmentShader |
-                   vk::PipelineStageFlagBits::eComputeShader;
+        {
+            vk::PipelineStageFlags stageFlags =
+                vk::PipelineStageFlagBits::eFragmentShader |
+                vk::PipelineStageFlagBits::eComputeShader;
+            if (bRayTracingPipelineEnabled)
+            {
+                stageFlags |= vk::PipelineStageFlagBits::eRayTracingShaderKHR;
+            }
+            return stageFlags;
+        }
         case ResourceState::UnorderedAccess:
             return vk::PipelineStageFlagBits::eComputeShader;
         case ResourceState::RayTracingStorage:
-            return vk::PipelineStageFlagBits::eAllCommands;
+            return bRayTracingPipelineEnabled
+                       ? vk::PipelineStageFlagBits::eRayTracingShaderKHR
+                       : vk::PipelineStageFlagBits::eAllCommands;
         case ResourceState::IndirectArgument:
             return vk::PipelineStageFlagBits::eDrawIndirect;
         case ResourceState::CopySource:
@@ -285,6 +297,16 @@ namespace NorvesLib::RHI::Vulkan
 #if NORVES_ENABLE_STATS
         CreateTimestampQueryPool();
 #endif
+    }
+
+    vk::PipelineStageFlags VulkanCommandList::ResolvePipelineStageFlags(
+        ResourceState state) const
+    {
+        const bool bRayTracingPipelineEnabled =
+            m_device != nullptr &&
+            m_device->GetCapabilities().RayTracing.bRayTracingPipeline;
+        return m_barrierTracker.ResourceStateToPipelineStageFlags(
+            state, bRayTracingPipelineEnabled);
     }
 
     VulkanCommandList::~VulkanCommandList()
@@ -1648,8 +1670,8 @@ namespace NorvesLib::RHI::Vulkan
         barrier.size = size == 0 ? VK_WHOLE_SIZE : size;
 
         m_commandBuffer.pipelineBarrier(
-            m_barrierTracker.ResourceStateToPipelineStageFlags(beforeState),
-            m_barrierTracker.ResourceStateToPipelineStageFlags(afterState),
+            ResolvePipelineStageFlags(beforeState),
+            ResolvePipelineStageFlags(afterState),
             {},
             0, nullptr,
             1, &barrier,
@@ -1709,32 +1731,8 @@ namespace NorvesLib::RHI::Vulkan
         barrier.subresourceRange.baseArrayLayer = arrayIndex;
         barrier.subresourceRange.layerCount = arrayCount == 0 ? VK_REMAINING_ARRAY_LAYERS : arrayCount;
 
-        const bool bRayTracingPipelineEnabled =
-            m_device != nullptr &&
-            m_device->GetCapabilities().RayTracing.bRayTracingPipeline;
-        const auto resolveTextureBarrierStage = [this, bRayTracingPipelineEnabled](
-                                                    ResourceState state) -> vk::PipelineStageFlags
-        {
-            vk::PipelineStageFlags stageFlags =
-                m_barrierTracker.ResourceStateToPipelineStageFlags(state);
-            if (!bRayTracingPipelineEnabled)
-            {
-                return stageFlags;
-            }
-
-            if (state == ResourceState::RayTracingStorage)
-            {
-                return vk::PipelineStageFlagBits::eRayTracingShaderKHR;
-            }
-            if (state == ResourceState::ShaderResource)
-            {
-                stageFlags |= vk::PipelineStageFlagBits::eRayTracingShaderKHR;
-            }
-            return stageFlags;
-        };
-
-        const vk::PipelineStageFlags sourceStage = resolveTextureBarrierStage(beforeState);
-        const vk::PipelineStageFlags destinationStage = resolveTextureBarrierStage(afterState);
+        const vk::PipelineStageFlags sourceStage = ResolvePipelineStageFlags(beforeState);
+        const vk::PipelineStageFlags destinationStage = ResolvePipelineStageFlags(afterState);
 
         m_commandBuffer.pipelineBarrier(
             sourceStage,
@@ -1764,7 +1762,7 @@ namespace NorvesLib::RHI::Vulkan
 
         m_commandBuffer.pipelineBarrier(
             vk::PipelineStageFlagBits::eAllCommands,
-            m_barrierTracker.ResourceStateToPipelineStageFlags(newState),
+            ResolvePipelineStageFlags(newState),
             {},
             0, nullptr,
             1, &barrier,
@@ -1785,7 +1783,7 @@ namespace NorvesLib::RHI::Vulkan
 
         m_commandBuffer.pipelineBarrier(
             vk::PipelineStageFlagBits::eAllCommands,
-            m_barrierTracker.ResourceStateToPipelineStageFlags(newState),
+            ResolvePipelineStageFlags(newState),
             {},
             0, nullptr,
             0, nullptr,
