@@ -107,6 +107,11 @@ namespace NorvesLib::Core::Rendering
         float IBLIntensity = 0.0f;
         bool bIBLEnabled = false;
 
+        RHI::TexturePtr DDGIIrradianceAtlas;
+        RHI::TexturePtr DDGIDistanceAtlas;
+        uint32_t DDGIProbeCount = 0;
+        bool bDDGIAtlasPublished = false;
+
         void Begin(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId)
         {
             FrameNumber = 0;
@@ -135,6 +140,10 @@ namespace NorvesLib::Core::Rendering
             PrefilteredSpecularMipLevels = 0;
             IBLIntensity = 0.0f;
             bIBLEnabled = false;
+            DDGIIrradianceAtlas.reset();
+            DDGIDistanceAtlas.reset();
+            DDGIProbeCount = 0;
+            bDDGIAtlasPublished = false;
             CascadedShadow = CascadedDirectionalShadowShaderValues{};
             for (uint32_t index = 0; index < 16; ++index)
             {
@@ -293,6 +302,27 @@ namespace NorvesLib::Core::Rendering
             IBLIntensity = iblIntensity;
             bIBLEnabled = bIBLEnabledValue;
             bLightingPublished = true;
+        }
+
+        void PublishDDGIAtlas(const RHI::TexturePtr& irradianceAtlas,
+                              const RHI::TexturePtr& distanceAtlas,
+                              uint32_t probeCount,
+                              bool bEnabledValue)
+        {
+            DDGIIrradianceAtlas.reset();
+            DDGIDistanceAtlas.reset();
+            DDGIProbeCount = 0u;
+            bDDGIAtlasPublished = false;
+            if (!bActive || !bLightingPublished || !bEnabledValue ||
+                !irradianceAtlas || !distanceAtlas || probeCount == 0u)
+            {
+                return;
+            }
+
+            DDGIIrradianceAtlas = irradianceAtlas;
+            DDGIDistanceAtlas = distanceAtlas;
+            DDGIProbeCount = probeCount;
+            bDDGIAtlasPublished = true;
         }
 
         bool Matches(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId) const

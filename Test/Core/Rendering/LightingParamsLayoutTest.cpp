@@ -2575,7 +2575,12 @@ int main()
     assert(std::isfinite(defaultSettings.EnvironmentLuminanceScaleNits));
     assert(defaultSettings.EnvironmentLuminanceScaleNits >= 0.0f);
 
-    assert(sizeof(GPULightingParams) == 720);
+    assert(sizeof(GPUDDGILightingParams) == 64);
+    assert(offsetof(GPUDDGILightingParams, volumeOrigin) == 0);
+    assert(offsetof(GPUDDGILightingParams, probeSpacing) == 16);
+    assert(offsetof(GPUDDGILightingParams, probeCounts) == 32);
+    assert(offsetof(GPUDDGILightingParams, info) == 48);
+    assert(sizeof(GPULightingParams) == 784);
     assert(sizeof(GPULightingParams) % 16 == 0);
 
     assert(offsetof(GPULightingParams, invViewProjection) == 0);
@@ -2596,6 +2601,7 @@ int main()
     assert(PreExposureOffset<GPULightingParams>() == 672);
     assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 688);
     assert(offsetof(GPULightingParams, cameraForward) == 704);
+    assert(offsetof(GPULightingParams, ddgi) == 720);
 
     assert(static_cast<uint8_t>(DebugViewMode::Normal) == 0);
     assert(static_cast<uint8_t>(DebugViewMode::Unlit) == 1);
@@ -2617,7 +2623,7 @@ int main()
         sourceRoot / "Library/Core/Private/Rendering/LightingPass.cpp");
     const TestString maskedShaderSource = MaskShaderNonCode(shaderSource);
     const TestString maskedLightingPassSource = MaskShaderNonCode(lightingPassSource);
-    for (uint32_t binding = 0; binding <= 15; ++binding)
+    for (uint32_t binding = 0; binding <= 18; ++binding)
     {
         AssertShaderBinding(shaderSource, binding);
     }
@@ -2626,7 +2632,7 @@ int main()
         FindShaderLayoutDeclaration(shaderSource, 4);
     assert(lightingParamsDeclaration.resourceType == "uniform");
     assert(lightingParamsDeclaration.resourceName == "params");
-    for (uint32_t binding = 0; binding <= 15; ++binding)
+    for (uint32_t binding = 0; binding <= 18; ++binding)
     {
         const ShaderLayoutDeclaration declaration =
             FindShaderLayoutDeclaration(shaderSource, binding);
@@ -2639,7 +2645,7 @@ int main()
         {
             assert(declaration.resourceType == "buffer");
         }
-        else if (binding == 6)
+        else if (binding == 6 || binding == 17 || binding == 18)
         {
             assert(declaration.resourceType == "sampler2DArray");
         }
@@ -2696,10 +2702,26 @@ int main()
                                     "skyTransmittance",
                                     "Transmittance",
                                     "sky");
+    AssertShaderResourceDeclaration(shaderSource,
+                                    17,
+                                    "sampler2DArray",
+                                    "ddgiIrradianceAtlas",
+                                    "DDGI",
+                                    "irradiance");
+    AssertShaderResourceDeclaration(shaderSource,
+                                    18,
+                                    "sampler2DArray",
+                                    "ddgiDistanceAtlas",
+                                    "DDGI",
+                                    "distance");
 
     assert(ContainsText(shaderSource, "uint prefilteredSpecularMipLevels;"));
     assert(ContainsText(shaderSource, "vec4 skySunDirectionAndCosRadius;"));
     assert(ContainsText(shaderSource, "vec4 cameraForward;"));
+    assert(ContainsText(shaderSource, "vec4 ddgiVolumeOrigin;"));
+    assert(ContainsText(shaderSource, "vec4 ddgiProbeSpacing;"));
+    assert(ContainsText(shaderSource, "uvec4 ddgiProbeCounts;"));
+    assert(ContainsText(shaderSource, "uvec4 ddgiInfo;"));
     assert(ContainsText(shaderSource, "vec3 viewForward = params.cameraForward.xyz;"));
     assert(ContainsText(shaderSource,
                         "dot(worldPos - params.cameraPosition.xyz, viewForward)"));
@@ -2964,7 +2986,7 @@ int main()
     const TestString descriptorSource =
         maskedLightingPassSource.substr(descriptorPosition,
                                        constructorPosition - descriptorPosition);
-    for (uint32_t binding = 0; binding <= 15; ++binding)
+    for (uint32_t binding = 0; binding <= 18; ++binding)
     {
         AssertProductionDescriptorBinding(descriptorSource, binding);
         if (binding == 4)
@@ -3003,7 +3025,7 @@ int main()
         RemoveWhitespace(maskedLightingPassSource.substr(executePosition,
                                                          registerOutputsPosition -
                                                              executePosition));
-    for (const uint32_t binding : {8u, 12u, 13u, 14u, 15u})
+    for (const uint32_t binding : {8u, 12u, 13u, 14u, 15u, 17u, 18u})
     {
         const TestString bindingText = FormatUnsigned(binding) + ",";
         assert(CountText(executeSource, "BindTexture(" + bindingText) == 1);
@@ -3133,6 +3155,16 @@ int main()
                             "RHI::TextureAddressMode::Wrap",
                             "RHI::TextureAddressMode::Clamp",
                             "RHI::FilterMode::Linear");
+    AssertSamplerDescriptor(lightingPassSource,
+                            17,
+                            "RHI::TextureAddressMode::Clamp",
+                            "RHI::TextureAddressMode::Clamp",
+                            "RHI::FilterMode::Point");
+    AssertSamplerDescriptor(lightingPassSource,
+                            18,
+                            "RHI::TextureAddressMode::Clamp",
+                            "RHI::TextureAddressMode::Clamp",
+                            "RHI::FilterMode::Point");
 
     uint32_t wrapPointSamplerCount = 0;
     uint32_t wrapLinearSamplerCount = 0;
@@ -3216,6 +3248,14 @@ int main()
                         "BindTexture(14,m_DefaultBlackTexture)"));
     assert(ContainsText(descriptorFactorySource,
                         "BindTexture(15,m_DefaultBlackTexture)"));
+    assert(ContainsText(descriptorFactorySource,
+                        "BindTexture(17,m_DefaultDDGIIrradianceAtlas)"));
+    assert(ContainsText(descriptorFactorySource,
+                        "BindSampler(17,m_DDGISampler)"));
+    assert(ContainsText(descriptorFactorySource,
+                        "BindTexture(18,m_DefaultDDGIDistanceAtlas)"));
+    assert(ContainsText(descriptorFactorySource,
+                        "BindSampler(18,m_DDGISampler)"));
     assert(ContainsText(descriptorFactorySource,
                         "BindStorageBuffer(11,m_DefaultNeuralBRDFWeightBuffer,0u,4u)"));
 

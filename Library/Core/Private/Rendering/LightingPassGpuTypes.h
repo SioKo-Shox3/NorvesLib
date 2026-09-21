@@ -6,6 +6,14 @@
 namespace NorvesLib::Core::Rendering
 {
 
+    struct GPUDDGILightingParams
+    {
+        float volumeOrigin[4]; // xyz=volume原点
+        float probeSpacing[4]; // xyz=probe間隔
+        uint32_t probeCounts[4]; // xyz=格子数, w=probe総数
+        uint32_t info[4]; // x=DDGI有効フラグ
+    };
+
     struct GPULightingParams
     {
         float invViewProjection[16];
@@ -28,6 +36,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t shadowPadding2;
         float skySunDirectionAndCosRadius[4];
         float cameraForward[4];
+        GPUDDGILightingParams ddgi;
     };
 
     struct GPULightData
@@ -38,7 +47,12 @@ namespace NorvesLib::Core::Rendering
         float attenuation[4];
     };
 
-    static_assert(sizeof(GPULightingParams) == 720);
+    static_assert(sizeof(GPUDDGILightingParams) == 64);
+    static_assert(offsetof(GPUDDGILightingParams, volumeOrigin) == 0);
+    static_assert(offsetof(GPUDDGILightingParams, probeSpacing) == 16);
+    static_assert(offsetof(GPUDDGILightingParams, probeCounts) == 32);
+    static_assert(offsetof(GPUDDGILightingParams, info) == 48);
+    static_assert(sizeof(GPULightingParams) == 784);
     static_assert(offsetof(GPULightingParams, lightView) == 96);
     static_assert(offsetof(GPULightingParams, lightProjection) == 352);
     static_assert(offsetof(GPULightingParams, shadowSplitDistances) == 608);
@@ -47,6 +61,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPULightingParams, preExposure) == 672);
     static_assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 688);
     static_assert(offsetof(GPULightingParams, cameraForward) == 704);
+    static_assert(offsetof(GPULightingParams, ddgi) == 720);
     static_assert(sizeof(GPULightData) == 64);
     static_assert(offsetof(GPULightData, position) == 0);
     static_assert(offsetof(GPULightData, direction) == 16);

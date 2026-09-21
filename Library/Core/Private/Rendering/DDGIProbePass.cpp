@@ -474,6 +474,18 @@ namespace NorvesLib::Core::Rendering
 
     bool DDGIProbePass::Execute(ViewRenderContext& context)
     {
+        for (FrameResources& resources : m_FrameResources)
+        {
+            if (resources.FrameIndex == context.FrameIndex &&
+                resources.ViewId == context.PhysicalLighting.ViewId &&
+                resources.ViewportId == context.PhysicalLighting.ViewportId)
+            {
+                resources.bAtlasValid = false;
+                resources.AtlasProbeCount = 0u;
+                break;
+            }
+        }
+
         if (context.CommandList == nullptr || context.Device == nullptr ||
             context.SnapshotScene == nullptr || context.SnapshotRayTracingScene == nullptr ||
             context.SnapshotRayTracingScene->TopLevel == nullptr ||

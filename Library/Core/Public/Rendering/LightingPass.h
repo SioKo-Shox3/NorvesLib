@@ -275,10 +275,13 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_ValidationRaw252PrefilteredSpecularTexture;
         RHI::TexturePtr m_DefaultBlackTexture;
         RHI::TexturePtr m_DefaultShadowMapArrayTexture;
-        RHI::SamplerPtr m_IBLSampler;         ///< source radiance sampler
+        RHI::TexturePtr m_DefaultDDGIIrradianceAtlas;
+        RHI::TexturePtr m_DefaultDDGIDistanceAtlas;
+        RHI::SamplerPtr m_IBLSampler;         ///< 環境放射輝度用サンプラー
         RHI::SamplerPtr m_DiffuseIrradianceSampler;
         RHI::SamplerPtr m_PrefilteredSpecularSampler;
         RHI::SamplerPtr m_DfgSampler;
+        RHI::SamplerPtr m_DDGISampler;
         uint32_t m_EnvironmentMipLevels = 1;  ///< 環境マップのミップレベル数
         bool m_bIBLAvailable = false;         ///< IBLリソースが利用可能か
         SkyAtmosphereParameters m_SkyAtmosphereIblParameters;

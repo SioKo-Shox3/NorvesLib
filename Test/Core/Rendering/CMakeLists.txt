@@ -780,6 +780,18 @@ target_compile_definitions(LightingParamsLayoutTest PRIVATE
 )
 set_target_properties(LightingParamsLayoutTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME LightingParamsLayoutTest COMMAND LightingParamsLayoutTest)
+add_executable(RenderingDDGILightingContractTest
+    RenderingDDGILightingContractTest.cpp
+)
+target_link_libraries(RenderingDDGILightingContractTest PRIVATE Core)
+target_include_directories(RenderingDDGILightingContractTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(RenderingDDGILightingContractTest PRIVATE
+    NORVES_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(RenderingDDGILightingContractTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME RenderingDDGILightingContractTest COMMAND RenderingDDGILightingContractTest)
 add_executable(LightingLightBufferTest
     LightingLightBufferTest.cpp
 )

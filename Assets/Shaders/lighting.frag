@@ -31,6 +31,10 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     uint shadowPadding2;
     vec4 skySunDirectionAndCosRadius; // xyz=太陽方向, w=cos(太陽ディスク角半径)
     vec4 cameraForward; // xyz=CSM分割に使うカメラ前方単位ベクトル
+    vec4 ddgiVolumeOrigin; // xyz=DDGI volume原点
+    vec4 ddgiProbeSpacing; // xyz=DDGI probe間隔
+    uvec4 ddgiProbeCounts; // xyz=格子数, w=probe総数
+    uvec4 ddgiInfo; // x=DDGI有効フラグ
 } params;
 
 // ライトデータ構造
@@ -64,6 +68,8 @@ layout(set = 0, binding = 13) uniform sampler2D prefilteredSpecular;
 layout(set = 0, binding = 14) uniform sampler2D skySunDisk;
 layout(set = 0, binding = 15) uniform sampler2D skyTransmittance;
 layout(set = 0, binding = 16) uniform sampler2D rayTracingShadowVisibility;
+layout(set = 0, binding = 17) uniform sampler2DArray ddgiIrradianceAtlas;
+layout(set = 0, binding = 18) uniform sampler2DArray ddgiDistanceAtlas;
 
 // SSAO (Screen-Space Ambient Occlusion)
 layout(set = 0, binding = 10) uniform sampler2D ssaoTexture;
@@ -576,6 +582,20 @@ bool IsRaw252ParameterInvariantValid()
            abs(params.ambientColor.w - 1.0) <= 0.0001;
 }
 
+vec3 EvaluateDiffuseEndpoint(vec3 irradiance,
+                             vec3 albedo,
+                             float metallic,
+                             vec2 brdf)
+{
+    float Ess = max(brdf.x + brdf.y, 0.0001);
+    vec3 F0d = vec3(0.04);
+    vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
+    vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
+                    vec3(0.0), vec3(1.0));
+    return irradiance * (albedo / PI) *
+           (1.0 - metallic) * (vec3(1.0) - Ed);
+}
+
 vec3 EvaluateIblEndpoint(vec3 albedo,
                          float metallic,
                          float roughness,
@@ -584,7 +604,9 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
                          float ao,
                          float specularAO,
                          float iblIntensity,
-                         vec2 brdf)
+                         vec2 brdf,
+                         bool bUseDDGI,
+                         vec3 ddgiIrradiance)
 {
     float Ess = max(brdf.x + brdf.y, 0.0001);
     vec3 F0d = vec3(0.04);
@@ -596,16 +618,171 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
     vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
                     vec3(0.0), vec3(1.0));
 
-    vec2 irradianceUV = EquirectangularUV(N);
-    vec3 irradiance = textureLod(diffuseIrradiance, irradianceUV, 0.0).rgb;
-    vec3 diffuseIBL = irradiance * (albedo / PI) *
-                      (1.0 - metallic) * (vec3(1.0) - Ed);
+    vec3 irradiance = bUseDDGI
+        ? ddgiIrradiance
+        : textureLod(diffuseIrradiance, EquirectangularUV(N), 0.0).rgb;
+    vec3 diffuseIBL = EvaluateDiffuseEndpoint(irradiance, albedo, metallic, brdf);
 
     vec3 R = reflect(-V, N);
     vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
     vec3 specularIBL = prefilteredColor *
                        ((1.0 - metallic) * Ed + metallic * Ec);
+    if (bUseDDGI)
+    {
+        return diffuseIBL * ao + specularIBL * specularAO * iblIntensity;
+    }
     return (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
+}
+
+float SignNotZero(float value)
+{
+    return value < 0.0 ? -1.0 : 1.0;
+}
+
+vec2 EncodeDDGIOctahedralDirection(vec3 direction)
+{
+    float denominator = abs(direction.x) + abs(direction.y) + abs(direction.z);
+    vec2 encoded = direction.xy / max(denominator, 1.0e-8);
+    if (direction.z < 0.0)
+    {
+        encoded = (1.0 - abs(encoded.yx)) *
+                  vec2(SignNotZero(encoded.x), SignNotZero(encoded.y));
+    }
+    return encoded * 0.5 + 0.5;
+}
+
+vec2 DDGIAtlasUv(vec2 octahedralUv)
+{
+    vec2 pixelCenter = octahedralUv * 6.0 + 1.0;
+    return pixelCenter / 8.0;
+}
+
+float SampleDDGIVisibility(uint probeIndex,
+                           vec3 probeToPointDirection,
+                           float pointDistance)
+{
+    vec2 moments = textureLod(ddgiDistanceAtlas,
+                              vec3(DDGIAtlasUv(EncodeDDGIOctahedralDirection(
+                                  probeToPointDirection)),
+                                   float(probeIndex)),
+                              0.0).rg;
+    if (any(isnan(moments)) || any(isinf(moments)))
+    {
+        return 0.05;
+    }
+
+    float meanDistance = max(moments.x, 0.0);
+    float variance = max(moments.y - meanDistance * meanDistance, 1.0e-4);
+    if (pointDistance <= meanDistance)
+    {
+        return 1.0;
+    }
+
+    float delta = pointDistance - meanDistance;
+    float chebyshev = variance / (variance + delta * delta);
+    chebyshev *= chebyshev * chebyshev;
+    return max(0.05, chebyshev);
+}
+
+bool TrySampleDDGIIrradiance(vec3 worldPosition,
+                             vec3 surfaceNormal,
+                             out vec3 irradiance)
+{
+    irradiance = vec3(0.0);
+    if (params.ddgiInfo.x == 0u || params.ddgiProbeCounts.w == 0u ||
+        any(equal(params.ddgiProbeCounts.xyz, uvec3(0u))) ||
+        any(isnan(params.ddgiVolumeOrigin.xyz)) ||
+        any(isinf(params.ddgiVolumeOrigin.xyz)) ||
+        any(isnan(params.ddgiProbeSpacing.xyz)) ||
+        any(isinf(params.ddgiProbeSpacing.xyz)) ||
+        any(lessThanEqual(params.ddgiProbeSpacing.xyz, vec3(0.0))) ||
+        any(isnan(worldPosition)) || any(isinf(worldPosition)) ||
+        any(isnan(surfaceNormal)) || any(isinf(surfaceNormal)))
+    {
+        return false;
+    }
+
+    float normalLengthSquared = dot(surfaceNormal, surfaceNormal);
+    if (normalLengthSquared <= 1.0e-8 || isnan(normalLengthSquared) ||
+        isinf(normalLengthSquared))
+    {
+        return false;
+    }
+    vec3 normal = surfaceNormal * inversesqrt(normalLengthSquared);
+    vec3 gridMaximum = vec3(params.ddgiProbeCounts.xyz - uvec3(1u));
+    vec3 gridPosition = (worldPosition - params.ddgiVolumeOrigin.xyz) /
+                        params.ddgiProbeSpacing.xyz;
+    if (any(isnan(gridPosition)) || any(isinf(gridPosition)) ||
+        any(lessThan(gridPosition, vec3(0.0))) ||
+        any(greaterThan(gridPosition, gridMaximum)))
+    {
+        return false;
+    }
+
+    ivec3 baseProbe = ivec3(floor(gridPosition));
+    vec3 alpha = clamp(gridPosition - vec3(baseProbe), vec3(0.0), vec3(1.0));
+    vec2 irradianceUv = DDGIAtlasUv(EncodeDDGIOctahedralDirection(normal));
+    vec3 accumulatedIrradiance = vec3(0.0);
+    float accumulatedWeight = 0.0;
+    for (uint corner = 0u; corner < 8u; ++corner)
+    {
+        uvec3 offset = uvec3(corner & 1u,
+                             (corner >> 1u) & 1u,
+                             (corner >> 2u) & 1u);
+        uvec3 probeCoordinates = min(uvec3(baseProbe) + offset,
+                                     params.ddgiProbeCounts.xyz - uvec3(1u));
+        uint probeIndex = probeCoordinates.x +
+                          probeCoordinates.y * params.ddgiProbeCounts.x +
+                          probeCoordinates.z * params.ddgiProbeCounts.x *
+                              params.ddgiProbeCounts.y;
+        if (probeIndex >= params.ddgiProbeCounts.w)
+        {
+            return false;
+        }
+
+        vec3 trilinear = mix(vec3(1.0) - alpha, alpha, vec3(offset));
+        float weight = trilinear.x * trilinear.y * trilinear.z;
+        if (weight <= 0.0)
+        {
+            continue;
+        }
+
+        vec3 probePosition = params.ddgiVolumeOrigin.xyz +
+                             params.ddgiProbeSpacing.xyz * vec3(probeCoordinates);
+        vec3 probeToPoint = worldPosition - probePosition;
+        float pointDistance = length(probeToPoint);
+        if (isnan(pointDistance) || isinf(pointDistance))
+        {
+            continue;
+        }
+        vec3 probeToPointDirection = pointDistance > 1.0e-6
+            ? probeToPoint / pointDistance
+            : normal;
+        float wrapShading = (dot(-probeToPointDirection, normal) + 1.0) * 0.5;
+        weight *= wrapShading * wrapShading + 0.2;
+        weight *= SampleDDGIVisibility(probeIndex,
+                                       probeToPointDirection,
+                                       pointDistance);
+
+        vec3 probeIrradiance = textureLod(ddgiIrradianceAtlas,
+                                          vec3(irradianceUv, float(probeIndex)),
+                                          0.0).rgb;
+        if (any(isnan(probeIrradiance)) || any(isinf(probeIrradiance)))
+        {
+            return false;
+        }
+        accumulatedIrradiance += probeIrradiance * weight;
+        accumulatedWeight += weight;
+    }
+
+    if (accumulatedWeight <= 1.0e-6 ||
+        any(isnan(accumulatedIrradiance)) || any(isinf(accumulatedIrradiance)))
+    {
+        return false;
+    }
+
+    irradiance = max(accumulatedIrradiance / accumulatedWeight, vec3(0.0));
+    return true;
 }
 
 void main()
@@ -916,6 +1093,11 @@ void main()
         vec3 F0d = vec3(0.04);
         vec3 F0c = iblAlbedo;
         vec3 F_ambient = FresnelSchlick(NdotV, (1.0 - metallic) * F0d + metallic * F0c);
+        vec3 ddgiIrradiance = vec3(0.0);
+        bool bDDGIValidationMode = params.debugViewMode >= 246u &&
+                                   params.debugViewMode <= 255u;
+        bool bDDGIAvailable = !bDDGIValidationMode &&
+            TrySampleDDGIIrradiance(worldPos, N, ddgiIrradiance);
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
@@ -937,7 +1119,9 @@ void main()
                                            ao,
                                            specularAO,
                                            iblIntensity,
-                                           brdf);
+                                           brdf,
+                                           bDDGIAvailable,
+                                           ddgiIrradiance);
         }
         else
         {
@@ -949,6 +1133,17 @@ void main()
             vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
             vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
             ambient = diffuseAmbient * ao + specularAmbient * specularAO;
+            if (bDDGIAvailable)
+            {
+                vec2 ddgiDfgCoordinate = clamp(vec2(NdotV, roughness),
+                                               vec2(0.5 / 256.0),
+                                               vec2(255.5 / 256.0));
+                vec2 ddgiBrdf = texture(brdfLUT, ddgiDfgCoordinate).rg;
+                ambient += EvaluateDiffuseEndpoint(ddgiIrradiance,
+                                                   albedo,
+                                                   metallic,
+                                                   ddgiBrdf) * ao;
+            }
         }
         if (!bValidationRaw252)
         {

@@ -8,6 +8,7 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DDGIVolume.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "RHI/IDevice.h"
@@ -881,6 +882,8 @@ namespace NorvesLib::Core::Rendering
     }
 
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
+    static constexpr uint32_t DDGI_ATLAS_TEXEL_COUNT = 8u;
+    static constexpr uint32_t DDGI_ATLAS_MINIMUM_ARRAY_LAYER_COUNT = 2u;
 
     static void InitializeSafeCascadedShadowParams(GPULightingParams& params)
     {
@@ -956,6 +959,68 @@ namespace NorvesLib::Core::Rendering
             }
         }
         return true;
+    }
+
+    static bool AreDDGIAtlasResourcesComplete(const RHI::TexturePtr& irradianceAtlas,
+                                              const RHI::TexturePtr& distanceAtlas,
+                                              uint32_t probeCount)
+    {
+        if (!irradianceAtlas || !distanceAtlas || probeCount == 0u)
+        {
+            return false;
+        }
+
+        const uint32_t requiredArraySize =
+            std::max(probeCount, DDGI_ATLAS_MINIMUM_ARRAY_LAYER_COUNT);
+        return irradianceAtlas->GetWidth() == DDGI_ATLAS_TEXEL_COUNT &&
+               irradianceAtlas->GetHeight() == DDGI_ATLAS_TEXEL_COUNT &&
+               irradianceAtlas->GetArraySize() >= requiredArraySize &&
+               irradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
+               (irradianceAtlas->GetUsage() & RHI::ResourceUsage::ShaderRead) !=
+                   RHI::ResourceUsage::None &&
+               distanceAtlas->GetWidth() == DDGI_ATLAS_TEXEL_COUNT &&
+               distanceAtlas->GetHeight() == DDGI_ATLAS_TEXEL_COUNT &&
+               distanceAtlas->GetArraySize() >= requiredArraySize &&
+               distanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT &&
+               (distanceAtlas->GetUsage() & RHI::ResourceUsage::ShaderRead) !=
+                   RHI::ResourceUsage::None;
+    }
+
+    static bool SupportsDDGILighting(const ViewRenderContext& context)
+    {
+        if (context.Device == nullptr)
+        {
+            return false;
+        }
+
+        const RHI::DeviceCapabilities& capabilities = context.Capabilities != nullptr
+            ? *context.Capabilities
+            : context.Device->GetCapabilities();
+        return capabilities.RayTracing.bAccelerationStructure &&
+               capabilities.RayTracing.bRayQuery &&
+               capabilities.bBufferDeviceAddress &&
+               capabilities.bShaderInt64;
+    }
+
+    static bool IsCompleteDDGILightingPublication(
+        const ViewRenderContext& context,
+        const DDGIVolumeParameters& volume,
+        const RHI::TexturePtr& irradianceAtlas,
+        const RHI::TexturePtr& distanceAtlas,
+        uint32_t atlasProbeCount,
+        const RHI::SamplerPtr& atlasSampler)
+    {
+        const uint32_t expectedProbeCount = GetDDGIProbeCount(volume);
+        const PhysicalLightingResources& lighting = context.PhysicalLighting;
+        return IsDDGIVolumeValid(volume) && expectedProbeCount > 0u &&
+               expectedProbeCount <= DDGIMaxProbeCount &&
+               atlasProbeCount == expectedProbeCount &&
+               AreDDGIAtlasResourcesComplete(irradianceAtlas,
+                                             distanceAtlas,
+                                             atlasProbeCount) &&
+               atlasSampler && SupportsDDGILighting(context) &&
+               lighting.bActive && lighting.bLightingPublished &&
+               lighting.FrameNumber == context.FrameNumber;
     }
 
     static RHI::DescriptorSetDesc CreateLightingDescriptorSetDesc(bool bNeuralBRDFAvailable)
@@ -1064,6 +1129,18 @@ namespace NorvesLib::Core::Rendering
         rayTracingShadowBinding.type = RHI::ResourceBindType::CombinedImageSampler;
         rayTracingShadowBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(rayTracingShadowBinding);
+
+        RHI::DescriptorBinding ddgiIrradianceBinding;
+        ddgiIrradianceBinding.binding = 17;
+        ddgiIrradianceBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        ddgiIrradianceBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(ddgiIrradianceBinding);
+
+        RHI::DescriptorBinding ddgiDistanceBinding;
+        ddgiDistanceBinding.binding = 18;
+        ddgiDistanceBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        ddgiDistanceBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(ddgiDistanceBinding);
 
         return dsDesc;
     }
@@ -1241,6 +1318,39 @@ namespace NorvesLib::Core::Rendering
         const uint16_t blackPixel[4] = {0x0000u, 0x0000u, 0x0000u, 0x0000u};
         m_DefaultBlackTexture->Update(blackPixel, sizeof(blackPixel), sizeof(blackPixel));
 
+        RHI::TextureDesc ddgiIrradianceFallbackDesc;
+        ddgiIrradianceFallbackDesc.Width = DDGI_ATLAS_TEXEL_COUNT;
+        ddgiIrradianceFallbackDesc.Height = DDGI_ATLAS_TEXEL_COUNT;
+        ddgiIrradianceFallbackDesc.ArraySize = DDGI_ATLAS_MINIMUM_ARRAY_LAYER_COUNT;
+        ddgiIrradianceFallbackDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+        ddgiIrradianceFallbackDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                                           RHI::ResourceUsage::TransferDst;
+        ddgiIrradianceFallbackDesc.DebugName = "LightingDDGIIrradianceArrayFallback";
+        m_DefaultDDGIIrradianceAtlas = m_Device->CreateTexture(ddgiIrradianceFallbackDesc);
+        if (!m_DefaultDDGIIrradianceAtlas)
+        {
+            NORVES_LOG_ERROR("LightingPass", "DDGI irradianceのfallback配列を作成できません");
+            return false;
+        }
+        uint16_t ddgiIrradianceFallbackPixels[
+            DDGI_ATLAS_TEXEL_COUNT * DDGI_ATLAS_TEXEL_COUNT * 4u] = {};
+        const uint32_t ddgiIrradianceRowPitch =
+            DDGI_ATLAS_TEXEL_COUNT * 4u * sizeof(uint16_t);
+        const uint32_t ddgiIrradianceSlicePitch =
+            ddgiIrradianceRowPitch * DDGI_ATLAS_TEXEL_COUNT;
+        for (uint32_t layer = 0u;
+             layer < DDGI_ATLAS_MINIMUM_ARRAY_LAYER_COUNT;
+             ++layer)
+        {
+            m_DefaultDDGIIrradianceAtlas->Update(ddgiIrradianceFallbackPixels,
+                                                 ddgiIrradianceRowPitch,
+                                                 ddgiIrradianceSlicePitch,
+                                                 0u,
+                                                 layer);
+        }
+
+        m_DefaultDDGIDistanceAtlas = m_DefaultDDGIIrradianceAtlas;
+
         RHI::TextureDesc shadowMapFallbackDesc;
         shadowMapFallbackDesc.Width = 1u;
         shadowMapFallbackDesc.Height = 1u;
@@ -1335,6 +1445,20 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        RHI::SamplerDesc ddgiSamplerDesc;
+        ddgiSamplerDesc.filterMin = RHI::FilterMode::Linear;
+        ddgiSamplerDesc.filterMag = RHI::FilterMode::Linear;
+        ddgiSamplerDesc.filterMip = RHI::FilterMode::Point;
+        ddgiSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        ddgiSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        ddgiSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_DDGISampler = m_Device->CreateSampler(ddgiSamplerDesc);
+        if (!m_DDGISampler)
+        {
+            NORVES_LOG_ERROR("LightingPass", "DDGI atlas用サンプラーを作成できません");
+            return false;
+        }
+
         // ========================================
         // Neural BRDF ウェイトデータ読み込み
         // ========================================
@@ -1424,6 +1548,7 @@ namespace NorvesLib::Core::Rendering
         m_RayTracingShadowPass.Shutdown();
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
             !m_DefaultShadowMapArrayTexture &&
+            !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
             !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer)
         {
             return;
@@ -1458,6 +1583,8 @@ namespace NorvesLib::Core::Rendering
         m_BrdfLutTexture.reset();
         m_DefaultBlackTexture.reset();
         m_DefaultShadowMapArrayTexture.reset();
+        m_DefaultDDGIIrradianceAtlas.reset();
+        m_DefaultDDGIDistanceAtlas.reset();
         m_bIBLAvailable = false;
         m_SkyAtmosphereIblParameters = SkyAtmosphereParameters{};
         m_SkyAtmosphereIblRadianceWidth = 0u;
@@ -1476,6 +1603,7 @@ namespace NorvesLib::Core::Rendering
         m_DiffuseIrradianceSampler.reset();
         m_PrefilteredSpecularSampler.reset();
         m_DfgSampler.reset();
+        m_DDGISampler.reset();
 
         // Shaders are released after the pipeline.
         m_LightingFragmentShader.reset();
@@ -2121,9 +2249,10 @@ namespace NorvesLib::Core::Rendering
         outDescriptorSet.reset();
         if (!m_Device || !m_LightDataBuffer || !m_LightArrayBuffer || !m_BrdfLutTexture ||
             !m_DefaultBlackTexture || !m_DefaultShadowMapArrayTexture ||
+            !m_DefaultDDGIIrradianceAtlas || !m_DefaultDDGIDistanceAtlas ||
             !m_DefaultNeuralBRDFWeightBuffer ||
             !m_GBufferSampler || !m_IBLSampler || !m_DiffuseIrradianceSampler ||
-            !m_PrefilteredSpecularSampler || !m_DfgSampler)
+            !m_PrefilteredSpecularSampler || !m_DfgSampler || !m_DDGISampler)
         {
             NORVES_LOG_ERROR("LightingPass", "Mandatory lighting descriptor resources are unavailable");
             return false;
@@ -2170,6 +2299,10 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindSampler(15, m_IBLSampler);
         descriptorSet->BindTexture(16, m_DefaultBlackTexture);
         descriptorSet->BindSampler(16, m_GBufferSampler);
+        descriptorSet->BindTexture(17, m_DefaultDDGIIrradianceAtlas);
+        descriptorSet->BindSampler(17, m_DDGISampler);
+        descriptorSet->BindTexture(18, m_DefaultDDGIDistanceAtlas);
+        descriptorSet->BindSampler(18, m_DDGISampler);
 
         outDescriptorSet = std::move(descriptorSet);
         return true;
@@ -2286,7 +2419,53 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("LightingPass", "Failed to update lighting light buffer, skipping lighting draw");
             return;
         }
-        m_DDGIProbePass.Execute(context);
+        const bool bDDGIProbeUpdateSucceeded = m_DDGIProbePass.Execute(context);
+        RHI::TexturePtr ddgiIrradianceAtlas = m_DDGIProbePass.GetIrradianceAtlas(
+            context.FrameIndex,
+            context.PhysicalLighting.ViewId,
+            context.PhysicalLighting.ViewportId);
+        RHI::TexturePtr ddgiDistanceAtlas = m_DDGIProbePass.GetDistanceAtlas(
+            context.FrameIndex,
+            context.PhysicalLighting.ViewId,
+            context.PhysicalLighting.ViewportId);
+        const uint32_t ddgiAtlasProbeCount = m_DDGIProbePass.GetAtlasProbeCount(
+            context.FrameIndex,
+            context.PhysicalLighting.ViewId,
+            context.PhysicalLighting.ViewportId);
+        const DDGIVolumeParameters* ddgiVolume = context.SnapshotScene != nullptr
+            ? &context.SnapshotScene->DDGIVolume
+            : nullptr;
+        const bool bDDGILightingAvailable = bDDGIProbeUpdateSucceeded &&
+            ddgiVolume != nullptr &&
+            IsCompleteDDGILightingPublication(context,
+                                               *ddgiVolume,
+                                               ddgiIrradianceAtlas,
+                                               ddgiDistanceAtlas,
+                                               ddgiAtlasProbeCount,
+                                               m_DDGISampler);
+        context.PhysicalLighting.PublishDDGIAtlas(ddgiIrradianceAtlas,
+                                                  ddgiDistanceAtlas,
+                                                  ddgiAtlasProbeCount,
+                                                  bDDGILightingAvailable);
+
+        GPUDDGILightingParams ddgiParameters = {};
+        if (bDDGILightingAvailable)
+        {
+            ddgiParameters.volumeOrigin[0] = ddgiVolume->Origin.x;
+            ddgiParameters.volumeOrigin[1] = ddgiVolume->Origin.y;
+            ddgiParameters.volumeOrigin[2] = ddgiVolume->Origin.z;
+            ddgiParameters.probeSpacing[0] = ddgiVolume->ProbeSpacing.x;
+            ddgiParameters.probeSpacing[1] = ddgiVolume->ProbeSpacing.y;
+            ddgiParameters.probeSpacing[2] = ddgiVolume->ProbeSpacing.z;
+            ddgiParameters.probeCounts[0] = ddgiVolume->ProbeCountX;
+            ddgiParameters.probeCounts[1] = ddgiVolume->ProbeCountY;
+            ddgiParameters.probeCounts[2] = ddgiVolume->ProbeCountZ;
+            ddgiParameters.probeCounts[3] = ddgiAtlasProbeCount;
+            ddgiParameters.info[0] = 1u;
+        }
+        m_LightDataBuffer->Update(&ddgiParameters,
+                                  sizeof(ddgiParameters),
+                                  offsetof(GPULightingParams, ddgi));
 
         if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {
@@ -2400,6 +2579,19 @@ namespace NorvesLib::Core::Rendering
                 ? context.PhysicalLighting.RayTracingShadowVisibilityTexture
                 : m_DefaultBlackTexture);
         m_LightingDescriptorSet->BindSampler(16, m_GBufferSampler);
+
+        m_LightingDescriptorSet->BindTexture(
+            17,
+            bDDGILightingAvailable
+                ? context.PhysicalLighting.DDGIIrradianceAtlas
+                : m_DefaultDDGIIrradianceAtlas);
+        m_LightingDescriptorSet->BindSampler(17, m_DDGISampler);
+        m_LightingDescriptorSet->BindTexture(
+            18,
+            bDDGILightingAvailable
+                ? context.PhysicalLighting.DDGIDistanceAtlas
+                : m_DefaultDDGIDistanceAtlas);
+        m_LightingDescriptorSet->BindSampler(18, m_DDGISampler);
 
         if (ssaoTexture)
         {
