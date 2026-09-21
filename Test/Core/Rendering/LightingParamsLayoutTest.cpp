@@ -2458,6 +2458,10 @@ namespace
                                  const TestString& validationRaw252Mode,
                                  const TestString& validationLambertMode,
                                  const TestString& validationPbrMode,
+                                 const TestString& r5RasterHardShadowMode,
+                                 const TestString& r5RayTracingHardShadowMode,
+                                 const TestString& r5RayTracingVisibilityMode,
+                                 const TestString& r5RasterFallbackMode,
                                  const TestString& validationRaw250Mode,
                                  const TestString& validationRaw251Mode)
     {
@@ -2474,9 +2478,9 @@ namespace
                                     semicolonPosition -
                                         returnPosition - TestString("return").size());
         assert(CountText(normalizedPolicy, "return") == 1);
-        assert(CountText(expression, "params.debugViewMode==") == 4);
-        assert(CountText(expression, "==") == 4);
-        assert(CountText(expression, "||") == 3);
+        assert(CountText(expression, "params.debugViewMode==") == 7);
+        assert(CountText(expression, "==") == 7);
+        assert(CountText(expression, "||") == 6);
         assert(expression.find("!=") == TestString::npos);
         assert(expression.find("&&") == TestString::npos);
         assert(expression.find('!') == TestString::npos);
@@ -2486,15 +2490,22 @@ namespace
         assert(CountText(expression, "params.debugViewMode==" + validationRaw252Mode) == 1);
         assert(CountText(expression, "params.debugViewMode==" + validationLambertMode) == 1);
         assert(CountText(expression, "params.debugViewMode==" + validationPbrMode) == 1);
+        assert(CountText(expression, "params.debugViewMode==" + r5RasterHardShadowMode) == 1);
+        assert(CountText(expression, "params.debugViewMode==" + r5RayTracingHardShadowMode) == 1);
+        assert(CountText(expression, "params.debugViewMode==" + r5RasterFallbackMode) == 1);
+        assert(CountText(expression, r5RayTracingVisibilityMode) == 0);
         assert(CountText(expression, validationRaw250Mode) == 0);
         assert(CountText(expression, validationRaw251Mode) == 0);
-        assert(CountText(expression, "DEBUG_VIEW_MODE_") == 4);
+        assert(CountText(expression, "DEBUG_VIEW_MODE_") == 7);
 
         const TestString expectedTerms[] = {
             "params.debugViewMode==DEBUG_VIEW_MODE_NORMAL",
             "params.debugViewMode==" + validationRaw252Mode,
             "params.debugViewMode==" + validationLambertMode,
-            "params.debugViewMode==" + validationPbrMode};
+            "params.debugViewMode==" + validationPbrMode,
+            "params.debugViewMode==" + r5RasterHardShadowMode,
+            "params.debugViewMode==" + r5RayTracingHardShadowMode,
+            "params.debugViewMode==" + r5RasterFallbackMode};
         TestString remainingExpression = expression;
         for (const TestString& term : expectedTerms)
         {
@@ -2734,6 +2745,10 @@ int main()
     const TestString validationRaw250Mode = FindShaderUintConstantName(shaderSource, 250);
     const TestString validationRaw251Mode = FindShaderUintConstantName(shaderSource, 251);
     const TestString validationRaw252Mode = FindShaderUintConstantName(shaderSource, 252);
+    const TestString r5RasterHardShadowMode = FindShaderUintConstantName(shaderSource, 246u);
+    const TestString r5RayTracingHardShadowMode = FindShaderUintConstantName(shaderSource, 247u);
+    const TestString r5RayTracingVisibilityMode = FindShaderUintConstantName(shaderSource, 248u);
+    const TestString r5RasterFallbackMode = FindShaderUintConstantName(shaderSource, 249u);
     const TestString normalizedShaderSource = RemoveWhitespace(maskedShaderSource);
     assert(CountText(normalizedShaderSource, "=253u;") == 1);
     assert(CountText(normalizedShaderSource, "=254u;") == 1);
@@ -3232,12 +3247,20 @@ int main()
                             validationRaw252Mode,
                             validationLambertMode,
                             validationPbrMode,
+                            r5RasterHardShadowMode,
+                            r5RayTracingHardShadowMode,
+                            r5RayTracingVisibilityMode,
+                            r5RasterFallbackMode,
                             validationRaw250Mode,
                             validationRaw251Mode);
     assert(ContainsText(preExposurePolicy, "DEBUG_VIEW_MODE_NORMAL"));
     assert(ContainsText(preExposurePolicy, validationRaw252Mode));
     assert(ContainsText(preExposurePolicy, validationLambertMode));
     assert(ContainsText(preExposurePolicy, validationPbrMode));
+    assert(ContainsText(preExposurePolicy, r5RasterHardShadowMode));
+    assert(ContainsText(preExposurePolicy, r5RayTracingHardShadowMode));
+    assert(!ContainsText(preExposurePolicy, r5RayTracingVisibilityMode));
+    assert(ContainsText(preExposurePolicy, r5RasterFallbackMode));
     assert(!ContainsText(preExposurePolicy, validationRaw250Mode));
     assert(!ContainsText(preExposurePolicy, validationRaw251Mode));
 
@@ -3442,8 +3465,9 @@ int main()
                         "else if (bValidationPBR || params.bNeuralBRDFEnabled == 0u)"));
     assert(ContainsText(shaderSource,
                         "if (!bValidationLambert && !bValidationPBR)"));
-    assert(ContainsText(shaderSource,
-                        "if (!bValidationLambert && lightType < 0.5 && params.bShadowEnabled != 0u)"));
+    assert(ContainsText(normalizedShaderSource,
+                        "if((!bValidationLambert||bValidationHardShadow)&&"
+                        "lightType<0.5&&params.bShadowEnabled!=0u)"));
     assert(ContainsText(shaderSource, "color = Lo_diffuse;"));
 
     std::cout << "LightingParamsLayoutTest passed\n";

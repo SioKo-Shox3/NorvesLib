@@ -36,11 +36,13 @@
 - R5-P9: `9e213c9` / `27d7505` / `c8db734`。GEngine所有のRayTracingSceneSubsystemがopaque DrawCommandからgeometryとinstance transformをFramePacketへコピーし、RenderThreadではFramePacketからBLAS/TLASを構築する。同一slotのTLAS update再利用、GPU待機後・device参照解放前の資源破棄、FramePacket寿命を契約テストで確認した。Debug build exit 0、専用GPU CTest 2/2 passed（Validation Layer無効）。証拠は`.harness/runs/20260921-r5-p9-resume/verify-R5-P9-final-build.txt`と`verify-R5-P9-final-ctest.txt`。
 - R5-P10: `VulkanCommandList`のstage解決をRT pipeline capabilityで制御し、対応デバイスの`ShaderResource` barrierに`eRayTracingShaderKHR`を追加した。RT保存状態も全buffer/image barrier経路で専用RT stageを使う。対象build exit 0、同期validation有効のRT CTest 1/1と直接capture（Raster/RT A/B・RT無効fallback、max_lsb=0）を確認。再リンク後のRenderingValidationは20 passed/7 skipped/1 known baseline failure（Outdoor golden、`mean_flip=0.002326954`で過去基準と一致）。ログは`.harness/runs/20260921-073235/verify-R5-P10-17.txt`〜`-23.txt`。
 
+- R5-P11: `LightingParamsLayoutTest`でプリエクスポージャを適用する7 mode（Normal、RAW252、Validation Lambert/PBR、R5 RasterHardShadow/RayTracingHardShadow/RasterFallback）を個別に固定し、RT visibility・RAW250/251は除外した。Debug build exit 0、対象CTest 2/2 passed、同期validation付き動的capture全段PASS（TLAS更新後の旧領域255・移動先0、Raster/RT/fallbackの`max_lsb=0`）。全CTestは235件中6失敗・7 skipで、開始baseline234件/8失敗の失敗集合に対して新規失敗0。ログは`.harness/runs/20260921-073235/verify-R5-P11-contract-fix-target-ctest.txt`、`verify-R5-P11-contract-fix-dynamic-sync.txt`、`verify-R5-P11-contract-fix-full-ctest.txt`。
+
 ## In progress
 
 ## Next
 
-- R5-P11: 動的TLAS更新とRT無効fallbackをGPU受入れする。
+- R5-P12: R5の受入れ記録を確定する。
 
 ## Notes
 

@@ -9,9 +9,9 @@
 
 - `ResolvePipelineStageFlags`でRT pipeline capabilityに応じたstageを一元解決し、対応デバイスの`ShaderResource`と`RayTracingStorage` barrierがRay Tracing shaderを対象にする。対応しないデバイスには拡張stage bitを渡さない。対応GPUのR5テストは同期validation有効で1/1 passed、Raster/RT A/BとRT無効fallbackはmax_lsb=0。再リンク後のRenderingValidationは既知のOutdoor golden baseline以外が成功した。
 
-## R5-P11 — blocking / 修正必須
+## R5-P11 — 解決済み
 
-- `Assets/Shaders/lighting.frag` の `ShouldApplySceneColorPreExposure()` はR5のRasterHardShadow、RayTracingHardShadow、RasterFallback modeを追加したが、`Test/Core/Rendering/LightingParamsLayoutTest.cpp` は比較式が4件のままとしているためCTestで失敗する。R5の3 modeを含めてshader契約テストを更新するか、プリエクスポージャ方針を見直し、`LightingParamsLayoutTest` を通してからP11を完了する。この失敗はR5導入で発生したものとして扱い、過去の全CTest失敗へ埋没させない。
+- `LightingParamsLayoutTest`はSceneColor pre-exposureの7許可modeを個別に検証し、RT visibilityとRAW250/251を除外する。対象CTestは2/2 passed。全CTestの失敗6件はP11開始時baselineの8件の部分集合で、新規失敗はない。詳細は`PROGRESS.md`とP11検証ログに記録した。
 
 ## Vulkan同期validation — 別経路の追跡事項
 
