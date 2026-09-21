@@ -43,12 +43,13 @@
 - R4 M1: DDGIの有限なprobe volume、ray-query更新、scene-linear octahedral irradiance/distance atlas、LightingPass統合、Cornell RGBE region metric、動的8-frame収束のR4-P1〜P7を定義した。
 - R4-P1: `9c34d35`。有限値検証、1..1024 probeのchecked grid indexing、octahedral方向変換、64 ray方向列と無効入力fallbackをCPU契約テストで固定した。Debug build exit 0、専用CTest 1/1 passed。
 - R4-P2: `578236d`。DDGI volumeとlinear BaseColor/emissiveを値所有snapshot化し、RHI非対応時の無効化とpacket clearを固定した。Debug build exit 0、専用CTest 1/1 passed。
+- R4-P3: FramePacketのTLASへ64方向のcompute ray queryをLightingPassからdispatchし、hit距離・instance/primitive属性とmissをGPU readbackした。同一command listのTLAS build→dispatch、frame slot再利用、RT無効時の番兵維持とSceneColor一致、pipeline/result-buffer生成例外時のDDGI停止・描画継続を固定した。`Game`とGPUテストのDebug buildはexit 0、専用CTestは1/1 passed。
 
 ## In progress
 
 ## Next
 
-- R4-P3: compute ray queryでprobe rayのhit属性を取得する。
+- R4-P3A: ray hitの拡散radianceを材質と直接光から計算する。
 
 ## Notes
 
@@ -89,3 +90,4 @@
 - R5-P12開始時の全CTest(2026-09-21): 235件中222 passed、7 skipped、6 failed/Not Run、exit 1。保存ログは`.harness/runs/20260921-125655/startup-ctest-LastTest.log`と`startup-ctest-LastTestsFailed.log`。R5のBDA、機能検出、RHI契約、RT影、動的TLAS/fallbackテストは成功。失敗はOutdoor golden差分、RenderGraphCompileTestのbinding 6 assertion、SkinnedRenderPathContractTestのpending件数assert、ScriptRuntimeSafetyTestのBAD_COMMAND、Bridgeの2 test executable不在。
 - R4-P1検証ログ: `.harness/runs/20260921-164825/verify-R4-P1-7.txt`（Debug build、EXIT_CODE=0）と`verify-R4-P1-8.txt`（CTest 1/1 passed）。両ログを開いて終了コードと結果を確認した。
 - R4-P2検証ログ: `.harness/runs/20260921-164825/verify-R4-P2-4.txt`（Debug build、EXIT_CODE=0。third-party PDB LNK4099警告あり）と`verify-R4-P2-5.txt`（CTest 1/1 passed）。保存ログを開いて終了コードと結果を確認した。
+- R4-P3検証ログ: `build/Testing/Temporary/LastTest.log`。GPU testでhit distance=2.03175、instance custom index=17、primitive=0、miss=-1を確認し、RT無効・compute-pipeline例外・result-buffer例外の各経路でdraw count=1とSceneColor一致を確認した。専用CTestは1/1 passed。
