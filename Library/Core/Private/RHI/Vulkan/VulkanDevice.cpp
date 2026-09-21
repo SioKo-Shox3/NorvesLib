@@ -18,10 +18,10 @@
 #include "Math/MatrixUtils.h"
 #include <iostream>
 #include <algorithm>
-#include <atomic>
 #include <filesystem>
 #include <limits>
 #include "Container/Containers.h"
+#include "Thread/Mutex.h"
 
 // Dynamic dispatcherの定義
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -30,21 +30,176 @@ namespace NorvesLib::RHI::Vulkan
 {
     namespace
     {
-        constexpr uint32_t SingleTimeCommandFailureOnEnd = 1;
-        constexpr uint32_t SingleTimeCommandFailureOnSubmit = 2;
-        constexpr uint32_t SingleTimeCommandFailureOnWait = 3;
-        std::atomic<uint32_t> g_singleTimeCommandFailurePointForTesting{0};
-        std::atomic<uint32_t> g_singleTimeCommandFailureHitCountForTesting{0};
+        enum class SingleTimeCommandFailurePointForTesting : uint32_t
+        {
+            None,
+            End,
+            Submit,
+            Wait,
+            WaitAndFallback
+        };
+
+        struct DeferredSingleTimeCommandBuffer
+        {
+            vk::Device device;
+            vk::CommandPool commandPool;
+            vk::CommandBuffer commandBuffer;
+        };
+
+        thread_local VulkanDevice *g_testFailureDevice = nullptr;
+        thread_local SingleTimeCommandFailurePointForTesting g_testFailurePoint =
+            SingleTimeCommandFailurePointForTesting::None;
+        thread_local VulkanDevice *g_lastTestFailureDevice = nullptr;
+        thread_local uint32_t g_testFailureHitCount = 0;
+        thread_local vk::Device g_textureUpdateSyncScopeDevice{};
+        thread_local vk::Device g_registeredTextureUpdateStagingDevice{};
+        thread_local vk::Buffer g_registeredTextureUpdateStagingBuffer{};
+        thread_local vk::DeviceMemory g_registeredTextureUpdateStagingMemory{};
+        thread_local bool g_textureUpdateLayoutRollbackRequested = false;
+        thread_local bool g_textureUpdateStagingDeferralRequested = false;
+
+        ::NorvesLib::Thread::Mutex g_deferredCommandBufferMutex;
+        ::NorvesLib::Core::Container::VariableArray<DeferredSingleTimeCommandBuffer> g_deferredCommandBuffers;
+        size_t g_reservedDeferredCommandBufferSlots = 0;
+
+        void ArmVulkanSingleTimeCommandFailureForTesting(
+            IDevice *device,
+            SingleTimeCommandFailurePointForTesting failurePoint) noexcept
+        {
+            g_testFailureDevice = dynamic_cast<VulkanDevice *>(device);
+            g_testFailurePoint = failurePoint;
+        }
+
+        void ReserveDeferredCommandBufferSlot()
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_deferredCommandBufferMutex);
+            g_deferredCommandBuffers.reserve(
+                g_deferredCommandBuffers.size() + g_reservedDeferredCommandBufferSlots + 1);
+            ++g_reservedDeferredCommandBufferSlots;
+        }
+
+        void CancelDeferredCommandBufferSlot() noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_deferredCommandBufferMutex);
+            if (g_reservedDeferredCommandBufferSlots > 0)
+            {
+                --g_reservedDeferredCommandBufferSlots;
+            }
+        }
+
+        void DeferSingleTimeCommandBuffer(
+            vk::Device device,
+            vk::CommandPool commandPool,
+            vk::CommandBuffer commandBuffer) noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_deferredCommandBufferMutex);
+            if (g_reservedDeferredCommandBufferSlots > 0)
+            {
+                --g_reservedDeferredCommandBufferSlots;
+            }
+            g_deferredCommandBuffers.push_back({device, commandPool, commandBuffer});
+        }
+
+        void ReleaseDeferredSingleTimeCommandBuffers(vk::Device device) noexcept
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_deferredCommandBufferMutex);
+            for (size_t index = 0; index < g_deferredCommandBuffers.size();)
+            {
+                const DeferredSingleTimeCommandBuffer &record = g_deferredCommandBuffers[index];
+                if (record.device != device)
+                {
+                    ++index;
+                    continue;
+                }
+
+                device.freeCommandBuffers(record.commandPool, 1, &record.commandBuffer);
+                g_deferredCommandBuffers.erase(g_deferredCommandBuffers.begin() + index);
+            }
+        }
+
     }
 
-    void SetVulkanSingleTimeCommandFailurePointForTesting(uint32_t failurePoint) noexcept
+    void ReleaseDeferredVulkanTextureUpdateStagingResourcesForDevice(vk::Device device) noexcept;
+
+    void InjectVulkanSingleTimeCommandEndFailureForTesting(IDevice *device) noexcept
     {
-        g_singleTimeCommandFailurePointForTesting.store(failurePoint, std::memory_order_relaxed);
+        ArmVulkanSingleTimeCommandFailureForTesting(
+            device, SingleTimeCommandFailurePointForTesting::End);
     }
 
-    uint32_t GetVulkanSingleTimeCommandFailureHitCountForTesting() noexcept
+    void InjectVulkanSingleTimeCommandSubmitFailureForTesting(IDevice *device) noexcept
     {
-        return g_singleTimeCommandFailureHitCountForTesting.load(std::memory_order_relaxed);
+        ArmVulkanSingleTimeCommandFailureForTesting(
+            device, SingleTimeCommandFailurePointForTesting::Submit);
+    }
+
+    void InjectVulkanSingleTimeCommandWaitFailureForTesting(IDevice *device) noexcept
+    {
+        ArmVulkanSingleTimeCommandFailureForTesting(
+            device, SingleTimeCommandFailurePointForTesting::Wait);
+    }
+
+    void InjectVulkanSingleTimeCommandWaitAndFallbackFailureForTesting(IDevice *device) noexcept
+    {
+        ArmVulkanSingleTimeCommandFailureForTesting(
+            device, SingleTimeCommandFailurePointForTesting::WaitAndFallback);
+    }
+
+    void ClearVulkanSingleTimeCommandFailureForTesting(IDevice *device) noexcept
+    {
+        VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device);
+        if (g_testFailureDevice == vulkanDevice)
+        {
+            g_testFailureDevice = nullptr;
+            g_testFailurePoint = SingleTimeCommandFailurePointForTesting::None;
+        }
+    }
+
+    uint32_t GetVulkanSingleTimeCommandFailureHitCountForTesting(IDevice *device) noexcept
+    {
+        const VulkanDevice *vulkanDevice = dynamic_cast<VulkanDevice *>(device);
+        return g_lastTestFailureDevice == vulkanDevice ? g_testFailureHitCount : 0;
+    }
+
+    void BeginVulkanTextureUpdateSyncScopeForTesting(vk::Device device) noexcept
+    {
+        g_textureUpdateSyncScopeDevice = device;
+        g_textureUpdateLayoutRollbackRequested = false;
+        g_textureUpdateStagingDeferralRequested = false;
+    }
+
+    void RegisterVulkanTextureUpdateStagingResourcesForTesting(
+        vk::Device device,
+        vk::Buffer buffer,
+        vk::DeviceMemory memory) noexcept
+    {
+        g_registeredTextureUpdateStagingDevice = device;
+        g_registeredTextureUpdateStagingBuffer = buffer;
+        g_registeredTextureUpdateStagingMemory = memory;
+    }
+
+    bool ConsumeVulkanTextureUpdateLayoutRollbackForTesting() noexcept
+    {
+        const bool bRequested = g_textureUpdateLayoutRollbackRequested;
+        g_textureUpdateLayoutRollbackRequested = false;
+        return bRequested;
+    }
+
+    bool ConsumeVulkanTextureUpdateStagingDeferralForTesting() noexcept
+    {
+        const bool bRequested = g_textureUpdateStagingDeferralRequested;
+        g_textureUpdateStagingDeferralRequested = false;
+        return bRequested;
+    }
+
+    void EndVulkanTextureUpdateSyncScopeForTesting() noexcept
+    {
+        g_textureUpdateSyncScopeDevice = nullptr;
+        g_registeredTextureUpdateStagingDevice = nullptr;
+        g_registeredTextureUpdateStagingBuffer = nullptr;
+        g_registeredTextureUpdateStagingMemory = nullptr;
+        g_textureUpdateLayoutRollbackRequested = false;
+        g_textureUpdateStagingDeferralRequested = false;
     }
 
     // 明示的なusing宣言（グローバル名前空間から参照）
@@ -1252,48 +1407,120 @@ namespace NorvesLib::RHI::Vulkan
     // 単発コマンドバッファ終了
     void VulkanDevice::EndSingleTimeCommands(vk::CommandBuffer commandBuffer)
     {
-        const uint32_t failurePoint =
-            g_singleTimeCommandFailurePointForTesting.exchange(0, std::memory_order_relaxed);
-        if (failurePoint != 0)
+        uint32_t failurePoint = 0;
+        if (g_testFailureDevice == this)
         {
-            g_singleTimeCommandFailureHitCountForTesting.fetch_add(1, std::memory_order_relaxed);
+            failurePoint = static_cast<uint32_t>(g_testFailurePoint);
+            g_testFailureDevice = nullptr;
+            g_testFailurePoint = SingleTimeCommandFailurePointForTesting::None;
+            g_lastTestFailureDevice = this;
+            ++g_testFailureHitCount;
         }
-        const vk::Result endResult = failurePoint == SingleTimeCommandFailureOnEnd
+
+        const bool bIsTextureUpdate = g_textureUpdateSyncScopeDevice == m_device;
+        const bool bHasTextureUpdateStagingResources =
+            g_registeredTextureUpdateStagingDevice == m_device &&
+            g_registeredTextureUpdateStagingBuffer &&
+            g_registeredTextureUpdateStagingMemory;
+        if (g_registeredTextureUpdateStagingDevice == m_device)
+        {
+            g_registeredTextureUpdateStagingDevice = nullptr;
+            g_registeredTextureUpdateStagingBuffer = nullptr;
+            g_registeredTextureUpdateStagingMemory = nullptr;
+        }
+
+        const vk::Result endResult = failurePoint ==
+                static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::End)
             ? vk::Result::eErrorUnknown
             : commandBuffer.end();
         if (endResult != vk::Result::eSuccess)
         {
+            if (bIsTextureUpdate)
+            {
+                g_textureUpdateLayoutRollbackRequested = true;
+            }
             m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
             throw std::runtime_error("単発コマンドバッファの終了に失敗しました");
+        }
+
+        try
+        {
+            ReserveDeferredCommandBufferSlot();
+        }
+        catch (...)
+        {
+            if (bIsTextureUpdate)
+            {
+                g_textureUpdateLayoutRollbackRequested = true;
+            }
+            m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+            throw;
         }
 
         vk::SubmitInfo submitInfo{};
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffer;
 
-        const vk::Result submitResult = failurePoint == SingleTimeCommandFailureOnSubmit
+        const vk::Result submitResult = failurePoint ==
+                static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::Submit)
             ? vk::Result::eErrorUnknown
             : m_graphicsQueue.submit(1, &submitInfo, nullptr);
         if (submitResult != vk::Result::eSuccess)
         {
+            CancelDeferredCommandBufferSlot();
+            if (bIsTextureUpdate && submitResult != vk::Result::eErrorDeviceLost)
+            {
+                g_textureUpdateLayoutRollbackRequested = true;
+            }
+            if (submitResult == vk::Result::eErrorDeviceLost)
+            {
+                ReportDeviceFaultOnce();
+            }
             m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
             throw std::runtime_error("キューへの送信に失敗しました");
         }
 
-        const vk::Result queueWaitResult = m_graphicsQueue.waitIdle();
-        const vk::Result waitResult =
-            failurePoint == SingleTimeCommandFailureOnWait && queueWaitResult == vk::Result::eSuccess
-                ? vk::Result::eErrorUnknown
-                : queueWaitResult;
-        if (waitResult != vk::Result::eSuccess)
+        const bool bInjectWaitFailure =
+            failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::Wait) ||
+            failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::WaitAndFallback);
+        const vk::Result queueWaitResult = bInjectWaitFailure
+            ? vk::Result::eErrorOutOfHostMemory
+            : m_graphicsQueue.waitIdle();
+        if (queueWaitResult != vk::Result::eSuccess)
         {
-            if (queueWaitResult == vk::Result::eSuccess)
+            if (queueWaitResult == vk::Result::eErrorDeviceLost)
             {
+                CancelDeferredCommandBufferSlot();
                 m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+                ReportDeviceFaultOnce();
+                throw std::runtime_error("キューの完了待機に失敗しました");
+            }
+
+            const VkResult deviceWaitResult =
+                failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::WaitAndFallback)
+                    ? VK_ERROR_OUT_OF_HOST_MEMORY
+                    : WaitIdleWithoutResultCheck(m_device, "EndSingleTimeCommands fallback");
+            if (deviceWaitResult == VK_SUCCESS || deviceWaitResult == VK_ERROR_DEVICE_LOST)
+            {
+                CancelDeferredCommandBufferSlot();
+                m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+                if (deviceWaitResult == VK_ERROR_DEVICE_LOST)
+                {
+                    ReportDeviceFaultOnce();
+                }
+            }
+            else
+            {
+                DeferSingleTimeCommandBuffer(m_device, m_commandPool, commandBuffer);
+                if (bIsTextureUpdate && bHasTextureUpdateStagingResources)
+                {
+                    g_textureUpdateStagingDeferralRequested = true;
+                }
             }
             throw std::runtime_error("キューの完了待機に失敗しました");
         }
 
+        CancelDeferredCommandBufferSlot();
         m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
     }
 
@@ -1404,8 +1631,8 @@ namespace NorvesLib::RHI::Vulkan
                 case '\r':
                     builder.Append("\\r");
                     break;
-                case '\n':
-                    builder.Append("\\n");
+                case '\r\n':
+                    builder.Append("\\r\n");
                     break;
                 default:
                     if (*pCharacter < 0x20 || *pCharacter == 0x7F)
@@ -1460,7 +1687,7 @@ namespace NorvesLib::RHI::Vulkan
             return;
         }
 
-        m_addressBindingDiagnosticsSink->WriteString("schema=vulkan_device_address_binding_v1\n");
+        m_addressBindingDiagnosticsSink->WriteString("schema=vulkan_device_address_binding_v1\r\n");
         m_addressBindingDiagnosticsSink->Flush();
 #else
         NORVES_LOG_WARNING("VulkanDevice", "Address binding diagnostics disabled: NORVES_ASSET_DIR is unavailable");
@@ -1546,7 +1773,7 @@ namespace NorvesLib::RHI::Vulkan
             }
         }
 
-        line.Append("\n");
+        line.Append("\r\n");
         m_addressBindingDiagnosticsSink->WriteString(line.ToString());
         m_addressBindingDiagnosticsSink->Flush();
     }
@@ -1791,6 +2018,11 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanDevice::WaitIdle()
     {
         const VkResult result = WaitIdleWithoutResultCheck(m_device, "VulkanDevice::WaitIdle");
+        if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)
+        {
+            ReleaseDeferredSingleTimeCommandBuffers(m_device);
+            ReleaseDeferredVulkanTextureUpdateStagingResourcesForDevice(m_device);
+        }
         if (result == VK_ERROR_DEVICE_LOST)
         {
             ReportDeviceFaultOnce();

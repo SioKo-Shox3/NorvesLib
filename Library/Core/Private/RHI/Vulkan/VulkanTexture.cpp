@@ -1,23 +1,78 @@
 ﻿#include "VulkanTexture.h"
 #include "VulkanDevice.h"
+#include "Thread/Mutex.h"
 #include <stdexcept>
 #include <algorithm>
 #include <cstring>
 #include <atomic>
+#include <utility>
 
 namespace NorvesLib::RHI::Vulkan
 {
+    void BeginVulkanTextureUpdateSyncScopeForTesting(vk::Device device) noexcept;
+    void RegisterVulkanTextureUpdateStagingResourcesForTesting(
+        vk::Device device,
+        vk::Buffer buffer,
+        vk::DeviceMemory memory) noexcept;
+    bool ConsumeVulkanTextureUpdateLayoutRollbackForTesting() noexcept;
+    bool ConsumeVulkanTextureUpdateStagingDeferralForTesting() noexcept;
+    void EndVulkanTextureUpdateSyncScopeForTesting() noexcept;
+
     namespace
     {
         std::atomic<uint32_t> g_liveUpdateStagingBufferCount{0};
         std::atomic<uint32_t> g_liveUpdateStagingMemoryCount{0};
+        std::atomic<uint32_t> g_deferredUpdateTextureResourceCount{0};
+
+        struct DeferredTextureUpdateStagingResources
+        {
+            TSharedPtr<VulkanDevice> deviceOwner;
+            vk::Device device;
+            vk::Buffer buffer;
+            vk::DeviceMemory stagingMemory;
+            VulkanTexture *pendingTexture = nullptr;
+            vk::Image textureImage;
+            vk::DeviceMemory textureMemory;
+            vk::ImageView textureImageView;
+            ::NorvesLib::Core::Container::VariableArray<vk::ImageView> mipImageViews;
+            ::NorvesLib::Core::Container::VariableArray<vk::ImageView> arrayLayerImageViews;
+            bool bOwnsTextureImage = false;
+        };
+
+        ::NorvesLib::Thread::Mutex g_deferredUpdateStagingMutex;
+        ::NorvesLib::Core::Container::VariableArray<DeferredTextureUpdateStagingResources>
+            g_deferredUpdateStagingResources;
+        size_t g_reservedDeferredUpdateStagingSlots = 0;
+
+        void DestroyTextureUpdateStagingResources(
+            vk::Device device,
+            vk::Buffer buffer,
+            vk::DeviceMemory memory) noexcept
+        {
+            if (buffer)
+            {
+                device.destroyBuffer(buffer);
+                g_liveUpdateStagingBufferCount.fetch_sub(1, std::memory_order_relaxed);
+            }
+
+            if (memory)
+            {
+                device.freeMemory(memory);
+                g_liveUpdateStagingMemoryCount.fetch_sub(1, std::memory_order_relaxed);
+            }
+        }
 
         class VulkanTextureUpdateStagingResources
         {
         public:
-            explicit VulkanTextureUpdateStagingResources(vk::Device device)
-                : m_device(device)
+            explicit VulkanTextureUpdateStagingResources(TSharedPtr<VulkanDevice> deviceOwner)
+                : m_deviceOwner(deviceOwner), m_device(deviceOwner->GetVkDevice())
             {
+                ::NorvesLib::Thread::ScopedLock lock(g_deferredUpdateStagingMutex);
+                g_deferredUpdateStagingResources.reserve(
+                    g_deferredUpdateStagingResources.size() + g_reservedDeferredUpdateStagingSlots + 1);
+                ++g_reservedDeferredUpdateStagingSlots;
+                m_bDeferredSlotReserved = true;
             }
 
             VulkanTextureUpdateStagingResources(const VulkanTextureUpdateStagingResources &) = delete;
@@ -25,27 +80,31 @@ namespace NorvesLib::RHI::Vulkan
 
             ~VulkanTextureUpdateStagingResources()
             {
-                if (m_buffer)
+                if (m_bDeferredSlotReserved)
                 {
-                    m_device.destroyBuffer(m_buffer);
-                    g_liveUpdateStagingBufferCount.fetch_sub(1, std::memory_order_relaxed);
+                    ::NorvesLib::Thread::ScopedLock lock(g_deferredUpdateStagingMutex);
+                    --g_reservedDeferredUpdateStagingSlots;
                 }
 
-                if (m_memory)
-                {
-                    m_device.freeMemory(m_memory);
-                    g_liveUpdateStagingMemoryCount.fetch_sub(1, std::memory_order_relaxed);
-                }
+                DestroyTextureUpdateStagingResources(m_device, m_buffer, m_memory);
             }
 
             void SetBuffer(vk::Buffer buffer)
             {
+                if (!buffer || m_buffer)
+                {
+                    return;
+                }
                 m_buffer = buffer;
                 g_liveUpdateStagingBufferCount.fetch_add(1, std::memory_order_relaxed);
             }
 
             void SetMemory(vk::DeviceMemory memory)
             {
+                if (!memory || m_memory)
+                {
+                    return;
+                }
                 m_memory = memory;
                 g_liveUpdateStagingMemoryCount.fetch_add(1, std::memory_order_relaxed);
             }
@@ -53,11 +112,136 @@ namespace NorvesLib::RHI::Vulkan
             vk::Buffer GetBuffer() const { return m_buffer; }
             vk::DeviceMemory GetMemory() const { return m_memory; }
 
+            void DeferUntilDeviceIdle(VulkanTexture *pendingTexture) noexcept
+            {
+                ::NorvesLib::Thread::ScopedLock lock(g_deferredUpdateStagingMutex);
+                --g_reservedDeferredUpdateStagingSlots;
+                g_deferredUpdateStagingResources.emplace_back();
+                DeferredTextureUpdateStagingResources &record = g_deferredUpdateStagingResources.back();
+                record.deviceOwner = m_deviceOwner;
+                record.device = m_device;
+                record.buffer = m_buffer;
+                record.stagingMemory = m_memory;
+                record.pendingTexture = pendingTexture;
+                m_bDeferredSlotReserved = false;
+                m_buffer = nullptr;
+                m_memory = nullptr;
+            }
+
         private:
+            TSharedPtr<VulkanDevice> m_deviceOwner;
             vk::Device m_device;
             vk::Buffer m_buffer;
             vk::DeviceMemory m_memory;
+            bool m_bDeferredSlotReserved = false;
         };
+    }
+
+    bool IsVulkanTextureUpdatePendingUntilDeviceIdle(VulkanTexture *texture) noexcept
+    {
+        ::NorvesLib::Thread::ScopedLock lock(g_deferredUpdateStagingMutex);
+        for (const DeferredTextureUpdateStagingResources &record : g_deferredUpdateStagingResources)
+        {
+            if (record.pendingTexture == texture)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool DeferVulkanTextureResourcesUntilDeviceIdle(
+        VulkanTexture *texture,
+        vk::Device device,
+        bool &bOwnsTextureImage,
+        vk::Image &textureImage,
+        vk::DeviceMemory &textureMemory,
+        vk::ImageView &textureImageView,
+        ::NorvesLib::Core::Container::VariableArray<vk::ImageView> &mipImageViews,
+        ::NorvesLib::Core::Container::VariableArray<vk::ImageView> &arrayLayerImageViews) noexcept
+    {
+        ::NorvesLib::Thread::ScopedLock lock(g_deferredUpdateStagingMutex);
+        for (DeferredTextureUpdateStagingResources &record : g_deferredUpdateStagingResources)
+        {
+            if (record.device != device || record.pendingTexture != texture)
+            {
+                continue;
+            }
+
+            record.pendingTexture = nullptr;
+            record.bOwnsTextureImage = bOwnsTextureImage;
+            record.textureImage = bOwnsTextureImage ? textureImage : vk::Image{};
+            record.textureMemory = textureMemory;
+            record.textureImageView = textureImageView;
+            record.mipImageViews = std::move(mipImageViews);
+            record.arrayLayerImageViews = std::move(arrayLayerImageViews);
+
+            if (record.textureImage || record.textureMemory || record.textureImageView ||
+                !record.mipImageViews.empty() || !record.arrayLayerImageViews.empty())
+            {
+                g_deferredUpdateTextureResourceCount.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            textureImage = nullptr;
+            textureMemory = nullptr;
+            textureImageView = nullptr;
+            bOwnsTextureImage = false;
+            return true;
+        }
+        return false;
+    }
+
+    void ReleaseDeferredVulkanTextureUpdateStagingResourcesForDevice(vk::Device device) noexcept
+    {
+        ::NorvesLib::Thread::ScopedLock lock(g_deferredUpdateStagingMutex);
+        for (size_t index = 0; index < g_deferredUpdateStagingResources.size();)
+        {
+            DeferredTextureUpdateStagingResources &record = g_deferredUpdateStagingResources[index];
+            if (record.device != device)
+            {
+                ++index;
+                continue;
+            }
+
+            DestroyTextureUpdateStagingResources(record.device, record.buffer, record.stagingMemory);
+            for (vk::ImageView imageView : record.arrayLayerImageViews)
+            {
+                if (imageView)
+                {
+                    record.device.destroyImageView(imageView);
+                }
+            }
+            for (vk::ImageView imageView : record.mipImageViews)
+            {
+                if (imageView)
+                {
+                    record.device.destroyImageView(imageView);
+                }
+            }
+            if (record.textureImageView)
+            {
+                record.device.destroyImageView(record.textureImageView);
+            }
+            if (record.textureImage && record.bOwnsTextureImage)
+            {
+                record.device.destroyImage(record.textureImage);
+            }
+            if (record.textureMemory)
+            {
+                record.device.freeMemory(record.textureMemory);
+            }
+            if (record.textureImage || record.textureMemory || record.textureImageView ||
+                !record.mipImageViews.empty() || !record.arrayLayerImageViews.empty())
+            {
+                g_deferredUpdateTextureResourceCount.fetch_sub(1, std::memory_order_relaxed);
+            }
+            g_deferredUpdateStagingResources.erase(g_deferredUpdateStagingResources.begin() + index);
+        }
+    }
+
+    void GetVulkanTextureUpdateDeferredTextureResourceCountForTesting(uint32_t &resourceCount) noexcept
+    {
+        resourceCount = g_deferredUpdateTextureResourceCount.load(std::memory_order_relaxed);
     }
 
     void GetVulkanTextureUpdateStagingResourceCountsForTesting(
@@ -200,6 +384,22 @@ namespace NorvesLib::RHI::Vulkan
     VulkanTexture::~VulkanTexture()
     {
         vk::Device vkDevice = m_device->GetVkDevice();
+        if (IsVulkanTextureUpdatePendingUntilDeviceIdle(this))
+        {
+            m_device->WaitIdle();
+            if (DeferVulkanTextureResourcesUntilDeviceIdle(
+                    this,
+                    vkDevice,
+                    m_bOwnsImage,
+                    m_image,
+                    m_memory,
+                    m_imageView,
+                    m_mipImageViews,
+                    m_arrayLayerImageViews))
+            {
+                return;
+            }
+        }
 
         // 配列layer ImageViewの破棄
         for (auto arrayLayerView : m_arrayLayerImageViews)
@@ -597,6 +797,14 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("無効なミップレベルまたは配列インデックスです");
         }
 
+        const uint32_t baseArrayLayer = arrayIndex * (m_desc.IsCubemap ? 6u : 1u);
+        const uint32_t affectedArrayLayerCount = m_desc.IsCubemap ? 6u : 1u;
+        vk::ImageLayout previousLayouts[6]{};
+        for (uint32_t layerIndex = 0; layerIndex < affectedArrayLayerCount; ++layerIndex)
+        {
+            previousLayouts[layerIndex] = GetTrackedSubresourceLayout(mipLevel, baseArrayLayer + layerIndex);
+        }
+
         // ステージングバッファの作成
         uint32_t width, height, depth;
         GetSubresourceLayout(m_desc, mipLevel, arrayIndex, width, height, depth);
@@ -610,12 +818,12 @@ namespace NorvesLib::RHI::Vulkan
         bufferInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
         bufferInfo.sharingMode = vk::SharingMode::eExclusive;
 
+        VulkanTextureUpdateStagingResources stagingResources(m_device);
         auto bufferResult = vkDevice.createBuffer(bufferInfo);
         if (bufferResult.result != vk::Result::eSuccess)
         {
             throw std::runtime_error("ステージングバッファの作成に失敗しました");
         }
-        VulkanTextureUpdateStagingResources stagingResources(vkDevice);
         stagingResources.SetBuffer(bufferResult.value);
         m_device->SetDebugObjectName(
             vk::ObjectType::eBuffer,
@@ -681,8 +889,8 @@ namespace NorvesLib::RHI::Vulkan
         }
         subresourceRange.baseMipLevel = mipLevel;
         subresourceRange.levelCount = 1;
-        subresourceRange.baseArrayLayer = arrayIndex * (m_desc.IsCubemap ? 6 : 1);
-        subresourceRange.layerCount = m_desc.IsCubemap ? 6 : 1;
+        subresourceRange.baseArrayLayer = baseArrayLayer;
+        subresourceRange.layerCount = affectedArrayLayerCount;
 
         // 転送先レイアウトに変更
         TransitionLayout(commandBuffer, vk::ImageLayout::eTransferDstOptimal, subresourceRange);
@@ -732,7 +940,36 @@ namespace NorvesLib::RHI::Vulkan
         TransitionLayout(commandBuffer, targetLayout, subresourceRange);
 
         // コマンドバッファの実行と解放
-        m_device->EndSingleTimeCommands(commandBuffer);
+        BeginVulkanTextureUpdateSyncScopeForTesting(vkDevice);
+        RegisterVulkanTextureUpdateStagingResourcesForTesting(
+            vkDevice, stagingResources.GetBuffer(), stagingResources.GetMemory());
+        try
+        {
+            m_device->EndSingleTimeCommands(commandBuffer);
+        }
+        catch (...)
+        {
+            if (ConsumeVulkanTextureUpdateStagingDeferralForTesting())
+            {
+                stagingResources.DeferUntilDeviceIdle(this);
+            }
+
+            if (ConsumeVulkanTextureUpdateLayoutRollbackForTesting())
+            {
+                for (uint32_t layerIndex = 0; layerIndex < affectedArrayLayerCount; ++layerIndex)
+                {
+                    SetTrackedSubresourceLayout(
+                        mipLevel,
+                        baseArrayLayer + layerIndex,
+                        previousLayouts[layerIndex]);
+                }
+                RefreshCurrentLayoutFromSubresources();
+            }
+
+            EndVulkanTextureUpdateSyncScopeForTesting();
+            throw;
+        }
+        EndVulkanTextureUpdateSyncScopeForTesting();
     }
 
     void VulkanTexture::TransitionLayout(
