@@ -616,17 +616,19 @@ void main()
     vec4 materialSample = texture(gbufferMaterial, fragUV);
     float depthSample = texture(gbufferDepth, fragUV).r;
 
+    bool bRayTracingShadowValidationMode =
+        params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_HARD_SHADOW ||
+        params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_VISIBILITY;
+    if (bRayTracingShadowValidationMode && params.shadowPadding0 == 0u)
+    {
+        outColor = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
+    }
+
     if (params.debugViewMode == DEBUG_VIEW_MODE_R5_RAY_TRACING_VISIBILITY)
     {
-        if (params.shadowPadding0 == 0u)
-        {
-            outColor = vec4(1.0, 0.0, 1.0, 1.0);
-        }
-        else
-        {
-            float visibility = texture(rayTracingShadowVisibility, fragUV).r;
-            outColor = vec4(vec3(visibility), 1.0);
-        }
+        float visibility = texture(rayTracingShadowVisibility, fragUV).r;
+        outColor = vec4(vec3(visibility), 1.0);
         return;
     }
 

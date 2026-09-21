@@ -2266,13 +2266,13 @@ namespace NorvesLib::Core::Rendering
         }
 
         const uint32_t debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
-        const bool bForceRasterShadow = debugViewMode == 246u || debugViewMode == 249u;
+        const bool bEnableRayTracingShadow = debugViewMode == 247u || debugViewMode == 248u;
         RHI::TexturePtr rayTracingShadowVisibility;
         const bool bRayTracingShadowAvailable = m_RayTracingShadowPass.Execute(
             context,
             depthTexture,
             normalTexture,
-            !bForceRasterShadow,
+            bEnableRayTracingShadow,
             rayTracingShadowVisibility);
         context.PhysicalLighting.PublishRayTracingShadow(
             rayTracingShadowVisibility, bRayTracingShadowAvailable);

@@ -405,7 +405,8 @@ namespace NorvesLib::RHI
         ResolveDest,
         ResolveSource,
         Present,
-        GenericRead
+        GenericRead,
+        RayTracingStorage
     };
 
     /**

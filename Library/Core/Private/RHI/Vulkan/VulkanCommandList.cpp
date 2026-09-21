@@ -120,6 +120,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::AccessFlagBits::eShaderRead;
         case ResourceState::UnorderedAccess:
             return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+        case ResourceState::RayTracingStorage:
+            return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
         case ResourceState::IndirectArgument:
             return vk::AccessFlagBits::eIndirectCommandRead;
         case ResourceState::CopySource:
@@ -154,6 +156,8 @@ namespace NorvesLib::RHI::Vulkan
                    vk::PipelineStageFlagBits::eComputeShader;
         case ResourceState::UnorderedAccess:
             return vk::PipelineStageFlagBits::eComputeShader;
+        case ResourceState::RayTracingStorage:
+            return vk::PipelineStageFlagBits::eAllCommands;
         case ResourceState::IndirectArgument:
             return vk::PipelineStageFlagBits::eDrawIndirect;
         case ResourceState::CopySource:
@@ -181,6 +185,7 @@ namespace NorvesLib::RHI::Vulkan
         case ResourceState::ShaderResource:
             return vk::ImageLayout::eShaderReadOnlyOptimal;
         case ResourceState::UnorderedAccess:
+        case ResourceState::RayTracingStorage:
             return vk::ImageLayout::eGeneral;
         case ResourceState::CopySource:
             return vk::ImageLayout::eTransferSrcOptimal;
@@ -1684,7 +1689,8 @@ namespace NorvesLib::RHI::Vulkan
             resolvedArrayCount == totalArrayLayers;
         const bool bPreserveGeneralLayout =
             !bCoversWholeTexture &&
-            beforeState == ResourceState::UnorderedAccess &&
+            (beforeState == ResourceState::UnorderedAccess ||
+             beforeState == ResourceState::RayTracingStorage) &&
             afterState == ResourceState::ShaderResource &&
             (vkTexture->GetUsage() & ResourceUsage::UnorderedAccess) != ResourceUsage::None &&
             vkTexture->GetVkImageLayout() == vk::ImageLayout::eGeneral;
@@ -1703,9 +1709,24 @@ namespace NorvesLib::RHI::Vulkan
         barrier.subresourceRange.baseArrayLayer = arrayIndex;
         barrier.subresourceRange.layerCount = arrayCount == 0 ? VK_REMAINING_ARRAY_LAYERS : arrayCount;
 
+        const bool bRayTracingStorageTransition =
+            beforeState == ResourceState::RayTracingStorage ||
+            afterState == ResourceState::RayTracingStorage;
+        const bool bRayTracingPipelineEnabled =
+            bRayTracingStorageTransition && m_device != nullptr &&
+            m_device->GetCapabilities().RayTracing.bRayTracingPipeline;
+        const vk::PipelineStageFlags sourceStage =
+            beforeState == ResourceState::RayTracingStorage && bRayTracingPipelineEnabled
+                ? vk::PipelineStageFlagBits::eRayTracingShaderKHR
+                : m_barrierTracker.ResourceStateToPipelineStageFlags(beforeState);
+        const vk::PipelineStageFlags destinationStage =
+            afterState == ResourceState::RayTracingStorage && bRayTracingPipelineEnabled
+                ? vk::PipelineStageFlagBits::eRayTracingShaderKHR
+                : m_barrierTracker.ResourceStateToPipelineStageFlags(afterState);
+
         m_commandBuffer.pipelineBarrier(
-            m_barrierTracker.ResourceStateToPipelineStageFlags(beforeState),
-            m_barrierTracker.ResourceStateToPipelineStageFlags(afterState),
+            sourceStage,
+            destinationStage,
             {},
             0, nullptr,
             0, nullptr,
