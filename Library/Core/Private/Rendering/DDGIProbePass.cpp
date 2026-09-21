@@ -209,7 +209,8 @@ namespace NorvesLib::Core::Rendering
             : context.Device->GetCapabilities();
         if (!capabilities.RayTracing.bAccelerationStructure ||
             !capabilities.RayTracing.bRayQuery ||
-            !capabilities.bBufferDeviceAddress)
+            !capabilities.bBufferDeviceAddress ||
+            !capabilities.bShaderInt64)
         {
             return false;
         }
@@ -363,7 +364,8 @@ namespace NorvesLib::Core::Rendering
             : context.Device->GetCapabilities();
         if (!capabilities.RayTracing.bAccelerationStructure ||
             !capabilities.RayTracing.bRayQuery ||
-            !capabilities.bBufferDeviceAddress)
+            !capabilities.bBufferDeviceAddress ||
+            !capabilities.bShaderInt64)
         {
             return false;
         }

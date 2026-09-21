@@ -173,6 +173,9 @@ namespace NorvesLib::RHI
 
         /** @brief バッファのdevice address機能が論理デバイスで有効か */
         bool bBufferDeviceAddress = false;
+
+        /** @brief 64-bit整数シェーダー演算機能が論理デバイスで有効か */
+        bool bShaderInt64 = false;
     };
 
 } // namespace NorvesLib::RHI

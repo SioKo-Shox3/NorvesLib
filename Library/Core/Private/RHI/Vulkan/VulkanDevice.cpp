@@ -1060,6 +1060,8 @@ namespace NorvesLib::RHI::Vulkan
         features2.features.fillModeNonSolid = VK_TRUE; // ワイヤーフレームなどのサポート
         features2.features.drawIndirectFirstInstance =
             physicalFeatures.drawIndirectFirstInstance == VK_TRUE ? VK_TRUE : VK_FALSE;
+        features2.features.shaderInt64 =
+            physicalFeatures.shaderInt64 == VK_TRUE ? VK_TRUE : VK_FALSE;
         m_enabledDeviceFeatures = features2.features;
 
         // Vulkan 1.2 機能: 対応している場合のみ drawIndirectCount を有効化
@@ -2486,6 +2488,8 @@ namespace NorvesLib::RHI::Vulkan
             m_Capabilities.bDrawIndirectCount = (m_vulkan12Features.drawIndirectCount == VK_TRUE);
             m_Capabilities.bBufferDeviceAddress =
                 m_vulkan12Features.bufferDeviceAddress == VK_TRUE;
+            m_Capabilities.bShaderInt64 =
+                m_enabledDeviceFeatures.shaderInt64 == VK_TRUE;
             m_Capabilities.bDrawIndirectFirstInstance =
                 (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
 

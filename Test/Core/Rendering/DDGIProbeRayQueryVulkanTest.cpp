@@ -752,7 +752,7 @@ namespace
 
         RHIDeviceDesc deviceDesc;
         deviceDesc.Api = GraphicsAPI::Vulkan;
-        deviceDesc.bEnableValidation = false;
+        deviceDesc.bEnableValidation = true;
         DevicePtr device = CreateRHIDevice(deviceDesc);
         if (!device || device->GetAPI() != API::Vulkan)
         {
@@ -761,9 +761,11 @@ namespace
 
         const NorvesLib::RHI::DeviceCapabilitiesA& capabilities = device->GetCapabilities();
         if (!capabilities.RayTracing.bAccelerationStructure ||
-            !capabilities.RayTracing.bRayQuery)
+            !capabilities.RayTracing.bRayQuery ||
+            !capabilities.bBufferDeviceAddress ||
+            !capabilities.bShaderInt64)
         {
-            return ReportGpuTestSkip(TestName, "GPU ray query機能を利用できません");
+            return ReportGpuTestSkip(TestName, "GPU ray query/BDA/shaderInt64機能を利用できません");
         }
 
         String shaderDirectory(NORVES_SOURCE_ROOT);
