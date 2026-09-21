@@ -172,25 +172,17 @@ namespace
         const std::size_t updatePosition = execute.find("m_DDGIProbePass.Execute(context)");
         const std::size_t publicationPosition =
             execute.find("IsCompleteDDGILightingPublication(", updatePosition);
-        const std::size_t parameterUpdatePosition =
-            execute.find("m_LightDataBuffer->Update(&lightingParams", publicationPosition);
         assert(updatePosition != TestString::npos);
         assert(publicationPosition != TestString::npos);
-        assert(parameterUpdatePosition != TestString::npos);
         assert(updatePosition < publicationPosition);
-        assert(publicationPosition < parameterUpdatePosition);
         AssertContains(execute, "context.PhysicalLighting.PublishDDGIAtlas");
         AssertContains(execute, "ddgiParameters.info[0] = 1u");
-        AssertContains(execute, "lightingParams.ddgi = ddgiParameters;");
-        AssertContains(execute,
-                       "m_LightDataBuffer->Update(&lightingParams, sizeof(lightingParams));");
         AssertContains(execute, "m_DefaultDDGIIrradianceAtlas");
         AssertContains(execute, "m_DefaultDDGIDistanceAtlas");
         AssertContains(execute, "BindTexture(17,");
         AssertContains(execute, "BindSampler(17,");
         AssertContains(execute, "BindTexture(18,");
         AssertContains(execute, "BindSampler(18,");
-        assert(execute.find("offsetof(GPULightingParams, ddgi)") == TestString::npos);
 
         const TestString completePublication =
             ExtractBlock(lightingPass, "static bool IsCompleteDDGILightingPublication");

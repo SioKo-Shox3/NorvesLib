@@ -4394,6 +4394,8 @@ namespace
         GPULightingParams params = {};
         DecodeLightingParams(params);
         assert(params.lightCount == 20);
+        assert(params.ddgi.info[0] == 0u);
+        assert(params.ddgi.probeCounts[3] == 0u);
 
         const GPULightData first = DecodeLightDataAt(0);
         const GPULightData last = DecodeLightDataAt(19);

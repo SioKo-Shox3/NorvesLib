@@ -45,9 +45,10 @@
 - R4-P2: `578236d`。DDGI volumeとlinear BaseColor/emissiveを値所有snapshot化し、RHI非対応時の無効化とpacket clearを固定した。Debug build exit 0、専用CTest 1/1 passed。
 - R4-P3: FramePacketのTLASへ64方向のcompute ray queryをLightingPassからdispatchし、hit距離・instance/primitive属性とmissをGPU readbackした。同一command listのTLAS build→dispatch、frame slot再利用、RT無効時の番兵維持とSceneColor一致、pipeline/result-buffer生成例外時のDDGI停止・描画継続を固定した。`Game`とGPUテストのDebug buildはexit 0、専用CTestは1/1 passed。
 - R4-P3A: `1ec32dd`。ray hit三角形normal・FramePacketのBaseColor/emissive・遮蔽付きdirectional/point/spot radianceとmiss環境をscene-linear ray結果へ保存した。frame slotごとにBDA geometry buffersを保持し、shaderInt64対応を有効化・ゲートした。Debug build exit 0、P3/P3A validation GPU CTest 2/2 passed、radiance readback期待値一致、独立評価PASS。
+- R4-P5: `9e55ed5`。GBufferのworld position/normalでvolume内probeをvisibility-weightedに補間し、diffuse IBLをDDGI irradianceへ置換して間接拡散を加えた。無効・volume外・RT非対応・不完全atlasでは既存IBLへ戻し、binding 4は全構造体を一括更新する。Debug build exit 0、focused CTest 3/3 passed。
 
 ## In progress
-- R4-P5 follow-up: 実装commit `a1b581a` の対象build/CTestは通過したが、独立評価でbinding 4の64 byte部分更新が既存`RenderGraphCompileTest`の784 byte FakeBuffer前提を壊すblocking回帰を検出。`RenderGraphCompileTest`を含む修正・検証・再評価をR4-P6より先に行う。
+- なし。
 
 ## Next
 
@@ -96,4 +97,5 @@
 - R4-P2検証ログ: `.harness/runs/20260921-164825/verify-R4-P2-4.txt`（Debug build、EXIT_CODE=0。third-party PDB LNK4099警告あり）と`verify-R4-P2-5.txt`（CTest 1/1 passed）。保存ログを開いて終了コードと結果を確認した。
 - R4-P3検証ログ: `build/Testing/Temporary/LastTest.log`。GPU testでhit distance=2.03175、instance custom index=17、primitive=0、miss=-1を確認し、RT無効・compute-pipeline例外・result-buffer例外の各経路でdraw count=1とSceneColor一致を確認した。専用CTestは1/1 passed。
 - R4-P4: source commits `738ede8`, `3dcd38f`, `63fa779`でprobe atlas更新を確定した。前frame irradianceの1段bounce、visibility weighting、octahedral border、hysteresis 0.8を実装し、single/2-probe GPU readbackでirradiance・距離モーメント・border sampleを検証した。Debug build exit 0（third-party shaderc PDB LNK4099警告のみ）、専用CTest 1/1 passed、直接実行exit 0。出力は`single_probe_array_layers=2`、border sample `0.912965` / interior-only `0.89276`、visibility-weighted `1.95123` / unweighted `1.22487`、`VUID_COUNT=0`。証跡は`.harness/runs/20260922-r4-p4/verify-4-build.txt`、`verify-5-ctest.txt`、`verify-6-direct.txt`。
-- R4-P5検証ログ: `.harness/runs/20260922-003731/verify-R4-P5-6.txt`（Debug build、EXIT_CODE=0）と`verify-R4-P5-7.txt`（CTest 2/2 passed、EXIT_CODE=0）。
+- R4-P5最終検証: Debug buildはEXIT_CODE=0、対象CTestは3/3 passed。証跡は`.harness/runs/20260922-003731/verify-R4-P5-12.txt`と`verify-R4-P5-13.txt`。
+- R4-P5の後続確認: Lighting側のnormal biasとGLSLコンパイルをR4-P6のGPU受入れで確認する。
