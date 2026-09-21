@@ -25,9 +25,12 @@ namespace NorvesLib::Core::Rendering
     namespace
     {
         constexpr uint32_t DDGIProbeRayWorkgroupSize = 64u;
+        constexpr uint32_t DDGIProbeAtlasTexelCount = 8u;
+        constexpr uint32_t DDGIProbeAtlasInteriorTexelCount = 6u;
         constexpr float DDGIProbeRayMinimumDistance = 0.001f;
         constexpr float DDGIProbeRayMaximumDistance = 10000.0f;
         constexpr float DDGIProbeShadowOriginOffset = 0.002f;
+        constexpr float DDGIProbeAtlasHysteresis = 0.8f;
         constexpr uint32_t DDGIProbeMaximumInstanceCustomIndex = 0x00FFFFFFu;
 
         struct DDGIProbeRayQueryParameters
@@ -38,6 +41,16 @@ namespace NorvesLib::Core::Rendering
             float RayLimits[4] = {};
             uint32_t SceneCounts[4] = {};
             float EnvironmentParameters[4] = {};
+        };
+
+        struct DDGIProbeIrradianceUpdateParameters
+        {
+            float VolumeOrigin[4] = {};
+            float ProbeSpacing[4] = {};
+            uint32_t ProbeCounts[4] = {};
+            uint32_t AtlasInfo[4] = {};
+            float RayLimits[4] = {};
+            uint32_t PassInfo[4] = {};
         };
 
         struct DDGIProbeRayInstanceData
@@ -53,6 +66,7 @@ namespace NorvesLib::Core::Rendering
         };
 
         static_assert(sizeof(DDGIProbeRayQueryParameters) == 96u);
+        static_assert(sizeof(DDGIProbeIrradianceUpdateParameters) == 96u);
         static_assert(sizeof(DDGIProbeRayInstanceData) == 64u);
         static_assert(sizeof(GPULightData) == 64u);
 
@@ -182,6 +196,45 @@ namespace NorvesLib::Core::Rendering
             }
             return descriptorSetDesc;
         }
+
+        RHI::DescriptorSetDesc CreateDDGIProbeIrradianceUpdateDescriptorSetDesc()
+        {
+            RHI::DescriptorSetDesc descriptorSetDesc;
+            const RHI::ResourceBindType types[] = {
+                RHI::ResourceBindType::AccelerationStructure,
+                RHI::ResourceBindType::ConstantBuffer,
+                RHI::ResourceBindType::RWBuffer,
+                RHI::ResourceBindType::StructuredBuffer,
+                RHI::ResourceBindType::CombinedImageSampler,
+                RHI::ResourceBindType::CombinedImageSampler,
+                RHI::ResourceBindType::RWTexture,
+                RHI::ResourceBindType::RWTexture};
+            for (uint32_t bindingIndex = 0u; bindingIndex < 8u; ++bindingIndex)
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = bindingIndex;
+                binding.type = types[bindingIndex];
+                binding.stages = RHI::ShaderStage::Compute;
+                descriptorSetDesc.bindings.push_back(binding);
+            }
+            return descriptorSetDesc;
+        }
+
+        bool IsSameDDGIVolume(const DDGIVolumeParameters& volume,
+                              const float (&origin)[3],
+                              const float (&spacing)[3],
+                              const uint32_t (&counts)[3])
+        {
+            return volume.Origin.x == origin[0] &&
+                   volume.Origin.y == origin[1] &&
+                   volume.Origin.z == origin[2] &&
+                   volume.ProbeSpacing.x == spacing[0] &&
+                   volume.ProbeSpacing.y == spacing[1] &&
+                   volume.ProbeSpacing.z == spacing[2] &&
+                   volume.ProbeCountX == counts[0] &&
+                   volume.ProbeCountY == counts[1] &&
+                   volume.ProbeCountZ == counts[2];
+        }
     }
 
     bool DDGIProbePass::EnsurePipeline(ViewRenderContext& context)
@@ -194,7 +247,8 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        if (m_Pipeline)
+        if (m_Pipeline && m_IrradianceUpdatePipeline && m_AtlasSampler &&
+            m_DefaultIrradianceAtlas && m_DefaultDistanceAtlas)
         {
             return true;
         }
@@ -235,6 +289,79 @@ namespace NorvesLib::Core::Rendering
             DisableAfterResourceFailure("プローブレイ問い合わせパイプラインを作成できません");
             return false;
         }
+
+        m_IrradianceUpdateShader = context.ShaderMgr->LoadShader(
+            "DDGI/ProbeIrradianceUpdate.comp", RHI::ShaderStage::Compute);
+        if (!m_IrradianceUpdateShader)
+        {
+            DisableAfterResourceFailure("irradiance更新シェーダーを読み込めません");
+            return false;
+        }
+
+        RHI::ComputePipelineDesc updatePipelineDesc;
+        updatePipelineDesc.computeShader = m_IrradianceUpdateShader;
+        updatePipelineDesc.descriptorSetLayouts.push_back(
+            CreateDDGIProbeIrradianceUpdateDescriptorSetDesc());
+        m_IrradianceUpdatePipeline = context.Device->CreateComputePipeline(updatePipelineDesc);
+        if (!m_IrradianceUpdatePipeline)
+        {
+            DisableAfterResourceFailure("irradiance更新パイプラインを作成できません");
+            return false;
+        }
+
+        RHI::SamplerDesc atlasSamplerDesc;
+        atlasSamplerDesc.filterMin = RHI::FilterMode::Linear;
+        atlasSamplerDesc.filterMag = RHI::FilterMode::Linear;
+        atlasSamplerDesc.filterMip = RHI::FilterMode::Point;
+        atlasSamplerDesc.addressU = RHI::TextureAddressMode::Clamp;
+        atlasSamplerDesc.addressV = RHI::TextureAddressMode::Clamp;
+        atlasSamplerDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_AtlasSampler = context.Device->CreateSampler(atlasSamplerDesc);
+        if (!m_AtlasSampler)
+        {
+            DisableAfterResourceFailure("irradiance atlas samplerを作成できません");
+            return false;
+        }
+
+        RHI::TextureDesc defaultIrradianceDesc;
+        defaultIrradianceDesc.Width = DDGIProbeAtlasTexelCount;
+        defaultIrradianceDesc.Height = DDGIProbeAtlasTexelCount;
+        defaultIrradianceDesc.ArraySize = 1u;
+        defaultIrradianceDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+        defaultIrradianceDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                                     RHI::ResourceUsage::TransferDst;
+        defaultIrradianceDesc.DebugName = "DDGIProbeUpdate.DefaultIrradiance";
+        m_DefaultIrradianceAtlas = context.Device->CreateTexture(defaultIrradianceDesc);
+        if (!m_DefaultIrradianceAtlas)
+        {
+            DisableAfterResourceFailure("既定irradiance atlasを作成できません");
+            return false;
+        }
+        uint16_t emptyIrradiance[DDGIProbeAtlasTexelCount * DDGIProbeAtlasTexelCount * 4u] = {};
+        m_DefaultIrradianceAtlas->Update(
+            emptyIrradiance,
+            DDGIProbeAtlasTexelCount * 4u * sizeof(uint16_t),
+            sizeof(emptyIrradiance));
+
+        RHI::TextureDesc defaultDistanceDesc;
+        defaultDistanceDesc.Width = DDGIProbeAtlasTexelCount;
+        defaultDistanceDesc.Height = DDGIProbeAtlasTexelCount;
+        defaultDistanceDesc.ArraySize = 1u;
+        defaultDistanceDesc.TextureFormat = RHI::Format::R16G16_FLOAT;
+        defaultDistanceDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                                   RHI::ResourceUsage::TransferDst;
+        defaultDistanceDesc.DebugName = "DDGIProbeUpdate.DefaultDistance";
+        m_DefaultDistanceAtlas = context.Device->CreateTexture(defaultDistanceDesc);
+        if (!m_DefaultDistanceAtlas)
+        {
+            DisableAfterResourceFailure("既定distance atlasを作成できません");
+            return false;
+        }
+        uint16_t emptyDistance[DDGIProbeAtlasTexelCount * DDGIProbeAtlasTexelCount * 2u] = {};
+        m_DefaultDistanceAtlas->Update(
+            emptyDistance,
+            DDGIProbeAtlasTexelCount * 2u * sizeof(uint16_t),
+            sizeof(emptyDistance));
         return true;
     }
 
@@ -392,6 +519,11 @@ namespace NorvesLib::Core::Rendering
         const uint32_t resultCount = probeCount * DDGIProbeRayDirectionCount;
         const uint32_t resultBufferSize = resultCount * sizeof(DDGIProbeRayQueryResult);
         FrameResources* frameResources = nullptr;
+        FrameResources* previousFrameResources = nullptr;
+        RHI::TexturePtr previousIrradianceAtlas;
+        RHI::TexturePtr previousDistanceAtlas;
+        bool bHasPreviousAtlas = false;
+        uint32_t instanceDataBufferSize = 0u;
         Container::VariableArray<DDGIProbeRayInstanceData> instanceData;
         Container::VariableArray<RHI::BufferPtr> geometryBuffers;
         try
@@ -418,6 +550,164 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
             frameResources->GeometryBuffers = std::move(geometryBuffers);
+
+            const bool bAtlasResourcesMatch =
+                frameResources->IrradianceAtlas && frameResources->DistanceAtlas &&
+                frameResources->IrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
+                frameResources->IrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
+                frameResources->IrradianceAtlas->GetArraySize() == probeCount &&
+                frameResources->IrradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
+                frameResources->DistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
+                frameResources->DistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
+                frameResources->DistanceAtlas->GetArraySize() == probeCount &&
+                frameResources->DistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT;
+            if (!bAtlasResourcesMatch)
+            {
+                frameResources->IrradianceAtlas.reset();
+                frameResources->DistanceAtlas.reset();
+                frameResources->IrradianceAtlasState = RHI::ResourceState::Undefined;
+                frameResources->DistanceAtlasState = RHI::ResourceState::Undefined;
+                frameResources->bAtlasValid = false;
+
+                RHI::TextureDesc irradianceAtlasDesc;
+                irradianceAtlasDesc.Width = DDGIProbeAtlasTexelCount;
+                irradianceAtlasDesc.Height = DDGIProbeAtlasTexelCount;
+                irradianceAtlasDesc.ArraySize = probeCount;
+                irradianceAtlasDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+                irradianceAtlasDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                                            RHI::ResourceUsage::ShaderWrite |
+                                            RHI::ResourceUsage::TransferSrc;
+                irradianceAtlasDesc.DebugName = "DDGIProbeUpdate.IrradianceAtlas";
+                frameResources->IrradianceAtlas = context.Device->CreateTexture(irradianceAtlasDesc);
+
+                RHI::TextureDesc distanceAtlasDesc;
+                distanceAtlasDesc.Width = DDGIProbeAtlasTexelCount;
+                distanceAtlasDesc.Height = DDGIProbeAtlasTexelCount;
+                distanceAtlasDesc.ArraySize = probeCount;
+                distanceAtlasDesc.TextureFormat = RHI::Format::R16G16_FLOAT;
+                distanceAtlasDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                                          RHI::ResourceUsage::ShaderWrite |
+                                          RHI::ResourceUsage::TransferSrc;
+                distanceAtlasDesc.DebugName = "DDGIProbeUpdate.DistanceAtlas";
+                frameResources->DistanceAtlas = context.Device->CreateTexture(distanceAtlasDesc);
+                if (!frameResources->IrradianceAtlas || !frameResources->DistanceAtlas)
+                {
+                    DisableAfterResourceFailure("irradiance/distance atlasを作成できません");
+                    return false;
+                }
+            }
+
+            if (frameResources->BounceDescriptorSet == nullptr)
+            {
+                frameResources->BounceDescriptorSet = context.Device->CreateDescriptorSet(
+                    CreateDDGIProbeIrradianceUpdateDescriptorSetDesc());
+            }
+            if (frameResources->UpdateDescriptorSet == nullptr)
+            {
+                frameResources->UpdateDescriptorSet = context.Device->CreateDescriptorSet(
+                    CreateDDGIProbeIrradianceUpdateDescriptorSetDesc());
+            }
+            if (frameResources->BounceDescriptorSet == nullptr ||
+                frameResources->UpdateDescriptorSet == nullptr)
+            {
+                DisableAfterResourceFailure("irradiance更新descriptor setを作成できません");
+                return false;
+            }
+
+            if (frameResources->BounceParametersBuffer == nullptr)
+            {
+                RHI::BufferDesc parametersBufferDesc(
+                    sizeof(DDGIProbeIrradianceUpdateParameters),
+                    RHI::ResourceUsage::ConstantBuffer,
+                    true,
+                    "DDGIProbeUpdate.BounceParameters");
+                frameResources->BounceParametersBuffer =
+                    context.Device->CreateBuffer(parametersBufferDesc);
+            }
+            if (frameResources->UpdateParametersBuffer == nullptr)
+            {
+                RHI::BufferDesc parametersBufferDesc(
+                    sizeof(DDGIProbeIrradianceUpdateParameters),
+                    RHI::ResourceUsage::ConstantBuffer,
+                    true,
+                    "DDGIProbeUpdate.AtlasParameters");
+                frameResources->UpdateParametersBuffer =
+                    context.Device->CreateBuffer(parametersBufferDesc);
+            }
+            if (!frameResources->BounceParametersBuffer ||
+                !frameResources->UpdateParametersBuffer)
+            {
+                DisableAfterResourceFailure("irradiance更新parameter bufferを作成できません");
+                return false;
+            }
+
+            for (FrameResources& candidate : m_FrameResources)
+            {
+                if (&candidate == frameResources || !candidate.bAtlasValid ||
+                    candidate.FrameNumber == UINT64_MAX ||
+                    candidate.FrameNumber + 1u != context.FrameNumber ||
+                    candidate.ViewId != frameResources->ViewId ||
+                    candidate.ViewportId != frameResources->ViewportId ||
+                    candidate.AtlasProbeCount != probeCount ||
+                    !IsSameDDGIVolume(volume,
+                                      candidate.VolumeOrigin,
+                                      candidate.ProbeSpacing,
+                                      candidate.ProbeCounts) ||
+                    !candidate.IrradianceAtlas || !candidate.DistanceAtlas)
+                {
+                    continue;
+                }
+                previousFrameResources = &candidate;
+                break;
+            }
+            bHasPreviousAtlas = previousFrameResources != nullptr;
+            previousIrradianceAtlas = bHasPreviousAtlas
+                ? previousFrameResources->IrradianceAtlas
+                : m_DefaultIrradianceAtlas;
+            previousDistanceAtlas = bHasPreviousAtlas
+                ? previousFrameResources->DistanceAtlas
+                : m_DefaultDistanceAtlas;
+
+            DDGIProbeIrradianceUpdateParameters bounceParameters;
+            DDGIProbeIrradianceUpdateParameters updateParameters;
+            DDGIProbeIrradianceUpdateParameters* updateParameterSets[] = {
+                &bounceParameters, &updateParameters};
+            for (uint32_t passIndex = 0u; passIndex < 2u; ++passIndex)
+            {
+                DDGIProbeIrradianceUpdateParameters& updateParams = *updateParameterSets[passIndex];
+                updateParams.VolumeOrigin[0] = volume.Origin.x;
+                updateParams.VolumeOrigin[1] = volume.Origin.y;
+                updateParams.VolumeOrigin[2] = volume.Origin.z;
+                updateParams.ProbeSpacing[0] = volume.ProbeSpacing.x;
+                updateParams.ProbeSpacing[1] = volume.ProbeSpacing.y;
+                updateParams.ProbeSpacing[2] = volume.ProbeSpacing.z;
+                updateParams.ProbeCounts[0] = volume.ProbeCountX;
+                updateParams.ProbeCounts[1] = volume.ProbeCountY;
+                updateParams.ProbeCounts[2] = volume.ProbeCountZ;
+                updateParams.ProbeCounts[3] = probeCount;
+                updateParams.AtlasInfo[0] = DDGIProbeAtlasTexelCount;
+                updateParams.AtlasInfo[1] = DDGIProbeAtlasInteriorTexelCount;
+                updateParams.AtlasInfo[2] = probeCount;
+                updateParams.AtlasInfo[3] = DDGIProbeRayDirectionCount;
+                updateParams.RayLimits[0] = DDGIProbeRayMinimumDistance;
+                updateParams.RayLimits[1] = DDGIProbeRayMaximumDistance;
+                updateParams.RayLimits[2] = DDGIProbeShadowOriginOffset;
+                const double spacingX = volume.ProbeSpacing.x;
+                const double spacingY = volume.ProbeSpacing.y;
+                const double spacingZ = volume.ProbeSpacing.z;
+                const double localMaxDistance = std::sqrt(
+                    spacingX * spacingX + spacingY * spacingY + spacingZ * spacingZ) * 1.5;
+                updateParams.RayLimits[3] = static_cast<float>(std::min(
+                    static_cast<double>(DDGIProbeRayMaximumDistance), localMaxDistance));
+                updateParams.PassInfo[0] = passIndex;
+                updateParams.PassInfo[1] = bHasPreviousAtlas ? 1u : 0u;
+                updateParams.PassInfo[2] = resultCount;
+                updateParams.PassInfo[3] = static_cast<uint32_t>(instanceData.size());
+            }
+            frameResources->BounceParametersBuffer->Update(
+                &bounceParameters, sizeof(bounceParameters));
+            frameResources->UpdateParametersBuffer->Update(
+                &updateParameters, sizeof(updateParameters));
 
             DDGIProbeRayQueryParameters parameters;
             parameters.VolumeOrigin[0] = volume.Origin.x;
@@ -448,7 +738,7 @@ namespace NorvesLib::Core::Rendering
             const void* instanceDataSource = instanceData.empty()
                 ? static_cast<const void*>(&emptyInstanceData)
                 : static_cast<const void*>(instanceData.data());
-            const uint32_t instanceDataBufferSize = static_cast<uint32_t>(
+            instanceDataBufferSize = static_cast<uint32_t>(
                 (instanceData.empty() ? 1u : instanceData.size()) *
                 sizeof(DDGIProbeRayInstanceData));
             frameResources->InstanceDataBuffer->Update(
@@ -484,6 +774,103 @@ namespace NorvesLib::Core::Rendering
             frameResources->DescriptorSet->BindSampler(
                 5u, physicalLighting.EnvironmentRadianceSampler);
             frameResources->DescriptorSet->Update();
+
+            const auto bindUpdateResources = [&](const RHI::DescriptorSetPtr& descriptorSet,
+                                                 const RHI::BufferPtr& updateParametersBuffer)
+            {
+                if (!descriptorSet->BindAccelerationStructure(
+                        0u, context.SnapshotRayTracingScene->TopLevel))
+                {
+                    return false;
+                }
+                descriptorSet->BindConstantBuffer(
+                    1u,
+                    updateParametersBuffer,
+                    0u,
+                    static_cast<uint32_t>(sizeof(DDGIProbeIrradianceUpdateParameters)));
+                descriptorSet->BindStorageBuffer(
+                    2u, frameResources->ResultBuffer, 0u, resultBufferSize);
+                descriptorSet->BindStorageBuffer(
+                    3u,
+                    frameResources->InstanceDataBuffer,
+                    0u,
+                    instanceDataBufferSize);
+                descriptorSet->BindTexture(4u, previousIrradianceAtlas);
+                descriptorSet->BindSampler(4u, m_AtlasSampler);
+                descriptorSet->BindTexture(5u, previousDistanceAtlas);
+                descriptorSet->BindSampler(5u, m_AtlasSampler);
+                descriptorSet->BindStorageTexture(6u, frameResources->IrradianceAtlas);
+                descriptorSet->BindStorageTexture(7u, frameResources->DistanceAtlas);
+                descriptorSet->Update();
+                return true;
+            };
+            if (!bindUpdateResources(frameResources->BounceDescriptorSet,
+                                     frameResources->BounceParametersBuffer) ||
+                !bindUpdateResources(frameResources->UpdateDescriptorSet,
+                                     frameResources->UpdateParametersBuffer))
+            {
+                return false;
+            }
+
+            if (!bHasPreviousAtlas)
+            {
+                if (m_DefaultIrradianceAtlasState == RHI::ResourceState::Undefined)
+                {
+                    context.CommandList->TextureBarrier(
+                        m_DefaultIrradianceAtlas,
+                        RHI::ResourceState::Undefined,
+                        RHI::ResourceState::ShaderResource,
+                        0u,
+                        0u,
+                        0u,
+                        0u);
+                    m_DefaultIrradianceAtlasState = RHI::ResourceState::ShaderResource;
+                }
+                if (m_DefaultDistanceAtlasState == RHI::ResourceState::Undefined)
+                {
+                    context.CommandList->TextureBarrier(
+                        m_DefaultDistanceAtlas,
+                        RHI::ResourceState::Undefined,
+                        RHI::ResourceState::ShaderResource,
+                        0u,
+                        0u,
+                        0u,
+                        0u);
+                    m_DefaultDistanceAtlasState = RHI::ResourceState::ShaderResource;
+                }
+            }
+
+            if (bHasPreviousAtlas)
+            {
+                if (previousFrameResources->IrradianceAtlasState !=
+                    RHI::ResourceState::ShaderResource)
+                {
+                    context.CommandList->TextureBarrier(
+                        previousFrameResources->IrradianceAtlas,
+                        previousFrameResources->IrradianceAtlasState,
+                        RHI::ResourceState::ShaderResource,
+                        0u,
+                        0u,
+                        0u,
+                        0u);
+                    previousFrameResources->IrradianceAtlasState =
+                        RHI::ResourceState::ShaderResource;
+                }
+                if (previousFrameResources->DistanceAtlasState !=
+                    RHI::ResourceState::ShaderResource)
+                {
+                    context.CommandList->TextureBarrier(
+                        previousFrameResources->DistanceAtlas,
+                        previousFrameResources->DistanceAtlasState,
+                        RHI::ResourceState::ShaderResource,
+                        0u,
+                        0u,
+                        0u,
+                        0u);
+                    previousFrameResources->DistanceAtlasState =
+                        RHI::ResourceState::ShaderResource;
+                }
+            }
         }
         catch (const std::exception& exception)
         {
@@ -526,6 +913,84 @@ namespace NorvesLib::Core::Rendering
             0u,
             resultBufferSize);
         frameResources->ResultState = RHI::ResourceState::ShaderResource;
+
+        context.CommandList->TextureBarrier(
+            frameResources->IrradianceAtlas,
+            frameResources->IrradianceAtlasState,
+            RHI::ResourceState::UnorderedAccess,
+            0u,
+            0u,
+            0u,
+            0u);
+        context.CommandList->TextureBarrier(
+            frameResources->DistanceAtlas,
+            frameResources->DistanceAtlasState,
+            RHI::ResourceState::UnorderedAccess,
+            0u,
+            0u,
+            0u,
+            0u);
+        frameResources->IrradianceAtlasState = RHI::ResourceState::UnorderedAccess;
+        frameResources->DistanceAtlasState = RHI::ResourceState::UnorderedAccess;
+
+        if (bHasPreviousAtlas)
+        {
+            context.CommandList->BufferBarrier(
+                frameResources->ResultBuffer,
+                RHI::ResourceState::ShaderResource,
+                RHI::ResourceState::UnorderedAccess,
+                0u,
+                resultBufferSize);
+            context.CommandList->SetPipeline(m_IrradianceUpdatePipeline);
+            context.CommandList->SetDescriptorSet(frameResources->BounceDescriptorSet);
+            context.CommandList->Dispatch(groupCountX, 1u, 1u);
+            context.CommandList->BufferBarrier(
+                frameResources->ResultBuffer,
+                RHI::ResourceState::UnorderedAccess,
+                RHI::ResourceState::ShaderResource,
+                0u,
+                resultBufferSize);
+            frameResources->ResultState = RHI::ResourceState::ShaderResource;
+        }
+
+        context.CommandList->SetPipeline(m_IrradianceUpdatePipeline);
+        context.CommandList->SetDescriptorSet(frameResources->UpdateDescriptorSet);
+        const uint32_t atlasTexelCount =
+            probeCount * DDGIProbeAtlasTexelCount * DDGIProbeAtlasTexelCount;
+        const uint32_t atlasGroupCountX =
+            (atlasTexelCount + DDGIProbeRayWorkgroupSize - 1u) /
+            DDGIProbeRayWorkgroupSize;
+        context.CommandList->Dispatch(atlasGroupCountX, 1u, 1u);
+        context.CommandList->TextureBarrier(
+            frameResources->IrradianceAtlas,
+            RHI::ResourceState::UnorderedAccess,
+            RHI::ResourceState::ShaderResource,
+            0u,
+            0u,
+            0u,
+            0u);
+        context.CommandList->TextureBarrier(
+            frameResources->DistanceAtlas,
+            RHI::ResourceState::UnorderedAccess,
+            RHI::ResourceState::ShaderResource,
+            0u,
+            0u,
+            0u,
+            0u);
+        frameResources->IrradianceAtlasState = RHI::ResourceState::ShaderResource;
+        frameResources->DistanceAtlasState = RHI::ResourceState::ShaderResource;
+        frameResources->AtlasProbeCount = probeCount;
+        frameResources->VolumeOrigin[0] = volume.Origin.x;
+        frameResources->VolumeOrigin[1] = volume.Origin.y;
+        frameResources->VolumeOrigin[2] = volume.Origin.z;
+        frameResources->ProbeSpacing[0] = volume.ProbeSpacing.x;
+        frameResources->ProbeSpacing[1] = volume.ProbeSpacing.y;
+        frameResources->ProbeSpacing[2] = volume.ProbeSpacing.z;
+        frameResources->ProbeCounts[0] = volume.ProbeCountX;
+        frameResources->ProbeCounts[1] = volume.ProbeCountY;
+        frameResources->ProbeCounts[2] = volume.ProbeCountZ;
+        frameResources->FrameNumber = context.FrameNumber;
+        frameResources->bAtlasValid = true;
         return true;
     }
 
@@ -561,6 +1026,54 @@ namespace NorvesLib::Core::Rendering
         return 0u;
     }
 
+    RHI::TexturePtr DDGIProbePass::GetIrradianceAtlas(
+        uint32_t frameIndex,
+        uint32_t viewId,
+        uint32_t viewportId) const
+    {
+        for (const FrameResources& resources : m_FrameResources)
+        {
+            if (resources.FrameIndex == frameIndex && resources.ViewId == viewId &&
+                resources.ViewportId == viewportId && resources.bAtlasValid)
+            {
+                return resources.IrradianceAtlas;
+            }
+        }
+        return nullptr;
+    }
+
+    RHI::TexturePtr DDGIProbePass::GetDistanceAtlas(
+        uint32_t frameIndex,
+        uint32_t viewId,
+        uint32_t viewportId) const
+    {
+        for (const FrameResources& resources : m_FrameResources)
+        {
+            if (resources.FrameIndex == frameIndex && resources.ViewId == viewId &&
+                resources.ViewportId == viewportId && resources.bAtlasValid)
+            {
+                return resources.DistanceAtlas;
+            }
+        }
+        return nullptr;
+    }
+
+    uint32_t DDGIProbePass::GetAtlasProbeCount(
+        uint32_t frameIndex,
+        uint32_t viewId,
+        uint32_t viewportId) const
+    {
+        for (const FrameResources& resources : m_FrameResources)
+        {
+            if (resources.FrameIndex == frameIndex && resources.ViewId == viewId &&
+                resources.ViewportId == viewportId && resources.bAtlasValid)
+            {
+                return resources.AtlasProbeCount;
+            }
+        }
+        return 0u;
+    }
+
     void DDGIProbePass::DisableAfterResourceFailure(const char* reason)
     {
         m_bUnavailable = true;
@@ -578,6 +1091,13 @@ namespace NorvesLib::Core::Rendering
         m_FrameResources.clear();
         m_Pipeline.reset();
         m_ComputeShader.reset();
+        m_IrradianceUpdatePipeline.reset();
+        m_IrradianceUpdateShader.reset();
+        m_AtlasSampler.reset();
+        m_DefaultIrradianceAtlas.reset();
+        m_DefaultDistanceAtlas.reset();
+        m_DefaultIrradianceAtlasState = RHI::ResourceState::Undefined;
+        m_DefaultDistanceAtlasState = RHI::ResourceState::Undefined;
         m_Device = nullptr;
         m_bPipelineAttempted = false;
         m_bUnavailable = false;

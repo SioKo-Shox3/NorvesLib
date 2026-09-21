@@ -183,6 +183,23 @@ register_rendering_gpu_test(
     DDGIProbeRadianceVulkanTest
     DDGIProbeRadianceVulkanTest
 )
+add_executable(DDGIProbeUpdateVulkanTest
+    DDGIProbeUpdateVulkanTest.cpp
+)
+target_link_libraries(DDGIProbeUpdateVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(DDGIProbeUpdateVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(DDGIProbeUpdateVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(DDGIProbeUpdateVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    DDGIProbeUpdateVulkanTest
+    DDGIProbeUpdateVulkanTest
+)
 add_executable(RHIRayTracingPipelineVulkanTest
     RHIRayTracingPipelineVulkanTest.cpp
 )
