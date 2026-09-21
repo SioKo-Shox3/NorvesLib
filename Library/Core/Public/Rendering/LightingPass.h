@@ -15,6 +15,7 @@ using namespace NorvesLib::Core::Container;
 
 namespace NorvesLib::Core::Rendering
 {
+    struct GPULightingParams;
 
     /**
      * @brief ライティングパス設定
@@ -146,15 +147,20 @@ namespace NorvesLib::Core::Rendering
         friend struct DDGIProbeRayQueryVulkanTestAccess;
 
         /**
-         * @brief ライト情報をGPUバッファにパック
+         * @brief ライト情報をGPUバッファ向けに構築
          *
          * 更新に成功したフレームは、同じViewRenderContextへ物理ライトSSBO・方向影・
-         * radiometric IBLリソースを公開します。ForwardPassはこの公開値だけを使用します。
+         * IBLリソースを公開します。ForwardPassはこの公開値だけを使用します。
+         * outParamsが有効な場合はGPU定数を返し、GPUバッファの更新を呼出元へ委ねます。
          * @param context 描画コンテキスト
          * @param bShadowAvailable シャドウマップが利用可能か
          * @param bSSAOAvailable SSAOテクスチャが利用可能か
+         * @param outParams GPU定数の出力先。nullptrの場合はGPUバッファへ直接反映します。
          */
-        bool UpdateLightBuffer(ViewRenderContext& context, bool bShadowAvailable, bool bSSAOAvailable);
+        bool UpdateLightBuffer(ViewRenderContext& context,
+                               bool bShadowAvailable,
+                               bool bSSAOAvailable,
+                               GPULightingParams* outParams = nullptr);
         bool EnsureLightArrayBufferCapacity(uint32_t requiredLightCount);
         uint32_t GetLightArrayBufferSizeBytes() const;
 

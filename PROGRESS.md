@@ -45,9 +45,9 @@
 - R4-P2: `578236d`。DDGI volumeとlinear BaseColor/emissiveを値所有snapshot化し、RHI非対応時の無効化とpacket clearを固定した。Debug build exit 0、専用CTest 1/1 passed。
 - R4-P3: FramePacketのTLASへ64方向のcompute ray queryをLightingPassからdispatchし、hit距離・instance/primitive属性とmissをGPU readbackした。同一command listのTLAS build→dispatch、frame slot再利用、RT無効時の番兵維持とSceneColor一致、pipeline/result-buffer生成例外時のDDGI停止・描画継続を固定した。`Game`とGPUテストのDebug buildはexit 0、専用CTestは1/1 passed。
 - R4-P3A: `1ec32dd`。ray hit三角形normal・FramePacketのBaseColor/emissive・遮蔽付きdirectional/point/spot radianceとmiss環境をscene-linear ray結果へ保存した。frame slotごとにBDA geometry buffersを保持し、shaderInt64対応を有効化・ゲートした。Debug build exit 0、P3/P3A validation GPU CTest 2/2 passed、radiance readback期待値一致、独立評価PASS。
-- R4-P5: DDGIのirradiance atlasをLightingPassへ接続し、volume内でvisibility-weighted probe補間による間接拡散を加えた。無効・volume外・RT非対応・不完全atlasでは既存diffuse IBLへ戻る。指定Debug build exit 0、対象CTest 2/2 passed。
 
 ## In progress
+- R4-P5 follow-up: 実装commit `a1b581a` の対象build/CTestは通過したが、独立評価でbinding 4の64 byte部分更新が既存`RenderGraphCompileTest`の784 byte FakeBuffer前提を壊すblocking回帰を検出。`RenderGraphCompileTest`を含む修正・検証・再評価をR4-P6より先に行う。
 
 ## Next
 

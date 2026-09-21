@@ -6038,6 +6038,7 @@ namespace
 
         RHI::TextureDesc namedShadowDesc =
             RHI::TextureDesc::DepthStencil(128, 128, RHI::Format::D32_FLOAT, "NamedShadowMap");
+        namedShadowDesc.ArraySize = PhysicalLightingShadowCascadeCount;
         RHI::TextureDesc legacyShadowDesc =
             RHI::TextureDesc::DepthStencil(128, 128, RHI::Format::D32_FLOAT, "LegacyShadowMap");
         RHI::TexturePtr namedShadowMap = device->CreateTexture(namedShadowDesc);

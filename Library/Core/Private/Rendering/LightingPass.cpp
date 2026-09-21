@@ -2414,7 +2414,11 @@ namespace NorvesLib::Core::Rendering
         const bool bShadowResourceAvailable =
             shadowMapTexture &&
             shadowMapTexture->GetArraySize() == PhysicalLightingShadowCascadeCount;
-        if (!UpdateLightBuffer(context, bShadowResourceAvailable, ssaoTexture != nullptr))
+        GPULightingParams lightingParams = {};
+        if (!UpdateLightBuffer(context,
+                               bShadowResourceAvailable,
+                               ssaoTexture != nullptr,
+                               &lightingParams))
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to update lighting light buffer, skipping lighting draw");
             return;
@@ -2463,9 +2467,8 @@ namespace NorvesLib::Core::Rendering
             ddgiParameters.probeCounts[3] = ddgiAtlasProbeCount;
             ddgiParameters.info[0] = 1u;
         }
-        m_LightDataBuffer->Update(&ddgiParameters,
-                                  sizeof(ddgiParameters),
-                                  offsetof(GPULightingParams, ddgi));
+        lightingParams.ddgi = ddgiParameters;
+        m_LightDataBuffer->Update(&lightingParams, sizeof(lightingParams));
 
         if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {
@@ -2790,7 +2793,8 @@ namespace NorvesLib::Core::Rendering
 
     bool LightingPass::UpdateLightBuffer(ViewRenderContext& context,
                                          bool bShadowAvailable,
-                                         bool bSSAOAvailable)
+                                         bool bSSAOAvailable,
+                                         GPULightingParams* outParams)
     {
         // ライティングパラメータを構築
         GPULightingParams params = {};
@@ -2986,7 +2990,14 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        m_LightDataBuffer->Update(&params, sizeof(GPULightingParams));
+        if (outParams != nullptr)
+        {
+            *outParams = params;
+        }
+        else
+        {
+            m_LightDataBuffer->Update(&params, sizeof(GPULightingParams));
+        }
         if (lightCount > 0)
         {
             m_LightArrayBuffer->Update(lightArray.data(), sizeof(GPULightData) * lightCount);
