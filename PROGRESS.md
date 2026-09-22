@@ -60,13 +60,14 @@
 - R6-P1-FIX-2: SceneRevisionを全MeshProxy/SkinnedMeshProxyの順序非依存な構成集合ハッシュへ移し、カリング済みDrawCommand・奥行きソート・物体/UI変換・RT配置を除外した。構成追加削除、メッシュ/材質/環境変更の変化と、カメラ/物体移動・カリング・proxy/UI/RT順序の不変性を性質テストで固定した。指定Game buildとCTest 3/3 passed。証拠は`.harness/runs/20260922-200402/verify-R6-P1-FIX-2-1.txt`と`verify-R6-P1-FIX-2-2.txt`。
 - R6-P2-FIX: 専用`RTGIDiffuseIndirectVulkanTest`で完全TLASと2x2 GBufferをLightingPassへ渡し、ray-query computeのhit/miss finite radiance、RTGI公開、無効化/TLAS不完全時の既存raster fallbackをGPU readbackで固定した。RTGI descriptorのsampler/storage image bindingずれも修正し、R5 RT pipeline/SBTとRendering3DTest起動経路は変更していない。指定Game build、GPU CTest 3/3、GLSL compileはすべてexit 0。証拠は`.harness/runs/20260922-200402/verify-R6-P2-FIX-5.txt`〜`-7.txt`。
 - R6-P3: current/history ping-pongの履歴slot状態を正しく遷移させ、連続rendered frameだけをvelocity再投影へ使うようにした。P2で追加されたvelocity/RTGI出力をRenderGraph契約へ反映した。指定Game buildはexit 0、`RenderingVelocityCameraVulkanTest`・`RenderingVelocityObjectVulkanTest`・`RenderGraphCompileTest`は3/3 passed。証拠は`.harness/runs/20260923-033012/verify-R6-P3-1.txt`と`verify-R6-P3-2.txt`。
+- R6-P4: 3x3 cross-bilateralデノイザをLightingPassへ接続した。depth/normal/material境界を棄却し、履歴confidenceをweightへ反映する。Gameと対象テストのDebug build、Vulkan 1.2 shader compile、指定CTest 4/4が成功した。RTGI GPU readbackはfinite hit radiance、miss zero、RTGI公開、disabled/TLAS不完全時のfallbackを確認した。証拠は`.harness/runs/20260923-r6-p4-review2/`に保存した。
 
 ## In progress
-- R6-P3まで完了。次はR6-P4の3x3 cross-bilateralデノイザを実装する。
+- R6-P4まで完了。次はR6-P5の静止・動的GI・fallback GPU受入れを固定する。
 
 ## Next
 
-- R6-P4: 3x3 cross-bilateralデノイザを実装する。
+- R6-P5: 静止・カメラ/物体/ライト移動・fallbackと履歴棄却をGPU readbackまたはHDR captureで検証する。
 
 ## Notes
 
