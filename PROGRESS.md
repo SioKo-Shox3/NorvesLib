@@ -29,6 +29,7 @@
 - R5-P2: AS、ray query、RT pipelineを拡張とfeatureごとに照会し、Vulkan 1.2 BDAとdeferred host operationsを含む依存関係を満たす機能だけを論理デバイスで有効化した。非対応時の初期化とラスタ描画を維持する。
 - R5-P3: RHI ShaderStageにRT 6 stageを追加し、Vulkan shadercをstageごとのshaderc kindへ一意に写像した。共通fixtureのDebugビルドはexit 0、6 stageのSPIR-V実行モデルを確認するCTestは1/1 passed。
 - R5-P4: `6501234`。BLAS/TLASのBuild/Update記述子と加速構造resourceをバックエンド非依存APIへ追加した。BLAS内のgeometry type統一と混在拒否、source/destination双方の容量境界、無効入力、RT非対応時の戻り値を契約テストで固定した。
+- R5-P5: `20260922-r5-p5-resume`。BDA vertex/index bufferから不透明triangle BLASを構築し、GPU queryの既知hit/miss、RT非対応時の非公開、従来経路維持、resource寿命を確認した。Debug build exit 0、専用CTest 1/1 passed、直接GPU実行 exit 0、独立評価PASS。容量再問い合わせ、build-input usageの追加検証、行末整理はnon-blockingとしてNEXT_FINDINGS.mdへ記録した。
 - R5-P6: `67780ea` / `29c483d` / `7d8d164`。Vulkan同期TLAS BuildはGPU完了後だけ実instance数を更新し、command-list Build 1件から同期Build 2件への変更、旧件数Update拒否、新件数UpdateとGPU queryを検証した。Debugビルドと専用CTestはexit 0、CTest 1/1 passed、独立評価PASS。証拠は`.harness/runs/20260920-174410/verify-R5-P6-5.txt`、`verify-R5-P6-6.txt`、`evaluator-R5-P6-2.txt`、`evaluator-R5-P6-3.txt`。
 - R5-P7: RayTracing pipeline descriptorにraygen/miss/closest-hit shader groupを加え、Vulkan pipelineとSBT生成を実装した。6 RT stageとAllRayTracingのdescriptor visibility、無効group拒否、group handleとSBT region alignmentをGPUテストで確認した。Debug build exit 0、専用CTest 1/1 passed、独立評価PASS。ログは`.harness/runs/20260920-174410/verify-R5-P7-5.txt`と`verify-R5-P7-6.txt`。
 - R5-P8: `2add53a` / `f9fa15a` / `1267197`。Vulkanの各dispatch軸上限と総呼出し数上限を検査し、同一deviceのTLAS binding、null/BLAS/foreign-device/別descriptor種の拒否、hit=1・miss=0のGPU readbackを固定した。両readback要素を番兵値から初期化して欠落dispatchも検出する。Debug build exit 0、専用CTest 1/1 passed、軸別拒否2件、上限・番兵値の修正差分は独立評価PASS。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-build-3.txt`、`verify-R5-P8-resume-ctest-3.txt`。
@@ -91,7 +92,7 @@
 - R5-P3検証ログ: .harness/runs/20260920-151245/verify-R5-P3-1.txt（Debug build exit 0）とverify-R5-P3-2.txt（CTest 1/1 passed）。
 - R5-P7ではVulkanDescriptorSet.cppに6つのRT stage flagsとAllRayTracingの写像を追加し、RT-only binding付きpipelineを専用GPUテストで確認した。
 - R5-P4検証ログ: `.harness/runs/20260920-151245/verify-R5-P4-6.txt` (Debug build, EXIT_CODE=0)、`verify-R5-P4-7.txt` (CTest 1/1 passed)。
-- R5-P5検証: build exit 0（VulkanDevice.hの既存マクロ再定義warning 2件）、専用CTest 1/1 passed、実行ログでray_query_hit=1 / ray_query_miss=0。証拠は`.harness/runs/20260920-174410/verify-R5-P5-1.txt`〜`verify-R5-P5-3.txt`。独立評価と助言窓口はClaudeのセッション上限で起動できず、blocked/R5-P5.mdに再開条件を記録した。
+- R5-P5再開検証: `20260922-r5-p5-resume`でbuild exit 0、専用CTest 1/1 passed、直接実行 exit 0を確認した。直接ログはBLAS/TLASのframe別hit切替、未送信Build件数破棄、instance数不一致Update拒否、fence後解放を記録する。独立評価は`evaluator-R5-P5-round1.txt`でPASS。旧保留記録は履歴として保持する。
 - R5-P6の独立評価でVulkanTexture::Updateの同期失敗時にstaging buffer/memoryの解放漏れが見つかった。独立フォローアップR5-P13へ登録した。
 - `VK_LAYER_VALIDATE_SYNC=1`をRenderingValidation全体へ設定した診断では、`RHIImageLayoutVulkanNoCasterSceneTest`と`RHIImageLayoutVulkanDrawThenNoCasterSceneTest`がswapchain画像のWRITE_AFTER_READを報告した。通常validationでは両テストが成功し、RT影専用テストも同期validation下で成功する。このswapchain経路は独立した追跡事項としてNEXT_FINDINGS.mdへ記録する。
 - R5-P10の影captureは`shadow_luma=0`/`lit_luma=255`の高コントラスト画像であるため、現在のA/Bは影領域の位置と出力一致を検証し、半影や階調誤差は検出しない。
