@@ -61,14 +61,15 @@
 - R6-P2-FIX: 専用`RTGIDiffuseIndirectVulkanTest`で完全TLASと2x2 GBufferをLightingPassへ渡し、ray-query computeのhit/miss finite radiance、RTGI公開、無効化/TLAS不完全時の既存raster fallbackをGPU readbackで固定した。RTGI descriptorのsampler/storage image bindingずれも修正し、R5 RT pipeline/SBTとRendering3DTest起動経路は変更していない。指定Game build、GPU CTest 3/3、GLSL compileはすべてexit 0。証拠は`.harness/runs/20260922-200402/verify-R6-P2-FIX-5.txt`〜`-7.txt`。
 - R6-P3: current/history ping-pongの履歴slot状態を正しく遷移させ、連続rendered frameだけをvelocity再投影へ使うようにした。P2で追加されたvelocity/RTGI出力をRenderGraph契約へ反映した。指定Game buildはexit 0、`RenderingVelocityCameraVulkanTest`・`RenderingVelocityObjectVulkanTest`・`RenderGraphCompileTest`は3/3 passed。証拠は`.harness/runs/20260923-033012/verify-R6-P3-1.txt`と`verify-R6-P3-2.txt`。
 - R6-P4: 3x3 cross-bilateralデノイザをLightingPassへ接続した。depth/normal/material境界を棄却し、履歴confidenceをweightへ反映する。Gameと対象テストのDebug build、Vulkan 1.2 shader compile、指定CTest 4/4が成功した。RTGI GPU readbackはfinite hit radiance、miss zero、RTGI公開、disabled/TLAS不完全時のfallbackを確認した。証拠は`.harness/runs/20260923-r6-p4-review2/`に保存した。
-- R6-P5: `.harness/runs/20260923-050747/`。HDR captureでRT無効時のIBL、R4 fallback、固定8 rendered-frame warmup後のRTGI静止golden、カメラ/物体移動、履歴棄却、移動後停止、点光源移動の4 rendered-frame以内の追従を確認した。`R6RTGIAcceptanceVulkanTest`は個別実行・全体ラベル内ともにpassed、Game buildはEXIT_CODE=0。既定のRendering3DTest起動経路と既定シーンは変更していない。
+- R6-P5: `.harness/runs/20260923-050747/`。HDR captureでRT無効時のIBL、R4 fallback、固定8 rendered-frame warmup後のRTGI静止golden、カメラ/物体移動、履歴棄却、移動後停止、点光源移動の4 rendered-frame以内の追従を確認し、専用`R6RTGIAcceptanceVulkanTest`は1/1 passed、Game buildはEXIT_CODE=0だった。ただし指定の全体`RenderingValidation`は34 passed・8 skipped・10 failed、EXIT_CODE=8であり、TASKSの状態を`blocked`へ戻した。既定のRendering3DTest起動経路と既定シーンは変更していない。
 
 ## In progress
-- R6-P5完了。次はR6-P6受入れを行う。
+- R6-P5はblocked。専用受入れは通過したが、全体RenderingValidationに失敗が残っている。
+- R6-P6はblocked。R6受入れ記録は保留として作成し、完了trailerは付けていない。
 
 ## Next
 
-- R6-P6の受入れを行い、続けてRenderingRoadmapのR7/R8計画と実装へ進む。
+- R6-P5の全体gate失敗を解消して再検証し、合格後にR6-P6の完了trailer判定へ戻る。R7/R8の実装は前提にしない。
 
 ## Notes
 - R6-P5再開時（2026-09-23）: `cmake --build build --config Debug --target Game RTGIDiffuseIndirectVulkanTest -- /m:1` 成功、`ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R '^RTGIDiffuseIndirectVulkanTest$'` は1/1 passed。ログは`.harness/runs/20260923-r6-p5-resume/`。
@@ -82,6 +83,7 @@
 - R6-P1-FIX検証(2026-09-22): 指定Game buildはEXIT_CODE=0、`RenderingDDGILightingContractTest`・`RayTracingSceneSnapshotTest`・`RenderingVelocityCameraVulkanTest`は3/3 passed。履歴revision差の保持と構成revision不一致のfallbackを契約テストで読戻し確認した。MSBuildのthird-party PDB/libwebsockets生成物warningは継続するが、対象ゲートの終了コードは0。
 - R6-P2-FIX検証(2026-09-23): `verify-R6-P2-FIX-5.txt`はGameと`RTGIDiffuseIndirectVulkanTest`のDebug build EXIT_CODE=0、`verify-R6-P2-FIX-6.txt`は指定GPU 3件が100% passed、`verify-R6-P2-FIX-7.txt`は`DiffuseIndirect.comp`のVulkan 1.2 compile EXIT_CODE=0。GPUテストのreadback出力はfinite、hit positive、miss zero、RTGI公開、disabled/incomplete fallback一致を示す。MSBuildの既存libwebsockets生成物warningは継続するが、対象ゲートの終了コードは0。
 - R6-P3検証(2026-09-23): 指定Game build EXIT_CODE=0、camera/object velocityとRenderGraphCompileTestは3/3 passed。RTGI履歴slotのread/write barrierとrendered FrameNumber連続性を修正した。MSBuildのlibwebsockets生成物warningは継続するが、対象ゲートの終了コードは0。
+- R6-P6開始検証(2026-09-23、run-id `20260923-050747`): 現HEADのGame buildはEXIT_CODE=0、既定シーン120フレームのスモークもEXIT_CODE=0だった。全体`RenderingValidation`の再実行は34 passed・8 skipped・2 failedで終了し、`DDGIProbeRadianceVulkanTest`の点/スポット遮蔽radiance不一致と`RenderingGoldenOutdoorVulkanTest`のgolden mismatchが残った。P5機能gate未完のためR6-P6を完了扱いにしない。
 
 - R5-P8開始ゲート: Debug buildはEXIT_CODE=0、対象CTestは1/1 passed。ログは.harness/runs/20260920-174410/verify-R5-P8-1.txtとverify-R5-P8-2.txt。これは既存P7テストの開始時状態で、P8の完了証拠ではない。
 - R5-P8再開儀式(2026-09-21): `git log --oneline -10`を確認し、再開時Debug build exit 0・専用CTest 1/1 passed。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-baseline-build.txt`と`verify-R5-P8-resume-baseline-ctest.txt`。
