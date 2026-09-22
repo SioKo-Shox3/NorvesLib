@@ -87,6 +87,8 @@ layout(location = 0) out vec4 outColor;
 // ========================================
 
 const float PI = 3.14159265359;
+// 角度重みが完全なゼロになる場合を避け、probe間の補間を安定させる最小床。
+const float DDGI_WRAP_WEIGHT_FLOOR = 0.004;
 const uint DEBUG_VIEW_MODE_NORMAL = 0u;
 const uint DEBUG_VIEW_MODE_UNLIT = 1u;
 const uint DEBUG_VIEW_MODE_WIREFRAME = 2u;
@@ -759,7 +761,7 @@ bool TrySampleDDGIIrradiance(vec3 worldPosition,
             ? probeToPoint / pointDistance
             : normal;
         float wrapShading = (dot(-probeToPointDirection, normal) + 1.0) * 0.5;
-        weight *= wrapShading * wrapShading;
+        weight *= wrapShading * wrapShading + DDGI_WRAP_WEIGHT_FLOOR;
         weight *= SampleDDGIVisibility(probeIndex,
                                        probeToPointDirection,
                                        pointDistance);

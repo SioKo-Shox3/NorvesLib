@@ -161,29 +161,6 @@ namespace NorvesLib::Core::Rendering
                     instanceData.Transform[transformIndex] =
                         snapshot.Instance.transform[transformIndex];
                 }
-                if (snapshot.Instance.customIndex < 6u)
-                {
-                    NORVES_LOG_WARNING("DDGIProbePass",
-                                    "instance custom=%u luminance=%f color=%f,%f,%f vertices=%u indices=%u count=%u",
-                                    snapshot.Instance.customIndex,
-                                    snapshot.Material.EmissiveLuminanceNits,
-                                    snapshot.Material.EmissiveColor[0],
-                                    snapshot.Material.EmissiveColor[1],
-                                    snapshot.Material.EmissiveColor[2],
-                                    snapshot.VertexCount,
-                                    snapshot.IndexCount,
-                                    static_cast<uint32_t>(scene.Instances.size()));
-                }
-                if (snapshot.Material.EmissiveLuminanceNits > 0.0f)
-                {
-                    NORVES_LOG_WARNING("DDGIProbePass",
-                                    "emissive instance custom=%u luminance=%f color=%f,%f,%f",
-                                    snapshot.Instance.customIndex,
-                                    snapshot.Material.EmissiveLuminanceNits,
-                                    snapshot.Material.EmissiveColor[0],
-                                    snapshot.Material.EmissiveColor[1],
-                                    snapshot.Material.EmissiveColor[2]);
-                }
                 outInstances.push_back(instanceData);
                 outGeometryBuffers.push_back(vertexBuffer);
                 outGeometryBuffers.push_back(indexBuffer);

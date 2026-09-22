@@ -67,6 +67,8 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Pro
 const float GoldenAngleRadians = 2.39996322972865332;
 const float Pi = 3.14159265358979323846;
 const float DistanceConeExponent = 32.0;
+// 角度重みが完全なゼロになる場合を避け、既存の一段加算契約を維持する最小床。
+const float WrapWeightFloor = 0.004;
 const uint InvalidHitAttribute = 0xFFFFFFFFu;
 
 float SignNotZero(float value)
@@ -244,7 +246,7 @@ vec3 SamplePreviousIrradiance(vec3 worldPosition, vec3 surfaceNormal, vec3 baseC
         }
         vec3 pointToProbeDirection = -normalize(probeToPoint);
         float wrapShading = (dot(pointToProbeDirection, surfaceNormal) + 1.0) * 0.5;
-        weight *= wrapShading * wrapShading;
+        weight *= wrapShading * wrapShading + WrapWeightFloor;
         weight *= SamplePreviousVisibility(probeIndex, probeToPoint, pointDistance);
 
         vec2 irradianceUv = AtlasUv(EncodeOctahedralDirection(surfaceNormal));
