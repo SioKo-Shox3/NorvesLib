@@ -10,7 +10,8 @@ namespace NorvesLib::Core::Rendering
     {
         PresentationColor,
         SceneColor,
-        BackBuffer
+        BackBuffer,
+        GBufferVelocity
     };
 
     struct FrameCaptureRequest
@@ -75,6 +76,7 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureSource PresentationColor;
         FrameCaptureSource SceneColor;
         FrameCaptureSource BackBuffer;
+        FrameCaptureSource GBufferVelocity;
 
         const FrameCaptureSource* Find(FrameCaptureSourceKind kind) const
         {
@@ -86,6 +88,8 @@ namespace NorvesLib::Core::Rendering
                 return &SceneColor;
             case FrameCaptureSourceKind::BackBuffer:
                 return &BackBuffer;
+            case FrameCaptureSourceKind::GBufferVelocity:
+                return &GBufferVelocity;
             default:
                 return nullptr;
             }
@@ -96,6 +100,7 @@ namespace NorvesLib::Core::Rendering
             PresentationColor = FrameCaptureSource{};
             SceneColor = FrameCaptureSource{};
             BackBuffer = FrameCaptureSource{};
+            GBufferVelocity = FrameCaptureSource{};
         }
     };
 

@@ -443,6 +443,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief メインカメラ情報（ビュー/プロジェクション行列計算用） */
         const CameraProxy *MainCamera = nullptr;
 
+        /** @brief 前フレームのメインカメラ履歴（FramePacket所有、velocity用） */
+        const CameraProxy *PreviousMainCamera = nullptr;
+
         /** @brief FramePacketが所有する空パラメータのスナップショット（未接続時は無効） */
         const SceneProxy *SnapshotScene = nullptr;
 
@@ -533,6 +536,15 @@ namespace NorvesLib::Core::Rendering
         const CameraProxy *GetActiveCamera() const
         {
             return CurrentCamera ? CurrentCamera : MainCamera;
+        }
+
+        const CameraProxy *GetPreviousCamera() const
+        {
+            const CameraProxy *activeCamera = GetActiveCamera();
+            return activeCamera && PreviousMainCamera &&
+                           activeCamera->CameraId == PreviousMainCamera->CameraId
+                       ? PreviousMainCamera
+                       : nullptr;
         }
 
         DrawCommandView GetActiveDrawCommands() const

@@ -38,11 +38,13 @@ namespace NorvesLib::Core::Rendering
         }
 
         void FillGPUSceneInstanceData(const Math::Matrix4x4 &world,
+                                      const Math::Matrix4x4 &previousWorld,
                                       const Math::Matrix4x4 &normalMatrix,
                                       const float *customData,
                                       GPUSceneInstanceData &outData)
         {
             Math::MatrixUtils::CopyToShaderData(world, outData.World);
+            Math::MatrixUtils::CopyToShaderData(previousWorld, outData.PreviousWorld);
 
             Math::MatrixUtils::CopyUpper3x3ToShaderData(normalMatrix, outData.NormalMatrix);
 
@@ -166,7 +168,8 @@ namespace NorvesLib::Core::Rendering
                                   proxy.ObjectId,
                                   proxy.CustomData,
                                   proxy.bCastShadow,
-                                  proxy.SortDepth);
+                                  proxy.SortDepth,
+                                  &proxy.PreviousWorldTransform);
             }
             return;
         }
@@ -210,7 +213,8 @@ namespace NorvesLib::Core::Rendering
                               proxy.ObjectId,
                               proxy.CustomData,
                               proxy.bCastShadow,
-                              proxy.SortDepth);
+                              proxy.SortDepth,
+                              &proxy.PreviousWorldTransform);
         }
     }
 
@@ -272,8 +276,13 @@ namespace NorvesLib::Core::Rendering
 
                     const Math::Matrix4x4 normalMatrix =
                         Math::MatrixUtils::CreateNormalMatrix(batch.InstanceTransforms[instanceIndex]);
+                    const Math::Matrix4x4 &previousWorld =
+                        instanceIndex < batch.InstancePreviousTransforms.size()
+                            ? batch.InstancePreviousTransforms[instanceIndex]
+                            : batch.InstanceTransforms[instanceIndex];
                     GPUSceneInstanceData instanceData;
                     FillGPUSceneInstanceData(batch.InstanceTransforms[instanceIndex],
+                                             previousWorld,
                                              normalMatrix,
                                              customData,
                                              instanceData);
@@ -321,8 +330,14 @@ namespace NorvesLib::Core::Rendering
                 }
                 cmd.Draw.NormalMatrix = Math::MatrixUtils::CreateNormalMatrix(cmd.Draw.WorldMatrix);
 
+                const Math::Matrix4x4 &previousWorld =
+                    instanceIndex < batch.InstancePreviousTransforms.size()
+                        ? batch.InstancePreviousTransforms[instanceIndex]
+                        : cmd.Draw.WorldMatrix;
+
                 GPUSceneInstanceData instanceData;
                 FillGPUSceneInstanceData(cmd.Draw.WorldMatrix,
+                                         previousWorld,
                                          cmd.Draw.NormalMatrix,
                                          cmd.Draw.CustomData,
                                          instanceData);

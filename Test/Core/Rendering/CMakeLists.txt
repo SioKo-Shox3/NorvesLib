@@ -350,6 +350,44 @@ register_rendering_gpu_test(
 set_tests_properties(RenderingValidationFixtureVulkanSkipContractTest PROPERTIES
     ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
 
+add_executable(RenderingVelocityVulkanTest
+    RenderingVelocityVulkanTest.cpp
+)
+target_link_libraries(RenderingVelocityVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+)
+target_include_directories(RenderingVelocityVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RenderingVelocityVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RenderingVelocityStaticVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=indoor
+    --capture-source=gbuffer-velocity
+    --scenario=static)
+register_rendering_gpu_test(
+    RenderingVelocityMotionVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=camera-object-motion)
+register_rendering_gpu_test(
+    RenderingVelocityFirstFrameVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=indoor
+    --capture-source=gbuffer-velocity
+    --scenario=first-frame-invalid-history)
+register_rendering_gpu_test(
+    RenderingVelocityVulkanSkipContractTest
+    RenderingVelocityVulkanTest
+    --scene=indoor
+    --capture-source=gbuffer-velocity
+    --scenario=first-frame-invalid-history)
+set_tests_properties(RenderingVelocityVulkanSkipContractTest PROPERTIES
+    ENVIRONMENT "NORVESLIB_FORCE_GPU_TEST_SKIP=1")
+
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp
 )

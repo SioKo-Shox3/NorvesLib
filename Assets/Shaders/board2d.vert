@@ -3,6 +3,7 @@
 struct InstanceData
 {
     mat4 world;
+    mat4 previousWorld;
     vec4 normalRows[3];
     vec4 objectColor;
     vec4 customData;

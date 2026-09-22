@@ -8,6 +8,7 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity GBufferNormal = Identity::Literal("GBuffer.Normal", sizeof("GBuffer.Normal") - 1);
     inline constexpr Identity GBufferMaterial = Identity::Literal("GBuffer.Material", sizeof("GBuffer.Material") - 1);
     inline constexpr Identity GBufferEmissive = Identity::Literal("GBuffer.Emissive", sizeof("GBuffer.Emissive") - 1);
+    inline constexpr Identity GBufferVelocity = Identity::Literal("GBuffer.Velocity", sizeof("GBuffer.Velocity") - 1);
     inline constexpr Identity GBufferDepth = Identity::Literal("GBuffer.Depth", sizeof("GBuffer.Depth") - 1);
     inline constexpr Identity ShadowMap = Identity::Literal("ShadowMap", sizeof("ShadowMap") - 1);
     inline constexpr Identity SkyAtmosphereTransmittance =

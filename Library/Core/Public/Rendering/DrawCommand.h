@@ -389,6 +389,7 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         Container::VariableArray<Math::Matrix4x4> InstanceTransforms;
+        Container::VariableArray<Math::Matrix4x4> InstancePreviousTransforms;
         Container::VariableArray<uint64_t> InstanceObjectIds; // 元のObjectID（デバッグ用）
 
         /**
@@ -413,9 +414,11 @@ namespace NorvesLib::Core::Rendering
          */
         void AddInstance(const Math::Matrix4x4 &worldTransform, uint64_t objectId = 0,
                          const float *customData = nullptr, bool bCastShadow = true,
-                         float sortDepth = 0.0f)
+                         float sortDepth = 0.0f,
+                         const Math::Matrix4x4 *previousWorldTransform = nullptr)
         {
             InstanceTransforms.push_back(worldTransform);
+            InstancePreviousTransforms.push_back(previousWorldTransform ? *previousWorldTransform : worldTransform);
             InstanceObjectIds.push_back(objectId);
             PerInstanceExtraData extra;
             if (customData)
@@ -449,6 +452,7 @@ namespace NorvesLib::Core::Rendering
         void Clear()
         {
             InstanceTransforms.clear();
+            InstancePreviousTransforms.clear();
             InstanceObjectIds.clear();
             InstanceExtraData.clear();
         }

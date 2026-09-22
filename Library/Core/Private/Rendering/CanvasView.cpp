@@ -191,6 +191,7 @@ namespace NorvesLib::Core::Rendering
                                    GPUSceneInstanceData &outData)
         {
             Math::MatrixUtils::CopyToShaderData(proxy.WorldTransform, outData.World);
+            Math::MatrixUtils::CopyToShaderData(proxy.PreviousWorldTransform, outData.PreviousWorld);
 
             for (float &value : outData.NormalMatrix)
             {

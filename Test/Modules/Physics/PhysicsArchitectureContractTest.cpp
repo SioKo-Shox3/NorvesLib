@@ -77,10 +77,10 @@ namespace
     static_assert(!std::is_same_v<TArrayElement<decltype(Rendering::SceneProxy::LightProxies)>, Entity>);
     static_assert(std::is_same_v<TArrayElement<decltype(Rendering::SceneProxy::SkinnedMeshProxies)>, Rendering::SkinnedMeshProxy>);
     static_assert(std::is_same_v<TArrayElement<decltype(Rendering::SkinnedMeshProxy::BonePalette)>, Math::Matrix4x4>);
-    static_assert(sizeof(Rendering::FramePacket) == 768);
-    static_assert(alignof(Rendering::FramePacket) == 8);
-    static_assert(sizeof(Rendering::SceneProxy) == 352);
-    static_assert(alignof(Rendering::SceneProxy) == 8);
+    static_assert(sizeof(Rendering::FramePacket) == 1104);
+    static_assert(alignof(Rendering::FramePacket) == 16);
+    static_assert(sizeof(Rendering::SceneProxy) == 496);
+    static_assert(alignof(Rendering::SceneProxy) == 16);
 
     bool IsAsciiIdentifierCharacter(char character)
     {

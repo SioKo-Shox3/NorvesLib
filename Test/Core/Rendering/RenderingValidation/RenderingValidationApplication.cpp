@@ -80,6 +80,10 @@ namespace NorvesLib::Test::RenderingValidation
                 {
                     m_RunConfig.CaptureSource = Core::Rendering::FrameCaptureSourceKind::BackBuffer;
                 }
+                else if (value == TEXT("gbuffer-velocity"))
+                {
+                    m_RunConfig.CaptureSource = Core::Rendering::FrameCaptureSourceKind::GBufferVelocity;
+                }
                 else
                 {
                     LOG_ERROR("描画検証の capture-source 値が不正です");

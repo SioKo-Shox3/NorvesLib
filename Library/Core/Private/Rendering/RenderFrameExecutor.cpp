@@ -2,6 +2,7 @@
 #include "Rendering/CanvasView.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/GBufferPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/View.h"
@@ -55,6 +56,19 @@ namespace NorvesLib::Core::Rendering
                 result.CaptureSources.SceneColor,
                 primarySceneView->GetFrameSceneColorTexture(),
                 request.Packet->FrameNumber);
+
+            if (request.Packet->CaptureRequest.SourceKind == FrameCaptureSourceKind::GBufferVelocity)
+            {
+                auto* gbufferPass = dynamic_cast<GBufferPass*>(
+                    primarySceneView->FindPass("GBufferPass"));
+                if (gbufferPass)
+                {
+                    SetFrameCaptureSource(
+                        result.CaptureSources.GBufferVelocity,
+                        gbufferPass->GetVelocityTexturePtr(),
+                        request.Packet->FrameNumber);
+                }
+            }
         }
     } // namespace
 

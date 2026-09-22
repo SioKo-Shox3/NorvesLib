@@ -8,14 +8,18 @@ layout(set = 0, binding = 0) uniform MVPData
 {
     mat4 view;
     mat4 projection;
+    mat4 previousView;
+    mat4 previousProjection;
     vec4 cameraPosition;
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;      // x=heightScale, y=hasHeightMap, z=unused, w=unused
+    vec4 velocityParams;  // x=前フレームカメラ履歴の有効フラグ
 } mvp;
 
 struct InstanceData
 {
     mat4 world;
+    mat4 previousWorld;
     vec4 normalRows[3];
     vec4 objectColor;
     vec4 customData;
@@ -32,6 +36,8 @@ layout(location = 2) out vec3 fragObjectColor;
 layout(location = 3) out vec4 fragEmissiveChromaticityAndLuminanceNits;
 layout(location = 4) out vec2 fragTexCoord;
 layout(location = 5) out vec3 fragViewDir;  // ワールド空間でのカメラ方向
+layout(location = 6) out vec4 fragCurrentClip;
+layout(location = 7) out vec4 fragPreviousClip;
 
 void main()
 {
@@ -48,5 +54,8 @@ void main()
     fragTexCoord = inTexCoord;
     fragViewDir = normalize(mvp.cameraPosition.xyz - worldPos.xyz);
 
-    gl_Position = mvp.projection * mvp.view * worldPos;
+    fragCurrentClip = mvp.projection * mvp.view * worldPos;
+    fragPreviousClip = mvp.previousProjection * mvp.previousView *
+                       instances[gl_InstanceIndex].previousWorld * vec4(inPosition, 1.0);
+    gl_Position = fragCurrentClip;
 }

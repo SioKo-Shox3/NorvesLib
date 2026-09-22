@@ -6,15 +6,20 @@ layout(location = 2) in vec3 fragObjectColor;
 layout(location = 3) in vec4 fragEmissiveChromaticityAndLuminanceNits;
 layout(location = 4) in vec2 fragTexCoord;
 layout(location = 5) in vec3 fragViewDir;
+layout(location = 6) in vec4 fragCurrentClip;
+layout(location = 7) in vec4 fragPreviousClip;
 
 // UBOからPOMパラメータを参照
 layout(set = 0, binding = 0) uniform MVPData
 {
     mat4 view;
     mat4 projection;
+    mat4 previousView;
+    mat4 previousProjection;
     vec4 cameraPosition;
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;  // x=heightScale, y=hasHeightMap, z=unused, w=unused
+    vec4 velocityParams; // x=前フレームカメラ履歴の有効フラグ
 } mvp;
 
 // PBRテクスチャサンプラー
@@ -30,6 +35,7 @@ layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
 layout(location = 1) out vec4 outNormal;    // RT1: World Normal (RGB) + unused
 layout(location = 2) out vec4 outMaterial;  // RT2: Metallic(R) / Roughness(G) / AO(B) / unused(A)
 layout(location = 3) out vec4 outEmissive;  // RT3: Emissive (RGB, HDR) + unused
+layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV
 
 /**
  * @brief スクリーンスペース微分からTBN行列を計算（Cotangent Frame法）
@@ -170,4 +176,19 @@ void main()
     vec3 physicalEmissive = fragEmissiveChromaticityAndLuminanceNits.rgb *
                             fragEmissiveChromaticityAndLuminanceNits.a;
     outEmissive = vec4(physicalEmissive, 1.0);
+
+    outVelocity = vec2(0.0);
+    if (mvp.velocityParams.x > 0.5 &&
+        abs(fragCurrentClip.w) > 1e-6 &&
+        abs(fragPreviousClip.w) > 1e-6)
+    {
+        vec2 currentNdc = fragCurrentClip.xy / fragCurrentClip.w;
+        vec2 previousNdc = fragPreviousClip.xy / fragPreviousClip.w;
+        vec2 velocity = (currentNdc - previousNdc) * 0.5;
+        if (all(equal(velocity, velocity)) &&
+            dot(velocity, velocity) < 1.0e6)
+        {
+            outVelocity = velocity;
+        }
+    }
 }

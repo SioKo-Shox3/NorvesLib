@@ -2659,11 +2659,12 @@ namespace
         assert(pass.GetNormalHandle().IsValid());
         assert(pass.GetMaterialHandle().IsValid());
         assert(pass.GetEmissiveHandle().IsValid());
+        assert(pass.GetVelocityHandle().IsValid());
         assert(pass.GetDepthHandle().IsValid());
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 5);
-        for (uint32_t i = 0; i < 4; ++i)
+        assert(barriers.size() == 6);
+        for (uint32_t i = 0; i < 5; ++i)
         {
             assert(barriers[i].Kind == RGBarrierKind::Texture);
             assert(barriers[i].BeforeState == RHI::ResourceState::Undefined);
@@ -2671,11 +2672,11 @@ namespace
             assert(barriers[i].PassIndex == 0);
             assert(barriers[i].CompiledOrderIndex == 0);
         }
-        assert(barriers[4].Kind == RGBarrierKind::Texture);
-        assert(barriers[4].BeforeState == RHI::ResourceState::Undefined);
-        assert(barriers[4].AfterState == RHI::ResourceState::DepthWrite);
-        assert(barriers[4].PassIndex == 0);
-        assert(barriers[4].CompiledOrderIndex == 0);
+        assert(barriers[5].Kind == RGBarrierKind::Texture);
+        assert(barriers[5].BeforeState == RHI::ResourceState::Undefined);
+        assert(barriers[5].AfterState == RHI::ResourceState::DepthWrite);
+        assert(barriers[5].PassIndex == 0);
+        assert(barriers[5].CompiledOrderIndex == 0);
     }
 
     void TestGBufferSSAONativeDeclareDependencies()
@@ -2740,8 +2741,8 @@ namespace
         assert(order[1] == ssaoPassIndex);
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 7);
-        for (uint32_t i = 0; i < 4; ++i)
+        assert(barriers.size() == 8);
+        for (uint32_t i = 0; i < 5; ++i)
         {
             assert(barriers[i].Kind == RGBarrierKind::Texture);
             assert(barriers[i].BeforeState == RHI::ResourceState::Undefined);
@@ -2749,22 +2750,22 @@ namespace
             assert(barriers[i].PassIndex == gbufferPassIndex);
             assert(barriers[i].CompiledOrderIndex == 0);
         }
-        assert(barriers[4].Kind == RGBarrierKind::Texture);
-        assert(barriers[4].BeforeState == RHI::ResourceState::Undefined);
-        assert(barriers[4].AfterState == RHI::ResourceState::DepthWrite);
-        assert(barriers[4].PassIndex == gbufferPassIndex);
-        assert(barriers[4].CompiledOrderIndex == 0);
-
         assert(barriers[5].Kind == RGBarrierKind::Texture);
         assert(barriers[5].BeforeState == RHI::ResourceState::Undefined);
-        assert(barriers[5].AfterState == RHI::ResourceState::RenderTarget);
-        assert(barriers[5].PassIndex == ssaoPassIndex);
-        assert(barriers[5].CompiledOrderIndex == 1);
+        assert(barriers[5].AfterState == RHI::ResourceState::DepthWrite);
+        assert(barriers[5].PassIndex == gbufferPassIndex);
+        assert(barriers[5].CompiledOrderIndex == 0);
+
         assert(barriers[6].Kind == RGBarrierKind::Texture);
         assert(barriers[6].BeforeState == RHI::ResourceState::Undefined);
         assert(barriers[6].AfterState == RHI::ResourceState::RenderTarget);
         assert(barriers[6].PassIndex == ssaoPassIndex);
         assert(barriers[6].CompiledOrderIndex == 1);
+        assert(barriers[7].Kind == RGBarrierKind::Texture);
+        assert(barriers[7].BeforeState == RHI::ResourceState::Undefined);
+        assert(barriers[7].AfterState == RHI::ResourceState::RenderTarget);
+        assert(barriers[7].PassIndex == ssaoPassIndex);
+        assert(barriers[7].CompiledOrderIndex == 1);
     }
 
     void TestGBufferSSAOLightingNativeDeclareDependencies()
@@ -2877,12 +2878,12 @@ namespace
         assert(order[2] == lightingPassIndex);
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 8);
-        assert(barriers[7].Kind == RGBarrierKind::Texture);
-        assert(barriers[7].BeforeState == RHI::ResourceState::Undefined);
-        assert(barriers[7].AfterState == RHI::ResourceState::RenderTarget);
-        assert(barriers[7].PassIndex == lightingPassIndex);
-        assert(barriers[7].CompiledOrderIndex == 2);
+        assert(barriers.size() == 9);
+        assert(barriers[8].Kind == RGBarrierKind::Texture);
+        assert(barriers[8].BeforeState == RHI::ResourceState::Undefined);
+        assert(barriers[8].AfterState == RHI::ResourceState::RenderTarget);
+        assert(barriers[8].PassIndex == lightingPassIndex);
+        assert(barriers[8].CompiledOrderIndex == 2);
     }
 
     void TestGBufferSSAOLightingNativeDeclareUsesNamedResourcesWithoutPassPointers()
@@ -3130,19 +3131,19 @@ namespace
         assert(order[3] == forwardPassIndex);
 
         const auto& barriers = graph.GetCompiledBarriers();
-        assert(barriers.size() == 10);
-        assert(barriers[8].Kind == RGBarrierKind::Texture);
-        assert(barriers[8].Resource == lightingPass.GetSceneColorHandle());
-        assert(barriers[8].BeforeState == RHI::ResourceState::ShaderResource);
-        assert(barriers[8].AfterState == RHI::ResourceState::RenderTarget);
-        assert(barriers[8].PassIndex == forwardPassIndex);
-        assert(barriers[8].CompiledOrderIndex == 3);
+        assert(barriers.size() == 11);
         assert(barriers[9].Kind == RGBarrierKind::Texture);
-        assert(barriers[9].Resource == gbufferPass.GetDepthHandle());
+        assert(barriers[9].Resource == lightingPass.GetSceneColorHandle());
         assert(barriers[9].BeforeState == RHI::ResourceState::ShaderResource);
-        assert(barriers[9].AfterState == RHI::ResourceState::DepthRead);
+        assert(barriers[9].AfterState == RHI::ResourceState::RenderTarget);
         assert(barriers[9].PassIndex == forwardPassIndex);
         assert(barriers[9].CompiledOrderIndex == 3);
+        assert(barriers[10].Kind == RGBarrierKind::Texture);
+        assert(barriers[10].Resource == gbufferPass.GetDepthHandle());
+        assert(barriers[10].BeforeState == RHI::ResourceState::ShaderResource);
+        assert(barriers[10].AfterState == RHI::ResourceState::DepthRead);
+        assert(barriers[10].PassIndex == forwardPassIndex);
+        assert(barriers[10].CompiledOrderIndex == 3);
     }
 
     void TestSSRNativeDeclareDependencies()
@@ -4160,7 +4161,7 @@ namespace
         exportedTexture.reset();
         assert(!result.TryGetTexture(RenderGraphResourceNames::SceneDepth, exportedTexture));
         assert(exportedTexture == nullptr);
-        assert(commandList.Barriers.size() == 8);
+        assert(commandList.Barriers.size() == 9);
         assert(commandList.BeginRenderPassCount == 4);
         assert(commandList.EndRenderPassCount == 4);
         assert(commandList.DrawCallCount == 3);
@@ -4821,7 +4822,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 4);
-        assert(commandList.Barriers.size() == 10);
+        assert(commandList.Barriers.size() == 11);
         assert(commandList.BeginRenderPassCount == 5);
         assert(commandList.EndRenderPassCount == 5);
         assert(commandList.DrawCallCount == 3);
@@ -4913,7 +4914,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 5);
-        assert(commandList.Barriers.size() == 12);
+        assert(commandList.Barriers.size() == 13);
         assert(commandList.BeginRenderPassCount == 6);
         assert(commandList.EndRenderPassCount == 6);
         assert(commandList.DrawCallCount == 4);
@@ -6232,7 +6233,7 @@ namespace
         assert(graph.Execute(context));
 
         assert(graph.GetLastExecutedPassCount() == 1);
-        assert(commandList.Barriers.size() == 5);
+        assert(commandList.Barriers.size() == 6);
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
         assert(commandList.DrawCallCount == 0);
@@ -6241,6 +6242,7 @@ namespace
         assert(sharedResources.HasTexture("GBuffer_Normal"));
         assert(sharedResources.HasTexture("GBuffer_Material"));
         assert(sharedResources.HasTexture("GBuffer_Emissive"));
+        assert(sharedResources.HasTexture("GBuffer_Velocity"));
         assert(sharedResources.HasTexture("GBuffer_Depth"));
 
         pass.Shutdown();

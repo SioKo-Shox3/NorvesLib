@@ -324,6 +324,9 @@ namespace NorvesLib::Core::Rendering
         case RHI::Format::R16G16B16A16_FLOAT:
             outBytesPerPixel = 8;
             return true;
+        case RHI::Format::R16G16_FLOAT:
+            outBytesPerPixel = 4;
+            return true;
         default:
             outBytesPerPixel = 0;
             return false;

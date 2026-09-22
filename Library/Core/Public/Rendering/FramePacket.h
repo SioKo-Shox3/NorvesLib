@@ -111,6 +111,8 @@ namespace NorvesLib::Core::Rendering
         // ========================================
 
         bool bHasMainCamera = false;
+        bool bHasPreviousMainCamera = false;
+        CameraProxy PreviousMainCamera;
         SceneProxy Scene;
         RayTracingSceneSnapshot RayTracingScene;
 
@@ -185,6 +187,8 @@ namespace NorvesLib::Core::Rendering
             TotalTime = 0.0;
             CaptureRequest = FrameCaptureRequestSnapshot{};
             bHasMainCamera = false;
+            bHasPreviousMainCamera = false;
+            PreviousMainCamera = CameraProxy{};
             Scene.Clear();
             RayTracingScene.Clear();
             DrawCommands.clear();

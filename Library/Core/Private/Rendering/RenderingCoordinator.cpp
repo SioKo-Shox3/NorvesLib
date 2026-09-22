@@ -1360,6 +1360,8 @@ namespace NorvesLib::Core::Rendering
         m_CanvasCameraId = 0;
         m_NextCameraId = 1;
         m_bCanvasCameraSyncPending.Store(false);
+        m_PreviousMainCamera = CameraProxy{};
+        m_bPreviousMainCameraValid = false;
 
         // SceneRendererの終了
         m_SceneRenderer.Shutdown();
@@ -1577,6 +1579,11 @@ namespace NorvesLib::Core::Rendering
         if (m_CurrentPacket)
         {
             m_CurrentPacket->bHasMainCamera = false;
+            m_CurrentPacket->bHasPreviousMainCamera = m_bPreviousMainCameraValid;
+            if (m_bPreviousMainCameraValid)
+            {
+                m_CurrentPacket->PreviousMainCamera = m_PreviousMainCamera;
+            }
             if (m_bCameraSet)
             {
                 auto mainCamera = m_MainCamera;
@@ -1797,6 +1804,12 @@ namespace NorvesLib::Core::Rendering
         // 書き込み完了をマーク（Writing→Ready）
         // Screen.EndFrame（submit/present）はRenderFrame内で実行するため、ここでは行わない。
         FramePacket* finishedPacket = m_CurrentPacket;
+        CameraProxy finishedCamera;
+        const bool bFinishedCameraValid = m_CurrentPacket && m_CurrentPacket->bHasMainCamera;
+        if (bFinishedCameraValid)
+        {
+            finishedCamera = m_CurrentPacket->Scene.MainCamera;
+        }
         if (m_CurrentPacket)
         {
             m_CurrentPacket->Stats.GameThreadStats = m_GameThreadStats;
@@ -1811,6 +1824,12 @@ namespace NorvesLib::Core::Rendering
             }
             m_PacketManager.FinishWrite(m_CurrentPacket);
             m_CurrentPacket = nullptr;
+        }
+
+        if (bFinishedCameraValid)
+        {
+            m_PreviousMainCamera = finishedCamera;
+            m_bPreviousMainCameraValid = true;
         }
 
         m_GameThreadStats.FrameNumber++;
@@ -2165,6 +2184,9 @@ namespace NorvesLib::Core::Rendering
 
         // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
         viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;
+        viewContext.PreviousMainCamera = packet->bHasPreviousMainCamera
+                                             ? &packet->PreviousMainCamera
+                                             : nullptr;
         viewContext.SnapshotScene = &packet->Scene;
         viewContext.SnapshotRayTracingScene = &packet->RayTracingScene;
         viewContext.SkyAtmosphereSnapshot = packet->Scene.SkyAtmosphere;

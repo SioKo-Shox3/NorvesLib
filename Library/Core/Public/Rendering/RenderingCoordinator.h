@@ -486,6 +486,7 @@ namespace NorvesLib::Core::Rendering
 
         // メインカメラ（GameThreadから設定される）
         CameraProxy m_MainCamera;
+        CameraProxy m_PreviousMainCamera;
         SkyAtmosphereParameters m_SkyAtmosphere;
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
@@ -495,6 +496,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_CanvasCameraId = 0;
         Thread::Atomic<bool> m_bCanvasCameraSyncPending{false};
         bool m_bCameraSet = false;
+        bool m_bPreviousMainCameraValid = false;
 
         // Screen（最終出力先 - SwapChain所有）
         Screen m_Screen;
