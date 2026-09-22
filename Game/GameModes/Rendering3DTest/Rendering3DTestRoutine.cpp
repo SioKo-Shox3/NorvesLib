@@ -1,7 +1,6 @@
 ﻿#include "Rendering3DTestRoutine.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Engine/Engine.h"
-#include "Rendering3DTestDebugDraw.h"
 #include "Core/Public/Object/World.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Component/BoardComponent.h"
@@ -1330,7 +1329,6 @@ namespace Game::GameModes
             }
         }
 
-        SubmitRendering3DTestDebugDraw();
         data.m_PickingController.DrawSelection();
 
         data.m_ElapsedTime += deltaTime;
