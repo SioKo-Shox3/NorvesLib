@@ -70,6 +70,7 @@ layout(set = 0, binding = 15) uniform sampler2D skyTransmittance;
 layout(set = 0, binding = 16) uniform sampler2D rayTracingShadowVisibility;
 layout(set = 0, binding = 17) uniform sampler2DArray ddgiIrradianceAtlas;
 layout(set = 0, binding = 18) uniform sampler2DArray ddgiDistanceAtlas;
+layout(set = 0, binding = 19) uniform sampler2D rtgiDiffuseIndirect;
 
 // SSAO (Screen-Space Ambient Occlusion)
 layout(set = 0, binding = 10) uniform sampler2D ssaoTexture;
@@ -636,6 +637,39 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
     return (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
 }
 
+vec3 EvaluateRTGIEndpoint(vec3 albedo,
+                          float metallic,
+                          float roughness,
+                          vec3 N,
+                          vec3 V,
+                          float ao,
+                          float specularAO,
+                          float iblIntensity,
+                          vec2 brdf,
+                          vec3 rtgiDiffuseRadiance)
+{
+    vec3 diffuse = max(rtgiDiffuseRadiance, vec3(0.0)) * ao;
+    vec3 specular = vec3(0.0);
+    if (params.bIBLEnabled != 0u)
+    {
+        float Ess = max(brdf.x + brdf.y, 0.0001);
+        vec3 F0d = vec3(0.04);
+        vec3 F0c = albedo;
+        vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
+        vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
+        vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
+                        vec3(0.0), vec3(1.0));
+        vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
+                        vec3(0.0), vec3(1.0));
+        vec3 R = reflect(-V, N);
+        vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
+        specular = prefilteredColor *
+                   ((1.0 - metallic) * Ed + metallic * Ec) *
+                   specularAO * iblIntensity;
+    }
+    return diffuse + specular;
+}
+
 float SignNotZero(float value)
 {
     return value < 0.0 ? -1.0 : 1.0;
@@ -1100,6 +1134,23 @@ void main()
                                    params.debugViewMode <= 255u;
         bool bDDGIAvailable = !bDDGIValidationMode &&
             TrySampleDDGIIrradiance(worldPos, N, ddgiIrradiance);
+        bool bRTGIAvailable = !bDDGIValidationMode && params.ddgiInfo.y != 0u;
+        vec3 rtgiDiffuseRadiance = vec3(0.0);
+        if (bRTGIAvailable)
+        {
+            rtgiDiffuseRadiance = texture(rtgiDiffuseIndirect, fragUV).rgb /
+                                  max(params.preExposure, 1.0e-6);
+            if (any(isnan(rtgiDiffuseRadiance)) || any(isinf(rtgiDiffuseRadiance)))
+            {
+                bRTGIAvailable = false;
+                rtgiDiffuseRadiance = vec3(0.0);
+            }
+            else
+            {
+                rtgiDiffuseRadiance = min(max(rtgiDiffuseRadiance, vec3(0.0)),
+                                          vec3(65504.0));
+            }
+        }
 
         // スペキュラAO（Lagarde 2014: 視線角度とラフネスに基づく遮蔽近似）
         specularAO = ComputeSpecularAO(NdotV, ao, roughness);
@@ -1114,17 +1165,28 @@ void main()
                                        vec2(0.5 / 256.0), vec2(255.5 / 256.0));
             vec2 brdf = texture(brdfLUT, dfgCoordinate).rg;
             float ddgiAmbientAO = bDDGIAvailable ? materialSample.b : ao;
-            ambient = EvaluateIblEndpoint(iblAlbedo,
-                                           metallic,
-                                           iblRoughness,
-                                           N,
-                                           V,
-                                           ddgiAmbientAO,
-                                           specularAO,
-                                           iblIntensity,
-                                           brdf,
-                                           bDDGIAvailable,
-                                           ddgiIrradiance);
+            ambient = bRTGIAvailable
+                ? EvaluateRTGIEndpoint(iblAlbedo,
+                                       metallic,
+                                       iblRoughness,
+                                       N,
+                                       V,
+                                       ddgiAmbientAO,
+                                       specularAO,
+                                       iblIntensity,
+                                       brdf,
+                                       rtgiDiffuseRadiance)
+                : EvaluateIblEndpoint(iblAlbedo,
+                                       metallic,
+                                       iblRoughness,
+                                       N,
+                                       V,
+                                       ddgiAmbientAO,
+                                       specularAO,
+                                       iblIntensity,
+                                       brdf,
+                                       bDDGIAvailable,
+                                       ddgiIrradiance);
         }
         else
         {
@@ -1136,7 +1198,24 @@ void main()
             vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
             vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
             ambient = diffuseAmbient * ao + specularAmbient * specularAO;
-            if (bDDGIAvailable)
+            if (bRTGIAvailable)
+            {
+                vec2 rtgiDfgCoordinate = clamp(vec2(NdotV, roughness),
+                                                vec2(0.5 / 256.0),
+                                                vec2(255.5 / 256.0));
+                vec2 rtgiBrdf = texture(brdfLUT, rtgiDfgCoordinate).rg;
+                ambient = EvaluateRTGIEndpoint(iblAlbedo,
+                                               metallic,
+                                               roughness,
+                                               N,
+                                               V,
+                                               ao,
+                                               specularAO,
+                                               0.0,
+                                               rtgiBrdf,
+                                               rtgiDiffuseRadiance);
+            }
+            else if (bDDGIAvailable)
             {
                 vec2 ddgiDfgCoordinate = clamp(vec2(NdotV, roughness),
                                                vec2(0.5 / 256.0),

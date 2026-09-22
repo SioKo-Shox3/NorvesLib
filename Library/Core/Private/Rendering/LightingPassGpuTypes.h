@@ -11,7 +11,7 @@ namespace NorvesLib::Core::Rendering
         float volumeOrigin[4]; // xyz=volume原点
         float probeSpacing[4]; // xyz=probe間隔
         uint32_t probeCounts[4]; // xyz=格子数, w=probe総数
-        uint32_t info[4]; // x=DDGI有効フラグ
+        uint32_t info[4]; // x=DDGI有効、y=RTGI有効フラグ
     };
 
     struct GPULightingParams

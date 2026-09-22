@@ -8,12 +8,14 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/FramePacket.h"
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
+#include "RHI/IPipeline.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/TransientResourcePool.h"
 #include "Math/MatrixUtils.h"
@@ -884,6 +886,174 @@ namespace NorvesLib::Core::Rendering
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
     static constexpr uint32_t DDGI_ATLAS_TEXEL_COUNT = 8u;
     static constexpr uint32_t DDGI_ATLAS_MINIMUM_ARRAY_LAYER_COUNT = 2u;
+    static constexpr uint32_t RTGI_COMPUTE_WORKGROUP_SIZE = 8u;
+    static constexpr float RTGI_RAY_MINIMUM_DISTANCE = 0.001f;
+    static constexpr float RTGI_RAY_MAXIMUM_DISTANCE = 10000.0f;
+    static constexpr uint32_t RTGI_MAX_INSTANCE_CUSTOM_INDEX = 0x00FFFFFFu;
+
+    struct RTGIComputeParameters
+    {
+        float invViewProjection[16] = {};
+        float cameraPosition[4] = {};
+        uint32_t imageAndSceneCounts[4] = {};
+        float rayLimits[4] = {};
+    };
+
+    struct RTGIInstanceData
+    {
+        uint64_t VertexAddress = 0u;
+        uint64_t IndexAddress = 0u;
+        float BaseColor[4] = {};
+        float EmissiveChromaticityAndLuminance[4] = {};
+        uint32_t VertexStride = 0u;
+        uint32_t VertexCount = 0u;
+        uint32_t IndexCount = 0u;
+        uint32_t CustomIndex = UINT32_MAX;
+        float Transform[12] = {};
+    };
+
+    static_assert(sizeof(RTGIComputeParameters) == 112u);
+    static_assert(sizeof(RTGIInstanceData) == 112u);
+
+    static bool IsFiniteNonNegativeRTGI(float value)
+    {
+        return std::isfinite(value) && value >= 0.0f;
+    }
+
+    static bool TryBuildRTGIInstanceData(
+        const RayTracingSceneSnapshot& scene,
+        Container::VariableArray<RTGIInstanceData>& outInstances,
+        Container::VariableArray<RHI::BufferPtr>& outGeometryBuffers)
+    {
+        outInstances.clear();
+        outGeometryBuffers.clear();
+        if (scene.Instances.empty() ||
+            scene.Instances.size() > std::numeric_limits<uint32_t>::max())
+        {
+            return false;
+        }
+
+        for (const RayTracingSceneInstanceSnapshot& snapshot : scene.Instances)
+        {
+            if (!snapshot.AccelerationStructureVertexBuffer ||
+                !snapshot.AccelerationStructureIndexBuffer ||
+                snapshot.VertexStride < sizeof(float) * 3u ||
+                snapshot.VertexCount < 3u || snapshot.IndexCount < 3u ||
+                snapshot.IndexCount % 3u != 0u ||
+                snapshot.Instance.customIndex > RTGI_MAX_INSTANCE_CUSTOM_INDEX)
+            {
+                return false;
+            }
+
+            const uint64_t vertexOffsetBytes =
+                static_cast<uint64_t>(snapshot.VertexOffset) * snapshot.VertexStride;
+            const uint64_t vertexRangeBytes =
+                static_cast<uint64_t>(snapshot.VertexCount) * snapshot.VertexStride;
+            const uint64_t indexOffsetBytes =
+                static_cast<uint64_t>(snapshot.IndexOffset) * sizeof(uint32_t);
+            const uint64_t indexRangeBytes =
+                static_cast<uint64_t>(snapshot.IndexCount) * sizeof(uint32_t);
+            const RHI::BufferPtr& vertexBuffer = snapshot.AccelerationStructureVertexBuffer;
+            const RHI::BufferPtr& indexBuffer = snapshot.AccelerationStructureIndexBuffer;
+            if (vertexRangeBytes > std::numeric_limits<uint32_t>::max() ||
+                indexRangeBytes > std::numeric_limits<uint32_t>::max() ||
+                vertexOffsetBytes > vertexBuffer->GetSize() ||
+                vertexRangeBytes > vertexBuffer->GetSize() - vertexOffsetBytes ||
+                indexOffsetBytes > indexBuffer->GetSize() ||
+                indexRangeBytes > indexBuffer->GetSize() - indexOffsetBytes ||
+                vertexBuffer->GetDeviceAddress() == 0u ||
+                indexBuffer->GetDeviceAddress() == 0u ||
+                vertexBuffer->GetDeviceAddress() >
+                    std::numeric_limits<uint64_t>::max() - vertexOffsetBytes ||
+                indexBuffer->GetDeviceAddress() >
+                    std::numeric_limits<uint64_t>::max() - indexOffsetBytes)
+            {
+                return false;
+            }
+
+            RTGIInstanceData instanceData;
+            instanceData.VertexAddress = vertexBuffer->GetDeviceAddress() + vertexOffsetBytes;
+            instanceData.IndexAddress = indexBuffer->GetDeviceAddress() + indexOffsetBytes;
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                if (!IsFiniteNonNegativeRTGI(snapshot.Material.BaseColor[channel]))
+                {
+                    return false;
+                }
+                instanceData.BaseColor[channel] = snapshot.Material.BaseColor[channel];
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                if (!IsFiniteNonNegativeRTGI(snapshot.Material.EmissiveColor[channel]))
+                {
+                    return false;
+                }
+                instanceData.EmissiveChromaticityAndLuminance[channel] =
+                    snapshot.Material.EmissiveColor[channel];
+            }
+            if (!IsFiniteNonNegativeRTGI(snapshot.Material.EmissiveLuminanceNits))
+            {
+                return false;
+            }
+            instanceData.EmissiveChromaticityAndLuminance[3] =
+                snapshot.Material.EmissiveLuminanceNits;
+            instanceData.VertexStride = snapshot.VertexStride;
+            instanceData.VertexCount = snapshot.VertexCount;
+            instanceData.IndexCount = snapshot.IndexCount;
+            instanceData.CustomIndex = snapshot.Instance.customIndex;
+            for (uint32_t transformIndex = 0u; transformIndex < 12u; ++transformIndex)
+            {
+                if (!std::isfinite(snapshot.Instance.transform[transformIndex]))
+                {
+                    return false;
+                }
+                instanceData.Transform[transformIndex] =
+                    snapshot.Instance.transform[transformIndex];
+            }
+            outInstances.push_back(instanceData);
+            outGeometryBuffers.push_back(vertexBuffer);
+            outGeometryBuffers.push_back(indexBuffer);
+        }
+
+        std::sort(outInstances.begin(), outInstances.end(),
+                  [](const RTGIInstanceData& lhs, const RTGIInstanceData& rhs)
+                  {
+                      return lhs.CustomIndex < rhs.CustomIndex;
+                  });
+        for (size_t index = 1u; index < outInstances.size(); ++index)
+        {
+            if (outInstances[index - 1u].CustomIndex == outInstances[index].CustomIndex)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static RHI::DescriptorSetDesc CreateRTGIComputeDescriptorSetDesc()
+    {
+        RHI::DescriptorSetDesc descriptorSetDesc;
+        const RHI::ResourceBindType types[] = {
+            RHI::ResourceBindType::AccelerationStructure,
+            RHI::ResourceBindType::ConstantBuffer,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::RWTexture,
+            RHI::ResourceBindType::StructuredBuffer,
+            RHI::ResourceBindType::StructuredBuffer,
+            RHI::ResourceBindType::CombinedImageSampler};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 10u; ++bindingIndex)
+        {
+            RHI::DescriptorBinding binding;
+            binding.binding = bindingIndex;
+            binding.type = types[bindingIndex];
+            binding.stages = RHI::ShaderStage::Compute;
+            descriptorSetDesc.bindings.push_back(binding);
+        }
+        return descriptorSetDesc;
+    }
 
     static void InitializeSafeCascadedShadowParams(GPULightingParams& params)
     {
@@ -1141,6 +1311,12 @@ namespace NorvesLib::Core::Rendering
         ddgiDistanceBinding.type = RHI::ResourceBindType::CombinedImageSampler;
         ddgiDistanceBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(ddgiDistanceBinding);
+
+        RHI::DescriptorBinding rtgiDiffuseIndirectBinding;
+        rtgiDiffuseIndirectBinding.binding = 19;
+        rtgiDiffuseIndirectBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+        rtgiDiffuseIndirectBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(rtgiDiffuseIndirectBinding);
 
         return dsDesc;
     }
@@ -1549,7 +1725,10 @@ namespace NorvesLib::Core::Rendering
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
             !m_DefaultShadowMapArrayTexture &&
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
-            !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer)
+            !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer &&
+            !m_RTGIComputePipeline && !m_RTGIComputeParametersBuffer &&
+            !m_RTGIComputeInstanceDataBuffer && !m_RTGIHistoryAgeTexture &&
+            !m_RTGIHistoryConfidenceTexture)
         {
             return;
         }
@@ -1562,6 +1741,19 @@ namespace NorvesLib::Core::Rendering
         m_LightingFramebuffer.reset();
         m_LightingRenderPass.reset();
         m_SceneColorTexture.reset();
+
+        // RTGIのcompute資源はdescriptor、pipeline、shaderの順で解放する。
+        m_RTGIComputeDescriptorSet.reset();
+        m_RTGIComputePipeline.reset();
+        m_RTGIComputeParametersBuffer.reset();
+        m_RTGIComputeInstanceDataBuffer.reset();
+        m_RTGIGeometryBuffers.clear();
+        m_RTGIHistoryAgeTexture.reset();
+        m_RTGIHistoryConfidenceTexture.reset();
+        m_RTGIComputeInstanceDataCapacity = 0u;
+        m_RTGIHistoryWidth = 0u;
+        m_RTGIHistoryHeight = 0u;
+        m_bRTGIComputeUnavailable = false;
 
         m_LightArrayBuffer.reset();
         m_RetiredLightArrayBuffers.clear();
@@ -1606,6 +1798,7 @@ namespace NorvesLib::Core::Rendering
         m_DDGISampler.reset();
 
         // Shaders are released after the pipeline.
+        m_RTGIComputeShader.reset();
         m_LightingFragmentShader.reset();
         m_LightingVertexShader.reset();
 
@@ -1833,13 +2026,32 @@ namespace NorvesLib::Core::Rendering
             m_ShadowMapHandle = shadowMapHandle.ToResourceHandle();
         }
 
-        // R6 RTGIは任意入力として読む。未公開なら既存のDDGI/IBL/rasterへ戻す。
+        // R6 RTGIはこのパス内のcomputeが生成し、後段のLightingへ渡す。
         RGTextureHandle rtgiDiffuseIndirectHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::RTGIDiffuseIndirect,
                                    rtgiDiffuseIndirectHandle,
                                    RHI::ResourceState::ShaderResource))
         {
             m_RTGIDiffuseIndirectHandle = rtgiDiffuseIndirectHandle.ToResourceHandle();
+        }
+        else
+        {
+            RGTextureDesc rtgiDesc;
+            rtgiDesc.Width = width;
+            rtgiDesc.Height = height;
+            rtgiDesc.Format = RTGIDiffuseIndirectRadianceFormat;
+            rtgiDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                             RHI::ResourceUsage::ShaderWrite;
+            rtgiDesc.DebugName = "RTGI.DiffuseIndirect";
+            const RGTextureHandle rtgiOutput = builder.WriteTexture(
+                RenderGraphResourceNames::RTGIDiffuseIndirect,
+                rtgiDesc,
+                RHI::ResourceState::UnorderedAccess,
+                RHI::ResourceState::ShaderResource);
+            if (rtgiOutput.IsValid())
+            {
+                m_RTGIDiffuseIndirectHandle = rtgiOutput.ToResourceHandle();
+            }
         }
 
         // SkyAtmospherePassの同一スナップショット由来リソースを依存として読む。
@@ -1925,6 +2137,12 @@ namespace NorvesLib::Core::Rendering
             ssaoTexture = resources.GetTexture(m_SSAOBlurredHandle);
         }
 
+        RHI::TexturePtr rtgiDiffuseIndirectTexture;
+        if (m_RTGIDiffuseIndirectHandle.IsValid())
+        {
+            rtgiDiffuseIndirectTexture = resources.GetTexture(m_RTGIDiffuseIndirectHandle);
+        }
+
         if ((!albedoTexture || !normalTexture || !materialTexture || !depthTexture || !emissiveTexture) &&
             m_GBufferPass)
         {
@@ -2002,6 +2220,7 @@ namespace NorvesLib::Core::Rendering
                           emissiveTexture,
                           ssaoTexture,
                           shadowMapTexture,
+                          rtgiDiffuseIndirectTexture,
                           m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
     }
 
@@ -2051,6 +2270,7 @@ namespace NorvesLib::Core::Rendering
                           emissivePtr,
                           ssaoPtr,
                           shadowMapPtr,
+                          RHI::TexturePtr{},
                           true);
     }
 
@@ -2314,6 +2534,8 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindSampler(17, m_DDGISampler);
         descriptorSet->BindTexture(18, m_DefaultDDGIDistanceAtlas);
         descriptorSet->BindSampler(18, m_DDGISampler);
+        descriptorSet->BindTexture(19, m_DefaultBlackTexture);
+        descriptorSet->BindSampler(19, m_GBufferSampler);
 
         outDescriptorSet = std::move(descriptorSet);
         return true;
@@ -2378,6 +2600,343 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool LightingPass::EnsureRTGIComputePipeline(ViewRenderContext& context)
+    {
+        if (m_bRTGIComputeUnavailable)
+        {
+            return false;
+        }
+        if (m_RTGIComputePipeline && m_RTGIComputeParametersBuffer &&
+            m_RTGIComputeInstanceDataBuffer)
+        {
+            return true;
+        }
+        if (!context.Device || !context.ShaderMgr || !context.CommandList ||
+            !context.RTGICapability.IsUsable())
+        {
+            return false;
+        }
+
+        m_Device = context.Device;
+        m_RTGIComputeShader = context.ShaderMgr->LoadShader(
+            "RTGI/DiffuseIndirect.comp", RHI::ShaderStage::Compute);
+        if (!m_RTGIComputeShader)
+        {
+            m_bRTGIComputeUnavailable = true;
+            NORVES_LOG_WARNING("LightingPass", "RTGI ray-query compute shaderを読み込めません");
+            return false;
+        }
+
+        RHI::ComputePipelineDesc pipelineDesc;
+        pipelineDesc.computeShader = m_RTGIComputeShader;
+        pipelineDesc.descriptorSetLayouts.push_back(CreateRTGIComputeDescriptorSetDesc());
+        m_RTGIComputePipeline = context.Device->CreateComputePipeline(pipelineDesc);
+        if (!m_RTGIComputePipeline)
+        {
+            m_bRTGIComputeUnavailable = true;
+            NORVES_LOG_WARNING("LightingPass", "RTGI ray-query compute pipelineを作成できません");
+            return false;
+        }
+
+        RHI::BufferDesc parametersDesc(
+            sizeof(RTGIComputeParameters),
+            RHI::ResourceUsage::ConstantBuffer,
+            true,
+            "RTGI.DiffuseIndirect.Parameters");
+        m_RTGIComputeParametersBuffer = context.Device->CreateBuffer(parametersDesc);
+        if (!m_RTGIComputeParametersBuffer)
+        {
+            m_bRTGIComputeUnavailable = true;
+            NORVES_LOG_WARNING("LightingPass", "RTGI parameter bufferを作成できません");
+            return false;
+        }
+
+        RHI::BufferDesc instanceDataDesc(
+            sizeof(RTGIInstanceData),
+            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+            true,
+            "RTGI.DiffuseIndirect.Instances");
+        m_RTGIComputeInstanceDataBuffer = context.Device->CreateBuffer(instanceDataDesc);
+        if (!m_RTGIComputeInstanceDataBuffer)
+        {
+            m_bRTGIComputeUnavailable = true;
+            NORVES_LOG_WARNING("LightingPass", "RTGI instance bufferを作成できません");
+            return false;
+        }
+        m_RTGIComputeInstanceDataCapacity = m_RTGIComputeInstanceDataBuffer->GetSize();
+        return true;
+    }
+
+    bool LightingPass::EnsureRTGIHistoryTextures(uint32_t width, uint32_t height)
+    {
+        if (!m_Device || width == 0u || height == 0u)
+        {
+            return false;
+        }
+        if (m_RTGIHistoryAgeTexture && m_RTGIHistoryConfidenceTexture &&
+            m_RTGIHistoryWidth == width && m_RTGIHistoryHeight == height)
+        {
+            return true;
+        }
+        if (width > std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))
+        {
+            return false;
+        }
+
+        RHI::TextureDesc ageDesc;
+        ageDesc.Width = width;
+        ageDesc.Height = height;
+        ageDesc.TextureFormat = RTGIHistoryAgeFormat;
+        ageDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                        RHI::ResourceUsage::TransferDst;
+        ageDesc.DebugName = "RTGI.History.CurrentAge";
+        RHI::TexturePtr ageTexture = m_Device->CreateTexture(ageDesc);
+
+        RHI::TextureDesc confidenceDesc = ageDesc;
+        confidenceDesc.TextureFormat = RTGIHistoryConfidenceFormat;
+        confidenceDesc.DebugName = "RTGI.History.CurrentConfidence";
+        RHI::TexturePtr confidenceTexture = m_Device->CreateTexture(confidenceDesc);
+        if (!ageTexture || !confidenceTexture)
+        {
+            return false;
+        }
+
+        const uint64_t pixelCount64 = static_cast<uint64_t>(width) * height;
+        if (pixelCount64 > std::numeric_limits<size_t>::max() / sizeof(uint16_t) ||
+            pixelCount64 > std::numeric_limits<uint32_t>::max())
+        {
+            return false;
+        }
+        const size_t pixelCount = static_cast<size_t>(pixelCount64);
+        Container::VariableArray<uint16_t> agePixels;
+        Container::VariableArray<uint16_t> confidencePixels;
+        agePixels.resize(pixelCount, 0u);
+        confidencePixels.resize(pixelCount, 0x3C00u);
+        const uint32_t rowPitch = width * sizeof(uint16_t);
+        const uint32_t slicePitch = static_cast<uint32_t>(pixelCount64) * sizeof(uint16_t);
+        ageTexture->Update(agePixels.data(), rowPitch, slicePitch);
+        confidenceTexture->Update(confidencePixels.data(), rowPitch, slicePitch);
+
+        m_RTGIHistoryAgeTexture = std::move(ageTexture);
+        m_RTGIHistoryConfidenceTexture = std::move(confidenceTexture);
+        m_RTGIHistoryWidth = width;
+        m_RTGIHistoryHeight = height;
+        return true;
+    }
+
+    bool LightingPass::ExecuteRTGI(ViewRenderContext& context,
+                                   const RHI::TexturePtr& albedoTexture,
+                                   const RHI::TexturePtr& normalTexture,
+                                   const RHI::TexturePtr& materialTexture,
+                                   const RHI::TexturePtr& depthTexture,
+                                   const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
+                                   const GPULightingParams& lightingParams)
+    {
+        if (!context.CommandList || !context.Device || !context.bRTGIEnabled ||
+            !context.bRTGITLASAvailable || !context.RTGICapability.IsUsable() ||
+            !context.SnapshotRayTracingScene ||
+            !context.SnapshotRayTracingScene->IsComplete() ||
+            !albedoTexture || !normalTexture || !materialTexture || !depthTexture ||
+            !rtgiDiffuseIndirectTexture ||
+            rtgiDiffuseIndirectTexture->GetFormat() != RTGIDiffuseIndirectRadianceFormat ||
+            (rtgiDiffuseIndirectTexture->GetUsage() & RHI::ResourceUsage::ShaderRead) ==
+                RHI::ResourceUsage::None ||
+            (rtgiDiffuseIndirectTexture->GetUsage() & RHI::ResourceUsage::ShaderWrite) ==
+                RHI::ResourceUsage::None)
+        {
+            return false;
+        }
+
+        const uint32_t debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
+        if (debugViewMode >= 246u && debugViewMode <= 255u)
+        {
+            return false;
+        }
+
+        const uint32_t width = rtgiDiffuseIndirectTexture->GetWidth();
+        const uint32_t height = rtgiDiffuseIndirectTexture->GetHeight();
+        if (width == 0u || height == 0u ||
+            width > std::numeric_limits<uint32_t>::max() -
+                        (RTGI_COMPUTE_WORKGROUP_SIZE - 1u) ||
+            height > std::numeric_limits<uint32_t>::max() -
+                         (RTGI_COMPUTE_WORKGROUP_SIZE - 1u))
+        {
+            return false;
+        }
+
+        Container::VariableArray<RTGIInstanceData> instanceData;
+        Container::VariableArray<RHI::BufferPtr> geometryBuffers;
+        if (!TryBuildRTGIInstanceData(*context.SnapshotRayTracingScene,
+                                      instanceData,
+                                      geometryBuffers))
+        {
+            return false;
+        }
+        if (!EnsureRTGIComputePipeline(context) ||
+            !EnsureRTGIHistoryTextures(width, height))
+        {
+            return false;
+        }
+
+        const uint64_t requiredInstanceDataSize =
+            static_cast<uint64_t>(instanceData.size()) * sizeof(RTGIInstanceData);
+        if (requiredInstanceDataSize == 0u ||
+            requiredInstanceDataSize > std::numeric_limits<uint32_t>::max())
+        {
+            return false;
+        }
+        if (!m_RTGIComputeInstanceDataBuffer ||
+            m_RTGIComputeInstanceDataCapacity < requiredInstanceDataSize)
+        {
+            RHI::BufferDesc instanceDataDesc(
+                requiredInstanceDataSize,
+                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                true,
+                "RTGI.DiffuseIndirect.Instances");
+            RHI::BufferPtr instanceDataBuffer = context.Device->CreateBuffer(instanceDataDesc);
+            if (!instanceDataBuffer)
+            {
+                return false;
+            }
+            m_RTGIComputeInstanceDataBuffer = std::move(instanceDataBuffer);
+            m_RTGIComputeInstanceDataCapacity = requiredInstanceDataSize;
+            m_RTGIComputeDescriptorSet.reset();
+        }
+
+        const RHI::TexturePtr& environmentTexture =
+            context.PhysicalLighting.EnvironmentRadianceTexture;
+        const RHI::SamplerPtr& environmentSampler =
+            context.PhysicalLighting.EnvironmentRadianceSampler;
+        const RHI::BufferPtr& lightBuffer = context.PhysicalLighting.LightBuffer;
+        const uint64_t requiredLightBufferSize =
+            static_cast<uint64_t>(context.PhysicalLighting.LogicalLightCount > 0u
+                                     ? context.PhysicalLighting.LogicalLightCount
+                                     : 1u) * sizeof(GPULightData);
+        if (!lightBuffer || !environmentTexture || !environmentSampler ||
+            context.PhysicalLighting.LightBufferSizeBytes < requiredLightBufferSize ||
+            lightBuffer->GetSize() < context.PhysicalLighting.LightBufferSizeBytes)
+        {
+            return false;
+        }
+
+        RTGIComputeParameters parameters;
+        std::memcpy(parameters.invViewProjection,
+                    lightingParams.invViewProjection,
+                    sizeof(parameters.invViewProjection));
+        std::memcpy(parameters.cameraPosition,
+                    lightingParams.cameraPosition,
+                    sizeof(parameters.cameraPosition));
+        parameters.imageAndSceneCounts[0] = width;
+        parameters.imageAndSceneCounts[1] = height;
+        parameters.imageAndSceneCounts[2] = static_cast<uint32_t>(instanceData.size());
+        parameters.imageAndSceneCounts[3] = context.PhysicalLighting.LogicalLightCount;
+        parameters.rayLimits[0] = RTGI_RAY_MINIMUM_DISTANCE;
+        parameters.rayLimits[1] = RTGI_RAY_MAXIMUM_DISTANCE;
+        parameters.rayLimits[2] = std::isfinite(lightingParams.preExposure) &&
+                                           lightingParams.preExposure > 0.0f
+                                       ? std::clamp(lightingParams.preExposure, 1.0e-6f, 1.0e6f)
+                                       : 1.0f;
+        parameters.rayLimits[3] = context.PhysicalLighting.bIBLEnabled &&
+                                          std::isfinite(context.PhysicalLighting.IBLIntensity) &&
+                                          context.PhysicalLighting.IBLIntensity > 0.0f
+                                      ? context.PhysicalLighting.IBLIntensity
+                                      : 0.0f;
+        m_RTGIComputeParametersBuffer->Update(&parameters, sizeof(parameters));
+        m_RTGIComputeInstanceDataBuffer->Update(
+            instanceData.data(), requiredInstanceDataSize);
+        m_RTGIGeometryBuffers = std::move(geometryBuffers);
+
+        if (!m_RTGIComputeDescriptorSet)
+        {
+            m_RTGIComputeDescriptorSet = context.Device->CreateDescriptorSet(
+                CreateRTGIComputeDescriptorSetDesc());
+            if (!m_RTGIComputeDescriptorSet)
+            {
+                return false;
+            }
+        }
+
+        if (!m_RTGIComputeDescriptorSet->BindAccelerationStructure(
+                0u, context.SnapshotRayTracingScene->TopLevel))
+        {
+            return false;
+        }
+        m_RTGIComputeDescriptorSet->BindConstantBuffer(
+            1u,
+            m_RTGIComputeParametersBuffer,
+            0u,
+            static_cast<uint32_t>(sizeof(RTGIComputeParameters)));
+        m_RTGIComputeDescriptorSet->BindTexture(2u, normalTexture);
+        m_RTGIComputeDescriptorSet->BindSampler(2u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(3u, depthTexture);
+        m_RTGIComputeDescriptorSet->BindSampler(3u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(4u, albedoTexture);
+        m_RTGIComputeDescriptorSet->BindSampler(4u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(5u, materialTexture);
+        m_RTGIComputeDescriptorSet->BindSampler(5u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindStorageTexture(6u, rtgiDiffuseIndirectTexture);
+        m_RTGIComputeDescriptorSet->BindStorageBuffer(
+            7u,
+            m_RTGIComputeInstanceDataBuffer,
+            0u,
+            static_cast<uint32_t>(requiredInstanceDataSize));
+        m_RTGIComputeDescriptorSet->BindStorageBuffer(
+            8u,
+            lightBuffer,
+            0u,
+            context.PhysicalLighting.LightBufferSizeBytes);
+        m_RTGIComputeDescriptorSet->BindTexture(9u, environmentTexture);
+        m_RTGIComputeDescriptorSet->BindSampler(9u, environmentSampler);
+        m_RTGIComputeDescriptorSet->Update();
+
+        const uint32_t groupCountX =
+            (width + RTGI_COMPUTE_WORKGROUP_SIZE - 1u) / RTGI_COMPUTE_WORKGROUP_SIZE;
+        const uint32_t groupCountY =
+            (height + RTGI_COMPUTE_WORKGROUP_SIZE - 1u) / RTGI_COMPUTE_WORKGROUP_SIZE;
+        context.CommandList->SetPipeline(m_RTGIComputePipeline);
+        context.CommandList->SetDescriptorSet(m_RTGIComputeDescriptorSet);
+        context.CommandList->Dispatch(groupCountX, groupCountY, 1u);
+        context.CommandList->TextureBarrier(
+            rtgiDiffuseIndirectTexture,
+            RHI::ResourceState::UnorderedAccess,
+            RHI::ResourceState::ShaderResource);
+
+        RTGIResult result;
+        result.DiffuseIndirectRadiance = rtgiDiffuseIndirectTexture;
+        result.State = RHI::ResourceState::ShaderResource;
+        result.Format = RTGIDiffuseIndirectRadianceFormat;
+        result.BounceCount = RTGIDiffuseBounceCount;
+        result.Width = width;
+        result.Height = height;
+        result.FrameNumber = context.FrameNumber;
+        result.SceneRevision = context.SceneRevision;
+        result.LightRevision = context.LightRevision;
+        result.bPreExposed = true;
+        result.bDiffuse = true;
+        result.bValid = true;
+
+        RTGIHistoryResources history;
+        history.FrameNumber = context.FrameNumber;
+        history.bValid = true;
+        const auto populateHistorySet = [&](RTGIHistoryResourceSet& resourceSet)
+        {
+            resourceSet.Radiance = rtgiDiffuseIndirectTexture;
+            resourceSet.Age = m_RTGIHistoryAgeTexture;
+            resourceSet.Confidence = m_RTGIHistoryConfidenceTexture;
+            resourceSet.State = RHI::ResourceState::ShaderResource;
+            resourceSet.Width = width;
+            resourceSet.Height = height;
+            resourceSet.SceneRevision = context.SceneRevision;
+            resourceSet.LightRevision = context.LightRevision;
+            resourceSet.AgeFrames = 0u;
+            resourceSet.bValid = true;
+        };
+        populateHistorySet(history.Current);
+        populateHistorySet(history.History);
+        context.PhysicalLighting.PublishRTGI(result, history);
+        return context.PhysicalLighting.RTGI.bPublished;
+    }
+
     void LightingPass::ExecuteWithInputs(ViewRenderContext& context,
                                          const RHI::TexturePtr& albedoTexture,
                                          const RHI::TexturePtr& normalTexture,
@@ -2386,6 +2945,7 @@ namespace NorvesLib::Core::Rendering
                                          const RHI::TexturePtr& emissiveTexture,
                                          const RHI::TexturePtr& ssaoTexture,
                                          const RHI::TexturePtr& shadowMapTexture,
+                                         const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                                          bool bRegisterLegacyOutputs)
     {
         if (!context.CommandList)
@@ -2462,10 +3022,19 @@ namespace NorvesLib::Core::Rendering
                                                   ddgiDistanceAtlas,
                                                   ddgiAtlasProbeCount,
                                                   bDDGILightingAvailable);
+        ExecuteRTGI(context,
+                    albedoTexture,
+                    normalTexture,
+                    materialTexture,
+                    depthTexture,
+                    rtgiDiffuseIndirectTexture,
+                    lightingParams);
         const RTGIFallbackDecision indirectLighting =
             context.PhysicalLighting.ResolveIndirectLighting();
         const bool bUseDDGILighting =
             indirectLighting.Source == RTGIIndirectLightingSource::DDGI;
+        const bool bUseRTGILighting =
+            indirectLighting.Source == RTGIIndirectLightingSource::RTGI;
 
         GPUDDGILightingParams ddgiParameters = {};
         if (bUseDDGILighting)
@@ -2481,6 +3050,10 @@ namespace NorvesLib::Core::Rendering
             ddgiParameters.probeCounts[2] = ddgiVolume->ProbeCountZ;
             ddgiParameters.probeCounts[3] = ddgiAtlasProbeCount;
             ddgiParameters.info[0] = 1u;
+        }
+        if (bUseRTGILighting)
+        {
+            ddgiParameters.info[1] = 1u;
         }
         lightingParams.ddgi = ddgiParameters;
         m_LightDataBuffer->Update(&lightingParams, sizeof(lightingParams));
@@ -2610,6 +3183,12 @@ namespace NorvesLib::Core::Rendering
                 ? context.PhysicalLighting.DDGIDistanceAtlas
                 : m_DefaultDDGIDistanceAtlas);
         m_LightingDescriptorSet->BindSampler(18, m_DDGISampler);
+        m_LightingDescriptorSet->BindTexture(
+            19,
+            bUseRTGILighting && context.PhysicalLighting.RTGI.Result.DiffuseIndirectRadiance
+                ? context.PhysicalLighting.RTGI.Result.DiffuseIndirectRadiance
+                : m_DefaultBlackTexture);
+        m_LightingDescriptorSet->BindSampler(19, m_GBufferSampler);
 
         if (ssaoTexture)
         {

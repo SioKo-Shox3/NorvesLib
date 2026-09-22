@@ -215,7 +215,17 @@ namespace NorvesLib::Core::Rendering
                                const RHI::TexturePtr& emissiveTexture,
                                const RHI::TexturePtr& ssaoTexture,
                                const RHI::TexturePtr& shadowMapTexture,
+                               const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                                bool bRegisterLegacyOutputs);
+        bool EnsureRTGIComputePipeline(ViewRenderContext& context);
+        bool EnsureRTGIHistoryTextures(uint32_t width, uint32_t height);
+        bool ExecuteRTGI(ViewRenderContext& context,
+                         const RHI::TexturePtr& albedoTexture,
+                         const RHI::TexturePtr& normalTexture,
+                         const RHI::TexturePtr& materialTexture,
+                         const RHI::TexturePtr& depthTexture,
+                         const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
+                         const GPULightingParams& lightingParams);
         void RegisterOutputs(ViewRenderContext& context,
                              const RHI::TexturePtr& sceneColorTexture,
                              const RHI::TexturePtr& depthTexture) const;
@@ -259,6 +269,18 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_LightingPipeline;
         RHI::ShaderPtr m_LightingVertexShader;
         RHI::ShaderPtr m_LightingFragmentShader;
+        RHI::ShaderPtr m_RTGIComputeShader;
+        RHI::PipelinePtr m_RTGIComputePipeline;
+        RHI::DescriptorSetPtr m_RTGIComputeDescriptorSet;
+        RHI::BufferPtr m_RTGIComputeParametersBuffer;
+        RHI::BufferPtr m_RTGIComputeInstanceDataBuffer;
+        Container::VariableArray<RHI::BufferPtr> m_RTGIGeometryBuffers;
+        RHI::TexturePtr m_RTGIHistoryAgeTexture;
+        RHI::TexturePtr m_RTGIHistoryConfidenceTexture;
+        uint64_t m_RTGIComputeInstanceDataCapacity = 0;
+        uint32_t m_RTGIHistoryWidth = 0;
+        uint32_t m_RTGIHistoryHeight = 0;
+        bool m_bRTGIComputeUnavailable = false;
         DDGIProbePass m_DDGIProbePass;
         RayTracingShadowPass m_RayTracingShadowPass;
         RHI::BufferPtr m_LightDataBuffer;
