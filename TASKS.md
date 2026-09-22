@@ -363,3 +363,21 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - verify: `git diff --check`
 - stop-when: RoadMapの依存関係または完了証拠が現行履歴から再構成できない場合は、未確認のフェーズを完了扱いにせず、不足証跡を監査記録へ残す。
 - paths: Docs/RenderingValidation/RenderingRoadmapAudit.md, TASKS.md, PROGRESS.md
+
+## R6A-M1: velocityの方式と検証契約を定義する
+- status: done
+- done-when: R6-aのvelocity符号、device用clip行列、初回/無効履歴のゼロ契約、R16G16_FLOATと`GBuffer_Velocity`、FramePacketでのカメラ/オブジェクト履歴、初回対象経路、完了条件、停止条件を追跡対象の設計文書へ固定する。
+- verify: `git diff --check`
+- verify: `rg -n "currentUV - previousUV|GBuffer_Velocity|FramePacket|停止条件" Docs/RenderingValidation/R6aVelocityPlan.md`
+- paths: Docs/RenderingValidation/R6aVelocityPlan.md, TASKS.md, PROGRESS.md
+
+## R6A-P1: velocityのFramePacket履歴とGBuffer出力を実装する
+- status: pending
+- done-when: 通常の遅延不透明MeshProxyについて、現在/前フレームのオブジェクト行列とメインカメラをFramePacketだけでRenderThreadへ渡し、GBufferの`GBuffer_Velocity`へR16G16_FLOATのvelocityを書き出す。起動経路、Rendering3DTestのシーン構成、既存GBuffer 4面の契約は変更しない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(GBuffer|RenderGraph|RenderingValidationSceneContractTest|SceneViewViewportCommandTest|WorldCameraSyncTest)"`
+- verify: `build\\Test\\Core\\Rendering\\Debug\\RenderingVelocityVulkanTest.exe --scenario=static`
+- verify: `build\\Test\\Core\\Rendering\\Debug\\RenderingVelocityVulkanTest.exe --scenario=camera-object-motion`
+- verify: `build\\Test\\Core\\Rendering\\Debug\\RenderingVelocityVulkanTest.exe --scenario=first-frame-invalid-history`
+- stop-when: 既存のRHI/RenderGraph境界を保ったままvelocity attachmentを作成できない、またはGPU readbackで解析契約を観測できない場合は、RTGIや別起動経路へ拡張せずAPI不足を記録する。
+- paths: Library/Core/Public/Rendering/MeshTypes.h, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Private/Rendering/DrawCommand.cpp, Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/GBufferPass.h, Library/Core/Private/Rendering/GBufferPass.cpp, Library/Core/Public/Rendering/RenderGraph/RenderGraphResourceNames.h, Assets/Shaders/gbuffer.vert, Assets/Shaders/gbuffer.frag, Test/Core/Rendering/RenderingVelocityVulkanTest.cpp, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md

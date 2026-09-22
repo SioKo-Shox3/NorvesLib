@@ -54,11 +54,11 @@
 - AUDIT-RM-P1: `20260922`。RoadMapの依存関係とR0〜R5のコード・受入れ記録を照合した。R3〜R5の実装済みなのにRoadMap表が未着手のまま残る遅れ、R2〜R5の完了トレーラー不足、R6-aを次に開始できる依存状態、Rendering3DTestに読み込む保存済みレンダリングシーンが存在しないことを追跡監査へ固定した。RoadMap本体は無視対象のため変更・追跡化していない。
 
 ## In progress
-- なし。TASKS.mdに登録したR1〜R5の実装タスクは完了。性能gateとNEXT_FINDINGS.mdのnon-blocking追跡は別ゲートとして残す。
+- R6A-P1: R6-aの設計契約をDocs/RenderingValidation/R6aVelocityPlan.mdへ固定済み。次はFramePacket履歴と遅延GBufferのvelocity出力を実装する。起動経路とRendering3DTestのシーン構成は変更しない。
 
 ## Next
 
-- R4/R5の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断、全体build再検証はNEXT_FINDINGS.mdのnon-blocking追跡事項として残す。
+- R6A-P1の実装とGPU readback検証。R4/R5の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断、全体build再検証はNEXT_FINDINGS.mdのnon-blocking追跡事項として残す。
 
 ## Notes
 
