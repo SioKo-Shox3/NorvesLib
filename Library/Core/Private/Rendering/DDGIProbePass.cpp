@@ -63,11 +63,12 @@ namespace NorvesLib::Core::Rendering
             uint32_t VertexCount = 0u;
             uint32_t IndexCount = 0u;
             uint32_t CustomIndex = UINT32_MAX;
+            float Transform[12] = {};
         };
 
         static_assert(sizeof(DDGIProbeRayQueryParameters) == 96u);
         static_assert(sizeof(DDGIProbeIrradianceUpdateParameters) == 96u);
-        static_assert(sizeof(DDGIProbeRayInstanceData) == 64u);
+        static_assert(sizeof(DDGIProbeRayInstanceData) == 112u);
         static_assert(sizeof(GPULightData) == 64u);
 
         bool IsFiniteNonNegative(float value)
@@ -155,6 +156,34 @@ namespace NorvesLib::Core::Rendering
                 instanceData.VertexCount = snapshot.VertexCount;
                 instanceData.IndexCount = snapshot.IndexCount;
                 instanceData.CustomIndex = snapshot.Instance.customIndex;
+                for (uint32_t transformIndex = 0u; transformIndex < 12u; ++transformIndex)
+                {
+                    instanceData.Transform[transformIndex] =
+                        snapshot.Instance.transform[transformIndex];
+                }
+                if (snapshot.Instance.customIndex < 6u)
+                {
+                    NORVES_LOG_WARNING("DDGIProbePass",
+                                    "instance custom=%u luminance=%f color=%f,%f,%f vertices=%u indices=%u count=%u",
+                                    snapshot.Instance.customIndex,
+                                    snapshot.Material.EmissiveLuminanceNits,
+                                    snapshot.Material.EmissiveColor[0],
+                                    snapshot.Material.EmissiveColor[1],
+                                    snapshot.Material.EmissiveColor[2],
+                                    snapshot.VertexCount,
+                                    snapshot.IndexCount,
+                                    static_cast<uint32_t>(scene.Instances.size()));
+                }
+                if (snapshot.Material.EmissiveLuminanceNits > 0.0f)
+                {
+                    NORVES_LOG_WARNING("DDGIProbePass",
+                                    "emissive instance custom=%u luminance=%f color=%f,%f,%f",
+                                    snapshot.Instance.customIndex,
+                                    snapshot.Material.EmissiveLuminanceNits,
+                                    snapshot.Material.EmissiveColor[0],
+                                    snapshot.Material.EmissiveColor[1],
+                                    snapshot.Material.EmissiveColor[2]);
+                }
                 outInstances.push_back(instanceData);
                 outGeometryBuffers.push_back(vertexBuffer);
                 outGeometryBuffers.push_back(indexBuffer);

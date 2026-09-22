@@ -218,7 +218,7 @@ set_target_properties(RenderingDDGIVulkanTest PROPERTIES FOLDER "Test/Core/Rende
 register_rendering_gpu_test(
     RenderingDDGIVulkanTest
     RenderingDDGIVulkanTest
-    --capture-source=back-buffer
+    --capture-source=scene-color
     --scenario=cornell-reference
 )
 add_executable(RHIRayTracingPipelineVulkanTest

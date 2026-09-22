@@ -34,6 +34,9 @@ struct ProbeRayInstanceData
     vec4 baseColor;
     vec4 emissiveChromaticityAndLuminance;
     uvec4 geometry;
+    vec4 transform0;
+    vec4 transform1;
+    vec4 transform2;
 };
 
 layout(set = 0, binding = 2, std430) buffer ProbeRayQueryResults
@@ -241,7 +244,7 @@ vec3 SamplePreviousIrradiance(vec3 worldPosition, vec3 surfaceNormal, vec3 baseC
         }
         vec3 pointToProbeDirection = -normalize(probeToPoint);
         float wrapShading = (dot(pointToProbeDirection, surfaceNormal) + 1.0) * 0.5;
-        weight *= wrapShading * wrapShading + 0.2;
+        weight *= wrapShading * wrapShading;
         weight *= SamplePreviousVisibility(probeIndex, probeToPoint, pointDistance);
 
         vec2 irradianceUv = AtlasUv(EncodeOctahedralDirection(surfaceNormal));

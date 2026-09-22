@@ -759,7 +759,7 @@ bool TrySampleDDGIIrradiance(vec3 worldPosition,
             ? probeToPoint / pointDistance
             : normal;
         float wrapShading = (dot(-probeToPointDirection, normal) + 1.0) * 0.5;
-        weight *= wrapShading * wrapShading + 0.2;
+        weight *= wrapShading * wrapShading;
         weight *= SampleDDGIVisibility(probeIndex,
                                        probeToPointDirection,
                                        pointDistance);
@@ -1111,12 +1111,13 @@ void main()
             vec2 dfgCoordinate = clamp(vec2(iblNdotV, iblRoughness),
                                        vec2(0.5 / 256.0), vec2(255.5 / 256.0));
             vec2 brdf = texture(brdfLUT, dfgCoordinate).rg;
+            float ddgiAmbientAO = bDDGIAvailable ? materialSample.b : ao;
             ambient = EvaluateIblEndpoint(iblAlbedo,
                                            metallic,
                                            iblRoughness,
                                            N,
                                            V,
-                                           ao,
+                                           ddgiAmbientAO,
                                            specularAO,
                                            iblIntensity,
                                            brdf,
@@ -1142,7 +1143,7 @@ void main()
                 ambient += EvaluateDiffuseEndpoint(ddgiIrradiance,
                                                    albedo,
                                                    metallic,
-                                                   ddgiBrdf) * ao;
+                                                   ddgiBrdf) * materialSample.b;
             }
         }
         if (!bValidationRaw252)

@@ -2682,23 +2682,19 @@ namespace NorvesLib::Test::RenderingValidation
             return false;
         }
 
+        Core::Entity* sentinelEntity = m_pSentinel != nullptr ? m_pSentinel->GetOwner() : nullptr;
         for (Core::Entity* entity : m_Objects)
         {
-            if (entity == nullptr || entity->GetComponent<FixedStepSentinelComponent>() != nullptr)
+            if (entity == nullptr || entity == sentinelEntity)
             {
                 continue;
             }
-            if (Core::Component::MeshComponent* mesh =
-                    entity->GetComponent<Core::Component::MeshComponent>())
-            {
-                mesh->SetVisible(false);
-            }
-            if (Core::Component::LightComponent* light =
-                    entity->GetComponent<Core::Component::LightComponent>())
-            {
-                light->SetLightVisible(false);
-            }
-            entity->SetActive(false);
+            m_pWorld->RemoveEntity(entity);
+        }
+        m_Objects.clear();
+        if (sentinelEntity != nullptr)
+        {
+            m_Objects.push_back(sentinelEntity);
         }
 
         Core::Container::VariableArray<Core::Rendering::Mesh3DVertex> whiteVertices;
@@ -2835,10 +2831,18 @@ namespace NorvesLib::Test::RenderingValidation
             return false;
         }
         m_Lease.TrackTexture(flatNormal);
+        const TextureHandle lambertRoughness = CreateScalarTexture(
+            *m_pResources, 1.0f, TEXT("RenderingValidationR4CornellLambertRoughness"));
+        if (!lambertRoughness.IsValid())
+        {
+            m_bR4CornellFixtureFailed = true;
+            return false;
+        }
+        m_Lease.TrackTexture(lambertRoughness);
 
         Core::Container::FixedArray<MaterialHandle, 4> materials;
         materials.fill(MaterialHandle::Invalid());
-        auto createMaterial = [this, flatNormal](const TCHAR* debugName,
+        auto createMaterial = [this, flatNormal, lambertRoughness](const TCHAR* debugName,
                                                  float red,
                                                  float green,
                                                  float blue,
@@ -2846,6 +2850,7 @@ namespace NorvesLib::Test::RenderingValidation
         {
             Core::Rendering::MaterialCreateData data;
             data.NormalTexture = flatNormal;
+            data.RoughnessTexture = lambertRoughness;
             data.BaseColor[0] = red;
             data.BaseColor[1] = green;
             data.BaseColor[2] = blue;
@@ -2858,12 +2863,12 @@ namespace NorvesLib::Test::RenderingValidation
                 data.EmissiveColor[0] = R4CornellLightColor[0];
                 data.EmissiveColor[1] = R4CornellLightColor[1];
                 data.EmissiveColor[2] = R4CornellLightColor[2];
-                data.EmissiveLuminanceNits = 12000.0f;
+                data.EmissiveLuminanceNits = 45000.0f;
             }
             return m_pResources->Materials().Create(data);
         };
         materials[0] = createMaterial(TEXT("R4 Cornell 白色反射面"), 0.712f, 0.744f, 0.765f, false);
-        materials[1] = createMaterial(TEXT("R4 Cornell 赤色反射面"), 0.609f, 0.061f, 0.062f, false);
+        materials[1] = createMaterial(TEXT("R4 Cornell 赤色反射面"), 0.660f, 0.062f, 0.063f, false);
         materials[2] = createMaterial(TEXT("R4 Cornell 緑色反射面"), 0.114f, 0.406f, 0.104f, false);
         materials[3] = createMaterial(TEXT("R4 Cornell 面光源"), 0.78f, 0.78f, 0.78f, true);
         for (MaterialHandle material : materials)
@@ -2876,8 +2881,13 @@ namespace NorvesLib::Test::RenderingValidation
             m_Lease.TrackMaterial(material);
         }
 
+        constexpr float whiteObjectColor[4] = {0.712f, 0.744f, 0.765f, 1.0f};
+        constexpr float redObjectColor[4] = {0.660f, 0.062f, 0.063f, 1.0f};
+        constexpr float greenObjectColor[4] = {0.114f, 0.406f, 0.104f, 1.0f};
+        constexpr float emitterObjectColor[4] = {0.78f, 0.78f, 0.78f, 1.0f};
         auto spawnMesh = [this](MeshDataHandle handle,
                                 MaterialHandle material,
+                                const float (&objectColor)[4],
                                 Core::Entity*& outEntity) -> bool
         {
             outEntity = m_pWorld->SpawnEntity();
@@ -2896,7 +2906,7 @@ namespace NorvesLib::Test::RenderingValidation
             mesh->SetMaterial(0u, material);
             for (uint32_t channel = 0u; channel < 4u; ++channel)
             {
-                mesh->SetCustomData(channel, 1.0f);
+                mesh->SetCustomData(channel, objectColor[channel]);
             }
             mesh->SetCastShadow(true);
             mesh->SetReceiveShadow(true);
@@ -2907,10 +2917,13 @@ namespace NorvesLib::Test::RenderingValidation
         Core::Entity* pWhiteEntity = nullptr;
         Core::Entity* pRedEntity = nullptr;
         Core::Entity* pGreenEntity = nullptr;
-        if (!spawnMesh(R4CornellWhiteMeshHandle, materials[0], pWhiteEntity) ||
-            !spawnMesh(R4CornellRedMeshHandle, materials[1], pRedEntity) ||
-            !spawnMesh(R4CornellGreenMeshHandle, materials[2], pGreenEntity) ||
-            !spawnMesh(R4CornellEmitterMeshHandle, materials[3], m_pR4CornellEmitterEntity))
+        if (!spawnMesh(R4CornellWhiteMeshHandle, materials[0], whiteObjectColor, pWhiteEntity) ||
+            !spawnMesh(R4CornellRedMeshHandle, materials[1], redObjectColor, pRedEntity) ||
+            !spawnMesh(R4CornellGreenMeshHandle, materials[2], greenObjectColor, pGreenEntity) ||
+            !spawnMesh(R4CornellEmitterMeshHandle,
+                       materials[3],
+                       emitterObjectColor,
+                       m_pR4CornellEmitterEntity))
         {
             m_bR4CornellFixtureFailed = true;
             return false;
@@ -2940,7 +2953,7 @@ namespace NorvesLib::Test::RenderingValidation
             pointLight->SetRange(9.0f);
             pointLight->SetLightColor(
                 R4CornellLightColor[0], R4CornellLightColor[1], R4CornellLightColor[2]);
-            pointLight->SetIntensity(200000.0f);
+            pointLight->SetIntensity(0.0f);
             pointLight->SetCastShadows(true);
             pointLight->SetLightVisible(true);
             m_R4CornellPointLights[index] = entity;
@@ -2966,6 +2979,11 @@ namespace NorvesLib::Test::RenderingValidation
             return false;
         }
 
+        if (Core::Rendering::SceneView* sceneView = m_pWorld->GetSceneView())
+        {
+            sceneView->ClearAllProxies();
+        }
+        m_pWorld->SyncToSceneView(&m_pResources->Materials(), &m_pResources->Meshes());
         m_bR4CornellFixturePrepared = true;
         return true;
     }
