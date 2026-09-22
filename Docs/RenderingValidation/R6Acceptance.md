@@ -47,12 +47,13 @@ P5専用受入れでは、8-frame warmup後に`R6_RTGI_WARMUP=PASS`、`R6_STATIC
 | R6-P4 | `.harness/runs/20260923-r6-p4-review2/verify-build.txt`, `verify-ctest.txt`, `verify-ctest-LastTest.txt` | Game/対象テストbuild、指定CTest、shader/denoise接続の読戻しを通過。 |
 | R6-P5専用 | `.harness/runs/20260923-050747/verify-R6-P5-1.txt`, `verify-R6-P5-3.txt`, `verify-R6-P5-4.txt` | Game build、受入れfixture build、`R6RTGIAcceptanceVulkanTest` 1/1は通過。 |
 | R6-P5全体gate | `.harness/runs/20260923-050747/verify-R6-P5-2.txt` | 34 passed・8 skipped・10 failed、EXIT_CODE=8。現HEADの再実行でも34 passed・8 skipped・2 failedとなり、P5 gateを完了扱いにできない。 |
+| R6-GATE-DDGI-ORACLE | `.harness/runs/20260923-r6-gate-ddgi/verify-build.txt`, `verify-ctest.txt`, `verify-ctest-LastTest.log` | 非遮蔽と点/スポット遮蔽を独立passで検証し、後者の期待値・実測値が全RGB channelで一致。対象CTest 1/1 passed。修正後の全体gateは未実行。 |
 | R6-P6保留確認 | `.harness/runs/20260923-050747/verify-R6-P6-1.txt`〜`verify-R6-P6-3.txt` | `git diff --check`、直近コミット本文、R6/RTGI/性能/Deferred/fallbackの記録を確認する。完了trailer不在を含む保留証拠。 |
 
 ## fallbackと既知の制限
 
 - P5専用fixtureの`R6_FALLBACK_RT_DISABLED=PASS`はIBL、`R6_FALLBACK_R4=PASS`はR4 DDGIを確認した。RT capability不在、RT無効、TLAS不完全、resource/dispatch失敗時も、R6の不完全な結果を公開せず既存間接光へ戻す契約をP2/P2-FIXで固定している。
-- P5全体gateの再実行で`DDGIProbeRadianceVulkanTest`はpoint/spot occluded hitのchannel 0が期待`4.92249`、実測`5.13309`となった。`RenderingGoldenOutdoorVulkanTest`は`mean_flip=0.002326954`、`max_flip=0.529430032`、`differing_pixels=459`で失敗した。これらを既知baselineと推測して無視せず、P5の再検証条件として残す。
+- P5全体gateでは`DDGIProbeRadianceVulkanTest`の前ケースirradiance持越しを検出した。シナリオ別passへ分離後の対象CTestは1/1 passedだが、全体gateでの再確認は未実施である。`RenderingGoldenOutdoorVulkanTest`は直近の全体実行で`mean_flip=0.002326954`、`max_flip=0.529430032`、`differing_pixels=459`となり失敗した。原因を確認するまでは既知baselineとして無視しない。
 - P5の全体gateログには、RHI image layout系と既存golden系の失敗、Slang SDK未導入によるneural material decoder無効化warningが含まれる。R6の完了根拠へ混ぜず、再実行時の失敗集合と原因を分離して確認する。
 - denoised textureそのものの直接readback、遠景の非線形depth閾値、複数frame slotへ拡張した場合のsame-slot履歴境界は、R6の機能受入れを阻害しない追跡事項として`NEXT_FINDINGS.md`に残す。
 - R6は1 bounce diffuseまでであり、2 bounce、specular GI、反射・透過、path tracing、ReSTIR、SSR/TAA、外部NRDは実装していない。

@@ -779,11 +779,11 @@ namespace
             return 1;
         }
 
-        DDGIProbePass probePass;
+        DDGIProbePass unoccludedProbePass;
         ProbeObservation unoccludedObservation;
         if (!RunProbeFrame(device,
                            shaderManager,
-                           probePass,
+                           unoccludedProbePass,
                            unoccludedPacket,
                            unoccludedScene,
                            lightBuffer,
@@ -801,10 +801,12 @@ namespace
             return 1;
         }
 
+        // 遮蔽ケースは独立評価し、前ケースの累積irradianceを持ち越さない。
+        DDGIProbePass occludedProbePass;
         ProbeObservation occludedObservation;
         if (!RunProbeFrame(device,
                            shaderManager,
-                           probePass,
+                           occludedProbePass,
                            occludedPacket,
                            occludedScene,
                            lightBuffer,
@@ -812,7 +814,7 @@ namespace
                            lightBufferSize,
                            environmentTexture,
                            environmentSampler,
-                           1u,
+                           0u,
                            occludedObservation) ||
             !ValidateObservation(occludedObservation,
                                  occludedPacket,
@@ -836,7 +838,8 @@ namespace
 
         std::cout << "directional_point_spot_lambert=true emissive_snapshot=true"
                      " point_spot_shadow_queries=true environment_miss=true\n";
-        probePass.Shutdown();
+        unoccludedProbePass.Shutdown();
+        occludedProbePass.Shutdown();
         shaderManager.Shutdown();
         device->WaitIdle();
         for (const ProbeObservation* observation :
