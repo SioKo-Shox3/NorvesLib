@@ -51,6 +51,7 @@
 - R4-P6: `20260922-r4-p7-final3`。Cornell RGBEを使うHDR scene-color captureでshadow/red/green ROIの相対誤差0.147881/0.152345/0.106696、red/green chroma差0.0194377/0.0229986を確認した。DDGI有効A/Bはmean/max delta=0.168949/6.5625、無効A/Bはmean/max delta=0/0、dynamic red/green ROIは4 warmup sample後のFrameNumber差8でprogress=0.971325/0.820146、VUID_COUNT=0。P4のDDGIProbeUpdateVulkanTestも回帰なし。
 - R4-P7: `20260922-r4-p7-final3`。R4Acceptance.md、Cornell RGBE/threshold、build/GPU/CTest読戻しログ、atlas履歴、失敗時公開状態クリア、既知の制限、Deferred性能gateを確定した。指定R4 9件CTestは9/9 passed。独立評価2周目で指摘された帳簿・行末・成果物追跡のblockingを修正し、最終GPUログと差分衛生を再確認してR4を受入れ完了とする。
 - SCENE-P1: `20260922`。起動経路は`GameApplicationHandler::CreateGameModeStateMachine`から従来どおり`Rendering3DTest`を開始するまま維持した。球・地面・ライト球・方向ライト・boulder非同期ロード・HDR環境の生成ログと120フレーム終了を確認し、既定フレームへ常時投入されていたテスト用黄色AABBだけを外した。選択表示AABBは維持した。Debug Game build exit 0、関連CTest 3/3 passed。
+- AUDIT-RM-P1: `20260922`。RoadMapの依存関係とR0〜R5のコード・受入れ記録を照合した。R3〜R5の実装済みなのにRoadMap表が未着手のまま残る遅れ、R2〜R5の完了トレーラー不足、R6-aを次に開始できる依存状態、Rendering3DTestに読み込む保存済みレンダリングシーンが存在しないことを追跡監査へ固定した。RoadMap本体は無視対象のため変更・追跡化していない。
 
 ## In progress
 - なし。TASKS.mdに登録したR1〜R5の実装タスクは完了。性能gateとNEXT_FINDINGS.mdのnon-blocking追跡は別ゲートとして残す。
