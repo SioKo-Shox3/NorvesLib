@@ -151,3 +151,42 @@ grep -c 'LightingPass' Test/Core/Rendering/RenderingRayTracingShadowVulkanTest.c
 - `RenderingRayTracingShadowVulkanTest`(保存された `verify-R6-P2-2.txt`・`recheck-R6-P2-5-2.txt` の Passed を採用。`DDGIProbeRayQueryVulkanTest` のみ直接実行し exit 0 を確認)
 
 `.harness/lessons/` は存在しないため教訓の選別は行っていません。
+
+## 反復 7 — 評価者(claude)の判定: 判定不能
+
+対象: R6-P1-FIX-2 SceneRevisionをカリング・ソート非依存へ修正する
+
+1行目が PASS/NEEDS_WORK ではなかった(1行目: 評価は完了しました。判定を書きます。)。回答をそのまま貼る:
+
+…(先頭を省略)
+Component::CurrentLODLevel` 由来で、カメラ距離から自動更新する箇所は無い(grep で代入なし)ため構成値として妥当。
+- `RevisionSetAccumulator`(count / xor / sum of mixed)により集合の順序に依存しない。DrawCommands・InstanceData・RayTracingScene は参照しない(ソースにも無く、テストの source-scan assert でも固定)。
+- 性質テスト `TestSceneRevisionIsCompositionOnly` はカメラ移動・物体/Skinned 移動・DrawCommands 全削除・RT instance 削減・proxy/UI(Board)/RT の並べ替えで不変、追加・削除・メッシュ変更・材質変更・環境(SunAltitude)変更で変化することを assert している。
+- R6-P1 の履歴 revision 契約(`UpdateFrameRevisions` 本体、`HasHistoryRevisionMismatch`)と FramePacket の値所有は差分で触れていない。
+
+**証拠**
+
+- `verify-R6-P1-FIX-2-1.txt`: Game ビルド `EXIT_CODE=0`(167行、Game.exe 生成まで確認)。
+- `verify-R6-P1-FIX-2-2.txt`: 指定3テスト `100% tests passed`(RayTracingSceneSnapshotTest / RenderingVelocityCameraVulkanTest / RenderingDDGILightingContractTest)。`recheck-R6-P1-FIX-2-7-1/2` も同結果。
+- verify のビルド対象は `Game` だけでテスト実行ファイルの再ビルドを保証しないため、`RenderingDDGILightingContractTest.exe`(00:16 生成、コミット 00:23 の直前)に `HashSceneRevisionInternal` と `packet.Scene.SkinnedMeshProxies` の文字列が含まれることを確認し、私自身も再実行した:
+
+```
+ctest --test-dir build -C Debug -R "^RenderingDDGILightingContractTest$"
+1/1 Test #108: RenderingDDGILightingContractTest ...   Passed    0.03 sec
+100% tests passed, 0 tests failed out of 1
+```
+
+- 行末: `git diff --numstat` と `--ignore-cr-at-eol --numstat` は5ファイルとも一致。変更ファイルはすべて `paths:` 内。英語コメント・文言の混入なし。
+
+**non-blocking**
+
+- 旧ハッシュにあった `InstanceData.ObjectColor` は新ハッシュに無い(MeshProxy に無いので proxy 集合からは観測不能)。R6-P3 の履歴側 material 棄却で概ね吸収されるが、物体色だけを変えた場合に revision が変わらないことは TASKS の R6-P3 の前提として明記しておくとよい。
+- `MeshProxy::CustomData` はハッシュに入るため、ゲーム側が毎フレーム CustomData をアニメーションさせると revision が毎フレーム変わり RTGI 履歴が積み上がらない。旧ハッシュも同じだったので回帰ではない。
+- 今後の verify では `--target Game RenderingDDGILightingContractTest` のようにテスト実行ファイルもビルド対象へ含めると、stale バイナリでの緑を防げる。
+
+**実行できなかったコマンド**
+
+- `cmake --build build --config Debug --target Game -- /m:1`(保存出力の exit 0 を採用)
+- `RayTracingSceneSnapshotTest` / `RenderingVelocityCameraVulkanTest`(GPU テスト。保存出力の Passed を採用。契約テストのみ直接再実行)
+
+`.harness/lessons/` は存在しないため教訓の選別は行っていません。

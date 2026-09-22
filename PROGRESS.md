@@ -58,13 +58,14 @@
 - R6-P1-FIX: `SceneRevision`から物体変換・`PreviousWorld`・TLAS transformを除き、シーン構成・材質・環境・TLAS構成だけをrevision化した。RTGI履歴はcurrent側のframe/revisionだけで選択し、history側のrevision差を`HasHistoryRevisionMismatch`でR6-P3へ保持する。1つ前のhistory revisionでRTGI選択を維持し、構成revision不一致でfallbackへ戻る契約テストを追加した。指定Game buildとCTest 3/3 passed。証拠は`.harness/runs/20260922-200402/verify-R6-P1-FIX-1.txt`と`verify-R6-P1-FIX-2.txt`。
 - R6-P2: R5のFramePacket TLAS/BLAS snapshotを共有する1 bounce ray-query computeをLightingPassへ接続し、TLAS hit/miss、直接光または環境光の有限なdiffuse indirect radiance、pre-exposureを`R16G16B16A16_FLOAT`へ渡した。RT非対応・無効化・不完全TLAS・資源またはdispatch例外ではRTGI結果を公開せず、R4 DDGI→既存IBL→rasterへ戻す。指定Game buildはexit 0、`DDGIProbeRayQueryVulkanTest`と`RenderingRayTracingShadowVulkanTest`は2/2 passed。証拠は`.harness/runs/20260922-200402/verify-R6-P2-1.txt`と`verify-R6-P2-2.txt`。
 - R6-P1-FIX-2: SceneRevisionを全MeshProxy/SkinnedMeshProxyの順序非依存な構成集合ハッシュへ移し、カリング済みDrawCommand・奥行きソート・物体/UI変換・RT配置を除外した。構成追加削除、メッシュ/材質/環境変更の変化と、カメラ/物体移動・カリング・proxy/UI/RT順序の不変性を性質テストで固定した。指定Game buildとCTest 3/3 passed。証拠は`.harness/runs/20260922-200402/verify-R6-P1-FIX-2-1.txt`と`verify-R6-P1-FIX-2-2.txt`。
+- R6-P2-FIX: 専用`RTGIDiffuseIndirectVulkanTest`で完全TLASと2x2 GBufferをLightingPassへ渡し、ray-query computeのhit/miss finite radiance、RTGI公開、無効化/TLAS不完全時の既存raster fallbackをGPU readbackで固定した。RTGI descriptorのsampler/storage image bindingずれも修正し、R5 RT pipeline/SBTとRendering3DTest起動経路は変更していない。指定Game build、GPU CTest 3/3、GLSL compileはすべてexit 0。証拠は`.harness/runs/20260922-200402/verify-R6-P2-FIX-5.txt`〜`-7.txt`。
 
 ## In progress
-- R6-P2は実装済みだが、独立評価で実行時の陽性経路証拠不足が判明した。R6-P2-FIXでRTGIのhit/miss・有限値・fallbackをGPU readback検証してからR6-P3へ進む。
+- R6-P2-FIXまで完了。次はR6-P3のvelocity再投影と8フレーム履歴を実装する。
 
 ## Next
 
-- R6-P2-FIX: 専用RTGI GPUテストでray-queryのhit/miss、finite radiance、公開状態、既存fallbackをreadbackする。
+- R6-P3: velocity再投影と8フレーム履歴を実装する。
 
 ## Notes
 
@@ -74,6 +75,7 @@
 - R6-a最終再検証: 最終ソースで関連CTest 17/17、velocity GPU CTest 6/6、カメラのみ/物体のみ/併用の解析値 readback、物体のみの背景ゼロ、移動後停止ゼロ、Game.logの既定シーン構成/`rendered=120`を確認した。Slang SDK未導入warning/errorは既存decoder無効化フォールバックであり、Vulkan validation errorは0件だった。
 - R6-M1再開ゲート(2026-09-22): `cmake --build build --config Debug --target Game RHIRayTracingPipelineVulkanTest -- /m:1`はexit 0。`ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RHIRayTracingPipelineVulkanTest|RenderingVelocityCameraVulkanTest)$"`は2/2 passed。MSBuildの既存libwebsockets生成物warningは継続するが、対象buildとCTestの終了コードは0。
 - R6-P1-FIX検証(2026-09-22): 指定Game buildはEXIT_CODE=0、`RenderingDDGILightingContractTest`・`RayTracingSceneSnapshotTest`・`RenderingVelocityCameraVulkanTest`は3/3 passed。履歴revision差の保持と構成revision不一致のfallbackを契約テストで読戻し確認した。MSBuildのthird-party PDB/libwebsockets生成物warningは継続するが、対象ゲートの終了コードは0。
+- R6-P2-FIX検証(2026-09-23): `verify-R6-P2-FIX-5.txt`はGameと`RTGIDiffuseIndirectVulkanTest`のDebug build EXIT_CODE=0、`verify-R6-P2-FIX-6.txt`は指定GPU 3件が100% passed、`verify-R6-P2-FIX-7.txt`は`DiffuseIndirect.comp`のVulkan 1.2 compile EXIT_CODE=0。GPUテストのreadback出力はfinite、hit positive、miss zero、RTGI公開、disabled/incomplete fallback一致を示す。MSBuildの既存libwebsockets生成物warningは継続するが、対象ゲートの終了コードは0。
 
 - R5-P8開始ゲート: Debug buildはEXIT_CODE=0、対象CTestは1/1 passed。ログは.harness/runs/20260920-174410/verify-R5-P8-1.txtとverify-R5-P8-2.txt。これは既存P7テストの開始時状態で、P8の完了証拠ではない。
 - R5-P8再開儀式(2026-09-21): `git log --oneline -10`を確認し、再開時Debug build exit 0・専用CTest 1/1 passed。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-baseline-build.txt`と`verify-R5-P8-resume-baseline-ctest.txt`。

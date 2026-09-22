@@ -145,6 +145,7 @@ namespace NorvesLib::Core::Rendering
 
     private:
         friend struct DDGIProbeRayQueryVulkanTestAccess;
+        friend struct RTGIDiffuseIndirectVulkanTestAccess;
 
         /**
          * @brief ライト情報をGPUバッファ向けに構築

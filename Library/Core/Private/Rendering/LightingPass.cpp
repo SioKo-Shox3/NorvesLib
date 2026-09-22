@@ -1052,6 +1052,7 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
             RHI::ResourceBindType::RWTexture,
             RHI::ResourceBindType::RWTexture,
             RHI::ResourceBindType::RWTexture,
