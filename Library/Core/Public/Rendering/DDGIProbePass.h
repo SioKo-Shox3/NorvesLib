@@ -75,6 +75,8 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr ResultBuffer;
             RHI::TexturePtr IrradianceAtlas;
             RHI::TexturePtr DistanceAtlas;
+            RHI::TexturePtr HistoryIrradianceAtlas;
+            RHI::TexturePtr HistoryDistanceAtlas;
             float VolumeOrigin[3] = {};
             float ProbeSpacing[3] = {};
             uint32_t ProbeCounts[3] = {};
@@ -83,6 +85,8 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState ResultState = RHI::ResourceState::Undefined;
             RHI::ResourceState IrradianceAtlasState = RHI::ResourceState::Undefined;
             RHI::ResourceState DistanceAtlasState = RHI::ResourceState::Undefined;
+            RHI::ResourceState HistoryIrradianceAtlasState = RHI::ResourceState::Undefined;
+            RHI::ResourceState HistoryDistanceAtlasState = RHI::ResourceState::Undefined;
         };
 
         bool EnsurePipeline(ViewRenderContext& context);

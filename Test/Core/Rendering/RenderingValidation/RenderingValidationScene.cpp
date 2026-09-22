@@ -77,15 +77,19 @@ namespace NorvesLib::Test::RenderingValidation
             const float (&positions)[4][3])
         {
             const uint32_t firstVertex = static_cast<uint32_t>(outVertices.size());
-            const double edgeAX = static_cast<double>(positions[1][0] - positions[0][0]);
-            const double edgeAY = static_cast<double>(positions[1][1] - positions[0][1]);
-            const double edgeAZ = static_cast<double>(positions[1][2] - positions[0][2]);
-            const double edgeBX = static_cast<double>(positions[2][0] - positions[0][0]);
-            const double edgeBY = static_cast<double>(positions[2][1] - positions[0][1]);
-            const double edgeBZ = static_cast<double>(positions[2][2] - positions[0][2]);
-            double normalX = edgeAY * edgeBZ - edgeAZ * edgeBY;
-            double normalY = edgeAZ * edgeBX - edgeAX * edgeBZ;
-            double normalZ = edgeAX * edgeBY - edgeAY * edgeBX;
+            const double rasterEdgeAX = static_cast<double>(positions[2][0] - positions[0][0]);
+            const double rasterEdgeAY = static_cast<double>(positions[2][1] - positions[0][1]);
+            const double rasterEdgeAZ = static_cast<double>(positions[2][2] - positions[0][2]);
+            const double rasterEdgeBX = static_cast<double>(positions[1][0] - positions[0][0]);
+            const double rasterEdgeBY = static_cast<double>(positions[1][1] - positions[0][1]);
+            const double rasterEdgeBZ = static_cast<double>(positions[1][2] - positions[0][2]);
+            // GBufferはFrontFace::Clockwiseで描画するため、indicesは室内から見て
+            // 反時計回りの(0,2,1)/(0,3,2)を使う。vertex normalはラスタ面の裏側、
+            // すなわち閉じたCornell室の内側を向ける必要があるため、法線の符号を
+            // ここで明示的に反転する。通常のメッシュ経路やDDGI shaderで補正しない。
+            double normalX = -(rasterEdgeAY * rasterEdgeBZ - rasterEdgeAZ * rasterEdgeBY);
+            double normalY = -(rasterEdgeAZ * rasterEdgeBX - rasterEdgeAX * rasterEdgeBZ);
+            double normalZ = -(rasterEdgeAX * rasterEdgeBY - rasterEdgeAY * rasterEdgeBX);
             const double normalLength = std::sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
             if (normalLength > 0.0)
             {
@@ -2995,18 +2999,7 @@ namespace NorvesLib::Test::RenderingValidation
         {
             return false;
         }
-        for (uint32_t index = 0; index < m_R4CornellPointLights.size(); ++index)
-        {
-            Core::Entity* entity = m_R4CornellPointLights[index];
-            if (entity == nullptr)
-            {
-                return false;
-            }
-            entity->SetPosition(
-                R4CornellPointLightPositions[index][0] + offsetX,
-                5.35f,
-                R4CornellPointLightPositions[index][1]);
-        }
+        // 点光源は無効化したまま、動的検証では面光源だけを移動する。
         m_pR4CornellEmitterEntity->SetPosition(offsetX, 0.0f, 0.0f);
         return true;
     }

@@ -53,8 +53,9 @@ namespace
     constexpr uint32_t BounceRayIndex = 55u;
     constexpr float OcclusionPlaneHitX = 0.65f;
     constexpr float Pi = 3.14159265358979323846f;
+    constexpr float DDGIWrapWeightFloor = 0.004f;
     constexpr float DistanceConeExponent = 32.0f;
-    constexpr float AtlasHysteresis = 0.8f;
+    constexpr float AtlasHysteresis = 0.60f;
     constexpr float EmitterRadiance[3] = {8.0f, 4.0f, 2.0f};
     constexpr float OccluderBaseColor[3] = {0.5f, 0.5f, 0.5f};
 
@@ -968,7 +969,7 @@ namespace
             const float wrapShading =
                 (pointToProbeX * surfaceNormal.x + pointToProbeY * surfaceNormal.y +
                  pointToProbeZ * surfaceNormal.z + 1.0f) * 0.5f;
-            weight *= wrapShading * wrapShading + 0.2f;
+            weight *= wrapShading * wrapShading + DDGIWrapWeightFloor;
 
             const Math::Vector3 probeToPoint(
                 probeToPointX, probeToPointY, probeToPointZ);

@@ -480,12 +480,16 @@ namespace NorvesLib::Core::Rendering
 
     bool DDGIProbePass::Execute(ViewRenderContext& context)
     {
+        bool bFrameResourceWasValid = false;
+        uint32_t previousAtlasProbeCount = 0u;
         for (FrameResources& resources : m_FrameResources)
         {
             if (resources.FrameIndex == context.FrameIndex &&
                 resources.ViewId == context.PhysicalLighting.ViewId &&
                 resources.ViewportId == context.PhysicalLighting.ViewportId)
             {
+                bFrameResourceWasValid = resources.bAtlasValid;
+                previousAtlasProbeCount = resources.AtlasProbeCount;
                 resources.bAtlasValid = false;
                 resources.AtlasProbeCount = 0u;
                 break;
@@ -537,9 +541,10 @@ namespace NorvesLib::Core::Rendering
         const uint32_t resultCount = probeCount * DDGIProbeRayDirectionCount;
         const uint32_t resultBufferSize = resultCount * sizeof(DDGIProbeRayQueryResult);
         FrameResources* frameResources = nullptr;
-        FrameResources* previousFrameResources = nullptr;
         RHI::TexturePtr previousIrradianceAtlas;
         RHI::TexturePtr previousDistanceAtlas;
+        RHI::ResourceState* previousIrradianceAtlasState = nullptr;
+        RHI::ResourceState* previousDistanceAtlasState = nullptr;
         bool bHasPreviousAtlas = false;
         uint32_t instanceDataBufferSize = 0u;
         Container::VariableArray<DDGIProbeRayInstanceData> instanceData;
@@ -573,6 +578,7 @@ namespace NorvesLib::Core::Rendering
                 probeCount, DDGIProbeAtlasMinimumArrayLayerCount);
             const bool bAtlasResourcesMatch =
                 frameResources->IrradianceAtlas && frameResources->DistanceAtlas &&
+                frameResources->HistoryIrradianceAtlas && frameResources->HistoryDistanceAtlas &&
                 frameResources->IrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
                 frameResources->IrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
                 frameResources->IrradianceAtlas->GetArraySize() == atlasArrayLayerCount &&
@@ -580,14 +586,27 @@ namespace NorvesLib::Core::Rendering
                 frameResources->DistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
                 frameResources->DistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
                 frameResources->DistanceAtlas->GetArraySize() == atlasArrayLayerCount &&
-                frameResources->DistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT;
+                frameResources->DistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT &&
+                frameResources->HistoryIrradianceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
+                frameResources->HistoryIrradianceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
+                frameResources->HistoryIrradianceAtlas->GetArraySize() == atlasArrayLayerCount &&
+                frameResources->HistoryIrradianceAtlas->GetFormat() == RHI::Format::R16G16B16A16_FLOAT &&
+                frameResources->HistoryDistanceAtlas->GetWidth() == DDGIProbeAtlasTexelCount &&
+                frameResources->HistoryDistanceAtlas->GetHeight() == DDGIProbeAtlasTexelCount &&
+                frameResources->HistoryDistanceAtlas->GetArraySize() == atlasArrayLayerCount &&
+                frameResources->HistoryDistanceAtlas->GetFormat() == RHI::Format::R16G16_FLOAT;
             if (!bAtlasResourcesMatch)
             {
                 frameResources->IrradianceAtlas.reset();
                 frameResources->DistanceAtlas.reset();
+                frameResources->HistoryIrradianceAtlas.reset();
+                frameResources->HistoryDistanceAtlas.reset();
                 frameResources->IrradianceAtlasState = RHI::ResourceState::Undefined;
                 frameResources->DistanceAtlasState = RHI::ResourceState::Undefined;
+                frameResources->HistoryIrradianceAtlasState = RHI::ResourceState::Undefined;
+                frameResources->HistoryDistanceAtlasState = RHI::ResourceState::Undefined;
                 frameResources->bAtlasValid = false;
+                bFrameResourceWasValid = false;
 
                 RHI::TextureDesc irradianceAtlasDesc;
                 irradianceAtlasDesc.Width = DDGIProbeAtlasTexelCount;
@@ -610,9 +629,14 @@ namespace NorvesLib::Core::Rendering
                                           RHI::ResourceUsage::TransferSrc;
                 distanceAtlasDesc.DebugName = "DDGIProbeUpdate.DistanceAtlas";
                 frameResources->DistanceAtlas = context.Device->CreateTexture(distanceAtlasDesc);
-                if (!frameResources->IrradianceAtlas || !frameResources->DistanceAtlas)
+                irradianceAtlasDesc.DebugName = "DDGIProbeUpdate.HistoryIrradianceAtlas";
+                frameResources->HistoryIrradianceAtlas = context.Device->CreateTexture(irradianceAtlasDesc);
+                distanceAtlasDesc.DebugName = "DDGIProbeUpdate.HistoryDistanceAtlas";
+                frameResources->HistoryDistanceAtlas = context.Device->CreateTexture(distanceAtlasDesc);
+                if (!frameResources->IrradianceAtlas || !frameResources->DistanceAtlas ||
+                    !frameResources->HistoryIrradianceAtlas || !frameResources->HistoryDistanceAtlas)
                 {
-                    DisableAfterResourceFailure("irradiance/distance atlasを作成できません");
+                    DisableAfterResourceFailure("irradiance/distance atlasの履歴を作成できません");
                     return false;
                 }
             }
@@ -661,32 +685,62 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            for (FrameResources& candidate : m_FrameResources)
+            const bool bFrameResourceHistoryMatches =
+                bFrameResourceWasValid && previousAtlasProbeCount == probeCount &&
+                IsSameDDGIVolume(volume,
+                                 frameResources->VolumeOrigin,
+                                 frameResources->ProbeSpacing,
+                                 frameResources->ProbeCounts);
+            if (bFrameResourceHistoryMatches)
             {
-                if (&candidate == frameResources || !candidate.bAtlasValid ||
-                    candidate.FrameNumber == UINT64_MAX ||
-                    candidate.FrameNumber + 1u != context.FrameNumber ||
-                    candidate.ViewId != frameResources->ViewId ||
-                    candidate.ViewportId != frameResources->ViewportId ||
-                    candidate.AtlasProbeCount != probeCount ||
-                    !IsSameDDGIVolume(volume,
-                                      candidate.VolumeOrigin,
-                                      candidate.ProbeSpacing,
-                                      candidate.ProbeCounts) ||
-                    !candidate.IrradianceAtlas || !candidate.DistanceAtlas)
-                {
-                    continue;
-                }
-                previousFrameResources = &candidate;
-                break;
+                // 1スロットのswap chainでも、前回atlasを読みながら別atlasへ書けるようにする。
+                std::swap(frameResources->IrradianceAtlas,
+                          frameResources->HistoryIrradianceAtlas);
+                std::swap(frameResources->DistanceAtlas,
+                          frameResources->HistoryDistanceAtlas);
+                std::swap(frameResources->IrradianceAtlasState,
+                          frameResources->HistoryIrradianceAtlasState);
+                std::swap(frameResources->DistanceAtlasState,
+                          frameResources->HistoryDistanceAtlasState);
+                previousIrradianceAtlas = frameResources->HistoryIrradianceAtlas;
+                previousDistanceAtlas = frameResources->HistoryDistanceAtlas;
+                previousIrradianceAtlasState = &frameResources->HistoryIrradianceAtlasState;
+                previousDistanceAtlasState = &frameResources->HistoryDistanceAtlasState;
+                bHasPreviousAtlas = true;
             }
-            bHasPreviousAtlas = previousFrameResources != nullptr;
-            previousIrradianceAtlas = bHasPreviousAtlas
-                ? previousFrameResources->IrradianceAtlas
-                : m_DefaultIrradianceAtlas;
-            previousDistanceAtlas = bHasPreviousAtlas
-                ? previousFrameResources->DistanceAtlas
-                : m_DefaultDistanceAtlas;
+
+            if (!bHasPreviousAtlas)
+            {
+                for (FrameResources& candidate : m_FrameResources)
+                {
+                    if (&candidate == frameResources || !candidate.bAtlasValid ||
+                        candidate.FrameNumber == UINT64_MAX ||
+                        candidate.FrameNumber + 1u != context.FrameNumber ||
+                        candidate.ViewId != frameResources->ViewId ||
+                        candidate.ViewportId != frameResources->ViewportId ||
+                        candidate.AtlasProbeCount != probeCount ||
+                        !IsSameDDGIVolume(volume,
+                                          candidate.VolumeOrigin,
+                                          candidate.ProbeSpacing,
+                                          candidate.ProbeCounts) ||
+                        !candidate.IrradianceAtlas || !candidate.DistanceAtlas)
+                    {
+                        continue;
+                    }
+                    previousIrradianceAtlas = candidate.IrradianceAtlas;
+                    previousDistanceAtlas = candidate.DistanceAtlas;
+                    previousIrradianceAtlasState = &candidate.IrradianceAtlasState;
+                    previousDistanceAtlasState = &candidate.DistanceAtlasState;
+                    bHasPreviousAtlas = true;
+                    break;
+                }
+            }
+
+            if (!bHasPreviousAtlas)
+            {
+                previousIrradianceAtlas = m_DefaultIrradianceAtlas;
+                previousDistanceAtlas = m_DefaultDistanceAtlas;
+            }
 
             DDGIProbeIrradianceUpdateParameters bounceParameters;
             DDGIProbeIrradianceUpdateParameters updateParameters;
@@ -862,33 +916,34 @@ namespace NorvesLib::Core::Rendering
 
             if (bHasPreviousAtlas)
             {
-                if (previousFrameResources->IrradianceAtlasState !=
-                    RHI::ResourceState::ShaderResource)
+                if (previousIrradianceAtlasState == nullptr ||
+                    previousDistanceAtlasState == nullptr)
                 {
-                    context.CommandList->TextureBarrier(
-                        previousFrameResources->IrradianceAtlas,
-                        previousFrameResources->IrradianceAtlasState,
-                        RHI::ResourceState::ShaderResource,
-                        0u,
-                        0u,
-                        0u,
-                        0u);
-                    previousFrameResources->IrradianceAtlasState =
-                        RHI::ResourceState::ShaderResource;
+                    return false;
                 }
-                if (previousFrameResources->DistanceAtlasState !=
-                    RHI::ResourceState::ShaderResource)
+                if (*previousIrradianceAtlasState != RHI::ResourceState::ShaderResource)
                 {
                     context.CommandList->TextureBarrier(
-                        previousFrameResources->DistanceAtlas,
-                        previousFrameResources->DistanceAtlasState,
+                        previousIrradianceAtlas,
+                        *previousIrradianceAtlasState,
                         RHI::ResourceState::ShaderResource,
                         0u,
                         0u,
                         0u,
                         0u);
-                    previousFrameResources->DistanceAtlasState =
-                        RHI::ResourceState::ShaderResource;
+                    *previousIrradianceAtlasState = RHI::ResourceState::ShaderResource;
+                }
+                if (*previousDistanceAtlasState != RHI::ResourceState::ShaderResource)
+                {
+                    context.CommandList->TextureBarrier(
+                        previousDistanceAtlas,
+                        *previousDistanceAtlasState,
+                        RHI::ResourceState::ShaderResource,
+                        0u,
+                        0u,
+                        0u,
+                        0u);
+                    *previousDistanceAtlasState = RHI::ResourceState::ShaderResource;
                 }
             }
         }

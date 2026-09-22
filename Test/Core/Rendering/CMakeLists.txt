@@ -221,6 +221,12 @@ register_rendering_gpu_test(
     --capture-source=scene-color
     --scenario=cornell-reference
 )
+register_rendering_gpu_test(
+    RenderingDDGIVulkanDynamicTest
+    RenderingDDGIVulkanTest
+    --capture-source=scene-color
+    --scenario=dynamic-update
+)
 add_executable(RHIRayTracingPipelineVulkanTest
     RHIRayTracingPipelineVulkanTest.cpp
 )
