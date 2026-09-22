@@ -35,6 +35,18 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
         "RTGI.History.CurrentConfidence", sizeof("RTGI.History.CurrentConfidence") - 1);
     inline constexpr Identity RTGIHistoryHistoryConfidence = Identity::Literal(
         "RTGI.History.HistoryConfidence", sizeof("RTGI.History.HistoryConfidence") - 1);
+    inline constexpr Identity RTGIHistoryCurrentDepth = Identity::Literal(
+        "RTGI.History.CurrentDepth", sizeof("RTGI.History.CurrentDepth") - 1);
+    inline constexpr Identity RTGIHistoryHistoryDepth = Identity::Literal(
+        "RTGI.History.HistoryDepth", sizeof("RTGI.History.HistoryDepth") - 1);
+    inline constexpr Identity RTGIHistoryCurrentNormal = Identity::Literal(
+        "RTGI.History.CurrentNormal", sizeof("RTGI.History.CurrentNormal") - 1);
+    inline constexpr Identity RTGIHistoryHistoryNormal = Identity::Literal(
+        "RTGI.History.HistoryNormal", sizeof("RTGI.History.HistoryNormal") - 1);
+    inline constexpr Identity RTGIHistoryCurrentMaterial = Identity::Literal(
+        "RTGI.History.CurrentMaterial", sizeof("RTGI.History.CurrentMaterial") - 1);
+    inline constexpr Identity RTGIHistoryHistoryMaterial = Identity::Literal(
+        "RTGI.History.HistoryMaterial", sizeof("RTGI.History.HistoryMaterial") - 1);
     inline constexpr Identity SSRSceneColor = Identity::Literal("SSR.SceneColor", sizeof("SSR.SceneColor") - 1);
     inline constexpr Identity BloomSceneColor = Identity::Literal("Bloom.SceneColor", sizeof("Bloom.SceneColor") - 1);
     inline constexpr Identity ToneMappedColor = Identity::Literal("ToneMappedColor", sizeof("ToneMappedColor") - 1);

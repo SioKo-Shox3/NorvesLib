@@ -898,6 +898,7 @@ namespace NorvesLib::Core::Rendering
         float cameraPosition[4] = {};
         uint32_t imageAndSceneCounts[4] = {};
         float rayLimits[4] = {};
+        uint32_t temporalState[4] = {};
     };
 
     struct RTGIInstanceData
@@ -913,7 +914,7 @@ namespace NorvesLib::Core::Rendering
         float Transform[12] = {};
     };
 
-    static_assert(sizeof(RTGIComputeParameters) == 112u);
+    static_assert(sizeof(RTGIComputeParameters) == 128u);
     static_assert(sizeof(RTGIInstanceData) == 112u);
 
     static bool IsFiniteNonNegativeRTGI(float value)
@@ -1044,8 +1045,20 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceBindType::RWTexture,
             RHI::ResourceBindType::StructuredBuffer,
             RHI::ResourceBindType::StructuredBuffer,
-            RHI::ResourceBindType::CombinedImageSampler};
-        for (uint32_t bindingIndex = 0u; bindingIndex < 10u; ++bindingIndex)
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::RWTexture,
+            RHI::ResourceBindType::RWTexture,
+            RHI::ResourceBindType::RWTexture,
+            RHI::ResourceBindType::RWTexture,
+            RHI::ResourceBindType::RWTexture,
+            RHI::ResourceBindType::RWTexture};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 23u; ++bindingIndex)
         {
             RHI::DescriptorBinding binding;
             binding.binding = bindingIndex;
@@ -1728,8 +1741,7 @@ namespace NorvesLib::Core::Rendering
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
             !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer &&
             !m_RTGIComputePipeline && !m_RTGIComputeParametersBuffer &&
-            !m_RTGIComputeInstanceDataBuffer && !m_RTGIHistoryAgeTexture &&
-            !m_RTGIHistoryConfidenceTexture)
+            !m_RTGIComputeInstanceDataBuffer)
         {
             return;
         }
@@ -1749,11 +1761,22 @@ namespace NorvesLib::Core::Rendering
         m_RTGIComputeParametersBuffer.reset();
         m_RTGIComputeInstanceDataBuffer.reset();
         m_RTGIGeometryBuffers.clear();
-        m_RTGIHistoryAgeTexture.reset();
-        m_RTGIHistoryConfidenceTexture.reset();
+        for (RTGIHistoryTextureSet& history : m_RTGIHistoryTextures)
+        {
+            history.Clear();
+        }
+        m_RTGIHistorySlotState[0] = RHI::ResourceState::Undefined;
+        m_RTGIHistorySlotState[1] = RHI::ResourceState::Undefined;
         m_RTGIComputeInstanceDataCapacity = 0u;
         m_RTGIHistoryWidth = 0u;
         m_RTGIHistoryHeight = 0u;
+        m_RTGIHistoryWriteIndex = 0u;
+        m_RTGIHistoryAgeFrames = 0u;
+        m_RTGIHistorySceneRevision = 0u;
+        m_RTGIHistoryLightRevision = 0u;
+        m_RTGIHistoryLightWeightLimitedFrames = 0u;
+        m_bRTGIHistoryValid = false;
+        m_bRTGIHistoryLightRevisionValid = false;
         m_bRTGIComputeUnavailable = false;
 
         m_LightArrayBuffer.reset();
@@ -1812,6 +1835,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferNormalHandle = {};
         m_GBufferMaterialHandle = {};
         m_GBufferDepthHandle = {};
+        m_GBufferVelocityHandle = {};
         m_GBufferEmissiveHandle = {};
         m_SSAOBlurredHandle = {};
         m_ShadowMapHandle = {};
@@ -1983,6 +2007,24 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        RGTextureHandle velocityHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::GBufferVelocity,
+                                   velocityHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_GBufferVelocityHandle = velocityHandle.ToResourceHandle();
+        }
+        else if (m_GBufferPass)
+        {
+            const RGResourceHandle fallbackVelocityHandle = m_GBufferPass->GetVelocityHandle();
+            if (fallbackVelocityHandle.IsValid())
+            {
+                builder.Read(fallbackVelocityHandle, RHI::ResourceState::ShaderResource);
+                m_GBufferVelocityHandle = fallbackVelocityHandle;
+                m_bLegacyInputFallbackActive = true;
+            }
+        }
+
         RGTextureHandle emissiveHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::GBufferEmissive,
                                    emissiveHandle,
@@ -2109,6 +2151,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr normalTexture;
         RHI::TexturePtr materialTexture;
         RHI::TexturePtr depthTexture;
+        RHI::TexturePtr velocityTexture;
         RHI::TexturePtr emissiveTexture;
         bool bUsedSharedResourceFallback = false;
         if (m_GBufferAlbedoHandle.IsValid())
@@ -2127,6 +2170,10 @@ namespace NorvesLib::Core::Rendering
         {
             depthTexture = resources.GetTexture(m_GBufferDepthHandle);
         }
+        if (m_GBufferVelocityHandle.IsValid())
+        {
+            velocityTexture = resources.GetTexture(m_GBufferVelocityHandle);
+        }
         if (m_GBufferEmissiveHandle.IsValid())
         {
             emissiveTexture = resources.GetTexture(m_GBufferEmissiveHandle);
@@ -2144,13 +2191,15 @@ namespace NorvesLib::Core::Rendering
             rtgiDiffuseIndirectTexture = resources.GetTexture(m_RTGIDiffuseIndirectHandle);
         }
 
-        if ((!albedoTexture || !normalTexture || !materialTexture || !depthTexture || !emissiveTexture) &&
+        if ((!albedoTexture || !normalTexture || !materialTexture || !depthTexture ||
+             !velocityTexture || !emissiveTexture) &&
             m_GBufferPass)
         {
             albedoTexture = albedoTexture ? albedoTexture : resources.GetTexture(m_GBufferPass->GetAlbedoHandle());
             normalTexture = normalTexture ? normalTexture : resources.GetTexture(m_GBufferPass->GetNormalHandle());
             materialTexture = materialTexture ? materialTexture : resources.GetTexture(m_GBufferPass->GetMaterialHandle());
             depthTexture = depthTexture ? depthTexture : resources.GetTexture(m_GBufferPass->GetDepthHandle());
+            velocityTexture = velocityTexture ? velocityTexture : resources.GetTexture(m_GBufferPass->GetVelocityHandle());
             emissiveTexture = emissiveTexture ? emissiveTexture : resources.GetTexture(m_GBufferPass->GetEmissiveHandle());
         }
 
@@ -2180,6 +2229,11 @@ namespace NorvesLib::Core::Rendering
             {
                 depthTexture = context.SharedResources->GetTexturePtr("GBuffer_Depth");
                 bUsedSharedResourceFallback = bUsedSharedResourceFallback || depthTexture != nullptr;
+            }
+            if (!velocityTexture)
+            {
+                velocityTexture = context.SharedResources->GetTexturePtr("GBuffer_Velocity");
+                bUsedSharedResourceFallback = bUsedSharedResourceFallback || velocityTexture != nullptr;
             }
             if (!emissiveTexture)
             {
@@ -2218,6 +2272,7 @@ namespace NorvesLib::Core::Rendering
                           normalTexture,
                           materialTexture,
                           depthTexture,
+                          velocityTexture,
                           emissiveTexture,
                           ssaoTexture,
                           shadowMapTexture,
@@ -2242,6 +2297,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr normalPtr;
         RHI::TexturePtr materialPtr;
         RHI::TexturePtr depthPtr;
+        RHI::TexturePtr velocityPtr;
         RHI::TexturePtr emissivePtr;
         RHI::TexturePtr ssaoPtr;
         RHI::TexturePtr shadowMapPtr;
@@ -2252,6 +2308,7 @@ namespace NorvesLib::Core::Rendering
             normalPtr = context.SharedResources->GetTexturePtr("GBuffer_Normal");
             materialPtr = context.SharedResources->GetTexturePtr("GBuffer_Material");
             depthPtr = context.SharedResources->GetTexturePtr("GBuffer_Depth");
+            velocityPtr = context.SharedResources->GetTexturePtr("GBuffer_Velocity");
             emissivePtr = context.SharedResources->GetTexturePtr("GBuffer_Emissive");
             ssaoPtr = context.SharedResources->GetTexturePtr("SSAO");
             shadowMapPtr = context.SharedResources->GetTexturePtr("ShadowMap");
@@ -2268,6 +2325,7 @@ namespace NorvesLib::Core::Rendering
                           normalPtr,
                           materialPtr,
                           depthPtr,
+                          velocityPtr,
                           emissivePtr,
                           ssaoPtr,
                           shadowMapPtr,
@@ -2674,55 +2732,91 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        if (m_RTGIHistoryAgeTexture && m_RTGIHistoryConfidenceTexture &&
-            m_RTGIHistoryWidth == width && m_RTGIHistoryHeight == height)
+        bool bHistoryTexturesComplete = m_RTGIHistoryWidth == width &&
+            m_RTGIHistoryHeight == height;
+        for (const RTGIHistoryTextureSet& history : m_RTGIHistoryTextures)
+        {
+            bHistoryTexturesComplete = bHistoryTexturesComplete &&
+                history.Radiance && history.Age && history.Confidence && history.Depth &&
+                history.Normal && history.Material;
+        }
+        if (bHistoryTexturesComplete)
         {
             return true;
         }
-        if (width > std::numeric_limits<uint32_t>::max() / sizeof(uint16_t))
+
+        const RHI::ResourceUsage historyUsage = RHI::ResourceUsage::ShaderRead |
+            RHI::ResourceUsage::ShaderWrite;
+        RTGIHistoryTextureSet newHistory[2];
+        for (uint32_t slotIndex = 0u; slotIndex < 2u; ++slotIndex)
         {
-            return false;
+            RHI::TextureDesc radianceDesc;
+            radianceDesc.Width = width;
+            radianceDesc.Height = height;
+            radianceDesc.TextureFormat = RTGIDiffuseIndirectRadianceFormat;
+            radianceDesc.Usage = historyUsage;
+            radianceDesc.DebugName = slotIndex == 0u
+                ? "RTGI.History.CurrentRadiance"
+                : "RTGI.History.HistoryRadiance";
+            newHistory[slotIndex].Radiance = m_Device->CreateTexture(radianceDesc);
+
+            RHI::TextureDesc ageDesc = radianceDesc;
+            ageDesc.TextureFormat = RTGIHistoryAgeFormat;
+            ageDesc.DebugName = slotIndex == 0u
+                ? "RTGI.History.CurrentAge"
+                : "RTGI.History.HistoryAge";
+            newHistory[slotIndex].Age = m_Device->CreateTexture(ageDesc);
+
+            RHI::TextureDesc confidenceDesc = ageDesc;
+            confidenceDesc.TextureFormat = RTGIHistoryConfidenceFormat;
+            confidenceDesc.DebugName = slotIndex == 0u
+                ? "RTGI.History.CurrentConfidence"
+                : "RTGI.History.HistoryConfidence";
+            newHistory[slotIndex].Confidence = m_Device->CreateTexture(confidenceDesc);
+
+            RHI::TextureDesc gbufferHistoryDesc = radianceDesc;
+            gbufferHistoryDesc.TextureFormat = RTGIHistoryGBufferFormat;
+            gbufferHistoryDesc.DebugName = slotIndex == 0u
+                ? "RTGI.History.CurrentDepth"
+                : "RTGI.History.HistoryDepth";
+            newHistory[slotIndex].Depth = m_Device->CreateTexture(gbufferHistoryDesc);
+            gbufferHistoryDesc.DebugName = slotIndex == 0u
+                ? "RTGI.History.CurrentNormal"
+                : "RTGI.History.HistoryNormal";
+            newHistory[slotIndex].Normal = m_Device->CreateTexture(gbufferHistoryDesc);
+            gbufferHistoryDesc.DebugName = slotIndex == 0u
+                ? "RTGI.History.CurrentMaterial"
+                : "RTGI.History.HistoryMaterial";
+            newHistory[slotIndex].Material = m_Device->CreateTexture(gbufferHistoryDesc);
+
+            if (!newHistory[slotIndex].Radiance || !newHistory[slotIndex].Age ||
+                !newHistory[slotIndex].Confidence || !newHistory[slotIndex].Depth ||
+                !newHistory[slotIndex].Normal || !newHistory[slotIndex].Material)
+            {
+                return false;
+            }
         }
 
-        RHI::TextureDesc ageDesc;
-        ageDesc.Width = width;
-        ageDesc.Height = height;
-        ageDesc.TextureFormat = RTGIHistoryAgeFormat;
-        ageDesc.Usage = RHI::ResourceUsage::ShaderRead |
-                        RHI::ResourceUsage::TransferDst;
-        ageDesc.DebugName = "RTGI.History.CurrentAge";
-        RHI::TexturePtr ageTexture = m_Device->CreateTexture(ageDesc);
-
-        RHI::TextureDesc confidenceDesc = ageDesc;
-        confidenceDesc.TextureFormat = RTGIHistoryConfidenceFormat;
-        confidenceDesc.DebugName = "RTGI.History.CurrentConfidence";
-        RHI::TexturePtr confidenceTexture = m_Device->CreateTexture(confidenceDesc);
-        if (!ageTexture || !confidenceTexture)
+        for (uint32_t slotIndex = 0u; slotIndex < 2u; ++slotIndex)
         {
-            return false;
+            m_RTGIHistoryTextures[slotIndex] = std::move(newHistory[slotIndex]);
+            m_RTGIHistorySlotState[slotIndex] = RHI::ResourceState::Undefined;
         }
-
-        const uint64_t pixelCount64 = static_cast<uint64_t>(width) * height;
-        if (pixelCount64 > std::numeric_limits<size_t>::max() / sizeof(uint16_t) ||
-            pixelCount64 > std::numeric_limits<uint32_t>::max())
-        {
-            return false;
-        }
-        const size_t pixelCount = static_cast<size_t>(pixelCount64);
-        Container::VariableArray<uint16_t> agePixels;
-        Container::VariableArray<uint16_t> confidencePixels;
-        agePixels.resize(pixelCount, 0u);
-        confidencePixels.resize(pixelCount, 0x3C00u);
-        const uint32_t rowPitch = width * sizeof(uint16_t);
-        const uint32_t slicePitch = static_cast<uint32_t>(pixelCount64) * sizeof(uint16_t);
-        ageTexture->Update(agePixels.data(), rowPitch, slicePitch);
-        confidenceTexture->Update(confidencePixels.data(), rowPitch, slicePitch);
-
-        m_RTGIHistoryAgeTexture = std::move(ageTexture);
-        m_RTGIHistoryConfidenceTexture = std::move(confidenceTexture);
         m_RTGIHistoryWidth = width;
         m_RTGIHistoryHeight = height;
+        m_RTGIHistoryWriteIndex = 0u;
+        InvalidateRTGIHistory();
         return true;
+    }
+
+    void LightingPass::InvalidateRTGIHistory()
+    {
+        m_bRTGIHistoryValid = false;
+        m_bRTGIHistoryLightRevisionValid = false;
+        m_RTGIHistoryAgeFrames = 0u;
+        m_RTGIHistorySceneRevision = 0u;
+        m_RTGIHistoryLightRevision = 0u;
+        m_RTGIHistoryLightWeightLimitedFrames = 0u;
     }
 
     bool LightingPass::ExecuteRTGI(ViewRenderContext& context,
@@ -2730,15 +2824,22 @@ namespace NorvesLib::Core::Rendering
                                    const RHI::TexturePtr& normalTexture,
                                    const RHI::TexturePtr& materialTexture,
                                    const RHI::TexturePtr& depthTexture,
+                                   const RHI::TexturePtr& velocityTexture,
                                    const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                                    const GPULightingParams& lightingParams)
     try
     {
+        const auto fail = [this]() -> bool
+        {
+            InvalidateRTGIHistory();
+            return false;
+        };
         if (!context.CommandList || !context.Device || !context.bRTGIEnabled ||
             !context.bRTGITLASAvailable || !context.RTGICapability.IsUsable() ||
             !context.SnapshotRayTracingScene ||
             !context.SnapshotRayTracingScene->IsComplete() ||
             !albedoTexture || !normalTexture || !materialTexture || !depthTexture ||
+            !velocityTexture ||
             !rtgiDiffuseIndirectTexture ||
             rtgiDiffuseIndirectTexture->GetFormat() != RTGIDiffuseIndirectRadianceFormat ||
             (rtgiDiffuseIndirectTexture->GetUsage() & RHI::ResourceUsage::ShaderRead) ==
@@ -2746,13 +2847,13 @@ namespace NorvesLib::Core::Rendering
             (rtgiDiffuseIndirectTexture->GetUsage() & RHI::ResourceUsage::ShaderWrite) ==
                 RHI::ResourceUsage::None)
         {
-            return false;
+            return fail();
         }
 
         const uint32_t debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
         if (debugViewMode >= 246u && debugViewMode <= 255u)
         {
-            return false;
+            return fail();
         }
 
         const uint32_t width = rtgiDiffuseIndirectTexture->GetWidth();
@@ -2763,7 +2864,7 @@ namespace NorvesLib::Core::Rendering
             height > std::numeric_limits<uint32_t>::max() -
                          (RTGI_COMPUTE_WORKGROUP_SIZE - 1u))
         {
-            return false;
+            return fail();
         }
 
         Container::VariableArray<RTGIInstanceData> instanceData;
@@ -2772,12 +2873,12 @@ namespace NorvesLib::Core::Rendering
                                       instanceData,
                                       geometryBuffers))
         {
-            return false;
+            return fail();
         }
         if (!EnsureRTGIComputePipeline(context) ||
             !EnsureRTGIHistoryTextures(width, height))
         {
-            return false;
+            return fail();
         }
 
         const uint64_t requiredInstanceDataSize =
@@ -2785,7 +2886,7 @@ namespace NorvesLib::Core::Rendering
         if (requiredInstanceDataSize == 0u ||
             requiredInstanceDataSize > std::numeric_limits<uint32_t>::max())
         {
-            return false;
+            return fail();
         }
         if (!m_RTGIComputeInstanceDataBuffer ||
             m_RTGIComputeInstanceDataCapacity < requiredInstanceDataSize)
@@ -2798,7 +2899,7 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr instanceDataBuffer = context.Device->CreateBuffer(instanceDataDesc);
             if (!instanceDataBuffer)
             {
-                return false;
+                return fail();
             }
             m_RTGIComputeInstanceDataBuffer = std::move(instanceDataBuffer);
             m_RTGIComputeInstanceDataCapacity = requiredInstanceDataSize;
@@ -2818,8 +2919,49 @@ namespace NorvesLib::Core::Rendering
             context.PhysicalLighting.LightBufferSizeBytes < requiredLightBufferSize ||
             lightBuffer->GetSize() < context.PhysicalLighting.LightBufferSizeBytes)
         {
-            return false;
+            return fail();
         }
+
+        const bool bHadHistory = m_bRTGIHistoryValid;
+        const uint32_t writeHistoryIndex = bHadHistory
+            ? (m_RTGIHistoryWriteIndex ^ 1u)
+            : m_RTGIHistoryWriteIndex;
+        const uint32_t readHistoryIndex = writeHistoryIndex ^ 1u;
+        RTGIHistoryTextureSet& writeHistory = m_RTGIHistoryTextures[writeHistoryIndex];
+        RTGIHistoryTextureSet& readHistory = m_RTGIHistoryTextures[readHistoryIndex];
+        const bool bSceneRevisionMatches =
+            m_bRTGIHistoryValid && m_RTGIHistorySceneRevision == context.SceneRevision;
+        const bool bHistoryReprojectionValid = bSceneRevisionMatches;
+        const bool bLightRevisionMismatch =
+            m_bRTGIHistoryLightRevisionValid &&
+            m_RTGIHistoryLightRevision != context.LightRevision;
+        const uint32_t lightWeightLimitedFrames = bLightRevisionMismatch
+            ? 2u
+            : m_RTGIHistoryLightWeightLimitedFrames;
+
+        const auto transitionHistorySlot = [&](RTGIHistoryTextureSet& slot,
+                                                RHI::ResourceState beforeState,
+                                                RHI::ResourceState afterState)
+        {
+            context.CommandList->TextureBarrier(slot.Radiance, beforeState, afterState);
+            context.CommandList->TextureBarrier(slot.Age, beforeState, afterState);
+            context.CommandList->TextureBarrier(slot.Confidence, beforeState, afterState);
+            context.CommandList->TextureBarrier(slot.Depth, beforeState, afterState);
+            context.CommandList->TextureBarrier(slot.Normal, beforeState, afterState);
+            context.CommandList->TextureBarrier(slot.Material, beforeState, afterState);
+        };
+
+        if (m_RTGIHistorySlotState[readHistoryIndex] == RHI::ResourceState::Undefined)
+        {
+            transitionHistorySlot(readHistory,
+                                  RHI::ResourceState::Undefined,
+                                  RHI::ResourceState::ShaderResource);
+            m_RTGIHistorySlotState[readHistoryIndex] = RHI::ResourceState::ShaderResource;
+        }
+        transitionHistorySlot(
+            writeHistory,
+            m_RTGIHistorySlotState[writeHistoryIndex],
+            RHI::ResourceState::UnorderedAccess);
 
         RTGIComputeParameters parameters;
         std::memcpy(parameters.invViewProjection,
@@ -2843,6 +2985,10 @@ namespace NorvesLib::Core::Rendering
                                           context.PhysicalLighting.IBLIntensity > 0.0f
                                       ? context.PhysicalLighting.IBLIntensity
                                       : 0.0f;
+        parameters.temporalState[0] = bHistoryReprojectionValid ? 1u : 0u;
+        parameters.temporalState[1] = bLightRevisionMismatch ? 1u : 0u;
+        parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
+        parameters.temporalState[3] = RTGIHistoryMaximumAge;
         m_RTGIComputeParametersBuffer->Update(&parameters, sizeof(parameters));
         m_RTGIComputeInstanceDataBuffer->Update(
             instanceData.data(), requiredInstanceDataSize);
@@ -2854,14 +3000,14 @@ namespace NorvesLib::Core::Rendering
                 CreateRTGIComputeDescriptorSetDesc());
             if (!m_RTGIComputeDescriptorSet)
             {
-                return false;
+                return fail();
             }
         }
 
         if (!m_RTGIComputeDescriptorSet->BindAccelerationStructure(
                 0u, context.SnapshotRayTracingScene->TopLevel))
         {
-            return false;
+            return fail();
         }
         m_RTGIComputeDescriptorSet->BindConstantBuffer(
             1u,
@@ -2889,6 +3035,26 @@ namespace NorvesLib::Core::Rendering
             context.PhysicalLighting.LightBufferSizeBytes);
         m_RTGIComputeDescriptorSet->BindTexture(9u, environmentTexture);
         m_RTGIComputeDescriptorSet->BindSampler(9u, environmentSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(10u, velocityTexture);
+        m_RTGIComputeDescriptorSet->BindSampler(10u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(11u, readHistory.Radiance);
+        m_RTGIComputeDescriptorSet->BindSampler(11u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(12u, readHistory.Age);
+        m_RTGIComputeDescriptorSet->BindSampler(12u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(13u, readHistory.Confidence);
+        m_RTGIComputeDescriptorSet->BindSampler(13u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(14u, readHistory.Depth);
+        m_RTGIComputeDescriptorSet->BindSampler(14u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(15u, readHistory.Normal);
+        m_RTGIComputeDescriptorSet->BindSampler(15u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindTexture(16u, readHistory.Material);
+        m_RTGIComputeDescriptorSet->BindSampler(16u, m_GBufferSampler);
+        m_RTGIComputeDescriptorSet->BindStorageTexture(17u, writeHistory.Radiance);
+        m_RTGIComputeDescriptorSet->BindStorageTexture(18u, writeHistory.Age);
+        m_RTGIComputeDescriptorSet->BindStorageTexture(19u, writeHistory.Confidence);
+        m_RTGIComputeDescriptorSet->BindStorageTexture(20u, writeHistory.Depth);
+        m_RTGIComputeDescriptorSet->BindStorageTexture(21u, writeHistory.Normal);
+        m_RTGIComputeDescriptorSet->BindStorageTexture(22u, writeHistory.Material);
         m_RTGIComputeDescriptorSet->Update();
 
         const uint32_t groupCountX =
@@ -2902,6 +3068,12 @@ namespace NorvesLib::Core::Rendering
             rtgiDiffuseIndirectTexture,
             RHI::ResourceState::UnorderedAccess,
             RHI::ResourceState::ShaderResource);
+        transitionHistorySlot(writeHistory,
+                              RHI::ResourceState::UnorderedAccess,
+                              RHI::ResourceState::ShaderResource);
+        // Vulkanのstorage imageはShaderResource遷移後もgeneral layoutを保持するため、
+        // 次のframeでは論理状態をUnorderedAccessとして再利用します。
+        m_RTGIHistorySlotState[writeHistoryIndex] = RHI::ResourceState::UnorderedAccess;
 
         RTGIResult result;
         result.DiffuseIndirectRadiance = rtgiDiffuseIndirectTexture;
@@ -2917,24 +3089,61 @@ namespace NorvesLib::Core::Rendering
         result.bDiffuse = true;
         result.bValid = true;
 
+        const uint32_t previousAgeFrames = m_RTGIHistoryAgeFrames;
+        const uint32_t currentAgeFrames = bHistoryReprojectionValid
+            ? std::min(previousAgeFrames + 1u, RTGIHistoryMaximumAge)
+            : 0u;
+        const uint32_t nextLightWeightLimitedFrames = lightWeightLimitedFrames > 0u
+            ? lightWeightLimitedFrames - 1u
+            : 0u;
+        const uint64_t previousSceneRevision = m_RTGIHistorySceneRevision;
+        const uint64_t previousLightRevision = m_RTGIHistoryLightRevision;
+
+        m_RTGIHistoryWriteIndex = writeHistoryIndex;
+        m_bRTGIHistoryValid = true;
+        m_RTGIHistoryAgeFrames = currentAgeFrames;
+        m_RTGIHistorySceneRevision = context.SceneRevision;
+        m_RTGIHistoryLightRevision = context.LightRevision;
+        m_RTGIHistoryLightWeightLimitedFrames = nextLightWeightLimitedFrames;
+        m_bRTGIHistoryLightRevisionValid = true;
+
         RTGIHistoryResources history;
         history.FrameNumber = context.FrameNumber;
         history.bValid = true;
-        const auto populateHistorySet = [&](RTGIHistoryResourceSet& resourceSet)
+        const auto populateHistorySet = [&](RTGIHistoryResourceSet& resourceSet,
+                                            const RTGIHistoryTextureSet& textures,
+                                            uint64_t sceneRevision,
+                                            uint64_t lightRevision,
+                                            uint32_t ageFrames)
         {
-            resourceSet.Radiance = rtgiDiffuseIndirectTexture;
-            resourceSet.Age = m_RTGIHistoryAgeTexture;
-            resourceSet.Confidence = m_RTGIHistoryConfidenceTexture;
+            resourceSet.Radiance = textures.Radiance;
+            resourceSet.Age = textures.Age;
+            resourceSet.Confidence = textures.Confidence;
             resourceSet.State = RHI::ResourceState::ShaderResource;
             resourceSet.Width = width;
             resourceSet.Height = height;
-            resourceSet.SceneRevision = context.SceneRevision;
-            resourceSet.LightRevision = context.LightRevision;
-            resourceSet.AgeFrames = 0u;
+            resourceSet.SceneRevision = sceneRevision;
+            resourceSet.LightRevision = lightRevision;
+            resourceSet.AgeFrames = std::min(ageFrames, RTGIHistoryMaximumAge);
             resourceSet.bValid = true;
         };
-        populateHistorySet(history.Current);
-        populateHistorySet(history.History);
+        populateHistorySet(history.Current,
+                           writeHistory,
+                           context.SceneRevision,
+                           context.LightRevision,
+                           currentAgeFrames);
+        if (bHadHistory)
+        {
+            populateHistorySet(history.History,
+                               readHistory,
+                               previousSceneRevision,
+                               previousLightRevision,
+                               previousAgeFrames);
+        }
+        else
+        {
+            history.History = history.Current;
+        }
         context.PhysicalLighting.PublishRTGI(result, history);
         return context.PhysicalLighting.RTGI.bPublished;
     }
@@ -2943,12 +3152,14 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_WARNING("LightingPass",
                            "RTGI ray-queryの実行に失敗したため既存間接光へ戻ります: %s",
                            exception.what());
+        InvalidateRTGIHistory();
         return false;
     }
     catch (...)
     {
         NORVES_LOG_WARNING("LightingPass",
                            "RTGI ray-queryの実行に失敗したため既存間接光へ戻ります");
+        InvalidateRTGIHistory();
         return false;
     }
 
@@ -2957,6 +3168,7 @@ namespace NorvesLib::Core::Rendering
                                          const RHI::TexturePtr& normalTexture,
                                          const RHI::TexturePtr& materialTexture,
                                          const RHI::TexturePtr& depthTexture,
+                                         const RHI::TexturePtr& velocityTexture,
                                          const RHI::TexturePtr& emissiveTexture,
                                          const RHI::TexturePtr& ssaoTexture,
                                          const RHI::TexturePtr& shadowMapTexture,
@@ -3042,6 +3254,7 @@ namespace NorvesLib::Core::Rendering
                     normalTexture,
                     materialTexture,
                     depthTexture,
+                    velocityTexture,
                     rtgiDiffuseIndirectTexture,
                     lightingParams);
         const RTGIFallbackDecision indirectLighting =

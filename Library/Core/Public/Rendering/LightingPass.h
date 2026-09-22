@@ -212,6 +212,7 @@ namespace NorvesLib::Core::Rendering
                                const RHI::TexturePtr& normalTexture,
                                const RHI::TexturePtr& materialTexture,
                                const RHI::TexturePtr& depthTexture,
+                               const RHI::TexturePtr& velocityTexture,
                                const RHI::TexturePtr& emissiveTexture,
                                const RHI::TexturePtr& ssaoTexture,
                                const RHI::TexturePtr& shadowMapTexture,
@@ -219,11 +220,13 @@ namespace NorvesLib::Core::Rendering
                                bool bRegisterLegacyOutputs);
         bool EnsureRTGIComputePipeline(ViewRenderContext& context);
         bool EnsureRTGIHistoryTextures(uint32_t width, uint32_t height);
+        void InvalidateRTGIHistory();
         bool ExecuteRTGI(ViewRenderContext& context,
                          const RHI::TexturePtr& albedoTexture,
                          const RHI::TexturePtr& normalTexture,
                          const RHI::TexturePtr& materialTexture,
                          const RHI::TexturePtr& depthTexture,
+                         const RHI::TexturePtr& velocityTexture,
                          const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                          const GPULightingParams& lightingParams);
         void RegisterOutputs(ViewRenderContext& context,
@@ -258,6 +261,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_GBufferNormalHandle;
         RGResourceHandle m_GBufferMaterialHandle;
         RGResourceHandle m_GBufferDepthHandle;
+        RGResourceHandle m_GBufferVelocityHandle;
         RGResourceHandle m_GBufferEmissiveHandle;
         RGResourceHandle m_SSAOBlurredHandle;
         RGResourceHandle m_ShadowMapHandle;
@@ -275,11 +279,39 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_RTGIComputeParametersBuffer;
         RHI::BufferPtr m_RTGIComputeInstanceDataBuffer;
         Container::VariableArray<RHI::BufferPtr> m_RTGIGeometryBuffers;
-        RHI::TexturePtr m_RTGIHistoryAgeTexture;
-        RHI::TexturePtr m_RTGIHistoryConfidenceTexture;
+        struct RTGIHistoryTextureSet
+        {
+            RHI::TexturePtr Radiance;
+            RHI::TexturePtr Age;
+            RHI::TexturePtr Confidence;
+            RHI::TexturePtr Depth;
+            RHI::TexturePtr Normal;
+            RHI::TexturePtr Material;
+
+            void Clear()
+            {
+                Radiance.reset();
+                Age.reset();
+                Confidence.reset();
+                Depth.reset();
+                Normal.reset();
+                Material.reset();
+            }
+        };
+        RTGIHistoryTextureSet m_RTGIHistoryTextures[2];
+        RHI::ResourceState m_RTGIHistorySlotState[2] = {
+            RHI::ResourceState::Undefined,
+            RHI::ResourceState::Undefined};
         uint64_t m_RTGIComputeInstanceDataCapacity = 0;
         uint32_t m_RTGIHistoryWidth = 0;
         uint32_t m_RTGIHistoryHeight = 0;
+        uint32_t m_RTGIHistoryWriteIndex = 0;
+        uint32_t m_RTGIHistoryAgeFrames = 0;
+        uint64_t m_RTGIHistorySceneRevision = 0;
+        uint64_t m_RTGIHistoryLightRevision = 0;
+        uint32_t m_RTGIHistoryLightWeightLimitedFrames = 0;
+        bool m_bRTGIHistoryValid = false;
+        bool m_bRTGIHistoryLightRevisionValid = false;
         bool m_bRTGIComputeUnavailable = false;
         DDGIProbePass m_DDGIProbePass;
         RayTracingShadowPass m_RayTracingShadowPass;

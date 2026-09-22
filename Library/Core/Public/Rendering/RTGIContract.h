@@ -14,6 +14,14 @@ namespace NorvesLib::Core::Rendering
         RHI::Format::R16G16B16A16_FLOAT;
     inline constexpr RHI::Format RTGIHistoryAgeFormat = RHI::Format::R16_FLOAT;
     inline constexpr RHI::Format RTGIHistoryConfidenceFormat = RHI::Format::R16_FLOAT;
+    inline constexpr RHI::Format RTGIHistoryGBufferFormat =
+        RHI::Format::R16G16B16A16_FLOAT;
+    inline constexpr float RTGIHistoryMaximumWeight = 0.9f;
+    inline constexpr float RTGIHistoryLightRevisionWeightLimit = 0.25f;
+    inline constexpr float RTGIHistoryInitialConfidence = 0.25f;
+    inline constexpr float RTGIHistoryNormalRejectionDot = 0.9f;
+    inline constexpr float RTGIHistoryDepthRejectionThreshold = 0.02f;
+    inline constexpr float RTGIHistoryMaterialRejectionThreshold = 0.05f;
 
     /**
      * @brief R6のray-query GIが必要とするRHI能力

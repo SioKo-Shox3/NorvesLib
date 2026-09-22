@@ -106,3 +106,48 @@ R6-P1-FIXでSceneRevisionをシーン構成だけへ限定し、History側revisi
 - `RenderingVelocityCameraVulkanTest`(GPU テスト。保存された `verify-R6-P1-FIX-2.txt` の Passed を採用)
 
 `.harness/lessons/` は存在しないため教訓の選別は行っていません。
+
+## 反復 5 — 評価者(claude)の判定: NEEDS_WORK
+
+対象: R6-P2 1 bounce ray-query GIを接続する
+
+対象: R6-P2 1 bounce ray-query GIを接続する(実装本体は範囲直前の `cc3dab4` と範囲内の `a684739`/`f22d31a`)
+
+**未達条件: done-when 前半「compute shader内のray queryでTLAS hit/missを処理し、有限なdiffuse indirect radianceをLightingPassへ渡す」に実行時の証拠がない**
+
+- 証拠 `verify-R6-P2-1.txt`(Game build EXIT_CODE=0)と `verify-R6-P2-2.txt`(2/2 passed)は実在し対象タスクのものです。しかしその2テストは新コードを一切通しません。
+  - `DDGIProbeRayQueryVulkanTest.cpp:820-830` は `context.RTGICapability` も `bRTGITLASAvailable` も設定せず(既定 false)、`lightingPass.Execute(context)`(レガシー経路 `LightingPass.cpp:2228-2266`)は `SharedResources` から GBuffer だけを取り、RTGI テクスチャは null のまま `ExecuteWithInputs` へ渡します。`ExecuteRTGI`(`:2737-2750`)は最初の条件で return false します。私が同テストを直接実行した出力(7行)にも RTGI の痕跡はありません。
+  - `RenderingRayTracingShadowVulkanTest.cpp` は `LightingPass` を参照していません(grep 0件)。
+- `ExecuteRTGI` の失敗はすべて「警告ログ+fallback」に吸収されます(shader ロード失敗 `:2624`、pipeline 生成失敗 `:2635`、例外 `:2941-2953`)。したがって shaderc での compile 失敗・descriptor layout 不一致・dispatch の validation error が起きても、列挙された verify は緑のままです。done-when の肯定側(hit/miss 処理、有限な radiance の受け渡し)が「もっともらしい」だけで、反証可能な証拠がありません。
+- 私が確認できた静的整合(参考): `glslangValidator --target-env vulkan1.2 -S comp` は exit 0。`RTGIInstanceData` は C++/GLSL とも 112 byte、light 構造体・型判定(`position.w`)・spot 減衰・equirect UV・`ReconstructWorldPosition` は `lighting.frag` と一致。BLAS の頂点は `Mesh3DVertex`(Position 先頭、R32G32B32、uint32 index)で shader の fetch と一致。`UpdateLightBuffer`(`:3004`)は `ExecuteRTGI`(`:3040`)より先。RenderGraph は transient を毎フレーム `Undefined→UnorderedAccess` へ遷移するので早期 return 時の layout 不整合はなし。R5 の `RayTracingShadowPass`/`RHI`/`Assets/Shaders/RayTracing` に変更なし。
+
+**再現手順**
+
+```
+build/Test/Core/Rendering/Debug/DDGIProbeRayQueryVulkanTest.exe   # exit 0、出力に RTGI なし
+grep -c 'LightingPass' Test/Core/Rendering/RenderingRayTracingShadowVulkanTest.cpp   # 0
+```
+
+**最小の直し方(候補)**
+
+1. (推奨)`Test/Core/Rendering/RTGIDiffuseIndirectVulkanTest.cpp` を `DDGIProbeRayQueryVulkanTest` を雛形に追加する。`context.RTGICapability = MakeRTGIRayQueryCapability(capabilities)`、`bRTGITLASAvailable = packet.HasCompleteRayTracingScene()` を設定し、`R16G16B16A16_FLOAT` / `ShaderRead|ShaderWrite` のテクスチャを作って friend 経由で `ExecuteWithInputs` に渡す。readback で (a) 全 texel が有限、(b) emissive 三角形へ向く画素の radiance > 0、(c) `context.PhysicalLighting.RTGI.bPublished == true` を assert。さらに `bRTGIEnabled=false` と TLAS 不完全の2ケースで `bPublished == false` かつ scene color が fallback と一致することを assert する。`TASKS.md` の verify にこのテストを追加し、証拠を保存する。
+2. 代替(弱い): Game を起動してログを保存し、`RTGI ... できません` / `既存間接光へ戻ります` の警告が無いことと、RTGI 有効/無効のスクリーンショット差を証拠にする。案1のほうが再現可能で、以後の P3 でも回帰検出に使える。
+
+**満たされている点**
+
+- RT 非対応・無効化・TLAS 不完全・資源生成失敗・例外の各経路が `ExecuteRTGI` で false を返し、`ResolveIndirectLighting` が DDGI→IBL→raster を選ぶ構造になっている(`:3047-3072`、`lighting.frag:1137-1189`)。
+- 範囲内の変更は `paths:` 内。`--numstat` と `--ignore-cr-at-eol --numstat` は範囲・WIP コミットとも一致。英語コメント・文言の混入なし。`Assets/Shaders/RTGI/DiffuseIndirect.comp` は追跡済み(前回の non-blocking は解消)。
+
+**non-blocking**
+
+- `m_RTGIComputeParametersBuffer`・`m_RTGIComputeInstanceDataBuffer`・`m_RTGIComputeDescriptorSet` は単一実体を毎フレーム `Update` している。既存の `m_LightDataBuffer`/`m_LightingDescriptorSet` と同じ流儀だが、`DDGIProbePass` は `frameResources` で frame-slot 分離している。in-flight フレームとの競合が無い根拠(RHI 側で更新が遅延/複製されるか)を P3 で確認しておくとよい。
+- `RTGIInstanceData::Transform` は shader 側で未使用(法線は `rayQueryGetIntersectionWorldToObjectEXT` から取得)。
+- `history.History` に現フレームのテクスチャと `AgeFrames=0` を入れており、実質 placeholder。P3 の履歴接続で置き換わる前提として TASKS に明記しておく。
+- `EvaluateRTGIEndpoint` の diffuse 項に Fresnel kD が無い(IBL 経路は kD を掛ける)ため、金属寄りの面でわずかに過大。R6 の見た目調整で扱えばよい。
+
+**実行できなかったコマンド**
+
+- `cmake --build build --config Debug --target Game -- /m:1`(保存された `verify-R6-P2-1.txt`・`recheck-R6-P2-5-1.txt` の exit 0 を採用)
+- `RenderingRayTracingShadowVulkanTest`(保存された `verify-R6-P2-2.txt`・`recheck-R6-P2-5-2.txt` の Passed を採用。`DDGIProbeRayQueryVulkanTest` のみ直接実行し exit 0 を確認)
+
+`.harness/lessons/` は存在しないため教訓の選別は行っていません。
