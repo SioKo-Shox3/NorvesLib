@@ -500,6 +500,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_LightRevision = 1u;
         uint64_t m_LastSceneRevisionHash = 0u;
         uint64_t m_LastLightRevisionHash = 0u;
+        bool m_bSceneRevisionHashValid = false;
+        bool m_bLightRevisionHashValid = false;
         Container::UnorderedMap<uint64_t, CameraProxy> m_Cameras;
         uint64_t m_NextCameraId = 1;
         uint64_t m_MainCameraId = 0;

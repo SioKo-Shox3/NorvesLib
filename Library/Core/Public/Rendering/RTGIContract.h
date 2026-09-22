@@ -197,9 +197,22 @@ namespace NorvesLib::Core::Rendering
         {
             return IsComplete() && FrameNumber == frameNumber &&
                    Current.SceneRevision == sceneRevision &&
-                   Current.LightRevision == lightRevision &&
-                   History.SceneRevision == sceneRevision &&
-                   History.LightRevision == lightRevision;
+                   Current.LightRevision == lightRevision;
+        }
+
+        /**
+         * @brief 履歴側のrevision差を後段の棄却・weight制御へ渡す
+         *
+         * 動的な物体移動による履歴差はここで保持し、RTGI選択を直ちにfallbackへ
+         * 切り替える条件にはしません。構成変更時はcurrentのrevision不一致を
+         * IsForFrameで検出し、古い履歴を採用しません。
+         */
+        bool HasHistoryRevisionMismatch(uint64_t sceneRevision,
+                                        uint64_t lightRevision) const
+        {
+            return IsComplete() &&
+                   (History.SceneRevision != sceneRevision ||
+                    History.LightRevision != lightRevision);
         }
 
         void Clear()

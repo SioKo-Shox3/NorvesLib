@@ -27,6 +27,53 @@ namespace
 #error NORVES_SOURCE_DIRはRenderingDDGILightingContractTestに必要です。
 #endif
 
+    class RTGIContractTexture final : public NorvesLib::RHI::ITexture
+    {
+    public:
+        RTGIContractTexture(uint32_t width, uint32_t height, NorvesLib::RHI::Format format)
+            : m_Width(width)
+            , m_Height(height)
+            , m_Format(format)
+        {
+        }
+
+        uint32_t GetWidth() const override { return m_Width; }
+        uint32_t GetHeight() const override { return m_Height; }
+        uint32_t GetDepth() const override { return 1u; }
+        uint32_t GetMipLevels() const override { return 1u; }
+        uint32_t GetArraySize() const override { return 1u; }
+        NorvesLib::RHI::Format GetFormat() const override { return m_Format; }
+        NorvesLib::RHI::ResourceUsage GetUsage() const override
+        {
+            return NorvesLib::RHI::ResourceUsage::ShaderRead;
+        }
+        bool IsCubemap() const override { return false; }
+        void Update(const void* data,
+                    uint32_t rowPitch,
+                    uint32_t slicePitch,
+                    uint32_t mipLevel = 0,
+                    uint32_t arrayIndex = 0) override
+        {
+            (void)data;
+            (void)rowPitch;
+            (void)slicePitch;
+            (void)mipLevel;
+            (void)arrayIndex;
+        }
+
+    private:
+        uint32_t m_Width = 0u;
+        uint32_t m_Height = 0u;
+        NorvesLib::RHI::Format m_Format = NorvesLib::RHI::Format::UNKNOWN;
+    };
+
+    NorvesLib::RHI::TexturePtr MakeRTGIContractTexture(uint32_t width,
+                                                        uint32_t height,
+                                                        NorvesLib::RHI::Format format)
+    {
+        return NorvesLib::RHI::MakeShared<RTGIContractTexture>(width, height, format);
+    }
+
     TestString ReadSource(const char* relativePath)
     {
         std::ifstream file(std::filesystem::path(NORVES_SOURCE_DIR) / relativePath,
@@ -257,7 +304,17 @@ namespace
                                                   iblBranchSignature.c_str());
         AssertContains(iblBranch, "bDDGIAvailable");
         AssertContains(iblBranch, "EvaluateIblEndpoint");
-        AssertContains(iblBranch, "ambient = EvaluateIblEndpoint");
+        const bool bHasRTGIEndpoint =
+            iblBranch.find("bRTGIAvailable") != TestString::npos;
+        if (bHasRTGIEndpoint)
+        {
+            AssertContains(iblBranch, "EvaluateRTGIEndpoint");
+            AssertContains(iblBranch, "ambient = bRTGIAvailable");
+        }
+        else
+        {
+            AssertContains(iblBranch, "ambient = EvaluateIblEndpoint");
+        }
         const std::size_t endpointPosition =
             iblBranch.find("EvaluateIblEndpoint(");
         assert(endpointPosition != TestString::npos);
@@ -311,6 +368,64 @@ namespace
 
         RTGIResourcePublication publication;
         publication.Configure(rayQueryCapability, true, true, 12u, 7u, 11u);
+
+        RTGIResult completeResult;
+        completeResult.DiffuseIndirectRadiance =
+            MakeRTGIContractTexture(4u, 4u, RTGIDiffuseIndirectRadianceFormat);
+        completeResult.State = NorvesLib::RHI::ResourceState::ShaderResource;
+        completeResult.Width = 4u;
+        completeResult.Height = 4u;
+        completeResult.FrameNumber = 12u;
+        completeResult.SceneRevision = 7u;
+        completeResult.LightRevision = 11u;
+        completeResult.bValid = true;
+
+        RTGIHistoryResources completeHistory;
+        completeHistory.FrameNumber = 12u;
+        completeHistory.bValid = true;
+        completeHistory.Current.Radiance =
+            MakeRTGIContractTexture(4u, 4u, RTGIDiffuseIndirectRadianceFormat);
+        completeHistory.Current.Age =
+            MakeRTGIContractTexture(4u, 4u, RTGIHistoryAgeFormat);
+        completeHistory.Current.Confidence =
+            MakeRTGIContractTexture(4u, 4u, RTGIHistoryConfidenceFormat);
+        completeHistory.Current.State = NorvesLib::RHI::ResourceState::ShaderResource;
+        completeHistory.Current.Width = 4u;
+        completeHistory.Current.Height = 4u;
+        completeHistory.Current.SceneRevision = 7u;
+        completeHistory.Current.LightRevision = 11u;
+        completeHistory.Current.bValid = true;
+        completeHistory.Current.AgeFrames = 0u;
+        completeHistory.History.Radiance =
+            MakeRTGIContractTexture(4u, 4u, RTGIDiffuseIndirectRadianceFormat);
+        completeHistory.History.Age =
+            MakeRTGIContractTexture(4u, 4u, RTGIHistoryAgeFormat);
+        completeHistory.History.Confidence =
+            MakeRTGIContractTexture(4u, 4u, RTGIHistoryConfidenceFormat);
+        completeHistory.History.State = NorvesLib::RHI::ResourceState::ShaderResource;
+        completeHistory.History.Width = 4u;
+        completeHistory.History.Height = 4u;
+        completeHistory.History.SceneRevision = 6u;
+        completeHistory.History.LightRevision = 11u;
+        completeHistory.History.bValid = true;
+        completeHistory.History.AgeFrames = 1u;
+
+        publication.PublishResult(completeResult, completeHistory);
+        assert(publication.History.IsComplete());
+        assert(publication.History.HasHistoryRevisionMismatch(7u, 11u));
+        assert(publication.bPublished);
+        decision = publication.Resolve(false, false);
+        assert(decision.Source == RTGIIndirectLightingSource::RTGI);
+        assert(decision.Reason == RTGIFallbackReason::None);
+        assert(!decision.bUsedFallback);
+
+        publication.Configure(rayQueryCapability, true, true, 12u, 8u, 11u);
+        publication.PublishResult(completeResult, completeHistory);
+        assert(!publication.bPublished);
+        decision = publication.Resolve(false, true);
+        assert(decision.Source == RTGIIndirectLightingSource::IBL);
+        assert(decision.Reason == RTGIFallbackReason::ResourceUnavailable);
+
         RTGIResult incompleteResult;
         RTGIHistoryResources incompleteHistory;
         publication.PublishResult(incompleteResult, incompleteHistory);
@@ -343,7 +458,18 @@ namespace
             ReadSource("Library/Core/Public/Rendering/RTGIContract.h");
         AssertContains(rtgiContract, "RTGIDiffuseBounceCount");
         AssertContains(rtgiContract, "IsForFrame");
+        AssertContains(rtgiContract, "HasHistoryRevisionMismatch");
         AssertContains(rtgiContract, "RTGIHistoryResources");
+
+        const TestString renderingCoordinator =
+            ReadSource("Library/Core/Private/Rendering/RenderingCoordinator.cpp");
+        const TestString sceneRevisionHash =
+            ExtractBlock(renderingCoordinator, "uint64_t HashSceneRevision");
+        assert(sceneRevisionHash.find("WorldMatrix") == TestString::npos);
+        assert(sceneRevisionHash.find("NormalMatrix") == TestString::npos);
+        assert(sceneRevisionHash.find("instance.World") == TestString::npos);
+        assert(sceneRevisionHash.find("instance.PreviousWorld") == TestString::npos);
+        assert(sceneRevisionHash.find("instance.Instance.transform") == TestString::npos);
 
         const TestString framePacket =
             ReadSource("Library/Core/Public/Rendering/FramePacket.h");

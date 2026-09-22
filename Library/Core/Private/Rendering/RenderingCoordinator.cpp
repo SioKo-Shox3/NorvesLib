@@ -81,6 +81,13 @@ namespace NorvesLib::Core::Rendering
             return hash;
         }
 
+        /**
+         * @brief シーン構成revisionを計算する
+         *
+         * 物体とUIの変換はR6-aのvelocityと深度・法線棄却で扱うため、全画面履歴を
+         * 無効化する構成revisionへ含めません。メッシュ・材質・環境・TLAS構成だけを
+         * 追跡し、構成変更時の履歴不採用を判定できる値にします。
+         */
         uint64_t HashSceneRevision(const FramePacket& packet)
         {
             uint64_t hash = RevisionHashOffset;
@@ -96,8 +103,6 @@ namespace NorvesLib::Core::Rendering
                 hash = HashRevisionValue(hash, command.Draw.InstanceCount);
                 hash = HashRevisionValue(hash, command.Draw.FirstInstance);
                 hash = HashRevisionValue(hash, command.Draw.InstanceDataOffset);
-                hash = HashRevisionFloatArray(hash, command.Draw.WorldMatrix.values, 16u);
-                hash = HashRevisionFloatArray(hash, command.Draw.NormalMatrix.values, 16u);
                 hash = HashRevisionFloatArray(hash, command.Draw.CustomData, 4u);
                 hash = HashRevisionValue(hash, command.Draw.bCastShadow);
                 hash = HashRevisionValue(hash, command.Draw.bInstanced);
@@ -106,9 +111,6 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.InstanceData.size());
             for (const GPUSceneInstanceData& instance : packet.InstanceData)
             {
-                hash = HashRevisionFloatArray(hash, instance.World, 16u);
-                hash = HashRevisionFloatArray(hash, instance.PreviousWorld, 16u);
-                hash = HashRevisionFloatArray(hash, instance.NormalMatrix, 12u);
                 hash = HashRevisionFloatArray(hash, instance.ObjectColor, 4u);
                 hash = HashRevisionFloatArray(hash, instance.CustomData, 4u);
             }
@@ -156,7 +158,6 @@ namespace NorvesLib::Core::Rendering
                 hash = HashRevisionValue(hash, instance.VertexCount);
                 hash = HashRevisionValue(hash, instance.VertexStride);
                 hash = HashRevisionValue(hash, instance.bGeometryOpaque);
-                hash = HashRevisionFloatArray(hash, instance.Instance.transform, 12u);
                 hash = HashRevisionValue(hash, instance.Instance.customIndex);
                 hash = HashRevisionValue(hash, instance.Instance.mask);
                 hash = HashRevisionFloatArray(hash, instance.Material.BaseColor, 4u);
@@ -994,6 +995,8 @@ namespace NorvesLib::Core::Rendering
         m_LightRevision = 1u;
         m_LastSceneRevisionHash = 0u;
         m_LastLightRevisionHash = 0u;
+        m_bSceneRevisionHashValid = false;
+        m_bLightRevisionHashValid = false;
         m_GPUTimingMailbox.Clear();
 
         if (m_Diagnostics)
@@ -1730,9 +1733,10 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::UpdateFrameRevisions(FramePacket& packet)
     {
         const uint64_t sceneHash = HashSceneRevision(packet);
-        if (m_LastSceneRevisionHash == 0u)
+        if (!m_bSceneRevisionHashValid)
         {
             m_LastSceneRevisionHash = sceneHash;
+            m_bSceneRevisionHashValid = true;
         }
         else if (m_LastSceneRevisionHash != sceneHash)
         {
@@ -1741,9 +1745,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         const uint64_t lightHash = HashLightRevision(packet);
-        if (m_LastLightRevisionHash == 0u)
+        if (!m_bLightRevisionHashValid)
         {
             m_LastLightRevisionHash = lightHash;
+            m_bLightRevisionHashValid = true;
         }
         else if (m_LastLightRevisionHash != lightHash)
         {
