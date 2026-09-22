@@ -53,13 +53,14 @@
 - SCENE-P1: `20260922`。起動経路は`GameApplicationHandler::CreateGameModeStateMachine`から従来どおり`Rendering3DTest`を開始するまま維持した。球・地面・ライト球・方向ライト・boulder非同期ロード・HDR環境の生成ログと120フレーム終了を確認し、既定フレームへ常時投入されていたテスト用黄色AABBだけを外した。選択表示AABBは維持した。Debug Game build exit 0、関連CTest 3/3 passed。
 - AUDIT-RM-P1: `20260922`。RoadMapの依存関係とR0〜R5のコード・受入れ記録を照合した。R3〜R5の実装済みなのにRoadMap表が未着手のまま残る遅れ、R2〜R5の完了トレーラー不足、R6-aを次に開始できる依存状態、Rendering3DTestに読み込む保存済みレンダリングシーンが存在しないことを追跡監査へ固定した。RoadMap本体は無視対象のため変更・追跡化していない。
 - R6-a: `2ba3854` の後続修正で、現フレームproxy更新、MeshComponentの履歴commit、カメラ履歴無効化、解析投影値・カメラのみ/物体のみ/併用・初回/安定静止・移動後停止のGPU検証を確定した。起動経路と既存Rendering3DTestのシーン構成は維持し、最終Game build、関連CTest 17/17、velocity GPU CTest 6/6、120フレーム起動ログを確認した。詳細は`Docs/RenderingValidation/R6aVelocityAcceptance.md`。
+- R6-M1: `Docs/RenderingValidation/R6TechniquePlan.md`で、1 bounce diffuse RTGIを既定、2 bounce diffuseを限定拡張、R6 GIのray query/R5 shadowのRT pipeline分担、velocity再投影、自作テンポラル+3x3 cross-bilateral、8フレーム履歴寿命・8 rendered-frame warmup、動的ライトrevision、性能gate Deferredを固定した。R7 path tracer、ReSTIR、SSR/TAA、外部NRDは先取りしない。開始ゲートはGame/RHIRayTracingPipelineVulkanTestのDebug build exit 0、RHIRayTracingPipelineVulkanTestとRenderingVelocityCameraVulkanTestのCTest 2/2 passed。
 
 ## In progress
-- なし。R6-aの独立ゲートを完了し、次はR6-M1の方式選定へ進む。
+- なし。R6-M1の方式選定を完了し、次はR6-P1の結果形式・fallback契約へ進む。
 
 ## Next
 
-- R6-M1でRTGIの方式、ray query/RT pipelineの分担、テンポラル蓄積、デノイザ、履歴寿命、ウォームアップ、性能gate保留を選定する。R4/R5の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断は後続またはNEXT_FINDINGS.mdのnon-blocking追跡事項とする。
+- R6-P1でRTGI結果形式、capability/fallback、FramePacketのscene/light revision、履歴resourceの公開契約を実装する。R4/R5の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断は後続またはNEXT_FINDINGS.mdのnon-blocking追跡事項とする。
 
 ## Notes
 
@@ -67,6 +68,7 @@
 - R4-P7旧blocked run（2026-09-22、run-id 20260922-045823）は履歴として保持する。後続run `20260922-r4-p7-final3`でHDR scene-color、red/green indirect ROI、disabled A/B、9/9 CTest、atlas履歴更新、失敗時の公開状態クリアを再検証した。独立評価2周目の帳簿・行末・成果物追跡に関する所見は受入れ前に修正し、現行成果物へ反映した。
 - R6-a初回検証: 関連CPU/RenderGraph/FramePacket CTest 17/17、velocity GPU CTest 3/3、Game build exit 0とGame.logの既定シーン構成/`rendered=120`を確認したが、最終ソースとの時系列対応と履歴/解析値の検証不足が指摘されたため、受入れを確定扱いにしない。
 - R6-a最終再検証: 最終ソースで関連CTest 17/17、velocity GPU CTest 6/6、カメラのみ/物体のみ/併用の解析値 readback、物体のみの背景ゼロ、移動後停止ゼロ、Game.logの既定シーン構成/`rendered=120`を確認した。Slang SDK未導入warning/errorは既存decoder無効化フォールバックであり、Vulkan validation errorは0件だった。
+- R6-M1再開ゲート(2026-09-22): `cmake --build build --config Debug --target Game RHIRayTracingPipelineVulkanTest -- /m:1`はexit 0。`ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RHIRayTracingPipelineVulkanTest|RenderingVelocityCameraVulkanTest)$"`は2/2 passed。MSBuildの既存libwebsockets生成物warningは継続するが、対象buildとCTestの終了コードは0。
 
 - R5-P8開始ゲート: Debug buildはEXIT_CODE=0、対象CTestは1/1 passed。ログは.harness/runs/20260920-174410/verify-R5-P8-1.txtとverify-R5-P8-2.txt。これは既存P7テストの開始時状態で、P8の完了証拠ではない。
 - R5-P8再開儀式(2026-09-21): `git log --oneline -10`を確認し、再開時Debug build exit 0・専用CTest 1/1 passed。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-baseline-build.txt`と`verify-R5-P8-resume-baseline-ctest.txt`。
