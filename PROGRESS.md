@@ -54,13 +54,14 @@
 - AUDIT-RM-P1: `20260922`。RoadMapの依存関係とR0〜R5のコード・受入れ記録を照合した。R3〜R5の実装済みなのにRoadMap表が未着手のまま残る遅れ、R2〜R5の完了トレーラー不足、R6-aを次に開始できる依存状態、Rendering3DTestに読み込む保存済みレンダリングシーンが存在しないことを追跡監査へ固定した。RoadMap本体は無視対象のため変更・追跡化していない。
 - R6-a: `2ba3854` の後続修正で、現フレームproxy更新、MeshComponentの履歴commit、カメラ履歴無効化、解析投影値・カメラのみ/物体のみ/併用・初回/安定静止・移動後停止のGPU検証を確定した。起動経路と既存Rendering3DTestのシーン構成は維持し、最終Game build、関連CTest 17/17、velocity GPU CTest 6/6、120フレーム起動ログを確認した。詳細は`Docs/RenderingValidation/R6aVelocityAcceptance.md`。
 - R6-M1: `Docs/RenderingValidation/R6TechniquePlan.md`で、1 bounce diffuse RTGIを既定、2 bounce diffuseを限定拡張、R6 GIのray query/R5 shadowのRT pipeline分担、velocity再投影、自作テンポラル+3x3 cross-bilateral、8フレーム履歴寿命・8 rendered-frame warmup、動的ライトrevision、性能gate Deferredを固定した。R7 path tracer、ReSTIR、SSR/TAA、外部NRDは先取りしない。開始ゲートはGame/RHIRayTracingPipelineVulkanTestのDebug build exit 0、RHIRayTracingPipelineVulkanTestとRenderingVelocityCameraVulkanTestのCTest 2/2 passed。
+- R6-P1: `RTGIContract`へ1 bounce diffuse・pre-exposed結果形式、ray-query capability、frame/scene/light revision一致、current/history radiance・age・confidence、R4 DDGI→既存IBL→raster fallbackを固定した。FramePacketへRTGI有効化とscene/light revisionを値コピーし、R5 TLAS snapshotの完全性を参照だけで判定してViewRenderContext・LightingPassへ接続した。Debug Game buildはexit 0、指定CTestは3/3 passed。証拠は`.harness/runs/20260922-200402/verify-R6-P1-1.txt`と`verify-R6-P1-2.txt`。
 
 ## In progress
-- なし。R6-M1の方式選定を完了し、次はR6-P1の結果形式・fallback契約へ進む。
+- なし。R6-P1の結果形式・fallback契約を完了し、次はR6-P2の1 bounce ray-query GI接続へ進む。
 
 ## Next
 
-- R6-P1でRTGI結果形式、capability/fallback、FramePacketのscene/light revision、履歴resourceの公開契約を実装する。R4/R5の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断は後続またはNEXT_FINDINGS.mdのnon-blocking追跡事項とする。
+- R6-P2でcompute shader内の1 bounce ray-query GIを接続する。R4/R5の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断は後続またはNEXT_FINDINGS.mdのnon-blocking追跡事項とする。
 
 ## Notes
 
@@ -112,3 +113,4 @@
 - R4-P5最終検証: Debug buildはEXIT_CODE=0、対象CTestは3/3 passed。証跡は`.harness/runs/20260922-003731/verify-R4-P5-12.txt`と`verify-R4-P5-13.txt`。
 - R4-P5の後続確認: Lighting側のnormal biasとGLSLコンパイルをR4-P6のGPU受入れで確認する。
 - R4-P7最終実GPU検証（20260922-r4-p7-final3）: `build.txt` EXIT_CODE=0、Cornell static/dynamic capture EXIT_CODE=0、P4 direct EXIT_CODE=0、R4指定CTest 9/9 passed。証跡は`.harness/runs/20260922-r4-p7-final3/`に保存した。
+- R6-P1検証: `verify-R6-P1-1.txt`でGame build EXIT_CODE=0、`verify-R6-P1-2.txt`でRayTracingSceneSnapshotTest・RenderingDDGILightingContractTest・RenderGraphCompileTestの3/3 passedとEXIT_CODE=0を読戻し確認した。既存のthird-party PDBおよびlibwebsockets生成物warningは残るが、対象ゲートは成功した。

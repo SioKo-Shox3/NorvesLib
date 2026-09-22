@@ -576,6 +576,11 @@ namespace NorvesLib::Core::Rendering
         const uint32_t viewId = context.CurrentViewport ? context.CurrentViewport->ViewId : UINT32_MAX;
         const uint32_t viewportId = context.CurrentViewport ? context.CurrentViewport->ViewportId : UINT32_MAX;
         context.PhysicalLighting.Begin(context.FrameNumber, viewId, viewportId);
+        context.PhysicalLighting.ConfigureRTGI(context.RTGICapability,
+                                               context.bRTGIEnabled,
+                                               context.bRTGITLASAvailable,
+                                               context.SceneRevision,
+                                               context.LightRevision);
         context.SkyAtmosphere.Reset();
         struct PhysicalLightingScope final
         {

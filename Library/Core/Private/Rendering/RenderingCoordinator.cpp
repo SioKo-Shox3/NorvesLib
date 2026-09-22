@@ -50,6 +50,161 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        constexpr uint64_t RevisionHashOffset = 1469598103934665603ull;
+        constexpr uint64_t RevisionHashPrime = 1099511628211ull;
+
+        uint64_t HashRevisionBytes(uint64_t hash, const void* data, size_t size)
+        {
+            const auto* bytes = static_cast<const uint8_t*>(data);
+            for (size_t index = 0; index < size; ++index)
+            {
+                hash ^= bytes[index];
+                hash *= RevisionHashPrime;
+            }
+            return hash;
+        }
+
+        template<typename T>
+        uint64_t HashRevisionValue(uint64_t hash, const T& value)
+        {
+            return HashRevisionBytes(hash, &value, sizeof(value));
+        }
+
+        uint64_t HashRevisionFloatArray(uint64_t hash,
+                                        const float* values,
+                                        uint32_t count)
+        {
+            for (uint32_t index = 0; index < count; ++index)
+            {
+                hash = HashRevisionValue(hash, values[index]);
+            }
+            return hash;
+        }
+
+        uint64_t HashSceneRevision(const FramePacket& packet)
+        {
+            uint64_t hash = RevisionHashOffset;
+            hash = HashRevisionValue(hash, packet.DrawCommands.size());
+            for (const DrawCommand& command : packet.DrawCommands)
+            {
+                hash = HashRevisionValue(hash, static_cast<uint8_t>(command.Type));
+                hash = HashRevisionValue(hash, static_cast<uint8_t>(command.Draw.PayloadKind));
+                hash = HashRevisionValue(hash, command.Draw.MeshHandle.Id);
+                hash = HashRevisionValue(hash, command.Draw.MaterialHandle.Id);
+                hash = HashRevisionValue(hash, command.Draw.ObjectId);
+                hash = HashRevisionValue(hash, command.Draw.SourceMeshComponentId);
+                hash = HashRevisionValue(hash, command.Draw.InstanceCount);
+                hash = HashRevisionValue(hash, command.Draw.FirstInstance);
+                hash = HashRevisionValue(hash, command.Draw.InstanceDataOffset);
+                hash = HashRevisionFloatArray(hash, command.Draw.WorldMatrix.values, 16u);
+                hash = HashRevisionFloatArray(hash, command.Draw.NormalMatrix.values, 16u);
+                hash = HashRevisionFloatArray(hash, command.Draw.CustomData, 4u);
+                hash = HashRevisionValue(hash, command.Draw.bCastShadow);
+                hash = HashRevisionValue(hash, command.Draw.bInstanced);
+            }
+
+            hash = HashRevisionValue(hash, packet.InstanceData.size());
+            for (const GPUSceneInstanceData& instance : packet.InstanceData)
+            {
+                hash = HashRevisionFloatArray(hash, instance.World, 16u);
+                hash = HashRevisionFloatArray(hash, instance.PreviousWorld, 16u);
+                hash = HashRevisionFloatArray(hash, instance.NormalMatrix, 12u);
+                hash = HashRevisionFloatArray(hash, instance.ObjectColor, 4u);
+                hash = HashRevisionFloatArray(hash, instance.CustomData, 4u);
+            }
+
+            const SkyAtmosphereParameters& sky = packet.Scene.SkyAtmosphere;
+            hash = HashRevisionValue(hash, sky.bEnabled);
+            hash = HashRevisionValue(hash, sky.SunAltitudeDegrees);
+            hash = HashRevisionValue(hash, sky.SunAzimuthDegrees);
+            hash = HashRevisionValue(hash, sky.SunLuminanceNits);
+            hash = HashRevisionValue(hash, sky.PlanetRadiusMeters);
+            hash = HashRevisionValue(hash, sky.AtmosphereHeightMeters);
+            hash = HashRevisionValue(hash, sky.RayleighScaleHeightMeters);
+            hash = HashRevisionValue(hash, sky.MieScaleHeightMeters);
+            hash = HashRevisionValue(hash, sky.MieAnisotropy);
+            hash = HashRevisionValue(hash, sky.GroundAlbedo.x);
+            hash = HashRevisionValue(hash, sky.GroundAlbedo.y);
+            hash = HashRevisionValue(hash, sky.GroundAlbedo.z);
+
+            const DDGIVolumeParameters& ddgi = packet.Scene.DDGIVolume;
+            hash = HashRevisionValue(hash, ddgi.bEnabled);
+            hash = HashRevisionValue(hash, ddgi.Origin.x);
+            hash = HashRevisionValue(hash, ddgi.Origin.y);
+            hash = HashRevisionValue(hash, ddgi.Origin.z);
+            hash = HashRevisionValue(hash, ddgi.ProbeSpacing.x);
+            hash = HashRevisionValue(hash, ddgi.ProbeSpacing.y);
+            hash = HashRevisionValue(hash, ddgi.ProbeSpacing.z);
+            hash = HashRevisionValue(hash, ddgi.ProbeCountX);
+            hash = HashRevisionValue(hash, ddgi.ProbeCountY);
+            hash = HashRevisionValue(hash, ddgi.ProbeCountZ);
+
+            const VolumetricFogParameters& fog = packet.Scene.VolumetricFog;
+            hash = HashRevisionValue(hash, fog.bEnabled);
+            hash = HashRevisionValue(hash, fog.DensityAtBaseHeight);
+            hash = HashRevisionValue(hash, fog.BaseHeight);
+            hash = HashRevisionValue(hash, fog.HeightFalloffPerUnit);
+
+            hash = HashRevisionValue(hash, packet.RayTracingScene.Instances.size());
+            for (const RayTracingSceneInstanceSnapshot& instance :
+                 packet.RayTracingScene.Instances)
+            {
+                hash = HashRevisionValue(hash, instance.MeshHandle.Id);
+                hash = HashRevisionValue(hash, instance.IndexOffset);
+                hash = HashRevisionValue(hash, instance.IndexCount);
+                hash = HashRevisionValue(hash, instance.VertexOffset);
+                hash = HashRevisionValue(hash, instance.VertexCount);
+                hash = HashRevisionValue(hash, instance.VertexStride);
+                hash = HashRevisionValue(hash, instance.bGeometryOpaque);
+                hash = HashRevisionFloatArray(hash, instance.Instance.transform, 12u);
+                hash = HashRevisionValue(hash, instance.Instance.customIndex);
+                hash = HashRevisionValue(hash, instance.Instance.mask);
+                hash = HashRevisionFloatArray(hash, instance.Material.BaseColor, 4u);
+                hash = HashRevisionFloatArray(hash, instance.Material.EmissiveColor, 3u);
+                hash = HashRevisionValue(hash, instance.Material.EmissiveLuminanceNits);
+            }
+            return hash;
+        }
+
+        uint64_t HashLightRevision(const FramePacket& packet)
+        {
+            uint64_t hash = RevisionHashOffset;
+            hash = HashRevisionValue(hash, packet.Scene.LightProxies.size());
+            for (const LightProxy& light : packet.Scene.LightProxies)
+            {
+                hash = HashRevisionValue(hash, light.LightId);
+                hash = HashRevisionValue(hash, static_cast<uint8_t>(light.Type));
+                hash = HashRevisionValue(hash, light.PositionX);
+                hash = HashRevisionValue(hash, light.PositionY);
+                hash = HashRevisionValue(hash, light.PositionZ);
+                hash = HashRevisionValue(hash, light.DirectionX);
+                hash = HashRevisionValue(hash, light.DirectionY);
+                hash = HashRevisionValue(hash, light.DirectionZ);
+                hash = HashRevisionValue(hash, light.ColorR);
+                hash = HashRevisionValue(hash, light.ColorG);
+                hash = HashRevisionValue(hash, light.ColorB);
+                hash = HashRevisionValue(hash, light.CanonicalIntensity);
+                hash = HashRevisionValue(hash, light.Range);
+                hash = HashRevisionValue(hash, light.AttenuationConstant);
+                hash = HashRevisionValue(hash, light.AttenuationLinear);
+                hash = HashRevisionValue(hash, light.AttenuationQuadratic);
+                hash = HashRevisionValue(hash, light.InnerConeAngle);
+                hash = HashRevisionValue(hash, light.OuterConeAngle);
+                hash = HashRevisionValue(hash, light.bCastShadows);
+                hash = HashRevisionValue(hash, light.ShadowBias);
+                hash = HashRevisionValue(hash, light.ShadowMapResolution);
+                hash = HashRevisionValue(hash, light.bVisible);
+                hash = HashRevisionValue(hash, static_cast<uint32_t>(light.AffectedLayers));
+            }
+            return hash;
+        }
+
+        uint64_t AdvanceRevision(uint64_t revision)
+        {
+            ++revision;
+            return revision == 0u ? 1u : revision;
+        }
+
         [[noreturn]] void ThrowSwapChainBeginFrameError(RHI::SwapChainBeginFrameStatus status)
         {
             if (status == RHI::SwapChainBeginFrameStatus::Fatal)
@@ -835,6 +990,10 @@ namespace NorvesLib::Core::Rendering
         m_PreviousCompletedTotalFrameTimeMs = 0.0f;
         m_LatestCompletedGPUTimeMs = 0.0f;
         m_bLatestCompletedGPUTimeValid = false;
+        m_SceneRevision = 1u;
+        m_LightRevision = 1u;
+        m_LastSceneRevisionHash = 0u;
+        m_LastLightRevisionHash = 0u;
         m_GPUTimingMailbox.Clear();
 
         if (m_Diagnostics)
@@ -1565,6 +1724,35 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.bRTGIEnabled = m_bRTGIEnabled;
+    }
+
+    void RenderingCoordinator::UpdateFrameRevisions(FramePacket& packet)
+    {
+        const uint64_t sceneHash = HashSceneRevision(packet);
+        if (m_LastSceneRevisionHash == 0u)
+        {
+            m_LastSceneRevisionHash = sceneHash;
+        }
+        else if (m_LastSceneRevisionHash != sceneHash)
+        {
+            m_LastSceneRevisionHash = sceneHash;
+            m_SceneRevision = AdvanceRevision(m_SceneRevision);
+        }
+
+        const uint64_t lightHash = HashLightRevision(packet);
+        if (m_LastLightRevisionHash == 0u)
+        {
+            m_LastLightRevisionHash = lightHash;
+        }
+        else if (m_LastLightRevisionHash != lightHash)
+        {
+            m_LastLightRevisionHash = lightHash;
+            m_LightRevision = AdvanceRevision(m_LightRevision);
+        }
+
+        packet.SceneRevision = m_SceneRevision;
+        packet.LightRevision = m_LightRevision;
     }
 
     void RenderingCoordinator::GenerateDrawCommands()
@@ -1788,6 +1976,7 @@ namespace NorvesLib::Core::Rendering
                 NORVES_LOG_WARNING("RayTracingSceneSubsystem",
                                    "FramePacketのレイトレーシングscene snapshotを構築できませんでした");
             }
+            UpdateFrameRevisions(*m_CurrentPacket);
         }
 
         NORVES_STAT_TIME_END(cmdGen, m_GameThreadStats.CommandGenerationTimeMs);
@@ -2187,6 +2376,11 @@ namespace NorvesLib::Core::Rendering
         viewContext.Renderer = &m_SceneRenderer;
         viewContext.PendingFrameCommands = &pendingFrameCommands;
         viewContext.Graph = &m_RenderGraph;
+        viewContext.SceneRevision = packet->SceneRevision;
+        viewContext.LightRevision = packet->LightRevision;
+        viewContext.bRTGIEnabled = packet->bRTGIEnabled;
+        viewContext.bRTGITLASAvailable = packet->HasCompleteRayTracingScene();
+        viewContext.RTGICapability = MakeRTGIRayQueryCapability(m_Device->GetCapabilities());
 
         // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
         viewContext.MainCamera = packet->bHasMainCamera ? &packet->Scene.MainCamera : nullptr;
@@ -2797,6 +2991,11 @@ namespace NorvesLib::Core::Rendering
                 rayTracingCapabilities.bAccelerationStructure,
                 rayTracingCapabilities.bRayQuery);
         }
+    }
+
+    void RenderingCoordinator::SetRTGIEnabled(bool bEnabled)
+    {
+        m_bRTGIEnabled = bEnabled;
     }
 
     void RenderingCoordinator::SetVolumetricFogParameters(

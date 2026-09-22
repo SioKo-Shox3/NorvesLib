@@ -290,6 +290,10 @@ namespace NorvesLib::Core::Rendering
         void SetDDGIVolumeParameters(const DDGIVolumeParameters& parameters);
         DDGIVolumeParameters GetDDGIVolumeParameters() const { return m_DDGIVolume; }
 
+        /** @brief RTGIを次のFramePacketへ明示的に有効化または無効化する。 */
+        void SetRTGIEnabled(bool bEnabled);
+        bool IsRTGIEnabled() const { return m_bRTGIEnabled; }
+
         /**
          * @brief 高さフォグ設定を次のFramePacketへ公開する
          * @param parameters GameThread側で保持する高さフォグ設定
@@ -426,6 +430,7 @@ namespace NorvesLib::Core::Rendering
 
         void SnapshotSceneParameters(FramePacket& packet,
                                      const RHI::DeviceCapabilities& capabilities) const;
+        void UpdateFrameRevisions(FramePacket& packet);
 
         // ========================================
         // 内部ヘルパー
@@ -490,6 +495,11 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters m_SkyAtmosphere;
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
+        bool m_bRTGIEnabled = true;
+        uint64_t m_SceneRevision = 1u;
+        uint64_t m_LightRevision = 1u;
+        uint64_t m_LastSceneRevisionHash = 0u;
+        uint64_t m_LastLightRevisionHash = 0u;
         Container::UnorderedMap<uint64_t, CameraProxy> m_Cameras;
         uint64_t m_NextCameraId = 1;
         uint64_t m_MainCameraId = 0;

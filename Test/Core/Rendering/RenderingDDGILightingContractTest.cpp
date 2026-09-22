@@ -2,6 +2,8 @@
 
 #include "Container/Containers.h"
 #include "RHI/RHITypes.h"
+#include "Rendering/FramePacket.h"
+#include "Rendering/RTGIContract.h"
 
 #define private public
 #include "Rendering/DDGIProbePass.h"
@@ -183,6 +185,7 @@ namespace
         AssertContains(execute, "BindSampler(17,");
         AssertContains(execute, "BindTexture(18,");
         AssertContains(execute, "BindSampler(18,");
+        AssertContains(execute, "bUseDDGILighting");
 
         const TestString completePublication =
             ExtractBlock(lightingPass, "static bool IsCompleteDDGILightingPublication");
@@ -267,6 +270,91 @@ namespace
         AssertContains(mainFunction, "ambient += EvaluateDiffuseEndpoint(ddgiIrradiance");
         AssertContains(mainFunction, "params.debugViewMode >= 246u");
     }
+
+    void TestRTGIFallbackContract()
+    {
+        NorvesLib::RHI::DeviceCapabilities supportedCapabilities;
+        supportedCapabilities.RayTracing.bAccelerationStructure = true;
+        supportedCapabilities.RayTracing.bRayQuery = true;
+        supportedCapabilities.bBufferDeviceAddress = true;
+        supportedCapabilities.bShaderInt64 = true;
+        const RTGIRayQueryCapability rayQueryCapability =
+            MakeRTGIRayQueryCapability(supportedCapabilities);
+        assert(rayQueryCapability.IsUsable());
+
+        RTGIResult diffuseResult;
+        assert(diffuseResult.BounceCount == RTGIDiffuseBounceCount);
+        assert(diffuseResult.bDiffuse);
+        diffuseResult.BounceCount = 2u;
+        assert(!diffuseResult.IsComplete());
+
+        supportedCapabilities.RayTracing.bRayQuery = false;
+        assert(!MakeRTGIRayQueryCapability(supportedCapabilities).IsUsable());
+
+        RTGIFallbackInputs disabledInputs;
+        disabledInputs.bRTGIEnabled = false;
+        disabledInputs.bDDGIAvailable = true;
+        disabledInputs.bIBLAvailable = true;
+        RTGIFallbackDecision decision = ResolveRTGIIndirectLighting(disabledInputs);
+        assert(decision.Source == RTGIIndirectLightingSource::DDGI);
+        assert(decision.Reason == RTGIFallbackReason::Disabled);
+        assert(decision.bUsedFallback);
+
+        RTGIFallbackInputs noTlasInputs;
+        noTlasInputs.bRTGIEnabled = true;
+        noTlasInputs.bTLASAvailable = false;
+        noTlasInputs.Capability = rayQueryCapability;
+        noTlasInputs.bIBLAvailable = true;
+        decision = ResolveRTGIIndirectLighting(noTlasInputs);
+        assert(decision.Source == RTGIIndirectLightingSource::IBL);
+        assert(decision.Reason == RTGIFallbackReason::TLASUnavailable);
+
+        RTGIResourcePublication publication;
+        publication.Configure(rayQueryCapability, true, true, 12u, 7u, 11u);
+        RTGIResult incompleteResult;
+        RTGIHistoryResources incompleteHistory;
+        publication.PublishResult(incompleteResult, incompleteHistory);
+        assert(!publication.bPublished);
+        decision = publication.Resolve(false, false);
+        assert(decision.Source == RTGIIndirectLightingSource::Raster);
+        assert(decision.Reason == RTGIFallbackReason::ResourceUnavailable);
+
+        FramePacket packet;
+        packet.SceneRevision = 7u;
+        packet.LightRevision = 11u;
+        packet.bRTGIEnabled = false;
+        assert(packet.SceneRevision == 7u && packet.LightRevision == 11u);
+        assert(!packet.HasCompleteRayTracingScene());
+        packet.Clear();
+        assert(packet.SceneRevision == 0u && packet.LightRevision == 0u);
+        assert(packet.bRTGIEnabled);
+
+        const TestString resourceNames =
+            ReadSource("Library/Core/Public/Rendering/RenderGraph/RenderGraphResourceNames.h");
+        AssertContains(resourceNames, "RTGIDiffuseIndirect");
+        AssertContains(resourceNames, "RTGIHistoryCurrent");
+        AssertContains(resourceNames, "RTGIHistoryHistory");
+        AssertContains(resourceNames, "RTGIHistoryCurrentAge");
+        AssertContains(resourceNames, "RTGIHistoryHistoryAge");
+        AssertContains(resourceNames, "RTGIHistoryCurrentConfidence");
+        AssertContains(resourceNames, "RTGIHistoryHistoryConfidence");
+
+        const TestString rtgiContract =
+            ReadSource("Library/Core/Public/Rendering/RTGIContract.h");
+        AssertContains(rtgiContract, "RTGIDiffuseBounceCount");
+        AssertContains(rtgiContract, "IsForFrame");
+        AssertContains(rtgiContract, "RTGIHistoryResources");
+
+        const TestString framePacket =
+            ReadSource("Library/Core/Public/Rendering/FramePacket.h");
+        AssertContains(framePacket, "RayTracingScene.IsComplete()");
+
+        const TestString lightingPass =
+            ReadSource("Library/Core/Private/Rendering/LightingPass.cpp");
+        const TestString declare = ExtractBlock(lightingPass, "void LightingPass::Declare");
+        AssertContains(declare, "RenderGraphResourceNames::RTGIDiffuseIndirect");
+        AssertContains(declare, "m_RTGIDiffuseIndirectHandle");
+    }
 }
 
 int main()
@@ -275,6 +363,7 @@ int main()
     TestStaleAtlasInvalidation();
     TestLightingFallbackAndPublication();
     TestVisibilityWeightedVolumeSampling();
+    TestRTGIFallbackContract();
     std::cout << "DDGI照明契約テスト: 合格\n";
     return 0;
 }

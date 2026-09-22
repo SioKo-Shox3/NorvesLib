@@ -6,6 +6,7 @@
 #include "Rendering/DebugDrawQueue.h"
 #include "ViewportSnapshot.h"
 #include "Rendering/FrameCaptureTypes.h"
+#include "Rendering/RTGIContract.h"
 #include "Debug/Stats.h"
 #include "Container/Containers.h"
 #include "Thread/Atomic.h"
@@ -79,6 +80,29 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<RayTracingSceneInstanceSnapshot> Instances;
         RHI::AccelerationStructurePtr TopLevel;
 
+        /**
+         * @brief TLASと全インスタンスのray query入力が揃っているか判定
+         *
+         * R5のresource所有権は変更せず、FramePacketに保持された参照だけを検査する。
+         */
+        bool IsComplete() const
+        {
+            if (!TopLevel || Instances.empty())
+            {
+                return false;
+            }
+
+            for (const RayTracingSceneInstanceSnapshot& instance : Instances)
+            {
+                if (!instance.BottomLevel || !instance.AccelerationStructureVertexBuffer ||
+                    !instance.AccelerationStructureIndexBuffer)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         void Clear()
         {
             TopLevel.reset();
@@ -103,6 +127,15 @@ namespace NorvesLib::Core::Rendering
         float DeltaTime = 0.0f;   // 前フレームからの経過時間
         double TotalTime = 0.0;   // アプリケーション開始からの経過時間
 
+        /** @brief RTGIの明示的な有効化。資源が不完全ならfallbackへ戻る。 */
+        bool bRTGIEnabled = true;
+
+        /** @brief シーン構成・ジオメトリ・環境のFramePacket値revision。 */
+        uint64_t SceneRevision = 0;
+
+        /** @brief ライト配列のFramePacket値revision。 */
+        uint64_t LightRevision = 0;
+
         /** @brief GameThread が非破壊 snapshot した capture request 値。 */
         FrameCaptureRequestSnapshot CaptureRequest;
 
@@ -115,6 +148,16 @@ namespace NorvesLib::Core::Rendering
         CameraProxy PreviousMainCamera;
         SceneProxy Scene;
         RayTracingSceneSnapshot RayTracingScene;
+
+        /**
+         * @brief TLAS snapshotがray query入力として完全か判定
+         *
+         * R5の所有権とresource寿命は変更せず、FramePacket内の参照だけを判定する。
+         */
+        bool HasCompleteRayTracingScene() const
+        {
+            return RayTracingScene.IsComplete();
+        }
 
         // ========================================
         // DrawCommandスナップショット（GameThreadで生成、RenderThreadで読み取り専用）
@@ -185,6 +228,9 @@ namespace NorvesLib::Core::Rendering
             FrameNumber = 0;
             DeltaTime = 0.0f;
             TotalTime = 0.0;
+            bRTGIEnabled = true;
+            SceneRevision = 0;
+            LightRevision = 0;
             CaptureRequest = FrameCaptureRequestSnapshot{};
             bHasMainCamera = false;
             bHasPreviousMainCamera = false;

@@ -6,6 +6,7 @@
 #include "Rendering/DebugDrawQueue.h"
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderGraph/RenderGraphDump.h"
+#include "Rendering/RTGIContract.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
@@ -112,6 +113,13 @@ namespace NorvesLib::Core::Rendering
         uint32_t DDGIProbeCount = 0;
         bool bDDGIAtlasPublished = false;
 
+        /** @brief R6 RTGIの能力・結果・current/history履歴の公開値。 */
+        RTGIResourcePublication RTGI;
+        RTGIIndirectLightingSource IndirectLightingSource =
+            RTGIIndirectLightingSource::Raster;
+        RTGIFallbackReason IndirectLightingFallbackReason =
+            RTGIFallbackReason::Disabled;
+
         void Begin(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId)
         {
             FrameNumber = 0;
@@ -144,6 +152,9 @@ namespace NorvesLib::Core::Rendering
             DDGIDistanceAtlas.reset();
             DDGIProbeCount = 0;
             bDDGIAtlasPublished = false;
+            RTGI.Clear();
+            IndirectLightingSource = RTGIIndirectLightingSource::Raster;
+            IndirectLightingFallbackReason = RTGIFallbackReason::Disabled;
             CascadedShadow = CascadedDirectionalShadowShaderValues{};
             for (uint32_t index = 0; index < 16; ++index)
             {
@@ -302,6 +313,7 @@ namespace NorvesLib::Core::Rendering
             IBLIntensity = iblIntensity;
             bIBLEnabled = bIBLEnabledValue;
             bLightingPublished = true;
+            RefreshIndirectLightingSource();
         }
 
         void PublishDDGIAtlas(const RHI::TexturePtr& irradianceAtlas,
@@ -316,6 +328,7 @@ namespace NorvesLib::Core::Rendering
             if (!bActive || !bLightingPublished || !bEnabledValue ||
                 !irradianceAtlas || !distanceAtlas || probeCount == 0u)
             {
+                RefreshIndirectLightingSource();
                 return;
             }
 
@@ -323,6 +336,34 @@ namespace NorvesLib::Core::Rendering
             DDGIDistanceAtlas = distanceAtlas;
             DDGIProbeCount = probeCount;
             bDDGIAtlasPublished = true;
+            RefreshIndirectLightingSource();
+        }
+
+        void ConfigureRTGI(const RTGIRayQueryCapability& capability,
+                           bool bEnabledValue,
+                           bool bTLASAvailable,
+                           uint64_t sceneRevision,
+                           uint64_t lightRevision)
+        {
+            RTGI.Configure(capability,
+                           bEnabledValue,
+                           bTLASAvailable,
+                           FrameNumber,
+                           sceneRevision,
+                           lightRevision);
+            RefreshIndirectLightingSource();
+        }
+
+        void PublishRTGI(const RTGIResult& result,
+                         const RTGIHistoryResources& history)
+        {
+            RTGI.PublishResult(result, history);
+            RefreshIndirectLightingSource();
+        }
+
+        RTGIFallbackDecision ResolveIndirectLighting() const
+        {
+            return RTGI.Resolve(bDDGIAtlasPublished, bIBLEnabled);
         }
 
         bool Matches(uint64_t frameNumber, uint32_t viewId, uint32_t viewportId) const
@@ -334,6 +375,14 @@ namespace NorvesLib::Core::Rendering
         void Invalidate()
         {
             *this = PhysicalLightingResources{};
+        }
+
+    private:
+        void RefreshIndirectLightingSource()
+        {
+            const RTGIFallbackDecision decision = ResolveIndirectLighting();
+            IndirectLightingSource = decision.Source;
+            IndirectLightingFallbackReason = decision.Reason;
         }
     };
 
@@ -451,6 +500,15 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief FramePacketが所有するRT scene snapshot */
         const RayTracingSceneSnapshot* SnapshotRayTracingScene = nullptr;
+
+        /** @brief FramePacketから値コピーしたscene/light revision。 */
+        uint64_t SceneRevision = 0;
+        uint64_t LightRevision = 0;
+
+        /** @brief FramePacketのRTGI有効化とTLAS完全性。 */
+        bool bRTGIEnabled = true;
+        bool bRTGITLASAvailable = false;
+        RTGIRayQueryCapability RTGICapability;
 
         /** @brief SnapshotScene未接続時に使用する空パラメータ値 */
         SkyAtmosphereParameters SkyAtmosphereSnapshot;

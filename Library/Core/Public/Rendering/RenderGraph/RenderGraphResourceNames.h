@@ -21,6 +21,20 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity SSAOBlurred = Identity::Literal("SSAO.Blurred", sizeof("SSAO.Blurred") - 1);
     inline constexpr Identity SceneColor = Identity::Literal("Scene.Color", sizeof("Scene.Color") - 1);
     inline constexpr Identity SceneDepth = Identity::Literal("Scene.Depth", sizeof("Scene.Depth") - 1);
+    inline constexpr Identity RTGIDiffuseIndirect =
+        Identity::Literal("RTGI.DiffuseIndirect", sizeof("RTGI.DiffuseIndirect") - 1);
+    inline constexpr Identity RTGIHistoryCurrent =
+        Identity::Literal("RTGI.History.Current", sizeof("RTGI.History.Current") - 1);
+    inline constexpr Identity RTGIHistoryHistory =
+        Identity::Literal("RTGI.History.History", sizeof("RTGI.History.History") - 1);
+    inline constexpr Identity RTGIHistoryCurrentAge =
+        Identity::Literal("RTGI.History.CurrentAge", sizeof("RTGI.History.CurrentAge") - 1);
+    inline constexpr Identity RTGIHistoryHistoryAge =
+        Identity::Literal("RTGI.History.HistoryAge", sizeof("RTGI.History.HistoryAge") - 1);
+    inline constexpr Identity RTGIHistoryCurrentConfidence = Identity::Literal(
+        "RTGI.History.CurrentConfidence", sizeof("RTGI.History.CurrentConfidence") - 1);
+    inline constexpr Identity RTGIHistoryHistoryConfidence = Identity::Literal(
+        "RTGI.History.HistoryConfidence", sizeof("RTGI.History.HistoryConfidence") - 1);
     inline constexpr Identity SSRSceneColor = Identity::Literal("SSR.SceneColor", sizeof("SSR.SceneColor") - 1);
     inline constexpr Identity BloomSceneColor = Identity::Literal("Bloom.SceneColor", sizeof("Bloom.SceneColor") - 1);
     inline constexpr Identity ToneMappedColor = Identity::Literal("ToneMappedColor", sizeof("ToneMappedColor") - 1);

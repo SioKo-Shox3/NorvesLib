@@ -1621,6 +1621,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferEmissiveHandle = {};
         m_SSAOBlurredHandle = {};
         m_ShadowMapHandle = {};
+        m_RTGIDiffuseIndirectHandle = {};
         m_bLegacyInputFallbackActive = false;
         m_bUsingRenderGraphResources = false;
         m_bRenderPassUsesRenderGraphInitialState = false;
@@ -1713,6 +1714,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferEmissiveHandle = {};
         m_SSAOBlurredHandle = {};
         m_ShadowMapHandle = {};
+        m_RTGIDiffuseIndirectHandle = {};
 
         RGTextureHandle albedoHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::GBufferAlbedo,
@@ -1829,6 +1831,15 @@ namespace NorvesLib::Core::Rendering
                                    RHI::ResourceState::ShaderResource))
         {
             m_ShadowMapHandle = shadowMapHandle.ToResourceHandle();
+        }
+
+        // R6 RTGIは任意入力として読む。未公開なら既存のDDGI/IBL/rasterへ戻す。
+        RGTextureHandle rtgiDiffuseIndirectHandle;
+        if (builder.TryReadTexture(RenderGraphResourceNames::RTGIDiffuseIndirect,
+                                   rtgiDiffuseIndirectHandle,
+                                   RHI::ResourceState::ShaderResource))
+        {
+            m_RTGIDiffuseIndirectHandle = rtgiDiffuseIndirectHandle.ToResourceHandle();
         }
 
         // SkyAtmospherePassの同一スナップショット由来リソースを依存として読む。
@@ -2451,9 +2462,13 @@ namespace NorvesLib::Core::Rendering
                                                   ddgiDistanceAtlas,
                                                   ddgiAtlasProbeCount,
                                                   bDDGILightingAvailable);
+        const RTGIFallbackDecision indirectLighting =
+            context.PhysicalLighting.ResolveIndirectLighting();
+        const bool bUseDDGILighting =
+            indirectLighting.Source == RTGIIndirectLightingSource::DDGI;
 
         GPUDDGILightingParams ddgiParameters = {};
-        if (bDDGILightingAvailable)
+        if (bUseDDGILighting)
         {
             ddgiParameters.volumeOrigin[0] = ddgiVolume->Origin.x;
             ddgiParameters.volumeOrigin[1] = ddgiVolume->Origin.y;
@@ -2585,13 +2600,13 @@ namespace NorvesLib::Core::Rendering
 
         m_LightingDescriptorSet->BindTexture(
             17,
-            bDDGILightingAvailable
+            bUseDDGILighting
                 ? context.PhysicalLighting.DDGIIrradianceAtlas
                 : m_DefaultDDGIIrradianceAtlas);
         m_LightingDescriptorSet->BindSampler(17, m_DDGISampler);
         m_LightingDescriptorSet->BindTexture(
             18,
-            bDDGILightingAvailable
+            bUseDDGILighting
                 ? context.PhysicalLighting.DDGIDistanceAtlas
                 : m_DefaultDDGIDistanceAtlas);
         m_LightingDescriptorSet->BindSampler(18, m_DDGISampler);
