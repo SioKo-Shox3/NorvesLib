@@ -18,7 +18,7 @@
 | R3 | 未着手 | `Docs/RenderingValidation/R3Acceptance.md`、`9dc360de07a6f9df895e1eb9ac6933593216925b` | なし | RoadMap表が遅延 |
 | R4 | 未着手 | `Docs/RenderingValidation/R4Acceptance.md`、`75102b1f7924a84e0eb86b2849cb0dd99eea73cc` | なし | RoadMap表が遅延 |
 | R5 | 未着手 | `Docs/RenderingValidation/R5Acceptance.md`、最終検証 `a743eeea98801b59aa209a29a84b9fb874453e0d` | なし | RoadMap表が遅延 |
-| R6 | 未着手 | R5完了を依存条件としてR6-aへ着手可能 | — | 次工程 |
+| R6 | 未着手 | R5完了を依存条件としてR6-aを独立受入れ。R6本体のRTGI・テンポラル蓄積・デノイザは未着手 | R6-a完了トレーラーを最終受入れコミットへ付与 | R6本体未着手、R6-aは整合 |
 | R7 | 未着手 | R7コアはR5+R1待ち。両方完了済みだが未着手 | — | 後続工程 |
 | R8 | 未着手 | R7コアとR6-a待ち | — | 依存未充足 |
 
@@ -46,6 +46,6 @@
 
 ## 次の着手点
 
-RoadMapから外れていない次工程はR6-aである。R5のRT基盤が完了しているため、まずカメラとオブジェクトのvelocityをFramePacket経由で独立出力し、解析値のreadbackを通す。その後、R6のRTGIとテンポラルデノイズへ進み、R7コア、R7屋外拡張、R8の順に依存を満たす。
+RoadMapから外れていない次工程はR6-M1である。R6-aでカメラとオブジェクトのvelocityをFramePacket経由で独立出力し、解析値のreadbackまで受入れたため、次にR6のRTGIとテンポラルデノイズ方式を選定する。その後、R7コア、R7屋外拡張、R8の順に依存を満たす。
 
 本監査では無視対象の `Docs/Plans/RenderingRoadmap.md` を変更・追跡化していない。

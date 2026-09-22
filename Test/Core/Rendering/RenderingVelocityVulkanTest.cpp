@@ -27,6 +27,7 @@ namespace
     {
         Static,
         CameraMotion,
+        ObjectMotion,
         CameraObjectMotion,
         FirstFrameInvalidHistory,
         MoveThenStop
@@ -212,7 +213,7 @@ namespace
             return false;
         }
 
-        constexpr float tolerance = 0.02f;
+        constexpr float tolerance = 0.002f;
         std::cout << "velocity_sample=" << label
                   << " pixel=(" << expected.PixelX << "," << expected.PixelY << ")"
                   << " expected=(" << expected.ExpectedX << "," << expected.ExpectedY << ")"
@@ -220,10 +221,25 @@ namespace
         if (std::abs(actualX - expected.ExpectedX) > tolerance ||
             std::abs(actualY - expected.ExpectedY) > tolerance)
         {
-            outFailureReason = TEXT("analytic velocity sample exceeded the 0.02 tolerance");
+            outFailureReason = TEXT("analytic velocity sample exceeded the 0.002 tolerance");
             return false;
         }
         return true;
+    }
+
+    bool CheckZeroVelocitySample(
+        const CapturedFrame& frame,
+        uint32_t pixelX,
+        uint32_t pixelY,
+        const char* label,
+        Core::Container::String& outFailureReason)
+    {
+        ExpectedVelocitySample expected;
+        expected.PixelX = pixelX;
+        expected.PixelY = pixelY;
+        expected.ExpectedX = 0.0f;
+        expected.ExpectedY = 0.0f;
+        return CheckExpectedVelocitySample(frame, expected, label, outFailureReason);
     }
 
     class VelocityHandler final : public RenderingValidationApplicationHandler
@@ -310,6 +326,7 @@ namespace
                         bRequestFollowup = true;
                     }
                     else if ((m_Scenario == Scenario::CameraMotion ||
+                              m_Scenario == Scenario::ObjectMotion ||
                               m_Scenario == Scenario::CameraObjectMotion ||
                               m_Scenario == Scenario::MoveThenStop) &&
                              m_Stage == CaptureStage::Initial)
@@ -379,6 +396,11 @@ namespace
                 m_Scenario = Scenario::CameraMotion;
                 return true;
             }
+            if (argument == TEXT("--scenario=object-motion"))
+            {
+                m_Scenario = Scenario::ObjectMotion;
+                return true;
+            }
             if (argument == TEXT("--scenario=first-frame-invalid-history"))
             {
                 m_Scenario = Scenario::FirstFrameInvalidHistory;
@@ -409,16 +431,22 @@ namespace
             return true;
         }
 
-        bool IsMotionScenario() const
+        bool IsCameraMotionScenario() const
         {
             return m_Scenario == Scenario::CameraMotion ||
                    m_Scenario == Scenario::CameraObjectMotion ||
                    m_Scenario == Scenario::MoveThenStop;
         }
 
+        bool IsMotionScenario() const
+        {
+            return IsCameraMotionScenario() || m_Scenario == Scenario::ObjectMotion;
+        }
+
         bool IsObjectMotionScenario() const
         {
-            return m_Scenario == Scenario::CameraObjectMotion ||
+            return m_Scenario == Scenario::ObjectMotion ||
+                   m_Scenario == Scenario::CameraObjectMotion ||
                    m_Scenario == Scenario::MoveThenStop;
         }
 
@@ -457,7 +485,7 @@ namespace
                 return;
             }
             CameraProxy camera = GetFixture().GetR5RayTracingShadowCamera();
-            camera.PositionX = bMoved ? 0.35f : 0.0f;
+            camera.PositionX = IsCameraMotionScenario() && bMoved ? 0.35f : 0.0f;
             renderWorld.SetMainCamera(camera);
         }
 
@@ -473,11 +501,13 @@ namespace
                 return false;
             }
 
+            const bool bCameraMotion = IsCameraMotionScenario();
+            const bool bObjectMotion = IsObjectMotionScenario();
             CameraProxy previousCamera = GetFixture().GetR5RayTracingShadowCamera();
             CameraProxy currentCamera = previousCamera;
-            currentCamera.PositionX = 0.35f;
+            currentCamera.PositionX = bCameraMotion ? 0.35f : 0.0f;
 
-            const float currentObjectOffset = IsObjectMotionScenario() ? 1.5f : 0.0f;
+            const float currentObjectOffset = bObjectMotion ? 1.5f : 0.0f;
             ExpectedVelocitySample receiverSample;
             if (!BuildExpectedVelocitySample(previousCamera,
                                              currentCamera,
@@ -487,26 +517,41 @@ namespace
                                              receiverSample) ||
                 !CheckExpectedVelocitySample(frame,
                                               receiverSample,
-                                              IsObjectMotionScenario()
-                                                  ? "receiver-camera-and-object-motion"
-                                                  : "receiver-camera-motion",
+                                              bCameraMotion
+                                                  ? (bObjectMotion
+                                                         ? "receiver-camera-and-object-motion"
+                                                         : "receiver-camera-motion")
+                                                  : "receiver-object-motion",
                                               outFailureReason))
             {
                 return false;
             }
 
-            ExpectedVelocitySample occluderSample;
-            if (IsObjectMotionScenario() &&
-                (!BuildExpectedVelocitySample(previousCamera,
-                                              currentCamera,
-                                              Math::Vector3(0.0f, 0.0f, 20.0f),
-                                              Math::Vector3(1.5f, 0.0f, 20.0f),
-                                              device.get(),
-                                              occluderSample) ||
-                 !CheckExpectedVelocitySample(frame,
-                                               occluderSample,
-                                               "receiver-center-camera-and-object-motion",
-                                               outFailureReason)))
+            ExpectedVelocitySample centerSample;
+            if (!BuildExpectedVelocitySample(previousCamera,
+                                             currentCamera,
+                                             Math::Vector3(0.0f, 0.0f, 20.0f),
+                                             Math::Vector3(currentObjectOffset, 0.0f, 20.0f),
+                                             device.get(),
+                                             centerSample) ||
+                !CheckExpectedVelocitySample(frame,
+                                              centerSample,
+                                              bCameraMotion
+                                                  ? (bObjectMotion
+                                                         ? "receiver-center-camera-and-object-motion"
+                                                         : "receiver-center-camera-motion")
+                                                  : "receiver-center-object-motion",
+                                              outFailureReason))
+            {
+                return false;
+            }
+
+            if (!bCameraMotion && bObjectMotion &&
+                !CheckZeroVelocitySample(frame,
+                                         255u,
+                                         0u,
+                                         "background-object-motion",
+                                         outFailureReason))
             {
                 return false;
             }

@@ -41,10 +41,10 @@ ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(Frame
 ### GPU velocity readback
 
 ```text
-ctest --test-dir build -C Debug --output-on-failure -V --no-tests=error -R "^RenderingVelocity(Static|Motion|Camera|FirstFrame|MoveThenStop)VulkanTest$"
+ctest --test-dir build -C Debug --output-on-failure -V --no-tests=error -R "^RenderingVelocity(Static|Motion|Camera|Object|FirstFrame|MoveThenStop)VulkanTest$"
 ```
 
-結果: `100% tests passed, 0 tests failed out of 5`。
+結果: `100% tests passed, 0 tests failed out of 6`。
 
 readback結果:
 
@@ -52,13 +52,15 @@ readback結果:
 static:        initial frame=0 max_magnitude=0 non_zero=0
 static:        stable  frame=2 max_magnitude=0 non_zero=0
 camera:        moved frame=2 expected=(0.0151554,0) actual=(0.015152,0)
+object:        moved frame=2 expected=(-0.0649519,0) actual=(-0.0649414,0)
 camera+object: moved frame=2 expected=(-0.0497965,0) actual=(-0.0497742,0)
 camera+object: moved-center expected=(-0.0497965,0) actual=(-0.0497742,0)
+object:        background pixel=(255,0) expected=(0,0) actual=(0,0)
 first-frame:   initial frame=0 max_magnitude=0 non_zero=0
 move-stop:     stopped frame=4 max_magnitude=0 non_zero=0
 ```
 
-カメラのみ、およびカメラ＋物体のサンプルは、既知の現在/前フレーム行列から算出したNDC差分とGPU readbackを比較した。移動後停止は別フレームで確認し、履歴の持ち越しによる残留velocityがないことを固定した。
+カメラのみ、物体のみ、およびカメラ＋物体のサンプルは、既知の現在/前フレーム行列から算出したNDC差分とGPU readbackを `0.002` 以下の許容誤差で比較した。物体のみでは対象外の背景画素もゼロであることを確認し、移動後停止は別フレームで確認して履歴の持ち越しによる残留velocityがないことを固定した。
 
 ### 既定Game起動
 

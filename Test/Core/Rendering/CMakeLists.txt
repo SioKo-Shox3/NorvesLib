@@ -380,6 +380,12 @@ register_rendering_gpu_test(
     --capture-source=gbuffer-velocity
     --scenario=camera-motion)
 register_rendering_gpu_test(
+    RenderingVelocityObjectVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=object-motion)
+register_rendering_gpu_test(
     RenderingVelocityFirstFrameVulkanTest
     RenderingVelocityVulkanTest
     --scene=indoor

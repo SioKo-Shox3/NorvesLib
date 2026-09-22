@@ -11,6 +11,7 @@ RTGI、テンポラル蓄積、デノイズはこの単位に含めない。
 ## 採用する契約
 
 - velocityは正規化viewport UVでの符号付き差分 `currentUV - previousUV` とする。
+- 解析値のGPU readback受入れ誤差は各成分 `0.002` 以下とし、ゼロ期待の背景画素も同じ閾値で検査する。
 - UVは、現在フレームと前フレームのdevice用clip行列で頂点を投影し、clip空間のXYをWで割った後、
   `ndc * 0.5 + 0.5` へ変換して求める。Vulkanのdevice用Y補正は両フレームへ同じ規約で適用する。
 - 前フレームが無い、投影が無効、またはclip Wが有限でない画素はvelocity `(0, 0)` とする。
@@ -35,7 +36,7 @@ RTGI、テンポラル蓄積、デノイズはこの単位に含めない。
 ## 完了条件
 
 - Debugビルドが成功し、既存GBuffer/Lighting/SceneViewの契約テストが回帰しない。
-- 既知の平行移動を行うfixtureで、GPU readbackのvelocityが解析値の許容誤差内になる。
+- 既知の平行移動を行うfixtureで、カメラのみ・物体のみ・カメラと物体の併用それぞれのGPU readback velocityが解析値の `0.002` 以下の誤差になる。物体のみは対象領域外の背景をゼロとして確認する。
 - 静止フレームはゼロ、カメラのみの移動は全対象が同じ解析差分、オブジェクトのみの移動は対象領域だけが解析差分になる。
 - 初回フレームと無効な履歴はゼロで、NaN/Infを出力しない。
 - `GBuffer_Velocity`がRenderGraph named resourceとして公開され、後続パスが読む前提を検証できる。
