@@ -1,9 +1,0 @@
-# LESSONS — NorvesLib
-
-| 日付 | 要点 | 本文 |
-|---|---|---|
-| 2026-09-08 | 再開時は現行の運転規則と実際の保存コミットを基点にする | [記録](Docs/lessons/2026-09-08-session-authority.md) |
-| 2026-09-08 | 全工程の依頼は起動確認で閉じず、実証拠を追って完了まで監視する | [記録](Docs/lessons/2026-09-08-completion-monitoring.md) |
-| 2026-09-17 | 計画実装中の失敗は本筋の前進修正へ直結する | [記録](Docs/lessons/2026-09-17-r1-p6b-execution-focus.md) |
-| 2026-09-19 | 対象フェーズへの指示が出たら周辺設定を止めて実装へ戻る | [記録](Docs/lessons/2026-09-19-r3-focus.md) |
-| 2026-09-22 | 起動画面だけで経路や保存シーンを推測せず、既存経路と永続化源を先に照合する | [記録](Docs/lessons/2026-09-22-scene-and-roadmap-authority.md) |
