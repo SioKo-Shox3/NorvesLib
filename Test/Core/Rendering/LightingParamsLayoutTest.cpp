@@ -2621,6 +2621,9 @@ int main()
         std::filesystem::path(NORVES_SHADER_DIR).parent_path().parent_path();
     const TestString lightingPassSource = ReadTextFile(
         sourceRoot / "Library/Core/Private/Rendering/LightingPass.cpp");
+    const TestString denoiserSource = ReadTextFile(
+        std::filesystem::path(shaderPath.c_str()).parent_path() /
+        "RTGI/CrossBilateralDenoise.comp");
     const TestString maskedShaderSource = MaskShaderNonCode(shaderSource);
     const TestString maskedLightingPassSource = MaskShaderNonCode(lightingPassSource);
     for (uint32_t binding = 0; binding <= 18; ++binding)
@@ -3272,7 +3275,25 @@ int main()
 
     assert(static_cast<uint8_t>(DebugViewMode::Normal) == 0);
     assert(static_cast<uint8_t>(DebugViewMode::Count) == 9);
-    assert(CountText(shaderSource, "params.preExposure") == 1);
+    assert(CountText(shaderSource, "params.preExposure") == 2);
+    assert(ContainsText(shaderSource,
+                        "texture(rtgiDiffuseIndirect, fragUV).rgb /"));
+    assert(ContainsText(shaderSource,
+                        "max(params.preExposure, 1.0e-6)"));
+    assert(ContainsText(lightingPassSource, "RTGI/CrossBilateralDenoise.comp"));
+    assert(ContainsText(lightingPassSource,
+                        "result.DiffuseIndirectRadiance = m_RTGIDenoisedTexture"));
+
+    assert(ContainsText(denoiserSource, "layout(local_size_x = 8, local_size_y = 8"));
+    assert(ContainsText(denoiserSource, "gbufferDepth"));
+    assert(ContainsText(denoiserSource, "gbufferNormal"));
+    assert(ContainsText(denoiserSource, "gbufferMaterial"));
+    assert(ContainsText(denoiserSource, "historyConfidence"));
+    assert(ContainsText(denoiserSource, "sampleConfidence"));
+    assert(ContainsText(lightingPassSource, "writeHistory.Confidence"));
+    assert(CountText(denoiserSource,
+                     "for (int offsetY = -1; offsetY <= 1; ++offsetY)") == 1);
+    assert(!ContainsText(denoiserSource, "preExposure"));
 
     const std::size_t preExposurePolicyPosition =
         FindText(shaderSource, "bool ShouldApplySceneColorPreExposure()");
@@ -3319,11 +3340,11 @@ int main()
 
     const std::size_t directBrdfPosition =
         FindText(shaderSource, "void EvaluateAnalyticalDirectEndpointBRDF");
-    const std::size_t firstIblPosition =
-        FindTextAfter(shaderSource, "if (params.bIBLEnabled != 0u)", directBrdfPosition);
+    const std::size_t rtgiAvailabilityPosition =
+        FindText(shaderSource, "bool bRTGIAvailable");
     const std::size_t iblPosition =
         FindTextAfter(shaderSource, "if (params.bIBLEnabled != 0u)",
-                      firstIblPosition + TestString("if (params.bIBLEnabled != 0u)").size());
+                      rtgiAvailabilityPosition);
     const TestString directBrdfSource =
         shaderSource.substr(directBrdfPosition, iblPosition - directBrdfPosition);
     assert(ContainsText(directBrdfSource, "F0d"));
@@ -3341,7 +3362,8 @@ int main()
     const TestString iblSource = shaderSource.substr(iblPosition,
                                                       iblEndPosition + 1 - iblPosition);
     assert(ContainsText(iblSource, "vec2 brdf = texture(brdfLUT, dfgCoordinate).rg;"));
-    assert(ContainsText(iblSource, "ambient = EvaluateIblEndpoint("));
+    assert(ContainsText(iblSource, "ambient = bRTGIAvailable"));
+    assert(ContainsText(iblSource, "EvaluateIblEndpoint("));
     assert(!ContainsText(iblSource, "FresnelSchlickRoughness"));
     assert(!ContainsText(iblSource, "F_ambient * brdf"));
     assert(!ContainsText(iblSource, "exp("));
@@ -3352,7 +3374,7 @@ int main()
     const TestString normalizedPrefilteredShaderSource = RemoveWhitespace(maskedShaderSource);
     assert(CountText(normalizedPrefilteredShaderSource,
                      RemoveWhitespace(prefilteredSamplerHelperSignature)) == 1);
-    assert(CountFunctionCalls(maskedShaderSource, prefilteredSamplerHelperName) == 3);
+    assert(CountFunctionCalls(maskedShaderSource, prefilteredSamplerHelperName) == 4);
     const ShaderLayoutDeclaration binding13Declaration =
         FindShaderLayoutDeclaration(shaderSource, 13);
     const TestString binding13SamplerName = binding13Declaration.resourceName;
@@ -3496,6 +3518,7 @@ int main()
     assert(skyOutputPosition == TestString::npos);
 
     assert(ContainsText(shaderSource, "return sceneColor * params.preExposure;"));
+    assert(CountText(shaderSource, "return sceneColor * params.preExposure;") == 1);
     assert(CountText(shaderSource, "vec3 ApplySceneColorPreExposure(vec3 sceneColor)") == 1);
     assert(CountText(shaderSource, "ApplySceneColorPreExposure(skyColor)") == 1);
     assert(CountText(shaderSource, "ApplySceneColorPreExposure(color)") == 1);

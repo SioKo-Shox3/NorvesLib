@@ -1070,6 +1070,27 @@ namespace NorvesLib::Core::Rendering
         return descriptorSetDesc;
     }
 
+    static RHI::DescriptorSetDesc CreateRTGIDenoiserDescriptorSetDesc()
+    {
+        RHI::DescriptorSetDesc descriptorSetDesc;
+        const RHI::ResourceBindType types[] = {
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::CombinedImageSampler,
+            RHI::ResourceBindType::RWTexture};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 6u; ++bindingIndex)
+        {
+            RHI::DescriptorBinding binding;
+            binding.binding = bindingIndex;
+            binding.type = types[bindingIndex];
+            binding.stages = RHI::ShaderStage::Compute;
+            descriptorSetDesc.bindings.push_back(binding);
+        }
+        return descriptorSetDesc;
+    }
+
     static void InitializeSafeCascadedShadowParams(GPULightingParams& params)
     {
         for (uint32_t cascadeIndex = 0u;
@@ -1742,7 +1763,8 @@ namespace NorvesLib::Core::Rendering
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
             !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer &&
             !m_RTGIComputePipeline && !m_RTGIComputeParametersBuffer &&
-            !m_RTGIComputeInstanceDataBuffer)
+            !m_RTGIComputeInstanceDataBuffer && !m_RTGIDenoiserPipeline &&
+            !m_RTGIDenoisedTexture)
         {
             return;
         }
@@ -1759,6 +1781,13 @@ namespace NorvesLib::Core::Rendering
         // RTGIのcompute資源はdescriptor、pipeline、shaderの順で解放する。
         m_RTGIComputeDescriptorSet.reset();
         m_RTGIComputePipeline.reset();
+        m_RTGIDenoiserDescriptorSet.reset();
+        m_RTGIDenoiserPipeline.reset();
+        m_RTGIDenoisedTexture.reset();
+        m_RTGIDenoiserShader.reset();
+        m_RTGIDenoisedTextureState = RHI::ResourceState::Undefined;
+        m_RTGIDenoisedWidth = 0u;
+        m_RTGIDenoisedHeight = 0u;
         m_RTGIComputeParametersBuffer.reset();
         m_RTGIComputeInstanceDataBuffer.reset();
         m_RTGIGeometryBuffers.clear();
@@ -1783,6 +1812,7 @@ namespace NorvesLib::Core::Rendering
         m_bRTGIHistoryCapabilityValid = false;
         m_bRTGIHistoryLightRevisionValid = false;
         m_bRTGIComputeUnavailable = false;
+        m_bRTGIDenoiserUnavailable = false;
 
         m_LightArrayBuffer.reset();
         m_RetiredLightArrayBuffers.clear();
@@ -2732,6 +2762,163 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool LightingPass::EnsureRTGIDenoiserResources(ViewRenderContext& context,
+                                                   uint32_t width,
+                                                   uint32_t height)
+    {
+        if (m_bRTGIDenoiserUnavailable || !context.Device || !context.ShaderMgr ||
+            width == 0u || height == 0u)
+        {
+            return false;
+        }
+
+        m_Device = context.Device;
+        if (!m_RTGIDenoiserPipeline)
+        {
+            m_RTGIDenoiserShader = context.ShaderMgr->LoadShader(
+                "RTGI/CrossBilateralDenoise.comp", RHI::ShaderStage::Compute);
+            if (!m_RTGIDenoiserShader)
+            {
+                m_bRTGIDenoiserUnavailable = true;
+                NORVES_LOG_WARNING("LightingPass",
+                                   "RTGI cross-bilateral denoiser shaderを読み込めません");
+                return false;
+            }
+
+            RHI::ComputePipelineDesc pipelineDesc;
+            pipelineDesc.computeShader = m_RTGIDenoiserShader;
+            pipelineDesc.descriptorSetLayouts.push_back(
+                CreateRTGIDenoiserDescriptorSetDesc());
+            m_RTGIDenoiserPipeline = context.Device->CreateComputePipeline(pipelineDesc);
+            if (!m_RTGIDenoiserPipeline)
+            {
+                m_bRTGIDenoiserUnavailable = true;
+                NORVES_LOG_WARNING("LightingPass",
+                                   "RTGI cross-bilateral denoiser pipelineを作成できません");
+                return false;
+            }
+        }
+
+        if (!m_RTGIDenoisedTexture || m_RTGIDenoisedWidth != width ||
+            m_RTGIDenoisedHeight != height)
+        {
+            RHI::TextureDesc denoisedDesc;
+            denoisedDesc.Width = width;
+            denoisedDesc.Height = height;
+            denoisedDesc.TextureFormat = RTGIDiffuseIndirectRadianceFormat;
+            denoisedDesc.Usage = RHI::ResourceUsage::ShaderRead |
+                                 RHI::ResourceUsage::ShaderWrite;
+            denoisedDesc.DebugName = "RTGI.DenoisedDiffuseIndirect";
+            RHI::TexturePtr denoisedTexture = context.Device->CreateTexture(denoisedDesc);
+            if (!denoisedTexture)
+            {
+                NORVES_LOG_WARNING("LightingPass",
+                                   "RTGI cross-bilateral denoiser出力を作成できません");
+                return false;
+            }
+            m_RTGIDenoisedTexture = std::move(denoisedTexture);
+            m_RTGIDenoisedTextureState = RHI::ResourceState::Undefined;
+            m_RTGIDenoisedWidth = width;
+            m_RTGIDenoisedHeight = height;
+        }
+
+        if (!m_RTGIDenoiserDescriptorSet)
+        {
+            m_RTGIDenoiserDescriptorSet = context.Device->CreateDescriptorSet(
+                CreateRTGIDenoiserDescriptorSetDesc());
+            if (!m_RTGIDenoiserDescriptorSet)
+            {
+                m_bRTGIDenoiserUnavailable = true;
+                NORVES_LOG_WARNING("LightingPass",
+                                   "RTGI cross-bilateral denoiser descriptorを作成できません");
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool LightingPass::ExecuteRTGIDenoiser(ViewRenderContext& context,
+                                           const RHI::TexturePtr& temporalRadiance,
+                                           const RHI::TexturePtr& confidenceTexture,
+                                           const RHI::TexturePtr& depthTexture,
+                                           const RHI::TexturePtr& normalTexture,
+                                           const RHI::TexturePtr& materialTexture)
+    {
+        if (!context.CommandList || !context.Device || !temporalRadiance ||
+            !confidenceTexture || !depthTexture || !normalTexture || !materialTexture ||
+            temporalRadiance->GetFormat() != RTGIDiffuseIndirectRadianceFormat ||
+            confidenceTexture->GetFormat() != RTGIHistoryConfidenceFormat ||
+            temporalRadiance->GetWidth() == 0u || temporalRadiance->GetHeight() == 0u ||
+            confidenceTexture->GetWidth() != temporalRadiance->GetWidth() ||
+            confidenceTexture->GetHeight() != temporalRadiance->GetHeight() ||
+            depthTexture->GetWidth() != temporalRadiance->GetWidth() ||
+            depthTexture->GetHeight() != temporalRadiance->GetHeight() ||
+            normalTexture->GetWidth() != temporalRadiance->GetWidth() ||
+            normalTexture->GetHeight() != temporalRadiance->GetHeight() ||
+            materialTexture->GetWidth() != temporalRadiance->GetWidth() ||
+            materialTexture->GetHeight() != temporalRadiance->GetHeight() ||
+            (temporalRadiance->GetUsage() & RHI::ResourceUsage::ShaderRead) ==
+                RHI::ResourceUsage::None ||
+            (confidenceTexture->GetUsage() & RHI::ResourceUsage::ShaderRead) ==
+                RHI::ResourceUsage::None ||
+            (depthTexture->GetUsage() & RHI::ResourceUsage::ShaderRead) ==
+                RHI::ResourceUsage::None ||
+            (normalTexture->GetUsage() & RHI::ResourceUsage::ShaderRead) ==
+                RHI::ResourceUsage::None ||
+            (materialTexture->GetUsage() & RHI::ResourceUsage::ShaderRead) ==
+                RHI::ResourceUsage::None)
+        {
+            return false;
+        }
+
+        const uint32_t width = temporalRadiance->GetWidth();
+        const uint32_t height = temporalRadiance->GetHeight();
+        if (!EnsureRTGIDenoiserResources(context, width, height) ||
+            !m_RTGIDenoisedTexture ||
+            (m_RTGIDenoisedTexture->GetUsage() & RHI::ResourceUsage::ShaderRead) ==
+                RHI::ResourceUsage::None ||
+            (m_RTGIDenoisedTexture->GetUsage() & RHI::ResourceUsage::ShaderWrite) ==
+                RHI::ResourceUsage::None)
+        {
+            return false;
+        }
+
+        if (m_RTGIDenoisedTextureState != RHI::ResourceState::UnorderedAccess)
+        {
+            context.CommandList->TextureBarrier(m_RTGIDenoisedTexture,
+                                                 m_RTGIDenoisedTextureState,
+                                                 RHI::ResourceState::UnorderedAccess);
+            m_RTGIDenoisedTextureState = RHI::ResourceState::UnorderedAccess;
+        }
+
+        m_RTGIDenoiserDescriptorSet->BindTexture(0u, temporalRadiance);
+        m_RTGIDenoiserDescriptorSet->BindSampler(0u, m_GBufferSampler);
+        m_RTGIDenoiserDescriptorSet->BindTexture(1u, depthTexture);
+        m_RTGIDenoiserDescriptorSet->BindSampler(1u, m_GBufferSampler);
+        m_RTGIDenoiserDescriptorSet->BindTexture(2u, normalTexture);
+        m_RTGIDenoiserDescriptorSet->BindSampler(2u, m_GBufferSampler);
+        m_RTGIDenoiserDescriptorSet->BindTexture(3u, materialTexture);
+        m_RTGIDenoiserDescriptorSet->BindSampler(3u, m_GBufferSampler);
+        m_RTGIDenoiserDescriptorSet->BindTexture(4u, confidenceTexture);
+        m_RTGIDenoiserDescriptorSet->BindSampler(4u, m_GBufferSampler);
+        m_RTGIDenoiserDescriptorSet->BindStorageTexture(5u, m_RTGIDenoisedTexture);
+        m_RTGIDenoiserDescriptorSet->Update();
+
+        const uint32_t groupCountX =
+            (width + RTGI_COMPUTE_WORKGROUP_SIZE - 1u) / RTGI_COMPUTE_WORKGROUP_SIZE;
+        const uint32_t groupCountY =
+            (height + RTGI_COMPUTE_WORKGROUP_SIZE - 1u) / RTGI_COMPUTE_WORKGROUP_SIZE;
+        context.CommandList->SetPipeline(m_RTGIDenoiserPipeline);
+        context.CommandList->SetDescriptorSet(m_RTGIDenoiserDescriptorSet);
+        context.CommandList->Dispatch(groupCountX, groupCountY, 1u);
+        context.CommandList->TextureBarrier(m_RTGIDenoisedTexture,
+                                             RHI::ResourceState::UnorderedAccess,
+                                             RHI::ResourceState::ShaderResource);
+        m_RTGIDenoisedTextureState = RHI::ResourceState::ShaderResource;
+        return true;
+    }
+
     bool LightingPass::EnsureRTGIHistoryTextures(uint32_t width, uint32_t height)
     {
         if (!m_Device || width == 0u || height == 0u)
@@ -3107,8 +3294,18 @@ namespace NorvesLib::Core::Rendering
                               RHI::ResourceState::ShaderResource);
         m_RTGIHistorySlotState[writeHistoryIndex] = RHI::ResourceState::ShaderResource;
 
+        if (!ExecuteRTGIDenoiser(context,
+                                 rtgiDiffuseIndirectTexture,
+                                 writeHistory.Confidence,
+                                 depthTexture,
+                                 normalTexture,
+                                 materialTexture))
+        {
+            return fail();
+        }
+
         RTGIResult result;
-        result.DiffuseIndirectRadiance = rtgiDiffuseIndirectTexture;
+        result.DiffuseIndirectRadiance = m_RTGIDenoisedTexture;
         result.State = RHI::ResourceState::ShaderResource;
         result.Format = RTGIDiffuseIndirectRadianceFormat;
         result.BounceCount = RTGIDiffuseBounceCount;

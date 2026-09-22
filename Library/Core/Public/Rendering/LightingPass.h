@@ -221,6 +221,9 @@ namespace NorvesLib::Core::Rendering
                                const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                                bool bRegisterLegacyOutputs);
         bool EnsureRTGIComputePipeline(ViewRenderContext& context);
+        bool EnsureRTGIDenoiserResources(ViewRenderContext& context,
+                                          uint32_t width,
+                                          uint32_t height);
         bool EnsureRTGIHistoryTextures(uint32_t width, uint32_t height);
         void InvalidateRTGIHistory();
         bool ExecuteRTGI(ViewRenderContext& context,
@@ -231,6 +234,12 @@ namespace NorvesLib::Core::Rendering
                          const RHI::TexturePtr& velocityTexture,
                          const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                          const GPULightingParams& lightingParams);
+        bool ExecuteRTGIDenoiser(ViewRenderContext& context,
+                                 const RHI::TexturePtr& temporalRadiance,
+                                 const RHI::TexturePtr& confidenceTexture,
+                                 const RHI::TexturePtr& depthTexture,
+                                 const RHI::TexturePtr& normalTexture,
+                                 const RHI::TexturePtr& materialTexture);
         void RegisterOutputs(ViewRenderContext& context,
                              const RHI::TexturePtr& sceneColorTexture,
                              const RHI::TexturePtr& depthTexture) const;
@@ -278,6 +287,13 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_RTGIComputeShader;
         RHI::PipelinePtr m_RTGIComputePipeline;
         RHI::DescriptorSetPtr m_RTGIComputeDescriptorSet;
+        RHI::ShaderPtr m_RTGIDenoiserShader;
+        RHI::PipelinePtr m_RTGIDenoiserPipeline;
+        RHI::DescriptorSetPtr m_RTGIDenoiserDescriptorSet;
+        RHI::TexturePtr m_RTGIDenoisedTexture;
+        RHI::ResourceState m_RTGIDenoisedTextureState = RHI::ResourceState::Undefined;
+        uint32_t m_RTGIDenoisedWidth = 0u;
+        uint32_t m_RTGIDenoisedHeight = 0u;
         RHI::BufferPtr m_RTGIComputeParametersBuffer;
         RHI::BufferPtr m_RTGIComputeInstanceDataBuffer;
         Container::VariableArray<RHI::BufferPtr> m_RTGIGeometryBuffers;
@@ -319,6 +335,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bRTGIHistoryCapabilityValid = false;
         bool m_bRTGIHistoryLightRevisionValid = false;
         bool m_bRTGIComputeUnavailable = false;
+        bool m_bRTGIDenoiserUnavailable = false;
         DDGIProbePass m_DDGIProbePass;
         RayTracingShadowPass m_RayTracingShadowPass;
         RHI::BufferPtr m_LightDataBuffer;
