@@ -1775,8 +1775,10 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryAgeFrames = 0u;
         m_RTGIHistorySceneRevision = 0u;
         m_RTGIHistoryLightRevision = 0u;
+        m_RTGIHistoryCapability = RTGIRayQueryCapability{};
         m_RTGIHistoryLightWeightLimitedFrames = 0u;
         m_bRTGIHistoryValid = false;
+        m_bRTGIHistoryCapabilityValid = false;
         m_bRTGIHistoryLightRevisionValid = false;
         m_bRTGIComputeUnavailable = false;
 
@@ -1930,6 +1932,7 @@ namespace NorvesLib::Core::Rendering
         m_GBufferNormalHandle = {};
         m_GBufferMaterialHandle = {};
         m_GBufferDepthHandle = {};
+        m_GBufferVelocityHandle = {};
         m_GBufferEmissiveHandle = {};
         m_SSAOBlurredHandle = {};
         m_ShadowMapHandle = {};
@@ -2813,6 +2816,8 @@ namespace NorvesLib::Core::Rendering
     void LightingPass::InvalidateRTGIHistory()
     {
         m_bRTGIHistoryValid = false;
+        m_bRTGIHistoryCapabilityValid = false;
+        m_RTGIHistoryCapability = RTGIRayQueryCapability{};
         m_bRTGIHistoryLightRevisionValid = false;
         m_RTGIHistoryAgeFrames = 0u;
         m_RTGIHistorySceneRevision = 0u;
@@ -2881,6 +2886,21 @@ namespace NorvesLib::Core::Rendering
         {
             return fail();
         }
+
+        const bool bHistoryCapabilityChanged =
+            m_bRTGIHistoryCapabilityValid &&
+            (m_RTGIHistoryCapability.bAccelerationStructure !=
+                 context.RTGICapability.bAccelerationStructure ||
+             m_RTGIHistoryCapability.bRayQuery != context.RTGICapability.bRayQuery ||
+             m_RTGIHistoryCapability.bBufferDeviceAddress !=
+                 context.RTGICapability.bBufferDeviceAddress ||
+             m_RTGIHistoryCapability.bShaderInt64 != context.RTGICapability.bShaderInt64);
+        if (bHistoryCapabilityChanged)
+        {
+            InvalidateRTGIHistory();
+        }
+        m_RTGIHistoryCapability = context.RTGICapability;
+        m_bRTGIHistoryCapabilityValid = true;
 
         const uint64_t requiredInstanceDataSize =
             static_cast<uint64_t>(instanceData.size()) * sizeof(RTGIInstanceData);

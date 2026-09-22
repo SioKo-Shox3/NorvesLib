@@ -80,6 +80,13 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
 
 const float PI = 3.14159265358979323846;
 const float RAY_ORIGIN_OFFSET = 0.002;
+const uint RTGI_HISTORY_MAXIMUM_AGE = 8u;
+const float RTGI_HISTORY_MAXIMUM_WEIGHT = 0.9;
+const float RTGI_HISTORY_LIGHT_WEIGHT_LIMIT = 0.25;
+const float RTGI_HISTORY_INITIAL_CONFIDENCE = 0.25;
+const float RTGI_HISTORY_NORMAL_REJECTION_DOT = 0.9;
+const float RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD = 0.02;
+const float RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD = 0.05;
 
 bool IsFiniteVector(vec3 value)
 {
@@ -401,23 +408,25 @@ bool TryReadReprojectedHistory(vec2 currentUV,
         return false;
     }
     sampledNormal *= inversesqrt(sampledNormalLengthSquared);
-    float depthThreshold = max(0.02,
+    float depthThreshold = max(RTGI_HISTORY_DEPTH_REJECTION_THRESHOLD,
                                0.05 * max(currentDepth, sampledDepth));
     if (abs(currentDepth - sampledDepth) > depthThreshold ||
-        dot(currentNormal, sampledNormal) < 0.9)
+        dot(currentNormal, sampledNormal) < RTGI_HISTORY_NORMAL_REJECTION_DOT)
     {
         return false;
     }
 
     vec3 materialDelta = abs(currentMaterial - sampledMaterial);
-    if (max(materialDelta.x, max(materialDelta.y, materialDelta.z)) > 0.05)
+    if (max(materialDelta.x, max(materialDelta.y, materialDelta.z)) >
+        RTGI_HISTORY_MATERIAL_REJECTION_THRESHOLD)
     {
         return false;
     }
 
     previousAge = clamp(previousAge,
                         0.0,
-                        float(parameters.temporalState.w));
+                        min(float(parameters.temporalState.w),
+                            float(RTGI_HISTORY_MAXIMUM_AGE)));
     previousConfidence = clamp(previousConfidence, 0.0, 1.0);
     previousRadiance = SanitizeRadiance(previousRadiance);
     return true;
@@ -433,7 +442,10 @@ void StoreTemporalSample(uvec2 pixel,
 {
     vec3 safeRadiance = SanitizeRadiance(radiance);
     float safeAge = IsFiniteScalar(age)
-        ? clamp(age, 0.0, float(parameters.temporalState.w))
+        ? clamp(age,
+                0.0,
+                min(float(parameters.temporalState.w),
+                    float(RTGI_HISTORY_MAXIMUM_AGE)))
         : 0.0;
     float safeConfidence = IsFiniteScalar(confidence)
         ? clamp(confidence, 0.0, 1.0)
@@ -581,19 +593,22 @@ void main()
                                   previousConfidence);
     float historyWeight = 0.0;
     float outputAge = 0.0;
-    float outputConfidence = bSurfaceValid ? 0.25 : 0.0;
+    float outputConfidence = bSurfaceValid ? RTGI_HISTORY_INITIAL_CONFIDENCE : 0.0;
     if (bHistoryAccepted)
     {
-        historyWeight = clamp(1.0 - 1.0 / (previousAge + 1.0), 0.0, 0.9);
+        historyWeight = clamp(1.0 - 1.0 / (previousAge + 1.0),
+                              0.0,
+                              RTGI_HISTORY_MAXIMUM_WEIGHT);
         historyWeight *= previousConfidence;
-        if (parameters.temporalState.z != 0u)
+        if (parameters.temporalState.y != 0u || parameters.temporalState.z != 0u)
         {
-            historyWeight = min(historyWeight, 0.25);
+            historyWeight = min(historyWeight, RTGI_HISTORY_LIGHT_WEIGHT_LIMIT);
         }
-        historyWeight = clamp(historyWeight, 0.0, 0.9);
+        historyWeight = clamp(historyWeight, 0.0, RTGI_HISTORY_MAXIMUM_WEIGHT);
         outputRadiance = mix(outputRadiance, previousRadiance, historyWeight);
         outputAge = min(previousAge + 1.0,
-                        float(parameters.temporalState.w));
+                        min(float(parameters.temporalState.w),
+                            float(RTGI_HISTORY_MAXIMUM_AGE)));
         outputConfidence = clamp(previousConfidence + 0.125, 0.0, 1.0);
     }
 

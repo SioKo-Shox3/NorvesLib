@@ -5,6 +5,7 @@
 #include "Rendering/DDGIProbePass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RayTracingShadowPass.h"
+#include "Rendering/RTGIContract.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
@@ -310,8 +311,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_RTGIHistoryAgeFrames = 0;
         uint64_t m_RTGIHistorySceneRevision = 0;
         uint64_t m_RTGIHistoryLightRevision = 0;
+        RTGIRayQueryCapability m_RTGIHistoryCapability;
         uint32_t m_RTGIHistoryLightWeightLimitedFrames = 0;
         bool m_bRTGIHistoryValid = false;
+        bool m_bRTGIHistoryCapabilityValid = false;
         bool m_bRTGIHistoryLightRevisionValid = false;
         bool m_bRTGIComputeUnavailable = false;
         DDGIProbePass m_DDGIProbePass;
