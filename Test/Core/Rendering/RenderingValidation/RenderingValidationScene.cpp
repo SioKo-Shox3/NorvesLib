@@ -2676,6 +2676,19 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::SetR5RayTracingShadowReceiverPositionX(
+        float positionX) const
+    {
+        if (!std::isfinite(positionX) || std::abs(positionX) > 6.0f ||
+            !m_bR5RayTracingShadowFixturePrepared || m_pR5ShadowReceiverEntity == nullptr)
+        {
+            return false;
+        }
+
+        m_pR5ShadowReceiverEntity->SetPosition(positionX, 0.0f, 20.0f);
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::ApplyR4CornellFixture() const
     {
         if (m_bR4CornellFixturePrepared)

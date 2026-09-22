@@ -11,7 +11,9 @@ R6-a の独立ゲートを受入れ完了とする。通常の遅延不透明 `M
 ## 実装範囲
 
 - `GPUSceneInstanceData` に `PreviousWorld` を追加し、通常の `MeshProxy` とインスタンス描画へ前フレーム変換をコピーする。
+- `World::SyncEntityRecursive` が現フレームの `MeshProxy` を毎フレーム更新し、proxy公開後に `MeshComponent` の変換履歴を確定することで、移動後に停止した物体の履歴を現フレームへ進める。
 - `FramePacket` に `PreviousMainCamera` と有効フラグを追加し、`RenderingCoordinator` が前回完了フレームのカメラを次のパケットへコピーする。
+- カメラを公開しなかったフレームをまたぐ場合は、次フレームで前カメラ履歴を再利用しない。
 - GBuffer に5枚目のカラー出力として `GBuffer.Velocity` / `GBuffer_Velocity` を追加し、フォーマットを `R16G16_FLOAT`、readback用usageを `TransferSrc` とする。既存のAlbedo/Normal/Material/Emissive 4面の値契約は維持する。
 - velocity shader は device clip space を viewport UV へ変換し、`currentUV - previousUV` を出力する。カメラ履歴が初回または無効の場合、velocityはゼロとする。
 - skinned mesh、MegaGeometry、Forward透明の履歴拡張は本工程の対象外とし、後続工程へ残す。
@@ -39,19 +41,24 @@ ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(Frame
 ### GPU velocity readback
 
 ```text
-ctest --test-dir build -C Debug --output-on-failure --verbose --no-tests=error -R "^RenderingVelocity(Static|Motion|FirstFrame)VulkanTest$"
+ctest --test-dir build -C Debug --output-on-failure -V --no-tests=error -R "^RenderingVelocity(Static|Motion|Camera|FirstFrame|MoveThenStop)VulkanTest$"
 ```
 
-結果: `100% tests passed, 0 tests failed out of 3`。
+結果: `100% tests passed, 0 tests failed out of 5`。
 
 readback結果:
 
 ```text
-static:      velocity_stage=initial request=1 max_magnitude=0 non_zero=0 non_finite=0
-motion:      velocity_stage=initial request=1 max_magnitude=0 non_zero=0 non_finite=0
-motion:      velocity_stage=moved request=2 max_magnitude=0.015152 non_zero=65536 non_finite=0
-first-frame: velocity_stage=initial request=1 max_magnitude=0 non_zero=0 non_finite=0
+static:        initial frame=0 max_magnitude=0 non_zero=0
+static:        stable  frame=2 max_magnitude=0 non_zero=0
+camera:        moved frame=2 expected=(0.0151554,0) actual=(0.015152,0)
+camera+object: moved frame=2 expected=(-0.0497965,0) actual=(-0.0497742,0)
+camera+object: moved-center expected=(-0.0497965,0) actual=(-0.0497742,0)
+first-frame:   initial frame=0 max_magnitude=0 non_zero=0
+move-stop:     stopped frame=4 max_magnitude=0 non_zero=0
 ```
+
+カメラのみ、およびカメラ＋物体のサンプルは、既知の現在/前フレーム行列から算出したNDC差分とGPU readbackを比較した。移動後停止は別フレームで確認し、履歴の持ち越しによる残留velocityがないことを固定した。
 
 ### 既定Game起動
 
@@ -67,6 +74,8 @@ build\Game\Debug\Game.exe --imgui --exit-after-rendered-frames=120
 - `Environment source and derived IBL resources created`
 - `GBufferPass initialized` と `GBufferPass shutdown`
 - `exit-after-rendered-frames reached rendered=120 baseline=0 target=120`
+
+実行時のVulkan validation error (`Validation Error` / `VUID-`) は0件だった。
 
 ログにあるSlang SDK未導入による `neural_material_decode.slang` の既存warning/errorは、decoder無効化の既存フォールバックであり、R6-a対象経路の終了やvelocity readbackを失敗させていない。
 

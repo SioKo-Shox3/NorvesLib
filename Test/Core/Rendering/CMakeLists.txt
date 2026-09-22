@@ -374,11 +374,23 @@ register_rendering_gpu_test(
     --capture-source=gbuffer-velocity
     --scenario=camera-object-motion)
 register_rendering_gpu_test(
+    RenderingVelocityCameraVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=camera-motion)
+register_rendering_gpu_test(
     RenderingVelocityFirstFrameVulkanTest
     RenderingVelocityVulkanTest
     --scene=indoor
     --capture-source=gbuffer-velocity
     --scenario=first-frame-invalid-history)
+register_rendering_gpu_test(
+    RenderingVelocityMoveThenStopVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=move-then-stop)
 register_rendering_gpu_test(
     RenderingVelocityVulkanSkipContractTest
     RenderingVelocityVulkanTest

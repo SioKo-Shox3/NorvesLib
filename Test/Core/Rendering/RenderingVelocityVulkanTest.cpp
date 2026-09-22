@@ -5,6 +5,8 @@
 #include "Boot/AppLauncher.h"
 #include "Boot/BootConfig.h"
 #include "Engine/Engine.h"
+#include "Math/Vector3.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/RenderWorld.h"
 #include "RHI/RHITypes.h"
 
@@ -24,14 +26,18 @@ namespace
     enum class Scenario : uint8_t
     {
         Static,
+        CameraMotion,
         CameraObjectMotion,
-        FirstFrameInvalidHistory
+        FirstFrameInvalidHistory,
+        MoveThenStop
     };
 
     enum class CaptureStage : uint8_t
     {
         Initial,
         Moved,
+        Stable,
+        Stopped,
         Complete
     };
 
@@ -40,6 +46,14 @@ namespace
         float MaximumMagnitudeSquared = 0.0f;
         uint64_t NonFiniteCount = 0;
         uint64_t NonZeroCount = 0;
+    };
+
+    struct ExpectedVelocitySample
+    {
+        uint32_t PixelX = 0;
+        uint32_t PixelY = 0;
+        float ExpectedX = 0.0f;
+        float ExpectedY = 0.0f;
     };
 
     uint16_t ReadHalf(const Core::Container::VariableArray<uint8_t>& pixels, size_t offset)
@@ -108,6 +122,110 @@ namespace
         return true;
     }
 
+    bool BuildExpectedVelocitySample(
+        const CameraProxy& previousCamera,
+        const CameraProxy& currentCamera,
+        const Math::Vector3& previousWorldPoint,
+        const Math::Vector3& currentWorldPoint,
+        const RHI::IDevice* device,
+        ExpectedVelocitySample& outSample)
+    {
+        const CameraViewConstants previousConstants = CameraViewConstants::BuildForDevice(
+            previousCamera,
+            static_cast<float>(ValidationWidth) / static_cast<float>(ValidationHeight),
+            device);
+        const CameraViewConstants currentConstants = CameraViewConstants::BuildForDevice(
+            currentCamera,
+            static_cast<float>(ValidationWidth) / static_cast<float>(ValidationHeight),
+            device);
+        const Math::Vector4 previousClip = previousConstants.ViewProjectionMatrix *
+                                           Math::Vector4(previousWorldPoint.x,
+                                                         previousWorldPoint.y,
+                                                         previousWorldPoint.z,
+                                                         1.0f);
+        const Math::Vector4 currentClip = currentConstants.ViewProjectionMatrix *
+                                          Math::Vector4(currentWorldPoint.x,
+                                                        currentWorldPoint.y,
+                                                        currentWorldPoint.z,
+                                                        1.0f);
+        if (!std::isfinite(previousClip.x) || !std::isfinite(previousClip.y) ||
+            !std::isfinite(previousClip.w) || !std::isfinite(currentClip.x) ||
+            !std::isfinite(currentClip.y) || !std::isfinite(currentClip.w) ||
+            std::abs(previousClip.w) <= 1.0e-6f || std::abs(currentClip.w) <= 1.0e-6f)
+        {
+            return false;
+        }
+
+        const float previousNdcX = previousClip.x / previousClip.w;
+        const float previousNdcY = previousClip.y / previousClip.w;
+        const float currentNdcX = currentClip.x / currentClip.w;
+        const float currentNdcY = currentClip.y / currentClip.w;
+        const float pixelX = (currentNdcX * 0.5f + 0.5f) * static_cast<float>(ValidationWidth);
+        if (!std::isfinite(previousNdcX) || !std::isfinite(previousNdcY) ||
+            !std::isfinite(currentNdcX) ||
+            !std::isfinite(currentNdcY) || !std::isfinite(pixelX) ||
+            pixelX < 0.0f || pixelX >= static_cast<float>(ValidationWidth) ||
+            std::abs(currentNdcY) > 0.02f)
+        {
+            return false;
+        }
+
+        outSample.PixelX = static_cast<uint32_t>(pixelX);
+        outSample.PixelY = ValidationHeight / 2u;
+        outSample.ExpectedX = (currentNdcX - previousNdcX) * 0.5f;
+        outSample.ExpectedY = (currentNdcY - previousNdcY) * 0.5f;
+        return std::isfinite(outSample.ExpectedX) && std::isfinite(outSample.ExpectedY);
+    }
+
+    bool ReadVelocitySample(
+        const CapturedFrame& frame,
+        const ExpectedVelocitySample& expected,
+        float& outX,
+        float& outY)
+    {
+        if (expected.PixelX >= frame.Width || expected.PixelY >= frame.Height)
+        {
+            return false;
+        }
+        const size_t offset = static_cast<size_t>(expected.PixelY) * frame.RowPitchBytes +
+                              static_cast<size_t>(expected.PixelX) * 4u;
+        if (offset + 4u > frame.Pixels.size())
+        {
+            return false;
+        }
+        outX = DecodeHalf(ReadHalf(frame.Pixels, offset));
+        outY = DecodeHalf(ReadHalf(frame.Pixels, offset + 2u));
+        return std::isfinite(outX) && std::isfinite(outY);
+    }
+
+    bool CheckExpectedVelocitySample(
+        const CapturedFrame& frame,
+        const ExpectedVelocitySample& expected,
+        const char* label,
+        Core::Container::String& outFailureReason)
+    {
+        float actualX = 0.0f;
+        float actualY = 0.0f;
+        if (!ReadVelocitySample(frame, expected, actualX, actualY))
+        {
+            outFailureReason = TEXT("analytic velocity sample is outside the captured image");
+            return false;
+        }
+
+        constexpr float tolerance = 0.02f;
+        std::cout << "velocity_sample=" << label
+                  << " pixel=(" << expected.PixelX << "," << expected.PixelY << ")"
+                  << " expected=(" << expected.ExpectedX << "," << expected.ExpectedY << ")"
+                  << " actual=(" << actualX << "," << actualY << ")\n";
+        if (std::abs(actualX - expected.ExpectedX) > tolerance ||
+            std::abs(actualY - expected.ExpectedY) > tolerance)
+        {
+            outFailureReason = TEXT("analytic velocity sample exceeded the 0.02 tolerance");
+            return false;
+        }
+        return true;
+    }
+
     class VelocityHandler final : public RenderingValidationApplicationHandler
     {
     public:
@@ -128,7 +246,7 @@ namespace
                 return false;
             }
 
-            if (m_Scenario == Scenario::CameraObjectMotion)
+            if (IsMotionScenario())
             {
                 if (GetRunConfig().Scene != SceneKind::Outdoor ||
                     !GetFixture().ApplyR5RayTracingShadowFixture())
@@ -154,22 +272,11 @@ namespace
 
             Core::Rendering::RenderWorld& renderWorld = Core::Engine::GEngine->GetRenderWorld();
             ApplyStageState(renderWorld);
-            if (m_bCaptureRequested)
-            {
-                return;
-            }
-
-            const Core::Rendering::FrameCaptureRequestResult request =
-                renderWorld.RequestFrameCapture({FrameCaptureSourceKind::GBufferVelocity});
-            if (!request.IsAccepted())
+            if (!m_bCaptureRequested && !RequestVelocityCapture(renderWorld))
             {
                 Fail("velocity capture request was rejected");
                 return;
             }
-
-            m_bCaptureRequested = true;
-            m_CaptureRequestRenderedFrame = renderWorld.GetRenderedFrameCount();
-            m_LastRequestId = request.RequestId;
         }
 
         void OnPostRender() override
@@ -196,21 +303,34 @@ namespace
                         return;
                     }
 
-                    if (m_Scenario == Scenario::CameraObjectMotion &&
-                        m_Stage == CaptureStage::Initial)
+                    bool bRequestFollowup = false;
+                    if (m_Scenario == Scenario::Static && m_Stage == CaptureStage::Initial)
+                    {
+                        m_Stage = CaptureStage::Stable;
+                        bRequestFollowup = true;
+                    }
+                    else if ((m_Scenario == Scenario::CameraMotion ||
+                              m_Scenario == Scenario::CameraObjectMotion ||
+                              m_Scenario == Scenario::MoveThenStop) &&
+                             m_Stage == CaptureStage::Initial)
                     {
                         m_Stage = CaptureStage::Moved;
+                        bRequestFollowup = true;
+                    }
+                    else if (m_Scenario == Scenario::MoveThenStop &&
+                             m_Stage == CaptureStage::Moved)
+                    {
+                        m_Stage = CaptureStage::Stopped;
+                        bRequestFollowup = true;
+                    }
+
+                    if (bRequestFollowup)
+                    {
                         ApplyStageState(renderWorld);
-                        const Core::Rendering::FrameCaptureRequestResult followup =
-                            renderWorld.RequestFrameCapture({FrameCaptureSourceKind::GBufferVelocity});
-                        if (!followup.IsAccepted())
+                        if (!RequestVelocityCapture(renderWorld))
                         {
                             Fail("velocity follow-up capture request was rejected");
-                            return;
                         }
-                        m_bCaptureRequested = true;
-                        m_CaptureRequestRenderedFrame = renderedFrames;
-                        m_LastRequestId = followup.RequestId;
                         return;
                     }
 
@@ -254,9 +374,19 @@ namespace
                 m_Scenario = Scenario::CameraObjectMotion;
                 return true;
             }
+            if (argument == TEXT("--scenario=camera-motion"))
+            {
+                m_Scenario = Scenario::CameraMotion;
+                return true;
+            }
             if (argument == TEXT("--scenario=first-frame-invalid-history"))
             {
                 m_Scenario = Scenario::FirstFrameInvalidHistory;
+                return true;
+            }
+            if (argument == TEXT("--scenario=move-then-stop"))
+            {
+                m_Scenario = Scenario::MoveThenStop;
                 return true;
             }
             outFailureReason = TEXT("unsupported velocity scenario");
@@ -264,16 +394,64 @@ namespace
         }
 
     private:
+        bool RequestVelocityCapture(Core::Rendering::RenderWorld& renderWorld)
+        {
+            const Core::Rendering::FrameCaptureRequestResult request =
+                renderWorld.RequestFrameCapture({FrameCaptureSourceKind::GBufferVelocity});
+            if (!request.IsAccepted())
+            {
+                return false;
+            }
+
+            m_bCaptureRequested = true;
+            m_CaptureRequestRenderedFrame = renderWorld.GetRenderedFrameCount();
+            m_LastRequestId = request.RequestId;
+            return true;
+        }
+
+        bool IsMotionScenario() const
+        {
+            return m_Scenario == Scenario::CameraMotion ||
+                   m_Scenario == Scenario::CameraObjectMotion ||
+                   m_Scenario == Scenario::MoveThenStop;
+        }
+
+        bool IsObjectMotionScenario() const
+        {
+            return m_Scenario == Scenario::CameraObjectMotion ||
+                   m_Scenario == Scenario::MoveThenStop;
+        }
+
+        const char* GetStageName() const
+        {
+            switch (m_Stage)
+            {
+            case CaptureStage::Initial:
+                return "initial";
+            case CaptureStage::Moved:
+                return "moved";
+            case CaptureStage::Stable:
+                return "stable";
+            case CaptureStage::Stopped:
+                return "stopped";
+            case CaptureStage::Complete:
+                return "complete";
+            }
+            return "unknown";
+        }
+
         void ApplyStageState(Core::Rendering::RenderWorld& renderWorld)
         {
-            if (m_Scenario != Scenario::CameraObjectMotion)
+            if (!IsMotionScenario())
             {
                 GetFixture().ApplyCamera(renderWorld);
                 return;
             }
 
-            const bool bMoved = m_Stage == CaptureStage::Moved;
-            if (!GetFixture().SetR5RayTracingShadowOccluderPositionX(bMoved ? 1.5f : 0.0f))
+            const bool bMoved = m_Stage == CaptureStage::Moved ||
+                                m_Stage == CaptureStage::Stopped;
+            if (!GetFixture().SetR5RayTracingShadowReceiverPositionX(
+                    IsObjectMotionScenario() && bMoved ? 1.5f : 0.0f))
             {
                 Fail("motion fixture object update failed");
                 return;
@@ -281,6 +459,58 @@ namespace
             CameraProxy camera = GetFixture().GetR5RayTracingShadowCamera();
             camera.PositionX = bMoved ? 0.35f : 0.0f;
             renderWorld.SetMainCamera(camera);
+        }
+
+        bool EvaluateAnalyticMotion(
+            const CapturedFrame& frame,
+            Core::Rendering::RenderWorld& renderWorld,
+            Core::Container::String& outFailureReason)
+        {
+            const auto device = renderWorld.GetRenderingCoordinator().GetDevice();
+            if (!device)
+            {
+                outFailureReason = TEXT("analytic velocity sample has no RHI device");
+                return false;
+            }
+
+            CameraProxy previousCamera = GetFixture().GetR5RayTracingShadowCamera();
+            CameraProxy currentCamera = previousCamera;
+            currentCamera.PositionX = 0.35f;
+
+            const float currentObjectOffset = IsObjectMotionScenario() ? 1.5f : 0.0f;
+            ExpectedVelocitySample receiverSample;
+            if (!BuildExpectedVelocitySample(previousCamera,
+                                             currentCamera,
+                                             Math::Vector3(6.0f, 0.0f, 20.0f),
+                                             Math::Vector3(6.0f + currentObjectOffset, 0.0f, 20.0f),
+                                             device.get(),
+                                             receiverSample) ||
+                !CheckExpectedVelocitySample(frame,
+                                              receiverSample,
+                                              IsObjectMotionScenario()
+                                                  ? "receiver-camera-and-object-motion"
+                                                  : "receiver-camera-motion",
+                                              outFailureReason))
+            {
+                return false;
+            }
+
+            ExpectedVelocitySample occluderSample;
+            if (IsObjectMotionScenario() &&
+                (!BuildExpectedVelocitySample(previousCamera,
+                                              currentCamera,
+                                              Math::Vector3(0.0f, 0.0f, 20.0f),
+                                              Math::Vector3(1.5f, 0.0f, 20.0f),
+                                              device.get(),
+                                              occluderSample) ||
+                 !CheckExpectedVelocitySample(frame,
+                                               occluderSample,
+                                               "receiver-center-camera-and-object-motion",
+                                               outFailureReason)))
+            {
+                return false;
+            }
+            return true;
         }
 
         bool EvaluateVelocityFrame(
@@ -294,8 +524,9 @@ namespace
                 return false;
             }
             std::cout << "velocity_stage="
-                      << (m_Stage == CaptureStage::Initial ? "initial" : "moved")
+                      << GetStageName()
                       << " request=" << m_LastRequestId
+                      << " frame=" << frame.FrameNumber
                       << " max_magnitude=" << std::sqrt(stats.MaximumMagnitudeSquared)
                       << " non_zero=" << stats.NonZeroCount
                       << " non_finite=" << stats.NonFiniteCount << "\n";
@@ -306,11 +537,29 @@ namespace
                 return false;
             }
 
-            if (m_Scenario == Scenario::CameraObjectMotion && m_Stage == CaptureStage::Moved)
+            if (IsMotionScenario() && m_Stage == CaptureStage::Moved)
             {
                 if (stats.MaximumMagnitudeSquared <= 1.0e-6f || stats.NonZeroCount == 0u)
                 {
                     outFailureReason = TEXT("camera/object motion did not produce velocity");
+                    return false;
+                }
+                if (Core::Engine::GEngine == nullptr ||
+                    !EvaluateAnalyticMotion(
+                        frame,
+                        Core::Engine::GEngine->GetRenderWorld(),
+                        outFailureReason))
+                {
+                    return false;
+                }
+                return true;
+            }
+
+            if (m_Scenario == Scenario::MoveThenStop && m_Stage == CaptureStage::Stopped)
+            {
+                if (stats.MaximumMagnitudeSquared > 1.0e-8f || stats.NonZeroCount != 0u)
+                {
+                    outFailureReason = TEXT("velocity did not return to zero after motion stopped");
                     return false;
                 }
                 return true;

@@ -1831,6 +1831,12 @@ namespace NorvesLib::Core::Rendering
             m_PreviousMainCamera = finishedCamera;
             m_bPreviousMainCameraValid = true;
         }
+        else
+        {
+            // カメラを公開しなかったフレームをまたいで履歴を再利用しない。
+            m_PreviousMainCamera = CameraProxy{};
+            m_bPreviousMainCameraValid = false;
+        }
 
         m_GameThreadStats.FrameNumber++;
         return finishedPacket;

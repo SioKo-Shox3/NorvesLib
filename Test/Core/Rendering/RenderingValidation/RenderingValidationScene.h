@@ -257,6 +257,7 @@ namespace NorvesLib::Test::RenderingValidation
         bool ApplyR3DistantAtmosphereFixture() const;
         bool ApplyR5RayTracingShadowFixture() const;
         bool SetR5RayTracingShadowOccluderPositionX(float positionX) const;
+        bool SetR5RayTracingShadowReceiverPositionX(float positionX) const;
         bool ApplyR4CornellFixture() const;
         bool SetR4CornellLightOffsetX(float offsetX) const;
         const Core::Rendering::CameraProxy& GetCamera() const;

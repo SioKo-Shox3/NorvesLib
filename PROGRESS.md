@@ -52,20 +52,21 @@
 - R4-P7: `20260922-r4-p7-final3`。R4Acceptance.md、Cornell RGBE/threshold、build/GPU/CTest読戻しログ、atlas履歴、失敗時公開状態クリア、既知の制限、Deferred性能gateを確定した。指定R4 9件CTestは9/9 passed。独立評価2周目で指摘された帳簿・行末・成果物追跡のblockingを修正し、最終GPUログと差分衛生を再確認してR4を受入れ完了とする。
 - SCENE-P1: `20260922`。起動経路は`GameApplicationHandler::CreateGameModeStateMachine`から従来どおり`Rendering3DTest`を開始するまま維持した。球・地面・ライト球・方向ライト・boulder非同期ロード・HDR環境の生成ログと120フレーム終了を確認し、既定フレームへ常時投入されていたテスト用黄色AABBだけを外した。選択表示AABBは維持した。Debug Game build exit 0、関連CTest 3/3 passed。
 - AUDIT-RM-P1: `20260922`。RoadMapの依存関係とR0〜R5のコード・受入れ記録を照合した。R3〜R5の実装済みなのにRoadMap表が未着手のまま残る遅れ、R2〜R5の完了トレーラー不足、R6-aを次に開始できる依存状態、Rendering3DTestに読み込む保存済みレンダリングシーンが存在しないことを追跡監査へ固定した。RoadMap本体は無視対象のため変更・追跡化していない。
-- R6-a: Roadmap trailer付き受入れコミット。FramePacketの前カメラ履歴とMeshProxyの前変換をGBuffer velocityへ接続した。`R16G16_FLOAT`/`GBuffer_Velocity`のreadback、初回無効履歴ゼロ、既知移動、既定Rendering3DTestの120フレーム終了を確認し、R6-aを独立受入れした。詳細は`Docs/RenderingValidation/R6aVelocityAcceptance.md`。
+- R6-a: `2ba3854` の後続修正で、現フレームproxy更新、MeshComponentの履歴commit、カメラ履歴無効化、解析投影値・初回/安定静止・移動後停止のGPU検証を確定した。起動経路と既存Rendering3DTestのシーン構成は維持し、最終Game build、関連CTest 17/17、velocity GPU CTest 5/5、120フレーム起動ログを確認した。詳細は`Docs/RenderingValidation/R6aVelocityAcceptance.md`。
 
 ## In progress
-- R6-M1: R6本体のRTGI・テンポラル蓄積・デノイザ方式を選定する。R6-aは独立ゲートを通過済みで、起動経路とRendering3DTestのシーン構成は維持する。
+- なし。R6-aの独立ゲートを完了し、次はR6-M1の方式選定へ進む。
 
 ## Next
 
-- R6-M1の方式選定記録を作成する。R4/R5/R6の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断、全体build再検証はNEXT_FINDINGS.mdのnon-blocking追跡事項として残す。
+- R6-M1でRTGIの方式、ray query/RT pipelineの分担、テンポラル蓄積、デノイザ、履歴寿命、ウォームアップ、性能gate保留を選定する。R4/R5の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断は後続またはNEXT_FINDINGS.mdのnon-blocking追跡事項とする。
 
 ## Notes
 
 - R4-P3Aの非blocking残課題: GPUテストはVUIDを自動でテスト失敗へ反映せず、validation layer未導入時はskipする。今回の受け入れでは実GPU readbackと実行ログを確認した。
 - R4-P7旧blocked run（2026-09-22、run-id 20260922-045823）は履歴として保持する。後続run `20260922-r4-p7-final3`でHDR scene-color、red/green indirect ROI、disabled A/B、9/9 CTest、atlas履歴更新、失敗時の公開状態クリアを再検証した。独立評価2周目の帳簿・行末・成果物追跡に関する所見は受入れ前に修正し、現行成果物へ反映した。
-- R6-a受入れ: 関連CPU/RenderGraph/FramePacket CTestは17/17 passed、velocity GPU CTestは3/3 passed。GPU readbackは静止/初回無効がmax=0、既知移動がmax=0.015152・全65536画素非ゼロ・非有限0。Game.logは球・地面・岩・ライト・HDR環境と`rendered=120`を記録した。Slang SDK未導入warning/errorは既存decoder fallbackで、対象テストは成功している。
+- R6-a初回検証: 関連CPU/RenderGraph/FramePacket CTest 17/17、velocity GPU CTest 3/3、Game build exit 0とGame.logの既定シーン構成/`rendered=120`を確認したが、最終ソースとの時系列対応と履歴/解析値の検証不足が指摘されたため、受入れを確定扱いにしない。
+- R6-a最終再検証: 最終ソースで関連CTest 17/17、velocity GPU CTest 5/5、解析値 readback、移動後停止ゼロ、Game.logの既定シーン構成/`rendered=120`を確認した。Slang SDK未導入warning/errorは既存decoder無効化フォールバックであり、Vulkan validation errorは0件だった。
 
 - R5-P8開始ゲート: Debug buildはEXIT_CODE=0、対象CTestは1/1 passed。ログは.harness/runs/20260920-174410/verify-R5-P8-1.txtとverify-R5-P8-2.txt。これは既存P7テストの開始時状態で、P8の完了証拠ではない。
 - R5-P8再開儀式(2026-09-21): `git log --oneline -10`を確認し、再開時Debug build exit 0・専用CTest 1/1 passed。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-baseline-build.txt`と`verify-R5-P8-resume-baseline-ctest.txt`。
