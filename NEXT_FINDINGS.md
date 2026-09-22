@@ -10,3 +10,7 @@
 - [R5-P5][non-blocking][入力usage] triangle BLASのvertex/index入力がBDAだけでなく`VertexBuffer`/`IndexBuffer` usageを満たす契約を追加し、StorageBufferだけの入力を拒否するケースを固定する。
 - [R5-P5][non-blocking][同期] 現行の同期Buildはqueue waitIdleで完了を保証する。将来非同期Buildへ拡張する場合はdst stageのRayTracingShaderを含むbarrierとfence依存を再検証する。
 - [R5-P5][non-blocking][行末] `VulkanDevice.cpp`のP5範囲外に残るLF/CRLF混在を、対象範囲を分離した整理タスクとして扱う。
+- [R5][non-blocking][swapchain同期] `VK_LAYER_VALIDATE_SYNC=1`で既存のNoCaster系swapchain画像に報告された`SYNC-HAZARD-WRITE-AFTER-READ`を、RT影専用経路とは分離したswapchain acquire/presentの同期課題として追跡する。
+- [R5][non-blocking][テスト注入] `VulkanDevice.cpp`のGPU同期失敗注入フックを製品コードから分離またはビルド時ガードする。現行のRHITextureUpdateVulkanTestは注入経路を検証済み。
+- [R5][non-blocking][全体build] Physics static assertを含む既知の全体build失敗と、R5対象外の既知CTest失敗を分離したまま、クリーンクローンのconfigure/ALL_BUILD再検証を別ゲートで行う。
+- [R5][non-blocking][行末] `RayTracingSceneSubsystem.h`、TASKS/PROGRESSの既存運転履歴に残るLF/CRLF混在を、意味差分と分離して整理する。

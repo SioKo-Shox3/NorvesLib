@@ -41,6 +41,7 @@
 
 - R5-P12: `d8cde71`。R5Acceptance.mdへ方式選定、RHI/Vulkan/API変更、RT影A/B、動的TLAS、非対応fallback、検証ログ、性能ゲート保留を集約し、R4/DDGIを後続として記録した。
 - R5-P13: `1545a41`。VulkanTexture::Updateの終了・送信・待機失敗時にstaging資源と転送先texture資源をデバイス待機まで保持し、非device-lost待機失敗時のdevice teardown保護とValidation error検出を実装した。Debug build exit 0、直接GPU実行 exit 0、専用CTest 1/1 passed。ビルドには既存のVulkan macro再定義とthird-party PDB警告がある。同一deviceの共有command pool操作とWaitIdleは呼出側で直列化する。
+- R5現行HEAD再検証: `20260922-r5-head-final`でR4/P13後のHEADを再ビルドし、R5 GPU群CTest 5/5 passed、静的RT影A/B・動的TLAS更新・RT無効fallbackの直接captureをすべてPASSで確認した。現行HEADのR5全体独立評価もPASS。Vulkan既存third-party PDB warningとSlang未導入warningはログに残るが、対象経路の終了コードは0。
 - R4 M1: DDGIの有限なprobe volume、ray-query更新、scene-linear octahedral irradiance/distance atlas、LightingPass統合、Cornell RGBE region metric、動的8-frame収束のR4-P1〜P7を定義した。
 - R4-P1: `9c34d35`。有限値検証、1..1024 probeのchecked grid indexing、octahedral方向変換、64 ray方向列と無効入力fallbackをCPU契約テストで固定した。Debug build exit 0、専用CTest 1/1 passed。
 - R4-P2: `578236d`。DDGI volumeとlinear BaseColor/emissiveを値所有snapshot化し、RHI非対応時の無効化とpacket clearを固定した。Debug build exit 0、専用CTest 1/1 passed。
@@ -51,11 +52,11 @@
 - R4-P7: `20260922-r4-p7-final3`。R4Acceptance.md、Cornell RGBE/threshold、build/GPU/CTest読戻しログ、atlas履歴、失敗時公開状態クリア、既知の制限、Deferred性能gateを確定した。指定R4 9件CTestは9/9 passed。独立評価2周目で指摘された帳簿・行末・成果物追跡のblockingを修正し、最終GPUログと差分衛生を再確認してR4を受入れ完了とする。
 
 ## In progress
-- なし。R4-P1〜P7は完了。次の未完タスクは一覧を確認してから着手する。
+- なし。TASKS.mdに登録したR1〜R5の実装タスクは完了。性能gateとNEXT_FINDINGS.mdのnon-blocking追跡は別ゲートとして残す。
 
 ## Next
 
-- R4の性能gate、RG16F/visibilityの上限・陽性対照はNEXT_FINDINGS.mdの非blocking追跡事項として残す。
+- R4/R5の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断、全体build再検証はNEXT_FINDINGS.mdのnon-blocking追跡事項として残す。
 
 ## Notes
 
