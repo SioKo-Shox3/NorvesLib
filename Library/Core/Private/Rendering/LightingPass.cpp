@@ -1773,11 +1773,13 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryHeight = 0u;
         m_RTGIHistoryWriteIndex = 0u;
         m_RTGIHistoryAgeFrames = 0u;
+        m_RTGIHistoryFrameNumber = 0u;
         m_RTGIHistorySceneRevision = 0u;
         m_RTGIHistoryLightRevision = 0u;
         m_RTGIHistoryCapability = RTGIRayQueryCapability{};
         m_RTGIHistoryLightWeightLimitedFrames = 0u;
         m_bRTGIHistoryValid = false;
+        m_bRTGIHistoryFrameNumberValid = false;
         m_bRTGIHistoryCapabilityValid = false;
         m_bRTGIHistoryLightRevisionValid = false;
         m_bRTGIComputeUnavailable = false;
@@ -2820,9 +2822,11 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryCapability = RTGIRayQueryCapability{};
         m_bRTGIHistoryLightRevisionValid = false;
         m_RTGIHistoryAgeFrames = 0u;
+        m_RTGIHistoryFrameNumber = 0u;
         m_RTGIHistorySceneRevision = 0u;
         m_RTGIHistoryLightRevision = 0u;
         m_RTGIHistoryLightWeightLimitedFrames = 0u;
+        m_bRTGIHistoryFrameNumberValid = false;
     }
 
     bool LightingPass::ExecuteRTGI(ViewRenderContext& context,
@@ -2950,9 +2954,14 @@ namespace NorvesLib::Core::Rendering
         const uint32_t readHistoryIndex = writeHistoryIndex ^ 1u;
         RTGIHistoryTextureSet& writeHistory = m_RTGIHistoryTextures[writeHistoryIndex];
         RTGIHistoryTextureSet& readHistory = m_RTGIHistoryTextures[readHistoryIndex];
+        const bool bPreviousFrameIsConsecutive =
+            m_bRTGIHistoryFrameNumberValid &&
+            context.FrameNumber > m_RTGIHistoryFrameNumber &&
+            context.FrameNumber - m_RTGIHistoryFrameNumber == 1u;
         const bool bSceneRevisionMatches =
             m_bRTGIHistoryValid && m_RTGIHistorySceneRevision == context.SceneRevision;
-        const bool bHistoryReprojectionValid = bSceneRevisionMatches;
+        const bool bHistoryReprojectionValid =
+            bPreviousFrameIsConsecutive && bSceneRevisionMatches;
         const bool bLightRevisionMismatch =
             m_bRTGIHistoryLightRevisionValid &&
             m_RTGIHistoryLightRevision != context.LightRevision;
@@ -2972,17 +2981,21 @@ namespace NorvesLib::Core::Rendering
             context.CommandList->TextureBarrier(slot.Material, beforeState, afterState);
         };
 
-        if (m_RTGIHistorySlotState[readHistoryIndex] == RHI::ResourceState::Undefined)
+        if (m_RTGIHistorySlotState[readHistoryIndex] != RHI::ResourceState::ShaderResource)
         {
             transitionHistorySlot(readHistory,
-                                  RHI::ResourceState::Undefined,
+                                  m_RTGIHistorySlotState[readHistoryIndex],
                                   RHI::ResourceState::ShaderResource);
             m_RTGIHistorySlotState[readHistoryIndex] = RHI::ResourceState::ShaderResource;
         }
-        transitionHistorySlot(
-            writeHistory,
-            m_RTGIHistorySlotState[writeHistoryIndex],
-            RHI::ResourceState::UnorderedAccess);
+        if (m_RTGIHistorySlotState[writeHistoryIndex] != RHI::ResourceState::UnorderedAccess)
+        {
+            transitionHistorySlot(
+                writeHistory,
+                m_RTGIHistorySlotState[writeHistoryIndex],
+                RHI::ResourceState::UnorderedAccess);
+            m_RTGIHistorySlotState[writeHistoryIndex] = RHI::ResourceState::UnorderedAccess;
+        }
 
         RTGIComputeParameters parameters;
         std::memcpy(parameters.invViewProjection,
@@ -3092,9 +3105,7 @@ namespace NorvesLib::Core::Rendering
         transitionHistorySlot(writeHistory,
                               RHI::ResourceState::UnorderedAccess,
                               RHI::ResourceState::ShaderResource);
-        // Vulkanのstorage imageはShaderResource遷移後もgeneral layoutを保持するため、
-        // 次のframeでは論理状態をUnorderedAccessとして再利用します。
-        m_RTGIHistorySlotState[writeHistoryIndex] = RHI::ResourceState::UnorderedAccess;
+        m_RTGIHistorySlotState[writeHistoryIndex] = RHI::ResourceState::ShaderResource;
 
         RTGIResult result;
         result.DiffuseIndirectRadiance = rtgiDiffuseIndirectTexture;
@@ -3123,9 +3134,11 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistoryWriteIndex = writeHistoryIndex;
         m_bRTGIHistoryValid = true;
         m_RTGIHistoryAgeFrames = currentAgeFrames;
+        m_RTGIHistoryFrameNumber = context.FrameNumber;
         m_RTGIHistorySceneRevision = context.SceneRevision;
         m_RTGIHistoryLightRevision = context.LightRevision;
         m_RTGIHistoryLightWeightLimitedFrames = nextLightWeightLimitedFrames;
+        m_bRTGIHistoryFrameNumberValid = true;
         m_bRTGIHistoryLightRevisionValid = true;
 
         RTGIHistoryResources history;

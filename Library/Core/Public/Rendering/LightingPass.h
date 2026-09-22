@@ -309,11 +309,13 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_RTGIHistoryHeight = 0;
         uint32_t m_RTGIHistoryWriteIndex = 0;
         uint32_t m_RTGIHistoryAgeFrames = 0;
+        uint64_t m_RTGIHistoryFrameNumber = 0;
         uint64_t m_RTGIHistorySceneRevision = 0;
         uint64_t m_RTGIHistoryLightRevision = 0;
         RTGIRayQueryCapability m_RTGIHistoryCapability;
         uint32_t m_RTGIHistoryLightWeightLimitedFrames = 0;
         bool m_bRTGIHistoryValid = false;
+        bool m_bRTGIHistoryFrameNumberValid = false;
         bool m_bRTGIHistoryCapabilityValid = false;
         bool m_bRTGIHistoryLightRevisionValid = false;
         bool m_bRTGIComputeUnavailable = false;
