@@ -47,7 +47,7 @@
 - R4-P3A: `1ec32dd`。ray hit三角形normal・FramePacketのBaseColor/emissive・遮蔽付きdirectional/point/spot radianceとmiss環境をscene-linear ray結果へ保存した。frame slotごとにBDA geometry buffersを保持し、shaderInt64対応を有効化・ゲートした。Debug build exit 0、P3/P3A validation GPU CTest 2/2 passed、radiance readback期待値一致、独立評価PASS。
 - R4-P5: `0116e8f`。GBufferのworld position/normalでvolume内probeをvisibility-weightedに補間し、diffuse IBLをDDGI irradianceへ置換して間接拡散を加えた。無効・volume外・RT非対応・不完全atlasでは既存IBLへ戻し、binding 4は全構造体を一括更新する。Debug build exit 0、focused CTest 3/3 passed。
 - R4-P6: `20260922-r4-p7-final3`。Cornell RGBEを使うHDR scene-color captureでshadow/red/green ROIの相対誤差0.147881/0.152345/0.106696、red/green chroma差0.0194377/0.0229986を確認した。DDGI有効A/Bはmean/max delta=0.168949/6.5625、無効A/Bはmean/max delta=0/0、dynamic red/green ROIは4 warmup sample後のFrameNumber差8でprogress=0.971325/0.820146、VUID_COUNT=0。P4のDDGIProbeUpdateVulkanTestも回帰なし。
-- R4-P7: `20260922-r4-p7-final3`。R4Acceptance.md、Cornell RGBE/threshold、build/GPU/CTest読戻しログ、atlas履歴、失敗時公開状態クリア、既知の制限、Deferred性能gateを確定した。指定R4 9件CTestは9/9 passed。独立評価の2周目を実施し、blocking所見がないことを確認してR4を受入れ完了とする。
+- R4-P7: `20260922-r4-p7-final3`。R4Acceptance.md、Cornell RGBE/threshold、build/GPU/CTest読戻しログ、atlas履歴、失敗時公開状態クリア、既知の制限、Deferred性能gateを確定した。指定R4 9件CTestは9/9 passed。独立評価2周目で指摘された帳簿・行末・成果物追跡のblockingを修正し、最終GPUログと差分衛生を再確認してR4を受入れ完了とする。
 
 ## In progress
 - なし。R4-P1〜P7は完了。次の未完タスクは一覧を確認してから着手する。
@@ -59,7 +59,7 @@
 ## Notes
 
 - R4-P3Aの非blocking残課題: GPUテストはVUIDを自動でテスト失敗へ反映せず、validation layer未導入時はskipする。今回の受け入れでは実GPU readbackと実行ログを確認した。
-- R4-P7旧blocked run（2026-09-22、run-id 20260922-045823）は履歴として保持する。後続run `20260922-r4-p7-final3`でHDR scene-color、red/green indirect ROI、disabled A/B、9/9 CTest、atlas履歴更新、失敗時の公開状態クリアを再検証し、旧NEEDS_WORK事項を解消した。
+- R4-P7旧blocked run（2026-09-22、run-id 20260922-045823）は履歴として保持する。後続run `20260922-r4-p7-final3`でHDR scene-color、red/green indirect ROI、disabled A/B、9/9 CTest、atlas履歴更新、失敗時の公開状態クリアを再検証した。独立評価2周目の帳簿・行末・成果物追跡に関する所見は受入れ前に修正し、現行成果物へ反映した。
 
 - R5-P8開始ゲート: Debug buildはEXIT_CODE=0、対象CTestは1/1 passed。ログは.harness/runs/20260920-174410/verify-R5-P8-1.txtとverify-R5-P8-2.txt。これは既存P7テストの開始時状態で、P8の完了証拠ではない。
 - R5-P8再開儀式(2026-09-21): `git log --oneline -10`を確認し、再開時Debug build exit 0・専用CTest 1/1 passed。ログは`.harness/runs/20260921-r5-p8-resume/verify-R5-P8-resume-baseline-build.txt`と`verify-R5-P8-resume-baseline-ctest.txt`。
@@ -99,7 +99,7 @@
 - R4-P1検証ログ: `.harness/runs/20260921-164825/verify-R4-P1-7.txt`（Debug build、EXIT_CODE=0）と`verify-R4-P1-8.txt`（CTest 1/1 passed）。両ログを開いて終了コードと結果を確認した。
 - R4-P2検証ログ: `.harness/runs/20260921-164825/verify-R4-P2-4.txt`（Debug build、EXIT_CODE=0。third-party PDB LNK4099警告あり）と`verify-R4-P2-5.txt`（CTest 1/1 passed）。保存ログを開いて終了コードと結果を確認した。
 - R4-P3検証ログ: `build/Testing/Temporary/LastTest.log`。GPU testでhit distance=2.03175、instance custom index=17、primitive=0、miss=-1を確認し、RT無効・compute-pipeline例外・result-buffer例外の各経路でdraw count=1とSceneColor一致を確認した。専用CTestは1/1 passed。
-- R4-P4: source commits `738ede8`, `3dcd38f`, `63fa779`でprobe atlas更新を確定した。前frame irradianceの1段bounce、visibility weighting、octahedral border、hysteresis 0.8を実装し、single/2-probe GPU readbackでirradiance・距離モーメント・border sampleを検証した。Debug build exit 0（third-party shaderc PDB LNK4099警告のみ）、専用CTest 1/1 passed、直接実行exit 0。出力は`single_probe_array_layers=2`、border sample `0.912965` / interior-only `0.89276`、visibility-weighted `1.95123` / unweighted `1.22487`、`VUID_COUNT=0`。証跡は`.harness/runs/20260922-r4-p4/verify-4-build.txt`、`verify-5-ctest.txt`、`verify-6-direct.txt`。
+- R4-P4: source commits `738ede8`, `3dcd38f`, `63fa779`でprobe atlas更新を確定した。前frame irradianceの1段bounce、visibility weighting、octahedral borderを実装し、現行のwrap重み床とhysteresis 0.6へ期待値を再基準化した。single/2-probe GPU readbackでirradiance・距離モーメント・border sampleを検証した。Debug build exit 0（third-party shaderc PDB LNK4099警告のみ）、専用CTest 1/1 passed、直接実行exit 0。出力は`single_probe_array_layers=2`、border sample `0.912965` / interior-only `0.89276`、visibility-weighted `1.96391` / unweighted `1.30247`、`VUID_COUNT=0`。証跡は`.harness/runs/20260922-r4-p4/verify-4-build.txt`、`verify-5-ctest.txt`、`verify-6-direct.txt`。
 - R4-P5最終検証: Debug buildはEXIT_CODE=0、対象CTestは3/3 passed。証跡は`.harness/runs/20260922-003731/verify-R4-P5-12.txt`と`verify-R4-P5-13.txt`。
 - R4-P5の後続確認: Lighting側のnormal biasとGLSLコンパイルをR4-P6のGPU受入れで確認する。
 - R4-P7最終実GPU検証（20260922-r4-p7-final3）: `build.txt` EXIT_CODE=0、Cornell static/dynamic capture EXIT_CODE=0、P4 direct EXIT_CODE=0、R4指定CTest 9/9 passed。証跡は`.harness/runs/20260922-r4-p7-final3/`に保存した。

@@ -77,19 +77,20 @@ namespace NorvesLib::Test::RenderingValidation
             const float (&positions)[4][3])
         {
             const uint32_t firstVertex = static_cast<uint32_t>(outVertices.size());
-            const double rasterEdgeAX = static_cast<double>(positions[2][0] - positions[0][0]);
-            const double rasterEdgeAY = static_cast<double>(positions[2][1] - positions[0][1]);
-            const double rasterEdgeAZ = static_cast<double>(positions[2][2] - positions[0][2]);
-            const double rasterEdgeBX = static_cast<double>(positions[1][0] - positions[0][0]);
-            const double rasterEdgeBY = static_cast<double>(positions[1][1] - positions[0][1]);
-            const double rasterEdgeBZ = static_cast<double>(positions[1][2] - positions[0][2]);
-            // GBufferはFrontFace::Clockwiseで描画するため、indicesは室内から見て
-            // 反時計回りの(0,2,1)/(0,3,2)を使う。vertex normalはラスタ面の裏側、
-            // すなわち閉じたCornell室の内側を向ける必要があるため、法線の符号を
-            // ここで明示的に反転する。通常のメッシュ経路やDDGI shaderで補正しない。
-            double normalX = -(rasterEdgeAY * rasterEdgeBZ - rasterEdgeAZ * rasterEdgeBY);
-            double normalY = -(rasterEdgeAZ * rasterEdgeBX - rasterEdgeAX * rasterEdgeBZ);
-            double normalZ = -(rasterEdgeAX * rasterEdgeBY - rasterEdgeAY * rasterEdgeBX);
+            const double edgeAX = static_cast<double>(positions[1][0] - positions[0][0]);
+            const double edgeAY = static_cast<double>(positions[1][1] - positions[0][1]);
+            const double edgeAZ = static_cast<double>(positions[1][2] - positions[0][2]);
+            const double edgeBX = static_cast<double>(positions[2][0] - positions[0][0]);
+            const double edgeBY = static_cast<double>(positions[2][1] - positions[0][1]);
+            const double edgeBZ = static_cast<double>(positions[2][2] - positions[0][2]);
+            // GBufferはFrontFace::Clockwiseで描画するため、indicesは
+            // (0,2,1)/(0,3,2)を使う。これはラスタ面の法線を外側へ向ける
+            // 順序であり、vertex normalは閉じたCornell室の内側を向けるため、
+            // ラスタ面とは反対側の幾何法線を元の頂点順序から保持する。
+            // 通常のメッシュ経路やDDGI shaderでは表裏を補正しない。
+            double normalX = edgeAY * edgeBZ - edgeAZ * edgeBY;
+            double normalY = edgeAZ * edgeBX - edgeAX * edgeBZ;
+            double normalZ = edgeAX * edgeBY - edgeAY * edgeBX;
             const double normalLength = std::sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
             if (normalLength > 0.0)
             {
