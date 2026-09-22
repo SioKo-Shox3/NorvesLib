@@ -65,3 +65,44 @@ R6-P1-FIXでSceneRevisionをシーン構成だけへ限定し、History側revisi
 - `RenderGraphCompileTest`(約 75 秒。保存された `verify-R6-P1-2.txt` と `recheck-R6-P1-2-2.txt` の Passed を採用)
 
 `.harness/lessons/` は存在しないため教訓の選別は行っていません。
+
+## 反復 4 — 評価者(claude)の判定: NEEDS_WORK
+
+対象: R6-P1-FIX revisionとRTGI履歴契約の意味論を修正する
+
+**未達条件: done-when 第1項「SceneRevision が毎フレームの物体変換ではなくシーン構成の変更を表す」**
+
+差分は `HashSceneRevision` から `WorldMatrix`/`NormalMatrix`/`World`/`PreviousWorld`/TLAS `transform` の直接ハッシュを外しましたが、ハッシュの入力である `packet.DrawCommands` と `packet.RayTracingScene.Instances` は依然としてカメラ位置と物体変換に依存する「順序付き・カリング済み」の列です。そのため物体やカメラが動くと構成が変わっていなくても revision が進みます。
+
+- `SceneView::GenerateCommands`(`Library/Core/Private/Rendering/SceneView.cpp:1000-1020`)は `CalculateSortKey(SortDepth, …)` の後に `DrawCommandSorter::Sort(m_OpaqueCommands, FrontToBack)` を行い、`SortDepth` は `CullProxies`(同 `:826`)でカメラ距離から毎フレーム再計算されます。`HashSceneRevision`(`RenderingCoordinator.cpp:91-114`)は `hash ^= byte; hash *= prime` の逐次ハッシュで **順序依存** なので、2つの描画コマンドの奥行き順が入れ替わるたびに(物体移動・カメラ移動の双方で)`m_SceneRevision` が増えます。
+- `CullProxies`(`SceneView.cpp:778-827`)は既定で frustum/distance カリング有効(`SceneView.h:22,24`)なので、カメラ回転で物体が視錐台を出入りするだけで `DrawCommands.size()`・`FirstInstance`/`InstanceDataOffset`・`InstanceData.size()` が変わり revision が進みます。
+- `RayTracingSceneSubsystem::BuildFrameSnapshot`(`RenderingCoordinator.cpp:575-576`)は `OpaqueCommandRange` からその順序で `Instances` を組むため、同じ理由で `Instances` のハッシュも動きます。
+- 計画(`Docs/RenderingValidation/R6TechniquePlan.md:88,96-97`)は scene revision 差を「全画面履歴無効化」に、カメラ・物体移動は「pixel 単位」に割り当てています。上記の状態では通常のカメラ操作中に P3 が全画面リセットを常用することになり、前回指摘と同じ欠陥が1段間接になっただけです。
+- 追加テスト(`RenderingDDGILightingContractTest.cpp:468-472`)は `HashSceneRevision` のソースに `WorldMatrix` 等の字句が無いことしか見ておらず、この性質を反証していません。
+
+再現(静的読解): 2物体のシーンでカメラを前後に動かし、2物体の `SortDepth` の大小が入れ替わるフレーム → `m_OpaqueCommands` の並びが入れ替わる → `HashSceneRevision` の値が変わる → `UpdateFrameRevisions`(`:1733-1744`)で `m_SceneRevision++`。
+
+**最小の直し方(候補)**
+
+1. ハッシュを**順序非依存・カリング非依存**にする。項目ごとのハッシュを可換に結合(XOR/加算)し、入力を「並び替え・カリング前」の集合にする。具体的には `SceneView` の proxy 収集時点(`m_MeshProxies`/`m_BoardProxies`、`ObjectId`・`MeshHandle`・`MaterialHandle`・`bCastShadow`・材質定数)と、TLAS 側は `customIndex`・`MeshHandle`・`IndexOffset/Count`・`Material` を要素ハッシュにして可換結合し、`FirstInstance`/`InstanceDataOffset`/`size()` のような配置由来の値は外す。
+2. 代替: revision の計算を `GenerateDrawCommands` のカリング/ソート前(SceneProxy 更新側)へ移し、`FramePacket` へ値コピーする。案1のほうが差分が小さい。
+
+いずれの案でも契約テストに「同じ描画コマンド集合を順序だけ入れ替えた/1つを frustum 外へ出した FramePacket で revision が変わらない」ケースを足してください(`HashSceneRevision` が無名名前空間なら、集合ハッシュを公開ヘルパに切り出してテストする)。
+
+**満たされている点**
+
+- `IsForFrame` が Current 側だけを見て、History の差を `HasHistoryRevisionMismatch` で保持する契約と、履歴 revision が1つ前でも RTGI が選ばれる/現フレーム revision 不一致で `ResourceUnavailable` へ戻るテストは追加済み。私の再実行でも `RenderingDDGILightingContractTest.exe` と `RayTracingSceneSnapshotTest.exe` は exit 0。
+- 証拠 `verify-R6-P1-FIX-1.txt`(EXIT_CODE=0)、`verify-R6-P1-FIX-2.txt`・`recheck-R6-P1-FIX-4-2.txt`(3/3 passed)は実在し対象タスクのもの。対象コミット `190e812` の変更は `paths:` 内、`--numstat` と `--ignore-cr-at-eol --numstat` は一致、英語コメント・文言の混入なし。
+
+**non-blocking**
+
+- 範囲内の `cc3dab4 作業途中の保存` は R6-P2 の RTGI compute/`lighting.frag` 変更を含む WIP コミットで、対象タスクの差分ではないため判定対象外としました。ただし `Assets/Shaders/RTGI/` が未追跡のまま `LightingPass` がそれを `LoadShader` する状態なので、P2 側で整合を取ってください。
+- 「構成変更で不採用」のテストは「公開済み result の revision が現フレームと不一致」を模しており、履歴側の不採用そのものは `HasHistoryRevisionMismatch` の消費者(P3)に委ねられています。P3 の done-when に「mismatch 時に履歴を棄却する」を明記してください。
+- 字句の不在を確認するソース文字列テストは実装の書き換えで容易に無効化されるため、性質テストに置き換えるのが望ましいです。
+
+**実行できなかったコマンド**
+
+- `cmake --build build --config Debug --target Game -- /m:1`(保存された `verify-R6-P1-FIX-1.txt`・`recheck-R6-P1-FIX-4-1.txt` の exit 0 を採用)
+- `RenderingVelocityCameraVulkanTest`(GPU テスト。保存された `verify-R6-P1-FIX-2.txt` の Passed を採用)
+
+`.harness/lessons/` は存在しないため教訓の選別は行っていません。
