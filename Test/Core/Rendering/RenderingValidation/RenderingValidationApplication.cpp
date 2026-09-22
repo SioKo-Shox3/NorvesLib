@@ -108,17 +108,22 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
-    bool RenderingValidationApplicationHandler::OnInitialize()
-    {
-        if (Core::Engine::GEngine == nullptr)
-        {
-            return false;
-        }
-        return m_Fixture.Initialize(Core::Engine::GEngine->GetWorld(),
-                                    Core::Engine::GEngine->GetRenderResources(),
-                                    m_RunConfig.Scene,
-                                    m_RunConfig.Seed);
-    }
+bool RenderingValidationApplicationHandler::OnInitialize()
+{
+	if (Core::Engine::GEngine == nullptr)
+	{
+		return false;
+	}
+	if (!m_Fixture.Initialize(Core::Engine::GEngine->GetWorld(),
+		Core::Engine::GEngine->GetRenderResources(),
+		m_RunConfig.Scene,
+		m_RunConfig.Seed))
+	{
+		return false;
+	}
+	Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(false);
+	return true;
+}
 
     bool RenderingValidationApplicationHandler::ShouldAdvanceSimulation() const
     {
