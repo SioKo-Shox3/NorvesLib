@@ -50,6 +50,14 @@ namespace NorvesLib::Core::Rendering
     class FrameCaptureReadbackHelper;
 
     /**
+     * @brief カリングと描画順に依存しないシーン構成ハッシュを計算する
+     *
+     * FramePacketが所有する全MeshProxy/SkinnedMeshProxyと材質・環境設定だけを
+     * 入力にし、カメラ依存の描画結果や物体の変換履歴は入力にしません。
+     */
+    uint64_t ComputeSceneRevisionHash(const FramePacket& packet);
+
+    /**
      * @brief レンダリング調整設定
      */
     struct RenderingCoordinatorSettings

@@ -3,6 +3,7 @@
 #include "Container/Containers.h"
 #include "RHI/RHITypes.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/RenderingCoordinator.h"
 #include "Rendering/RTGIContract.h"
 
 #define private public
@@ -328,6 +329,149 @@ namespace
         AssertContains(mainFunction, "params.debugViewMode >= 246u");
     }
 
+    MeshProxy MakeSceneRevisionMeshProxy(uint64_t objectId,
+                                         uint64_t meshId,
+                                         uint64_t materialId)
+    {
+        MeshProxy proxy;
+        proxy.ObjectId = objectId;
+        proxy.ComponentId = objectId + 100u;
+        proxy.MeshHandle = MeshDataHandle{meshId};
+        proxy.SubMeshCount = 1u;
+        proxy.SubMeshes[0].IndexStart = 3u;
+        proxy.SubMeshes[0].IndexCount = 6u;
+        proxy.SubMeshes[0].VertexStart = 1u;
+        proxy.SubMeshes[0].MaterialIndex = 0u;
+        proxy.MaterialCount = 1u;
+        proxy.Materials[0] = MaterialHandle{materialId};
+        proxy.MaterialBlendModes[0] = BlendMode::Opaque;
+        proxy.CustomData[0] = 0.25f;
+        return proxy;
+    }
+
+    SkinnedMeshProxy MakeSceneRevisionSkinnedMeshProxy(uint64_t objectId,
+                                                       uint64_t meshId,
+                                                       uint64_t generation,
+                                                       uint64_t materialId)
+    {
+        SkinnedMeshProxy proxy;
+        proxy.MeshHandle = SkinnedMeshHandle{meshId, generation};
+        proxy.Material = MaterialHandle{materialId};
+        proxy.ObjectId = objectId;
+        proxy.ComponentId = objectId + 200u;
+        proxy.bCastShadow = true;
+        proxy.bHasAnimatedBounds = true;
+        proxy.bVisible = true;
+        return proxy;
+    }
+
+    void PopulateSceneRevisionPacket(FramePacket& packet)
+    {
+        packet.Scene.MeshProxies.push_back(MakeSceneRevisionMeshProxy(1u, 11u, 21u));
+        packet.Scene.MeshProxies.push_back(MakeSceneRevisionMeshProxy(2u, 12u, 22u));
+        packet.Scene.SkinnedMeshProxies.push_back(
+            MakeSceneRevisionSkinnedMeshProxy(3u, 31u, 1u, 41u));
+        packet.Scene.SkinnedMeshProxies.push_back(
+            MakeSceneRevisionSkinnedMeshProxy(4u, 32u, 1u, 42u));
+
+        DrawCommand meshCommand = DrawCommand::CreateDrawIndexed();
+        meshCommand.Draw.PayloadKind = DrawPayloadKind::Mesh;
+        meshCommand.Draw.MeshHandle = MeshDataHandle{11u};
+        meshCommand.Draw.MaterialHandle = MaterialHandle{21u};
+        meshCommand.Draw.SortDepth = 2.0f;
+        meshCommand.SortKey = 2u;
+        packet.DrawCommands.push_back(meshCommand);
+
+        DrawCommand boardCommand = DrawCommand::CreateDraw();
+        boardCommand.Draw.PayloadKind = DrawPayloadKind::Board;
+        boardCommand.Draw.SortDepth = 1.0f;
+        boardCommand.SortKey = 1u;
+        packet.DrawCommands.push_back(boardCommand);
+
+        DrawCommand secondBoardCommand = DrawCommand::CreateDraw();
+        secondBoardCommand.Draw.PayloadKind = DrawPayloadKind::Board;
+        secondBoardCommand.Draw.SortDepth = 3.0f;
+        secondBoardCommand.SortKey = 3u;
+        packet.DrawCommands.push_back(secondBoardCommand);
+
+        RayTracingSceneInstanceSnapshot firstInstance;
+        firstInstance.MeshHandle = MeshDataHandle{11u};
+        firstInstance.IndexOffset = 0u;
+        firstInstance.IndexCount = 6u;
+        firstInstance.Instance.customIndex = 1u;
+        packet.RayTracingScene.Instances.push_back(firstInstance);
+        RayTracingSceneInstanceSnapshot secondInstance;
+        secondInstance.MeshHandle = MeshDataHandle{12u};
+        secondInstance.IndexOffset = 3u;
+        secondInstance.IndexCount = 9u;
+        secondInstance.Instance.customIndex = 2u;
+        packet.RayTracingScene.Instances.push_back(secondInstance);
+    }
+
+    void TestSceneRevisionIsCompositionOnly()
+    {
+        FramePacket baselinePacket;
+        PopulateSceneRevisionPacket(baselinePacket);
+        const uint64_t baselineHash = ComputeSceneRevisionHash(baselinePacket);
+
+        FramePacket movedAndCulledPacket;
+        PopulateSceneRevisionPacket(movedAndCulledPacket);
+        movedAndCulledPacket.Scene.MainCamera.PositionX += 50.0f;
+        movedAndCulledPacket.Scene.MainCamera.PositionZ -= 25.0f;
+        MeshProxy& movedMesh = movedAndCulledPacket.Scene.MeshProxies[0];
+        movedMesh.WorldTransform.values[0] += 13.0f;
+        movedMesh.PreviousWorldTransform.values[1] -= 7.0f;
+        movedMesh.WorldBounds.CenterX += 22.0f;
+        movedMesh.SortDepth = 99.0f;
+        movedMesh.SortKey = 0xFFFFFFFFu;
+        SkinnedMeshProxy& movedSkinned = movedAndCulledPacket.Scene.SkinnedMeshProxies[0];
+        movedSkinned.WorldTransform.values[0] += 5.0f;
+        movedAndCulledPacket.DrawCommands.clear();
+        movedAndCulledPacket.RayTracingScene.Instances.pop_back();
+        assert(ComputeSceneRevisionHash(movedAndCulledPacket) == baselineHash);
+
+        FramePacket reorderedPacket;
+        PopulateSceneRevisionPacket(reorderedPacket);
+        MeshProxy firstMesh = reorderedPacket.Scene.MeshProxies[0];
+        reorderedPacket.Scene.MeshProxies[0] = reorderedPacket.Scene.MeshProxies[1];
+        reorderedPacket.Scene.MeshProxies[1] = firstMesh;
+        SkinnedMeshProxy firstSkinned = reorderedPacket.Scene.SkinnedMeshProxies[0];
+        reorderedPacket.Scene.SkinnedMeshProxies[0] = reorderedPacket.Scene.SkinnedMeshProxies[1];
+        reorderedPacket.Scene.SkinnedMeshProxies[1] = firstSkinned;
+        DrawCommand firstBoardCommand = reorderedPacket.DrawCommands[1];
+        reorderedPacket.DrawCommands[1] = reorderedPacket.DrawCommands[2];
+        reorderedPacket.DrawCommands[2] = firstBoardCommand;
+        RayTracingSceneInstanceSnapshot firstInstance = reorderedPacket.RayTracingScene.Instances[0];
+        reorderedPacket.RayTracingScene.Instances[0] = reorderedPacket.RayTracingScene.Instances[1];
+        reorderedPacket.RayTracingScene.Instances[1] = firstInstance;
+        assert(ComputeSceneRevisionHash(reorderedPacket) == baselineHash);
+
+        FramePacket addedPacket;
+        PopulateSceneRevisionPacket(addedPacket);
+        addedPacket.Scene.MeshProxies.push_back(MakeSceneRevisionMeshProxy(5u, 15u, 25u));
+        assert(ComputeSceneRevisionHash(addedPacket) != baselineHash);
+
+        FramePacket removedPacket;
+        PopulateSceneRevisionPacket(removedPacket);
+        removedPacket.Scene.MeshProxies.pop_back();
+        assert(ComputeSceneRevisionHash(removedPacket) != baselineHash);
+
+        FramePacket meshChangedPacket;
+        PopulateSceneRevisionPacket(meshChangedPacket);
+        meshChangedPacket.Scene.MeshProxies[0].MeshHandle = MeshDataHandle{99u};
+        assert(ComputeSceneRevisionHash(meshChangedPacket) != baselineHash);
+
+        FramePacket materialChangedPacket;
+        PopulateSceneRevisionPacket(materialChangedPacket);
+        materialChangedPacket.Scene.SkinnedMeshProxies[0].Material = MaterialHandle{99u};
+        assert(ComputeSceneRevisionHash(materialChangedPacket) != baselineHash);
+
+        FramePacket environmentChangedPacket;
+        PopulateSceneRevisionPacket(environmentChangedPacket);
+        environmentChangedPacket.Scene.SkyAtmosphere.SunAltitudeDegrees += 1.0f;
+        assert(ComputeSceneRevisionHash(environmentChangedPacket) != baselineHash);
+    }
+
     void TestRTGIFallbackContract()
     {
         NorvesLib::RHI::DeviceCapabilities supportedCapabilities;
@@ -464,7 +608,12 @@ namespace
         const TestString renderingCoordinator =
             ReadSource("Library/Core/Private/Rendering/RenderingCoordinator.cpp");
         const TestString sceneRevisionHash =
-            ExtractBlock(renderingCoordinator, "uint64_t HashSceneRevision");
+            ExtractBlock(renderingCoordinator, "uint64_t HashSceneRevisionInternal");
+        AssertContains(sceneRevisionHash, "packet.Scene.MeshProxies");
+        AssertContains(sceneRevisionHash, "packet.Scene.SkinnedMeshProxies");
+        assert(sceneRevisionHash.find("packet.DrawCommands") == TestString::npos);
+        assert(sceneRevisionHash.find("packet.InstanceData") == TestString::npos);
+        assert(sceneRevisionHash.find("packet.RayTracingScene.Instances") == TestString::npos);
         assert(sceneRevisionHash.find("WorldMatrix") == TestString::npos);
         assert(sceneRevisionHash.find("NormalMatrix") == TestString::npos);
         assert(sceneRevisionHash.find("instance.World") == TestString::npos);
@@ -489,6 +638,7 @@ int main()
     TestStaleAtlasInvalidation();
     TestLightingFallbackAndPublication();
     TestVisibilityWeightedVolumeSampling();
+    TestSceneRevisionIsCompositionOnly();
     TestRTGIFallbackContract();
     std::cout << "DDGI照明契約テスト: 合格\n";
     return 0;

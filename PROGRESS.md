@@ -57,13 +57,14 @@
 - R6-P1: `RTGIContract`へ1 bounce diffuse・pre-exposed結果形式、ray-query capability、frame/scene/light revision一致、current/history radiance・age・confidence、R4 DDGI→既存IBL→raster fallbackを固定した。FramePacketへRTGI有効化とscene/light revisionを値コピーし、R5 TLAS snapshotの完全性を参照だけで判定してViewRenderContext・LightingPassへ接続した。Debug Game buildはexit 0、指定CTestは3/3 passed。証拠は`.harness/runs/20260922-200402/verify-R6-P1-1.txt`と`verify-R6-P1-2.txt`。
 - R6-P1-FIX: `SceneRevision`から物体変換・`PreviousWorld`・TLAS transformを除き、シーン構成・材質・環境・TLAS構成だけをrevision化した。RTGI履歴はcurrent側のframe/revisionだけで選択し、history側のrevision差を`HasHistoryRevisionMismatch`でR6-P3へ保持する。1つ前のhistory revisionでRTGI選択を維持し、構成revision不一致でfallbackへ戻る契約テストを追加した。指定Game buildとCTest 3/3 passed。証拠は`.harness/runs/20260922-200402/verify-R6-P1-FIX-1.txt`と`verify-R6-P1-FIX-2.txt`。
 - R6-P2: R5のFramePacket TLAS/BLAS snapshotを共有する1 bounce ray-query computeをLightingPassへ接続し、TLAS hit/miss、直接光または環境光の有限なdiffuse indirect radiance、pre-exposureを`R16G16B16A16_FLOAT`へ渡した。RT非対応・無効化・不完全TLAS・資源またはdispatch例外ではRTGI結果を公開せず、R4 DDGI→既存IBL→rasterへ戻す。指定Game buildはexit 0、`DDGIProbeRayQueryVulkanTest`と`RenderingRayTracingShadowVulkanTest`は2/2 passed。証拠は`.harness/runs/20260922-200402/verify-R6-P2-1.txt`と`verify-R6-P2-2.txt`。
+- R6-P1-FIX-2: SceneRevisionを全MeshProxy/SkinnedMeshProxyの順序非依存な構成集合ハッシュへ移し、カリング済みDrawCommand・奥行きソート・物体/UI変換・RT配置を除外した。構成追加削除、メッシュ/材質/環境変更の変化と、カメラ/物体移動・カリング・proxy/UI/RT順序の不変性を性質テストで固定した。指定Game buildとCTest 3/3 passed。証拠は`.harness/runs/20260922-200402/verify-R6-P1-FIX-2-1.txt`と`verify-R6-P1-FIX-2-2.txt`。
 
 ## In progress
-- なし。R6-P2を完了し、次はR6-P3のvelocity再投影と8フレーム履歴へ進む。
+- R6-P2は実装済みだが、独立評価で実行時の陽性経路証拠不足が判明した。R6-P2-FIXでRTGIのhit/miss・有限値・fallbackをGPU readback検証してからR6-P3へ進む。
 
 ## Next
 
-- R6-P2でcompute shader内の1 bounce ray-query GIを接続する。R4/R5の性能gate、RG16F/visibilityの上限・陽性対照、swapchain同期診断は後続またはNEXT_FINDINGS.mdのnon-blocking追跡事項とする。
+- R6-P2-FIX: 専用RTGI GPUテストでray-queryのhit/miss、finite radiance、公開状態、既存fallbackをreadbackする。
 
 ## Notes
 

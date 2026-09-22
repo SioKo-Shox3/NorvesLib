@@ -52,6 +52,8 @@ namespace NorvesLib::Core::Rendering
     {
         constexpr uint64_t RevisionHashOffset = 1469598103934665603ull;
         constexpr uint64_t RevisionHashPrime = 1099511628211ull;
+        constexpr uint64_t MeshProxyRevisionTag = 0x4D45534850524F58ull;
+        constexpr uint64_t SkinnedMeshProxyRevisionTag = 0x534B494E50524F58ull;
 
         uint64_t HashRevisionBytes(uint64_t hash, const void* data, size_t size)
         {
@@ -81,39 +83,116 @@ namespace NorvesLib::Core::Rendering
             return hash;
         }
 
+        uint64_t MixRevisionValue(uint64_t value)
+        {
+            value += 0x9E3779B97F4A7C15ull;
+            value = (value ^ (value >> 30u)) * 0xBF58476D1CE4E5B9ull;
+            value = (value ^ (value >> 27u)) * 0x94D049BB133111EBull;
+            return value ^ (value >> 31u);
+        }
+
+        struct RevisionSetAccumulator
+        {
+            uint64_t Count = 0u;
+            uint64_t Xor = 0u;
+            uint64_t Sum = 0u;
+
+            void Add(uint64_t value)
+            {
+                const uint64_t mixed = MixRevisionValue(value);
+                ++Count;
+                Xor ^= mixed;
+                Sum += mixed;
+            }
+
+            uint64_t Finish(uint64_t hash) const
+            {
+                hash = HashRevisionValue(hash, Count);
+                hash = HashRevisionValue(hash, Xor);
+                hash = HashRevisionValue(hash, Sum);
+                return hash;
+            }
+        };
+
+        uint64_t HashMeshProxyRevision(const MeshProxy& proxy)
+        {
+            uint64_t hash = RevisionHashOffset ^ MeshProxyRevisionTag;
+            hash = HashRevisionValue(hash, proxy.ObjectId);
+            hash = HashRevisionValue(hash, proxy.ComponentId);
+            hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
+            hash = HashRevisionValue(hash, proxy.LODLevel);
+            hash = HashRevisionValue(hash, proxy.SubMeshCount);
+            const uint32_t subMeshCount =
+                proxy.SubMeshCount < MAX_MATERIAL_SLOTS ? proxy.SubMeshCount : MAX_MATERIAL_SLOTS;
+            for (uint32_t index = 0u; index < subMeshCount; ++index)
+            {
+                const SubMeshRange& subMesh = proxy.SubMeshes[index];
+                hash = HashRevisionValue(hash, subMesh.IndexStart);
+                hash = HashRevisionValue(hash, subMesh.IndexCount);
+                hash = HashRevisionValue(hash, subMesh.VertexStart);
+                hash = HashRevisionValue(hash, subMesh.MaterialIndex);
+            }
+
+            hash = HashRevisionValue(hash, proxy.MaterialCount);
+            const uint32_t materialCount =
+                proxy.MaterialCount < MAX_MATERIAL_SLOTS ? proxy.MaterialCount : MAX_MATERIAL_SLOTS;
+            for (uint32_t index = 0u; index < materialCount; ++index)
+            {
+                hash = HashRevisionValue(hash, proxy.Materials[index].Id);
+                hash = HashRevisionValue(hash,
+                                        static_cast<uint8_t>(proxy.MaterialBlendModes[index]));
+            }
+            hash = HashRevisionValue(hash, proxy.bHasMaterialOverrides);
+            hash = HashRevisionValue(hash, proxy.bVisible);
+            hash = HashRevisionValue(hash, proxy.bCastShadow);
+            hash = HashRevisionValue(hash, proxy.bReceiveShadow);
+            hash = HashRevisionValue(hash, proxy.bAffectDynamicIndirectLighting);
+            hash = HashRevisionValue(hash, proxy.bAffectDistanceFieldLighting);
+            hash = HashRevisionValue(hash, static_cast<uint32_t>(proxy.LayerMask));
+            return HashRevisionFloatArray(hash, proxy.CustomData, 4u);
+        }
+
+        uint64_t HashSkinnedMeshProxyRevision(const SkinnedMeshProxy& proxy)
+        {
+            uint64_t hash = RevisionHashOffset ^ SkinnedMeshProxyRevisionTag;
+            hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
+            hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
+            hash = HashRevisionValue(hash, proxy.Material.Id);
+            hash = HashRevisionValue(hash, proxy.ObjectId);
+            hash = HashRevisionValue(hash, proxy.ComponentId);
+            hash = HashRevisionValue(hash, proxy.bCastShadow);
+            hash = HashRevisionValue(hash, proxy.bHasAnimatedBounds);
+            return HashRevisionValue(hash, proxy.bVisible);
+        }
+
         /**
          * @brief シーン構成revisionを計算する
          *
          * 物体とUIの変換はR6-aのvelocityと深度・法線棄却で扱うため、全画面履歴を
-         * 無効化する構成revisionへ含めません。メッシュ・材質・環境・TLAS構成だけを
+         * 無効化する構成revisionへ含めません。proxy集合のメッシュ・材質・環境だけを
          * 追跡し、構成変更時の履歴不採用を判定できる値にします。
          */
-        uint64_t HashSceneRevision(const FramePacket& packet)
+        uint64_t HashSceneRevisionInternal(const FramePacket& packet)
         {
             uint64_t hash = RevisionHashOffset;
-            hash = HashRevisionValue(hash, packet.DrawCommands.size());
-            for (const DrawCommand& command : packet.DrawCommands)
+            RevisionSetAccumulator meshProxies;
+            for (const MeshProxy& proxy : packet.Scene.MeshProxies)
             {
-                hash = HashRevisionValue(hash, static_cast<uint8_t>(command.Type));
-                hash = HashRevisionValue(hash, static_cast<uint8_t>(command.Draw.PayloadKind));
-                hash = HashRevisionValue(hash, command.Draw.MeshHandle.Id);
-                hash = HashRevisionValue(hash, command.Draw.MaterialHandle.Id);
-                hash = HashRevisionValue(hash, command.Draw.ObjectId);
-                hash = HashRevisionValue(hash, command.Draw.SourceMeshComponentId);
-                hash = HashRevisionValue(hash, command.Draw.InstanceCount);
-                hash = HashRevisionValue(hash, command.Draw.FirstInstance);
-                hash = HashRevisionValue(hash, command.Draw.InstanceDataOffset);
-                hash = HashRevisionFloatArray(hash, command.Draw.CustomData, 4u);
-                hash = HashRevisionValue(hash, command.Draw.bCastShadow);
-                hash = HashRevisionValue(hash, command.Draw.bInstanced);
+                meshProxies.Add(HashMeshProxyRevision(proxy));
             }
+            hash = meshProxies.Finish(hash);
 
-            hash = HashRevisionValue(hash, packet.InstanceData.size());
-            for (const GPUSceneInstanceData& instance : packet.InstanceData)
+            RevisionSetAccumulator skinnedMeshProxies;
+            for (const SkinnedMeshProxy& proxy : packet.Scene.SkinnedMeshProxies)
             {
-                hash = HashRevisionFloatArray(hash, instance.ObjectColor, 4u);
-                hash = HashRevisionFloatArray(hash, instance.CustomData, 4u);
+                skinnedMeshProxies.Add(HashSkinnedMeshProxyRevision(proxy));
             }
+            hash = skinnedMeshProxies.Finish(hash);
+
+            hash = HashRevisionValue(hash, packet.Scene.AmbientColorR);
+            hash = HashRevisionValue(hash, packet.Scene.AmbientColorG);
+            hash = HashRevisionValue(hash, packet.Scene.AmbientColorB);
+            hash = HashRevisionValue(hash, packet.Scene.AmbientIntensity);
 
             const SkyAtmosphereParameters& sky = packet.Scene.SkyAtmosphere;
             hash = HashRevisionValue(hash, sky.bEnabled);
@@ -146,24 +225,13 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, fog.DensityAtBaseHeight);
             hash = HashRevisionValue(hash, fog.BaseHeight);
             hash = HashRevisionValue(hash, fog.HeightFalloffPerUnit);
-
-            hash = HashRevisionValue(hash, packet.RayTracingScene.Instances.size());
-            for (const RayTracingSceneInstanceSnapshot& instance :
-                 packet.RayTracingScene.Instances)
-            {
-                hash = HashRevisionValue(hash, instance.MeshHandle.Id);
-                hash = HashRevisionValue(hash, instance.IndexOffset);
-                hash = HashRevisionValue(hash, instance.IndexCount);
-                hash = HashRevisionValue(hash, instance.VertexOffset);
-                hash = HashRevisionValue(hash, instance.VertexCount);
-                hash = HashRevisionValue(hash, instance.VertexStride);
-                hash = HashRevisionValue(hash, instance.bGeometryOpaque);
-                hash = HashRevisionValue(hash, instance.Instance.customIndex);
-                hash = HashRevisionValue(hash, instance.Instance.mask);
-                hash = HashRevisionFloatArray(hash, instance.Material.BaseColor, 4u);
-                hash = HashRevisionFloatArray(hash, instance.Material.EmissiveColor, 3u);
-                hash = HashRevisionValue(hash, instance.Material.EmissiveLuminanceNits);
-            }
+            hash = HashRevisionValue(hash, packet.Scene.bFogEnabled);
+            hash = HashRevisionValue(hash, packet.Scene.FogColorR);
+            hash = HashRevisionValue(hash, packet.Scene.FogColorG);
+            hash = HashRevisionValue(hash, packet.Scene.FogColorB);
+            hash = HashRevisionValue(hash, packet.Scene.FogDensity);
+            hash = HashRevisionValue(hash, packet.Scene.FogStart);
+            hash = HashRevisionValue(hash, packet.Scene.FogEnd);
             return hash;
         }
 
@@ -547,6 +615,11 @@ namespace NorvesLib::Core::Rendering
         }
 
     } // namespace
+
+    uint64_t ComputeSceneRevisionHash(const FramePacket& packet)
+    {
+        return HashSceneRevisionInternal(packet);
+    }
 
     RayTracingSceneSubsystem::~RayTracingSceneSubsystem()
     {
@@ -1732,7 +1805,7 @@ namespace NorvesLib::Core::Rendering
 
     void RenderingCoordinator::UpdateFrameRevisions(FramePacket& packet)
     {
-        const uint64_t sceneHash = HashSceneRevision(packet);
+        const uint64_t sceneHash = ComputeSceneRevisionHash(packet);
         if (!m_bSceneRevisionHashValid)
         {
             m_LastSceneRevisionHash = sceneHash;
