@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <exception>
 #include <limits>
 #include <utility>
 
@@ -2731,6 +2732,7 @@ namespace NorvesLib::Core::Rendering
                                    const RHI::TexturePtr& depthTexture,
                                    const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                                    const GPULightingParams& lightingParams)
+    try
     {
         if (!context.CommandList || !context.Device || !context.bRTGIEnabled ||
             !context.bRTGITLASAvailable || !context.RTGICapability.IsUsable() ||
@@ -2935,6 +2937,19 @@ namespace NorvesLib::Core::Rendering
         populateHistorySet(history.History);
         context.PhysicalLighting.PublishRTGI(result, history);
         return context.PhysicalLighting.RTGI.bPublished;
+    }
+    catch (const std::exception& exception)
+    {
+        NORVES_LOG_WARNING("LightingPass",
+                           "RTGI ray-queryの実行に失敗したため既存間接光へ戻ります: %s",
+                           exception.what());
+        return false;
+    }
+    catch (...)
+    {
+        NORVES_LOG_WARNING("LightingPass",
+                           "RTGI ray-queryの実行に失敗したため既存間接光へ戻ります");
+        return false;
     }
 
     void LightingPass::ExecuteWithInputs(ViewRenderContext& context,
