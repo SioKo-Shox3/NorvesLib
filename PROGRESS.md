@@ -62,6 +62,7 @@
 - R6-P3: current/history ping-pongの履歴slot状態を正しく遷移させ、連続rendered frameだけをvelocity再投影へ使うようにした。P2で追加されたvelocity/RTGI出力をRenderGraph契約へ反映した。指定Game buildはexit 0、`RenderingVelocityCameraVulkanTest`・`RenderingVelocityObjectVulkanTest`・`RenderGraphCompileTest`は3/3 passed。証拠は`.harness/runs/20260923-033012/verify-R6-P3-1.txt`と`verify-R6-P3-2.txt`。
 - R6-P4: 3x3 cross-bilateralデノイザをLightingPassへ接続した。depth/normal/material境界を棄却し、履歴confidenceをweightへ反映する。Gameと対象テストのDebug build、Vulkan 1.2 shader compile、指定CTest 4/4が成功した。RTGI GPU readbackはfinite hit radiance、miss zero、RTGI公開、disabled/TLAS不完全時のfallbackを確認した。証拠は`.harness/runs/20260923-r6-p4-review2/`に保存した。
 - R6-P5: `.harness/runs/20260923-050747/`。HDR captureでRT無効時のIBL、R4 fallback、固定8 rendered-frame warmup後のRTGI静止golden、カメラ/物体移動、履歴棄却、移動後停止、点光源移動の4 rendered-frame以内の追従を確認し、専用`R6RTGIAcceptanceVulkanTest`は1/1 passed、Game buildはEXIT_CODE=0だった。ただし指定の全体`RenderingValidation`は34 passed・8 skipped・10 failed、EXIT_CODE=8であり、TASKSの状態を`blocked`へ戻した。既定のRendering3DTest起動経路と既定シーンは変更していない。
+- R7-M1: `Docs/RenderingValidation/R7SamplingAndExrSelection.md` と `R7TechniquePlan.md` に、NEE + power heuristic MIS、TinyEXR v3.2.0 C11 API、linear RGB float/ZIP scanline、seed決定論性、R7 core/outdoor段階を固定し、P1〜P7/O1〜O3へ分割した。
 
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、全体gateのDDGI放射輝度テストは履歴分離後の単体再検証に合格した。残るOutdoor golden差分を原因調査し、RenderingValidation全体を再確認する。
@@ -69,12 +70,13 @@
 
 ## Next
 
-- `R6-GATE-OUTDOOR`で既存Outdoor goldenとの差分を診断する。承認済みgolden/thresholdは変更せず、修正後に全体gateを再実行してからR6-P6へ戻る。
+- `R6-GATE-OUTDOOR`で既存Outdoor goldenとの差分原因を確定し、承認済みgolden/thresholdを変えずに解消できるか判断する。R6 gateを閉じた後、`R7-P1`へ進む。
 
 ## Notes
 - R6-P5再開時（2026-09-23）: `cmake --build build --config Debug --target Game RTGIDiffuseIndirectVulkanTest -- /m:1` 成功、`ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R '^RTGIDiffuseIndirectVulkanTest$'` は1/1 passed。ログは`.harness/runs/20260923-r6-p5-resume/`。
 - R6-P5最終検証（2026-09-23）: `verify-R6-P5-1.txt`のGame buildはEXIT_CODE=0、`verify-R6-P5-3.txt`の受入れテストbuildはEXIT_CODE=0、`verify-R6-P5-4.txt`は1/1 passed。HDR出力は8-frame warmup、static golden、RT無効/R4 fallback、カメラ/物体移動、履歴棄却、移動後停止2サンプル、ライト4 rendered frames以内の追従をPASSとして記録した。指定の全体`RenderingValidation`は`verify-R6-P5-2.txt`で44件中34 passed・8 skipped・10 failed、EXIT_CODE=8。10失敗（RHIGPUTimestamp、DDGIProbeRadiance、RenderingDDGI 2件、RHIImageLayout 4件、RenderingGolden 2件）は着手時baselineと同じで、R6-P5追加テストは全体実行でもpassed。
 - R6-GATE-DDGI-ORACLE（2026-09-23）: `DDGIProbeRadianceVulkanTest`が1 pass内で非遮蔽→遮蔽を連続実行し、R4-P4のprevious-irradiance bounceを後者の直接照明期待値へ混入させていた。遮蔽ケースを独立passに分け、Debug build exit 0、CTest 1/1 passed。`.harness/runs/20260923-r6-gate-ddgi/verify-ctest-LastTest.log`でpoint/spot遮蔽期待値と実測値が両方`4.92249,2.50945,1.32604`と一致することを確認した。全体gateはこの修正後まだ未実行。
+- R6-GATE-OUTDOOR診断（2026-09-23）: `RenderingGoldenImageTest` Debug buildはexit 0。Outdoor CTestを単独実行すると平均FLIP `0.002326954`、最大FLIP `0.529430032`、差分459画素で失敗する。baseline SHAは承認済み`05D202…D895B6`のまま、staging captureを2回出力したSHAは両方`9933B5…F3B954`で決定論的。差分画像・cropは`.harness/runs/20260923-r6-outdoor-diagnosis/`に保存した。R1以前のfixture配置/ライト/カメラ定義は現行まで不変。R2でsingle shadow matrixから4-cascade CSMへ移行し、R2受入れコマンドにR1 Indoor/Outdoor golden実行が含まれていなかった点を調査中。ベースライン/閾値は変更していない。
 
 - R4-P3Aの非blocking残課題: GPUテストはVUIDを自動でテスト失敗へ反映せず、validation layer未導入時はskipする。今回の受け入れでは実GPU readbackと実行ログを確認した。
 - R4-P7旧blocked run（2026-09-22、run-id 20260922-045823）は履歴として保持する。後続run `20260922-r4-p7-final3`でHDR scene-color、red/green indirect ROI、disabled A/B、9/9 CTest、atlas履歴更新、失敗時の公開状態クリアを再検証した。独立評価2周目の帳簿・行末・成果物追跡に関する所見は受入れ前に修正し、現行成果物へ反映した。
