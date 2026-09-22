@@ -66,6 +66,11 @@ R6-P1-FIXでSceneRevisionをシーン構成だけへ限定し、History側revisi
 
 `.harness/lessons/` は存在しないため教訓の選別は行っていません。
 
+## R6-P4 評価の非blocking追跡事項
+
+- GPUテストはtemporalの入力radianceをreadbackし、denoised textureは公開状態とSceneColor差分で間接確認している。denoised値を直接読むtest seamまたはgolden比較は追加余地として残す。
+- cross-bilateralのdepth閾値は非線形GBuffer depthの差を使うため、遠景で境界棄却が緩む可能性がある。material差にはAO成分も含むため、tapが過剰に棄却される可能性と合わせてR6-P5/P6の受入れcaptureで観察する。
+
 ## 反復 4 — 評価者(claude)の判定: NEEDS_WORK
 
 対象: R6-P1-FIX revisionとRTGI履歴契約の意味論を修正する

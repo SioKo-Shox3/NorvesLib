@@ -3031,7 +3031,8 @@ namespace NorvesLib::Core::Rendering
             InvalidateRTGIHistory();
             return false;
         };
-        if (!context.CommandList || !context.Device || !context.bRTGIEnabled ||
+        if (m_bRTGIDenoiserUnavailable || !context.CommandList || !context.Device ||
+            !context.bRTGIEnabled ||
             !context.bRTGITLASAvailable || !context.RTGICapability.IsUsable() ||
             !context.SnapshotRayTracingScene ||
             !context.SnapshotRayTracingScene->IsComplete() ||
