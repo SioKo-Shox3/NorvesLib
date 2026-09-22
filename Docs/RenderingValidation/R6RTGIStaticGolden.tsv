@@ -1,0 +1,7 @@
+﻿schema	NorvesLib.RenderingValidation.R6RTGIStaticGolden.v1
+mean_y	0.258768
+center_y	0.0305305
+center_red	0.0408391
+center_green	0.0290016
+center_blue	0.0153209
+tolerance	0.001

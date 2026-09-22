@@ -259,7 +259,10 @@ namespace NorvesLib::Test::RenderingValidation
         bool SetR5RayTracingShadowOccluderPositionX(float positionX) const;
         bool SetR5RayTracingShadowReceiverPositionX(float positionX) const;
         bool ApplyR4CornellFixture() const;
+        bool AddR6CornellDynamicObject() const;
         bool SetR4CornellLightOffsetX(float offsetX) const;
+        bool SetR4CornellObjectOffsetX(float offsetX) const;
+        bool SetR4CornellPointLightState(float offsetX, float intensity) const;
         const Core::Rendering::CameraProxy& GetCamera() const;
         const Core::Rendering::CameraProxy& GetR3ShadowedShaftsCamera() const;
         const Core::Rendering::CameraProxy& GetR5RayTracingShadowCamera() const;
@@ -351,6 +354,7 @@ namespace NorvesLib::Test::RenderingValidation
         mutable bool m_bR4CornellFixtureFailed = false;
         mutable Core::Rendering::CameraProxy m_R4CornellCamera;
         mutable Core::Entity* m_pR4CornellEmitterEntity = nullptr;
+        mutable Core::Entity* m_pR4CornellDynamicObjectEntity = nullptr;
         mutable Core::Container::FixedArray<Core::Entity*, 4> m_R4CornellPointLights{};
         bool m_bPublished = false;
     };

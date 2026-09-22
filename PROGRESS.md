@@ -61,15 +61,18 @@
 - R6-P2-FIX: 専用`RTGIDiffuseIndirectVulkanTest`で完全TLASと2x2 GBufferをLightingPassへ渡し、ray-query computeのhit/miss finite radiance、RTGI公開、無効化/TLAS不完全時の既存raster fallbackをGPU readbackで固定した。RTGI descriptorのsampler/storage image bindingずれも修正し、R5 RT pipeline/SBTとRendering3DTest起動経路は変更していない。指定Game build、GPU CTest 3/3、GLSL compileはすべてexit 0。証拠は`.harness/runs/20260922-200402/verify-R6-P2-FIX-5.txt`〜`-7.txt`。
 - R6-P3: current/history ping-pongの履歴slot状態を正しく遷移させ、連続rendered frameだけをvelocity再投影へ使うようにした。P2で追加されたvelocity/RTGI出力をRenderGraph契約へ反映した。指定Game buildはexit 0、`RenderingVelocityCameraVulkanTest`・`RenderingVelocityObjectVulkanTest`・`RenderGraphCompileTest`は3/3 passed。証拠は`.harness/runs/20260923-033012/verify-R6-P3-1.txt`と`verify-R6-P3-2.txt`。
 - R6-P4: 3x3 cross-bilateralデノイザをLightingPassへ接続した。depth/normal/material境界を棄却し、履歴confidenceをweightへ反映する。Gameと対象テストのDebug build、Vulkan 1.2 shader compile、指定CTest 4/4が成功した。RTGI GPU readbackはfinite hit radiance、miss zero、RTGI公開、disabled/TLAS不完全時のfallbackを確認した。証拠は`.harness/runs/20260923-r6-p4-review2/`に保存した。
+- R6-P5: `.harness/runs/20260923-050747/`。HDR captureでRT無効時のIBL、R4 fallback、固定8 rendered-frame warmup後のRTGI静止golden、カメラ/物体移動、履歴棄却、移動後停止、点光源移動の4 rendered-frame以内の追従を確認した。`R6RTGIAcceptanceVulkanTest`は個別実行・全体ラベル内ともにpassed、Game buildはEXIT_CODE=0。既定のRendering3DTest起動経路と既定シーンは変更していない。
 
 ## In progress
-- R6-P4まで完了。次はR6-P5の静止・動的GI・fallback GPU受入れを固定する。
+- R6-P5完了。次はR6-P6受入れを行う。
 
 ## Next
 
-- R6-P5: 静止・カメラ/物体/ライト移動・fallbackと履歴棄却をGPU readbackまたはHDR captureで検証する。
+- R6-P6の受入れを行い、続けてRenderingRoadmapのR7/R8計画と実装へ進む。
 
 ## Notes
+- R6-P5再開時（2026-09-23）: `cmake --build build --config Debug --target Game RTGIDiffuseIndirectVulkanTest -- /m:1` 成功、`ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R '^RTGIDiffuseIndirectVulkanTest$'` は1/1 passed。ログは`.harness/runs/20260923-r6-p5-resume/`。
+- R6-P5最終検証（2026-09-23）: `verify-R6-P5-1.txt`のGame buildはEXIT_CODE=0、`verify-R6-P5-3.txt`の受入れテストbuildはEXIT_CODE=0、`verify-R6-P5-4.txt`は1/1 passed。HDR出力は8-frame warmup、static golden、RT無効/R4 fallback、カメラ/物体移動、履歴棄却、移動後停止2サンプル、ライト4 rendered frames以内の追従をPASSとして記録した。指定の全体`RenderingValidation`は`verify-R6-P5-2.txt`で44件中34 passed・8 skipped・10 failed、EXIT_CODE=8。10失敗（RHIGPUTimestamp、DDGIProbeRadiance、RenderingDDGI 2件、RHIImageLayout 4件、RenderingGolden 2件）は着手時baselineと同じで、R6-P5追加テストは全体実行でもpassed。
 
 - R4-P3Aの非blocking残課題: GPUテストはVUIDを自動でテスト失敗へ反映せず、validation layer未導入時はskipする。今回の受け入れでは実GPU readbackと実行ログを確認した。
 - R4-P7旧blocked run（2026-09-22、run-id 20260922-045823）は履歴として保持する。後続run `20260922-r4-p7-final3`でHDR scene-color、red/green indirect ROI、disabled A/B、9/9 CTest、atlas履歴更新、失敗時の公開状態クリアを再検証した。独立評価2周目の帳簿・行末・成果物追跡に関する所見は受入れ前に修正し、現行成果物へ反映した。

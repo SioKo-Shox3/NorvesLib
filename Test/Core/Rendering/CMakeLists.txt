@@ -183,6 +183,27 @@ register_rendering_gpu_test(
     RTGIDiffuseIndirectVulkanTest
     RTGIDiffuseIndirectVulkanTest
 )
+add_executable(R6RTGIAcceptanceVulkanTest
+    R6RTGIAcceptanceVulkanTest.cpp
+)
+target_link_libraries(R6RTGIAcceptanceVulkanTest PRIVATE
+    RenderingValidationFixtureSupport
+    RenderingGpuTestSupport
+    RenderingFloatImageSupport
+)
+target_include_directories(R6RTGIAcceptanceVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+target_compile_definitions(R6RTGIAcceptanceVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+)
+set_target_properties(R6RTGIAcceptanceVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    R6RTGIAcceptanceVulkanTest
+    R6RTGIAcceptanceVulkanTest
+    --scene=indoor
+)
 add_executable(DDGIProbeRadianceVulkanTest
     DDGIProbeRadianceVulkanTest.cpp
 )

@@ -997,6 +997,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_bR4CornellFixtureFailed = false;
         m_R4CornellCamera = {};
         m_pR4CornellEmitterEntity = nullptr;
+        m_pR4CornellDynamicObjectEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
 
         state.pWorld = nullptr;
@@ -1076,6 +1077,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_bR4CornellFixtureFailed = false;
         m_R4CornellCamera = {};
         m_pR4CornellEmitterEntity = nullptr;
+        m_pR4CornellDynamicObjectEntity = nullptr;
         m_R4CornellPointLights.fill(nullptr);
         m_bPublished = false;
 
@@ -3006,6 +3008,42 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::AddR6CornellDynamicObject() const
+    {
+        if (!m_bR4CornellFixturePrepared || m_pWorld == nullptr ||
+            m_pR4CornellDynamicObjectEntity != nullptr)
+        {
+            return m_pR4CornellDynamicObjectEntity != nullptr;
+        }
+
+        m_pR4CornellDynamicObjectEntity = m_pWorld->SpawnEntity();
+        if (m_pR4CornellDynamicObjectEntity == nullptr)
+        {
+            return false;
+        }
+        m_Objects.push_back(m_pR4CornellDynamicObjectEntity);
+        m_pR4CornellDynamicObjectEntity->SetPosition(2.78f, 0.72f, 2.6f);
+        m_pR4CornellDynamicObjectEntity->SetScale(0.28f, 0.28f, 0.28f);
+        Core::Component::MeshComponent* dynamicObjectMesh =
+            m_pWorld->CreateComponent<Core::Component::MeshComponent>(
+                m_pR4CornellDynamicObjectEntity);
+        if (dynamicObjectMesh == nullptr)
+        {
+            return false;
+        }
+        dynamicObjectMesh->SetMeshHandle(SphereHandle);
+        dynamicObjectMesh->SetMaterial(0u, m_NeutralMaterial);
+        dynamicObjectMesh->SetCustomData(0u, 0.68f);
+        dynamicObjectMesh->SetCustomData(1u, 0.72f);
+        dynamicObjectMesh->SetCustomData(2u, 0.76f);
+        dynamicObjectMesh->SetCustomData(3u, 1.0f);
+        dynamicObjectMesh->SetCastShadow(true);
+        dynamicObjectMesh->SetReceiveShadow(true);
+        dynamicObjectMesh->SetVisible(true);
+        m_pWorld->SyncToSceneView(&m_pResources->Materials(), &m_pResources->Meshes());
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::SetR4CornellLightOffsetX(float offsetX) const
     {
         if (!std::isfinite(offsetX) || std::abs(offsetX) > 0.8f ||
@@ -3013,8 +3051,43 @@ namespace NorvesLib::Test::RenderingValidation
         {
             return false;
         }
-        // 点光源は無効化したまま、動的検証では面光源だけを移動する。
+        // 動的検証では発光メッシュの位置を移動し、点光源は別の状態設定で扱う。
         m_pR4CornellEmitterEntity->SetPosition(offsetX, 0.0f, 0.0f);
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetR4CornellObjectOffsetX(float offsetX) const
+    {
+        if (!std::isfinite(offsetX) || std::abs(offsetX) > 1.0f ||
+            !m_bR4CornellFixturePrepared || m_pR4CornellDynamicObjectEntity == nullptr)
+        {
+            return false;
+        }
+        m_pR4CornellDynamicObjectEntity->SetPosition(2.78f + offsetX, 0.72f, 2.6f);
+        return true;
+    }
+
+    bool RenderingValidationSceneFixture::SetR4CornellPointLightState(
+        float offsetX,
+        float intensity) const
+    {
+        if (!std::isfinite(offsetX) || !std::isfinite(intensity) ||
+            offsetX < -1.0f || offsetX > 1.0f || intensity < 0.0f ||
+            !m_bR4CornellFixturePrepared || m_R4CornellPointLights[0] == nullptr)
+        {
+            return false;
+        }
+        m_R4CornellPointLights[0]->SetPosition(
+            R4CornellPointLightPositions[0][0] + offsetX,
+            5.35f,
+            R4CornellPointLightPositions[0][1]);
+        Core::Component::PointLightComponent* pointLight =
+            m_R4CornellPointLights[0]->GetComponent<Core::Component::PointLightComponent>();
+        if (pointLight == nullptr)
+        {
+            return false;
+        }
+        pointLight->SetIntensity(intensity);
         return true;
     }
 
