@@ -284,6 +284,14 @@ namespace
             std::cerr << "PTカメラ用pipelineを初期化できませんでした\n";
             return false;
         }
+        // 固定基準は空が無効なときの一様環境0.05を背景にする（既定の環境光は黒）。
+        PathTracingEnvironment environment;
+        environment.Mode = PathTracingEnvironmentMode::Uniform;
+        for (float& channel : environment.UniformRadiance)
+        {
+            channel = 0.05f;
+        }
+        pass.SetEnvironment(environment);
         RenderGraph graph;
         graph.Initialize(nullptr);
         for (uint64_t frame = 1u; frame <= 32u; ++frame)

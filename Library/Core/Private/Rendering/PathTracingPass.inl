@@ -1,7 +1,9 @@
 ﻿// FramePacketの値スナップショットから独立したPT描画と履歴を実装する。
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/DfgLut.h"
 #include "Rendering/FramePacket.h"
+#include "Rendering/LightingPassLightPacking.h"
 #include "Rendering/PathTracingCamera.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SkyAtmosphere.h"
@@ -20,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -40,6 +43,10 @@ namespace NorvesLib::Core::Rendering
             float FogLightDirectionAndAnisotropy[4] = {};
             float FogLightRadianceAndEnabled[4] = {};
             float ExposureAndDebug[4] = {}; ///< x=カメラのプリエクスポージャ、y=検証出力
+            /** @brief x=点・spot・方向光の数、y=発光instance数、z=発光三角形数、w=BSDFと標本化戦略 */
+            uint32_t LightState[4] = {};
+            /** @brief rgb=一様環境の放射輝度または環境textureの倍率、w=環境光の種類 */
+            float EnvironmentRadiance[4] = {};
         };
 
         struct PathTracingInstance
@@ -51,10 +58,23 @@ namespace NorvesLib::Core::Rendering
             uint32_t Geometry[4] = {};
             float ObjectColor[4] = {}; ///< GBufferと同じ規則のinstance色
             uint32_t Textures[4] = {}; ///< アルベド・法線・metallic・roughnessの材質texture表番号
+            /** @brief TLASと同じ物体→ワールド変換（行優先3x4）。発光三角形の標本化に使う。 */
+            float ObjectToWorld[12] = {};
         };
 
-        static_assert(sizeof(PathTracingParameters) == 208u);
-        static_assert(sizeof(PathTracingInstance) == 96u);
+        /** @brief 発光instanceの表の1要素。firstTriangleは発光三角形の通し番号の先頭。 */
+        struct PathTracingEmissiveInstance
+        {
+            uint32_t InstanceIndex = 0u;
+            uint32_t TriangleCount = 0u;
+            uint32_t FirstTriangle = 0u;
+            uint32_t Reserved = 0u;
+        };
+
+        static_assert(sizeof(PathTracingParameters) == 240u);
+        static_assert(sizeof(PathTracingInstance) == 144u);
+        static_assert(sizeof(PathTracingEmissiveInstance) == 16u);
+        static_assert(sizeof(GPULightData) == 64u);
 
         // 材質texture表の先頭に置く既定texture。GBufferの既定値と同じ並びと値にする。
         constexpr uint32_t PathDefaultAlbedoTextureIndex = 0u;
@@ -62,6 +82,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t PathDefaultMetallicTextureIndex = 2u;
         constexpr uint32_t PathDefaultRoughnessTextureIndex = 3u;
         constexpr uint32_t PathMaterialTextureBinding = 8u;
+        constexpr uint32_t PathDfgLutBinding = 9u;
+        constexpr uint32_t PathEnvironmentBinding = 10u;
+        constexpr uint32_t PathLightBinding = 11u;
+        constexpr uint32_t PathEmissiveBinding = 12u;
 
         uint64_t HashPathBytes(uint64_t hash, const void* data, size_t size)
         {
@@ -288,7 +312,74 @@ namespace NorvesLib::Core::Rendering
             materialTextures.stages = RHI::ShaderStage::AllRayTracing;
             materialTextures.count = PathTracingMaterialTextureCapacity;
             desc.bindings.push_back(materialTextures);
+            const std::pair<uint32_t, RHI::ResourceBindType> lightingBindings[] = {
+                {PathDfgLutBinding, RHI::ResourceBindType::CombinedImageSampler},
+                {PathEnvironmentBinding, RHI::ResourceBindType::CombinedImageSampler},
+                {PathLightBinding, RHI::ResourceBindType::StructuredBuffer},
+                {PathEmissiveBinding, RHI::ResourceBindType::StructuredBuffer}};
+            for (const auto& [index, type] : lightingBindings)
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = index;
+                binding.type = type;
+                binding.stages = RHI::ShaderStage::AllRayTracing;
+                desc.bindings.push_back(binding);
+            }
             return desc;
+        }
+
+        uint64_t HashPathEnvironment(const PathTracingEnvironment& environment,
+                                     PathTracingBsdfMode bsdfMode,
+                                     PathTracingLightSampling lightSampling)
+        {
+            uint64_t hash = 14695981039346656037ull;
+            hash = HashPathBytes(hash, &environment.Mode, sizeof(environment.Mode));
+            hash = HashPathBytes(hash, environment.UniformRadiance,
+                                 sizeof(environment.UniformRadiance));
+            const RHI::ITexture* texture = environment.EquirectTexture.get();
+            hash = HashPathBytes(hash, &texture, sizeof(texture));
+            hash = HashPathBytes(hash, &environment.Intensity, sizeof(environment.Intensity));
+            hash = HashPathBytes(hash, &bsdfMode, sizeof(bsdfMode));
+            return HashPathBytes(hash, &lightSampling, sizeof(lightSampling));
+        }
+
+        // 環境光の値を検査し、GPUへ渡す形（rgb=放射輝度または倍率、w=種類）にする。無効なら黒。
+        void FillPathEnvironmentParameters(const PathTracingEnvironment& environment,
+                                           PathTracingParameters& parameters)
+        {
+            parameters.EnvironmentRadiance[0] = 0.0f;
+            parameters.EnvironmentRadiance[1] = 0.0f;
+            parameters.EnvironmentRadiance[2] = 0.0f;
+            parameters.EnvironmentRadiance[3] =
+                static_cast<float>(static_cast<uint32_t>(PathTracingEnvironmentMode::Black));
+            if (environment.Mode == PathTracingEnvironmentMode::Uniform)
+            {
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    const float value = environment.UniformRadiance[channel];
+                    if (!std::isfinite(value) || value < 0.0f)
+                    {
+                        return;
+                    }
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    parameters.EnvironmentRadiance[channel] = environment.UniformRadiance[channel];
+                }
+                parameters.EnvironmentRadiance[3] =
+                    static_cast<float>(static_cast<uint32_t>(PathTracingEnvironmentMode::Uniform));
+            }
+            else if (environment.Mode == PathTracingEnvironmentMode::Equirect &&
+                     environment.EquirectTexture && std::isfinite(environment.Intensity) &&
+                     environment.Intensity >= 0.0f)
+            {
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    parameters.EnvironmentRadiance[channel] = environment.Intensity;
+                }
+                parameters.EnvironmentRadiance[3] =
+                    static_cast<float>(static_cast<uint32_t>(PathTracingEnvironmentMode::Equirect));
+            }
         }
     }
 
@@ -380,8 +471,38 @@ namespace NorvesLib::Core::Rendering
         m_DefaultFlatNormalTexture = createDefault1x1("PathTracing.DefaultFlatNormal", 128u, 128u, 255u);
         m_DefaultBlackTexture = createDefault1x1("PathTracing.DefaultBlack", 0u, 0u, 0u);
         m_DefaultMidGrayTexture = createDefault1x1("PathTracing.DefaultMidGray", 128u, 128u, 128u);
+        m_DefaultEnvironmentTexture = createDefault1x1("PathTracing.DefaultEnvironment", 0u, 0u, 0u);
+
+        // ラスタのLightingPassと同じ生成関数でDFG LUTを作り、同じ座標規則（線形・端でclamp）で読む。
+        RHI::TextureDesc dfgLutDesc;
+        dfgLutDesc.Width = DfgLutSize;
+        dfgLutDesc.Height = DfgLutSize;
+        dfgLutDesc.MipLevels = 1;
+        dfgLutDesc.TextureFormat = RHI::Format::R16G16_FLOAT;
+        dfgLutDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+        dfgLutDesc.DebugName = "PathTracing.DfgLut";
+        m_DfgLutTexture = context.Device->CreateTexture(dfgLutDesc);
+        if (m_DfgLutTexture)
+        {
+            const uint32_t rowPitch = DfgLutSize * 2u * static_cast<uint32_t>(sizeof(uint16_t));
+            m_DfgLutTexture->Update(GetDfgLutHalfData(), rowPitch, rowPitch * DfgLutSize);
+        }
+        RHI::SamplerDesc linearClampDesc;
+        linearClampDesc.filterMin = RHI::FilterMode::Linear;
+        linearClampDesc.filterMag = RHI::FilterMode::Linear;
+        linearClampDesc.filterMip = RHI::FilterMode::Linear;
+        linearClampDesc.addressU = RHI::TextureAddressMode::Clamp;
+        linearClampDesc.addressV = RHI::TextureAddressMode::Clamp;
+        linearClampDesc.addressW = RHI::TextureAddressMode::Clamp;
+        m_LinearClampSampler = context.Device->CreateSampler(linearClampDesc);
+        // 正距円筒は経度方向だけ周回する。
+        RHI::SamplerDesc environmentDesc = linearClampDesc;
+        environmentDesc.addressU = RHI::TextureAddressMode::Wrap;
+        m_EnvironmentSampler = context.Device->CreateSampler(environmentDesc);
         if (!m_Pipeline || !m_Sampler || !m_MaterialSampler || !m_DefaultWhiteTexture ||
-            !m_DefaultFlatNormalTexture || !m_DefaultBlackTexture || !m_DefaultMidGrayTexture)
+            !m_DefaultFlatNormalTexture || !m_DefaultBlackTexture || !m_DefaultMidGrayTexture ||
+            !m_DefaultEnvironmentTexture || !m_DfgLutTexture || !m_LinearClampSampler ||
+            !m_EnvironmentSampler)
         {
             Shutdown();
             return false;
@@ -403,7 +524,15 @@ namespace NorvesLib::Core::Rendering
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
         m_DefaultMidGrayTexture.reset();
+        m_DefaultEnvironmentTexture.reset();
+        m_DfgLutTexture.reset();
+        m_LinearClampSampler.reset();
+        m_EnvironmentSampler.reset();
+        m_Environment = PathTracingEnvironment{};
         m_BoundMaterialTextureCount = 0u;
+        m_PunctualLightCount = 0u;
+        m_EmissiveInstanceCount = 0u;
+        m_EmissiveTriangleCount = 0u;
         m_OutputHandle = {};
         m_SkyRadianceHandle = {};
         m_SkyTransmittanceHandle = {};
@@ -643,6 +772,8 @@ namespace NorvesLib::Core::Rendering
             instance.Geometry[1] = snapshot.VertexCount;
             instance.Geometry[2] = snapshot.IndexCount;
             instance.Geometry[3] = index;
+            std::memcpy(instance.ObjectToWorld, snapshot.Instance.transform,
+                        sizeof(instance.ObjectToWorld));
         }
         for (const PathTracingInstance& instance : instances)
         {
@@ -689,6 +820,84 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool PathTracingPass::PrepareLights(const ViewRenderContext& context,
+                                        FrameResources& frameResources)
+    {
+        // 点・spot・方向光はラスタのLightingPassと同じ関数で詰め、単位・減衰・spot円錐を一致させる。
+        Container::Span<const LightProxy> lightProxies;
+        if (context.SnapshotLightProxies)
+        {
+            lightProxies = Container::Span<const LightProxy>(*context.SnapshotLightProxies);
+        }
+        else if (context.SnapshotScene)
+        {
+            lightProxies = Container::Span<const LightProxy>(context.SnapshotScene->LightProxies);
+        }
+        Container::VariableArray<GPULightData> lights;
+        m_PunctualLightCount = PackLightingPassLights(lightProxies, lights);
+        // light revisionが進まなくても、光源表の中身が変われば累積履歴を捨てる。
+        m_DeclaredLightSignature = HashPathBytes(14695981039346656037ull, lights.data(),
+                                                 lights.size() * sizeof(GPULightData));
+
+        // 発光instanceは全三角形を光源標本の対象にする。命中側の判定（発光色×nits > 0）と同じ条件で選ぶ。
+        Container::VariableArray<PathTracingEmissiveInstance> emissive;
+        uint64_t triangleTotal = 0u;
+        for (const RayTracingSceneInstanceSnapshot& snapshot :
+             context.SnapshotRayTracingScene->Instances)
+        {
+            const RayTracingHitMaterialSnapshot& material = snapshot.Material;
+            const bool bEmissive = material.EmissiveLuminanceNits > 0.0f &&
+                (material.EmissiveColor[0] > 0.0f || material.EmissiveColor[1] > 0.0f ||
+                 material.EmissiveColor[2] > 0.0f);
+            if (!bEmissive)
+            {
+                continue;
+            }
+            PathTracingEmissiveInstance entry;
+            entry.InstanceIndex = snapshot.Instance.customIndex;
+            entry.TriangleCount = snapshot.IndexCount / 3u;
+            entry.FirstTriangle = static_cast<uint32_t>(triangleTotal);
+            triangleTotal += entry.TriangleCount;
+            if (triangleTotal > std::numeric_limits<uint32_t>::max())
+            {
+                return false;
+            }
+            emissive.push_back(entry);
+        }
+        m_EmissiveInstanceCount = static_cast<uint32_t>(emissive.size());
+        m_EmissiveTriangleCount = static_cast<uint32_t>(triangleTotal);
+
+        const auto upload = [&context](RHI::BufferPtr& buffer, uint64_t& capacity,
+                                       const void* data, uint64_t size, uint64_t elementSize,
+                                       const char* debugName)
+        {
+            // 空の表でも束縛できるよう、最低1要素分を確保する。
+            const uint64_t requiredSize = std::max(size, elementSize);
+            if (!buffer || capacity < requiredSize)
+            {
+                RHI::BufferDesc desc(requiredSize, RHI::ResourceUsage::StorageBuffer, true,
+                                     debugName);
+                buffer = context.Device->CreateBuffer(desc);
+                capacity = buffer ? buffer->GetSize() : 0u;
+            }
+            if (!buffer)
+            {
+                return false;
+            }
+            if (size > 0u)
+            {
+                buffer->Update(data, size);
+            }
+            return true;
+        };
+        return upload(frameResources.LightBuffer, frameResources.LightBufferCapacity,
+                      lights.data(), lights.size() * sizeof(GPULightData), sizeof(GPULightData),
+                      "PathTracing.Lights") &&
+               upload(frameResources.EmissiveBuffer, frameResources.EmissiveBufferCapacity,
+                      emissive.data(), emissive.size() * sizeof(PathTracingEmissiveInstance),
+                      sizeof(PathTracingEmissiveInstance), "PathTracing.EmissiveInstances");
+    }
+
     void PathTracingPass::Declare(RenderGraphBuilder& builder)
     {
         m_OutputHandle = {};
@@ -719,7 +928,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         FrameResources* frameResources = FindOrCreateFrameResources(*context, *history);
-        if (!frameResources || !PrepareInstances(*context, *frameResources))
+        if (!frameResources || !PrepareInstances(*context, *frameResources) ||
+            !PrepareLights(*context, *frameResources))
         {
             return;
         }
@@ -769,6 +979,8 @@ namespace NorvesLib::Core::Rendering
         FillPathFogParameters(*context, preExposure, parameters);
         const uint64_t skySignature = HashPathSky(sky, preExposure);
         const uint64_t fogSignature = HashPathFog(parameters);
+        const uint64_t environmentSignature =
+            HashPathEnvironment(m_Environment, m_BsdfMode, m_LightSampling);
         const bool bReset = history->SampleCount == 0u ||
             history->SceneRevision != context->SceneRevision ||
             history->LightRevision != context->LightRevision ||
@@ -778,6 +990,8 @@ namespace NorvesLib::Core::Rendering
             history->FogSignature != fogSignature ||
             history->DebugOutput != m_DebugOutput ||
             history->MaterialTextureSignature != m_DeclaredMaterialTextureSignature ||
+            history->LightSignature != m_DeclaredLightSignature ||
+            history->EnvironmentSignature != environmentSignature ||
             history->SampleCount == UINT32_MAX;
         if (bReset)
         {
@@ -826,6 +1040,7 @@ namespace NorvesLib::Core::Rendering
         m_DeclaredGeometrySignature = geometrySignature;
         m_DeclaredSkySignature = skySignature;
         m_DeclaredFogSignature = fogSignature;
+        m_DeclaredEnvironmentSignature = environmentSignature;
         m_bPrepared = true;
     }
 
@@ -929,6 +1144,12 @@ namespace NorvesLib::Core::Rendering
                               parameters);
         parameters.ExposureAndDebug[0] = SafePathPreExposure(context.GetActiveCamera()->PreExposure);
         parameters.ExposureAndDebug[1] = static_cast<float>(static_cast<uint32_t>(m_DebugOutput));
+        parameters.LightState[0] = m_PunctualLightCount;
+        parameters.LightState[1] = m_EmissiveInstanceCount;
+        parameters.LightState[2] = m_EmissiveTriangleCount;
+        parameters.LightState[3] = static_cast<uint32_t>(m_BsdfMode) |
+                                   (static_cast<uint32_t>(m_LightSampling) << 2u);
+        FillPathEnvironmentParameters(m_Environment, parameters);
         frameResources.ParametersBuffer->Update(&parameters, sizeof(parameters));
 
         RHI::DescriptorSetPtr descriptorSet = frameResources.DescriptorSet;
@@ -955,6 +1176,12 @@ namespace NorvesLib::Core::Rendering
                                         sizeof(transform)) != 0)
                         {
                             bHasMotion = true;
+                            // 発光三角形の光源標本もシャッター時刻のTLASと同じ変換で行う。
+                            frameResources.InstanceBuffer->Update(
+                                transform, sizeof(transform),
+                                static_cast<uint64_t>(instance.customIndex) *
+                                        sizeof(PathTracingInstance) +
+                                    offsetof(PathTracingInstance, ObjectToWorld));
                         }
                         std::memcpy(instance.transform, transform,
                                     sizeof(transform));
@@ -1027,6 +1254,21 @@ namespace NorvesLib::Core::Rendering
                 return;
             }
         }
+        const bool bEnvironmentTexture =
+            parameters.EnvironmentRadiance[3] ==
+            static_cast<float>(static_cast<uint32_t>(PathTracingEnvironmentMode::Equirect));
+        descriptorSet->BindTexture(PathDfgLutBinding, m_DfgLutTexture);
+        descriptorSet->BindSampler(PathDfgLutBinding, m_LinearClampSampler);
+        descriptorSet->BindTexture(PathEnvironmentBinding,
+                                   bEnvironmentTexture ? m_Environment.EquirectTexture
+                                                       : m_DefaultEnvironmentTexture);
+        descriptorSet->BindSampler(PathEnvironmentBinding, m_EnvironmentSampler);
+        descriptorSet->BindStorageBuffer(
+            PathLightBinding, frameResources.LightBuffer, 0u,
+            static_cast<uint32_t>(frameResources.LightBuffer->GetSize()));
+        descriptorSet->BindStorageBuffer(
+            PathEmissiveBinding, frameResources.EmissiveBuffer, 0u,
+            static_cast<uint32_t>(frameResources.EmissiveBuffer->GetSize()));
         descriptorSet->Update();
 
         context.CommandList->SetPipeline(m_Pipeline);
@@ -1047,6 +1289,8 @@ namespace NorvesLib::Core::Rendering
         history.FogSignature = m_DeclaredFogSignature;
         history.DebugOutput = m_DebugOutput;
         history.MaterialTextureSignature = m_DeclaredMaterialTextureSignature;
+        history.LightSignature = m_DeclaredLightSignature;
+        history.EnvironmentSignature = m_DeclaredEnvironmentSignature;
         history.bSkyValid = bSkyValid;
     }
 

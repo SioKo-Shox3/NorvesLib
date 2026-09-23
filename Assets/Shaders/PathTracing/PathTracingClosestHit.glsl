@@ -6,50 +6,16 @@
 #extension GL_EXT_nonuniform_qualifier : require
 
 #include "PathTracing/PathTracingCommon.glsl"
+#include "PathTracing/PathTracingScene.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
 
-struct PathInstance
-{
-    uint64_t vertexAddress;
-    uint64_t indexAddress;
-    vec4 baseColor;
-    vec4 emission;
-    uvec4 geometry; // x=頂点幅、y=頂点数、z=索引数、w=インスタンス番号
-    vec4 objectColor; // GBufferと同じ規則のinstance色
-    uvec4 textures; // x=アルベド、y=法線、z=metallic、w=roughnessのtexture配列番号
-};
-layout(set = 0, binding = 2, std430) readonly buffer PathInstances
-{
-    PathInstance values[];
-} instances;
 layout(set = 0, binding = 8) uniform sampler2D materialTextures[256];
-layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer VertexData
-{
-    float values[];
-};
-layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer IndexData
-{
-    uint values[];
-};
 
 layout(location = 0) rayPayloadInEXT PathPayload payload;
 hitAttributeEXT vec2 hitBarycentrics;
 
 // Mesh3DVertexの並び（位置3・法線3・UV2の32 byte）。これより短い頂点は位置だけを持つ。
 const uint MESH3D_VERTEX_BYTES = 32u;
-
-vec3 ReadFloat3(VertexData vertices, uint index, uint stride, uint component)
-{
-    uint offset = index * stride + component;
-    return vec3(vertices.values[offset], vertices.values[offset + 1u],
-                vertices.values[offset + 2u]);
-}
-
-vec2 ReadFloat2(VertexData vertices, uint index, uint stride, uint component)
-{
-    uint offset = index * stride + component;
-    return vec2(vertices.values[offset], vertices.values[offset + 1u]);
-}
 
 vec4 SampleMaterialTexture(uint textureIndex, vec2 uv)
 {
@@ -66,21 +32,15 @@ void main()
         return;
     }
     PathInstance instance = instances.values[instanceIndex];
-    uint firstIndex = uint(gl_PrimitiveID) * 3u;
-    if (instance.geometry.x < 12u || firstIndex + 2u >= instance.geometry.z)
+    uvec3 triangleIndices;
+    if (!ReadTriangleIndices(instance, uint(gl_PrimitiveID), triangleIndices))
     {
         payload.Hit = 0u;
         return;
     }
-    IndexData indices = IndexData(instance.indexAddress);
-    uint a = indices.values[firstIndex];
-    uint b = indices.values[firstIndex + 1u];
-    uint c = indices.values[firstIndex + 2u];
-    if (a >= instance.geometry.y || b >= instance.geometry.y || c >= instance.geometry.y)
-    {
-        payload.Hit = 0u;
-        return;
-    }
+    uint a = triangleIndices.x;
+    uint b = triangleIndices.y;
+    uint c = triangleIndices.z;
     VertexData vertices = VertexData(instance.vertexAddress);
     uint stride = instance.geometry.x / 4u;
     vec3 p0 = gl_ObjectToWorldEXT * vec4(ReadFloat3(vertices, a, stride, 0u), 1.0);

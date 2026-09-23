@@ -26,6 +26,53 @@ namespace NorvesLib::Core::Rendering
     /** @brief パストレーサーが1フレームで束ねる材質textureの上限（重複を除いた数） */
     inline constexpr uint32_t PathTracingMaterialTextureCapacity = 256u;
 
+    /** @brief 空が無効なときの環境光の種類。環境光はBSDF標本だけで評価する。 */
+    enum class PathTracingEnvironmentMode : uint32_t
+    {
+        Black = 0,
+        Uniform = 1,
+        Equirect = 2
+    };
+
+    /**
+     * @brief 空が無効なときの環境光
+     *
+     * 放射輝度は物理値で、パストレーサーがカメラのプリエクスポージャを掛ける。
+     * Equirectの向きはLightingPassの環境マップと同じ正距円筒（atan(z, x)、asin(-y)）。
+     */
+    struct PathTracingEnvironment
+    {
+        PathTracingEnvironmentMode Mode = PathTracingEnvironmentMode::Black;
+        float UniformRadiance[3] = {0.0f, 0.0f, 0.0f};
+        RHI::TexturePtr EquirectTexture;
+        float Intensity = 1.0f;
+    };
+
+    /**
+     * @brief 表面BSDF
+     *
+     * Productionはラスタと同じDFG LUTで多重散乱を補償したGGX鏡面と、(1-Ed)で重みを付けた拡散。
+     * ValidationLambertはラスタの検証mode 253と同じ純Lambert（アルベド/π）。
+     */
+    enum class PathTracingBsdfMode : uint32_t
+    {
+        Production = 0,
+        ValidationLambert = 1
+    };
+
+    /**
+     * @brief 発光三角形と太陽円盤の標本化戦略
+     *
+     * 既定はpower heuristic（β=2）のMIS。LightOnlyとBsdfOnlyは同じ期待値へ収束することを確かめる検証用。
+     * 点・spot・方向光は常に光源標本（重み1）。
+     */
+    enum class PathTracingLightSampling : uint32_t
+    {
+        MultipleImportance = 0,
+        LightOnly = 1,
+        BsdfOnly = 2
+    };
+
     class PathTracingPass final : public IViewPass, public IRenderGraphPass
     {
     public:
@@ -46,6 +93,26 @@ namespace NorvesLib::Core::Rendering
         /** @brief 直近フレームで束ねた材質texture数（先頭の既定texture4個を含む） */
         uint32_t GetBoundMaterialTextureCount() const { return m_BoundMaterialTextureCount; }
 
+        /**
+         * @brief 空が無効なときの環境光を設定する。変更すると累積履歴を捨てる。
+         *
+         * 環境textureの参照を持つため、Shutdownで既定（黒）へ戻して参照を離す。
+         * 同じtextureの中身を書き換えた場合は履歴を捨てないので、別textureを渡すかscene revisionを進める。
+         */
+        void SetEnvironment(const PathTracingEnvironment& environment) { m_Environment = environment; }
+
+        /** @brief 表面BSDFを切り替える。変更すると累積履歴を捨てる。 */
+        void SetBsdfMode(PathTracingBsdfMode mode) { m_BsdfMode = mode; }
+
+        /** @brief 発光三角形と太陽円盤の標本化戦略を切り替える。変更すると累積履歴を捨てる。 */
+        void SetLightSampling(PathTracingLightSampling sampling) { m_LightSampling = sampling; }
+
+        /** @brief 直近フレームで光源表へ載せた点・spot・方向光の数 */
+        uint32_t GetPunctualLightCount() const { return m_PunctualLightCount; }
+
+        /** @brief 直近フレームで光源標本の対象にした発光三角形の数 */
+        uint32_t GetEmissiveTriangleCount() const { return m_EmissiveTriangleCount; }
+
     private:
         struct FrameResources
         {
@@ -58,6 +125,12 @@ namespace NorvesLib::Core::Rendering
             uint32_t MotionInstanceCapacity = 0u;
             /** @brief このフレームの材質texture表。先頭4要素は既定texture。 */
             Container::VariableArray<RHI::TexturePtr> MaterialTextures;
+            /** @brief 点・spot・方向光の表（ラスタのLightingPassと同じ詰め方） */
+            RHI::BufferPtr LightBuffer;
+            uint64_t LightBufferCapacity = 0u;
+            /** @brief 発光instanceの表（instance番号・三角形数・先頭三角形の通し番号） */
+            RHI::BufferPtr EmissiveBuffer;
+            uint64_t EmissiveBufferCapacity = 0u;
         };
 
         struct History
@@ -76,6 +149,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t FogSignature = 0u;
             /** @brief 解決後の材質texture実体と各instanceの表番号の署名 */
             uint64_t MaterialTextureSignature = 0u;
+            uint64_t LightSignature = 0u;
+            uint64_t EnvironmentSignature = 0u;
             PathTracingDebugOutput DebugOutput = PathTracingDebugOutput::None;
             bool bSkyValid = false;
             RHI::TexturePtr Textures[2];
@@ -89,6 +164,8 @@ namespace NorvesLib::Core::Rendering
                                                   History& history);
         bool PrepareInstances(const ViewRenderContext& context,
                               FrameResources& frameResources);
+        bool PrepareLights(const ViewRenderContext& context,
+                           FrameResources& frameResources);
 
         Container::VariableArray<History> m_Histories;
         RHI::PipelinePtr m_Pipeline;
@@ -103,8 +180,22 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_DefaultFlatNormalTexture;
         RHI::TexturePtr m_DefaultBlackTexture;
         RHI::TexturePtr m_DefaultMidGrayTexture;
+        /** @brief ラスタと同じsplit-sum DFG LUT（多重散乱補償とエネルギー分配に使う） */
+        RHI::TexturePtr m_DfgLutTexture;
+        RHI::SamplerPtr m_LinearClampSampler;
+        /** @brief 環境textureを使わないときに束ねる1x1の黒 */
+        RHI::TexturePtr m_DefaultEnvironmentTexture;
+        RHI::SamplerPtr m_EnvironmentSampler;
         PathTracingDebugOutput m_DebugOutput = PathTracingDebugOutput::None;
+        PathTracingEnvironment m_Environment;
+        PathTracingBsdfMode m_BsdfMode = PathTracingBsdfMode::Production;
+        PathTracingLightSampling m_LightSampling = PathTracingLightSampling::MultipleImportance;
         uint32_t m_BoundMaterialTextureCount = 0u;
+        uint32_t m_PunctualLightCount = 0u;
+        uint32_t m_EmissiveInstanceCount = 0u;
+        uint32_t m_EmissiveTriangleCount = 0u;
+        uint64_t m_DeclaredLightSignature = 0u;
+        uint64_t m_DeclaredEnvironmentSignature = 0u;
         bool m_bMaterialTextureOverflowReported = false;
         RGTextureHandle m_OutputHandle;
         RGTextureHandle m_SkyRadianceHandle;

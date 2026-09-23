@@ -12,7 +12,23 @@ layout(set = 0, binding = 1, std140) uniform PathTracingParameters
     vec4 fogLightDirectionAndAnisotropy; // xyz=方向光の進行方向、w=HG異方性
     vec4 fogLightRadianceAndEnabled; // rgb=方向光放射輝度、w=散乱有効
     vec4 exposureAndDebug; // x=カメラのプリエクスポージャ、y=検証出力（0=放射輝度）
+    uvec4 lightState; // x=点・spot・方向光の数、y=発光instance数、z=発光三角形数、w=BSDF(bit0-1)と標本化戦略(bit2-3)
+    vec4 environmentRadiance; // rgb=一様環境の放射輝度または環境textureの倍率、w=環境光の種類
 } parameters;
+
+// 表面BSDF（PathTracingBsdfModeと同じ値）。
+const uint PATH_BSDF_PRODUCTION = 0u;
+const uint PATH_BSDF_VALIDATION_LAMBERT = 1u;
+
+// 発光三角形と太陽円盤の標本化戦略（PathTracingLightSamplingと同じ値）。
+const uint PATH_SAMPLING_MIS = 0u;
+const uint PATH_SAMPLING_LIGHT_ONLY = 1u;
+const uint PATH_SAMPLING_BSDF_ONLY = 2u;
+
+// 空が無効なときの環境光（PathTracingEnvironmentModeと同じ値）。
+const uint PATH_ENVIRONMENT_BLACK = 0u;
+const uint PATH_ENVIRONMENT_UNIFORM = 1u;
+const uint PATH_ENVIRONMENT_EQUIRECT = 2u;
 
 // 検証出力。1次命中面の材質値を放射輝度の代わりに書く。
 const uint PATH_DEBUG_NONE = 0u;

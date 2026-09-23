@@ -1,15 +1,40 @@
 ﻿// 決定論的な1試料を追跡し、前回までの平均と合成する。
+// 各表面頂点で点・spot・方向光と発光三角形・太陽円盤を光源標本し（NEE）、BSDF標本で経路を延ばす。
+// 発光三角形と太陽円盤はpower heuristic（β=2）で2つの標本を合成し、環境光はBSDF標本だけで評価する。
 #version 460
 #extension GL_EXT_ray_tracing : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
 #include "PathTracing/PathTracingCommon.glsl"
+#include "PathTracing/PathTracingScene.glsl"
+#include "Common/PbrMaterialEvaluation.glsl"
+#include "PathTracing/PathTracingBsdf.glsl"
 
 layout(set = 0, binding = 3) uniform sampler2D previousAverage;
 layout(set = 0, binding = 4, rgba32f) uniform writeonly image2D currentAverage;
 layout(set = 0, binding = 5) uniform sampler2D skyRadiance;
 layout(set = 0, binding = 6) uniform sampler2D skyTransmittance;
 layout(set = 0, binding = 7) uniform sampler2D skySunDisk;
+layout(set = 0, binding = 10) uniform sampler2D environmentTexture;
+
+// ラスタのlighting.fragと同じ並び（LightingPassの詰め方）。
+struct PathLight
+{
+    vec4 position; // xyz=位置、w=種類（0=方向、1=点、2=spot）
+    vec4 direction; // xyz=進行方向、w=内側円錐の余弦
+    vec4 chromaticityAndIntensity; // xyz=Y=1の色度、w=lux（方向）またはcd
+    vec4 attenuation; // x=範囲、y=外側円錐の余弦
+};
+layout(set = 0, binding = 11, std430) readonly buffer PathLights
+{
+    PathLight values[];
+} lights;
+layout(set = 0, binding = 12, std430) readonly buffer PathEmissiveInstances
+{
+    uvec4 values[]; // x=instance番号、y=三角形数、z=先頭三角形の通し番号
+} emissiveInstances;
 
 layout(location = 0) rayPayloadEXT PathPayload payload;
 
@@ -26,18 +51,6 @@ float Random01(inout uint state)
     return float(NextRandom(state) & 0x00ffffffu) * (1.0 / 16777216.0);
 }
 
-vec3 CosineHemisphere(vec3 normal, inout uint state)
-{
-    float phi = 6.28318530718 * Random01(state);
-    float radius = sqrt(Random01(state));
-    vec3 tangent = normalize(cross(abs(normal.z) < 0.9 ? vec3(0.0, 0.0, 1.0) :
-                                   vec3(0.0, 1.0, 0.0), normal));
-    vec3 bitangent = cross(normal, tangent);
-    return normalize(tangent * (radius * cos(phi)) +
-                     bitangent * (radius * sin(phi)) +
-                     normal * sqrt(max(0.0, 1.0 - radius * radius)));
-}
-
 vec2 EquirectangularUV(vec3 direction)
 {
     vec2 uv = vec2(atan(direction.z, direction.x),
@@ -45,11 +58,57 @@ vec2 EquirectangularUV(vec3 direction)
     return uv * vec2(0.15915494, 0.31830989) + 0.5;
 }
 
-vec3 SkyMissRadiance(vec3 direction, bool primaryRay)
+uint BsdfMode()
+{
+    return parameters.lightState.w & 3u;
+}
+
+uint SamplingMode()
+{
+    return (parameters.lightState.w >> 2u) & 3u;
+}
+
+float PreExposure()
+{
+    return parameters.exposureAndDebug.x;
+}
+
+// 太陽円盤の立体角。円盤判定と同じ余弦値から求める（1-cosはfloatで誤差なく引ける）。
+float SunSolidAngle()
+{
+    return 6.28318530718 * (1.0 - parameters.skySunDirectionAndCosRadius.w);
+}
+
+bool IsSunAvailable()
+{
+    return parameters.skyState.z > 0.5 && parameters.skyState.y > 0.0 &&
+           SunSolidAngle() > 0.0;
+}
+
+// 空が無効なときの環境光（物理値）。
+vec3 EnvironmentRadiance(vec3 direction)
+{
+    uint mode = uint(parameters.environmentRadiance.w + 0.5);
+    if (mode == PATH_ENVIRONMENT_UNIFORM)
+    {
+        return parameters.environmentRadiance.rgb;
+    }
+    if (mode == PATH_ENVIRONMENT_EQUIRECT)
+    {
+        return max(textureLod(environmentTexture, EquirectangularUV(direction), 0.0).rgb,
+                   vec3(0.0)) * parameters.environmentRadiance.r;
+    }
+    return vec3(0.0);
+}
+
+// 不交差の放射輝度（事前露出済み）。bsdfPdfは2次以降の太陽円盤のMIS重みに使う。
+vec3 MissRadiance(vec3 direction, bool primaryRay, float bsdfPdf)
 {
     if (parameters.skyState.z < 0.5)
     {
-        return parameters.skyState.w > 0.5 ? vec3(0.0) : vec3(0.05);
+        // 空を要求したがLUTがないフレームは黒へ固定する。
+        return parameters.skyState.w > 0.5 ? vec3(0.0)
+                                            : EnvironmentRadiance(direction) * PreExposure();
     }
     vec3 sky = textureLod(skyRadiance, EquirectangularUV(direction), 0.0).rgb;
     vec4 disk = textureLod(skySunDisk, vec2(0.5), 0.0);
@@ -60,11 +119,21 @@ vec3 SkyMissRadiance(vec3 direction, bool primaryRay)
                                 0.0).rgb, vec3(0.0), vec3(1.0));
     }
     sky *= parameters.skyState.x;
-    if (primaryRay && disk.a > 0.5 &&
-        dot(direction, parameters.skySunDirectionAndCosRadius.xyz) >=
-            parameters.skySunDirectionAndCosRadius.w)
+    bool bInsideSun = dot(direction, parameters.skySunDirectionAndCosRadius.xyz) >=
+                      parameters.skySunDirectionAndCosRadius.w;
+    if (bInsideSun && primaryRay && disk.a > 0.5)
     {
+        // 1次レイは表示用の円盤（fp16飽和を含む）を見せる。
         sky += disk.rgb;
+    }
+    else if (bInsideSun && !primaryRay && IsSunAvailable())
+    {
+        // 2次以降は照明用の飽和しない太陽放射輝度（照度/立体角）をBSDF側の重みで足す。
+        uint sampling = SamplingMode();
+        float weight = sampling == PATH_SAMPLING_BSDF_ONLY ? 1.0 :
+                       sampling == PATH_SAMPLING_LIGHT_ONLY ? 0.0 :
+                       PowerHeuristic(bsdfPdf, 1.0 / SunSolidAngle());
+        sky += vec3(parameters.skyState.y / SunSolidAngle()) * weight;
     }
     return max(sky, vec3(0.0));
 }
@@ -214,6 +283,238 @@ void ApplyFogSegment(vec3 origin, vec3 direction, vec3 surfacePosition,
     throughput *= transmittance;
 }
 
+// 影レイ。最初の命中で打ち切り、命中シェーダーは実行しない（不交差シェーダーだけがHitを0にする）。
+bool IsVisible(vec3 origin, vec3 direction, float maxDistance)
+{
+    if (maxDistance <= 0.001)
+    {
+        return true;
+    }
+    payload.Hit = 1u;
+    traceRayEXT(scene, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT |
+                           gl_RayFlagsSkipClosestHitShaderEXT,
+                0xffu, 0u, 0u, 0u, origin, 0.001, direction, maxDistance, 0);
+    return payload.Hit == 0u;
+}
+
+// 面から少し浮かせた原点から目標点までの可視性。方向と距離を浮かせた原点から測り直す。
+// 面上の点から測った方向のままだと、浅い角度で原点のずれが光線方向へ伸び、目標の発光面を
+// 手前で横切って自分で遮る。目標面の手前で止めるため、距離の0.1%だけ短くする。
+bool IsPointVisible(vec3 shadowOrigin, vec3 target)
+{
+    vec3 toTarget = target - shadowOrigin;
+    float targetDistance = length(toTarget);
+    if (targetDistance <= 1.0e-6)
+    {
+        return true;
+    }
+    return IsVisible(shadowOrigin, toTarget / targetDistance, targetDistance * 0.999);
+}
+
+float RangeWindow(float distance, float range)
+{
+    float factor = max(1.0 - pow(distance / max(range, 0.0001), 4.0), 0.0);
+    return factor * factor;
+}
+
+// 点・spot・方向光の直接照明（光源標本だけ、重み1）。単位・減衰・spot円錐はラスタと同じ。
+vec3 EvaluatePunctualLights(PathSurface surface, vec3 position, vec3 geometricNormal)
+{
+    vec3 sum = vec3(0.0);
+    vec3 shadowOrigin = position + geometricNormal * 0.002;
+    for (uint index = 0u; index < parameters.lightState.x; ++index)
+    {
+        PathLight light = lights.values[index];
+        float lightType = light.position.w;
+        vec3 L;
+        float attenuation = 1.0;
+        float maxDistance = 100000.0;
+        if (lightType < 0.5)
+        {
+            float directionLength = length(light.direction.xyz);
+            if (directionLength <= 1.0e-8)
+            {
+                continue;
+            }
+            L = -light.direction.xyz / directionLength;
+        }
+        else
+        {
+            vec3 toLight = light.position.xyz - position;
+            float distance = length(toLight);
+            if (distance <= 1.0e-6)
+            {
+                continue;
+            }
+            L = toLight / distance;
+            attenuation = RangeWindow(distance, light.attenuation.x) /
+                          max(distance * distance, 0.01 * 0.01);
+            maxDistance = -1.0;
+            if (lightType >= 1.5)
+            {
+                float directionLength = length(light.direction.xyz);
+                if (directionLength <= 1.0e-8)
+                {
+                    continue;
+                }
+                float theta = dot(L, -light.direction.xyz / directionLength);
+                float innerCosine = light.direction.w;
+                float outerCosine = light.attenuation.y;
+                attenuation *= clamp((theta - outerCosine) /
+                                         max(innerCosine - outerCosine, 0.001),
+                                     0.0, 1.0);
+            }
+        }
+        float NdotL = dot(surface.Normal, L);
+        if (attenuation <= 0.0 || NdotL <= 0.0 || dot(geometricNormal, L) <= 0.0)
+        {
+            continue;
+        }
+        vec3 contribution = EvaluatePathBsdf(surface, L) * NdotL * attenuation *
+            light.chromaticityAndIntensity.rgb * light.chromaticityAndIntensity.w;
+        bool bVisible = maxDistance < 0.0
+            ? IsPointVisible(shadowOrigin, light.position.xyz)
+            : IsVisible(shadowOrigin, L, maxDistance);
+        if (max(contribution.r, max(contribution.g, contribution.b)) <= 0.0 || !bVisible)
+        {
+            continue;
+        }
+        sum += contribution;
+    }
+    return sum * PreExposure();
+}
+
+// 発光三角形の光源標本。三角形を通し番号で一様に選び、面上を一様に標本化する。
+vec3 SampleEmissiveTriangles(PathSurface surface, vec3 position, vec3 geometricNormal,
+                             inout uint state)
+{
+    uint totalTriangles = parameters.lightState.z;
+    uint sampling = SamplingMode();
+    if (totalTriangles == 0u || parameters.lightState.y == 0u ||
+        sampling == PATH_SAMPLING_BSDF_ONLY)
+    {
+        return vec3(0.0);
+    }
+    uint triangleNumber = min(uint(Random01(state) * float(totalTriangles)),
+                              totalTriangles - 1u);
+    float u1 = Random01(state);
+    float u2 = Random01(state);
+    // 先頭三角形の通し番号が昇順の表を二分探索する。
+    uint low = 0u;
+    uint high = parameters.lightState.y - 1u;
+    while (low < high)
+    {
+        uint middle = (low + high + 1u) / 2u;
+        if (emissiveInstances.values[middle].z <= triangleNumber)
+        {
+            low = middle;
+        }
+        else
+        {
+            high = middle - 1u;
+        }
+    }
+    uvec4 entry = emissiveInstances.values[low];
+    if (triangleNumber < entry.z || triangleNumber - entry.z >= entry.y ||
+        entry.x >= parameters.imageState.w)
+    {
+        return vec3(0.0);
+    }
+    PathInstance instance = instances.values[entry.x];
+    vec3 p0;
+    vec3 p1;
+    vec3 p2;
+    if (!ReadWorldTriangle(instance, triangleNumber - entry.z, p0, p1, p2))
+    {
+        return vec3(0.0);
+    }
+    vec3 edgeCross = cross(p1 - p0, p2 - p0);
+    float twiceArea = length(edgeCross);
+    if (twiceArea <= 1.0e-12)
+    {
+        return vec3(0.0);
+    }
+    float rootU1 = sqrt(u1);
+    vec3 lightPoint = p0 * (1.0 - rootU1) + p1 * (rootU1 * (1.0 - u2)) + p2 * (rootU1 * u2);
+    vec3 toLight = lightPoint - position;
+    float distanceSquared = dot(toLight, toLight);
+    if (distanceSquared <= 1.0e-12)
+    {
+        return vec3(0.0);
+    }
+    float distance = sqrt(distanceSquared);
+    vec3 L = toLight / distance;
+    // 発光は両面（命中側と同じ規則）。
+    float lightCosine = abs(dot(edgeCross / twiceArea, L));
+    float NdotL = dot(surface.Normal, L);
+    if (lightCosine <= 1.0e-6 || NdotL <= 0.0 || dot(geometricNormal, L) <= 0.0)
+    {
+        return vec3(0.0);
+    }
+    float lightPdf = distanceSquared /
+        (lightCosine * 0.5 * twiceArea * float(totalTriangles));
+    float weight = sampling == PATH_SAMPLING_LIGHT_ONLY
+        ? 1.0
+        : PowerHeuristic(lightPdf, PathBsdfPdf(surface, L));
+    vec3 emission = instance.emission.rgb * instance.emission.a * PreExposure();
+    vec3 contribution = EvaluatePathBsdf(surface, L) * NdotL * emission * (weight / lightPdf);
+    if (max(contribution.r, max(contribution.g, contribution.b)) <= 0.0 ||
+        !IsPointVisible(position + geometricNormal * 0.002, lightPoint))
+    {
+        return vec3(0.0);
+    }
+    return contribution;
+}
+
+// BSDF標本で当たった発光三角形の重み。1次命中は常に1。
+float EmissionHitWeight(float bsdfPdf, vec3 toHit, vec3 hitNormal, float triangleArea)
+{
+    uint sampling = SamplingMode();
+    if (sampling == PATH_SAMPLING_BSDF_ONLY)
+    {
+        return 1.0;
+    }
+    if (sampling == PATH_SAMPLING_LIGHT_ONLY)
+    {
+        return 0.0;
+    }
+    float distanceSquared = dot(toHit, toHit);
+    float lightCosine = abs(dot(hitNormal, toHit * inversesqrt(max(distanceSquared, 1.0e-24))));
+    if (parameters.lightState.z == 0u || triangleArea <= 0.0 || lightCosine <= 1.0e-6)
+    {
+        return 1.0;
+    }
+    float lightPdf = distanceSquared /
+        (lightCosine * triangleArea * float(parameters.lightState.z));
+    return PowerHeuristic(bsdfPdf, lightPdf);
+}
+
+// 太陽円盤の光源標本。放射輝度=照度/立体角、pdf=1/立体角なので寄与はf·cos·照度·重み。
+vec3 SampleSun(PathSurface surface, vec3 position, vec3 geometricNormal, inout uint state)
+{
+    uint sampling = SamplingMode();
+    if (!IsSunAvailable() || sampling == PATH_SAMPLING_BSDF_ONLY)
+    {
+        return vec3(0.0);
+    }
+    vec3 L = SampleSolarDirection(state);
+    float NdotL = dot(surface.Normal, L);
+    if (NdotL <= 0.0 || dot(geometricNormal, L) <= 0.0)
+    {
+        return vec3(0.0);
+    }
+    float weight = sampling == PATH_SAMPLING_LIGHT_ONLY
+        ? 1.0
+        : PowerHeuristic(1.0 / SunSolidAngle(), PathBsdfPdf(surface, L));
+    vec3 contribution = EvaluatePathBsdf(surface, L) * NdotL * parameters.skyState.y * weight;
+    if (max(contribution.r, max(contribution.g, contribution.b)) <= 0.0 ||
+        !IsVisible(position + geometricNormal * 0.002, L, 100000.0))
+    {
+        return vec3(0.0);
+    }
+    return contribution;
+}
+
 void main()
 {
     ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
@@ -245,6 +546,9 @@ void main()
     vec3 radiance = vec3(0.0);
     uint debugOutput = uint(parameters.exposureAndDebug.y + 0.5);
     vec3 debugValue = vec3(0.0);
+    uint bsdfMode = BsdfMode();
+    // 直前の頂点でBSDF標本を引いたときの立体角pdf（発光命中と太陽のMIS重みに使う）。
+    float previousBsdfPdf = 0.0;
 
     for (uint bounce = 0u; bounce < 8u; ++bounce)
     {
@@ -253,16 +557,20 @@ void main()
                     origin, 0.001, direction, 100000.0, 0);
         if (payload.Hit == 0u)
         {
-            radiance += throughput * SkyMissRadiance(direction, bounce == 0u);
+            radiance += throughput * MissRadiance(direction, bounce == 0u, previousBsdfPdf);
             break;
         }
 
+        // 影レイが同じpayloadを使うため、命中面の値を先に取り出す。
         vec3 surfacePosition = payload.Position;
         vec3 geometricNormal = payload.GeometricNormal;
-        vec3 surfaceNormal = payload.ShadingNormal;
-        vec3 surfaceColor = clamp(payload.Albedo, vec3(0.0), vec3(1.0));
+        vec3 shadingNormal = payload.ShadingNormal;
+        vec3 surfaceAlbedo = clamp(payload.Albedo, vec3(0.0), vec3(1.0));
+        float surfaceMetallic = payload.Metallic;
+        float surfaceRoughness = payload.Roughness;
+        float triangleArea = payload.TriangleArea;
         // 発光はGBufferと同じく色×nitsの物理値に、カメラのプリエクスポージャを掛ける。
-        vec3 surfaceEmission = payload.Emission * parameters.exposureAndDebug.x;
+        vec3 surfaceEmission = payload.Emission * PreExposure();
         if (bounce == 0u && debugOutput != PATH_DEBUG_NONE)
         {
             debugValue = debugOutput == PATH_DEBUG_ALBEDO ? payload.Albedo :
@@ -271,27 +579,42 @@ void main()
             break;
         }
         ApplyFogSegment(origin, direction, surfacePosition, throughput, radiance);
-        radiance += throughput * surfaceEmission;
-        if (parameters.skyState.z > 0.5)
+        if (max(surfaceEmission.r, max(surfaceEmission.g, surfaceEmission.b)) > 0.0)
         {
-            vec3 solarDirection = SampleSolarDirection(state);
-            float incidence = max(dot(surfaceNormal, solarDirection), 0.0);
-            if (incidence > 0.0 && dot(geometricNormal, solarDirection) > 0.0)
-            {
-                payload.Hit = 0u;
-                traceRayEXT(scene, gl_RayFlagsOpaqueEXT |
-                                 gl_RayFlagsTerminateOnFirstHitEXT,
-                            0xffu, 0u, 0u, 0u,
-                            surfacePosition + geometricNormal * 0.002,
-                            0.001, solarDirection, 100000.0, 0);
-                if (payload.Hit == 0u)
-                {
-                    radiance += throughput * surfaceColor *
-                        (incidence * parameters.skyState.y * 0.31830988618);
-                }
-            }
+            float emissionWeight = bounce == 0u
+                ? 1.0
+                : EmissionHitWeight(previousBsdfPdf, surfacePosition - origin,
+                                    geometricNormal, triangleArea);
+            radiance += throughput * surfaceEmission * emissionWeight;
         }
-        throughput *= surfaceColor;
+
+        PathSurface surface = MakePathSurface(shadingNormal, -direction, surfaceAlbedo,
+                                              surfaceMetallic, surfaceRoughness, bsdfMode);
+        radiance += throughput * EvaluatePunctualLights(surface, surfacePosition, geometricNormal);
+        radiance += throughput * SampleEmissiveTriangles(surface, surfacePosition,
+                                                         geometricNormal, state);
+        radiance += throughput * SampleSun(surface, surfacePosition, geometricNormal, state);
+
+        vec3 u = vec3(Random01(state), Random01(state), Random01(state));
+        vec3 nextDirection;
+        // 面の裏へ抜ける方向は光漏れになるため経路を打ち切る。
+        if (!SamplePathBsdf(surface, u, nextDirection) ||
+            dot(nextDirection, geometricNormal) <= 0.0)
+        {
+            break;
+        }
+        float bsdfPdf = PathBsdfPdf(surface, nextDirection);
+        if (!(bsdfPdf > 0.0))
+        {
+            break;
+        }
+        throughput *= EvaluatePathBsdf(surface, nextDirection) *
+                      (dot(surface.Normal, nextDirection) / bsdfPdf);
+        if (any(isnan(throughput)) || any(isinf(throughput)) ||
+            max(throughput.r, max(throughput.g, throughput.b)) <= 0.0)
+        {
+            break;
+        }
         if (bounce >= 3u)
         {
             float survival = clamp(max(throughput.r, max(throughput.g, throughput.b)),
@@ -302,14 +625,9 @@ void main()
             }
             throughput /= survival;
         }
+        previousBsdfPdf = bsdfPdf;
         origin = surfacePosition + geometricNormal * 0.002;
-        direction = CosineHemisphere(surfaceNormal, state);
-        // シェーディング法線が傾くと散乱方向が幾何面の裏へ向く。同じ面へ再命中して
-        // 発光を重複加算するため、経路を打ち切る。
-        if (dot(direction, geometricNormal) <= 0.0)
-        {
-            break;
-        }
+        direction = nextDirection;
     }
 
     if (debugOutput != PATH_DEBUG_NONE)

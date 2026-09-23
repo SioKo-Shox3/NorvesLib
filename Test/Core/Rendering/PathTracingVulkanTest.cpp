@@ -146,6 +146,18 @@ namespace
         return packet.HasCompleteRayTracingScene();
     }
 
+    // 既存の検証は空が無効なときに一様環境0.05を前提にする（既定の環境光は黒）。
+    PathTracingEnvironment MakeUniformEnvironment(float radiance)
+    {
+        PathTracingEnvironment environment;
+        environment.Mode = PathTracingEnvironmentMode::Uniform;
+        for (float& channel : environment.UniformRadiance)
+        {
+            channel = radiance;
+        }
+        return environment;
+    }
+
     bool RecordHostReadBarrier(const CommandListPtr& commandList,
                                const BufferPtr& readback)
     {
@@ -348,6 +360,7 @@ namespace
             std::cerr << "PT RT pipeline/SBTを作成できませんでした\n";
             return 1;
         }
+        pass.SetEnvironment(MakeUniformEnvironment(0.05f));
         RenderGraph graph;
         graph.Initialize(nullptr);
         VariableArray<float> first;
@@ -563,6 +576,9 @@ namespace
             std::cerr << "霧検証用PT/空パスを初期化できませんでした\n";
             return 1;
         }
+        // 表面はラスタの検証mode 253と同じ純Lambertにし、方向光の表面直接照明を解析値で比べる。
+        pass.SetEnvironment(MakeUniformEnvironment(0.05f));
+        pass.SetBsdfMode(PathTracingBsdfMode::ValidationLambert);
         RenderGraph graph;
         graph.Initialize(nullptr);
         VariableArray<float> baseline;
@@ -659,10 +675,16 @@ namespace
         const float transmission = ComputeHeightFogTransmittance(
             packet.Scene.VolumetricFog, camera.PositionY, 0.0f, 2.0f);
         const float lightColor[] = {1.0f, 0.5f, 0.25f};
+        // 表面の方向光はラスタと同じく色度（Y=1）×照度。視線と同じ向きから当たり、余弦は1。
+        const float lightLuminance = 0.2126f * lightColor[0] + 0.7152f * lightColor[1] +
+                                     0.0722f * lightColor[2];
+        const float surfaceAlbedo[] = {0.8f, 0.3f, 0.1f};
         for (uint32_t channel = 0u; channel < 3u; ++channel)
         {
+            const float surfaceDirect = surfaceAlbedo[channel] / 3.14159265358979323846f *
+                100.0f * lightColor[channel] / lightLuminance;
             const float expected = 100.0f * lightColor[channel] * phase *
-                (1.0f - transmission);
+                (1.0f - transmission) + transmission * surfaceDirect;
             const float measured = pixels[center + channel] - noLight[channel];
             std::cout << "fog_scattering_channel=" << channel
                       << " measured=" << measured << " expected=" << expected << '\n';
@@ -748,10 +770,12 @@ namespace
             return 1;
         }
         packet.Scene.SkyAtmosphere.bEnabled = false;
+        // 環境光は物理値にプリエクスポージャを掛けて評価する。
+        const float expectedEnvironment = 0.15f * camera.PreExposure;
         if (!RunFrame(device, graph, pass, context, 11u, 1u, 1u, pixels) ||
             pass.GetAccumulatedSampleCount() != 1u ||
-            std::abs(pixels[0u] + pixels[1u] + pixels[2u] - 0.15f) >
-                0.0001f)
+            std::abs(pixels[0u] + pixels[1u] + pixels[2u] - expectedEnvironment) >
+                expectedEnvironment * 0.001f)
         {
             std::cerr << "空無効時にPT環境光へ戻れませんでした\n";
             return 1;
@@ -872,6 +896,9 @@ namespace
             std::cerr << "屋外PTの空LUTまたはRT pipelineを初期化できませんでした\n";
             return 1;
         }
+        // 太陽照度の解析値は純Lambertで比べる（ラスタの検証mode 253と同じ表面）。
+        pathPass.SetEnvironment(MakeUniformEnvironment(0.05f));
+        pathPass.SetBsdfMode(PathTracingBsdfMode::ValidationLambert);
         RenderGraph graph;
         graph.Initialize(nullptr);
         VariableArray<float> pixels;
@@ -1010,11 +1037,13 @@ namespace
             return 1;
         }
         packet.Scene.SkyAtmosphere.bEnabled = false;
+        const float expectedEnvironment = 0.15f * camera.PreExposure;
         if (!RunFrame(device, graph, pathPass, context, 8u,
                       1u, 1u, pixels, &skyPass) ||
             pathPass.GetAccumulatedSampleCount() != 1u ||
             context.SkyAtmosphere.bSnapshotEnabled ||
-            std::abs(MaxCornerRadiance(pixels) - 0.15f) > 0.0001f)
+            std::abs(MaxCornerRadiance(pixels) - expectedEnvironment) >
+                expectedEnvironment * 0.001f)
         {
             std::cerr << "空無効時のPT環境光へ戻りませんでした\n";
             return 1;
