@@ -83,18 +83,18 @@
 - TEST-RGC: `5e1bdfa`。R7-P1のinclude展開でShaderManagerがファイルを読むようになり、空のshader置き場で初期化するRenderGraphCompileTestが失敗していた。実在するAssets/Shadersを渡して合格。
 - R7-P3B: `1cdf101` / `058aab9` / `20b1764` / `8c80695`。RT材質snapshotへinstance色とalbedo・normal・metallic・roughnessのtexture handleを加え、PTはRenderThreadで解決して重複を除いた256要素の配列descriptorへ束ねる（既定はGBufferと同じ白・平坦法線・黒・中間灰）。closest-hitはMesh3DVertexの法線・UVを補間し、ラスタと同じ余接フレームと共通の復号関数で材質値を得る。発光は色×nits×プリエクスポージャ。余接フレームの退化判定は尺度不変な共通関数にし、ラスタの常時fallbackも解消した。PathTracingMaterialVulkanTestでUV・instance色・metallic/roughness・法線マップ（伸縮UV・逆巻き・退化UV）・既定値・重複除去・handle解放時の履歴破棄・発光・stride 12・表の上限を固定し、validation 0件。RenderingValidation 51件で失敗0件（8件はskip契約）。
 - R7-P3C: `f605567` / `9128e3e` / `16f4532` / `9e0b35e`（記録 `179c3e4` / `c770ec6`）。DFG LUTの生成をラスタと共有し、PTのBSDFをラスタIBL端点と同じ多重散乱補償と(1-Ed)拡散にした（VNDF標本化、粗さ0でも有限な安定式、視線が裏なら幾何法線）。点・spot・方向光はLightingPassと同じ光源表のNEE、発光三角形と太陽円盤はpower heuristicのMIS、環境光は黒・一様・正距円筒（固定0.05を廃止）。影レイは浮かせた原点から目標点まで調べ、面光源は最も近い命中が標本化した発光三角形かで判定する。PathTracingLightingVulkanTestで白炉17行（平均相対誤差の最大0.626%）、解析照明（0.244%以内、spot円錐外0）、面光源の3戦略と解析照度（0.623%以内）、光沢金属・急な法線・太陽の3戦略の一致、光源直前の遮蔽板を固定。RenderingValidation 52件で失敗0件。
+- R7-P3D: `39a674d` / `c520c23` / `b70b412` / `c3448c8` / `8d6f7c0`、評価対応 `a1dc7e6` / `9125b04` / `1f79a37` / `19227a9` / `97890d2`。起動時の設定（`--renderer=path-tracing`、試料数/frame）でmain SceneViewをPTにでき、既定はラスタ。PTはLightingPassと同じ環境マップ読み込み、検証表示252/253/254、正射影、取得時の最小試料数とRGBA32F読み戻しに対応した。レイトレーシングシーンは影を落とさない不透明物体も含め、影・DDGI・RTGIはinstance maskで影を落とす物体だけを調べ、影を落とす物体がなければ従来どおりfallbackする。PTのシェーディング法線はラスタの法線行列と同じ退化規則に従う。カメラ標本はdispatchごとの連続した添字で引く。PathTracingRasterParityVulkanTestでR1の白炉15行と既知光度4段階をPTでも同じ評価関数に通し、ラスタとの差は白炉のマスク平均0.405%・8x8区画0.577%、既知光度のROI平均0.648%以内。RenderingValidation 53件で失敗0件（ラベル内のR6停止残留の揺らぎはTEST-R6-RESIDUAL-TIMINGへ）。
 
 ## In progress
-- R7-P3D: 起動時のPT選択（`--renderer=path-tracing`、試料数/frame）、LightingPassと共有する環境マップ読み込み、検証表示mode 252/253/254のPT対応、正射影、取得時の試料数条件と記録、RGBA32Fの読み戻しを実装中。描画検証appとラスタ/PT比較テストが残る。
 - R6-P6はblocked。R6-P5-REF（R7-P3D後のPT参照との比較）が残る。
 
 ## Next
 
-- R7-P3Dを仕上げて評価する（R7-P3Cの2周目対応`9e0b35e`の確認を含める）。
-- R6-P5-REF → R7-P4（16/64/256 spp、Cornell RGBE）→ R7-P7 → R6-P6 → R7-O3 の順に再開する。閾値とseedは変更しない。
+- R6-P5-REF → R7-P4（16/64/256 spp、Cornell RGBE）→ R7-P7 → TEST-R6-RESIDUAL-TIMING → R6-P6 → R7-O3 の順に再開する。閾値とseedは変更しない。FIX-NORMAL-MATRIX-SCALEは基準画像への影響を確かめてから扱う。
 - R8はM1（ACES 2.0 SDRのOCIO焼き込みLUT、DoF・動きぼけ、240 frame EXR）でTASKSを起こしてから着手する。
 
 ## Notes
+- R7-P3D評価（2026-09-24）: 1周目で1frameに束ねた試料のカメラ標本の偏り、影を落とさない物体だけのシーンでRTGIが既存の間接光を置き換える経路、PT機能判定のshaderInt64漏れが指摘され、2周目でPASS。R7-P3Bの`8c80695`とR7-P3Cの`9e0b35e`も追加指摘なし。負の対照は`.harness/runs/20260924-r7-p3d/negative-*.txt`。
 - R7-P3C評価（2026-09-24）: 1周目でGGXの分母（粗さ0）、裏側の視線の標本化、65504の切り詰め、影レイの終端、2周目で面光源の直前（2mm以内）の遮蔽物の見逃しが指摘された。2周の上限に達したため、最後の修正`9e0b35e`はR7-P3Dの評価対象へ含めて確認する。負の対照は`.harness/runs/20260924-r7-p3c/negative-p3c-*.txt`。
 - R7-P3B評価（2026-09-24）: 1周目で接空間基底の正規化・面裏散乱・texture解決変化の履歴破棄、2周目でラスタの退化判定（画面微分の絶対値）との分岐差が指摘された。2周の上限に達したため、最後の修正`8c80695`はR7-P3Cの評価対象へ含めて確認する。太陽標本の幾何面判定のテスト不足（non-blocking）はP3Cの太陽MISで扱う。ログは`.harness/runs/20260924-r7-p3b/`。
 - R6評価（2026-09-24、2周目）: 距離基準のずれと停止後の残留検証不足でNEEDS_WORK。2周の上限に達したため、対応（`ab86d83`・`c4a9d93`・`c5765a0`）はR6-P5-REFの評価対象へ含めて確認する。SkinnedRenderPathContractTestの停止は既存問題としてTEST-SKINNEDへ登録した。
