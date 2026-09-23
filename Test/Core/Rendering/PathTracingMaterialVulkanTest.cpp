@@ -491,6 +491,29 @@ namespace
         Normalize(outNormal);
     }
 
+    // ラスタ（gbuffer.fragのCalculateTBN）の余接フレーム。T=∇u、B=∇vを長い方の長さで共通に
+    // 正規化し、法線 = normalize(T·t.x + B·t.y + N·t.z)。
+    void ExpectedCotangentShadingNormal(const float (&gradientU)[3], const float (&gradientV)[3],
+                                        const float (&normal)[3],
+                                        const uint8_t (&normalBytes)[3], float (&outNormal)[3])
+    {
+        const float lengthSquaredU = gradientU[0] * gradientU[0] + gradientU[1] * gradientU[1] +
+                                     gradientU[2] * gradientU[2];
+        const float lengthSquaredV = gradientV[0] * gradientV[0] + gradientV[1] * gradientV[1] +
+                                     gradientV[2] * gradientV[2];
+        const float inverseMaxLength = 1.0f / std::sqrt(std::max(lengthSquaredU, lengthSquaredV));
+        const float tangent[3] = {Unorm(normalBytes[0]) * 2.0f - 1.0f,
+                                  Unorm(normalBytes[1]) * 2.0f - 1.0f,
+                                  Unorm(normalBytes[2]) * 2.0f - 1.0f};
+        for (uint32_t axis = 0u; axis < 3u; ++axis)
+        {
+            outNormal[axis] = (gradientU[axis] * tangent[0] + gradientV[axis] * tangent[1]) *
+                                  inverseMaxLength +
+                              normal[axis] * tangent[2];
+        }
+        Normalize(outNormal);
+    }
+
     // 範囲内の全画素が期待値と一致するか調べ、比較した画素数を返す。
     template <typename InsideFunction>
     uint32_t CheckUniformRegion(const ScreenMapping& mapping, const VariableArray<float>& pixels,
@@ -526,8 +549,32 @@ namespace
         return checked;
     }
 
+    // 材質資源からRTスナップショットへtexture handleを値で写すことを確かめる。
+    bool CheckMaterialSnapshotCopiesTextureHandles()
+    {
+        MaterialResourceData material;
+        material.AlbedoTexture = TextureHandle{11u};
+        material.NormalTexture = TextureHandle{12u};
+        material.MetallicTexture = TextureHandle{13u};
+        material.RoughnessTexture = TextureHandle{14u};
+        const RayTracingHitMaterialSnapshot snapshot = MakeRayTracingHitMaterialSnapshot(&material);
+        const RayTracingHitMaterialSnapshot empty = MakeRayTracingHitMaterialSnapshot(nullptr);
+        return snapshot.AlbedoTexture == material.AlbedoTexture &&
+               snapshot.NormalTexture == material.NormalTexture &&
+               snapshot.MetallicTexture == material.MetallicTexture &&
+               snapshot.RoughnessTexture == material.RoughnessTexture &&
+               !empty.AlbedoTexture.IsValid() && !empty.NormalTexture.IsValid() &&
+               !empty.MetallicTexture.IsValid() && !empty.RoughnessTexture.IsValid() &&
+               empty.ObjectColor[0] == 1.0f && empty.ObjectColor[3] == 1.0f;
+    }
+
     int RunTest()
     {
+        if (!CheckMaterialSnapshotCopiesTextureHandles())
+        {
+            std::cerr << "材質snapshotがtexture handleを写しませんでした\n";
+            return 1;
+        }
         if (IsForcedGpuTestSkipRequested())
         {
             return ReportGpuTestSkip(TestName, "GPUテストが環境変数でスキップされました");
@@ -603,9 +650,12 @@ namespace
         // 同じRHI textureを別handleで登録し、texture表が実体で重複を除くことを確かめる。
         const TextureHandle metallicAliasHandle =
             textures.RegisterExternalTexture(metallicTexture, "MetallicAlias");
+        // 累積の途中で解放し、既定textureへの切り替えで履歴を捨てることを確かめる。
+        const TextureHandle releasableAlbedoHandle =
+            textures.RegisterExternalTexture(albedoTexture, "ReleasableAlbedo");
         if (!albedoHandle.IsValid() || !normalHandle.IsValid() || !metallicHandle.IsValid() ||
             !roughnessHandle.IsValid() || !metallicAliasHandle.IsValid() ||
-            metallicAliasHandle == metallicHandle)
+            !releasableAlbedoHandle.IsValid() || metallicAliasHandle == metallicHandle)
         {
             std::cerr << "材質textureをRenderResourcesへ登録できませんでした\n";
             return 1;
@@ -619,12 +669,23 @@ namespace
             {{QuadHalfSize, -QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
             {{-QuadHalfSize, -QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}}};
         const uint32_t quadIndices[6] = {0u, 1u, 2u, 0u, 2u, 3u};
+        // u=(x+S)/2S+(S-y)/4S、v=(S-y)/4S。uとvの勾配の長さが違い直交もしないため、
+        // T・Bを個別に正規化するとラスタの余接フレームと結果が変わる。
+        const Mesh3DVertex stretchedVertices[4] = {
+            {{-QuadHalfSize, QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
+            {{QuadHalfSize, QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
+            {{QuadHalfSize, -QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {1.5f, 0.5f}},
+            {{-QuadHalfSize, -QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.5f, 0.5f}}};
+        const uint32_t stretchedIndices[6] = {0u, 1u, 2u, 0u, 3u, 2u};
         const float trianglePositions[9] = {-1.0f, -1.0f, 0.0f, 1.0f, -1.0f, 0.0f,
                                             0.0f, 1.0f, 0.0f};
         const uint32_t triangleIndices[3] = {0u, 1u, 2u};
         TestGeometry quad;
+        TestGeometry stretchedQuad;
         TestGeometry positionOnlyTriangle;
         if (!BuildGeometry(device, quadVertices, 4u, sizeof(Mesh3DVertex), quadIndices, 6u, quad) ||
+            !BuildGeometry(device, stretchedVertices, 4u, sizeof(Mesh3DVertex), stretchedIndices,
+                           6u, stretchedQuad) ||
             !BuildGeometry(device, trianglePositions, 3u, 3u * sizeof(float), triangleIndices, 3u,
                            positionOnlyTriangle))
         {
@@ -649,7 +710,11 @@ namespace
         triangleMaterial.NormalTexture = normalHandle;
         triangleMaterial.MetallicTexture = metallicHandle;
         triangleMaterial.RoughnessTexture = roughnessHandle;
-        if (!BuildTopLevel(device, quadPacket) || !BuildTopLevel(device, trianglePacket))
+        FramePacket stretchedPacket;
+        stretchedPacket.RayTracingScene.Instances.push_back(MakeInstance(stretchedQuad, 0u, 0.0f));
+        stretchedPacket.RayTracingScene.Instances[0].Material.NormalTexture = normalHandle;
+        if (!BuildTopLevel(device, quadPacket) || !BuildTopLevel(device, trianglePacket) ||
+            !BuildTopLevel(device, stretchedPacket))
         {
             std::cerr << "検証用のTLASを作成できませんでした\n";
             return 1;
@@ -824,6 +889,25 @@ namespace
         CheckUniformRegion(mapping, pixels, insideQuad, texturedNormal, NormalTolerance,
                            "textured_normal", bPassed);
 
+        // 3b. 伸縮・傾斜したUVでも、ラスタと同じ余接フレームで法線マップを適用する。
+        //     2枚目の三角形は巻き順が逆で、辺から求める行列式の符号が反転する。
+        context.SnapshotScene = &stretchedPacket.Scene;
+        context.SnapshotRayTracingScene = &stretchedPacket.RayTracingScene;
+        if (!render(PathTracingDebugOutput::ShadingNormal, 5u, "stretched_normal"))
+        {
+            return 1;
+        }
+        const float stretchedGradientU[3] = {0.5f / QuadHalfSize, -0.25f / QuadHalfSize, 0.0f};
+        const float stretchedGradientV[3] = {0.0f, -0.25f / QuadHalfSize, 0.0f};
+        const float vertexNormal[3] = {0.0f, 0.0f, -1.0f};
+        float stretchedNormal[3];
+        ExpectedCotangentShadingNormal(stretchedGradientU, stretchedGradientV, vertexNormal,
+                                       TiltedNormalBytes, stretchedNormal);
+        CheckUniformRegion(mapping, pixels, insideQuad, stretchedNormal, NormalTolerance,
+                           "stretched_normal", bPassed);
+        context.SnapshotScene = &quadPacket.Scene;
+        context.SnapshotRayTracingScene = &quadPacket.RayTracingScene;
+
         // 4. 同じRHI textureを指す別handleは表の1要素にまとまる。
         quadMaterial.RoughnessTexture = metallicAliasHandle;
         if (!render(PathTracingDebugOutput::MetallicRoughness, 7u, "aliased_material"))
@@ -863,13 +947,47 @@ namespace
         CheckUniformRegion(mapping, pixels, insideQuad, defaultNormal, NormalTolerance,
                            "default_normal", bPassed);
 
-        // 6. 発光は色×nitsにプリエクスポージャを掛ける。1次命中の反射は一様環境0.05×アルベド。
+        // 5b. 累積中にhandleを解放すると解決結果が既定の白へ変わり、履歴を捨てる。
+        quadMaterial.AlbedoTexture = releasableAlbedoHandle;
+        if (!render(PathTracingDebugOutput::Albedo, 5u, "release_before"))
+        {
+            return 1;
+        }
+        for (uint32_t extra = 0u; extra < 3u; ++extra)
+        {
+            ++frame;
+            if (!RunFrame(device, graph, pass, context, frame, pixels) ||
+                pass.GetAccumulatedSampleCount() != extra + 2u)
+            {
+                std::cerr << "解放前の材質で累積できませんでした\n";
+                return 1;
+            }
+        }
+        textures.ReleaseTexture(releasableAlbedoHandle);
+        ++frame;
+        if (!RunFrame(device, graph, pass, context, frame, pixels) ||
+            pass.GetAccumulatedSampleCount() != 1u ||
+            pass.GetBoundMaterialTextureCount() != 4u)
+        {
+            std::cerr << "handle解放後の既定textureへの切り替えで履歴を捨てませんでした samples="
+                      << pass.GetAccumulatedSampleCount() << " textures="
+                      << pass.GetBoundMaterialTextureCount() << '\n';
+            return 1;
+        }
+        CheckUniformRegion(mapping, pixels, insideQuad, defaultAlbedo, ValueTolerance,
+                           "released_albedo", bPassed);
+        quadMaterial.AlbedoTexture = TextureHandle();
+
+        // 6. 発光は色×nitsにプリエクスポージャを掛ける。空を要求してLUTがないフレームは不交差が黒になり、
+        //    傾いた法線マップで散乱が面の裏へ向いても自己交差で発光を重ねないことを確かめる。
+        quadMaterial.NormalTexture = normalHandle;
+        quadPacket.Scene.SkyAtmosphere.bEnabled = true;
         quadMaterial.EmissiveColor[0] = 1.0f;
         quadMaterial.EmissiveColor[1] = 0.5f;
         quadMaterial.EmissiveColor[2] = 0.25f;
         quadMaterial.EmissiveLuminanceNits = 4.0f;
         camera.PreExposure = 0.125f;
-        if (!render(PathTracingDebugOutput::None, 4u, "emission_low_exposure"))
+        if (!render(PathTracingDebugOutput::None, 5u, "emission_low_exposure"))
         {
             return 1;
         }
@@ -879,18 +997,17 @@ namespace
         {
             expectedEmission[channel] =
                 quadMaterial.EmissiveColor[channel] * quadMaterial.EmissiveLuminanceNits *
-                    camera.PreExposure +
-                ObjectColor[channel] * 0.05f;
+                camera.PreExposure;
         }
         CheckUniformRegion(mapping, pixels, insideQuad, expectedEmission, ValueTolerance,
                            "emission_low_exposure", bPassed);
         camera.PreExposure = 0.5f;
-        if (!render(PathTracingDebugOutput::None, 4u, "emission_high_exposure"))
+        if (!render(PathTracingDebugOutput::None, 5u, "emission_high_exposure"))
         {
             return 1;
         }
         {
-            // 同じ乱数列で経路は同一なので、露出の差はそのまま発光の差になる。
+            // 露出の差はそのまま発光の差になる。
             float maxError = 0.0f;
             for (uint32_t index = 0u; index < Width * Height; ++index)
             {
@@ -911,6 +1028,8 @@ namespace
             }
         }
         camera.PreExposure = 1.0f;
+        quadPacket.Scene.SkyAtmosphere.bEnabled = false;
+        quadMaterial.NormalTexture = TextureHandle();
 
         // 7. 位置のみの頂点（stride 12）は幾何法線とUV 0へfallbackし、法線マップを使わない。
         context.SnapshotScene = &trianglePacket.Scene;
@@ -1018,7 +1137,8 @@ namespace
         if (bPassed)
         {
             std::cout << "pt_material_uv=true instance_color=true metallic_roughness=true "
-                         "normal_map=true defaults=true texture_dedup=true "
+                         "normal_map=true cotangent_frame=true defaults=true texture_dedup=true "
+                         "texture_release_reset=true scatter_below_surface_terminated=true "
                          "emission_pre_exposure=true position_only_fallback=true "
                          "texture_table_overflow=true\n";
         }

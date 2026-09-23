@@ -651,6 +651,20 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
         }
+        // handleの解放や差し替えで解決結果が既定textureへ変わっても履歴を捨てられるよう、
+        // 解決後のtexture実体と各instanceの表番号を署名にする。
+        uint64_t textureSignature = 14695981039346656037ull;
+        for (const RHI::TexturePtr& texture : textureTable)
+        {
+            const RHI::ITexture* pointer = texture.get();
+            textureSignature = HashPathBytes(textureSignature, &pointer, sizeof(pointer));
+        }
+        for (const PathTracingInstance& instance : instances)
+        {
+            textureSignature = HashPathBytes(textureSignature, instance.Textures,
+                                             sizeof(instance.Textures));
+        }
+        m_DeclaredMaterialTextureSignature = textureSignature;
 
         const uint64_t requiredSize = instances.size() * sizeof(PathTracingInstance);
         if (requiredSize > std::numeric_limits<uint32_t>::max())
@@ -763,6 +777,7 @@ namespace NorvesLib::Core::Rendering
             history->SkySignature != skySignature ||
             history->FogSignature != fogSignature ||
             history->DebugOutput != m_DebugOutput ||
+            history->MaterialTextureSignature != m_DeclaredMaterialTextureSignature ||
             history->SampleCount == UINT32_MAX;
         if (bReset)
         {
@@ -1031,6 +1046,7 @@ namespace NorvesLib::Core::Rendering
         history.SkySignature = m_DeclaredSkySignature;
         history.FogSignature = m_DeclaredFogSignature;
         history.DebugOutput = m_DebugOutput;
+        history.MaterialTextureSignature = m_DeclaredMaterialTextureSignature;
         history.bSkyValid = bSkyValid;
     }
 

@@ -74,6 +74,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t GeometrySignature = 0u;
             uint64_t SkySignature = 0u;
             uint64_t FogSignature = 0u;
+            /** @brief 解決後の材質texture実体と各instanceの表番号の署名 */
+            uint64_t MaterialTextureSignature = 0u;
             PathTracingDebugOutput DebugOutput = PathTracingDebugOutput::None;
             bool bSkyValid = false;
             RHI::TexturePtr Textures[2];
@@ -115,6 +117,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_DeclaredGeometrySignature = 0u;
         uint64_t m_DeclaredSkySignature = 0u;
         uint64_t m_DeclaredFogSignature = 0u;
+        uint64_t m_DeclaredMaterialTextureSignature = 0u;
         bool m_bPrepared = false;
     };
 }

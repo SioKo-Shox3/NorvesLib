@@ -276,7 +276,7 @@ void main()
         {
             vec3 solarDirection = SampleSolarDirection(state);
             float incidence = max(dot(surfaceNormal, solarDirection), 0.0);
-            if (incidence > 0.0)
+            if (incidence > 0.0 && dot(geometricNormal, solarDirection) > 0.0)
             {
                 payload.Hit = 0u;
                 traceRayEXT(scene, gl_RayFlagsOpaqueEXT |
@@ -304,6 +304,12 @@ void main()
         }
         origin = surfacePosition + geometricNormal * 0.002;
         direction = CosineHemisphere(surfaceNormal, state);
+        // シェーディング法線が傾くと散乱方向が幾何面の裏へ向く。同じ面へ再命中して
+        // 発光を重複加算するため、経路を打ち切る。
+        if (dot(direction, geometricNormal) <= 0.0)
+        {
+            break;
+        }
     }
 
     if (debugOutput != PATH_DEBUG_NONE)

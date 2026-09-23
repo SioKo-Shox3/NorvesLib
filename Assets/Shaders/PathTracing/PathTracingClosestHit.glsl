@@ -126,35 +126,37 @@ void main()
         vec2 uv2 = ReadFloat2(vertices, c, stride, 6u);
         uv = uv0 * weights.x + uv1 * weights.y + uv2 * weights.z;
 
-        // 三角形の位置とUVからdP/du・dP/dvを求め、ラスタの余接フレームと同じ向きの基底を作る。
+        // ラスタ（gbuffer.fragのCalculateTBN）と同じ余接フレーム。画面微分の代わりに三角形の辺と
+        // UV差分を使い、T・Bの長さの比を保ったまま共通の倍率で正規化する。
         vec2 deltaUv1 = uv1 - uv0;
         vec2 deltaUv2 = uv2 - uv0;
-        float determinant = deltaUv1.x * deltaUv2.y - deltaUv2.x * deltaUv1.y;
-        vec3 tangent;
-        vec3 bitangent;
-        if (abs(determinant) > 1.0e-12)
+        vec3 edge1Perp = cross(shadingNormal, edge1);
+        vec3 edge2Perp = cross(edge2, shadingNormal);
+        vec3 tangent = edge2Perp * deltaUv1.x + edge1Perp * deltaUv2.x;
+        vec3 bitangent = edge2Perp * deltaUv1.y + edge1Perp * deltaUv2.y;
+        // ラスタの画面微分は表向きの面で行列式が正になり、T・BはUVの面内勾配と同じ向きを持つ。
+        // 辺の並びによる行列式の符号を打ち消して同じ向きへ揃える。
+        if (dot(edge1, edge2Perp) < 0.0)
         {
-            float inverseDeterminant = 1.0 / determinant;
-            tangent = (edge1 * deltaUv2.y - edge2 * deltaUv1.y) * inverseDeterminant;
-            bitangent = (edge2 * deltaUv1.x - edge1 * deltaUv2.x) * inverseDeterminant;
+            tangent = -tangent;
+            bitangent = -bitangent;
+        }
+        float maxLengthSquared = max(dot(tangent, tangent), dot(bitangent, bitangent));
+        // 退化判定は辺とUVの大きさに対する比で行う。
+        float edgeScale = max(dot(edge1, edge1), dot(edge2, edge2));
+        float uvScale = max(dot(deltaUv1, deltaUv1), dot(deltaUv2, deltaUv2));
+        if (maxLengthSquared > 1.0e-12 * edgeScale * uvScale)
+        {
+            float inverseMaxLength = inversesqrt(maxLengthSquared);
+            tangentBasis = mat3(tangent * inverseMaxLength, bitangent * inverseMaxLength,
+                                shadingNormal);
         }
         else
         {
             vec3 up = abs(shadingNormal.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-            tangent = cross(up, shadingNormal);
-            bitangent = cross(shadingNormal, tangent);
-        }
-        tangent -= shadingNormal * dot(shadingNormal, tangent);
-        bitangent -= shadingNormal * dot(shadingNormal, bitangent);
-        float tangentLength = length(tangent);
-        float bitangentLength = length(bitangent);
-        if (tangentLength > 1.0e-8 && bitangentLength > 1.0e-8)
-        {
-            tangentBasis = mat3(tangent / tangentLength, bitangent / bitangentLength, shadingNormal);
-        }
-        else
-        {
-            tangentBasis = mat3(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), shadingNormal);
+            vec3 fallbackTangent = normalize(cross(up, shadingNormal));
+            tangentBasis = mat3(fallbackTangent, cross(shadingNormal, fallbackTangent),
+                                shadingNormal);
         }
     }
 
