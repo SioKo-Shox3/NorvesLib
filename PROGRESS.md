@@ -68,17 +68,21 @@
 - R7-P2: 明示選択の独立PT passをR5 RT pipeline/SBTとFramePacketのRT snapshotへ接続し、1 sample/frameの累積平均をSceneColorへ公開した。静止時の収束、描画packet欠番時の履歴維持、camera/scene/light・材質・形状変更時のresetをGPU readbackで確認した。frame slot別のdescriptor/buffer資源を使い、既定rasterとRendering3DTest起動経路は変更していない。
 
 - R7-P3停止条件調査: RT材質snapshotがBaseColor/emissiveのみで、共有BRDF・texture評価に必要な値と資源が欠けることを確認した。指定build・CTestも未登録targetのため失敗し、タスクはblocked。
+- R7-P4の停止調査（タスク未完）: 既存PTのGPUスモークは1/1 passed。指定テストは未登録で、Cornell公開参照との比較を実証できないためblockedとした。
 
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
 - R6-P6はblocked。R6受入れ記録は保留として作成し、完了trailerは付けていない。
 - R7-P1は共通PBR shaderとinclude展開を`0872211`でコミット済み。Indoor・R1数値・RTGI/契約テストは通過したが、R2 CSM以降の既知Outdoor golden不一致により受入れはblocked。R1承認済みbaselineと閾値は不変。モデル切替による3回目の中断は機能失敗として数えない。
+- R7-P4はblocked。指定テストは未登録で、Cornell比較に必要なR7-P3の材質・光輸送契約も未完。
 
 ## Next
 
 - R7-P3はRT材質snapshotとtexture資源・UV・DFGの契約確定後に再開する。R6 Outdoorの基準画像判断とR7-P1の受入れは保留として保持する。
+- R7-P3の契約と光輸送を実装後、R7-P4の同一seed 16/64/256 sppとCornell RGBE参照のGPU検証を登録して再開する。閾値とseedは変更しない。
 
 ## Notes
+- R7-P4検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P4-1.txt`は未登録build targetでEXIT_CODE=1、`verify-R7-P4-2.txt`はCTest未登録でEXIT_CODE=8。既存PathTracingVulkanTestのDebug buildとGPU CTestは成功（1/1）。停止理由は`blocked/R7-P4.md`。
 - R7-P3検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P3-1.txt`はGame成功後に未登録のPathTracingLightingVulkanTest targetでEXIT_CODE=1、`verify-R7-P3-2.txt`は指定3テストが未登録でEXIT_CODE=8。開始時のGame/PathTracingVulkanTest buildと既存PT GPU CTestは成功。停止理由と選択肢は`blocked/R7-P3.md`。
 - R7-P2検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P2-8.txt`はGame/PathTracingVulkanTestのDebug buildでEXIT_CODE=0、`verify-R7-P2-9.txt`は指定CTest 1/1 passed・EXIT_CODE=0。`verify-R7-P2-10.txt`の実GPU出力は16 sampleの変化量が0.0130208から0.00131565へ低下し、交互frame slot、packet欠番時の履歴維持、camera/scene/material/geometry/light reset、明示選択を確認した。
 - R6-P5再開時（2026-09-23）: `cmake --build build --config Debug --target Game RTGIDiffuseIndirectVulkanTest -- /m:1` 成功、`ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R '^RTGIDiffuseIndirectVulkanTest$'` は1/1 passed。ログは`.harness/runs/20260923-r6-p5-resume/`。
