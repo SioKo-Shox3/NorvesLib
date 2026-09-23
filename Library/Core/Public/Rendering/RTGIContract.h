@@ -20,6 +20,7 @@ namespace NorvesLib::Core::Rendering
     inline constexpr float RTGIHistoryLightRevisionWeightLimit = 0.25f;
     inline constexpr float RTGIHistoryInitialConfidence = 0.25f;
     inline constexpr float RTGIHistoryNormalRejectionDot = 0.9f;
+    /** @brief 履歴棄却の距離差の下限（ワールド単位）。カメラからの線形距離の5%と大きい方を使う。 */
     inline constexpr float RTGIHistoryDepthRejectionThreshold = 0.02f;
     inline constexpr float RTGIHistoryMaterialRejectionThreshold = 0.05f;
 

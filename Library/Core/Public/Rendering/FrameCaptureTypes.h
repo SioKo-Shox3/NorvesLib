@@ -11,7 +11,9 @@ namespace NorvesLib::Core::Rendering
         PresentationColor,
         SceneColor,
         BackBuffer,
-        GBufferVelocity
+        GBufferVelocity,
+        RTGIDiffuseIndirect, ///< R6 RTGIのデノイズ後の間接光（検証用）
+        RTGIHistoryAge       ///< R6 RTGIの書き込み済み履歴age（検証用）
     };
 
     struct FrameCaptureRequest
@@ -77,6 +79,8 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureSource SceneColor;
         FrameCaptureSource BackBuffer;
         FrameCaptureSource GBufferVelocity;
+        FrameCaptureSource RTGIDiffuseIndirect;
+        FrameCaptureSource RTGIHistoryAge;
 
         const FrameCaptureSource* Find(FrameCaptureSourceKind kind) const
         {
@@ -90,6 +94,10 @@ namespace NorvesLib::Core::Rendering
                 return &BackBuffer;
             case FrameCaptureSourceKind::GBufferVelocity:
                 return &GBufferVelocity;
+            case FrameCaptureSourceKind::RTGIDiffuseIndirect:
+                return &RTGIDiffuseIndirect;
+            case FrameCaptureSourceKind::RTGIHistoryAge:
+                return &RTGIHistoryAge;
             default:
                 return nullptr;
             }
@@ -101,6 +109,8 @@ namespace NorvesLib::Core::Rendering
             SceneColor = FrameCaptureSource{};
             BackBuffer = FrameCaptureSource{};
             GBufferVelocity = FrameCaptureSource{};
+            RTGIDiffuseIndirect = FrameCaptureSource{};
+            RTGIHistoryAge = FrameCaptureSource{};
         }
     };
 

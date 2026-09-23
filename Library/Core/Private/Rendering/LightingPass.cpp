@@ -899,6 +899,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t imageAndSceneCounts[4] = {};
         float rayLimits[4] = {};
         uint32_t temporalState[4] = {};
+        uint32_t sampleState[4] = {}; ///< x=描画フレーム番号。静止中も毎フレーム別のレイを引く。
     };
 
     struct RTGIInstanceData
@@ -914,7 +915,7 @@ namespace NorvesLib::Core::Rendering
         float Transform[12] = {};
     };
 
-    static_assert(sizeof(RTGIComputeParameters) == 128u);
+    static_assert(sizeof(RTGIComputeParameters) == 144u);
     static_assert(sizeof(RTGIInstanceData) == 112u);
 
     static bool IsFiniteNonNegativeRTGI(float value)
@@ -2806,8 +2807,10 @@ namespace NorvesLib::Core::Rendering
             denoisedDesc.Width = width;
             denoisedDesc.Height = height;
             denoisedDesc.TextureFormat = RTGIDiffuseIndirectRadianceFormat;
+            // TransferSrcは検証captureの読戻しに使う。
             denoisedDesc.Usage = RHI::ResourceUsage::ShaderRead |
-                                 RHI::ResourceUsage::ShaderWrite;
+                                 RHI::ResourceUsage::ShaderWrite |
+                                 RHI::ResourceUsage::TransferSrc;
             denoisedDesc.DebugName = "RTGI.DenoisedDiffuseIndirect";
             RHI::TexturePtr denoisedTexture = context.Device->CreateTexture(denoisedDesc);
             if (!denoisedTexture)
@@ -2919,6 +2922,36 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool LightingPass::TryGetRTGICaptureTexture(FrameCaptureSourceKind kind,
+                                                uint64_t frameNumber,
+                                                RHI::TexturePtr& outTexture,
+                                                RHI::ResourceState& outState) const
+    {
+        outTexture.reset();
+        outState = RHI::ResourceState::Undefined;
+        // 指定フレームでRTGIが成功し、履歴と出力がそのフレームの値である場合だけ返す。
+        if (!m_bRTGIHistoryValid || !m_bRTGIHistoryFrameNumberValid ||
+            m_RTGIHistoryFrameNumber != frameNumber ||
+            m_RTGIHistoryWriteIndex >= 2u)
+        {
+            return false;
+        }
+        switch (kind)
+        {
+        case FrameCaptureSourceKind::RTGIDiffuseIndirect:
+            outTexture = m_RTGIDenoisedTexture;
+            outState = m_RTGIDenoisedTextureState;
+            break;
+        case FrameCaptureSourceKind::RTGIHistoryAge:
+            outTexture = m_RTGIHistoryTextures[m_RTGIHistoryWriteIndex].Age;
+            outState = m_RTGIHistorySlotState[m_RTGIHistoryWriteIndex];
+            break;
+        default:
+            return false;
+        }
+        return static_cast<bool>(outTexture) && outState != RHI::ResourceState::Undefined;
+    }
+
     bool LightingPass::EnsureRTGIHistoryTextures(uint32_t width, uint32_t height)
     {
         if (!m_Device || width == 0u || height == 0u)
@@ -2938,8 +2971,9 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // TransferSrcは検証captureで履歴ageを読み戻すために使う。
         const RHI::ResourceUsage historyUsage = RHI::ResourceUsage::ShaderRead |
-            RHI::ResourceUsage::ShaderWrite;
+            RHI::ResourceUsage::ShaderWrite | RHI::ResourceUsage::TransferSrc;
         RTGIHistoryTextureSet newHistory[2];
         for (uint32_t slotIndex = 0u; slotIndex < 2u; ++slotIndex)
         {
@@ -3211,6 +3245,7 @@ namespace NorvesLib::Core::Rendering
         parameters.temporalState[1] = bLightRevisionMismatch ? 1u : 0u;
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
         parameters.temporalState[3] = RTGIHistoryMaximumAge;
+        parameters.sampleState[0] = static_cast<uint32_t>(context.FrameNumber);
         m_RTGIComputeParametersBuffer->Update(&parameters, sizeof(parameters));
         m_RTGIComputeInstanceDataBuffer->Update(
             instanceData.data(), requiredInstanceDataSize);

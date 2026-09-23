@@ -3,6 +3,7 @@
 #include "IViewPass.h"
 #include "NeuralBRDFData.h"
 #include "Rendering/DDGIProbePass.h"
+#include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RayTracingShadowPass.h"
 #include "Rendering/RTGIContract.h"
@@ -110,6 +111,18 @@ namespace NorvesLib::Core::Rendering
         {
             m_bRegisterLegacyBridge = bRegister;
         }
+
+        /**
+         * @brief 検証captureへ渡す直近フレームのRTGI資源を取得する
+         *
+         * 指定フレームでRTGIが成功した場合だけ、デノイズ後の間接光
+         * （RTGIDiffuseIndirect）または書き込み済みの履歴age（RTGIHistoryAge）と、
+         * その資源の現在の状態を返す。
+         */
+        bool TryGetRTGICaptureTexture(FrameCaptureSourceKind kind,
+                                      uint64_t frameNumber,
+                                      RHI::TexturePtr& outTexture,
+                                      RHI::ResourceState& outState) const;
 
         /**
          * @brief デストラクタ

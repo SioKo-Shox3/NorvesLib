@@ -1,8 +1,9 @@
-#include "Rendering/RenderFrameExecutor.h"
+﻿#include "Rendering/RenderFrameExecutor.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/GBufferPass.h"
+#include "Rendering/LightingPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/View.h"
@@ -67,6 +68,30 @@ namespace NorvesLib::Core::Rendering
                         result.CaptureSources.GBufferVelocity,
                         gbufferPass->GetVelocityTexturePtr(),
                         request.Packet->FrameNumber);
+                }
+            }
+
+            const FrameCaptureSourceKind captureKind = request.Packet->CaptureRequest.SourceKind;
+            if (captureKind == FrameCaptureSourceKind::RTGIDiffuseIndirect ||
+                captureKind == FrameCaptureSourceKind::RTGIHistoryAge)
+            {
+                // RTGIの検証captureは、そのフレームで成功したLightingPassの資源だけを対象にする。
+                auto* lightingPass = dynamic_cast<LightingPass*>(
+                    primarySceneView->FindPass("LightingPass"));
+                RHI::TexturePtr texture;
+                RHI::ResourceState state = RHI::ResourceState::Undefined;
+                if (lightingPass &&
+                    lightingPass->TryGetRTGICaptureTexture(
+                        captureKind, request.Packet->FrameNumber, texture, state))
+                {
+                    FrameCaptureSource& source =
+                        captureKind == FrameCaptureSourceKind::RTGIDiffuseIndirect
+                            ? result.CaptureSources.RTGIDiffuseIndirect
+                            : result.CaptureSources.RTGIHistoryAge;
+                    source.Texture = texture;
+                    source.CurrentState = state;
+                    source.RestoreState = state;
+                    source.FrameNumber = request.Packet->FrameNumber;
                 }
             }
         }
