@@ -8,7 +8,7 @@
 |---|---|
 | 材質評価の共有 | R7-P1の共通shaderとR1数値検証は成立。Outdoor goldenはR2 CSM後の出力で再承認（`c1474fc`）し、Indoor/Outdoor goldenは通過。R7-P3Bで材質texture・UV・法線マップ・instance色をPTへ接続し、余接フレームの退化判定をラスタと共通の尺度不変な関数にした（`058aab9`・`20b1764`・`8c80695`）。 |
 | 独立PTと累積 | R7-P2の16試料で変化量が`0.0130208`から`0.00131565`へ低下し、履歴resetと明示選択を確認。 |
-| NEE/MIS・解析照明 | R7-P3C（`f605567`・`9128e3e`）。PTのBSDFはラスタIBL端点と同じDFG LUTの多重散乱補償と(1-Ed)拡散で、点・spot・方向光はLightingPassと同じ光源表のNEE、発光三角形と太陽円盤はpower heuristicのMIS。`PathTracingLightingVulkanTest`でR1と同じ15行の白炉（平均相対誤差の最大0.60%、固定9点の最大1.5%）、純Lambert・本番BSDFの点・spot・方向光の解析輝度（画素平均との誤差0.24%以内、spot円錐外は0）、面光源の光源標本のみ・BSDF標本のみ・MISと多角形光源の解析照度の一致（0.6%以内）を確認した。同じ行のラスタ/PT比較はR7-P3Dで行う。 |
+| NEE/MIS・解析照明 | R7-P3C（`f605567`・`9128e3e`・`16f4532`）。PTのBSDFはラスタIBL端点と同じDFG LUTの多重散乱補償と(1-Ed)拡散で、点・spot・方向光はLightingPassと同じ光源表のNEE、発光三角形と太陽円盤はpower heuristicのMIS。`PathTracingLightingVulkanTest`（`.harness/runs/20260924-r7-p3c/ctest-label-r2.txt`）: R1と同じ15行と粗さ0の2行の白炉は平均相対誤差の最大0.626%（roughness 128/255・metallic 1）、固定9点の最大1.50%、符号付き平均は全行で0.05%以内。純Lambertの点光源・方向光と本番BSDFの点光源は画素平均との相対誤差0.244%以内。spotは円錐外3316画素が厳密に0で、縁の画素は値が小さく相対誤差が最大40.8%になるが、画素内の値の広がりから見積もった統計許容差の内側。本番BSDFの解析比較は点光源だけで、spot・方向光・面光源は純Lambertで確かめた。面光源は光源標本のみ・BSDF標本のみ・MISと多角形光源の解析照度が0.623%以内、光沢金属・急な法線・太陽円盤の3戦略の一致は0.52%以内。光源の直前の遮蔽板の背後は0。同じ行のラスタ/PT比較はR7-P3Dで行う。 |
 | SPP収束・公開Cornell | R7-P4は`blocked`。16/64/256 sppの接頭列MSEと公開参照比較の専用テストは未登録。現行の16試料GPUスモークはこの条件の代わりにならない。 |
 | 薄レンズ・シャッター | R7-P5の解析CoC `49.7312 px`に対する1024試料の測定CoCは`49.7069 px`。静止・移動32試料の固定GPU基準と決定論性を確認。 |
 | 決定論EXR | R7-P6の同一seed・32 SPP・frameの2出力はbyte一致し、SHA-256は`9333237a36a6a8ee732fe55557a430706c5a831b71e7d0f8bef3edb80291d768`。独立読取でRGB float32/ZIPとwindowを検査し、3枚の全2,099画素が有限。 |
