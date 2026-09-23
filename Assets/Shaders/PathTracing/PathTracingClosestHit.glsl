@@ -16,6 +16,8 @@ hitAttributeEXT vec2 hitBarycentrics;
 
 // Mesh3DVertexの並び（位置3・法線3・UV2の32 byte）。これより短い頂点は位置だけを持つ。
 const uint MESH3D_VERTEX_BYTES = 32u;
+// ラスタの法線行列（MatrixUtils::CreateNormalMatrix）が単位行列へ落とす行列式の閾値（FLT_EPSILON）。
+const float RASTER_NORMAL_MATRIX_DETERMINANT_EPSILON = 1.192092896e-07;
 
 vec4 SampleMaterialTexture(uint textureIndex, vec2 uv)
 {
@@ -71,7 +73,12 @@ void main()
     if (bHasAttributes)
     {
         // 法線は物体→ワールド行列の逆転置で運ぶ（非一様スケールでも面に垂直を保つ）。
-        mat3 normalMatrix = transpose(mat3(gl_WorldToObjectEXT));
+        // ラスタのGBufferと同じく、3x3の行列式の絶対値がFLT_EPSILON未満（一様スケールで約0.005未満）
+        // なら単位行列を使う。小さく縮めた物体の頂点法線はこの規則を前提に作られている。
+        mat3 normalMatrix = abs(determinant(mat3(gl_ObjectToWorldEXT))) <
+                                RASTER_NORMAL_MATRIX_DETERMINANT_EPSILON
+            ? mat3(1.0)
+            : transpose(mat3(gl_WorldToObjectEXT));
         vec3 interpolatedNormal = normalMatrix *
             (ReadFloat3(vertices, a, stride, 3u) * weights.x +
              ReadFloat3(vertices, b, stride, 3u) * weights.y +
