@@ -2,6 +2,7 @@
 #include "RenderingValidation/GpuTestEnvironment.h"
 
 #include "Rendering/FramePacket.h"
+#include "Rendering/PathTracingCamera.h"
 #include "Rendering/PathTracingPass.h"
 #if defined(NORVES_EXR_OUTPUT_TEST)
 #include "Rendering/PathTracingExrOutput.h"
@@ -314,6 +315,57 @@ namespace
         return true;
     }
 
+    /**
+     * @brief 背景を引いた赤の強度で重み付けした、重心まわりの画素距離の二乗平均
+     *
+     * 画像の外周2画素に重みの0.1%を超える強度があれば、像が画面外へはみ出しているとして失敗にする。
+     */
+    bool MeasureIntensitySecondMoment(const VariableArray<float>& pixels, double background,
+                                      double& outSecondMoment)
+    {
+        double weightSum = 0.0;
+        double borderWeight = 0.0;
+        double sumX = 0.0;
+        double sumY = 0.0;
+        const auto weightAt = [&](uint32_t x, uint32_t y)
+        {
+            const double value = static_cast<double>(pixels[(y * Width + x) * 4u]) - background;
+            return value > 1.0e-4 ? value : 0.0;
+        };
+        for (uint32_t y = 0u; y < Height; ++y)
+        {
+            for (uint32_t x = 0u; x < Width; ++x)
+            {
+                const double weight = weightAt(x, y);
+                weightSum += weight;
+                sumX += weight * (x + 0.5);
+                sumY += weight * (y + 0.5);
+                if (x < 2u || y < 2u || x + 2u >= Width || y + 2u >= Height)
+                {
+                    borderWeight += weight;
+                }
+            }
+        }
+        if (!(weightSum > 0.0) || borderWeight > weightSum * 1.0e-3)
+        {
+            return false;
+        }
+        const double centerX = sumX / weightSum;
+        const double centerY = sumY / weightSum;
+        double moment = 0.0;
+        for (uint32_t y = 0u; y < Height; ++y)
+        {
+            for (uint32_t x = 0u; x < Width; ++x)
+            {
+                const double dx = x + 0.5 - centerX;
+                const double dy = y + 0.5 - centerY;
+                moment += weightAt(x, y) * (dx * dx + dy * dy);
+            }
+        }
+        outSecondMoment = moment / weightSum;
+        return true;
+    }
+
     bool CheckBlocks(const char* name, const VariableArray<float>& pixels,
                      const float expected[16])
     {
@@ -549,6 +601,173 @@ namespace
         {
             std::cerr << "移動画像が静止画像と区別できません\n";
             return 1;
+        }
+
+        // レンズ標本の分布: 小さな発光三角形を焦点面に置いた像と焦点から外した像では、強度の
+        // 二次モーメントの差がレンズ標本による像のずれの二乗平均になる（形の寄与は同じで打ち消す）。
+        // レンズ上の一様な標本ならCoC半径の二乗の1/2。1frameに2・4・5試料を束ねても、dispatchごとの
+        // 連続した添字で同じ分布になることを確かめる（試料数おきの添字では2試料で24%大きい）。
+        std::memset(snapshot.Instance.transform, 0, sizeof(snapshot.Instance.transform));
+        snapshot.Instance.transform[0] = 0.05f;
+        snapshot.Instance.transform[5] = 0.05f;
+        snapshot.Instance.transform[10] = 0.05f;
+        std::memcpy(snapshot.PreviousTransform, snapshot.Instance.transform,
+                    sizeof(snapshot.PreviousTransform));
+        snapshot.bHasPreviousTransform = false;
+        AccelerationStructureBuildDesc lensBuild;
+        lensBuild.type = AccelerationStructureType::TopLevel;
+        lensBuild.destination = packet.RayTracingScene.TopLevel;
+        lensBuild.instances.push_back(snapshot.Instance);
+        if (!packet.RayTracingScene.TopLevel->Build(lensBuild))
+        {
+            std::cerr << "レンズ分布用のTLASを構築できません\n";
+            return 1;
+        }
+        CameraProxy focusedCamera = camera;
+        focusedCamera.PositionX = 0.0f;
+        focusedCamera.FieldOfView = 10.0f;
+        focusedCamera.FocusDistance = 2.0f;
+        CameraProxy defocusedCamera = focusedCamera;
+        defocusedCamera.FocusDistance = 1.2f;
+        const double cocPixels = ComputePathTracingCocPixels(defocusedCamera, 2.0f, Height);
+        // 期待値は、連続したdispatch添字0〜31のカメラ標本によるずれの二乗平均（32個のHalton標本の
+        // 離散値。連続な一様分布ならCoC半径の二乗の1/2）。ずれは焦点距離・像距離から求める。
+        double expectedRms = 0.0;
+        // 薄レンズの像は焦点距離の設定で倍率が変わる（像距離に合わせて画角を1-f/焦点距離倍に狭める）。
+        // 焦点を合わせた像の形の二次モーメントを焦点を外した像の倍率へ換算してから差を取る。
+        double shapeMagnificationSquared = 1.0;
+        {
+            const double focalLength = 0.024 /
+                (2.0 * std::tan(defocusedCamera.FieldOfView * 3.14159265358979323846 / 360.0));
+            const double magnification =
+                (1.0 - focalLength / focusedCamera.FocusDistance) /
+                (1.0 - focalLength / defocusedCamera.FocusDistance);
+            shapeMagnificationSquared = magnification * magnification;
+            const double focus = defocusedCamera.FocusDistance;
+            const double imageDistance = focalLength * focus / (focus - focalLength);
+            const double pixelsPerLensUnit =
+                std::abs(1.0 - 2.0 / focus) * imageDistance / 2.0 * Height / 0.024;
+            double sum = 0.0;
+            for (uint32_t index = 0u; index < 32u; ++index)
+            {
+                const PathTracingCameraSample lens =
+                    SamplePathTracingCamera(defocusedCamera, nullptr, 0.0f, index);
+                const double radius = std::hypot(lens.LensOffset[0], lens.LensOffset[1]);
+                sum += radius * pixelsPerLensUnit * radius * pixelsPerLensUnit;
+            }
+            expectedRms = std::sqrt(sum / 32.0);
+        }
+        for (const uint32_t samplesPerFrame : {1u, 2u, 4u, 5u})
+        {
+            VariableArray<float> focusedPixels;
+            VariableArray<float> defocusedPixels;
+            double focusedMoment = 0.0;
+            double defocusedMoment = 0.0;
+            if (!Capture(device, shaderManager, packet, focusedCamera, nullptr, focusedPixels,
+                         samplesPerFrame) ||
+                !Capture(device, shaderManager, packet, defocusedCamera, nullptr, defocusedPixels,
+                         samplesPerFrame) ||
+                !MeasureIntensitySecondMoment(focusedPixels, 0.05, focusedMoment) ||
+                !MeasureIntensitySecondMoment(defocusedPixels, 0.05, defocusedMoment) ||
+                !(defocusedMoment > focusedMoment * shapeMagnificationSquared))
+            {
+                std::cerr << "レンズ分布の像を測れません samples_per_frame=" << samplesPerFrame
+                          << '\n';
+                return 1;
+            }
+            const double measuredRms =
+                std::sqrt(defocusedMoment - focusedMoment * shapeMagnificationSquared);
+            const double relativeError = std::abs(measuredRms - expectedRms) / expectedRms;
+            std::cout << "lens_spread samples_per_frame=" << samplesPerFrame
+                      << " coc_px=" << cocPixels
+                      << " uniform_rms_px=" << 0.5 * cocPixels / std::sqrt(2.0)
+                      << " expected_rms_px=" << expectedRms
+                      << " measured_rms_px=" << measuredRms
+                      << " relative_error=" << relativeError << '\n';
+            // 許容差3%: 画素の標本化と重心まわりのモーメントの推定誤差。試料数おきの添字では24%ずれる。
+            if (relativeError > 0.03)
+            {
+                std::cerr << "1frameに束ねた試料でレンズ標本の分布が一様になりません\n";
+                return 1;
+            }
+        }
+
+        // シャッター時刻の分布: ピンホールカメラで小さな発光三角形をシャッター区間にx方向へ動かすと、
+        // 静止の像に対する強度の二次モーメントの増分は移動量の二乗×シャッター時刻の分散になる。
+        // シャッター区間が1frame全体なら時刻は一様で分散1/12。時刻はbase 5のHalton列なので、
+        // 5試料を束ねた試料数おきの添字では区間の一部に偏る。
+        CameraProxy pinholeCamera = focusedCamera;
+        pinholeCamera.FocusDistance = 0.0f;
+        const double pixelsPerUnit = Height /
+            (2.0 * 2.0 * std::tan(pinholeCamera.FieldOfView * 3.14159265358979323846 / 360.0));
+        // 期待値は、連続したdispatch添字0〜31のシャッター時刻の標準偏差×移動量（32個のHalton標本の
+        // 離散値。連続な一様分布なら移動量/√12）。
+        double expectedShutterRms = 0.0;
+        {
+            double sum = 0.0;
+            double sumSquares = 0.0;
+            for (uint32_t index = 0u; index < 32u; ++index)
+            {
+                const double time = SamplePathTracingCamera(
+                    pinholeCamera, &pinholeCamera, 1.0f / 60.0f, index).ShutterTime;
+                sum += time;
+                sumSquares += time * time;
+            }
+            const double mean = sum / 32.0;
+            expectedShutterRms = 0.1 * pixelsPerUnit * std::sqrt(sumSquares / 32.0 - mean * mean);
+        }
+        for (const uint32_t samplesPerFrame : {1u, 2u, 4u, 5u})
+        {
+            snapshot.bHasPreviousTransform = false;
+            snapshot.Instance.transform[3] = 0.0f;
+            snapshot.PreviousTransform[3] = 0.0f;
+            AccelerationStructureBuildDesc stillBuild;
+            stillBuild.type = AccelerationStructureType::TopLevel;
+            stillBuild.destination = packet.RayTracingScene.TopLevel;
+            stillBuild.instances.push_back(snapshot.Instance);
+            VariableArray<float> stillPixels;
+            double stillMoment = 0.0;
+            if (!packet.RayTracingScene.TopLevel->Build(stillBuild) ||
+                !Capture(device, shaderManager, packet, pinholeCamera, &pinholeCamera, stillPixels,
+                         samplesPerFrame) ||
+                !MeasureIntensitySecondMoment(stillPixels, 0.05, stillMoment))
+            {
+                std::cerr << "静止した小さな発光三角形の像を測れません\n";
+                return 1;
+            }
+            snapshot.bHasPreviousTransform = true;
+            snapshot.PreviousTransform[3] = -0.05f;
+            snapshot.Instance.transform[3] = 0.05f;
+            AccelerationStructureBuildDesc movingBuild;
+            movingBuild.type = AccelerationStructureType::TopLevel;
+            movingBuild.destination = packet.RayTracingScene.TopLevel;
+            movingBuild.instances.push_back(snapshot.Instance);
+            VariableArray<float> movingPixels;
+            double movingMoment = 0.0;
+            if (!packet.RayTracingScene.TopLevel->Build(movingBuild) ||
+                !Capture(device, shaderManager, packet, pinholeCamera, &pinholeCamera, movingPixels,
+                         samplesPerFrame) ||
+                !MeasureIntensitySecondMoment(movingPixels, 0.05, movingMoment) ||
+                !(movingMoment > stillMoment))
+            {
+                std::cerr << "動く小さな発光三角形の像を測れません samples_per_frame="
+                          << samplesPerFrame << '\n';
+                return 1;
+            }
+            const double measuredRms = std::sqrt(movingMoment - stillMoment);
+            const double relativeError =
+                std::abs(measuredRms - expectedShutterRms) / expectedShutterRms;
+            std::cout << "shutter_spread samples_per_frame=" << samplesPerFrame
+                      << " uniform_rms_px=" << 0.1 * pixelsPerUnit / std::sqrt(12.0)
+                      << " expected_rms_px=" << expectedShutterRms
+                      << " measured_rms_px=" << measuredRms
+                      << " relative_error=" << relativeError << '\n';
+            // 許容差3%: レンズと同じ。試料数おきの添字では5試料で標準偏差が約1/5になる。
+            if (relativeError > 0.03)
+            {
+                std::cerr << "1frameに束ねた試料でシャッター時刻の分布が一様になりません\n";
+                return 1;
+            }
         }
         shaderManager.Shutdown();
         device->WaitIdle();
