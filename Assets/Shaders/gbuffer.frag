@@ -63,9 +63,12 @@ mat3 CalculateTBN(vec3 worldNormal, vec3 worldPos, vec2 texCoord)
     vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
     vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
 
-    // 退化チェック: UV微分が零の場合（UVシームや極付近）
+    // 退化チェック: UV微分が零の場合（UVシームや極付近）。画素あたりの微分は解像度で
+    // 小さくなるため、絶対値ではなく位置微分とUV微分の大きさに対する比で判定する。
     float maxLen2 = max(dot(T, T), dot(B, B));
-    if (maxLen2 < 1e-8)
+    float positionScale = max(dot(dp1, dp1), dot(dp2, dp2));
+    float uvScale = max(dot(duv1, duv1), dot(duv2, duv2));
+    if (IsCotangentFrameDegenerate(maxLen2, positionScale, uvScale))
     {
         // フォールバック: 任意の接線フレームを構築
         vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);

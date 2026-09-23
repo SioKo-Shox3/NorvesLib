@@ -142,10 +142,10 @@ void main()
             bitangent = -bitangent;
         }
         float maxLengthSquared = max(dot(tangent, tangent), dot(bitangent, bitangent));
-        // 退化判定は辺とUVの大きさに対する比で行う。
+        // 退化判定はラスタと同じ共通関数で、辺とUVの大きさに対する比で行う。
         float edgeScale = max(dot(edge1, edge1), dot(edge2, edge2));
         float uvScale = max(dot(deltaUv1, deltaUv1), dot(deltaUv2, deltaUv2));
-        if (maxLengthSquared > 1.0e-12 * edgeScale * uvScale)
+        if (!IsCotangentFrameDegenerate(maxLengthSquared, edgeScale, uvScale))
         {
             float inverseMaxLength = inversesqrt(maxLengthSquared);
             tangentBasis = mat3(tangent * inverseMaxLength, bitangent * inverseMaxLength,

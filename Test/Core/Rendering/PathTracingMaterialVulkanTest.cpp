@@ -514,6 +514,30 @@ namespace
         Normalize(outNormal);
     }
 
+    // UVが退化したときの基底（ラスタのCalculateTBNと同じ）: T=normalize(up×N)、B=N×T。
+    void ExpectedFallbackShadingNormal(const float (&normal)[3], const uint8_t (&normalBytes)[3],
+                                       float (&outNormal)[3])
+    {
+        const bool bUseY = std::abs(normal[1]) < 0.999f;
+        const float upVector[3] = {bUseY ? 0.0f : 1.0f, bUseY ? 1.0f : 0.0f, 0.0f};
+        float tangentAxis[3] = {upVector[1] * normal[2] - upVector[2] * normal[1],
+                                upVector[2] * normal[0] - upVector[0] * normal[2],
+                                upVector[0] * normal[1] - upVector[1] * normal[0]};
+        Normalize(tangentAxis);
+        const float bitangentAxis[3] = {normal[1] * tangentAxis[2] - normal[2] * tangentAxis[1],
+                                        normal[2] * tangentAxis[0] - normal[0] * tangentAxis[2],
+                                        normal[0] * tangentAxis[1] - normal[1] * tangentAxis[0]};
+        const float tangent[3] = {Unorm(normalBytes[0]) * 2.0f - 1.0f,
+                                  Unorm(normalBytes[1]) * 2.0f - 1.0f,
+                                  Unorm(normalBytes[2]) * 2.0f - 1.0f};
+        for (uint32_t axis = 0u; axis < 3u; ++axis)
+        {
+            outNormal[axis] = tangentAxis[axis] * tangent[0] + bitangentAxis[axis] * tangent[1] +
+                              normal[axis] * tangent[2];
+        }
+        Normalize(outNormal);
+    }
+
     // 範囲内の全画素が期待値と一致するか調べ、比較した画素数を返す。
     template <typename InsideFunction>
     uint32_t CheckUniformRegion(const ScreenMapping& mapping, const VariableArray<float>& pixels,
@@ -677,15 +701,24 @@ namespace
             {{QuadHalfSize, -QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {1.5f, 0.5f}},
             {{-QuadHalfSize, -QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.5f, 0.5f}}};
         const uint32_t stretchedIndices[6] = {0u, 1u, 2u, 0u, 3u, 2u};
+        // 全頂点が同じUVの四角形。UVの勾配がなく、共通の退化判定で既定の基底へ落ちる。
+        const Mesh3DVertex degenerateVertices[4] = {
+            {{-QuadHalfSize, QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.3f, 0.3f}},
+            {{QuadHalfSize, QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.3f, 0.3f}},
+            {{QuadHalfSize, -QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.3f, 0.3f}},
+            {{-QuadHalfSize, -QuadHalfSize, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.3f, 0.3f}}};
         const float trianglePositions[9] = {-1.0f, -1.0f, 0.0f, 1.0f, -1.0f, 0.0f,
                                             0.0f, 1.0f, 0.0f};
         const uint32_t triangleIndices[3] = {0u, 1u, 2u};
         TestGeometry quad;
         TestGeometry stretchedQuad;
+        TestGeometry degenerateQuad;
         TestGeometry positionOnlyTriangle;
         if (!BuildGeometry(device, quadVertices, 4u, sizeof(Mesh3DVertex), quadIndices, 6u, quad) ||
             !BuildGeometry(device, stretchedVertices, 4u, sizeof(Mesh3DVertex), stretchedIndices,
                            6u, stretchedQuad) ||
+            !BuildGeometry(device, degenerateVertices, 4u, sizeof(Mesh3DVertex), quadIndices, 6u,
+                           degenerateQuad) ||
             !BuildGeometry(device, trianglePositions, 3u, 3u * sizeof(float), triangleIndices, 3u,
                            positionOnlyTriangle))
         {
@@ -713,8 +746,11 @@ namespace
         FramePacket stretchedPacket;
         stretchedPacket.RayTracingScene.Instances.push_back(MakeInstance(stretchedQuad, 0u, 0.0f));
         stretchedPacket.RayTracingScene.Instances[0].Material.NormalTexture = normalHandle;
+        FramePacket degeneratePacket;
+        degeneratePacket.RayTracingScene.Instances.push_back(MakeInstance(degenerateQuad, 0u, 0.0f));
+        degeneratePacket.RayTracingScene.Instances[0].Material.NormalTexture = normalHandle;
         if (!BuildTopLevel(device, quadPacket) || !BuildTopLevel(device, trianglePacket) ||
-            !BuildTopLevel(device, stretchedPacket))
+            !BuildTopLevel(device, stretchedPacket) || !BuildTopLevel(device, degeneratePacket))
         {
             std::cerr << "検証用のTLASを作成できませんでした\n";
             return 1;
@@ -905,6 +941,18 @@ namespace
                                        TiltedNormalBytes, stretchedNormal);
         CheckUniformRegion(mapping, pixels, insideQuad, stretchedNormal, NormalTolerance,
                            "stretched_normal", bPassed);
+
+        // 3c. UVが退化した面は、ラスタと同じ既定の基底で法線マップを適用する。
+        context.SnapshotScene = &degeneratePacket.Scene;
+        context.SnapshotRayTracingScene = &degeneratePacket.RayTracingScene;
+        if (!render(PathTracingDebugOutput::ShadingNormal, 5u, "degenerate_uv_normal"))
+        {
+            return 1;
+        }
+        float degenerateNormal[3];
+        ExpectedFallbackShadingNormal(vertexNormal, TiltedNormalBytes, degenerateNormal);
+        CheckUniformRegion(mapping, pixels, insideQuad, degenerateNormal, NormalTolerance,
+                           "degenerate_uv_normal", bPassed);
         context.SnapshotScene = &quadPacket.Scene;
         context.SnapshotRayTracingScene = &quadPacket.RayTracingScene;
 
@@ -1137,7 +1185,8 @@ namespace
         if (bPassed)
         {
             std::cout << "pt_material_uv=true instance_color=true metallic_roughness=true "
-                         "normal_map=true cotangent_frame=true defaults=true texture_dedup=true "
+                         "normal_map=true cotangent_frame=true degenerate_uv_fallback=true "
+                         "defaults=true texture_dedup=true "
                          "texture_release_reset=true scatter_below_surface_terminated=true "
                          "emission_pre_exposure=true position_only_fallback=true "
                          "texture_table_overflow=true\n";

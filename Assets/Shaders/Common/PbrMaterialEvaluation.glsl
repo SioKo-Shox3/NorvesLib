@@ -51,6 +51,14 @@ vec3 ComposePbrSurfaceAlbedo(vec3 objectColor, PbrMaterialTextureSamples samples
     return objectColor * samples.Albedo.rgb;
 }
 
+// 余接フレーム（UVの面内勾配T・B）の退化判定。T・Bの長さを位置差分とUV差分の大きさに対する
+// 比で判定し、画面解像度や物体の大きさに依らず同じ結論を出す。ラスタの画面微分と
+// パストレーサーの三角形の辺で共有する。
+bool IsCotangentFrameDegenerate(float maxLengthSquared, float positionScale, float uvScale)
+{
+    return !(maxLengthSquared > 1.0e-12 * positionScale * uvScale);
+}
+
 // 接空間法線を接空間の基底でワールド法線へ変換する。
 vec3 ApplyTangentSpaceNormal(mat3 tangentBasis, vec3 tangentNormal)
 {
