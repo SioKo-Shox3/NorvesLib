@@ -11,13 +11,13 @@ R6の受入れは保留する。`RenderingRoadmap: R6 complete` trailerは付け
 - `DDGIProbeRadianceVulkanTest`: 1 pass内で非遮蔽→遮蔽を連続実行し、前ケースのprobe irradianceが後者の直接照明期待値へ混入していた。遮蔽ケースを独立passへ分離し（`d96d6fe`）、rendererの放射輝度計算・期待値・閾値は変更していない。
 - `RenderingGoldenOutdoorVulkanTest`: R2の4カスケードCSM導入で球の自己影境界と接地影の輪郭459画素が変わっていた。正式な候補生成・承認・publish手順でOutdoor.pngだけを現行出力（SHA256=`9933B558…F3B954`）へ置き換えた（`c1474fc`、根拠は`R1Acceptance.md`の「R2 CSM後のOutdoor再承認」）。Indoor画像と閾値は変更していない。
 
-一方、2026-09-23の独立評価で、完了条件の検証方法と実装に次の不足が見つかった。これらを解消するまでR6は完了にしない。
+一方、2026-09-23の独立評価で、完了条件の検証方法と実装に次の不足が見つかった。判定2〜5は2026-09-24に解消し、判定1だけが残る。判定1を解消するまでR6は完了にしない。
 
-1. **静止収束画像の参照比較**: P5の静止goldenは平均輝度・中央ROIのRGBなど5値の比較であり、Roadmapが求める参照画像との知覚diffではない。R7の自前PTで同一条件の参照を作り、FLIP pool/max-pixelの二段判定で比較する（R7-P3D以降に実施）。
-2. **ライト追従の判定式**: 追従率が「4 rendered frame時点の変化量 / 2 rendered frame時点の変化量」で、最終変化量に対する到達率になっていない。収束後の変化量を分母にし、間接光を評価できるROIで4 rendered frame以内に80%へ到達することを確認する。
-3. **RTGIのサンプル更新**: `DiffuseIndirect.comp`のレイ方向がpixel座標だけで決まり、静止中に同じレイを再評価している。テンポラル蓄積で推定誤差が減らないため、rendered frameごとに決定論的に異なるサンプルを使う。
-4. **履歴棄却の検証**: カメラ・物体移動後の画像変化だけを見ており、棄却処理が壊れていても成立し得る。履歴age/confidenceのreadbackなど、棄却そのものを反証できる検証にする。
-5. **再オープン規則**: R7参照との再照合で閾値を超えた場合の扱いを、下の「R7参照との再照合条件」に明記した。
+1. **静止収束画像の参照比較（未解消）**: 平均輝度・中央ROIのRGBなど5値の比較は、Roadmapが求める参照画像との知覚diffではない。R7の自前PTで同一条件の参照を作り、FLIP pool/max-pixelの二段判定で比較する（R6-P5-REF、R7-P3D以降に実施）。
+2. **ライト追従の判定式（解消）**: 点光源を部屋の片側（offset −1.0）で16描画フレーム落ち着かせた後に反対側（+1.0）へ移し、デノイズ後間接光の色にじみ（R平均−G平均）を測る。収束後（移動から24〜32フレーム）の平均変化量を分母にし、4描画フレーム以内の到達率80%以上と、最終変化量が静止時の揺らぎの5倍以上であることを判定する。点光源は追従検証の段階だけ天井の面光源と同程度（200000 lm）にした。1200 lmでは面光源（約19万lm）の間接光に埋もれ、変化が揺らぎの2倍未満だった。5回の実行で到達率は0.84〜1.40、最終変化量は揺らぎの約25〜37倍だった。
+3. **RTGIのサンプル更新（解消）**: `DiffuseIndirect.comp`は画素ごとに回転を加えたR2列を描画フレーム番号で進める（`3e5c374`）。旧実装の中央ROI輝度0.0305は、固定1方向の推定の偏りを含んでいた（修正後0.041前後）。
+4. **履歴棄却の検証（解消）**: 実装側にも不具合があった。履歴棄却が非線形なNDC深度の相対5%で判定され、半精度で保存した遠景の深度差が閾値に埋もれていた。履歴へカメラからの線形距離を保存して相対差で棄却するよう直した（`3e5c374`）。検証は履歴ageのreadbackで行う（`e49cf5c`）。物体を移動前後とも見える位置（offset +0.55→+1.0）で動かし、エンジンと同じカメラ行列で投影した旧位置の円の内側かつ新位置の円の外側の170画素が、すべて移動からの経過フレーム数以下（最大0）のageになることを確認した。同時に奥の壁の静止領域は100%が最大age 8を保った。カメラ移動では静止領域の99.4%が履歴を保持し、残りは遮蔽物輪郭の視差による正当な棄却だった。停止後は物体が去った領域のageが10フレームで最大へ戻った。なおoffset 0の球は短いブロックの後ろにほぼ隠れており、以前の0→0.55の移動では露出領域がブロック面のまま変化しなかった。
+5. **再オープン規則（解消）**: R7参照との再照合で閾値を超えた場合の扱いを、下の「R7参照との再照合条件」に明記した。
 
 ## 実装コミット
 
@@ -32,6 +32,7 @@ R6の受入れは保留する。`RenderingRoadmap: R6 complete` trailerは付け
 | R6-P4 | `2808077`, `db337ae` | temporal出力へ3x3 cross-bilateral denoiseを接続し、pre-exposure契約を維持 |
 | R6-P5 | `b032e0d` | 動的GI、静止golden、移動、履歴棄却、fallbackの専用GPU受入れfixtureを追加 |
 | 全体gate修正 | `d96d6fe`, `a41190e`, `c1474fc` | DDGI遮蔽ケースのpass分離、物理テストのFramePacket ABI契約同期、R2 CSM後のOutdoor基準再承認 |
+| R6-P5再開 | `3e5c374`, `e49cf5c` | 描画フレームごとのRTGI試料更新、線形距離による履歴棄却、RTGI検証capture、履歴ageと間接光のreadbackによる受入れ |
 
 ## 方式と公開契約
 
@@ -43,9 +44,9 @@ R6の受入れは保留する。`RenderingRoadmap: R6 complete` trailerは付け
 
 ## golden・threshold
 
-R6専用の静止参照は`Docs/RenderingValidation/R6RTGIStaticGolden.tsv`に固定した。schemaは`NorvesLib.RenderingValidation.R6RTGIStaticGolden.v1`、`mean_y=0.258768`、`center_y=0.0305305`、center RGBは`0.0408391,0.0290016,0.0153209`、許容値は`0.001`である。これは同一実装の再現性を見る暫定値であり、上の判定1の参照比較の代わりにはならない。
+旧`R6RTGIStaticGolden.tsv`（平均値5個、許容0.001）は削除した。レイが描画フレームごとに変わると、実行時のフレーム番号の違いでmean_yが±0.0015程度揺れ、許容0.001の自己参照は意味を持たない。静止段階では、warmup直後との平均絶対差（時間方向の揺らぎ）が0.02以下であることだけを確認し（実測0.0085前後）、参照画像との比較はR6-P5-REFで行う。
 
-P5専用受入れでは、8-frame warmup後に`R6_RTGI_WARMUP=PASS`、`R6_STATIC_GOLDEN`の`static_delta=0`、`golden_delta=1.07262e-07`を確認した。`static_delta=0`は判定3のとおり同じレイの再評価によるもので、収束の証拠には使えない。ライト移動の`elapsed=4`、進捗`1.23262`は判定2の判定式による値である。
+最新のP5専用受入れ（`.harness/runs/20260924-r6-p5/verify-r6-acceptance.txt`）の主な値: warmup後mean_y=0.259374、静止中の揺らぎ0.00852、カメラ移動時の静止領域保持率0.994、物体移動の露出170画素の最大age 0、停止12フレーム後の去った領域の保持率1、ライト追従の到達率0.840（最終変化0.0154、揺らぎ0.00042）。
 
 ## 検証ログ
 
@@ -61,7 +62,8 @@ P5専用受入れでは、8-frame warmup後に`R6_RTGI_WARMUP=PASS`、`R6_STATIC
 | R6-P5全体gate（初回） | `.harness/runs/20260923-050747/verify-R6-P5-2.txt` | 44件中26 passed・8 skipped・10 failed、EXIT_CODE=8。その後の再実行で2 failedまで縮小した。 |
 | R6-GATE-DDGI-ORACLE | `.harness/runs/20260923-r6-gate-ddgi/verify-build.txt`, `verify-ctest.txt`, `verify-ctest-LastTest.log` | 非遮蔽と点/スポット遮蔽を独立passで検証し、後者の期待値・実測値が全RGB channelで一致。対象CTest 1/1 passed。 |
 | R6-GATE-OUTDOOR | `.harness/runs/20260923-resume/baseline-generate.txt`, `baseline-publish.txt`, `outdoor-ctest.txt` | 候補生成のIndoor/Outdoor hashは承認値と一致し、publishは`baseline_publish=PASS`、置換後のOutdoor golden CTestは1/1 passed。 |
-| R6-P5全体gate（最新） | `.harness/runs/20260923-resume/start-allbuild-2.txt`, `rv-full.txt` | targetless Debug buildはEXIT_CODE=0。`ctest -L RenderingValidation --timeout 180`は49件中41 passed・8 skipped・0 failed、EXIT_CODE=0。skipの8件はGPU skip契約テストである。 |
+| R6-P5全体gate（Outdoor再承認後） | `.harness/runs/20260923-resume/start-allbuild-2.txt`, `rv-full.txt` | targetless Debug buildはEXIT_CODE=0。`ctest -L RenderingValidation --timeout 180`は49件中41 passed・8 skipped・0 failed、EXIT_CODE=0。skipの8件はGPU skip契約テストである。 |
+| R6-P5再開 | `.harness/runs/20260924-r6-p5/verify-allbuild-2.txt`, `verify-rv-2.txt`, `verify-r6-acceptance.txt`, `stability-1.txt`〜`-3.txt` | 全buildはEXIT_CODE=0。RenderingValidation 50件は失敗0件。R6受入れを計4回実行し、すべてEXIT_CODE=0。 |
 
 ## fallbackと既知の制限
 

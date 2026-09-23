@@ -78,6 +78,7 @@
 - R6-GATE-OUTDOOR: `c1474fc`。R2の4カスケードCSM導入で変わったOutdoor基準画像を、ユーザー承認のもと正式な候補生成・publish手順で現行出力（SHA256 `9933B558…F3B954`）へ置き換えた。Indoorと閾値は不変。置換後のOutdoor golden 1/1、RenderingValidation 49件は失敗0件。
 - 物理テストABI同期: `a41190e`。R6/R7で増えたFramePacket（1152 byte）とSceneProxy（512 byte）へ物理側の境界契約を合わせ、全buildを復旧した。
 - R7-P3A: `8ac04e8` / `4500394` / `48fa18e`。RHIに配列combined image samplerと要素単位bindを追加し、Vulkan 1.2の非一様添字を対応時だけ有効化した。配列layoutだけpool容量を広げ、stage別・set全体のdescriptor上限をVulkanの計数規則で検査する。64要素のGPUテストで最大誤差2.97e-08・validation 0件、pool拡張を無効化した負の対照で失敗を確認した。RenderingValidation 50件は失敗0件。
+- R6-P5再開: `3e5c374` / `e49cf5c`。RTGIの試料を描画フレームごとに更新し、履歴棄却をNDC深度から線形距離へ変えた（遠景で露出領域の古い履歴を使っていた）。受入れは履歴ageとデノイズ後間接光の読み戻しで判定し、露出170画素の最大age 0、カメラ移動時の保持率0.994、停止後の再蓄積、ライト追従率0.84〜1.40（5回）を確認した。自己参照TSVは削除し、参照比較はR6-P5-REFへ分けた。RenderingValidation 50件は失敗0件。
 
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
