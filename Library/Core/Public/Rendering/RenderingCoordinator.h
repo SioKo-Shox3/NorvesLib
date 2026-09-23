@@ -93,6 +93,8 @@ namespace NorvesLib::Core::Rendering
         RenderingMainViewRenderer MainViewRenderer = RenderingMainViewRenderer::Raster;
         /** @brief パストレーサーが1フレームで累積する試料数 */
         uint32_t PathTracingSamplesPerFrame = 1;
+        /** @brief パストレーサーが追う光輸送の範囲（既定は多重散乱をすべて追う） */
+        PathTracingTransportScope PathTracingTransport = PathTracingTransportScope::Full;
     };
 
     struct RenderingCoordinatorStatsSnapshot

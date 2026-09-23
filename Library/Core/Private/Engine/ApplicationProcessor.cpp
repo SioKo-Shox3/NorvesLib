@@ -292,6 +292,38 @@ namespace
         return true;
     }
 
+    // --path-tracing-transport=full|direct|single-diffuse-bounce
+    bool TryParsePathTracingTransportOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::PathTracingTransportScope& outScope,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-transport=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("full"))
+        {
+            outScope = NorvesLib::Core::Rendering::PathTracingTransportScope::Full;
+            return true;
+        }
+        if (value == TEXT("direct"))
+        {
+            outScope = NorvesLib::Core::Rendering::PathTracingTransportScope::DirectOnly;
+            return true;
+        }
+        if (value == TEXT("single-diffuse-bounce"))
+        {
+            outScope = NorvesLib::Core::Rendering::PathTracingTransportScope::SingleDiffuseBounce;
+            return true;
+        }
+        return false;
+    }
+
     bool IsDisableBoardInstanceBatchingOption(const TCHAR* pText)
     {
         if (!pText)
@@ -398,6 +430,8 @@ namespace NorvesLib::Core::Engine
         bool bBoardInstanceBatchingEnabled = true;
         Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
         uint32_t pathTracingSamplesPerFrame = 1u;
+        Rendering::PathTracingTransportScope pathTracingTransport =
+            Rendering::PathTracingTransportScope::Full;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -471,6 +505,17 @@ namespace NorvesLib::Core::Engine
             {
                 LOG_WARNING("ApplicationProcessor runtime option --path-tracing-samples-per-frame ignored: value must be 1-1024");
             }
+
+            bool bMatchedTransport = false;
+            if (TryParsePathTracingTransportOption(args[i], pathTracingTransport, bMatchedTransport))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_transport=%u",
+                         static_cast<unsigned int>(pathTracingTransport));
+            }
+            else if (bMatchedTransport)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-transport ignored: value must be 'full', 'direct' or 'single-diffuse-bounce'");
+            }
         }
 
         const Detail::ExitFrameSelection exitFrameSelection = Detail::SelectExitFrameSelection(exitFrameOptions);
@@ -539,6 +584,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.bEnableValidation = config.bEnableRHIValidation;
             renderSettings.MainViewRenderer = mainViewRenderer;
             renderSettings.PathTracingSamplesPerFrame = pathTracingSamplesPerFrame;
+            renderSettings.PathTracingTransport = pathTracingTransport;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {

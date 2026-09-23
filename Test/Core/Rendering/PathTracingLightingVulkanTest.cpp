@@ -1242,6 +1242,82 @@ namespace
             }
         }
 
+        // 3b. 光輸送の範囲（純Lambert、画面全体を覆う1枚の平面、点光源と一様環境）。直接光だけの範囲は
+        // 環境を含まず点光源の解析値に一致し、拡散1バウンスとの差は平面の反射率×環境の放射輝度になる。
+        // 平面1枚では散乱光線が他の面に当たらないため、多重散乱をすべて追っても拡散1バウンスと同じ値になる。
+        {
+            constexpr float TransportEnvironmentRadiance = 0.25f;
+            pass.SetEnvironment(MakeUniformEnvironment(TransportEnvironmentRadiance));
+            planePacket.Scene.LightProxies.clear();
+            planePacket.Scene.LightProxies.push_back(MakeLightProxy(pointLight));
+            double chroma[3] = {};
+            Chromaticity(pointLight.Color, chroma);
+            const auto pointExpected = [&](const Vec3& point, const Vec3&, double (&outValue)[3])
+            {
+                Vec3 direction;
+                double irradiance = 0.0;
+                EvaluatePunctualIncidence(pointLight, point, direction, irradiance);
+                const double cosine = std::max(Dot(facingShadingNormal, direction), 0.0);
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    outValue[channel] = planeColor[channel] / Pi * chroma[channel] *
+                                        irradiance * cosine * camera.PreExposure;
+                }
+            };
+            VariableArray<float> directPixels;
+            VariableArray<float> singlePixels;
+            VariableArray<float> fullPixels;
+            pass.SetTransportScope(PathTracingTransportScope::DirectOnly);
+            if (!runner.Accumulate(PunctualSamples, directPixels, "transport_direct"))
+            {
+                return 1;
+            }
+            uint32_t zeroPixels = 0u;
+            bPassed = CheckPixelAverages(planeMapping, facing, directPixels, pointExpected,
+                                         PunctualSamples, "transport_direct", zeroPixels) &&
+                      bPassed;
+            pass.SetTransportScope(PathTracingTransportScope::SingleDiffuseBounce);
+            if (!runner.Accumulate(PunctualSamples, singlePixels, "transport_single_diffuse_bounce"))
+            {
+                return 1;
+            }
+            pass.SetTransportScope(PathTracingTransportScope::Full);
+            if (!runner.Accumulate(PunctualSamples, fullPixels, "transport_full"))
+            {
+                return 1;
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                double bounceSum = 0.0;
+                double singleSum = 0.0;
+                double fullSum = 0.0;
+                for (uint32_t index = 0u; index < Width * Height; ++index)
+                {
+                    bounceSum += singlePixels[index * 4u + channel] -
+                                 directPixels[index * 4u + channel];
+                    singleSum += singlePixels[index * 4u + channel];
+                    fullSum += fullPixels[index * 4u + channel];
+                }
+                const double pixelCount = static_cast<double>(Width * Height);
+                const double bounceMean = bounceSum / pixelCount;
+                const double expectedBounce =
+                    planeColor[channel] * TransportEnvironmentRadiance * camera.PreExposure;
+                const double bounceError = std::abs(bounceMean - expectedBounce) / expectedBounce;
+                const double fullError = std::abs(fullSum - singleSum) / singleSum;
+                std::cout << "transport_scope channel=" << channel
+                          << " single_minus_direct=" << bounceMean
+                          << " expected=" << expectedBounce << " relative_error=" << bounceError
+                          << " full_vs_single_relative=" << fullError << '\n';
+                if (bounceError > 0.01 || fullError > 0.01)
+                {
+                    std::cerr << "光輸送の範囲ごとの値が解析値と一致しません\n";
+                    bPassed = false;
+                }
+            }
+            pass.SetTransportScope(PathTracingTransportScope::Full);
+            pass.SetEnvironment(PathTracingEnvironment{});
+        }
+
         // 4. 本番BSDFの点光源。NEEの評価がDFG補償付きの共通式と一致する。
         pass.SetBsdfMode(PathTracingBsdfMode::Production);
         planePacket.Scene.LightProxies.clear();

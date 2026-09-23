@@ -751,7 +751,8 @@ namespace NorvesLib::Core::Rendering
                         "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
     }
 
-    void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame)
+    void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame,
+                                             PathTracingTransportScope transportScope)
     {
         if (m_PostProcessStack)
         {
@@ -774,6 +775,7 @@ namespace NorvesLib::Core::Rendering
         environmentMap.Intensity = DefaultEnvironmentIntensity;
         pathTracingPass->SetEnvironmentMapSource(environmentMap);
         pathTracingPass->SetSamplesPerFrame(samplesPerFrame);
+        pathTracingPass->SetTransportScope(transportScope);
         AddPass(std::move(pathTracingPass));
 
         auto postProcessStack = MakeUnique<PostProcessStack>();

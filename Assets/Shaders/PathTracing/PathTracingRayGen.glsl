@@ -68,6 +68,11 @@ uint SamplingMode()
     return (parameters.lightState.w >> 2u) & 3u;
 }
 
+uint TransportScope()
+{
+    return parameters.sampleState.w;
+}
+
 float PreExposure()
 {
     return parameters.exposureAndDebug.x;
@@ -633,21 +638,50 @@ vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
                                                          geometricNormal, state);
         radiance += throughput * SampleSun(surface, surfacePosition, geometricNormal, state);
 
+        // 輸送範囲を限る参照: 直接光だけなら1次命中の光源標本で、拡散1バウンスなら2つ目の命中の
+        // 光源標本で打ち切る（発光三角形と太陽円盤は光源標本だけなので、散乱光線の命中側では数えない）。
+        uint transportScope = TransportScope();
+        if (transportScope == PATH_TRANSPORT_DIRECT_ONLY ||
+            (transportScope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE && bounce >= 1u))
+        {
+            break;
+        }
+
         vec3 u = vec3(Random01(state), Random01(state), Random01(state));
         vec3 nextDirection;
-        // 面の裏へ抜ける方向は光漏れになるため経路を打ち切る。
-        if (!SamplePathBsdf(surface, u, nextDirection) ||
-            dot(nextDirection, geometricNormal) <= 0.0)
+        float bsdfPdf;
+        if (transportScope == PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE)
         {
-            break;
+            // 拡散葉だけをコサイン分布で標本化する。重みは拡散のBRDF×π（拡散葉の方向反射率）。
+            float phi = 2.0 * PI * u.y;
+            float radius = sqrt(u.z);
+            nextDirection = normalize(surface.Tangent * (radius * cos(phi)) +
+                                      surface.Bitangent * (radius * sin(phi)) +
+                                      surface.Normal * sqrt(max(0.0, 1.0 - u.z)));
+            float cosine = dot(surface.Normal, nextDirection);
+            if (cosine <= 0.0 || dot(nextDirection, geometricNormal) <= 0.0)
+            {
+                break;
+            }
+            bsdfPdf = cosine / PI;
+            throughput *= surface.DiffuseBrdf * PI;
         }
-        float bsdfPdf = PathBsdfPdf(surface, nextDirection);
-        if (!(bsdfPdf > 0.0))
+        else
         {
-            break;
+            // 面の裏へ抜ける方向は光漏れになるため経路を打ち切る。
+            if (!SamplePathBsdf(surface, u, nextDirection) ||
+                dot(nextDirection, geometricNormal) <= 0.0)
+            {
+                break;
+            }
+            bsdfPdf = PathBsdfPdf(surface, nextDirection);
+            if (!(bsdfPdf > 0.0))
+            {
+                break;
+            }
+            throughput *= EvaluatePathBsdf(surface, nextDirection) *
+                          (dot(surface.Normal, nextDirection) / bsdfPdf);
         }
-        throughput *= EvaluatePathBsdf(surface, nextDirection) *
-                      (dot(surface.Normal, nextDirection) / bsdfPdf);
         if (any(isnan(throughput)) || any(isinf(throughput)) ||
             max(throughput.r, max(throughput.g, throughput.b)) <= 0.0)
         {

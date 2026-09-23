@@ -79,6 +79,7 @@ namespace NorvesLib::Core::Rendering
         coordSettings.RenderGraphDumpOptions = settings.RenderGraphDumpOptions;
         coordSettings.MainViewRenderer = settings.MainViewRenderer;
         coordSettings.PathTracingSamplesPerFrame = settings.PathTracingSamplesPerFrame;
+        coordSettings.PathTracingTransport = settings.PathTracingTransport;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {

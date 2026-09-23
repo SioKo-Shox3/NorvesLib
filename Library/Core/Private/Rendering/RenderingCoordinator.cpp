@@ -1546,7 +1546,8 @@ namespace NorvesLib::Core::Rendering
         }
         if (m_MainViewRenderer == RenderingMainViewRenderer::PathTracing)
         {
-            m_MainSceneView->SetupPathTracingPipeline(settings.PathTracingSamplesPerFrame);
+            m_MainSceneView->SetupPathTracingPipeline(settings.PathTracingSamplesPerFrame,
+                                                      settings.PathTracingTransport);
             NORVES_LOG_INFO("RenderingCoordinator", "Path tracing pipeline configured on MainSceneView");
         }
         else

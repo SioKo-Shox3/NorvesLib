@@ -362,9 +362,18 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 輸送範囲を限るときは、発光三角形と太陽円盤を光源標本だけで評価する。
+        PathTracingLightSampling ResolvePathLightSampling(PathTracingLightSampling sampling,
+                                                          PathTracingTransportScope scope)
+        {
+            return scope == PathTracingTransportScope::Full ? sampling
+                                                            : PathTracingLightSampling::LightOnly;
+        }
+
         uint64_t HashPathEnvironment(const PathTracingEnvironment& environment,
                                      PathTracingBsdfMode bsdfMode,
-                                     PathTracingLightSampling lightSampling)
+                                     PathTracingLightSampling lightSampling,
+                                     PathTracingTransportScope transportScope)
         {
             uint64_t hash = 14695981039346656037ull;
             hash = HashPathBytes(hash, &environment.Mode, sizeof(environment.Mode));
@@ -374,6 +383,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashPathBytes(hash, &texture, sizeof(texture));
             hash = HashPathBytes(hash, &environment.Intensity, sizeof(environment.Intensity));
             hash = HashPathBytes(hash, &bsdfMode, sizeof(bsdfMode));
+            hash = HashPathBytes(hash, &transportScope, sizeof(transportScope));
             return HashPathBytes(hash, &lightSampling, sizeof(lightSampling));
         }
 
@@ -1062,7 +1072,9 @@ namespace NorvesLib::Core::Rendering
         ResolvePathValidationMode(static_cast<uint32_t>(context->GetActiveDebugMode()), m_Environment,
                                   m_BsdfMode, m_EffectiveEnvironment, m_EffectiveBsdfMode);
         const uint64_t environmentSignature =
-            HashPathEnvironment(m_EffectiveEnvironment, m_EffectiveBsdfMode, m_LightSampling);
+            HashPathEnvironment(m_EffectiveEnvironment, m_EffectiveBsdfMode,
+                                ResolvePathLightSampling(m_LightSampling, m_TransportScope),
+                                m_TransportScope);
         const bool bReset = history->SampleCount == 0u ||
             history->SceneRevision != context->SceneRevision ||
             history->LightRevision != context->LightRevision ||
@@ -1231,8 +1243,9 @@ namespace NorvesLib::Core::Rendering
         parameters.LightState[0] = m_PunctualLightCount;
         parameters.LightState[1] = m_EmissiveInstanceCount;
         parameters.LightState[2] = m_EmissiveTriangleCount;
-        parameters.LightState[3] = static_cast<uint32_t>(m_EffectiveBsdfMode) |
-                                   (static_cast<uint32_t>(m_LightSampling) << 2u);
+        parameters.LightState[3] =
+            static_cast<uint32_t>(m_EffectiveBsdfMode) |
+            (static_cast<uint32_t>(ResolvePathLightSampling(m_LightSampling, m_TransportScope)) << 2u);
         FillPathEnvironmentParameters(m_EffectiveEnvironment, parameters);
         parameters.SampleState[0] = m_SamplesPerFrame;
         // 正射影は画素ごとに近平面から平行に光線を出す。検証mode 252はラスタの深度alphaと同じく
@@ -1241,6 +1254,7 @@ namespace NorvesLib::Core::Rendering
             opticalCamera.Projection == ProjectionType::Orthographic ? 1u : 0u;
         parameters.SampleState[2] =
             static_cast<uint32_t>(context.GetActiveDebugMode()) == 252u ? 1u : 0u;
+        parameters.SampleState[3] = static_cast<uint32_t>(m_TransportScope);
         frameResources.ParametersBuffer->Update(&parameters, sizeof(parameters));
 
         RHI::DescriptorSetPtr descriptorSet = frameResources.DescriptorSet;

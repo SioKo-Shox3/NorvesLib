@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Rendering/IViewPass.h"
+#include "Rendering/PathTracingTransportScope.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "RHI/DeviceCapabilities.h"
 #include "RHI/RHITypes.h"
@@ -135,6 +136,14 @@ namespace NorvesLib::Core::Rendering
         void SetLightSampling(PathTracingLightSampling sampling) { m_LightSampling = sampling; }
 
         /**
+         * @brief 光輸送の範囲を切り替える。変更すると累積履歴を捨てる。
+         *
+         * Full以外では発光三角形と太陽円盤を光源標本だけで評価する（SetLightSamplingの設定より優先）。
+         */
+        void SetTransportScope(PathTracingTransportScope scope) { m_TransportScope = scope; }
+        PathTracingTransportScope GetTransportScope() const { return m_TransportScope; }
+
+        /**
          * @brief 環境マップを既定の環境光にする。Initializeで読み込み、SetEnvironmentと同じ扱いにする。
          */
         void SetEnvironmentMapSource(const PathTracingEnvironmentMapSource& source)
@@ -258,6 +267,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_SamplesPerFrame = 1u;
         PathTracingBsdfMode m_BsdfMode = PathTracingBsdfMode::Production;
         PathTracingLightSampling m_LightSampling = PathTracingLightSampling::MultipleImportance;
+        PathTracingTransportScope m_TransportScope = PathTracingTransportScope::Full;
         uint32_t m_BoundMaterialTextureCount = 0u;
         uint32_t m_PunctualLightCount = 0u;
         uint32_t m_EmissiveInstanceCount = 0u;

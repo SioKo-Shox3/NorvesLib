@@ -61,6 +61,7 @@ namespace NorvesLib::Core::Rendering
         // メインSceneViewの描画方式（起動時にだけ選ぶ。既定はラスタ）
         RenderingMainViewRenderer MainViewRenderer = RenderingMainViewRenderer::Raster;
         uint32_t PathTracingSamplesPerFrame = 1;
+        PathTracingTransportScope PathTracingTransport = PathTracingTransportScope::Full;
     };
 
     // ========================================

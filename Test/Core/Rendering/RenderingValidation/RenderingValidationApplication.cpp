@@ -161,6 +161,11 @@ namespace NorvesLib::Test::RenderingValidation
                 }
                 continue;
             }
+            if (StartsWith(argument, TEXT("--path-tracing-transport=")))
+            {
+                // エンジンが同じ引数で輸送範囲を設定する。
+                continue;
+            }
             if (StartsWith(argument, TEXT("--path-tracing-samples=")))
             {
                 if (!TryParsePositiveInteger(

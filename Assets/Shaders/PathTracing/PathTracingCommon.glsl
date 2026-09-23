@@ -26,6 +26,11 @@ const uint PATH_SAMPLING_MIS = 0u;
 const uint PATH_SAMPLING_LIGHT_ONLY = 1u;
 const uint PATH_SAMPLING_BSDF_ONLY = 2u;
 
+// 光輸送の範囲（PathTracingTransportScopeと同じ値）。
+const uint PATH_TRANSPORT_FULL = 0u;
+const uint PATH_TRANSPORT_DIRECT_ONLY = 1u;
+const uint PATH_TRANSPORT_SINGLE_DIFFUSE_BOUNCE = 2u;
+
 // 空が無効なときの環境光（PathTracingEnvironmentModeと同じ値）。
 const uint PATH_ENVIRONMENT_BLACK = 0u;
 const uint PATH_ENVIRONMENT_UNIFORM = 1u;
