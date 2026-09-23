@@ -618,6 +618,33 @@ target_compile_definitions(PathTracingCameraVulkanTest PRIVATE
     NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 set_target_properties(PathTracingCameraVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
 register_rendering_gpu_test(PathTracingCameraVulkanTest PathTracingCameraVulkanTest)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(PATH_TRACING_EXR_OUTPUT_ROOT
+    "${CMAKE_BINARY_DIR}/RenderingValidation/PathTracingExrOutputRuns")
+file(MAKE_DIRECTORY
+    "${PATH_TRACING_EXR_OUTPUT_ROOT}/first"
+    "${PATH_TRACING_EXR_OUTPUT_ROOT}/second"
+    "${PATH_TRACING_EXR_OUTPUT_ROOT}/known")
+add_executable(PathTracingExrOutputTest PathTracingCameraVulkanTest.cpp)
+target_link_libraries(PathTracingExrOutputTest PRIVATE Core RenderingGpuTestSupport)
+target_include_directories(PathTracingExrOutputTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private)
+target_compile_definitions(PathTracingExrOutputTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
+    NORVES_EXR_OUTPUT_TEST
+    NORVES_EXR_OUTPUT_ROOT="${PATH_TRACING_EXR_OUTPUT_ROOT}")
+set_target_properties(PathTracingExrOutputTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME PathTracingExrOutputTest
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/PathTracingExrOutputTest.py
+            $<TARGET_FILE:PathTracingExrOutputTest>
+            ${PATH_TRACING_EXR_OUTPUT_ROOT})
+set_tests_properties(PathTracingExrOutputTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 target_link_libraries(RenderingRayTracingShadowVulkanTest PRIVATE
     RenderingValidationFixtureSupport
     RenderingGpuTestSupport

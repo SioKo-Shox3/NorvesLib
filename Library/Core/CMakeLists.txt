@@ -122,6 +122,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkyAtmosphere.cpp
     Private/Rendering/VolumetricFog.cpp
     Private/Rendering/DDGIVolume.cpp
+    Private/Rendering/PathTracingExrOutput.cpp
     Private/Rendering/DDGIProbePass.cpp
     Private/Rendering/VolumetricsPass.cpp
     Private/Rendering/SkyAtmospherePass.cpp
@@ -518,7 +519,25 @@ set(PUBLIC_HEADERS
     Public/Input/IInputDevice.h
     Public/Input/MayaCameraController.h
     Public/Input/LightController.h
+    Public/Rendering/PathTracingExrOutput.h
 )
+
+# TinyEXR v3.2.0 の C API を独立した静的ライブラリに閉じ込める。
+file(GLOB TINYEXR_V3_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/src/*.c")
+add_library(NorvesThirdParty_TinyEXR STATIC
+    ${TINYEXR_V3_SOURCES}
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/deps/zstd/tinyexr_zstd.c)
+target_include_directories(NorvesThirdParty_TinyEXR PRIVATE
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/src
+    ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/deps/zstd)
+set_target_properties(NorvesThirdParty_TinyEXR PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON
+    FOLDER "Library/ThirdParty")
+if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(NorvesThirdParty_TinyEXR PRIVATE /experimental:c11atomics)
+endif()
 
 # ライブラリの作成
 add_library(${MODULE_NAME} STATIC ${PRIVATE_SOURCES} ${PUBLIC_HEADERS})
@@ -531,6 +550,7 @@ target_include_directories(${MODULE_NAME}
     PRIVATE 
         Private
         ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb  # stb_image.h
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/tinyexr/include
 )
 
 target_compile_definitions(${MODULE_NAME}
@@ -571,6 +591,7 @@ target_link_libraries(${MODULE_NAME}
         Vulkan::Vulkan
     PRIVATE
         NorvesThirdParty_AngelScript
+        NorvesThirdParty_TinyEXR
         $<$<CONFIG:Debug>:${SHADERC_LIB_DEBUG}>
         $<$<NOT:$<CONFIG:Debug>>:${SHADERC_LIB_RELEASE}>
 )

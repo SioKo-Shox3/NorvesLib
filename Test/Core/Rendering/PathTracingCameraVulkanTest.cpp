@@ -3,6 +3,9 @@
 
 #include "Rendering/FramePacket.h"
 #include "Rendering/PathTracingPass.h"
+#if defined(NORVES_EXR_OUTPUT_TEST)
+#include "Rendering/PathTracingExrOutput.h"
+#endif
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
@@ -21,6 +24,9 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#if defined(NORVES_EXR_OUTPUT_TEST)
+#include <limits>
+#endif
 
 namespace
 {
@@ -30,7 +36,11 @@ namespace
     using namespace NorvesLib::RHI;
     using namespace NorvesLib::Test::RenderingValidation;
 
+#if defined(NORVES_EXR_OUTPUT_TEST)
+    constexpr const char* TestName = "PathTracingExrOutputTest";
+#else
     constexpr const char* TestName = "PathTracingCameraVulkanTest";
+#endif
     constexpr uint32_t Width = 32u;
     constexpr uint32_t Height = 32u;
     constexpr uint64_t ReadbackBytes = Width * Height * 4u * sizeof(float);
@@ -319,6 +329,72 @@ namespace
         return true;
     }
 
+#if defined(NORVES_EXR_OUTPUT_TEST)
+    bool CheckExrOutput(const VariableArray<float>& firstPixels,
+                        const VariableArray<float>& secondPixels)
+    {
+        constexpr uint32_t FixedSeed = 0x6a09e667u;
+        String firstDirectory(NORVES_EXR_OUTPUT_ROOT);
+        firstDirectory += "/first";
+        String secondDirectory(NORVES_EXR_OUTPUT_ROOT);
+        secondDirectory += "/second";
+        String knownDirectory(NORVES_EXR_OUTPUT_ROOT);
+        knownDirectory += "/known";
+        if (!WritePathTracingExrFrame(firstDirectory.c_str(), "triangle",
+                                      FixedSeed, 32u, 7u, Width, Height,
+                                      firstPixels.data(), firstPixels.size()) ||
+            !WritePathTracingExrFrame(secondDirectory.c_str(), "triangle",
+                                      FixedSeed, 32u, 7u, Width, Height,
+                                      secondPixels.data(), secondPixels.size()))
+        {
+            std::cerr << "固定seedのPT画像をEXR連番へ保存できません\n";
+            return false;
+        }
+
+        constexpr uint32_t KnownWidth = 3u;
+        constexpr uint32_t KnownHeight = 17u;
+        VariableArray<float> knownPixels(KnownWidth * KnownHeight * 4u);
+        for (uint32_t y = 0u; y < KnownHeight; ++y)
+        {
+            for (uint32_t x = 0u; x < KnownWidth; ++x)
+            {
+                const size_t index = (y * KnownWidth + x) * 4u;
+                knownPixels[index] = 0.25f * static_cast<float>(x + 1u) +
+                    0.01f * static_cast<float>(y);
+                knownPixels[index + 1u] = 1.25f + 0.125f * static_cast<float>(y);
+                knownPixels[index + 2u] = 0.5f * static_cast<float>(x + y);
+                knownPixels[index + 3u] = 1.0f;
+            }
+        }
+        if (!WritePathTracingExrFrame(knownDirectory.c_str(), "known",
+                                      42u, 3u, 9u, KnownWidth, KnownHeight,
+                                      knownPixels.data(), knownPixels.size()))
+        {
+            std::cerr << "既知RGB値のEXRを保存できません\n";
+            return false;
+        }
+        knownPixels[0] = std::numeric_limits<float>::quiet_NaN();
+        if (WritePathTracingExrFrame(knownDirectory.c_str(), "known",
+                                     42u, 3u, 9u, KnownWidth, KnownHeight,
+                                     knownPixels.data(), knownPixels.size()))
+        {
+            std::cerr << "NaNを含むEXRが公開されました\n";
+            return false;
+        }
+        knownPixels[0] = std::numeric_limits<float>::infinity();
+        if (WritePathTracingExrFrame(knownDirectory.c_str(), "known",
+                                     42u, 3u, 9u, KnownWidth, KnownHeight,
+                                     knownPixels.data(), knownPixels.size()))
+        {
+            std::cerr << "Infを含むEXRが公開されました\n";
+            return false;
+        }
+        std::cout << "exr_fixed_seed=0x6a09e667 exr_spp=32 exr_frame=7 "
+                  << "exr_nonfinite_rejected=true\n";
+        return true;
+    }
+#endif
+
     int RunTest()
     {
         if (IsForcedGpuTestSkipRequested())
@@ -377,6 +453,12 @@ namespace
                 return 1;
             }
         }
+#if defined(NORVES_EXR_OUTPUT_TEST)
+        if (!CheckExrOutput(staticPixels, staticRepeat))
+        {
+            return 1;
+        }
+#endif
         std::cout << "varying_delta_time_keeps_static_history=true\n";
         const float staticGolden[16] = {
             0.05f, 0.42604f, 0.412437f, 0.05f,

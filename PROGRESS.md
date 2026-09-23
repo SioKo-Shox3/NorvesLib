@@ -70,6 +70,7 @@
 - R7-P3停止条件調査: RT材質snapshotがBaseColor/emissiveのみで、共有BRDF・texture評価に必要な値と資源が欠けることを確認した。指定build・CTestも未登録targetのため失敗し、タスクはblocked。
 - R7-P4の停止調査（タスク未完）: 既存PTのGPUスモークは1/1 passed。指定テストは未登録で、Cornell公開参照との比較を実証できないためblockedとした。
 - R7-P5: FramePacketの前後カメラ・RT instance transformから決定論的なシャッター時刻と薄レンズ光線を構築し、並進のsample別TLASを接続した。CoC解析値49.7312 pxに対して1024レンズ試料の49.7069 px、静止・移動の32試料GPU基準画像、可変DeltaTimeでの静止累積を固定した。指定Debug buildとCTest 2/2、既存RT snapshot/PT回帰2/2に合格した。
+- R7-P6: TinyEXR v3.2.0 C APIのRGB float/ZIP scanline出力を追加し、固定seed・32 SPP・frameの実GPU PT画像2回をbyte一致で保存した。NaN/Infは保存前に拒否し、同一ディレクトリの一時ファイルを完成後に公開する。独立したPython読取器とOpenCVのOpenEXR読取器でchannel・precision・window・既知RGB値を確認した。指定Debug buildとCTest 1/1に合格した。
 
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
@@ -81,9 +82,10 @@
 
 - R7-P3はRT材質snapshotとtexture資源・UV・DFGの契約確定後に再開する。R6 Outdoorの基準画像判断とR7-P1の受入れは保留として保持する。
 - R7-P3の契約と光輸送を実装後、R7-P4の同一seed 16/64/256 sppとCornell RGBE参照のGPU検証を登録して再開する。閾値とseedは変更しない。
-- R7-P6の固定seed EXR sequence出力を実装する。R7-P3/P4のblocked状態とR6 Outdoor/R7-P1の既知保留は維持する。
+- R7-P7のcore受入れはR7-P3/P4の光輸送・収束契約が完了してから行う。R6 Outdoor/R7-P1の既知保留は維持する。
 
 ## Notes
+- R7-P6検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P6-10.txt`で指定build EXIT_CODE=0、`verify-R7-P6-11.txt`で指定CTest 1/1 passed・EXIT_CODE=0、`verify-R7-P6-12.txt`で固定条件2出力のbyte一致（SHA256 `9333237a36a6a8ee732fe55557a430706c5a831b71e7d0f8bef3edb80291d768`）、BGR float32/ZIP、32×32・3×17 window、有限値とNaN/Inf拒否を読戻し確認した。`verify-R7-P6-9.txt`のOpenCV独立読取と、`verify-R7-P6-13.txt`・`-14.txt`の既存カメラGPUテストもEXIT_CODE=0。MSVCのC11 atomicsは専用compile optionで有効化し、TinyEXRのJPH SIMD builtinのみ移植した。
 - R7-P5検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P5-10.txt`で指定build EXIT_CODE=0、`verify-R7-P5-11.txt`で指定CTest 2/2 passed、`verify-R7-P5-12.txt`で可変DeltaTimeの静止32試料累積と静止/移動golden・画像差0.0576274を読戻し確認した。既存RT snapshot/PT回帰は`verify-R7-P5-3.txt`・`-4.txt`で2/2 passed。線形3×3が同じ並進だけを補間し、それ以外はcurrentを使う。実際のアニメーションでpacketのcamera/geometryが変わると既存の履歴規則で累積はリセットされる。独立評価は2周目PASS。
 - R7-P4検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P4-1.txt`は未登録build targetでEXIT_CODE=1、`verify-R7-P4-2.txt`はCTest未登録でEXIT_CODE=8。既存PathTracingVulkanTestのDebug buildとGPU CTestは成功（1/1）。停止理由は`blocked/R7-P4.md`。
 - R7-P3検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P3-1.txt`はGame成功後に未登録のPathTracingLightingVulkanTest targetでEXIT_CODE=1、`verify-R7-P3-2.txt`は指定3テストが未登録でEXIT_CODE=8。開始時のGame/PathTracingVulkanTest buildと既存PT GPU CTestは成功。停止理由と選択肢は`blocked/R7-P3.md`。
