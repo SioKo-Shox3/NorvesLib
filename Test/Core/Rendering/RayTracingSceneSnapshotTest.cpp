@@ -181,6 +181,42 @@ namespace
         }
         std::cout << "draw_snapshot_geometry_and_transforms=true\n";
 
+        // 影を落とさない不透明物体もinstanceとして含め、maskで区別する（影・DDGI・RTGIは
+        // 影を落とす物体のbitだけを調べ、パストレーサーは全bitを調べる）。半透明は含めない。
+        {
+            FramePacket maskPacket;
+            DrawCommand caster = MakeMeshDraw(meshHandle);
+            caster.Draw.InstanceCount = 1;
+            DrawCommand nonCaster = MakeMeshDraw(meshHandle);
+            nonCaster.Draw.InstanceCount = 1;
+            nonCaster.Draw.InstanceDataOffset = 1;
+            nonCaster.Draw.bCastShadow = false;
+            DrawCommand translucent = MakeMeshDraw(meshHandle);
+            translucent.Draw.InstanceCount = 1;
+            translucent.Draw.InstanceDataOffset = 2;
+            translucent.Draw.MaterialBlendMode = BlendMode::Translucent;
+            maskPacket.DrawCommands.push_back(caster);
+            maskPacket.DrawCommands.push_back(nonCaster);
+            maskPacket.DrawCommands.push_back(translucent);
+            maskPacket.InstanceData.resize(3);
+            SetInstanceTransform(maskPacket.InstanceData[0], 1.0f, 0.0f, 0.0f);
+            SetInstanceTransform(maskPacket.InstanceData[1], 0.0f, 5.0f, 0.0f);
+            SetInstanceTransform(maskPacket.InstanceData[2], 0.0f, 0.0f, 7.0f);
+            SetOpaqueRange(maskPacket);
+            if (!subsystem.BuildFrameSnapshot(&renderResources.Meshes(), maskPacket) ||
+                maskPacket.RayTracingScene.Instances.size() != 2 ||
+                maskPacket.RayTracingScene.Instances[0].Instance.mask !=
+                    RayTracingInstanceMaskShadowCaster ||
+                maskPacket.RayTracingScene.Instances[1].Instance.mask !=
+                    RayTracingInstanceMaskNonShadowCaster ||
+                !IsNear(maskPacket.RayTracingScene.Instances[1].Instance.transform[7], 5.0f))
+            {
+                std::cerr << "影を落とす/落とさない不透明物体のinstance maskが正しくありません\n";
+                return 1;
+            }
+            std::cout << "draw_snapshot_shadow_caster_masks=true\n";
+        }
+
         CommandListPtr commandList = device->CreateCommandList();
         if (!commandList || !BuildAndSubmit(device, *commandList, subsystem, 0, packet))
         {

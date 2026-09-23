@@ -2691,6 +2691,18 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::SetR5RayTracingShadowOccluderCastsShadow(
+        bool bCastShadow) const
+    {
+        if (!m_bR5RayTracingShadowFixturePrepared || m_pR5ShadowOccluderMesh == nullptr)
+        {
+            return false;
+        }
+
+        m_pR5ShadowOccluderMesh->SetCastShadow(bCastShadow);
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::ApplyR4CornellFixture() const
     {
         if (m_bR4CornellFixturePrepared)

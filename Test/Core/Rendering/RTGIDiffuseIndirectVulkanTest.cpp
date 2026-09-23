@@ -416,6 +416,25 @@ namespace
         return true;
     }
 
+    bool AreAllRTGIPixelsZero(const LightingFrameObservation& observation)
+    {
+        if (observation.RTGIPixels.size() != TestWidth * TestHeight * 4u)
+        {
+            return false;
+        }
+        for (uint32_t pixel = 0u; pixel < TestWidth * TestHeight; ++pixel)
+        {
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                if (!IsZeroHalf(observation.RTGIPixels[pixel * 4u + channel]))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     bool AreSceneColorsEqual(const LightingFrameObservation& lhs,
                              const LightingFrameObservation& rhs)
     {
@@ -807,10 +826,47 @@ namespace
             return 1;
         }
 
+        // 影を落とさない設定のinstanceはTLASに含まれても、RTGIのray query（caster bitだけ）には
+        // 当たらない。命中していた画素も未命中と同じ0になる。
+        FramePacket nonCasterPacket;
+        PopulateRayTracingSnapshot(topLevel,
+                                   bottomLevel,
+                                   vertexBuffer,
+                                   indexBuffer,
+                                   nonCasterPacket);
+        nonCasterPacket.RayTracingScene.Instances[0].Instance.mask =
+            RayTracingInstanceMaskNonShadowCaster;
+        AccelerationStructureBuildDesc nonCasterBuild = topLevelBuild;
+        nonCasterBuild.instances[0].mask = RayTracingInstanceMaskNonShadowCaster;
+        LightingFrameObservation nonCaster;
+        if (!RunLightingFrame(device,
+                              capabilities,
+                              rtgiCapability,
+                              lightingPass,
+                              renderer,
+                              context,
+                              nonCasterPacket.RayTracingScene,
+                              nonCasterBuild,
+                              gbuffer,
+                              rtgiOutput,
+                              true,
+                              true,
+                              true,
+                              4u,
+                              nonCaster) ||
+            !nonCaster.bPublished ||
+            nonCaster.Source != RTGIIndirectLightingSource::RTGI ||
+            !AreAllRTGIPixelsZero(nonCaster))
+        {
+            std::cerr << "影を落とさない設定のinstanceにRTGIのray queryが当たりました\n";
+            return 1;
+        }
+
         std::cout << "rtgi_capability_usable=true tlas_complete=true output_format=R16G16B16A16_FLOAT\n";
         std::cout << "rtgi_hit_miss_readback=finite hit_positive=true miss_zero=true\n";
         std::cout << "rtgi_published=true source=RTGI fallback_disabled=Raster fallback_incomplete_tlas=Raster\n";
         std::cout << "scene_color_rtgi_differs_from_fallback=true disabled_and_incomplete_equal=true\n";
+        std::cout << "rtgi_non_shadow_caster_instance_ignored=true\n";
 
         lightingPass.Shutdown();
         renderer.Shutdown();

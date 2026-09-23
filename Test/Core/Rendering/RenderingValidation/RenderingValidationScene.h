@@ -258,6 +258,7 @@ namespace NorvesLib::Test::RenderingValidation
         bool ApplyR5RayTracingShadowFixture() const;
         bool SetR5RayTracingShadowOccluderPositionX(float positionX) const;
         bool SetR5RayTracingShadowReceiverPositionX(float positionX) const;
+        bool SetR5RayTracingShadowOccluderCastsShadow(bool bCastShadow) const;
         bool ApplyR4CornellFixture() const;
         bool AddR6CornellDynamicObject() const;
         bool SetR4CornellLightOffsetX(float offsetX) const;

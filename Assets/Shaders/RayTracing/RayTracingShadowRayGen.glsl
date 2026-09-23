@@ -2,6 +2,8 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
 
+#include "Common/RayTracingInstanceMask.glsl"
+
 layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
 layout(set = 0, binding = 1) uniform sampler2D gbufferDepth;
 layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
@@ -58,7 +60,7 @@ void main()
     visibility = 1u;
     traceRayEXT(scene,
                 gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-                0xffu,
+                RayTracingInstanceMaskShadowCaster,
                 0u,
                 0u,
                 0u,

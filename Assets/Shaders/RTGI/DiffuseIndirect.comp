@@ -81,6 +81,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTG
 };
 
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/RayTracingInstanceMask.glsl"
 const float RAY_ORIGIN_OFFSET = 0.002;
 const uint RTGI_HISTORY_MAXIMUM_AGE = 8u;
 const float RTGI_HISTORY_MAXIMUM_WEIGHT = 0.9;
@@ -280,7 +281,7 @@ bool IsOccluded(vec3 worldPosition,
     rayQueryInitializeEXT(shadowQuery,
                           sceneTopLevel,
                           gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
-                          0xFFu,
+                          RayTracingInstanceMaskShadowCaster,
                           worldPosition + normal * RAY_ORIGIN_OFFSET,
                           parameters.rayLimits.x,
                           lightDirection,
@@ -543,7 +544,7 @@ void main()
             rayQueryInitializeEXT(query,
                                   sceneTopLevel,
                                   gl_RayFlagsOpaqueEXT,
-                                  0xFFu,
+                                  RayTracingInstanceMaskShadowCaster,
                                   rayOrigin,
                                   parameters.rayLimits.x,
                                   rayDirection,

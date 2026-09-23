@@ -161,7 +161,8 @@ namespace
     void AppendInstance(FramePacket& packet,
                         const TriangleResources& triangle,
                         uint32_t customIndex,
-                        const RayTracingHitMaterialSnapshot& material)
+                        const RayTracingHitMaterialSnapshot& material,
+                        uint8_t instanceMask = RayTracingInstanceMaskShadowCaster)
     {
         RayTracingSceneInstanceSnapshot snapshot;
         snapshot.SourceVertexBuffer = triangle.VertexBuffer;
@@ -174,6 +175,7 @@ namespace
         snapshot.bGeometryOpaque = true;
         snapshot.Instance.bottomLevel = triangle.BottomLevel;
         snapshot.Instance.customIndex = customIndex;
+        snapshot.Instance.mask = instanceMask;
         snapshot.Instance.disableTriangleFacingCull = true;
         snapshot.BottomLevel = triangle.BottomLevel;
         snapshot.Material = material;
@@ -183,8 +185,11 @@ namespace
     bool CreateTestScene(const DevicePtr& device,
                          bool bAddLightOccluders,
                          FramePacket& outPacket,
-                         SceneResources& outResources)
+                         SceneResources& outResources,
+                         bool bOccludersCastShadow = true)
     {
+        const uint8_t occluderMask = bOccludersCastShadow ? RayTracingInstanceMaskShadowCaster
+                                                          : RayTracingInstanceMaskNonShadowCaster;
         DDGIVolumeParameters volume = MakeDefaultDDGIVolumeParameters();
         volume.bEnabled = true;
         volume.Origin = Math::Vector3(0.0f, 0.0f, 2.0f);
@@ -238,7 +243,7 @@ namespace
             {
                 return false;
             }
-            AppendInstance(outPacket, positiveX, PlaneCustomIndex + 1u, {});
+            AppendInstance(outPacket, positiveX, PlaneCustomIndex + 1u, {}, occluderMask);
 
             const Vertex negativeXVertices[3] = {
                 {{-2.0f, -10.0f, -10.0f}},
@@ -253,7 +258,7 @@ namespace
             {
                 return false;
             }
-            AppendInstance(outPacket, negativeX, PlaneCustomIndex + 2u, {});
+            AppendInstance(outPacket, negativeX, PlaneCustomIndex + 2u, {}, occluderMask);
         }
 
         AccelerationStructureDesc topLevelDesc;
@@ -753,15 +758,19 @@ namespace
 
         FramePacket unoccludedPacket;
         FramePacket occludedPacket;
+        FramePacket nonCasterPacket;
         SceneResources unoccludedScene;
         SceneResources occludedScene;
+        SceneResources nonCasterScene;
         if (!CreateTestScene(device, false, unoccludedPacket, unoccludedScene) ||
-            !CreateTestScene(device, true, occludedPacket, occludedScene))
+            !CreateTestScene(device, true, occludedPacket, occludedScene) ||
+            !CreateTestScene(device, true, nonCasterPacket, nonCasterScene, false))
         {
             return 1;
         }
         AddTestLights(unoccludedPacket);
         AddTestLights(occludedPacket);
+        AddTestLights(nonCasterPacket);
 
         BufferPtr lightBuffer;
         uint32_t lightCount = 0u;
@@ -824,6 +833,30 @@ namespace
             return 1;
         }
 
+        // 遮蔽板を影を落とさない設定にすると、TLASに含まれてもprobeの光線と影の問い合わせ
+        // （caster bitだけ）には当たらず、遮蔽なしと同じ放射輝度になる。
+        DDGIProbePass nonCasterProbePass;
+        ProbeObservation nonCasterObservation;
+        if (!RunProbeFrame(device,
+                           shaderManager,
+                           nonCasterProbePass,
+                           nonCasterPacket,
+                           nonCasterScene,
+                           lightBuffer,
+                           lightCount,
+                           lightBufferSize,
+                           environmentTexture,
+                           environmentSampler,
+                           0u,
+                           nonCasterObservation) ||
+            !ValidateObservation(nonCasterObservation,
+                                 nonCasterPacket,
+                                 false,
+                                 "non_shadow_caster_occluders"))
+        {
+            return 1;
+        }
+
         const DDGIProbeRayQueryResult& unoccludedHit =
             unoccludedObservation.Results[HitDirectionIndex];
         const DDGIProbeRayQueryResult& occludedHit =
@@ -840,10 +873,11 @@ namespace
                      " point_spot_shadow_queries=true environment_miss=true\n";
         unoccludedProbePass.Shutdown();
         occludedProbePass.Shutdown();
+        nonCasterProbePass.Shutdown();
         shaderManager.Shutdown();
         device->WaitIdle();
         for (const ProbeObservation* observation :
-             {&unoccludedObservation, &occludedObservation})
+             {&unoccludedObservation, &occludedObservation, &nonCasterObservation})
         {
             for (const TWeakPtr<IBuffer>& geometryLease : observation->GeometryInputLeases)
             {

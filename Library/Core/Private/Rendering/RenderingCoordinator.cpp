@@ -650,11 +650,12 @@ namespace NorvesLib::Core::Rendering
         for (const DrawCommand& command : opaqueCommands)
         {
             const DrawParams& draw = command.Draw;
+            // 影を落とさない物体もパストレーサーの主光線・散乱光線には見えるため含める。
+            // 影・DDGI・RTGIはinstance maskで影を落とす物体だけを調べる。
             if ((command.Type != DrawCommandType::DrawIndexed &&
                  command.Type != DrawCommandType::DrawIndexedInstanced) ||
                 draw.PayloadKind != DrawPayloadKind::Mesh ||
                 !draw.MeshHandle.IsValid() ||
-                !draw.bCastShadow ||
                 (draw.MaterialBlendMode != BlendMode::Opaque &&
                  draw.MaterialBlendMode != BlendMode::Masked))
             {
@@ -767,6 +768,8 @@ namespace NorvesLib::Core::Rendering
                 }
                 instance.Instance.customIndex =
                     static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+                instance.Instance.mask = draw.bCastShadow ? RayTracingInstanceMaskShadowCaster
+                                                          : RayTracingInstanceMaskNonShadowCaster;
                 CopyRayTracingInstanceTransform(worldTransform, instance.Instance.transform);
                 if (IsFiniteRayTracingTransform(previousWorldTransform))
                 {

@@ -49,6 +49,7 @@ namespace
         DynamicMovedRasterReference,
         DynamicMovedRayTracingHardShadow,
         DynamicRasterFallback,
+        DynamicNonCasterVisibility,
         Complete
     };
 
@@ -237,9 +238,12 @@ namespace
                     m_Stage == CaptureStage::DynamicMovedRasterReference ||
                     m_Stage == CaptureStage::DynamicMovedRayTracingHardShadow ||
                     m_Stage == CaptureStage::DynamicRasterFallback;
+                // 影を落とさない設定の物体はTLASに含まれても影の光線（caster bitだけ）には当たらない。
                 m_bDynamicFixtureStateValid =
                     GetFixture().SetR5RayTracingShadowOccluderPositionX(
-                        bOccluderMoved ? DynamicOccluderPositionX : 0.0f);
+                        bOccluderMoved ? DynamicOccluderPositionX : 0.0f) &&
+                    GetFixture().SetR5RayTracingShadowOccluderCastsShadow(
+                        m_Stage != CaptureStage::DynamicNonCasterVisibility);
             }
         }
 
@@ -483,6 +487,35 @@ namespace
                 return true;
             }
 
+            case CaptureStage::DynamicNonCasterVisibility:
+            {
+                // 初期位置へ戻した遮蔽物を影を落とさない設定にすると、初期位置の影の領域も照らされる。
+                const double formerShadowLuma = MeanLuma(frame.Pixels.data(),
+                                                         frame.RowPitchBytes,
+                                                         frame.BytesPerPixel,
+                                                         116u,
+                                                         116u,
+                                                         140u,
+                                                         140u);
+                const double litLuma = MeanLuma(frame.Pixels.data(),
+                                                frame.RowPitchBytes,
+                                                frame.BytesPerPixel,
+                                                36u,
+                                                116u,
+                                                60u,
+                                                140u);
+                std::cout << "R5_DYNAMIC_NON_CASTER frame=" << frame.FrameNumber
+                          << " former_shadow_luma=" << formerShadowLuma
+                          << " lit_luma=" << litLuma << '\n';
+                if (formerShadowLuma < 170.0 || litLuma < 170.0)
+                {
+                    outFailureReason = TEXT("影を落とさない設定の遮蔽物がRT影の光線を遮っています");
+                    return false;
+                }
+                std::cout << "R5_DYNAMIC_NON_CASTER=PASS\n";
+                return true;
+            }
+
             case CaptureStage::Complete:
                 break;
             }
@@ -520,6 +553,9 @@ namespace
                     m_Stage = CaptureStage::DynamicRasterFallback;
                     break;
                 case CaptureStage::DynamicRasterFallback:
+                    m_Stage = CaptureStage::DynamicNonCasterVisibility;
+                    break;
+                case CaptureStage::DynamicNonCasterVisibility:
                     m_Stage = CaptureStage::Complete;
                     break;
                 default:
@@ -546,6 +582,7 @@ namespace
             case CaptureStage::DynamicMovedRasterReference:
             case CaptureStage::DynamicMovedRayTracingHardShadow:
             case CaptureStage::DynamicRasterFallback:
+            case CaptureStage::DynamicNonCasterVisibility:
             case CaptureStage::Complete:
                 m_Stage = CaptureStage::Complete;
                 break;
@@ -567,6 +604,7 @@ namespace
                 return RasterFallbackMode;
             case CaptureStage::DynamicInitialVisibility:
             case CaptureStage::DynamicMovedVisibility:
+            case CaptureStage::DynamicNonCasterVisibility:
                 return RayTracingVisibilityMode;
             case CaptureStage::DynamicMovedRasterReference:
                 return RasterHardShadowMode;

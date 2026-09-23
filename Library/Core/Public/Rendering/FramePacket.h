@@ -52,10 +52,17 @@ namespace NorvesLib::Core::Rendering
         bool bGameThreadTimingsAvailable = false;
     };
 
+    /// 影を落とす不透明物体のinstance mask。影・DDGI・RTGIの光線はこのbitだけを調べる。
+    /// Assets/Shaders/Common/RayTracingInstanceMask.glslと一致させる。
+    inline constexpr uint8_t RayTracingInstanceMaskShadowCaster = 0x01u;
+    /// 影を落とさない不透明物体のinstance mask。全bitで調べるパストレーサーだけが当たる。
+    inline constexpr uint8_t RayTracingInstanceMaskNonShadowCaster = 0x02u;
+
     /**
      * @brief レイトレーシング用シーンのフレームスナップショット
      *
      * BLAS参照とTLASをFramePacketへ格納し、RenderThreadへ値として渡します。
+     * 不透明・マスクの描画をすべて含め、影を落とすかどうかはinstance maskで区別します。
      */
     struct RayTracingSceneInstanceSnapshot
     {

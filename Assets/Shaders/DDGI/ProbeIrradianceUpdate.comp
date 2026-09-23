@@ -4,6 +4,8 @@
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
+#include "Common/RayTracingInstanceMask.glsl"
+
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT sceneTopLevel;
@@ -296,7 +298,7 @@ void AddPreviousIrradiance(uint rayIndex)
     rayQueryInitializeEXT(query,
                           sceneTopLevel,
                           gl_RayFlagsOpaqueEXT,
-                          0xFFu,
+                          RayTracingInstanceMaskShadowCaster,
                           rayOrigin,
                           parameters.rayLimits.x,
                           rayDirection,
