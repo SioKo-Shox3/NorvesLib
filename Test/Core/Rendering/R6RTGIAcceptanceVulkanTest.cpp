@@ -1,9 +1,12 @@
 ﻿// R6 RTGIの静止・移動・ライト追従・fallbackをHDR captureで検証する。
 #include "Boot/AppLauncher.h"
 #include "Boot/BootConfig.h"
+#include "Engine/Engine.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/FrameCaptureTypes.h"
 #include "Rendering/RenderWorld.h"
+#include "Rendering/RenderingCoordinator.h"
 #include "RenderingValidation/GpuTestEnvironment.h"
 #include "RenderingValidation/RenderingFloatImage.h"
 #include "RenderingValidation/RenderingValidationApplication.h"
@@ -18,7 +21,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <iostream>
 #include <limits>
 
@@ -33,12 +35,39 @@ namespace
     constexpr uint32_t WarmupRenderedFrames = 8u;
     constexpr uint32_t LightDeadlineRenderedFrames = 4u;
     constexpr double MinimumFallbackDifference = 0.0005;
-    constexpr double MinimumMotionDifference = 0.0005;
-    constexpr double MaximumStoppedDifference = 0.02;
     constexpr double MaximumStoppedFrameDifference = 0.02;
-    constexpr double MinimumLightChange = 0.00025;
     constexpr double MinimumLightProgress = 0.80;
     constexpr float R6PointLightIntensity = 1200.0f;
+    constexpr float RTGIHistoryMaximumAge = 8.0f;
+    constexpr uint32_t LightBaselineSamples = 4u;
+    constexpr uint64_t LightBaselineSettleFrames = 16u;
+    constexpr float LightStartOffset = -1.0f;
+    constexpr float LightMovedOffset = 1.0f;
+    // 天井の面光源（45000 nits、約1.37 m²、約19万lm）と同程度にして、点光源の移動が
+    // 間接光の色にじみへ現れるようにする。追従検証の段階だけで使う。
+    constexpr float R6FollowLightIntensity = 200000.0f;
+    constexpr uint64_t LightConvergedElapsedFrames = 24u;
+    constexpr uint64_t LightObservationFrames = 32u;
+    constexpr uint64_t CameraSettleRenderedFrames = 10u;
+    constexpr uint64_t StopSettleRenderedFrames = 12u;
+    constexpr float ObjectVisibleOffset = 0.55f;
+    constexpr float ObjectMovedOffset = 1.0f;
+    // カメラ・物体移動時に履歴を保つべき静止領域で、最大ageを維持する画素の割合の下限。
+    // 視差で露出する遮蔽物の輪郭だけが棄却されるため、大半の画素は保持される。
+    constexpr double MinimumKeptFraction = 0.9;
+    // 追従率の分母となる最終変化量は、静止時の揺らぎ（標準偏差）の5倍以上を要求する。
+    constexpr double LightSignalToNoise = 5.0;
+
+    // 画面上の矩形（画像幅・高さに対する割合: 左, 右, 上, 下）。
+    struct UvRect
+    {
+        double Left;
+        double Right;
+        double Top;
+        double Bottom;
+    };
+    // 物体・カメラ移動の影響を受けない奥の壁の中央。
+    constexpr UvRect StaticControlRoi = {200.0 / 512.0, 312.0 / 512.0, 150.0 / 512.0, 250.0 / 512.0};
 
     struct ImageMetrics
     {
@@ -50,158 +79,88 @@ namespace
         double MaximumY = 0.0;
     };
 
-    struct StaticGolden
-    {
-        double MeanY = 0.0;
-        double CenterY = 0.0;
-        double CenterRed = 0.0;
-        double CenterGreen = 0.0;
-        double CenterBlue = 0.0;
-        double Tolerance = 0.0;
-        bool bValid = false;
-    };
-
     enum class CaptureStage : uint8_t
     {
         IblFallback,
         R4FallbackWarmup,
         RTGIWarmup,
-        StaticGolden,
+        StaticStability,
         CameraMoved,
+        CameraSettled,
         ObjectMoved,
         MoveStopped,
+        LightBaseline,
         LightMoved,
         Complete
     };
 
-    bool ParseGoldenValue(const char* key, double value, StaticGolden& golden)
+    // R16_FLOATの履歴age captureを行優先のfloat配列へ復号する。
+    bool DecodeCapturedR16Float(const CapturedFrame& frame, VariableArray<float>& outValues)
     {
-        if (std::strcmp(key, "mean_y") == 0)
-        {
-            golden.MeanY = value;
-        }
-        else if (std::strcmp(key, "center_y") == 0)
-        {
-            golden.CenterY = value;
-        }
-        else if (std::strcmp(key, "center_red") == 0)
-        {
-            golden.CenterRed = value;
-        }
-        else if (std::strcmp(key, "center_green") == 0)
-        {
-            golden.CenterGreen = value;
-        }
-        else if (std::strcmp(key, "center_blue") == 0)
-        {
-            golden.CenterBlue = value;
-        }
-        else if (std::strcmp(key, "tolerance") == 0)
-        {
-            golden.Tolerance = value;
-        }
-        else
+        if (!frame.IsSuccess() || frame.Format != RHI::Format::R16_FLOAT ||
+            frame.Width == 0u || frame.Height == 0u ||
+            frame.RowPitchBytes < frame.Width * 2u ||
+            frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
         {
             return false;
         }
-        return std::isfinite(value);
+        outValues.resize(static_cast<size_t>(frame.Width) * frame.Height);
+        for (uint32_t y = 0u; y < frame.Height; ++y)
+        {
+            for (uint32_t x = 0u; x < frame.Width; ++x)
+            {
+                const size_t offset = static_cast<size_t>(y) * frame.RowPitchBytes + x * 2u;
+                const uint16_t bits = static_cast<uint16_t>(
+                    frame.Pixels[offset] | (static_cast<uint16_t>(frame.Pixels[offset + 1u]) << 8u));
+                outValues[static_cast<size_t>(y) * frame.Width + x] = DecodeIeee754Binary16(bits);
+            }
+        }
+        return true;
     }
 
-    bool LoadStaticGolden(StaticGolden& outGolden)
+    struct AgeRange
     {
-        std::ifstream input(
-            NORVES_SOURCE_ROOT "/Docs/RenderingValidation/R6RTGIStaticGolden.tsv");
-        if (!input)
-        {
-            std::cerr << "R6静止goldenを開けませんでした\n";
-            return false;
-        }
+        float Minimum = 0.0f;
+        float Maximum = 0.0f;
+        uint32_t Count = 0u;
+        uint32_t KeptCount = 0u; ///< 最大ageを維持した画素数
 
-        bool bSchema = false;
-        bool bMeanY = false;
-        bool bCenterY = false;
-        bool bCenterRed = false;
-        bool bCenterGreen = false;
-        bool bCenterBlue = false;
-        bool bTolerance = false;
-        char line[256] = {};
-        while (input.getline(line, sizeof(line)))
+        double KeptFraction() const
         {
-            if (static_cast<unsigned char>(line[0]) == 0xEFu &&
-                static_cast<unsigned char>(line[1]) == 0xBBu &&
-                static_cast<unsigned char>(line[2]) == 0xBFu)
+            return Count > 0u ? static_cast<double>(KeptCount) / static_cast<double>(Count) : 0.0;
+        }
+    };
+
+    AgeRange MeasureAge(const VariableArray<float>& ages, uint32_t width, uint32_t height,
+                        const UvRect& roi)
+    {
+        AgeRange range;
+        const uint32_t left = static_cast<uint32_t>(roi.Left * width);
+        const uint32_t right = static_cast<uint32_t>(roi.Right * width);
+        const uint32_t top = static_cast<uint32_t>(roi.Top * height);
+        const uint32_t bottom = static_cast<uint32_t>(roi.Bottom * height);
+        range.Minimum = std::numeric_limits<float>::infinity();
+        range.Maximum = -std::numeric_limits<float>::infinity();
+        for (uint32_t y = top; y < bottom && y < height; ++y)
+        {
+            for (uint32_t x = left; x < right && x < width; ++x)
             {
-                std::memmove(line, line + 3, std::strlen(line + 3) + 1u);
-            }
-            if (line[0] == '\0' || line[0] == '#')
-            {
-                continue;
-            }
-            char* separator = std::strchr(line, '\t');
-            if (separator == nullptr)
-            {
-                return false;
-            }
-            *separator = '\0';
-            char* valueText = separator + 1;
-            size_t valueLength = std::strlen(valueText);
-            while (valueLength > 0u &&
-                   (valueText[valueLength - 1u] == '\r' ||
-                    valueText[valueLength - 1u] == ' ' ||
-                    valueText[valueLength - 1u] == '\t'))
-            {
-                valueText[--valueLength] = '\0';
-            }
-            char* valueEnd = nullptr;
-            const double value = std::strtod(valueText, &valueEnd);
-            if (valueEnd == valueText || *valueEnd != '\0')
-            {
-                if (std::strcmp(line, "schema") == 0 &&
-                    std::strcmp(valueText,
-                                "NorvesLib.RenderingValidation.R6RTGIStaticGolden.v1") == 0)
+                const float age = ages[static_cast<size_t>(y) * width + x];
+                if (!std::isfinite(age))
                 {
-                    bSchema = true;
-                    continue;
+                    range.Count = 0u;
+                    return range;
                 }
-                return false;
-            }
-            if (std::strcmp(line, "mean_y") == 0)
-            {
-                bMeanY = true;
-            }
-            else if (std::strcmp(line, "center_y") == 0)
-            {
-                bCenterY = true;
-            }
-            else if (std::strcmp(line, "center_red") == 0)
-            {
-                bCenterRed = true;
-            }
-            else if (std::strcmp(line, "center_green") == 0)
-            {
-                bCenterGreen = true;
-            }
-            else if (std::strcmp(line, "center_blue") == 0)
-            {
-                bCenterBlue = true;
-            }
-            else if (std::strcmp(line, "tolerance") == 0)
-            {
-                bTolerance = true;
-            }
-            else
-            {
-                return false;
-            }
-            if (!ParseGoldenValue(line, value, outGolden))
-            {
-                return false;
+                range.Minimum = std::min(range.Minimum, age);
+                range.Maximum = std::max(range.Maximum, age);
+                ++range.Count;
+                if (age >= RTGIHistoryMaximumAge)
+                {
+                    ++range.KeptCount;
+                }
             }
         }
-        outGolden.bValid = bSchema && bMeanY && bCenterY && bCenterRed &&
-                           bCenterGreen && bCenterBlue && bTolerance &&
-                           outGolden.Tolerance > 0.0;
-        return outGolden.bValid;
+        return range;
     }
 
     double Luma(float red, float green, float blue)
@@ -288,6 +247,26 @@ namespace
                           : std::numeric_limits<double>::infinity();
     }
 
+    // 赤と緑の壁からの色にじみの差（デノイズ後間接光のR平均−G平均）。点光源が片側の壁へ
+    // 寄るほど、その壁の色の一次反射が増えて値が変わる。
+    double MeasureIndirectChroma(const RgbaFloatImage& image)
+    {
+        double red = 0.0;
+        double green = 0.0;
+        uint64_t count = 0u;
+        for (size_t offset = 0u; offset + 3u < image.Values.size(); offset += 4u)
+        {
+            red += image.Values[offset + 0u];
+            green += image.Values[offset + 1u];
+            ++count;
+        }
+        if (count == 0u)
+        {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        return (red - green) / static_cast<double>(count);
+    }
+
     class R6RTGIAcceptanceHandler final : public RenderingValidationApplicationHandler
     {
     public:
@@ -305,20 +284,21 @@ namespace
             m_bObjectMoved = false;
             m_bStopped = false;
             m_StopSample = 0u;
-            m_LightSample = 0u;
+            m_PreviousStageLastFrame = 0u;
             m_LightStartFrame = 0u;
-            m_LightInitialY = 0.0;
-            m_LightValues.fill(0.0);
-            m_LightFrames.fill(0u);
+            m_LightBaselineValues.fill(0.0);
+            m_LightBaselineCount = 0u;
+            m_LightDeadlineValue = 0.0;
+            m_LightDeadlineElapsed = 0u;
+            m_bLightDeadlineSampled = false;
+            m_LightConvergedSum = 0.0;
+            m_LightConvergedCount = 0u;
+            m_LightLastElapsed = 0u;
             m_IblImage = {};
             m_R4Image = {};
             m_StaticImage = {};
-            m_StopImage = {};
             m_StaticMetrics = {};
-            m_StopMetrics = {};
-            m_Golden = {};
-            if (!LoadStaticGolden(m_Golden) ||
-                !RenderingValidationApplicationHandler::OnPreInitialize(args))
+            if (!RenderingValidationApplicationHandler::OnPreInitialize(args))
             {
                 return false;
             }
@@ -341,6 +321,24 @@ namespace
                 outFailureReason = TEXT("R6 Cornell fixtureの動的状態を更新できません");
                 return false;
             }
+            if (m_StageSample == 0u)
+            {
+                m_StageStartFrame = frame.FrameNumber;
+            }
+            else if (frame.FrameNumber <= m_LastStageFrame)
+            {
+                outFailureReason = TEXT("R6 captureのFrameNumberが単調増加していません");
+                return false;
+            }
+            m_LastStageFrame = frame.FrameNumber;
+            ++m_StageSample;
+
+            if (m_Stage == CaptureStage::CameraMoved || m_Stage == CaptureStage::ObjectMoved ||
+                m_Stage == CaptureStage::MoveStopped)
+            {
+                return EvaluateHistoryAge(frame, outFailureReason);
+            }
+
             RgbaFloatImage image;
             if (DecodeCapturedRgba16Float(frame, image) != FloatImageStatus::Success)
             {
@@ -353,17 +351,6 @@ namespace
                 outFailureReason = TEXT("R6 HDR captureに有限な画素がありません");
                 return false;
             }
-            if (m_StageSample == 0u)
-            {
-                m_StageStartFrame = frame.FrameNumber;
-            }
-            else if (frame.FrameNumber <= m_LastStageFrame)
-            {
-                outFailureReason = TEXT("R6 captureのFrameNumberが単調増加していません");
-                return false;
-            }
-            m_LastStageFrame = frame.FrameNumber;
-            ++m_StageSample;
 
             switch (m_Stage)
             {
@@ -429,128 +416,80 @@ namespace
                 }
                 return true;
 
-            case CaptureStage::StaticGolden:
+            case CaptureStage::StaticStability:
             {
-                const double goldenDelta = std::max(
-                    std::max(std::abs(metrics.MeanY - m_Golden.MeanY),
-                             std::abs(metrics.CenterY - m_Golden.CenterY)),
-                    std::max(std::abs(metrics.CenterRed - m_Golden.CenterRed),
-                             std::max(std::abs(metrics.CenterGreen - m_Golden.CenterGreen),
-                                      std::abs(metrics.CenterBlue - m_Golden.CenterBlue))));
+                // 静止中もレイがフレームごとに変わるため、warmup直後との差は時間方向の揺らぎになる。
+                // 移動後停止と同じ上限で揺らぎが有界であることを確認する。参照画像との比較は
+                // R7の自前PTを使うR6-P5-REFで行う。
                 const double staticDelta = MeanAbsoluteDifference(m_StaticImage, image);
-                std::cout << "R6_STATIC_GOLDEN frame=" << frame.FrameNumber
+                std::cout << "R6_STATIC_STABILITY frame=" << frame.FrameNumber
                           << " mean_y=" << metrics.MeanY
                           << " center_y=" << metrics.CenterY
                           << " center_rgb=" << metrics.CenterRed << ','
                           << metrics.CenterGreen << ',' << metrics.CenterBlue
-                          << " static_delta=" << staticDelta
-                          << " golden_delta=" << goldenDelta << '\n';
-                if (goldenDelta > m_Golden.Tolerance ||
-                    staticDelta > m_Golden.Tolerance)
+                          << " static_delta=" << staticDelta << '\n';
+                if (staticDelta > MaximumStoppedFrameDifference)
                 {
-                    outFailureReason = TEXT("R6静止RTGI goldenまたは8 frame安定値が閾値外です");
+                    outFailureReason = TEXT("R6静止RTGIの時間方向の揺らぎが上限を超えます");
                     return false;
                 }
                 return true;
             }
 
-            case CaptureStage::CameraMoved:
-            {
-                const double delta = MeanAbsoluteDifference(m_StaticImage, image);
-                m_bCameraMoved = delta >= MinimumMotionDifference;
-                std::cout << "R6_CAMERA_MOVE frame=" << frame.FrameNumber
-                          << " mean_delta=" << delta
-                          << " history_rejection=" << (m_bCameraMoved ? "observed" : "missing")
-                          << '\n';
-                if (!m_bCameraMoved)
-                {
-                    outFailureReason = TEXT("カメラ移動によるHDR変化または履歴棄却を観測できません");
-                    return false;
-                }
+            case CaptureStage::CameraSettled:
+                // カメラを元へ戻し、物体移動の前に履歴ageを最大まで回復させる。
                 return true;
-            }
 
-            case CaptureStage::ObjectMoved:
+            case CaptureStage::LightBaseline:
             {
-                const double delta = MeanAbsoluteDifference(m_StaticImage, image);
-                m_bObjectMoved = delta >= MinimumMotionDifference;
-                std::cout << "R6_OBJECT_MOVE frame=" << frame.FrameNumber
-                          << " mean_delta=" << delta
-                          << " history_rejection=" << (m_bObjectMoved ? "observed" : "missing")
-                          << '\n';
-                if (!m_bObjectMoved)
+                // 開始位置へ移した後の落ち着き期間を過ぎてから、デノイズ後間接光を複数回読み、
+                // 基準値と静止時の揺らぎを求める。
+                const double balance = MeasureIndirectChroma(image);
+                if (!std::isfinite(balance) || m_LightBaselineCount >= LightBaselineSamples)
                 {
-                    outFailureReason = TEXT("物体移動によるHDR変化または履歴棄却を観測できません");
+                    outFailureReason = TEXT("ライト移動前の間接光基準を測れません");
                     return false;
                 }
-                return true;
-            }
-
-            case CaptureStage::MoveStopped:
-            {
-                const double delta = MeanAbsoluteDifference(m_StaticImage, image);
-                const double frameDelta = m_StopSample > 0u
-                    ? MeanAbsoluteDifference(m_StopImage, image)
-                    : 0.0;
-                m_StopImage = image;
-                m_StopMetrics = metrics;
-                ++m_StopSample;
-                m_bStopped = delta <= MaximumStoppedDifference;
-                std::cout << "R6_MOVE_THEN_STOP frame=" << frame.FrameNumber
-                          << " sample=" << m_StopSample
-                          << " static_delta=" << delta
-                          << " frame_delta=" << frameDelta
-                          << " residual=" << (m_bStopped ? "bounded" : "excessive") << '\n';
-                if (!m_bStopped ||
-                    (m_StopSample >= 2u && frameDelta > MaximumStoppedFrameDifference))
+                if (frame.FrameNumber - m_StageStartFrame < LightBaselineSettleFrames)
                 {
-                    outFailureReason = TEXT("移動後停止で静止goldenへの残留が収束しません");
-                    return false;
+                    return true;
                 }
-                if (m_StopSample >= 2u)
-                {
-                    m_LightStartFrame = frame.FrameNumber;
-                    m_LightInitialY = metrics.CenterY;
-                    std::cout << "R6_MOVE_THEN_STOP_INITIAL center_y=" << m_LightInitialY << '\n';
-                }
+                m_LightBaselineValues[m_LightBaselineCount++] = balance;
+                m_LightStartFrame = frame.FrameNumber;
+                std::cout << "R6_LIGHT_BASELINE frame=" << frame.FrameNumber
+                          << " sample=" << m_LightBaselineCount
+                          << " indirect_chroma=" << balance << '\n';
                 return true;
             }
 
             case CaptureStage::LightMoved:
             {
-                if (m_LightSample >= m_LightValues.size())
+                const double balance = MeasureIndirectChroma(image);
+                const uint64_t elapsed = frame.FrameNumber - m_LightStartFrame;
+                if (!std::isfinite(balance) || elapsed == 0u)
                 {
-                    outFailureReason = TEXT("ライト移動のcapture数が上限を超えました");
+                    outFailureReason = TEXT("ライト移動後の間接光を測れません");
                     return false;
                 }
-                const uint32_t sampleIndex = m_LightSample++;
-                m_LightValues[sampleIndex] = metrics.CenterY;
-                m_LightFrames[sampleIndex] = frame.FrameNumber;
                 std::cout << "R6_LIGHT_MOVE frame=" << frame.FrameNumber
-                          << " elapsed=" << (frame.FrameNumber - m_LightStartFrame)
-                          << " sample=" << (sampleIndex + 1u)
-                          << " center_y=" << metrics.CenterY << '\n';
-                if (sampleIndex == 1u)
+                          << " elapsed=" << elapsed
+                          << " indirect_chroma=" << balance << '\n';
+                if (elapsed <= LightDeadlineRenderedFrames)
                 {
-                    const double firstChange = m_LightValues[0u] - m_LightInitialY;
-                    const double finalChange = m_LightValues[1u] - m_LightInitialY;
-                    const double progress = std::abs(firstChange) > 1.0e-12
-                        ? std::abs(finalChange) / std::abs(firstChange)
-                        : 0.0;
-                    const uint64_t elapsed = frame.FrameNumber - m_LightStartFrame;
-                    std::cout << "R6_LIGHT_FOLLOWUP=PASS elapsed=" << elapsed
-                              << " progress=" << progress
-                              << " change=" << finalChange << '\n';
-                    if (m_LightFrames[1u] <= m_LightFrames[0u] ||
-                        elapsed > LightDeadlineRenderedFrames ||
-                        std::abs(firstChange) < MinimumLightChange ||
-                        std::abs(finalChange) < MinimumLightChange ||
-                        firstChange * finalChange <= 0.0 ||
-                        progress < MinimumLightProgress)
-                    {
-                        outFailureReason = TEXT("ライト移動後4 rendered frame以内の追従を確認できません");
-                        return false;
-                    }
+                    // 期限内で最も新しい値を追従判定に使う。
+                    m_LightDeadlineValue = balance;
+                    m_LightDeadlineElapsed = elapsed;
+                    m_bLightDeadlineSampled = true;
+                }
+                else if (elapsed >= LightConvergedElapsedFrames)
+                {
+                    m_LightConvergedSum += balance;
+                    ++m_LightConvergedCount;
+                }
+                m_LightLastElapsed = elapsed;
+                if (elapsed >= LightObservationFrames)
+                {
+                    return EvaluateLightFollow(outFailureReason);
                 }
                 return true;
             }
@@ -569,7 +508,21 @@ namespace
             {
                 return false;
             }
-            outRequest.SourceKind = FrameCaptureSourceKind::SceneColor;
+            switch (m_Stage)
+            {
+            case CaptureStage::CameraMoved:
+            case CaptureStage::ObjectMoved:
+            case CaptureStage::MoveStopped:
+                outRequest.SourceKind = FrameCaptureSourceKind::RTGIHistoryAge;
+                break;
+            case CaptureStage::LightBaseline:
+            case CaptureStage::LightMoved:
+                outRequest.SourceKind = FrameCaptureSourceKind::RTGIDiffuseIndirect;
+                break;
+            default:
+                outRequest.SourceKind = FrameCaptureSourceKind::SceneColor;
+                break;
+            }
             return true;
         }
 
@@ -581,24 +534,37 @@ namespace
             renderWorld.SetMainCamera(camera);
 
             const bool bRTGI = m_Stage == CaptureStage::RTGIWarmup ||
-                               m_Stage == CaptureStage::StaticGolden ||
+                               m_Stage == CaptureStage::StaticStability ||
                                m_Stage == CaptureStage::CameraMoved ||
+                               m_Stage == CaptureStage::CameraSettled ||
                                m_Stage == CaptureStage::ObjectMoved ||
                                m_Stage == CaptureStage::MoveStopped ||
+                               m_Stage == CaptureStage::LightBaseline ||
                                m_Stage == CaptureStage::LightMoved;
             renderWorld.GetRenderingCoordinator().SetRTGIEnabled(bRTGI);
             renderWorld.SetDDGIVolumeParameters(MakeCornellVolume(
                 m_Stage == CaptureStage::R4FallbackWarmup));
 
-            const float objectOffset = m_Stage == CaptureStage::ObjectMoved ? 0.55f : 0.0f;
+            // 既定位置（0）の球は短いブロックの後ろにほぼ隠れるため、露出の検証は
+            // 移動前後とも見える位置（+0.55から+1.0）で行う。
+            const float objectOffset = m_Stage == CaptureStage::CameraSettled ? ObjectVisibleOffset :
+                                       m_Stage == CaptureStage::ObjectMoved ? ObjectMovedOffset :
+                                                                              0.0f;
             m_bStateReady = GetFixture().SetR4CornellObjectOffsetX(objectOffset) && m_bStateReady;
 
             const bool bLightEnabled = bRTGI;
-            const float lightOffset = m_Stage == CaptureStage::LightMoved ? 0.55f : 0.0f;
+            // 点光源を部屋の片側（-1.0）で落ち着かせてから反対側（+1.0）へ移す。
+            const float lightOffset = m_Stage == CaptureStage::LightBaseline ? LightStartOffset :
+                                      m_Stage == CaptureStage::LightMoved ? LightMovedOffset :
+                                                                            0.0f;
             m_bStateReady = GetFixture().SetR4CornellLightOffsetX(0.0f) && m_bStateReady;
+            const bool bFollowStage = m_Stage == CaptureStage::LightBaseline ||
+                                      m_Stage == CaptureStage::LightMoved;
+            const float lightIntensity = !bLightEnabled ? 0.0f :
+                                         bFollowStage ? R6FollowLightIntensity :
+                                                        R6PointLightIntensity;
             m_bStateReady = GetFixture().SetR4CornellPointLightState(
-                lightOffset,
-                bLightEnabled ? R6PointLightIntensity : 0.0f) && m_bStateReady;
+                lightOffset, lightIntensity) && m_bStateReady;
         }
 
         void AdvanceCaptureStage() override
@@ -611,15 +577,28 @@ namespace
                     return;
                 }
             }
-            else if (m_Stage == CaptureStage::MoveStopped && m_StopSample < 2u)
+            else if (m_Stage == CaptureStage::CameraSettled &&
+                     m_LastStageFrame - m_StageStartFrame < CameraSettleRenderedFrames)
             {
                 return;
             }
-            else if (m_Stage == CaptureStage::LightMoved && m_LightSample < 2u)
+            else if (m_Stage == CaptureStage::MoveStopped &&
+                     m_StopLastElapsed < StopSettleRenderedFrames)
+            {
+                return;
+            }
+            else if (m_Stage == CaptureStage::LightBaseline &&
+                     m_LightBaselineCount < LightBaselineSamples)
+            {
+                return;
+            }
+            else if (m_Stage == CaptureStage::LightMoved &&
+                     m_LightLastElapsed < LightObservationFrames)
             {
                 return;
             }
 
+            m_PreviousStageLastFrame = m_LastStageFrame;
             m_StageSample = 0u;
             m_StageStartFrame = 0u;
             m_LastStageFrame = 0u;
@@ -632,21 +611,29 @@ namespace
                 m_Stage = CaptureStage::RTGIWarmup;
                 break;
             case CaptureStage::RTGIWarmup:
-                m_Stage = CaptureStage::StaticGolden;
+                m_Stage = CaptureStage::StaticStability;
                 break;
-            case CaptureStage::StaticGolden:
+            case CaptureStage::StaticStability:
                 m_Stage = CaptureStage::CameraMoved;
                 break;
             case CaptureStage::CameraMoved:
+                m_Stage = CaptureStage::CameraSettled;
+                break;
+            case CaptureStage::CameraSettled:
                 m_Stage = CaptureStage::ObjectMoved;
                 break;
             case CaptureStage::ObjectMoved:
                 m_Stage = CaptureStage::MoveStopped;
                 m_StopSample = 0u;
+                m_StopLastElapsed = 0u;
                 break;
             case CaptureStage::MoveStopped:
+                m_Stage = CaptureStage::LightBaseline;
+                m_LightBaselineCount = 0u;
+                break;
+            case CaptureStage::LightBaseline:
                 m_Stage = CaptureStage::LightMoved;
-                m_LightSample = 0u;
+                m_LightLastElapsed = 0u;
                 break;
             case CaptureStage::LightMoved:
                 m_Stage = CaptureStage::Complete;
@@ -675,13 +662,10 @@ namespace
         }
 
         CaptureStage m_Stage = CaptureStage::IblFallback;
-        StaticGolden m_Golden;
         RgbaFloatImage m_IblImage;
         RgbaFloatImage m_R4Image;
         RgbaFloatImage m_StaticImage;
-        RgbaFloatImage m_StopImage;
         ImageMetrics m_StaticMetrics;
-        ImageMetrics m_StopMetrics;
         uint64_t m_StageStartFrame = 0u;
         uint64_t m_LastStageFrame = 0u;
         uint32_t m_StageSample = 0u;
@@ -693,11 +677,248 @@ namespace
         bool m_bObjectMoved = false;
         bool m_bStopped = false;
         uint32_t m_StopSample = 0u;
-        uint32_t m_LightSample = 0u;
+        uint64_t m_StopLastElapsed = 0u;
+        uint64_t m_PreviousStageLastFrame = 0u;
         uint64_t m_LightStartFrame = 0u;
-        double m_LightInitialY = 0.0;
-        FixedArray<double, 2> m_LightValues{};
-        FixedArray<uint64_t, 2> m_LightFrames{};
+        FixedArray<double, LightBaselineSamples> m_LightBaselineValues{};
+        uint32_t m_LightBaselineCount = 0u;
+        double m_LightDeadlineValue = 0.0;
+        uint64_t m_LightDeadlineElapsed = 0u;
+        bool m_bLightDeadlineSampled = false;
+        double m_LightConvergedSum = 0.0;
+        uint32_t m_LightConvergedCount = 0u;
+        uint64_t m_LightLastElapsed = 0u;
+
+        struct ScreenCircle
+        {
+            double X = 0.0;
+            double Y = 0.0;
+            double Radius = 0.0;
+            bool bValid = false;
+        };
+
+        /**
+         * @brief 動的球（半径0.28、中心(2.78+offsetX,0.72,2.6)）をCornellカメラで画素座標の円へ投影する
+         *
+         * 画素Yは画像の上端から数える。GBufferのvelocity検証と同じ、デバイス規約込みの行列を使う。
+         */
+        ScreenCircle ProjectCornellObject(float offsetX, uint32_t width, uint32_t height) const
+        {
+            ScreenCircle circle;
+            const RHI::DevicePtr device =
+                Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator().GetDevice();
+            const CameraViewConstants constants = CameraViewConstants::BuildForDevice(
+                GetFixture().GetR4CornellCamera(),
+                static_cast<float>(width) / static_cast<float>(height),
+                device.get());
+            const auto project = [&](float x, float y, float z, double& outX, double& outY) -> bool
+            {
+                const Math::Vector4 clip = constants.ViewProjectionMatrix * Math::Vector4(x, y, z, 1.0f);
+                if (!std::isfinite(clip.x) || !std::isfinite(clip.y) || !std::isfinite(clip.w) ||
+                    std::abs(clip.w) <= 1.0e-6f)
+                {
+                    return false;
+                }
+                outX = (static_cast<double>(clip.x / clip.w) * 0.5 + 0.5) * width;
+                outY = (static_cast<double>(clip.y / clip.w) * 0.5 + 0.5) * height;
+                return std::isfinite(outX) && std::isfinite(outY);
+            };
+            constexpr float Radius = 0.28f;
+            const float centerX = 2.78f + offsetX;
+            double edgeX = 0.0;
+            double edgeY = 0.0;
+            double topX = 0.0;
+            double topY = 0.0;
+            if (!project(centerX, 0.72f, 2.6f, circle.X, circle.Y) ||
+                !project(centerX + Radius, 0.72f, 2.6f, edgeX, edgeY) ||
+                !project(centerX, 0.72f + Radius, 2.6f, topX, topY))
+            {
+                return circle;
+            }
+            circle.Radius = std::max(std::hypot(edgeX - circle.X, edgeY - circle.Y),
+                                     std::hypot(topX - circle.X, topY - circle.Y));
+            circle.bValid = std::isfinite(circle.Radius) && circle.Radius > 1.0;
+            return circle;
+        }
+
+        /**
+         * @brief 履歴ageのreadbackで、物体移動で露出した領域の棄却とカメラ移動時の保持を判定する
+         *
+         * 棄却された画素はage 0から数え直すため、capture時点のageは移動からのフレーム数以下になる。
+         * 棄却処理が働かなければ露出領域も静止領域と同じ最大ageのままになる。
+         */
+        bool EvaluateHistoryAge(const CapturedFrame& frame, String& outFailureReason)
+        {
+            VariableArray<float> ages;
+            if (!DecodeCapturedR16Float(frame, ages))
+            {
+                outFailureReason = TEXT("R6履歴ageのR16F読戻しに失敗しました");
+                return false;
+            }
+            const AgeRange control = MeasureAge(ages, frame.Width, frame.Height, StaticControlRoi);
+            const bool bControlKept = control.KeptFraction() >= MinimumKeptFraction;
+            if (m_Stage == CaptureStage::CameraMoved)
+            {
+                m_bCameraMoved = bControlKept;
+                std::cout << "R6_CAMERA_MOVE frame=" << frame.FrameNumber
+                          << " control_kept_fraction=" << control.KeptFraction()
+                          << " control_age_min=" << control.Minimum
+                          << " history_kept=" << (bControlKept ? "true" : "false") << '\n';
+                if (!bControlKept)
+                {
+                    outFailureReason = TEXT("カメラ移動で再投影可能な静止領域の履歴が保持されません");
+                    return false;
+                }
+                return true;
+            }
+
+            if (m_Stage == CaptureStage::MoveStopped)
+            {
+                // 停止後に物体が去った領域でも、履歴が再び受け入れられて最大ageへ戻ることを確認する。
+                const ScreenCircle vacated = ProjectCornellObject(ObjectMovedOffset, frame.Width, frame.Height);
+                AgeRange region;
+                if (vacated.bValid)
+                {
+                    for (uint32_t y = 0u; y < frame.Height; ++y)
+                    {
+                        for (uint32_t x = 0u; x < frame.Width; ++x)
+                        {
+                            const double px = static_cast<double>(x) + 0.5 - vacated.X;
+                            const double py = static_cast<double>(y) + 0.5 - vacated.Y;
+                            if (std::hypot(px, py) > vacated.Radius - 1.5)
+                            {
+                                continue;
+                            }
+                            ++region.Count;
+                            if (ages[static_cast<size_t>(y) * frame.Width + x] >= RTGIHistoryMaximumAge)
+                            {
+                                ++region.KeptCount;
+                            }
+                        }
+                    }
+                }
+                const uint64_t elapsed = frame.FrameNumber - m_PreviousStageLastFrame;
+                m_StopLastElapsed = elapsed;
+                ++m_StopSample;
+                const bool bSettled = elapsed >= StopSettleRenderedFrames;
+                m_bStopped = region.Count > 0u && region.KeptFraction() >= MinimumKeptFraction &&
+                             bControlKept;
+                std::cout << "R6_MOVE_THEN_STOP frame=" << frame.FrameNumber
+                          << " elapsed=" << elapsed
+                          << " vacated_pixels=" << region.Count
+                          << " vacated_kept_fraction=" << region.KeptFraction()
+                          << " control_kept_fraction=" << control.KeptFraction()
+                          << " history_rebuilt=" << (m_bStopped ? "true" : "false");
+                std::cout << std::endl;
+                if (bSettled && !m_bStopped)
+                {
+                    outFailureReason = TEXT("移動後停止で物体が去った領域の履歴が再蓄積されません");
+                    return false;
+                }
+                return true;
+            }
+
+            // 物体移動の前後の球をエンジンと同じカメラ行列で投影し、旧位置の円の内側かつ
+            // 新位置の円の外側（境界から余白を取る）を、露出して履歴を捨てるべき画素とする。
+            const ScreenCircle previous = ProjectCornellObject(ObjectVisibleOffset, frame.Width, frame.Height);
+            const ScreenCircle current = ProjectCornellObject(ObjectMovedOffset, frame.Width, frame.Height);
+            if (!previous.bValid || !current.bValid)
+            {
+                outFailureReason = TEXT("物体の画面投影を計算できません");
+                return false;
+            }
+            constexpr double BoundaryMarginPixels = 1.5;
+            AgeRange exposed;
+            exposed.Minimum = std::numeric_limits<float>::infinity();
+            exposed.Maximum = -std::numeric_limits<float>::infinity();
+            for (uint32_t y = 0u; y < frame.Height; ++y)
+            {
+                for (uint32_t x = 0u; x < frame.Width; ++x)
+                {
+                    const double px = static_cast<double>(x) + 0.5;
+                    const double py = static_cast<double>(y) + 0.5;
+                    const double previousDistance = std::hypot(px - previous.X, py - previous.Y);
+                    const double currentDistance = std::hypot(px - current.X, py - current.Y);
+                    if (previousDistance > previous.Radius - BoundaryMarginPixels ||
+                        currentDistance < current.Radius + BoundaryMarginPixels)
+                    {
+                        continue;
+                    }
+                    const float age = ages[static_cast<size_t>(y) * frame.Width + x];
+                    exposed.Minimum = std::min(exposed.Minimum, age);
+                    exposed.Maximum = std::max(exposed.Maximum, age);
+                    ++exposed.Count;
+                }
+            }
+            const uint64_t elapsed = frame.FrameNumber - m_PreviousStageLastFrame;
+            // 棄却された画素は移動フレームでage 0から数え直すため、capture時点でも経過フレーム数以下に留まる。
+            constexpr uint32_t MinimumExposedPixels = 8u;
+            const bool bExposedRejected = exposed.Count >= MinimumExposedPixels &&
+                                          std::isfinite(exposed.Maximum) &&
+                                          exposed.Maximum <= static_cast<float>(elapsed) &&
+                                          exposed.Maximum < RTGIHistoryMaximumAge;
+            m_bObjectMoved = bControlKept && bExposedRejected;
+            std::cout << "R6_OBJECT_MOVE frame=" << frame.FrameNumber
+                      << " elapsed=" << elapsed
+                      << " previous_circle=" << previous.X << ',' << previous.Y << ',' << previous.Radius
+                      << " current_circle=" << current.X << ',' << current.Y << ',' << current.Radius
+                      << " exposed_pixels=" << exposed.Count
+                      << " exposed_age_max=" << exposed.Maximum
+                      << " control_kept_fraction=" << control.KeptFraction()
+                      << " history_rejection=" << (bExposedRejected ? "observed" : "missing")
+                      << '\n';
+            if (!m_bObjectMoved)
+            {
+                outFailureReason = TEXT("物体移動で露出した領域の履歴棄却をageで確認できません");
+                return false;
+            }
+            return true;
+        }
+
+        /**
+         * @brief 収束後の変化量を分母に、期限内に80%へ到達したかを判定する
+         */
+        bool EvaluateLightFollow(String& outFailureReason)
+        {
+            double baselineMean = 0.0;
+            for (double value : m_LightBaselineValues)
+            {
+                baselineMean += value;
+            }
+            baselineMean /= static_cast<double>(LightBaselineSamples);
+            double variance = 0.0;
+            for (double value : m_LightBaselineValues)
+            {
+                variance += (value - baselineMean) * (value - baselineMean);
+            }
+            const double noise = std::sqrt(variance / static_cast<double>(LightBaselineSamples - 1u));
+            const double converged = m_LightConvergedCount > 0u
+                ? m_LightConvergedSum / static_cast<double>(m_LightConvergedCount)
+                : std::numeric_limits<double>::quiet_NaN();
+            const double finalChange = converged - baselineMean;
+            const double deadlineChange = m_LightDeadlineValue - baselineMean;
+            const double progress = std::abs(finalChange) > 0.0
+                ? deadlineChange / finalChange
+                : 0.0;
+            const bool bSignal = std::isfinite(finalChange) &&
+                                 std::abs(finalChange) >= LightSignalToNoise * noise &&
+                                 std::abs(finalChange) > 0.0;
+            const bool bPassed = m_bLightDeadlineSampled && bSignal &&
+                                 progress >= MinimumLightProgress;
+            std::cout << "R6_LIGHT_FOLLOWUP=" << (bPassed ? "PASS" : "FAIL")
+                      << " deadline_elapsed=" << m_LightDeadlineElapsed
+                      << " progress=" << progress
+                      << " final_change=" << finalChange
+                      << " deadline_change=" << deadlineChange
+                      << " baseline_noise=" << noise
+                      << " converged_samples=" << m_LightConvergedCount << '\n';
+            if (!bPassed)
+            {
+                outFailureReason = TEXT("ライト移動後4 rendered frame以内に収束変化量の80%へ追従しません");
+                return false;
+            }
+            return true;
+        }
     };
 
     TSharedPtr<Core::Application::IApplicationHandler> CreateHandler()
