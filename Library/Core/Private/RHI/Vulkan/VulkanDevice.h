@@ -65,11 +65,14 @@ namespace NorvesLib::RHI::Vulkan
          * @brief 配列bindingを含むset群がデバイスのdescriptor上限に収まるか検査する
          *
          * 全bindingがcount=1のset群は従来どおり検査せずtrueを返す。配列を含む場合は、
-         * stageごとの合計（sampler・sampled image・全資源）とset群全体の合計を
-         * 物理デバイスのlimitと比べる。
+         * stageごとの合計（sampler・sampled image・maxPerStageResources対象資源）とset群全体の合計を
+         * 物理デバイスのlimitと比べる。maxPerStageResourcesは単独samplerと加速構造を数えず、
+         * fragment段ではcolor attachment数を加える。
          * @param sets pipeline layoutまたは単一descriptor setを構成するset群
+         * @param fragmentColorAttachmentCount graphics pipelineのcolor attachment数（他は0）
          */
-        bool IsWithinDescriptorArrayLimits(const VariableArray<DescriptorSetDesc> &sets) const;
+        bool IsWithinDescriptorArrayLimits(const VariableArray<DescriptorSetDesc> &sets,
+                                           uint32_t fragmentColorAttachmentCount = 0u) const;
 
         /**
          * @brief VulkanDeviceのファクトリメソッド

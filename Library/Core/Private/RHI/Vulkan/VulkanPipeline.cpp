@@ -310,7 +310,9 @@ namespace NorvesLib::RHI::Vulkan
         // パイプラインレイアウト
         // GraphicsPipelineDescのdescriptorSetLayoutsからディスクリプタセットレイアウトを作成
         VariableArray<TSharedPtr<VulkanDescriptorSetLayout>> descriptorSetLayouts;
-        if (!m_device->IsWithinDescriptorArrayLimits(m_desc.descriptorSetLayouts))
+        if (!m_device->IsWithinDescriptorArrayLimits(
+                m_desc.descriptorSetLayouts,
+                static_cast<uint32_t>(colorBlendAttachments.size())))
         {
             throw std::runtime_error("配列descriptorがデバイス上限を超えています");
         }

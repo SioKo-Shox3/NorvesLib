@@ -2212,7 +2212,8 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
-    bool VulkanDevice::IsWithinDescriptorArrayLimits(const VariableArray<DescriptorSetDesc> &sets) const
+    bool VulkanDevice::IsWithinDescriptorArrayLimits(const VariableArray<DescriptorSetDesc> &sets,
+                                                     uint32_t fragmentColorAttachmentCount) const
     {
         bool bHasArrayBinding = false;
         for (const DescriptorSetDesc &set : sets)
@@ -2261,7 +2262,8 @@ namespace NorvesLib::RHI::Vulkan
         {
             uint64_t stageSamplers = 0u;
             uint64_t stageSampledImages = 0u;
-            uint64_t stageResources = 0u;
+            // maxPerStageResourcesは単独samplerと加速構造を数えず、fragmentのcolor attachmentを数える。
+            uint64_t stageResources = stage == ShaderStage::Pixel ? fragmentColorAttachmentCount : 0u;
             for (const DescriptorSetDesc &set : sets)
             {
                 for (const DescriptorBinding &binding : set.bindings)
@@ -2270,7 +2272,11 @@ namespace NorvesLib::RHI::Vulkan
                     {
                         continue;
                     }
-                    stageResources += binding.count;
+                    if (binding.type != ResourceBindType::Sampler &&
+                        binding.type != ResourceBindType::AccelerationStructure)
+                    {
+                        stageResources += binding.count;
+                    }
                     if (binding.type == ResourceBindType::CombinedImageSampler ||
                         binding.type == ResourceBindType::Sampler)
                     {
