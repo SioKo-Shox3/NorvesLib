@@ -6,6 +6,7 @@
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
 #include "Rendering/ForwardPass.h"
 #include "Rendering/BloomPass.h"
@@ -744,6 +745,31 @@ namespace NorvesLib::Core::Rendering
 
         NORVES_LOG_INFO("SceneView",
                         "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
+    }
+
+    void SceneView::SetupPathTracingPipeline()
+    {
+        if (m_PostProcessStack)
+        {
+            m_PostProcessStack->Shutdown();
+            m_PostProcessStack.reset();
+        }
+        for (auto& pass : m_Passes)
+        {
+            if (pass && pass->IsInitialized())
+            {
+                pass->Shutdown();
+            }
+        }
+        m_Passes.clear();
+        AddPass(MakeUnique<PathTracingPass>());
+
+        auto postProcessStack = MakeUnique<PostProcessStack>();
+        ToneMappingSettings toneMappingSettings;
+        toneMappingSettings.Operator = ToneMappingOperator::ACES;
+        toneMappingSettings.VignetteIntensity = 0.0f;
+        postProcessStack->AddPass(MakeUnique<ToneMappingPass>(toneMappingSettings));
+        SetPostProcessStack(std::move(postProcessStack));
     }
 
     void SceneView::CullProxies(Viewport *viewport)

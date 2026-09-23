@@ -219,6 +219,9 @@ namespace NorvesLib::Core::Rendering
          */
         void SetupDeferredPipeline(SceneRenderer *sceneRenderer);
 
+        /** @brief 明示選択時だけ独立パストレーシングパイプラインを設定する。 */
+        void SetupPathTracingPipeline();
+
         /**
          * @brief Proxyをカリング
          * @param viewport 対象Viewport

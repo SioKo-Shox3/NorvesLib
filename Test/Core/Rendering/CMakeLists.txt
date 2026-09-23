@@ -594,6 +594,17 @@ set_tests_properties(RenderingHdrSceneVulkanSkipContractTest PROPERTIES
 add_executable(RenderingRayTracingShadowVulkanTest
     RenderingRayTracingShadowVulkanTest.cpp
 )
+add_executable(PathTracingVulkanTest
+    PathTracingVulkanTest.cpp
+)
+target_link_libraries(PathTracingVulkanTest PRIVATE Core RenderingGpuTestSupport)
+target_include_directories(PathTracingVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private)
+target_compile_definitions(PathTracingVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+set_target_properties(PathTracingVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(PathTracingVulkanTest PathTracingVulkanTest)
 target_link_libraries(RenderingRayTracingShadowVulkanTest PRIVATE
     RenderingValidationFixtureSupport
     RenderingGpuTestSupport
