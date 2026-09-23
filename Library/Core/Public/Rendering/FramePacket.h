@@ -115,6 +115,23 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        /**
+         * @brief 影を落とす物体（影・DDGI・RTGIの光線が当たる物体）があるか
+         *
+         * 影を落とさない物体だけのシーンでは、影・DDGI・RTGIは従来の空のシーンと同じくfallbackする。
+         */
+        bool HasShadowCasters() const
+        {
+            for (const RayTracingSceneInstanceSnapshot& instance : Instances)
+            {
+                if ((instance.Instance.mask & RayTracingInstanceMaskShadowCaster) != 0u)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         void Clear()
         {
             TopLevel.reset();

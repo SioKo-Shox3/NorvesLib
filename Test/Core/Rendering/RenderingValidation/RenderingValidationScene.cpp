@@ -2703,6 +2703,18 @@ namespace NorvesLib::Test::RenderingValidation
         return true;
     }
 
+    bool RenderingValidationSceneFixture::SetR5RayTracingShadowReceiverCastsShadow(
+        bool bCastShadow) const
+    {
+        if (!m_bR5RayTracingShadowFixturePrepared || m_pR5ShadowReceiverMesh == nullptr)
+        {
+            return false;
+        }
+
+        m_pR5ShadowReceiverMesh->SetCastShadow(bCastShadow);
+        return true;
+    }
+
     bool RenderingValidationSceneFixture::ApplyR4CornellFixture() const
     {
         if (m_bR4CornellFixturePrepared)

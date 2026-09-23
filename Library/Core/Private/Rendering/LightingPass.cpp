@@ -2986,6 +2986,7 @@ namespace NorvesLib::Core::Rendering
             !context.bRTGITLASAvailable || !context.RTGICapability.IsUsable() ||
             !context.SnapshotRayTracingScene ||
             !context.SnapshotRayTracingScene->IsComplete() ||
+            !context.SnapshotRayTracingScene->HasShadowCasters() ||
             !albedoTexture || !normalTexture || !materialTexture || !depthTexture ||
             !velocityTexture ||
             !rtgiDiffuseIndirectTexture ||

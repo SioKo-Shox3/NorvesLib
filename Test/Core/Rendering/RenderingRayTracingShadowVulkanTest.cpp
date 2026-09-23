@@ -239,11 +239,14 @@ namespace
                     m_Stage == CaptureStage::DynamicMovedRayTracingHardShadow ||
                     m_Stage == CaptureStage::DynamicRasterFallback;
                 // 影を落とさない設定の物体はTLASに含まれても影の光線（caster bitだけ）には当たらない。
+                // 影を落とす物体がないシーンではRT影がfallbackするため、その段階では受光面を
+                // 影を落とす物体にしてRT影を動かす（平面の受光面は自身の影の光線に当たらない）。
+                const bool bNonCasterStage = m_Stage == CaptureStage::DynamicNonCasterVisibility;
                 m_bDynamicFixtureStateValid =
                     GetFixture().SetR5RayTracingShadowOccluderPositionX(
                         bOccluderMoved ? DynamicOccluderPositionX : 0.0f) &&
-                    GetFixture().SetR5RayTracingShadowOccluderCastsShadow(
-                        m_Stage != CaptureStage::DynamicNonCasterVisibility);
+                    GetFixture().SetR5RayTracingShadowOccluderCastsShadow(!bNonCasterStage) &&
+                    GetFixture().SetR5RayTracingShadowReceiverCastsShadow(bNonCasterStage);
             }
         }
 

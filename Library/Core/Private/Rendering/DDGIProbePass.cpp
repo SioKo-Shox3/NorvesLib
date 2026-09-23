@@ -499,6 +499,7 @@ namespace NorvesLib::Core::Rendering
         if (context.CommandList == nullptr || context.Device == nullptr ||
             context.SnapshotScene == nullptr || context.SnapshotRayTracingScene == nullptr ||
             context.SnapshotRayTracingScene->TopLevel == nullptr ||
+            !context.SnapshotRayTracingScene->HasShadowCasters() ||
             context.FrameIndex >= FRAME_PACKET_BUFFER_COUNT ||
             !context.PhysicalLighting.bLightingPublished ||
             !context.PhysicalLighting.LightBuffer ||

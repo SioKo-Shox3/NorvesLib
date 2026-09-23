@@ -524,7 +524,9 @@ namespace
         context.SnapshotRayTracingScene = &rayTracingScene;
         context.RTGICapability = rtgiCapability;
         context.bRTGIEnabled = bRTGIEnabled;
-        context.bRTGITLASAvailable = rayTracingScene.IsComplete();
+        // RenderingCoordinatorと同じく、影を落とす物体がないシーンはTLAS利用不可として扱う。
+        context.bRTGITLASAvailable = rayTracingScene.IsComplete() &&
+                                     rayTracingScene.HasShadowCasters();
         context.SceneRevision = ExpectedSceneRevision;
         context.LightRevision = ExpectedLightRevision;
         context.PhysicalLighting.Begin(frameNumber, 0u, 0u);
@@ -826,37 +828,98 @@ namespace
             return 1;
         }
 
-        // 影を落とさない設定のinstanceはTLASに含まれても、RTGIのray query（caster bitだけ）には
-        // 当たらない。命中していた画素も未命中と同じ0になる。
-        FramePacket nonCasterPacket;
+        // 影を落とさない物体だけのシーンは、TLASがあってもTLASのない場合と同じfallbackになる。
+        FramePacket nonCasterOnlyPacket;
         PopulateRayTracingSnapshot(topLevel,
                                    bottomLevel,
                                    vertexBuffer,
                                    indexBuffer,
-                                   nonCasterPacket);
-        nonCasterPacket.RayTracingScene.Instances[0].Instance.mask =
+                                   nonCasterOnlyPacket);
+        nonCasterOnlyPacket.RayTracingScene.Instances[0].Instance.mask =
             RayTracingInstanceMaskNonShadowCaster;
-        AccelerationStructureBuildDesc nonCasterBuild = topLevelBuild;
-        nonCasterBuild.instances[0].mask = RayTracingInstanceMaskNonShadowCaster;
-        LightingFrameObservation nonCaster;
+        AccelerationStructureBuildDesc nonCasterOnlyBuild = topLevelBuild;
+        nonCasterOnlyBuild.instances[0].mask = RayTracingInstanceMaskNonShadowCaster;
+        LightingFrameObservation nonCasterOnly;
         if (!RunLightingFrame(device,
                               capabilities,
                               rtgiCapability,
                               lightingPass,
                               renderer,
                               context,
-                              nonCasterPacket.RayTracingScene,
-                              nonCasterBuild,
+                              nonCasterOnlyPacket.RayTracingScene,
+                              nonCasterOnlyBuild,
+                              gbuffer,
+                              rtgiOutput,
+                              true,
+                              false,
+                              true,
+                              4u,
+                              nonCasterOnly) ||
+            !nonCasterOnlyPacket.RayTracingScene.IsComplete() ||
+            nonCasterOnly.bPublished ||
+            nonCasterOnly.Source == RTGIIndirectLightingSource::RTGI ||
+            nonCasterOnly.Reason != RTGIFallbackReason::TLASUnavailable ||
+            !AreSceneColorsEqual(nonCasterOnly, incomplete))
+        {
+            std::cerr << "影を落とさない物体だけのシーンがTLASのない場合と同じfallbackになりません\n";
+            return 1;
+        }
+
+        // 影を落とす物体があるシーンでは、光線の経路にある影を落とさない物体をRTGIのray query
+        // （caster bitだけ）が無視し、命中していた画素も未命中と同じ0になる。影を落とす物体は
+        // どの光線も届かない遠方へ小さく置く。
+        AccelerationStructureDesc mixedTopLevelDesc;
+        mixedTopLevelDesc.type = AccelerationStructureType::TopLevel;
+        mixedTopLevelDesc.maxInstanceCount = 2u;
+        AccelerationStructurePtr mixedTopLevel =
+            device->CreateAccelerationStructure(mixedTopLevelDesc);
+        if (!mixedTopLevel)
+        {
+            std::cerr << "影を落とす物体と落とさない物体のTLASを作成できませんでした\n";
+            return 1;
+        }
+        FramePacket mixedPacket;
+        PopulateRayTracingSnapshot(mixedTopLevel,
+                                   bottomLevel,
+                                   vertexBuffer,
+                                   indexBuffer,
+                                   mixedPacket);
+        mixedPacket.RayTracingScene.Instances[0].Instance.mask =
+            RayTracingInstanceMaskNonShadowCaster;
+        RayTracingSceneInstanceSnapshot farCaster = mixedPacket.RayTracingScene.Instances[0];
+        farCaster.Instance.mask = RayTracingInstanceMaskShadowCaster;
+        farCaster.Instance.customIndex = ExpectedInstanceCustomIndex + 1u;
+        farCaster.Instance.transform[0] = 1.0e-4f;
+        farCaster.Instance.transform[5] = 1.0e-4f;
+        farCaster.Instance.transform[10] = 1.0e-4f;
+        farCaster.Instance.transform[3] = 1.0e6f;
+        mixedPacket.RayTracingScene.Instances.push_back(farCaster);
+        AccelerationStructureBuildDesc mixedBuild;
+        mixedBuild.type = AccelerationStructureType::TopLevel;
+        mixedBuild.destination = mixedTopLevel;
+        for (const RayTracingSceneInstanceSnapshot& snapshot : mixedPacket.RayTracingScene.Instances)
+        {
+            mixedBuild.instances.push_back(snapshot.Instance);
+        }
+        LightingFrameObservation mixed;
+        if (!RunLightingFrame(device,
+                              capabilities,
+                              rtgiCapability,
+                              lightingPass,
+                              renderer,
+                              context,
+                              mixedPacket.RayTracingScene,
+                              mixedBuild,
                               gbuffer,
                               rtgiOutput,
                               true,
                               true,
                               true,
-                              4u,
-                              nonCaster) ||
-            !nonCaster.bPublished ||
-            nonCaster.Source != RTGIIndirectLightingSource::RTGI ||
-            !AreAllRTGIPixelsZero(nonCaster))
+                              5u,
+                              mixed) ||
+            !mixed.bPublished ||
+            mixed.Source != RTGIIndirectLightingSource::RTGI ||
+            !AreAllRTGIPixelsZero(mixed))
         {
             std::cerr << "影を落とさない設定のinstanceにRTGIのray queryが当たりました\n";
             return 1;
@@ -866,7 +929,8 @@ namespace
         std::cout << "rtgi_hit_miss_readback=finite hit_positive=true miss_zero=true\n";
         std::cout << "rtgi_published=true source=RTGI fallback_disabled=Raster fallback_incomplete_tlas=Raster\n";
         std::cout << "scene_color_rtgi_differs_from_fallback=true disabled_and_incomplete_equal=true\n";
-        std::cout << "rtgi_non_shadow_caster_instance_ignored=true\n";
+        std::cout << "rtgi_non_shadow_caster_only_scene_falls_back=true "
+                     "rtgi_non_shadow_caster_instance_ignored=true\n";
 
         lightingPass.Shutdown();
         renderer.Shutdown();

@@ -2518,7 +2518,9 @@ namespace NorvesLib::Core::Rendering
         viewContext.SceneRevision = packet->SceneRevision;
         viewContext.LightRevision = packet->LightRevision;
         viewContext.bRTGIEnabled = packet->bRTGIEnabled;
-        viewContext.bRTGITLASAvailable = packet->HasCompleteRayTracingScene();
+        // RTGIの光線は影を落とす物体だけを調べる。影を落とす物体がなければ従来どおりfallbackする。
+        viewContext.bRTGITLASAvailable = packet->HasCompleteRayTracingScene() &&
+                                         packet->RayTracingScene.HasShadowCasters();
         viewContext.RTGICapability = MakeRTGIRayQueryCapability(m_Device->GetCapabilities());
 
         // フレームパケットからスナップショットを設定（RenderThread読み取り専用）
