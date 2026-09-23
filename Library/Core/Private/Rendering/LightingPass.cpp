@@ -900,6 +900,7 @@ namespace NorvesLib::Core::Rendering
         float rayLimits[4] = {};
         uint32_t temporalState[4] = {};
         uint32_t sampleState[4] = {}; ///< x=描画フレーム番号。静止中も毎フレーム別のレイを引く。
+        float previousCameraPosition[4] = {}; ///< xyz=履歴を書いた前フレームのカメラ位置。
     };
 
     struct RTGIInstanceData
@@ -915,7 +916,7 @@ namespace NorvesLib::Core::Rendering
         float Transform[12] = {};
     };
 
-    static_assert(sizeof(RTGIComputeParameters) == 144u);
+    static_assert(sizeof(RTGIComputeParameters) == 160u);
     static_assert(sizeof(RTGIInstanceData) == 112u);
 
     static bool IsFiniteNonNegativeRTGI(float value)
@@ -3246,6 +3247,20 @@ namespace NorvesLib::Core::Rendering
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
         parameters.temporalState[3] = RTGIHistoryMaximumAge;
         parameters.sampleState[0] = static_cast<uint32_t>(context.FrameNumber);
+        // 履歴の距離は前フレームのカメラから測ったものなので、現在の表面も同じカメラから測って比べる。
+        if (const CameraProxy* previousCamera = context.GetPreviousCamera())
+        {
+            parameters.previousCameraPosition[0] = previousCamera->PositionX;
+            parameters.previousCameraPosition[1] = previousCamera->PositionY;
+            parameters.previousCameraPosition[2] = previousCamera->PositionZ;
+        }
+        else
+        {
+            std::memcpy(parameters.previousCameraPosition,
+                        lightingParams.cameraPosition,
+                        sizeof(parameters.previousCameraPosition));
+        }
+        parameters.previousCameraPosition[3] = 1.0f;
         m_RTGIComputeParametersBuffer->Update(&parameters, sizeof(parameters));
         m_RTGIComputeInstanceDataBuffer->Update(
             instanceData.data(), requiredInstanceDataSize);
