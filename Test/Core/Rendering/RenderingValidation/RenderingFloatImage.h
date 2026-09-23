@@ -62,6 +62,19 @@ namespace NorvesLib::Test::RenderingValidation
     FloatImageStatus DecodeCapturedRgba16Float(
         const Core::Rendering::CapturedFrame& frame,
         RgbaFloatImage& outImage);
+    /**
+     * @brief RGBA16F（ラスタのSceneColor）とRGBA32F（パストレーサーの累積画像）の取得結果を読む。
+     */
+    FloatImageStatus DecodeCapturedRgbaFloat(
+        const Core::Rendering::CapturedFrame& frame,
+        RgbaFloatImage& outImage);
+    /**
+     * @brief 比較用にRGBA float画像を書き出す。
+     *
+     * 形式は1行目 `NLRGBA32F <幅> <高さ> <試料数>`、続けて行優先のRGBA float32（リトルエンディアン）。
+     */
+    bool WriteRgbaFloatDump(const Core::Container::String& path, const RgbaFloatImage& image,
+                            uint32_t sampleCount);
     NonFiniteLocation FindFirstNonFinite(const RgbaFloatImage& image);
     bool IsFiniteImage(const RgbaFloatImage& image);
     RgbaFloatViolation FindFirstRgba16FloatViolation(const RgbaFloatImage& image);

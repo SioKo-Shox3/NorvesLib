@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -1784,6 +1785,15 @@ namespace
                 LOG_ERROR("P4 scenario は SceneColor capture と組み合わせてください");
                 return false;
             }
+            // パストレーサーは白炉（mode 252）と既知光度（mode 253/254/0）の行だけを、
+            // ラスタと同じ評価関数に通す。GBufferの検証表示を使う行はPTに対応する出力がない。
+            if (GetRunConfig().bPathTracing &&
+                !(m_bKnownCdScenario ||
+                  (m_bP4Scenario && m_P4Scenario == P4Scenario::Raw252WhiteFurnace)))
+            {
+                LOG_ERROR("--renderer=path-tracing は white-furnace と known-cd-lambert の scenario にだけ対応します");
+                return false;
+            }
             if (m_bTransparentPhysicalLightingScenario &&
                 GetRunConfig().CaptureSource != Core::Rendering::FrameCaptureSourceKind::SceneColor)
             {
@@ -2311,6 +2321,18 @@ namespace
                 m_P4Scenario = P4Scenario::Raw252RoughnessSweep;
                 return true;
             }
+            const Core::Container::String dumpPrefix(TEXT("--dump-capture-dir="));
+            if (argument.size() > dumpPrefix.size() &&
+                argument.substr(0, dumpPrefix.size()) == dumpPrefix)
+            {
+                if (!m_DumpCaptureDirectory.empty())
+                {
+                    outFailureReason = TEXT("duplicate dump capture directory");
+                    return false;
+                }
+                m_DumpCaptureDirectory = argument.substr(dumpPrefix.size());
+                return true;
+            }
             if (argument == TEXT("--r1-scenario=white-furnace"))
             {
                 if (m_bP4Scenario || m_bKnownCdScenario || m_bR1Scenario ||
@@ -2828,7 +2850,9 @@ namespace
             }
             if (m_bP4Scenario)
             {
-                if (m_P4Substage != P4CaptureSubstage::Material)
+                // パストレーサーはGBufferの検証表示（Depth/Normal/Material）を出さないため、
+                // 各行は主画像だけを取得する。
+                if (m_P4Substage != P4CaptureSubstage::Material && !GetRunConfig().bPathTracing)
                 {
                     m_P4Substage = static_cast<P4CaptureSubstage>(
                         static_cast<uint8_t>(m_P4Substage) + 1u);
@@ -4679,11 +4703,11 @@ namespace
                 m_P4LastRuntimeRow = m_P4RowIndex;
                 m_bP4HasRuntimeIdentity = true;
             }
-            if (frame.Format != RHI::Format::R16G16B16A16_FLOAT ||
+            if (frame.Format != GetExpectedSceneColorFormat() ||
                 frame.Width != ValidationWidth || frame.Height != ValidationHeight ||
-                DecodeCapturedRgba16Float(frame, outImage) != FloatImageStatus::Success)
+                DecodeCapturedRgbaFloat(frame, outImage) != FloatImageStatus::Success)
             {
-                reason = TEXT("P4 capture format, dimensions, or RGBA16F decode is invalid");
+                reason = TEXT("P4 capture format, dimensions, or RGBA float decode is invalid");
                 return false;
             }
             if (!IsFiniteAndWithinRgba16Range(outImage))
@@ -4712,7 +4736,9 @@ namespace
             std::cout << "P4 snapshot chain: scenario=" << GetP4ScenarioName()
                       << " mode=" << GetP4DebugViewMode()
                       << " row=" << m_P4RowIndex
-                      << " source=SceneColor format=R16G16B16A16_FLOAT size=256x256"
+                      << " source=SceneColor format="
+                      << (GetRunConfig().bPathTracing ? "R32G32B32A32_FLOAT" : "R16G16B16A16_FLOAT")
+                      << " size=256x256"
                       << " material_index=" << materialIndex
                       << " light_count=" << lightCount
                       << " fixture_row_applied=1"
@@ -5656,6 +5682,16 @@ namespace
             {
                 return false;
             }
+            if (m_P4Substage == P4CaptureSubstage::Primary)
+            {
+                char dumpName[64] = {};
+                std::snprintf(dumpName, sizeof(dumpName), "%s-row%02u", GetP4ScenarioName(),
+                              m_P4RowIndex);
+                if (!DumpCaptureImage(dumpName, image, frame, reason))
+                {
+                    return false;
+                }
+            }
             if (m_P4Substage != P4CaptureSubstage::Primary)
             {
                 if (!m_bP4FixtureSnapshotAvailable ||
@@ -5721,10 +5757,42 @@ namespace
                 reason = TEXT("P4 scenario enum is invalid");
                 return false;
             }
-            if (!bPassed && !m_bP4ActualOracleMismatch)
+            // ラスタは誤差超過をMaterial副段階まで持ち越して報告する。副段階のないPTはこの行で失敗させる。
+            if (!bPassed && (!m_bP4ActualOracleMismatch || GetRunConfig().bPathTracing))
             {
                 return false;
             }
+            return true;
+        }
+
+        // SceneColorの取得形式。ラスタはRGBA16F、パストレーサーは累積画像のRGBA32F。
+        RHI::Format GetExpectedSceneColorFormat() const
+        {
+            return GetRunConfig().bPathTracing ? RHI::Format::R32G32B32A32_FLOAT
+                                               : RHI::Format::R16G16B16A16_FLOAT;
+        }
+
+        // ラスタ/PT比較用に取得画像を書き出す（--dump-capture-dir 指定時だけ）。
+        bool DumpCaptureImage(const char* name,
+                              const RgbaFloatImage& image,
+                              const Core::Rendering::CapturedFrame& frame,
+                              Core::Container::String& reason) const
+        {
+            if (m_DumpCaptureDirectory.empty())
+            {
+                return true;
+            }
+            Core::Container::String path = m_DumpCaptureDirectory;
+            path += TEXT("/");
+            path += name;
+            path += TEXT(".nlrgba");
+            if (!WriteRgbaFloatDump(path, image, frame.PathTracingSampleCount))
+            {
+                reason = TEXT("capture dump could not be written");
+                return false;
+            }
+            std::cout << "capture dump written: name=" << name
+                      << " path_tracing_samples=" << frame.PathTracingSampleCount << "\n";
             return true;
         }
 
@@ -5865,7 +5933,7 @@ namespace
             const uint64_t stageToken = GetLastAcceptedRequestStageToken();
             if (stageToken == 0u ||
                 (m_KnownCdHasStageToken && stageToken <= m_KnownCdLastStageToken) ||
-                frame.Format != RHI::Format::R16G16B16A16_FLOAT ||
+                frame.Format != GetExpectedSceneColorFormat() ||
                 frame.Width != ValidationWidth || frame.Height != ValidationHeight)
             {
                 reason = TEXT("known-cd capture stage token, format, or dimensions are invalid");
@@ -5882,9 +5950,9 @@ namespace
             }
 
             RgbaFloatImage image;
-            if (DecodeCapturedRgba16Float(frame, image) != FloatImageStatus::Success)
+            if (DecodeCapturedRgbaFloat(frame, image) != FloatImageStatus::Success)
             {
-                reason = TEXT("known-cd capture RGBA16F decode failed");
+                reason = TEXT("known-cd capture RGBA float decode failed");
                 return false;
             }
 
@@ -5892,6 +5960,14 @@ namespace
             {
                 reason = TEXT("known-cd capture contains a non-finite or saturated RGBA16F value");
                 return false;
+            }
+            {
+                char dumpName[64] = {};
+                std::snprintf(dumpName, sizeof(dumpName), "known-cd-%s", GetKnownCdStageName());
+                if (!DumpCaptureImage(dumpName, image, frame, reason))
+                {
+                    return false;
+                }
             }
             double channelMean[3] = {};
             size_t roiCount = 0u;
@@ -7138,6 +7214,7 @@ namespace
         bool m_bKnownCdScenario = false;
         bool m_bP4Scenario = false;
         bool m_bTransparentPhysicalLightingScenario = false;
+        Core::Container::String m_DumpCaptureDirectory;
         bool m_bMarkerRegistered = false;
         enum class R1CaptureStage : uint8_t
         {
@@ -7618,6 +7695,30 @@ int main(int argc, char** argv)
     if (!CanCreateVulkanDeviceForGpuTest(reason))
     {
         return ReportGpuTestSkip("RenderingHdrSceneCaptureTest", "no Vulkan device is available");
+    }
+
+    // パストレーサー指定の実行は、RenderingCoordinatorがPTを選べる機能のない環境ではスキップする。
+    bool bPathTracingRequested = false;
+    for (int index = 1; index < argc; ++index)
+    {
+        bPathTracingRequested = bPathTracingRequested ||
+                                std::strcmp(argv[index], "--renderer=path-tracing") == 0;
+    }
+    if (bPathTracingRequested)
+    {
+        RHI::RHIDeviceDesc probeDesc;
+        probeDesc.Api = RHI::GraphicsAPI::Vulkan;
+        probeDesc.bEnableValidation = false;
+        RHI::DevicePtr probe = RHI::CreateRHIDevice(probeDesc);
+        if (!probe ||
+            !probe->GetCapabilities().RayTracing.bAccelerationStructure ||
+            !probe->GetCapabilities().RayTracing.bRayTracingPipeline ||
+            !probe->GetCapabilities().bBufferDeviceAddress ||
+            !probe->GetCapabilities().bSampledImageArrayNonUniformIndexing)
+        {
+            return ReportGpuTestSkip("RenderingHdrSceneCaptureTest",
+                                     "path tracing capabilities are unavailable");
+        }
     }
 
     if (bR1Scenario || bAllNumericalScenario)

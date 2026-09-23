@@ -701,6 +701,21 @@ set_tests_properties(PathTracingExrOutputTest PROPERTIES
     RESOURCE_LOCK NorvesLibGPU
     SKIP_RETURN_CODE 125
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# R1の白炉と既知光度の行をラスタとパストレーサーで取得し、同じ行のSceneColorを比べる。
+set(PATH_TRACING_RASTER_PARITY_ROOT
+    "${CMAKE_BINARY_DIR}/RenderingValidation/PathTracingRasterParityRuns")
+add_custom_target(PathTracingRasterParityVulkanTest DEPENDS RenderingHdrSceneCaptureTest)
+set_target_properties(PathTracingRasterParityVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+add_test(NAME PathTracingRasterParityVulkanTest
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/PathTracingRasterParityTest.py
+            $<TARGET_FILE:RenderingHdrSceneCaptureTest>
+            ${PATH_TRACING_RASTER_PARITY_ROOT})
+set_tests_properties(PathTracingRasterParityVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 target_link_libraries(RenderingRayTracingShadowVulkanTest PRIVATE
     RenderingValidationFixtureSupport
     RenderingGpuTestSupport

@@ -119,6 +119,12 @@ namespace NorvesLib::Test::RenderingValidation
         SceneKind Scene = SceneKind::Indoor;
         uint32_t Seed = ValidationSeed;
         Core::Rendering::FrameCaptureSourceKind CaptureSource = Core::Rendering::FrameCaptureSourceKind::PresentationColor;
+        /** @brief メインSceneViewをパストレーサーで描く（--renderer=path-tracing） */
+        bool bPathTracing = false;
+        /** @brief パストレーサーで各取得の前に累積する試料数（--path-tracing-samples=N） */
+        uint32_t PathTracingSamples = 1;
+        /** @brief パストレーサーの1フレームあたりの試料数（--path-tracing-samples-per-frame=N） */
+        uint32_t PathTracingSamplesPerFrame = 1;
     };
 
     bool BuildSceneLayout(SceneKind kind, uint32_t seed, SceneLayout& outLayout);

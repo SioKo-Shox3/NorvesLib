@@ -1,8 +1,12 @@
 ﻿#include "RenderingValidation/RenderingFloatImage.h"
 
+#include "FileStream/FileStream.h"
+
 #include <bit>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstring>
 #include <limits>
 
 namespace NorvesLib::Test::RenderingValidation
@@ -222,6 +226,77 @@ namespace NorvesLib::Test::RenderingValidation
             }
         }
         return FloatImageStatus::Success;
+    }
+
+    FloatImageStatus DecodeCapturedRgbaFloat(
+        const Core::Rendering::CapturedFrame& frame,
+        RgbaFloatImage& outImage)
+    {
+        if (frame.Format != RHI::Format::R32G32B32A32_FLOAT)
+        {
+            return DecodeCapturedRgba16Float(frame, outImage);
+        }
+        outImage = RgbaFloatImage{};
+        if (!frame.IsSuccess())
+        {
+            return FloatImageStatus::CaptureNotSuccessful;
+        }
+        constexpr uint32_t Rgba32BytesPerPixel = 16u;
+        if (frame.Width == 0u || frame.Height == 0u ||
+            frame.Width > std::numeric_limits<uint32_t>::max() / Rgba32BytesPerPixel)
+        {
+            return FloatImageStatus::InvalidDimensions;
+        }
+        if (frame.BytesPerPixel != Rgba32BytesPerPixel ||
+            frame.RowPitchBytes < frame.Width * Rgba32BytesPerPixel ||
+            frame.Pixels.size() < static_cast<size_t>(frame.RowPitchBytes) * frame.Height)
+        {
+            return FloatImageStatus::InvalidPixelData;
+        }
+        outImage.Width = frame.Width;
+        outImage.Height = frame.Height;
+        outImage.Values.resize(static_cast<size_t>(frame.Width) * frame.Height * RgbaChannelCount);
+        for (uint32_t y = 0; y < frame.Height; ++y)
+        {
+            const uint8_t* row = frame.Pixels.data() + static_cast<size_t>(y) * frame.RowPitchBytes;
+            std::memcpy(outImage.Values.data() +
+                            static_cast<size_t>(y) * frame.Width * RgbaChannelCount,
+                        row, static_cast<size_t>(frame.Width) * Rgba32BytesPerPixel);
+        }
+        return FloatImageStatus::Success;
+    }
+
+    bool WriteRgbaFloatDump(const Core::Container::String& path, const RgbaFloatImage& image,
+                            uint32_t sampleCount)
+    {
+        if (image.Width == 0u || image.Height == 0u ||
+            image.Values.size() != static_cast<size_t>(image.Width) * image.Height * RgbaChannelCount)
+        {
+            return false;
+        }
+        char header[96] = {};
+        const int headerLength = std::snprintf(header, sizeof(header), "NLRGBA32F %u %u %u\n",
+                                               image.Width, image.Height, sampleCount);
+        if (headerLength <= 0 || static_cast<size_t>(headerLength) >= sizeof(header))
+        {
+            return false;
+        }
+        FileStream::FileStreamUniquePtr stream = FileStream::FileStream::CreateUnique(
+            path, FileStream::FileMode::Write, FileStream::FileAccess::Write,
+            FileStream::FileShare::None);
+        if (!stream)
+        {
+            return false;
+        }
+        const size_t bodyBytes = image.Values.size() * sizeof(float);
+        if (stream->Write(header, static_cast<size_t>(headerLength)) !=
+                static_cast<size_t>(headerLength) ||
+            stream->Write(image.Values.data(), bodyBytes) != bodyBytes)
+        {
+            return false;
+        }
+        stream->Flush();
+        return true;
     }
 
     NonFiniteLocation FindFirstNonFinite(const RgbaFloatImage& image)

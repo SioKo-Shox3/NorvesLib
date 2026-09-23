@@ -13,6 +13,43 @@ namespace NorvesLib::Test::RenderingValidation
             const Core::Container::String prefixText(prefix);
             return value.size() >= prefixText.size() && value.substr(0, prefixText.size()) == prefixText;
         }
+
+        // 10進の正の整数（上限付き）を読む。
+        bool TryParsePositiveInteger(const Core::Container::String& text, uint32_t maximum,
+                                     uint32_t& outValue)
+        {
+            if (text.empty() || text.size() > 9u)
+            {
+                return false;
+            }
+            uint32_t value = 0u;
+            for (const auto character : text)
+            {
+                if (character < TEXT('0') || character > TEXT('9'))
+                {
+                    return false;
+                }
+                value = value * 10u + static_cast<uint32_t>(character - TEXT('0'));
+            }
+            if (value == 0u || value > maximum)
+            {
+                return false;
+            }
+            outValue = value;
+            return true;
+        }
+
+        // パストレーサーの取得1回に掛かる描画フレーム数（保留で待つ分）の見積もり。
+        uint64_t ComputePathTracingCaptureFrames(const RenderingValidationRunConfig& config)
+        {
+            if (!config.bPathTracing)
+            {
+                return 0u;
+            }
+            const uint64_t perFrame = config.PathTracingSamplesPerFrame == 0u
+                ? 1u : config.PathTracingSamplesPerFrame;
+            return (static_cast<uint64_t>(config.PathTracingSamples) + perFrame - 1u) / perFrame;
+        }
     }
 
     bool RenderingValidationApplicationHandler::OnPreInitialize(
@@ -92,6 +129,51 @@ namespace NorvesLib::Test::RenderingValidation
                 continue;
             }
 
+            if (StartsWith(argument, TEXT("--renderer=")))
+            {
+                const Core::Container::String value =
+                    argument.substr(Core::Container::String(TEXT("--renderer=")).size());
+                if (value == TEXT("raster"))
+                {
+                    m_RunConfig.bPathTracing = false;
+                }
+                else if (value == TEXT("path-tracing"))
+                {
+                    m_RunConfig.bPathTracing = true;
+                }
+                else
+                {
+                    LOG_ERROR("描画検証の renderer 値が不正です");
+                    return false;
+                }
+                continue;
+            }
+            if (StartsWith(argument, TEXT("--path-tracing-samples-per-frame=")))
+            {
+                // エンジン側が同じ引数で試料数を設定する。ここでは待ち時間の見積もりにだけ使う。
+                if (!TryParsePositiveInteger(
+                        argument.substr(Core::Container::String(
+                            TEXT("--path-tracing-samples-per-frame=")).size()),
+                        1024u, m_RunConfig.PathTracingSamplesPerFrame))
+                {
+                    LOG_ERROR("描画検証の path-tracing-samples-per-frame 値が不正です");
+                    return false;
+                }
+                continue;
+            }
+            if (StartsWith(argument, TEXT("--path-tracing-samples=")))
+            {
+                if (!TryParsePositiveInteger(
+                        argument.substr(Core::Container::String(
+                            TEXT("--path-tracing-samples=")).size()),
+                        1u << 24u, m_RunConfig.PathTracingSamples))
+                {
+                    LOG_ERROR("描画検証の path-tracing-samples 値が不正です");
+                    return false;
+                }
+                continue;
+            }
+
             Core::Container::String reason;
             if (!ParseAdditionalArgument(argument, reason))
             {
@@ -122,6 +204,13 @@ bool RenderingValidationApplicationHandler::OnInitialize()
 		return false;
 	}
 	Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(false);
+    if (m_RunConfig.bPathTracing &&
+        Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator().GetMainViewRenderer() !=
+            Core::Rendering::RenderingMainViewRenderer::PathTracing)
+    {
+        LOG_ERROR("描画検証でパストレーサーを要求しましたが、メインSceneViewがラスタのままです");
+        return false;
+    }
 	return true;
 }
 
@@ -143,8 +232,12 @@ bool RenderingValidationApplicationHandler::OnInitialize()
         if (!m_bCaptureRequested && m_Fixture.IsCaptureStateStable() &&
             !renderWorld.HasPendingAsyncAssets())
         {
-            const Core::Rendering::FrameCaptureRequestResult request = renderWorld.RequestFrameCapture(
-                {m_RunConfig.CaptureSource});
+            Core::Rendering::FrameCaptureRequest captureRequest;
+            captureRequest.SourceKind = m_RunConfig.CaptureSource;
+            captureRequest.MinimumPathTracingSamples =
+                m_RunConfig.bPathTracing ? m_RunConfig.PathTracingSamples : 0u;
+            const Core::Rendering::FrameCaptureRequestResult request =
+                renderWorld.RequestFrameCapture(captureRequest);
             if (!request.IsAccepted())
             {
                 Fail(request.Status == Core::Rendering::FrameCaptureRequestStatus::AlreadyPending
@@ -183,6 +276,18 @@ bool RenderingValidationApplicationHandler::OnInitialize()
                     Fail("描画検証の capture 結果が失敗しました");
                     return;
                 }
+                if (m_RunConfig.bPathTracing)
+                {
+                    LOG_INFO("RenderingValidation path tracing capture: request=%llu frame=%llu samples=%u",
+                             static_cast<unsigned long long>(frame.RequestId),
+                             static_cast<unsigned long long>(frame.FrameNumber),
+                             frame.PathTracingSampleCount);
+                    if (frame.PathTracingSampleCount < m_RunConfig.PathTracingSamples)
+                    {
+                        Fail("描画検証の capture がパストレーサーの試料数に届く前に取得されました");
+                        return;
+                    }
+                }
                 const bool bAccepted = EvaluateCapturedFrame(frame, reason);
                 if (bAccepted)
                 {
@@ -192,6 +297,8 @@ bool RenderingValidationApplicationHandler::OnInitialize()
                 Core::Rendering::FrameCaptureRequest followupRequest;
                 if (bAccepted && RequestFollowupCapture(frame, followupRequest))
                 {
+                    followupRequest.MinimumPathTracingSamples =
+                        m_RunConfig.bPathTracing ? m_RunConfig.PathTracingSamples : 0u;
                     const Core::Rendering::FrameCaptureRequestResult followupResult =
                         renderWorld.RequestFrameCapture(followupRequest);
                     if (!followupResult.IsAccepted())
@@ -217,13 +324,15 @@ bool RenderingValidationApplicationHandler::OnInitialize()
                 }
                 return;
             }
-            if (renderedFrames >= m_CaptureRequestRenderedFrame + 32)
+            if (renderedFrames >= m_CaptureRequestRenderedFrame + 32 +
+                                      ComputePathTracingCaptureFrames(m_RunConfig))
             {
                 Fail("描画検証の capture が要求後32フレーム以内に完了しませんでした");
                 return;
             }
         }
-        if (renderedFrames >= 600)
+        // パストレーサーは取得ごとに試料の累積を待つため、全体の期限は取得ごとの期限に任せる。
+        if (!m_RunConfig.bPathTracing && renderedFrames >= 600)
         {
             Fail("描画検証が全体600フレームの期限を超えました");
         }
