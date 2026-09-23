@@ -156,6 +156,8 @@ def compare_known_cd(raster_dir, path_dir):
 
 
 def main():
+    # 子プロセスの日本語ログを端末の符号化で表せない場合も、診断を途切れさせずに置き換えて出す。
+    sys.stdout.reconfigure(errors="replace")
     if len(sys.argv) != 3:
         print("usage: PathTracingRasterParityTest.py <RenderingHdrSceneCaptureTest> <output-root>")
         return 2
