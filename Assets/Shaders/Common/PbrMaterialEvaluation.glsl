@@ -14,6 +14,22 @@ struct PbrGBufferMaterialSamples
     vec4 Material;
 };
 
+// 材質textureの標本値を材質値へ復号する。ラスタとパストレーサーは標本の取り方
+// （暗黙LODとLOD 0）だけが異なり、復号はこの関数を共有する。
+PbrMaterialTextureSamples DecodePbrMaterialTextureSamples(
+    vec4 albedoSample,
+    vec4 normalSample,
+    float metallicSample,
+    float roughnessSample,
+    float aoSample)
+{
+    PbrMaterialTextureSamples result;
+    result.Albedo = albedoSample;
+    result.TangentNormal = normalSample.rgb * 2.0 - 1.0;
+    result.Material = vec3(metallicSample, roughnessSample, aoSample);
+    return result;
+}
+
 PbrMaterialTextureSamples SamplePbrMaterialTextures(
     sampler2D albedoSampler,
     sampler2D normalSampler,
@@ -22,13 +38,23 @@ PbrMaterialTextureSamples SamplePbrMaterialTextures(
     sampler2D aoSampler,
     vec2 texCoord)
 {
-    PbrMaterialTextureSamples result;
-    result.Albedo = texture(albedoSampler, texCoord);
-    result.TangentNormal = texture(normalSampler, texCoord).rgb * 2.0 - 1.0;
-    result.Material = vec3(texture(metallicSampler, texCoord).r,
-                            texture(roughnessSampler, texCoord).r,
-                            texture(aoSampler, texCoord).r);
-    return result;
+    return DecodePbrMaterialTextureSamples(texture(albedoSampler, texCoord),
+                                           texture(normalSampler, texCoord),
+                                           texture(metallicSampler, texCoord).r,
+                                           texture(roughnessSampler, texCoord).r,
+                                           texture(aoSampler, texCoord).r);
+}
+
+// 表面のアルベド。instance色×アルベドtextureで、材質のBaseColorは使わない。
+vec3 ComposePbrSurfaceAlbedo(vec3 objectColor, PbrMaterialTextureSamples samples)
+{
+    return objectColor * samples.Albedo.rgb;
+}
+
+// 接空間法線を接空間の基底でワールド法線へ変換する。
+vec3 ApplyTangentSpaceNormal(mat3 tangentBasis, vec3 tangentNormal)
+{
+    return normalize(tangentBasis * tangentNormal);
 }
 
 PbrGBufferMaterialSamples SamplePbrMaterialTextures(

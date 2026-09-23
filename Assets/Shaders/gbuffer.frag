@@ -160,12 +160,12 @@ void main()
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord);
-    outAlbedo = vec4(fragObjectColor * textureSamples.Albedo.rgb,
+    outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples),
                      textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUV使用）
     mat3 TBN_normal = CalculateTBN(fragNormal, fragWorldPos, texCoord);
-    vec3 normal = normalize(TBN_normal * textureSamples.TangentNormal);
+    vec3 normal = ApplyTangentSpaceNormal(TBN_normal, textureSamples.TangentNormal);
     outNormal = vec4(normal, 0.0);
 
     // PBRマテリアルパラメータ（POM補正済みUV使用）
