@@ -65,6 +65,8 @@
 - R7-M1: `Docs/RenderingValidation/R7SamplingAndExrSelection.md` と `R7TechniquePlan.md` に、NEE + power heuristic MIS、TinyEXR v3.2.0 C11 API、linear RGB float/ZIP scanline、seed決定論性、R7 core/outdoor段階を固定し、P1〜P7/O1〜O3へ分割した。
 - R7-P1: `PbrMaterialEvaluation.glsl`へ共通のBRDF・texture評価をまとめ、opaque/transparent rasterとRTGI computeから参照する。shader-root相対include展開を接続した。対象build成功、R1 all-numericalは40 static rows/68 numerical rows/120 capturesで合格し、Indoor goldenも合格。Outdoor goldenは開始時と同じ`mean_flip=0.002326954`・459画素差で失敗し、R1 baselineは変更していない。
 
+- R7-P2: 明示選択の独立PT passをR5 RT pipeline/SBTとFramePacketのRT snapshotへ接続し、1 sample/frameの累積平均をSceneColorへ公開した。静止時の収束、描画packet欠番時の履歴維持、camera/scene/light・材質・形状変更時のresetをGPU readbackで確認した。frame slot別のdescriptor/buffer資源を使い、既定rasterとRendering3DTest起動経路は変更していない。
+
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
 - R6-P6はblocked。R6受入れ記録は保留として作成し、完了trailerは付けていない。
@@ -72,9 +74,10 @@
 
 ## Next
 
-- Roadmap上R6と並行可能なR7コアの`R7-P2`へ進む。R6 Outdoorの基準画像判断は保留として保持し、R1の承認済みbaseline/thresholdは変更しない。
+- R7-P3のNEE/MISと直接光輸送へ進む。R6 Outdoorの基準画像判断とR7-P1の受入れは保留として保持する。
 
 ## Notes
+- R7-P2検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P2-8.txt`はGame/PathTracingVulkanTestのDebug buildでEXIT_CODE=0、`verify-R7-P2-9.txt`は指定CTest 1/1 passed・EXIT_CODE=0。`verify-R7-P2-10.txt`の実GPU出力は16 sampleの変化量が0.0130208から0.00131565へ低下し、交互frame slot、packet欠番時の履歴維持、camera/scene/material/geometry/light reset、明示選択を確認した。
 - R6-P5再開時（2026-09-23）: `cmake --build build --config Debug --target Game RTGIDiffuseIndirectVulkanTest -- /m:1` 成功、`ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R '^RTGIDiffuseIndirectVulkanTest$'` は1/1 passed。ログは`.harness/runs/20260923-r6-p5-resume/`。
 - R6-P5最終検証（2026-09-23）: `verify-R6-P5-1.txt`のGame buildはEXIT_CODE=0、`verify-R6-P5-3.txt`の受入れテストbuildはEXIT_CODE=0、`verify-R6-P5-4.txt`は1/1 passed。HDR出力は8-frame warmup、static golden、RT無効/R4 fallback、カメラ/物体移動、履歴棄却、移動後停止2サンプル、ライト4 rendered frames以内の追従をPASSとして記録した。指定の全体`RenderingValidation`は`verify-R6-P5-2.txt`で44件中34 passed・8 skipped・10 failed、EXIT_CODE=8。10失敗（RHIGPUTimestamp、DDGIProbeRadiance、RenderingDDGI 2件、RHIImageLayout 4件、RenderingGolden 2件）は着手時baselineと同じで、R6-P5追加テストは全体実行でもpassed。
 - R6-GATE-DDGI-ORACLE（2026-09-23）: `DDGIProbeRadianceVulkanTest`が1 pass内で非遮蔽→遮蔽を連続実行し、R4-P4のprevious-irradiance bounceを後者の直接照明期待値へ混入させていた。遮蔽ケースを独立passに分け、Debug build exit 0、CTest 1/1 passed。`.harness/runs/20260923-r6-gate-ddgi/verify-ctest-LastTest.log`でpoint/spot遮蔽期待値と実測値が両方`4.92249,2.50945,1.32604`と一致することを確認した。全体gateはこの修正後まだ未実行。
