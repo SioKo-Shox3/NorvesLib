@@ -1416,6 +1416,48 @@ namespace
             }
         }
 
+        // 輸送範囲を限った参照でも面光源は光源標本だけで数える。平面と面光源だけのシーンでは、拡散
+        // 1バウンスの散乱光線が面光源に当たっても発光を二重に数えず、2つ目の命中（面光源の面）の
+        // 光源標本で打ち切るため、直接光だけの範囲と同じく多角形光源の解析照度になる（標本化戦略の
+        // 設定がBSDF標本のみでも光源標本へ切り替わる）。
+        const struct
+        {
+            PathTracingTransportScope Scope;
+            const char* Label;
+        } areaScopeCases[2] = {
+            {PathTracingTransportScope::DirectOnly, "transport_area_direct"},
+            {PathTracingTransportScope::SingleDiffuseBounce, "transport_area_single_diffuse_bounce"}};
+        for (const auto& scopeCase : areaScopeCases)
+        {
+            pass.SetTransportScope(scopeCase.Scope);
+            if (!runner.Accumulate(256u, pixels, scopeCase.Label))
+            {
+                return 1;
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                double measuredSum = 0.0;
+                double expectedSum = 0.0;
+                for (size_t index = 0u; index < planePixels.size(); ++index)
+                {
+                    measuredSum += pixels[planePixels[index] * 4u + channel];
+                    expectedSum += analytic[index] * planeColor[channel];
+                }
+                const double relative = std::abs(measuredSum - expectedSum) / expectedSum;
+                std::cout << scopeCase.Label << " channel=" << channel
+                          << " measured_mean=" << measuredSum / planePixels.size()
+                          << " analytic_mean=" << expectedSum / planePixels.size()
+                          << " relative=" << relative << '\n';
+                if (relative > 0.02)
+                {
+                    std::cerr << scopeCase.Label << "が多角形光源の解析照度と一致しません\n";
+                    bPassed = false;
+                }
+            }
+        }
+        pass.SetTransportScope(PathTracingTransportScope::Full);
+        pass.SetLightSampling(PathTracingLightSampling::MultipleImportance);
+
         // 光沢金属でも3つの戦略の平均が一致する（解析値なし、MISを基準にする）。
         pass.SetBsdfMode(PathTracingBsdfMode::Production);
         RayTracingHitMaterialSnapshot& glossyMaterial = areaPacket.RayTracingScene.Instances[0].Material;

@@ -4,7 +4,8 @@
 // パストレーサー（--renderer=path-tracing、輸送範囲は--path-tracing-transport）のSceneColorを取得し、
 // --r6-reference-dumpへfloat画像として書き出す。
 // 比較（CPU）: --compare-dumps=<dir> で4枚（raster-rtgi・pt-direct・pt-single・pt-full）を読み、
-// R6の申告範囲（拡散1バウンス）に合わせたPT参照（pt-single）と比べる。
+// R6の申告範囲（拡散1バウンス）に合わせたPT参照（pt-single）と比べる。判定は原寸のFLIP平均と
+// 原寸の画素単位FLIP最大の二段で、8x8区画平均画像のFLIP最大を補助の判定に加える。
 #include "Boot/AppLauncher.h"
 #include "Boot/BootConfig.h"
 #include "Engine/Engine.h"
@@ -41,8 +42,11 @@ namespace
     constexpr float R6PointLightIntensity = 1200.0f;
     // RTGI履歴の最大age（8 rendered frame）の3倍待ってから取得する。
     constexpr uint64_t RasterConvergedRenderedFrames = 24u;
-    // 画素単位の判定は8x8区画の平均で行う（縁のaliasingとPTの残留雑音を区画内で均す）。
+    // 補助の判定に使う区画の大きさ（縁のaliasingとPTの残留雑音を区画内で均した局所の差を見る）。
     constexpr uint32_t BlockSize = 8u;
+    // 局所欠陥の負の対照: 参照の暗い3x3画素へ加える光漏れ（画像の平均輝度の倍率）。
+    constexpr uint32_t LeakPatchSize = 3u;
+    constexpr double LeakScale = 4.0;
     // 閾値の物差し: 参照の間接光成分を一様に±20%変えた画像と参照との知覚差。
     constexpr double IndirectYardstick = 0.2;
     // 物差しの単調性を確かめる、閾値の外側にあるべき変化量。
@@ -181,6 +185,9 @@ namespace
     struct FlipMeasurement
     {
         double Mean = 0.0;
+        float PixelMax = 0.0f;
+        uint32_t PixelX = 0u;
+        uint32_t PixelY = 0u;
         float BlockMax = 0.0f;
         uint32_t BlockX = 0u;
         uint32_t BlockY = 0u;
@@ -259,6 +266,9 @@ namespace
             return false;
         }
         outMeasurement.Mean = full.MeanFlipError;
+        outMeasurement.PixelMax = full.MaxFlipError;
+        outMeasurement.PixelX = full.MaxFlipX;
+        outMeasurement.PixelY = full.MaxFlipY;
         outMeasurement.BlockMax = blocks.MaxFlipError;
         outMeasurement.BlockX = blocks.MaxFlipX;
         outMeasurement.BlockY = blocks.MaxFlipY;
@@ -281,6 +291,52 @@ namespace
         return result;
     }
 
+    // 参照の内側（外周8画素を除く）で最も暗い3x3画素へ、画像の平均輝度のLeakScale倍の光を足す。
+    RgbaFloatImage AddLocalLeak(const RgbaFloatImage& image, double meanLuminance)
+    {
+        uint32_t bestX = BlockSize;
+        uint32_t bestY = BlockSize;
+        double bestLuminance = 1.0e30;
+        for (uint32_t y = BlockSize; y + BlockSize + LeakPatchSize <= image.Height; ++y)
+        {
+            for (uint32_t x = BlockSize; x + BlockSize + LeakPatchSize <= image.Width; ++x)
+            {
+                double sum = 0.0;
+                for (uint32_t dy = 0u; dy < LeakPatchSize; ++dy)
+                {
+                    for (uint32_t dx = 0u; dx < LeakPatchSize; ++dx)
+                    {
+                        const size_t offset = (static_cast<size_t>(y + dy) * image.Width + x + dx) * 4u;
+                        sum += 0.2126 * image.Values[offset] + 0.7152 * image.Values[offset + 1u] +
+                               0.0722 * image.Values[offset + 2u];
+                    }
+                }
+                if (sum < bestLuminance)
+                {
+                    bestLuminance = sum;
+                    bestX = x;
+                    bestY = y;
+                }
+            }
+        }
+        RgbaFloatImage result = image;
+        for (uint32_t dy = 0u; dy < LeakPatchSize; ++dy)
+        {
+            for (uint32_t dx = 0u; dx < LeakPatchSize; ++dx)
+            {
+                const size_t offset = (static_cast<size_t>(bestY + dy) * image.Width + bestX + dx) * 4u;
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    result.Values[offset + channel] +=
+                        static_cast<float>(LeakScale * meanLuminance);
+                }
+            }
+        }
+        std::cout << "local_leak_patch x=" << bestX << " y=" << bestY
+                  << " size=" << LeakPatchSize << " added=" << LeakScale * meanLuminance << '\n';
+        return result;
+    }
+
     double MeanLuminance(const RgbaFloatImage& image)
     {
         double sum = 0.0;
@@ -295,6 +351,8 @@ namespace
     void PrintMeasurement(const char* label, const FlipMeasurement& measurement)
     {
         std::cout << label << " mean_flip=" << measurement.Mean
+                  << " pixel_max_flip=" << measurement.PixelMax
+                  << " pixel=(" << measurement.PixelX << "," << measurement.PixelY << ")"
                   << " block8_max_flip=" << measurement.BlockMax
                   << " block=(" << measurement.BlockX << "," << measurement.BlockY << ")\n";
     }
@@ -334,29 +392,39 @@ namespace
         FlipMeasurement rasterMeasurement;
         FlipMeasurement fullVsRaster;
         FlipMeasurement fullVsSingle;
+        FlipMeasurement localLeak;
         if (!MeasureFlip(single, ScaleIndirect(direct, single, 1.0 + IndirectYardstick), plus) ||
             !MeasureFlip(single, ScaleIndirect(direct, single, 1.0 - IndirectYardstick), minus) ||
             !MeasureFlip(single, ScaleIndirect(direct, single, 1.0 + IndirectSanity), sanityPlus) ||
             !MeasureFlip(single, ScaleIndirect(direct, single, 1.0 - IndirectSanity), sanityMinus) ||
             !MeasureFlip(single, raster, rasterMeasurement) ||
             !MeasureFlip(full, raster, fullVsRaster) ||
-            !MeasureFlip(full, single, fullVsSingle))
+            !MeasureFlip(full, single, fullVsSingle) ||
+            !MeasureFlip(single, AddLocalLeak(single, MeanLuminance(single)), localLeak))
         {
             std::cerr << "FLIPを評価できません\n";
             return 1;
         }
         const double meanLimit = std::min(plus.Mean, minus.Mean);
+        const float pixelLimit = std::min(plus.PixelMax, minus.PixelMax);
         const float blockLimit = std::min(plus.BlockMax, minus.BlockMax);
         PrintMeasurement("yardstick_indirect_plus20", plus);
         PrintMeasurement("yardstick_indirect_minus20", minus);
         PrintMeasurement("sanity_indirect_plus40", sanityPlus);
         PrintMeasurement("sanity_indirect_minus40", sanityMinus);
+        PrintMeasurement("negative_local_leak", localLeak);
         std::cout << "r6_reference_threshold mean_flip<=" << meanLimit
+                  << " pixel_max_flip<=" << pixelLimit
                   << " block8_max_flip<=" << blockLimit << '\n';
 
-        // 物差しが変化量に対して単調で、より大きな誤差を閾値の外に置くこと。
+        // 物差しが変化量に対して単調で、より大きな誤差を閾値の外に置くこと。局所的な光漏れは
+        // 全体平均では閾値内に埋もれても、原寸の画素単位最大で閾値の外に出ること。
         const bool bSanity = sanityPlus.Mean > meanLimit && sanityMinus.Mean > meanLimit &&
-                             sanityPlus.BlockMax > blockLimit && sanityMinus.BlockMax > blockLimit;
+                             sanityPlus.PixelMax > pixelLimit && sanityMinus.PixelMax > pixelLimit &&
+                             sanityPlus.BlockMax > blockLimit && sanityMinus.BlockMax > blockLimit &&
+                             localLeak.PixelMax > pixelLimit;
+        std::cout << "negative_local_leak mean_within_limit=" << (localLeak.Mean <= meanLimit ? 1 : 0)
+                  << " pixel_max_outside_limit=" << (localLeak.PixelMax > pixelLimit ? 1 : 0) << '\n';
 
         const double directLuminance = MeanLuminance(direct);
         const double singleIndirect = MeanLuminance(single) - directLuminance;
@@ -373,12 +441,13 @@ namespace
                   << '\n';
 
         const bool bPassed = bSanity && rasterMeasurement.Mean <= meanLimit &&
+                             rasterMeasurement.PixelMax <= pixelLimit &&
                              rasterMeasurement.BlockMax <= blockLimit;
         std::cout << "r6_reference_comparison=" << (bPassed ? "PASS" : "FAIL")
                   << " sanity=" << (bSanity ? "PASS" : "FAIL") << '\n';
         if (!bSanity)
         {
-            std::cerr << "閾値の物差しが変化量に対して単調ではありません\n";
+            std::cerr << "閾値の物差しが変化量に対して単調でないか、局所欠陥を検出できません\n";
         }
         return bPassed ? 0 : 1;
     }
