@@ -44,9 +44,10 @@ namespace
     constexpr uint64_t RasterConvergedRenderedFrames = 24u;
     // 補助の判定に使う区画の大きさ（縁のaliasingとPTの残留雑音を区画内で均した局所の差を見る）。
     constexpr uint32_t BlockSize = 8u;
-    // 局所欠陥の負の対照: 参照の暗い3x3画素へ加える光漏れ（画像の平均輝度の倍率）。
-    constexpr uint32_t LeakPatchSize = 3u;
-    constexpr double LeakScale = 4.0;
+    // 局所欠陥の負の対照: 参照の最も暗い1画素へ加える光漏れ（画像の平均輝度の倍率）。全体平均と
+    // 8x8区画平均では閾値内に埋もれ、画素単位の最大だけが閾値の外に出る大きさにする。
+    constexpr uint32_t LeakPatchSize = 1u;
+    constexpr double LeakScale = 1.0;
     // 閾値の物差し: 参照の間接光成分を一様に±20%変えた画像と参照との知覚差。
     constexpr double IndirectYardstick = 0.2;
     // 物差しの単調性を確かめる、閾値の外側にあるべき変化量。
@@ -291,7 +292,7 @@ namespace
         return result;
     }
 
-    // 参照の内側（外周8画素を除く）で最も暗い3x3画素へ、画像の平均輝度のLeakScale倍の光を足す。
+    // 参照の内側（外周8画素を除く）で最も暗い画素へ、画像の平均輝度のLeakScale倍の光を足す。
     RgbaFloatImage AddLocalLeak(const RgbaFloatImage& image, double meanLuminance)
     {
         uint32_t bestX = BlockSize;
@@ -417,13 +418,16 @@ namespace
                   << " pixel_max_flip<=" << pixelLimit
                   << " block8_max_flip<=" << blockLimit << '\n';
 
-        // 物差しが変化量に対して単調で、より大きな誤差を閾値の外に置くこと。局所的な光漏れは
-        // 全体平均では閾値内に埋もれても、原寸の画素単位最大で閾値の外に出ること。
+        // 物差しが変化量に対して単調で、より大きな誤差を閾値の外に置くこと。1画素の光漏れは全体平均と
+        // 8x8区画平均では閾値内に埋もれ、原寸の画素単位最大だけで閾値の外に出ること。
+        const bool bLeakPixelOnly = localLeak.Mean <= meanLimit && localLeak.BlockMax <= blockLimit &&
+                                    localLeak.PixelMax > pixelLimit;
         const bool bSanity = sanityPlus.Mean > meanLimit && sanityMinus.Mean > meanLimit &&
                              sanityPlus.PixelMax > pixelLimit && sanityMinus.PixelMax > pixelLimit &&
                              sanityPlus.BlockMax > blockLimit && sanityMinus.BlockMax > blockLimit &&
-                             localLeak.PixelMax > pixelLimit;
+                             bLeakPixelOnly;
         std::cout << "negative_local_leak mean_within_limit=" << (localLeak.Mean <= meanLimit ? 1 : 0)
+                  << " block_within_limit=" << (localLeak.BlockMax <= blockLimit ? 1 : 0)
                   << " pixel_max_outside_limit=" << (localLeak.PixelMax > pixelLimit ? 1 : 0) << '\n';
 
         const double directLuminance = MeanLuminance(direct);
