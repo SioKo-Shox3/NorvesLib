@@ -75,6 +75,9 @@
 - R7-O1: FramePacketのSkyAtmosphereParametersからR2の空LUTと太陽ディスクをPTへ接続した。missで散乱空を評価し、太陽ディスク方向を明示サンプルして可視面へ直接照明を加える。空設定・露出・LUT公開状態の変化で累積履歴を破棄する。屋外GPUテストで朝・昼・夕の有限性、R2入力一致、太陽照度、空無効とLUT欠落・復帰を確認した。
 
 - R7-O2: R3の高さ霧スナップショットから解析透過率と固定24段の方向光単一散乱をPTの有限ヒット区間へ接続した。R3の異方性0.76を内部で共有し、霧・空の無効時、空放射霧色、RT遮蔽、霧と光の変更時の履歴破棄をGPUで確認した。
+- R6-GATE-OUTDOOR: `c1474fc`。R2の4カスケードCSM導入で変わったOutdoor基準画像を、ユーザー承認のもと正式な候補生成・publish手順で現行出力（SHA256 `9933B558…F3B954`）へ置き換えた。Indoorと閾値は不変。置換後のOutdoor golden 1/1、RenderingValidation 49件は失敗0件。
+- 物理テストABI同期: `a41190e`。R6/R7で増えたFramePacket（1152 byte）とSceneProxy（512 byte）へ物理側の境界契約を合わせ、全buildを復旧した。
+- R7-P3A: `8ac04e8` / `4500394` / `48fa18e`。RHIに配列combined image samplerと要素単位bindを追加し、Vulkan 1.2の非一様添字を対応時だけ有効化した。配列layoutだけpool容量を広げ、stage別・set全体のdescriptor上限をVulkanの計数規則で検査する。64要素のGPUテストで最大誤差2.97e-08・validation 0件、pool拡張を無効化した負の対照で失敗を確認した。RenderingValidation 50件は失敗0件。
 
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
@@ -93,6 +96,8 @@
 - R7-P7はP3のNEE/MIS・PT数値契約、P4の16/64/256 spp・Cornell比較、P1のOutdoor基準再検証後に再開する。同一条件のR4/R6比較を各1回行い、閾値超過時だけ該当phaseを再オープンする。
 
 ## Notes
+- R7-P3A評価（2026-09-24）: 1周目で配列を含まないlayoutのpool容量変化とデバイス上限未検査、2周目でmaxPerStageResourcesの計数規則（単独sampler・加速構造を除き、fragmentのcolor attachmentを加える）が指摘された。2周の上限に達したため、最後の修正`48fa18e`はR7-P3Bの評価対象へ含めて確認する。検証ログは`.harness/runs/20260923-resume/verify-R7-P3A-*-3.txt`。
+- R6完了判定の評価（2026-09-23）: 静止参照が5値比較、ライト追従率の分母、RTGIのサンプル固定、履歴棄却の検証不足、再オープン規則の欠落でNEEDS_WORK。R6-P5を再開し、参照比較はR6-P5-REF（R7-P3D後）へ分けた。
 - R7-O3停止監査（2026-09-23）: .harness/runs/20260923-095848/verify-R7-O3-1.txt〜-5.txtを読戻し、Game Debug build exit 0、指定屋外CTest 1/1、関連R7 CTest 6/6、P3/P4専用CTest登録0件を確認した。3時刻のPT空・太陽数値はあるが、霧込みPT/raster同一シーンのFLIP値はない。Docs/RenderingValidation/R7OutdoorAcceptance.mdとblocked/R7-O3.mdに停止根拠を記録し、R7完了trailerは付けない。
 - R7-O2検証（2026-09-23）: .harness/runs/20260923-095848/verify-R7-O2-6.txtは指定Debug build EXIT_CODE=0、verify-R7-O2-7.txtはGPU CTest 2/2 passed。verify-R7-O2-8.txtでは密度0.15/0.3と高さ変更の透過率0.740818/0.548812/0.680309、方向光散乱の実測0.159891/0.0799457/0.0399729と解析期待値0.159801/0.0799007/0.0399503、霧付き表面差0.966716・空miss差0を読戻し確認した。ラスタとの遮蔽方式・二次レイ差はDocs/RenderingValidation/R7FogTransport.mdに記録した。
 - R7-O1検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-O1-3.txt`は指定Debug build EXIT_CODE=0、`verify-R7-O1-4.txt`は屋外CTest 1/1 passed。`verify-R7-O1-5.txt`で朝/昼/夕の空miss合計0.0455075/0.0734877/0.0773978、太陽面0.718427/0.351861/0.672279と解析値0.720148/0.354884/0.674271を確認した。全画素有限、空無効・LUT欠落と同一設定の復帰で履歴1試料を確認した。`verify-R7-O1-6.txt`と`-7.txt`の既存PT・R2空モデルbuild/CTestはEXIT_CODE=0、2/2 passed。
