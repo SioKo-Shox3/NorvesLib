@@ -6,9 +6,9 @@
 
 | 条件 | 現在の証拠と判定 |
 |---|---|
-| 材質評価の共有 | R7-P1の共通shaderとIndoor/R1数値検証は成立。承認済みOutdoor goldenは平均FLIP `0.002326954`、459画素差で未達のためP1は`blocked`。 |
+| 材質評価の共有 | R7-P1の共通shaderとR1数値検証は成立。Outdoor goldenはR2 CSM後の出力で再承認（`c1474fc`）し、Indoor/Outdoor goldenは通過。R7-P3Bで材質texture・UV・法線マップ・instance色をPTへ接続し、余接フレームの退化判定をラスタと共通の尺度不変な関数にした（`058aab9`・`20b1764`・`8c80695`）。 |
 | 独立PTと累積 | R7-P2の16試料で変化量が`0.0130208`から`0.00131565`へ低下し、履歴resetと明示選択を確認。 |
-| NEE/MIS・解析照明 | R7-P3は`blocked`。現行のPT材質snapshotはBaseColor/発光のみで、texture、UV、metallic、roughness、DFGと光源PDFの契約がない。PTモードでのR1白炉・解析照明とラスタ/PT一致は未検証。 |
+| NEE/MIS・解析照明 | R7-P3C（`f605567`・`9128e3e`）。PTのBSDFはラスタIBL端点と同じDFG LUTの多重散乱補償と(1-Ed)拡散で、点・spot・方向光はLightingPassと同じ光源表のNEE、発光三角形と太陽円盤はpower heuristicのMIS。`PathTracingLightingVulkanTest`でR1と同じ15行の白炉（平均相対誤差の最大0.60%、固定9点の最大1.5%）、純Lambert・本番BSDFの点・spot・方向光の解析輝度（画素平均との誤差0.24%以内、spot円錐外は0）、面光源の光源標本のみ・BSDF標本のみ・MISと多角形光源の解析照度の一致（0.6%以内）を確認した。同じ行のラスタ/PT比較はR7-P3Dで行う。 |
 | SPP収束・公開Cornell | R7-P4は`blocked`。16/64/256 sppの接頭列MSEと公開参照比較の専用テストは未登録。現行の16試料GPUスモークはこの条件の代わりにならない。 |
 | 薄レンズ・シャッター | R7-P5の解析CoC `49.7312 px`に対する1024試料の測定CoCは`49.7069 px`。静止・移動32試料の固定GPU基準と決定論性を確認。 |
 | 決定論EXR | R7-P6の同一seed・32 SPP・frameの2出力はbyte一致し、SHA-256は`9333237a36a6a8ee732fe55557a430706c5a831b71e7d0f8bef3edb80291d768`。独立読取でRGB float32/ZIPとwindowを検査し、3枚の全2,099画素が有限。 |
