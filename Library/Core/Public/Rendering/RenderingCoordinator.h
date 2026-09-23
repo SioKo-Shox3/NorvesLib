@@ -58,6 +58,15 @@ namespace NorvesLib::Core::Rendering
     uint64_t ComputeSceneRevisionHash(const FramePacket& packet);
 
     /**
+     * @brief メインSceneViewの描画方式。起動時にだけ選ぶ。
+     */
+    enum class RenderingMainViewRenderer : uint8_t
+    {
+        Raster,
+        PathTracing
+    };
+
+    /**
      * @brief レンダリング調整設定
      */
     struct RenderingCoordinatorSettings
@@ -75,6 +84,15 @@ namespace NorvesLib::Core::Rendering
         uint32_t MaxDrawCallsPerFrame = 10000;
         bool bEnableValidation = false;
         RGDumpOptions RenderGraphDumpOptions;
+        /**
+         * @brief メインSceneViewの描画方式（既定はラスタ）。
+         *
+         * PathTracingはRT pipeline・BDA・非一様texture添字に対応するデバイスだけで有効になり、
+         * 非対応ならラスタへ戻して警告する。
+         */
+        RenderingMainViewRenderer MainViewRenderer = RenderingMainViewRenderer::Raster;
+        /** @brief パストレーサーが1フレームで累積する試料数 */
+        uint32_t PathTracingSamplesPerFrame = 1;
     };
 
     struct RenderingCoordinatorStatsSnapshot
@@ -337,6 +355,9 @@ namespace NorvesLib::Core::Rendering
          */
         Container::TSharedPtr<SceneView> GetMainSceneView() const { return m_MainSceneView; }
 
+        /** @brief 初期化で実際に選んだメインSceneViewの描画方式 */
+        RenderingMainViewRenderer GetMainViewRenderer() const { return m_MainViewRenderer; }
+
         /**
          * @brief CanvasViewを取得
          */
@@ -542,6 +563,7 @@ namespace NorvesLib::Core::Rendering
 
         // View管理
         Container::TSharedPtr<SceneView> m_MainSceneView;
+        RenderingMainViewRenderer m_MainViewRenderer = RenderingMainViewRenderer::Raster;
         Container::TSharedPtr<CanvasView> m_CanvasView;
         Container::VariableArray<Container::TSharedPtr<View>> m_Views;
 

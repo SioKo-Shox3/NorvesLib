@@ -17,7 +17,9 @@ namespace NorvesLib::Core::Rendering
     {
         NoRequest,
         Recorded,
-        PublishedFailure
+        PublishedFailure,
+        /** @brief 要求した試料数に届かないため、要求を保留へ戻した */
+        Deferred
     };
 
     class FrameCaptureReadbackHelper

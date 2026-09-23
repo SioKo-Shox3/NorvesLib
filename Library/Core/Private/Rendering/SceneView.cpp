@@ -30,6 +30,10 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        // ディファードのLightingPassとパストレーサーが共有する環境マップの設定。
+        constexpr const char* DefaultEnvironmentMapPath = "Textures/Atmosphere/grasslands_sunset_4k.hdr";
+        constexpr float DefaultEnvironmentIntensity = 1.0f;
+
         float NormalizeBoardFlipFlag(bool bFlip)
         {
             return bFlip ? 1.0f : 0.0f;
@@ -675,8 +679,8 @@ namespace NorvesLib::Core::Rendering
 
         // LightingPass: GBuffer→HDRシーンカラー
         LightingPassSettings lightingSettings;
-        lightingSettings.EnvironmentMapPath = "Textures/Atmosphere/grasslands_sunset_4k.hdr";
-        lightingSettings.IBLIntensity = 1.0f;
+        lightingSettings.EnvironmentMapPath = DefaultEnvironmentMapPath;
+        lightingSettings.IBLIntensity = DefaultEnvironmentIntensity;
         lightingSettings.NeuralBRDFWeightPath = "Data/disney.ns.bin";
         auto lightingPass = MakeUnique<LightingPass>(lightingSettings);
         lightingPass->SetSceneView(this);
@@ -747,7 +751,7 @@ namespace NorvesLib::Core::Rendering
                         "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
     }
 
-    void SceneView::SetupPathTracingPipeline()
+    void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame)
     {
         if (m_PostProcessStack)
         {
@@ -763,7 +767,14 @@ namespace NorvesLib::Core::Rendering
         }
         m_Passes.clear();
         AddPass(MakeUnique<SkyAtmospherePass>());
-        AddPass(MakeUnique<PathTracingPass>());
+        auto pathTracingPass = MakeUnique<PathTracingPass>();
+        PathTracingEnvironmentMapSource environmentMap;
+        environmentMap.Path = DefaultEnvironmentMapPath;
+        environmentMap.LuminanceScaleNits = LightingPassSettings{}.EnvironmentLuminanceScaleNits;
+        environmentMap.Intensity = DefaultEnvironmentIntensity;
+        pathTracingPass->SetEnvironmentMapSource(environmentMap);
+        pathTracingPass->SetSamplesPerFrame(samplesPerFrame);
+        AddPass(std::move(pathTracingPass));
 
         auto postProcessStack = MakeUnique<PostProcessStack>();
         ToneMappingSettings toneMappingSettings;

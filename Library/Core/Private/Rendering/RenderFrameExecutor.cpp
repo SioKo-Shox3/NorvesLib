@@ -4,6 +4,7 @@
 #include "Rendering/FramePacket.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/PathTracingPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/View.h"
@@ -57,6 +58,12 @@ namespace NorvesLib::Core::Rendering
                 result.CaptureSources.SceneColor,
                 primarySceneView->GetFrameSceneColorTexture(),
                 request.Packet->FrameNumber);
+            if (auto* pathTracingPass = dynamic_cast<PathTracingPass*>(
+                    primarySceneView->FindPass("PathTracingPass")))
+            {
+                result.CaptureSources.PathTracingSampleCount =
+                    pathTracingPass->GetAccumulatedSampleCount();
+            }
 
             if (request.Packet->CaptureRequest.SourceKind == FrameCaptureSourceKind::GBufferVelocity)
             {

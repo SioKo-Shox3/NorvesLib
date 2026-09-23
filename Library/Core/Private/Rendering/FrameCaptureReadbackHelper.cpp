@@ -64,6 +64,7 @@ namespace NorvesLib::Core::Rendering
 
         m_ActiveRequest.RequestId = m_NextRequestId++;
         m_ActiveRequest.SourceKind = request.SourceKind;
+        m_ActiveRequest.MinimumPathTracingSamples = request.MinimumPathTracingSamples;
         m_State = State::Requested;
         return {FrameCaptureRequestStatus::Accepted, m_ActiveRequest.RequestId};
     }
@@ -156,6 +157,13 @@ namespace NorvesLib::Core::Rendering
             return FrameCaptureRecordStatus::NoRequest;
         }
 
+        // パストレーサーの累積が要求の試料数に届くまで、要求を保留へ戻して次のフレームで取り直す。
+        if (sources.PathTracingSampleCount < m_ActiveRequest.MinimumPathTracingSamples)
+        {
+            m_State = State::Requested;
+            return FrameCaptureRecordStatus::Deferred;
+        }
+
         const FrameCaptureSource* source = sources.Find(snapshot.SourceKind);
 
         if (!commandList || !source || !source->Texture || frameSlotIndex >= m_FrameSlotCount)
@@ -231,6 +239,7 @@ namespace NorvesLib::Core::Rendering
         m_CompletedFrame.Transfer = source->Transfer;
         m_CompletedFrame.bHardwareSrgbEncode = source->bHardwareSrgbEncode;
         m_CompletedFrame.bShaderSrgbEncode = source->bShaderSrgbEncode;
+        m_CompletedFrame.PathTracingSampleCount = sources.PathTracingSampleCount;
         m_State = State::RecordedAwaitingSubmit;
         return FrameCaptureRecordStatus::Recorded;
     }
@@ -281,6 +290,7 @@ namespace NorvesLib::Core::Rendering
         frame.Transfer = m_CompletedFrame.Transfer;
         frame.bHardwareSrgbEncode = m_CompletedFrame.bHardwareSrgbEncode;
         frame.bShaderSrgbEncode = m_CompletedFrame.bShaderSrgbEncode;
+        frame.PathTracingSampleCount = m_CompletedFrame.PathTracingSampleCount;
         frame.Pixels.resize(static_cast<size_t>(m_PendingReadback.ByteCount));
         if (!frame.Pixels.empty())
         {
@@ -323,6 +333,9 @@ namespace NorvesLib::Core::Rendering
             return true;
         case RHI::Format::R16G16B16A16_FLOAT:
             outBytesPerPixel = 8;
+            return true;
+        case RHI::Format::R32G32B32A32_FLOAT:
+            outBytesPerPixel = 16;
             return true;
         case RHI::Format::R16G16_FLOAT:
             outBytesPerPixel = 4;

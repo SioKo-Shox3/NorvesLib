@@ -534,16 +534,10 @@ vec3 SampleSun(PathSurface surface, vec3 position, vec3 geometricNormal, inout u
     return contribution;
 }
 
-void main()
+// 1試料を追跡し、放射輝度（または検証出力）とalphaを返す。alphaは検証mode 252のときだけ
+// 1次命中で0.5（ラスタの深度alphaと同じく幾何は1未満、背景は1）、それ以外は常に1。
+vec4 TracePixelSample(ivec2 pixel, ivec2 extent, uint sampleIndex)
 {
-    ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
-    ivec2 extent = imageSize(currentAverage);
-    if (any(greaterThanEqual(pixel, extent)))
-    {
-        return;
-    }
-
-    uint sampleIndex = parameters.imageState.z;
     uint state = uint(pixel.x + 1) * 0x9e3779b9u ^
                  uint(pixel.y + 1) * 0x85ebca6bu ^
                  (sampleIndex + 1u) * 0xc2b2ae35u ^ 0x6a09e667u;
@@ -551,16 +545,26 @@ void main()
     vec4 farPoint = parameters.inverseViewProjection * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
     if (isnan(farPoint.w) || isinf(farPoint.w) || abs(farPoint.w) < 0.000001)
     {
-        imageStore(currentAverage, pixel, vec4(0.0, 0.0, 0.0, 1.0));
-        return;
+        return vec4(0.0, 0.0, 0.0, 1.0);
     }
     vec3 origin = parameters.cameraPosition.xyz;
     vec3 direction = normalize(farPoint.xyz / farPoint.w - origin);
+    if (parameters.sampleState.y != 0u)
+    {
+        // 正射影は画素ごとに近平面上の点から視線方向へ平行に飛ばす（深度は近平面0・遠平面1）。
+        vec4 nearPoint = parameters.inverseViewProjection * vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+        if (isnan(nearPoint.w) || isinf(nearPoint.w) || abs(nearPoint.w) < 0.000001)
+        {
+            return vec4(0.0, 0.0, 0.0, 1.0);
+        }
+        origin = nearPoint.xyz / nearPoint.w;
+        direction = normalize(farPoint.xyz / farPoint.w - origin);
+    }
     if (any(isnan(direction)) || any(isinf(direction)))
     {
-        imageStore(currentAverage, pixel, vec4(0.0, 0.0, 0.0, 1.0));
-        return;
+        return vec4(0.0, 0.0, 0.0, 1.0);
     }
+    float coverageAlpha = 1.0;
     vec3 throughput = vec3(1.0);
     vec3 radiance = vec3(0.0);
     uint debugOutput = uint(parameters.exposureAndDebug.y + 0.5);
@@ -581,6 +585,10 @@ void main()
         }
 
         // 影レイが同じpayloadを使うため、命中面の値を先に取り出す。
+        if (bounce == 0u && parameters.sampleState.z != 0u)
+        {
+            coverageAlpha = 0.5;
+        }
         vec3 surfacePosition = payload.Position;
         vec3 geometricNormal = payload.GeometricNormal;
         vec3 shadingNormal = payload.ShadingNormal;
@@ -671,11 +679,32 @@ void main()
     // 累積画像はfloat32。太陽円盤などの大きな試料値を切ると期待値が偏るため、有限値は切らない。
     radiance = debugOutput == PATH_DEBUG_SHADING_NORMAL ? clamp(radiance, vec3(-1.0), vec3(1.0))
                                                         : max(radiance, vec3(0.0));
-    vec3 average = radiance;
-    if (sampleIndex > 0u)
+    return vec4(radiance, coverageAlpha);
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    ivec2 extent = imageSize(currentAverage);
+    if (any(greaterThanEqual(pixel, extent)))
     {
-        vec3 previous = texelFetch(previousAverage, pixel, 0).rgb;
-        average = previous + (radiance - previous) / float(sampleIndex + 1u);
+        return;
     }
-    imageStore(currentAverage, pixel, vec4(average, 1.0));
+
+    // このdispatchでsamplesPerFrame試料を引き、前回までの平均と試料数の比で合成する。
+    uint baseSample = parameters.imageState.z;
+    uint samplesPerFrame = max(parameters.sampleState.x, 1u);
+    vec4 sum = vec4(0.0);
+    for (uint sampleOffset = 0u; sampleOffset < samplesPerFrame; ++sampleOffset)
+    {
+        sum += TracePixelSample(pixel, extent, baseSample + sampleOffset);
+    }
+    vec4 average = sum / float(samplesPerFrame);
+    if (baseSample > 0u)
+    {
+        vec4 previous = texelFetch(previousAverage, pixel, 0);
+        average = previous + (average - previous) *
+            (float(samplesPerFrame) / float(baseSample + samplesPerFrame));
+    }
+    imageStore(currentAverage, pixel, average);
 }

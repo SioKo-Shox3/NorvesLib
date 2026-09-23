@@ -57,6 +57,10 @@ namespace NorvesLib::Core::Rendering
         bool bEnableValidation = false;
         bool bEnableGPUDebug = false;
         RGDumpOptions RenderGraphDumpOptions;
+
+        // メインSceneViewの描画方式（起動時にだけ選ぶ。既定はラスタ）
+        RenderingMainViewRenderer MainViewRenderer = RenderingMainViewRenderer::Raster;
+        uint32_t PathTracingSamplesPerFrame = 1;
     };
 
     // ========================================

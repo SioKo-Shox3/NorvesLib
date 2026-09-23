@@ -19,12 +19,19 @@ namespace NorvesLib::Core::Rendering
     struct FrameCaptureRequest
     {
         FrameCaptureSourceKind SourceKind = FrameCaptureSourceKind::PresentationColor;
+        /**
+         * @brief メインSceneViewのパストレーサーがこの試料数を累積するまで取得を待つ（0なら待たない）。
+         *
+         * 条件を満たさないフレームでは要求を保留したまま次のフレームへ回す。
+         */
+        uint32_t MinimumPathTracingSamples = 0;
     };
 
     struct FrameCaptureRequestSnapshot
     {
         uint64_t RequestId = 0;
         FrameCaptureSourceKind SourceKind = FrameCaptureSourceKind::PresentationColor;
+        uint32_t MinimumPathTracingSamples = 0;
 
         bool IsValid() const
         {
@@ -81,6 +88,8 @@ namespace NorvesLib::Core::Rendering
         FrameCaptureSource GBufferVelocity;
         FrameCaptureSource RTGIDiffuseIndirect;
         FrameCaptureSource RTGIHistoryAge;
+        /** @brief このフレームにメインSceneViewのパストレーサーが累積した試料数（ラスタなら0） */
+        uint32_t PathTracingSampleCount = 0;
 
         const FrameCaptureSource* Find(FrameCaptureSourceKind kind) const
         {
@@ -111,6 +120,7 @@ namespace NorvesLib::Core::Rendering
             GBufferVelocity = FrameCaptureSource{};
             RTGIDiffuseIndirect = FrameCaptureSource{};
             RTGIHistoryAge = FrameCaptureSource{};
+            PathTracingSampleCount = 0;
         }
     };
 
@@ -128,6 +138,8 @@ namespace NorvesLib::Core::Rendering
         RHI::PresentationTransfer Transfer = RHI::PresentationTransfer::Unknown;
         bool bHardwareSrgbEncode = false;
         bool bShaderSrgbEncode = false;
+        /** @brief 取得したフレームでパストレーサーが累積していた試料数（ラスタなら0） */
+        uint32_t PathTracingSampleCount = 0;
         Container::VariableArray<uint8_t> Pixels;
 
         bool IsSuccess() const

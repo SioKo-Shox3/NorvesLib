@@ -1523,11 +1523,37 @@ namespace NorvesLib::Core::Rendering
         // m_SceneRenderer.SetDefaultPipeline(m_TrianglePipeline);
 
         // ========================================
-        // 12.5. ディファードパイプラインの構築
+        // 12.5. メインSceneViewのパイプライン構築
         // ========================================
-        // SceneViewにDeferred描画パス（GBuffer→Lighting→ToneMapping）を登録
-        m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer);
-        NORVES_LOG_INFO("RenderingCoordinator", "Deferred pipeline configured on MainSceneView");
+        // 既定はDeferred描画パス（GBuffer→Lighting→ToneMapping）。パストレーサーは起動時の設定で
+        // 明示選択し、RT pipeline・BDA・非一様texture添字に対応するデバイスでだけ有効にする。
+        m_MainViewRenderer = RenderingMainViewRenderer::Raster;
+        if (settings.MainViewRenderer == RenderingMainViewRenderer::PathTracing)
+        {
+            const RHI::DeviceCapabilities& capabilities = m_Device->GetCapabilities();
+            if (capabilities.RayTracing.bAccelerationStructure &&
+                capabilities.RayTracing.bRayTracingPipeline &&
+                capabilities.bBufferDeviceAddress &&
+                capabilities.bSampledImageArrayNonUniformIndexing)
+            {
+                m_MainViewRenderer = RenderingMainViewRenderer::PathTracing;
+            }
+            else
+            {
+                NORVES_LOG_WARNING("RenderingCoordinator",
+                                   "Path tracing was requested but the device lacks ray tracing support; using the deferred pipeline");
+            }
+        }
+        if (m_MainViewRenderer == RenderingMainViewRenderer::PathTracing)
+        {
+            m_MainSceneView->SetupPathTracingPipeline(settings.PathTracingSamplesPerFrame);
+            NORVES_LOG_INFO("RenderingCoordinator", "Path tracing pipeline configured on MainSceneView");
+        }
+        else
+        {
+            m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer);
+            NORVES_LOG_INFO("RenderingCoordinator", "Deferred pipeline configured on MainSceneView");
+        }
 
         // ========================================
         // 13. MeshProxyはWorldから自動登録される
@@ -2751,7 +2777,8 @@ namespace NorvesLib::Core::Rendering
                 m_CommandList.get(),
                 claimedCaptureRequest,
                 executionResult.CaptureSources);
-            if (captureRecordStatus == FrameCaptureRecordStatus::PublishedFailure)
+            if (captureRecordStatus == FrameCaptureRecordStatus::PublishedFailure ||
+                captureRecordStatus == FrameCaptureRecordStatus::Deferred)
             {
                 captureAssignment.MarkResolved();
             }

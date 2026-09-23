@@ -233,6 +233,65 @@ namespace
         }
     }
 
+    // --renderer=raster|path-tracing。一致したがbMatchedだけ真で値が不正なら偽を返す。
+    bool TryParseRendererOption(const String& argument,
+                                NorvesLib::Core::Rendering::RenderingMainViewRenderer& outRenderer,
+                                bool& bMatched)
+    {
+        const String prefix = TEXT("--renderer=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("raster"))
+        {
+            outRenderer = NorvesLib::Core::Rendering::RenderingMainViewRenderer::Raster;
+            return true;
+        }
+        if (value == TEXT("path-tracing"))
+        {
+            outRenderer = NorvesLib::Core::Rendering::RenderingMainViewRenderer::PathTracing;
+            return true;
+        }
+        return false;
+    }
+
+    // --path-tracing-samples-per-frame=N（1〜1024）
+    bool TryParsePathTracingSamplesPerFrameOption(const String& argument, uint32_t& outSamples,
+                                                  bool& bMatched)
+    {
+        const String prefix = TEXT("--path-tracing-samples-per-frame=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value.empty() || value.size() > 4u)
+        {
+            return false;
+        }
+        uint32_t parsed = 0u;
+        for (const auto character : value)
+        {
+            if (character < TEXT('0') || character > TEXT('9'))
+            {
+                return false;
+            }
+            parsed = parsed * 10u + static_cast<uint32_t>(character - TEXT('0'));
+        }
+        if (parsed == 0u || parsed > 1024u)
+        {
+            return false;
+        }
+        outSamples = parsed;
+        return true;
+    }
+
     bool IsDisableBoardInstanceBatchingOption(const TCHAR* pText)
     {
         if (!pText)
@@ -337,6 +396,8 @@ namespace NorvesLib::Core::Engine
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
         bool bEnableCanvasView = false;
         bool bBoardInstanceBatchingEnabled = true;
+        Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
+        uint32_t pathTracingSamplesPerFrame = 1u;
         const VariableArray<String> &args = config.Arguments;
         for (size_t i = 0; i < args.size(); ++i)
         {
@@ -385,6 +446,30 @@ namespace NorvesLib::Core::Engine
             {
                 bBoardInstanceBatchingEnabled = false;
                 LOG_INFO("ApplicationProcessor runtime option board_instance_batching=false");
+            }
+
+            bool bMatchedRenderer = false;
+            if (TryParseRendererOption(args[i], mainViewRenderer, bMatchedRenderer))
+            {
+                LOG_INFO("ApplicationProcessor runtime option renderer=%s",
+                         mainViewRenderer == Rendering::RenderingMainViewRenderer::PathTracing
+                             ? "path-tracing" : "raster");
+            }
+            else if (bMatchedRenderer)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --renderer ignored: value must be 'raster' or 'path-tracing'");
+            }
+
+            bool bMatchedSamples = false;
+            if (TryParsePathTracingSamplesPerFrameOption(args[i], pathTracingSamplesPerFrame,
+                                                         bMatchedSamples))
+            {
+                LOG_INFO("ApplicationProcessor runtime option path_tracing_samples_per_frame=%u",
+                         pathTracingSamplesPerFrame);
+            }
+            else if (bMatchedSamples)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --path-tracing-samples-per-frame ignored: value must be 1-1024");
             }
         }
 
@@ -452,6 +537,8 @@ namespace NorvesLib::Core::Engine
             renderSettings.bVSync = true;
             renderSettings.bEnableMultiThreadedRendering = bEnableMultiThreadedRendering;
             renderSettings.bEnableValidation = config.bEnableRHIValidation;
+            renderSettings.MainViewRenderer = mainViewRenderer;
+            renderSettings.PathTracingSamplesPerFrame = pathTracingSamplesPerFrame;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {

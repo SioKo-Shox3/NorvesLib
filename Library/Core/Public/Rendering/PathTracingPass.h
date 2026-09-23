@@ -49,6 +49,24 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief 空が無効なときの既定の環境光にするHDR環境マップ（ラスタのLightingPassと同じ設定）
+     *
+     * 読み込みと輝度換算はLightingPassと同じ共有関数で行い、同じ放射輝度の正距円筒textureを使う。
+     */
+    struct PathTracingEnvironmentMapSource
+    {
+        Container::String Path;
+        float LuminanceScaleNits = 1.0f;
+        float Intensity = 1.0f;
+    };
+
+    /** @brief ラスタの検証mode 252（一様環境）と同じ放射輝度 */
+    inline constexpr float PathTracingValidationUniformRadiance = 100.0f;
+
+    /** @brief 1回のdispatchで累積できる試料数の上限 */
+    inline constexpr uint32_t PathTracingMaxSamplesPerFrame = 1024u;
+
+    /**
      * @brief 表面BSDF
      *
      * Productionはラスタと同じDFG LUTで多重散乱を補償したGGX鏡面と、(1-Ed)で重みを付けた拡散。
@@ -106,6 +124,26 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 発光三角形と太陽円盤の標本化戦略を切り替える。変更すると累積履歴を捨てる。 */
         void SetLightSampling(PathTracingLightSampling sampling) { m_LightSampling = sampling; }
+
+        /**
+         * @brief 環境マップを既定の環境光にする。Initializeで読み込み、SetEnvironmentと同じ扱いにする。
+         */
+        void SetEnvironmentMapSource(const PathTracingEnvironmentMapSource& source)
+        {
+            m_EnvironmentMapSource = source;
+        }
+
+        /**
+         * @brief 1フレーム（1回のdispatch）で累積する試料数（1〜PathTracingMaxSamplesPerFrame）。
+         *
+         * 薄レンズとシャッター時刻はdispatchごとに1回引くため、同じフレームの試料は同じ標本を共有する。
+         */
+        void SetSamplesPerFrame(uint32_t samples)
+        {
+            m_SamplesPerFrame = samples == 0u ? 1u
+                : (samples > PathTracingMaxSamplesPerFrame ? PathTracingMaxSamplesPerFrame : samples);
+        }
+        uint32_t GetSamplesPerFrame() const { return m_SamplesPerFrame; }
 
         /** @brief 直近フレームで光源表へ載せた点・spot・方向光の数 */
         uint32_t GetPunctualLightCount() const { return m_PunctualLightCount; }
@@ -188,6 +226,12 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_EnvironmentSampler;
         PathTracingDebugOutput m_DebugOutput = PathTracingDebugOutput::None;
         PathTracingEnvironment m_Environment;
+        PathTracingEnvironmentMapSource m_EnvironmentMapSource;
+        RHI::TexturePtr m_EnvironmentMapTexture;
+        /** @brief 検証表示modeを反映した、このフレームの環境光とBSDF */
+        PathTracingEnvironment m_EffectiveEnvironment;
+        PathTracingBsdfMode m_EffectiveBsdfMode = PathTracingBsdfMode::Production;
+        uint32_t m_SamplesPerFrame = 1u;
         PathTracingBsdfMode m_BsdfMode = PathTracingBsdfMode::Production;
         PathTracingLightSampling m_LightSampling = PathTracingLightSampling::MultipleImportance;
         uint32_t m_BoundMaterialTextureCount = 0u;

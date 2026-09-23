@@ -77,6 +77,8 @@ namespace NorvesLib::Core::Rendering
         coordSettings.MaxDrawCallsPerFrame = settings.MaxDrawCallsPerFrame;
         coordSettings.bEnableValidation = settings.bEnableValidation;
         coordSettings.RenderGraphDumpOptions = settings.RenderGraphDumpOptions;
+        coordSettings.MainViewRenderer = settings.MainViewRenderer;
+        coordSettings.PathTracingSamplesPerFrame = settings.PathTracingSamplesPerFrame;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {

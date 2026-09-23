@@ -1,6 +1,7 @@
 ﻿// 独立PTのGPU累積、静止収束、履歴破棄と明示選択を確認する。
 #include "RenderingValidation/GpuTestEnvironment.h"
 
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/SceneView.h"
@@ -456,6 +457,135 @@ namespace
             return 1;
         }
         std::cout << "pt_camera_scene_material_geometry_light_resets=true\n";
+
+        // 1回のdispatchで4試料を引く累積は、1試料ずつ4フレーム累積した結果と同じ試料番号と乱数を使う。
+        VariableArray<float> fourFrames;
+        for (uint64_t frame = 25u; frame <= 28u; ++frame)
+        {
+            if (!RunFrame(device, graph, pass, context, frame, 2u, 3u, fourFrames) ||
+                pass.GetAccumulatedSampleCount() != frame - 24u)
+            {
+                std::cerr << "1試料ずつの累積を作れませんでした\n";
+                return 1;
+            }
+        }
+        pass.SetSamplesPerFrame(4u);
+        VariableArray<float> oneDispatch;
+        if (!RunFrame(device, graph, pass, context, 29u, 2u, 4u, oneDispatch) ||
+            pass.GetAccumulatedSampleCount() != 4u)
+        {
+            std::cerr << "1回のdispatchで4試料を累積しませんでした samples="
+                      << pass.GetAccumulatedSampleCount() << "\n";
+            return 1;
+        }
+        {
+            float maxDifference = 0.0f;
+            for (size_t index = 0u; index < oneDispatch.size(); ++index)
+            {
+                maxDifference = std::max(maxDifference,
+                                         std::abs(oneDispatch[index] - fourFrames[index]));
+            }
+            std::cout << "pt_samples_per_frame=4 max_difference_from_four_frames=" << maxDifference
+                      << "\n";
+            if (maxDifference > 1.0e-4f)
+            {
+                std::cerr << "1回4試料の累積が1試料ずつ4フレームと一致しません\n";
+                return 1;
+            }
+        }
+        pass.SetSamplesPerFrame(1u);
+
+        // 正射影は画素ごとに近平面から視線方向へ平行に光線を出す。CPUで同じ逆ビュー射影から
+        // 光線を作り、三角形の内側は材質のアルベド、外側は0（検証出力は命中面だけの値）を確かめる。
+        camera.Projection = ProjectionType::Orthographic;
+        camera.OrthoWidth = 3.0f;
+        camera.OrthoHeight = 3.0f;
+        pass.SetDebugOutput(PathTracingDebugOutput::Albedo);
+        if (!RunFrame(device, graph, pass, context, 30u, 2u, 4u, current) ||
+            pass.GetAccumulatedSampleCount() != 1u)
+        {
+            std::cerr << "正射影カメラでPTを描画できませんでした\n";
+            return 1;
+        }
+        {
+            const CameraViewConstants orthoView =
+                CameraViewConstants::BuildForDevice(camera, 1.0f, device.get());
+            float inverseViewProjection[16] = {};
+            orthoView.CopyShaderInverseViewProjection(inverseViewProjection);
+            const auto unproject = [&](double u, double v, double depth, double (&out)[3])
+            {
+                const double ndc[4] = {u * 2.0 - 1.0, v * 2.0 - 1.0, depth, 1.0};
+                double point[4] = {};
+                for (uint32_t row = 0u; row < 4u; ++row)
+                {
+                    for (uint32_t column = 0u; column < 4u; ++column)
+                    {
+                        point[row] += inverseViewProjection[column * 4u + row] * ndc[column];
+                    }
+                }
+                for (uint32_t axis = 0u; axis < 3u; ++axis)
+                {
+                    out[axis] = point[axis] / point[3];
+                }
+            };
+            // 画素の4隅から出す平行光線がz=0平面で三角形(-1,-1)(1,-1)(0,1)の内側か。
+            const auto cornerInside = [&](double u, double v)
+            {
+                double nearPoint[3];
+                double farPoint[3];
+                unproject(u, v, 0.0, nearPoint);
+                unproject(u, v, 1.0, farPoint);
+                const double t = -nearPoint[2] / (farPoint[2] - nearPoint[2]);
+                // 形状変更の検証でinstanceをx方向へ動かしているため、その平行移動を戻して比べる。
+                const double x = nearPoint[0] + (farPoint[0] - nearPoint[0]) * t -
+                                 packet.RayTracingScene.Instances[0].Instance.transform[3];
+                const double y = nearPoint[1] + (farPoint[1] - nearPoint[1]) * t -
+                                 packet.RayTracingScene.Instances[0].Instance.transform[7];
+                return y > -1.0 && 2.0 * x + y < 1.0 && -2.0 * x + y < 1.0;
+            };
+            uint32_t insidePixels = 0u;
+            uint32_t outsidePixels = 0u;
+            const float albedo[3] = {0.8f, 0.3f, 0.1f};
+            for (uint32_t y = 0u; y < Height; ++y)
+            {
+                for (uint32_t x = 0u; x < Width; ++x)
+                {
+                    uint32_t insideCorners = 0u;
+                    for (uint32_t corner = 0u; corner < 4u; ++corner)
+                    {
+                        insideCorners += cornerInside(
+                            (x + static_cast<double>(corner & 1u)) / Width,
+                            (y + static_cast<double>(corner >> 1u)) / Height) ? 1u : 0u;
+                    }
+                    if (insideCorners != 0u && insideCorners != 4u)
+                    {
+                        continue;
+                    }
+                    const float* pixel = current.data() + (static_cast<size_t>(y) * Width + x) * 4u;
+                    for (uint32_t channel = 0u; channel < 3u; ++channel)
+                    {
+                        const float expected = insideCorners == 4u ? albedo[channel] : 0.0f;
+                        if (std::abs(pixel[channel] - expected) > 1.0e-5f)
+                        {
+                            std::cerr << "正射影の画素が期待値と一致しません pixel=(" << x << ','
+                                      << y << ") measured=" << pixel[channel]
+                                      << " expected=" << expected << "\n";
+                            return 1;
+                        }
+                    }
+                    (insideCorners == 4u ? insidePixels : outsidePixels) += 1u;
+                }
+            }
+            std::cout << "pt_orthographic inside_pixels=" << insidePixels
+                      << " outside_pixels=" << outsidePixels << "\n";
+            if (insidePixels < 150u || outsidePixels < 400u)
+            {
+                std::cerr << "正射影の比較画素が足りません\n";
+                return 1;
+            }
+        }
+        camera.Projection = ProjectionType::Perspective;
+        pass.SetDebugOutput(PathTracingDebugOutput::None);
 
         TransientResourcePool pool;
         if (!pool.Initialize(device->GetResourceAllocator(), 1u))

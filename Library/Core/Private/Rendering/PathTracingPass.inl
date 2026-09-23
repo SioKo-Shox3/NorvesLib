@@ -2,6 +2,7 @@
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/DfgLut.h"
+#include "Rendering/EnvironmentMapSource.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/LightingPassLightPacking.h"
 #include "Rendering/PathTracingCamera.h"
@@ -47,6 +48,8 @@ namespace NorvesLib::Core::Rendering
             uint32_t LightState[4] = {};
             /** @brief rgb=一様環境の放射輝度または環境textureの倍率、w=環境光の種類 */
             float EnvironmentRadiance[4] = {};
+            /** @brief x=このdispatchで累積する試料数 */
+            uint32_t SampleState[4] = {};
         };
 
         struct PathTracingInstance
@@ -71,7 +74,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t Reserved = 0u;
         };
 
-        static_assert(sizeof(PathTracingParameters) == 240u);
+        static_assert(sizeof(PathTracingParameters) == 256u);
         static_assert(sizeof(PathTracingInstance) == 144u);
         static_assert(sizeof(PathTracingEmissiveInstance) == 16u);
         static_assert(sizeof(GPULightData) == 64u);
@@ -328,6 +331,37 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
+        // ラスタの検証表示modeと同じ条件の環境光とBSDF。252は一様環境（LightingPassの検証用環境と同じ値）、
+        // 253は環境光なしの純Lambert、254は環境光なしの本番BSDF。それ以外は設定どおり。
+        void ResolvePathValidationMode(uint32_t debugViewMode,
+                                       const PathTracingEnvironment& configuredEnvironment,
+                                       PathTracingBsdfMode configuredBsdf,
+                                       PathTracingEnvironment& outEnvironment,
+                                       PathTracingBsdfMode& outBsdf)
+        {
+            outEnvironment = configuredEnvironment;
+            outBsdf = configuredBsdf;
+            if (debugViewMode == 252u)
+            {
+                outEnvironment = PathTracingEnvironment{};
+                outEnvironment.Mode = PathTracingEnvironmentMode::Uniform;
+                for (float& channel : outEnvironment.UniformRadiance)
+                {
+                    channel = PathTracingValidationUniformRadiance;
+                }
+            }
+            else if (debugViewMode == 253u)
+            {
+                outEnvironment = PathTracingEnvironment{};
+                outBsdf = PathTracingBsdfMode::ValidationLambert;
+            }
+            else if (debugViewMode == 254u)
+            {
+                outEnvironment = PathTracingEnvironment{};
+                outBsdf = PathTracingBsdfMode::Production;
+            }
+        }
+
         uint64_t HashPathEnvironment(const PathTracingEnvironment& environment,
                                      PathTracingBsdfMode bsdfMode,
                                      PathTracingLightSampling lightSampling)
@@ -507,6 +541,45 @@ namespace NorvesLib::Core::Rendering
             Shutdown();
             return false;
         }
+        if (!m_EnvironmentMapSource.Path.empty())
+        {
+            // LightingPassと同じ関数で読み、同じfloat16の放射輝度を正距円筒textureにする。
+            Container::VariableArray<float> radiance;
+            uint32_t mapWidth = 0u;
+            uint32_t mapHeight = 0u;
+            if (LoadEnvironmentRadianceSource(m_EnvironmentMapSource.Path,
+                                              m_EnvironmentMapSource.LuminanceScaleNits, radiance,
+                                              mapWidth, mapHeight))
+            {
+                Container::VariableArray<uint16_t> halfRadiance(radiance.size());
+                for (size_t index = 0u; index < radiance.size(); ++index)
+                {
+                    halfRadiance[index] = FloatToHalfRne(radiance[index]);
+                }
+                RHI::TextureDesc mapDesc;
+                mapDesc.Width = mapWidth;
+                mapDesc.Height = mapHeight;
+                mapDesc.MipLevels = 1;
+                mapDesc.TextureFormat = RHI::Format::R16G16B16A16_FLOAT;
+                mapDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::TransferDst;
+                mapDesc.DebugName = "PathTracing.EnvironmentMap";
+                m_EnvironmentMapTexture = context.Device->CreateTexture(mapDesc);
+                if (m_EnvironmentMapTexture)
+                {
+                    const uint32_t rowPitch = mapWidth * 4u * static_cast<uint32_t>(sizeof(uint16_t));
+                    m_EnvironmentMapTexture->Update(halfRadiance.data(), rowPitch, rowPitch * mapHeight);
+                    m_Environment = PathTracingEnvironment{};
+                    m_Environment.Mode = PathTracingEnvironmentMode::Equirect;
+                    m_Environment.EquirectTexture = m_EnvironmentMapTexture;
+                    m_Environment.Intensity = m_EnvironmentMapSource.Intensity;
+                }
+            }
+            if (!m_EnvironmentMapTexture)
+            {
+                NORVES_LOG_WARNING("PathTracingPass",
+                                   "Environment map could not be loaded; the environment stays black");
+            }
+        }
         m_bInitialized = true;
         return true;
     }
@@ -529,6 +602,8 @@ namespace NorvesLib::Core::Rendering
         m_LinearClampSampler.reset();
         m_EnvironmentSampler.reset();
         m_Environment = PathTracingEnvironment{};
+        m_EffectiveEnvironment = PathTracingEnvironment{};
+        m_EnvironmentMapTexture.reset();
         m_BoundMaterialTextureCount = 0u;
         m_PunctualLightCount = 0u;
         m_EmissiveInstanceCount = 0u;
@@ -979,8 +1054,10 @@ namespace NorvesLib::Core::Rendering
         FillPathFogParameters(*context, preExposure, parameters);
         const uint64_t skySignature = HashPathSky(sky, preExposure);
         const uint64_t fogSignature = HashPathFog(parameters);
+        ResolvePathValidationMode(static_cast<uint32_t>(context->GetActiveDebugMode()), m_Environment,
+                                  m_BsdfMode, m_EffectiveEnvironment, m_EffectiveBsdfMode);
         const uint64_t environmentSignature =
-            HashPathEnvironment(m_Environment, m_BsdfMode, m_LightSampling);
+            HashPathEnvironment(m_EffectiveEnvironment, m_EffectiveBsdfMode, m_LightSampling);
         const bool bReset = history->SampleCount == 0u ||
             history->SceneRevision != context->SceneRevision ||
             history->LightRevision != context->LightRevision ||
@@ -992,7 +1069,7 @@ namespace NorvesLib::Core::Rendering
             history->MaterialTextureSignature != m_DeclaredMaterialTextureSignature ||
             history->LightSignature != m_DeclaredLightSignature ||
             history->EnvironmentSignature != environmentSignature ||
-            history->SampleCount == UINT32_MAX;
+            history->SampleCount > UINT32_MAX - m_SamplesPerFrame;
         if (bReset)
         {
             history->SampleCount = 0u;
@@ -1147,9 +1224,16 @@ namespace NorvesLib::Core::Rendering
         parameters.LightState[0] = m_PunctualLightCount;
         parameters.LightState[1] = m_EmissiveInstanceCount;
         parameters.LightState[2] = m_EmissiveTriangleCount;
-        parameters.LightState[3] = static_cast<uint32_t>(m_BsdfMode) |
+        parameters.LightState[3] = static_cast<uint32_t>(m_EffectiveBsdfMode) |
                                    (static_cast<uint32_t>(m_LightSampling) << 2u);
-        FillPathEnvironmentParameters(m_Environment, parameters);
+        FillPathEnvironmentParameters(m_EffectiveEnvironment, parameters);
+        parameters.SampleState[0] = m_SamplesPerFrame;
+        // 正射影は画素ごとに近平面から平行に光線を出す。検証mode 252はラスタの深度alphaと同じく
+        // 幾何を1未満、背景を1にするalphaを書く。
+        parameters.SampleState[1] =
+            opticalCamera.Projection == ProjectionType::Orthographic ? 1u : 0u;
+        parameters.SampleState[2] =
+            static_cast<uint32_t>(context.GetActiveDebugMode()) == 252u ? 1u : 0u;
         frameResources.ParametersBuffer->Update(&parameters, sizeof(parameters));
 
         RHI::DescriptorSetPtr descriptorSet = frameResources.DescriptorSet;
@@ -1260,7 +1344,7 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindTexture(PathDfgLutBinding, m_DfgLutTexture);
         descriptorSet->BindSampler(PathDfgLutBinding, m_LinearClampSampler);
         descriptorSet->BindTexture(PathEnvironmentBinding,
-                                   bEnvironmentTexture ? m_Environment.EquirectTexture
+                                   bEnvironmentTexture ? m_EffectiveEnvironment.EquirectTexture
                                                        : m_DefaultEnvironmentTexture);
         descriptorSet->BindSampler(PathEnvironmentBinding, m_EnvironmentSampler);
         descriptorSet->BindStorageBuffer(
@@ -1280,7 +1364,7 @@ namespace NorvesLib::Core::Rendering
         }
         restoreTextureStates();
         history.CurrentIndex = m_TargetIndex;
-        ++history.SampleCount;
+        history.SampleCount += m_SamplesPerFrame;
         history.SceneRevision = context.SceneRevision;
         history.LightRevision = context.LightRevision;
         history.CameraSignature = m_DeclaredCameraSignature;
