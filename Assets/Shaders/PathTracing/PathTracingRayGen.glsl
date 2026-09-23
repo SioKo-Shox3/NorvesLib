@@ -9,7 +9,7 @@ layout(set = 0, binding = 1, std140) uniform PathTracingParameters
     vec4 cameraPosition;
     uvec4 imageState; // xy=寸法、z=試料番号、w=インスタンス数
     vec4 skySunDirectionAndCosRadius;
-    vec4 skyState; // x=プリエクスポージャ、y=太陽立体角、z=空有効、w=空要求
+    vec4 skyState; // x=プリエクスポージャ、y=太陽の事前露出照度、z=空有効、w=空要求
     vec4 fogDensityHeightFalloffAndEnabled; // xyz=R3密度・基準高さ・減衰率、w=霧有効
     vec4 fogColorAndPreExposure; // rgb=空欠落時の霧色、w=事前露出
     vec4 fogLightDirectionAndAnisotropy; // xyz=方向光の進行方向、w=HG異方性
@@ -293,8 +293,7 @@ void main()
                             0.001, solarDirection, 100000.0, 0);
                 if (payload.Hit == 0u)
                 {
-                    vec3 disk = textureLod(skySunDisk, vec2(0.5), 0.0).rgb;
-                    radiance += throughput * surfaceColor * disk *
+                    radiance += throughput * surfaceColor *
                         (incidence * parameters.skyState.y * 0.31830988618);
                 }
             }

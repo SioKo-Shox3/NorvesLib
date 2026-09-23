@@ -962,9 +962,40 @@ namespace
             return 1;
         }
 
+        camera.PreExposure = 1.0f / 10000.0f;
+        if (!RunFrame(device, graph, pathPass, context, 6u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 1u ||
+            !context.SkyAtmosphere.bSunDiskSaturated)
+        {
+            std::cerr << "太陽ディスクのfp16飽和ケースを描画できませんでした\n";
+            return 1;
+        }
+        const SkyAtmosphereParameters evening =
+            SanitizeSkyAtmosphereParameters(packet.Scene.SkyAtmosphere);
+        const Math::Vector3 eveningSun = MakeSunDirectionFromAltitudeAzimuth(
+            evening.SunAltitudeDegrees, evening.SunAzimuthDegrees);
+        const float saturatedExpectedSurface =
+            ComputeSunDiskIrradiance(evening) * camera.PreExposure *
+            std::max(-eveningSun.z, 0.0f) * 1.2f /
+            3.14159265358979323846f;
+        const float saturatedSurface = CenterRadiance(pixels);
+        std::cout << "saturated_solar_surface=" << saturatedSurface
+                  << " expected_saturated_solar_surface="
+                  << saturatedExpectedSurface << " display_sun_disk="
+                  << context.SkyAtmosphere.SunDiskPreExposedLuminance << '\n';
+        if (std::abs(saturatedSurface - saturatedExpectedSurface) > 0.03f ||
+            context.SkyAtmosphere.SunDiskPreExposedLuminance >=
+                ComputeSunDiskPreExposedLuminance(evening, camera.PreExposure))
+        {
+            std::cerr << "飽和した表示ディスクがPT直接照明を減らしました\n";
+            return 1;
+        }
+        camera.PreExposure = 1.0f / 50000.0f;
+
         packet.Scene.SkyAtmosphere.SunAltitudeDegrees = cases[1].Altitude;
         packet.Scene.SkyAtmosphere.SunAzimuthDegrees = 90.0f;
-        if (!RunFrame(device, graph, pathPass, context, 6u,
+        if (!RunFrame(device, graph, pathPass, context, 7u,
                       1u, 1u, pixels, &skyPass) ||
             pathPass.GetAccumulatedSampleCount() != 1u ||
             centerRadiance[1] <= CenterRadiance(pixels) + 0.01f)
@@ -973,7 +1004,7 @@ namespace
             return 1;
         }
         packet.Scene.SkyAtmosphere.bEnabled = false;
-        if (!RunFrame(device, graph, pathPass, context, 7u,
+        if (!RunFrame(device, graph, pathPass, context, 8u,
                       1u, 1u, pixels, &skyPass) ||
             pathPass.GetAccumulatedSampleCount() != 1u ||
             context.SkyAtmosphere.bSnapshotEnabled ||
@@ -983,7 +1014,7 @@ namespace
             return 1;
         }
         packet.Scene.SkyAtmosphere.bEnabled = true;
-        if (!RunFrame(device, graph, pathPass, context, 8u,
+        if (!RunFrame(device, graph, pathPass, context, 9u,
                       1u, 1u, pixels) ||
             pathPass.GetAccumulatedSampleCount() != 1u ||
             context.SkyAtmosphere.bValid || MaxCornerRadiance(pixels) > 0.0001f)
@@ -993,7 +1024,7 @@ namespace
         }
         std::cout << "sky_parameter_parity=3 solar_sampling=true "
                      "sky_disabled_fallback=true sky_missing_fallback=true "
-                     "sky_recovery_reset=true\n";
+                     "sky_recovery_reset=true saturated_solar_sampling=true\n";
         skyPass.Shutdown();
         pathPass.Shutdown();
         graph.Shutdown();

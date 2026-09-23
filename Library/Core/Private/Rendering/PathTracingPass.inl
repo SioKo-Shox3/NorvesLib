@@ -785,7 +785,8 @@ namespace NorvesLib::Core::Rendering
             parameters.SkySunDirectionAndCosRadius[3] = std::cos(
                 std::sqrt(SolarDiskSolidAngleSteradians / 3.14159265358979323846f));
             parameters.SkyState[0] = context.SkyAtmosphere.PreExposure;
-            parameters.SkyState[1] = SolarDiskSolidAngleSteradians;
+            parameters.SkyState[1] = ComputeSunDiskIrradiance(sky) *
+                context.SkyAtmosphere.PreExposure;
             parameters.SkyState[2] = 1.0f;
         }
         parameters.SkyState[3] = sky.bEnabled ? 1.0f : 0.0f;
