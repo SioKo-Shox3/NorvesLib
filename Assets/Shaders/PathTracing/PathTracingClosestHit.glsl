@@ -9,6 +9,8 @@ layout(set = 0, binding = 1, std140) uniform PathTracingParameters
     mat4 inverseViewProjection;
     vec4 cameraPosition;
     uvec4 imageState;
+    vec4 skySunDirectionAndCosRadius;
+    vec4 skyState;
 } parameters;
 
 struct PathInstance

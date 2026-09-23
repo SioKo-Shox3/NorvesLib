@@ -48,6 +48,8 @@ namespace NorvesLib::Core::Rendering
             uint64_t LightRevision = 0u;
             uint64_t CameraSignature = 0u;
             uint64_t GeometrySignature = 0u;
+            uint64_t SkySignature = 0u;
+            bool bSkyValid = false;
             RHI::TexturePtr Textures[2];
             RHI::ResourceState TextureStates[2] = {
                 RHI::ResourceState::Undefined, RHI::ResourceState::Undefined};
@@ -67,11 +69,15 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_ClosestHitShader;
         RHI::SamplerPtr m_Sampler;
         RGTextureHandle m_OutputHandle;
+        RGTextureHandle m_SkyRadianceHandle;
+        RGTextureHandle m_SkyTransmittanceHandle;
+        RGTextureHandle m_SunDiskHandle;
         uint32_t m_ActiveHistoryIndex = UINT32_MAX;
         uint32_t m_ActiveFrameResourceIndex = UINT32_MAX;
         uint32_t m_TargetIndex = 0u;
         uint64_t m_DeclaredCameraSignature = 0u;
         uint64_t m_DeclaredGeometrySignature = 0u;
+        uint64_t m_DeclaredSkySignature = 0u;
         bool m_bPrepared = false;
     };
 }

@@ -72,6 +72,8 @@
 - R7-P5: FramePacketの前後カメラ・RT instance transformから決定論的なシャッター時刻と薄レンズ光線を構築し、並進のsample別TLASを接続した。CoC解析値49.7312 pxに対して1024レンズ試料の49.7069 px、静止・移動の32試料GPU基準画像、可変DeltaTimeでの静止累積を固定した。指定Debug buildとCTest 2/2、既存RT snapshot/PT回帰2/2に合格した。
 - R7-P6: TinyEXR v3.2.0 C APIのRGB float/ZIP scanline出力を追加し、固定seed・32 SPP・frameの実GPU PT画像2回をbyte一致で保存した。NaN/Infは保存前に拒否し、同一ディレクトリの一時ファイルを完成後に公開する。独立したPython読取器とOpenCVのOpenEXR読取器でchannel・precision・window・既知RGB値を確認した。指定Debug buildとCTest 1/1に合格した。
 
+- R7-O1: FramePacketのSkyAtmosphereParametersからR2の空LUTと太陽ディスクをPTへ接続した。missで散乱空を評価し、太陽ディスク方向を明示サンプルして可視面へ直接照明を加える。空設定・露出・LUT公開状態の変化で累積履歴を破棄する。屋外GPUテストで朝・昼・夕の有限性、R2入力一致、太陽照度、空無効とLUT欠落・復帰を確認した。
+
 ## In progress
 - R6-P5はblocked。専用受入れは通過し、DDGI放射輝度テストの履歴分離後単体再検証も合格した。R6-GATE-OUTDOORはR1承認済みgoldenとの不一致がR2 CSM導入時から再現し、基準画像の扱いが決まるまで停止する。
 - R6-P6はblocked。R6受入れ記録は保留として作成し、完了trailerは付けていない。
@@ -82,11 +84,13 @@
 
 ## Next
 
+- R7-O2: R3のfog snapshotをPT ray transportへ接続し、空・フォグ無効時のfallbackと有限透過率を検証する。
 - R7-P3はRT材質snapshotとtexture資源・UV・DFGの契約確定後に再開する。R6 Outdoorの基準画像判断とR7-P1の受入れは保留として保持する。
 - R7-P3の契約と光輸送を実装後、R7-P4の同一seed 16/64/256 sppとCornell RGBE参照のGPU検証を登録して再開する。閾値とseedは変更しない。
 - R7-P7はP3のNEE/MIS・PT数値契約、P4の16/64/256 spp・Cornell比較、P1のOutdoor基準再検証後に再開する。同一条件のR4/R6比較を各1回行い、閾値超過時だけ該当phaseを再オープンする。
 
 ## Notes
+- R7-O1検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-O1-3.txt`は指定Debug build EXIT_CODE=0、`verify-R7-O1-4.txt`は屋外CTest 1/1 passed。`verify-R7-O1-5.txt`で朝/昼/夕の空miss合計0.0455075/0.0734877/0.0773978、太陽面0.718427/0.351861/0.672279と解析値0.720148/0.354884/0.674271を確認した。全画素有限、空無効・LUT欠落と同一設定の復帰で履歴1試料を確認した。`verify-R7-O1-6.txt`と`-7.txt`の既存PT・R2空モデルbuild/CTestはEXIT_CODE=0、2/2 passed。
 - R7-P7受入れ監査（2026-09-23）: .harness/runs/20260923-095848/verify-R7-P7-1.txt〜-8.txtを読戻し、関連Debug build EXIT_CODE=0、CTest 7/7 passed、R1ラスタ数値40静的行/68数値行/120 capture、EXR 3枚2,099画素のfinite-scanを確認した。P3/P4専用CTestは登録0件で、同一条件self PT対R4/R6の比較値はない。Docs/RenderingValidation/R7CoreAcceptance.mdとblocked/R7-P7.mdに再検証単位を記録し、R7 trailerは付けない。
 - R7-P6検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P6-10.txt`で指定build EXIT_CODE=0、`verify-R7-P6-11.txt`で指定CTest 1/1 passed・EXIT_CODE=0、`verify-R7-P6-12.txt`で固定条件2出力のbyte一致（SHA256 `9333237a36a6a8ee732fe55557a430706c5a831b71e7d0f8bef3edb80291d768`）、BGR float32/ZIP、32×32・3×17 window、有限値とNaN/Inf拒否を読戻し確認した。`verify-R7-P6-9.txt`のOpenCV独立読取と、`verify-R7-P6-13.txt`・`-14.txt`の既存カメラGPUテストもEXIT_CODE=0。MSVCのC11 atomicsは専用compile optionで有効化し、TinyEXRのJPH SIMD builtinのみ移植した。
 - R7-P5検証（2026-09-23）: `.harness/runs/20260923-095848/verify-R7-P5-10.txt`で指定build EXIT_CODE=0、`verify-R7-P5-11.txt`で指定CTest 2/2 passed、`verify-R7-P5-12.txt`で可変DeltaTimeの静止32試料累積と静止/移動golden・画像差0.0576274を読戻し確認した。既存RT snapshot/PT回帰は`verify-R7-P5-3.txt`・`-4.txt`で2/2 passed。線形3×3が同じ並進だけを補間し、それ以外はcurrentを使う。実際のアニメーションでpacketのcamera/geometryが変わると既存の履歴規則で累積はリセットされる。独立評価は2周目PASS。

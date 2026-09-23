@@ -549,7 +549,7 @@ Rendering R1完了後のR2実装タスク。仕様は `Docs/Plans/RenderingR2Sky
 - paths: Docs/RenderingValidation, Test/Core/Rendering, TASKS.md, PROGRESS.md
 
 ## R7-O1: R2 SkyAtmosphereをPT miss radianceとsolar samplingへ接続する
-- status: todo
+- status: done
 - done-when: rasterと同じSkyAtmosphereParametersからPTのsky miss radianceとsolar disk direct lightingを構成し、朝/昼/夕3時刻の有限性・parameter parityを検証する。
 - verify: `cmake --build build --config Debug --target Game PathTracingOutdoorVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^PathTracingOutdoorVulkanTest$"`

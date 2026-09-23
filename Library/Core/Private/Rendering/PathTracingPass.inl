@@ -3,6 +3,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/PathTracingCamera.h"
+#include "Rendering/SkyAtmosphere.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -14,6 +15,7 @@
 #include "RHI/ISampler.h"
 #include "RHI/ITexture.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -28,6 +30,8 @@ namespace NorvesLib::Core::Rendering
             float InverseViewProjection[16] = {};
             float CameraPosition[4] = {};
             uint32_t ImageState[4] = {};
+            float SkySunDirectionAndCosRadius[4] = {};
+            float SkyState[4] = {};
         };
 
         struct PathTracingInstance
@@ -39,7 +43,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t Geometry[4] = {};
         };
 
-        static_assert(sizeof(PathTracingParameters) == 96u);
+        static_assert(sizeof(PathTracingParameters) == 128u);
         static_assert(sizeof(PathTracingInstance) == 64u);
 
         uint64_t HashPathBytes(uint64_t hash, const void* data, size_t size)
@@ -100,6 +104,28 @@ namespace NorvesLib::Core::Rendering
             return hash;
         }
 
+        uint64_t HashPathSky(const SkyAtmosphereParameters& sky, float preExposure)
+        {
+            uint64_t hash = 14695981039346656037ull;
+            hash = HashPathBytes(hash, &sky.bEnabled, sizeof(sky.bEnabled));
+            if (!sky.bEnabled)
+            {
+                return hash;
+            }
+            hash = HashPathBytes(hash, &sky.SunAltitudeDegrees, sizeof(float));
+            hash = HashPathBytes(hash, &sky.SunAzimuthDegrees, sizeof(float));
+            hash = HashPathBytes(hash, &sky.SunLuminanceNits, sizeof(float));
+            hash = HashPathBytes(hash, &sky.PlanetRadiusMeters, sizeof(float));
+            hash = HashPathBytes(hash, &sky.AtmosphereHeightMeters, sizeof(float));
+            hash = HashPathBytes(hash, &sky.RayleighScaleHeightMeters, sizeof(float));
+            hash = HashPathBytes(hash, &sky.MieScaleHeightMeters, sizeof(float));
+            hash = HashPathBytes(hash, &sky.MieAnisotropy, sizeof(float));
+            hash = HashPathBytes(hash, &sky.GroundAlbedo.x, sizeof(float));
+            hash = HashPathBytes(hash, &sky.GroundAlbedo.y, sizeof(float));
+            hash = HashPathBytes(hash, &sky.GroundAlbedo.z, sizeof(float));
+            return HashPathBytes(hash, &preExposure, sizeof(preExposure));
+        }
+
         RHI::DescriptorSetDesc CreatePathTracingDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -108,8 +134,11 @@ namespace NorvesLib::Core::Rendering
                 RHI::ResourceBindType::ConstantBuffer,
                 RHI::ResourceBindType::StructuredBuffer,
                 RHI::ResourceBindType::CombinedImageSampler,
-                RHI::ResourceBindType::RWTexture};
-            for (uint32_t index = 0u; index < 5u; ++index)
+                RHI::ResourceBindType::RWTexture,
+                RHI::ResourceBindType::CombinedImageSampler,
+                RHI::ResourceBindType::CombinedImageSampler,
+                RHI::ResourceBindType::CombinedImageSampler};
+            for (uint32_t index = 0u; index < 8u; ++index)
             {
                 RHI::DescriptorBinding binding;
                 binding.binding = index;
@@ -194,6 +223,9 @@ namespace NorvesLib::Core::Rendering
         m_ClosestHitShader.reset();
         m_Sampler.reset();
         m_OutputHandle = {};
+        m_SkyRadianceHandle = {};
+        m_SkyTransmittanceHandle = {};
+        m_SunDiskHandle = {};
         m_ActiveHistoryIndex = UINT32_MAX;
         m_ActiveFrameResourceIndex = UINT32_MAX;
         m_bPrepared = false;
@@ -407,6 +439,9 @@ namespace NorvesLib::Core::Rendering
     void PathTracingPass::Declare(RenderGraphBuilder& builder)
     {
         m_OutputHandle = {};
+        m_SkyRadianceHandle = {};
+        m_SkyTransmittanceHandle = {};
+        m_SunDiskHandle = {};
         m_ActiveHistoryIndex = UINT32_MAX;
         m_ActiveFrameResourceIndex = UINT32_MAX;
         m_bPrepared = false;
@@ -470,11 +505,20 @@ namespace NorvesLib::Core::Rendering
         }
         const uint64_t geometrySignature =
             HashPathGeometry(*context->SnapshotRayTracingScene);
+        const SkyAtmosphereParameters sky = SanitizeSkyAtmosphereParameters(
+            context->SnapshotScene ? context->SnapshotScene->SkyAtmosphere :
+                                     context->SkyAtmosphereSnapshot);
+        const float preExposure = std::isfinite(activeCamera.PreExposure) &&
+                                          activeCamera.PreExposure > 0.0f
+                                      ? std::clamp(activeCamera.PreExposure, 1.0e-6f, 1.0e6f)
+                                      : 1.0f;
+        const uint64_t skySignature = HashPathSky(sky, preExposure);
         const bool bReset = history->SampleCount == 0u ||
             history->SceneRevision != context->SceneRevision ||
             history->LightRevision != context->LightRevision ||
             history->CameraSignature != cameraSignature ||
             history->GeometrySignature != geometrySignature ||
+            history->SkySignature != skySignature ||
             history->SampleCount == UINT32_MAX;
         if (bReset)
         {
@@ -495,6 +539,20 @@ namespace NorvesLib::Core::Rendering
         builder.Read(previous, RHI::ResourceState::ShaderResource);
         builder.Write(output, RHI::ResourceState::RayTracingStorage,
                       RHI::ResourceState::ShaderResource);
+        if (builder.TryGetTexture(RenderGraphResourceNames::SkyAtmosphereRadiance,
+                                  m_SkyRadianceHandle) &&
+            builder.TryGetTexture(RenderGraphResourceNames::SkyAtmosphereTransmittance,
+                                  m_SkyTransmittanceHandle) &&
+            builder.TryGetTexture(RenderGraphResourceNames::SkyAtmosphereSunDisk,
+                                  m_SunDiskHandle))
+        {
+            builder.Read(m_SkyRadianceHandle.ToResourceHandle(),
+                         RHI::ResourceState::ShaderResource);
+            builder.Read(m_SkyTransmittanceHandle.ToResourceHandle(),
+                         RHI::ResourceState::ShaderResource);
+            builder.Read(m_SunDiskHandle.ToResourceHandle(),
+                         RHI::ResourceState::ShaderResource);
+        }
         if (!builder.PublishTexture(RenderGraphResourceNames::SceneColor, output) ||
             !builder.ExportTexture(RenderGraphResourceNames::SceneColor, output) ||
             !builder.TryGetTexture(RenderGraphResourceNames::SceneColor, m_OutputHandle))
@@ -507,6 +565,7 @@ namespace NorvesLib::Core::Rendering
             frameResources - history->FrameSlots.data());
         m_DeclaredCameraSignature = cameraSignature;
         m_DeclaredGeometrySignature = geometrySignature;
+        m_DeclaredSkySignature = skySignature;
         m_bPrepared = true;
     }
 
@@ -575,9 +634,35 @@ namespace NorvesLib::Core::Rendering
         }
         parameters.ImageState[0] = history.Width;
         parameters.ImageState[1] = history.Height;
-        parameters.ImageState[2] = history.SampleCount;
         parameters.ImageState[3] = static_cast<uint32_t>(
             context.SnapshotRayTracingScene->Instances.size());
+        const SkyAtmosphereParameters sky = SanitizeSkyAtmosphereParameters(
+            context.SnapshotScene ? context.SnapshotScene->SkyAtmosphere :
+                                    context.SkyAtmosphereSnapshot);
+        const bool bSkyValid = sky.bEnabled && context.SkyAtmosphere.bValid &&
+            m_SkyRadianceHandle.IsValid() && m_SkyTransmittanceHandle.IsValid() &&
+            m_SunDiskHandle.IsValid() && context.SkyAtmosphere.RadianceTexture &&
+            context.SkyAtmosphere.TransmittanceTexture &&
+            context.SkyAtmosphere.SunDiskTexture && context.SkyAtmosphere.Sampler;
+        if (history.SampleCount > 0u && history.bSkyValid != bSkyValid)
+        {
+            history.SampleCount = 0u;
+        }
+        parameters.ImageState[2] = history.SampleCount;
+        if (bSkyValid)
+        {
+            const Math::Vector3 sunDirection = MakeSunDirectionFromAltitudeAzimuth(
+                sky.SunAltitudeDegrees, sky.SunAzimuthDegrees);
+            parameters.SkySunDirectionAndCosRadius[0] = sunDirection.x;
+            parameters.SkySunDirectionAndCosRadius[1] = sunDirection.y;
+            parameters.SkySunDirectionAndCosRadius[2] = sunDirection.z;
+            parameters.SkySunDirectionAndCosRadius[3] = std::cos(
+                std::sqrt(SolarDiskSolidAngleSteradians / 3.14159265358979323846f));
+            parameters.SkyState[0] = context.SkyAtmosphere.PreExposure;
+            parameters.SkyState[1] = SolarDiskSolidAngleSteradians;
+            parameters.SkyState[2] = 1.0f;
+        }
+        parameters.SkyState[3] = sky.bEnabled ? 1.0f : 0.0f;
         frameResources.ParametersBuffer->Update(&parameters, sizeof(parameters));
 
         RHI::DescriptorSetPtr descriptorSet = frameResources.DescriptorSet;
@@ -655,6 +740,14 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindTexture(3u, history.Textures[1u - m_TargetIndex]);
         descriptorSet->BindSampler(3u, m_Sampler);
         descriptorSet->BindStorageTexture(4u, history.Textures[m_TargetIndex]);
+        const RHI::TexturePtr& fallback = history.Textures[1u - m_TargetIndex];
+        descriptorSet->BindTexture(5u, bSkyValid ? context.SkyAtmosphere.RadianceTexture : fallback);
+        descriptorSet->BindTexture(6u, bSkyValid ? context.SkyAtmosphere.TransmittanceTexture : fallback);
+        descriptorSet->BindTexture(7u, bSkyValid ? context.SkyAtmosphere.SunDiskTexture : fallback);
+        for (uint32_t binding = 5u; binding <= 7u; ++binding)
+        {
+            descriptorSet->BindSampler(binding, bSkyValid ? context.SkyAtmosphere.Sampler : m_Sampler);
+        }
         descriptorSet->Update();
 
         context.CommandList->SetPipeline(m_Pipeline);
@@ -671,6 +764,8 @@ namespace NorvesLib::Core::Rendering
         history.LightRevision = context.LightRevision;
         history.CameraSignature = m_DeclaredCameraSignature;
         history.GeometrySignature = m_DeclaredGeometrySignature;
+        history.SkySignature = m_DeclaredSkySignature;
+        history.bSkyValid = bSkyValid;
     }
 
     uint32_t PathTracingPass::GetAccumulatedSampleCount() const

@@ -6,6 +6,8 @@
 #include "Rendering/SceneView.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SkyAtmosphere.h"
+#include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -20,6 +22,7 @@
 #include "RHI/Vulkan/VulkanBuffer.h"
 #include "RHI/Vulkan/VulkanCommandList.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -33,7 +36,11 @@ namespace
     using namespace NorvesLib::RHI;
     using namespace NorvesLib::Test::RenderingValidation;
 
+#ifdef NORVES_PATH_TRACING_OUTDOOR_TEST
+    constexpr const char* TestName = "PathTracingOutdoorVulkanTest";
+#else
     constexpr const char* TestName = "PathTracingVulkanTest";
+#endif
     constexpr uint32_t Width = 32u;
     constexpr uint32_t Height = 32u;
     constexpr uint64_t ReadbackBytes = Width * Height * 4u * sizeof(float);
@@ -43,7 +50,8 @@ namespace
         float Position[3];
     };
 
-    bool BuildScene(const DevicePtr& device, FramePacket& packet)
+    bool BuildScene(const DevicePtr& device, FramePacket& packet,
+                    bool bEmissive = true)
     {
         const Vertex vertices[3] = {
             {{-1.0f, -1.0f, 0.0f}},
@@ -124,7 +132,7 @@ namespace
         snapshot.Material.EmissiveColor[0] = 1.0f;
         snapshot.Material.EmissiveColor[1] = 0.25f;
         snapshot.Material.EmissiveColor[2] = 0.0f;
-        snapshot.Material.EmissiveLuminanceNits = 2.0f;
+        snapshot.Material.EmissiveLuminanceNits = bEmissive ? 2.0f : 0.0f;
         packet.RayTracingScene.TopLevel = top;
         packet.RayTracingScene.Instances.push_back(snapshot);
         return packet.HasCompleteRayTracingScene();
@@ -163,7 +171,8 @@ namespace
                   uint64_t frameNumber,
                   uint64_t sceneRevision,
                   uint64_t lightRevision,
-                  VariableArray<float>& outPixels)
+                  VariableArray<float>& outPixels,
+                  SkyAtmospherePass* skyPass = nullptr)
     {
         CommandListPtr commandList = device->CreateCommandList();
         BufferDesc readbackDesc(ReadbackBytes, ResourceUsage::TransferDst,
@@ -182,6 +191,11 @@ namespace
         commandList->SetFrameIndex(context.FrameIndex);
         commandList->Begin();
         graph.BeginFrame(frameNumber);
+        context.SkyAtmosphere.Reset();
+        if (skyPass)
+        {
+            graph.AddPass(skyPass);
+        }
         graph.AddPass(&pass);
         if (!graph.Compile(context))
         {
@@ -191,7 +205,8 @@ namespace
         }
         const RenderGraphExecutionResult result = graph.ExecuteWithResult(context);
         TexturePtr output;
-        if (!result.bSuccess || result.ExecutedPassCount != 1u ||
+        if (!result.bSuccess ||
+            result.ExecutedPassCount != (skyPass ? 2u : 1u) ||
             !result.TryGetTexture(RenderGraphResourceNames::SceneColor, output) ||
             output != pass.GetAccumulatedTexture())
         {
@@ -258,7 +273,8 @@ namespace
             return 1;
         }
         view.SetupPathTracingPipeline();
-        if (view.GetPassCount() != 1u || !view.FindPass("PathTracingPass"))
+        if (view.GetPassCount() != 2u || !view.FindPass("SkyAtmospherePass") ||
+            !view.FindPass("PathTracingPass"))
         {
             std::cerr << "PTの明示選択が独立passを登録しませんでした\n";
             return 1;
@@ -473,9 +489,253 @@ namespace
         device->WaitIdle();
         return bSelectedPipelineSucceeded ? 0 : 1;
     }
+
+#ifdef NORVES_PATH_TRACING_OUTDOOR_TEST
+    bool MatchesSkyParameters(const SkyAtmosphereParameters& actual,
+                              const SkyAtmosphereParameters& expected)
+    {
+        return actual.bEnabled == expected.bEnabled &&
+            actual.SunAltitudeDegrees == expected.SunAltitudeDegrees &&
+            actual.SunAzimuthDegrees == expected.SunAzimuthDegrees &&
+            actual.SunLuminanceNits == expected.SunLuminanceNits &&
+            actual.PlanetRadiusMeters == expected.PlanetRadiusMeters &&
+            actual.AtmosphereHeightMeters == expected.AtmosphereHeightMeters &&
+            actual.RayleighScaleHeightMeters == expected.RayleighScaleHeightMeters &&
+            actual.MieScaleHeightMeters == expected.MieScaleHeightMeters &&
+            actual.MieAnisotropy == expected.MieAnisotropy &&
+            actual.GroundAlbedo.x == expected.GroundAlbedo.x &&
+            actual.GroundAlbedo.y == expected.GroundAlbedo.y &&
+            actual.GroundAlbedo.z == expected.GroundAlbedo.z;
+    }
+
+    float MaxCornerRadiance(const VariableArray<float>& pixels)
+    {
+        const size_t corners[] = {0u, Width - 1u,
+                                  (Height - 1u) * Width, Width * Height - 1u};
+        float maximum = 0.0f;
+        for (size_t corner : corners)
+        {
+            const size_t offset = corner * 4u;
+            maximum = std::max(maximum, pixels[offset] + pixels[offset + 1u] +
+                                            pixels[offset + 2u]);
+        }
+        return maximum;
+    }
+
+    float CenterRadiance(const VariableArray<float>& pixels)
+    {
+        const size_t offset = (Height / 2u * Width + Width / 2u) * 4u;
+        return pixels[offset] + pixels[offset + 1u] + pixels[offset + 2u];
+    }
+
+    int RunOutdoorTest()
+    {
+        if (IsForcedGpuTestSkipRequested())
+        {
+            return ReportGpuTestSkip(TestName, "GPUテストが環境変数でスキップされました");
+        }
+        String unavailableReason;
+        if (!CanCreateVulkanDeviceForGpuTest(unavailableReason))
+        {
+            return ReportGpuTestSkip(TestName, unavailableReason.c_str());
+        }
+        RHIDeviceDesc deviceDesc;
+        deviceDesc.Api = GraphicsAPI::Vulkan;
+        deviceDesc.bEnableValidation = true;
+        DevicePtr device = CreateRHIDevice(deviceDesc);
+        if (!device || !device->GetCapabilities().RayTracing.bAccelerationStructure ||
+            !device->GetCapabilities().RayTracing.bRayTracingPipeline ||
+            !device->GetCapabilities().bBufferDeviceAddress)
+        {
+            return ReportGpuTestSkip(TestName, "RT pipeline/BDAを利用できません");
+        }
+        String shaderDirectory(NORVES_SOURCE_ROOT);
+        shaderDirectory += "/Assets/Shaders";
+        ShaderManager shaderManager;
+        if (!shaderManager.Initialize(device.get(), shaderDirectory))
+        {
+            return 1;
+        }
+        FramePacket packet;
+        if (!BuildScene(device, packet, false))
+        {
+            std::cerr << "屋外PT用のRT snapshotを構築できませんでした\n";
+            return 1;
+        }
+        CameraProxy camera;
+        camera.CameraId = 1u;
+        camera.PositionZ = -2.0f;
+        camera.ForwardZ = 1.0f;
+        camera.Viewport.Width = static_cast<float>(Width);
+        camera.Viewport.Height = static_cast<float>(Height);
+        camera.AspectRatio = 1.0f;
+        camera.PreExposure = 1.0f / 50000.0f;
+
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = Width;
+        context.RenderHeight = Height;
+        context.ScreenWidth = Width;
+        context.ScreenHeight = Height;
+        context.MainCamera = &camera;
+        context.SnapshotScene = &packet.Scene;
+        context.SnapshotRayTracingScene = &packet.RayTracingScene;
+        context.SkyAtmosphereSnapshot.bEnabled = true;
+        context.SkyAtmosphereSnapshot.SunAltitudeDegrees = 89.0f;
+        context.SkyAtmosphereSnapshot.SunLuminanceNits = 1000.0f;
+        CommandListPtr initializationCommand = device->CreateCommandList();
+        context.CommandList = initializationCommand.get();
+        SkyAtmospherePass skyPass;
+        PathTracingPass pathPass;
+        if (!skyPass.Initialize(context) || !pathPass.Initialize(context))
+        {
+            std::cerr << "屋外PTの空LUTまたはRT pipelineを初期化できませんでした\n";
+            return 1;
+        }
+        RenderGraph graph;
+        graph.Initialize(nullptr);
+        VariableArray<float> pixels;
+        struct TimeCase
+        {
+            const char* Name;
+            float Altitude;
+            float Azimuth;
+        };
+        const TimeCase cases[] = {
+            {"morning", 8.0f, -60.0f},
+            {"noon", 65.0f, -90.0f},
+            {"evening", 22.0f, -120.0f}};
+        float cornerRadiance[3] = {};
+        float centerRadiance[3] = {};
+        for (uint32_t index = 0u; index < 3u; ++index)
+        {
+            SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
+            sky.bEnabled = true;
+            sky.SunAltitudeDegrees = cases[index].Altitude;
+            sky.SunAzimuthDegrees = cases[index].Azimuth;
+            sky.RayleighScaleHeightMeters = 8500.0f;
+            sky.MieAnisotropy = 0.65f;
+            sky.GroundAlbedo = Math::Vector3(0.2f, 0.15f, 0.1f);
+            packet.Scene.SkyAtmosphere = sky;
+            if (!RunFrame(device, graph, pathPass, context, index + 1u,
+                          1u, 1u, pixels, &skyPass) ||
+                pathPass.GetAccumulatedSampleCount() != 1u)
+            {
+                std::cerr << "時刻変更時にPTを描画・履歴破棄できませんでした\n";
+                return 1;
+            }
+            const SkyAtmosphereParameters expected =
+                SanitizeSkyAtmosphereParameters(sky);
+            const float expectedSun =
+                ComputeSunDiskPreExposedLuminance(expected, camera.PreExposure);
+            const SkyRadianceSample zenith = EvaluateHillaireSkyReference(
+                expected, Math::Vector3::UnitY);
+            if (!MatchesSkyParameters(skyPass.GetLastParameters(), expected) ||
+                !MatchesSkyParameters(context.SkyAtmosphere.Parameters, expected) ||
+                !context.SkyAtmosphere.bValid ||
+                std::abs(context.SkyAtmosphere.SunDiskPreExposedLuminance -
+                         expectedSun) > 0.1f ||
+                !zenith.bValid || !std::isfinite(zenith.Radiance.x) ||
+                !std::isfinite(zenith.Radiance.y) ||
+                !std::isfinite(zenith.Radiance.z))
+            {
+                std::cerr << "R2空スナップショットとPTの入力が一致しませんでした\n";
+                return 1;
+            }
+            cornerRadiance[index] = MaxCornerRadiance(pixels);
+            centerRadiance[index] = CenterRadiance(pixels);
+            const Math::Vector3 sunDirection =
+                MakeSunDirectionFromAltitudeAzimuth(expected.SunAltitudeDegrees,
+                                                    expected.SunAzimuthDegrees);
+            const float expectedSurface =
+                ComputeSunDiskIrradiance(expected) * camera.PreExposure *
+                std::max(-sunDirection.z, 0.0f) * 1.2f /
+                3.14159265358979323846f;
+            std::cout << cases[index].Name << "_sky=" << cornerRadiance[index]
+                      << " solar_surface=" << centerRadiance[index]
+                      << " expected_solar_surface=" << expectedSurface
+                      << " sun_disk=" << expectedSun << '\n';
+            if (cornerRadiance[index] <= 0.0f ||
+                centerRadiance[index] <= 0.0f ||
+                std::abs(centerRadiance[index] - expectedSurface) > 0.03f)
+            {
+                std::cerr << "空missまたは太陽照度の解析値とPTが一致しませんでした\n";
+                return 1;
+            }
+        }
+        if (std::abs(cornerRadiance[0] - cornerRadiance[1]) < 0.0001f &&
+            std::abs(cornerRadiance[1] - cornerRadiance[2]) < 0.0001f)
+        {
+            std::cerr << "時刻変更が空miss radianceに反映されませんでした\n";
+            return 1;
+        }
+
+        if (!RunFrame(device, graph, pathPass, context, 4u,
+                      1u, 1u, pixels) ||
+            pathPass.GetAccumulatedSampleCount() != 1u ||
+            context.SkyAtmosphere.bValid || MaxCornerRadiance(pixels) > 0.0001f)
+        {
+            std::cerr << "同一空設定のLUT欠落時に履歴を破棄できませんでした\n";
+            return 1;
+        }
+        if (!RunFrame(device, graph, pathPass, context, 5u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 1u ||
+            !context.SkyAtmosphere.bValid ||
+            std::abs(MaxCornerRadiance(pixels) - cornerRadiance[2]) > 0.0001f)
+        {
+            std::cerr << "同一空設定のLUT復帰時に履歴を破棄できませんでした\n";
+            return 1;
+        }
+
+        packet.Scene.SkyAtmosphere.SunAltitudeDegrees = cases[1].Altitude;
+        packet.Scene.SkyAtmosphere.SunAzimuthDegrees = 90.0f;
+        if (!RunFrame(device, graph, pathPass, context, 6u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 1u ||
+            centerRadiance[1] <= CenterRadiance(pixels) + 0.01f)
+        {
+            std::cerr << "太陽を裏面へ移しても直接照明が減りませんでした\n";
+            return 1;
+        }
+        packet.Scene.SkyAtmosphere.bEnabled = false;
+        if (!RunFrame(device, graph, pathPass, context, 7u,
+                      1u, 1u, pixels, &skyPass) ||
+            pathPass.GetAccumulatedSampleCount() != 1u ||
+            context.SkyAtmosphere.bSnapshotEnabled ||
+            std::abs(MaxCornerRadiance(pixels) - 0.15f) > 0.0001f)
+        {
+            std::cerr << "空無効時のPT環境光へ戻りませんでした\n";
+            return 1;
+        }
+        packet.Scene.SkyAtmosphere.bEnabled = true;
+        if (!RunFrame(device, graph, pathPass, context, 8u,
+                      1u, 1u, pixels) ||
+            pathPass.GetAccumulatedSampleCount() != 1u ||
+            context.SkyAtmosphere.bValid || MaxCornerRadiance(pixels) > 0.0001f)
+        {
+            std::cerr << "空要求時のLUT欠落を黒へ戻せませんでした\n";
+            return 1;
+        }
+        std::cout << "sky_parameter_parity=3 solar_sampling=true "
+                     "sky_disabled_fallback=true sky_missing_fallback=true "
+                     "sky_recovery_reset=true\n";
+        skyPass.Shutdown();
+        pathPass.Shutdown();
+        graph.Shutdown();
+        shaderManager.Shutdown();
+        device->WaitIdle();
+        return 0;
+    }
+#endif
 }
 
 int main()
 {
+#ifdef NORVES_PATH_TRACING_OUTDOOR_TEST
+    return RunOutdoorTest();
+#else
     return RunTest();
+#endif
 }

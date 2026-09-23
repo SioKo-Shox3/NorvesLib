@@ -762,6 +762,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
         m_Passes.clear();
+        AddPass(MakeUnique<SkyAtmospherePass>());
         AddPass(MakeUnique<PathTracingPass>());
 
         auto postProcessStack = MakeUnique<PostProcessStack>();
