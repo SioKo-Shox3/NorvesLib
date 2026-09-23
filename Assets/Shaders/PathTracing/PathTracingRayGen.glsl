@@ -297,9 +297,10 @@ bool IsVisible(vec3 origin, vec3 direction, float maxDistance)
     return payload.Hit == 0u;
 }
 
-// 面から少し浮かせた原点から目標点までの可視性。方向と距離を浮かせた原点から測り直す。
-// 面上の点から測った方向のままだと、浅い角度で原点のずれが光線方向へ伸び、目標の発光面を
-// 手前で横切って自分で遮る。目標面の手前で止めるため、距離の0.1%だけ短くする。
+// 面から少し浮かせた原点から目標点までの可視性。方向と距離を浮かせた原点から測り直し、
+// 目標点まで全区間を調べる。面上の点から測った方向のままだと、浅い角度で原点のずれが
+// 光線方向へ伸び、目標の発光面を手前で横切って自分で遮る。発光面を目標にするときは、
+// 呼び出し側が目標点を発光面の法線方向へ受光側に浮かせる（原点と同じ幅）。
 bool IsPointVisible(vec3 shadowOrigin, vec3 target)
 {
     vec3 toTarget = target - shadowOrigin;
@@ -308,7 +309,7 @@ bool IsPointVisible(vec3 shadowOrigin, vec3 target)
     {
         return true;
     }
-    return IsVisible(shadowOrigin, toTarget / targetDistance, targetDistance * 0.999);
+    return IsVisible(shadowOrigin, toTarget / targetDistance, targetDistance);
 }
 
 float RangeWindow(float distance, float range)
@@ -458,8 +459,11 @@ vec3 SampleEmissiveTriangles(PathSurface surface, vec3 position, vec3 geometricN
         : PowerHeuristic(lightPdf, PathBsdfPdf(surface, L));
     vec3 emission = instance.emission.rgb * instance.emission.a * PreExposure();
     vec3 contribution = EvaluatePathBsdf(surface, L) * NdotL * emission * (weight / lightPdf);
+    // 影レイの終点は発光面から受光側へ法線方向に浮かせ、発光面そのものに当たらないようにする。
+    vec3 lightNormal = edgeCross / twiceArea;
+    vec3 shadowTarget = lightPoint + lightNormal * (dot(lightNormal, L) < 0.0 ? 0.002 : -0.002);
     if (max(contribution.r, max(contribution.g, contribution.b)) <= 0.0 ||
-        !IsPointVisible(position + geometricNormal * 0.002, lightPoint))
+        !IsPointVisible(position + geometricNormal * 0.002, shadowTarget))
     {
         return vec3(0.0);
     }
@@ -588,6 +592,12 @@ void main()
             radiance += throughput * surfaceEmission * emissionWeight;
         }
 
+        // 視線がシェーディング法線の裏にある（法線マップや頂点法線の補間で起きる）ときは、
+        // 幾何法線をシェーディング法線に使う。評価・pdf・標本化を同じ表側の法線で行う。
+        if (dot(shadingNormal, -direction) <= 0.0)
+        {
+            shadingNormal = geometricNormal;
+        }
         PathSurface surface = MakePathSurface(shadingNormal, -direction, surfaceAlbedo,
                                               surfaceMetallic, surfaceRoughness, bsdfMode);
         radiance += throughput * EvaluatePunctualLights(surface, surfacePosition, geometricNormal);
@@ -638,8 +648,9 @@ void main()
     {
         radiance = vec3(0.0);
     }
+    // 累積画像はfloat32。太陽円盤などの大きな試料値を切ると期待値が偏るため、有限値は切らない。
     radiance = debugOutput == PATH_DEBUG_SHADING_NORMAL ? clamp(radiance, vec3(-1.0), vec3(1.0))
-                                                        : clamp(radiance, vec3(0.0), vec3(65504.0));
+                                                        : max(radiance, vec3(0.0));
     vec3 average = radiance;
     if (sampleIndex > 0u)
     {

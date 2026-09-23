@@ -41,12 +41,19 @@ float PowerHeuristic(float pdfA, float pdfB)
 }
 
 // GGXの法線分布。共通のDistributionGGXは分母を1e-4で止めるため鋭い葉の頂点を削る。
-// 標本化の確率密度と一致させるため、ここでは分母を止めない厳密形を使う。
-float PathGgxDistribution(float NdotH, float alpha)
+// 標本化の確率密度と一致させるため分母を止めない。NdotH^2(a^2-1)+1はa^2が小さいとfloatで
+// a^2-1が-1へ丸まり0になるため、NdotH^2·a^2 + sin^2θ_hへ書き換え、sin^2は外積から求める。
+float PathGgxDistribution(float NdotH, float sinSquared, float alpha)
 {
     float a2 = alpha * alpha;
-    float denominator = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    float denominator = NdotH * NdotH * a2 + sinSquared;
     return a2 / (PI * denominator * denominator);
+}
+
+float PathSinSquared(vec3 normal, vec3 halfVector)
+{
+    vec3 crossed = cross(normal, halfVector);
+    return dot(crossed, crossed);
 }
 
 // 可視法線分布の確率密度に使う厳密なSmith G1。
@@ -72,7 +79,9 @@ PathSurface MakePathSurface(vec3 normal, vec3 view, vec3 albedo, float metallic,
     surface.Tangent = normalize(cross(up, normal));
     surface.Bitangent = cross(normal, surface.Tangent);
     surface.View = view;
-    surface.NdotV = max(dot(normal, view), 1.0e-4);
+    // 呼び出し側は視線がシェーディング法線の表側にあることを保証する（裏なら幾何法線へ切り替える）。
+    // 下限はゼロ除算を避けるためだけのもの。
+    surface.NdotV = max(dot(normal, view), 1.0e-6);
     // 葉の粗さはDFG LUTの標本域（両端は半texel内側）に揃える。LUTはroughness 1を0.998で読むため、
     // 実際の葉をそれより粗くすると補償1/Essと積分する葉がずれ、白炉がエネルギーを失う。
     surface.Roughness = mode == PATH_BSDF_VALIDATION_LAMBERT
@@ -129,7 +138,7 @@ vec3 EvaluatePathBsdf(PathSurface surface, vec3 L)
     vec3 H = normalize(surface.View + L);
     float NdotH = max(dot(surface.Normal, H), 0.0);
     float VdotH = max(dot(surface.View, H), 0.0);
-    float D = PathGgxDistribution(NdotH, surface.Alpha);
+    float D = PathGgxDistribution(NdotH, PathSinSquared(surface.Normal, H), surface.Alpha);
     float G = PathDfgGeometry(surface.NdotV, NdotL, surface.Roughness);
     float specularCommon = D * G / (4.0 * surface.NdotV * NdotL);
     vec3 Fd = FresnelSchlick(VdotH, surface.F0Dielectric);
@@ -155,7 +164,8 @@ float PathBsdfPdf(PathSurface surface, vec3 L)
     }
     vec3 H = normalize(surface.View + L);
     float NdotH = max(dot(surface.Normal, H), 0.0);
-    float specularPdf = PathGgxDistribution(NdotH, surface.Alpha) *
+    float specularPdf =
+        PathGgxDistribution(NdotH, PathSinSquared(surface.Normal, H), surface.Alpha) *
         PathSmithG1(surface.NdotV, surface.Alpha) / (4.0 * surface.NdotV);
     return surface.SpecularProbability * specularPdf +
            (1.0 - surface.SpecularProbability) * diffusePdf;
@@ -186,9 +196,10 @@ bool SamplePathBsdf(PathSurface surface, vec3 u, out vec3 L)
 {
     if (surface.Mode != PATH_BSDF_VALIDATION_LAMBERT && u.x < surface.SpecularProbability)
     {
+        // 実際の視線を接空間へ移す（pdfと同じ視線で標本化する）。
         vec3 viewTangent = normalize(vec3(dot(surface.View, surface.Tangent),
                                           dot(surface.View, surface.Bitangent),
-                                          surface.NdotV));
+                                          max(dot(surface.View, surface.Normal), 1.0e-6)));
         vec3 halfTangent = SampleGgxVisibleNormal(viewTangent, surface.Alpha, u.yz);
         vec3 H = halfTangent.x * surface.Tangent + halfTangent.y * surface.Bitangent +
                  halfTangent.z * surface.Normal;

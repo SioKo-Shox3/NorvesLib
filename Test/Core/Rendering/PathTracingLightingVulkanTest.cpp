@@ -1,5 +1,6 @@
-﻿// PTの光輸送を解析値と白炉で確かめる。R1と同じ15行の白炉、正距円筒環境の向き、
-// 点・spot・方向光の解析輝度（純Lambertと本番BSDF）、面光源のNEEのみ・BSDFのみ・MISの一致。
+﻿// PTの光輸送を解析値と白炉で確かめる。R1と同じ15行の白炉（と粗さ0）、正距円筒環境の向き、
+// 点・spot・方向光の解析輝度（純Lambertと本番BSDF）、面光源と太陽円盤のNEEのみ・BSDFのみ・MISの一致、
+// 視線がシェーディング法線の裏になる面での戦略の一致、光源の直前にある遮蔽物。
 #include "RenderingValidation/GpuTestEnvironment.h"
 
 #include "Rendering/CameraViewConstants.h"
@@ -9,6 +10,8 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SkyAtmosphere.h"
+#include "Rendering/SkyAtmospherePass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -301,6 +304,8 @@ namespace
         RenderGraph* Graph = nullptr;
         PathTracingPass* Pass = nullptr;
         ViewRenderContext* Context = nullptr;
+        /** @brief 空と太陽の検証だけで使う。nullなら空LUTを作らない。 */
+        SkyAtmospherePass* Sky = nullptr;
         uint64_t FrameNumber = 0u;
 
         // sampleCount回の試料を累積し、最後の累積画像を読み戻す。初回で履歴を捨てることも確かめる。
@@ -347,6 +352,10 @@ namespace
             commandList->Begin();
             Graph->BeginFrame(FrameNumber);
             context.SkyAtmosphere.Reset();
+            if (Sky)
+            {
+                Graph->AddPass(Sky);
+            }
             Graph->AddPass(Pass);
             if (!Graph->Compile(context))
             {
@@ -355,7 +364,7 @@ namespace
             }
             const RenderGraphExecutionResult result = Graph->ExecuteWithResult(context);
             TexturePtr output;
-            if (!result.bSuccess || result.ExecutedPassCount != 1u ||
+            if (!result.bSuccess || result.ExecutedPassCount != (Sky ? 2u : 1u) ||
                 !result.TryGetTexture(RenderGraphResourceNames::SceneColor, output) ||
                 output != Pass->GetAccumulatedTexture())
             {
@@ -867,6 +876,22 @@ namespace
             ownedTextures.push_back(texture);
             roughnessHandles[index] = textures.RegisterExternalTexture(texture, "Roughness");
         }
+        // 粗さ0（GGXの分母がfloatで0になりやすい鏡面）と、太陽の光沢反射に使う粗さ25/255。
+        TexturePtr zeroRoughnessTexture = CreateGrayTexture(device, 0u, "ZeroRoughness");
+        TexturePtr glossyRoughnessTexture = CreateGrayTexture(device, 25u, "GlossyRoughness");
+        // 接空間法線(0.906, 0.004, 0.176)。+Tへ約80度傾き、視線の反対側の画素では視線が裏になる。
+        const uint8_t steepNormalPixel[4] = {243u, 128u, 150u, 255u};
+        TexturePtr steepNormalTexture = CreateTexture(device, 1u, 1u, Format::R8G8B8A8_UNORM, 4u,
+                                                      steepNormalPixel, "SteepNormal");
+        ownedTextures.push_back(zeroRoughnessTexture);
+        ownedTextures.push_back(glossyRoughnessTexture);
+        ownedTextures.push_back(steepNormalTexture);
+        const TextureHandle zeroRoughnessHandle =
+            textures.RegisterExternalTexture(zeroRoughnessTexture, "ZeroRoughness");
+        const TextureHandle glossyRoughnessHandle =
+            textures.RegisterExternalTexture(glossyRoughnessTexture, "GlossyRoughness");
+        const TextureHandle steepNormalHandle =
+            textures.RegisterExternalTexture(steepNormalTexture, "SteepNormal");
 
         VariableArray<Mesh3DVertex> sphereVertices;
         VariableArray<uint32_t> sphereIndices;
@@ -875,6 +900,9 @@ namespace
         TestGeometry facingPlane;
         TestGeometry floorPlane;
         TestGeometry areaLight;
+        TestGeometry pointBlocker;
+        TestGeometry areaBlocker;
+        TestGeometry farLight;
         const Vec3 facingCorners[4] = {{-3.0, 3.0, 0.0}, {3.0, 3.0, 0.0},
                                        {3.0, -3.0, 0.0}, {-3.0, -3.0, 0.0}};
         const Vec3 floorCorners[4] = {{-40.0, 0.0, 40.0}, {40.0, 0.0, 40.0},
@@ -882,10 +910,22 @@ namespace
         // 視野の外（z=-0.6での視野半幅は約0.81）に置き、受光面（z=0）へ向ける両面発光の四角形。
         const Vec3 lightCorners[4] = {{1.0, -0.5, -0.6}, {2.0, -0.5, -0.6},
                                       {2.0, 0.5, -0.6}, {1.0, 0.5, -0.6}};
+        // 10m先の点光源（z=-10）の5mm手前、カメラの後ろにある小さな遮蔽板。
+        const Vec3 pointBlockerCorners[4] = {{-0.1, 0.1, -9.995}, {0.1, 0.1, -9.995},
+                                             {0.1, -0.1, -9.995}, {-0.1, -0.1, -9.995}};
+        // 5m先（z=-5、カメラの後ろ）の面光源と、その2.5mm受光側にある面光源より広い遮蔽板。
+        // 距離の0.1%を未検査にする終端では約5mmを見逃す距離にする。
+        const Vec3 farLightCorners[4] = {{-2.0, -2.0, -5.0}, {2.0, -2.0, -5.0},
+                                         {2.0, 2.0, -5.0}, {-2.0, 2.0, -5.0}};
+        const Vec3 areaBlockerCorners[4] = {{-3.0, -3.0, -4.9975}, {3.0, -3.0, -4.9975},
+                                            {3.0, 3.0, -4.9975}, {-3.0, 3.0, -4.9975}};
         if (!BuildGeometry(device, sphereVertices, sphereIndices, sphere) ||
             !BuildQuad(device, facingCorners, {0.0, 0.0, -1.0}, facingPlane) ||
             !BuildQuad(device, floorCorners, {0.0, 1.0, 0.0}, floorPlane) ||
-            !BuildQuad(device, lightCorners, {0.0, 0.0, 1.0}, areaLight))
+            !BuildQuad(device, lightCorners, {0.0, 0.0, 1.0}, areaLight) ||
+            !BuildQuad(device, pointBlockerCorners, {0.0, 0.0, 1.0}, pointBlocker) ||
+            !BuildQuad(device, areaBlockerCorners, {0.0, 0.0, 1.0}, areaBlocker) ||
+            !BuildQuad(device, farLightCorners, {0.0, 0.0, 1.0}, farLight))
         {
             std::cerr << "検証用の形状を作成できませんでした\n";
             return 1;
@@ -914,8 +954,27 @@ namespace
             lightMaterial.EmissiveColor[2] = 1.0f;
             lightMaterial.EmissiveLuminanceNits = AreaLightNits;
         }
+        FramePacket pointBlockedPacket;
+        pointBlockedPacket.RayTracingScene.Instances.push_back(
+            MakeInstance(facingPlane, 0u, planeColor));
+        pointBlockedPacket.RayTracingScene.Instances.push_back(MakeInstance(pointBlocker, 1u, black));
+        RayTracingSceneInstanceSnapshot farLightInstance = MakeInstance(farLight, 1u, black);
+        farLightInstance.Material.EmissiveColor[0] = 1.0f;
+        farLightInstance.Material.EmissiveColor[1] = 1.0f;
+        farLightInstance.Material.EmissiveColor[2] = 1.0f;
+        farLightInstance.Material.EmissiveLuminanceNits = AreaLightNits;
+        FramePacket farLitPacket;
+        farLitPacket.RayTracingScene.Instances.push_back(MakeInstance(facingPlane, 0u, planeColor));
+        farLitPacket.RayTracingScene.Instances.push_back(farLightInstance);
+        FramePacket areaBlockedPacket;
+        areaBlockedPacket.RayTracingScene.Instances.push_back(
+            MakeInstance(facingPlane, 0u, planeColor));
+        areaBlockedPacket.RayTracingScene.Instances.push_back(farLightInstance);
+        areaBlockedPacket.RayTracingScene.Instances.push_back(MakeInstance(areaBlocker, 2u, black));
         if (!BuildTopLevel(device, furnacePacket) || !BuildTopLevel(device, planePacket) ||
-            !BuildTopLevel(device, floorPacket) || !BuildTopLevel(device, areaPacket))
+            !BuildTopLevel(device, floorPacket) || !BuildTopLevel(device, areaPacket) ||
+            !BuildTopLevel(device, pointBlockedPacket) || !BuildTopLevel(device, farLitPacket) ||
+            !BuildTopLevel(device, areaBlockedPacket))
         {
             std::cerr << "検証用のTLASを作成できませんでした\n";
             return 1;
@@ -1034,6 +1093,20 @@ namespace
                           static_cast<unsigned>(roughnessBytes[row / 3u]),
                           static_cast<unsigned>(metallicBytes[row % 3u]));
             checkFurnace(label, row);
+        }
+        // 1b. 粗さ0（葉の粗さはLUTの標本域の下端、alphaは1e-4）でも有限でエネルギーを保つ。
+        for (uint32_t metallicIndex = 0u; metallicIndex < 3u; metallicIndex += 2u)
+        {
+            sphereMaterial.MetallicTexture = metallicHandles[metallicIndex];
+            sphereMaterial.RoughnessTexture = zeroRoughnessHandle;
+            if (!runner.Accumulate(FurnaceSamples, pixels, "white_furnace_zero_roughness"))
+            {
+                return 1;
+            }
+            char label[64] = {};
+            std::snprintf(label, sizeof(label), "roughness=0/255 metallic=%u/255",
+                          static_cast<unsigned>(metallicBytes[metallicIndex]));
+            checkFurnace(label, 15u + metallicIndex / 2u);
         }
 
         // 2. 正距円筒の環境texture。一定値1なら一様環境と同じ白炉の値になる。
@@ -1303,6 +1376,158 @@ namespace
         }
         pass.SetLightSampling(PathTracingLightSampling::MultipleImportance);
 
+        const auto meanOfImage = [&](uint32_t channel)
+        {
+            double sum = 0.0;
+            for (uint32_t index = 0u; index < Width * Height; ++index)
+            {
+                sum += pixels[index * 4u + channel];
+            }
+            return sum / (Width * Height);
+        };
+        const auto compareStrategies = [&](const char* label, uint32_t samples, double tolerance)
+        {
+            double means[3][3] = {};
+            for (uint32_t caseIndex = 0u; caseIndex < 3u; ++caseIndex)
+            {
+                pass.SetLightSampling(samplingCases[caseIndex].Sampling);
+                if (!runner.Accumulate(samples, pixels, label))
+                {
+                    return false;
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    means[caseIndex][channel] = meanOfImage(channel);
+                }
+            }
+            pass.SetLightSampling(PathTracingLightSampling::MultipleImportance);
+            for (uint32_t caseIndex = 1u; caseIndex < 3u; ++caseIndex)
+            {
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    const double relative = std::abs(means[caseIndex][channel] - means[0][channel]) /
+                                            means[0][channel];
+                    std::cout << label << '_' << samplingCases[caseIndex].Label
+                              << " channel=" << channel << " mean=" << means[caseIndex][channel]
+                              << " mis_mean=" << means[0][channel] << " relative=" << relative
+                              << '\n';
+                    if (!(means[0][channel] > 0.0) || relative > tolerance)
+                    {
+                        std::cerr << label << "で標本化戦略の期待値が一致しません\n";
+                        bPassed = false;
+                    }
+                }
+            }
+            return true;
+        };
+
+        // 6. 視線がシェーディング法線の裏になる画素（強く傾いた法線マップの右側）でも、
+        //    評価・pdf・標本化が同じ法線を使い、3戦略が同じ期待値へ収束する。
+        // 金属（metallic 1、roughness 0.5）にしてBSDF標本を全て可視法線分布から引く。
+        glossyMaterial.MetallicTexture = metallicHandles[2];
+        glossyMaterial.RoughnessTexture = roughnessHandles[2];
+        glossyMaterial.NormalTexture = steepNormalHandle;
+        if (!compareStrategies("steep_normal_area", 1024u, 0.01))
+        {
+            return 1;
+        }
+        glossyMaterial.MetallicTexture = TextureHandle();
+        glossyMaterial.RoughnessTexture = TextureHandle();
+        glossyMaterial.NormalTexture = TextureHandle();
+
+        // 7. 太陽円盤の3戦略。光沢金属の床に太陽を正反射させ、飽和しない太陽放射輝度
+        //    （事前露出後で約1.6e5）をBSDF標本側でも切らずに累積する。
+        SkyAtmospherePass skyPass;
+        // 直前のフレームのcommand listは解放済みなので、初期化用を渡す。
+        context.CommandList = initializationCommand.get();
+        if (!skyPass.Initialize(context))
+        {
+            std::cerr << "空パスを初期化できませんでした\n";
+            return 1;
+        }
+        SkyAtmosphereParameters sky = MakeDefaultSkyAtmosphereParameters();
+        sky.bEnabled = true;
+        sky.SunAltitudeDegrees = 45.0f;
+        sky.SunAzimuthDegrees = 90.0f;
+        floorPacket.Scene.SkyAtmosphere = sky;
+        RayTracingHitMaterialSnapshot& floorMaterial = floorPacket.RayTracingScene.Instances[0].Material;
+        floorMaterial.MetallicTexture = metallicHandles[2];
+        floorMaterial.RoughnessTexture = glossyRoughnessHandle;
+        camera = MakeCamera({0.0, 2.0, -2.0}, {0.0, -1.0, 1.0});
+        camera.PreExposure = 1.0f / 10000.0f;
+        // 視野を8度に絞り、太陽の光沢反射が多くの画素にまたがるようにしてBSDF標本側の分散を抑える。
+        camera.FieldOfView = 8.0f;
+        useScene(floorPacket);
+        pass.SetBsdfMode(PathTracingBsdfMode::Production);
+        runner.Sky = &skyPass;
+        if (!compareStrategies("sun_glossy", 1024u, 0.05))
+        {
+            return 1;
+        }
+        runner.Sky = nullptr;
+        floorPacket.Scene.SkyAtmosphere.bEnabled = false;
+        camera = MakeCamera({0.0, 0.0, -2.0}, {0.0, 0.0, 1.0});
+
+        // 8. 光源の直前にある遮蔽物。点光源は10m先の5mm手前、面光源は2.5mm手前の板で全て遮る。
+        pass.SetEnvironment(PathTracingEnvironment{});
+        pass.SetBsdfMode(PathTracingBsdfMode::ValidationLambert);
+        PunctualLightCase distantLight;
+        distantLight.Type = LightType::Point;
+        distantLight.Position = {0.0, 0.0, -10.0};
+        distantLight.Intensity = 100.0f;
+        distantLight.Range = 1000.0f;
+        const auto imageMax = [&]()
+        {
+            float maximum = 0.0f;
+            for (uint32_t index = 0u; index < Width * Height; ++index)
+            {
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    maximum = std::max(maximum, pixels[index * 4u + channel]);
+                }
+            }
+            return maximum;
+        };
+        planePacket.Scene.LightProxies.clear();
+        planePacket.Scene.LightProxies.push_back(MakeLightProxy(distantLight));
+        useScene(planePacket);
+        if (!runner.Accumulate(1u, pixels, "distant_point_unblocked"))
+        {
+            return 1;
+        }
+        const float unblockedMax = imageMax();
+        pointBlockedPacket.Scene.LightProxies.push_back(MakeLightProxy(distantLight));
+        useScene(pointBlockedPacket);
+        if (!runner.Accumulate(1u, pixels, "distant_point_blocked"))
+        {
+            return 1;
+        }
+        const float pointBlockedMax = imageMax();
+        useScene(farLitPacket);
+        if (!runner.Accumulate(64u, pixels, "far_area_unblocked"))
+        {
+            return 1;
+        }
+        const float areaUnblockedMax = imageMax();
+        useScene(areaBlockedPacket);
+        if (!runner.Accumulate(256u, pixels, "far_area_blocked"))
+        {
+            return 1;
+        }
+        const float areaBlockedMax = imageMax();
+        std::cout << "distant_point_unblocked_max=" << unblockedMax
+                  << " distant_point_blocked_max=" << pointBlockedMax
+                  << " far_area_unblocked_max=" << areaUnblockedMax
+                  << " far_area_blocked_max=" << areaBlockedMax << '\n';
+        if (!(unblockedMax > 0.0f) || pointBlockedMax != 0.0f || !(areaUnblockedMax > 0.0f) ||
+            areaBlockedMax != 0.0f)
+        {
+            std::cerr << "光源の直前の遮蔽物を影レイが見逃しました\n";
+            bPassed = false;
+        }
+        planePacket.Scene.LightProxies.clear();
+
+        skyPass.Shutdown();
         pass.Shutdown();
         graph.Shutdown();
         device->WaitIdle();
@@ -1319,9 +1544,11 @@ namespace
         }
         if (bPassed)
         {
-            std::cout << "pt_white_furnace_rows=15 equirect_environment=true "
+            std::cout << "pt_white_furnace_rows=15 zero_roughness=true equirect_environment=true "
                          "lambert_punctual_analytic=true spot_outside_zero=true "
-                         "production_bsdf_point=true area_light_mis_consistent=true\n";
+                         "production_bsdf_point=true area_light_mis_consistent=true "
+                         "steep_normal_consistent=true sun_mis_consistent=true "
+                         "near_light_occluders=true\n";
         }
         return bPassed ? 0 : 1;
     }
