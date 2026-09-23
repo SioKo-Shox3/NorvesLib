@@ -176,6 +176,9 @@ namespace NorvesLib::RHI
 
         /** @brief 64-bit整数シェーダー演算機能が論理デバイスで有効か */
         bool bShaderInt64 = false;
+
+        /** @brief 配列sampled imageを呼び出しごとに異なる添字で参照できるか（Vulkan 1.2 descriptor indexing） */
+        bool bSampledImageArrayNonUniformIndexing = false;
     };
 
 } // namespace NorvesLib::RHI

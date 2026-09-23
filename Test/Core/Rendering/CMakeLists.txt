@@ -282,6 +282,19 @@ register_rendering_gpu_test(
     RHIRayTracingPipelineVulkanTest
     RHIRayTracingPipelineVulkanTest
 )
+add_executable(RHIDescriptorArrayVulkanTest
+    RHIDescriptorArrayVulkanTest.cpp
+)
+target_link_libraries(RHIDescriptorArrayVulkanTest PRIVATE RenderingGpuTestSupport)
+target_include_directories(RHIDescriptorArrayVulkanTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
+)
+set_target_properties(RHIDescriptorArrayVulkanTest PROPERTIES FOLDER "Test/Core/Rendering")
+register_rendering_gpu_test(
+    RHIDescriptorArrayVulkanTest
+    RHIDescriptorArrayVulkanTest
+)
 add_executable(RayTracingCapabilityContractTest
     RayTracingCapabilityContractTest.cpp
 )

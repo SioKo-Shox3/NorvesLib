@@ -21,6 +21,25 @@ namespace NorvesLib::RHI::Vulkan
     class VulkanSampler;
     class VulkanAccelerationStructure;
 
+    /** @brief 1 bindingあたりの配列要素数の上限。device limitより十分小さく保つ。 */
+    constexpr uint32_t MaxDescriptorBindingArrayCount = 1024u;
+
+    /**
+     * @brief RHIのbinding配列数を受理できるか判定する
+     *
+     * 配列（count>=2）はCombinedImageSamplerだけを対象にし、他の型は従来どおり1要素に限る。
+     */
+    inline bool IsSupportedDescriptorBindingCount(const DescriptorBinding &binding)
+    {
+        if (binding.count == 1u)
+        {
+            return true;
+        }
+        return binding.count > 1u &&
+               binding.count <= MaxDescriptorBindingArrayCount &&
+               binding.type == ResourceBindType::CombinedImageSampler;
+    }
+
     /**
      * @brief Vulkanディスクリプタセットレイアウト (vulkan.hpp使用)
      */
@@ -69,6 +88,19 @@ namespace NorvesLib::RHI::Vulkan
         VulkanDescriptorPool(TSharedPtr<VulkanDevice> device, uint32_t maxSets = 100);
 
         /**
+         * @brief レイアウトの配列要素数を満たす容量でプールを作成する
+         *
+         * 型ごとの容量は従来の既定値と「全bindingの要素数合計×maxSets」の大きい方にする。
+         * 配列を含まないレイアウトでは従来の容量と一致する。
+         * @param device Vulkanデバイス
+         * @param maxSets 最大セット数
+         * @param bindings このプールから割り当てるレイアウトのbinding
+         */
+        VulkanDescriptorPool(TSharedPtr<VulkanDevice> device,
+                             uint32_t maxSets,
+                             const VariableArray<DescriptorBindingDesc> &bindings);
+
+        /**
          * @brief デストラクタ
          */
         ~VulkanDescriptorPool();
@@ -77,6 +109,9 @@ namespace NorvesLib::RHI::Vulkan
         void Reset();
 
     private:
+        void CreatePool(uint32_t maxSets,
+                        const VariableArray<DescriptorBindingDesc> *bindings);
+
         TSharedPtr<VulkanDevice> m_device;
         vk::DescriptorPool m_pool;
     };
@@ -112,6 +147,10 @@ namespace NorvesLib::RHI::Vulkan
         void BindStorageBuffer(uint32_t binding, BufferPtr buffer, uint32_t offset, uint32_t size) override;
         bool BindAccelerationStructure(uint32_t binding,
                                        AccelerationStructurePtr accelerationStructure) override;
+        bool BindTextureArrayElement(uint32_t binding,
+                                     uint32_t arrayElement,
+                                     TexturePtr texture,
+                                     SamplerPtr sampler) override;
         void BindStorageTexture(uint32_t binding, TexturePtr texture) override;
         void BindStorageTexture(uint32_t binding, TexturePtr texture, uint32_t mipLevel) override;
         void Update() override;
@@ -154,8 +193,12 @@ namespace NorvesLib::RHI::Vulkan
 
         UnorderedMap<uint32_t, BindingInfo> m_bindings;
 
+        /** @brief 配列bindingの要素。キーは (binding << 32) | 要素番号。 */
+        UnorderedMap<uint64_t, BindingInfo> m_arrayElementBindings;
+
         void CreatePipelineLayout();
         vk::DescriptorType GetVkDescriptorType(uint32_t binding) const;
+        uint32_t GetDescriptorCount(uint32_t binding) const;
     };
 
 } // namespace NorvesLib::RHI::Vulkan

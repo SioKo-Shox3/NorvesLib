@@ -319,7 +319,11 @@ namespace NorvesLib::RHI::Vulkan
                 DescriptorBindingDesc bindingDesc;
                 bindingDesc.binding = binding.binding;
                 bindingDesc.stages = binding.stages;
-                bindingDesc.count = 1;
+                if (!IsSupportedDescriptorBindingCount(binding))
+                {
+                    throw std::runtime_error("未対応のディスクリプタ配列数です");
+                }
+                bindingDesc.count = binding.count;
 
                 bindingDesc.type = VulkanDevice::ConvertResourceBindType(binding.type);
 
@@ -414,7 +418,11 @@ namespace NorvesLib::RHI::Vulkan
                 bindingDesc.binding = binding.binding;
                 bindingDesc.type = VulkanDevice::ConvertResourceBindType(binding.type);
                 bindingDesc.stages = binding.stages;
-                bindingDesc.count = 1;
+                if (!IsSupportedDescriptorBindingCount(binding))
+                {
+                    throw std::runtime_error("未対応のディスクリプタ配列数です");
+                }
+                bindingDesc.count = binding.count;
                 bindingDescs.push_back(bindingDesc);
             }
 
@@ -492,7 +500,11 @@ namespace NorvesLib::RHI::Vulkan
                 bindingDesc.binding = binding.binding;
                 bindingDesc.type = VulkanDevice::ConvertResourceBindType(binding.type);
                 bindingDesc.stages = binding.stages;
-                bindingDesc.count = 1;
+                if (!IsSupportedDescriptorBindingCount(binding))
+                {
+                    throw std::runtime_error("未対応のディスクリプタ配列数です");
+                }
+                bindingDesc.count = binding.count;
                 bindingDescs.push_back(bindingDesc);
             }
 

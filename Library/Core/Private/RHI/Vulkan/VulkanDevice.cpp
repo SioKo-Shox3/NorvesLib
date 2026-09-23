@@ -1075,6 +1075,9 @@ namespace NorvesLib::RHI::Vulkan
             vulkan12Query.drawIndirectCount == VK_TRUE ? VK_TRUE : VK_FALSE;
         m_vulkan12Features.bufferDeviceAddress =
             vulkan12Query.bufferDeviceAddress == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // 配列sampled imageの非一様添字は、PTの材質texture配列が対応時だけ使う。
+        m_vulkan12Features.shaderSampledImageArrayNonUniformIndexing =
+            vulkan12Query.shaderSampledImageArrayNonUniformIndexing == VK_TRUE ? VK_TRUE : VK_FALSE;
         features2.pNext = &m_vulkan12Features;
 
         // 任意のデバイス拡張は機能照会より先に選定する。
@@ -2220,7 +2223,15 @@ namespace NorvesLib::RHI::Vulkan
             bindingDesc.binding = binding.binding;
             bindingDesc.type = ConvertResourceBindType(binding.type);
             bindingDesc.stages = binding.stages;
-            bindingDesc.count = 1;
+            bindingDesc.count = binding.count;
+            if (!IsSupportedDescriptorBindingCount(binding))
+            {
+                NORVES_LOG_ERROR("VulkanDevice",
+                                 "Descriptor binding %u has an unsupported array count %u",
+                                 binding.binding,
+                                 binding.count);
+                return nullptr;
+            }
             bindingDescs.push_back(bindingDesc);
         }
 
@@ -2229,10 +2240,11 @@ namespace NorvesLib::RHI::Vulkan
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
             bindingDescs);
 
-        // ディスクリプタプールの作成
+        // ディスクリプタプールの作成（配列bindingは要素数ぶんの容量を確保する）
         auto pool = MakeShared<VulkanDescriptorPool>(
             TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
-            10); // 10セット分のプールを作成
+            10, // 10セット分のプールを作成
+            bindingDescs);
 
         // VulkanDescriptorSetの作成
         auto descriptorSet = MakeShared<VulkanDescriptorSet>(
@@ -2490,6 +2502,8 @@ namespace NorvesLib::RHI::Vulkan
                 m_vulkan12Features.bufferDeviceAddress == VK_TRUE;
             m_Capabilities.bShaderInt64 =
                 m_enabledDeviceFeatures.shaderInt64 == VK_TRUE;
+            m_Capabilities.bSampledImageArrayNonUniformIndexing =
+                m_vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE;
             m_Capabilities.bDrawIndirectFirstInstance =
                 (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
 
