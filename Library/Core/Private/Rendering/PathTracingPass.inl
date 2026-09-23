@@ -656,7 +656,7 @@ namespace NorvesLib::Core::Rendering
             history->Textures[1].reset();
             history->TextureStates[0] = RHI::ResourceState::Undefined;
             history->TextureStates[1] = RHI::ResourceState::Undefined;
-            history->SampleCount = 0u;
+            history->ResetAccumulation();
             RHI::TextureDesc desc;
             desc.Width = width;
             desc.Height = height;
@@ -1069,10 +1069,11 @@ namespace NorvesLib::Core::Rendering
             history->MaterialTextureSignature != m_DeclaredMaterialTextureSignature ||
             history->LightSignature != m_DeclaredLightSignature ||
             history->EnvironmentSignature != environmentSignature ||
+            history->SamplesPerFrame != m_SamplesPerFrame ||
             history->SampleCount > UINT32_MAX - m_SamplesPerFrame;
         if (bReset)
         {
-            history->SampleCount = 0u;
+            history->ResetAccumulation();
         }
         m_TargetIndex = history->SampleCount == 0u ? 0u : 1u - history->CurrentIndex;
         const uint32_t previousIndex = 1u - m_TargetIndex;
@@ -1145,10 +1146,23 @@ namespace NorvesLib::Core::Rendering
             history.TextureStates[0] = RHI::ResourceState::ShaderResource;
             history.TextureStates[1] = RHI::ResourceState::ShaderResource;
         };
+        // 空の有効性が変わった累積は捨てる。カメラ標本の添字を決める前に判定する。
+        const SkyAtmosphereParameters sky = SanitizeSkyAtmosphereParameters(
+            context.SnapshotScene ? context.SnapshotScene->SkyAtmosphere :
+                                    context.SkyAtmosphereSnapshot);
+        const bool bSkyValid = sky.bEnabled && context.SkyAtmosphere.bValid &&
+            m_SkyRadianceHandle.IsValid() && m_SkyTransmittanceHandle.IsValid() &&
+            m_SunDiskHandle.IsValid() && context.SkyAtmosphere.RadianceTexture &&
+            context.SkyAtmosphere.TransmittanceTexture &&
+            context.SkyAtmosphere.SunDiskTexture && context.SkyAtmosphere.Sampler;
+        if (history.SampleCount > 0u && history.bSkyValid != bSkyValid)
+        {
+            history.ResetAccumulation();
+        }
         PathTracingParameters parameters;
         const PathTracingCameraSample cameraSample = SamplePathTracingCamera(
             *context.GetActiveCamera(), context.GetPreviousCamera(),
-            context.SnapshotDeltaTime, history.SampleCount);
+            context.SnapshotDeltaTime, history.DispatchCount);
         CameraProxy opticalCamera = cameraSample.Camera;
         if (cameraSample.bThinLens)
         {
@@ -1188,18 +1202,6 @@ namespace NorvesLib::Core::Rendering
         parameters.ImageState[1] = history.Height;
         parameters.ImageState[3] = static_cast<uint32_t>(
             context.SnapshotRayTracingScene->Instances.size());
-        const SkyAtmosphereParameters sky = SanitizeSkyAtmosphereParameters(
-            context.SnapshotScene ? context.SnapshotScene->SkyAtmosphere :
-                                    context.SkyAtmosphereSnapshot);
-        const bool bSkyValid = sky.bEnabled && context.SkyAtmosphere.bValid &&
-            m_SkyRadianceHandle.IsValid() && m_SkyTransmittanceHandle.IsValid() &&
-            m_SunDiskHandle.IsValid() && context.SkyAtmosphere.RadianceTexture &&
-            context.SkyAtmosphere.TransmittanceTexture &&
-            context.SkyAtmosphere.SunDiskTexture && context.SkyAtmosphere.Sampler;
-        if (history.SampleCount > 0u && history.bSkyValid != bSkyValid)
-        {
-            history.SampleCount = 0u;
-        }
         parameters.ImageState[2] = history.SampleCount;
         if (bSkyValid)
         {
@@ -1365,6 +1367,8 @@ namespace NorvesLib::Core::Rendering
         restoreTextureStates();
         history.CurrentIndex = m_TargetIndex;
         history.SampleCount += m_SamplesPerFrame;
+        ++history.DispatchCount;
+        history.SamplesPerFrame = m_SamplesPerFrame;
         history.SceneRevision = context.SceneRevision;
         history.LightRevision = context.LightRevision;
         history.CameraSignature = m_DeclaredCameraSignature;

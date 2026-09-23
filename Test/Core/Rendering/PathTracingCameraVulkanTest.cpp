@@ -262,7 +262,8 @@ namespace
     bool Capture(const DevicePtr& device, ShaderManager& shaderManager,
                  FramePacket& packet, CameraProxy& camera,
                  const CameraProxy* previousCamera,
-                 VariableArray<float>& pixels)
+                 VariableArray<float>& pixels,
+                 uint32_t samplesPerFrame = 1u)
     {
         ViewRenderContext context;
         context.Device = device.get();
@@ -292,6 +293,7 @@ namespace
             channel = 0.05f;
         }
         pass.SetEnvironment(environment);
+        pass.SetSamplesPerFrame(samplesPerFrame);
         RenderGraph graph;
         graph.Initialize(nullptr);
         for (uint64_t frame = 1u; frame <= 32u; ++frame)
@@ -301,9 +303,9 @@ namespace
                                             : (frame % 2u == 0u ? 1.0f / 55.0f
                                                                : 1.0f / 60.0f);
             if (!RunFrame(device, graph, pass, context, frame, 1u, 1u, pixels) ||
-                pass.GetAccumulatedSampleCount() != frame)
+                pass.GetAccumulatedSampleCount() != frame * samplesPerFrame)
             {
-                std::cerr << "PTカメラの32試料を累積できませんでした\n";
+                std::cerr << "PTカメラの試料を累積できませんでした\n";
                 return false;
             }
         }
@@ -483,6 +485,14 @@ namespace
         {
             return 1;
         }
+        // 1frameに4試料を束ねても、カメラ標本（レンズ位置）はdispatchごとの連続した添字で引く。
+        // 32回のdispatchで同じ32個のレンズ位置を使うため、画素内の試料だけが増えて基準と一致する。
+        VariableArray<float> staticBatched;
+        if (!Capture(device, shaderManager, packet, camera, nullptr, staticBatched, 4u) ||
+            !CheckBlocks("static_batched4", staticBatched, staticGolden))
+        {
+            return 1;
+        }
 
         RayTracingSceneInstanceSnapshot& snapshot = packet.RayTracingScene.Instances[0];
         std::memcpy(snapshot.PreviousTransform, snapshot.Instance.transform,
@@ -523,6 +533,13 @@ namespace
             0.471709f, 1.91757f, 1.94575f, 0.56499f,
             1.09261f, 1.7553f, 1.7553f, 1.16646f};
         if (!CheckBlocks("motion", motionPixels, motionGolden))
+        {
+            return 1;
+        }
+        // シャッター時刻も同じく、束ねた試料の数に関係なくdispatchごとの連続した添字で引く。
+        VariableArray<float> motionBatched;
+        if (!Capture(device, shaderManager, packet, camera, &previousCamera, motionBatched, 4u) ||
+            !CheckBlocks("motion_batched4", motionBatched, motionGolden))
         {
             return 1;
         }

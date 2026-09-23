@@ -179,6 +179,15 @@ namespace NorvesLib::Core::Rendering
             uint32_t Height = 0u;
             uint32_t CurrentIndex = 1u;
             uint32_t SampleCount = 0u;
+            /**
+             * @brief 累積に使ったdispatchの数。カメラ標本（レンズ位置・シャッター時刻）の添字にする。
+             *
+             * 1回のdispatchで束ねた試料は同じカメラ標本を使うため、試料数ではなくdispatchごとに
+             * 連続した添字でHalton列を引く。
+             */
+            uint32_t DispatchCount = 0u;
+            /** @brief 累積中の1frameあたり試料数。変わるとカメラ標本の重みが揃わないため履歴を捨てる。 */
+            uint32_t SamplesPerFrame = 0u;
             uint64_t SceneRevision = 0u;
             uint64_t LightRevision = 0u;
             uint64_t CameraSignature = 0u;
@@ -195,6 +204,12 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState TextureStates[2] = {
                 RHI::ResourceState::Undefined, RHI::ResourceState::Undefined};
             Container::VariableArray<FrameResources> FrameSlots;
+
+            void ResetAccumulation()
+            {
+                SampleCount = 0u;
+                DispatchCount = 0u;
+            }
         };
 
         History* FindOrCreateHistory(const ViewRenderContext& context, uint32_t width, uint32_t height);
