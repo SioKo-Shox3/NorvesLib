@@ -814,7 +814,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t imageAndSceneCounts[4] = {};
         float rayLimits[4] = {};
         uint32_t temporalState[4] = {};
-        uint32_t sampleState[4] = {}; ///< x=描画フレーム番号。静止中も毎フレーム別のレイを引く。
+        /// x=描画フレーム番号（静止中も毎フレーム別のレイを引く）、y=発光instance数、z=発光三角形数。
+        uint32_t sampleState[4] = {};
         float previousCameraPosition[4] = {}; ///< xyz=履歴を書いた前フレームのカメラ位置。
     };
 
@@ -831,8 +832,22 @@ namespace NorvesLib::Core::Rendering
         float Transform[12] = {};
     };
 
+    /**
+     * @brief RTGIが光源標本する発光instanceの表の1行
+     *
+     * 発光三角形を通し番号で一様に選ぶため、各行に先頭の通し番号を持たせて二分探索する。
+     */
+    struct RTGIEmitterEntry
+    {
+        uint32_t InstanceIndex = 0u; ///< instance表（CustomIndex順）の番号
+        uint32_t TriangleCount = 0u;
+        uint32_t FirstTriangle = 0u;
+        uint32_t Reserved = 0u;
+    };
+
     static_assert(sizeof(RTGIComputeParameters) == 160u);
     static_assert(sizeof(RTGIInstanceData) == 112u);
+    static_assert(sizeof(RTGIEmitterEntry) == 16u);
 
     static bool IsFiniteNonNegativeRTGI(float value)
     {
@@ -949,6 +964,41 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    // 発光色×nitsが正のinstanceを、RTGIの1次面と命中点の光源標本の対象にする（命中側の発光の
+    // 判定と同じ条件）。
+    static bool TryBuildRTGIEmitterTable(
+        const Container::VariableArray<RTGIInstanceData>& instances,
+        Container::VariableArray<RTGIEmitterEntry>& outEntries,
+        uint32_t& outTriangleCount)
+    {
+        outEntries.clear();
+        outTriangleCount = 0u;
+        uint64_t triangleTotal = 0u;
+        for (size_t index = 0u; index < instances.size(); ++index)
+        {
+            const float* emission = instances[index].EmissiveChromaticityAndLuminance;
+            const bool bEmissive = emission[3] > 0.0f &&
+                (emission[0] > 0.0f || emission[1] > 0.0f || emission[2] > 0.0f);
+            const uint32_t triangleCount = instances[index].IndexCount / 3u;
+            if (!bEmissive || triangleCount == 0u)
+            {
+                continue;
+            }
+            RTGIEmitterEntry entry;
+            entry.InstanceIndex = static_cast<uint32_t>(index);
+            entry.TriangleCount = triangleCount;
+            entry.FirstTriangle = static_cast<uint32_t>(triangleTotal);
+            triangleTotal += triangleCount;
+            if (triangleTotal > std::numeric_limits<uint32_t>::max())
+            {
+                return false;
+            }
+            outEntries.push_back(entry);
+        }
+        outTriangleCount = static_cast<uint32_t>(triangleTotal);
+        return true;
+    }
+
     static RHI::DescriptorSetDesc CreateRTGIComputeDescriptorSetDesc()
     {
         RHI::DescriptorSetDesc descriptorSetDesc;
@@ -975,8 +1025,9 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceBindType::RWTexture,
             RHI::ResourceBindType::RWTexture,
             RHI::ResourceBindType::RWTexture,
-            RHI::ResourceBindType::RWTexture};
-        for (uint32_t bindingIndex = 0u; bindingIndex < 23u; ++bindingIndex)
+            RHI::ResourceBindType::RWTexture,
+            RHI::ResourceBindType::StructuredBuffer};
+        for (uint32_t bindingIndex = 0u; bindingIndex < 24u; ++bindingIndex)
         {
             RHI::DescriptorBinding binding;
             binding.binding = bindingIndex;
@@ -1680,7 +1731,8 @@ namespace NorvesLib::Core::Rendering
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
             !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer &&
             !m_RTGIComputePipeline && !m_RTGIComputeParametersBuffer &&
-            !m_RTGIComputeInstanceDataBuffer && !m_RTGIDenoiserPipeline &&
+            !m_RTGIComputeInstanceDataBuffer && !m_RTGIComputeEmitterBuffer &&
+            !m_RTGIDenoiserPipeline &&
             !m_RTGIDenoisedTexture)
         {
             return;
@@ -1707,6 +1759,7 @@ namespace NorvesLib::Core::Rendering
         m_RTGIDenoisedHeight = 0u;
         m_RTGIComputeParametersBuffer.reset();
         m_RTGIComputeInstanceDataBuffer.reset();
+        m_RTGIComputeEmitterBuffer.reset();
         m_RTGIGeometryBuffers.clear();
         for (RTGIHistoryTextureSet& history : m_RTGIHistoryTextures)
         {
@@ -1715,6 +1768,7 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistorySlotState[0] = RHI::ResourceState::Undefined;
         m_RTGIHistorySlotState[1] = RHI::ResourceState::Undefined;
         m_RTGIComputeInstanceDataCapacity = 0u;
+        m_RTGIComputeEmitterCapacity = 0u;
         m_RTGIHistoryWidth = 0u;
         m_RTGIHistoryHeight = 0u;
         m_RTGIHistoryWriteIndex = 0u;
@@ -3024,6 +3078,12 @@ namespace NorvesLib::Core::Rendering
         {
             return fail();
         }
+        Container::VariableArray<RTGIEmitterEntry> emitterEntries;
+        uint32_t emitterTriangleCount = 0u;
+        if (!TryBuildRTGIEmitterTable(instanceData, emitterEntries, emitterTriangleCount))
+        {
+            return fail();
+        }
         if (!EnsureRTGIComputePipeline(context) ||
             !EnsureRTGIHistoryTextures(width, height))
         {
@@ -3067,6 +3127,28 @@ namespace NorvesLib::Core::Rendering
             }
             m_RTGIComputeInstanceDataBuffer = std::move(instanceDataBuffer);
             m_RTGIComputeInstanceDataCapacity = requiredInstanceDataSize;
+            m_RTGIComputeDescriptorSet.reset();
+        }
+        // 発光instanceがなくても束縛できるよう、最低1行分を確保する。
+        const uint64_t emitterDataSize =
+            static_cast<uint64_t>(emitterEntries.size()) * sizeof(RTGIEmitterEntry);
+        const uint64_t requiredEmitterBufferSize =
+            std::max<uint64_t>(emitterDataSize, sizeof(RTGIEmitterEntry));
+        if (!m_RTGIComputeEmitterBuffer ||
+            m_RTGIComputeEmitterCapacity < requiredEmitterBufferSize)
+        {
+            RHI::BufferDesc emitterDesc(
+                requiredEmitterBufferSize,
+                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                true,
+                "RTGI.DiffuseIndirect.Emitters");
+            RHI::BufferPtr emitterBuffer = context.Device->CreateBuffer(emitterDesc);
+            if (!emitterBuffer)
+            {
+                return fail();
+            }
+            m_RTGIComputeEmitterBuffer = std::move(emitterBuffer);
+            m_RTGIComputeEmitterCapacity = requiredEmitterBufferSize;
             m_RTGIComputeDescriptorSet.reset();
         }
 
@@ -3163,6 +3245,8 @@ namespace NorvesLib::Core::Rendering
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
         parameters.temporalState[3] = RTGIHistoryMaximumAge;
         parameters.sampleState[0] = static_cast<uint32_t>(context.FrameNumber);
+        parameters.sampleState[1] = static_cast<uint32_t>(emitterEntries.size());
+        parameters.sampleState[2] = emitterTriangleCount;
         // 履歴の距離は前フレームのカメラから測ったものなので、現在の表面も同じカメラから測って比べる。
         if (const CameraProxy* previousCamera = context.GetPreviousCamera())
         {
@@ -3180,6 +3264,10 @@ namespace NorvesLib::Core::Rendering
         m_RTGIComputeParametersBuffer->Update(&parameters, sizeof(parameters));
         m_RTGIComputeInstanceDataBuffer->Update(
             instanceData.data(), requiredInstanceDataSize);
+        if (emitterDataSize > 0u)
+        {
+            m_RTGIComputeEmitterBuffer->Update(emitterEntries.data(), emitterDataSize);
+        }
         m_RTGIGeometryBuffers = std::move(geometryBuffers);
 
         if (!m_RTGIComputeDescriptorSet)
@@ -3221,6 +3309,11 @@ namespace NorvesLib::Core::Rendering
             lightBuffer,
             0u,
             context.PhysicalLighting.LightBufferSizeBytes);
+        m_RTGIComputeDescriptorSet->BindStorageBuffer(
+            23u,
+            m_RTGIComputeEmitterBuffer,
+            0u,
+            static_cast<uint32_t>(requiredEmitterBufferSize));
         m_RTGIComputeDescriptorSet->BindTexture(9u, environmentTexture);
         m_RTGIComputeDescriptorSet->BindSampler(9u, environmentSampler);
         m_RTGIComputeDescriptorSet->BindTexture(10u, velocityTexture);

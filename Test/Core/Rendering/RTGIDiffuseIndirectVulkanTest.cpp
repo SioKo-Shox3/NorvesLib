@@ -767,6 +767,15 @@ namespace
             active.Reason != RTGIFallbackReason::None ||
             active.DrawCallCount != 1u)
         {
+            std::cerr << "rtgi_active published=" << active.bPublished
+                      << " source=" << static_cast<uint32_t>(active.Source)
+                      << " reason=" << static_cast<uint32_t>(active.Reason)
+                      << " draw_calls=" << active.DrawCallCount << " pixels=";
+            for (uint16_t value : active.RTGIPixels)
+            {
+                std::cerr << std::hex << value << std::dec << ' ';
+            }
+            std::cerr << '\n';
             std::cerr << "RTGI有効経路のhit/miss readbackまたは公開状態が不正です\n";
             return 1;
         }
@@ -865,63 +874,95 @@ namespace
             return 1;
         }
 
-        // 影を落とす物体があるシーンでは、光線の経路にある影を落とさない物体をRTGIのray query
-        // （caster bitだけ）が無視し、命中していた画素も未命中と同じ0になる。影を落とす物体は
-        // どの光線も届かない遠方へ小さく置く。
-        AccelerationStructureDesc mixedTopLevelDesc;
-        mixedTopLevelDesc.type = AccelerationStructureType::TopLevel;
-        mixedTopLevelDesc.maxInstanceCount = 2u;
-        AccelerationStructurePtr mixedTopLevel =
-            device->CreateAccelerationStructure(mixedTopLevelDesc);
-        if (!mixedTopLevel)
+        // 影を落とす物体があるシーンでは、影を落とさない物体をRTGIの光線と影の問い合わせ（caster bit
+        // だけ）が無視する。発光面（影を落とす物体、z=2）だけのシーンと、その手前（z=1）に影を落とさない
+        // 発光しない遮蔽板を加えたシーンを、同じ描画フレーム番号（同じ乱数、履歴の再投影なし）で描き、
+        // RTGIの出力が画素ごとに一致することを確かめる。1次面は発光面からの光源標本で照らされる。
+        const auto buildScene = [&](bool bWithOccluder,
+                                    AccelerationStructurePtr& outTopLevel,
+                                    FramePacket& outPacket,
+                                    AccelerationStructureBuildDesc& outBuild) -> bool
         {
-            std::cerr << "影を落とす物体と落とさない物体のTLASを作成できませんでした\n";
+            AccelerationStructureDesc sceneTopLevelDesc;
+            sceneTopLevelDesc.type = AccelerationStructureType::TopLevel;
+            sceneTopLevelDesc.maxInstanceCount = 2u;
+            outTopLevel = device->CreateAccelerationStructure(sceneTopLevelDesc);
+            if (!outTopLevel)
+            {
+                return false;
+            }
+            PopulateRayTracingSnapshot(outTopLevel, bottomLevel, vertexBuffer, indexBuffer,
+                                       outPacket);
+            RayTracingSceneInstanceSnapshot emitter = outPacket.RayTracingScene.Instances[0];
+            emitter.Instance.customIndex = ExpectedInstanceCustomIndex + 1u;
+            emitter.Instance.transform[11] = 1.0f;
+            RayTracingSceneInstanceSnapshot& occluder = outPacket.RayTracingScene.Instances[0];
+            occluder.Instance.mask = RayTracingInstanceMaskNonShadowCaster;
+            for (float& channel : occluder.Material.EmissiveColor)
+            {
+                channel = 0.0f;
+            }
+            occluder.Material.EmissiveLuminanceNits = 0.0f;
+            if (!bWithOccluder)
+            {
+                outPacket.RayTracingScene.Instances.clear();
+            }
+            outPacket.RayTracingScene.Instances.push_back(emitter);
+            outBuild.type = AccelerationStructureType::TopLevel;
+            outBuild.destination = outTopLevel;
+            for (const RayTracingSceneInstanceSnapshot& snapshot : outPacket.RayTracingScene.Instances)
+            {
+                outBuild.instances.push_back(snapshot.Instance);
+            }
+            return true;
+        };
+        AccelerationStructurePtr emitterOnlyTopLevel;
+        AccelerationStructurePtr occludedTopLevel;
+        FramePacket emitterOnlyPacket;
+        FramePacket occludedPacket;
+        AccelerationStructureBuildDesc emitterOnlyBuild;
+        AccelerationStructureBuildDesc occludedBuild;
+        if (!buildScene(false, emitterOnlyTopLevel, emitterOnlyPacket, emitterOnlyBuild) ||
+            !buildScene(true, occludedTopLevel, occludedPacket, occludedBuild))
+        {
+            std::cerr << "発光面と影を落とさない遮蔽板のTLASを作成できませんでした\n";
             return 1;
         }
-        FramePacket mixedPacket;
-        PopulateRayTracingSnapshot(mixedTopLevel,
-                                   bottomLevel,
-                                   vertexBuffer,
-                                   indexBuffer,
-                                   mixedPacket);
-        mixedPacket.RayTracingScene.Instances[0].Instance.mask =
-            RayTracingInstanceMaskNonShadowCaster;
-        RayTracingSceneInstanceSnapshot farCaster = mixedPacket.RayTracingScene.Instances[0];
-        farCaster.Instance.mask = RayTracingInstanceMaskShadowCaster;
-        farCaster.Instance.customIndex = ExpectedInstanceCustomIndex + 1u;
-        farCaster.Instance.transform[0] = 1.0e-4f;
-        farCaster.Instance.transform[5] = 1.0e-4f;
-        farCaster.Instance.transform[10] = 1.0e-4f;
-        farCaster.Instance.transform[3] = 1.0e6f;
-        mixedPacket.RayTracingScene.Instances.push_back(farCaster);
-        AccelerationStructureBuildDesc mixedBuild;
-        mixedBuild.type = AccelerationStructureType::TopLevel;
-        mixedBuild.destination = mixedTopLevel;
-        for (const RayTracingSceneInstanceSnapshot& snapshot : mixedPacket.RayTracingScene.Instances)
+        constexpr uint64_t CasterComparisonFrame = 40u;
+        LightingFrameObservation emitterOnly;
+        LightingFrameObservation withNonCaster;
+        if (!RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+                              context, emitterOnlyPacket.RayTracingScene, emitterOnlyBuild,
+                              gbuffer, rtgiOutput, true, true, true, CasterComparisonFrame,
+                              emitterOnly) ||
+            !RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+                              context, occludedPacket.RayTracingScene, occludedBuild, gbuffer,
+                              rtgiOutput, true, true, true, CasterComparisonFrame,
+                              withNonCaster) ||
+            !emitterOnly.bPublished || !withNonCaster.bPublished ||
+            emitterOnly.RTGIPixels.size() != withNonCaster.RTGIPixels.size())
         {
-            mixedBuild.instances.push_back(snapshot.Instance);
+            std::cerr << "発光面のRTGIを描けませんでした\n";
+            return 1;
         }
-        LightingFrameObservation mixed;
-        if (!RunLightingFrame(device,
-                              capabilities,
-                              rtgiCapability,
-                              lightingPass,
-                              renderer,
-                              context,
-                              mixedPacket.RayTracingScene,
-                              mixedBuild,
-                              gbuffer,
-                              rtgiOutput,
-                              true,
-                              true,
-                              true,
-                              5u,
-                              mixed) ||
-            !mixed.bPublished ||
-            mixed.Source != RTGIIndirectLightingSource::RTGI ||
-            !AreAllRTGIPixelsZero(mixed))
+        bool bLitByEmitter = true;
+        for (const uint32_t hitPixel : {0u, 2u})
         {
-            std::cerr << "影を落とさない設定のinstanceにRTGIのray queryが当たりました\n";
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                bLitByEmitter = bLitByEmitter &&
+                                IsPositiveHalf(emitterOnly.RTGIPixels[hitPixel * 4u + channel]);
+            }
+        }
+        bool bIdentical = true;
+        for (size_t index = 0u; index < emitterOnly.RTGIPixels.size(); ++index)
+        {
+            bIdentical = bIdentical && emitterOnly.RTGIPixels[index] == withNonCaster.RTGIPixels[index];
+        }
+        if (!bLitByEmitter || !bIdentical)
+        {
+            std::cerr << "影を落とさない遮蔽板がRTGIの光線か影の問い合わせに当たりました lit="
+                      << bLitByEmitter << " identical=" << bIdentical << "\n";
             return 1;
         }
 

@@ -15,7 +15,7 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     uvec4 imageAndSceneCounts; // xy=画像寸法、z=インスタンス数、w=ライト数
     vec4 rayLimits; // x=最小距離、y=最大距離、z=pre-exposure、w=環境強度
     uvec4 temporalState; // x=履歴有効、y=ライトrevision差、z=weight制限、w=age上限
-    uvec4 sampleState; // x=描画フレーム番号（試料系列の番号）
+    uvec4 sampleState; // x=描画フレーム番号（試料系列の番号）、y=発光instance数、z=発光三角形数
     vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置
 } parameters;
 
@@ -69,6 +69,11 @@ layout(set = 0, binding = 19, r16f) uniform writeonly image2D historyConfidenceO
 layout(set = 0, binding = 20, rgba16f) uniform writeonly image2D historyDepthOutput;
 layout(set = 0, binding = 21, rgba16f) uniform writeonly image2D historyNormalOutput;
 layout(set = 0, binding = 22, rgba16f) uniform writeonly image2D historyMaterialOutput;
+// 発光instanceの表。x=instance表の番号、y=三角形数、z=先頭の通し番号。
+layout(set = 0, binding = 23, std430) readonly buffer RTGIEmitters
+{
+    uvec4 values[];
+} emitters;
 
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RTGIVertexData
 {
@@ -291,6 +296,165 @@ bool IsOccluded(vec3 worldPosition,
     }
     return rayQueryGetIntersectionTypeEXT(shadowQuery, true) ==
            gl_RayQueryCommittedIntersectionTriangleEXT;
+}
+
+// 光源標本の乱数。画素・描画フレーム番号・次元ごとに独立した値を引く。
+float EmitterRandom(uvec2 pixel, uint frameIndex, uint dimension)
+{
+    return HashToUnit(Hash32(uvec2(Hash32(pixel + uvec2(dimension * 7919u, dimension * 104729u)),
+                                   frameIndex)));
+}
+
+// instanceの三角形のワールド座標の頂点。変換はinstance表の物体→ワールド行列（行優先3x4）。
+bool TryReadWorldTriangle(RTGIInstanceData instanceData,
+                          uint primitiveIndex,
+                          out vec3 vertex0,
+                          out vec3 vertex1,
+                          out vec3 vertex2)
+{
+    vertex0 = vec3(0.0);
+    vertex1 = vec3(0.0);
+    vertex2 = vec3(0.0);
+    uint vertexStrideBytes = instanceData.geometry.x;
+    uint vertexCount = instanceData.geometry.y;
+    uint indexCount = instanceData.geometry.z;
+    if (vertexStrideBytes < 12u || (vertexStrideBytes & 3u) != 0u ||
+        primitiveIndex >= indexCount / 3u)
+    {
+        return false;
+    }
+    RTGIIndexData indexBuffer = RTGIIndexData(instanceData.indexAddress);
+    uvec3 vertexIndices = uvec3(indexBuffer.values[primitiveIndex * 3u],
+                                indexBuffer.values[primitiveIndex * 3u + 1u],
+                                indexBuffer.values[primitiveIndex * 3u + 2u]);
+    if (vertexIndices.x >= vertexCount || vertexIndices.y >= vertexCount ||
+        vertexIndices.z >= vertexCount)
+    {
+        return false;
+    }
+    RTGIVertexData vertexBuffer = RTGIVertexData(instanceData.vertexAddress);
+    uint stride = vertexStrideBytes / 4u;
+    vec3 objectVertices[3];
+    for (uint corner = 0u; corner < 3u; ++corner)
+    {
+        uint offset = vertexIndices[corner] * stride;
+        objectVertices[corner] = vec3(vertexBuffer.values[offset],
+                                      vertexBuffer.values[offset + 1u],
+                                      vertexBuffer.values[offset + 2u]);
+    }
+    vertex0 = vec3(dot(instanceData.transform0, vec4(objectVertices[0], 1.0)),
+                   dot(instanceData.transform1, vec4(objectVertices[0], 1.0)),
+                   dot(instanceData.transform2, vec4(objectVertices[0], 1.0)));
+    vertex1 = vec3(dot(instanceData.transform0, vec4(objectVertices[1], 1.0)),
+                   dot(instanceData.transform1, vec4(objectVertices[1], 1.0)),
+                   dot(instanceData.transform2, vec4(objectVertices[1], 1.0)));
+    vertex2 = vec3(dot(instanceData.transform0, vec4(objectVertices[2], 1.0)),
+                   dot(instanceData.transform1, vec4(objectVertices[2], 1.0)),
+                   dot(instanceData.transform2, vec4(objectVertices[2], 1.0)));
+    return IsFiniteVector(vertex0) && IsFiniteVector(vertex1) && IsFiniteVector(vertex2);
+}
+
+// 浮かせた始点から目標点の手前（距離の0.1%）までに遮蔽物があるか。方向と距離を浮かせた始点から
+// 測り直す（面上の点から測った方向のままだと、浅い角度で始点のずれが光線方向へ伸び、目標の
+// 発光面を手前で横切って自分で遮る）。
+bool IsSegmentOccluded(vec3 origin, vec3 target)
+{
+    vec3 toTarget = target - origin;
+    float targetDistance = length(toTarget);
+    if (!IsFiniteScalar(targetDistance) || targetDistance * 0.999 <= parameters.rayLimits.x)
+    {
+        return false;
+    }
+    rayQueryEXT shadowQuery;
+    rayQueryInitializeEXT(shadowQuery,
+                          sceneTopLevel,
+                          gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                          RayTracingInstanceMaskShadowCaster,
+                          origin,
+                          parameters.rayLimits.x,
+                          toTarget / targetDistance,
+                          targetDistance * 0.999);
+    while (rayQueryProceedEXT(shadowQuery))
+    {
+    }
+    return rayQueryGetIntersectionTypeEXT(shadowQuery, true) ==
+           gl_RayQueryCommittedIntersectionTriangleEXT;
+}
+
+// 発光三角形の光源標本。三角形を通し番号で一様に選び、面上を一様に標本化した直接照度Eを、
+// コサイン標本の1本と同じ単位（反射率を掛ける前の入射放射輝度の推定 E/π）で返す。
+// 発光は両面（パストレーサーと同じ）。
+vec3 SampleEmitterIrradiance(vec3 worldPosition, vec3 normal, uvec2 pixel, uint dimension)
+{
+    uint entryCount = parameters.sampleState.y;
+    uint triangleTotal = parameters.sampleState.z;
+    if (entryCount == 0u || triangleTotal == 0u)
+    {
+        return vec3(0.0);
+    }
+    uint frameIndex = parameters.sampleState.x;
+    float u0 = EmitterRandom(pixel, frameIndex, dimension);
+    float u1 = EmitterRandom(pixel, frameIndex, dimension + 1u);
+    float u2 = EmitterRandom(pixel, frameIndex, dimension + 2u);
+    uint triangleNumber = min(uint(u0 * float(triangleTotal)), triangleTotal - 1u);
+    // 先頭の通し番号がtriangleNumber以下の最後の行を探す。
+    uint low = 0u;
+    uint high = entryCount - 1u;
+    while (low < high)
+    {
+        uint middle = (low + high + 1u) / 2u;
+        if (emitters.values[middle].z <= triangleNumber)
+        {
+            low = middle;
+        }
+        else
+        {
+            high = middle - 1u;
+        }
+    }
+    uvec4 entry = emitters.values[low];
+    if (entry.x >= parameters.imageAndSceneCounts.z || triangleNumber < entry.z ||
+        triangleNumber - entry.z >= entry.y)
+    {
+        return vec3(0.0);
+    }
+    RTGIInstanceData emitter = instances.values[entry.x];
+    vec3 vertex0;
+    vec3 vertex1;
+    vec3 vertex2;
+    if (!TryReadWorldTriangle(emitter, triangleNumber - entry.z, vertex0, vertex1, vertex2))
+    {
+        return vec3(0.0);
+    }
+    vec3 edgeCross = cross(vertex1 - vertex0, vertex2 - vertex0);
+    float twiceArea = length(edgeCross);
+    if (!IsFiniteScalar(twiceArea) || twiceArea <= 1.0e-12)
+    {
+        return vec3(0.0);
+    }
+    float squareRoot = sqrt(u1);
+    vec3 lightPoint = vertex0 * (1.0 - squareRoot) + vertex1 * (squareRoot * (1.0 - u2)) +
+                      vertex2 * (squareRoot * u2);
+    vec3 toLight = lightPoint - worldPosition;
+    float distanceSquared = dot(toLight, toLight);
+    if (!IsFiniteScalar(distanceSquared) || distanceSquared <= 1.0e-12)
+    {
+        return vec3(0.0);
+    }
+    float distanceToLight = sqrt(distanceSquared);
+    vec3 lightDirection = toLight / distanceToLight;
+    float surfaceCosine = dot(normal, lightDirection);
+    float lightCosine = abs(dot(edgeCross / twiceArea, lightDirection));
+    if (surfaceCosine <= 0.0 || lightCosine <= 1.0e-6 ||
+        IsSegmentOccluded(worldPosition + normal * RAY_ORIGIN_OFFSET, lightPoint))
+    {
+        return vec3(0.0);
+    }
+    vec3 emission = emitter.emissiveChromaticityAndLuminance.rgb *
+                    emitter.emissiveChromaticityAndLuminance.a;
+    // 面積の確率密度は1/(三角形数×面積)。E = Le·cosS·cosL/d²/pdf。
+    return SanitizeRadiance(emission * (surfaceCosine * lightCosine * 0.5 * twiceArea *
+                                        float(triangleTotal) / (PI * distanceSquared)));
 }
 
 vec3 ComputeDirectRadiance(vec3 worldPosition,
@@ -581,16 +745,20 @@ void main()
                         hitNormal = -hitNormal;
                     }
                     vec3 hitPosition = rayOrigin + rayDirection * hitDistance;
-                    vec3 emissive = hitInstance.emissiveChromaticityAndLuminance.rgb *
-                                    hitInstance.emissiveChromaticityAndLuminance.a;
-                    incomingRadiance = emissive +
-                                       ComputeDirectRadiance(hitPosition,
+                    // 発光三角形の光は1次面と命中点の光源標本で数えるため、コサイン標本が発光面に
+                    // 当たっても発光を加えない。命中点は点・spot・方向光と発光三角形で照らす。
+                    incomingRadiance = ComputeDirectRadiance(hitPosition,
                                                              hitNormal,
-                                                             hitInstance.baseColor.rgb);
+                                                             hitInstance.baseColor.rgb) +
+                                       hitInstance.baseColor.rgb *
+                                           SampleEmitterIrradiance(hitPosition, hitNormal,
+                                                                   pixel, 3u);
                 }
             }
 
-            incomingRadiance = SanitizeRadiance(incomingRadiance);
+            // 1次面を照らす発光三角形の直接光（反射率を掛ける前の単位でコサイン標本に加える）。
+            incomingRadiance = SanitizeRadiance(incomingRadiance) +
+                               SampleEmitterIrradiance(worldPosition, worldNormal, pixel, 0u);
             float preExposure = IsFiniteScalar(parameters.rayLimits.z) &&
                                         parameters.rayLimits.z > 0.0
                                     ? clamp(parameters.rayLimits.z, 1.0e-6, 1.0e6)

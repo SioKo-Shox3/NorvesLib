@@ -309,6 +309,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_RTGIDenoisedHeight = 0u;
         RHI::BufferPtr m_RTGIComputeParametersBuffer;
         RHI::BufferPtr m_RTGIComputeInstanceDataBuffer;
+        /** @brief RTGIが光源標本する発光instanceの表 */
+        RHI::BufferPtr m_RTGIComputeEmitterBuffer;
         Container::VariableArray<RHI::BufferPtr> m_RTGIGeometryBuffers;
         struct RTGIHistoryTextureSet
         {
@@ -334,6 +336,7 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::Undefined,
             RHI::ResourceState::Undefined};
         uint64_t m_RTGIComputeInstanceDataCapacity = 0;
+        uint64_t m_RTGIComputeEmitterCapacity = 0;
         uint32_t m_RTGIHistoryWidth = 0;
         uint32_t m_RTGIHistoryHeight = 0;
         uint32_t m_RTGIHistoryWriteIndex = 0;
