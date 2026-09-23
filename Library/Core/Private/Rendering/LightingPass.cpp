@@ -10,6 +10,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/DDGIVolume.h"
+#include "Rendering/DfgLut.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "RHI/IDevice.h"
@@ -32,69 +33,6 @@
 
 namespace NorvesLib::Core::Rendering
 {
-    // ========================================
-    // float32 → float16 (round-to-nearest-even) 変換ヘルパー
-    // ========================================
-    static uint16_t FloatToHalfRne(float value)
-    {
-        union
-        {
-            float f;
-            uint32_t u;
-        } conv;
-        conv.f = value;
-        uint32_t f32 = conv.u;
-
-        const uint16_t sign = static_cast<uint16_t>((f32 >> 16u) & 0x8000u);
-        const uint32_t exponentBits = (f32 >> 23u) & 0xFFu;
-        const uint32_t mantissa = f32 & 0x007FFFFFu;
-        if (exponentBits == 0xFFu)
-        {
-            return mantissa == 0u ? sign | 0x7C00u : 0x7E00u;
-        }
-
-        const int32_t exponent = static_cast<int32_t>(exponentBits) - 127;
-        if (exponent > 15)
-        {
-            return sign | 0x7C00u;
-        }
-        if (exponent >= -14)
-        {
-            uint32_t roundedMantissa = mantissa;
-            const uint32_t truncated = roundedMantissa >> 13u;
-            const uint32_t remainder = roundedMantissa & 0x1FFFu;
-            const bool bRoundUp = remainder > 0x1000u ||
-                                   (remainder == 0x1000u && (truncated & 1u) != 0u);
-            roundedMantissa = truncated + (bRoundUp ? 1u : 0u);
-            int32_t roundedExponent = exponent;
-            if (roundedMantissa >= 0x400u)
-            {
-                roundedMantissa = 0u;
-                ++roundedExponent;
-            }
-            if (roundedExponent > 15)
-            {
-                return sign | 0x7C00u;
-            }
-            return sign |
-                   static_cast<uint16_t>((roundedExponent + 15) << 10u) |
-                   static_cast<uint16_t>(roundedMantissa);
-        }
-        if (exponent >= -25)
-        {
-            const uint32_t normalizedMantissa = mantissa | 0x00800000u;
-            const uint32_t shift = static_cast<uint32_t>(-exponent - 1);
-            const uint32_t truncated = normalizedMantissa >> shift;
-            const uint32_t remainderMask = (1u << shift) - 1u;
-            const uint32_t remainder = normalizedMantissa & remainderMask;
-            const uint32_t halfway = 1u << (shift - 1u);
-            const bool bRoundUp = remainder > halfway ||
-                                   (remainder == halfway && (truncated & 1u) != 0u);
-            return sign | static_cast<uint16_t>(truncated + (bRoundUp ? 1u : 0u));
-        }
-        return sign;
-    }
-
     static uint32_t ReverseBits32(uint32_t value)
     {
         value = (value << 16u) | (value >> 16u);
@@ -4352,101 +4290,10 @@ namespace NorvesLib::Core::Rendering
     // ========================================
     bool LightingPass::GenerateBRDFLut()
     {
-        constexpr uint32_t LUT_SIZE = 256;
-        constexpr uint32_t SAMPLE_COUNT = 4096;
-        constexpr float PI = 3.14159265359f;
-
         NORVES_LOG_INFO("LightingPass", "Generating BRDF LUT...");
 
-        // RG16_FLOAT LUT
-        Container::VariableArray<uint16_t> lutData(static_cast<size_t>(LUT_SIZE) * LUT_SIZE * 2, 0);
-        Container::VariableArray<float> halfVectors(SAMPLE_COUNT * 3, 0.0f);
-
-        for (uint32_t y = 0; y < LUT_SIZE; ++y)
-        {
-            const float roughness = (static_cast<float>(y) + 0.5f) /
-                                    static_cast<float>(LUT_SIZE);
-
-            for (uint32_t i = 0; i < SAMPLE_COUNT; ++i)
-            {
-                // Hammersley sequence
-                float u = static_cast<float>(i) / static_cast<float>(SAMPLE_COUNT);
-                uint32_t bits = i;
-                bits = (bits << 16u) | (bits >> 16u);
-                bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-                bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-                bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-                bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-                float v = static_cast<float>(bits) * 2.3283064365386963e-10f;
-
-                // ImportanceSample GGX
-                float a = roughness * roughness;
-                float phi = 2.0f * PI * u;
-                float cosTheta = std::sqrt((1.0f - v) / (1.0f + (a * a - 1.0f) * v));
-                float sinTheta = std::sqrt(1.0f - cosTheta * cosTheta);
-
-                halfVectors[i * 3] = sinTheta * std::cos(phi);
-                halfVectors[i * 3 + 1] = sinTheta * std::sin(phi);
-                halfVectors[i * 3 + 2] = cosTheta;
-            }
-
-            for (uint32_t x = 0; x < LUT_SIZE; ++x)
-            {
-                const float NdotV = (static_cast<float>(x) + 0.5f) /
-                                    static_cast<float>(LUT_SIZE);
-
-                // V vector in tangent space (N = (0,0,1))
-                float Vx = std::sqrt(1.0f - NdotV * NdotV);
-                float Vy = 0.0f;
-                float Vz = NdotV;
-
-                float A = 0.0f;
-                float B = 0.0f;
-
-                for (uint32_t i = 0; i < SAMPLE_COUNT; ++i)
-                {
-                    const float Hx = halfVectors[i * 3];
-                    const float Hy = halfVectors[i * 3 + 1];
-                    const float Hz = halfVectors[i * 3 + 2];
-
-                    // Reflect V around H to get L
-                    float VdotH = Vx * Hx + Vy * Hy + Vz * Hz;
-                    float Lx = 2.0f * VdotH * Hx - Vx;
-                    float Ly = 2.0f * VdotH * Hy - Vy;
-                    float Lz = 2.0f * VdotH * Hz - Vz;
-
-                    float NdotL = (std::max)(Lz, 0.0f);
-                    float NdotH = (std::max)(Hz, 0.0f);
-                    VdotH = (std::max)(VdotH, 0.0f);
-
-                    if (NdotL > 0.0f)
-                    {
-                        // Smith GGX for IBL: k = roughness^2 / 2
-                        float k = (roughness * roughness) / 2.0f;
-                        float G_V = NdotV / (NdotV * (1.0f - k) + k);
-                        float G_L = NdotL / (NdotL * (1.0f - k) + k);
-                        float G = G_V * G_L;
-
-                        float G_Vis = (G * VdotH) / (NdotH * NdotV + 0.0001f);
-                        float Fc = std::pow(1.0f - VdotH, 5.0f);
-
-                        A += (1.0f - Fc) * G_Vis;
-                        B += Fc * G_Vis;
-                    }
-                }
-
-                A /= static_cast<float>(SAMPLE_COUNT);
-                B /= static_cast<float>(SAMPLE_COUNT);
-
-                // Clamp to valid range
-                A = (std::max)(0.0f, (std::min)(1.0f, A));
-                B = (std::max)(0.0f, (std::min)(1.0f, B));
-
-                size_t idx = (static_cast<size_t>(y) * LUT_SIZE + x) * 2;
-                lutData[idx + 0] = FloatToHalfRne(A);
-                lutData[idx + 1] = FloatToHalfRne(B);
-            }
-        }
+        // ラスタとパストレーサーで同じ値を使うため、生成は共有関数に任せる（RG16_FLOAT）。
+        constexpr uint32_t LUT_SIZE = DfgLutSize;
 
         // テクスチャ作成（R16G16_FLOAT）
         RHI::TextureDesc lutDesc;
@@ -4466,7 +4313,7 @@ namespace NorvesLib::Core::Rendering
 
         uint32_t rowPitch = LUT_SIZE * 2 * static_cast<uint32_t>(sizeof(uint16_t));
         uint32_t slicePitch = rowPitch * LUT_SIZE;
-        m_BrdfLutTexture->Update(lutData.data(), rowPitch, slicePitch);
+        m_BrdfLutTexture->Update(GetDfgLutHalfData(), rowPitch, slicePitch);
 
         NORVES_LOG_INFO("LightingPass", "BRDF LUT generated");
         return true;
